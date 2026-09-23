@@ -1,7 +1,11 @@
-// SWARM's simulation: the arena, the player, enemies, bullets, sparks, scoring and the
-// spawn director, stepped at a fixed 120 Hz. Nothing here touches SDL or the GPU, so
-// one World runs the window, the headless captures and the benchmark, and a World
-// built from the same seed and fed the same inputs replays exactly.
+// SWARM's simulation: the arena, the player, enemies, bullets, scoring, the spawn
+// director and the warp grid, stepped at a fixed 120 Hz. Nothing here touches SDL or
+// the GPU, so one World runs the window, the headless captures and the benchmark, and
+// a World built from the same seed and fed the same inputs replays exactly.
+//
+// Sparks are not simulated here: the World queues `Burst`s (where, which way, how
+// many, what colour) and the renderer turns each into GPU particles, so a burst of
+// thousands costs the simulation one record.
 //
 // Enemies live in an Arena<Enemy> and are named by generational handles (the bot
 // tracks its target by handle, and a handle to an enemy that has since died reads as
@@ -13,6 +17,9 @@
 // Steady state allocates nothing: every Vec here is cleared and refilled, never
 // dropped, and the arena reuses freed slots.
 
+from "./grid" import {
+    Grid, newGrid
+}
 from "std/arena" import {
     Arena, Handle
 }
@@ -23,10 +30,16 @@ from "std/math" import {
 pub let ARENA_HW: f64 = 1200.0
 
 pub let ARENA_HH: f64 = 675.0
-// The visible window onto the arena, in world units: 1600x900, like the window.
-pub let VIEW_HW: f64 = 800.0
+// The visible window onto the arena, in world units: half the arena's width, so the
+// ship and the enemies around it are big enough to read at a glance.
+pub let VIEW_HW: f64 = 600.0
 
-pub let VIEW_HH: f64 = 450.0
+pub let VIEW_HH: f64 = 337.5
+// The HUD's coordinate space (screen units, origin at the centre, y up): 1600x900,
+// like the window in points, whatever the zoom.
+pub let SCREEN_HW: f64 = 800.0
+
+pub let SCREEN_HH: f64 = 450.0
 
 pub let DT: f64 = 1.0 / 120.0
 
@@ -53,7 +66,7 @@ pub let START_LIVES: i64 = 3
 pub let START_BOMBS: i64 = 3
 
 // Spatial hash: 64-unit cells over the arena. The widest collision a query must see is
-// a splitter (26) against a bullet (5) plus a tick of movement, well inside one cell,
+// a splitter (36) against a bullet (5) plus a tick of movement, inside one cell,
 // so a 3x3 neighbourhood around the querying point finds every candidate even though
 // the grid is built before the enemies move.
 let CELL: f64 = 64.0
@@ -72,8 +85,13 @@ let WAVE_SPEED: f64 = 2600.0
 let DEATH_CLEAR_R: f64 = 650.0
 let RESPAWN_CLEAR_R: f64 = 420.0
 let RESPAWN_DELAY: f64 = 1.4
-let MAX_SPARKS: i64 = 60000
+// Bursts queued between two renders; past this they are dropped (a window that stops
+// drawing, or headless ticks that are never rendered, must not grow it without bound).
+let MAX_BURSTS: i64 = 8192
 let MAX_FX: i64 = 2000
+// Particles per ordinary kill, and the budget a bomb's kills share.
+let KILL_SPARKS: i64 = 420
+let BOMB_SPARKS: i64 = 5000
 
 pub struct Enemy {
     kind: i32,
@@ -103,20 +121,29 @@ pub struct Bullet {
     life: f64,
 }
 
-pub struct Spark {
+// `count` particles leaving (x, y) inside a cone of half-angle `spread` about
+// (dirX, dirY) (PI for all round), at speeds in [speedLo, speedHi] plus (baseVx,
+// baseVy), each living up to `life` seconds. The colour is a display value, and a
+// channel above 1 is a brightness multiplier (it blooms).
+pub struct Burst {
     x: f64,
     y: f64,
-    vx: f64,
-    vy: f64,
-    life: f64,
-    max: f64,
+    dirX: f64,
+    dirY: f64,
+    spread: f64,
+    speedLo: f64,
+    speedHi: f64,
+    baseVx: f64,
+    baseVy: f64,
     r: f64,
     g: f64,
     b: f64,
+    count: i64,
+    life: f64,
     size: f64,
 }
 
-// An expanding ring effect: kill pops, bomb shockwaves, spawn and respawn flashes.
+// An expanding ring: the shockwaves of bombs and deaths, and nothing else.
 pub struct Fx {
     x: f64,
     y: f64,
@@ -171,30 +198,32 @@ pub fn rgb(r: f64, g: f64, b: f64): Rgb {
     }
 }
 
+// One colour per enemy type, all saturated and away from the player's white and gold:
+// violet, cyan, rose, and red-orange for the splitter's children.
 pub fn enemyColor(kind: i32): Rgb {
     if kind == SEEKER {
-        return rgb(0.2, 0.75, 1.0)
+        return rgb(0.1, 0.8, 1.0)
     }
     if kind == SPLITTER {
-        return rgb(1.0, 0.25, 0.55)
+        return rgb(1.0, 0.2, 0.45)
     }
     if kind == MINI {
-        return rgb(1.0, 0.55, 0.2)
+        return rgb(1.0, 0.38, 0.1)
     }
-    return rgb(0.7, 0.35, 1.0)
+    return rgb(0.62, 0.3, 1.0)
 }
 
 pub fn enemyRadius(kind: i32): f64 {
     if kind == SPLITTER {
-        return 30.0
+        return 36.0
     }
     if kind == MINI {
-        return 11.0
+        return 14.0
     }
     if kind == SEEKER {
-        return 17.0
+        return 21.0
     }
-    return 18.0
+    return 22.0
 }
 
 fn enemyPoints(kind: i32): i64 {
@@ -309,8 +338,10 @@ pub struct World {
     cellOf: Vec<i64>,
 
     bullets: Vec<Bullet>,
-    sparks: Vec<Spark>,
     fx: Vec<Fx>,
+    // Queued for the renderer, which empties it each frame it draws.
+    bursts: Vec<Burst>,
+    grid: Grid,
 
     // The one active clearing wave (a bomb, or the clear on death and respawn).
     waveOn: bool,
@@ -325,6 +356,10 @@ pub struct World {
     camY: f64,
     // Screen-shake trauma in [0, 1]; the renderer squares it.
     shake: f64,
+    // A white HDR flash (bombs, deaths) and the chromatic-aberration pulse, both in
+    // [0, 1] and decaying; the composite pass reads them.
+    flash: f64,
+    aberr: f64,
 
     // Benchmark mode: the player cannot die, the director is off and the enemy count
     // is topped back up to benchCount every tick.
@@ -333,7 +368,6 @@ pub struct World {
 
     // Per-tick factors, precomputed so the hot loops need no exp or trig.
     playerDamp: f64,
-    sparkDamp: f64,
     camK: f64,
     seekC: f64,
     seekS: f64,
@@ -380,22 +414,24 @@ pub fn newWorld(seed: u64): World {
         cellItems: Vec.withCapacity(4096),
         cellOf: Vec.withCapacity(4096),
         bullets: Vec.withCapacity(512),
-        sparks: Vec.withCapacity(MAX_SPARKS),
         fx: Vec.withCapacity(MAX_FX),
+        bursts: Vec.withCapacity(1024),
+        grid: newGrid(ARENA_HW, ARENA_HH, DT),
         waveOn: false,
         waveX: 0.0,
         waveY: 0.0,
         waveR: 0.0,
         waveMax: 0.0,
         spawnAcc: 0.0,
-        nextSwarm: 32.0,
+        nextSwarm: 40.0,
         camX: 0.0,
         camY: 0.0,
         shake: 0.0,
+        flash: 0.0,
+        aberr: 0.0,
         bench: false,
         benchCount: 0,
         playerDamp: Math.exp(-PLAYER_DAMP * DT),
-        sparkDamp: Math.exp(-2.2 * DT),
         camK: 1.0 - Math.exp(-5.0 * DT),
         seekC: Math.cos(seekTurn),
         seekS: Math.sin(seekTurn),
@@ -445,14 +481,33 @@ impl World {
         self.storeCache()
         self.direct()
         self.flushPending()
-        self.updateSparks()
+        self.pushGrid()
+        self.grid.step()
         self.updateFx()
         self.updateCombo()
         self.updateCamera()
-        self.shake -= 1.5 * DT
-        if self.shake < 0.0 {
-            self.shake = 0.0
+        self.shake = Math.maxF64(self.shake - 1.7 * DT, 0.0)
+        self.flash = Math.maxF64(self.flash - 5.0 * DT, 0.0)
+        self.aberr = Math.maxF64(self.aberr - 2.5 * DT, 0.0)
+    }
+
+    // The small, continuous pushes on the grid: the ship's wake and every bullet's.
+    fn pushGrid(self: &mut Self) {
+        if self.alive && !self.gameOver {
+            let sp = Math.sqrt(self.pvx * self.pvx + self.pvy * self.pvy)
+            if sp > 60.0 {
+                self.grid.impulse(self.px, self.py, 70.0, sp * 0.05)
+            }
         }
+        for i in 0..self.bullets.len {
+            let b = self.bullets[i]
+            self.grid.impulse(b.x, b.y, 34.0, 9.0)
+        }
+    }
+
+    fn addFlash(self: &mut Self, flash: f64, aberr: f64) {
+        self.flash = Math.minF64(self.flash + flash, 1.0)
+        self.aberr = Math.minF64(self.aberr + aberr, 1.0)
     }
 
     fn addShake(self: &mut Self, amt: f64) {
@@ -534,21 +589,25 @@ impl World {
             self.fireCd = 0.0
         }
 
-        if inp.bomb && self.bombs > 0 {
+        // Not while a clearing wave is still running: a held button (or the autopilot
+        // deciding it is boxed in three ticks running) would spend every bomb at once.
+        if inp.bomb && self.bombs > 0 && !self.waveOn {
             self.bombs -= 1
             self.startWave(self.px, self.py, BOMB_R)
-            self.addShake(0.65)
-            self.addFx(self.px, self.py, 10.0, WAVE_SPEED, 0.45, rgb(0.6, 0.85, 1.0), 7.0)
-            self.addFx(self.px, self.py, 0.0, WAVE_SPEED * 0.7, 0.55, rgb(1.0, 1.0, 1.0), 3.0)
+            self.addShake(0.8)
+            self.addFlash(0.9, 1.0)
+            self.grid.impulse(self.px, self.py, 260.0, 900.0)
+            self.addFx(self.px, self.py, 0.0, WAVE_SPEED * 0.7, 0.4, rgb(1.0, 1.0, 1.0), 3.0)
+            // Fast only: slow embers would pile up on the ship and hide it.
+            self.spray(self.px, self.py, 1.0, 0.0, 3.2, 700.0, 1600.0, 0.0, 0.0, rgb(0.6, 0.85, 1.0), 1400, 0.55, 2.4)
         }
 
-        // Engine exhaust: a thin trail of sparks out of the tail while thrusting.
-        if ml > 0.1 && self.tick % 2 == 0 {
-            let bx = self.px - self.faceX * 14.0
-            let by = self.py - self.faceY * 14.0
-            let jx = (self.rand() - 0.5) * 60.0
-            let jy = (self.rand() - 0.5) * 60.0
-            self.addSpark(bx, by, -mx * 260.0 + jx, -my * 260.0 + jy, 0.28, rgb(1.0, 0.55, 0.15), 2.0)
+        // Engine exhaust: a hot cone out of the tail, opposite the thrust, carrying a
+        // little of the ship's own velocity so the trail hangs behind it.
+        if ml > 0.1 {
+            let tx = -mx / ml
+            let ty = -my / ml
+            self.spray(self.px - self.faceX * 12.0, self.py - self.faceY * 12.0, tx, ty, 0.3, 160.0, 420.0, self.pvx * 0.3, self.pvy * 0.3, rgb(2.4, 1.0, 0.32), 6, 0.34, 2.2)
         }
     }
 
@@ -576,10 +635,11 @@ impl World {
         self.comboT = 0.0
         self.bullets.clear()
         self.addShake(1.0)
-        self.burst(self.px, self.py, rgb(1.0, 0.9, 0.6), 260, 900.0, 1.6)
-        self.burst(self.px, self.py, rgb(1.0, 0.4, 0.2), 120, 500.0, 1.2)
-        self.addFx(self.px, self.py, 10.0, 900.0, 0.8, rgb(1.0, 0.8, 0.5), 5.0)
-        self.addFx(self.px, self.py, 10.0, 500.0, 1.0, rgb(1.0, 0.4, 0.2), 3.0)
+        self.addFlash(1.0, 1.0)
+        self.grid.impulse(self.px, self.py, 380.0, 1400.0)
+        self.spray(self.px, self.py, 1.0, 0.0, 3.2, 450.0, 1300.0, 0.0, 0.0, rgb(1.0, 0.9, 0.6), 1800, 0.7, 2.6)
+        self.burst(self.px, self.py, rgb(1.0, 0.7, 0.3), 700, 600.0, 0.5)
+        self.addFx(self.px, self.py, 10.0, 1400.0, 0.45, rgb(1.0, 0.85, 0.5), 5.0)
         self.startWave(self.px, self.py, DEATH_CLEAR_R)
     }
 
@@ -590,8 +650,9 @@ impl World {
         self.pvx = 0.0
         self.pvy = 0.0
         self.startWave(self.px, self.py, RESPAWN_CLEAR_R)
-        self.addFx(self.px, self.py, 120.0, -160.0, 0.6, rgb(0.8, 0.9, 1.0), 3.0)
-        self.addFx(self.px, self.py, 10.0, 700.0, 0.6, rgb(0.8, 0.9, 1.0), 4.0)
+        self.grid.impulse(self.px, self.py, 320.0, -700.0)
+        self.addFlash(0.35, 0.3)
+        self.burst(self.px, self.py, rgb(0.8, 0.9, 1.0), 600, 700.0, 0.4)
     }
 
     fn startWave(self: &mut Self, x: f64, y: f64, r: f64) {
@@ -721,8 +782,13 @@ impl World {
             }
             if e.spawn > 0.0 {
                 e.spawn -= DT
-                if e.spawn < 0.0 {
+                if e.spawn <= 0.0 {
+                    // Arrival: a pop of light and a suck on the grid. A swarm ring is
+                    // dozens of these at once, which is what makes it ripple.
                     e.spawn = 0.0
+                    self.grid.impulse(e.x, e.y, 80.0, -220.0)
+                    let c = enemyColor(e.kind)
+                    self.burst(e.x, e.y, rgb(c.r * 1.5, c.g * 1.5, c.b * 1.5), 40, 260.0, 0.35)
                 }
                 self.cache[i] = e
                 continue
@@ -894,11 +960,17 @@ impl World {
                 gone = true
                 let wx = clampF(b.x, -ARENA_HW, ARENA_HW)
                 let wy = clampF(b.y, -ARENA_HH, ARENA_HH)
-                for _s in 0..3 {
-                    let a = self.rand() * 6.2831853
-                    let sp = 80.0 + self.rand() * 220.0
-                    self.addSpark(wx, wy, Math.cos(a) * sp - b.vx * 0.1, Math.sin(a) * sp - b.vy * 0.1, 0.3, rgb(1.0, 0.8, 0.4), 1.6)
+                // Sparks thrown back off the wall: the shot's direction mirrored in
+                // whichever wall it crossed.
+                var rx = b.vx / BULLET_SPEED
+                var ry = b.vy / BULLET_SPEED
+                if b.x < -ARENA_HW || b.x > ARENA_HW {
+                    rx = -rx
                 }
+                if b.y < -ARENA_HH || b.y > ARENA_HH {
+                    ry = -ry
+                }
+                self.spray(wx, wy, rx, ry, 0.9, 80.0, 420.0, 0.0, 0.0, rgb(1.6, 1.1, 0.45), 24, 0.3, 1.6)
             }
             if !gone {
                 let j = self.bulletHit(b.x, b.y)
@@ -917,6 +989,9 @@ impl World {
                             idx: j,
                             scored: true,
                         })
+                    } else {
+                        let c = enemyColor(self.cache[j].kind)
+                        self.spray(b.x, b.y, -b.vx / BULLET_SPEED, -b.vy / BULLET_SPEED, 0.8, 120.0, 420.0, 0.0, 0.0, rgb(c.r * 1.4, c.g * 1.4, c.b * 1.4), 30, 0.25, 1.5)
                     }
                 }
             }
@@ -969,6 +1044,9 @@ impl World {
             return
         }
         self.waveR += WAVE_SPEED * DT
+        // The front shoves the grid outward as it passes, weakening as it spreads.
+        let fade = 1.0 - Math.minF64(self.waveR / (self.waveMax + 200.0), 1.0)
+        self.grid.ring(self.waveX, self.waveY, self.waveR, 70.0, 260.0 * fade)
         let r2 = self.waveR * self.waveR
         for i in 0..self.cache.len {
             if self.cache[i].hp > 0 {
@@ -995,31 +1073,36 @@ impl World {
         }
         // A bomb can kill hundreds in a tick: share a spark budget between them so the
         // screen reads as a wave of pops rather than one white smear.
-        var budget: i64 = 60
+        var budget = KILL_SPARKS
         if nd > 10 {
-            budget = 600 / nd
-            if budget < 6 {
-                budget = 6
-            }
+            budget = Math.maxI64(BOMB_SPARKS / nd, 40)
         }
         for k in 0..nd {
             let d = self.deaths[k]
             let e = self.cache[d.idx]
             let col = enemyColor(e.kind)
             var n = budget
-            var speed: f64 = 520.0
+            var speed: f64 = 560.0
+            var push: f64 = 260.0
             if e.kind == SPLITTER {
                 n = budget + budget / 2
-                speed = 640.0
-                self.addShake(0.12)
+                speed = 700.0
+                push = 520.0
+                self.addShake(0.16)
+                self.addFlash(0.0, 0.3)
             } else if e.kind == MINI {
                 n = budget / 2
+                push = 160.0
             }
-            self.burst(e.x, e.y, col, n, speed, 1.0)
+            // Short and clean: sparks gone within half a second.
+            self.burst(e.x, e.y, col, n, speed, 0.5)
             // A hot flash at the centre, gone in a few frames: what makes a kill pop.
-            self.addSpark(e.x, e.y, 0.0, 0.0, 0.12, white(col, 0.4), enemyRadius(e.kind) * 1.1)
-            if nd < 40 {
-                self.addFx(e.x, e.y, enemyRadius(e.kind) * 0.6, 260.0, 0.25, col, 2.0)
+            // Not for a mass clear, where dozens of them only whiten the area (the
+            // clearing wave's own ring and the grid carry that).
+            if nd < 12 {
+                let hot = white(col, 0.5)
+                self.spray(e.x, e.y, 1.0, 0.0, 3.2, 0.0, 0.0, 0.0, 0.0, rgb(hot.r * 3.0, hot.g * 3.0, hot.b * 3.0), 1, 0.12, enemyRadius(e.kind) * 1.5)
+                self.grid.impulse(e.x, e.y, 110.0, push)
             }
             if d.scored {
                 self.score += enemyPoints(e.kind) * self.multiplier()
@@ -1106,15 +1189,21 @@ impl World {
         return dx * dx + dy * dy >= d * d
     }
 
-    // A random point in the arena at least SAFE_SPAWN from the player. Falls back to
-    // the point mirrored through the centre, which is far whenever the player is near
-    // an edge (the only way the samples all miss).
-    fn spawnPoint(self: &mut Self, margin: f64): Dir {
+    // A random point at least SAFE_SPAWN from the player: in and just around the view
+    // when `near` (the arena is four screens, and spawns far away would leave the
+    // screen empty while they wander in), anywhere in the arena otherwise. Falls back
+    // to the point mirrored through the centre, which is far whenever the player is
+    // near an edge (the only way the samples all miss).
+    fn spawnPoint(self: &mut Self, margin: f64, near: bool): Dir {
         var x: f64 = 0.0
         var y: f64 = 0.0
+        let cx = if near { self.px } else { 0.0 }
+        let cy = if near { self.py } else { 0.0 }
+        let rx = if near { VIEW_HW + 150.0 } else { ARENA_HW }
+        let ry = if near { VIEW_HH + 150.0 } else { ARENA_HH }
         for _try in 0..10 {
-            x = (self.rand() * 2.0 - 1.0) * (ARENA_HW - margin)
-            y = (self.rand() * 2.0 - 1.0) * (ARENA_HH - margin)
+            x = clampF(cx + (self.rand() * 2.0 - 1.0) * rx, -ARENA_HW + margin, ARENA_HW - margin)
+            y = clampF(cy + (self.rand() * 2.0 - 1.0) * ry, -ARENA_HH + margin, ARENA_HH - margin)
             if self.farFromPlayer(x, y, SAFE_SPAWN) {
                 return Dir {
                     x: x,
@@ -1138,7 +1227,7 @@ impl World {
             while self.live.len + self.pending.len < self.benchCount {
                 let t: f64 = 150.0
                 let kind = self.pickKind(t)
-                let p = self.spawnPoint(30.0)
+                let p = self.spawnPoint(30.0, false)
                 self.spawnAt(kind, p.x, p.y, 0.0)
             }
             return
@@ -1147,25 +1236,31 @@ impl World {
             return
         }
         let t = self.time
-        // Enemies a second: 3 at the start, ~15 at one minute, ~34 at two. Past about
-        // 25 a second the gun cannot keep up, which is where it turns into a swarm.
-        let rate = 3.0 + 0.12 * t + 0.0012 * t * t
+        // Enemies a second: 1.5 at the start, ~7 at one minute, ~17 at two, and never
+        // more alive at once than `cap`, which grows from 25 to 300 over three minutes.
+        // It opens sparse and readable and builds to a swarm; the benchmark's tens of
+        // thousands are a showcase, not the game.
+        let rate = 1.5 + 0.07 * t + 0.0005 * t * t
+        let cap = Math.minI64(25 + ((t * 1.6) as i64), 300)
+        if self.live.len + self.pending.len >= cap {
+            self.spawnAcc = 0.0
+        }
         self.spawnAcc += rate * DT
         while self.spawnAcc >= 1.0 {
             self.spawnAcc -= 1.0
             let kind = self.pickKind(t)
-            if t > 15.0 && self.rand() < 0.2 {
+            if t > 25.0 && self.rand() < 0.2 {
                 // A pack at one spot, charged against the budget so the average rate
                 // holds. It is what makes corners dangerous.
                 let g = 4 + ((self.rand() * 3.0) as i64)
-                let p = self.spawnPoint(60.0)
+                let p = self.spawnPoint(60.0, true)
                 for m in 0..g {
                     let a = (m as f64) * 6.2831853 / (g as f64)
                     self.spawnAt(kind, p.x + Math.cos(a) * 34.0, p.y + Math.sin(a) * 34.0, TELEGRAPH)
                 }
                 self.spawnAcc -= (g - 1) as f64
             } else {
-                let p = self.spawnPoint(30.0)
+                let p = self.spawnPoint(30.0, true)
                 self.spawnAt(kind, p.x, p.y, TELEGRAPH)
             }
         }
@@ -1182,11 +1277,11 @@ impl World {
     // A ring of seekers around the player, telegraphed for a full second, then closing
     // in. Points that the arena walls would push inside the safe radius are dropped.
     fn spawnSwarm(self: &mut Self, t: f64) {
-        var n = 24 + ((t * 0.3) as i64)
-        if n > 80 {
-            n = 80
+        var n = 16 + ((t * 0.25) as i64)
+        if n > 60 {
+            n = 60
         }
-        let rad: f64 = 540.0
+        let rad: f64 = 520.0
         for k in 0..n {
             let a = (k as f64) * 6.2831853 / (n as f64)
             let x = clampF(self.px + Math.cos(a) * rad, -ARENA_HW + 30.0, ARENA_HW - 30.0)
@@ -1195,7 +1290,8 @@ impl World {
                 self.spawnAt(SEEKER, x, y, SWARM_TELEGRAPH)
             }
         }
-        self.addFx(self.px, self.py, rad + 60.0, -60.0, SWARM_TELEGRAPH, rgb(0.2, 0.75, 1.0), 2.0)
+        self.addFlash(0.0, 0.45)
+        self.addShake(0.2)
     }
 
     // Fill a benchmark World with its enemies before timing starts.
@@ -1208,39 +1304,32 @@ impl World {
 
     // ── Effects ─────────────────────────────────────────────────────────────────────
 
-    fn addSpark(self: &mut Self, x: f64, y: f64, vx: f64, vy: f64, life: f64, c: Rgb, size: f64) {
-        if self.sparks.len >= MAX_SPARKS {
+    fn spray(self: &mut Self, x: f64, y: f64, dx: f64, dy: f64, spread: f64, lo: f64, hi: f64, bvx: f64, bvy: f64, c: Rgb, n: i64, life: f64, size: f64) {
+        if self.bursts.len >= MAX_BURSTS || n <= 0 {
             return
         }
-        self.sparks.push(Spark {
+        self.bursts.push(Burst {
             x: x,
             y: y,
-            vx: vx,
-            vy: vy,
-            life: life,
-            max: life,
+            dirX: dx,
+            dirY: dy,
+            spread: spread,
+            speedLo: lo,
+            speedHi: hi,
+            baseVx: bvx,
+            baseVy: bvy,
             r: c.r,
             g: c.g,
             b: c.b,
+            count: n,
+            life: life,
             size: size,
         })
     }
 
+    // All round, from slow embers to `speed`.
     fn burst(self: &mut Self, x: f64, y: f64, c: Rgb, n: i64, speed: f64, life: f64) {
-        for _k in 0..n {
-            if self.sparks.len >= MAX_SPARKS {
-                return
-            }
-            let a = self.rand() * 6.2831853
-            let u = self.rand()
-            // Most sparks fast, a few slow embers near the centre.
-            let s = speed * (0.15 + 0.85 * u * (2.0 - u))
-            let l = life * (0.45 + 0.55 * self.rand())
-            let sz = 2.0 + self.rand() * 1.8
-            // A touch of white in some sparks so a burst has a hot centre.
-            let w = self.rand() * 0.35
-            self.addSpark(x, y, Math.cos(a) * s, Math.sin(a) * s, l, rgb(c.r + (1.0 - c.r) * w, c.g + (1.0 - c.g) * w, c.b + (1.0 - c.b) * w), sz)
-        }
+        self.spray(x, y, 1.0, 0.0, 3.2, speed * 0.12, speed, 0.0, 0.0, c, n, life, 2.4)
     }
 
     fn addFx(self: &mut Self, x: f64, y: f64, rad: f64, vrad: f64, life: f64, c: Rgb, width: f64) {
@@ -1259,36 +1348,6 @@ impl World {
             b: c.b,
             width: width,
         })
-    }
-
-    fn updateSparks(self: &mut Self) {
-        let damp = self.sparkDamp
-        var i: i64 = 0
-        while i < self.sparks.len {
-            var s = self.sparks[i]
-            s.life -= DT
-            if s.life <= 0.0 {
-                let last = self.sparks.len - 1
-                self.sparks[i] = self.sparks[last]
-                self.sparks.truncate(last)
-                continue
-            }
-            s.vx *= damp
-            s.vy *= damp
-            s.x += s.vx * DT
-            s.y += s.vy * DT
-            // Sparks ricochet off the arena wall.
-            if s.x < -ARENA_HW || s.x > ARENA_HW {
-                s.vx = -s.vx * 0.6
-                s.x = clampF(s.x, -ARENA_HW, ARENA_HW)
-            }
-            if s.y < -ARENA_HH || s.y > ARENA_HH {
-                s.vy = -s.vy * 0.6
-                s.y = clampF(s.y, -ARENA_HH, ARENA_HH)
-            }
-            self.sparks[i] = s
-            i += 1
-        }
     }
 
     fn updateFx(self: &mut Self) {
@@ -1327,8 +1386,10 @@ impl World {
     }
 
     fn updateCamera(self: &mut Self) {
-        let tx = self.px + self.pvx * 0.12
-        let ty = self.py + self.pvy * 0.12
+        // Leads a little toward where the ship is aiming (and moving): more of the
+        // screen in front of the gun than behind it.
+        let tx = self.px + self.faceX * 80.0 + self.pvx * 0.06
+        let ty = self.py + self.faceY * 55.0 + self.pvy * 0.06
         self.camX += (tx - self.camX) * self.camK
         self.camY += (ty - self.camY) * self.camK
         // The view may run 90 units past the wall, enough to see it is a wall.

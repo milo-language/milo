@@ -1,0 +1,190 @@
+// SWARM's post-processing, as MSL source: the bloom chain and the final composite.
+//
+// The scene is drawn into an RGBA16F target in linear HDR light. The bloom chain then
+// halves it six times with a 13-tap filter (Jimenez, "Next Generation Post Processing
+// in Call of Duty: Advanced Warfare", SIGGRAPH 2014), the first step with a Karis
+// average so a lone white-hot pixel cannot flicker into a blob, and walks back up with
+// a 3x3 tent, adding each level into the one above it. The composite adds the result
+// to the untouched full-resolution scene, so cores stay crisp and only the light
+// around them spreads, then applies the flash, the chromatic aberration pulse, an ACES
+// tonemap, a vignette, the sRGB transfer (the swapchain and capture targets are UNORM,
+// so the encode is done here) and a little grain, which also dithers away banding in
+// the dark gradients.
+//
+// All three are full-screen triangles from the vertex id alone (FULLSCREEN_VS), with
+// the source at [[texture(0)]]/[[sampler(0)]] and 16 floats of fragment uniforms.
+
+pub let FULLSCREEN_VS_ENTRY: string = "fullscreen_vs"
+
+pub let FULLSCREEN_VS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct FOut { float4 pos [[position]]; float2 uv; };
+
+vertex FOut fullscreen_vs(uint vid [[vertex_id]]) {
+    float2 p = float2(vid == 1 ? 3.0 : -1.0, vid == 2 ? 3.0 : -1.0);
+    FOut o;
+    o.pos = float4(p, 0.0, 1.0);
+    o.uv = float2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    return o;
+}
+"
+
+// Uniforms: texel (1 / source size), karis (1 on the first step), weight (upsample
+// only: how much of the level below is added).
+
+pub let DOWN_FS_ENTRY: string = "down_fs"
+
+pub let UP_FS_ENTRY: string = "up_fs"
+
+pub let BLOOM_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct FOut { float4 pos [[position]]; float2 uv; };
+
+struct BloomU { float2 texel; float karis; float weight; float4 q0; float4 q1; float4 q2; };
+
+static float3 tap(texture2d<float> t, sampler s, float2 uv) {
+    // Clamped so one runaway value (an inf from a degenerate quad) cannot poison
+    // every level below it.
+    return min(t.sample(s, uv).rgb, float3(512.0));
+}
+
+static float3 karis(float3 a, float3 b, float3 c, float3 d) {
+    float3 m = (a + b + c + d) * 0.25;
+    return m / (1.0 + dot(m, float3(0.2126, 0.7152, 0.0722)));
+}
+
+// Thirteen taps on a 4x4-texel footprint: an outer ring of 12 on a 2-texel grid and
+// an inner square of 4. Weighted as five overlapping 2x2 boxes (0.5 for the centre
+// box, 0.125 for each corner box), which is what keeps it from aliasing.
+fragment float4 down_fs(FOut in [[stage_in]],
+                        constant BloomU& u [[buffer(0)]],
+                        texture2d<float> src [[texture(0)]],
+                        sampler smp [[sampler(0)]]) {
+    float2 uv = in.uv;
+    float2 t = u.texel;
+    float3 a = tap(src, smp, uv + t * float2(-2.0, -2.0));
+    float3 b = tap(src, smp, uv + t * float2(0.0, -2.0));
+    float3 c = tap(src, smp, uv + t * float2(2.0, -2.0));
+    float3 d = tap(src, smp, uv + t * float2(-2.0, 0.0));
+    float3 e = tap(src, smp, uv);
+    float3 f = tap(src, smp, uv + t * float2(2.0, 0.0));
+    float3 g = tap(src, smp, uv + t * float2(-2.0, 2.0));
+    float3 h = tap(src, smp, uv + t * float2(0.0, 2.0));
+    float3 i = tap(src, smp, uv + t * float2(2.0, 2.0));
+    float3 j = tap(src, smp, uv + t * float2(-1.0, -1.0));
+    float3 k = tap(src, smp, uv + t * float2(1.0, -1.0));
+    float3 l = tap(src, smp, uv + t * float2(-1.0, 1.0));
+    float3 m = tap(src, smp, uv + t * float2(1.0, 1.0));
+    float3 o;
+    if (u.karis > 0.5) {
+        o = karis(j, k, l, m) * 0.5
+          + karis(a, b, d, e) * 0.125 + karis(b, c, e, f) * 0.125
+          + karis(d, e, g, h) * 0.125 + karis(e, f, h, i) * 0.125;
+        // Undo the average's darkening of the bright end, roughly: the Karis weight
+        // is only there to stop fireflies, not to dim the bloom.
+        o *= 1.0 + dot(o, float3(0.2126, 0.7152, 0.0722));
+    } else {
+        o = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+    }
+    return float4(o, 1.0);
+}
+
+fragment float4 up_fs(FOut in [[stage_in]],
+                      constant BloomU& u [[buffer(0)]],
+                      texture2d<float> src [[texture(0)]],
+                      sampler smp [[sampler(0)]]) {
+    float2 uv = in.uv;
+    float2 t = u.texel;
+    float3 s = src.sample(smp, uv).rgb * 4.0;
+    s += (src.sample(smp, uv + t * float2(-1.0, 0.0)).rgb + src.sample(smp, uv + t * float2(1.0, 0.0)).rgb
+        + src.sample(smp, uv + t * float2(0.0, -1.0)).rgb + src.sample(smp, uv + t * float2(0.0, 1.0)).rgb) * 2.0;
+    s += src.sample(smp, uv + t * float2(-1.0, -1.0)).rgb + src.sample(smp, uv + t * float2(1.0, -1.0)).rgb
+       + src.sample(smp, uv + t * float2(-1.0, 1.0)).rgb + src.sample(smp, uv + t * float2(1.0, 1.0)).rgb;
+    return float4(s * (u.weight / 16.0), 1.0);
+}
+"
+
+// Uniforms: scene texel, bloom texel, bloom strength, exposure, flash, aberration,
+// vignette, grain, frame number (grain seed), then padding. Scene at texture 0, the
+// top of the bloom chain (half resolution) at texture 1.
+
+pub let COMPOSITE_FS_ENTRY: string = "composite_fs"
+
+pub let COMPOSITE_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct FOut { float4 pos [[position]]; float2 uv; };
+
+struct CompU {
+    float2 texel;
+    float2 btexel;
+    float bloom;
+    float exposure;
+    float flash;
+    float aberr;
+    float vignette;
+    float grain;
+    float frame;
+    float p0;
+    float4 q0;
+};
+
+// Narkowicz's fit of the ACES filmic curve, per channel: saturated highlights run to
+// white, which is what makes a neon core read as white-hot inside its colour.
+static float3 aces(float3 x) {
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
+
+static float3 toSrgb(float3 c) {
+    float3 lo = c * 12.92;
+    float3 hi = 1.055 * pow(c, float3(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= 0.0031308);
+}
+
+static float hash(uint2 p, uint f) {
+    uint x = p.x * 1664525u + p.y * 1013904223u + f * 2654435761u;
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return float(x >> 8) * (1.0 / 16777216.0);
+}
+
+fragment float4 composite_fs(FOut in [[stage_in]],
+                             constant CompU& u [[buffer(0)]],
+                             texture2d<float> scene [[texture(0)]],
+                             texture2d<float> bloom [[texture(1)]],
+                             sampler s0 [[sampler(0)]],
+                             sampler s1 [[sampler(1)]]) {
+    float2 uv = in.uv;
+    float2 cc = uv - 0.5;
+    float3 col;
+    if (u.aberr > 0.001) {
+        // Red and blue pulled apart radially, more toward the edges.
+        float2 off = cc * u.aberr * (0.002 + 0.014 * dot(cc, cc));
+        col = float3(scene.sample(s0, uv - off).r, scene.sample(s0, uv).g, scene.sample(s0, uv + off).b);
+    } else {
+        col = scene.sample(s0, uv).rgb;
+    }
+    // The bloom level is half resolution: a tent over it upsamples without blocks.
+    float2 t = u.btexel;
+    float3 b = bloom.sample(s1, uv).rgb * 4.0;
+    b += (bloom.sample(s1, uv + t * float2(-1.0, 0.0)).rgb + bloom.sample(s1, uv + t * float2(1.0, 0.0)).rgb
+        + bloom.sample(s1, uv + t * float2(0.0, -1.0)).rgb + bloom.sample(s1, uv + t * float2(0.0, 1.0)).rgb) * 2.0;
+    b += bloom.sample(s1, uv + t * float2(-1.0, -1.0)).rgb + bloom.sample(s1, uv + t * float2(1.0, -1.0)).rgb
+       + bloom.sample(s1, uv + t * float2(-1.0, 1.0)).rgb + bloom.sample(s1, uv + t * float2(1.0, 1.0)).rgb;
+    float3 hdr = col + b * (u.bloom / 16.0);
+    // The flash both lifts the exposure and washes in a cold white.
+    hdr = hdr * (u.exposure * (1.0 + 0.9 * u.flash)) + float3(0.8, 0.9, 1.0) * (0.08 * u.flash * u.flash);
+    float3 m = aces(hdr);
+    float r = length(cc * float2(1.0, 0.8));
+    m *= mix(1.0, smoothstep(0.85, 0.25, r), u.vignette);
+    m = toSrgb(m);
+    m += (hash(uint2(in.pos.xy), uint(u.frame)) - 0.5) * u.grain;
+    return float4(m, 1.0);
+}
+"

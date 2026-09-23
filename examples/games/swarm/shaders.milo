@@ -4,14 +4,15 @@
 // or hand-ported copies; until then SWARM runs on Metal only.
 //
 // Resource slots follow SDL_GPU's MSL convention: [[buffer(n)]] numbers uniform buffers
-// first, then storage buffers. The vertex stage has one uniform block (slot 0) and one
-// storage buffer (bound to storage slot 0, which is therefore [[buffer(1)]]).
+// first, then (compute) read-only storage buffers, then read-write ones. Every vertex
+// stage here has one uniform block (slot 0) and one storage buffer, which is therefore
+// [[buffer(1)]]. The post-processing shaders are in postfx.milo.
 //
-// The CPU side must agree on two layouts, both 16 or 32 bytes with no float3 anywhere
-// (a float3 in a Metal buffer is 16-byte aligned, which silently shifts every field
-// after it):
-//   Particle  = { float2 pos; float2 vel; }                    main.milo's Particle
-//   Uniforms  = 8 floats                                       main.milo's uniforms()
+// Every buffer layout the CPU shares is floats and float2s only, with no float3 (a
+// float3 in a Metal buffer is 16-byte aligned, which silently shifts every field after
+// it). This first pair is the spike's:
+//   Particle  = { float2 pos; float2 vel; }                    spike.milo's Particle
+//   Uniforms  = 8 floats                                       spike.milo's uniforms()
 
 pub let SWARM_VS_ENTRY: string = "swarm_vs"
 
@@ -94,25 +95,37 @@ fragment float4 swarm_fs(VOut in [[stage_in]]) {
 }
 "
 
-// ── The game's shape pipeline ────────────────────────────────────────────────────────
+// ── The scene: shapes, the warp grid and particles ───────────────────────────────────
 //
-// Everything in the game (ships, enemies, bullets, sparks, the arena, the HUD text) is
-// one instanced draw of this pipeline. Each instance is 48 bytes, three float4s, laid
-// out by draw.milo's `Inst`:
+// Everything below draws into the HDR scene target (RGBA16F) with additive blending,
+// so the values are linear light and may run well past 1: a line's core is a few
+// times brighter than white, which is what the bloom chain (postfx.milo) picks up.
+// Every quad is a 4-vertex triangle strip: corner k is (k & 1 ? +1 : -1, k & 2 ? +1 : -1).
+
+// ── Shapes ──
+//
+// Ships, enemies, bullets, rings, walls and the HUD are instanced draws of this
+// pipeline. Each instance is 48 bytes, three float4s, laid out by draw.milo's `Inst`:
 //   a = (x, y, hx, hy)          centre and half extents, world units
 //   b = (cos, sin, shape, width) rotation, shape id (+16 = screen space), line half-width
-//   c = (r, g, b, alpha)         colour; additive, so alpha simply scales it
+//   c = (r, g, b, alpha)         colour; alpha scales it (above 1 blooms harder)
 //
 // Shapes are signed distance functions evaluated in world units, so a line is the same
-// thickness on a 10-unit mine and a 1200-unit wall, and every outline gets the same
-// glow: a white-hot core of half-width `width` plus a coloured falloff GLOW units wide.
-// The quad is grown by GLOW on every side so the falloff fits, and the falloff reaches
-// exactly zero at the quad edge so overlapping quads never show a seam.
+// thickness on a small mine and a 1200-unit wall. A rim is a hot core of half-width
+// `width` plus a short coloured falloff GLOW units wide; the wide glow is the bloom's
+// job, so the quad only grows by GLOW and most of its pixels are shape. Enemies and the
+// ship are filled silhouettes: a body at moderate brightness inside a bright rim, with
+// the inner mark cut out of the body, one instance each.
 //
-// Uniforms: (scale.x, scale.y, cam.x, cam.y, time, gain, worldDim, 0). `scale` maps
-// world units to clip space, `cam` is the camera centre including screen shake, and
-// `worldDim` scales everything that is not HUD (dimmed behind the pause and game-over
-// text).
+// The output's alpha is the body's coverage. The additive pipeline ignores it; the
+// ship is drawn last by a second pipeline blending (ONE, ONE_MINUS_SRC_ALPHA), so its
+// body covers whatever is under it while its rim and glow still add light.
+//
+// Uniforms (16 floats): world scale, cam, screen scale, time, gain, worldDim, hudDim,
+// zoom. World instances map through (pos - cam) * world scale, screen ones (HUD) through
+// pos * screen scale; `zoom` is screen units per world unit. `worldDim` dims everything
+// but the HUD (behind the pause and game-over text); `hudDim` turns on the dimming of
+// anything under the HUD readouts.
 
 pub let GAME_VS_ENTRY: string = "game_vs"
 
@@ -125,51 +138,65 @@ using namespace metal;
 struct Inst { float4 a; float4 b; float4 c; };
 
 struct Uniforms {
-    float2 scale;
+    float2 wscale;
     float2 cam;
+    float2 sscale;
     float time;
     float gain;
     float worldDim;
+    float hudDim;
+    float zoom;
     float pad0;
+    float4 pad1;
 };
 
 struct VOut {
     float4 pos [[position]];
     float2 local;
     float2 half_ext [[flat]];
+    float2 rot2 [[flat]];
     float shape [[flat]];
     float width [[flat]];
     float4 color [[flat]];
 };
 
-constant float GLOW = 12.0;
+constant float GLOW = 5.0;
+
+// Colours are authored as display (sRGB-ish) values, as a designer picks them, and
+// may exceed 1 as a brightness multiplier: the hue is linearised and the multiplier
+// kept linear.
+static float3 toLinear(float3 c) {
+    float m = max(max(c.r, c.g), max(c.b, 1.0));
+    return pow(max(c / m, 0.0), float3(2.2)) * m;
+}
 
 vertex VOut game_vs(uint vid [[vertex_id]],
                     uint iid [[instance_id]],
                     constant Uniforms& u [[buffer(0)]],
                     const device Inst* is [[buffer(1)]]) {
-    const float2 corners[6] = {
-        float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0),
-        float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0)
-    };
+    float2 corner = float2((vid & 1) ? 1.0 : -1.0, (vid & 2) ? 1.0 : -1.0);
     Inst it = is[iid];
     float shape = it.b.z;
     bool screen = shape >= 16.0;
     if (screen) { shape -= 16.0; }
     float2 h = it.a.zw;
-    // A dot (0) fades out inside its own quad; a filled box (7) has a short glow of
-    // its own (the fragment shader's falloff distance); outlines get the full GLOW.
+    // A dot (0) fades out inside its own quad; a filled box (4) has a short glow of
+    // its own (the fragment shader's falloff distance); outlines get GLOW.
     float grow = GLOW;
     if (shape < 0.5) { grow = 0.0; }
-    if (shape > 6.5) { grow = 0.6 * min(h.x, h.y) + 2.0; }
-    float2 local = corners[vid] * (h + grow);
+    if (shape > 3.5 && shape < 4.5) { grow = 0.6 * min(h.x, h.y) + 2.0; }
+    // The ship: rim, keyline and glow (GAME_FS's KEYLINE + SHIP_GLOW, plus the rim).
+    if (shape > 7.5) { grow = it.b.w + 3.5 + 7.0; }
+    float2 local = corner * (h + grow);
     float2 rot = float2(local.x * it.b.x - local.y * it.b.y, local.x * it.b.y + local.y * it.b.x);
     float2 world = it.a.xy + rot;
     VOut o;
-    float2 rel = screen ? world : (world - u.cam);
-    o.pos = float4(rel * u.scale, 0.0, 1.0);
+    o.pos = float4(screen ? world * u.sscale : (world - u.cam) * u.wscale, 0.0, 1.0);
     o.local = local;
     o.half_ext = h;
+    // The inner mark of a compound enemy turns the other way: rotating the outer
+    // frame by twice its own angle, (cos 2a, sin 2a), with no trig.
+    o.rot2 = float2(it.b.x * it.b.x - it.b.y * it.b.y, 2.0 * it.b.x * it.b.y);
     o.shape = shape;
     o.width = it.b.w;
     float k = u.gain;
@@ -177,12 +204,12 @@ vertex VOut game_vs(uint vid [[vertex_id]],
         k *= u.worldDim;
         // Anything passing under the score, multiplier or lives readouts (see
         // draw.milo's drawHud) is dimmed so the numbers stay legible.
-        float2 c = it.a.xy - u.cam;
-        if (c.y > 360.0 && (c.x < -540.0 || abs(c.x) < 120.0 || c.x > 640.0)) {
+        float2 c = (it.a.xy - u.cam) * u.zoom;
+        if (u.hudDim > 0.5 && c.y > 360.0 && (c.x < -540.0 || abs(c.x) < 120.0 || c.x > 640.0)) {
             k *= 0.3;
         }
     }
-    o.color = float4(it.c.rgb * it.c.a * k, 1.0);
+    o.color = float4(toLinear(it.c.rgb) * it.c.a * k, 1.0);
     return o;
 }
 "
@@ -195,14 +222,21 @@ struct VOut {
     float4 pos [[position]];
     float2 local;
     float2 half_ext [[flat]];
+    float2 rot2 [[flat]];
     float shape [[flat]];
     float width [[flat]];
     float4 color [[flat]];
 };
 
-constant float GLOW = 12.0;
+constant float GLOW = 5.0;
+// Body brightness relative to the rim colour: solid enough to read as a filled
+// silhouette, dim enough that the rim stays the edge.
+constant float BODY = 0.45;
+// The ship's dark keyline outside its rim, and its glow beyond that (the vertex shader
+// grows the ship's quad by both).
+constant float KEYLINE = 3.5;
+constant float SHIP_GLOW = 7.0;
 
-// Distance to the segment a-b.
 static float segDist(float2 p, float2 a, float2 b) {
     float2 pa = p - a;
     float2 ba = b - a;
@@ -210,14 +244,63 @@ static float segDist(float2 p, float2 a, float2 b) {
     return length(pa - ba * t);
 }
 
-// Unsigned distance to a closed polygon's outline. Outlines are all SWARM draws, so
-// the inside/outside sign is never needed.
-static float polyDist(float2 p, thread const float2* v, int n) {
-    float d = 1e9;
-    for (int i = 0; i < n; i++) {
-        d = min(d, segDist(p, v[i], v[(i + 1) % n]));
+// Signed distance to a rhombus with half-diagonals b (Inigo Quilez).
+static float rhombus(float2 p, float2 b) {
+    p = abs(p);
+    float h = clamp((b.x * (b.x - 2.0 * p.x) - b.y * (b.y - 2.0 * p.y)) / dot(b, b), -1.0, 1.0);
+    float d = length(p - 0.5 * b * float2(1.0 - h, 1.0 + h));
+    return d * sign(p.x * b.y + p.y * b.x - b.x * b.y);
+}
+
+// Signed distance to an equilateral triangle with its apex on +x, circumradius R
+// (Quilez's, which points up: x and y swap, harmless for a shape symmetric about
+// its axis).
+static float triangle(float2 q, float R) {
+    const float k = 1.7320508;
+    float r = R * 0.8660254;
+    float2 p = float2(abs(q.y) - r, q.x + r / k);
+    if (p.x + k * p.y > 0.0) { p = float2(p.x - k * p.y, -k * p.x - p.y) * 0.5; }
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+}
+
+static float box(float2 p, float2 h) {
+    float2 q = abs(p) - h;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+}
+
+// Signed distance to the ship's chevron: nose at +x, a notch cut into the tail. A
+// concave quad, so the sign comes from a crossing count (Quilez's sdPolygon).
+static float chevron(float2 p, float2 h) {
+    float2 v[4] = { float2(h.x, 0.0), float2(-h.x, h.y), float2(-0.45 * h.x, 0.0), float2(-h.x, -h.y) };
+    float d = dot(p - v[0], p - v[0]);
+    float s = 1.0;
+    for (int i = 0, j = 3; i < 4; j = i, i++) {
+        float2 e = v[j] - v[i];
+        float2 w = p - v[i];
+        float2 b = w - e * saturate(dot(w, e) / dot(e, e));
+        d = min(d, dot(b, b));
+        bool c0 = p.y >= v[i].y;
+        bool c1 = p.y < v[j].y;
+        bool c2 = e.x * w.y > e.y * w.x;
+        if ((c0 && c1 && c2) || (!c0 && !c1 && !c2)) { s = -s; }
     }
-    return d;
+    return s * sqrt(d);
+}
+
+// A rim at unsigned distance d: a white-hot core of half-width w, antialiased, and a
+// short falloff in the base colour.
+static float3 rim(float d, float w, float3 col) {
+    float aa = max(fwidth(d), 1e-4);
+    float core = saturate((w - d) / aa + 0.5);
+    float g = 1.0 - saturate((d - w) / GLOW);
+    float3 hot = mix(col, float3(max(col.r, max(col.g, col.b))), 0.3);
+    return hot * core * 2.0 + col * (g * g) * 0.6;
+}
+
+// Coverage of the inside of a signed distance, antialiased.
+static float inside(float sd) {
+    return saturate(0.5 - sd / max(fwidth(sd), 1e-4));
 }
 
 fragment float4 game_fs(VOut in [[stage_in]]) {
@@ -225,6 +308,7 @@ fragment float4 game_fs(VOut in [[stage_in]]) {
     float2 h = in.half_ext;
     int shape = int(in.shape + 0.5);
     float3 col = in.color.rgb;
+    float w = in.width;
 
     if (shape == 0) {
         // Soft dot, anisotropic: a streak when hx > hy.
@@ -234,45 +318,354 @@ fragment float4 game_fs(VOut in [[stage_in]]) {
         float halo = max(1.0 - d2, 0.0);
         halo *= halo;
         float3 hot = mix(col, float3(length(col)), 0.35);
-        return float4(hot * core * 1.4 + col * halo * 0.5, 1.0);
+        return float4(hot * core * 1.4 + col * halo * 0.5, 0.0);
     }
-
+    if (shape == 4) {
+        // Filled box with a thin glow: font pixels and HUD bars.
+        float sd = box(p, h);
+        float fill = inside(sd);
+        float x = saturate(sd / (0.6 * min(h.x, h.y) + 2.0));
+        float g = (1.0 - x) * (1.0 - x);
+        return float4(col * (fill * 1.1 + g * 0.35 * (1.0 - fill)), 0.0);
+    }
+    float2 q = float2(in.rot2.x * p.x - in.rot2.y * p.y, in.rot2.y * p.x + in.rot2.x * p.y);
+    if (shape == 5) {
+        // Wanderer: a filled square with a counter-spinning diamond cut out of it.
+        float sd = box(p, h);
+        float cut = rhombus(q, h * 0.62);
+        float body = inside(sd) * (1.0 - 0.8 * inside(cut));
+        float3 c = col * BODY * body + rim(abs(sd), w, col) + 0.45 * rim(abs(cut), w * 0.6, col);
+        return float4(c, 0.0);
+    }
+    if (shape == 6) {
+        // Seeker: a filled dart, long along its heading, with a white-hot eye.
+        float sd = rhombus(p, h);
+        float r = 0.2 * h.y;
+        float3 c = col * BODY * inside(sd) + rim(abs(sd), w, col);
+        c += mix(col, float3(1.0), 0.6) * 1.8 * exp(-dot(p, p) / (r * r));
+        return float4(c, 0.0);
+    }
+    if (shape == 7) {
+        // Splitter: a filled triangle with a smaller one, pointing the other way, cut
+        // out of it.
+        float sd = triangle(p, h.x);
+        float cut = triangle(-q, h.x * 0.45);
+        float body = inside(sd) * (1.0 - 0.8 * inside(cut));
+        float3 c = col * BODY * body + rim(abs(sd), w, col) + 0.5 * rim(abs(cut), w * 0.6, col);
+        return float4(c, 0.0);
+    }
+    if (shape == 8) {
+        // The player: a white-hot filled chevron inside a rim of its own colour, then
+        // a dark keyline and a glow. Body and keyline are opaque (alpha), so the ship
+        // stays a clean silhouette even in the middle of its own bomb.
+        float sd = chevron(p, h);
+        float fill = inside(sd);
+        float depth = saturate(-sd / (0.35 * h.y));
+        float3 body = mix(col * 1.2, float3(1.7), 0.35 + 0.65 * depth);
+        float aa = max(fwidth(sd), 1e-4);
+        float core = saturate((w - abs(sd)) / aa + 0.5);
+        float key = inside(sd - (w + KEYLINE));
+        float g = 1.0 - saturate((sd - w - KEYLINE) / SHIP_GLOW);
+        float3 c = body * fill + mix(col, float3(1.0), 0.3) * core * 2.0 + col * (g * g) * 0.5 * (1.0 - key);
+        return float4(c, max(fill, 0.85 * key));
+    }
     float d;
     if (shape == 1) {
         d = abs(length(p) - h.x);
     } else if (shape == 2) {
-        float2 v[4] = { float2(h.x, 0.0), float2(0.0, h.y), float2(-h.x, 0.0), float2(0.0, -h.y) };
-        d = polyDist(p, v, 4);
-    } else if (shape == 3) {
-        float2 q = abs(p) - h;
-        d = abs(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0));
-    } else if (shape == 4) {
-        float2 v[3] = { float2(h.x, 0.0), float2(-0.5 * h.x, 0.866 * h.y), float2(-0.5 * h.x, -0.866 * h.y) };
-        d = polyDist(p, v, 3);
-    } else if (shape == 5) {
-        // Ship chevron: nose at +x, a notch cut into the tail.
-        float2 v[4] = { float2(h.x, 0.0), float2(-h.x, h.y), float2(-0.45 * h.x, 0.0), float2(-h.x, -h.y) };
-        d = polyDist(p, v, 4);
-    } else if (shape == 6) {
+        d = abs(chevron(p, h));
+    } else {
         // A line along x, hx long (half), drawn at `width`.
         d = segDist(p, float2(-h.x, 0.0), float2(h.x, 0.0));
-    } else {
-        // Filled box with a thin glow: font pixels and HUD bars.
-        float2 q = abs(p) - h;
-        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
-        float fill = saturate(0.5 - sd / max(fwidth(sd), 1e-4));
-        float x = saturate(sd / (0.6 * min(h.x, h.y) + 2.0));
-        float g = (1.0 - x) * (1.0 - x);
-        return float4(col * (fill * 1.1 + g * 0.35 * (1.0 - fill)), 1.0);
     }
+    return float4(rim(d, w, col), 0.0);
+}
+"
 
-    float w = in.width;
-    float aa = max(fwidth(d), 1e-4);
-    float core = saturate((w - d) / aa + 0.5);
-    float x = saturate((d - w) / GLOW);
-    float g = (1.0 - x);
-    float glow = g * g * g;
-    float3 hot = mix(col, float3(max(col.r, max(col.g, col.b))), 0.5);
-    return float4(hot * core * 1.5 + col * glow * 0.55, 1.0);
+// ── Warp grid ──
+//
+// One instance per grid segment: first the horizontal ones, (cols - 1) per row, then
+// the vertical ones. The vertex shader reads both end nodes' displacements (one float2
+// per node, row-major, uploaded each frame from grid.milo) and builds a thin quad
+// along the bent segment. Lines brighten and shift toward violet where the lattice is
+// displaced or stretched, so a shockwave reads as a travelling band of light.
+//
+// Uniforms (16 floats): scale, cam, origin (node 0's rest position), step (spacing),
+// cols, rows, gain, worldDim, then padding.
+
+pub let GRID_VS_ENTRY: string = "grid_vs"
+
+pub let GRID_FS_ENTRY: string = "grid_fs"
+
+pub let GRID_VS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct GridU {
+    float2 scale;
+    float2 cam;
+    float2 origin;
+    float2 step;
+    float cols;
+    float rows;
+    float gain;
+    float worldDim;
+    float pad0;
+    float pad1;
+    float pad2;
+    float pad3;
+};
+
+struct GOut {
+    float4 pos [[position]];
+    float across;
+    float3 color [[flat]];
+};
+
+constant float LINE_W = 0.6;
+constant float LINE_GLOW = 2.5;
+
+vertex GOut grid_vs(uint vid [[vertex_id]],
+                    uint iid [[instance_id]],
+                    constant GridU& u [[buffer(0)]],
+                    const device float2* disp [[buffer(1)]]) {
+    uint cols = uint(u.cols);
+    uint rows = uint(u.rows);
+    uint nh = (cols - 1) * rows;
+    uint ia;
+    uint ib;
+    bool major;
+    float rest;
+    if (iid < nh) {
+        uint r = iid / (cols - 1);
+        ia = r * cols + iid % (cols - 1);
+        ib = ia + 1;
+        major = (r % 4) == 0;
+        rest = u.step.x;
+    } else {
+        uint k = iid - nh;
+        ia = k;
+        ib = k + cols;
+        major = ((k % cols) % 4) == 0;
+        rest = u.step.y;
+    }
+    float2 da = disp[ia];
+    float2 db = disp[ib];
+    float2 a = u.origin + float2(float(ia % cols), float(ia / cols)) * u.step + da;
+    float2 b = u.origin + float2(float(ib % cols), float(ib / cols)) * u.step + db;
+    float2 ab = b - a;
+    float len = max(length(ab), 1e-3);
+    float2 n = float2(-ab.y, ab.x) / len;
+    float hw = LINE_W + LINE_GLOW;
+    float2 corner = float2((vid & 1) ? 1.0 : -1.0, (vid & 2) ? 1.0 : -1.0);
+    float2 p = mix(a, b, corner.x * 0.5 + 0.5) + n * (corner.y * hw);
+    GOut o;
+    o.pos = float4((p - u.cam) * u.scale, 0.0, 1.0);
+    o.across = corner.y * hw;
+    float e = saturate((length(da) + length(db)) * 0.008) + saturate(abs(len - rest) / rest * 2.0);
+    // Barely there at rest; the displacement term is what makes it visible.
+    float3 base = major ? float3(0.0035, 0.0035, 0.022) : float3(0.0015, 0.0015, 0.009);
+    float3 hot = float3(0.13, 0.05, 0.48);
+    o.color = (base + hot * (e * e)) * u.gain * u.worldDim;
+    return o;
+}
+"
+
+pub let GRID_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct GOut {
+    float4 pos [[position]];
+    float across;
+    float3 color [[flat]];
+};
+
+constant float LINE_W = 0.6;
+constant float LINE_GLOW = 2.5;
+
+fragment float4 grid_fs(GOut in [[stage_in]]) {
+    float d = abs(in.across);
+    float aa = max(fwidth(in.across), 1e-4);
+    float core = saturate((LINE_W - d) / aa + 0.5);
+    float g = 1.0 - saturate((d - LINE_W) / LINE_GLOW);
+    return float4(in.color * (core + 0.3 * g * g), 1.0);
+}
+"
+
+// ── GPU particles ──
+//
+// A persistent ring of PARTICLE_CAP particles in one storage buffer, never read back.
+// Each frame the CPU uploads the frame's bursts (world.milo's Burst, one record per
+// burst however many particles it makes) and two kernels run in one compute pass:
+// emit_cs writes the new particles at the ring's head, one thread per particle, and
+// update_cs integrates the window of the ring that may still be alive. Then the draw
+// pass reads the same buffer in its vertex shader: one 4-vertex streak per particle,
+// stretched along its velocity.
+//
+// Particle (32 bytes): pos, vel, life left, 1 / starting life, and the colour and
+// size packed as four halves, so the colour is worked out once, at emission.
+// Emit (64 bytes, render.milo's GpuEmit, all f32): pos, base velocity, cone axis,
+// spread, speed range, life, size, first (its first particle's offset among this
+// frame's new ones), colour, count. Thread t finds its burst by binary search on
+// `first`.
+
+pub let EMIT_CS_ENTRY: string = "emit_cs"
+
+pub let UPDATE_CS_ENTRY: string = "update_cs"
+
+pub let PARTICLE_GROUP: i64 = 256
+
+pub let PARTICLE_CS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct Particle { float2 pos; float2 vel; float life; float inv; uint rg; uint bs; };
+
+struct Emit {
+    float2 pos; float2 base; float2 dir;
+    float spread; float lo; float hi; float life; float size; float first;
+    float r; float g; float b; float count;
+};
+
+struct EmitU { float head; float total; float bursts; float cap; float seed; float p0; float p1; float p2; float4 q0; float4 q1; };
+
+struct UpdateU { float base; float count; float cap; float dt; float damp; float hw; float hh; float p0; float4 q0; float4 q1; };
+
+static uint hash(uint x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+static float rnd(thread uint& s) {
+    s = hash(s);
+    return float(s >> 8) * (1.0 / 16777216.0);
+}
+
+// As the shape pipeline's toLinear: display-space hue, linear multiplier above 1.
+static float3 toLinear(float3 c) {
+    float m = max(max(c.r, c.g), max(c.b, 1.0));
+    return pow(max(c / m, 0.0), float3(2.2)) * m;
+}
+
+kernel void emit_cs(uint t [[thread_position_in_grid]],
+                    constant EmitU& u [[buffer(0)]],
+                    const device Emit* em [[buffer(1)]],
+                    device Particle* ps [[buffer(2)]]) {
+    if (t >= uint(u.total)) { return; }
+    int lo = 0;
+    int hi = int(u.bursts) - 1;
+    while (lo < hi) {
+        int mid = (lo + hi + 1) >> 1;
+        if (uint(em[mid].first) <= t) { lo = mid; } else { hi = mid - 1; }
+    }
+    Emit e = em[lo];
+    uint s = hash(t * 0x9E3779B9u + uint(u.seed) * 0x85EBCA6Bu);
+    float a = atan2(e.dir.y, e.dir.x) + (rnd(s) * 2.0 - 1.0) * e.spread;
+    // Most particles near the top speed, a few slow embers near the centre.
+    float v = rnd(s);
+    float speed = mix(e.lo, e.hi, v * (2.0 - v));
+    float life = e.life * (0.45 + 0.55 * rnd(s));
+    float3 col = float3(e.r, e.g, e.b);
+    col = toLinear(mix(col, float3(max(col.r, max(col.g, col.b))), rnd(s) * 0.4));
+    // A big burst's particles are each dimmer, so thousands overlapping at the centre
+    // read as fine filaments rather than one white disc.
+    col *= min(1.0, 20.0 * rsqrt(max(e.count, 1.0)));
+    float size = e.size * (0.7 + 0.6 * rnd(s));
+    Particle p;
+    p.pos = e.pos + (float2(rnd(s), rnd(s)) - 0.5) * 3.0;
+    p.vel = e.base + float2(cos(a), sin(a)) * speed;
+    p.life = life;
+    p.inv = 1.0 / max(life, 1e-3);
+    p.rg = as_type<uint>(half2(col.rg));
+    p.bs = as_type<uint>(half2(half(col.b), half(size)));
+    ps[(uint(u.head) + t) % uint(u.cap)] = p;
+}
+
+kernel void update_cs(uint t [[thread_position_in_grid]],
+                      constant UpdateU& u [[buffer(0)]],
+                      device Particle* ps [[buffer(1)]]) {
+    if (t >= uint(u.count)) { return; }
+    uint i = (uint(u.base) + t) % uint(u.cap);
+    Particle p = ps[i];
+    if (p.life <= 0.0) { return; }
+    p.life -= u.dt;
+    p.vel *= u.damp;
+    p.pos += p.vel * u.dt;
+    // Sparks ricochet off the arena wall.
+    if (abs(p.pos.x) > u.hw) { p.vel.x = -p.vel.x * 0.6; p.pos.x = clamp(p.pos.x, -u.hw, u.hw); }
+    if (abs(p.pos.y) > u.hh) { p.vel.y = -p.vel.y * 0.6; p.pos.y = clamp(p.pos.y, -u.hh, u.hh); }
+    ps[i] = p;
+}
+"
+
+// Uniforms (16 floats): scale, cam, base (ring index of the window's oldest), cap,
+// gain, stretch (streak length per unit of speed), worldDim, then padding.
+
+pub let PART_VS_ENTRY: string = "part_vs"
+
+pub let PART_FS_ENTRY: string = "part_fs"
+
+pub let PART_VS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct Particle { float2 pos; float2 vel; float life; float inv; uint rg; uint bs; };
+
+struct PartU { float2 scale; float2 cam; float base; float cap; float gain; float stretch; float worldDim; float p0; float p1; float p2; float4 q0; };
+
+struct POut {
+    float4 pos [[position]];
+    float2 uv;
+    float3 color [[flat]];
+};
+
+vertex POut part_vs(uint vid [[vertex_id]],
+                    uint iid [[instance_id]],
+                    constant PartU& u [[buffer(0)]],
+                    const device Particle* ps [[buffer(1)]]) {
+    Particle p = ps[(uint(u.base) + iid) % uint(u.cap)];
+    POut o;
+    if (p.life <= 0.0) {
+        // All four corners in one place: a zero-area strip that rasterises nothing.
+        o.pos = float4(0.0, 0.0, 0.0, 1.0);
+        o.uv = float2(0.0);
+        o.color = float3(0.0);
+        return o;
+    }
+    float k = saturate(p.life * p.inv);
+    half2 rg = as_type<half2>(p.rg);
+    half2 bs = as_type<half2>(p.bs);
+    float size = float(bs.y);
+    float sp = length(p.vel);
+    float2 d = sp > 1e-3 ? p.vel / sp : float2(1.0, 0.0);
+    // Streaks stretch with speed and thin (and dim) as they die.
+    float len = size + sp * u.stretch;
+    float wid = size * (0.35 + 0.45 * k);
+    float2 corner = float2((vid & 1) ? 1.0 : -1.0, (vid & 2) ? 1.0 : -1.0);
+    float2 l = float2(corner.x * len, corner.y * wid);
+    float2 world = p.pos + float2(l.x * d.x - l.y * d.y, l.x * d.y + l.y * d.x);
+    o.pos = float4((world - u.cam) * u.scale, 0.0, 1.0);
+    o.uv = corner;
+    o.color = float3(float(rg.x), float(rg.y), float(bs.x)) * (k * (0.35 + 0.65 * k) * u.gain * u.worldDim);
+    return o;
+}
+"
+
+pub let PART_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct POut {
+    float4 pos [[position]];
+    float2 uv;
+    float3 color [[flat]];
+};
+
+fragment float4 part_fs(POut in [[stage_in]]) {
+    float a = max(1.0 - dot(in.uv, in.uv), 0.0);
+    return float4(in.color * (a * a), 1.0);
 }
 "

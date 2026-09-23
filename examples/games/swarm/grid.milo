@@ -1,0 +1,128 @@
+// The warp grid: a spring-mass lattice over the arena floor that explosions, bombs and
+// arrivals shove around. The World owns one and steps it at 120 Hz on the CPU; the
+// grid pipeline (shaders.milo) draws it from the displacements alone.
+//
+// Each node stores its displacement from its rest point, not its position, and the
+// springs are linearised: a node accelerates toward its four neighbours'
+// displacements (a discrete Laplacian, which makes a damped wave equation), toward
+// its own rest point (the anchor), and against its velocity. At these amplitudes that
+// is all a spring grid looks like, and it costs a handful of flops per node with no
+// square roots. Nodes on the arena wall are pinned.
+//
+// Semi-implicit Euler is stable while K * dt^2 * 8 < 4, i.e. K < 7200 at 120 Hz. A
+// ripple then travels about spacing * sqrt(K), some 1300 units a second.
+
+from "std/math" import {
+    Math
+}
+
+pub let GRID_COLS: i64 = 101
+
+pub let GRID_ROWS: i64 = 57
+
+let K_NEIGHBOUR: f64 = 3000.0
+let K_ANCHOR: f64 = 38.0
+let DAMPING: f64 = 3.2
+// Displacements are clamped here: past it the lattice folds over itself.
+let MAX_DISP: f64 = 70.0
+
+pub struct Grid {
+    // Rest position of node (0, 0), and the spacing between nodes.
+    ox: f64,
+    oy: f64,
+    sx: f64,
+    sy: f64,
+    dt: f64,
+    damp: f64,
+    dx: Vec<f64>,
+    dy: Vec<f64>,
+    vx: Vec<f64>,
+    vy: Vec<f64>,
+}
+
+// A grid spanning [-hw, hw] x [-hh, hh], stepped `dt` seconds at a time.
+pub fn newGrid(hw: f64, hh: f64, dt: f64): Grid {
+    let n = GRID_COLS * GRID_ROWS
+    return Grid {
+        ox: -hw,
+        oy: -hh,
+        sx: 2.0 * hw / ((GRID_COLS - 1) as f64),
+        sy: 2.0 * hh / ((GRID_ROWS - 1) as f64),
+        dt: dt,
+        damp: Math.exp(-DAMPING * dt),
+        dx: Vec.filled(n, 0.0),
+        dy: Vec.filled(n, 0.0),
+        vx: Vec.filled(n, 0.0),
+        vy: Vec.filled(n, 0.0),
+    }
+}
+
+impl Grid {
+    fn step(self: &mut Self) {
+        let w = GRID_COLS
+        let dt = self.dt
+        let damp = self.damp
+        for r in 1..GRID_ROWS - 1 {
+            let row = r * w
+            for c in 1..w - 1 {
+                let i = row + c
+                let ax = K_NEIGHBOUR * (self.dx[i - 1] + self.dx[i + 1] + self.dx[i - w] + self.dx[i + w] - 4.0 * self.dx[i]) - K_ANCHOR * self.dx[i]
+                let ay = K_NEIGHBOUR * (self.dy[i - 1] + self.dy[i + 1] + self.dy[i - w] + self.dy[i + w] - 4.0 * self.dy[i]) - K_ANCHOR * self.dy[i]
+                self.vx[i] = (self.vx[i] + ax * dt) * damp
+                self.vy[i] = (self.vy[i] + ay * dt) * damp
+            }
+        }
+        for r in 1..GRID_ROWS - 1 {
+            let row = r * w
+            for c in 1..w - 1 {
+                let i = row + c
+                var x = self.dx[i] + self.vx[i] * dt
+                var y = self.dy[i] + self.vy[i] * dt
+                let d2 = x * x + y * y
+                if d2 > MAX_DISP * MAX_DISP {
+                    let k = MAX_DISP / Math.sqrt(d2)
+                    x = x * k
+                    y = y * k
+                }
+                self.dx[i] = x
+                self.dy[i] = y
+            }
+        }
+    }
+
+    // A radial kick: every free node within `rad` of (x, y) gains up to `strength`
+    // units a second of velocity away from it (toward it when negative), falling off
+    // quadratically to nothing at the edge.
+    fn impulse(self: &mut Self, x: f64, y: f64, rad: f64, strength: f64) {
+        self.ring(x, y, 0.0, rad, strength)
+    }
+
+    // A kick concentrated on the circle of radius `r` about (x, y), `width` to either
+    // side: a bomb's shockwave front, pushed outward tick by tick as it grows. With
+    // r = 0 it is an ordinary radial impulse.
+    fn ring(self: &mut Self, x: f64, y: f64, r: f64, width: f64, strength: f64) {
+        let reach = r + width
+        let c0 = Math.maxI64(((x - reach - self.ox) / self.sx) as i64, 1)
+        let c1 = Math.minI64(((x + reach - self.ox) / self.sx) as i64 + 1, GRID_COLS - 2)
+        let r0 = Math.maxI64(((y - reach - self.oy) / self.sy) as i64, 1)
+        let r1 = Math.minI64(((y + reach - self.oy) / self.sy) as i64 + 1, GRID_ROWS - 2)
+        if c0 > c1 || r0 > r1 {
+            return
+        }
+        for rr in r0..r1 + 1 {
+            for cc in c0..c1 + 1 {
+                let i = rr * GRID_COLS + cc
+                let px = self.ox + (cc as f64) * self.sx + self.dx[i] - x
+                let py = self.oy + (rr as f64) * self.sy + self.dy[i] - y
+                let d = Math.sqrt(px * px + py * py)
+                let off = Math.abs(d - r)
+                if off < width && d > 0.001 {
+                    let f = 1.0 - off / width
+                    let k = strength * f * f / d
+                    self.vx[i] += px * k
+                    self.vy[i] += py * k
+                }
+            }
+        }
+    }
+}
