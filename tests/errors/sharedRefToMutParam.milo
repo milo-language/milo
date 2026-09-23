@@ -1,0 +1,13 @@
+// @error: cannot pass 's', a shared '&' reference, as a '&mut' argument
+// A '&S' parameter is read-only: forwarding it as '&mut' would let 'bump' write
+// through a borrow the caller handed out as shared, mutating even a 'let' there.
+struct S { x: i64 }
+fn bump(s: &mut S) { s.x = s.x + 1 }
+fn peek(s: &S): i64 {
+    bump(&mut s)
+    return s.x
+}
+fn main(): i32 {
+    let s = S { x: 1 }
+    return peek(s) as i32
+}

@@ -30,8 +30,12 @@ pub fn main(): i32 {
     var bodies = bodyTable()
     var missions = missionTable()
     var bad = 0
+    // Calibrated by index, before the scan: a for-in element is a shared borrow,
+    // and calibrateMission writes the mission.
+    for ci in 0..missions.len() {
+        let _ = calibrateMission(bodies, &mut missions[ci], nowSeconds())
+    }
     for m in missions {
-        let _ = calibrateMission(bodies, &mut m, nowSeconds())
         // The scale everything on this map is measured against: how far out the
         // transfer itself reaches, which is the FARTHER of its two endpoints and
         // not the target alone. Measured against the target alone an inbound

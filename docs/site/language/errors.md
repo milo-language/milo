@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 365 distinct messages across 430 programs the compiler must reject.
+Every error message the test suite pins: 366 distinct messages across 431 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -181,6 +181,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot open 'nonexistent.txt'`](#cannot-open-nonexistent-txt)
 - [`cannot pass 'b' because it is borrowed`](#cannot-pass-b-because-it-is-borrowed)
 - [`cannot pass 'items' because it is borrowed`](#cannot-pass-items-because-it-is-borrowed)
+- [`cannot pass 's', a shared '&' reference, as a '&mut' argument`](#cannot-pass-s-a-shared-reference-as-a-mut-argument)
 - [`cannot pass a closure that captures 'n' by reference to 'Promise.blocking', which keeps it`](#cannot-pass-a-closure-that-captures-n-by-reference-to-promise-blocking-which-keeps-it)
 - [`cannot pass a closure that captures 'n' by reference to 'Task.spawn', which keeps it`](#cannot-pass-a-closure-that-captures-n-by-reference-to-task-spawn-which-keeps-it)
 - [`cannot pass a closure that captures 'n' by reference to 'wrap', which keeps it`](#cannot-pass-a-closure-that-captures-n-by-reference-to-wrap-which-keeps-it)
@@ -4001,6 +4002,25 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/passMutWhileIterating.milo](https://github.com/milo-language/milo/blob/main/tests/errors/passMutWhileIterating.milo)</sub>
+
+## `cannot pass 's', a shared '&' reference, as a '&mut' argument` {#cannot-pass-s-a-shared-reference-as-a-mut-argument}
+
+A '&S' parameter is read-only: forwarding it as '&mut' would let 'bump' write through a borrow the caller handed out as shared, mutating even a 'let' there.
+
+```milo skip
+struct S { x: i64 }
+fn bump(s: &mut S) { s.x = s.x + 1 }
+fn peek(s: &S): i64 {
+    bump(&mut s)
+    return s.x
+}
+fn main(): i32 {
+    let s = S { x: 1 }
+    return peek(s) as i32
+}
+```
+
+<sub>[tests/errors/sharedRefToMutParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sharedRefToMutParam.milo)</sub>
 
 ## `cannot pass a closure that captures 'n' by reference to 'Promise.blocking', which keeps it` {#cannot-pass-a-closure-that-captures-n-by-reference-to-promise-blocking-which-keeps-it}
 

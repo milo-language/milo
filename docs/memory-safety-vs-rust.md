@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-09-20 (corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
+last-verified: 2026-09-22 (finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -330,6 +330,24 @@ Not memory safety; listed because it is the row where the prover claimed more th
   `tests/prove/builtinPushFrame.milo`, `havocNoContractUnknown`, `builtinContainerContracts`,
   `loopIndexAssignKeepsLen`.
 - **Commits:** `ae1a86d0`, `ec108569`. **Found by:** the 2026-09-19 battle test (P1, P2).
+
+### Finding #11 (closed): a shared `&` binding could be forwarded as `&mut`
+
+- **Shape:** `fn peek(s: &S): i64 { bump(&mut s); return s.x }` with `fn bump(s: &mut S)`,
+  called as `let s = S { x: 1 }; peek(s)`. The caller's IMMUTABLE `let` came back as 2. The
+  same hole covered a for-in element, which is a shared borrow: `for m in v { bump(&mut m) }`
+  wrote every element of `v` in place.
+- **Why it slipped:** the `&mut`-argument check rejected an immutable binding only when its
+  type was not a reference (`info.type.tag !== "ref"`), which exempted shared references along
+  with `&mut` ones.
+- **Now:** a binding whose type is `&T` (not `&mut T`) is rejected as a `&mut` argument with
+  "cannot pass 's', a shared '&' reference, as a '&mut' argument" and a hint to take `&mut` in
+  the signature. `tests/errors/sharedRefToMutParam.milo`. Blast radius measured before landing:
+  milojs 0 sites, the package suites 0, this repo's examples 1 (`apsis/tools/sweepdials`,
+  rewritten to calibrate by index), the emulators 2 (both functions whose `&` parameter really
+  was written through; fixed by taking `&mut`).
+- **Found by:** a milojs agent that wrote `nativeValue(&mut st, ...)` inside a function taking
+  `st: &Interp`, and noticed it compiled.
 
 ## What the compiler does not check, and what happens instead
 

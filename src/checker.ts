@@ -8261,6 +8261,14 @@ export class TypeChecker {
             `declare with 'var' to make it mutable`);
           break;
         }
+        // A shared '&T' binding is no more writable than a 'let': forwarding it to a
+        // '&mut' parameter let a callee mutate the caller's value through a borrow
+        // the caller had handed out as read-only (found in milojs, 2026-09-22).
+        if (info && info.type.tag === "ref" && !info.type.mutable) {
+          this.error(`cannot pass '${this.describeExpr(arg)}', a shared '&' reference, as a '&mut' argument`, sp,
+            `take '&mut ${this.show(info.type.inner)}' in this function's signature if it needs to mutate`);
+          break;
+        }
       }
     }
     this.autoBorrowed.set(arg, { mutable });
