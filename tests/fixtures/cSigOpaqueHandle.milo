@@ -1,0 +1,25 @@
+// @skip-os: win32
+// A @cSig parameter or return typed as a pointer to an `extern type` is a C handle
+// (`DIR *`, `SDL_GPUDevice *`). Milo claims no width for the pointee, and C may declare
+// it incomplete (glibc's DIR, every SDL handle), where `sizeof` on it is ill-formed. The
+// pointee-width assert used to be emitted anyway, so a correctly bound handle API failed
+// the build with "the header declares no such type". It is now skipped for opaque
+// pointees, the same opt-out `*u8` gets; the rest of the signature is still checked.
+// Windows is skipped because it has no <dirent.h>.
+extern type DIR
+
+@cSig("dirent.h", "DIR *opendir(const char *)")
+extern fn opendir(path: *u8): *DIR
+
+@cSig("dirent.h", "int closedir(DIR *)")
+extern fn closedir(d: *DIR): i32
+
+fn main() {
+    unsafe {
+        let d = opendir(".".cstr())
+        print(d as i64 != 0)
+        print(closedir(d))
+    }
+}
+// @expect: true
+// @expect: 0

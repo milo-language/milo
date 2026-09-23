@@ -145,6 +145,8 @@ export class Codegen {
   private externAbi = new Map<string, ExternAbiInfo>();
   private structLayouts = new Map<string, StructLayout>();
   private cLayoutStructs: HIRStruct[] = [];
+  // `extern type` names: a pointer to one is a C handle whose pointee Milo never sizes.
+  private opaqueTypes = new Set<string>();
   private cSigs: { fnName: string; header: string; sig: string; retType: TypeKind; params?: { type: TypeKind }[] }[] = [];
   private cValues: { global: string; cName: string; header: string; value: string; signed: boolean }[] = [];
   private enumLayouts = new Map<string, EnumLayout>();
@@ -1444,6 +1446,9 @@ export class Codegen {
       if (mt.tag !== "ptr") continue;
       const pointee = mt.inner;
       if (pointee.tag === "int" && pointee.bits === 8) continue;
+      // An `extern type` pointee is a handle (`SDL_GPUDevice *`): C declares it incomplete,
+      // so `sizeof` on it is ill-formed, and Milo claims no width for it either.
+      if (pointee.tag === "struct" && this.opaqueTypes.has(pointee.name)) continue;
       // The deref is emitted from the MILO side, not from how the C type is spelled: half
       // of Win32's pointer parameters are typedefs that hide the star (LPDWORD, PHANDLE,
       // LPSTR), and gating on a trailing `*` let exactly those through unchecked. If C
@@ -1603,6 +1608,7 @@ export class Codegen {
       if (s.cLayout) this.cLayoutStructs.push(s);
     }
     this.cSigs = module.cSigs ?? [];
+    this.opaqueTypes = new Set(module.opaqueTypes ?? []);
     this.cValues = module.cValues ?? [];
 
     // Register enum layouts. An enum payload can itself be an enum

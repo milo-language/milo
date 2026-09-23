@@ -1,0 +1,29 @@
+// @skip-os: linux, win32
+// The darwin half of cSigOpaqueHandle.milo. macOS declares DIR as a complete struct,
+// so that fixture cannot tell the fix apart from the bug here; CoreFoundation's refs
+// are pointers to structs the SDK never defines (`CFStringRef` is
+// `const struct __CFString *`), which is the incomplete-handle shape that broke the
+// build before `extern type` pointees were exempted from the pointee-width assert.
+extern type CFString
+
+@link("framework:CoreFoundation")
+@cSig("CoreFoundation/CoreFoundation.h", "CFStringRef CFStringCreateWithCString(CFAllocatorRef, const char *, CFStringEncoding)")
+extern fn CFStringCreateWithCString(alloc: *u8, s: *u8, encoding: u32): *CFString
+
+@cSig("CoreFoundation/CoreFoundation.h", "CFIndex CFStringGetLength(CFStringRef)")
+extern fn CFStringGetLength(s: *CFString): i64
+
+@cSig("CoreFoundation/CoreFoundation.h", "void CFRelease(CFTypeRef)")
+extern fn CFRelease(s: *CFString): void
+
+@cValue("kCFStringEncodingUTF8", "CoreFoundation/CoreFoundation.h")
+let UTF8: u32 = 0x08000100
+
+fn main() {
+    unsafe {
+        let s = CFStringCreateWithCString(0 as *u8, "swarm".cstr(), UTF8)
+        print(CFStringGetLength(s))
+        CFRelease(s)
+    }
+}
+// @expect: 5

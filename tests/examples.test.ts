@@ -27,6 +27,7 @@ const DIR_ENTRIES = [
   "net/weather/app.milo",
   "net/termpair/server.milo",
   "net/termpair/client.milo",
+  "games/swarm/main.milo",
 ];
 
 // Only the top level of each folder: subdirs hold helper modules and smoke

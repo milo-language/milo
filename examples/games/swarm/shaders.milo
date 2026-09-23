@@ -1,0 +1,95 @@
+// SWARM's shaders, as Metal Shading Language source. SDL_GPU's Metal backend compiles
+// MSL text at pipeline creation, so no offline toolchain is needed on macOS. Vulkan
+// (SPIR-V) and D3D12 (DXIL) builds come later, from one source through SDL_shadercross
+// or hand-ported copies; until then SWARM runs on Metal only.
+//
+// Resource slots follow SDL_GPU's MSL convention: [[buffer(n)]] numbers uniform buffers
+// first, then storage buffers. The vertex stage has one uniform block (slot 0) and one
+// storage buffer (bound to storage slot 0, which is therefore [[buffer(1)]]).
+//
+// The CPU side must agree on two layouts, both 16 or 32 bytes with no float3 anywhere
+// (a float3 in a Metal buffer is 16-byte aligned, which silently shifts every field
+// after it):
+//   Particle  = { float2 pos; float2 vel; }                    main.milo's Particle
+//   Uniforms  = 8 floats                                       main.milo's uniforms()
+
+pub let SWARM_VS_ENTRY: string = "swarm_vs"
+
+pub let SWARM_FS_ENTRY: string = "swarm_fs"
+
+pub let SWARM_VS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct Particle { float2 pos; float2 vel; };
+
+struct Uniforms {
+    float2 scale;      // world units to clip space
+    float size;        // base quad half-extent, world units
+    float intensity;   // overall brightness, scaled down as the count rises
+    float time;
+    float pad0;
+    float pad1;
+    float pad2;
+};
+
+struct VOut {
+    float4 pos [[position]];
+    float2 uv;
+    float3 color;
+};
+
+static float3 hue(float h) {
+    float3 k = fract(h + float3(0.0, 2.0 / 3.0, 1.0 / 3.0));
+    return saturate(abs(k * 6.0 - 3.0) - 1.0);
+}
+
+vertex VOut swarm_vs(uint vid [[vertex_id]],
+                     uint iid [[instance_id]],
+                     constant Uniforms& u [[buffer(0)]],
+                     const device Particle* ps [[buffer(1)]]) {
+    const float2 corners[6] = {
+        float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0),
+        float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0)
+    };
+    float2 c = corners[vid];
+    Particle p = ps[iid];
+    float speed = length(p.vel);
+    // A per-instance constant in [0,1) from the golden ratio: size and hue jitter
+    // that stays attached to the particle frame after frame.
+    float j = fract(float(iid) * 0.61803398875);
+    float heat = saturate(speed / 700.0);
+    float s = u.size * (0.55 + 0.9 * j) * (1.0 + 0.8 * heat);
+
+    VOut o;
+    o.pos = float4((p.pos + c * s) * u.scale, 0.0, 1.0);
+    o.uv = c;
+    // Hue follows the direction of travel, so a stream reads as one colour and a
+    // vortex as a colour wheel. Fast particles run hot towards white.
+    float h = atan2(p.vel.y, p.vel.x) * 0.15915494 + 0.5 + j * 0.06 + u.time * 0.01;
+    float3 col = mix(hue(h), float3(1.0), heat * heat * 0.55);
+    o.color = col * u.intensity * (0.35 + 1.1 * heat);
+    return o;
+}
+"
+
+pub let SWARM_FS: string = "
+#include <metal_stdlib>
+using namespace metal;
+
+struct VOut {
+    float4 pos [[position]];
+    float2 uv;
+    float3 color;
+};
+
+// Additive blend (ONE, ONE): the output IS the light this quad adds. A wide soft halo
+// plus a tight hot core; zero at the quad edge so no square ever shows.
+fragment float4 swarm_fs(VOut in [[stage_in]]) {
+    float d2 = dot(in.uv, in.uv);
+    float halo = max(1.0 - d2, 0.0);
+    halo *= halo;
+    float core = exp(-d2 * 14.0);
+    return float4(in.color * (halo * 0.55 + core * 0.9), 1.0);
+}
+"

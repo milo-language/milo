@@ -1,0 +1,218 @@
+// SWARM's SDL3 core: init, one window, events, timing.
+//
+// The externs are the raw C surface and every one carries @cSig/@cValue/@cLayout, so a
+// transcription error breaks the build instead of corrupting a frame. The game never
+// calls them directly: it uses `Window`, `pollEvent` and `ticksNs` below, and raw
+// pointers stay inside this file.
+
+pub extern type SDL_Window
+
+@link("SDL3")
+@cSig("SDL3/SDL.h", "bool SDL_Init(SDL_InitFlags)")
+extern fn SDL_Init(flags: u32): bool
+
+@cSig("SDL3/SDL.h", "void SDL_Quit(void)")
+extern fn SDL_Quit(): void
+
+// Owned by SDL, valid until the next SDL call on this thread: copy it out at once.
+@cSig("SDL3/SDL.h", "const char *SDL_GetError(void)")
+extern fn SDL_GetError(): *u8
+
+@cSig("SDL3/SDL.h", "SDL_Window *SDL_CreateWindow(const char *, int, int, SDL_WindowFlags)")
+extern fn SDL_CreateWindow(title: *u8, w: i32, h: i32, flags: u64): *SDL_Window
+
+@cSig("SDL3/SDL.h", "void SDL_DestroyWindow(SDL_Window *)")
+extern fn SDL_DestroyWindow(win: *SDL_Window): void
+
+@cSig("SDL3/SDL.h", "bool SDL_GetWindowSizeInPixels(SDL_Window *, int *, int *)")
+extern fn SDL_GetWindowSizeInPixels(win: *SDL_Window, w: *i32, h: *i32): bool
+
+@cSig("SDL3/SDL.h", "bool SDL_PollEvent(SDL_Event *)")
+extern fn SDL_PollEvent(ev: *SdlEvent): bool
+
+@cSig("SDL3/SDL.h", "Uint64 SDL_GetTicksNS(void)")
+extern fn SDL_GetTicksNS(): u64
+
+@cSig("SDL3/SDL.h", "SDL_MouseButtonFlags SDL_GetMouseState(float *, float *)")
+extern fn SDL_GetMouseState(x: *f32, y: *f32): u32
+
+@cValue("SDL_INIT_VIDEO", "SDL3/SDL.h")
+let SDL_INIT_VIDEO: u32 = 0x20
+
+@cValue("SDL_WINDOW_HIDDEN", "SDL3/SDL.h")
+let SDL_WINDOW_HIDDEN: u64 = 0x8
+
+@cValue("SDL_WINDOW_HIGH_PIXEL_DENSITY", "SDL3/SDL.h")
+let SDL_WINDOW_HIGH_PIXEL_DENSITY: u64 = 0x2000
+
+@cValue("SDL_EVENT_QUIT", "SDL3/SDL.h")
+let SDL_EVENT_QUIT: u32 = 0x100
+
+@cValue("SDL_EVENT_WINDOW_CLOSE_REQUESTED", "SDL3/SDL.h")
+let SDL_EVENT_WINDOW_CLOSE_REQUESTED: u32 = 0x210
+
+@cValue("SDL_EVENT_KEY_DOWN", "SDL3/SDL.h")
+let SDL_EVENT_KEY_DOWN: u32 = 0x300
+
+@cValue("SDL_SCANCODE_ESCAPE", "SDL3/SDL.h")
+pub let SCANCODE_ESCAPE: u32 = 41
+
+@cValue("SDL_SCANCODE_Q", "SDL3/SDL.h")
+pub let SCANCODE_Q: u32 = 20
+
+// SDL_Event is a 128-byte union. Milo has no unions, so it is declared as its tag plus
+// opaque filler (C's first member is named `type`, a Milo keyword, hence @cOpaque), and
+// a variant is read by viewing the same bytes as that variant's struct, whose own
+// layout is verified field by field below.
+@cLayout("SDL_Event", "SDL3/SDL.h")
+extern struct SdlEvent {
+    @cOpaque kind: u32,
+    @cOpaque rest: [u8; 124],
+}
+
+@cLayout("SDL_KeyboardEvent", "SDL3/SDL.h")
+extern struct SdlKeyboardEvent {
+    @cOpaque kind: u32,
+    reserved: u32,
+    timestamp: u64,
+    windowID: u32,
+    which: u32,
+    scancode: u32,
+    key: u32,
+    mod: u16,
+    raw: u16,
+    down: bool,
+    repeat: bool,
+}
+
+// SDL's last error message, copied into a Milo string.
+pub fn sdlError(): string {
+    unsafe {
+        return _cstrToString(SDL_GetError())
+    }
+}
+
+// Brings up the video subsystem (which implies events). Pair with `quit`.
+pub fn initVideo(): Result<Unit, string> {
+    if !SDL_Init(SDL_INIT_VIDEO) {
+        return Result.Err("SDL_Init: " + sdlError())
+    }
+    return Result.Ok(Unit {})
+}
+
+pub fn quit() {
+    SDL_Quit()
+}
+
+// Nanoseconds since SDL_Init. Monotonic.
+pub fn ticksNs(): i64 {
+    return SDL_GetTicksNS() as i64
+}
+
+pub struct PixelSize {
+    w: i64,
+    h: i64,
+}
+
+pub struct Mouse {
+    x: f32,
+    y: f32,
+    buttons: u32,
+}
+
+// Mouse position in window points, and the button bitmask.
+pub fn mouseState(): Mouse {
+    var x: f32 = 0.0
+    var y: f32 = 0.0
+    var b: u32 = 0
+    unsafe {
+        b = SDL_GetMouseState(x.addrOf(), y.addrOf())
+    }
+    return Mouse {
+        x: x,
+        y: y,
+        buttons: b,
+    }
+}
+
+// One SDL window, destroyed when dropped. The pointer field makes it move-only, so a
+// second owner (and a double destroy) cannot be written.
+pub struct Window {
+    raw: *SDL_Window,
+}
+
+impl Drop for Window {
+    fn drop(self: &mut Self) {
+        unsafe {
+            if self.raw as i64 != 0 {
+                SDL_DestroyWindow(self.raw)
+            }
+        }
+    }
+}
+
+// A window `w` x `h` in points. HiDPI-aware: on a Retina display the drawable is
+// larger than the point size, and `pixelSize` reports the real one.
+pub fn openWindow(title: string, w: i64, h: i64, hidden: bool): Result<Window, string> {
+    var flags = SDL_WINDOW_HIGH_PIXEL_DENSITY
+    if hidden {
+        flags = flags | SDL_WINDOW_HIDDEN
+    }
+    unsafe {
+        let raw = SDL_CreateWindow(title.cstr(), w as i32, h as i32, flags)
+        if raw as i64 == 0 {
+            return Result.Err("SDL_CreateWindow: " + sdlError())
+        }
+        return Result.Ok(Window {
+            raw: raw,
+        })
+    }
+}
+
+impl Window {
+    fn pixelSize(self: &Self): PixelSize {
+        var w: i32 = 0
+        var h: i32 = 0
+        unsafe {
+            SDL_GetWindowSizeInPixels(self.raw, w.addrOf(), h.addrOf())
+        }
+        return PixelSize {
+            w: w as i64,
+            h: h as i64,
+        }
+    }
+
+    // For gpu.milo only: the device claims the window by its C handle.
+    fn handle(self: &Self): *SDL_Window {
+        return self.raw
+    }
+}
+
+pub enum Event {
+    Empty,
+    Quit,
+    KeyDown(u32),
+    Other,
+}
+
+// The next pending event, or Empty when the queue is drained. The 128-byte event lives
+// on the stack, so polling never allocates.
+pub fn pollEvent(): Event {
+    var ev = SdlEvent {
+        kind: 0,
+        rest: [0; 124],
+    }
+    unsafe {
+        if !SDL_PollEvent(ev.addrOf()) {
+            return Event.Empty
+        }
+        if ev.kind == SDL_EVENT_QUIT || ev.kind == SDL_EVENT_WINDOW_CLOSE_REQUESTED {
+            return Event.Quit
+        }
+        if ev.kind == SDL_EVENT_KEY_DOWN {
+            let k = ev.addrOf() as *SdlKeyboardEvent
+            return Event.KeyDown((*k).scancode)
+        }
+    }
+    return Event.Other
+}

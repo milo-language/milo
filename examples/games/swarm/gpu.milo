@@ -1,0 +1,998 @@
+// SWARM's SDL_GPU layer: the C bindings SWARM needs, and a small safe API over them.
+//
+// Every create-info struct below is passed to SDL by pointer, so its layout IS the
+// contract, and each one carries @cLayout: a field at the wrong offset fails the build
+// instead of handing Metal a garbage pipeline. Every extern carries @cSig and every
+// constant @cValue, for the same reason.
+//
+// Ownership model. The `Device` owns every resource it creates (pipelines, buffers,
+// transfer buffers, textures) and the window it claimed, and releases them all when it
+// drops, window last. The game holds plain index handles (`Buffer`, `Pipeline`, ...),
+// which are Copy and cannot dangle: a handle only resolves through the Device that
+// made it, and nothing is released while that Device is alive. Transient objects
+// (command buffers, passes, swapchain textures) are move-only structs consumed by the
+// call that ends them.
+
+from "./sdl3" import {
+    SDL_Window, Window, sdlError
+}
+from "std/os" import {
+    memcpy
+}
+
+pub extern type SDL_GPUDevice
+
+pub extern type SDL_GPUShader
+
+pub extern type SDL_GPUGraphicsPipeline
+
+pub extern type SDL_GPUBuffer
+
+pub extern type SDL_GPUTransferBuffer
+
+pub extern type SDL_GPUTexture
+
+pub extern type SDL_GPUCommandBuffer
+
+pub extern type SDL_GPUCopyPass
+
+pub extern type SDL_GPURenderPass
+
+pub extern type SDL_GPUFence
+
+// ── Layout-verified create-info structs ──────────────────────────────────────────────
+
+@cLayout("SDL_GPUShaderCreateInfo", "SDL3/SDL.h")
+extern struct ShaderCreateInfo {
+    code_size: u64,
+    code: *u8,
+    entrypoint: *u8,
+    format: u32,
+    stage: u32,
+    num_samplers: u32,
+    num_storage_textures: u32,
+    num_storage_buffers: u32,
+    num_uniform_buffers: u32,
+    props: u32,
+}
+
+@cLayout("SDL_GPUColorTargetBlendState", "SDL3/SDL.h")
+extern struct ColorTargetBlendState {
+    src_color_blendfactor: u32,
+    dst_color_blendfactor: u32,
+    color_blend_op: u32,
+    src_alpha_blendfactor: u32,
+    dst_alpha_blendfactor: u32,
+    alpha_blend_op: u32,
+    color_write_mask: u8,
+    enable_blend: bool,
+    enable_color_write_mask: bool,
+    padding1: u8,
+    padding2: u8,
+}
+
+@cLayout("SDL_GPUColorTargetDescription", "SDL3/SDL.h")
+extern struct ColorTargetDescription {
+    format: u32,
+    blend_state: ColorTargetBlendState,
+}
+
+@cLayout("SDL_GPUVertexInputState", "SDL3/SDL.h")
+extern struct VertexInputState {
+    // SDL_GPUVertexBufferDescription / SDL_GPUVertexAttribute arrays. SWARM pulls its
+    // instances from a storage buffer, so these stay null and are typed as bytes.
+    vertex_buffer_descriptions: *u8,
+    num_vertex_buffers: u32,
+    vertex_attributes: *u8,
+    num_vertex_attributes: u32,
+}
+
+@cLayout("SDL_GPURasterizerState", "SDL3/SDL.h")
+extern struct RasterizerState {
+    fill_mode: u32,
+    cull_mode: u32,
+    front_face: u32,
+    depth_bias_constant_factor: f32,
+    depth_bias_clamp: f32,
+    depth_bias_slope_factor: f32,
+    enable_depth_bias: bool,
+    enable_depth_clip: bool,
+    padding1: u8,
+    padding2: u8,
+}
+
+@cLayout("SDL_GPUMultisampleState", "SDL3/SDL.h")
+extern struct MultisampleState {
+    sample_count: u32,
+    sample_mask: u32,
+    enable_mask: bool,
+    enable_alpha_to_coverage: bool,
+    padding2: u8,
+    padding3: u8,
+}
+
+@cLayout("SDL_GPUStencilOpState", "SDL3/SDL.h")
+extern struct StencilOpState {
+    fail_op: u32,
+    pass_op: u32,
+    depth_fail_op: u32,
+    compare_op: u32,
+}
+
+@cLayout("SDL_GPUDepthStencilState", "SDL3/SDL.h")
+extern struct DepthStencilState {
+    compare_op: u32,
+    back_stencil_state: StencilOpState,
+    front_stencil_state: StencilOpState,
+    compare_mask: u8,
+    write_mask: u8,
+    enable_depth_test: bool,
+    enable_depth_write: bool,
+    enable_stencil_test: bool,
+    padding1: u8,
+    padding2: u8,
+    padding3: u8,
+}
+
+@cLayout("SDL_GPUGraphicsPipelineTargetInfo", "SDL3/SDL.h")
+extern struct GraphicsPipelineTargetInfo {
+    color_target_descriptions: *ColorTargetDescription,
+    num_color_targets: u32,
+    depth_stencil_format: u32,
+    has_depth_stencil_target: bool,
+    padding1: u8,
+    padding2: u8,
+    padding3: u8,
+}
+
+@cLayout("SDL_GPUGraphicsPipelineCreateInfo", "SDL3/SDL.h")
+extern struct GraphicsPipelineCreateInfo {
+    vertex_shader: *SDL_GPUShader,
+    fragment_shader: *SDL_GPUShader,
+    vertex_input_state: VertexInputState,
+    primitive_type: u32,
+    rasterizer_state: RasterizerState,
+    multisample_state: MultisampleState,
+    depth_stencil_state: DepthStencilState,
+    target_info: GraphicsPipelineTargetInfo,
+    props: u32,
+}
+
+@cLayout("SDL_GPUBufferCreateInfo", "SDL3/SDL.h")
+extern struct BufferCreateInfo {
+    usage: u32,
+    size: u32,
+    props: u32,
+}
+
+@cLayout("SDL_GPUTransferBufferCreateInfo", "SDL3/SDL.h")
+extern struct TransferBufferCreateInfo {
+    usage: u32,
+    size: u32,
+    props: u32,
+}
+
+@cLayout("SDL_GPUTransferBufferLocation", "SDL3/SDL.h")
+extern struct TransferBufferLocation {
+    transfer_buffer: *SDL_GPUTransferBuffer,
+    offset: u32,
+}
+
+@cLayout("SDL_GPUBufferRegion", "SDL3/SDL.h")
+extern struct BufferRegion {
+    buffer: *SDL_GPUBuffer,
+    offset: u32,
+    size: u32,
+}
+
+@cLayout("SDL_FColor", "SDL3/SDL.h")
+pub extern struct FColor {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+}
+
+@cLayout("SDL_GPUColorTargetInfo", "SDL3/SDL.h")
+extern struct ColorTargetInfo {
+    texture: *SDL_GPUTexture,
+    mip_level: u32,
+    layer_or_depth_plane: u32,
+    clear_color: FColor,
+    load_op: u32,
+    store_op: u32,
+    resolve_texture: *SDL_GPUTexture,
+    resolve_mip_level: u32,
+    resolve_layer: u32,
+    cycle: bool,
+    cycle_resolve_texture: bool,
+    padding1: u8,
+    padding2: u8,
+}
+
+// C's first field is `type`, a Milo keyword: declared @cOpaque, so the build still
+// checks every field after it (and the total size) but not its name.
+@cLayout("SDL_GPUTextureCreateInfo", "SDL3/SDL.h")
+extern struct TextureCreateInfo {
+    @cOpaque kind: u32,
+    format: u32,
+    usage: u32,
+    width: u32,
+    height: u32,
+    layer_count_or_depth: u32,
+    num_levels: u32,
+    sample_count: u32,
+    props: u32,
+}
+
+@cLayout("SDL_GPUTextureRegion", "SDL3/SDL.h")
+extern struct TextureRegion {
+    texture: *SDL_GPUTexture,
+    mip_level: u32,
+    layer: u32,
+    x: u32,
+    y: u32,
+    z: u32,
+    w: u32,
+    h: u32,
+    d: u32,
+}
+
+@cLayout("SDL_GPUTextureTransferInfo", "SDL3/SDL.h")
+extern struct TextureTransferInfo {
+    transfer_buffer: *SDL_GPUTransferBuffer,
+    offset: u32,
+    pixels_per_row: u32,
+    rows_per_layer: u32,
+}
+
+// ── Functions ────────────────────────────────────────────────────────────────────────
+
+@link("SDL3")
+@cSig("SDL3/SDL.h", "SDL_GPUDevice *SDL_CreateGPUDevice(SDL_GPUShaderFormat, bool, const char *)")
+extern fn SDL_CreateGPUDevice(formats: u32, debug: bool, name: *u8): *SDL_GPUDevice
+
+@cSig("SDL3/SDL.h", "void SDL_DestroyGPUDevice(SDL_GPUDevice *)")
+extern fn SDL_DestroyGPUDevice(d: *SDL_GPUDevice): void
+
+@cSig("SDL3/SDL.h", "const char *SDL_GetGPUDeviceDriver(SDL_GPUDevice *)")
+extern fn SDL_GetGPUDeviceDriver(d: *SDL_GPUDevice): *u8
+
+@cSig("SDL3/SDL.h", "bool SDL_ClaimWindowForGPUDevice(SDL_GPUDevice *, SDL_Window *)")
+extern fn SDL_ClaimWindowForGPUDevice(d: *SDL_GPUDevice, w: *SDL_Window): bool
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseWindowFromGPUDevice(SDL_GPUDevice *, SDL_Window *)")
+extern fn SDL_ReleaseWindowFromGPUDevice(d: *SDL_GPUDevice, w: *SDL_Window): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUTextureFormat SDL_GetGPUSwapchainTextureFormat(SDL_GPUDevice *, SDL_Window *)")
+extern fn SDL_GetGPUSwapchainTextureFormat(d: *SDL_GPUDevice, w: *SDL_Window): u32
+
+@cSig("SDL3/SDL.h", "bool SDL_WindowSupportsGPUPresentMode(SDL_GPUDevice *, SDL_Window *, SDL_GPUPresentMode)")
+extern fn SDL_WindowSupportsGPUPresentMode(d: *SDL_GPUDevice, w: *SDL_Window, mode: u32): bool
+
+@cSig("SDL3/SDL.h", "bool SDL_SetGPUSwapchainParameters(SDL_GPUDevice *, SDL_Window *, SDL_GPUSwapchainComposition, SDL_GPUPresentMode)")
+extern fn SDL_SetGPUSwapchainParameters(d: *SDL_GPUDevice, w: *SDL_Window, comp: u32, mode: u32): bool
+
+@cSig("SDL3/SDL.h", "bool SDL_SetGPUAllowedFramesInFlight(SDL_GPUDevice *, Uint32)")
+extern fn SDL_SetGPUAllowedFramesInFlight(d: *SDL_GPUDevice, n: u32): bool
+
+@cSig("SDL3/SDL.h", "SDL_GPUShader *SDL_CreateGPUShader(SDL_GPUDevice *, const SDL_GPUShaderCreateInfo *)")
+extern fn SDL_CreateGPUShader(d: *SDL_GPUDevice, info: *ShaderCreateInfo): *SDL_GPUShader
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUShader(SDL_GPUDevice *, SDL_GPUShader *)")
+extern fn SDL_ReleaseGPUShader(d: *SDL_GPUDevice, s: *SDL_GPUShader): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUGraphicsPipeline *SDL_CreateGPUGraphicsPipeline(SDL_GPUDevice *, const SDL_GPUGraphicsPipelineCreateInfo *)")
+extern fn SDL_CreateGPUGraphicsPipeline(d: *SDL_GPUDevice, info: *GraphicsPipelineCreateInfo): *SDL_GPUGraphicsPipeline
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUGraphicsPipeline(SDL_GPUDevice *, SDL_GPUGraphicsPipeline *)")
+extern fn SDL_ReleaseGPUGraphicsPipeline(d: *SDL_GPUDevice, p: *SDL_GPUGraphicsPipeline): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUBuffer *SDL_CreateGPUBuffer(SDL_GPUDevice *, const SDL_GPUBufferCreateInfo *)")
+extern fn SDL_CreateGPUBuffer(d: *SDL_GPUDevice, info: *BufferCreateInfo): *SDL_GPUBuffer
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUBuffer(SDL_GPUDevice *, SDL_GPUBuffer *)")
+extern fn SDL_ReleaseGPUBuffer(d: *SDL_GPUDevice, b: *SDL_GPUBuffer): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUTransferBuffer *SDL_CreateGPUTransferBuffer(SDL_GPUDevice *, const SDL_GPUTransferBufferCreateInfo *)")
+extern fn SDL_CreateGPUTransferBuffer(d: *SDL_GPUDevice, info: *TransferBufferCreateInfo): *SDL_GPUTransferBuffer
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUTransferBuffer(SDL_GPUDevice *, SDL_GPUTransferBuffer *)")
+extern fn SDL_ReleaseGPUTransferBuffer(d: *SDL_GPUDevice, t: *SDL_GPUTransferBuffer): void
+
+@cSig("SDL3/SDL.h", "void *SDL_MapGPUTransferBuffer(SDL_GPUDevice *, SDL_GPUTransferBuffer *, bool)")
+extern fn SDL_MapGPUTransferBuffer(d: *SDL_GPUDevice, t: *SDL_GPUTransferBuffer, cycle: bool): *u8
+
+@cSig("SDL3/SDL.h", "void SDL_UnmapGPUTransferBuffer(SDL_GPUDevice *, SDL_GPUTransferBuffer *)")
+extern fn SDL_UnmapGPUTransferBuffer(d: *SDL_GPUDevice, t: *SDL_GPUTransferBuffer): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUTexture *SDL_CreateGPUTexture(SDL_GPUDevice *, const SDL_GPUTextureCreateInfo *)")
+extern fn SDL_CreateGPUTexture(d: *SDL_GPUDevice, info: *TextureCreateInfo): *SDL_GPUTexture
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUTexture(SDL_GPUDevice *, SDL_GPUTexture *)")
+extern fn SDL_ReleaseGPUTexture(d: *SDL_GPUDevice, t: *SDL_GPUTexture): void
+
+@cSig("SDL3/SDL.h", "SDL_GPUCommandBuffer *SDL_AcquireGPUCommandBuffer(SDL_GPUDevice *)")
+extern fn SDL_AcquireGPUCommandBuffer(d: *SDL_GPUDevice): *SDL_GPUCommandBuffer
+
+@cSig("SDL3/SDL.h", "bool SDL_SubmitGPUCommandBuffer(SDL_GPUCommandBuffer *)")
+extern fn SDL_SubmitGPUCommandBuffer(c: *SDL_GPUCommandBuffer): bool
+
+@cSig("SDL3/SDL.h", "bool SDL_CancelGPUCommandBuffer(SDL_GPUCommandBuffer *)")
+extern fn SDL_CancelGPUCommandBuffer(c: *SDL_GPUCommandBuffer): bool
+
+@cSig("SDL3/SDL.h", "SDL_GPUFence *SDL_SubmitGPUCommandBufferAndAcquireFence(SDL_GPUCommandBuffer *)")
+extern fn SDL_SubmitGPUCommandBufferAndAcquireFence(c: *SDL_GPUCommandBuffer): *SDL_GPUFence
+
+@cSig("SDL3/SDL.h", "bool SDL_WaitForGPUFences(SDL_GPUDevice *, bool, SDL_GPUFence *const *, Uint32)")
+extern fn SDL_WaitForGPUFences(d: *SDL_GPUDevice, waitAll: bool, fences: **SDL_GPUFence, n: u32): bool
+
+@cSig("SDL3/SDL.h", "void SDL_ReleaseGPUFence(SDL_GPUDevice *, SDL_GPUFence *)")
+extern fn SDL_ReleaseGPUFence(d: *SDL_GPUDevice, f: *SDL_GPUFence): void
+
+@cSig("SDL3/SDL.h", "bool SDL_WaitForGPUIdle(SDL_GPUDevice *)")
+extern fn SDL_WaitForGPUIdle(d: *SDL_GPUDevice): bool
+
+@cSig("SDL3/SDL.h", "SDL_GPUCopyPass *SDL_BeginGPUCopyPass(SDL_GPUCommandBuffer *)")
+extern fn SDL_BeginGPUCopyPass(c: *SDL_GPUCommandBuffer): *SDL_GPUCopyPass
+
+@cSig("SDL3/SDL.h", "void SDL_UploadToGPUBuffer(SDL_GPUCopyPass *, const SDL_GPUTransferBufferLocation *, const SDL_GPUBufferRegion *, bool)")
+extern fn SDL_UploadToGPUBuffer(p: *SDL_GPUCopyPass, src: *TransferBufferLocation, dst: *BufferRegion, cycle: bool): void
+
+@cSig("SDL3/SDL.h", "void SDL_DownloadFromGPUTexture(SDL_GPUCopyPass *, const SDL_GPUTextureRegion *, const SDL_GPUTextureTransferInfo *)")
+extern fn SDL_DownloadFromGPUTexture(p: *SDL_GPUCopyPass, src: *TextureRegion, dst: *TextureTransferInfo): void
+
+@cSig("SDL3/SDL.h", "void SDL_EndGPUCopyPass(SDL_GPUCopyPass *)")
+extern fn SDL_EndGPUCopyPass(p: *SDL_GPUCopyPass): void
+
+@cSig("SDL3/SDL.h", "bool SDL_WaitAndAcquireGPUSwapchainTexture(SDL_GPUCommandBuffer *, SDL_Window *, SDL_GPUTexture **, Uint32 *, Uint32 *)")
+extern fn SDL_WaitAndAcquireGPUSwapchainTexture(c: *SDL_GPUCommandBuffer, w: *SDL_Window, tex: **SDL_GPUTexture, tw: *u32, th: *u32): bool
+
+@cSig("SDL3/SDL.h", "SDL_GPURenderPass *SDL_BeginGPURenderPass(SDL_GPUCommandBuffer *, const SDL_GPUColorTargetInfo *, Uint32, const SDL_GPUDepthStencilTargetInfo *)")
+extern fn SDL_BeginGPURenderPass(c: *SDL_GPUCommandBuffer, targets: *ColorTargetInfo, n: u32, depth: *u8): *SDL_GPURenderPass
+
+@cSig("SDL3/SDL.h", "void SDL_EndGPURenderPass(SDL_GPURenderPass *)")
+extern fn SDL_EndGPURenderPass(p: *SDL_GPURenderPass): void
+
+@cSig("SDL3/SDL.h", "void SDL_BindGPUGraphicsPipeline(SDL_GPURenderPass *, SDL_GPUGraphicsPipeline *)")
+extern fn SDL_BindGPUGraphicsPipeline(p: *SDL_GPURenderPass, pipe: *SDL_GPUGraphicsPipeline): void
+
+@cSig("SDL3/SDL.h", "void SDL_BindGPUVertexStorageBuffers(SDL_GPURenderPass *, Uint32, SDL_GPUBuffer *const *, Uint32)")
+extern fn SDL_BindGPUVertexStorageBuffers(p: *SDL_GPURenderPass, first: u32, bufs: **SDL_GPUBuffer, n: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_PushGPUVertexUniformData(SDL_GPUCommandBuffer *, Uint32, const void *, Uint32)")
+extern fn SDL_PushGPUVertexUniformData(c: *SDL_GPUCommandBuffer, slot: u32, data: *f32, len: u32): void
+
+@cSig("SDL3/SDL.h", "void SDL_DrawGPUPrimitives(SDL_GPURenderPass *, Uint32, Uint32, Uint32, Uint32)")
+extern fn SDL_DrawGPUPrimitives(p: *SDL_GPURenderPass, verts: u32, instances: u32, firstVert: u32, firstInst: u32): void
+
+// ── Constants ────────────────────────────────────────────────────────────────────────
+
+@cValue("SDL_GPU_SHADERFORMAT_MSL", "SDL3/SDL.h")
+let SHADERFORMAT_MSL: u32 = 16
+
+@cValue("SDL_GPU_SHADERSTAGE_VERTEX", "SDL3/SDL.h")
+let SHADERSTAGE_VERTEX: u32 = 0
+
+@cValue("SDL_GPU_SHADERSTAGE_FRAGMENT", "SDL3/SDL.h")
+let SHADERSTAGE_FRAGMENT: u32 = 1
+
+@cValue("SDL_GPU_TEXTUREFORMAT_INVALID", "SDL3/SDL.h")
+let TEXTUREFORMAT_INVALID: u32 = 0
+
+@cValue("SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM", "SDL3/SDL.h")
+pub let TEXTUREFORMAT_R8G8B8A8_UNORM: u32 = 4
+
+@cValue("SDL_GPU_TEXTURETYPE_2D", "SDL3/SDL.h")
+let TEXTURETYPE_2D: u32 = 0
+
+@cValue("SDL_GPU_TEXTUREUSAGE_COLOR_TARGET", "SDL3/SDL.h")
+let TEXTUREUSAGE_COLOR_TARGET: u32 = 2
+
+@cValue("SDL_GPU_TEXTUREUSAGE_SAMPLER", "SDL3/SDL.h")
+let TEXTUREUSAGE_SAMPLER: u32 = 1
+
+@cValue("SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ", "SDL3/SDL.h")
+pub let BUFFERUSAGE_GRAPHICS_STORAGE_READ: u32 = 8
+
+@cValue("SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD", "SDL3/SDL.h")
+let TRANSFERBUFFERUSAGE_UPLOAD: u32 = 0
+
+@cValue("SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD", "SDL3/SDL.h")
+let TRANSFERBUFFERUSAGE_DOWNLOAD: u32 = 1
+
+@cValue("SDL_GPU_PRIMITIVETYPE_TRIANGLELIST", "SDL3/SDL.h")
+let PRIMITIVETYPE_TRIANGLELIST: u32 = 0
+
+@cValue("SDL_GPU_BLENDFACTOR_ONE", "SDL3/SDL.h")
+let BLENDFACTOR_ONE: u32 = 2
+
+@cValue("SDL_GPU_BLENDOP_ADD", "SDL3/SDL.h")
+let BLENDOP_ADD: u32 = 1
+
+@cValue("SDL_GPU_LOADOP_CLEAR", "SDL3/SDL.h")
+let LOADOP_CLEAR: u32 = 1
+
+@cValue("SDL_GPU_STOREOP_STORE", "SDL3/SDL.h")
+let STOREOP_STORE: u32 = 0
+
+@cValue("SDL_GPU_SWAPCHAINCOMPOSITION_SDR", "SDL3/SDL.h")
+let SWAPCHAINCOMPOSITION_SDR: u32 = 0
+
+@cValue("SDL_GPU_PRESENTMODE_VSYNC", "SDL3/SDL.h")
+pub let PRESENTMODE_VSYNC: u32 = 0
+
+@cValue("SDL_GPU_PRESENTMODE_IMMEDIATE", "SDL3/SDL.h")
+pub let PRESENTMODE_IMMEDIATE: u32 = 1
+
+@cValue("SDL_GPU_PRESENTMODE_MAILBOX", "SDL3/SDL.h")
+pub let PRESENTMODE_MAILBOX: u32 = 2
+
+// ── Safe API ─────────────────────────────────────────────────────────────────────────
+
+pub struct Pipeline {
+    id: i64,
+}
+
+pub struct Buffer {
+    id: i64,
+    size: i64,
+}
+
+pub struct TransferBuffer {
+    id: i64,
+    size: i64,
+}
+
+pub struct Texture {
+    id: i64,
+    w: i64,
+    h: i64,
+}
+
+pub struct Device {
+    raw: *SDL_GPUDevice,
+    // The window this device presents to, if any. Its own Drop (SDL_DestroyWindow) runs
+    // after Device's Drop below, which has already released it from the device and
+    // destroyed the device: fields drop after the struct's Drop.
+    window: Option<Window>,
+    windowRaw: *SDL_Window,
+    pipelines: Vec<*SDL_GPUGraphicsPipeline>,
+    buffers: Vec<*SDL_GPUBuffer>,
+    transfers: Vec<*SDL_GPUTransferBuffer>,
+    textures: Vec<*SDL_GPUTexture>,
+}
+
+impl Drop for Device {
+    fn drop(self: &mut Self) {
+        unsafe {
+            // Releasing a resource a submitted command buffer still reads is undefined.
+            SDL_WaitForGPUIdle(self.raw)
+            for p in self.pipelines {
+                SDL_ReleaseGPUGraphicsPipeline(self.raw, p)
+            }
+            for b in self.buffers {
+                SDL_ReleaseGPUBuffer(self.raw, b)
+            }
+            for t in self.transfers {
+                SDL_ReleaseGPUTransferBuffer(self.raw, t)
+            }
+            for t in self.textures {
+                SDL_ReleaseGPUTexture(self.raw, t)
+            }
+            if self.windowRaw as i64 != 0 {
+                SDL_ReleaseWindowFromGPUDevice(self.raw, self.windowRaw)
+            }
+            SDL_DestroyGPUDevice(self.raw)
+        }
+    }
+}
+
+// A Metal device that accepts MSL source. `debug` turns on SDL's validation layer.
+pub fn createDevice(debug: bool): Result<Device, string> {
+    unsafe {
+        let raw = SDL_CreateGPUDevice(SHADERFORMAT_MSL, debug, 0 as *u8)
+        if raw as i64 == 0 {
+            return Result.Err("SDL_CreateGPUDevice: " + sdlError())
+        }
+        return Result.Ok(Device {
+            raw: raw,
+            window: Option.None,
+            windowRaw: 0 as *SDL_Window,
+            pipelines: Vec.new(),
+            buffers: Vec.new(),
+            transfers: Vec.new(),
+            textures: Vec.new(),
+        })
+    }
+}
+
+// Everything needed to build SWARM's one kind of pipeline: an instanced draw with no
+// vertex buffers (the vertex shader pulls from storage), one color target, optional
+// additive blending.
+pub struct PipelineDesc {
+    vsSource: string,
+    vsEntry: string,
+    fsSource: string,
+    fsEntry: string,
+    vsUniformBuffers: u32,
+    vsStorageBuffers: u32,
+    format: u32,
+    additive: bool,
+}
+
+// Shaders are MSL SOURCE text: SDL_GPU's Metal backend compiles it at load. The C
+// strings are NUL-terminated by `cstr`, and code_size excludes the terminator.
+fn makeShader(dev: *SDL_GPUDevice, src: &string, entry: &string, stage: u32, uniforms: u32, storage: u32): *SDL_GPUShader {
+    var info = ShaderCreateInfo {
+        code_size: src.len as u64,
+        code: src.cstr(),
+        entrypoint: entry.cstr(),
+        format: SHADERFORMAT_MSL,
+        stage: stage,
+        num_samplers: 0,
+        num_storage_textures: 0,
+        num_storage_buffers: storage,
+        num_uniform_buffers: uniforms,
+        props: 0,
+    }
+    unsafe {
+        return SDL_CreateGPUShader(dev, info.addrOf())
+    }
+}
+
+impl Device {
+    fn driver(self: &Self): string {
+        unsafe {
+            return _cstrToString(SDL_GetGPUDeviceDriver(self.raw))
+        }
+    }
+
+    // Take the window for presenting. The device owns it from here on.
+    fn claim(self: &mut Self, win: Window): Result<Unit, string> {
+        let wr = win.handle()
+        if !SDL_ClaimWindowForGPUDevice(self.raw, wr) {
+            return Result.Err("SDL_ClaimWindowForGPUDevice: " + sdlError())
+        }
+        self.windowRaw = wr
+        self.window = Option.Some(win)
+        return Result.Ok(Unit {})
+    }
+
+    fn swapchainFormat(self: &Self): u32 {
+        return SDL_GetGPUSwapchainTextureFormat(self.raw, self.windowRaw)
+    }
+
+    fn supportsPresentMode(self: &Self, mode: u32): bool {
+        return SDL_WindowSupportsGPUPresentMode(self.raw, self.windowRaw, mode)
+    }
+
+    fn setPresentMode(self: &mut Self, mode: u32): bool {
+        return SDL_SetGPUSwapchainParameters(self.raw, self.windowRaw, SWAPCHAINCOMPOSITION_SDR, mode)
+    }
+
+    fn setFramesInFlight(self: &mut Self, n: u32): bool {
+        return SDL_SetGPUAllowedFramesInFlight(self.raw, n)
+    }
+
+    fn createPipeline(self: &mut Self, d: &PipelineDesc): Result<Pipeline, string> {
+        let vs = makeShader(self.raw, d.vsSource, d.vsEntry, SHADERSTAGE_VERTEX, d.vsUniformBuffers, d.vsStorageBuffers)
+        if vs as i64 == 0 {
+            return Result.Err("vertex shader: " + sdlError())
+        }
+        let fs = makeShader(self.raw, d.fsSource, d.fsEntry, SHADERSTAGE_FRAGMENT, 0, 0)
+        if fs as i64 == 0 {
+            unsafe {
+                SDL_ReleaseGPUShader(self.raw, vs)
+            }
+            return Result.Err("fragment shader: " + sdlError())
+        }
+        var target = ColorTargetDescription {
+            format: d.format,
+            blend_state: ColorTargetBlendState {
+                src_color_blendfactor: BLENDFACTOR_ONE,
+                dst_color_blendfactor: BLENDFACTOR_ONE,
+                color_blend_op: BLENDOP_ADD,
+                src_alpha_blendfactor: BLENDFACTOR_ONE,
+                dst_alpha_blendfactor: BLENDFACTOR_ONE,
+                alpha_blend_op: BLENDOP_ADD,
+                color_write_mask: 0,
+                enable_blend: d.additive,
+                enable_color_write_mask: false,
+                padding1: 0,
+                padding2: 0,
+            },
+        }
+        unsafe {
+            var info = GraphicsPipelineCreateInfo {
+                vertex_shader: vs,
+                fragment_shader: fs,
+                vertex_input_state: VertexInputState {
+                    vertex_buffer_descriptions: 0 as *u8,
+                    num_vertex_buffers: 0,
+                    vertex_attributes: 0 as *u8,
+                    num_vertex_attributes: 0,
+                },
+                primitive_type: PRIMITIVETYPE_TRIANGLELIST,
+                rasterizer_state: RasterizerState {
+                    fill_mode: 0,
+                    cull_mode: 0,
+                    front_face: 0,
+                    depth_bias_constant_factor: 0.0,
+                    depth_bias_clamp: 0.0,
+                    depth_bias_slope_factor: 0.0,
+                    enable_depth_bias: false,
+                    enable_depth_clip: false,
+                    padding1: 0,
+                    padding2: 0,
+                },
+                multisample_state: MultisampleState {
+                    sample_count: 0,
+                    sample_mask: 0,
+                    enable_mask: false,
+                    enable_alpha_to_coverage: false,
+                    padding2: 0,
+                    padding3: 0,
+                },
+                depth_stencil_state: DepthStencilState {
+                    compare_op: 0,
+                    back_stencil_state: StencilOpState {
+                        fail_op: 0,
+                        pass_op: 0,
+                        depth_fail_op: 0,
+                        compare_op: 0,
+                    },
+                    front_stencil_state: StencilOpState {
+                        fail_op: 0,
+                        pass_op: 0,
+                        depth_fail_op: 0,
+                        compare_op: 0,
+                    },
+                    compare_mask: 0,
+                    write_mask: 0,
+                    enable_depth_test: false,
+                    enable_depth_write: false,
+                    enable_stencil_test: false,
+                    padding1: 0,
+                    padding2: 0,
+                    padding3: 0,
+                },
+                target_info: GraphicsPipelineTargetInfo {
+                    color_target_descriptions: target.addrOf(),
+                    num_color_targets: 1,
+                    depth_stencil_format: TEXTUREFORMAT_INVALID,
+                    has_depth_stencil_target: false,
+                    padding1: 0,
+                    padding2: 0,
+                    padding3: 0,
+                },
+                props: 0,
+            }
+            let p = SDL_CreateGPUGraphicsPipeline(self.raw, info.addrOf())
+            // The pipeline keeps what it needs; the shader objects are ours to drop.
+            SDL_ReleaseGPUShader(self.raw, vs)
+            SDL_ReleaseGPUShader(self.raw, fs)
+            if p as i64 == 0 {
+                return Result.Err("SDL_CreateGPUGraphicsPipeline: " + sdlError())
+            }
+            self.pipelines.push(p)
+        }
+        return Result.Ok(Pipeline {
+            id: self.pipelines.len - 1,
+        })
+    }
+
+    fn createBuffer(self: &mut Self, usage: u32, size: i64): Result<Buffer, string> {
+        var info = BufferCreateInfo {
+            usage: usage,
+            size: size as u32,
+            props: 0,
+        }
+        unsafe {
+            let b = SDL_CreateGPUBuffer(self.raw, info.addrOf())
+            if b as i64 == 0 {
+                return Result.Err("SDL_CreateGPUBuffer: " + sdlError())
+            }
+            self.buffers.push(b)
+        }
+        return Result.Ok(Buffer {
+            id: self.buffers.len - 1,
+            size: size,
+        })
+    }
+
+    fn createTransferBuffer(self: &mut Self, download: bool, size: i64): Result<TransferBuffer, string> {
+        var usage = TRANSFERBUFFERUSAGE_UPLOAD
+        if download {
+            usage = TRANSFERBUFFERUSAGE_DOWNLOAD
+        }
+        var info = TransferBufferCreateInfo {
+            usage: usage,
+            size: size as u32,
+            props: 0,
+        }
+        unsafe {
+            let t = SDL_CreateGPUTransferBuffer(self.raw, info.addrOf())
+            if t as i64 == 0 {
+                return Result.Err("SDL_CreateGPUTransferBuffer: " + sdlError())
+            }
+            self.transfers.push(t)
+        }
+        return Result.Ok(TransferBuffer {
+            id: self.transfers.len - 1,
+            size: size,
+        })
+    }
+
+    // An offscreen color target that can also be sampled (the bloom chain will).
+    fn createTargetTexture(self: &mut Self, w: i64, h: i64, format: u32): Result<Texture, string> {
+        var info = TextureCreateInfo {
+            kind: TEXTURETYPE_2D,
+            format: format,
+            usage: TEXTUREUSAGE_COLOR_TARGET | TEXTUREUSAGE_SAMPLER,
+            width: w as u32,
+            height: h as u32,
+            layer_count_or_depth: 1,
+            num_levels: 1,
+            sample_count: 0,
+            props: 0,
+        }
+        unsafe {
+            let t = SDL_CreateGPUTexture(self.raw, info.addrOf())
+            if t as i64 == 0 {
+                return Result.Err("SDL_CreateGPUTexture: " + sdlError())
+            }
+            self.textures.push(t)
+        }
+        return Result.Ok(Texture {
+            id: self.textures.len - 1,
+            w: w,
+            h: h,
+        })
+    }
+
+    fn begin(self: &Self): Result<Commands, string> {
+        unsafe {
+            let c = SDL_AcquireGPUCommandBuffer(self.raw)
+            if c as i64 == 0 {
+                return Result.Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
+            }
+            return Result.Ok(Commands {
+                raw: c,
+            })
+        }
+    }
+
+    fn textureTarget(self: &Self, t: Texture): Target {
+        return Target {
+            raw: self.textures[t.id],
+            w: t.w,
+            h: t.h,
+        }
+    }
+
+    // Copy `data` into the transfer buffer. `cycle` hands back a fresh backing
+    // allocation when the GPU may still be reading the previous one, so a per-frame
+    // upload never stalls on, or scribbles over, the frame in flight.
+    fn write<T>(self: &Self, dst: TransferBuffer, data: &Vec<T>, cycle: bool) {
+        let bytes = data.len * sizeOf<T>()
+        assert(bytes <= dst.size, "gpu write: data larger than the transfer buffer")
+        unsafe {
+            let t = self.transfers[dst.id]
+            let p = SDL_MapGPUTransferBuffer(self.raw, t, cycle)
+            memcpy(p, data.ptr() as *u8, bytes)
+            SDL_UnmapGPUTransferBuffer(self.raw, t)
+        }
+    }
+
+    // Read `tex` back to the CPU: one command buffer, then wait for the GPU to go idle.
+    // Returns w*h packed pixels in the texture's own byte order.
+    fn readTexture(self: &mut Self, tex: Texture): Result<Vec<u32>, string> {
+        let bytes = tex.w * tex.h * 4
+        let xfer = self.createTransferBuffer(true, bytes)?
+        var out: Vec<u32> = Vec.filled(tex.w * tex.h, 0)
+        unsafe {
+            let c = SDL_AcquireGPUCommandBuffer(self.raw)
+            if c as i64 == 0 {
+                return Result.Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
+            }
+            let cp = SDL_BeginGPUCopyPass(c)
+            var src = TextureRegion {
+                texture: self.textures[tex.id],
+                mip_level: 0,
+                layer: 0,
+                x: 0,
+                y: 0,
+                z: 0,
+                w: tex.w as u32,
+                h: tex.h as u32,
+                d: 1,
+            }
+            var dst = TextureTransferInfo {
+                transfer_buffer: self.transfers[xfer.id],
+                offset: 0,
+                pixels_per_row: 0,
+                rows_per_layer: 0,
+            }
+            SDL_DownloadFromGPUTexture(cp, src.addrOf(), dst.addrOf())
+            SDL_EndGPUCopyPass(cp)
+            if !SDL_SubmitGPUCommandBuffer(c) {
+                return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
+            }
+            SDL_WaitForGPUIdle(self.raw)
+            let p = SDL_MapGPUTransferBuffer(self.raw, self.transfers[xfer.id], false)
+            memcpy(out.ptr() as *u8, p, bytes)
+            SDL_UnmapGPUTransferBuffer(self.raw, self.transfers[xfer.id])
+        }
+        return Result.Ok(out)
+    }
+}
+
+// A texture a render pass can draw into: either this frame's swapchain image or an
+// offscreen texture. Move-only, and consumed by `beginPass`, so a swapchain image
+// cannot be carried past the command buffer that acquired it.
+pub struct Target {
+    raw: *SDL_GPUTexture,
+    w: i64,
+    h: i64,
+}
+
+// One command buffer. Consumed by `submit` (or `cancel`).
+pub struct Commands {
+    raw: *SDL_GPUCommandBuffer,
+}
+
+impl Commands {
+    // Copy a transfer buffer's first `bytes` into a GPU buffer. `cycle` as in write.
+    fn upload(self: &mut Self, dev: &Device, src: TransferBuffer, dst: Buffer, bytes: i64, cycle: bool) {
+        assert(bytes <= src.size && bytes <= dst.size, "gpu upload: region larger than a buffer")
+        unsafe {
+            let cp = SDL_BeginGPUCopyPass(self.raw)
+            var from = TransferBufferLocation {
+                transfer_buffer: dev.transfers[src.id],
+                offset: 0,
+            }
+            var to = BufferRegion {
+                buffer: dev.buffers[dst.id],
+                offset: 0,
+                size: bytes as u32,
+            }
+            SDL_UploadToGPUBuffer(cp, from.addrOf(), to.addrOf(), cycle)
+            SDL_EndGPUCopyPass(cp)
+        }
+    }
+
+    // Block until the window's next swapchain image is free. None when there is none to
+    // draw into (a minimized window); the frame should then submit without drawing.
+    fn acquireSwapchain(self: &mut Self, dev: &Device): Option<Target> {
+        var tex = 0 as *SDL_GPUTexture
+        var w: u32 = 0
+        var h: u32 = 0
+        unsafe {
+            if !SDL_WaitAndAcquireGPUSwapchainTexture(self.raw, dev.windowRaw, tex.addrOf(), w.addrOf(), h.addrOf()) {
+                return Option.None
+            }
+        }
+        if tex as i64 == 0 {
+            return Option.None
+        }
+        return Option.Some(Target {
+            raw: tex,
+            w: w as i64,
+            h: h as i64,
+        })
+    }
+
+    // 8 floats of vertex-stage uniforms, visible to MSL as `constant T& [[buffer(slot)]]`.
+    fn pushVertexUniforms(self: &mut Self, slot: u32, data: [f32; 8]) {
+        unsafe {
+            SDL_PushGPUVertexUniformData(self.raw, slot, data, 32)
+        }
+    }
+
+    fn beginPass(self: &mut Self, target: Target, clear: FColor): Result<Pass, string> {
+        var info = ColorTargetInfo {
+            texture: target.raw,
+            mip_level: 0,
+            layer_or_depth_plane: 0,
+            clear_color: clear,
+            load_op: LOADOP_CLEAR,
+            store_op: STOREOP_STORE,
+            resolve_texture: 0 as *SDL_GPUTexture,
+            resolve_mip_level: 0,
+            resolve_layer: 0,
+            cycle: false,
+            cycle_resolve_texture: false,
+            padding1: 0,
+            padding2: 0,
+        }
+        unsafe {
+            let p = SDL_BeginGPURenderPass(self.raw, info.addrOf(), 1, 0 as *u8)
+            if p as i64 == 0 {
+                return Result.Err("SDL_BeginGPURenderPass: " + sdlError())
+            }
+            return Result.Ok(Pass {
+                raw: p,
+            })
+        }
+    }
+
+    fn submit(self: Self): Result<Unit, string> {
+        if !SDL_SubmitGPUCommandBuffer(self.raw) {
+            return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
+        }
+        return Result.Ok(Unit {})
+    }
+
+    // Submit, and get a fence that signals when the GPU has finished this buffer. Pacing
+    // offscreen frames needs it: with no swapchain to block on, nothing else stops the
+    // CPU queueing frames (and cycling transfer buffers) without bound.
+    fn submitFenced(self: Self): Result<Fence, string> {
+        unsafe {
+            let f = SDL_SubmitGPUCommandBufferAndAcquireFence(self.raw)
+            if f as i64 == 0 {
+                return Result.Err("SDL_SubmitGPUCommandBufferAndAcquireFence: " + sdlError())
+            }
+            return Result.Ok(Fence {
+                raw: f,
+            })
+        }
+    }
+}
+
+// A submitted command buffer's completion signal. Consumed by `Device.wait`.
+pub struct Fence {
+    raw: *SDL_GPUFence,
+}
+
+impl Device {
+    fn waitIdle(self: &Self) {
+        SDL_WaitForGPUIdle(self.raw)
+    }
+
+    fn waitFor(self: &Self, f: &Fence) {
+        var raw = f.raw
+        unsafe {
+            SDL_WaitForGPUFences(self.raw, true, raw.addrOf(), 1)
+        }
+    }
+
+    // Release a fence only after at least one LATER submit. The leak below is measured;
+    // the mechanism is inferred, not read from SDL's source: SDL's Metal backend (3.4.x)
+    // appears to retire a finished command buffer, and drops its references to the buffers it
+    // used, during the next submit, by checking that buffer's fence. A fence released
+    // before that check goes back to SDL's pool and is handed out again unsignalled, so
+    // the old command buffer is never retired, and every buffer it touched stays
+    // "in use": each cycled upload then allocates a fresh one, about 1.6 MB a frame at
+    // 100k particles. Measured: release right after the wait grew to 1.1 GB in 300
+    // frames; release one submit later stays flat at 85 MB over 2000.
+    fn releaseFence(self: &Self, f: Fence) {
+        SDL_ReleaseGPUFence(self.raw, f.raw)
+    }
+}
+
+// One render pass. Consumed by `end`.
+pub struct Pass {
+    raw: *SDL_GPURenderPass,
+}
+
+impl Pass {
+    fn bindPipeline(self: &mut Self, dev: &Device, p: Pipeline) {
+        SDL_BindGPUGraphicsPipeline(self.raw, dev.pipelines[p.id])
+    }
+
+    fn bindVertexStorage(self: &mut Self, dev: &Device, slot: u32, b: Buffer) {
+        var raw = dev.buffers[b.id]
+        unsafe {
+            SDL_BindGPUVertexStorageBuffers(self.raw, slot, raw.addrOf(), 1)
+        }
+    }
+
+    fn draw(self: &mut Self, vertices: i64, instances: i64) {
+        SDL_DrawGPUPrimitives(self.raw, vertices as u32, instances as u32, 0, 0)
+    }
+
+    fn end(self: Self) {
+        SDL_EndGPURenderPass(self.raw)
+    }
+}
