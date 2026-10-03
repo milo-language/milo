@@ -43,6 +43,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |
+| `scripts/edit-loop.ts` | Edit-loop benchmark: build time for cold, unchanged-rebuild and one-line-edit scenarios over a fixed set of real programs, with the MILO_TIMING phase breakdown per build. |
 | `scripts/explicit-mut.ts` | Rewrites `f(x)` to `f(&mut x)` wherever `x` is bound to a `&mut` parameter. |
 | `scripts/fetch-assets.sh` | Regenerates the game assets that are deliberately NOT in git: the FLYBY city files (82 MB of terrain, footprints and aerial drape) and the APSIS planet maps. |
 | `scripts/fuzz-arena.ts` | Differential falsifier for the GENERATIONAL ARENA — std/arena's Handle<T>. |

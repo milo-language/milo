@@ -61,6 +61,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |
 | `src/suggest.ts` | "Did you mean ...?" hints for the checker. |
 | `src/target.ts` | host platform detection for platform-specific stdlib resolution, plus cross-compilation target definitions (incl. |
+| `src/timing.ts` | MILO_TIMING=1 per-phase wall-time breakdown of one compiler invocation, printed to stderr. |
 | `src/tokens.ts` | Token types and the keyword lists the lexer, parser and generated editor grammar all read from. |
 | `src/types.ts` | Internal type representations: the TypeKind tagged union every later stage speaks. |
 | `src/verify.ts` | Verification condition generator — produces SMT-LIB2 from contract annotations and symbolically executes function bodies to prove postconditions. |

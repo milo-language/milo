@@ -1,5 +1,7 @@
 // CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of
 // the surface described in src/cli-help.ts.
+// timing must be the first import: it timestamps Bun startup before other modules load.
+import { phase, phaseNote, markModulesLoaded, timingReport } from "./timing";
 import { discoverContractTests, contractTestSupport, UNREACHABLE_STATE_EXIT } from "./contract-tests";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync, statSync } from "fs";
 import { WARNING_NAMES } from "./warnings";
@@ -34,6 +36,8 @@ import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
 import { fixFor, applyEdits, type Fix } from "./fixes";
 import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore } from "./objcache";
+
+markModulesLoaded();
 
 // `--cgus=N` (also MILO_CGUS): how many codegen units to hand clang. Module-level rather
 // than threaded through compileToBinary's parameter list, which is already at its limit —
@@ -92,11 +96,10 @@ function failCompile(what: string): never {
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
-  let tokens, program;
+  let program: Program | undefined;
   try {
-    tokens = new Lexer(source).tokenize();
-    program = new Parser(tokens, source, filePath).parse();
-    program = resolveImports(program, sourceDir, target, filePath);
+    program = phase("lex+parse", () => new Parser(new Lexer(source).tokenize(), source, filePath).parse());
+    program = phase("resolve imports", () => resolveImports(program!, sourceDir, target, filePath));
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic — render the source line + caret
     // + hint (same Elm-style output as type errors). Errors from imported files
@@ -109,7 +112,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     failCompile("parse failed");
   }
 
-  const result = new TypeChecker(warningConfig).check(program);
+  const result = phase("check", () => new TypeChecker(warningConfig).check(program!));
   const errors = result.diagnostics.filter(d => d.severity === "error");
   const warnings = result.diagnostics.filter(d => d.severity !== "error");
   // Diagnostics from imported modules carry span.file; resolve their source off
@@ -128,7 +131,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     failCompile(`${errors.length} type error${errors.length === 1 ? "" : "s"}`);
   }
 
-  const hir = lower(program, result, sourceDir, target.os, target.arch);
+  const hir = phase("lower", () => lower(program!, result, sourceDir, target.os, target.arch));
   // Attached here rather than inside `lower`: the map is a resolver fact codegen renders
   // through (print text, DWARF names), not anything lowering computes or reads.
   hir.displayNames = program.displayNames;
@@ -287,7 +290,7 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  const ir = cg.generate(hirModule);
+  const ir = phase("codegen", () => cg.generate(hirModule));
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
@@ -332,6 +335,10 @@ function reportGuardSkips(output: string): void {
 
 function verifyCDecls(cGuards: string | null, target: TargetInfo, linkLibs: string[] = []): void {
   if (!cGuards) return;
+  phase("verify c decls", () => verifyCDeclsUntimed(cGuards, target, linkLibs));
+}
+
+function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: string[]): void {
   // The guard TU is compiled with the host cc against the host's headers, so it only
   // says anything true when the target IS the host. Bare-metal is freestanding; a
   // different hosted target has its own headers and, more subtly, its own data model —
@@ -811,7 +818,7 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
   // The previous build's unit placement keeps unchanged units byte-identical, which is
   // what lets the object cache serve them (a size-driven repack moved everything).
   const prev = objCacheEnabled() ? placementLoad(programId, units) : null;
-  const mods = splitModule(ir, units, stats, prev ?? undefined);
+  const mods = phase("split", () => splitModule(ir, units, stats, prev ?? undefined));
   if (!mods) return false;
   if (objCacheEnabled() && stats.out?.placement) placementStore(programId, units, stats.out.placement);
 
@@ -824,18 +831,24 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
     // `wait` reports only the last job's status, so a failed unit would go unnoticed and
     // resurface as a confusing undefined-symbol error at link time.
     const pending: { key: string; obj: string }[] = [];
-    const jobs = lls.map((f, i) => objCompileCommand(ccId, ccFlags, mods[i]!, objs[i]!,
+    const jobList = lls.map((f, i) => objCompileCommand(ccId, ccFlags, mods[i]!, objs[i]!,
       `${cc} ${ccFlags} -c ${f} -o ${objs[i]} -Wno-override-module & pids="$pids $!"`, pending))
-      .filter((j): j is string => j !== null).join("\n");
-    const script = `pids=""\n${jobs}\nfor p in $pids; do wait $p || exit 1; done`;
+      .filter((j): j is string => j !== null);
+    const script = `pids=""\n${jobList.join("\n")}\nfor p in $pids; do wait $p || exit 1; done`;
     if (process.env.MILO_VERBOSE === "1") {
-      console.error(`cgu: ${units} units, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines, ${units - pending.length} cached`);
+      console.error(`cgu: ${units} units, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines, ${units - jobList.length} cached`);
     }
-    if (pending.length > 0) execSync(script, { stdio: ["pipe", "pipe", "pipe"] });
-    for (const p of pending) objCacheStore(p.key, p.obj);
+    // Gated on the job count, not `pending`: with the cache off nothing is pending, and
+    // gating on it skipped every compile, so the link failed and the build silently fell
+    // back to one serial module.
+    phase("clang", () => {
+      if (jobList.length > 0) execSync(script, { stdio: ["pipe", "pipe", "pipe"] });
+      for (const p of pending) objCacheStore(p.key, p.obj);
+    });
+    phaseNote("clang", `${jobList.length}/${units} units compiled, ${units - jobList.length} from objcache`);
     const linkCmd = `${cc} ${ccFlags} ${objs.join(" ")} ${linkFlags}`;
     if (process.env.MILO_VERBOSE === "1") console.error(`link: ${linkCmd}`);
-    execSync(linkCmd, { stdio: ["pipe", "pipe", "pipe"] });
+    phase("link", () => execSync(linkCmd, { stdio: ["pipe", "pipe", "pipe"] }));
     return true;
   } catch (e: any) {
     if (process.env.MILO_VERBOSE === "1") {
@@ -907,15 +920,18 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       try {
         const compile = objCompileCommand(tc.id, ccFlags, readFileSync(llFile, "utf-8"), obj,
           `${tc.path}${ccFlags} -c ${llFile} -o ${obj} -Wno-override-module`, pending);
-        if (compile !== null) {
-          execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
-          for (const p of pending) objCacheStore(p.key, p.obj);
-        }
+        phase("clang", () => {
+          if (compile !== null) {
+            execSync(compile, { stdio: ["pipe", "pipe", "pipe"] });
+            for (const p of pending) objCacheStore(p.key, p.obj);
+          }
+        });
+        phaseNote("clang", `${compile === null ? 0 : 1}/1 units compiled, ${compile === null ? 1 : 0} from objcache`);
         const cmd = `${tc.path}${ccFlags} ${obj} -o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
         // MILO_VERBOSE=1 surfaces the otherwise-invisible link command — the only
         // place @link/detected/`--` flags actually land — so a link failure is diagnosable.
         if (process.env.MILO_VERBOSE === "1") console.error(`link: ${cmd}`);
-        execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
+        phase("link", () => execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }));
       } finally {
         try { unlinkSync(obj); } catch {}
       }
@@ -1580,6 +1596,8 @@ async function runTests(
 // MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
 async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks: boolean | null = null, contractChecks: boolean | null = null) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize, overflowChecks, false, contractChecks);
+  // Before the program starts, so its output never interleaves with the table.
+  timingReport();
   try {
     if (target.arch === "wasm64") {
       runWasm(bin, extraArgs); // process.exit()s itself with the wasm program's exit code
@@ -2526,6 +2544,7 @@ async function main() {
     const t0 = Date.now();
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations);
     reportCompiled(source!, bin, Date.now() - t0);
+    timingReport();
   } else if (cmd === "check") {
     runCheck(readFileSync(source!, "utf-8"), source!, target, warningConfig, args.includes("--json"));
   } else if (cmd === "fix") {
