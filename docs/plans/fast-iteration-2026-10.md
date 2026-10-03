@@ -73,3 +73,13 @@ std, and the link always runs.
 ## Progress log
 
 - 2026-10-03: plan written.
+- 2026-10-03: step 0 shipped (`MILO_TIMING=1`, `scripts/edit-loop.ts`). Baseline,
+  redline (8k-line game) one-line edit at -O2, warm cache: **1.11s**. check 0.28,
+  split 0.21, verify c decls 0.17, clang 0.18 (1/8 units), codegen 0.08, resolve 0.06,
+  link 0.04, Bun startup 0.03. Unchanged rebuild still 0.93s with zero clang.
+  Conclusion: clang is 16%, not the bottleneck at this size. Reorder: cache the c-decl
+  check (fixed cost every build), make `split` cheap (TS regex re-parse of the whole IR
+  even on full cache hits; codegen already knows function boundaries), then the daemon
+  for check/resolve/codegen. Step 1 (finer units) is worth at most ~0.18s here.
+  Also fixed: `MILO_OBJ_CACHE=0` silently skipped every split compile and fell back to
+  one serial module (jq cold 0.89s -> 0.57s).
