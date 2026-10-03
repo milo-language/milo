@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: fast-iteration-plan
+purpose: cut the edit-to-running loop to well under a second via measurement, finer object caching, mixed opt levels, a daemon, a HIR interpreter, hot patching and a cheap dev backend
+key-files: src/cgu.ts, src/objcache.ts, src/main.ts, scripts/edit-loop.ts
+update-when: a step ships or is abandoned, or the edit-loop numbers move
+last-verified: 2026-10-03
+-->
+
 # Fast iteration: edit-to-running in well under a second
 
 Goal: the edit loop (change a line, see it run) on a large program costs a fraction of a
