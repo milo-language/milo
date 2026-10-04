@@ -230,6 +230,10 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
     host.error(message(names), span, hint);
   };
   const cannotStore = (names: string) => `cannot store a closure that captures ${names} by reference`;
+  // Exactly the args `check` does not return early on. Tested before `retainsParam`, which
+  // walks the callee's body and was being run for every argument of every call.
+  const mayBeClosure = (value: Expr, bound: Map<string, Expr>) =>
+    value.kind === "Closure" || (value.kind === "Ident" && bound.has(value.name));
   // Structural walk rather than a per-node switch: a missing arm here would silently
   // skip a whole subtree, which is exactly the class of bug this pass exists to close.
   const visit = (node: unknown, bound: Map<string, Expr>) => {
@@ -273,7 +277,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
       case "Call": {
         const args = n.args as Expr[];
         for (let i = 0; i < args.length; i++) {
-          if (!retainsParam(host, fns, n.func as string, i, new Set())) continue;
+          if (!mayBeClosure(args[i]!, bound) || !retainsParam(host, fns, n.func as string, i, new Set())) continue;
           check(args[i]!, bound, names => `cannot pass a closure that captures ${names} by reference to '${n.func}', which keeps it`,
             `'${n.func}'`);
         }
@@ -294,6 +298,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
           // payload) or a builtin: treated as retaining, on retainsParam's own rule that
           // every unknown answers YES because a wrong NO is a use-after-free. The only
           // args this can reject are closures, so fail-closed costs nothing else.
+          if (!mayBeClosure(args[i]!, bound)) continue;
           if (mangled && fns.has(mangled) && !retainsParam(host, fns, mangled, i, new Set())) continue;
           check(args[i]!, bound, names => `cannot pass a closure that captures ${names} by reference to '${who}', which keeps it`,
             `'${who}'`);
@@ -321,7 +326,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
         const args = n.args as Expr[];
         for (let i = 0; i < args.length; i++) {
           // +1: the mangled method carries `self` as its first parameter.
-          if (!retainsParam(host, fns, mangled, i + 1, new Set())) continue;
+          if (!mayBeClosure(args[i]!, bound) || !retainsParam(host, fns, mangled, i + 1, new Set())) continue;
           check(args[i]!, bound, names => `cannot pass a closure that captures ${names} by reference to '${owner}.${n.method}', which keeps it`,
             `'${owner}.${n.method}'`);
         }
