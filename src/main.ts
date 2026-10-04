@@ -826,7 +826,7 @@ function objCompileCommand(ccId: string, ccFlags: string, ir: string, obj: strin
 function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string, linkFlags: string, optFlag: string, emitDebug: boolean, programId: string): boolean {
   const ir = readFileSync(llFile, "utf-8");
   let irLines = 1;
-  for (let i = 0; i < ir.length; i++) if (ir.charCodeAt(i) === 10) irLines++;
+  for (let i = ir.indexOf("\n"); i !== -1; i = ir.indexOf("\n", i + 1)) irLines++;
   const units = cguCount(irLines, optFlag, emitDebug);
   if (units < 2) return false;
 

@@ -50,23 +50,45 @@ type Module = {
 // The string alternative comes FIRST so a `@` inside `c"...@..."` is consumed as data:
 // those bytes are the program's own string constants, and rewriting one would corrupt it.
 // `c` is required to start a token so an identifier merely ending in `c` cannot open a
-// byte string. Must be rebuilt per call — a shared /g regex carries lastIndex between
-// callers and would silently skip the head of the next module.
-function scanner(): RegExp {
-  return new RegExp(String.raw`(?<![-a-zA-Z$._0-9])[c!]"(?:[^"\\]|\\.)*"|@(${IDENT})`, "g");
+// byte string. That rule used to be a `(?<!...)` lookbehind, which drops JSC off its regex
+// JIT and made the scan ~35x slower (101ms vs 3ms on redline's 4.7MB module); `forEachRef`
+// checks the preceding byte by hand instead and, on a rejected string, resumes one char
+// later, exactly where the lookbehind form would have resumed.
+const SCAN_SOURCE = String.raw`[c!]"(?:[^"\\]|\\.)*"|@(${IDENT})`;
+const IDENT_CHAR = /[-a-zA-Z$._0-9]/;
+
+/** Calls `fn(start, end, rawName)` for every `@symbol` in `text`, in order. */
+function forEachRef(text: string, fn: (start: number, end: number, raw: string) => void): void {
+  // Fresh per call: a shared /g regex carries lastIndex between callers.
+  const re = new RegExp(SCAN_SOURCE, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1];
+    if (name === undefined) {
+      if (m.index > 0 && IDENT_CHAR.test(text[m.index - 1]!)) re.lastIndex = m.index + 1;
+      continue;
+    }
+    fn(m.index, re.lastIndex, name);
+  }
 }
 
 /**
  * Rewrite every `@symbol` reference in `text` through `map` (undefined = leave alone).
- * A char-at-a-time walk here cost 708ms on a 135k-line module — enough to eat the
- * parallelism it exists to enable — so this stays a single native regex pass.
+ * A char-at-a-time walk here cost 708ms on a 135k-line module, so this stays a native
+ * regex pass. Returns `text` itself when nothing was renamed.
  */
 function mapSymbols(text: string, map: (name: string) => string | undefined): string {
-  return text.replace(scanner(), (whole, name?: string) => {
-    if (name === undefined) return whole;
-    const replaced = map(unquote(name));
-    return replaced === undefined ? whole : `@${quoteIfNeeded(replaced)}`;
+  let out: string[] | null = null;
+  let last = 0;
+  forEachRef(text, (start, end, raw) => {
+    const replaced = map(unquote(raw));
+    if (replaced === undefined) return;
+    (out ??= []).push(text.slice(last, start), `@${quoteIfNeeded(replaced)}`);
+    last = end;
   });
+  if (out === null) return text;
+  (out as string[]).push(text.slice(last));
+  return (out as string[]).join("");
 }
 
 function unquote(raw: string): string {
@@ -102,7 +124,7 @@ function mapGlobalSymbols(text: string, map: (name: string) => string | undefine
 /** Every distinct `@symbol` referenced anywhere in `text`. */
 function referencedSymbols(text: string): Set<string> {
   const found = new Set<string>();
-  mapSymbols(text, (name) => { found.add(name); return undefined; });
+  forEachRef(text, (_s, _e, raw) => { found.add(unquote(raw)); });
   return found;
 }
 
@@ -115,23 +137,28 @@ function referencedInGlobal(text: string): Set<string> {
   return found;
 }
 
+const DEFINE_HEADER = new RegExp(`^define\\s+(.*?)@(${IDENT})\\s*\\(`);
+const GLOBAL_LINE = new RegExp(`^@(${IDENT})\\s*=\\s*(.*)$`);
+
 function parseModule(ir: string): Module | null {
   const mod: Module = { header: [], typedefs: [], declares: [], globals: [], funcs: [], metadata: [], attrs: [] };
   const lines = ir.split("\n");
+  // Offset of lines[i] in `ir`, so a function's text is one slice instead of a re-join.
+  let offset = 0;
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; offset += lines[i]!.length + 1, i++) {
     const line = lines[i]!;
     if (!line.trim()) continue;
 
     if (line.startsWith("define")) {
       // Our emitter always closes a function with `}` in column 0, and never emits a
       // nested column-0 `}`; anything else means the shape changed under us, so bail.
-      const start = i;
-      while (i < lines.length && lines[i] !== "}") i++;
+      const start = i, startOffset = offset;
+      while (i < lines.length && lines[i] !== "}") offset += lines[i++]!.length + 1;
       if (i >= lines.length) return null;
-      const text = lines.slice(start, i + 1).join("\n");
+      const text = ir.slice(startOffset, offset + 1);
       const header = lines[start]!;
-      const m = new RegExp(`^define\\s+(.*?)@(${IDENT})\\s*\\(`).exec(header);
+      const m = DEFINE_HEADER.exec(header);
       if (!m) return null;
       mod.funcs.push({
         name: unquote(m[2]!),
@@ -150,7 +177,7 @@ function parseModule(ir: string): Module | null {
     if (/^%\S* = type\b/.test(line)) { mod.typedefs.push(line); continue; }
 
     if (line.startsWith("@")) {
-      const m = new RegExp(`^@(${IDENT})\\s*=\\s*(.*)$`).exec(line);
+      const m = GLOBAL_LINE.exec(line);
       if (!m) return null;
       // An alias or ifunc aliases a symbol we may be about to move; not emitted today,
       // and getting it wrong is silent, so decline the split instead of guessing.
@@ -346,8 +373,9 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
     if (!s) refs.set(name, (s = new Set()));
     s.add(unit);
   };
-  mod.funcs.forEach((f, i) => {
-    for (const sym of referencedSymbols(f.text)) noteRef(sym, home[i]!);
+  const funcRefs = mod.funcs.map(f => referencedSymbols(f.text));
+  funcRefs.forEach((syms, i) => {
+    for (const sym of syms) noteRef(sym, home[i]!);
   });
 
   const globalByName = new Map(mod.globals.map(g => [g.name, g]));
@@ -396,31 +424,48 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   const applyRename = (text: string) => rename.size === 0 ? text : mapSymbols(text, n => rename.get(n));
   const applyGlobalRename = (text: string) => rename.size === 0 ? text : mapGlobalSymbols(text, n => rename.get(n));
   const renamed = (name: string) => rename.get(name) ?? name;
+  const touchesRename = (syms: Set<string>) => {
+    if (rename.size === 0) return false;
+    for (const s of syms) if (rename.has(s)) return true;
+    return false;
+  };
+
+  // Everything below that every unit repeats is computed once, not once per unit.
+  const declares = mod.declares.map(applyRename);
+  const metadata = mod.metadata.map(applyRename);
+  const externDeclOfFn: (string | undefined)[] = new Array(mod.funcs.length);
+  const externDeclOfGlobal: (string | null | undefined)[] = new Array(mod.globals.length);
 
   const out: string[] = [];
   for (let u = 0; u < units; u++) {
     const parts: string[] = [];
     parts.push(...mod.header, "");
     if (mod.typedefs.length) parts.push(...mod.typedefs, "");
-    if (mod.declares.length) parts.push(...mod.declares.map(applyRename), "");
+    if (declares.length) parts.push(...declares, "");
 
     // Functions defined elsewhere but called here.
     const externFns: string[] = [];
-    for (const f of mod.funcs) {
+    for (let i = 0; i < mod.funcs.length; i++) {
+      const f = mod.funcs[i]!;
       if (funcHome.get(f.name) === u) continue;
       if (!refs.get(f.name)?.has(u)) continue;
-      externFns.push(applyRename(declareFor(f.header)));
+      externFns.push(externDeclOfFn[i] ??= applyRename(declareFor(f.header)));
     }
     if (externFns.length) parts.push(...externFns, "");
 
-    for (const g of mod.globals) {
+    for (let gi = 0; gi < mod.globals.length; gi++) {
+      const g = mod.globals[gi]!;
       const gh = globalHome.get(g.name)!;
       if (gh === u) {
         parts.push(applyGlobalRename(promote.has(g.name) ? promoteDefinition(g.text) : g.text));
       } else if (refs.get(g.name)?.has(u)) {
-        const decl = externDeclFor(g.text);
-        if (!decl) return null;
-        parts.push(applyRename(decl));
+        let decl = externDeclOfGlobal[gi];
+        if (decl === undefined) {
+          const d = externDeclFor(g.text);
+          decl = externDeclOfGlobal[gi] = d === null ? null : applyRename(d);
+        }
+        if (decl === null) return null;
+        parts.push(decl);
       }
     }
     parts.push("");
@@ -428,13 +473,15 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
     for (let i = 0; i < mod.funcs.length; i++) {
       const f = mod.funcs[i]!;
       if (home[i] !== u) continue;
-      parts.push(applyRename(promote.has(f.name) ? promoteDefinition(f.text) : f.text), "");
+      const text = promote.has(f.name) ? promoteDefinition(f.text) : f.text;
+      // promoteDefinition only drops a linkage word, so the scan's symbol set still holds.
+      parts.push(touchesRename(funcRefs[i]!) ? applyRename(text) : text, "");
     }
 
     // Attribute groups and metadata are replicated: a `#0` or `!dbg` attachment that
     // survived into any unit has to resolve there. Unused entries are legal.
     if (mod.attrs.length) parts.push(...mod.attrs);
-    if (mod.metadata.length) parts.push(...mod.metadata.map(applyRename));
+    if (metadata.length) parts.push(...metadata);
     out.push(parts.join("\n") + "\n");
   }
 
