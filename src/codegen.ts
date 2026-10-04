@@ -2260,21 +2260,26 @@ export class Codegen {
   // constant-size, so hoisting is unconditionally safe (allocas have no operands
   // that need dominating, and relative order is preserved).
   private hoistAllocas(lines: string[], insertAt: number): void {
+    // One partitioning pass: splicing each alloca out in place was quadratic in the
+    // function's line count.
     const hoisted: string[] = [];
+    const rest: string[] = [];
     let pastEntryBlock = false;
     for (let i = insertAt; i < lines.length; i++) {
       const line = lines[i];
       if (line.length > 0 && line[0] !== " " && line.endsWith(":")) {
         pastEntryBlock = true;
+        rest.push(line);
         continue;
       }
-      if (pastEntryBlock && /^ {2}%\S+ = alloca /.test(line)) {
-        hoisted.push(line);
-        lines.splice(i, 1);
-        i--;
-      }
+      // The includes() pre-filter skips the regex for the vast majority of lines.
+      if (pastEntryBlock && line.includes(" = alloca ") && /^ {2}%\S+ = alloca /.test(line)) hoisted.push(line);
+      else rest.push(line);
     }
-    if (hoisted.length > 0) lines.splice(insertAt, 0, ...hoisted);
+    if (hoisted.length === 0) return;
+    lines.length = insertAt;
+    for (const line of hoisted) lines.push(line);
+    for (const line of rest) lines.push(line);
   }
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
