@@ -27,6 +27,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/ast.ts` | AST node types: what the parser produces and the checker walks. |
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
+| `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |

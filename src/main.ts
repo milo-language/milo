@@ -35,6 +35,7 @@ import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
 import { fixFor, applyEdits, type Fix } from "./fixes";
+import { cdeclCacheEnabled, cdeclCacheKey, cdeclCacheHit, cdeclCacheStore } from "./cdeclcache";
 import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore } from "./objcache";
 
 markModulesLoaded();
@@ -307,6 +308,9 @@ function compileWithGuards(source: string, target: TargetInfo, filePath?: string
 function pkgConfigCflags(linkLibs: string[]): string {
   const flags: string[] = [];
   for (const lib of linkLibs) {
+    // A darwin framework is never a pkg-config module, and a failed lookup is not free:
+    // pkg-config takes ~30ms to give up, twice per name with the lowercase retry.
+    if (lib.startsWith("framework:")) continue;
     // `@link("SDL2")` is the -l name; pkg-config's module is `sdl2`. Try the name as
     // written first so a lib whose .pc really is capitalised still resolves.
     for (const mod of [lib, lib.toLowerCase()]) {
@@ -369,11 +373,22 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
   const cc = tc.kind === "clang" ? tc.path : "cc";
   const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}` : "";
   const libFlags = pkgConfigCflags(linkLibs);
+  // The llc+cc fallback has no toolchain id to key on, so it is never cached.
+  const cacheKey = tc.kind === "clang" && cdeclCacheEnabled()
+    ? cdeclCacheKey(cGuards, tc.id, `${crossFlags}\0${libFlags}`) : null;
+  if (cacheKey && cdeclCacheHit(cacheKey)) {
+    if (process.env.MILO_VERBOSE === "1") console.error(`cdeclcache: hit ${cacheKey.slice(0, 12)}`);
+    return;
+  }
   const tmpC = join(tmpdir(), `milo_cdecl_${crypto.randomUUID().slice(0, 8)}.c`);
+  const depFile = cacheKey ? tmpC.replace(/\.c$/, ".d") : null;
   try {
     writeFileSync(tmpC, cGuards);
-    const stdout = execSync(`${cc} -fsyntax-only ${crossFlags} ${libFlags} "${tmpC}" 2>&1`, { stdio: ["pipe", "pipe", "pipe"] });
-    reportGuardSkips(stdout.toString());
+    const depFlags = depFile ? `-MD -MF "${depFile}"` : "";
+    const stdout = execSync(`${cc} -fsyntax-only ${depFlags} ${crossFlags} ${libFlags} "${tmpC}" 2>&1`, { stdio: ["pipe", "pipe", "pipe"] });
+    const out = stdout.toString();
+    reportGuardSkips(out);
+    if (cacheKey && depFile && !/milo-guard-skip:/.test(out)) cdeclCacheStore(cacheKey, depFile, tmpC);
   } catch (e: any) {
     const stderr = (e.stdout?.toString() ?? "") + (e.stderr?.toString() ?? e.message ?? "");
     reportGuardSkips(stderr);
@@ -429,6 +444,7 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
     process.exit(1);
   } finally {
     try { unlinkSync(tmpC); } catch {}
+    if (depFile) try { unlinkSync(depFile); } catch {}
   }
 }
 
