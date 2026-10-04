@@ -83,3 +83,12 @@ std, and the link always runs.
   for check/resolve/codegen. Step 1 (finer units) is worth at most ~0.18s here.
   Also fixed: `MILO_OBJ_CACHE=0` silently skipped every split compile and fell back to
   one serial module (jq cold 0.89s -> 0.57s).
+- 2026-10-03: c-decl check cached (header content hashes from clang's depfile): 0.20 -> 0.03s
+  warm. Split 0.24 -> 0.03s (a regex lookbehind knocked JSC off its regex JIT; output
+  byte-identical across 1490 fixture splits). Redline one-line edit 1.17 -> 0.96s on a
+  loaded machine; frontend is now ~60%.
+  Warm-JIT experiment (frontend 8x in one process, redline): 566ms cold -> ~350ms warm
+  (check 360 -> 230, resolve 77 -> 50, codegen 100 -> 60). So a daemon buys ~0.2s from the
+  JIT alone, plus resolve's std re-parse if it caches ASTs by content hash. Check at
+  ~230ms warm is real work: profile it for hot spots before building any incremental
+  checking.
