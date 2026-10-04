@@ -187,6 +187,7 @@ interface MoveSnapshot {
   moved: boolean;
   places: string[];
 }
+const PRISTINE_MOVE: MoveSnapshot = { moved: false, places: [] };
 
 interface VarInfo {
   type: TypeKind;
@@ -602,6 +603,26 @@ export class TypeChecker {
   // prior statement-walker attempt fell into.
   private unsafeUsedStack: boolean[] = [];
   private scopes: Map<string, VarInfo>[] = [];
+  // Per-statement bookkeeping used to rescan every binding in scope, and the module scope
+  // holds every global (300+ in a game-sized program), which made those scans the
+  // checker's top cost. The fields below let each scan skip the bindings it provably
+  // cannot change; the results are the same as the full scans.
+  //
+  // The module scope (pushed before globals are declared) and every VarInfo declared in it.
+  private globalScope: Map<string, VarInfo> | null = null;
+  private globalScopeInfos = new Set<VarInfo>();
+  // Set at the first write to a global's move state. Until then every global is pristine
+  // (moved false, movedPlaces undefined), so a move snapshot can leave them out.
+  private globalMovesTouched = false;
+  // Snapshots that left the globals out, with how many globals existed when taken: those
+  // globals were pristine at that moment, which is what restore/checkLoopMoves read.
+  private partialMoveSnaps = new WeakMap<Map<VarInfo, MoveSnapshot>, number>();
+  // Open "which bindings did this statement newly freeze" windows. The before-set is
+  // scanned lazily at the first change to any `borrowed` flag inside the window, so a
+  // statement that freezes nothing never scans at all.
+  private borrowWindows: { before: Set<VarInfo> | null }[] = [];
+  // Bindings whose flexInt is (or recently was) set, with the name they are declared under.
+  private flexIntVars = new Map<VarInfo, string>();
   private exprTypes = new Map<Expr, TypeKind>();
   // Per-pattern payload binding types (parallel to pattern.bindings), for hover/LSP.
   private patternBindingTypes = new Map<import("./ast").Pattern, TypeKind[]>();
@@ -1043,11 +1064,13 @@ export class TypeChecker {
     const unsafeUsed = this.unsafeUsedStack.length;
     const loopDepth = this.loopDepth;
     const closureFrameCount = this.closureFrames.length;
+    const borrowWindowCount = this.borrowWindows.length;
     try {
       f();
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
       this.scopes.length = scopeDepth;
+      this.borrowWindows.length = borrowWindowCount;
       this.unsafeDepth = unsafeDepth;
       this.unsafeUsedStack.length = unsafeUsed;
       this.loopDepth = loopDepth;
@@ -2422,13 +2445,32 @@ export class TypeChecker {
 
   private snapshotMoveState(): Map<VarInfo, MoveSnapshot> {
     const snap = new Map<VarInfo, MoveSnapshot>();
+    const skip = this.globalMovesTouched ? null : this.globalScope;
     for (const scope of this.scopes) {
+      if (scope === skip) continue;
       for (const [, info] of scope) snap.set(info, { moved: info.moved, places: [...info.movedPlaces ?? []] });
     }
+    if (skip) this.partialMoveSnaps.set(snap, skip.size);
     return snap;
   }
 
+  // Called before any write to a binding's `moved`/`movedPlaces`.
+  private touchMoveState(info: VarInfo) {
+    if (!this.globalMovesTouched && this.globalScopeInfos.has(info)) this.globalMovesTouched = true;
+  }
+
   private restoreMoveState(snap: Map<VarInfo, MoveSnapshot>) {
+    const partialGlobals = this.partialMoveSnaps.get(snap);
+    // The globals a partial snapshot left out were pristine when it was taken; once any
+    // global's move state has been written, put them back to that.
+    if (partialGlobals !== undefined && this.globalMovesTouched && this.globalScope) {
+      let i = 0;
+      for (const [, info] of this.globalScope) {
+        if (i++ >= partialGlobals) break;
+        info.moved = false;
+        info.movedPlaces = undefined;
+      }
+    }
     for (const [info, s] of snap) {
       info.moved = s.moved;
       // Rebuilt rather than reused: the snapshot is taken once and restored to at each
@@ -2441,7 +2483,7 @@ export class TypeChecker {
   // falls through is unusable after, whichever path actually ran.
   private mergeMoveState(snap: Map<VarInfo, MoveSnapshot>) {
     for (const [info, s] of snap) {
-      if (s.moved) info.moved = true;
+      if (s.moved) { this.touchMoveState(info); info.moved = true; }
       for (const p of s.places) this.markPlaceMoved(info, p);
     }
   }
@@ -2450,12 +2492,17 @@ export class TypeChecker {
   // so it is an error unless the only path that moved also left the loop. Applies one
   // level down too — a field moved out in the body is just as gone on iteration two.
   private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, returnMoves: Set<VarInfo>, sp: Span | undefined) {
+    const partialGlobals = this.partialMoveSnaps.get(pre);
     for (const scope of this.scopes) {
+      const leftOut = partialGlobals !== undefined && scope === this.globalScope;
+      // Globals still pristine now cannot have moved since the snapshot.
+      if (leftOut && !this.globalMovesTouched) continue;
+      let i = 0;
       for (const [name, info] of scope) {
-        const before = pre.get(info);
+        const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
         if (!before.moved && info.moved) {
-          if (returnMoves.has(info)) info.moved = false;
+          if (returnMoves.has(info)) { this.touchMoveState(info); info.moved = false; }
           else this.error(`cannot move '${name}' out of a loop`, sp);
         }
         for (const p of [...info.movedPlaces ?? []]) {
@@ -2513,12 +2560,14 @@ export class TypeChecker {
         }
       }
     }
+    if (scope === this.globalScope) this.globalScopeInfos.add(info);
     scope.set(name, info);
   }
 
   // Freeze `info` for a borrow of `place`. The path is recorded so a later mutation of a
   // provably different field isn't rejected; pass null when the borrowed place is unknown.
   private freeze(info: VarInfo, place: Expr | null, kind: BorrowKind = "view", holder: PointerHolder | null = null) {
+    this.noteBorrowChange();
     info.borrowed = true;
     (info.borrowedPaths ??= []).push(place ? this.borrowPrefix(place) : null);
     (info.borrowKinds ??= []).push(kind);
@@ -2548,6 +2597,33 @@ export class TypeChecker {
   // died). A pointer borrow is owned by a BINDING and outlives all of them, so it is
   // kept here and released only through `releasePointerBorrows` by its holder; otherwise
   // `let p = v.ptr(); for x in v {}; v.push(0)` would drop `p`'s borrow with the loop's.
+  private openBorrowWindow(): { before: Set<VarInfo> | null } {
+    const w = { before: null };
+    this.borrowWindows.push(w);
+    return w;
+  }
+
+  // Called before any write to a `borrowed` flag: every open window that has not yet
+  // recorded its before-set records it now, while it still matches the window's start.
+  private noteBorrowChange() {
+    for (const w of this.borrowWindows) {
+      if (w.before) continue;
+      const before = new Set<VarInfo>();
+      for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) before.add(vi);
+      w.before = before;
+    }
+  }
+
+  // Bindings in scope frozen now that were not when `w` opened, in scope order. Closes `w`.
+  private newlyFrozenSince(w: { before: Set<VarInfo> | null }): VarInfo[] {
+    const at = this.borrowWindows.lastIndexOf(w);
+    if (at >= 0) this.borrowWindows.length = at;
+    const out: VarInfo[] = [];
+    if (!w.before) return out;
+    for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !w.before.has(vi)) out.push(vi);
+    return out;
+  }
+
   private unfreeze(info: VarInfo) {
     this.retainBorrows(info, (_, i) => info.borrowKinds?.[i] === "pointer");
   }
@@ -2561,6 +2637,7 @@ export class TypeChecker {
     const idx: number[] = [];
     for (let i = 0; i < (info.borrowedPaths?.length ?? 0); i++) if (keep(holders[i] ?? null, i)) idx.push(i);
     if (idx.length === 0) {
+      this.noteBorrowChange();
       info.borrowed = false;
       info.borrowedPaths = undefined;
       info.borrowKinds = undefined;
@@ -2771,6 +2848,7 @@ export class TypeChecker {
     // still the owner, `tryMoveLeaf` left its borrows in place, and there is nothing to carry.
     if (!to || !carried.from.moved) return;
     carried.holders.forEach((h, i) => {
+      this.noteBorrowChange();
       to.borrowed = true;
       (to.borrowedPaths ??= []).push(carried.paths[i]);
       (to.borrowKinds ??= []).push("pointer");
@@ -3462,6 +3540,7 @@ export class TypeChecker {
 
     // type-check module-level globals — push a module scope so declare() works
     this.pushScope();
+    this.globalScope = this.scopes[this.scopes.length - 1];
     const globalTypes = new Map<string, TypeKind>();
     // Declare annotated globals up front. Checking one global's initializer can
     // monomorphize a function whose body reads a global declared further down the
@@ -5672,6 +5751,7 @@ export class TypeChecker {
       // `r.items()` that returns `self.data[..]` blocks writes to `r.data` and nothing else
       const base = this.accessPath(obj);
       const path = base && base.fields && viewFields ? [...base.fields, ...viewFields] : null;
+      this.noteBorrowChange();
       info.borrowed = true;
       (info.borrowedPaths ??= []).push(path);
     }
@@ -5926,10 +6006,9 @@ export class TypeChecker {
     // this statement: its width is now fixed at the default. This is what keeps
     // widening sound — a binding can only adopt a wider width at its FIRST read
     // (within one statement), never retroactively after an i32 use committed.
-    for (const scope of this.scopes) {
-      for (const [, vi] of scope) {
-        if (vi.flexInt && vi.read) vi.flexInt = undefined;
-      }
+    for (const [vi, name] of this.flexIntVars) {
+      if (!vi.flexInt) { this.flexIntVars.delete(vi); continue; }
+      if (vi.read && this.scopes.some(s => s.get(name) === vi)) { vi.flexInt = undefined; this.flexIntVars.delete(vi); }
     }
   }
 
@@ -5942,8 +6021,7 @@ export class TypeChecker {
         if (hint && this.nestedRef(hint)) {
           this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
         }
-        const frozenBeforeRhs = new Set<VarInfo>();
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
+        const frozenBeforeRhs = this.openBorrowWindow();
         const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
         const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
@@ -5962,8 +6040,7 @@ export class TypeChecker {
         // Borrows the RHS created: a ref binding owns them until its scope pops;
         // any other binding consumed them within the statement (e.g. s[0..n].clone())
         // and must not leak a freeze onto later statements.
-        const newlyFrozen: VarInfo[] = [];
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) newlyFrozen.push(vi);
+        const newlyFrozen = this.newlyFrozenSince(frozenBeforeRhs);
         const bindingType = hint ?? valType;
         // A void binding gets a storage slot it cannot have: `alloca void`. The value
         // side of "no data" is `Unit`; `void` is only a function return type. Silent once a
@@ -5984,7 +6061,7 @@ export class TypeChecker {
           const leaves = this.flexIntLeaves(stmt.value);
           if (leaves) {
             const info = this.lookup(stmt.name);
-            if (info) info.flexInt = { leaves, valueExpr: stmt.value };
+            if (info) { info.flexInt = { leaves, valueExpr: stmt.value }; this.flexIntVars.set(info, stmt.name); }
           }
         }
         if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
@@ -6000,8 +6077,7 @@ export class TypeChecker {
         if (hint && this.nestedRef(hint)) {
           this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
         }
-        const frozenBeforeRhs = new Set<VarInfo>();
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
+        const frozenBeforeRhs = this.openBorrowWindow();
         const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
         const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
@@ -6029,8 +6105,7 @@ export class TypeChecker {
           }
         }
         {
-          const newlyFrozen: VarInfo[] = [];
-          for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) newlyFrozen.push(vi);
+          const newlyFrozen = this.newlyFrozenSince(frozenBeforeRhs);
           const bindingType = hint ?? valType;
           // A void binding gets a storage slot it cannot have: `alloca void`. The value
           // side of "no data" is `Unit`; `void` is only a function return type. Silent once a
@@ -6134,8 +6209,7 @@ export class TypeChecker {
         // are consumed within this statement — no binding outlives it — so they
         // must not leak a freeze onto the next statement. Snapshot which vars are
         // already frozen, then release any newly-frozen by the RHS afterward.
-        const frozenBeforeRhs = new Set<VarInfo>();
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
+        const frozenBeforeRhs = this.openBorrowWindow();
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
         this.lintStringConcatInLoop(stmt.target, stmt.value, targetInfo.type, sp);
         if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
@@ -6150,13 +6224,13 @@ export class TypeChecker {
             this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);
           }
         }
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) this.unfreeze(vi);
+        for (const vi of this.newlyFrozenSince(frozenBeforeRhs)) this.unfreeze(vi);
         if (targetInfo.type.tag === "int") this.enforceRangeInto(stmt.value, valType, targetInfo.type, sp);
         // ident-ok: assigning a whole variable revives it, and a field assignment deliberately must not revive the whole
         if (stmt.target.kind === "Ident") {
           const info = this.lookup(stmt.target.name);
           if (info) {
-            info.moved = false;
+            this.touchMoveState(info); info.moved = false;
             // `p = w.ptr()` overwrites whatever `p` pointed at, so the borrows the old
             // value held end here; the new ones are bound below. A `var` can never hold a
             // reference, so every freeze on it is a pointer borrow.
@@ -6474,10 +6548,9 @@ export class TypeChecker {
         // A view produced by a discarded expression (`print(lx.word(0, 5))`) has no
         // binding to outlive the statement, so its freeze must not survive it either —
         // same reasoning as the RHS snapshot in Assign, which this mirrors.
-        const frozenBefore = new Set<VarInfo>();
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBefore.add(vi);
+        const frozenBefore = this.openBorrowWindow();
         const exprType = this.checkExpr(stmt.expr);
-        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBefore.has(vi)) this.unfreeze(vi);
+        for (const vi of this.newlyFrozenSince(frozenBefore)) this.unfreeze(vi);
         let warned = this.valueTails.has(stmt.expr);
         if (!warned && exprType.tag === "enum") {
           const enumInfo = this.enums.get(exprType.name);
@@ -6544,7 +6617,7 @@ export class TypeChecker {
           // Same arm-entry consumption as match: a destructuring then-branch
           // zeroes the payload before its body runs, so the subject is dead
           // there. The else-branch never destructures, so it stays readable.
-          let patternMovedInfo: { moved: boolean } | null = null;
+          let patternMovedInfo: VarInfo | null = null;
           if (!subjBorrows && this.armConsumesSubject(stmt.pattern, enumInfo)) {
             this.tryMove(stmt.subject);
             // ident-ok: tracks a NAMED binding so the then-body can read it again; a field subject has no binding to un-mark
@@ -6556,7 +6629,7 @@ export class TypeChecker {
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
           if (patternMovedInfo) {
             this.movedByPattern.delete(patternMovedInfo);
-            patternMovedInfo.moved = false; // re-marked by the tryMove below, after the else-branch
+            this.touchMoveState(patternMovedInfo); patternMovedInfo.moved = false; // re-marked by the tryMove below, after the else-branch
           }
           this.popScope();
         } else {
@@ -7377,7 +7450,7 @@ export class TypeChecker {
             `move the remaining fields individually, or clone '${expr.name}${partial}' at the point it was transferred so '${expr.name}' stays whole`);
           return;
         }
-        info.moved = true;
+        this.touchMoveState(info); info.moved = true;
         this.movedExprs.add(expr);
         // Moving a capture out of a `move` closure empties the environment slot it
         // lives in, so the closure cannot run a second time. Record it on the capture
@@ -7401,7 +7474,7 @@ export class TypeChecker {
           if (this.isCopyType(cap.type)) continue;
           const info = this.lookup(cap.name);
           if (info) {
-            info.moved = true;
+            this.touchMoveState(info); info.moved = true;
             this.unfreeze(info);
           }
         }
@@ -8132,7 +8205,7 @@ export class TypeChecker {
   }
 
   private markPlaceMoved(info: VarInfo, path: string) {
-    (info.movedPlaces ??= new Set()).add(path);
+    this.touchMoveState(info); (info.movedPlaces ??= new Set()).add(path);
   }
 
   private clearMovedPlace(info: VarInfo, path: string | null) {
@@ -9386,7 +9459,7 @@ export class TypeChecker {
         // zeroed captures. Before this, the second call silently returned a wrong
         // answer (and, before captures aliased their slots, double-freed).
         if (varInfo.callsOnce && !varInfo.moved) {
-          varInfo.moved = true;
+          this.touchMoveState(varInfo); varInfo.moved = true;
           varInfo.consumedByCall = true;
         }
         if (fnType.tag === "cfn") this.cfnCalls.set(expr, fnType);
@@ -11905,7 +11978,7 @@ export class TypeChecker {
     // Keyed on the placeholder pattern, which is unique per statement: this is the map the
     // LSP already reads for a let-else binding's hover, so the unwrap gets one for free.
     this.patternBindingTypes.set(stmt.pattern, [refType]);
-    if (refType.mutable) info.borrowed = true;
+    if (refType.mutable) { this.noteBorrowChange(); info.borrowed = true; }
     this.declare(name, { type: refType, mutable: refType.mutable, moved: false, borrowed: false, read: false, span: sp,
       ...(refType.mutable && { freezes: [info] }) });
   }
