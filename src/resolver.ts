@@ -737,20 +737,28 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     k === "span" || k === "sourceFile" || k === "isPub" ? undefined : typeof v === "bigint" ? `${v}n` : v;
   // Signature identity ignores param *names* — only arity, param types, and the
   // return type decide whether one fn can stand in for another.
+  // A decl's comparison text is only read when two decls share a name, so it is built on
+  // first use: stringifying every fn, type and global up front was most of resolve's time.
+  const bodyCache = new WeakMap<object, string>();
+  const bodyOf = (decl: unknown): string => {
+    let b = bodyCache.get(decl as object);
+    if (b === undefined) { b = JSON.stringify(decl, stripForCompare); bodyCache.set(decl as object, b); }
+    return b;
+  };
   const sigKey = (f: typeof functions[number]) =>
     f.params.map(p => JSON.stringify(p.type, stripSpan)).join(",") + "=>" + JSON.stringify(f.retType, stripSpan);
 
   // Stdlib/prelude signatures, to detect user shadows. First occurrence wins.
-  const stdlibSigs = new Map<string, { file: string; sig: string; body: string }>();
+  const stdlibSigs = new Map<string, { file: string; sig: string; decl: object }>();
   for (const f of functions) {
     if (f.isExtern) continue;
     if (f.sourceFile && preludeFiles.has(f.sourceFile) && !stdlibSigs.has(f.name)) {
-      stdlibSigs.set(f.name, { file: f.sourceFile, sig: sigKey(f), body: JSON.stringify(f, stripForCompare) });
+      stdlibSigs.set(f.name, { file: f.sourceFile, sig: sigKey(f), decl: f });
     }
   }
 
   const shadowedStdlib: { name: string; stdlibFile: string; span?: Span }[] = [];
-  const fnDefs = new Map<string, { file: string; body: string }>();
+  const fnDefs = new Map<string, { file: string; decl: object }>();
   for (const f of functions) {
     if (f.isExtern || (f.sourceFile && preludeFiles.has(f.sourceFile))) continue;
 
@@ -760,7 +768,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // silently rebinds those calls to the user's body, which is a footgun (a user's
     // `strIndexOf`/`charAt` can break std from the inside). Surface it as a warning
     // the user can `--allow` when the override is deliberate.
-    if (shadowed && shadowed.sig === sigKey(f) && shadowed.body !== JSON.stringify(f, stripForCompare)) {
+    if (shadowed && shadowed.sig === sigKey(f) && bodyOf(shadowed.decl) !== bodyOf(f)) {
       shadowedStdlib.push({ name: f.name, stdlibFile: shadowed.file, span: f.span });
     }
     if (shadowed && shadowed.sig !== sigKey(f)) {
@@ -774,9 +782,8 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       }, readSourceSafe(f.sourceFile), f.sourceFile);
     }
 
-    const body = JSON.stringify(f, stripForCompare);
     const prev = fnDefs.get(f.name);
-    if (prev && prev.body !== body && prev.file !== f.sourceFile) {
+    if (prev && prev.file !== f.sourceFile && bodyOf(prev.decl) !== bodyOf(f)) {
       throw new ParseError({
         severity: "error",
         code: "duplicate-fn",
@@ -786,7 +793,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         hint: `also defined in '${prev.file}'. Milo compiles all modules into one namespace, so only one body survives and every call site runs it. Rename one, or move the shared implementation into a single module both import.`,
       }, readSourceSafe(f.sourceFile), f.sourceFile);
     }
-    if (!prev) fnDefs.set(f.name, { file: f.sourceFile ?? "(unknown)", body });
+    if (!prev) fnDefs.set(f.name, { file: f.sourceFile ?? "(unknown)", decl: f });
   }
 
   // A stdlib file reads as 'std/http.milo' rather than the absolute path it was
@@ -822,11 +829,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // redefined with a different signature is `shadows-stdlib`, an error, because
   // the library's own uses break; a prelude type redefined with different fields
   // breaks the library's own uses the same way.
-  const typeDefs = new Map<string, { file: string; kind: string; body: string }>();
+  const typeDefs = new Map<string, { file: string; kind: string; decl: unknown }>();
   for (const t of typeDecls) {
-    const body = JSON.stringify(t.decl, stripForCompare);
     const prev = typeDefs.get(t.name);
-    if (prev && prev.file !== t.file && (prev.kind !== t.kind || prev.body !== body)) {
+    if (prev && prev.file !== t.file && (prev.kind !== t.kind || bodyOf(prev.decl) !== bodyOf(t.decl))) {
       const sameKind = prev.kind === t.kind;
       throw new ParseError({
         severity: "error",
@@ -837,7 +843,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         hint: `Milo merges every module into one flat namespace, so a type name has exactly one meaning program-wide${sameKind ? " and these two definitions differ" : ""} — only one of them survives and every use of '${t.name}' resolves to it, including the other module's own uses. Rename one${sameKind ? ", or move the shared definition into a single module both import" : ""}.`,
       }, readSourceSafe(t.file), t.file);
     }
-    if (!prev) typeDefs.set(t.name, { file: t.file, kind: t.kind, body });
+    if (!prev) typeDefs.set(t.name, { file: t.file, kind: t.kind, decl: t.decl });
   }
 
   // Globals live in the *value* namespace, alongside fns — `@name` is one LLVM
@@ -847,12 +853,11 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // within a file; this is the same rule across files.
   const fnFileByName = new Map<string, string>();
   for (const f of functions) if (!fnFileByName.has(f.name)) fnFileByName.set(f.name, f.sourceFile ?? "(unknown)");
-  const globalDefs = new Map<string, { file: string; body: string }>();
+  const globalDefs = new Map<string, { file: string; decl: unknown }>();
   for (const g of globalDecls) {
-    const body = JSON.stringify(g.decl, stripForCompare);
     const prev = globalDefs.get(g.name);
     const fnFile = fnFileByName.get(g.name);
-    const clash = prev && prev.file !== g.file && prev.body !== body
+    const clash = prev && prev.file !== g.file && bodyOf(prev.decl) !== bodyOf(g.decl)
       ? { file: prev.file, kind: "global" }
       : fnFile !== undefined && fnFile !== g.file
         ? { file: fnFile, kind: "function" }
@@ -867,7 +872,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         hint: `Milo merges every module into one flat namespace, and globals share it with functions — only one '${g.name}' survives and every use resolves to it. Rename one of them.`,
       }, readSourceSafe(g.file), g.file);
     }
-    if (!prev) globalDefs.set(g.name, { file: g.file, body });
+    if (!prev) globalDefs.set(g.name, { file: g.file, decl: g.decl });
   }
 
   // dedup: keep last occurrence of each name (user wins over prelude)
@@ -877,10 +882,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     for (let i = arr.length - 1; i >= 0; i--) {
       if (!seen.has(arr[i].name)) {
         seen.add(arr[i].name);
-        result.unshift(arr[i]);
+        result.push(arr[i]);
       }
     }
-    return result;
+    return result.reverse();
   }
 
   const userFnNames = new Set(program.functions.map(f => f.name));
