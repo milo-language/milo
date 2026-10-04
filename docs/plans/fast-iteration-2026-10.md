@@ -92,3 +92,10 @@ std, and the link always runs.
   JIT alone, plus resolve's std re-parse if it caches ASTs by content hash. Check at
   ~230ms warm is real work: profile it for hot spots before building any incremental
   checking.
+- 2026-10-03: frontend hot-spot pass (4 fixes, IR + diagnostics byte-identical on 1275
+  files, full suite green). Main one: every statement rescanned every binding in scope,
+  and the module scope holds every global (309 in redline); scans are now lazy/skipped.
+  Redline in-process check 283 -> 102ms cold, 192 -> 46ms warm. Edit loop (quiet
+  machine): one-line edit 0.77 -> **0.57s**, unchanged rebuild 0.59 -> 0.40s, frontend
+  0.44 -> 0.25s. Profile now flat (nothing over 3.5%). Remaining cold frontend ~250ms vs
+  ~130ms warm: the daemon (step 3) is next, worth ~0.12s JIT + ~20ms std re-lex/parse.
