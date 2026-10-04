@@ -1,9 +1,27 @@
-// Edit-loop benchmark: build time for cold, unchanged-rebuild and one-line-edit scenarios
+// Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios
 // over a fixed set of real programs, with the MILO_TIMING phase breakdown per build.
 // This is the number every fast-iteration step (docs/plans/fast-iteration-2026-10.md)
 // must move.
 //
 //   bun scripts/edit-loop.ts [--runs N] [-t <program substr>] [--json]
+//
+// Scenarios, per program:
+//   cold                  object cache off (so no placement and no hot unit either).
+//   warm unchanged        rebuild of an already-built, unedited program.
+//   one-line edit         the first edit to a function: it moves to the hot unit
+//                         (src/cgu.ts HotState), so its old unit changes too. That old
+//                         unit minus the function is the same IR on every run, so once
+//                         any build has compiled it (run 1, or an earlier invocation) it
+//                         comes from the objcache and this row matches "repeat edit".
+//                         On a truly empty cache it shows one more unit compiled.
+//   repeat edit           a second edit to the same string literal right after a first;
+//                         only the hot unit should recompile. This is the edit loop.
+//   one-line edit --fast  a first edit at -O0.
+// Every edit run starts from a reset: the original source rebuilt with MILO_HOT_UNIT=0,
+// which empties the persisted hot set. Without it, run 2 of "one-line edit" would find
+// the function already hot from run 1 and measure a repeat edit, and an earlier
+// invocation's hot set would leak into this one (the work path, and so the program's
+// cache key, is the same every time).
 //
 // Builds only; no produced binary is ever run. Each build goes through scripts/guard.ts
 // with the same caps scripts/selfhost.sh uses, since the src-milo build peaks near 2 GB.
@@ -33,7 +51,7 @@ const PROGRAMS: Program[] = [
   { name: "src-milo", dir: "src-milo", entry: "main.milo", needle: `"commands: build, run, emit-ir, check, lsp"` },
 ];
 
-const SCENARIOS = ["cold", "warm unchanged", "one-line edit", "one-line edit --fast"] as const;
+const SCENARIOS = ["cold", "warm unchanged", "one-line edit", "repeat edit", "one-line edit --fast"] as const;
 type Scenario = typeof SCENARIOS[number];
 
 interface Build {
@@ -95,10 +113,12 @@ function parseTiming(stderr: string): { totalMs: number; phases: Record<string, 
   return totalMs < 0 ? null : { totalMs, phases, compiled, total };
 }
 
-function build(entry: string, out: string, opts: { cache: boolean; fast: boolean }): Build {
+function build(entry: string, out: string, opts: { cache: boolean; fast: boolean; hot?: boolean }): Build {
   const env: Record<string, string> = { ...process.env as Record<string, string>, MILO_TIMING: "1" };
   if (!opts.cache) env.MILO_OBJ_CACHE = "0";
   else delete env.MILO_OBJ_CACHE;
+  if (opts.hot === false) env.MILO_HOT_UNIT = "0";
+  else delete env.MILO_HOT_UNIT;
   const args = ["scripts/guard.ts", "--mem-mb", "4096", "--virtual-mem-mb", "8192", "--timeout-s", "600", "--",
     "bun", "run", join(root, "src/main.ts"), "build", entry, "-o", out, ...(opts.fast ? ["--fast"] : [])];
   const r = spawnSync("bun", args, { cwd: root, env, encoding: "utf-8", maxBuffer: 64 << 20 });
@@ -162,7 +182,7 @@ function benchProgram(p: Program, runs: number, work: string, log: (s: string) =
     for (let i = 0; i < n; i++) {
       const b = fn(i);
       bs.push(b);
-      log(`  ${p.name} / ${scenario} #${i + 1}: ${b.ok ? (b.totalMs / 1000).toFixed(2) + "s" : "FAIL " + b.error}`);
+      log(`  ${p.name} / ${scenario} #${i + 1}: ${b.ok ? `${(b.totalMs / 1000).toFixed(2)}s, ${b.unitsCompiled}/${b.unitsTotal} units` : "FAIL " + b.error}`);
       if (!b.ok) break;
     }
     rows.push(toRow(p.name, scenario, bs));
@@ -174,13 +194,29 @@ function benchProgram(p: Program, runs: number, work: string, log: (s: string) =
     for (const s of SCENARIOS.slice(1)) rows.push({ ...rows[0]!, scenario: s });
     return rows;
   }
-  build(entry, out, { cache: true, fast: false }); // prime
+  const reset = (fast: boolean) => { writeFileSync(entry, original); build(entry, out, { cache: true, fast, hot: false }); };
+  reset(false); // prime
   time("warm unchanged", runs, () => build(entry, out, { cache: true, fast: false }));
   let n = 0;
-  time("one-line edit", runs, () => { editOnce(entry, original, p.needle, ++n); return build(entry, out, { cache: true, fast: false }); });
-  writeFileSync(entry, original);
-  build(entry, out, { cache: true, fast: true }); // prime the -O0 objects
-  time("one-line edit --fast", runs, () => { editOnce(entry, original, p.needle, ++n); return build(entry, out, { cache: true, fast: true }); });
+  time("one-line edit", runs, () => {
+    reset(false);
+    editOnce(entry, original, p.needle, ++n);
+    return build(entry, out, { cache: true, fast: false });
+  });
+  time("repeat edit", runs, () => {
+    reset(false);
+    editOnce(entry, original, p.needle, ++n);
+    const first = build(entry, out, { cache: true, fast: false });
+    if (!first.ok) return first;
+    editOnce(entry, original, p.needle, ++n);
+    return build(entry, out, { cache: true, fast: false });
+  });
+  reset(true); // prime the -O0 objects
+  time("one-line edit --fast", runs, () => {
+    reset(true);
+    editOnce(entry, original, p.needle, ++n);
+    return build(entry, out, { cache: true, fast: true });
+  });
   writeFileSync(entry, original);
   return rows;
 }

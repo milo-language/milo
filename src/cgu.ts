@@ -287,6 +287,71 @@ function packItems(funcs: Func[], units: number, prev: Placement | undefined): {
 }
 
 /**
+ * The hot unit. A one-line edit recompiles the edited function's whole unit, so its cost
+ * scales with what shares that unit, not with the edit. Functions that changed in recent
+ * builds are pulled out into one extra unit (index `units`), so the second and later
+ * edits to the same function recompile only that small unit. The first edit still
+ * recompiles the function's old home (which lost it) alongside the hot unit, in parallel.
+ *
+ * `hashes` is every function's IR-text hash from the previous build; `hot` is the hot
+ * set, most recently changed last. An array, not a Set, because eviction order must be a
+ * function of the persisted state alone.
+ */
+export type HotState = { hashes: Map<string, string>; hot: string[] };
+
+// Bounds on the hot set. The hot unit only pays while it compiles faster than the unit it
+// left, so its body is capped at half the per-unit share; past that the oldest hot
+// functions return to their homes. Measured on redline at 8 units (16k-line share, clang
+// -O2): its `main` (4.1k lines, the function a UI edit usually lands in) alone takes
+// 0.09s against 0.18s for its home unit; 5.3k-line `invert` takes 0.04s; a one-line
+// function 0.024s, which is the per-unit floor (process start plus the repeated
+// preamble). A cap of 2% of the program would have excluded `main`. The count cap bounds
+// the declarations the hot unit repeats.
+const HOT_MAX_FNS = 64;
+const HOT_SHARE = 0.5;
+
+function textHash(text: string): string {
+  return Bun.hash(text).toString(36);
+}
+
+/**
+ * Next hot state from this build's functions and the previous state. A function is newly
+ * hot when its text hash changed or it did not exist in the previous build; with no
+ * previous state (first build, or unreadable state) nothing is hot. When one build changes
+ * more than the bounds allow (a branch switch, a mass rename) there is no single edit to
+ * follow, so the hot set is cleared rather than filled with an arbitrary slice.
+ */
+export function selectHot(funcs: { name: string; text: string; lineCount: number }[], units: number, prev: HotState | null): HotState {
+  const hashes = new Map<string, string>();
+  const lines = new Map<string, number>();
+  let total = 0;
+  for (const f of funcs) {
+    hashes.set(f.name, textHash(f.text));
+    lines.set(f.name, f.lineCount);
+    total += f.lineCount;
+  }
+  if (!prev) return { hashes, hot: [] };
+  const cap = Math.ceil(total / units * HOT_SHARE);
+
+  const changed: string[] = [];
+  let changedLines = 0;
+  for (const f of funcs) {
+    if (prev.hashes.get(f.name) === hashes.get(f.name)) continue;
+    changed.push(f.name);
+    changedLines += f.lineCount;
+  }
+  if (changed.length > HOT_MAX_FNS || changedLines > cap) return { hashes, hot: [] };
+
+  // A re-edited function moves to the back (most recent); deleted functions drop out.
+  const fresh = new Set(changed);
+  const hot = prev.hot.filter(n => lines.has(n) && !fresh.has(n)).concat(changed);
+  let hotLines = hot.reduce((n, name) => n + lines.get(name)!, 0);
+  let drop = 0;
+  while (hot.length - drop > HOT_MAX_FNS || hotLines > cap) hotLines -= lines.get(hot[drop++]!)!;
+  return { hashes, hot: hot.slice(drop) };
+}
+
+/**
  * Turn a `define` header into a `declare` for units that only call the function.
  * Parameter names and `#N` attribute groups are legal on a declaration and the byval /
  * sret / coerce attributes MUST survive: codegen requires the same attribute rendering
@@ -344,14 +409,21 @@ function externDeclFor(text: string): string | null {
   return `${m[1]}external ${quals} ${type}`;
 }
 
-export type SplitStats = { units: number; promoted: number; placement?: Placement };
+export type SplitStats = { units: number; promoted: number; placement?: Placement; hot?: HotState };
+
+/**
+ * Hot-unit input: the previous build's state (null when there is none or it could not be
+ * read) and whether to place hot functions at all. Disabled still records hashes, with an
+ * empty hot set, so the next enabled build starts from this one.
+ */
+export type HotOptions = { prev: HotState | null; enabled: boolean };
 
 /**
  * Split `ir` into `units` self-contained LLVM modules that link to the same program.
  * Returns null when the module cannot be split safely or is too small to be worth it —
  * the caller then compiles the original module unchanged.
  */
-export function splitModule(ir: string, units: number, stats?: { out?: SplitStats }, prev?: Placement): string[] | null {
+export function splitModule(ir: string, units: number, stats?: { out?: SplitStats }, prev?: Placement, hotOpts?: HotOptions): string[] | null {
   if (units < 2) return null;
   const mod = parseModule(ir);
   if (!mod) return null;
@@ -359,8 +431,37 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   // the parallelism returns.
   if (mod.funcs.length < units * 4) return null;
 
+  let hotState: HotState | undefined;
+  if (hotOpts) {
+    hotState = selectHot(mod.funcs, units, hotOpts.prev);
+    if (!hotOpts.enabled) hotState.hot = [];
+  }
+  const hotSet = new Set(hotState?.hot ?? []);
   const packed: { placement?: Placement } = {};
-  const home = packFunctions(mod.funcs, units, prev, packed);
+  let home: number[];
+  let totalUnits = units;
+  if (hotSet.size === 0) {
+    home = packFunctions(mod.funcs, units, prev, packed);
+  } else {
+    // Hot functions sit out the packing entirely, so everything else keeps the sticky
+    // placement it had.
+    const coldIdx: number[] = [];
+    mod.funcs.forEach((f, i) => { if (!hotSet.has(f.name)) coldIdx.push(i); });
+    const coldHome = packFunctions(coldIdx.map(i => mod.funcs[i]!), units, prev, packed);
+    home = new Array<number>(mod.funcs.length).fill(units);
+    coldIdx.forEach((i, k) => { home[i] = coldHome[k]!; });
+    totalUnits = units + 1;
+    // Remember where a hot function lived, so when it is evicted it returns to that unit
+    // and the unit's IR (and cached object) can come back byte-identical.
+    if (prev && packed.placement) {
+      for (const name of hotSet) {
+        for (const key of [moduleKey(name), name]) {
+          const u = prev.get(key);
+          if (u !== undefined && !packed.placement.has(key)) packed.placement.set(key, u);
+        }
+      }
+    }
+  }
   const funcHome = new Map<string, number>();
   mod.funcs.forEach((f, i) => funcHome.set(f.name, home[i]!));
 
@@ -382,8 +483,9 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   // A global naming another global forces both to unit 0: the reference is not inside any
   // function, so there is no unit that can privately own the pair.
   const forcedToZero = new Set<string>();
-  for (const g of mod.globals) {
-    for (const sym of referencedInGlobal(g.text)) {
+  const globalRefs = mod.globals.map(g => referencedInGlobal(g.text));
+  for (const [gi, g] of mod.globals.entries()) {
+    for (const sym of globalRefs[gi]!) {
       if (sym !== g.name && globalByName.has(sym)) { forcedToZero.add(sym); forcedToZero.add(g.name); }
     }
   }
@@ -393,6 +495,13 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
     const seen = refs.get(g.name);
     if (forcedToZero.has(g.name) || !seen || seen.size !== 1) globalHome.set(g.name, 0);
     else globalHome.set(g.name, [...seen][0]!);
+  }
+  // A global's initializer can name a function (a trait object's itable), which makes that
+  // function referenced from the global's unit. Missing this left the unit with an
+  // undefined symbol, so every program with a trait object fell back to one module.
+  const funcNames = new Set(mod.funcs.map(f => f.name));
+  for (const [gi, g] of mod.globals.entries()) {
+    for (const sym of globalRefs[gi]!) if (funcNames.has(sym)) noteRef(sym, globalHome.get(g.name)!);
   }
 
   // Promotion set: module-local symbols reachable from a unit that is not their home.
@@ -437,7 +546,7 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   const externDeclOfGlobal: (string | null | undefined)[] = new Array(mod.globals.length);
 
   const out: string[] = [];
-  for (let u = 0; u < units; u++) {
+  for (let u = 0; u < totalUnits; u++) {
     const parts: string[] = [];
     parts.push(...mod.header, "");
     if (mod.typedefs.length) parts.push(...mod.typedefs, "");
@@ -491,6 +600,6 @@ export function splitModule(ir: string, units: number, stats?: { out?: SplitStat
   for (const f of mod.funcs) emitted.add(renamed(f.name));
   if (emitted.size !== mod.funcs.length) return null;
 
-  if (stats) stats.out = { units, promoted: promote.size, placement: packed.placement };
+  if (stats) stats.out = { units: totalUnits, promoted: promote.size, placement: packed.placement, hot: hotState };
   return out;
 }

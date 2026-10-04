@@ -18,7 +18,8 @@
 
 import { createHash } from "crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import type { HotState } from "./cgu";
 import { cacheRoot } from "./pkg";
 
 // Above this many objects the oldest are removed down to half; a 1k-fixture suite at
@@ -96,7 +97,7 @@ function maybePrune(dir: string): void {
 // and an edit invalidates one unit's object rather than all of them.
 export function placementLoad(programId: string, units: number): Map<string, number> | null {
   try {
-    const raw = readFileSync(placementPath(programId, units), "utf8");
+    const raw = readFileSync(statePath("placement", programId, units), "utf8");
     const obj = JSON.parse(raw) as Record<string, number>;
     return new Map(Object.entries(obj));
   } catch {
@@ -105,16 +106,48 @@ export function placementLoad(programId: string, units: number): Map<string, num
 }
 
 export function placementStore(programId: string, units: number, placement: Map<string, number>): void {
+  writeAtomic(statePath("placement", programId, units), JSON.stringify(Object.fromEntries(placement)));
+}
+
+// The hot-unit state (cgu.ts HotState), keyed like the placement. `MILO_HOT_UNIT=0`
+// places nothing hot and stores an empty hot set, which is also how a benchmark resets
+// it. Any shape this does not recognize loads as null: no hot set, never a guess.
+export function hotUnitEnabled(): boolean {
+  return process.env.MILO_HOT_UNIT !== "0";
+}
+
+export function hotStateLoad(programId: string, units: number): HotState | null {
   try {
-    const dir = join(objCacheDir(), "placement");
-    mkdirSync(dir, { recursive: true });
-    const tmp = `${placementPath(programId, units)}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(placement)));
-    renameSync(tmp, placementPath(programId, units));
+    const obj = JSON.parse(readFileSync(statePath("hot", programId, units), "utf8"));
+    if (obj?.v !== 1 || typeof obj.hashes !== "object" || obj.hashes === null || !Array.isArray(obj.hot)) return null;
+    const hashes = new Map<string, string>();
+    for (const [k, v] of Object.entries(obj.hashes)) {
+      if (typeof v !== "string") return null;
+      hashes.set(k, v);
+    }
+    if (!obj.hot.every((n: unknown) => typeof n === "string")) return null;
+    return { hashes, hot: obj.hot as string[] };
+  } catch {
+    return null;
+  }
+}
+
+export function hotStateStore(programId: string, units: number, state: HotState): void {
+  writeAtomic(statePath("hot", programId, units), JSON.stringify({ v: 1, hot: state.hot, hashes: Object.fromEntries(state.hashes) }));
+}
+
+// Temporary name then rename, so a concurrent build never reads half a file. Failures are
+// ignored for the same reason as objCacheStore.
+function writeAtomic(path: string, text: string): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, text);
+    renameSync(tmp, path);
   } catch {}
 }
 
-function placementPath(programId: string, units: number): string {
+function statePath(kind: "placement" | "hot", programId: string, units: number): string {
   const h = createHash("sha256").update(programId).update("\0").update(String(units)).digest("hex").slice(0, 32);
-  return join(objCacheDir(), "placement", `${h}.json`);
+  return join(objCacheDir(), kind, `${h}.json`);
 }

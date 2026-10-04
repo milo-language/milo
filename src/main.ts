@@ -36,7 +36,7 @@ import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
 import { fixFor, applyEdits, type Fix } from "./fixes";
 import { cdeclCacheEnabled, cdeclCacheKey, cdeclCacheHit, cdeclCacheStore } from "./cdeclcache";
-import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore } from "./objcache";
+import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore, hotStateLoad, hotStateStore, hotUnitEnabled } from "./objcache";
 
 markModulesLoaded();
 
@@ -833,10 +833,14 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
   const stats: { out?: SplitStats } = {};
   // The previous build's unit placement keeps unchanged units byte-identical, which is
   // what lets the object cache serve them (a size-driven repack moved everything).
-  const prev = objCacheEnabled() ? placementLoad(programId, units) : null;
-  const mods = phase("split", () => splitModule(ir, units, stats, prev ?? undefined));
+  const cache = objCacheEnabled();
+  const prev = cache ? placementLoad(programId, units) : null;
+  // The hot unit (cgu.ts HotState) only pays through the cache, so it is off with it.
+  const hotOpts = cache ? { prev: hotStateLoad(programId, units), enabled: hotUnitEnabled() } : undefined;
+  const mods = phase("split", () => splitModule(ir, units, stats, prev ?? undefined, hotOpts));
   if (!mods) return false;
-  if (objCacheEnabled() && stats.out?.placement) placementStore(programId, units, stats.out.placement);
+  if (cache && stats.out?.placement) placementStore(programId, units, stats.out.placement);
+  if (cache && stats.out?.hot) hotStateStore(programId, units, stats.out.hot);
 
   const base = llFile.replace(/\.ll$/, "");
   const lls = mods.map((_, i) => `${base}.cgu${i}.ll`);
@@ -852,7 +856,8 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
       .filter((j): j is string => j !== null);
     const script = `pids=""\n${jobList.join("\n")}\nfor p in $pids; do wait $p || exit 1; done`;
     if (process.env.MILO_VERBOSE === "1") {
-      console.error(`cgu: ${units} units, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines, ${units - jobList.length} cached`);
+      const hot = stats.out?.hot?.hot.length ? ` (+1 hot unit: ${stats.out.hot.hot.length} fns)` : "";
+      console.error(`cgu: ${units} units${hot}, ${stats.out?.promoted ?? 0} symbols promoted, ${irLines} IR lines, ${mods.length - jobList.length} cached`);
     }
     // Gated on the job count, not `pending`: with the cache off nothing is pending, and
     // gating on it skipped every compile, so the link failed and the build silently fell
@@ -861,7 +866,7 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
       if (jobList.length > 0) execSync(script, { stdio: ["pipe", "pipe", "pipe"] });
       for (const p of pending) objCacheStore(p.key, p.obj);
     });
-    phaseNote("clang", `${jobList.length}/${units} units compiled, ${units - jobList.length} from objcache`);
+    phaseNote("clang", `${jobList.length}/${mods.length} units compiled, ${mods.length - jobList.length} from objcache`);
     const linkCmd = `${cc} ${ccFlags} ${objs.join(" ")} ${linkFlags}`;
     if (process.env.MILO_VERBOSE === "1") console.error(`link: ${linkCmd}`);
     phase("link", () => execSync(linkCmd, { stdio: ["pipe", "pipe", "pipe"] }));

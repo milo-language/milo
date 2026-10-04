@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { splitModule } from "../src/cgu";
+import { splitModule, selectHot, type SplitStats } from "../src/cgu";
 
 // A module with enough functions to clear splitModule's "too small to bother" floor
 // (units * 4). Bodies differ in length so the bin packer has something to balance.
@@ -83,6 +83,19 @@ describe("cgu splitter", () => {
     expect(mods.join("\n")).not.toContain("@__milo_cgu.b");
   });
 
+  // A trait object's itable is a global whose initializer names functions. The unit that
+  // holds the itable must be able to see each of them.
+  test("a function named only by a global's initializer is visible in that global's unit", () => {
+    const ir = synth(40).replace(`declare i32 @puts(ptr)`, `@itable = private unnamed_addr constant { ptr, ptr } { ptr @fn5, ptr null }\ndeclare i32 @puts(ptr)`)
+      .replace(`%r = call i32 @fn0(ptr null)`, `%r = call i32 @fn0(ptr @itable)`);
+    for (let units = 2; units <= 8; units++) {
+      const mods = splitModule(ir, units)!;
+      const holder = mods.find(m => /^@itable = /m.test(m))!;
+      const fn5 = /@(__milo_cgu\.)?fn5\b/.exec(holder.match(/^@itable = .*$/m)![0])![0].slice(1);
+      expect(definedIn(holder).includes(fn5) || new RegExp(`^declare .*@${fn5.replace(/\./g, "\\.")}\\(`, "m").test(holder)).toBe(true);
+    }
+  });
+
   test("declines rather than dropping an unrecognized top-level construct", () => {
     const ir = synth(40) + `\nmodule asm "nop"\n`;
     expect(splitModule(ir, 4)).toBeNull();
@@ -130,5 +143,121 @@ describe("cgu splitter", () => {
     const sizes = mods.map(m => m.split("\n").length);
     const spread = Math.max(...sizes) / Math.min(...sizes);
     expect(spread).toBeLessThan(1.5);
+  });
+});
+
+describe("hot unit", () => {
+  const fns = (spec: [string, string, number][]) => spec.map(([name, text, lineCount]) => ({ name, text, lineCount }));
+  // 8 functions at 4 units; with 10-line bodies the share is 20 lines and the cap 10.
+  const base = fns(Array.from({ length: 8 }, (_, i) => [`f${i}`, `body${i}`, 10] as [string, string, number]));
+  const edit = (fs: typeof base, name: string, text: string) => fs.map(f => f.name === name ? { ...f, text } : f);
+
+  test("no previous state makes nothing hot", () => {
+    expect(selectHot(base, 4, null).hot).toEqual([]);
+  });
+
+  test("a changed or new function becomes hot, most recent last", () => {
+    // 1-line bodies at 2 units: cap 2 lines, room for two hot functions.
+    const small = base.map(f => ({ ...f, lineCount: 1 }));
+    const s0 = selectHot(small, 2, null);
+    const s1 = selectHot(edit(small, "f3", "edited"), 2, s0);
+    expect(s1.hot).toEqual(["f3"]);
+    const added = [...edit(small, "f3", "edited"), { name: "g", text: "new", lineCount: 1 }];
+    const s2 = selectHot(added, 2, s1);
+    expect(s2.hot).toEqual(["f3", "g"]);
+    // Re-editing f3 moves it to the back.
+    const s3 = selectHot(edit(added, "f3", "again"), 2, s2);
+    expect(s3.hot).toEqual(["g", "f3"]);
+    // A deleted function drops out.
+    const s4 = selectHot(edit(small, "f3", "again"), 2, s3);
+    expect(s4.hot).toEqual(["f3"]);
+  });
+
+  test("the oldest hot functions are evicted past the line cap", () => {
+    // 6-line functions against a 12-line cap (48 lines, 2 units): two fit, not three.
+    const sized = base.map(f => ({ ...f, lineCount: 6 }));
+    let s = selectHot(sized, 2, null);
+    s = selectHot(edit(sized, "f1", "a"), 2, s);
+    s = selectHot(edit(sized, "f2", "b"), 2, s);
+    expect(s.hot).toEqual(["f1", "f2"]);
+    s = selectHot(edit(sized, "f3", "c"), 2, s);
+    expect(s.hot).toEqual(["f2", "f3"]);
+  });
+
+  test("the hot set holds at most 64 functions", () => {
+    const many = fns(Array.from({ length: 400 }, (_, i) => [`f${i}`, `b${i}`, 1] as [string, string, number]));
+    let s = selectHot(many, 2, null);
+    for (let i = 0; i < 70; i++) s = selectHot(edit(many, `f${i}`, `e${i}`), 2, s);
+    expect(s.hot.length).toBe(64);
+    expect(s.hot[0]).toBe("f6");
+    expect(s.hot[63]).toBe("f69");
+  });
+
+  test("a change larger than the bounds clears the hot set", () => {
+    let s = selectHot(base, 4, null);
+    s = selectHot(edit(base, "f0", "x"), 4, s);
+    expect(s.hot).toEqual(["f0"]);
+    // Every body changes at once: 80 lines against a 10-line cap.
+    s = selectHot(base.map(f => ({ ...f, text: f.text + "!" })), 4, s);
+    expect(s.hot).toEqual([]);
+  });
+
+  test("an empty hot set produces exactly the output of the no-hot path", () => {
+    const ir = synth(40, { shared: true });
+    const plain = splitModule(ir, 4)!;
+    const st: { out?: SplitStats } = {};
+    expect(splitModule(ir, 4, st, undefined, { prev: null, enabled: true })).toEqual(plain);
+    expect(st.out!.hot!.hot).toEqual([]);
+    // Unchanged program with a previous state: still nothing hot, still identical.
+    const again = splitModule(ir, 4, undefined, st.out!.placement, { prev: st.out!.hot!, enabled: true });
+    expect(again).toEqual(splitModule(ir, 4, undefined, st.out!.placement)!);
+  });
+
+  const stripPromo = (n: string) => n.replace(/^__milo_cgu\./, "");
+  const homeOf = (mods: string[]) => new Map(mods.flatMap((m, u) => definedIn(m).map(n => [stripPromo(n), u] as const)));
+  // Changes fn7's body and nothing else.
+  const editFn7 = (ir: string, k = 99) => ir.replace("%v0 = add i32 7, 0", `%v0 = add i32 7, ${k}`);
+
+  test("a hot function moves to an extra unit and every other function stays put", () => {
+    const ir = synth(40, { shared: true });
+    const st: { out?: SplitStats } = {};
+    const before = splitModule(ir, 4, st, undefined, { prev: null, enabled: true })!;
+    const st2: { out?: SplitStats } = {};
+    const after = splitModule(editFn7(ir), 4, st2, st.out!.placement, { prev: st.out!.hot!, enabled: true })!;
+    expect(st2.out!.hot!.hot).toEqual(["fn7"]);
+    expect(st2.out!.units).toBe(5);
+    expect(after.length).toBe(5);
+    expect(definedIn(after[4]!).map(stripPromo)).toEqual(["fn7"]);
+    const h0 = homeOf(before), h1 = homeOf(after);
+    for (const [name, u] of h0) if (name !== "fn7") expect(h1.get(name)).toBe(u);
+    // A second edit to fn7 changes the hot unit and nothing else.
+    const after2 = splitModule(editFn7(ir, 98), 4, undefined, st2.out!.placement, { prev: st2.out!.hot!, enabled: true })!;
+    for (let u = 0; u < 4; u++) expect(after2[u]).toBe(after[u]!);
+    expect(after2[4]).not.toBe(after[4]!);
+  });
+
+  test("disabled places nothing hot and forgets the hot set", () => {
+    const ir = synth(40);
+    const st: { out?: SplitStats } = {};
+    splitModule(ir, 4, st, undefined, { prev: null, enabled: true });
+    const st2: { out?: SplitStats } = {};
+    const off = splitModule(editFn7(ir), 4, st2, st.out!.placement, { prev: st.out!.hot!, enabled: false })!;
+    expect(off.length).toBe(4);
+    expect(st2.out!.hot!.hot).toEqual([]);
+  });
+
+  test("an evicted function returns to the unit it left", () => {
+    const ir = synth(40);
+    const st: { out?: SplitStats } = {};
+    const before = splitModule(ir, 4, st, undefined, { prev: null, enabled: true })!;
+    const st2: { out?: SplitStats } = {};
+    splitModule(editFn7(ir), 4, st2, st.out!.placement, { prev: st.out!.hot!, enabled: true });
+    // The stored placement still remembers fn7's old unit while fn7 is hot; packing would
+    // otherwise treat it as new and send it to whichever unit is least loaded.
+    expect(st2.out!.placement!.get("fn7")).toBe(st.out!.placement!.get("fn7"));
+    // The original source with the hot set disabled: every unit byte-identical to the
+    // first build, so all of their objects are cache hits.
+    const back = splitModule(ir, 4, undefined, st2.out!.placement, { prev: st2.out!.hot!, enabled: false })!;
+    expect(back).toEqual(before);
   });
 });

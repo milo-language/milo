@@ -99,3 +99,10 @@ std, and the link always runs.
   machine): one-line edit 0.77 -> **0.57s**, unchanged rebuild 0.59 -> 0.40s, frontend
   0.44 -> 0.25s. Profile now flat (nothing over 3.5%). Remaining cold frontend ~250ms vs
   ~130ms warm: the daemon (step 3) is next, worth ~0.12s JIT + ~20ms std re-lex/parse.
+- 2026-10-03: hot unit (cgu.ts `HotState`). Functions whose IR changed since the last
+  build go to an extra unit (cap: 64 fns, half a unit's share), so repeat edits recompile
+  only it. Redline one-line edit 0.59 -> 0.50s (clang 0.18 -> 0.10, main alone is 0.09);
+  java-dap 0.52 -> 0.40s (clang 0.15 -> 0.03). First edit on an empty cache compiles the
+  old home too (2/9, in parallel, same 0.10s). Runtime: json/sort benchmarks with the hot
+  function split out are within noise. Also fixed: a global naming a function (trait
+  itables) was not counted as a reference, so 11 fixtures' splits fell back to one module.
