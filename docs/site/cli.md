@@ -23,6 +23,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 |---|---|
 | [`run <file> [args]`](#run) | Compile and run (no artifacts left behind). |
 | [`build <file> [-o out]`](#build) | Compile to executable. |
+| [`hot <file> [-- args]`](#hot) | Run and patch function bodies on every save. |
 | [`test [file\|dir...]`](#test) | Run tests (\*\_test.milo, recursive in a dir; cwd by default). |
 | [`check <file>`](#check) | Type-check only, no codegen. |
 | [`fix <file>`](#fix) | Apply every machine-applicable fix the check reports (&mut markers, imports, @ sigils, unused unsafe), in every file it reaches. |
@@ -58,6 +59,14 @@ milo build <file> [-o out]
 ```
 
 Compile to executable.
+
+### hot
+
+```sh
+milo hot <file> [-- args]
+```
+
+Run and patch function bodies on every save. A body-only edit is swapped into the running program; a layout, signature or global change restarts it (docs/plans/fast-iteration-2026-10.md).
 
 ### test
 
@@ -392,6 +401,7 @@ Parsed by every command that takes a source file. Each acts on the ones that app
 | `--contract-checks` | Assert requires/ensures/invariant at any -O (default: only --debug). |
 | `--no-contract-checks` | Drop those asserts at any -O (e.g. fast -O0 builds). |
 | `--strip-panic-locations` | Blank source paths out of runtime panic messages (-g still embeds them). |
+| `--hot` | Build a hot-reload host: -O0, patchable functions, writes \<out\>.hot.json. |
 | `--fast` | Quick edit-loop build: -O0, wrapping (~2x faster compile). |
 | `--cgus=<n>` | Codegen units compiled in parallel (default: auto, 1 for --release/-g). |
 | `--deny=<warning>` | Treat warning as error (e.g. --deny=unused-variable). |
