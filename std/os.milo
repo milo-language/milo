@@ -3,7 +3,7 @@
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
 from "std/platform" import {
-    getErrno, eagain, einprogress, netErrno, netEagain, netEinprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
+    getErrno, eagain, ebadf, einprogress, netErrno, netEagain, netEinprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
     SockAddrStorage, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, sockAddrInLen,
     sockAddrIn6Len, sockAddrUnLen,
     pthread_create, pthread_join, pthread_detach,
@@ -289,19 +289,32 @@ pub extern fn execvp(file: *u8, argv: *u8): i32
 // keeps running; on a plain OS thread they behave like the raw calls. All fd
 // IO in std should go through these instead of per-call-site EAGAIN loops.
 
+// Put fd in non-blocking mode for a green task. A green task depends on this:
+// without O_NONBLOCK the IO blocks the whole scheduler thread and no other task
+// can run to satisfy it, so the program hangs silently. Two ways it fails:
+//   * EBADF: the caller passed a closed fd. That is the caller's bug and an IO
+//     error like any other, so report it (false → the wrapper returns -1). It
+//     used to exit the process with a message blaming the platform.
+//   * anything else: on POSIX it does not happen; on Windows it means a
+//     non-socket fd, which needs the IOCP tier. Say so and stop rather than hang.
+fn greenNonblocking(fd: i32, what: string): bool {
+    if setNonblocking(fd) == 0 {
+        return true
+    }
+    if getErrno() == ebadf() {
+        return false
+    }
+    eprint($"milo: green {what} is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+    exit(1)
+    return false
+}
+
 // One read(2). Returns bytes read, 0 at EOF, <0 on error.
 pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        // A green task depends on this succeeding: without O_NONBLOCK the read below
-        // blocks the whole scheduler thread instead of returning EAGAIN and parking, and
-        // no other task can ever run to satisfy it — the program simply hangs with no
-        // output. On POSIX this never fails; on Windows it fails for anything that is not
-        // a socket (ioctlsocket only covers sockets), which is the IOCP tier of the port.
-        // Say so and stop, rather than deadlocking silently.
-        if setNonblocking(fd) != 0 {
-            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
-            exit(1)
+        if !greenNonblocking(fd, "IO on this fd") {
+            return -1 as i64
         }
     }
     while true {
@@ -319,10 +332,8 @@ pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
 pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        // Same deadlock risk as readFd above.
-        if setNonblocking(fd) != 0 {
-            eprint("milo: green IO on this fd is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
-            exit(1)
+        if !greenNonblocking(fd, "IO on this fd") {
+            return -1 as i64
         }
     }
     unsafe {
@@ -350,9 +361,8 @@ pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
 pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        if setNonblocking(fd) != 0 {
-            eprint("milo: green socket IO is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
-            exit(1)
+        if !greenNonblocking(fd, "socket IO") {
+            return -1 as i64
         }
     }
     while true {
@@ -369,9 +379,8 @@ pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
 pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
-        if setNonblocking(fd) != 0 {
-            eprint("milo: green socket IO is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
-            exit(1)
+        if !greenNonblocking(fd, "socket IO") {
+            return -1 as i64
         }
     }
     unsafe {

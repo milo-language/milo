@@ -298,6 +298,11 @@ pub fn eagain(): i32 {
     return 35
 }
 
+// A closed or never-opened fd. Green IO returns -1 for it rather than exiting.
+pub fn ebadf(): i32 {
+    return 8
+}
+
 pub fn einprogress(): i32 {
     return 36
 }

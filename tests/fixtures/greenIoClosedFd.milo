@@ -1,0 +1,45 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
+// @expect: read -1
+// @expect: write -1
+// @expect: still running
+
+// IO on a closed fd from a green task is an error the caller sees (-1), not a
+// process exit. It used to print "green IO on this fd is not supported on this
+// platform" and exit(1): dapweb's server died that way when a websocket writer
+// outlived its socket.
+from "std/platform" import {
+    pipe,
+    close
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    readFd,
+    writeFd
+}
+
+pub fn main(): i32 {
+    var fds: [u8; 8] = [0; 8]
+    var rfd: i32 = 0
+    var wfd: i32 = 0
+    unsafe {
+        pipe(fds as *i32)
+        let p = fds as *i32
+        rfd = p[0]
+        wfd = p[1]
+        close(rfd)
+        close(wfd)
+    }
+    Task.spawn(move(): void => {
+        var buf: [u8; 4] = [0; 4]
+        print("read ", readFd(rfd, buf, 4))
+        print("write ", writeFd(wfd, buf, 4))
+        print("still running")
+    })
+    schedulerRunToCompletion()
+    return 0
+}
