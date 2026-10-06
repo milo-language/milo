@@ -278,10 +278,17 @@ pub fn ignoreSigpipe(): void {
 }
 
 impl TcpListener {
-    // Bind to 0.0.0.0:port and start listening. SO_REUSEADDR is set so a quick
+    // Bind to 0.0.0.0:port (every interface) and start listening. SO_REUSEADDR is set so a quick
     // restart doesn't fail with "address already in use". Pass port 0 to let the
     // OS choose a free port (recover it via the accepted peer or getsockname).
     fn bind(port: u16): Result<TcpListener, NetError> {
+        return TcpListener.bindAddr(0, port)
+    }
+
+    // Bind to one IPv4 address (see `ip4`). `bindAddr(ip4(127, 0, 0, 1), port)`
+    // is the loopback-only listener a local dev server wants: `bind` takes every
+    // interface, so anything it serves is reachable from the network.
+    fn bindAddr(addr: u32, port: u16): Result<TcpListener, NetError> {
         ignoreSigpipe()
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
@@ -295,8 +302,8 @@ impl TcpListener {
         var one: i32 = 1
         setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
 
-        var addr = makeSockaddr(port, 0)
-        if bindIn(fd, addr) < 0 {
+        var sa = makeSockaddr(port, addr)
+        if bindIn(fd, sa) < 0 {
             close(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }

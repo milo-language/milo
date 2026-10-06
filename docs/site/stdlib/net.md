@@ -86,7 +86,7 @@ stalls everything else that task drives until a client connects.
 fn TcpListener.bind(port: u16): Result<TcpListener, NetError>
 ```
 
-Bind to 0.0.0.0:port and start listening. SO_REUSEADDR is set so a quick
+Bind to 0.0.0.0:port (every interface) and start listening. SO_REUSEADDR is set so a quick
 restart doesn't fail with "address already in use". Pass port 0 to let the
 OS choose a free port (recover it via the accepted peer or getsockname).
 
@@ -98,6 +98,16 @@ fn TcpListener.bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError>
 
 Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
 or all-zero for the v6 wildcard "::").
+
+#### `TcpListener.bindAddr`
+
+```milo
+fn TcpListener.bindAddr(addr: u32, port: u16): Result<TcpListener, NetError>
+```
+
+Bind to one IPv4 address (see `ip4`). `bindAddr(ip4(127, 0, 0, 1), port)`
+is the loopback-only listener a local dev server wants: `bind` takes every
+interface, so anything it serves is reachable from the network.
 
 #### `TcpListener.port`
 

@@ -1,0 +1,20 @@
+// @skip-os: win32
+// Windows skipped for the same reason as tcpListenerPort: no IOCP tier for
+// TcpListener yet.
+//
+// `bindAddr` exists so a local dev server can take loopback only; `bind` takes
+// every interface. A loopback listener must still accept a loopback connect.
+from "std/net" import {
+    TcpListener, TcpStream, ip4
+}
+
+// @expect: true
+// @expect: true
+pub fn main(): i32 {
+    let l = TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!
+    let p = l.port()
+    print((p > 1024).toString())
+    let c = TcpStream.connect(ip4(127, 0, 0, 1), p as u16)
+    print(c.isOk().toString())
+    return 0
+}
