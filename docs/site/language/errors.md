@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 369 distinct messages across 452 programs the compiler must reject.
+Every error message the test suite pins: 369 distinct messages across 457 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -3761,6 +3761,27 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/moveInLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveInLoop.milo)</sub>
+
+A path that ends in `continue` starts the next iteration, so a move on it runs again: the second `take(s)` used to receive an emptied string.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    for i in 0..3 {
+        if i < 2 {
+            take(s)
+            continue
+        }
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnContinueLoopsAgain.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnContinueLoopsAgain.milo)</sub>
 
 ## `cannot move 'self.inner.s' out of the borrowed 'self'` {#cannot-move-self-inner-s-out-of-the-borrowed-self}
 
@@ -8868,6 +8889,85 @@ fn main(): i32 {
 
 <sub>[tests/errors/moveAfterClosureCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveAfterClosureCapture.milo)</sub>
 
+Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose arms both break: each break carries the move to the loop exit.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var o: Option<i64> = Option.Some(1)
+    for i in 0..3 {
+        match o {
+            Option.Some(n) => {
+                take(s)
+                if n > i {
+                    break
+                } else {
+                    break
+                }
+            }
+            Option.None => {}
+        }
+        o = Option.None
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnBreakInMatchArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakInMatchArm.milo)</sub>
+
+The if-statement join drops a path that ends in `break` (it does not fall through to the statement after the if), but that path still reaches the code after the loop. Its move used to be lost there, and `print(s)` read an emptied string.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        if n == 1 {
+            take(s)
+            break
+        }
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnBreakUsedAfterLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakUsedAfterLoop.milo)</sub>
+
+The loop is left from its condition too, which can be before the body ever ran: a re-assignment inside the body does not make `s` valid after the loop. The exit state used to be the end of the body alone, so this read an emptied string when n is 0.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+fn run(n: i64): void {
+    var s = "hello".clone()
+    take(s)
+    for _i in 0..n {
+        s = "again".clone()
+    }
+    print(s)
+}
+
+pub fn main(): i32 {
+    run(0)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveReassignedOnlyInLoopBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveReassignedOnlyInLoopBody.milo)</sub>
+
 ```milo skip
 fn consume(s: string): void {
 }
@@ -8881,6 +8981,28 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/useAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMove.milo)</sub>
+
+`while let` desugars to `while true { if let ... else { break } }`, so the body's own `break` is the only way the move reaches the code after the loop.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    while let Option.Some(_x) = v.pop() {
+        take(s)
+        break
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/whileLetBreakMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/whileLetBreakMove.milo)</sub>
 
 ## `use of moved variable 'value'` {#use-of-moved-variable-value}
 

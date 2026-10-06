@@ -696,6 +696,11 @@ export class TypeChecker {
   // Stack entry per loop nesting level.
   private returnOnlyMovesStack: Set<VarInfo>[] = [];
   private inReturnInLoop = false;
+  // Per enclosing loop, the move state at each `break` and `continue`. The if/match joins
+  // drop a path that ends in break/continue (it does not fall through to the statement
+  // after them), so without these its moves were lost: a move before `break` was never
+  // seen after the loop, and one before `continue` never reached the next-iteration check.
+  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[] }[] = [];
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
@@ -1070,6 +1075,8 @@ export class TypeChecker {
     const unsafeDepth = this.unsafeDepth;
     const unsafeUsed = this.unsafeUsedStack.length;
     const loopDepth = this.loopDepth;
+    const loopFrameCount = this.loopFrames.length;
+    const returnOnlyMovesCount = this.returnOnlyMovesStack.length;
     const closureFrameCount = this.closureFrames.length;
     const borrowWindowCount = this.borrowWindows.length;
     try {
@@ -1081,6 +1088,8 @@ export class TypeChecker {
       this.unsafeDepth = unsafeDepth;
       this.unsafeUsedStack.length = unsafeUsed;
       this.loopDepth = loopDepth;
+      this.loopFrames.length = loopFrameCount;
+      this.returnOnlyMovesStack.length = returnOnlyMovesCount;
       this.closureFrames.length = closureFrameCount;
     }
   }
@@ -2527,6 +2536,37 @@ export class TypeChecker {
       if (s.moved) { this.touchMoveState(info); info.moved = true; }
       for (const p of s.places) this.markPlaceMoved(info, p);
     }
+  }
+
+  private beginLoopMoves(): Map<VarInfo, MoveSnapshot> {
+    this.returnOnlyMovesStack.push(new Set());
+    this.loopFrames.push({ breaks: [], continues: [] });
+    return this.snapshotMoveState();
+  }
+
+  // Leaves the current state at the loop's exit. The next iteration starts from the
+  // fall-through end of the body or from any `continue`; the loop is left from the
+  // condition (any of those states, or `pre` when the body never runs) or from a `break`.
+  // `condCanExit` is false for `while true` (and `while let`, which desugars to it), whose
+  // only way out is a break.
+  private endLoopMoves(pre: Map<VarInfo, MoveSnapshot>, body: Stmt[], sp: Span | undefined, condCanExit: boolean) {
+    const returnMoves = this.returnOnlyMovesStack.pop()!;
+    const frame = this.loopFrames.pop()!;
+    const reentry = [...frame.continues];
+    if (!this.bodyAlwaysReturns(body)) reentry.unshift(this.snapshotMoveState());
+    const exits = [...frame.breaks];
+    if (reentry.length > 0) {
+      this.joinMoveStates(reentry);
+      this.checkLoopMoves(pre, returnMoves, sp);
+      if (condCanExit) exits.unshift(this.snapshotMoveState());
+    }
+    if (condCanExit) exits.unshift(pre);
+    this.joinMoveStates(exits.length > 0 ? exits : [pre]);
+  }
+
+  private joinMoveStates(states: Map<VarInfo, MoveSnapshot>[]) {
+    this.restoreMoveState(states[0]!);
+    for (let i = 1; i < states.length; i++) this.mergeMoveState(states[i]!);
   }
 
   // After a loop body: a move inside it would run a second time on the next iteration,
@@ -5861,8 +5901,7 @@ export class TypeChecker {
     this.stringViewForIns.set(stmt, { mode });
 
     const viewType: TypeKind = { tag: "ref", inner: { tag: "string" }, mutable: false };
-    const preMoves = this.snapshotMoveState();
-    this.returnOnlyMovesStack.push(new Set());
+    const preMoves = this.beginLoopMoves();
     this.pushScope();
     if (stmt.varName2) {
       // enumerate: `for i, line in text.lines()`
@@ -5877,8 +5916,7 @@ export class TypeChecker {
     this.loopDepth--;
     this.popScope();
     if (rootInfo) this.unfreeze(rootInfo);
-    const returnMoves = this.returnOnlyMovesStack.pop()!;
-    this.checkLoopMoves(preMoves, returnMoves, sp);
+    this.endLoopMoves(preMoves, stmt.body, sp, true);
   }
 
   // The call site freezes the receiver and nothing else, so a returned view must point
@@ -6362,15 +6400,13 @@ export class TypeChecker {
           this.error(`while condition must be bool, got ${this.show(condType)}`, sp);
         }
         for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
-        const preMoves = this.snapshotMoveState();
-        this.returnOnlyMovesStack.push(new Set());
+        const preMoves = this.beginLoopMoves();
         this.pushScope();
         this.loopDepth++;
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.loopDepth--;
         this.popScope();
-        const returnMoves = this.returnOnlyMovesStack.pop()!;
-        this.checkLoopMoves(preMoves, returnMoves, sp);
+        this.endLoopMoves(preMoves, stmt.body, sp, !(stmt.cond.kind === "BoolLit" && stmt.cond.value));
         break;
       }
       case "ForInStmt": {
@@ -6394,8 +6430,7 @@ export class TypeChecker {
             varType = startType.tag === "int" ? startType : endType;
           }
           this.setType(stmt.iterable, varType);
-          const preMoves = this.snapshotMoveState();
-          this.returnOnlyMovesStack.push(new Set());
+          const preMoves = this.beginLoopMoves();
           this.pushScope();
           this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
           for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
@@ -6403,8 +6438,7 @@ export class TypeChecker {
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
-          const returnMoves = this.returnOnlyMovesStack.pop()!;
-          this.checkLoopMoves(preMoves, returnMoves, sp);
+          this.endLoopMoves(preMoves, stmt.body, sp, true);
         } else {
           // `for line in text.lines()` / `for f in text.splitView(",")` — a text pass that
           // allocates nothing. Handled here and nowhere else: the yielded `&string` views
@@ -6436,8 +6470,7 @@ export class TypeChecker {
           const iterBorrowInfo = this.freezeIterable(stmt.iterable);
           if (iterType.tag === "vec") {
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
-            const preMoves = this.snapshotMoveState();
-            this.returnOnlyMovesStack.push(new Set());
+            const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
               // enumerate: for i, val in vec
@@ -6452,12 +6485,10 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            const returnMoves = this.returnOnlyMovesStack.pop()!;
-            this.checkLoopMoves(preMoves, returnMoves, sp);
+            this.endLoopMoves(preMoves, stmt.body, sp, true);
           } else if (iterType.tag === "string") {
             const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
-            const preMoves = this.snapshotMoveState();
-            this.returnOnlyMovesStack.push(new Set());
+            const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
               const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
@@ -6471,13 +6502,11 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            const returnMoves3 = this.returnOnlyMovesStack.pop()!;
-            this.checkLoopMoves(preMoves, returnMoves3, sp);
+            this.endLoopMoves(preMoves, stmt.body, sp, true);
           } else if (iterType.tag === "hashmap") {
             const keyRef: TypeKind = { tag: "ref", inner: iterType.key, mutable: false };
             const valRef: TypeKind = { tag: "ref", inner: iterType.value, mutable: false };
-            const preMoves = this.snapshotMoveState();
-            this.returnOnlyMovesStack.push(new Set());
+            const preMoves = this.beginLoopMoves();
             this.pushScope();
             this.declare(stmt.varName, { type: keyRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
             if (stmt.varName2) {
@@ -6488,12 +6517,10 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            const returnMoves4 = this.returnOnlyMovesStack.pop()!;
-            this.checkLoopMoves(preMoves, returnMoves4, sp);
+            this.endLoopMoves(preMoves, stmt.body, sp, true);
           } else if (iterType.tag === "array") {
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
-            const preMoves = this.snapshotMoveState();
-            this.returnOnlyMovesStack.push(new Set());
+            const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
               const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
@@ -6507,8 +6534,7 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            const returnMoves5 = this.returnOnlyMovesStack.pop()!;
-            this.checkLoopMoves(preMoves, returnMoves5, sp);
+            this.endLoopMoves(preMoves, stmt.body, sp, true);
           } else if (iterType.tag === "struct" || iterType.tag === "enum") {
             // iterator protocol: type has next(&mut Self): Option<T>
             const resolved = this.resolveMethod(iterType.name, "next");
@@ -6521,9 +6547,13 @@ export class TypeChecker {
               this.pushScope();
               this.declare(stmt.varName, { type: { tag: "unknown" }, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
               for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+              // Moves are judged by the per-instantiation re-check; the frame only gives
+              // this body's break/continue somewhere to record into.
+              this.loopFrames.push({ breaks: [], continues: [] });
               this.loopDepth++;
               for (const s of stmt.body) this.checkStmt(s, fnRetType);
               this.loopDepth--;
+              this.loopFrames.pop();
               this.popScope();
             } else if (!resolved) {
               this.error(`cannot iterate over type '${this.show(iterType)}': no 'next' method found`, sp);
@@ -6559,8 +6589,7 @@ export class TypeChecker {
                   this.error("iterator for loop takes one binding, not two", sp);
                 }
                 this.iteratorForIns.set(stmt, { nextMethod: resolved.mangled, elemType, optionEnumName });
-                const preMoves = this.snapshotMoveState();
-                this.returnOnlyMovesStack.push(new Set());
+                const preMoves = this.beginLoopMoves();
                 this.pushScope();
                 this.declare(stmt.varName, { type: elemType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
                 for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
@@ -6568,8 +6597,7 @@ export class TypeChecker {
                 for (const s of stmt.body) this.checkStmt(s, fnRetType);
                 this.loopDepth--;
                 this.popScope();
-                const returnMovesIter = this.returnOnlyMovesStack.pop()!;
-                this.checkLoopMoves(preMoves, returnMovesIter, sp);
+                this.endLoopMoves(preMoves, stmt.body, sp, true);
               }
             }
           } else if (iterType.tag !== "unknown") {
@@ -6584,9 +6612,11 @@ export class TypeChecker {
       }
       case "BreakStmt":
         if (this.loopDepth === 0) this.error("'break' outside of loop", sp);
+        else this.loopFrames[this.loopFrames.length - 1]?.breaks.push(this.snapshotMoveState());
         break;
       case "ContinueStmt":
         if (this.loopDepth === 0) this.error("'continue' outside of loop", sp);
+        else this.loopFrames[this.loopFrames.length - 1]?.continues.push(this.snapshotMoveState());
         break;
       case "ExprStmt": {
         // A view produced by a discarded expression (`print(lx.word(0, 5))`) has no

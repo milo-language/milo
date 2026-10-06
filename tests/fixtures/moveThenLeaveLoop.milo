@@ -1,0 +1,51 @@
+// Moves on a path that leaves the loop are fine: a move right before `break` never runs
+// twice, and one before `continue` is fine when the binding is re-assigned first. The
+// first loop was rejected as "cannot move 's' out of a loop" before break states existed.
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        take(s)
+        break
+    }
+    var t = "x".clone()
+    for i in 0..3 {
+        if i == 1 {
+            take(t)
+            t = "y".clone()
+            continue
+        }
+        print(t)
+    }
+    print(t)
+    let u = "u".clone()
+    var v: Vec<i64> = Vec.new()
+    v.push(7)
+    while let Option.Some(x) = v.pop() {
+        if x == 7 {
+            take(u)
+            break
+        }
+    }
+    var w = "w1".clone()
+    while true {
+        take(w)
+        w = "w2".clone()
+        break
+    }
+    print(w)
+    return 0
+}
+// @expect: hello
+// @expect: x
+// @expect: x
+// @expect: y
+// @expect: y
+// @expect: u
+// @expect: w1
+// @expect: w2

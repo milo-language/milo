@@ -1,0 +1,17 @@
+// @error: cannot move 's' out of a loop
+// A path that ends in `continue` starts the next iteration, so a move on it runs again:
+// the second `take(s)` used to receive an emptied string.
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    for i in 0..3 {
+        if i < 2 {
+            take(s)
+            continue
+        }
+    }
+    return 0
+}

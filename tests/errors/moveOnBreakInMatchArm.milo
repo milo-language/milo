@@ -1,0 +1,27 @@
+// @error: use of moved variable 's'
+// Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose
+// arms both break: each break carries the move to the loop exit.
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var o: Option<i64> = Option.Some(1)
+    for i in 0..3 {
+        match o {
+            Option.Some(n) => {
+                take(s)
+                if n > i {
+                    break
+                } else {
+                    break
+                }
+            }
+            Option.None => {}
+        }
+        o = Option.None
+    }
+    print(s)
+    return 0
+}
