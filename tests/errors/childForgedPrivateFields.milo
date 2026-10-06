@@ -1,4 +1,5 @@
-// @error: field '_pid' of 'Child' is private to 'std/process.milo'
+// @error: field '_pid' of 'Child' is private to 'std/process
+// (The pin stops before the extension: on Windows the module is std/process.windows.milo.)
 // Spelling the private field names does not get around the privacy: only std/process
 // may build a Child.
 from "std/process" import { Child }

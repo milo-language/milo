@@ -75,8 +75,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)`](#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop)
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
-- [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process-milo)
-- [`'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'`](#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process-milo)
+- [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process)
+- [`'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
@@ -242,7 +242,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`expects 1 args, got 2`](#expects-1-args-got-2)
 - [`extern 'fcntl' declares 3 fixed parameters but C fixes only 2`](#extern-fcntl-declares-3-fixed-parameters-but-c-fixes-only-2)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
-- [`field '_pid' of 'Child' is private to 'std/process.milo'`](#field-pid-of-child-is-private-to-std-process-milo)
+- [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
@@ -1674,9 +1674,9 @@ fn main() {
 
 <sub>[tests/errors/structLitTypeArgsNotGeneric.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsNotGeneric.milo)</sub>
 
-## `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'` {#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process-milo}
+## `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process` {#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process}
 
-Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
+(The pin stops before the extension: on Windows the module is std/process.windows.milo.) Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
 
 ```milo skip
 from "std/process" import { Command }
@@ -1694,9 +1694,9 @@ fn main() {
 
 <sub>[tests/errors/pubUserTypeNamedLikeStd.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubUserTypeNamedLikeStd.milo)</sub>
 
-## `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'` {#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process-milo}
+## `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process` {#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process}
 
-A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
+(The pin stops before the extension: on Windows the module is std/process.windows.milo.) A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
 
 ```milo skip
 from "std/process" import { Process }
@@ -5935,9 +5935,9 @@ fn main(): i32 {
 
 <sub>[tests/errors/sealedDataForged.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sealedDataForged.milo)</sub>
 
-## `field '_pid' of 'Child' is private to 'std/process.milo'` {#field-pid-of-child-is-private-to-std-process-milo}
+## `field '_pid' of 'Child' is private to 'std/process` {#field-pid-of-child-is-private-to-std-process}
 
-Spelling the private field names does not get around the privacy: only std/process may build a Child.
+(The pin stops before the extension: on Windows the module is std/process.windows.milo.) Spelling the private field names does not get around the privacy: only std/process may build a Child.
 
 ```milo skip
 from "std/process" import { Child }

@@ -1,4 +1,5 @@
-// @error: 'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'
+// @error: 'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process
+// (The pin stops before the extension: on Windows the module is std/process.windows.milo.)
 // Only a PRIVATE type is renamed when it shares a std type's name (see
 // userTypeNamedLikeStd). A `pub` one may have importers in other files that would need
 // rewriting too, so it still collides with std/process's `Process` and says so.

@@ -9789,10 +9789,10 @@ export class TypeChecker {
   private checkStructLitAsInstance(expr: ExprOf<"StructLit">, hint: Extract<TypeKind, { tag: "struct" }>): TypeKind {
     const sp = expr.span;
     const hintInfo = must(this.structs, hint.name, "struct instance");
+    const namesOk = this.checkStructLitFieldNames(expr, hint.name, hintInfo.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = hintInfo.fields.find(d => d.name === f.name);
-      if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, hintInfo.fields.map(d => d.name))); continue; }
-      this.checkFieldPrivacy(hint.name, f.name, sp);
+      if (!fieldDef) continue;
       let valType = this.checkExprWithHint(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);
@@ -9804,7 +9804,7 @@ export class TypeChecker {
       this.tryMove(f.value);
     }
     for (const d of hintInfo.fields) {
-      if (!expr.fields.find(f => f.name === d.name)) {
+      if (namesOk && !expr.fields.find(f => f.name === d.name)) {
         this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
       }
     }
@@ -9848,10 +9848,10 @@ export class TypeChecker {
     }
     if (genericInfo) {
       const typeMap = new Map<string, TypeKind>();
+      const namesOk = this.checkStructLitFieldNames(expr, expr.name, genericInfo.decl.fields.map(d => d.name));
       for (const f of expr.fields) {
         const declField = genericInfo.decl.fields.find(d => d.name === f.name);
-        if (!declField) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, genericInfo.decl.fields.map(d => d.name))); continue; }
-        this.checkFieldPrivacy(expr.name, f.name, sp);
+        if (!declField) continue;
         const valType = this.checkExpr(f.value);
         // Infer type params from the field's declared (unsubstituted) type against the
         // argument's concrete type — recursively, so `Vec<T>`/`[T]`/nested generics
@@ -9883,7 +9883,7 @@ export class TypeChecker {
         this.tryMove(f.value);
       }
       for (const d of info.fields) {
-        if (!expr.fields.find(f => f.name === d.name)) {
+        if (namesOk && !expr.fields.find(f => f.name === d.name)) {
           this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
         }
       }
@@ -9891,10 +9891,10 @@ export class TypeChecker {
     }
     const info = this.structs.get(expr.name);
     if (!info) { this.error(`unknown struct '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
+    const namesOk = this.checkStructLitFieldNames(expr, expr.name, info.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
-      if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp, memberHint(f.name, info.fields.map(d => d.name))); continue; }
-      this.checkFieldPrivacy(expr.name, f.name, sp);
+      if (!fieldDef) continue;
       let valType = this.checkExprWithHint(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);
@@ -9911,7 +9911,7 @@ export class TypeChecker {
       this.tryMove(f.value);
     }
     for (const d of info.fields) {
-      if (!expr.fields.find(f => f.name === d.name)) {
+      if (namesOk && !expr.fields.find(f => f.name === d.name)) {
         this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
       }
     }
@@ -9923,17 +9923,10 @@ export class TypeChecker {
   // derived method counts as the struct's file) and falls back to the expression's own
   // span outside any fn (a global initializer). Fn and method names are not covered:
   // `_sendFrame` is an ordinary name. Called from every read, write and literal site.
-  private checkFieldPrivacy(structName: string, field: string, refSpan?: Span): void {
-    if (!field.startsWith("_")) return;
-    // A generic literal names the base struct before it is instantiated.
-    const info = this.structs.get(structName);
-    const declFile = info?.file ?? this.genericStructs.get(structName)?.decl.span?.file;
-    const refFile = this.currentFnFile ?? refSpan?.file;
-    // Compared as absolute paths: the entry file is parsed under the path the CLI was
-    // given, and the same file reached again through an import is parsed under its
-    // absolute one (a std module checked directly is the everyday case).
-    if (!declFile || !refFile || this.absFile(declFile) === this.absFile(refFile)) return;
-    const shown = info?.baseName ?? structName;
+  private checkFieldPrivacy(structName: string, field: string, refSpan?: Span): boolean {
+    const declFile = this.privateFieldOwner(structName, field, refSpan);
+    if (!declFile) return true;
+    const shown = this.structs.get(structName)?.baseName ?? structName;
     this.diagnostics.push({
       severity: "error",
       span: refSpan,
@@ -9941,6 +9934,40 @@ export class TypeChecker {
       hint: `a field named with a leading '_' is visible only in the file that declares the struct; add an accessor or constructor there`,
       code: "private-field",
     });
+    return false;
+  }
+
+  // The declaring file when `field` is private to a file other than the referencing one.
+  private privateFieldOwner(structName: string, field: string, refSpan?: Span): string | null {
+    if (!field.startsWith("_")) return null;
+    // A generic literal names the base struct before it is instantiated.
+    const declFile = this.structs.get(structName)?.file ?? this.genericStructs.get(structName)?.decl.span?.file;
+    const refFile = this.currentFnFile ?? refSpan?.file;
+    // Compared as absolute paths: the entry file is parsed under the path the CLI was
+    // given, and the same file reached again through an import is parsed under its
+    // absolute one (a std module checked directly is the everyday case).
+    if (!declFile || !refFile || this.absFile(declFile) === this.absFile(refFile)) return null;
+    return declFile;
+  }
+
+  // Field-name diagnostics for one struct literal; false when any name was wrong. Once a
+  // name is wrong the "missing field" list is that mistake's echo (spelling `pid` also
+  // leaves `_pid` missing), so callers drop it. A literal of a struct with a `_` field,
+  // written outside the struct's file, cannot compile however it is spelled: it is one
+  // mistake, so only its first name error is reported.
+  private checkStructLitFieldNames(expr: ExprOf<"StructLit">, privacyName: string, declared: string[]): boolean {
+    const unbuildableHere = declared.some(n => this.privateFieldOwner(privacyName, n, expr.span) !== null);
+    let ok = true;
+    for (const f of expr.fields) {
+      if (!ok && unbuildableHere) break;
+      if (!declared.includes(f.name)) {
+        this.error(`struct '${expr.name}' has no field '${f.name}'`, expr.span, memberHint(f.name, declared));
+        ok = false;
+      } else if (!this.checkFieldPrivacy(privacyName, f.name, expr.span)) {
+        ok = false;
+      }
+    }
+    return ok;
   }
 
   private absFileCache = new Map<string, string>();

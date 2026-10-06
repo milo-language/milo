@@ -1,9 +1,9 @@
 # std/testing
 
-Test assertion helpers.
+Test assertion helpers. Plain `assert(cond)` is a builtin and needs no import.
 
 ```milo
-from "std/testing" import { assert, assertEqual, assertStrEqual }
+from "std/testing" import { assertEqual, assertStrEqual }
 ```
 
 <!-- generated:api -->

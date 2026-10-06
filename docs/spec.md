@@ -534,9 +534,9 @@ A conforming implementation shall reject this program at compile time.
 
 A conforming implementation shall reject this program at compile time.
 
-- The diagnostic shall contain: `field '_pid' of 'Child' is private to 'std/process.milo'`
+- The diagnostic shall contain: `field '_pid' of 'Child' is private to 'std/process`
 
-**Rationale.** Spelling the private field names does not get around the privacy: only std/process may build a Child.
+**Rationale.** (The pin stops before the extension: on Windows the module is std/process.windows.milo.) Spelling the private field names does not get around the privacy: only std/process may build a Child.
 
 *Program:* [`tests/errors/childForgedPrivateFields.milo`](../tests/errors/childForgedPrivateFields.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -3262,9 +3262,9 @@ A conforming implementation shall reject this program at compile time.
 
 A conforming implementation shall reject this program at compile time.
 
-- The diagnostic shall contain: `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'`
+- The diagnostic shall contain: `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process`
 
-**Rationale.** Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
+**Rationale.** (The pin stops before the extension: on Windows the module is std/process.windows.milo.) Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
 
 *Program:* [`tests/errors/pubUserTypeNamedLikeStd.milo`](../tests/errors/pubUserTypeNamedLikeStd.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4200,9 +4200,9 @@ A conforming implementation shall reject this program at compile time.
 
 A conforming implementation shall reject this program at compile time.
 
-- The diagnostic shall contain: `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'`
+- The diagnostic shall contain: `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process`
 
-**Rationale.** A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
+**Rationale.** (The pin stops before the extension: on Windows the module is std/process.windows.milo.) A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
 
 *Program:* [`tests/errors/userTypeShadowsImportedStd.milo`](../tests/errors/userTypeShadowsImportedStd.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
