@@ -407,6 +407,18 @@ pub fn sharedWith<R>(sh: &Shared, f: (&Sealed) => R): R {
     }
 }
 
+// Read the whole sealed buffer as a borrowed `&string`, for a callee that already takes
+// one (a socket write, a hash, a parser). Nothing is copied, and a `&string` cannot
+// write, so the sealed guarantee holds through the borrow. With `sharedWith` this is
+// how one shared message reaches N writers without N copies:
+//
+//     sharedWith(sh, (s: &Sealed): i64 => sealedWith(s, (b: &string): i64 => b.len))
+//
+// Free function for the same reason as `sharedWith`: `R` belongs to the operation.
+pub fn sealedWith<R>(s: &Sealed, f: (&string) => R): R {
+    return f(s._data)
+}
+
 impl Shared {
     // Another holder of the same bytes. No copy; the buffer is released when the
     // last holder drops.

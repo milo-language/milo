@@ -1,0 +1,71 @@
+// @skip-os: win32
+// std/crypto has no Windows arm (std/ws binds OpenSSL through it), and `pipe` is POSIX.
+
+// One message sealed and shared once, sent to two connections from refcount clones:
+// the broadcast fan-out shape. Each receiver must decode the exact bytes, the masked
+// (client) path must mask them, and the sends must only borrow: the holder count is
+// back to one once the per-connection clones are gone.
+
+// @expect: holders 3
+// @expect: holders after 1
+// @expect: Text 200 true
+// @expect: Text 200 true
+// @expect: sealed Text 5 hello
+
+from "std/ws" import {
+    WsConn, WsOpcode
+}
+from "std/seal" import {
+    Shared, seal
+}
+from "std/platform" import {
+    pipe
+}
+
+// Consumes its clone, as a writer task draining its channel would.
+fn sendClone(conn: &WsConn, msg: Shared): void {
+    let _ = conn.sendShared(msg)
+}
+
+pub fn main(): i32 {
+    var a: [i32; 2] = [0; 2]
+    var b: [i32; 2] = [0; 2]
+    var c: [i32; 2] = [0; 2]
+    unsafe {
+        if pipe(a as *i32) != 0 || pipe(b as *i32) != 0 || pipe(c as *i32) != 0 {
+            return 1
+        }
+    }
+    // Views on every end so no Drop closes the pipe fds. One server sender
+    // (unmasked) and one client sender (masked).
+    let sa = WsConn.view(a[1], 0, false)
+    let sb = WsConn.view(b[1], 0, true)
+    var ra = WsConn.view(a[0], 0, true)
+    var rb = WsConn.view(b[0], 0, false)
+
+    // 200 bytes: past the 7-bit length, so the 16-bit length header is exercised too.
+    var text: string = ""
+    for i in 0..200 {
+        text.push(97 + (i % 26) as u8)
+    }
+    let want = text.clone()
+    let msg = seal(text).share()
+    let forA = msg.clone()
+    let forB = msg.clone()
+    print($"holders {msg.holders()}")
+    sendClone(sa, forA)
+    sendClone(sb, forB)
+    print($"holders after {msg.holders()}")
+
+    let ma = ra.recv()!
+    print($"{ma.opcode} {ma.payload.len} {ma.payload == want}")
+    let mb = rb.recv()!
+    print($"{mb.opcode} {mb.payload.len} {mb.payload == want}")
+
+    let sc = WsConn.view(c[1], 0, false)
+    var rc = WsConn.view(c[0], 0, true)
+    let _ = sc.sendSealed(seal("hello".clone()))
+    let m3 = rc.recv()!
+    print($"sealed {m3.opcode} {m3.payload.len} {m3.payload}")
+    return 0
+}

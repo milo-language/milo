@@ -66,6 +66,24 @@ fn WsConn.sendBinary(self: &WsConn, data: &string): Result<i32, string>
 
 Send a binary message.
 
+#### `WsConn.sendSealed`
+
+```milo
+fn WsConn.sendSealed(self: &WsConn, msg: &Sealed): Result<i32, string>
+```
+
+Send a sealed buffer as one text message, framed straight from its bytes.
+
+#### `WsConn.sendShared`
+
+```milo
+fn WsConn.sendShared(self: &WsConn, msg: &Shared): Result<i32, string>
+```
+
+Send a shared sealed buffer as one text message. The fan-out shape: seal and share
+a message once, hand each connection's writer a refcount clone, and every socket
+is written from the one buffer.
+
 #### `WsConn.sendText`
 
 ```milo

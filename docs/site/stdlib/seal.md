@@ -433,6 +433,21 @@ pub fn seal(s: string): Sealed
 
 Consume a buffer and return it sealed. O(1): the bytes are moved, not copied.
 
+#### `sealedWith`
+
+```milo
+pub fn sealedWith<R>(s: &Sealed, f: (&string) => R): R
+```
+
+Read the whole sealed buffer as a borrowed `&string`, for a callee that already takes
+one (a socket write, a hash, a parser). Nothing is copied, and a `&string` cannot
+write, so the sealed guarantee holds through the borrow. With `sharedWith` this is
+how one shared message reaches N writers without N copies:
+
+    sharedWith(sh, (s: &Sealed): i64 => sealedWith(s, (b: &string): i64 => b.len))
+
+Free function for the same reason as `sharedWith`: `R` belongs to the operation.
+
 #### `share`
 
 ```milo
