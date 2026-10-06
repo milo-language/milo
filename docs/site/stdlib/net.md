@@ -260,6 +260,6 @@ None if the text isn't a valid v6 address — inet_pton is strict, and a v4 lite
 pub fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
-DNS lookup: the first IPv4 address for `hostname`.
+DNS lookup: the first IPv4 address for `hostname`. Recorded as net.resolve.
 
 <!-- /generated:api -->

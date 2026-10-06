@@ -41,8 +41,8 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   {
     name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)",
     flags: [
-      { flag: "--record <trace>", help: "record clock, entropy, env and argv reads to <trace> (= MILO_RECORD)" },
-      { flag: "--replay <trace>", help: "answer those reads from <trace> instead of the OS (= MILO_REPLAY)" },
+      { flag: "--record <trace>", help: "record every OS answer and scheduling decision to <trace> (= MILO_RECORD)" },
+      { flag: "--replay <trace>", help: "answer them from <trace> instead of the OS (= MILO_REPLAY)" },
     ],
   },
   { name: "build", usage: "build <file> [-o out]", summary: "compile to executable" },
@@ -121,6 +121,15 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     name: "explain", usage: "explain <name>",
     summary: "what one warning, @attribute or keyword means, with an example and how to silence it",
     flags: [{ flag: "--json", help: "the raw entry" }],
+  },
+  {
+    name: "trace", usage: "trace <file>",
+    summary: "list a record/replay trace's records: seq, kind, call argument, payload size",
+    flags: [
+      { flag: "--json", help: "{version, total, records: [{seq, kind, arg, payloadLen, offset}]}" },
+      { flag: "--kind <prefix>", help: "only records whose kind starts with <prefix> (net., sched.)" },
+      { flag: "--payload <seq>", help: "write one record's payload bytes to stdout" },
+    ],
   },
   {
     name: "api", usage: "api <terms>", summary: "search std signatures by name/doc",

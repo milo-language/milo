@@ -790,7 +790,7 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
 var activeRouter: Vec<Router> = []
 
 // A response can be a few hundred KB (a gridpoint feed, a radar frame), and a
-// green task's socket is non-blocking: one sysWrite() is not a promise to have
+// green task's socket is non-blocking: one write() is not a promise to have
 // written all of it. serveRouter's single write is safe only because its socket
 // blocks; here a short write would truncate the body with no error anywhere.
 fn writeAll(fd: i32, buf: string): void {

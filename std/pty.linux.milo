@@ -93,10 +93,10 @@ impl Pty {
     // replay no pty exists and the master is a synthetic fd answered from the trace.
     fn open(): Result<Pty, string> {
         if replayOff() {
-            return Pty.openLive()
+            return Pty._openLive()
         }
         let p = replayBlob("pty.open", "", (): string => {
-            match Pty.openLive() {
+            match Pty._openLive() {
                 Result.Ok(pty) => {
                     return pty.masterFd.toString() + " " + pty.slavePath
                 }
@@ -119,7 +119,7 @@ impl Pty {
         })
     }
 
-    fn openLive(): Result<Pty, string> {
+    fn _openLive(): Result<Pty, string> {
         unsafe {
             // O_RDWR=2 | O_NOCTTY=0x100
             let master = posix_openpt(258)
@@ -149,15 +149,14 @@ impl Pty {
         }
     }
 
-    // Spawn child connected to PTY.
-    // Spawning is one record (pty.spawn) answering with the pid; under replay nothing
-    // is forked.
+    // Spawn child connected to PTY. Recorded as pty.spawn (the pid); under replay
+    // nothing is forked.
     fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
     requires
     self.masterFd >= 0
     {
         if replayOff() {
-            return self.spawnLive(program, args)
+            return self._spawnLive(program, args)
         }
         var line = program.clone()
         for a in args {
@@ -165,7 +164,7 @@ impl Pty {
             line.pushStr(a)
         }
         let pid = replayRet("pty.spawn", line, false, (): i64 => {
-            match self.spawnLive(program, args) {
+            match self._spawnLive(program, args) {
                 Result.Ok(pid) => {
                     return pid as i64
                 }
@@ -181,7 +180,7 @@ impl Pty {
         return Result.Ok(pid)
     }
 
-    fn spawnLive(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string> {
+    fn _spawnLive(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string> {
         unsafe {
             let argc = args.len + 2
             let argv = malloc(argc * 8)

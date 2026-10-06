@@ -69,6 +69,7 @@ thread_local var rrPastEnd: i64 = 0
 // MILO_REPLAY_STOP: the record at which replay calls miloReplayStop (0 = none).
 thread_local var rrStopAt: i64 = 0
 thread_local var rrStopPrint: bool = false
+thread_local var rrStopCall: string = ""
 // Set once replay is exiting with a divergence, so the exit hook stays quiet.
 thread_local var rrFailing: bool = false
 thread_local var rrThreadWarned: bool = false
@@ -456,16 +457,14 @@ pub fn replayTakeI64(kind: &string, arg: &string): i64 {
 @externalLinkage
 pub fn miloReplayStop(seq: i64): void {
     if rrStopPrint {
-        eprint("replay: stop at record " + seq.toString())
+        eprint("replay: stop at record " + seq.toString() + ": " + rrStopCall)
         return
     }
     debugTrap()
 }
 
 fn replayStopHit(seq: i64, call: string): void {
-    if rrStopPrint {
-        eprint("replay: reached record " + seq.toString() + " " + call)
-    }
+    rrStopCall = call
     miloReplayStop(seq)
 }
 

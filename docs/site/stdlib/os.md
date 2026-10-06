@@ -136,6 +136,122 @@ use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/st
 pub fn sendFd(fd: i32, buf: *u8, len: i64): i64
 ```
 
+### `sysAccept`
+
+```milo
+pub fn sysAccept(fd: i32): i32
+```
+
+accept(2), discarding the peer address. Under replay the recorded client fd comes
+back as a synthetic socket.
+
+### `sysClose`
+
+```milo
+pub fn sysClose(fd: i32): i32
+```
+
+close(2). Under replay a synthetic descriptor is forgotten, never passed to the OS.
+
+### `sysDup`
+
+```milo
+pub fn sysDup(fd: i32): i32
+```
+
+dup(2). Under replay the duplicate of a descriptor is synthetic like everything else
+the trace hands out, and keeps the original's record kinds.
+
+### `sysIsatty`
+
+```milo
+pub fn sysIsatty(fd: i32): bool
+```
+
+isatty(3) through the trace: whether a descriptor is a terminal is an input too.
+
+### `sysKill`
+
+```milo
+pub fn sysKill(pid: i32, sig: i32): i32
+```
+
+kill(2) through the trace. Under replay no signal is sent: the pid is the recorded
+run's, and whatever has it now is not ours.
+
+### `sysListen`
+
+```milo
+pub fn sysListen(fd: i32, backlog: i32): i32
+```
+
+listen(2).
+
+### `sysLseek`
+
+```milo
+pub fn sysLseek(fd: i32, off: i64, whence: i32): i64
+```
+
+lseek(2): the new offset, or &lt;0.
+
+### `sysOpen`
+
+```milo
+pub fn sysOpen(path: &string, flags: i32, mode: i32): i32
+```
+
+open(2) with a creation mode (ignored unless `flags` creates). The fd, or &lt;0.
+
+### `sysRead`
+
+```milo
+pub fn sysRead(fd: i32, buf: *u8, len: i64): i64
+```
+
+One read(2): bytes read, 0 at EOF, &lt;0 with errno set.
+
+### `sysRecv`
+
+```milo
+pub fn sysRecv(fd: i32, buf: *u8, len: i64): i64
+```
+
+One socket read (recv on Windows, where a SOCKET is not a CRT fd).
+
+### `sysSend`
+
+```milo
+pub fn sysSend(fd: i32, buf: *u8, len: i64): i64
+```
+
+One socket write (send on Windows).
+
+### `sysSocket`
+
+```milo
+pub fn sysSocket(domain: i32, sockType: i32, protocol: i32): i32
+```
+
+socket(2). Under replay the recorded number comes back as a synthetic socket.
+
+### `sysWaitpid`
+
+```milo
+pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32
+```
+
+waitpid(2) through the trace: the return value and the status word the kernel wrote.
+Under replay no child exists; the recorded exit comes back.
+
+### `sysWrite`
+
+```milo
+pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64
+```
+
+One write(2): bytes written, &lt;0 with errno set.
+
 ### `writeFd`
 
 ```milo

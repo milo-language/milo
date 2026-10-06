@@ -41,6 +41,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`help`](#help) | Print this help (also --help, -h). |
 | [`lang`](#lang) | The language's vocabulary as data: keywords, types, operators, builtins, warnings, attributes, commands. |
 | [`explain <name>`](#explain) | What one warning, @attribute or keyword means, with an example and how to silence it. |
+| [`trace <file>`](#trace) | List a record/replay trace's records: seq, kind, call argument, payload size. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
 
@@ -54,8 +55,8 @@ Compile and run (no artifacts left behind).
 
 | Flag | Effect |
 |---|---|
-| `--record <trace>` | Record clock, entropy, env and argv reads to \<trace\> (= MILO\_RECORD). |
-| `--replay <trace>` | Answer those reads from \<trace\> instead of the OS (= MILO\_REPLAY). |
+| `--record <trace>` | Record every OS answer and scheduling decision to \<trace\> (= MILO\_RECORD). |
+| `--replay <trace>` | Answer them from \<trace\> instead of the OS (= MILO\_REPLAY). |
 
 ### build
 
@@ -259,6 +260,20 @@ What one warning, @attribute or keyword means, with an example and how to silenc
 | Flag | Effect |
 |---|---|
 | `--json` | The raw entry. |
+
+### trace
+
+```sh
+milo trace <file>
+```
+
+List a record/replay trace's records: seq, kind, call argument, payload size.
+
+| Flag | Effect |
+|---|---|
+| `--json` | {version, total, records: \[{seq, kind, arg, payloadLen, offset}\]}. |
+| `--kind <prefix>` | Only records whose kind starts with \<prefix\> (net., sched.). |
+| `--payload <seq>` | Write one record's payload bytes to stdout. |
 
 ### api
 

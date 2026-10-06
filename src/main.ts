@@ -2349,6 +2349,11 @@ async function main() {
     process.exit(runLangInfo(args.slice(1)));
   }
 
+  if (cmd === "trace") {
+    const { runTrace } = require("./trace");
+    process.exit(runTrace(args.slice(1)));
+  }
+
   if (cmd === "explain") {
     const { runExplain } = require("./lang-info");
     process.exit(runExplain(args.slice(1)));

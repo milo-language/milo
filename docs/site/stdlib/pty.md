@@ -56,6 +56,9 @@ their own (e.g. `while true` shells) before a blocking wait().
 fn Pty.open(): Result<Pty, string>
 ```
 
+Opening is one record (pty.open): the master fd and the slave's path. Under
+replay no pty exists and the master is a synthetic fd answered from the trace.
+
 #### `Pty.output`
 
 ```milo
@@ -97,7 +100,8 @@ fn Pty.resize(self: &mut Pty, rows: u16, cols: u16): i32
 fn Pty.spawn(self: &mut Pty, program: &string, args: &Vec<string>): Result<i32, string>
 ```
 
-Spawn child connected to PTY.
+Spawn child connected to PTY. Recorded as pty.spawn (the pid); under replay
+nothing is forked.
 
 #### `Pty.wait`
 
