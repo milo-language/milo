@@ -8524,13 +8524,16 @@ export class TypeChecker {
   // shape. A user fn, variable, struct, enum or alias of the same name wins, so existing
   // programs that define their own `Some` are untouched; `bindElidedPattern` is the same
   // rule for patterns.
-  private static readonly PRELUDE_VARIANTS: Record<string, string> = { Some: "Option", None: "Option", Ok: "Result", Err: "Result" };
+  // A Map, not an object literal: indexing `{...}[name]` with a call named `toString` or
+  // `constructor` found Object.prototype's member and rewrote the call into an EnumLit
+  // whose enumName was a function (a crash in the suggester; fuzzFrontend found it).
+  private static readonly PRELUDE_VARIANTS = new Map<string, string>([["Some", "Option"], ["None", "Option"], ["Ok", "Result"], ["Err", "Result"]]);
 
   private canonicalizePreludeVariant(expr: Expr): void {
     if (expr.kind !== "Call" && expr.kind !== "Ident") return;
     if (expr.kind === "Call" && expr.sigil) return;
     const variant = expr.kind === "Call" ? expr.func : expr.name;
-    const enumName = TypeChecker.PRELUDE_VARIANTS[variant];
+    const enumName = TypeChecker.PRELUDE_VARIANTS.get(variant);
     if (!enumName || this.nameIsDefined(variant)) return;
     const args = expr.kind === "Call" ? expr.args : [];
     const typeArgs = expr.kind === "Call" ? expr.typeArgs : undefined;
