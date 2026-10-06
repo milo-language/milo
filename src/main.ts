@@ -34,6 +34,7 @@ import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
 import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
+import { hostTransform, hostLinkFlags, runHot } from "./hot";
 import { fixFor, applyEdits, type Fix } from "./fixes";
 import { cdeclCacheEnabled, cdeclCacheKey, cdeclCacheHit, cdeclCacheStore } from "./cdeclcache";
 import { objCacheEnabled, objCacheKey, objCacheFetch, objCacheStore, placementLoad, placementStore, hotStateLoad, hotStateStore, hotUnitEnabled } from "./objcache";
@@ -95,12 +96,16 @@ function failCompile(what: string): never {
   process.exit(1);
 }
 
+// Every source file the last frontend run read; `milo hot` watches these.
+let lastResolvedFiles: string[] = [];
+
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let program: Program | undefined;
   try {
     program = phase("lex+parse", () => new Parser(new Lexer(source).tokenize(), source, filePath).parse());
     program = phase("resolve imports", () => resolveImports(program!, sourceDir, target, filePath));
+    lastResolvedFiles = [...new Set([...(filePath ? [resolve(filePath)] : []), ...(program.fileImports?.keys() ?? [])])];
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic — render the source line + caret
     // + hint (same Elm-style output as type errors). Errors from imported files
@@ -1244,7 +1249,7 @@ function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string 
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks: boolean | null = null, staticDeps = false, forceContractChecks: boolean | null = null, stripPanicLocations = false): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks: boolean | null = null, staticDeps = false, forceContractChecks: boolean | null = null, stripPanicLocations = false, hot = false): string {
   const source = readFileSync(sourcePath, "utf-8");
   // Arithmetic (+ - * -x) traps on overflow in EVERY build mode — the language law is
   // "every op is total; wrapping is opt-in" (Swift/Zig-safe model, not Rust's mode-flip).
@@ -1260,7 +1265,9 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
-  const { ir, cGuards, linkLibs, hasMain } = compileWithGuards(source, target, sourcePath, warningConfig, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
+  const compiled = compileWithGuards(source, target, sourcePath, warningConfig, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
+  const { cGuards, linkLibs, hasMain } = compiled;
+  let ir = compiled.ir;
   // Every path through here links an executable, and an executable needs an entry
   // point. Without this the linker answered for us, with `Undefined symbols: "_main"`
   // and a stack of ld noise that names no Milo file: the same report you get for a
@@ -1288,6 +1295,19 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   const outDir = dirname(out);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
+  let hotLink = "";
+  if (hot) {
+    if (target.bareMetal || target.os === "windows" || target.arch === "wasm64") {
+      console.error(`error: --hot needs a hosted darwin or linux target (dlopen), not ${target.triple}`);
+      process.exit(1);
+    }
+    const h = hostTransform(ir);
+    if ("error" in h) { console.error(`error: --hot: ${h.error}`); process.exit(1); }
+    ir = h.ir;
+    writeFileSync(`${out}.hot.json`, JSON.stringify(h.manifest));
+    hotLink = hostLinkFlags(target.os);
+  }
+
   try {
     writeFileSync(tmpLl, ir);
     // Dev hook: keep a copy of the whole-program IR for inspection (objdump shows
@@ -1303,7 +1323,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
       linkBareMetal(tmpLl, out, target, optFlag, heapSize);
     } else {
       const libs = detectLibs(ir, target, staticDeps) + declaredLibSpec(linkLibs, target, staticDeps);
-      const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
+      const extra = (extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "") + hotLink;
       linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target, resolve(sourcePath));
     }
   } catch (e: any) {
@@ -1660,6 +1680,27 @@ async function runFile(sourcePath: string, extraArgs: string[], target: TargetIn
   }
 }
 
+// `milo hot`: the host and every patch are built with the same settings (-O0, one unit,
+// overflow traps on, contracts as -O0 has them), or a patch's IR would differ from the
+// host's for reasons that are not the edit.
+async function hotCommand(sourcePath: string, args: string[], target: TargetInfo, warningConfig: WarningConfig, overflowChecks: boolean | null, contractChecks: boolean | null): Promise<number> {
+  const tc = detectToolchain();
+  if (tc.kind !== "clang") { console.error("error: milo hot requires clang"); return 1; }
+  cguOverride = 1;
+  const trap = overflowChecks ?? true;
+  const contracts = contractChecks ?? true;
+  const frontendOk = <T>(fn: () => T): T | null => {
+    try { return withThrowingDiagnostics(fn); } catch (e) { if (e instanceof CompileFailure) return null; throw e; }
+  };
+  return runHot(args, {
+    buildHost: (outBin) => frontendOk(() => compileToBinary(sourcePath, outBin, target, "-O0", warningConfig, [], false, false, null, trap, false, contracts, false, true)) !== null,
+    compileIR: () => frontendOk(() => compile(readFileSync(sourcePath, "utf-8"), target, sourcePath, warningConfig, trap, false, contracts)),
+    files: () => lastResolvedFiles,
+    cc: tc.path,
+    os: target.os,
+  });
+}
+
 // Run a bare-metal ELF under QEMU with semihosting. The program's stdout/exit
 // arrive on the semihosting console (startup.c prints "exit=<n>"); QEMU's own
 // process exit is always 1 for legacy SYS_EXIT, so we don't propagate it.
@@ -1721,7 +1762,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean; hot: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -1746,6 +1787,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // unrecognized `--flag` would otherwise be swallowed as the source-file positional below.
   let emitAll = false;
   let emitSpans = false;
+  let hot = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
@@ -1755,6 +1797,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     // up to ~2.4x slower, which is why this is opt-in rather than the default for `run`.
     // A later explicit --overflow-checks still wins (the loop is order-sensitive).
     else if (args[i] === "--fast") { optFlag = "-O0"; overflowChecks = false; contractChecks = false; }
+    else if (args[i] === "--hot") { hot = true; }
     else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     // Codegen units: clang is ~95% of build time and parallelises across processes.
     // `--cgus=1` forces the single module back (the shape release builds and -g already
@@ -1826,7 +1869,10 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     for (const n of project.denied) if (!allowed.has(n) && !expected.has(n)) denied.add(n);
     for (const n of project.allowed) if (!denied.has(n)) allowed.add(n);
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations };
+  // A hot host is -O0 and one unit: patches are compiled at -O0 against it, and the hot
+  // transform runs on the whole module before any split could see it.
+  if (hot) { optFlag = "-O0"; cguOverride = 1; }
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -2373,7 +2419,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -2549,7 +2595,7 @@ async function main() {
 
   // bun/uv behavior: a locked dependency that isn't in the cache is fetched instead
   // of erroring. No-op (a few existsSync calls) when there is no milo.json or no deps.
-  if (cmd === "run" || cmd === "build") {
+  if (cmd === "run" || cmd === "build" || cmd === "hot") {
     try {
       await ensureDepsInstalled(source!);
     } catch (e) {
@@ -2563,9 +2609,11 @@ async function main() {
     await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks);
   } else if (cmd === "build") {
     const t0 = Date.now();
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations, hot);
     reportCompiled(source!, bin, Date.now() - t0);
     timingReport();
+  } else if (cmd === "hot") {
+    process.exit(await hotCommand(source!, rest, target, warningConfig, overflowChecks, contractChecks));
   } else if (cmd === "check") {
     runCheck(readFileSync(source!, "utf-8"), source!, target, warningConfig, args.includes("--json"));
   } else if (cmd === "fix") {

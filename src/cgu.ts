@@ -21,7 +21,7 @@ const IDENT = String.raw`(?:"(?:[^"\\]|\\.)*"|[-a-zA-Z$._][-a-zA-Z$._0-9]*)`;
 // the ones that must be promoted when a symbol is referenced from another unit.
 const LOCAL_LINKAGE = /^(?:private|internal)\b/;
 
-type Func = {
+export type Func = {
   name: string;
   /** the `define ... {` line, used to synthesize a cross-unit `declare` */
   header: string;
@@ -30,13 +30,13 @@ type Func = {
   local: boolean;
 };
 
-type Global = {
+export type Global = {
   name: string;
   text: string;
   local: boolean;
 };
 
-type Module = {
+export type Module = {
   header: string[];
   typedefs: string[];
   declares: string[];
@@ -77,7 +77,7 @@ function forEachRef(text: string, fn: (start: number, end: number, raw: string) 
  * A char-at-a-time walk here cost 708ms on a 135k-line module, so this stays a native
  * regex pass. Returns `text` itself when nothing was renamed.
  */
-function mapSymbols(text: string, map: (name: string) => string | undefined): string {
+export function mapSymbols(text: string, map: (name: string) => string | undefined): string {
   let out: string[] | null = null;
   let last = 0;
   forEachRef(text, (start, end, raw) => {
@@ -91,11 +91,11 @@ function mapSymbols(text: string, map: (name: string) => string | undefined): st
   return (out as string[]).join("");
 }
 
-function unquote(raw: string): string {
+export function unquote(raw: string): string {
   return raw.startsWith('"') ? raw.slice(1, -1) : raw;
 }
 
-function quoteIfNeeded(name: string): string {
+export function quoteIfNeeded(name: string): string {
   return /^[-a-zA-Z$._][-a-zA-Z$._0-9]*$/.test(name) ? name : `"${name}"`;
 }
 
@@ -115,21 +115,21 @@ function aroundBytePayload(text: string): [string, string, string] {
 }
 
 /** `mapSymbols` that skips a global's byte-string payload instead of scanning through it. */
-function mapGlobalSymbols(text: string, map: (name: string) => string | undefined): string {
+export function mapGlobalSymbols(text: string, map: (name: string) => string | undefined): string {
   const [head, payload, tail] = aroundBytePayload(text);
   if (!payload) return mapSymbols(head, map);
   return mapSymbols(head, map) + payload + mapSymbols(tail, map);
 }
 
 /** Every distinct `@symbol` referenced anywhere in `text`. */
-function referencedSymbols(text: string): Set<string> {
+export function referencedSymbols(text: string): Set<string> {
   const found = new Set<string>();
   forEachRef(text, (_s, _e, raw) => { found.add(unquote(raw)); });
   return found;
 }
 
 /** `referencedSymbols` for a global, skipping its byte-string payload. */
-function referencedInGlobal(text: string): Set<string> {
+export function referencedInGlobal(text: string): Set<string> {
   const [head, payload, tail] = aroundBytePayload(text);
   if (!payload) return referencedSymbols(head);
   const found = referencedSymbols(head);
@@ -140,7 +140,7 @@ function referencedInGlobal(text: string): Set<string> {
 const DEFINE_HEADER = new RegExp(`^define\\s+(.*?)@(${IDENT})\\s*\\(`);
 const GLOBAL_LINE = new RegExp(`^@(${IDENT})\\s*=\\s*(.*)$`);
 
-function parseModule(ir: string): Module | null {
+export function parseModule(ir: string): Module | null {
   const mod: Module = { header: [], typedefs: [], declares: [], globals: [], funcs: [], metadata: [], attrs: [] };
   const lines = ir.split("\n");
   // Offset of lines[i] in `ir`, so a function's text is one slice instead of a re-join.
@@ -310,7 +310,7 @@ export type HotState = { hashes: Map<string, string>; hot: string[] };
 const HOT_MAX_FNS = 64;
 const HOT_SHARE = 0.5;
 
-function textHash(text: string): string {
+export function textHash(text: string): string {
   return Bun.hash(text).toString(36);
 }
 
@@ -357,7 +357,7 @@ export function selectHot(funcs: { name: string; text: string; lineCount: number
  * sret / coerce attributes MUST survive: codegen requires the same attribute rendering
  * at the declaration and at every call, or the ABI silently disagrees.
  */
-function declareFor(header: string): string {
+export function declareFor(header: string): string {
   let d = header
     .replace(/^define\s+/, "")
     .replace(/\s*\{\s*$/, "");
@@ -396,7 +396,7 @@ function endOfType(text: string, start: number): number {
 }
 
 /** A global's definition rewritten as a declaration for units that only read it. */
-function externDeclFor(text: string): string | null {
+export function externDeclFor(text: string): string | null {
   // `@g = [linkage] [quals] {global|constant} <type> <init>` becomes the same prefix with
   // `external` linkage and the initializer dropped.
   const m = /^(@\S+\s*=\s*)(?:private\s+|internal\s+|external\s+|weak\s+|weak_odr\s+|linkonce\s+|linkonce_odr\s+|common\s+|appending\s+)?((?:unnamed_addr\s+|local_unnamed_addr\s+|thread_local(?:\([^)]*\))?\s+|dso_local\s+|dso_preemptable\s+|externally_initialized\s+|constant\s+|global\s+)*)/.exec(text);

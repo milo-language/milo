@@ -43,6 +43,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
 | `src/hir.ts` | Typed HIR — every expression carries its resolved TypeKind. |
+| `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |

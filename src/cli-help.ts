@@ -41,6 +41,13 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   { name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)" },
   { name: "build", usage: "build <file> [-o out]", summary: "compile to executable" },
   {
+    name: "hot", usage: "hot <file> [-- args]", summary: "run and patch function bodies on every save",
+    details: [
+      "a body-only edit is swapped into the running program; a layout, signature",
+      "or global change restarts it (docs/plans/fast-iteration-2026-10.md)",
+    ],
+  },
+  {
     name: "test", usage: "test [file|dir...]",
     summary: "run tests (*_test.milo, recursive in a dir; cwd by default)",
     details: [
@@ -170,6 +177,7 @@ export const OPTIONS: CliOption[] = [
   { flag: "--contract-checks", help: ["assert requires/ensures/invariant at any -O (default: only --debug)"] },
   { flag: "--no-contract-checks", help: ["drop those asserts at any -O (e.g. fast -O0 builds)"] },
   { flag: "--strip-panic-locations", help: ["blank source paths out of runtime panic messages (-g still embeds them)"] },
+  { flag: "--hot", help: ["build a hot-reload host: -O0, patchable functions, writes <out>.hot.json"] },
   { flag: "--fast", help: ["quick edit-loop build: -O0, wrapping (~2x faster compile)"] },
   { flag: "--cgus=<n>", help: ["codegen units compiled in parallel (default: auto, 1 for --release/-g)"] },
   { flag: "--deny=<warning>", help: ["treat warning as error (e.g. --deny=unused-variable)"] },
