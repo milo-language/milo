@@ -20,7 +20,7 @@ from "src-milo/codegen/types.milo" import {
     nextTemp, nextLabel, emit, emitG, emitLabel, llType, stripPercent, resolveTyStr, ensureMalloc,
     findLocal, hasLocal, genLoad, isVecTy, unwrapVec, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupFieldRange, lookupVariantTag, lookupVariantPayload,
-    isInlineArrTy, inlineArrElem, addrWasMoved, ensureStringTy
+    isInlineArrTy, inlineArrElem, addrWasMoved, ensureStringTy, resolveAstTy, ensureMemcpy, hashMapValTy, hashMapKeyTy
 }
 from "src-milo/codegen/expr.milo" import {
     genExpr, genLvalue, genHExpr, variantStructTy,
@@ -32,6 +32,9 @@ from "src-milo/codegen/drops.milo" import {
 }
 from "src-milo/codegen/strings.milo" import {
     genStringAppendInPlace, genStringEq, genStringLit, emitStringLit, ensureStrFind
+}
+from "src-milo/codegen/emit.milo" import {
+    isFixedArrayTy
 }
 
 // -- Assignment --
@@ -1490,8 +1493,13 @@ pub fn genMatchAst(cg: &mut Cgen, subject: &ExprNode, arms: &Vec<HMatchArm>, loc
 // sentinel of their own. Zeroing after the drop is what makes the drop
 // idempotent: a `break` drops the loop-scoped locals and then falls through to
 // the function epilogue, which walks the same slots from 0.
+//
+// Newest first: locals drop in reverse declaration order (the language rule since
+// 2026-09-21, tests/fixtures/dropUser.milo), as struct fields always did.
 pub fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &string) {
-    for i in fromLen..locs.len {
+    var i = locs.len
+    while i > fromLen {
+        i -= 1
         if locs[i].isRef {
             continue
         }

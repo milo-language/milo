@@ -24,7 +24,7 @@ from "src-milo/parser.milo" import {
 from "src-milo/ast.milo" import {
     Program, StructDecl, EnumDecl, Function, ImportDecl, TraitDecl, ImplDecl,
     GlobalDecl, cloneGlobal, renameFunction, renameGlobal, Diagnostic, cloneDiagnostic,
-    Attribute, Pattern, Stmt
+    Attribute, Pattern, Stmt, TypeAlias
 }
 
 pub struct ResolverState {

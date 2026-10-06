@@ -1,6 +1,6 @@
 // Checker state — scopes, variable info, diagnostic tracking, type tables
 from "src-milo/ast.milo" import {
-    Span, Function, StructDecl, EnumDecl, Program, Stmt, ImplDecl, MiloType, Attribute, Diagnostic
+    Span, Function, StructDecl, EnumDecl, Program, Stmt, ImplDecl, MiloType, Attribute, Diagnostic, cloneSpan
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, tyVoid, isCopy
@@ -259,6 +259,10 @@ pub struct Checker {
     // see ForInInfo. Statements carry no id, and lowering needs this to choose between
     // the four HStmt for-loop variants without re-running the classification.
     forIns: HashMap<u32, ForInInfo>,
+    // A call of a generic method (see checkGenericMethod), keyed by the RECEIVER's node
+    // id: the instance's method name (`onRecv_i64`), which lowering writes into the
+    // call so codegen's `Type$method` lookup finds the monomorphized fn.
+    genericMethodNames: HashMap<u32, string>,
     // Borrow-liveness tracking for views (&[T]/&string) — see checker/borrow.milo.
     // Name-keyed rather than living on VarInfo: VarInfo is looked up BY VALUE
     // (lookup returns a copy; mutation goes through setVar*-and-reinsert), so a
@@ -337,6 +341,7 @@ pub fn newChecker(): Checker {
         jsonCapableStructs: HashMap.new(),
         exprTypes: HashMap.new(),
         forIns: HashMap.new(),
+        genericMethodNames: HashMap.new(),
         borrowedPaths: HashMap.new(),
         scopeFreezes: Vec.new(),
         viewReturnFields: HashMap.new(),

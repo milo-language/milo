@@ -1,7 +1,7 @@
 // Trait/implDecl resolution, derive macros, builtin registrations
 from "src-milo/ast.milo" import {
     Program, Function, Expr, MiloType, StructDecl, EnumDecl, ImplDecl,
-    Param, Span, simpleType, TraitDecl, TraitMethod,
+    Param, Span, simpleType, TraitDecl, TraitMethod, ExprNode, mkExpr, cloneSpan, cloneStmts, Stmt, cloneTypeParams
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst,
@@ -14,6 +14,12 @@ from "src-milo/checker/state.milo" import {
 }
 from "src-milo/checker/derive_json.milo" import {
     deriveJson
+}
+from "src-milo/checker/mono.milo" import {
+    replayImplForInsts, registerGenericFn
+}
+from "src-milo/checker/stmt.milo" import {
+    resolveAstType
 }
 
 // -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
@@ -470,6 +476,24 @@ pub fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
             for i in 0..implDecl.methods.len {
                 let m = implDecl.methods[i]
                 let mangled = tn.clone() + "$" + m.name.clone()
+                // A method with its own type parameters (`fn onRecv<T>(self: &mut Self,
+                // ch: &Channel<T>)` in std/select.milo) is a generic fn whose param 0 is
+                // the receiver, instantiated per call by checkGenericMethod. Registered as
+                // a concrete method, its `Channel<T>` resolved with T unbound, and every
+                // program importing std/sync emitted a `Channel_T` no backend can size.
+                if m.typeParams.len > 0 {
+                    registerGenericFn(&mut ck, Function {
+                        name: mangled,
+                        typeParams: cloneTypeParams(m.typeParams),
+                        params: substSelfParams(m.params, tn),
+                        retType: substSelfMiloType(m.retType, tn),
+                        body: cloneStmts(m.body),
+                        isExtern: false,
+                        isVariadic: false,
+                        attributes: m.attributes.clone(),
+                    })
+                    continue
+                }
 
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {

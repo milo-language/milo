@@ -3,7 +3,7 @@ from "src-milo/target.milo" import {
     getHostTarget
 }
 from "src-milo/ast.milo" import {
-    ExprNode, Expr, StructLitField, Function
+    ExprNode, Expr, StructLitField, Function, mkExpr
 }
 from "src-milo/hir.milo" import {
     HIRModule, HFunction, HExpr, hexprAbort

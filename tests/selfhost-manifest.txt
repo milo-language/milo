@@ -466,7 +466,6 @@ sendAnnotation
 sha1Vectors
 sha256Vectors
 sha512Vectors
-shardWeld
 signalSigchld
 signalTwoPipes
 sigpipeIgnored

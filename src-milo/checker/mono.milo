@@ -2,14 +2,14 @@
 from "src-milo/ast.milo" import {
     Function, Stmt, Expr, MiloType, StructDecl, EnumDecl, EnumVariant,
     Param, StructField, TypeParam, Span, StructLitField, MatchArm, Pattern, ImplDecl, Attribute,
-    cloneOptI64,
+    cloneOptI64, cloneOptString, cloneSpan, mkExpr, copyExplicitMut, ExprNode, simpleType, cloneTypeParams
 }
 from "src-milo/checker/traits.milo" import {
     registerImpl
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName, tyUnknown,
-    isNumeric, isInteger,
+    isNumeric, isInteger, tyVoid
 }
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField,
@@ -524,7 +524,9 @@ pub fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeAr
         }
         monoMethods.push(Function {
             name: gi.methods[mi].name.clone(),
-            typeParams: Vec.new(),
+            // A method's own type parameters (Arena<T>.with<R>) stay: registerImpl
+            // parks such a method as a generic fn over them once T is concrete.
+            typeParams: cloneTypeParams(gi.methods[mi].typeParams),
             params: mParams,
             retType: substituteMiloType(gi.methods[mi].retType, tps, tas2),
             body: substStmts(gi.methods[mi].body, tps, tas2),

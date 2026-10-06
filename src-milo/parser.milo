@@ -6,7 +6,10 @@ from "src-milo/ast.milo" import {
     MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
     EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, TraitDecl,
     TraitMethod, ImplDecl, Attribute, TypeParam, StructLitField, LiteralKind,
-    GlobalDecl, simpleType, ptrType, Diagnostic, cloneDiagnostic
+    GlobalDecl, simpleType, ptrType, Diagnostic, cloneDiagnostic, TypeAlias, markExplicitMut, cloneSpan, mkExpr, ExprNode, cloneStmts
+}
+from "src-milo/lexer.milo" import {
+    tokenize
 }
 
 pub struct Parser {
@@ -349,7 +352,13 @@ pub fn parseAttributeArg(p: &mut Parser): string {
 
 pub fn parseAttribute(p: &mut Parser): Attribute {
     expect(&mut p, TokKind.At)
-    let name = expect(&mut p, TokKind.Ident).value
+    // Attribute names are their own namespace, so the keyword `unsafe` names one
+    // (`@unsafe` on std/io.milo's adoptFd), as in src/parser.ts.
+    let name = if at(p, TokKind.Unsafe) {
+        advance(&mut p).value
+    } else {
+        expect(&mut p, TokKind.Ident).value
+    }
     var args: Vec<string> = Vec.new()
     if matchTok(&mut p, TokKind.LParen) {
         args.push(parseAttributeArg(&mut p))

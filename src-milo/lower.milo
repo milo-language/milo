@@ -293,8 +293,17 @@ fn hoistKind(k: Expr, ownerId: u32, fnRetType: &TypeKind, ck: &Checker, cx: &mut
             return Expr.CastExpr(hoistNode(operand, fnRetType, ck, &mut cx), targetType)
         }
         Expr.MethodCall(obj, method, args) => {
+            // A generic method's call names the instance the checker picked.
+            var callee = method
+            match ck.genericMethodNames.get((*obj).id) {
+                Option.Some(inst) => {
+                    callee = inst
+                }
+                Option.None => {
+                }
+            }
             let o = hoistNode(obj, fnRetType, ck, &mut cx)
-            return Expr.MethodCall(o, method, hoistNodes(args, fnRetType, ck, &mut cx))
+            return Expr.MethodCall(o, callee, hoistNodes(args, fnRetType, ck, &mut cx))
         }
         Expr.RangeExpr(start, end) => {
             let s = hoistNode(start, fnRetType, ck, &mut cx)

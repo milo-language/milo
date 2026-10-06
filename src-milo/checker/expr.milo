@@ -1,6 +1,6 @@
 // Expression type checking
 from "src-milo/ast.milo" import {
-    Expr, Param, MiloType, Span, StructLitField, Pattern, Stmt, MatchArm
+    Expr, Param, MiloType, Span, StructLitField, Pattern, Stmt, MatchArm, mkExpr, isExplicitMut, cloneSpan, ExprNode
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
@@ -21,7 +21,7 @@ from "src-milo/checker/traits.milo" import {
     resolveMethod
 }
 from "src-milo/checker/stmt.milo" import {
-    checkStmt, checkMatchExpr
+    checkStmt, checkMatchExpr, resolveAstType
 }
 from "src-milo/checker/borrow.milo" import {
     rootIdentName, errorIfFrozenRoot, freezePlace, freezeViewMethodSource,
@@ -1510,7 +1510,7 @@ pub fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNode>>, ty
                 if ck.structs.contains(sname) {
                     let sinfo = ck.structs.get(sname)!
                     for fi in 0..sinfo.fields.len {
-                        let ft = sinfo.fields[fi].ty
+                        let ft = sinfo.fields[fi].ty.clone()
                         if !isInteger(ft) && !isFloat(ft) && !typeEq(ft, tyBool()) && !typeEq(ft, tyString()) {
                             error(&mut ck, "jsonStringify: field '" + sinfo.fields[fi].name.clone() + "' has unsupported type '" + typeName(ft) + "' (only string/bool/int/float)", cloneSpan(span))
                         }
@@ -2922,6 +2922,54 @@ pub fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<ExprNod
     if !ck.functions.contains(mangled) {
         return tyUnknown()
     }
+    let sig = ck.functions.get(mangled)!
+    return sig.ret.clone()
+}
+
+// A method with its own type parameters, parked by registerImpl as the generic fn
+// `Type$method` whose param 0 is the receiver. Its type parameters are inferred from
+// the user args against params 1.., the instance is monomorphized like a generic fn's,
+// and its method name is recorded under the receiver's node id for lowering.
+pub fn checkGenericMethod(ck: &mut Checker, obj: &ExprNode, func: &string, method: &string, args: &Vec<Heap<ExprNode>>, span: &Option<Span>): TypeKind {
+    let generic = ck.genericFns.get(func)!
+    if args.len + 1 != generic.decl.params.len {
+        error(&mut ck, "method '" + method.clone() + "' expects " + (generic.decl.params.len - 1).toString() + " args, got " + args.len.toString(), cloneSpan(span))
+        return tyUnknown()
+    }
+    if generic.decl.params[0].ty.isRefMut {
+        errorIfFrozenRoot(&mut ck, obj, "call '" + method.clone() + "' on", span)
+    }
+    var inferred: HashMap<string, TypeKind> = HashMap.new()
+    for i in 0..args.len {
+        let declTy = typeFromAst(generic.decl.params[i + 1].ty)
+        let argType = checkExpr(&mut ck, *args[i])
+        checkExplicitMut(&mut ck, *args[i], method, declTy)
+        inferInto(generic.typeParams, declTy, argType, &mut inferred)
+        inferFromAst(ck, generic.typeParams, generic.decl.params[i + 1].ty, argType, &mut inferred)
+        match declTy {
+            TypeKind.TRef(inner, m) => {
+            }
+            _ => {
+                tryMove(&mut ck, *args[i])
+            }
+        }
+    }
+    var typeArgs: Vec<TypeKind> = Vec.new()
+    for i in 0..generic.typeParams.len {
+        if !inferred.contains(generic.typeParams[i]) {
+            error(&mut ck, "cannot infer type parameter '" + generic.typeParams[i].clone() + "' for method '" + method.clone() + "'", cloneSpan(span))
+            return tyUnknown()
+        }
+        typeArgs.push(inferred.get(generic.typeParams[i])!.clone())
+    }
+    let mangled = monomorphizeFn(&mut ck, func, typeArgs)
+    if !ck.functions.contains(mangled) {
+        return tyUnknown()
+    }
+    // monomorphizeFn names the instance `Type$method_<args>`; the call keeps the
+    // receiver, so what changes is the method name after `Type$`.
+    let typePrefix = func.len - method.len
+    ck.genericMethodNames.insert(obj.id, mangled[typePrefix..mangled.len].clone())
     let sig = ck.functions.get(mangled)!
     return sig.ret.clone()
 }
@@ -4957,6 +5005,10 @@ pub fn checkStringMethod(ck: &mut Checker, obj: &ExprNode, method: &string, args
 // -- Struct/trait method calls --
 
 pub fn checkStructMethod(ck: &mut Checker, obj: &ExprNode, structName: &string, method: &string, args: &Vec<Heap<ExprNode>>, span: &Option<Span>): TypeKind {
+    let genericName = structName.clone() + "$" + method.clone()
+    if ck.genericFns.contains(genericName) {
+        return checkGenericMethod(&mut ck, obj, genericName, method, args, span)
+    }
     // Look up inherent implDecl method
     if ck.inherentImpls.contains(structName) {
         let implDecl = ck.inherentImpls.get(structName)!
@@ -4989,7 +5041,7 @@ pub fn checkStructMethod(ck: &mut Checker, obj: &ExprNode, structName: &string, 
             var i: i64 = 0
             while i < args.len && (i + 1) < sig.params.len {
                 let argType = checkExpr(&mut ck, *args[i])
-                let paramType = sig.params[i + 1].ty
+                let paramType = sig.params[i + 1].ty.clone()
                 checkExplicitMut(&mut ck, *args[i], method, paramType)
                 // display name computed BEFORE the match: the TRef arm moves the
                 // inner Heap out, leaving `paramType` zeroed (same hazard as the

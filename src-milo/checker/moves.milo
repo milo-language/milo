@@ -13,7 +13,7 @@
 // than a second Expr-chain walker, so an index anywhere in a place (accessPath's
 // `tainted`) is treated identically by both move and borrow tracking.
 from "src-milo/ast.milo" import {
-    Expr
+    Expr, ExprNode
 }
 from "src-milo/checker/state.milo" import {
     Checker

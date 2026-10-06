@@ -6,7 +6,7 @@ from "std/path" import {
     Path
 }
 from "src-milo/ast.milo" import {
-    Expr, ExprNode, Stmt, Pattern, StructLitField, Span, Param, MiloType
+    Expr, ExprNode, Stmt, Pattern, StructLitField, Span, Param, MiloType, mkExpr
 }
 from "src-milo/hir.milo" import {
     HExpr, HExprNode, hexprAbort, hirType
@@ -24,7 +24,7 @@ from "src-milo/codegen/types.milo" import {
     findLocal, hasLocal, genLoad, ensureMalloc, ensureMemcpy, ensurePutchar, ensureStringTy,
     lookupFnRet, lookupFieldIndex, lookupFieldType,
     lookupVariantTag, variantTagOpt, lookupVariantPayload, lookupEnumPayloadSlots,
-    isInlineArrTy, inlineArrLen, inlineArrElem, ensureFpSat
+    isInlineArrTy, inlineArrLen, inlineArrElem, ensureFpSat, tyStr, resolveAstTy, ensureFree
 }
 from "src-milo/codegen/stmt.milo" import {
     genClosure, genClosureCall, widenToI64, genMatchAst, genArmBody, MatchGen,
@@ -1931,7 +1931,7 @@ pub fn genPropagate(cg: &mut Cgen, inner: &ExprNode, locs: &Vec<Local>, sigs: &V
                 if cg.enums.contains(retErrName) {
                     let ei = cg.enums.get(retErrName)!
                     for vi in 0..ei.variants.len {
-                        let pt = ei.variants[vi].payloadTypes
+                        let pt = ei.variants[vi].payloadTypes.clone()
                         if pt.len == 1 && stripPercent(resolveTyStr(cg, pt[0])) == srcErrKey {
                             wrapVar = ei.variants[vi].name.clone()
                             wrapTag = ei.variants[vi].tag
@@ -8879,6 +8879,19 @@ pub fn genLvalueWithHint(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>, sigs: &
                     v: slot, ty: elemTy
                 }
             }
+            // A string's byte has no place of its own: read it and spill it, like any
+            // rvalue. Falling through to the "0" below passed a null pointer as a
+            // by-pointer closure arg (`f(s._data[i])` in std/seal's sealedEach).
+            if llType(o.ty) == "%String" {
+                let b = genStringIndex(&mut cg, o.v, iv.v)
+                let bll = llType(b.ty)
+                let baddr = nextTemp(&mut cg)
+                emit(&mut cg, "  " + baddr + " = alloca " + bll + "\n")
+                emit(&mut cg, "  store " + bll + " " + b.v + ", ptr " + baddr + "\n")
+                return Val {
+                    v: baddr, ty: b.ty
+                }
+            }
             return Val {
                 v: "0", ty: "i64"
             }
@@ -9709,7 +9722,10 @@ pub fn genExpr(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>, sigs: &Vec<CgFnSi
             let base = blockBase(cg, e.id, "if-expression")
             var thenB = takeBlock(&mut cg, base)
             var elseB = takeBlock(&mut cg, base + 1)
-            let v = genIfExprValue(&mut cg, *cond, thenB, elseB, &mut locs, sigs, hintTy.clone())
+            // genExpr holds locs as '&': the arm bodies push their own bindings and pop
+            // them before returning, so they get a scratch copy rather than the caller's.
+            var armLocs = locs.clone()
+            let v = genIfExprValue(&mut cg, *cond, thenB, elseB, &mut armLocs, sigs, hintTy.clone())
             putBlock(&mut cg, base, thenB)
             putBlock(&mut cg, base + 1, elseB)
             return v
@@ -9721,7 +9737,8 @@ pub fn genExpr(cg: &mut Cgen, e: &ExprNode, locs: &Vec<Local>, sigs: &Vec<CgFnSi
             let retTyStr = cg.curRetTy.clone()
             let base = blockBase(cg, e.id, "match-expression")
             var armsH = takeArms(&mut cg, base)
-            let mg = genMatchAst(&mut cg, *subject, armsH, &mut locs, sigs, retTyStr, true, hintTy)
+            var armLocs = locs.clone() // see the IfExpr arm
+            let mg = genMatchAst(&mut cg, *subject, armsH, &mut armLocs, sigs, retTyStr, true, hintTy)
             putArms(&mut cg, base, armsH)
             return mg.val
         }

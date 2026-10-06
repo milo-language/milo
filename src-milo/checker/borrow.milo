@@ -9,7 +9,7 @@
 // which sidesteps threading two more fields through every VarInfo literal in
 // the file. See state.milo's Checker struct for the field-level rationale.
 from "src-milo/ast.milo" import {
-    Expr, Span, cloneSpan
+    Expr, Span, cloneSpan, ExprNode
 }
 from "src-milo/checker/state.milo" import {
     Checker, error

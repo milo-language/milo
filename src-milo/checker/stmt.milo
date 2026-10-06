@@ -1,7 +1,7 @@
 // Statement type checking
 from "src-milo/ast.milo" import {
     Stmt, Expr, MiloType, Span, MatchArm, Pattern, Param, Function, Program,
-    EnumDecl, EnumVariant, TypeParam, simpleType,
+    EnumDecl, EnumVariant, TypeParam, simpleType, StructDecl, ExprNode, cloneSpan
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
@@ -11,11 +11,11 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, EnumInfo, VariantInfo, ForInKind, ForInInfo, forInInfo,
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
-    normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves, nestedRef, hasAttr, MoveSnapshot,
+    normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves, nestedRef, hasAttr, MoveSnapshot, TraitInfo, TraitMethodInfo, CkStructField, PendingVecInfer
 }
 from "src-milo/checker/expr.milo" import {
     intCoercible, floatLitCoercible, arrayIntCoercible, arrayToVecCoercible, checkExpr, tryMove, isRootMutable, deref,
-    errorIfMovingBorrowedNonCopy, enforceRangeInto,
+    errorIfMovingBorrowedNonCopy, enforceRangeInto, unwrapableInner, interfaceCoercible, optionIntWrapCoercible
 }
 from "src-milo/checker/traits.milo" import {
     registerBuiltinTraits, registerAllImpls, synthesizeDefaultMethods, processDerives, typeImplementsTrait, resolveMethod
@@ -1690,7 +1690,10 @@ pub fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
             }
             base = TypeKind.TEnum(monomorphizeEnum(&mut ck, ty.name, typeArgs))
             matched = true
-        } else if ck.genericStructs.contains(ty.name) {
+        } else if ck.genericStructs.contains(ty.name) && ty.name != "Vec" && ty.name != "Heap" && ty.name != "HashMap" {
+            // The builtin containers win over a user generic of the same name, as in the
+            // oracle: the prelude's Heap<Error> stays a box even in a program declaring its
+            // own Heap<T> (tests/fixtures/genericStruct.milo).
             var typeArgs: Vec<TypeKind> = Vec.new()
             for i in 0..ty.typeArgs.len {
                 typeArgs.push(resolveAstType(&mut ck, ty.typeArgs[i]))
