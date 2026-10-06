@@ -87,13 +87,6 @@ Reads are blocking. When mergeStderr is false the caller MUST drain both
 stdout and stderr or the child can deadlock filling an unread pipe; DAP puts
 protocol on stdout and logs on stderr, so mergeStderr=true is the safe default.
 
-Fields:
-
-- `pid: i32`
-- `stdinFd: i32`: parent → child stdin
-- `stdoutFd: i32`: child stdout → parent
-- `stderrFd: i32`: child stderr → parent, or -1 when merged into stdout
-
 #### `Child.close`
 
 ```milo
@@ -109,6 +102,16 @@ fn Child.closeStdin(self: &mut Child): void
 ```
 
 Close the child's stdin, sending EOF. Idempotent.
+
+#### `Child.pid`
+
+```milo
+fn Child.pid(self: &Child): i32
+```
+
+The OS process id. These accessors are read-only: the fields are private so a
+Child cannot be built around a pid or fds this program does not own, and an fd
+read here stays owned by the Child (takeStdout/takeStderr hand one over).
 
 #### `Child.readStderr`
 
@@ -153,6 +156,22 @@ fn Child.stderr(self: &Child): Channel<string>
 Stream the child's stderr the same way. Only valid when stderr is a
 separate pipe (not merged into stdout).
 
+#### `Child.stderrFd`
+
+```milo
+fn Child.stderrFd(self: &Child): i32
+```
+
+The parent end of the child's stderr pipe, or -1 when merged, not a pipe, or taken.
+
+#### `Child.stdinFd`
+
+```milo
+fn Child.stdinFd(self: &Child): i32
+```
+
+The parent end of the child's stdin pipe, or -1 when stdin is not a pipe or closed.
+
 #### `Child.stdout`
 
 ```milo
@@ -163,6 +182,14 @@ Stream the child's stdout as an iterable channel, pumped on a background
 green task — the uniform async-read API shared with pty/socket/pipe.
 `for chunk in child.stdout()`; closes at EOF (child exits / closes stdout).
 Only valid when stdout is a pipe (the default).
+
+#### `Child.stdoutFd`
+
+```milo
+fn Child.stdoutFd(self: &Child): i32
+```
+
+The parent end of the child's stdout pipe, or -1 when not a pipe or taken.
 
 #### `Child.takeStderr`
 
@@ -334,7 +361,14 @@ pub struct Process
 
 A child started by `Process.spawn`. `wait` for its exit status.
 
-Fields: `pid: i32`.
+#### `Process.pid`
+
+```milo
+fn Process.pid(self: &Process): i32
+```
+
+The OS process id. Read-only: the fields are private so a Process cannot be
+built around a pid this program never spawned and then waited on or signalled.
 
 #### `Process.signal`
 

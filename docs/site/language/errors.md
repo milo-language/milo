@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 372 distinct messages across 460 programs the compiler must reject.
+Every error message the test suite pins: 374 distinct messages across 462 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -240,6 +240,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`expects 1 args, got 2`](#expects-1-args-got-2)
 - [`extern 'fcntl' declares 3 fixed parameters but C fixes only 2`](#extern-fcntl-declares-3-fixed-parameters-but-c-fixes-only-2)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
+- [`field '_pid' of 'Child' is private to 'std/process.milo'`](#field-pid-of-child-is-private-to-std-process-milo)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
@@ -333,6 +334,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`shadows a standard-library function`](#shadows-a-standard-library-function)
 - [`shadows an outer binding`](#shadows-an-outer-binding)
 - [`string.push: expected u8, got i64`](#string-push-expected-u8-got-i64)
+- [`struct 'Child' has no field 'pid'`](#struct-child-has-no-field-pid)
 - [`struct 'Direct<i64>' is recursive by value and has infinite size`](#struct-direct-i64-is-recursive-by-value-and-has-infinite-size)
 - [`struct 'P' has no field 'nope'`](#struct-p-has-no-field-nope)
 - [`struct 'Ping<i64>' is recursive by value and has infinite size`](#struct-ping-i64-is-recursive-by-value-and-has-infinite-size)
@@ -5892,6 +5894,21 @@ fn main(): i32 {
 
 <sub>[tests/errors/sealedDataForged.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sealedDataForged.milo)</sub>
 
+## `field '_pid' of 'Child' is private to 'std/process.milo'` {#field-pid-of-child-is-private-to-std-process-milo}
+
+Spelling the private field names does not get around the privacy: only std/process may build a Child.
+
+```milo skip
+from "std/process" import { Child }
+
+fn main() {
+    let c = Child { _pid: 999999, _stdinFd: -1, _stdoutFd: -1, _stderrFd: -1 }
+    print(c.signal(0).isOk())
+}
+```
+
+<sub>[tests/errors/childForgedPrivateFields.milo](https://github.com/milo-language/milo/blob/main/tests/errors/childForgedPrivateFields.milo)</sub>
+
 ## `field '_x' of 'S' is private to` {#field-x-of-s-is-private-to}
 
 Naming a `_` field in a struct literal from another file. A struct with any `_` field can only be built by literal in its own file; other files go through a constructor.
@@ -7685,6 +7702,21 @@ fn main() {
 ```
 
 <sub>[tests/errors/stringPushI64.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringPushI64.milo)</sub>
+
+## `struct 'Child' has no field 'pid'` {#struct-child-has-no-field-pid}
+
+A Child owns a process and its pipes, so another file must not be able to build one around a pid it never spawned and then signal it. Compiled clean before Child's fields became `_`-private (childForgedPrivateFields covers the spelled-private form).
+
+```milo skip
+from "std/process" import { Child }
+
+fn main() {
+    let c = Child { pid: 999999, stdinFd: -1, stdoutFd: -1, stderrFd: -1 }
+    print(c.signal(0).isOk())
+}
+```
+
+<sub>[tests/errors/childForgedFromPid.milo](https://github.com/milo-language/milo/blob/main/tests/errors/childForgedFromPid.milo)</sub>
 
 ## `struct 'Direct<i64>' is recursive by value and has infinite size` {#struct-direct-i64-is-recursive-by-value-and-has-infinite-size}
 

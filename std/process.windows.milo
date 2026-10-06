@@ -148,11 +148,17 @@ pub fn run(cmd: &string): Result<i32> {
 // operate on. The POSIX arm needs only the pid because waitpid/kill take it directly;
 // Windows needs the HANDLE, so this arm carries an extra field the POSIX struct lacks.
 pub struct Process {
-    pid: i32,
-    handle: i64,
+    _pid: i32,
+    _handle: i64,
 }
 
 impl Process {
+    // The OS process id. Read-only: the fields are private so a Process cannot be
+    // built around a pid this program never spawned and then waited on or signalled.
+    fn pid(self: &Self): i32 {
+        return self._pid
+    }
+
     // Start the program at `path` in the background, with no arguments and no shell.
     // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
@@ -161,14 +167,14 @@ impl Process {
     }
 
     fn wait(self: &Self): Result<i32> {
-        return waitHandle(self.handle)
+        return waitHandle(self._handle)
     }
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
         // Windows has no signals to a process; the only portable "signal" is a forced
         // termination. Any sig maps to TerminateProcess, exit code 1.
         unsafe {
-            if TerminateProcess(self.handle, 1 as u32) == 0 {
+            if TerminateProcess(self._handle, 1 as u32) == 0 {
                 return Result.Err("TerminateProcess() failed")
             }
         }
@@ -198,14 +204,36 @@ pub fn processAlive(pid: i32): bool {
 // reads are blocking; drain both streams when stderr is not merged. handle is the extra
 // Windows-only field (see Process above).
 pub struct Child {
-    pid: i32,
-    handle: i64,
-    stdinFd: i32,
-    stdoutFd: i32,
-    stderrFd: i32,
+    _pid: i32,
+    _handle: i64,
+    _stdinFd: i32,
+    _stdoutFd: i32,
+    _stderrFd: i32,
 }
 
 impl Child {
+    // The OS process id. These accessors are read-only: the fields are private so a
+    // Child cannot be built around a pid or fds this program does not own, and an fd
+    // read here stays owned by the Child (takeStdout/takeStderr hand one over).
+    fn pid(self: &Self): i32 {
+        return self._pid
+    }
+
+    // The parent end of the child's stdin pipe, or -1 when stdin is not a pipe or closed.
+    fn stdinFd(self: &Self): i32 {
+        return self._stdinFd
+    }
+
+    // The parent end of the child's stdout pipe, or -1 when not a pipe or taken.
+    fn stdoutFd(self: &Self): i32 {
+        return self._stdoutFd
+    }
+
+    // The parent end of the child's stderr pipe, or -1 when merged, not a pipe, or taken.
+    fn stderrFd(self: &Self): i32 {
+        return self._stderrFd
+    }
+
     // Spawn with both stdio pipes and nothing else configured. Shorthand for
     // `Command.new(program).args(args).stderr(...)` — use Command when the child needs
     // a working directory, an environment, or a stream pointed anywhere but a pipe.
@@ -222,78 +250,78 @@ impl Child {
     // parent to write, and closeStdin() has already sent EOF.
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stdinFd >= 0
+    self._stdinFd >= 0
     {
-        return write(self.stdinFd, buf, len)
+        return write(self._stdinFd, buf, len)
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64
     requires
-    self.stdinFd >= 0
+    self._stdinFd >= 0
     {
         unsafe {
-            return write(self.stdinFd, s as *u8, s.len)
+            return write(self._stdinFd, s as *u8, s.len)
         }
     }
 
     // Only valid when stdout is a pipe (the default) rather than redirected elsewhere.
     fn readStdout(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stdoutFd >= 0
+    self._stdoutFd >= 0
     {
-        return read(self.stdoutFd, buf, len)
+        return read(self._stdoutFd, buf, len)
     }
 
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stderrFd >= 0
+    self._stderrFd >= 0
     {
-        return read(self.stderrFd, buf, len)
+        return read(self._stderrFd, buf, len)
     }
 
     // Only valid when stdout is a pipe (the default).
     fn stdout(self: &Self): Channel<string>
     requires
-    self.stdoutFd >= 0
+    self._stdoutFd >= 0
     {
-        return fdChannel(self.stdoutFd)
+        return fdChannel(self._stdoutFd)
     }
 
     fn stderr(self: &Self): Channel<string>
     requires
-    self.stderrFd >= 0
+    self._stderrFd >= 0
     {
-        return fdChannel(self.stderrFd)
+        return fdChannel(self._stderrFd)
     }
 
     // See the POSIX arm.
     fn takeStdout(self: &mut Self): OwnedFd {
-        let fd = self.stdoutFd
-        self.stdoutFd = -1
+        let fd = self._stdoutFd
+        self._stdoutFd = -1
         unsafe { return adoptFd(fd) }
     }
 
     // See the POSIX arm.
     fn takeStderr(self: &mut Self): OwnedFd {
-        let fd = self.stderrFd
-        self.stderrFd = -1
+        let fd = self._stderrFd
+        self._stderrFd = -1
         unsafe { return adoptFd(fd) }
     }
 
     fn closeStdin(self: &mut Self): void {
-        if self.stdinFd >= 0 {
-            close(self.stdinFd)
-            self.stdinFd = -1
+        if self._stdinFd >= 0 {
+            unsafe { close(self._stdinFd) }
+            self._stdinFd = -1
         }
     }
 
     fn wait(self: &Self): Result<i32> {
-        return waitHandle(self.handle)
+        return waitHandle(self._handle)
     }
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
         unsafe {
-            if TerminateProcess(self.handle, 1 as u32) == 0 {
+            if TerminateProcess(self._handle, 1 as u32) == 0 {
                 return Result.Err("TerminateProcess() failed")
             }
         }
@@ -302,17 +330,17 @@ impl Child {
 
     fn close(self: &mut Self): void {
         self.closeStdin()
-        if self.stdoutFd >= 0 {
-            close(self.stdoutFd)
-            self.stdoutFd = -1
+        if self._stdoutFd >= 0 {
+            unsafe { close(self._stdoutFd) }
+            self._stdoutFd = -1
         }
-        if self.stderrFd >= 0 {
-            close(self.stderrFd)
-            self.stderrFd = -1
+        if self._stderrFd >= 0 {
+            unsafe { close(self._stderrFd) }
+            self._stderrFd = -1
         }
-        if self.handle != 0 {
-            unsafe { CloseHandle(self.handle) }
-            self.handle = 0
+        if self._handle != 0 {
+            unsafe { CloseHandle(self._handle) }
+            self._handle = 0
         }
     }
 }
@@ -387,7 +415,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
         let handle = (pi as *i64) [0]
         let pid = (pi as *u32) [4] as i32
         return Result.Ok(Process {
-            pid: pid, handle: handle
+            _pid: pid, _handle: handle
         })
     }
 }
@@ -637,10 +665,10 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
 
 fn closeStreamFds(fds: &StreamFds): void {
     if fds.child >= 0 {
-        close(fds.child)
+        unsafe { close(fds.child) }
     }
     if fds.parent >= 0 {
-        close(fds.parent)
+        unsafe { close(fds.parent) }
     }
 }
 
@@ -715,35 +743,35 @@ fn commandSpawn(cmd: &Command): Result<Child> {
 
     // The parent no longer needs the child-side ends regardless of outcome.
     if inFds.child >= 0 {
-        close(inFds.child)
+        unsafe { close(inFds.child) }
     }
     if outFds.child >= 0 {
-        close(outFds.child)
+        unsafe { close(outFds.child) }
     }
     if errFds.child >= 0 {
-        close(errFds.child)
+        unsafe { close(errFds.child) }
     }
 
     match res {
         Result.Err(msg) => {
             if inFds.parent >= 0 {
-                close(inFds.parent)
+                unsafe { close(inFds.parent) }
             }
             if outFds.parent >= 0 {
-                close(outFds.parent)
+                unsafe { close(outFds.parent) }
             }
             if errFds.parent >= 0 {
-                close(errFds.parent)
+                unsafe { close(errFds.parent) }
             }
             return Result.Err(msg)
         }
         Result.Ok(proc) => {
             return Result.Ok(Child {
-                pid: proc.pid,
-                handle: proc.handle,
-                stdinFd: inFds.parent,
-                stdoutFd: outFds.parent,
-                stderrFd: errFds.parent,
+                _pid: proc._pid,
+                _handle: proc._handle,
+                _stdinFd: inFds.parent,
+                _stdoutFd: outFds.parent,
+                _stderrFd: errFds.parent,
             })
         }
     }

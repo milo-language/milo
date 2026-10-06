@@ -1,0 +1,10 @@
+// @error: struct 'Child' has no field 'pid'
+// A Child owns a process and its pipes, so another file must not be able to build one
+// around a pid it never spawned and then signal it. Compiled clean before Child's
+// fields became `_`-private (childForgedPrivateFields covers the spelled-private form).
+from "std/process" import { Child }
+
+fn main() {
+    let c = Child { pid: 999999, stdinFd: -1, stdoutFd: -1, stderrFd: -1 }
+    print(c.signal(0).isOk())
+}

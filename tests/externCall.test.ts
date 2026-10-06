@@ -57,6 +57,15 @@ fn main() {
   expect(codes(src)).toEqual([{ code: "unused-unsafe", line: 5 }]);
 });
 
+test("a @pure extern taking a pointer is not exempt: @pure is trusted only on scalars", () => {
+  const src = `@pure
+extern fn strlen(s: *u8): i64
+fn main() {
+  print(strlen("abc"))
+}`;
+  expect(codes(src)).toEqual([{ code: "extern-call", line: 4 }]);
+});
+
 test("an extern that already needs unsafe is the existing error, not this warning", () => {
   const src = `extern fn strdup(s: *u8): *u8
 fn main() {

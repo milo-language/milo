@@ -85,6 +85,16 @@ for (const [names, arms, why] of [
   for (const n of names) ARM_ONLY[n] = { arms: [...arms] as Arm[], why };
 }
 
+const SAFE_WINDOWS_SHIMS = new Set<string>([
+  "access", "dlclose", "dlerror", "dlopen", "dlsym", "getcontext", "getpid", "gettimeofday", "lseek",
+  "makecontext", "mmap", "mprotect", "munmap", "pipe", "read", "swapcontext", "usleep", "write",
+  "pthread_cond_broadcast", "pthread_cond_destroy", "pthread_cond_init", "pthread_cond_signal",
+  "pthread_cond_wait", "pthread_create", "pthread_detach", "pthread_join", "pthread_mutex_destroy",
+  "pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_rwlock_destroy",
+  "pthread_rwlock_init", "pthread_rwlock_rdlock", "pthread_rwlock_unlock", "pthread_rwlock_wrlock",
+  "pthread_self",
+]);
+
 describe("platform arm parity", () => {
   const fams = families();
 
@@ -114,6 +124,31 @@ describe("platform arm parity", () => {
       expect(gaps).toEqual([]);
     });
   }
+
+  // Same names are not enough: a name the posix arms export as a bare extern needs
+  // `unsafe` there (the extern-call rule), so a Windows Milo shim of it must be `@unsafe`
+  // too, or a program that closes an fd some owner still holds compiles on Windows only.
+  // SAFE_WINDOWS_SHIMS is the ratchet of shims not yet aligned; it may only shrink.
+  test("a Windows shim of a posix extern is @unsafe", () => {
+    const unaligned: string[] = [];
+    const seen = new Set<string>();
+    for (const [fam, arms] of [...fams].sort()) {
+      if (!arms.windows || !arms.darwin || !arms.linux) continue;
+      const posix = [arms.darwin, arms.linux].map(f => exportsOf(f).externOnly);
+      const win = readFileSync(join(STD, arms.windows), "utf-8");
+      for (const m of win.matchAll(/((?:^@\w+.*\n)*)^pub fn ([A-Za-z_][A-Za-z0-9_]*)/gm)) {
+        const name = m[2]!;
+        if (!posix.every(s => s.has(name))) continue;
+        seen.add(name);
+        const isUnsafe = /^@unsafe\b/m.test(m[1]!);
+        if (!isUnsafe && !SAFE_WINDOWS_SHIMS.has(name)) unaligned.push(`${fam}.${name}`);
+        if (isUnsafe && SAFE_WINDOWS_SHIMS.has(name)) unaligned.push(`${fam}.${name} (aligned now: drop it from SAFE_WINDOWS_SHIMS)`);
+      }
+    }
+    expect(seen.has("close")).toBe(true);
+    expect(unaligned).toEqual([]);
+    expect([...SAFE_WINDOWS_SHIMS].filter(n => !seen.has(n))).toEqual([]);
+  });
 
   test("no ARM_ONLY entry is stale", () => {
     // An allowance for a name that no longer exists, or that every arm now provides,

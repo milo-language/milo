@@ -1384,9 +1384,12 @@ export class TypeChecker {
   // to sit inside `unsafe` (std wraps the harmless ones in safe pub fns), staged as a
   // warning so existing programs get a cycle to migrate.
   //
-  // A `@pure` extern is exempt: purity (reads only its arguments, no effects) is a
-  // stronger claim than this rule asks for, the purity pass already trusts it, and a
-  // `@pure` caller may not contain `unsafe` at all, so Math.sqrt could not call libm.
+  // A `@pure` extern whose params and return are all scalars is exempt: purity (reads
+  // only its arguments, no effects) is a stronger claim than this rule asks for, the
+  // purity pass already trusts it, and a `@pure` caller may not contain `unsafe` at all,
+  // so Math.sqrt could not call libm. The claim is taken on trust, so it only buys the
+  // exemption where nothing can go wrong if it is false: a `@pure` extern handed a
+  // pointer (a string or array coerced to `*T`) can write through it like any other.
   //
   // Not reported inside a manifest dependency: the reader cannot edit it. std IS
   // reported, because std is where the wrappers live and it is held to zero.
@@ -1394,8 +1397,8 @@ export class TypeChecker {
   // `exit` is exempt too: codegen compiles every `exit(n)` as the safe builtin whether or
   // not std/os's extern of the same name is in scope, and in the flat namespace one
   // user import of that extern would otherwise retarget every builtin `exit` in std.
-  private noteSafeExternCall(name: string, attrs: { name: string }[] | undefined, span?: Span) {
-    if (name === "exit" || attrs?.some(a => a.name === "pure")) return;
+  private noteSafeExternCall(name: string, attrs: { name: string }[] | undefined, allScalar: boolean, span?: Span) {
+    if (name === "exit" || (allScalar && attrs?.some(a => a.name === "pure"))) return;
     if (this.unsafeDepth > 0) {
       if (this.unsafeUsedStack.length > 0) this.unsafeUsedStack[this.unsafeUsedStack.length - 1] = true;
       return;
@@ -9760,7 +9763,10 @@ export class TypeChecker {
           break;
         }
       }
-      if (argsSafe) this.noteSafeExternCall(expr.func, this.fnDecls.get(expr.func)?.attributes, sp);
+      if (argsSafe) {
+        const allScalar = isScalar(sig.ret) && sig.params.every(p => isScalar(p.type));
+        this.noteSafeExternCall(expr.func, this.fnDecls.get(expr.func)?.attributes, allScalar, sp);
+      }
       if (!argsSafe) {
         // teach the rule, not just the verdict — it's otherwise learned by trial-and-error
         const why = !retSafe

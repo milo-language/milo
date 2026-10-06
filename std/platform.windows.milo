@@ -745,6 +745,11 @@ pub fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return _write(fd, buf, clampCount(nbyte)) as i64 }
 }
 
+// `@unsafe` to match the POSIX arms, where `close` is the bare extern and so needs
+// `unsafe`: closing an fd that a TcpStream, OwnedFd or Child still owns leaves that
+// owner on a closed or reused descriptor, and a safe shim here would let exactly that
+// compile on Windows only.
+@unsafe
 pub fn close(fd: i32): i32 {
     if fd < 0 {
         return -1

@@ -60,9 +60,9 @@ pub fn main(): i32 {
     unsafe {
         var status: [i32; 1] = [0]
         // WNOHANG: the child is already gone, so this returns its pid without blocking.
-        let reaped = waitpid(p.pid, status as *u8, 1)
+        let reaped = waitpid(p.pid(), status as *u8, 1)
         // @expect: reaped true
-        print("reaped ", reaped == p.pid)
+        print("reaped ", reaped == p.pid())
     }
     return 0
 }

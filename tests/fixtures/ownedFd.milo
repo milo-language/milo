@@ -18,7 +18,7 @@ fn main() {
     args.push("hello")
     var c = Child.spawn("echo", args, false)!
     let out = c.takeStdout()
-    print(c.stdoutFd)
+    print(c.stdoutFd())
     var acc = ""
     for chunk in out.channel() {
         acc.pushStr(chunk)

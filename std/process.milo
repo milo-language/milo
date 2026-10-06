@@ -97,10 +97,16 @@ fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
 
 // A child started by `Process.spawn`. `wait` for its exit status.
 pub struct Process {
-    pid: i32,
+    _pid: i32,
 }
 
 impl Process {
+    // The OS process id. Read-only: the fields are private so a Process cannot be
+    // built around a pid this program never spawned and then waited on or signalled.
+    fn pid(self: &Self): i32 {
+        return self._pid
+    }
+
     // Start the program at `path` in the background, with no arguments and no shell.
     // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
@@ -116,7 +122,7 @@ impl Process {
             }
         }
         return Result.Ok(Process {
-            pid: pid
+            _pid: pid
         })
     }
 
@@ -124,7 +130,7 @@ impl Process {
     // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpidGreen(self.pid, &mut statusBuf)
+        let r = waitpidGreen(self._pid, &mut statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
@@ -135,7 +141,7 @@ impl Process {
     // Send signal `sig` to the child. 0 on success.
     fn signal(self: &Self, sig: i32): Result<i32> {
         var r: i32 = 0
-        unsafe { r = kill(self.pid, sig) }
+        unsafe { r = kill(self._pid, sig) }
         if r < 0 {
             return Result.Err("kill() failed")
         }
@@ -162,13 +168,35 @@ pub fn processAlive(pid: i32): bool {
 // stdout and stderr or the child can deadlock filling an unread pipe; DAP puts
 // protocol on stdout and logs on stderr, so mergeStderr=true is the safe default.
 pub struct Child {
-    pid: i32,
-    stdinFd: i32, // parent → child stdin
-    stdoutFd: i32, // child stdout → parent
-    stderrFd: i32, // child stderr → parent, or -1 when merged into stdout
+    _pid: i32,
+    _stdinFd: i32, // parent → child stdin
+    _stdoutFd: i32, // child stdout → parent
+    _stderrFd: i32, // child stderr → parent, or -1 when merged into stdout
 }
 
 impl Child {
+    // The OS process id. These accessors are read-only: the fields are private so a
+    // Child cannot be built around a pid or fds this program does not own, and an fd
+    // read here stays owned by the Child (takeStdout/takeStderr hand one over).
+    fn pid(self: &Self): i32 {
+        return self._pid
+    }
+
+    // The parent end of the child's stdin pipe, or -1 when stdin is not a pipe or closed.
+    fn stdinFd(self: &Self): i32 {
+        return self._stdinFd
+    }
+
+    // The parent end of the child's stdout pipe, or -1 when not a pipe or taken.
+    fn stdoutFd(self: &Self): i32 {
+        return self._stdoutFd
+    }
+
+    // The parent end of the child's stderr pipe, or -1 when merged, not a pipe, or taken.
+    fn stderrFd(self: &Self): i32 {
+        return self._stderrFd
+    }
+
     // Spawn with both stdio pipes and nothing else configured. Shorthand for
     // `Command.new(program).args(args).stderr(...)` — use Command when the child needs
     // a working directory, an environment, or a stream pointed anywhere but a pipe.
@@ -185,17 +213,17 @@ impl Child {
     // parent to write, and closeStdin() has already sent EOF.
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stdinFd >= 0
+    self._stdinFd >= 0
     {
-        unsafe { return write(self.stdinFd, buf, len) }
+        unsafe { return write(self._stdinFd, buf, len) }
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64
     requires
-    self.stdinFd >= 0
+    self._stdinFd >= 0
     {
         unsafe {
-            return write(self.stdinFd, s as *u8, s.len)
+            return write(self._stdinFd, s as *u8, s.len)
         }
     }
 
@@ -203,17 +231,17 @@ impl Child {
     // Only valid when stdout is a pipe (the default) rather than redirected elsewhere.
     fn readStdout(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stdoutFd >= 0
+    self._stdoutFd >= 0
     {
-        unsafe { return read(self.stdoutFd, buf, len) }
+        unsafe { return read(self._stdoutFd, buf, len) }
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
     requires
-    self.stderrFd >= 0
+    self._stderrFd >= 0
     {
-        unsafe { return read(self.stderrFd, buf, len) }
+        unsafe { return read(self._stderrFd, buf, len) }
     }
 
     // Stream the child's stdout as an iterable channel, pumped on a background
@@ -222,40 +250,40 @@ impl Child {
     // Only valid when stdout is a pipe (the default).
     fn stdout(self: &Self): Channel<string>
     requires
-    self.stdoutFd >= 0
+    self._stdoutFd >= 0
     {
-        return fdChannel(self.stdoutFd)
+        return fdChannel(self._stdoutFd)
     }
 
     // Stream the child's stderr the same way. Only valid when stderr is a
     // separate pipe (not merged into stdout).
     fn stderr(self: &Self): Channel<string>
     requires
-    self.stderrFd >= 0
+    self._stderrFd >= 0
     {
-        return fdChannel(self.stderrFd)
+        return fdChannel(self._stderrFd)
     }
 
     // Hand the stdout pipe to the caller: the Child stops tracking it, and the returned
     // handle closes it when dropped. For a pump task that must be the fd's last user.
     fn takeStdout(self: &mut Self): OwnedFd {
-        let fd = self.stdoutFd
-        self.stdoutFd = -1
+        let fd = self._stdoutFd
+        self._stdoutFd = -1
         unsafe { return adoptFd(fd) }
     }
 
     // As takeStdout, for a separate stderr pipe (a -1 handle when stderr was merged).
     fn takeStderr(self: &mut Self): OwnedFd {
-        let fd = self.stderrFd
-        self.stderrFd = -1
+        let fd = self._stderrFd
+        self._stderrFd = -1
         unsafe { return adoptFd(fd) }
     }
 
     // Close the child's stdin, sending EOF. Idempotent.
     fn closeStdin(self: &mut Self): void {
-        if self.stdinFd >= 0 {
-            unsafe { close(self.stdinFd) }
-            self.stdinFd = -1
+        if self._stdinFd >= 0 {
+            unsafe { close(self._stdinFd) }
+            self._stdinFd = -1
         }
     }
 
@@ -263,7 +291,7 @@ impl Child {
     // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        let r = waitpidGreen(self.pid, &mut statusBuf)
+        let r = waitpidGreen(self._pid, &mut statusBuf)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
@@ -273,7 +301,7 @@ impl Child {
 
     fn signal(self: &Self, sig: i32): Result<i32> {
         var r: i32 = 0
-        unsafe { r = kill(self.pid, sig) }
+        unsafe { r = kill(self._pid, sig) }
         if r < 0 {
             return Result.Err("kill() failed")
         }
@@ -283,13 +311,13 @@ impl Child {
     // Close any still-open parent-side fds. Call after wait().
     fn close(self: &mut Self): void {
         self.closeStdin()
-        if self.stdoutFd >= 0 {
-            unsafe { close(self.stdoutFd) }
-            self.stdoutFd = -1
+        if self._stdoutFd >= 0 {
+            unsafe { close(self._stdoutFd) }
+            self._stdoutFd = -1
         }
-        if self.stderrFd >= 0 {
-            unsafe { close(self.stderrFd) }
-            self.stderrFd = -1
+        if self._stderrFd >= 0 {
+            unsafe { close(self._stderrFd) }
+            self._stderrFd = -1
         }
     }
 }
@@ -685,10 +713,10 @@ fn commandSpawn(cmd: &Command): Result<Child> {
         freeArgv(argv, argc)
         freeEnvp(envp)
         return Result.Ok(Child {
-            pid: pid,
-            stdinFd: inFds.parent,
-            stdoutFd: outFds.parent,
-            stderrFd: errFds.parent,
+            _pid: pid,
+            _stdinFd: inFds.parent,
+            _stdoutFd: outFds.parent,
+            _stderrFd: errFds.parent,
         })
     }
 }

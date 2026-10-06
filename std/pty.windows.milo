@@ -292,11 +292,11 @@ impl Pty {
 
     fn close(self: &mut Self): void {
         if self.masterFd >= 0 {
-            close(self.masterFd)
+            unsafe { close(self.masterFd) }
             self.masterFd = -1
         }
         if self._inputFd >= 0 {
-            close(self._inputFd)
+            unsafe { close(self._inputFd) }
             self._inputFd = -1
         }
         // Closing the pseudoconsole signals the child's console has gone away.

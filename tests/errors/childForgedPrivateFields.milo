@@ -1,0 +1,9 @@
+// @error: field '_pid' of 'Child' is private to 'std/process.milo'
+// Spelling the private field names does not get around the privacy: only std/process
+// may build a Child.
+from "std/process" import { Child }
+
+fn main() {
+    let c = Child { _pid: 999999, _stdinFd: -1, _stdoutFd: -1, _stderrFd: -1 }
+    print(c.signal(0).isOk())
+}
