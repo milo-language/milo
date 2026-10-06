@@ -115,6 +115,21 @@ written from old examples. A lint with a `milo fix` rewrite for redundant litera
 would stop the drift. Same question for other idioms that changed (e.g. `if let` exists
 now; dapweb still has sentinel-value patterns from before it did).
 
+### 8. Imported names collide with builtins (found landing extern-call)
+
+`exit` is a builtin, and std/os also exports an extern `exit`. A file that imports
+std/os's `exit` turns every builtin `exit(n)` call elsewhere (std/argparse) into the
+extern, because the namespace is flat. The extern-call rule had to exempt `exit` to
+avoid warnings users cannot fix. Same family as item 1: what an import brings into scope
+leaks past the importing file.
+
+### 9. Ownership holes the extern-call work exposed
+
+- `Child` has public fields, so `Child { pid: anyPid }.signal(9)` compiles in safe code:
+  a forged handle is as dangerous as a raw `kill`.
+- Windows std/platform exports `close` as a safe pub fn.
+- The extern-call rule exempts `@pure` externs (libm); `@pure` is trusted, not checked.
+
 ## What the analysis should produce
 
 Per item: confirm the repro; find the root cause in `src/` (file:line); propose the fix at
