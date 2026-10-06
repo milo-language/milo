@@ -5,7 +5,7 @@ pub fn apply(f: () => i64): i64 {
     return f()
 }
 
-pub fn wrap(f: () => i64): () => void {
+pub fn wrap(f: move () => i64): () => void {
     return move(): void => {
         let result = f()
         print(result)

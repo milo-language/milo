@@ -274,13 +274,13 @@ Fields: `routes: Vec<Route>`, `middleware: Vec<(&mut Context, (&mut Context) => 
 #### `Router.addRoute`
 
 ```milo
-fn Router.addRoute(self: &mut Router, method: string, pattern: string, h: (&mut Context) => Response): void
+fn Router.addRoute(self: &mut Router, method: string, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 #### `Router.all`
 
 ```milo
-fn Router.all(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
+fn Router.all(self: &mut Router, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 Register a route that matches any method.
@@ -288,7 +288,7 @@ Register a route that matches any method.
 #### `Router.delete`
 
 ```milo
-fn Router.delete(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
+fn Router.delete(self: &mut Router, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 Register a DELETE route.
@@ -296,7 +296,7 @@ Register a DELETE route.
 #### `Router.get`
 
 ```milo
-fn Router.get(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
+fn Router.get(self: &mut Router, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 Register a GET route. `:name` segments in `pattern` bind path parameters, read
@@ -319,7 +319,7 @@ An empty router.
 #### `Router.post`
 
 ```milo
-fn Router.post(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
+fn Router.post(self: &mut Router, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 Register a POST route.
@@ -327,7 +327,7 @@ Register a POST route.
 #### `Router.put`
 
 ```milo
-fn Router.put(self: &mut Router, pattern: string, h: (&mut Context) => Response): void
+fn Router.put(self: &mut Router, pattern: string, h: move (&mut Context) => Response): void
 ```
 
 Register a PUT route.
@@ -335,7 +335,7 @@ Register a PUT route.
 #### `Router.use`
 
 ```milo
-fn Router.use(self: &mut Router, mw: (&mut Context, (&mut Context) => Response) => Response): void
+fn Router.use(self: &mut Router, mw: move (&mut Context, (&mut Context) => Response) => Response): void
 ```
 
 Add middleware. It receives the context and `next`, the rest of the chain, and

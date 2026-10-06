@@ -13,7 +13,7 @@ import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -2199,7 +2199,7 @@ export class TypeChecker {
             params: m.params.map(p => ({
               name: p.name,
               type: this.substituteSelfInMiloType(
-                this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs),
+                this.substituteParamType(declaredType(p), generic.typeParams, typeArgs),
                 mangled
               ),
             })),
@@ -2259,6 +2259,16 @@ export class TypeChecker {
   // Null in, null out: only a closure param may omit its type annotation, and closures
   // aren't monomorphized — but Param.type is nullable for everyone, so the substitution
   // paths have to carry that through rather than assert it away.
+  // A parameter declared as a bare type parameter (`x: T`) promises nothing about
+  // keeping its argument, so when `T` is a closure type the instance's parameter is
+  // `move`: escaping, as a plain closure parameter is not (checkNonEscapingParams). Only
+  // a parameter written as a closure type is non-escaping.
+  private substituteParamType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
+    const sub = this.substituteMiloType(ty, typeParams, typeArgs);
+    const bareTypeParam = typeParams.includes(ty.name) && !ty.isRef && !ty.isRefMut && !ty.isPtr && !ty.isArray;
+    return bareTypeParam && sub.isFn && !sub.isCFn ? { ...sub, isMoveFn: true } : sub;
+  }
+
   private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType;
   private substituteMiloType(ty: MiloType | null, typeParams: string[], typeArgs: TypeKind[]): MiloType | null;
   private substituteMiloType(ty: MiloType | null, typeParams: string[], typeArgs: TypeKind[]): MiloType | null {
@@ -2329,7 +2339,7 @@ export class TypeChecker {
 
     // Build concrete param types — substitute type params first, then resolve
     const params = generic.decl.params.map(p => ({
-      type: this.resolve(this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs), sp),
+      type: this.resolve(this.substituteParamType(declaredType(p), generic.typeParams, typeArgs), sp),
       name: p.name,
     }));
     const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs), sp);
@@ -2356,7 +2366,7 @@ export class TypeChecker {
       typeParams: [],
       params: generic.decl.params.map(p => ({
         name: p.name,
-        type: this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs),
+        type: this.substituteParamType(declaredType(p), generic.typeParams, typeArgs),
       })),
       retType: this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs),
       contracts: generic.decl.contracts ?? [],
@@ -2419,7 +2429,7 @@ export class TypeChecker {
         typeParams: [],
         params: tpl.decl.params.map(p => ({
           name: p.name,
-          type: this.substituteMiloType(declaredType(p), names, typeArgs),
+          type: this.substituteParamType(declaredType(p), names, typeArgs),
         })),
         retType: this.substituteMiloType(tpl.decl.retType, names, typeArgs),
         body: this.substituteBody(tpl.decl.body, names, typeArgs),
@@ -2468,7 +2478,12 @@ export class TypeChecker {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
           const replaced = this.typeKindToMiloType(typeArgs[idx]);
-          return { ...value, ...replaced };
+          // The wrappers stay, as in substituteMiloType: `&mut S` inside a local's fn
+          // type (`let w: (&mut S) => R`) became a by-value `S`.
+          const wrapped = value.isRef || value.isRefMut || value.isPtr || value.isArray
+            ? { isRef: value.isRef, isRefMut: value.isRefMut, isPtr: value.isPtr, ptrDepth: value.ptrDepth, isArray: value.isArray, arraySize: value.arraySize }
+            : {};
+          return { ...value, ...replaced, ...wrapped };
         }
       }
       // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }. Not one that
@@ -3759,6 +3774,7 @@ export class TypeChecker {
     // Also needs the finished maps: `closureCaptures` is filled as each closure body is
     // checked, and the auto-`move` promotions have all settled by now.
     checkEscapingClosures(host, program, view);
+    checkNonEscapingParams(host, program, view);
 
     // Same reason: the `@thread` entry points, their call sites, and the closure captures
     // are all resolved by now.
@@ -5611,7 +5627,7 @@ export class TypeChecker {
             name: p.name,
             type: p.name === "self"
               ? { name: container, typeArgs: argsMilo, isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null }
-              : this.substituteSelfInMiloType(this.substituteMiloType(declaredType(p), names, args), container, argsMilo),
+              : this.substituteSelfInMiloType(this.substituteParamType(declaredType(p), names, args), container, argsMilo),
           })),
           retType: this.substituteSelfInMiloType(this.substituteMiloType(m.retType, names, args), container, argsMilo),
           body: this.substituteBody(m.body, names, args),

@@ -1,0 +1,49 @@
+// @expect: 7
+// @expect: 14
+// @expect: 21
+// @expect: 14
+// A plain closure-typed parameter is non-escaping: the callee may call it or pass it on
+// to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+// Calling it and forwarding it (to a free fn, a method, through a by-reference closure
+// that is itself only called) are the uses that keep it inside the call.
+fn twice(f: () => i64): i64 {
+    return f() + f()
+}
+
+fn forward(f: () => i64): i64 {
+    return twice(f)
+}
+
+struct Runner {
+    times: i64,
+}
+
+impl Runner {
+    fn run(self: &Self, f: () => i64): i64 {
+        var total: i64 = 0
+        var i: i64 = 0
+        while i < self.times {
+            total = total + f()
+            i = i + 1
+        }
+        return total
+    }
+
+    fn viaClosure(self: &Self, f: () => i64): i64 {
+        let g = (): i64 => f()
+        return forward(g)
+    }
+}
+
+fn seven(): i64 {
+    return 7
+}
+
+pub fn main(): i32 {
+    let r = Runner { times: 3 }
+    print(seven().toString())
+    print(forward(seven).toString())
+    print(r.run(seven).toString())
+    print(r.viaClosure(seven).toString())
+    return 0
+}

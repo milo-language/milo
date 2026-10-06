@@ -466,7 +466,7 @@ Where this window begins in the original string.
 #### `parallelMap`
 
 ```milo
-pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Vec<T>
+pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: move (Shard<T>) => Shard<T>): Vec<T>
 ```
 
 Divide, run on `workers` threads, reassemble. The whole cycle in one call.
@@ -486,7 +486,7 @@ also what keeps the workers from sharing anything.
 #### `parallelMapWith`
 
 ```milo
-pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>>
+pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: move (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>>
 ```
 
 parallelMap with two things it cannot express: more windows than workers, and
@@ -512,7 +512,7 @@ deterministic even though each worker's share is not.
 #### `parallelScanStr`
 
 ```milo
-pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: (&StrShard) => R): Scanned<R>
+pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: move (&StrShard) => R): Scanned<R>
 ```
 
 Divide a string into `windows` read-only windows, each extended `overlap` bytes into

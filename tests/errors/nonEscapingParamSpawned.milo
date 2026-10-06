@@ -1,0 +1,16 @@
+// @error: non-escaping closure parameter 'f' is passed to 'Task.spawn', which may keep it
+// A plain closure-typed parameter is non-escaping: the callee may call it or pass it on
+// to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+// The task outlives the call; the closure may borrow the caller's frame.
+from "std/runtime" import {
+    Task
+}
+
+fn background(f: () => void) {
+    Task.spawn(f)
+}
+
+pub fn main(): i32 {
+    background((): void => print("hi"))
+    return 0
+}

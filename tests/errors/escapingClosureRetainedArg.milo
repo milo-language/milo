@@ -1,16 +1,15 @@
 // Handing a borrowing closure to a function that KEEPS it. `wrap` stores its parameter in
 // a struct it returns, so the closure outlives the frame its capture lives in — a live
-// SIGKILL. Whether the callee keeps the argument is computed, not annotated: a fn-typed
-// parameter that only ever appears in callee position is consumed during the call, and
-// anything else counts as retained. `each` below only calls its parameter, so passing the
-// same closure there is still accepted (tests/fixtures/closureNonRetainingArg.milo).
+// SIGKILL. The signature says so: `move` marks a parameter the callee may keep, and a
+// plain one is non-escaping (only called or passed on), so passing the same closure to a
+// plain parameter is still accepted (tests/fixtures/closureNonRetainingArg.milo).
 // @error: cannot pass a closure that captures 'n' by reference to 'wrap', which keeps it
 
 struct Box {
     f: (i64) => i64,
 }
 
-fn wrap(g: (i64) => i64): Box {
+fn wrap(g: move (i64) => i64): Box {
     return Box { f: g }
 }
 

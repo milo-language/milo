@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 377 distinct messages across 466 programs the compiler must reject.
+Every error message the test suite pins: 384 distinct messages across 473 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -301,6 +301,13 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`no definition here to give linkage to`](#no-definition-here-to-give-linkage-to)
 - [`no entry point`](#no-entry-point)
 - [`no whitespace allowed between '@' and attribute name`](#no-whitespace-allowed-between-and-attribute-name)
+- [`non-escaping closure parameter 'f' is captured by a 'move' closure`](#non-escaping-closure-parameter-f-is-captured-by-a-move-closure)
+- [`non-escaping closure parameter 'f' is passed to 'keepMove', which may keep it`](#non-escaping-closure-parameter-f-is-passed-to-keepmove-which-may-keep-it)
+- [`non-escaping closure parameter 'f' is passed to 'push', which may keep it`](#non-escaping-closure-parameter-f-is-passed-to-push-which-may-keep-it)
+- [`non-escaping closure parameter 'f' is passed to 'Task.spawn', which may keep it`](#non-escaping-closure-parameter-f-is-passed-to-task-spawn-which-may-keep-it)
+- [`non-escaping closure parameter 'f' is returned`](#non-escaping-closure-parameter-f-is-returned)
+- [`non-escaping closure parameter 'f' is stored`](#non-escaping-closure-parameter-f-is-stored)
+- [`non-escaping closure parameter 'f' is stored in a struct`](#non-escaping-closure-parameter-f-is-stored-in-a-struct)
 - [`non-exhaustive match`](#non-exhaustive-match)
 - [`non-exhaustive match: missing variant`](#non-exhaustive-match-missing-variant)
 - [`non-exhaustive match: missing variant 'Plain'`](#non-exhaustive-match-missing-variant-plain)
@@ -4581,10 +4588,10 @@ fn main() {
 
 ## `cannot pass a closure that captures 'n' by reference to 'wrap', which keeps it` {#cannot-pass-a-closure-that-captures-n-by-reference-to-wrap-which-keeps-it}
 
-The same hole reached through a parameter. `retainsParam` decides "does the callee keep this argument?" by looking for the parameter as an `Ident`, and a CAPTURE is invisible to that: `f(3)` inside the closure body is a `Call` with a string callee and no `Ident` node at all. So `wrap` answered "not retained", the borrowing closure passed the call-site check, and the returned `move` closure carried a pointer into the dead frame.
+The same hole reached through a parameter. `wrap` captures its parameter in the `move` closure it returns, so the parameter has to be `move` (a plain one is non-escaping: tests/errors/nonEscapingParamMoveCapture.milo), and a borrowing closure handed to it would outlive its frame: this once printed -1 for 8.
 
 ```milo skip
-fn wrap(f: (i64) => i64): move () => i64 {
+fn wrap(f: move (i64) => i64): move () => i64 {
     return move (): i64 => f(3)
 }
 
@@ -4602,14 +4609,14 @@ fn main() {
 
 <sub>[tests/errors/escapingClosureCapturedParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/escapingClosureCapturedParam.milo)</sub>
 
-Handing a borrowing closure to a function that KEEPS it. `wrap` stores its parameter in a struct it returns, so the closure outlives the frame its capture lives in — a live SIGKILL. Whether the callee keeps the argument is computed, not annotated: a fn-typed parameter that only ever appears in callee position is consumed during the call, and anything else counts as retained. `each` below only calls its parameter, so passing the same closure there is still accepted (tests/fixtures/closureNonRetainingArg.milo).
+Handing a borrowing closure to a function that KEEPS it. `wrap` stores its parameter in a struct it returns, so the closure outlives the frame its capture lives in — a live SIGKILL. The signature says so: `move` marks a parameter the callee may keep, and a plain one is non-escaping (only called or passed on), so passing the same closure to a plain parameter is still accepted (tests/fixtures/closureNonRetainingArg.milo).
 
 ```milo skip
 struct Box {
     f: (i64) => i64,
 }
 
-fn wrap(g: (i64) => i64): Box {
+fn wrap(g: move (i64) => i64): Box {
     return Box { f: g }
 }
 
@@ -7081,6 +7088,154 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/attributeSpace.milo](https://github.com/milo-language/milo/blob/main/tests/errors/attributeSpace.milo)</sub>
+
+## `non-escaping closure parameter 'f' is captured by a 'move' closure` {#non-escaping-closure-parameter-f-is-captured-by-a-move-closure}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures). A `move` closure copies the `{fn, env}` pair, and the env may point into the caller.
+
+```milo skip
+fn wrap(f: () => i64): move () => i64 {
+    return move (): i64 => f() + 1
+}
+
+pub fn main(): i32 {
+    let g = wrap((): i64 => 3)
+    print(g().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamMoveCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamMoveCapture.milo)</sub>
+
+## `non-escaping closure parameter 'f' is passed to 'keepMove', which may keep it` {#non-escaping-closure-parameter-f-is-passed-to-keepmove-which-may-keep-it}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+
+```milo skip
+struct Box {
+    f: move () => i64,
+}
+
+fn keepMove(f: move () => i64): Box {
+    return Box { f: f }
+}
+
+fn pass(f: () => i64): Box {
+    return keepMove(f)
+}
+
+pub fn main(): i32 {
+    let b = pass((): i64 => 3)
+    print(b.f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamToMoveParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamToMoveParam.milo)</sub>
+
+## `non-escaping closure parameter 'f' is passed to 'push', which may keep it` {#non-escaping-closure-parameter-f-is-passed-to-push-which-may-keep-it}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+
+```milo skip
+fn keep(v: &mut Vec<() => i64>, f: () => i64) {
+    v.push(f)
+}
+
+pub fn main(): i32 {
+    var v: Vec<() => i64> = Vec.new()
+    keep(&mut v, (): i64 => 3)
+    print(v.len.toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamPushed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamPushed.milo)</sub>
+
+## `non-escaping closure parameter 'f' is passed to 'Task.spawn', which may keep it` {#non-escaping-closure-parameter-f-is-passed-to-task-spawn-which-may-keep-it}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures). The task outlives the call; the closure may borrow the caller's frame.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+fn background(f: () => void) {
+    Task.spawn(f)
+}
+
+pub fn main(): i32 {
+    background((): void => print("hi"))
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamSpawned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamSpawned.milo)</sub>
+
+## `non-escaping closure parameter 'f' is returned` {#non-escaping-closure-parameter-f-is-returned}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+
+```milo skip
+fn pass(f: () => i64): () => i64 {
+    return f
+}
+
+pub fn main(): i32 {
+    let g = pass((): i64 => 3)
+    print(g().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamReturned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamReturned.milo)</sub>
+
+## `non-escaping closure parameter 'f' is stored` {#non-escaping-closure-parameter-f-is-stored}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+
+```milo skip
+fn zero(): i64 {
+    return 0
+}
+
+var saved: () => i64 = zero
+
+fn keep(f: () => i64) {
+    saved = f
+}
+
+pub fn main(): i32 {
+    keep((): i64 => 3)
+    print(saved().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamStoredInGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamStoredInGlobal.milo)</sub>
+
+## `non-escaping closure parameter 'f' is stored in a struct` {#non-escaping-closure-parameter-f-is-stored-in-a-struct}
+
+A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures). Storing it would let a by-reference closure from the caller outlive the caller's frame.
+
+```milo skip
+struct Box {
+    f: () => i64,
+}
+
+fn keep(f: () => i64): Box {
+    return Box { f: f }
+}
+
+pub fn main(): i32 {
+    let b = keep((): i64 => 3)
+    print(b.f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/nonEscapingParamStoredInStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamStoredInStruct.milo)</sub>
 
 ## `non-exhaustive match` {#non-exhaustive-match}
 

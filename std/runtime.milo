@@ -680,7 +680,7 @@ impl Promise<T> {
         return self._ch.clone()
     }
 
-    fn run(f: () => T): Promise<T> {
+    fn run(f: move () => T): Promise<T> {
         let ch = Channel<T>.new(1)!
         let chSend = ch.clone() // worker's owning handle
         Task.spawn(move(): void => {

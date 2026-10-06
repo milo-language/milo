@@ -300,14 +300,20 @@ impl Shards<T> {
 // Everything the work depends on therefore travels in the window itself, which is
 // also what keeps the workers from sharing anything.
 @copyOnly
-pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: (Shard<T>) => Shard<T>): Vec<T> {
+pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: move (Shard<T>) => Shard<T>): Vec<T> {
+    // `f` is `move` because it crosses to the worker threads, so a capturing closure
+    // literal arrives owning its captures (a by-reference one would point into the
+    // caller's frame from N threads). Every worker needs a copy and an owning closure has
+    // one owner, so the workers share a non-owning alias. That is sound only because
+    // every worker is awaited before this returns; `Task.scope` is the planned spelling.
+    let work: (Shard<T>) => Shard<T> = f
     var owner = shatter(v, workers)
     var windows = owner.windows()
     var ps: Vec<Promise<Shard<T>>> = Vec.new()
     while windows.len > 0 {
         let w = windows.pop()!
         ps.push(Promise<Shard<T>>.blocking(move(): Shard<T> => {
-            return f(w)
+            return work(w)
         }))
     }
     let back = Promise.all(ps).await()!
@@ -362,7 +368,9 @@ impl NoWorkers<T> {
 // must not encode the assignment: per-worker tallies merge into totals that are
 // deterministic even though each worker's share is not.
 @copyOnly(T)
-pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>> {
+pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: move (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>> {
+    // `move` and the non-owning alias: see parallelMap.
+    let work: (Shard<T>, &mut S) => Shard<T> = f
     // Refuse BEFORE dividing anything, so the buffer goes home whole. A non-positive
     // `windows` is not checked at all: `shatter` already clamps the count to at
     // least one, so the old guard rejected an input the divider was about to accept.
@@ -399,7 +407,7 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: (Shard<
                 if j.isErr() {
                     break
                 }
-                oc.send(f(j!, &mut s))!
+                oc.send(work(j!, &mut s))!
             }
             return s
         }))
@@ -657,14 +665,16 @@ struct ScanPart<R> {
 //
 // A match that begins inside a window's overlap is also visible to the next window,
 // so a counting `f` must stop at `w.ownLen()`, not `w.len()`.
-pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: (&StrShard) => R): Scanned<R> {
+pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: move (&StrShard) => R): Scanned<R> {
+    // `move` and the non-owning alias: see parallelMap.
+    let work: (&StrShard) => R = f
     var owner = shatterStr(s, windows)
     var ws = owner.windows(overlap)
     var ps: Vec<Promise<ScanPart<R>>> = Vec.new()
     while ws.len > 0 {
         let w = ws.pop()!
         ps.push(Promise<ScanPart<R>>.blocking(move(): ScanPart<R> => {
-            let r = f(w)
+            let r = work(w)
             return ScanPart {
                 window: w, result: r
             }

@@ -1,0 +1,20 @@
+// @error: non-escaping closure parameter 'f' is passed to 'keepMove', which may keep it
+// A plain closure-typed parameter is non-escaping: the callee may call it or pass it on
+// to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
+struct Box {
+    f: move () => i64,
+}
+
+fn keepMove(f: move () => i64): Box {
+    return Box { f: f }
+}
+
+fn pass(f: () => i64): Box {
+    return keepMove(f)
+}
+
+pub fn main(): i32 {
+    let b = pass((): i64 => 3)
+    print(b.f().toString())
+    return 0
+}

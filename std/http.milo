@@ -674,37 +674,37 @@ impl Router {
 
     // Register a GET route. `:name` segments in `pattern` bind path parameters, read
     // with `ctx.param("name")`.
-    fn get(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+    fn get(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("GET", pattern, h)
     }
 
     // Register a POST route.
-    fn post(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+    fn post(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("POST", pattern, h)
     }
 
     // Register a PUT route.
-    fn put(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+    fn put(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("PUT", pattern, h)
     }
 
     // Register a DELETE route.
-    fn delete(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+    fn delete(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("DELETE", pattern, h)
     }
 
     // Register a route that matches any method.
-    fn all(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+    fn all(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("*", pattern, h)
     }
 
     // Add middleware. It receives the context and `next`, the rest of the chain, and
     // returns the response.
-    fn use(self: &mut Self, mw: (&mut Context, (&mut Context) => Response) => Response): void {
+    fn use(self: &mut Self, mw: move (&mut Context, (&mut Context) => Response) => Response): void {
         self.middleware.push(mw)
     }
 
-    fn addRoute(self: &mut Self, method: string, pattern: string, h: (&mut Context) => Response): void {
+    fn addRoute(self: &mut Self, method: string, pattern: string, h: move (&mut Context) => Response): void {
         let paramNames = extractParamNames(pattern)
         self.routes.push(Route {
             method: method,

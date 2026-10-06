@@ -99,7 +99,7 @@ torn down once this clone and the Promise's own handle are both gone.
 #### `Promise.run`
 
 ```milo
-fn Promise.run(f: () => T): Promise<T>
+fn Promise.run(f: move () => T): Promise<T>
 ```
 
 ### `Task`
