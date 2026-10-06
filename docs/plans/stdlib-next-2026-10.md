@@ -3,7 +3,7 @@ system: planning
 purpose: accepted std and toolchain additions for the agent era, for consideration, with a design sketch for deterministic record/replay
 key-files: std/ (http, json, testing, runtime, time, rng, fs, net, process), src/checker.ts (attributes, extern calls)
 update-when: an item is accepted, built, or rejected
-last-verified: 2026-10-06 (replay phase 1 landed; std module list checked; items marked "no" are absent from std/)
+last-verified: 2026-10-06 (replay phases 1-3 landed; std module list checked; items marked "no" are absent from std/)
 -->
 
 # What std should include next (2026-10)
@@ -95,8 +95,15 @@ Phases, each useful alone:
 1. Time, randomness, env and args recorded/replayed (small; makes most tests repeatable).
    **Done 2026-10-06 (fd64fe4d):** also the timezone and HashMap seeds; format, hook and
    what is not captured in [record-replay.md](../record-replay.md).
-2. File, network and subprocess IO through the trace.
-3. Scheduler order recorded; divergence detection.
+2. File, network and subprocess IO through the trace. **Done 2026-10-06 (6aa90385,
+   fef6af09):** files, directories and fs mutations, sockets, DNS, TLS (above OpenSSL),
+   subprocesses, ptys and stdin; synthetic fds under replay; writes recorded by size and
+   performed only for stdout/stderr.
+3. Scheduler order recorded; divergence detection. **Done 2026-10-06 (6aa90385,
+   36d37c5b):** each event-loop poll is a `sched.pick`/`sched.idle` record, sleeps take no
+   time under replay, streaming trace reader, divergence with context and unconsumed
+   records at exit, `MILO_REPLAY_STOP` (the reverse-step primitive) and `milo trace`. See
+   [record-replay.md](../record-replay.md).
 4. dapweb reverse-step on top of replay.
 5. Simulation mode: seeded scheduler, simulated clock and network, run many seeds.
 
@@ -109,7 +116,8 @@ Serial, one agent at a time, each landed green before the next:
 2. Root-cause fixes from `friction-2026-10.md` (analysis first, then fixes by rank).
 3. Replay phase 1: time, randomness, env and args. Done (fd64fe4d), see
    [record-replay.md](../record-replay.md).
-4. Replay phases 2-3: IO through the trace, scheduler order, divergence detection.
+4. Replay phases 2-3: IO through the trace, scheduler order, divergence detection. Done
+   (6aa90385, fef6af09, 36d37c5b), see [record-replay.md](../record-replay.md).
 5. Protocol primitives: SSE, deadlines/cancellation/retry, JSON-RPC framing into std.
 6. JSON Schema derivation, then `@tool` + MCP serving.
 7. diff/patch, glob, semver, gitignore; property testing and fuzzing in `std/testing`.
