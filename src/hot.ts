@@ -75,6 +75,9 @@ function isConstant(g: Global): boolean {
   return /^@\S+\s*=\s*(?:[a-z_]+(?:\([^)]*\))?\s+)*constant\b/.test(g.text);
 }
 
+/** Raw function-text hash -> its normalized hash and the constants that went into it. */
+export type HashCache = Map<string, { norm: string; consts: [string, string][] }>;
+
 /** Facts about one parsed module that both the host transform and the patch need. */
 class View {
   readonly fns: Map<string, Func>;
@@ -84,7 +87,7 @@ class View {
   readonly rename = new Map<string, string>();
   readonly typeNames: Set<string>;
 
-  constructor(readonly mod: Module) {
+  constructor(readonly mod: Module, readonly cache?: HashCache) {
     this.fns = new Map(mod.funcs.map(f => [f.name, f]));
     this.globals = new Map(mod.globals.map(g => [g.name, g]));
     this.localConsts = new Map(mod.globals.filter(g => g.local && isConstant(g)).map(g => [g.name, g]));
@@ -101,9 +104,17 @@ class View {
    * otherwise one new string literal would make every later function look edited.
    */
   fnHash(f: Func): string {
+    // Most functions are byte-identical to the previous build; their hash is reused unless
+    // a constant they name now holds different bytes (an edited literal keeps its name).
+    const raw = textHash(f.text);
+    const hit = this.cache?.get(raw);
+    if (hit && hit.consts.every(([n, h]) => this.constHash(n) === h)) return hit.norm;
+    const consts: [string, string][] = [];
     const text = mapSymbols(f.text, n => {
-      const c = this.localConsts.get(n);
-      return c ? `__c.${textHash(c.text.replace(/^@\S+\s*=\s*/, ""))}` : undefined;
+      if (!this.localConsts.has(n)) return undefined;
+      const h = this.constHash(n);
+      consts.push([n, h]);
+      return `__c.${h}`;
     });
     // Value and label names renumbered by first appearance: some synthesized functions
     // draw temp numbers from a module-wide counter, so an edit elsewhere renames their
@@ -114,7 +125,20 @@ class View {
       if (label !== undefined) return `${canon(label)}:`;
       return this.typeNames.has(ref!) ? m : `%${canon(ref!)}`;
     });
-    return textHash(normalized);
+    const norm = textHash(normalized);
+    this.cache?.set(raw, { norm, consts });
+    return norm;
+  }
+
+  private constHashes = new Map<string, string>();
+  private constHash(name: string): string {
+    let h = this.constHashes.get(name);
+    if (h === undefined) {
+      const c = this.localConsts.get(name);
+      h = c ? textHash(c.text.replace(/^@\S+\s*=\s*/, "")) : "";
+      this.constHashes.set(name, h);
+    }
+    return h;
   }
 
   mutableGlobals(): Map<string, string> {
@@ -279,10 +303,10 @@ export type PatchResult =
  * previous one; layout, signature and function-set checks always compare against the host,
  * because the host's data and thunks are what the patch has to fit.
  */
-export function emitPatch(manifest: HotManifest, current: Record<string, string>, newIr: string, n: number): PatchResult {
+export function emitPatch(manifest: HotManifest, current: Record<string, string>, newIr: string, n: number, cache?: HashCache): PatchResult {
   const mod = parseModule(newIr);
   if (!mod) return { kind: "refuse", reason: "the IR has a shape the hot transform does not recognize" };
-  const v = new View(mod);
+  const v = new View(mod, cache);
 
   const types = typesOf(mod);
   for (const [name, def] of Object.entries(manifest.types)) {
@@ -431,6 +455,7 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
   let n = 0;
   const fileHashes = new Map<string, string>();
   const fileStats = new Map<string, string>();
+  const hashCache: HashCache = new Map();
 
   const snapshot = () => {
     fileHashes.clear(); fileStats.clear();
@@ -489,7 +514,9 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     if (!child) { await kill(); start(); continue; }
     const ir = deps.compileIR();
     if (ir === null) continue;
-    const r = emitPatch(manifest!, current, ir, n + 1);
+    const tCompiled = performance.now();
+    const r = emitPatch(manifest!, current, ir, n + 1, hashCache);
+    const tDiffed = performance.now();
     if (r.kind === "none") continue;
     if (r.kind === "refuse") {
       console.error(`hot: restart (${r.reason})`);
@@ -499,8 +526,10 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     }
     n++;
     const lib = patchLibName(dir, n, deps.os);
+    let tClang = 0;
     try {
       compilePatch(deps.cc, r.ir, lib, deps.os);
+      tClang = performance.now();
       sendPatch(fifo, lib, n, r.exported);
     } catch (e: any) {
       console.error(`hot: patch failed, restarting:\n${e.stderr?.toString() ?? e.message}`);
@@ -509,6 +538,11 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     const a = await awaitAck(ack, n);
     if (!a.ok) { console.error(`hot: restart (apply failed: ${a.msg})`); await kill(); start(); continue; }
     Object.assign(current, r.hashes);
-    console.error(`hot: patched ${r.changed.join(", ")} in ${Math.round(performance.now() - t0)}ms`);
+    const ms = (a: number, b: number) => Math.round(b - a);
+    const tDone = performance.now();
+    console.error(`hot: patched ${r.changed.join(", ")} in ${ms(t0, tDone)}ms`);
+    if (process.env.MILO_VERBOSE === "1") {
+      console.error(`hot:   frontend+codegen ${ms(t0, tCompiled)}, diff ${ms(tCompiled, tDiffed)}, clang ${ms(tDiffed, tClang)}, apply ${ms(tClang, tDone)} (${a.msg})`);
+    }
   }
 }

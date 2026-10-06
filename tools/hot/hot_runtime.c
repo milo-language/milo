@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static const char *ack_path;
@@ -39,7 +40,10 @@ static void apply(char *line) {
 
   // Never dlclose: a thread may be inside an old version's code (a frame loop that called
   // the previous body), and unmapping it would crash that frame.
+  struct timespec t0, t1;
+  clock_gettime(CLOCK_MONOTONIC, &t0);
   void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  clock_gettime(CLOCK_MONOTONIC, &t1);
   if (!h) { ack("err", n, dlerror()); return; }
 
   // Resolve every slot and body before storing any, so a missing symbol leaves the
@@ -66,7 +70,11 @@ static void apply(char *line) {
   // Release pairs with the thunk's acquire load: a caller that sees the new pointer also
   // sees everything dlopen wrote (relocations, the patch's constants).
   for (int i = 0; i < count; i++) __atomic_store_n(slots[i], fns[i], __ATOMIC_RELEASE);
-  ack("ok", n, NULL);
+  // The dlopen time rides along for `MILO_VERBOSE=1`: on macOS the first load of a new
+  // file is assessed by the OS, and that is most of the apply latency.
+  char note[64];
+  snprintf(note, sizeof note, "dlopen %.1fms", (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+  ack("ok", n, note);
 }
 
 static void *hot_thread(void *arg) {

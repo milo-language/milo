@@ -6,7 +6,7 @@ import { spawnSync, execSync } from "child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { emitPatch, compilePatch, sendPatch, awaitAck, initialHashes, patchLibName, hostTransform, type HotManifest, type PatchResult } from "../src/hot";
+import { emitPatch, compilePatch, sendPatch, awaitAck, initialHashes, patchLibName, hostTransform, type HotManifest, type PatchResult, type HashCache } from "../src/hot";
 import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -99,6 +99,7 @@ class Host {
   ack = join(this.dir, "ack");
   manifest!: HotManifest;
   current: Record<string, string> = {};
+  cache: HashCache = new Map();
   n = 0;
   proc!: ReturnType<typeof Bun.spawn>;
   out!: Lines;
@@ -132,7 +133,7 @@ class Host {
     writeFileSync(this.src, source);
     // --debug: the same -O0 codegen settings `build --hot` used for the host.
     const ir = milo(["emit-ir", "--debug", this.src]);
-    const r = emitPatch(this.manifest, this.current, ir, this.n + 1);
+    const r = emitPatch(this.manifest, this.current, ir, this.n + 1, this.cache);
     if (r.kind !== "patch") return r;
     this.n++;
     const lib = patchLibName(this.dir, this.n, OS);
