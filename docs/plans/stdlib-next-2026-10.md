@@ -3,7 +3,7 @@ system: planning
 purpose: accepted std and toolchain additions for the agent era, for consideration, with a design sketch for deterministic record/replay
 key-files: std/ (http, json, testing, runtime, time, rng, fs, net, process), src/checker.ts (attributes, extern calls)
 update-when: an item is accepted, built, or rejected
-last-verified: 2026-10-06 (std module list checked; items marked "no" are absent from std/)
+last-verified: 2026-10-06 (replay phase 1 landed; std module list checked; items marked "no" are absent from std/)
 -->
 
 # What std should include next (2026-10)
@@ -93,6 +93,8 @@ What it unlocks:
 Phases, each useful alone:
 
 1. Time, randomness, env and args recorded/replayed (small; makes most tests repeatable).
+   **Done 2026-10-06 (fd64fe4d):** also the timezone and HashMap seeds; format, hook and
+   what is not captured in [record-replay.md](../record-replay.md).
 2. File, network and subprocess IO through the trace.
 3. Scheduler order recorded; divergence detection.
 4. dapweb reverse-step on top of replay.
@@ -105,7 +107,8 @@ Serial, one agent at a time, each landed green before the next:
 1. Extern calls need `unsafe`, owning fd/process types (branch `extern-unsafe`, running).
    Replay depends on it: it makes every unrecorded hole visible.
 2. Root-cause fixes from `friction-2026-10.md` (analysis first, then fixes by rank).
-3. Replay phase 1: time, randomness, env and args.
+3. Replay phase 1: time, randomness, env and args. Done (fd64fe4d), see
+   [record-replay.md](../record-replay.md).
 4. Replay phases 2-3: IO through the trace, scheduler order, divergence detection.
 5. Protocol primitives: SSE, deadlines/cancellation/retry, JSON-RPC framing into std.
 6. JSON Schema derivation, then `@tool` + MCP serving.
