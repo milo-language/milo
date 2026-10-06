@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 368 distinct messages across 451 programs the compiler must reject.
+Every error message the test suite pins: 369 distinct messages across 452 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -372,6 +372,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable`](#use-of-moved-variable)
 - [`use of moved variable 'a'`](#use-of-moved-variable-a)
 - [`use of moved variable 'box'`](#use-of-moved-variable-box)
+- [`use of moved variable 'c'`](#use-of-moved-variable-c)
 - [`use of moved variable 'd'`](#use-of-moved-variable-d)
 - [`use of moved variable 'data'`](#use-of-moved-variable-data)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
@@ -8554,6 +8555,31 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/adoptedUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/adoptedUseAfterMove.milo)</sub>
+
+## `use of moved variable 'c'` {#use-of-moved-variable-c}
+
+The let-else restore covers only the else block. A move inside the else is still a move for the rest of that block: here `take(c)` moves it and the return reads it.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+fn f(c: string, o: Option<i64>): Option<string> {
+    let Option.Some(_v) = o else {
+        take(c)
+        return Option.Some(c)
+    }
+    return Option.None
+}
+
+pub fn main(): i32 {
+    let _a = f("x", Option.None)
+    return 0
+}
+```
+
+<sub>[tests/errors/letElseMoveStillCounts.milo](https://github.com/milo-language/milo/blob/main/tests/errors/letElseMoveStillCounts.milo)</sub>
 
 ## `use of moved variable 'd'` {#use-of-moved-variable-d}
 
