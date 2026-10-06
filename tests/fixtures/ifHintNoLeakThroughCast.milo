@@ -1,0 +1,22 @@
+// The `u8` belongs to the `let`, not to the if/match three levels down: the arms are
+// plain i64 literals and only the `as u8` result is narrowed. The arms used to read the
+// let's hint directly and reported "integer literal 300 overflows u8".
+fn cond(): bool {
+    return true
+}
+
+fn pick(): i64 {
+    return 1
+}
+
+pub fn main(): i32 {
+    let c = cond()
+    let n: u8 = (if c { 300 } else { 1 }).toString().len as u8
+    print(n.toString())
+    let k = pick()
+    let m: u8 = (match k { 1 => 3000, _ => 1 }).toString().len as u8
+    print(m.toString())
+    return 0
+}
+// @expect: 3
+// @expect: 4

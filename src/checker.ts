@@ -2451,7 +2451,8 @@ export class TypeChecker {
       if (argType.tag === "unknown") return null;
       this.inferTypeParamsFromHint(declaredType(declared), argType, names, typeMap);
     }
-    if (this.returnHint) this.inferTypeParamsFromHint(tpl.decl.retType, this.returnHint, names, typeMap);
+    const expected = this.expectedTypeOf(expr);
+    if (expected) this.inferTypeParamsFromHint(tpl.decl.retType, expected, names, typeMap);
     if (names.some(n => !typeMap.has(n))) return null;
     return names.map(n => must(typeMap, n, "method type map"));
   }
@@ -9448,8 +9449,9 @@ export class TypeChecker {
 
       // infer missing type params from return type hint
       let missing = genericFn.typeParams.filter(p => !typeMap.has(p));
-      if (missing.length > 0 && this.returnHint) {
-        this.inferTypeParamsFromHint(genericFn.decl.retType, this.returnHint, genericFn.typeParams, typeMap);
+      const expected = this.expectedTypeOf(expr);
+      if (missing.length > 0 && expected) {
+        this.inferTypeParamsFromHint(genericFn.decl.retType, expected, genericFn.typeParams, typeMap);
         missing = genericFn.typeParams.filter(p => !typeMap.has(p));
       }
       if (missing.length > 0) {
@@ -11949,8 +11951,7 @@ export class TypeChecker {
     // `if c { u8var } else { 0 }` unifies with no annotation). Same const-int
     // retype machinery as enum payloads / struct fields / return.
     const [thenTail, elseTail] = [this.tailExprOf(expr.thenBody), this.tailExprOf(expr.elseBody)];
-    const hint = this.returnHint;
-    let target: TypeKind | null = hint?.tag === "int" ? hint : null;
+    let target: TypeKind | null = want?.tag === "int" ? want : null;
     if (!target && thenType.tag === "int" && elseType.tag === "int" && !typeEq(thenType, elseType)) {
       if (thenTail && this.isConstIntExpr(thenTail) && !(elseTail && this.isConstIntExpr(elseTail))) target = elseType;
       else if (elseTail && this.isConstIntExpr(elseTail) && !(thenTail && this.isConstIntExpr(thenTail))) target = thenType;
@@ -11986,8 +11987,7 @@ export class TypeChecker {
     // `match x { A => 1, B => 2 }` in an i64 slot doesn't stall at i32 —
     // same const-int retype path as if-expression arms.
     const armTails = expr.arms.map(a => this.tailExprOf(a.body));
-    const hint = this.returnHint;
-    let target: TypeKind | null = hint?.tag === "int" ? hint : null;
+    let target: TypeKind | null = want?.tag === "int" ? want : null;
     if (!target) {
       for (let i = 0; i < armTypes.length; i++) {
         const tail = armTails[i];
