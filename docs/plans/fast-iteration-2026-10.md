@@ -3,7 +3,7 @@ system: fast-iteration-plan
 purpose: cut the edit-to-running loop to well under a second via measurement, finer object caching, mixed opt levels, a daemon, a HIR interpreter, hot patching and a cheap dev backend
 key-files: src/cgu.ts, src/objcache.ts, src/main.ts, scripts/edit-loop.ts
 update-when: a step ships or is abandoned, or the edit-loop numbers move
-last-verified: 2026-10-03
+last-verified: 2026-10-05
 -->
 
 # Fast iteration: edit-to-running in well under a second
@@ -50,9 +50,9 @@ std, and the link always runs.
    LLVM. Instant start, 10-50x slower execution: for tests and agent loops, not
    emulators. Doubles as a differential oracle (interp vs native output on every
    fixture). FFI via a libffi-style bridge or reject `extern` initially.
-5. **Hot patching.** Daemon recompiles one function at -O0 and swaps it into the
-   running process via a debug-build function pointer table. Struct layout change =
-   restart. Target: games and emulators keep state across edits.
+5. **Hot reload.** `milo hot foo.milo`: the running process picks up edited functions
+   from patch dylibs and keeps its state. Pulled ahead of step 4 (it reuses the daemon
+   and `HotState`). Design below.
 6. **Cheap dev backend.** Copy-and-patch stencils (CPython 3.13 JIT), QBE, or a
    single-pass LLVM-IR backend (TPDE). Biggest lever on per-unit cost, biggest effort.
    Revisit only if 1-3 leave clang -O0 as the floor.
@@ -60,6 +60,39 @@ std, and the link always runs.
    (polymorphization). Cuts work for every backend.
 8. **Check-only loop.** Measure what fraction of agent iterations end in a type error;
    if high, the LSP/daemon diagnostics path matters more than codegen speed.
+
+## Hot reload design (step 5)
+
+Prior art: Rust `subsecond` (Dioxus; jump table + patch dylib), Live++ (prologue
+patching), cr.h (whole-dylib reload, state in host).
+
+- **`--hot` build.** Host executable. Each user fn `f` is a thunk `f: jmp [slot_f]`
+  with the body in `f.v0`; taking `f`'s address yields the thunk, so fn pointers already
+  stored in closures, trait itables and callbacks stay valid across patches. std is
+  direct-called at -O2 and not patchable in v1. The host exports its symbols so patches
+  bind to its globals, std and allocator.
+- **Patch.** On save the daemon re-checks, diffs per-fn IR hashes (`cgu.ts` `HotState`
+  already computes this set), compiles changed and new fns at -O0 into `patch_N.dylib`
+  linked against the host, and sends the path to the process.
+- **Apply.** The runtime `dlopen`s the patch and does one atomic pointer store per
+  slot. A body-only edit is an independent per-slot swap, needs no safe point, and is
+  the common case. Old dylibs are never unloaded: frames on the stack may still run them.
+- **Refuse, restart.** Any type layout change (layout hashes), a global added or
+  retyped, a signature change. v1 refuses all of these; signature changes with all
+  callers patched together at a safe point are v2.
+- **Why a slot table, not prologue patching.** Writing `__TEXT` on Apple Silicon
+  invalidates the code signature and the kernel kills the process. The slot lives in a
+  data page. Cost: one indirect branch per user call in dev builds, noise at -O0.
+- **Limit.** A fn that never returns (`while running { ... }` in `main`) keeps its old
+  body. Convention: a per-frame `update(&mut state)`. The tool warns when a patched fn
+  is on the stack at apply time.
+- **Split.** Thunk codegen, patch emission and refusal rules live in `src/` (they need
+  compiler internals). The runner (watch, IPC, apply runtime, status) talks to the
+  compiler through a JSON manifest (slots, layout hashes, patch path) and can be its own
+  tool.
+- **Gate.** Edit-to-visible latency on redline, target under 0.3s. Differential: a
+  program patched with edit E prints the same as one cold-built with E applied, over a
+  set of scripted edits.
 
 ## Invariants
 
@@ -106,3 +139,6 @@ std, and the link always runs.
   old home too (2/9, in parallel, same 0.10s). Runtime: json/sort benchmarks with the hot
   function split out are within noise. Also fixed: a global naming a function (trait
   itables) was not counted as a reference, so 11 fixtures' splits fell back to one module.
+- 2026-10-05: next order: daemon (3), hot reload MVP (5, body-only edits on redline),
+  then the interpreter (4) for the agent loop. Hot reload serves long-running stateful
+  programs; agents mostly need 3 and 4.
