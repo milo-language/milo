@@ -3,7 +3,7 @@ system: planning
 purpose: root-cause analysis of each item in friction-2026-10.md, with the root fix, blast radius, gate, effort, and an execution order
 key-files: src/checker.ts (expectedTypeOf, checkExprWithHint, checkIfExprExpr, bodyAlwaysReturns, mergeMoveState, checkClosureExpr, declare), src/checker-program-passes.ts (closure escape pass), src/resolver.ts (per-module rename, duplicate-type), std/process.milo, std/runtime.milo
 update-when: an item is fixed, a step of the execution order lands, or the owner decides one of the open questions
-last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5)
+last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1)
 -->
 
 # Friction 2026-10: analysis and root fixes
@@ -431,14 +431,31 @@ the same per-module change as stage 5 of item 1 and should ride with it, not bef
 
 Small landable steps, each with its gate, highest score first.
 
-1. Item 4 step A: break/continue states. Loop frames collect break/continue snapshots;
+1. **Done debc39dd.** Item 4 step A: break/continue states. Loop frames collect break/continue snapshots;
    loop exit joins break states; `checkLoopMoves` sees continue states. Three error
-   fixtures above (fail today). S.
-2. Item 3 leak: the four raw `this.returnHint` reads go through the expected-type
+   fixtures above (fail today). S. As landed: `loopFrames` + `beginLoopMoves`/`endLoopMoves`
+   in checker.ts. The exit state also joins the pre-loop state (the condition can end the
+   loop before the body runs; `while true`/`while let` excepted), so a re-assignment inside
+   a `for` body no longer revives a value moved before the loop
+   (`moveReassignedOnlyInLoopBody`). `bodyAlwaysReturns` still drops break/continue paths at
+   if/match joins, which is right there now that each break/continue records its state at
+   the statement. Also removes the false positive "cannot move out of a loop" on a move
+   right before a top-level `break` (`moveThenLeaveLoop`). Fixtures: `moveOnBreakUsedAfterLoop`,
+   `moveOnContinueLoopsAgain`, `whileLetBreakMove`, `moveOnBreakInMatchArm`.
+2. **Done 6c1084f5.** Item 3 leak: the four raw `this.returnHint` reads go through the expected-type
    accessor. Fixture `ifHintNoLeakThroughCast` (fails today). S.
-3. Item 5: bind on redeclare; `<unknown>` sink suppression; cascade-count test. S.
-4. Item 2 prerequisite: scope-level escape in the `Assign` arm. Fixture
-   `byRefClosureOutlivesScope` (fails today). S.
+3. **Done 505e484b.** Item 5: bind on redeclare; `<unknown>` sink suppression; cascade-count test. S.
+   As landed: the sink keys on `UNKNOWN_TYPE_NAME` (types.ts) in message or hint. The
+   cascade ratchet lives in tests/run.test.ts's error lane (it reuses that lane's compiles),
+   `MAX_MULTI_ERROR_FIXTURES = 45` (48 before: aliasTakesNoTypeArgs, cyclicTypeAlias and
+   cyclicGenericAlias dropped to one error, genericVoidArg 9 to 3, nullableRefNotUnwrapped
+   3 to 2). Exactly-one-error checks in tests/checkerRecovery.test.ts.
+4. **Done 66bdf9f3.** Item 2 prerequisite: scope-level escape in the `Assign` arm. Fixture
+   `byRefClosureOutlivesScope` (fails today). S. As landed: the escape pass tracks the block
+   depth of locals (let/var, loop vars, closure params, pattern bindings). It found a real
+   instance in std: `Router.handle` (std/http.milo) built its middleware chain from
+   by-reference closures over loop-body locals, so two or more middleware recursed forever.
+   The links are `move` now (fixtures `httpRouterMiddlewareChain`, `byRefClosureOutlivesLoopBody`).
 5. Item 9 three fixes, item 8 `exit` rename + gate. S each.
 6. Item 1 type-only rename of private user types colliding with std types (after the
    owner agrees on the scope). S-M.
