@@ -1,0 +1,49 @@
+// Router.handle with two middleware, without a socket. Each link of the chain used to be
+// a by-reference closure over that loop iteration's `mw` and `next`, which `final`
+// outlived; with two or more middleware every link read the last iteration's slots and
+// the request recursed forever. byRefClosureOutlivesLoopBody is the checker rule that
+// found it.
+from "std/http" import {
+    Context, Request, Response, Router
+}
+
+fn home(_c: &mut Context): Response {
+    return Response.Text("home")
+}
+
+fn outer(c: &mut Context, next: (&mut Context) => Response): Response {
+    print("outer in")
+    let r = next(&mut c)
+    print("outer out")
+    return r
+}
+
+fn inner(c: &mut Context, next: (&mut Context) => Response): Response {
+    print("inner in")
+    let r = next(&mut c)
+    print("inner out")
+    return r
+}
+
+pub fn main() {
+    var router = Router.new()
+    router.get("/", home)
+    router.use(outer)
+    router.use(inner)
+    let handled = router.handle(Request {
+        method: "GET", path: "/", queryParams: [], headers: [], body: "",
+    })
+    match handled.response {
+        Response.Text(t) => {
+            print(t)
+        }
+        _ => {
+            print("other")
+        }
+    }
+}
+// @expect: outer in
+// @expect: inner in
+// @expect: inner out
+// @expect: outer out
+// @expect: home

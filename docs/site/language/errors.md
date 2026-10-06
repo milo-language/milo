@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 370 distinct messages across 458 programs the compiler must reject.
+Every error message the test suite pins: 372 distinct messages across 460 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -202,6 +202,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
 - [`cannot store a closure that captures 'n' by reference`](#cannot-store-a-closure-that-captures-n-by-reference)
+- [`cannot store a closure that captures 's' by reference`](#cannot-store-a-closure-that-captures-s-by-reference)
+- [`cannot store a closure that captures 'x' by reference`](#cannot-store-a-closure-that-captures-x-by-reference)
 - [`cannot store a reference in a Vec`](#cannot-store-a-reference-in-a-vec)
 - [`cannot take 'Fd' out of a container by index: it carries Drop`](#cannot-take-fd-out-of-a-container-by-index-it-carries-drop)
 - [`cannot take 'Handle' out of a container by index: it carries a raw pointer field ('p')`](#cannot-take-handle-out-of-a-container-by-index-it-carries-a-raw-pointer-field-p)
@@ -5032,6 +5034,46 @@ fn main() {
 ```
 
 <sub>[tests/errors/escapingClosureMoveLaunderStore.milo](https://github.com/milo-language/milo/blob/main/tests/errors/escapingClosureMoveLaunderStore.milo)</sub>
+
+## `cannot store a closure that captures 's' by reference` {#cannot-store-a-closure-that-captures-s-by-reference}
+
+A by-reference closure lives as long as the local it is assigned to. `f` is declared outside the `if` block that `s` lives in, so the closure outlives `s`: this printed 0 for 40 (the same program without the `if` prints 40). The frame is not the lifetime, the scope is.
+
+```milo skip
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    if cond() {
+        let s = "a string long enough to live on the heap".clone()
+        f = (): i64 => s.len
+    }
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/byRefClosureOutlivesScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/byRefClosureOutlivesScope.milo)</sub>
+
+## `cannot store a closure that captures 'x' by reference` {#cannot-store-a-closure-that-captures-x-by-reference}
+
+Same rule as byRefClosureOutlivesScope, through a loop body and an alias: `g` is bound in the body, `x` is the loop variable, and `f` outlives both.
+
+```milo skip
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    for x in 0..3 {
+        let g = (): i64 => x * 10
+        f = g
+    }
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/byRefClosureOutlivesLoopBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/byRefClosureOutlivesLoopBody.milo)</sub>
 
 ## `cannot store a reference in a Vec` {#cannot-store-a-reference-in-a-vec}
 
