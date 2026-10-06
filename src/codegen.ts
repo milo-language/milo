@@ -789,6 +789,7 @@ export class Codegen {
         // unsized [T] = slice view: same {ptr,len,cap} layout as Vec, cap=0 → non-owning
         this.hasVecType = true;
         return `%Vec`;
+      case "never": return "void";
       case "unknown": throw new Error("unknown type in codegen");
     }
   }

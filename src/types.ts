@@ -23,6 +23,11 @@ export type TypeKind =
   // pass an env argument the C callee never declared.
   | { tag: "cfn"; params: TypeKind[]; ret: TypeKind }
   | { tag: "interface"; name: string }
+  // The checker's type for an expression after which control does not continue: a call
+  // to `exit` or `todo`, and (in if/match value position) an arm that ended in
+  // return/break/continue. Internal: there is no syntax for it, and the checker never
+  // records it on a node later stages read as a value type (lowering sees `void`).
+  | { tag: "never" }
   | { tag: "unknown" };
 
 // Every name `typeFromAst` resolves to a builtin rather than a user struct, aliases
@@ -85,7 +90,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
   switch (a.tag) {
     case "int": return (b as typeof a).bits === a.bits && (b as typeof a).signed === a.signed;
     case "float": return (b as typeof a).bits === a.bits;
-    case "bool": case "void": case "string": case "unknown": return true;
+    case "bool": case "void": case "string": case "never": case "unknown": return true;
     case "ptr": return typeEq(a.inner, (b as typeof a).inner);
     case "heap": return typeEq(a.inner, (b as typeof a).inner);
     case "vec": return typeEq(a.element, (b as typeof a).element);
@@ -111,6 +116,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
 // that build a KEY from a type must not pass one.
 // How `unknown` renders; the checker's error sink keys on it (see TypeChecker.error).
 export const UNKNOWN_TYPE_NAME = "<unknown>";
+export const NEVER_TYPE: TypeKind = { tag: "never" };
 
 export function typeName(t: TypeKind, demangle?: (name: string) => string): string {
   const tn = (x: TypeKind) => typeName(x, demangle);
@@ -134,6 +140,7 @@ export function typeName(t: TypeKind, demangle?: (name: string) => string): stri
     case "fn": return `${t.owning ? "move " : ""}(${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
     case "cfn": return `extern (${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
     case "interface": return t.name;
+    case "never": return "never";
     case "unknown": return UNKNOWN_TYPE_NAME;
   }
 }

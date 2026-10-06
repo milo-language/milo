@@ -8,7 +8,7 @@ import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
-import { typeFromAst, typeEq, typeName, UNKNOWN_TYPE_NAME, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+import { typeFromAst, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
@@ -680,15 +680,19 @@ export class TypeChecker {
   // Origin file of the fn body being checked; see checkFieldPrivacy.
   private currentFnFile: string | undefined;
   private loopDepth = 0;
-  // Track variables moved exclusively inside return stmts within loops.
-  // Stack entry per loop nesting level.
-  private returnOnlyMovesStack: Set<VarInfo>[] = [];
-  private inReturnInLoop = false;
-  // Per enclosing loop, the move state at each `break` and `continue`. The if/match joins
-  // drop a path that ends in break/continue (it does not fall through to the statement
-  // after them), so without these its moves were lost: a move before `break` was never
-  // seen after the loop, and one before `continue` never reached the next-iteration check.
-  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[] }[] = [];
+  // Whether control can reach the statement being checked. `return`, `break`,
+  // `continue`, a call whose type is `never` (`exit`, `todo`) and a loop nothing leaves
+  // clear it; every join (if, if-let, match, if/match expressions, loops) sets it to
+  // "any incoming path is reachable" and merges move state over the reachable paths only
+  // (`joinPaths`). This is the one model of divergence for move tracking; the syntactic
+  // `bodyAlwaysReturns` is left to the unreachable-code diagnostic.
+  private reachable = true;
+  // Per enclosing loop, the move state at each reachable `break` and `continue`, and
+  // whether the loop itself was reachable. A break/continue path does not fall through to
+  // the statement after its if/match, so its moves are recorded here instead: a move
+  // before `break` reaches the code after the loop, one before `continue` reaches the
+  // next-iteration check.
+  private loopFrames: { breaks: Map<VarInfo, MoveSnapshot>[]; continues: Map<VarInfo, MoveSnapshot>[]; reachable: boolean }[] = [];
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
@@ -1070,7 +1074,7 @@ export class TypeChecker {
     const unsafeUsed = this.unsafeUsedStack.length;
     const loopDepth = this.loopDepth;
     const loopFrameCount = this.loopFrames.length;
-    const returnOnlyMovesCount = this.returnOnlyMovesStack.length;
+    const reachable = this.reachable;
     const closureFrameCount = this.closureFrames.length;
     const borrowWindowCount = this.borrowWindows.length;
     try {
@@ -1083,7 +1087,7 @@ export class TypeChecker {
       this.unsafeUsedStack.length = unsafeUsed;
       this.loopDepth = loopDepth;
       this.loopFrames.length = loopFrameCount;
-      this.returnOnlyMovesStack.length = returnOnlyMovesCount;
+      this.reachable = reachable;
       this.closureFrames.length = closureFrameCount;
     }
   }
@@ -1831,6 +1835,7 @@ export class TypeChecker {
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
       case "fn": return `fn_${t.params.map(p => this.mangleTypeName(p)).join("_")}_ret_${this.mangleTypeName(t.ret)}`;
       case "interface": return `iface_${t.name}`;
+      case "never": return "never";
       case "unknown": return "unknown";
     }
   }
@@ -2532,8 +2537,7 @@ export class TypeChecker {
   }
 
   private beginLoopMoves(): Map<VarInfo, MoveSnapshot> {
-    this.returnOnlyMovesStack.push(new Set());
-    this.loopFrames.push({ breaks: [], continues: [] });
+    this.loopFrames.push({ breaks: [], continues: [], reachable: this.reachable });
     return this.snapshotMoveState();
   }
 
@@ -2542,19 +2546,38 @@ export class TypeChecker {
   // condition (any of those states, or `pre` when the body never runs) or from a `break`.
   // `condCanExit` is false for `while true` (and `while let`, which desugars to it), whose
   // only way out is a break.
-  private endLoopMoves(pre: Map<VarInfo, MoveSnapshot>, body: Stmt[], sp: Span | undefined, condCanExit: boolean) {
-    const returnMoves = this.returnOnlyMovesStack.pop()!;
+  // A loop nothing leaves (`while true` with no reachable `break`) leaves the code after
+  // it unreachable.
+  private endLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined, condCanExit: boolean) {
     const frame = this.loopFrames.pop()!;
     const reentry = [...frame.continues];
-    if (!this.bodyAlwaysReturns(body)) reentry.unshift(this.snapshotMoveState());
+    if (this.reachable) reentry.unshift(this.snapshotMoveState());
     const exits = [...frame.breaks];
     if (reentry.length > 0) {
       this.joinMoveStates(reentry);
-      this.checkLoopMoves(pre, returnMoves, sp);
+      this.checkLoopMoves(pre, sp);
       if (condCanExit) exits.unshift(this.snapshotMoveState());
     }
     if (condCanExit) exits.unshift(pre);
     this.joinMoveStates(exits.length > 0 ? exits : [pre]);
+    this.reachable = frame.reachable && exits.length > 0;
+  }
+
+  // The join after a branch construct: the code after it sees the union of the move
+  // states of the paths that reach it, and is reachable when any of them is. A path that
+  // diverged contributes nothing; when none reaches, the state is `pre` (unobservable).
+  private joinPaths(pre: Map<VarInfo, MoveSnapshot>, paths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[]) {
+    const live = paths.filter(p => p.reachable).map(p => p.state);
+    this.joinMoveStates(live.length > 0 ? live : [pre]);
+    this.reachable = live.length > 0;
+  }
+
+  // Check one path of a branch construct from `pre`, and return where it ended.
+  private checkPath(pre: Map<VarInfo, MoveSnapshot>, preReachable: boolean, check: () => void): { state: Map<VarInfo, MoveSnapshot>; reachable: boolean } {
+    this.restoreMoveState(pre);
+    this.reachable = preReachable;
+    check();
+    return { state: this.snapshotMoveState(), reachable: this.reachable };
   }
 
   private joinMoveStates(states: Map<VarInfo, MoveSnapshot>[]) {
@@ -2565,7 +2588,7 @@ export class TypeChecker {
   // After a loop body: a move inside it would run a second time on the next iteration,
   // so it is an error unless the only path that moved also left the loop. Applies one
   // level down too — a field moved out in the body is just as gone on iteration two.
-  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, returnMoves: Set<VarInfo>, sp: Span | undefined) {
+  private checkLoopMoves(pre: Map<VarInfo, MoveSnapshot>, sp: Span | undefined) {
     const partialGlobals = this.partialMoveSnaps.get(pre);
     for (const scope of this.scopes) {
       const leftOut = partialGlobals !== undefined && scope === this.globalScope;
@@ -2575,14 +2598,10 @@ export class TypeChecker {
       for (const [name, info] of scope) {
         const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
-        if (!before.moved && info.moved) {
-          if (returnMoves.has(info)) { this.touchMoveState(info); info.moved = false; }
-          else this.error(`cannot move '${name}' out of a loop`, sp);
-        }
+        if (!before.moved && info.moved) this.error(`cannot move '${name}' out of a loop`, sp);
         for (const p of [...info.movedPlaces ?? []]) {
           if (before.places.includes(p)) continue;
-          if (returnMoves.has(info)) info.movedPlaces!.delete(p);
-          else this.error(`cannot move '${name}${p}' out of a loop`, sp);
+          this.error(`cannot move '${name}${p}' out of a loop`, sp);
         }
       }
     }
@@ -3087,7 +3106,7 @@ export class TypeChecker {
     this.functions.set("eprint", { params: [], ret: { tag: "void" }, variadic: true });
     this.functions.set("format", { params: [], ret: { tag: "string" }, variadic: true });
     this.functions.set("flush", { params: [], ret: { tag: "void" }, variadic: false });
-    this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: NEVER_TYPE, variadic: false });
     this.functions.set("_miloArgCount", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
     this.functions.set("_miloArgAt", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
     this.functions.set("_cstrToString", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "string" }, variadic: false });
@@ -5916,7 +5935,7 @@ export class TypeChecker {
     this.loopDepth--;
     this.popScope();
     if (rootInfo) this.unfreeze(rootInfo);
-    this.endLoopMoves(preMoves, stmt.body, sp, true);
+    this.endLoopMoves(preMoves, sp, true);
   }
 
   // The call site freezes the receiver and nothing else, so a returned view must point
@@ -5991,6 +6010,7 @@ export class TypeChecker {
     const savedRetType = this.currentFnRetType;
     const savedScopeFloor = this.fnScopeFloor;
     const savedFnFile = this.currentFnFile;
+    const savedReachable = this.reachable;
     // The restore is a `finally` because a `fatal()` anywhere below unwinds past
     // it — leaving currentFnRetType pointing at an abandoned function would make
     // the NEXT function's `return`/`?` check answer against the wrong signature.
@@ -6002,10 +6022,12 @@ export class TypeChecker {
       this.currentFnRetType = savedRetType;
       this.fnScopeFloor = savedScopeFloor;
       this.currentFnFile = savedFnFile;
+      this.reachable = savedReachable;
     }
   }
 
   private checkFunctionBody(fn: Function) {
+    this.reachable = true;
     this.currentFnIsUser = this.fnIsUserCode(fn.name);
     this.currentFnIsDep = this.fnIsDependencyCode(fn.name);
     // `sourceFile` first: a derived method's spans name the synthetic
@@ -6337,10 +6359,8 @@ export class TypeChecker {
         if (!stmt.value) {
           if (fnRetType.tag !== "void") this.error(`return without value in function returning ${this.show(fnRetType)}`, sp);
         } else {
-          const prev = this.inReturnInLoop;
-          if (this.loopDepth > 0) this.inReturnInLoop = true;
           const valType = this.checkExpr(stmt.value, fnRetType);
-          if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
+          if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && !(valType.tag === "never" && fnRetType.tag === "void") && fnRetType.tag !== "unknown") {
             const isStringToPtr = valType.tag === "string" && fnRetType.tag === "ptr" && fnRetType.inner.tag === "int" && fnRetType.inner.bits === 8;
             // Coerce a concrete type to an interface at return position
             // (`return Heap(Circle{})` where the fn returns Heap<Shape>), as
@@ -6361,8 +6381,8 @@ export class TypeChecker {
           // is a hard error, the index spelling silently deep-copies.
           this.lintIndexClone(stmt.value, valType, sp);
           this.tryMove(stmt.value);
-          this.inReturnInLoop = prev;
         }
+        this.reachable = false;
         break;
       }
       case "IfStmt": {
@@ -6370,29 +6390,17 @@ export class TypeChecker {
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
           this.error(`if condition must be bool, got ${this.show(condType)}`, sp);
         }
+        // With no else, the false path reaches the join unchanged.
         const preMoves = this.snapshotMoveState();
-        this.pushScope();
-        for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
-        this.popScope();
-        const thenReturns = this.bodyAlwaysReturns(stmt.thenBody);
-        if (stmt.elseBody) {
-          const afterThen = this.snapshotMoveState();
-          this.restoreMoveState(preMoves);
+        const preReachable = this.reachable;
+        const checkBody = (body: Stmt[]) => () => {
           this.pushScope();
-          for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
+          for (const s of body) this.checkStmt(s, fnRetType);
           this.popScope();
-          const elseReturns = this.bodyAlwaysReturns(stmt.elseBody);
-          // moved if moved in a branch that DOESN'T always exit (branches that always return
-          // don't leak their moves to code after the if)
-          const afterElse = this.snapshotMoveState();
-          this.restoreMoveState(preMoves);
-          if (!thenReturns) this.mergeMoveState(afterThen);
-          if (!elseReturns) this.mergeMoveState(afterElse);
-        } else if (thenReturns) {
-          // No else and the then-branch always returns: control flow only continues past
-          // the if if the condition was false, so moves inside thenBody don't apply here.
-          this.restoreMoveState(preMoves);
-        }
+        };
+        const thenPath = this.checkPath(preMoves, preReachable, checkBody(stmt.thenBody));
+        const elsePath = stmt.elseBody ? this.checkPath(preMoves, preReachable, checkBody(stmt.elseBody)) : { state: preMoves, reachable: preReachable };
+        this.joinPaths(preMoves, [thenPath, elsePath]);
         break;
       }
       case "WhileStmt": {
@@ -6407,7 +6415,7 @@ export class TypeChecker {
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.loopDepth--;
         this.popScope();
-        this.endLoopMoves(preMoves, stmt.body, sp, !(stmt.cond.kind === "BoolLit" && stmt.cond.value));
+        this.endLoopMoves(preMoves, sp, !(stmt.cond.kind === "BoolLit" && stmt.cond.value));
         break;
       }
       case "ForInStmt": {
@@ -6439,7 +6447,7 @@ export class TypeChecker {
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
-          this.endLoopMoves(preMoves, stmt.body, sp, true);
+          this.endLoopMoves(preMoves, sp, true);
         } else {
           // `for line in text.lines()` / `for f in text.splitView(",")` — a text pass that
           // allocates nothing. Handled here and nowhere else: the yielded `&string` views
@@ -6486,7 +6494,7 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            this.endLoopMoves(preMoves, stmt.body, sp, true);
+            this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "string") {
             const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
             const preMoves = this.beginLoopMoves();
@@ -6503,7 +6511,7 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            this.endLoopMoves(preMoves, stmt.body, sp, true);
+            this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "hashmap") {
             const keyRef: TypeKind = { tag: "ref", inner: iterType.key, mutable: false };
             const valRef: TypeKind = { tag: "ref", inner: iterType.value, mutable: false };
@@ -6518,7 +6526,7 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            this.endLoopMoves(preMoves, stmt.body, sp, true);
+            this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "array") {
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
             const preMoves = this.beginLoopMoves();
@@ -6535,7 +6543,7 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
-            this.endLoopMoves(preMoves, stmt.body, sp, true);
+            this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "struct" || iterType.tag === "enum") {
             // iterator protocol: type has next(&mut Self): Option<T>
             const resolved = this.resolveMethod(iterType.name, "next");
@@ -6550,11 +6558,13 @@ export class TypeChecker {
               for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
               // Moves are judged by the per-instantiation re-check; the frame only gives
               // this body's break/continue somewhere to record into.
-              this.loopFrames.push({ breaks: [], continues: [] });
+              const loopReachable = this.reachable;
+              this.loopFrames.push({ breaks: [], continues: [], reachable: loopReachable });
               this.loopDepth++;
               for (const s of stmt.body) this.checkStmt(s, fnRetType);
               this.loopDepth--;
               this.loopFrames.pop();
+              this.reachable = loopReachable;
               this.popScope();
             } else if (!resolved) {
               this.error(`cannot iterate over type '${this.show(iterType)}': no 'next' method found`, sp);
@@ -6598,7 +6608,7 @@ export class TypeChecker {
                 for (const s of stmt.body) this.checkStmt(s, fnRetType);
                 this.loopDepth--;
                 this.popScope();
-                this.endLoopMoves(preMoves, stmt.body, sp, true);
+                this.endLoopMoves(preMoves, sp, true);
               }
             }
           } else if (iterType.tag !== "unknown") {
@@ -6613,11 +6623,13 @@ export class TypeChecker {
       }
       case "BreakStmt":
         if (this.loopDepth === 0) this.error("'break' outside of loop", sp);
-        else this.loopFrames[this.loopFrames.length - 1]?.breaks.push(this.snapshotMoveState());
+        else if (this.reachable) this.loopFrames[this.loopFrames.length - 1]?.breaks.push(this.snapshotMoveState());
+        this.reachable = false;
         break;
       case "ContinueStmt":
         if (this.loopDepth === 0) this.error("'continue' outside of loop", sp);
-        else this.loopFrames[this.loopFrames.length - 1]?.continues.push(this.snapshotMoveState());
+        else if (this.reachable) this.loopFrames[this.loopFrames.length - 1]?.continues.push(this.snapshotMoveState());
+        this.reachable = false;
         break;
       case "ExprStmt": {
         // A view produced by a discarded expression (`print(lx.word(0, 5))`) has no
@@ -6666,6 +6678,7 @@ export class TypeChecker {
         // to the code after the if. `if let Some(i) = find(k) { v[i] = value  return }`
         // followed by `insert(value)` used to be "use of moved variable".
         const preMoves = this.snapshotMoveState();
+        const preReachable = this.reachable;
         if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
           const enumInfo = must(this.enums, subjType.name, "enums");
           const ps = stmt.pattern.span;
@@ -6712,15 +6725,16 @@ export class TypeChecker {
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
           this.popScope();
         }
-        const afterThen = this.snapshotMoveState();
-        this.restoreMoveState(preMoves);
-        if (stmt.elseBody) {
-          this.pushScope();
-          for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
-          this.popScope();
-          if (this.bodyAlwaysReturns(stmt.elseBody)) this.restoreMoveState(preMoves);
-        }
-        if (!this.bodyAlwaysReturns(stmt.thenBody)) this.mergeMoveState(afterThen);
+        const thenPath = { state: this.snapshotMoveState(), reachable: this.reachable };
+        const elseBody = stmt.elseBody;
+        const elsePath = elseBody
+          ? this.checkPath(preMoves, preReachable, () => {
+            this.pushScope();
+            for (const s of elseBody) this.checkStmt(s, fnRetType);
+            this.popScope();
+          })
+          : { state: preMoves, reachable: preReachable };
+        this.joinPaths(preMoves, [thenPath, elsePath]);
         // A borrowed subject is only read, not consumed.
         if (!subjBorrows) this.tryMove(stmt.subject);
         break;
@@ -6742,6 +6756,7 @@ export class TypeChecker {
         // everything below runs only on the matched path. Without the restore,
         // `else { return Some(c) }` reported `c` as moved at every later use.
         const preElseMoves = this.snapshotMoveState();
+        const preElseReachable = this.reachable;
         this.pushScope();
         for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
         this.popScope();
@@ -6750,6 +6765,7 @@ export class TypeChecker {
         } else {
           this.restoreMoveState(preElseMoves);
         }
+        this.reachable = preElseReachable;
         if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
           const enumInfo = must(this.enums, subjType.name, "enums");
           const ps = stmt.pattern.span;
@@ -6961,7 +6977,8 @@ export class TypeChecker {
   }
 
   // Does this body unconditionally exit (return/break/continue) on every path?
-  // Used by move tracking to avoid propagating moves from branches that never fall through.
+  // Syntactic, for the unreachable-code diagnostic and the let-else "must diverge" rule.
+  // Move tracking does not use it: it follows `this.reachable`, which also knows `exit`.
   private bodyAlwaysReturns(body: Stmt[]): boolean {
     for (const s of body) {
       if (s.kind === "Return") return true;
@@ -7044,7 +7061,7 @@ export class TypeChecker {
   }
 
   // Does control ever fall off the end of a function body? Stricter shapes than
-  // bodyAlwaysReturns, which also feeds move tracking and the unreachable scan:
+  // bodyAlwaysReturns, which also feeds the unreachable scan:
   // adding `while true` there would make the `return 0` that most servers keep after
   // their accept loop an "unreachable code" error, so this predicate is only asked
   // at a fn or closure end. Codegen has no answer for a non-void fn that falls off:
@@ -7531,14 +7548,6 @@ export class TypeChecker {
         // lives in, so the closure cannot run a second time. Record it on the capture
         // and the literal is typed call-once below.
         this.eachCaptureOf(expr.name, cap => { cap.consumedInClosure = true; });
-        if (this.loopDepth > 0 && this.returnOnlyMovesStack.length > 0) {
-          const cur = this.returnOnlyMovesStack[this.returnOnlyMovesStack.length - 1];
-          if (this.inReturnInLoop) {
-            cur.add(info);
-          } else {
-            cur.delete(info);
-          }
-        }
       }
     }
     // Move closure: captures are moved out of the enclosing scope
@@ -8676,6 +8685,7 @@ export class TypeChecker {
       }
     }
     const result = this.checkExprKind(expr, hint);
+    if (result.tag === "never") this.reachable = false;
     // Coerce a constant-int subtree (`-1`, `a + 1` where every leaf is a literal)
     // to an int hint — the bare-literal branch above only catches a lone `IntLit`,
     // so a UnaryOp/BinOp wrapper (`return -1`, `let x: i64 = -1`) would otherwise
@@ -9601,7 +9611,7 @@ export class TypeChecker {
         const msgType = this.checkExpr(expr.args[0]);
         if (msgType.tag !== "string" && msgType.tag !== "unknown") this.error(`todo() message must be a string, got ${this.show(msgType)}`, sp);
       }
-      return this.setType(expr, { tag: "void" });
+      return this.setType(expr, NEVER_TYPE);
     }
     if (expr.func === "assert") {
       if (expr.args.length < 1 || expr.args.length > 2) {
@@ -10493,16 +10503,17 @@ export class TypeChecker {
     // The direct spelling (`s.len` rather than `f(s)`) was rejected, which is the
     // give-away: one operation, two spellings, two answers.
     const savedLoopDepth = this.loopDepth;
-    const savedInReturnInLoop = this.inReturnInLoop;
+    const savedReachable = this.reachable;
     this.loopDepth = 0;
-    this.inReturnInLoop = false;
+    this.reachable = true;
     for (const s of expr.body) this.checkStmt(s, inferredRet);
     this.loopDepth = savedLoopDepth;
-    this.inReturnInLoop = savedInReturnInLoop;
+    this.reachable = savedReachable;
     if (inferredRet.tag === "unknown" && expr.body.length > 0) {
       const lastStmt = expr.body[expr.body.length - 1];
       if (lastStmt.kind === "Return" && lastStmt.value) {
         inferredRet = this.exprTypes.get(lastStmt.value) ?? { tag: "void" };
+        if (inferredRet.tag === "never") inferredRet = { tag: "void" };
       } else if (lastStmt.kind === "ExprStmt") {
         inferredRet = { tag: "void" };
       } else {
@@ -11956,25 +11967,29 @@ export class TypeChecker {
     }
     const fnRetType = this.currentFnRetType;
     const preMoves = this.snapshotMoveState();
+    const preReachable = this.reachable;
     const want = expected;
 
-    this.pushScope();
-    this.checkValueBody(expr.thenBody, fnRetType, want);
-    this.popScope();
-    const thenType = this.blockExprType(expr.thenBody);
-
-    const afterThen = this.snapshotMoveState();
-    this.restoreMoveState(preMoves);
-
-    this.pushScope();
-    this.checkValueBody(expr.elseBody, fnRetType, want);
-    this.popScope();
-    const elseType = this.blockExprType(expr.elseBody);
-
-    const afterElse = this.snapshotMoveState();
-    this.restoreMoveState(preMoves);
-    this.mergeMoveState(afterThen);
-    this.mergeMoveState(afterElse);
+    // An arm whose end is unreachable (`return`, `exit(1)`) has type `never`, which
+    // takes the other arm's type.
+    let thenType: TypeKind = NEVER_TYPE, elseType: TypeKind = NEVER_TYPE;
+    const thenPath = this.checkPath(preMoves, preReachable, () => {
+      this.pushScope();
+      this.checkValueBody(expr.thenBody, fnRetType, want);
+      this.popScope();
+      if (this.reachable) thenType = this.blockExprType(expr.thenBody);
+    });
+    const elsePath = this.checkPath(preMoves, preReachable, () => {
+      this.pushScope();
+      this.checkValueBody(expr.elseBody, fnRetType, want);
+      this.popScope();
+      if (this.reachable) elseType = this.blockExprType(expr.elseBody);
+    });
+    this.joinPaths(preMoves, [thenPath, elsePath]);
+    // Both arms diverging leaves the if `void`, as before: nothing can observe it.
+    if (thenType.tag === "never" && elseType.tag === "never") thenType = elseType = { tag: "void" };
+    else if (thenType.tag === "never") thenType = elseType;
+    else if (elseType.tag === "never") elseType = thenType;
 
     // As-a-value if: coerce a const-int arm to the expected width so
     // `let h: i64 = if c { 16 } else { 8 }` doesn't leave both arms at the
@@ -12033,13 +12048,13 @@ export class TypeChecker {
     // if a later concrete arm disagrees.
     let result: TypeKind = { tag: "unknown" };
     for (const t of finalTypes) {
-      if (t.tag === "unknown" || t.tag === "void") continue;
+      if (t.tag === "unknown" || t.tag === "void" || t.tag === "never") continue;
       if (result.tag === "unknown") { result = t; continue; }
       if (!typeEq(result, t)) {
         this.error(`match arms have mismatched types: '${this.show(result)}' vs '${this.show(t)}'`, sp);
       }
     }
-    if (result.tag === "unknown" && finalTypes.some(t => t.tag === "void")) result = { tag: "void" };
+    if (result.tag === "unknown" && finalTypes.some(t => t.tag === "void" || t.tag === "never")) result = { tag: "void" };
     return this.setType(expr, result);
   }
 
@@ -12098,9 +12113,11 @@ export class TypeChecker {
     // reaches code where the binding does not exist. Checked in its own scope BEFORE the
     // binding is declared, so the binding is not in scope inside it. Same rule, and the
     // same reason, as the enum let-else above.
+    const preElseReachable = this.reachable;
     this.pushScope();
     for (const st of stmt.elseBody) this.checkStmt(st, fnRetType);
     this.popScope();
+    this.reachable = preElseReachable;
     if (!this.bodyAlwaysReturns(stmt.elseBody)) {
       this.error(`the else block of 'let ${name} = ${stmt.value.kind === "Ident" ? stmt.value.name : "…"} else { … }' must diverge (return/break/continue) — it runs when C passed null`, sp);
     }
@@ -12426,7 +12443,8 @@ export class TypeChecker {
     if (isLiteralType) {
       let hasWildcard = false;
       const preMoves = this.snapshotMoveState();
-      const mergedMoves = new Map<VarInfo, MoveSnapshot>();
+      const preReachable = this.reachable;
+      const armPaths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[] = [];
       for (const arm of arms) {
         if (arm.pattern.kind === "WildcardPattern") {
           hasWildcard = true;
@@ -12446,25 +12464,15 @@ export class TypeChecker {
           this.error(`cannot use enum pattern when matching on ${this.show(subjType)}`, arm.pattern.span);
         }
         this.restoreMoveState(preMoves);
+        this.reachable = preReachable;
         this.pushScope();
         if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
         else this.checkValueBody(arm.body, fnRetType, expected);
-        armTypes.push(this.blockExprType(arm.body));
+        armTypes.push(this.reachable ? this.blockExprType(arm.body) : NEVER_TYPE);
         this.popScope();
-        // An arm that always exits never falls through to the code after the match,
-        // so its moves must not reach there — same rule the if-statement uses.
-        if (!this.bodyAlwaysReturns(arm.body)) {
-          for (const [info, st] of this.snapshotMoveState()) {
-            const prior = mergedMoves.get(info);
-            mergedMoves.set(info, {
-              moved: st.moved || (prior?.moved ?? false),
-              places: [...new Set([...st.places, ...prior?.places ?? []])],
-            });
-          }
-        }
+        armPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
       }
-      this.restoreMoveState(preMoves);
-      this.mergeMoveState(mergedMoves);
+      this.joinPaths(preMoves, armPaths);
       if (!hasWildcard && subjType.tag === "bool") {
         const hasTrueArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === true);
         const hasFalseArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === false);
@@ -12483,7 +12491,8 @@ export class TypeChecker {
       const covered = new Set<string>();
       let hasWildcard = false;
       const preMoves = this.snapshotMoveState();
-      const mergedMoves = new Map<VarInfo, MoveSnapshot>();
+      const preReachable = this.reachable;
+      const armPaths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[] = [];
       for (const arm of arms) {
         if (arm.pattern.kind === "WildcardPattern") {
           hasWildcard = true;
@@ -12508,6 +12517,7 @@ export class TypeChecker {
           this.error(`cannot use literal pattern when matching on enum`, arm.pattern.span);
         }
         this.restoreMoveState(preMoves);
+        this.reachable = preReachable;
         this.pushScope();
         if (arm.pattern.kind === "EnumPattern") {
           const variant = enumInfo.variants.get(arm.pattern.variant);
@@ -12553,22 +12563,11 @@ export class TypeChecker {
         if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
         else this.checkValueBody(arm.body, fnRetType, expected);
         if (patternMovedInfo) this.movedByPattern.delete(patternMovedInfo);
-        armTypes.push(this.blockExprType(arm.body));
+        armTypes.push(this.reachable ? this.blockExprType(arm.body) : NEVER_TYPE);
         this.popScope();
-        // An arm that always exits never falls through to the code after the match,
-        // so its moves must not reach there — same rule the if-statement uses.
-        if (!this.bodyAlwaysReturns(arm.body)) {
-          for (const [info, st] of this.snapshotMoveState()) {
-            const prior = mergedMoves.get(info);
-            mergedMoves.set(info, {
-              moved: st.moved || (prior?.moved ?? false),
-              places: [...new Set([...st.places, ...prior?.places ?? []])],
-            });
-          }
-        }
+        armPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
       }
-      this.restoreMoveState(preMoves);
-      this.mergeMoveState(mergedMoves);
+      this.joinPaths(preMoves, armPaths);
       if (!hasWildcard) {
         for (const [name, v] of enumInfo.variants) {
           // A variant carrying an uninhabited payload has no values, so demanding an arm

@@ -1605,7 +1605,9 @@ class LowerCtx {
     throw new Error(`lowerExprRaw: unhandled expression kind '${(_exhaustive as { kind: string }).kind}'`);
   }
 
+  // `never` is the checker's; a diverging call is a `void` one from here on.
   private typeOf(expr: Expr): TypeKind | undefined {
-    return this.c.exprTypes.get(expr);
+    const t = this.c.exprTypes.get(expr);
+    return t?.tag === "never" ? { tag: "void" } : t;
   }
 }

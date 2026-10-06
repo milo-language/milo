@@ -2488,6 +2488,13 @@ if condition {
 // p is invalid after the if/else regardless of which branch ran
 ```
 
+A branch that does not reach the code after it (it ends in `return`, `break`,
+`continue`, `exit(…)` or `todo()`, or in a loop nothing leaves) does not count there: a
+value moved before `exit(1)` is still usable on the other path. A `break` or `continue`
+carries its moves to the loop's exit or its next iteration instead. In an `if` or `match`
+used as a value, such an arm takes the type of the others, so
+`let n = if ok { 1 } else { return 0 }` is an `i64`.
+
 ### Destruction order
 
 A value is destroyed when the block that owns it ends (or at the function's exit for a

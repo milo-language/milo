@@ -1,0 +1,21 @@
+// Only the path that ends in `exit` is dropped at the join: the other arm moved `s` and
+// does reach the print.
+fn take(s: string) {
+    print(s)
+}
+
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    let s = "x".clone()
+    if cond() {
+        take(s)
+    } else {
+        exit(1)
+    }
+    print(s)
+    return 0
+}
+// @error: use of moved variable 's'

@@ -1,0 +1,38 @@
+// An if-expression arm that ends in `return`, `break` or `continue` has type `never` and
+// takes the other arm's type; its moves do not reach the code after the if. The first
+// form used to be "if-else branches have mismatched types: 'void' vs 'i64'".
+fn take(s: string) {
+    print($"took {s}")
+}
+
+fn pick(s: string, early: bool): i64 {
+    let n = if early { take(s); return 0 } else { 1 }
+    print($"{s} {n}")
+    return n
+}
+
+fn firstPositive(xs: &Vec<i64>): i64 {
+    var total = 0
+    for x in xs {
+        let v = if x > 0 { x } else { continue }
+        total = total + v
+        let w = if total > 5 { break } else { total }
+        print($"running {w}")
+    }
+    return total
+}
+
+pub fn main(): i32 {
+    print(pick("a".clone(), true).toString())
+    print(pick("b".clone(), false).toString())
+    let xs: Vec<i64> = [2, -1, 3, 4]
+    print(firstPositive(xs).toString())
+    return 0
+}
+// @expect: took a
+// @expect: 0
+// @expect: b 1
+// @expect: 1
+// @expect: running 2
+// @expect: running 5
+// @expect: 9

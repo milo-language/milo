@@ -1,0 +1,43 @@
+// `exit` does not return, so a move on a path that ends in `exit(…)` never reaches the
+// code after it. `print(s)` below used to be "use of moved variable 's'".
+fn take(s: string) {
+    print($"took {s}")
+}
+
+fn cond(): bool {
+    return true
+}
+
+fn spin(s: string) {
+    while true {
+        take(s)
+        exit(0)
+    }
+}
+
+pub fn main(): i32 {
+    let s = "kept".clone()
+    if !cond() {
+        take(s)
+        exit(1)
+    }
+    print(s)
+    let t = "also kept".clone()
+    match cond() {
+        false => {
+            take(t)
+            exit(2)
+        }
+        true => {}
+    }
+    print(t)
+    let u = "in an arm".clone()
+    let n = if cond() { 7 } else { take(u); exit(3) }
+    print($"{n} {u}")
+    spin("spun".clone())
+    return 0
+}
+// @expect: kept
+// @expect: also kept
+// @expect: 7 in an arm
+// @expect: took spun

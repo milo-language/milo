@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 377 distinct messages across 465 programs the compiler must reject.
+Every error message the test suite pins: 377 distinct messages across 466 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -9024,6 +9024,32 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/moveAfterClosureCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveAfterClosureCapture.milo)</sub>
+
+Only the path that ends in `exit` is dropped at the join: the other arm moved `s` and does reach the print.
+
+```milo skip
+fn take(s: string) {
+    print(s)
+}
+
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    let s = "x".clone()
+    if cond() {
+        take(s)
+    } else {
+        exit(1)
+    }
+    print(s)
+    return 0
+}
+// @error: use of moved variable 's'
+```
+
+<sub>[tests/errors/moveOnArmBesideExit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnArmBesideExit.milo)</sub>
 
 Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose arms both break: each break carries the move to the loop exit.
 
