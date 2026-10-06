@@ -34,9 +34,9 @@ fn _pad(input: &string): string {
     for i in 0..input.len {
         m.push(input[i])
     }
-    m.push(0x80 as u8)
+    m.push(0x80)
     while m.len % 64 != 56 {
-        m.push(0 as u8)
+        m.push(0)
     }
     let bits = input.len * 8
     // 64-bit big-endian length. Message lengths fit in the low 40 bits in practice,

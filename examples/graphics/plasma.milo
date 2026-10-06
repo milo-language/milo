@@ -45,7 +45,7 @@ from "std/pty" import {
 // TIOCGWINSZ on darwin; fall back to 80x40 if the ioctl gives nothing.
 pub fn termSize(out: &mut [i64; 2]): void {
     var ws = WinSize {
-        rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 0, cols: 0, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(1, 1074295912, (ws.addrOf()) as *u8)

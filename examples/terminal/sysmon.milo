@@ -44,7 +44,7 @@ from "std/math" import {
 
 pub fn termCols(): i64 {
     var ws = WinSize {
-        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 24, cols: 80, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(1, 1074295912, (ws.addrOf()) as *u8)
@@ -54,7 +54,7 @@ pub fn termCols(): i64 {
 
 pub fn termRows(): i64 {
     var ws = WinSize {
-        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 24, cols: 80, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(1, 1074295912, (ws.addrOf()) as *u8)
@@ -80,7 +80,7 @@ pub fn clr(buf: &mut string): void {
 
 pub fn spaces(buf: &mut string, n: i64): void {
     for i in 0..n {
-        buf.push(32 as u8)
+        buf.push(32)
     }
 }
 

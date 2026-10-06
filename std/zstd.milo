@@ -965,13 +965,13 @@ fn encRawBlockHeader(out: &mut string, size: i64, last: bool) {
 fn zstdCompressRaw(src: &string): string {
     let maxBlock: i64 = 131072 // 128 KiB, the zstd block cap
     var out = ""
-    out.push(0x28 as u8)
-    out.push(0xb5 as u8)
-    out.push(0x2f as u8)
-    out.push(0xfd as u8)
+    out.push(0x28)
+    out.push(0xb5)
+    out.push(0x2f)
+    out.push(0xfd)
     // Frame_Header_Descriptor: Single_Segment (0x20) + Content_Checksum (0x04) +
     // Frame_Content_Size flag 2 → a 4-byte content size (0xc0 = flag 2 in bits 6..7).
-    out.push(0xa4 as u8)
+    out.push(0xa4)
     enc32LE(&mut out, src.len)
     if src.len == 0 {
         encRawBlockHeader(&mut out, 0, true)
@@ -1778,7 +1778,7 @@ fn encSeqCount(out: &mut string, n: i64) {
         out.push(((n >> 8) + 0x80) as u8)
         out.push((n & 0xff) as u8)
     } else {
-        out.push(0xff as u8)
+        out.push(0xff)
         out.push(((n - 0x7F00) & 0xff) as u8)
         out.push((((n - 0x7F00) >> 8) & 0xff) as u8)
     }
@@ -1845,11 +1845,11 @@ fn compressBlock(block: &string): BlockResult {
 // appended XXH64 content checksum — decodable by `zstdDecompress` above and reference `zstd -d`.
 fn zstdCompress(src: &string): string {
     var out = ""
-    out.push(0x28 as u8)
-    out.push(0xb5 as u8)
-    out.push(0x2f as u8)
-    out.push(0xfd as u8)
-    out.push(0xa4 as u8)
+    out.push(0x28)
+    out.push(0xb5)
+    out.push(0x2f)
+    out.push(0xfd)
+    out.push(0xa4)
     enc32LE(&mut out, src.len)
     if src.len == 0 {
         encRawBlockHeader(&mut out, 0, true)

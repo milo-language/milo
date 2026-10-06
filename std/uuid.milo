@@ -56,14 +56,14 @@ pub struct Uuid {
 impl Uuid {
     // The all-zero UUID, 00000000-0000-0000-0000-000000000000.
     fn nil(): Uuid {
-        return Uuid { bytes: [0 as u8; 16] }
+        return Uuid { bytes: [0; 16] }
     }
 
     // Random UUID (version 4): 122 random bits.
     //
     // The bits come from the OS CSPRNG.
     fn v4(): Uuid {
-        var b: [u8; 16] = [0 as u8; 16]
+        var b: [u8; 16] = [0; 16]
         unsafe {
             Random.bytes(b as *u8, 16)
         }
@@ -103,7 +103,7 @@ impl Uuid {
             seq = _v7Seq
         }
 
-        var b: [u8; 16] = [0 as u8; 16]
+        var b: [u8; 16] = [0; 16]
         unsafe {
             Random.bytes(b as *u8, 16)
         }
@@ -128,7 +128,7 @@ impl Uuid {
         if s.len != 36 {
             return Option.None
         }
-        var b: [u8; 16] = [0 as u8; 16]
+        var b: [u8; 16] = [0; 16]
         var i: i64 = 0
         var out: i64 = 0
         while i < 36 {

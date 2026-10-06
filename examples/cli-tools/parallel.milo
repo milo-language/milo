@@ -66,7 +66,7 @@ pub fn main(): i32 {
     // pids of active children (-1 = slot free)
     var pids: Vec<i64> = Vec.new()
     for pi in 0..jobs {
-        pids.push(-1 as i64)
+        pids.push(-1)
     }
 
     while completed < lines.len {
@@ -110,7 +110,7 @@ pub fn main(): i32 {
             // free the slot
             for fi in 0..jobs {
                 if pids[fi] == pid as i64 {
-                    pids[fi] = -1 as i64
+                    pids[fi] = -1
                 }
             }
         }

@@ -46,7 +46,7 @@ fn blockKey(key: &string, block: i64, hash: (&string) => string): string {
         }
     }
     while k.len < block {
-        k.push(0 as u8)
+        k.push(0)
     }
     return k
 }

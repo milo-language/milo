@@ -479,7 +479,7 @@ pub fn searchWithRegex(content: &string, filePath: &string, re: &mut Regex, opts
     }
 
     var matchCount: i64 = 0
-    var lastPrinted: i64 = -1 as i64
+    var lastPrinted: i64 = -1
     var afterRemaining: i64 = 0
     var headerPrinted: bool = false
 

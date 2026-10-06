@@ -76,8 +76,8 @@ pub fn afInet6(): i32 {
 // index for a link-local address (fe80::/10), 0 otherwise.
 pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     var a = SockAddrIn6 {
-        sin6_len: 28 as u8,
-        sin6_family: 30 as u8,
+        sin6_len: 28,
+        sin6_family: 30,
         sin6_port: htons(port),
         sin6_flowinfo: 0,
         sin6_addr: [0; 16],
@@ -105,8 +105,8 @@ pub fn sockAddrIn6Len(): u32 {
 // silently shortened one (UnixListener/UnixStream do).
 pub fn makeSockaddrUn(path: &string): SockAddrUn {
     var a = SockAddrUn {
-        sun_len: 106 as u8,
-        sun_family: 1 as u8,
+        sun_len: 106,
+        sun_family: 1,
         sun_path: [0; 104],
     }
     var i: i64 = 0
@@ -132,8 +132,8 @@ pub fn sockAddrStorageLen(): u32 {
 
 pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     return SockAddrIn {
-        sin_len: 16 as u8,
-        sin_family: 2 as u8,
+        sin_len: 16,
+        sin_family: 2,
         sin_port: htons(port),
         sin_addr: addr,
         sin_zero: [0; 8],
@@ -222,35 +222,35 @@ pub struct Kevent {
 }
 
 pub fn evfiltRead(): i16 {
-    return -1 as i16
+    return -1
 }
 
 pub fn evfiltWrite(): i16 {
-    return -2 as i16
+    return -2
 }
 
 pub fn evfiltUser(): i16 {
-    return -10 as i16
+    return -10
 }
 
 pub fn evAdd(): u16 {
-    return 1 as u16
+    return 1
 }
 
 pub fn evDelete(): u16 {
-    return 2 as u16
+    return 2
 }
 
 pub fn evEnable(): u16 {
-    return 4 as u16
+    return 4
 }
 
 pub fn evOneshot(): u16 {
-    return 16 as u16
+    return 16
 }
 
 pub fn evClear(): u16 {
-    return 32 as u16
+    return 32
 }
 
 pub fn noteTrigger(): u32 {

@@ -34,7 +34,7 @@ pub fn mmapAnon(size: i64): Result<MappedMemory> {
         let p = mmap(0 as *u8, size, PROT_RW, mapPrivateAnon(), -1, 0)
         addr = p as i64
     }
-    let mapFailed: i64 = -1 as i64
+    let mapFailed: i64 = -1
     if addr == mapFailed {
         return Result.Err("mmap failed")
     }
@@ -52,7 +52,7 @@ pub fn mmapFile(fFd: i32, size: i64): Result<MappedMemory> {
         let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, fFd, 0)
         addr = p as i64
     }
-    let mapFailed: i64 = -1 as i64
+    let mapFailed: i64 = -1
     if addr == mapFailed {
         return Result.Err("mmap failed")
     }

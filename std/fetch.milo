@@ -362,7 +362,7 @@ fn hexDigit(c: u8): i64 {
     if c >= 'A' && c <= 'F' {
         return (c - 'A') as i64 + 10
     }
-    return -1 as i64
+    return -1
 }
 
 // ── HTTP parsing ──
@@ -512,9 +512,9 @@ pub fn hostHeader(url: &string): string {
     let host = parseHost(url)
     let port = parsePort(url)
     let dflt: u16 = if isHttps(url) {
-        443 as u16
+        443
     } else {
-        80 as u16
+        80
     }
     if port == dflt {
         return host

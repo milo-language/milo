@@ -141,11 +141,11 @@ fn readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
             if n > 0 {
                 return n as i64
             }
-            return -1 as i64
+            return -1
         }
         return readFd(fd, buf, len)
     }
-    return -1 as i64
+    return -1
 }
 
 fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
@@ -343,9 +343,9 @@ fn wsSendFrame(fd: i32, ssl: i64, isClient: bool, opcode: WsOpcode, payload: &st
     }
     // RFC 6455: client→server frames MUST be masked; server frames MUST NOT be.
     let maskBytes: i64 = if isClient {
-        4 as i64
+        4
     } else {
-        0 as i64
+        0
     }
 
     var mask: [u8; 4] = [0; 4]
@@ -370,9 +370,9 @@ fn wsSendFrame(fd: i32, ssl: i64, isClient: bool, opcode: WsOpcode, payload: &st
 
         // byte 1+: mask bit + payload length
         let maskBit: u8 = if isClient {
-            128 as u8
+            128
         } else {
-            0 as u8
+            0
         }
         if payload.len < 126 {
             *((frame as i64 + pos) as *u8) = maskBit | (payload.len as u8)

@@ -66,11 +66,11 @@ fn ansiPushRaw(buf: &mut string, s: &string): void {
 fn ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
     ansiPushRaw(&mut buf, lead)
     ansiPushU8(&mut buf, r)
-    buf.push(59 as u8) // ';'
+    buf.push(59) // ';'
     ansiPushU8(&mut buf, g)
-    buf.push(59 as u8)
+    buf.push(59)
     ansiPushU8(&mut buf, b)
-    buf.push(109 as u8) // 'm'
+    buf.push(109) // 'm'
 }
 
 // Append a 24-bit foreground / background SGR directly into buf (no allocation).

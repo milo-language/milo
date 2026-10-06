@@ -38,7 +38,7 @@ fn csvParse(input: &string): Result<Vec<Vec<string>>> {
             if ch == 34 {
                 // double quote: peek for escaped quote
                 if i + 1 < input.len && input[i + 1] == 34 {
-                    field.push(34 as u8)
+                    field.push(34)
                     i += 2
                     continue
                 }

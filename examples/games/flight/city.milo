@@ -30,13 +30,13 @@ from "./texture" import {
     SLOT_ORTHO, Texture, texNew
 }
 
-pub let COVER_URBAN: u8 = 0 as u8
+pub let COVER_URBAN: u8 = 0
 
-pub let COVER_PARK: u8 = 1 as u8
+pub let COVER_PARK: u8 = 1
 
-pub let COVER_SAND: u8 = 2 as u8
+pub let COVER_SAND: u8 = 2
 
-pub let COVER_WATER: u8 = 3 as u8
+pub let COVER_WATER: u8 = 3
 
 // Footprints are stored flat rather than as Vec<Vec<..>>: one contiguous point
 // array plus per-building offsets. A city is tens of thousands of buildings and
@@ -259,7 +259,7 @@ pub fn cityAttachOrtho(c: &mut City, png: &string): Result<i64, string> {
     t.slot = SLOT_ORTHO
     t.lut = srgbTable()
     t.px = Vec.new()
-    t.pxu = Vec.filled(n * n * 3, 0 as u8)
+    t.pxu = Vec.filled(n * n * 3, 0)
     let ch = img.channels
     for y in 0..n {
         for x in 0..n {
@@ -799,7 +799,7 @@ pub fn cityParse(src: &string): Result<City, string> {
     if !plausible(src, p, coverCount, 1) {
         return Err("truncated city file: cover grid " + c.coverN.toString())
     }
-    c.cover = Vec.filled(coverCount, 0 as u8)
+    c.cover = Vec.filled(coverCount, 0)
     for i in 0..coverCount {
         c.cover[i] = src[p + i]
     }
@@ -1060,7 +1060,7 @@ fn parseRoofs(c: &mut City, src: &string, from: i64): Result<i64, string> {
     if !have(src, p, n * 9) {
         return Err("truncated city file: " + n.toString() + " roofs")
     }
-    c.bRoof = Vec.filled(n, 0 as u8)
+    c.bRoof = Vec.filled(n, 0)
     c.bRoofH = Vec.filled(n, 0.0)
     c.bBase = Vec.filled(n, 0.0)
     for i in 0..n {

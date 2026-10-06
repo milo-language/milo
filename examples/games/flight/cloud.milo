@@ -198,7 +198,7 @@ pub fn cloudSynthetic(reach: f64, coverage: f64, baseM: f64, thicknessM: f64, se
             let k = (j * n + i) * 3
             f.texel[k] = c as f32
             f.texel[k + 1] = top as f32
-            f.texel[k + 2] = 0.0 as f32
+            f.texel[k + 2] = 0.0
         }
     }
     return f

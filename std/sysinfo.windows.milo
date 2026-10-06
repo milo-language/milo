@@ -48,7 +48,7 @@ pub fn hostname(): string {
 pub fn cwd(): string {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
-        GetCurrentDirectoryA(4096 as u32, buf as *u8)
+        GetCurrentDirectoryA(4096, buf as *u8)
         return _cstrToString(buf as *u8)
     }
 }
@@ -131,7 +131,7 @@ pub fn cpuModel(): string {
 pub fn totalMem(): i64 {
     var buf: [u8; 64] = [0; 64]
     unsafe {
-        (buf as *u32) [0] = 64 as u32
+        (buf as *u32) [0] = 64
         if GlobalMemoryStatusEx(buf as *u8) == 0 {
             return 0
         }
@@ -143,7 +143,7 @@ pub fn totalMem(): i64 {
 pub fn freeMem(): i64 {
     var buf: [u8; 64] = [0; 64]
     unsafe {
-        (buf as *u32) [0] = 64 as u32
+        (buf as *u32) [0] = 64
         if GlobalMemoryStatusEx(buf as *u8) == 0 {
             return 0
         }

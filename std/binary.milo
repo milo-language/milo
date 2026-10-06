@@ -84,7 +84,7 @@ impl Bytes {
 
     // The f32 whose host bit pattern is `b`. Inverse of `f32ToBits`.
     fn f32FromBits(b: u32): f32 {
-        var v: f32 = 0.0 as f32
+        var v: f32 = 0.0
         unsafe {
             v = *(b.addrOf() as *f32)
         }

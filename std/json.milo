@@ -326,9 +326,9 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
             } else if esc == '/' {
                 result.push('/')
             } else if esc == 'b' {
-                result.push(8 as u8)
+                result.push(8)
             } else if esc == 'f' {
-                result.push(12 as u8)
+                result.push(12)
             } else if esc == 'u' && i + 4 < len {
                 // \uXXXX → code point → UTF-8.
                 //

@@ -75,14 +75,14 @@ fn base64Encode(input: &string): string {
         result.push(b64EncodeChar(a >> 2))
         result.push(b64EncodeChar(((a & 3) << 4) | (b >> 4)))
         result.push(b64EncodeChar((b & 15) << 2))
-        result.push(61 as u8)
+        result.push(61)
     }
     if remaining == 1 {
         let a = input[i]
         result.push(b64EncodeChar(a >> 2))
         result.push(b64EncodeChar((a & 3) << 4))
-        result.push(61 as u8)
-        result.push(61 as u8)
+        result.push(61)
+        result.push(61)
     }
     return result
 }

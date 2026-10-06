@@ -716,7 +716,7 @@ impl Router {
 
     fn handle(self: &Self, req: Request): HandledResponse {
         // find matching route index + params first (borrowing req), then move req after the loop
-        var matchIdx: i64 = -1 as i64
+        var matchIdx: i64 = -1
         var matchedParams: Vec<Param> = []
         for i in 0..self.routes.len {
             let route = self.routes[i]

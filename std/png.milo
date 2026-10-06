@@ -224,7 +224,7 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
     var raw = ""
     var y = 0
     while y < height {
-        raw.push(0 as u8) // filter: None
+        raw.push(0) // filter: None
         let start = y * width * channels
         var i = 0
         while i < width * channels {
@@ -237,27 +237,27 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
     var out = ""
     // The 8-byte signature. The \r\n\x1a\n tail is a deliberate trap for
     // transfers that mangle line endings — if it survives, the rest did too.
-    out.push(137 as u8)
-    out.push(80 as u8)
-    out.push(78 as u8)
-    out.push(71 as u8)
-    out.push(13 as u8)
-    out.push(10 as u8)
-    out.push(26 as u8)
-    out.push(10 as u8)
+    out.push(137)
+    out.push(80)
+    out.push(78)
+    out.push(71)
+    out.push(13)
+    out.push(10)
+    out.push(26)
+    out.push(10)
 
     var ihdr = ""
     Bytes.writeU32Be(&mut ihdr, width as u32)
     Bytes.writeU32Be(&mut ihdr, height as u32)
-    ihdr.push(8 as u8) // bit depth
+    ihdr.push(8) // bit depth
     if channels == 3 {
-        ihdr.push(2 as u8) // truecolour
+        ihdr.push(2) // truecolour
     } else {
-        ihdr.push(6 as u8) // truecolour + alpha
+        ihdr.push(6) // truecolour + alpha
     }
-    ihdr.push(0 as u8) // deflate
-    ihdr.push(0 as u8) // adaptive filtering
-    ihdr.push(0 as u8) // no interlace
+    ihdr.push(0) // deflate
+    ihdr.push(0) // adaptive filtering
+    ihdr.push(0) // no interlace
     chunk(&mut out, "IHDR", ihdr)
     chunk(&mut out, "IDAT", Deflate.zlib(raw))
     chunk(&mut out, "IEND", "")

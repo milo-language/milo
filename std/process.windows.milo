@@ -115,12 +115,12 @@ fn oReadBinary(): i32 {
 // child gets a NULL one.
 fn stdHandleId(stream: i32): u32 {
     if stream == 0 {
-        return 4294967286 as u32
+        return 4294967286
     }
     if stream == 1 {
-        return 4294967285 as u32
+        return 4294967285
     }
-    return 4294967284 as u32
+    return 4294967284
 }
 
 // ── Simple command execution ──
@@ -174,7 +174,7 @@ impl Process {
         // Windows has no signals to a process; the only portable "signal" is a forced
         // termination. Any sig maps to TerminateProcess, exit code 1.
         unsafe {
-            if TerminateProcess(self._handle, 1 as u32) == 0 {
+            if TerminateProcess(self._handle, 1) == 0 {
                 return Result.Err("TerminateProcess() failed")
             }
         }
@@ -187,7 +187,7 @@ impl Process {
 pub fn processAlive(pid: i32): bool {
     unsafe {
         // PROCESS_QUERY_LIMITED_INFORMATION; an exit code of STILL_ACTIVE (259) means running.
-        let h = OpenProcess(4096 as u32, 0, pid as u32) as i64
+        let h = OpenProcess(4096, 0, pid as u32) as i64
         if h == 0 {
             return false
         }
@@ -203,11 +203,11 @@ pub fn processAlive(pid: i32): bool {
 pub fn terminateProcess(pid: i32): bool {
     unsafe {
         // PROCESS_TERMINATE
-        let h = OpenProcess(1 as u32, 0, pid as u32) as i64
+        let h = OpenProcess(1, 0, pid as u32) as i64
         if h == 0 {
             return false
         }
-        let ok = TerminateProcess(h, 1 as u32)
+        let ok = TerminateProcess(h, 1)
         CloseHandle(h)
         return ok != 0
     }
@@ -336,7 +336,7 @@ impl Child {
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
         unsafe {
-            if TerminateProcess(self._handle, 1 as u32) == 0 {
+            if TerminateProcess(self._handle, 1) == 0 {
                 return Result.Err("TerminateProcess() failed")
             }
         }
@@ -363,7 +363,7 @@ impl Child {
 // Block on a process HANDLE and read its exit code. INFINITE = 0xFFFFFFFF.
 fn waitHandle(handle: i64): Result<i32> {
     unsafe {
-        WaitForSingleObject(handle, 4294967295 as u32)
+        WaitForSingleObject(handle, 4294967295)
         var codeBuf: [u32; 1] = [0]
         if GetExitCodeProcess(handle, codeBuf as *u32) == 0 {
             return Result.Err("GetExitCodeProcess() failed")
@@ -384,7 +384,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
         // STARTUPINFOA is 104 bytes on x64: cb at 0, dwFlags at 60, hStdInput/Output/Error
         // at 80/88/96. Zero it, then fill only what we use.
         var si: [u8; 104] = [0; 104]
-        (si as *u32) [0] = 104 as u32
+        (si as *u32) [0] = 104
         let useHandles = childIn >= 0 || childOut >= 0 || childErr >= 0 || errFromStdout
         if useHandles {
             // STARTF_USESTDHANDLES replaces all three at once, so a stream left alone
@@ -420,7 +420,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
         // appName NULL => the first token of cmdLine is the program and the standard
         // search (including PATH) applies, matching execvp. inherit=TRUE so the marked
         // pipe ends cross into the child.
-        let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 1, 0 as u32, envBlock, curDir, si as *u8, pi as *u8)
+        let ok = CreateProcessA(0 as *u8, cmdLine, 0 as *u8, 0 as *u8, 1, 0, envBlock, curDir, si as *u8, pi as *u8)
         free(cmdLine)
         if ok == 0 {
             // A missing or unlaunchable program lands here — the Windows analogue of the
@@ -596,7 +596,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
             }
             Stdio.Pipe => {
                 var fds: [i32; 2] = [0; 2]
-                if _pipe(fds as *i32, 4096 as u32, pipeFlags()) != 0 {
+                if _pipe(fds as *i32, 4096, pipeFlags()) != 0 {
                     return Result.Err("pipe(" + label + ") failed")
                 }
                 // Only the child's end becomes inheritable; the parent's end stays
@@ -864,12 +864,12 @@ fn buildEnvBlock(cmd: &Command): Result<*u8> {
         var flat = ""
         for i in 0..records.len {
             flat.pushStr(records[i])
-            flat.push(0 as u8)
+            flat.push(0)
         }
         // An entirely empty environment still needs its own record terminator, or the
         // trailing NUL below would be read as the block's first (empty) record.
         if records.len == 0 {
-            flat.push(0 as u8)
+            flat.push(0)
         }
         let n = flat.len
         let buf = malloc(n + 1)

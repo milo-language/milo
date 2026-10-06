@@ -219,13 +219,13 @@ fn push32BE(out: &mut string, v: i64) {
 // CRC-32 + ISIZE trailer. Output is accepted by system gunzip and std/inflate.
 fn gzipCompress(src: &string): string {
     var out = ""
-    out.push(0x1f as u8)
-    out.push(0x8b as u8)
-    out.push(8 as u8) // CM = deflate
-    out.push(0 as u8) // FLG = none
+    out.push(0x1f)
+    out.push(0x8b)
+    out.push(8) // CM = deflate
+    out.push(0) // FLG = none
     push32LE(&mut out, 0) // MTIME = 0 (unknown)
-    out.push(0 as u8) // XFL
-    out.push(255 as u8) // OS = unknown
+    out.push(0) // XFL
+    out.push(255) // OS = unknown
     let body = deflate(src)
     for i in 0..body.len {
         out.push(body[i])
@@ -238,8 +238,8 @@ fn gzipCompress(src: &string): string {
 // Compress to a zlib stream (RFC 1950): 2-byte header, DEFLATE body, Adler-32.
 fn zlibCompress(src: &string): string {
     var out = ""
-    out.push(0x78 as u8) // CMF: deflate, 32K window
-    out.push(0x9c as u8) // FLG: default level, header check 0x789c % 31 == 0
+    out.push(0x78) // CMF: deflate, 32K window
+    out.push(0x9c) // FLG: default level, header check 0x789c % 31 == 0
     let body = deflate(src)
     for i in 0..body.len {
         out.push(body[i])

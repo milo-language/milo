@@ -208,10 +208,10 @@ pub fn lightMatrix(sunX: f64, sunY: f64, sunZ: f64, cx: f64, cy: f64, cz: f64, h
     m[10] = (fwd[2] / depth) as f32
     m[14] = (tf / depth) as f32
 
-    m[3] = 0.0 as f32
-    m[7] = 0.0 as f32
-    m[11] = 0.0 as f32
-    m[15] = 1.0 as f32
+    m[3] = 0.0
+    m[7] = 0.0
+    m[11] = 0.0
+    m[15] = 1.0
     return m
 }
 
@@ -225,10 +225,10 @@ pub fn shadowNew(gl: &mut GlContext, size: i64): Result<ShadowMap, string> {
     let target = Target.new(&mut gl, size, size, true, false)?
     let shader = Shader.compile(&mut gl, SHADOW_VERT, SHADOW_FRAG)?
     var m: Vec<f32> = Vec.filled(16, 0.0)
-    m[0] = 1.0 as f32
-    m[5] = 1.0 as f32
-    m[10] = 1.0 as f32
-    m[15] = 1.0 as f32
+    m[0] = 1.0
+    m[5] = 1.0
+    m[10] = 1.0
+    m[15] = 1.0
     return Ok(ShadowMap {
         target: target,
         shader: shader,

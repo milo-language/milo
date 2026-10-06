@@ -235,7 +235,7 @@ pub fn clearLines(board: &mut Board): i64 {
     // zero the rows above the compacted stack
     while write >= 0 {
         for x in 0..W {
-            board[write * W + x] = 0 as i32
+            board[write * W + x] = 0
         }
         write -= 1
     }

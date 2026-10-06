@@ -75,7 +75,7 @@ pub struct TermSize {
 
 pub fn termSize(): TermSize {
     var ws = WinSize {
-        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 24, cols: 80, xpixel: 0, ypixel: 0
     }
     unsafe {
         // TIOCGWINSZ on macOS
@@ -126,9 +126,9 @@ pub fn isoTimestamp(): string {
 
     let isLeap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
     let febDays: i64 = if isLeap {
-        29 as i64
+        29
     } else {
-        28 as i64
+        28
     }
     let monthDays: [i64; 12] = [31, febDays, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     var m: i64 = 0
@@ -194,9 +194,9 @@ fn main(): i32 {
     // (443 for https, 80 for http). Omitting it broke local servers — a browser sent
     // to http://127.0.0.1/... hits port 80, not the actual --port.
     let defaultPort: i64 = if useTls {
-        443 as i64
+        443
     } else {
-        80 as i64
+        80
     }
     // .clone() because this arm hands `host`'s buffer to `authority` while `host`
     // is still read below (resolve, the error message, the TLS handshake name).

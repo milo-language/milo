@@ -89,7 +89,7 @@ pub fn findSession(terminalId: &string): i64 {
             return i
         }
     }
-    return -1 as i64
+    return -1
 }
 
 // ── HTTP helpers ──

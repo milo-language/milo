@@ -55,7 +55,7 @@ pub fn ivFromCount(count: i64): string {
         c = c >> 8
     }
     for i in 0..4 {
-        s.push(0 as u8)
+        s.push(0)
     }
     return s
 }

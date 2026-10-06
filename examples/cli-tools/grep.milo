@@ -15,7 +15,7 @@ from "std/path" import {
 
 pub fn makeColor(code: &string): string {
     var s: string = ""
-    s.push(27 as u8)
+    s.push(27)
     s = s + "[" + code + "m"
     return s
 }
@@ -223,7 +223,7 @@ pub fn main(): i32 {
         invert: args.getBool("invert-match"),
         noColor: args.getBool("no-color"),
         showFilename: showFilename,
-        totalMatches: 0 as i64,
+        totalMatches: 0,
         red: makeColor("1;31"),
         green: makeColor("32"),
         magenta: makeColor("35"),

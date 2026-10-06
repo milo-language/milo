@@ -318,7 +318,7 @@ pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if !greenNonblocking(fd, "IO on this fd") {
-            return -1 as i64
+            return -1
         }
     }
     while true {
@@ -330,7 +330,7 @@ pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
         }
         return n
     }
-    return -1 as i64
+    return -1
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
@@ -338,7 +338,7 @@ pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if !greenNonblocking(fd, "IO on this fd") {
-            return -1 as i64
+            return -1
         }
     }
     unsafe {
@@ -367,7 +367,7 @@ pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if !greenNonblocking(fd, "socket IO") {
-            return -1 as i64
+            return -1
         }
     }
     while true {
@@ -378,14 +378,14 @@ pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
         }
         return n
     }
-    return -1 as i64
+    return -1
 }
 
 pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
         if !greenNonblocking(fd, "socket IO") {
-            return -1 as i64
+            return -1
         }
     }
     unsafe {

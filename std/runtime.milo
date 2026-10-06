@@ -482,7 +482,7 @@ impl Task {
             rtWritePtr(task, tJoinCell(), cell)
 
             let total = guardPageSize() + stackBytes
-            let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
+            let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0)
             rtWritePtr(task, tStack(), stackMem)
             rtWriteI64(task, tStackSize(), total)
 

@@ -148,7 +148,7 @@ pub fn renderColor(buf: &mut string, lum: &[f64; 3520]): void {
                 emit(&mut buf, "▄")
             } else {
                 emit(&mut buf, "\x1b[49m")
-                buf.push(32 as u8)
+                buf.push(32)
             }
         }
     }
@@ -165,7 +165,7 @@ pub fn printAscii(): void {
         for c in 0..PW {
             let l = lum[r * PW + c]
             if l < 0.0 {
-                out.push(32 as u8)
+                out.push(32)
             } else {
                 var idx = (l / 1.41 * 11.0) as i64
                 if idx > 11 {
@@ -174,7 +174,7 @@ pub fn printAscii(): void {
                 out.push(ramp[idx])
             }
         }
-        out.push(10 as u8)
+        out.push(10)
     }
     writeStdout(out)
 }

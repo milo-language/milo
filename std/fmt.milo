@@ -125,7 +125,7 @@ pub fn padRight(s: &string, width: i64, ch: u8): string {
 // Zero-pad an integer to a minimum width.
 pub fn zeroPad(n: i64, width: i64): string {
     let s = n.toString()
-    return padLeft(s, width, 48 as u8)
+    return padLeft(s, width, 48)
 }
 
 // Join a Vec<string> with a separator.

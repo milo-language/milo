@@ -176,7 +176,7 @@ pub fn dapServe(): i64 {
             continue
         }
         let cmd = req.str("command") ?? ""
-        let seq = req.i64("seq") ?? (0 as i64)
+        let seq = req.i64("seq") ?? 0
         if cmd == "initialize" {
             out.respond(seq, cmd, capabilitiesJson())
         } else if cmd == "launch" || cmd == "attach" {
@@ -302,7 +302,7 @@ pub fn strArray(args: &Json, key: &string): Vec<string> {
 pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<JdwpIo> {
     if !isLaunch {
         let host = args.str("hostName") ?? (args.str("host") ?? "localhost")
-        let port = args.i64("port") ?? (0 as i64)
+        let port = args.i64("port") ?? 0
         if port <= 0 {
             return Err("attach needs \"port\" (JDWP agent port)")
         }
@@ -328,7 +328,7 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
             cp = "."
         }
     }
-    let port = args.i64("jdwpPort") ?? (15737 as i64)
+    let port = args.i64("jdwpPort") ?? 15737
     let java = findJava(args.str("javaPath") ?? "")
     if java.len == 0 {
         return Err("no java executable found — set \"javaPath\" or JAVA_HOME")
@@ -679,7 +679,7 @@ impl Sess {
             return false
         }
         let cmd = req.str("command") ?? ""
-        let seq = req.i64("seq") ?? (0 as i64)
+        let seq = req.i64("seq") ?? 0
         let args = req.get("arguments") ?? Json.parse("{}")!
 
         if cmd == "setBreakpoints" {
@@ -938,7 +938,7 @@ impl Sess {
     // ── stepping / pause ──
 
     fn onStep(self: &mut Sess, seq: i64, cmd: string, args: Json, depth: i64): void {
-        let dapTid = args.i64("threadId") ?? (1 as i64)
+        let dapTid = args.i64("threadId") ?? 1
         let tid = self.jdwpThreadOf(dapTid)
         if tid == 0 {
             self.out.fail(seq, cmd, "unknown threadId")
@@ -973,7 +973,7 @@ impl Sess {
             }
         }
         self.out.respond(seq, c, "{}")
-        let dapTid = args.i64("threadId") ?? (1 as i64)
+        let dapTid = args.i64("threadId") ?? 1
         self.out.event("stopped", Json.obj().str("reason", "pause").int("threadId", dapTid).bool("allThreadsStopped", true).build())
     }
 
@@ -1234,7 +1234,7 @@ impl Sess {
 
     fn onStackTrace(self: &mut Sess, seq: i64, args: Json): void {
         let c: string = "stackTrace"
-        let dapTid = args.i64("threadId") ?? (1 as i64)
+        let dapTid = args.i64("threadId") ?? 1
         let tid = self.jdwpThreadOf(dapTid)
         if tid == 0 {
             self.out.fail(seq, c, "unknown threadId")
@@ -1297,7 +1297,7 @@ impl Sess {
 
     fn onScopes(self: &mut Sess, seq: i64, args: Json): void {
         let c: string = "scopes"
-        let frameId = args.i64("frameId") ?? (0 as i64)
+        let frameId = args.i64("frameId") ?? 0
         let fidx = self.frameByDapId(frameId)
         if fidx < 0 {
             self.out.fail(seq, c, "unknown frameId")
@@ -1412,7 +1412,7 @@ impl Sess {
 
     fn onVariables(self: &mut Sess, seq: i64, args: Json): void {
         let c: string = "variables"
-        let ref = args.i64("variablesReference") ?? (0 as i64)
+        let ref = args.i64("variablesReference") ?? 0
         if ref < 1 || ref > self.varRefs.len {
             self.out.fail(seq, c, "unknown variablesReference")
             return
@@ -1529,7 +1529,7 @@ impl Sess {
     fn onEvaluate(self: &mut Sess, seq: i64, args: Json): void {
         let c: string = "evaluate"
         let expr = (args.str("expression") ?? "").trim()
-        let frameId = args.i64("frameId") ?? (0 as i64)
+        let frameId = args.i64("frameId") ?? 0
         let fidx = self.frameByDapId(frameId)
         if expr.len == 0 || fidx < 0 {
             self.out.fail(seq, c, "evaluate needs an expression and a frameId")
@@ -1597,7 +1597,7 @@ impl Sess {
             return
         }
         let value = d.str("value") ?? ""
-        let ref = d.i64("variablesReference") ?? (0 as i64)
+        let ref = d.i64("variablesReference") ?? 0
         let ty = d.str("type") ?? ""
         self.out.respond(seq, c, Json.obj().str("result", value).str("type", ty).int("variablesReference", ref).build())
     }

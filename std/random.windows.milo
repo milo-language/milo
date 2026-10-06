@@ -14,13 +14,13 @@
 pub extern fn BCryptGenRandom(alg: *u8, buf: *u8, len: u32, flags: u32): i32
 
 fn randBytes(buf: *u8, n: i64): void {
-    unsafe { BCryptGenRandom(0 as *u8, buf, n as u32, 2 as u32) }
+    unsafe { BCryptGenRandom(0 as *u8, buf, n as u32, 2) }
 }
 
 fn randU32(): u32 {
     var v: u32 = 0
     unsafe {
-        BCryptGenRandom(0 as *u8, v.addrOf() as *u8, 4 as u32, 2 as u32)
+        BCryptGenRandom(0 as *u8, v.addrOf() as *u8, 4, 2)
     }
     return v
 }

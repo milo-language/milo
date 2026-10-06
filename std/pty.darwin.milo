@@ -106,7 +106,7 @@ impl Pty {
 
             let name = _cstrToString(namePtr)
             return Result.Ok(Pty {
-                masterFd: master, slavePath: name, childPid: -1, _rows: 24 as u16, _cols: 80 as u16
+                masterFd: master, slavePath: name, childPid: -1, _rows: 24, _cols: 80
             })
         }
     }
@@ -157,7 +157,7 @@ impl Pty {
                 ioctl(slave, tiocsctty(), 0)
                 // set winsize on slave so child sees correct dimensions
                 var childWs = WinSize {
-                    rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16
+                    rows: self._rows, cols: self._cols, xpixel: 0, ypixel: 0
                 }
                 ioctl(slave, tiocswinsz(), (childWs.addrOf()) as *u8)
                 dup2(slave, 0)

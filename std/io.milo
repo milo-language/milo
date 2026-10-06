@@ -241,16 +241,16 @@ impl FdReader {
                     return b[0] as i64
                 }
                 if n == 0 {
-                    return -1 as i64
+                    return -1
                 }
                 if green && getErrno() == eagain() {
                     schedulerWaitRead(fd)
                     continue
                 }
-                return -1 as i64
+                return -1
             }
         }
-        return -1 as i64
+        return -1
     }
 
     // Read exactly n bytes into a string. Err if the stream ends first.
@@ -447,7 +447,7 @@ impl File {
             })
         }
         let fd = self.fd
-        self.fd = 0 as i32
+        self.fd = 0
         unsafe {
             if close(fd) < 0 {
                 return Result.Err(ioError("close"))

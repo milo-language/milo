@@ -143,10 +143,10 @@ impl Pty {
             // and keeps inWrite (to send input) and outRead (to receive output).
             var inPipe: [i64; 2] = [0; 2]
             var outPipe: [i64; 2] = [0; 2]
-            if CreatePipe(inPipe as *i64, ((inPipe as *u8) as i64 + 8) as *i64, 0 as *u8, 0 as u32) == 0 {
+            if CreatePipe(inPipe as *i64, ((inPipe as *u8) as i64 + 8) as *i64, 0 as *u8, 0) == 0 {
                 return Result.Err("CreatePipe(in) failed")
             }
-            if CreatePipe(outPipe as *i64, ((outPipe as *u8) as i64 + 8) as *i64, 0 as *u8, 0 as u32) == 0 {
+            if CreatePipe(outPipe as *i64, ((outPipe as *u8) as i64 + 8) as *i64, 0 as *u8, 0) == 0 {
                 CloseHandle(inPipe[0])
                 CloseHandle(inPipe[1])
                 return Result.Err("CreatePipe(out) failed")
@@ -157,7 +157,7 @@ impl Pty {
             let outWrite = outPipe[1]
 
             var hpc: [i64; 1] = [0]
-            let hr = CreatePseudoConsole(packCoord(24 as u16, 80 as u16), inRead, outWrite, 0 as u32, hpc as *u8)
+            let hr = CreatePseudoConsole(packCoord(24, 80), inRead, outWrite, 0, hpc as *u8)
             // The pseudoconsole duplicated the ends it needs; release ours.
             CloseHandle(inRead)
             CloseHandle(outWrite)
@@ -174,8 +174,8 @@ impl Pty {
                 masterFd: masterFd,
                 slavePath: "",
                 childPid: -1,
-                _rows: 24 as u16,
-                _cols: 80 as u16,
+                _rows: 24,
+                _cols: 80,
                 _inputFd: inputFd,
                 _hpcon: hpc[0],
                 _childHandle: 0,
@@ -193,14 +193,14 @@ impl Pty {
 
             // Size, allocate, and initialise the attribute list, then load the HPCON.
             var sizeBuf: [i64; 1] = [0]
-            InitializeProcThreadAttributeList(0 as *u8, 1 as u32, 0 as u32, sizeBuf as *u8)
+            InitializeProcThreadAttributeList(0 as *u8, 1, 0, sizeBuf as *u8)
             let attrList = malloc(sizeBuf[0])
-            if InitializeProcThreadAttributeList(attrList, 1 as u32, 0 as u32, sizeBuf as *u8) == 0 {
+            if InitializeProcThreadAttributeList(attrList, 1, 0, sizeBuf as *u8) == 0 {
                 free(attrList)
                 free(cmdLine)
                 return Result.Err("InitializeProcThreadAttributeList failed")
             }
-            if UpdateProcThreadAttribute(attrList, 0 as u32, attrPseudoconsole(), self._hpcon, 8, 0 as *u8, 0 as *u8) == 0 {
+            if UpdateProcThreadAttribute(attrList, 0, attrPseudoconsole(), self._hpcon, 8, 0 as *u8, 0 as *u8) == 0 {
                 DeleteProcThreadAttributeList(attrList)
                 free(attrList)
                 free(cmdLine)
@@ -211,7 +211,7 @@ impl Pty {
             // cb must be the full 112; std handles are NOT set — the pseudoconsole is the
             // child's console.
             var six: [u8; 112] = [0; 112]
-            (six as *u32) [0] = 112 as u32
+            (six as *u32) [0] = 112
             (six as *i64) [13] = attrList as i64
 
             var pi: [u8; 24] = [0; 24]
@@ -267,7 +267,7 @@ impl Pty {
 
     fn winSize(self: &Self): WinSize {
         return WinSize {
-            rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16
+            rows: self._rows, cols: self._cols, xpixel: 0, ypixel: 0
         }
     }
 
@@ -276,7 +276,7 @@ impl Pty {
     self.childPid > 0
     {
         unsafe {
-            WaitForSingleObject(self._childHandle, 4294967295 as u32)
+            WaitForSingleObject(self._childHandle, 4294967295)
             var codeBuf: [u32; 1] = [0]
             GetExitCodeProcess(self._childHandle, codeBuf as *u32)
             return codeBuf[0] as i32
@@ -287,7 +287,7 @@ impl Pty {
     requires
     self.childPid > 0
     {
-        unsafe { TerminateProcess(self._childHandle, 1 as u32) }
+        unsafe { TerminateProcess(self._childHandle, 1) }
     }
 
     fn close(self: &mut Self): void {

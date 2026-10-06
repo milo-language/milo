@@ -100,7 +100,7 @@ pub fn parseSize(s: &string, out: &mut [i64; 2]): void {
 // Push the PTY's window size (sends SIGWINCH to the shell so it repaints).
 pub fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
     var ws = WinSize {
-        rows: rows as u16, cols: cols as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: rows as u16, cols: cols as u16, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(masterFd, TIOCSWINSZ, (ws.addrOf()) as *u8)
@@ -601,7 +601,7 @@ pub let TIOCGWINSZ: i64 = 1074295912 // 0x40087468 (macOS)
 // so it can size the PTY + grid to match this client.
 pub fn sendSize(sockFd: i32): void {
     var ws = WinSize {
-        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 24, cols: 80, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(1, TIOCGWINSZ, (ws.addrOf()) as *u8)

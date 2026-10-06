@@ -112,7 +112,7 @@ pub fn charAt(row: &string, c: i64): u8 {
     if c < row.len {
         return row[c]
     }
-    return 32 as u8
+    return 32
 }
 
 pub fn emit(buf: &mut string, s: &string): void {
@@ -123,7 +123,7 @@ pub fn emit(buf: &mut string, s: &string): void {
 
 pub fn termSize(out: &mut [i64; 2]): void {
     var ws = WinSize {
-        rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+        rows: 0, cols: 0, xpixel: 0, ypixel: 0
     }
     unsafe {
         ioctl(1, 1074295912, (ws.addrOf()) as *u8)
@@ -170,7 +170,7 @@ pub fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
                 emit(&mut buf, "▄")
             } else {
                 emit(&mut buf, "\x1b[49m")
-                buf.push(32 as u8)
+                buf.push(32)
             }
         }
     }
@@ -181,7 +181,7 @@ pub fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
     for r in 0..h {
         emit(&mut buf, Ansi.cursorTo(row0 + r, col0))
         for c in 0..w {
-            buf.push(32 as u8)
+            buf.push(32)
         }
     }
 }

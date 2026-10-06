@@ -280,7 +280,7 @@ pub fn namedEntity(name: &string, out: &mut string): bool {
         return true
     }
     if name == "apos" {
-        out.push(39 as u8)
+        out.push(39)
         return true
     }
     if name == "nbsp" {

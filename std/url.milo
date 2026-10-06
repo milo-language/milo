@@ -46,7 +46,7 @@ fn urlParse(s: string): Result<Url> {
         let auth = s[authStart..i]
 
         // split host:port
-        var colonPos: i64 = -1 as i64
+        var colonPos: i64 = -1
         var j: i64 = auth.len - 1
         while j >= 0 {
             if auth[j] == ':' {

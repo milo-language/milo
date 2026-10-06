@@ -53,7 +53,7 @@ fn findEocd(src: &string): i64 {
         // p <= len - 22, so the read is always in range; the default only has to
         // be some value that is not the signature, and every p is a candidate to
         // reject rather than a field whose value is being trusted.
-        if Bytes.readU32Le(src, p).unwrapOr(0 as u32) == 0x06054b50 as u32 {
+        if Bytes.readU32Le(src, p).unwrapOr(0) == 0x06054b50 as u32 {
             return p
         }
         p -= 1

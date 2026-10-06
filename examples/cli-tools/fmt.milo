@@ -207,7 +207,7 @@ impl Lexer {
         if self.pos < self.src.len {
             self.advance()
         }
-        s.push(34 as u8)
+        s.push(34)
         return s
     }
 
@@ -241,7 +241,7 @@ impl Lexer {
         if self.pos < self.src.len {
             self.advance()
         }
-        s.push(34 as u8)
+        s.push(34)
         return s
     }
 
@@ -505,7 +505,7 @@ impl Lexer {
             self.advance()
             var op: string = ""
             op.push(ch)
-            op.push(61 as u8)
+            op.push(61)
             return Token {
                 kind: TokKind.OpAssign, text: op, line: line
             }
