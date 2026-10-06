@@ -434,6 +434,45 @@ Variants:
 - `AlreadyExists(string)`
 - `Other(string)`
 
+### `OwnedFd`
+
+```milo
+pub struct OwnedFd
+```
+
+Sole owner of a descriptor that is neither a File nor a socket: a pipe end taken from
+a Child, a dup of a pty master. Closes it on drop, so the move checker allows one
+closer per descriptor, and a task that owns one is the last user of the number by
+construction. There is no safe way to build one from a bare integer: adopting a
+number something else will also close is the double close (or the close of a
+reused number) this type exists to rule out. Get one from an owner, or by `dup`.
+
+#### `OwnedFd.channel`
+
+```milo
+fn OwnedFd.channel(self: &OwnedFd): Channel<string>
+```
+
+Stream the descriptor's bytes as a channel (see fdChannel). Keep this handle alive
+until the channel closes: dropping it closes the fd under the pump.
+
+#### `OwnedFd.dup`
+
+```milo
+fn OwnedFd.dup(fd: i32): Result<OwnedFd, IoError>
+```
+
+A new descriptor for the same open file as `fd`, owned by the result. Whoever
+owns `fd` keeps it: closing one of the two leaves the other open.
+
+#### `OwnedFd.fd`
+
+```milo
+fn OwnedFd.fd(self: &OwnedFd): i32
+```
+
+The descriptor number, still owned by this handle: valid only while it lives.
+
 ### `Reader`
 
 ```milo
@@ -482,6 +521,15 @@ fn Writer.write(self: &mut Writer, data: &string): Result<Unit, IoError>
 ```
 
 ### Functions
+
+#### `adoptFd`
+
+```milo
+pub fn adoptFd(fd: i32): OwnedFd
+```
+
+Take ownership of `fd`. The caller vouches that nothing else will close it; this is
+how an owner elsewhere in std (Child.takeStdout) hands its descriptor over.
 
 #### `copyStream`
 

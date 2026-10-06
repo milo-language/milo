@@ -1,0 +1,36 @@
+// OwnedFd: the descriptor handle with one owner. A dropped handle closes its fd (the
+// next dup reuses the number), Child.takeStdout moves the pipe out of the Child, and
+// processAlive probes a pid without signalling it.
+from "std/process" import { Child, processAlive }
+from "std/io" import { OwnedFd }
+from "std/sysinfo" import { pid }
+
+fn dupNumber(): i32 {
+    let a = OwnedFd.dup(1)!
+    return a.fd()
+}
+
+fn main() {
+    let first = dupNumber()
+    print(first > 2 && dupNumber() == first)
+
+    var args: Vec<string> = []
+    args.push("hello")
+    var c = Child.spawn("echo", args, false)!
+    let out = c.takeStdout()
+    print(c.stdoutFd)
+    var acc = ""
+    for chunk in out.channel() {
+        acc.pushStr(chunk)
+    }
+    let _w = c.wait()
+    print(acc.trim())
+
+    print(processAlive(pid()))
+    print(processAlive(-12345 as i32))
+}
+// @expect: true
+// @expect: -1
+// @expect: hello
+// @expect: true
+// @expect: false
