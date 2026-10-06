@@ -109,6 +109,9 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
 // user wrote (`Pair<i64, string>`). Only the checker knows that mapping, so it is passed
 // in; without it the name is the identity used for lookups and mangling, and callers
 // that build a KEY from a type must not pass one.
+// How `unknown` renders; the checker's error sink keys on it (see TypeChecker.error).
+export const UNKNOWN_TYPE_NAME = "<unknown>";
+
 export function typeName(t: TypeKind, demangle?: (name: string) => string): string {
   const tn = (x: TypeKind) => typeName(x, demangle);
   switch (t.tag) {
@@ -131,7 +134,7 @@ export function typeName(t: TypeKind, demangle?: (name: string) => string): stri
     case "fn": return `${t.owning ? "move " : ""}(${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
     case "cfn": return `extern (${t.params.map(tn).join(", ")}) => ${tn(t.ret)}`;
     case "interface": return t.name;
-    case "unknown": return "<unknown>";
+    case "unknown": return UNKNOWN_TYPE_NAME;
   }
 }
 

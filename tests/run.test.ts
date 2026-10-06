@@ -292,6 +292,20 @@ describe("errors (type checker rejects)", () => {
       expect(r.stderr).toContain(expectedError!);
     });
   }
+
+  // Shrink-only ratchet on error cascades: a fixture pins one mistake, so a second error
+  // is usually fallout of the first. Lower the bound when a change removes cascades.
+  // Counted from the compiles above, so only a run of the whole lane can judge it.
+  const MAX_MULTI_ERROR_FIXTURES = 45;
+  test("error fixtures reporting more than one error do not grow", () => {
+    const whole = readdirSync(ERRORS_DIR).filter(f => f.endsWith(".milo") && !skippedHere(ERRORS_DIR, f)).length;
+    if (files.length !== whole) return;
+    const multi = files.filter(f => {
+      const lines = results.get(f)!.stderr.replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+      return lines.filter(l => l.startsWith("error")).length > 1;
+    });
+    expect(multi.length).toBeLessThanOrEqual(MAX_MULTI_ERROR_FIXTURES);
+  });
 });
 
 describe("runtime errors (debug mode traps)", () => {

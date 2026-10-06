@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 369 distinct messages across 457 programs the compiler must reject.
+Every error message the test suite pins: 370 distinct messages across 458 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -384,6 +384,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`value -1 is out of range`](#value-1-is-out-of-range)
 - [`value 60000 is out of range`](#value-60000-is-out-of-range)
 - [`variable 'a' already declared in this scope`](#variable-a-already-declared-in-this-scope)
+- [`variable 'args' already declared in this scope`](#variable-args-already-declared-in-this-scope)
 - [`variant 'Some' has 1 fields, but pattern has 2 bindings`](#variant-some-has-1-fields-but-pattern-has-2-bindings)
 - [`was already moved out of it`](#was-already-moved-out-of-it)
 - [`which implements Drop`](#which-implements-drop)
@@ -9128,6 +9129,22 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/matchArmDuplicateBinding.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchArmDuplicateBinding.milo)</sub>
+
+## `variable 'args' already declared in this scope` {#variable-args-already-declared-in-this-scope}
+
+The redeclaration is the one mistake here. The later lines were written against the second `args`, so they resolve to it; they used to resolve to the first (an i64) and report "type 'i64' has no method 'push'" and "cannot access field 'len'" as well. tests/checkerRecovery.test.ts pins that this reports exactly one error.
+
+```milo skip
+pub fn main(): i32 {
+    let args = 1
+    var args: Vec<string> = Vec.new()
+    args.push("a")
+    print(args.len.toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/redeclareSameScopeNoCascade.milo](https://github.com/milo-language/milo/blob/main/tests/errors/redeclareSameScopeNoCascade.milo)</sub>
 
 ## `variant 'Some' has 1 fields, but pattern has 2 bindings` {#variant-some-has-1-fields-but-pattern-has-2-bindings}
 

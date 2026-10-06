@@ -142,3 +142,27 @@ fn main() {
   expect(errs.some(e => e.includes("undefined variable 'missingArg'"))).toBe(true);
   expect(errs.some(e => e.includes("use of moved variable 's'"))).toBe(true);
 });
+
+// A same-scope redeclaration reports and still binds, so the lines written against the
+// second declaration check against it instead of each failing against the first.
+test("a same-scope redeclaration reports once and binds the new declaration", () => {
+  const errs = errorsOf(`fn main() {
+    let args = 1
+    var args: Vec<string> = Vec.new()
+    args.push("a")
+    print(args.len.toString())
+}`);
+  expect(errs).toEqual(["variable 'args' already declared in this scope"]);
+});
+
+// Once an error is on file, a message that renders a type as <unknown> is about that
+// error's fallout. Without an earlier error it would be a checker bug, so it must show.
+test("errors that render <unknown> are dropped once an error is on file", () => {
+  const errs = errorsOf(`type Meters = f64
+
+fn main() {
+    let x: Meters<i64> = 1.5
+    print(x.toString())
+}`);
+  expect(errs).toEqual(["'Meters' is not a generic type"]);
+});

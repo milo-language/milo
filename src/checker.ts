@@ -1,12 +1,14 @@
 // Type checking, move checking and scope validation over the merged AST, producing
 // the CheckResult that lowering reads. Semantic errors are caught HERE, before codegen:
 // if codegen can reach an invalid state, this file missed it.
+// Error recovery: an erroneous declaration still binds, an erroneous expression is typed
+// `unknown`, and nothing reports about `unknown` (enforced in `error()`).
 import { attributesFor } from "./attributes";
 import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
-import { typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+import { typeFromAst, typeEq, typeName, UNKNOWN_TYPE_NAME, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
@@ -896,7 +898,13 @@ export class TypeChecker {
     return false;
   }
 
+  // Recovery policy: an erroneous declaration still binds; an erroneous expression is
+  // typed `unknown`; nothing reports about `unknown`. The last part is enforced here
+  // rather than at each of the hundreds of call sites: once an error is on file, a
+  // message that had to render a type as `<unknown>` is about the first mistake's
+  // fallout, not a new one. With no error on file it is a checker bug and still shows.
   private error(msg: string, span?: Span, hint?: string) {
+    if ((msg.includes(UNKNOWN_TYPE_NAME) || hint?.includes(UNKNOWN_TYPE_NAME)) && this.diagnostics.some(d => d.severity === "error")) return;
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
   }
 
@@ -2616,6 +2624,12 @@ export class TypeChecker {
       const prior = scope.get(name);
       const hint = prior?.span ? `'${name}' was first declared at line ${prior.span.line}` : undefined;
       this.error(`variable '${name}' already declared in this scope`, at, hint);
+      // Bind the new declaration anyway: later lines were written against it, and
+      // resolving them to the first one turned every use into a type error of its own.
+      // The first binding leaves scope here, so its freezes go with it as in popScope.
+      if (prior?.freezes) for (const src of prior.freezes) { this.unfreeze(src); this.releasePointerBorrows(src, prior); }
+      if (scope === this.globalScope) this.globalScopeInfos.add(info);
+      scope.set(name, info);
       return;
     }
     // Shadowing an ENCLOSING binding is rejected too, not just a same-scope
