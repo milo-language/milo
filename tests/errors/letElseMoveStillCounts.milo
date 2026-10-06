@@ -1,0 +1,19 @@
+// @error: use of moved variable 'c'
+// The let-else restore covers only the else block. A move inside the else is still a
+// move for the rest of that block: here `take(c)` moves it and the return reads it.
+fn take(s: string): void {
+    print(s)
+}
+
+fn f(c: string, o: Option<i64>): Option<string> {
+    let Option.Some(_v) = o else {
+        take(c)
+        return Option.Some(c)
+    }
+    return Option.None
+}
+
+pub fn main(): i32 {
+    let _a = f("x", Option.None)
+    return 0
+}

@@ -6668,11 +6668,17 @@ export class TypeChecker {
         // diverge — otherwise the binding below wouldn't be guaranteed live. It's
         // checked (in its own scope) BEFORE the binding is declared, so the
         // binding is not in scope inside it.
+        // Moves inside the else do not reach the code after it: the else diverges, so
+        // everything below runs only on the matched path. Without the restore,
+        // `else { return Some(c) }` reported `c` as moved at every later use.
+        const preElseMoves = this.snapshotMoveState();
         this.pushScope();
         for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
         this.popScope();
         if (!this.bodyAlwaysReturns(stmt.elseBody)) {
           this.error(`let-else block must diverge (return/break/continue) — it runs when the pattern doesn't match`, sp);
+        } else {
+          this.restoreMoveState(preElseMoves);
         }
         if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
           const enumInfo = must(this.enums, subjType.name, "enums");

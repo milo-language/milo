@@ -1,0 +1,24 @@
+// A move inside a diverging let-else does not reach the code after it: the else runs
+// only when the pattern fails, and it returns. `c` used to be reported as moved at the
+// print below.
+
+// @expect: v 3 c x
+// @expect: sink y
+fn sink(s: &string): void {
+    print("sink ", s)
+}
+
+fn f(c: string, o: Option<i64>): Option<string> {
+    let Option.Some(v) = o else {
+        sink(c)
+        return Option.Some(c)
+    }
+    print("v ", v.toString(), " c ", c)
+    return Option.None
+}
+
+pub fn main(): i32 {
+    let _a = f("x", Option.Some(3 as i64))
+    let _b = f("y", Option.None)
+    return 0
+}
