@@ -632,6 +632,15 @@ pub fn replayBlob(kind: &string, arg: &string, live: () => string): string {
     return p
 }
 
+// The space-separated decimals of a payload (several numbers in one answer).
+pub fn replayInts(p: &string): Vec<i64> {
+    var out: Vec<i64> = Vec.new()
+    for f in p.split(" ") {
+        out.push(decimal(f))
+    }
+    return out
+}
+
 // ── file descriptors ──
 
 fn byteAt(table: &string, fd: i32): u8 {
@@ -665,6 +674,11 @@ pub fn replayFdOpened(fd: i32, cat: u8): void {
     if rrMode == 3 {
         setByte(&mut rrFdSynth, fd, 1)
     }
+}
+
+// What std recorded `fd` as (see replayFdOpened), 0 when nothing.
+pub fn replayFdCategory(fd: i32): u8 {
+    return byteAt(rrFdCat, fd)
 }
 
 // True when `fd` is a replay-synthetic descriptor: every operation on it is answered

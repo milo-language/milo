@@ -11,20 +11,20 @@
 // typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, and holds
 // no unsafe of its own.
 from "std/os" import {
-    socket,
-    listen,
     acceptFd,
     readFd,
     writeFd,
     unlink,
     bindUn,
-    connectFdUn
+    connectFdUn,
+    sysClose,
+    sysSocket,
+    sysListen
 }
 from "std/platform" import {
     SockAddrUn,
     makeSockaddrUn,
-    sockAddrUnMaxPath,
-    close
+    sockAddrUnMaxPath
 }
 from "std/sync" import {
     Channel
@@ -49,7 +49,7 @@ impl Drop for UnixStream {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
         if self.fd > 0 {
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 }
@@ -64,13 +64,13 @@ impl UnixStream {
             return Result.Err("unix socket path too long")
         }
         var fd: i32 = 0
-        unsafe { fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
+        unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
         if fd < 0 {
-            return Result.Err("socket() failed")
+            return Result.Err("sysSocket() failed")
         }
         var addr = makeSockaddrUn(path)
         if connectFdUn(fd, addr) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err("connect() failed")
         }
         return Result.Ok(UnixStream { fd: fd })
@@ -126,7 +126,7 @@ impl Drop for UnixListener {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
         if self.fd > 0 {
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 }
@@ -142,19 +142,19 @@ impl UnixListener {
         }
         unsafe { unlink(path) }
         var fd: i32 = 0
-        unsafe { fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
+        unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
         if fd < 0 {
-            return Result.Err("socket() failed")
+            return Result.Err("sysSocket() failed")
         }
         var addr = makeSockaddrUn(path)
         if bindUn(fd, addr) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err("bind() failed")
         }
         unsafe {
-            if listen(fd, 128) < 0 {
-                unsafe { close(fd) }
-                return Result.Err("listen() failed")
+            if sysListen(fd, 128) < 0 {
+                sysClose(fd)
+                return Result.Err("sysListen() failed")
             }
         }
         return Result.Ok(UnixListener { fd: fd })

@@ -20,7 +20,13 @@ from "std/os" import {
     writeFd,
     connectFdIn6,
     bindIn6,
-    inet_pton
+    inet_pton,
+    sysSocket,
+    sysListen,
+    sysClose
+}
+from "std/replay" import {
+    replayOff, replayBlob
 }
 from "std/platform" import {
     SockAddrIn,
@@ -30,7 +36,6 @@ from "std/platform" import {
     soReuseaddr,
     makeSockaddr6,
     afInet6,
-    close,
     ensureNetInit
 }
 from "std/sync" import {
@@ -69,7 +74,7 @@ impl Drop for TcpStream {
         // Tradeoff: a real socket on fd 0 (only possible if stdin was closed at
         // startup) is leaked instead of closed.
         if self.fd > 0 {
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 }
@@ -115,7 +120,7 @@ impl TcpStream {
 
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
+        fd = sysSocket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
@@ -123,7 +128,7 @@ impl TcpStream {
         var addr = makeSockaddr(port, ip)
 
         if connectFdIn(fd, addr) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
 
@@ -138,13 +143,13 @@ impl TcpStream {
     fn connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream, NetError> {
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(afInet6(), 1, 0) }
+        fd = sysSocket(afInet6(), 1, 0)
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
         var sa = makeSockaddr6(port, addr, scopeId)
         if connectFdIn6(fd, sa) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
         return Result.Ok(TcpStream {
@@ -245,7 +250,7 @@ impl Drop for TcpListener {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop).
         if self.fd > 0 {
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 }
@@ -297,7 +302,7 @@ impl TcpListener {
 
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
+        fd = sysSocket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
@@ -307,14 +312,12 @@ impl TcpListener {
 
         var sa = makeSockaddr(port, addr)
         if bindIn(fd, sa) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }
-        unsafe {
-            if listen(fd, 1024) < 0 {
-                unsafe { close(fd) }
-                return Result.Err(NetError.ConnectionFailed("listen() failed"))
-            }
+        if sysListen(fd, 1024) < 0 {
+            sysClose(fd)
+            return Result.Err(NetError.ConnectionFailed("listen() failed"))
         }
         return Result.Ok(TcpListener {
             fd: fd
@@ -326,7 +329,7 @@ impl TcpListener {
     fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(afInet6(), 1, 0) }
+        fd = sysSocket(afInet6(), 1, 0)
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
@@ -334,14 +337,12 @@ impl TcpListener {
         unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
         var sa = makeSockaddr6(port, addr, 0)
         if bindIn6(fd, sa) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }
-        unsafe {
-            if listen(fd, 1024) < 0 {
-                unsafe { close(fd) }
-                return Result.Err(NetError.ConnectionFailed("listen() failed"))
-            }
+        if sysListen(fd, 1024) < 0 {
+            sysClose(fd)
+            return Result.Err(NetError.ConnectionFailed("listen() failed"))
         }
         return Result.Ok(TcpListener {
             fd: fd
@@ -389,8 +390,32 @@ impl TcpListener {
 
 // ── DNS ──
 
-// DNS lookup: the first IPv4 address for `hostname`.
+// DNS lookup: the first IPv4 address for `hostname`. Recorded as net.resolve.
 pub fn resolve(hostname: &string): Result<u32, NetError> {
+    if !replayOff() {
+        let p = replayBlob("net.resolve", hostname, (): string => {
+            match resolveLive(hostname) {
+                Result.Ok(ip) => {
+                    return ip.toString()
+                }
+                Result.Err(_) => {
+                    return "!"
+                }
+            }
+        })
+        if p == "!" {
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
+        }
+        var ip: u32 = 0
+        for i in 0..p.len() {
+            ip = ip * 10 + ((p[i] - '0') as u32)
+        }
+        return Result.Ok(ip)
+    }
+    return resolveLive(hostname)
+}
+
+fn resolveLive(hostname: &string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
         let hintsFamily = (hints as *i32)

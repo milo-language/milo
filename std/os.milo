@@ -3,7 +3,7 @@
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
 from "std/platform" import {
-    getErrno, eagain, ebadf, einprogress, netErrno, netEagain, netEinprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
+    getErrno, setErrno, eagain, ebadf, einprogress, netErrno, netEagain, netEinprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
     SockAddrStorage, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, sockAddrInLen,
     sockAddrIn6Len, sockAddrUnLen,
     pthread_create, pthread_join, pthread_detach,
@@ -22,8 +22,8 @@ from "std/runtime" import {
     schedulerCurrent, schedulerWaitRead, schedulerWaitWrite
 }
 from "std/replay" import {
-    replayOff, replayActive, replayRead, replayWrite, replayOpen, replayClose, replayLseek, replayRet, replayFdOpened,
-    replayHex
+    replayOff, replayActive, replayRead, replayWrite, replayOpen, replayClose, replayLseek, replayRet, replayFdOpened, replayFdCategory,
+    replayHex, replayBlob, replayInts
 }
 
 // ── I/O ──
@@ -232,6 +232,75 @@ pub fn sysOpen(path: &string, flags: i32, mode: i32): i32 {
         unsafe { return open(path, flags, mode) }
     }
     return replayOpen(path, flags, mode)
+}
+
+// dup(2). Under replay the duplicate of a descriptor is synthetic like everything else
+// the trace hands out, and keeps the original's record kinds.
+pub fn sysDup(fd: i32): i32 {
+    if replayOff() {
+        unsafe { return dup(fd) }
+    }
+    let n = replayRet("fd.dup", fd.toString(), false, (): i64 => {
+        unsafe {
+            return dup(fd) as i64
+        }
+    }) as i32
+    replayFdOpened(n, replayFdCategory(fd))
+    return n
+}
+
+// waitpid(2) through the trace: the return value and the status word the kernel wrote.
+// Under replay no child exists; the recorded exit comes back.
+pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
+    if replayOff() {
+        unsafe { return waitpid(pid, status, options) }
+    }
+    let p = replayBlob("proc.wait", pid.toString() + " " + options.toString(), (): string => {
+        var r: i32 = 0
+        var st: i32 = 0
+        unsafe {
+            r = waitpid(pid, status, options)
+            st = _loadI32(status)
+        }
+        return r.toString() + " " + st.toString() + " " + getErrno().toString()
+    })
+    let v = replayInts(p)
+    if v.len != 3 {
+        return -1
+    }
+    unsafe {
+        let sp = status as *i32
+        sp[0] = v[1] as i32
+    }
+    if v[0] < 0 {
+        setErrno(v[2] as i32)
+    }
+    return v[0] as i32
+}
+
+// kill(2) through the trace. Under replay no signal is sent: the pid is the recorded
+// run's, and whatever has it now is not ours.
+pub fn sysKill(pid: i32, sig: i32): i32 {
+    if replayOff() {
+        unsafe { return kill(pid, sig) }
+    }
+    return replayRet("proc.kill", pid.toString() + " " + sig.toString(), false, (): i64 => {
+        unsafe {
+            return kill(pid, sig) as i64
+        }
+    }) as i32
+}
+
+// isatty(3) through the trace: whether a descriptor is a terminal is an input too.
+pub fn sysIsatty(fd: i32): bool {
+    if replayOff() {
+        unsafe { return isatty(fd) == 1 }
+    }
+    return replayRet("fd.isatty", fd.toString(), false, (): i64 => {
+        unsafe {
+            return isatty(fd) as i64
+        }
+    }) == 1
 }
 
 // close(2). Under replay a synthetic descriptor is forgotten, never passed to the OS.

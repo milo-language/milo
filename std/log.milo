@@ -36,11 +36,11 @@ from "std/math" import {
 }
 from "std/os" import {
     fflush,
-    writeFd
+    writeFd,
+    sysClose,
+    sysOpen
 }
 from "std/platform" import {
-    close,
-    open,
     oWriteCreateAppend
 }
 from "std/time" import {
@@ -390,7 +390,7 @@ impl Log {
     // module never closes it, and it must outlive the last record.
     fn setSinkFd(fd: i32): void {
         if gSinkOwned {
-            unsafe { close(gSinkFd) }
+            sysClose(gSinkFd)
         }
         gSinkFd = fd
         gSinkOwned = false
@@ -401,12 +401,12 @@ impl Log {
     // O_APPEND is what makes concurrent whole-record writes atomic at any size.
     fn setSinkPath(path: &string): Result<Unit, IoError> {
         var fd: i32 = 0
-        unsafe { fd = open(path, oWriteCreateAppend(), 420) }
+        unsafe { fd = sysOpen(path, oWriteCreateAppend(), 420) }
         if fd < 0 {
             return Result.Err(ioError(path))
         }
         if gSinkOwned {
-            unsafe { close(gSinkFd) }
+            sysClose(gSinkFd)
         }
         gSinkFd = fd
         gSinkOwned = true

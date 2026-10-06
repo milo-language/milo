@@ -7,8 +7,6 @@ from "std/fs" import {
 from "std/platform" import {
     pipe,
     close,
-    read,
-    write,
     open,
     devNullPath,
     oWriteCreateTrunc,
@@ -29,7 +27,14 @@ from "std/os" import {
     memcpy,
     memset,
     system,
-    waitpid
+    sysRead,
+    sysWrite,
+    sysClose,
+    sysWaitpid,
+    sysKill
+}
+from "std/replay" import {
+    replayOff, replayRet, replayBlob, replayInts, replayFdOpened
 }
 from "std/time" import {
     sleepMs
@@ -54,8 +59,11 @@ from "std/platform" import {
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
 pub fn run(cmd: &string): Result<i32> {
-    var status: i32 = 0
-    unsafe { status = system(cmd) }
+    let status = replayRet("proc.run", cmd, false, (): i64 => {
+        unsafe {
+            return system(cmd) as i64
+        }
+    }) as i32
     if status < 0 {
         return Result.Err("system() failed")
     }
@@ -77,12 +85,12 @@ pub fn run(cmd: &string): Result<i32> {
 // process-wide: installing one here would replace a handler the program owns.
 fn waitpidGreen(pid: i32, statusBuf: &mut [u8; 4]): i32 {
     if schedulerCurrent() as i64 == 0 {
-        unsafe { return waitpid(pid, statusBuf, 0) }
+        unsafe { return sysWaitpid(pid, statusBuf as *u8, 0) }
     }
     var delay: i64 = 1
     while true {
         var r: i32 = 0
-        unsafe { r = waitpid(pid, statusBuf, 1) }
+        unsafe { r = sysWaitpid(pid, statusBuf as *u8, 1) }
         if r != 0 {
             return r
         }
@@ -109,22 +117,31 @@ impl Process {
     // Start the program at `path` in the background, with no arguments and no shell.
     // For arguments, a working directory or redirection, use `Command`.
     fn spawn(path: &string): Result<Process> {
-        var pid: i32 = 0
-        unsafe { pid = fork() }
+        let pid = replayRet("proc.spawn", path, false, (): i64 => {
+            return processSpawnLive(path) as i64
+        }) as i32
         if pid < 0 {
             return Result.Err("fork() failed")
-        }
-        if pid == 0 {
-            unsafe {
-                execl(path, path, 0 as *u8)
-                exit(127)
-            }
         }
         return Result.Ok(Process {
             _pid: pid
         })
     }
+}
 
+fn processSpawnLive(path: &string): i32 {
+    var pid: i32 = 0
+    unsafe { pid = fork() }
+    if pid == 0 {
+        unsafe {
+            execl(path, path, 0 as *u8)
+            exit(127)
+        }
+    }
+    return pid
+}
+
+impl Process {
     // Block until the child exits and return its status. Inside a green task only this
     // task parks (see waitpidGreen); the rest of the scheduler keeps running.
     fn wait(self: &Self): Result<i32> {
@@ -139,9 +156,7 @@ impl Process {
 
     // Send signal `sig` to the child. 0 on success.
     fn signal(self: &Self, sig: i32): Result<i32> {
-        var r: i32 = 0
-        unsafe { r = kill(self._pid, sig) }
-        if r < 0 {
+        if sysKill(self._pid, sig) < 0 {
             return Result.Err("kill() failed")
         }
         return Result.Ok(0)
@@ -152,9 +167,7 @@ impl Process {
 // nothing (signal 0), so it is safe on any pid, including one that is not our child
 // and so cannot be waited on. A pid can be reused once its process is reaped.
 pub fn processAlive(pid: i32): bool {
-    var r: i32 = -1
-    unsafe { r = kill(pid, 0) }
-    return r == 0
+    return sysKill(pid, 0) == 0
 }
 
 // Ask a process you did not spawn to exit (SIGTERM; TerminateProcess on Windows).
@@ -163,9 +176,7 @@ pub fn processAlive(pid: i32): bool {
 // processAlive and anything else you know about it first. True if the signal was
 // delivered.
 pub fn terminateProcess(pid: i32): bool {
-    var r: i32 = -1
-    unsafe { r = kill(pid, 15) }
-    return r == 0
+    return sysKill(pid, 15) == 0
 }
 
 // ── Child with piped stdio ──
@@ -225,7 +236,7 @@ impl Child {
     requires
     self._stdinFd >= 0
     {
-        unsafe { return write(self._stdinFd, buf, len) }
+        return sysWrite(self._stdinFd, buf, len)
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64
@@ -233,7 +244,7 @@ impl Child {
     self._stdinFd >= 0
     {
         unsafe {
-            return write(self._stdinFd, s as *u8, s.len)
+            return sysWrite(self._stdinFd, s as *u8, s.len)
         }
     }
 
@@ -243,7 +254,7 @@ impl Child {
     requires
     self._stdoutFd >= 0
     {
-        unsafe { return read(self._stdoutFd, buf, len) }
+        return sysRead(self._stdoutFd, buf, len)
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
@@ -251,7 +262,7 @@ impl Child {
     requires
     self._stderrFd >= 0
     {
-        unsafe { return read(self._stderrFd, buf, len) }
+        return sysRead(self._stderrFd, buf, len)
     }
 
     // Stream the child's stdout as an iterable channel, pumped on a background
@@ -292,7 +303,7 @@ impl Child {
     // Close the child's stdin, sending EOF. Idempotent.
     fn closeStdin(self: &mut Self): void {
         if self._stdinFd >= 0 {
-            unsafe { close(self._stdinFd) }
+            sysClose(self._stdinFd)
             self._stdinFd = -1
         }
     }
@@ -310,9 +321,7 @@ impl Child {
     }
 
     fn signal(self: &Self, sig: i32): Result<i32> {
-        var r: i32 = 0
-        unsafe { r = kill(self._pid, sig) }
-        if r < 0 {
+        if sysKill(self._pid, sig) < 0 {
             return Result.Err("kill() failed")
         }
         return Result.Ok(0)
@@ -322,11 +331,11 @@ impl Child {
     fn close(self: &mut Self): void {
         self.closeStdin()
         if self._stdoutFd >= 0 {
-            unsafe { close(self._stdoutFd) }
+            sysClose(self._stdoutFd)
             self._stdoutFd = -1
         }
         if self._stderrFd >= 0 {
-            unsafe { close(self._stderrFd) }
+            sysClose(self._stderrFd)
             self._stderrFd = -1
         }
     }
@@ -603,7 +612,45 @@ fn closeStreamFds(fds: &StreamFds): void {
     }
 }
 
+// Spawning is one record (proc.spawn): the command line as the arg, the pid and the
+// parent's pipe ends as the answer. Under replay nothing is forked, no pipe or
+// redirect file is opened, and the recorded pipe ends come back as synthetic fds whose
+// reads and writes are answered from the trace.
 fn commandSpawn(cmd: &Command): Result<Child> {
+    if replayOff() {
+        return commandSpawnLive(cmd)
+    }
+    var line = cmd.program.clone()
+    for a in cmd.argv {
+        line.push(' ')
+        line.pushStr(a)
+    }
+    let p = replayBlob("proc.spawn", line, (): string => {
+        match commandSpawnLive(cmd) {
+            Result.Ok(c) => {
+                return c._pid.toString() + " " + c._stdinFd.toString() + " " + c._stdoutFd.toString() + " " + c._stderrFd.toString()
+            }
+            Result.Err(e) => {
+                return "!" + e
+            }
+        }
+    })
+    if p.len() > 0 && p[0] == '!' {
+        return Result.Err(p.substr(1, p.len()))
+    }
+    let v = replayInts(p)
+    for i in 1..4 {
+        replayFdOpened(v[i] as i32, 'p')
+    }
+    return Result.Ok(Child {
+        _pid: v[0] as i32,
+        _stdinFd: v[1] as i32,
+        _stdoutFd: v[2] as i32,
+        _stderrFd: v[3] as i32,
+    })
+}
+
+fn commandSpawnLive(cmd: &Command): Result<Child> {
     unsafe {
         let inFds = match openStdio(cmd.inMode, false, "stdin") {
             Result.Ok(f) => {
@@ -877,8 +924,11 @@ pub fn capture(cmd: &string): Result<string> {
     // mid-flight, corrupting `uname` output that src-milo/target.milo derives
     // the host triple from — a wrong triple then silently miscompiled whatever
     // OTHER fixture happened to be building at the same moment.
-    var myPid: i32 = 0
-    unsafe { myPid = getpid() }
+    let myPid = replayRet("proc.getpid", "", false, (): i64 => {
+        unsafe {
+            return getpid() as i64
+        }
+    })
     let tmpPath: string = "/tmp/.milo_capture_" + myPid.toString()
     let fullCmd = cmd + " > " + tmpPath + " 2>&1"
     let code = run(fullCmd)!

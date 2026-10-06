@@ -1,23 +1,23 @@
 // std/io — file and directory I/O with automatic cleanup
 
 from "std/os" import {
-    dup,
     fflush,
     readFd,
     recvFd,
     sendFd,
     strerror,
-    writeFd
+    writeFd,
+    sysRead,
+    sysOpen,
+    sysClose,
+    sysLseek,
+    sysDup
 }
 from "std/platform" import {
     eagain,
     getErrno,
     oWriteCreateAppend,
-    oWriteCreateTrunc,
-    close,
-    lseek,
-    open,
-    read
+    oWriteCreateTrunc
 }
 from "std/sync" import {
     Channel
@@ -236,7 +236,7 @@ impl FdReader {
         var b: [u8; 1] = [0; 1]
         unsafe {
             while true {
-                let n = read(fd, b as *u8, 1)
+                let n = sysRead(fd, b as *u8, 1)
                 if n > 0 {
                     return b[0] as i64
                 }
@@ -267,7 +267,7 @@ impl FdReader {
             }
             var r: i64 = 0
             unsafe {
-                r = read(fd, buf as *u8, want)
+                r = sysRead(fd, buf as *u8, want)
             }
             if r < 0 && green && getErrno() == eagain() {
                 schedulerWaitRead(fd)
@@ -298,7 +298,7 @@ impl Drop for File {
         // all-zero — the zero value must drop as a no-op or we close fd 0 (stdin).
         // See TcpStream.drop in std/net for the full story.
         if self.fd > 0 {
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 }
@@ -306,8 +306,7 @@ impl Drop for File {
 impl File {
     // Open a file for reading.
     fn openRead(path: &string): Result<File, IoError> {
-        var fd: i32 = 0
-        unsafe { fd = open(path, 0) }
+        let fd = sysOpen(path, 0, 0)
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -318,8 +317,7 @@ impl File {
 
     // Open a file for writing, creating it or truncating it (mode 0644).
     fn openWrite(path: &string): Result<File, IoError> {
-        var fd: i32 = 0
-        unsafe { fd = open(path, oWriteCreateTrunc(), 420) }
+        let fd = sysOpen(path, oWriteCreateTrunc(), 420)
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -330,8 +328,7 @@ impl File {
 
     // Open a file for appending, creating it if missing (mode 0644).
     fn openAppend(path: &string): Result<File, IoError> {
-        var fd: i32 = 0
-        unsafe { fd = open(path, oWriteCreateAppend(), 420) }
+        let fd = sysOpen(path, oWriteCreateAppend(), 420)
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -342,13 +339,9 @@ impl File {
 
     // Size of the open file in bytes. The read position is left where it was.
     fn size(self: &Self): i64 {
-        var cur: i64 = 0
-        unsafe { cur = lseek(self.fd, 0, 1) }
-        var size: i64 = 0
-        unsafe {
-            size = lseek(self.fd, 0, 2)
-            lseek(self.fd, cur, 0)
-        }
+        let cur = sysLseek(self.fd, 0, 1)
+        let size = sysLseek(self.fd, 0, 2)
+        sysLseek(self.fd, cur, 0)
         return size
     }
 
@@ -364,7 +357,7 @@ impl File {
         // then overflowed to INT64_MIN — a negative-capacity crash. 1 GiB is a
         // generous ceiling that also bounds a hostile presize.
         if size > 0 && size <= 1073741824 {
-            unsafe { lseek(self.fd, 0, 0) }
+            sysLseek(self.fd, 0, 0)
             // One malloc, one read per 64 KiB, one memcpy at the end. The previous
             // version appended the read buffer to a String ONE BYTE AT A TIME, which
             // cost more than the read syscalls themselves — 33ms of a 47ms grep over
@@ -425,8 +418,7 @@ impl File {
     // offset. A BufReader over this file caches bytes past its own cursor, so
     // seeking underneath one desynchronizes it — seek first, then wrap.
     fn seek(self: &Self, pos: i64): Result<i64, IoError> {
-        var at: i64 = 0
-        unsafe { at = lseek(self.fd, pos, 0) }
+        let at = sysLseek(self.fd, pos, 0)
         if at < 0 {
             return Result.Err(IoError.Other("seek failed"))
         }
@@ -435,7 +427,7 @@ impl File {
 
     // Current cursor offset, or -1 for a stream that cannot report one (pipe, tty).
     fn tell(self: &Self): i64 {
-        unsafe { return lseek(self.fd, 0, 1) }
+        return sysLseek(self.fd, 0, 1)
     }
 
     // Close now instead of at drop, and report failure. Drop closes silently, which
@@ -448,10 +440,8 @@ impl File {
         }
         let fd = self.fd
         self.fd = 0
-        unsafe {
-            if close(fd) < 0 {
-                return Result.Err(ioError("close"))
-            }
+        if sysClose(fd) < 0 {
+            return Result.Err(ioError("close"))
         }
         return Result.Ok(Unit {
         })
@@ -550,7 +540,7 @@ impl Drop for OwnedFd {
     fn drop(self: &mut Self): void {
         // `> 0`: the zero value must drop as a no-op (see TcpStream.drop in std/net).
         if self._fd > 0 {
-            unsafe { close(self._fd) }
+            sysClose(self._fd)
         }
     }
 }
@@ -568,8 +558,7 @@ impl OwnedFd {
     // A new descriptor for the same open file as `fd`, owned by the result. Whoever
     // owns `fd` keeps it: closing one of the two leaves the other open.
     fn dup(fd: i32): Result<OwnedFd, IoError> {
-        var n: i32 = -1
-        unsafe { n = dup(fd) }
+        let n = sysDup(fd)
         if n < 0 {
             return Result.Err(IoError.Other("dup failed"))
         }

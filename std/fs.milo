@@ -30,7 +30,12 @@ from "std/os" import {
     symlink,
     truncate,
     unlink,
-    writeFd
+    writeFd,
+    sysOpen,
+    sysClose
+}
+from "std/replay" import {
+    replayOff, replayRet, replayBlob
 }
 from "std/io" import {
     File, IoError, ioError
@@ -49,17 +54,88 @@ from "std/platform" import {
     statModeOffset,
     statSizeOffset,
     access,
-    close,
     devNullPath,
     oWriteCreateTrunc,
-    open,
-    read
+    setErrno
 }
 
 // Path of the OS bit-bucket device — /dev/null on POSIX, NUL on Windows. Use this
 // instead of hard-coding "/dev/null", which does not exist on Windows.
 pub fn devNull(): string {
     return devNullPath()
+}
+
+// ── record/replay (std/replay, docs/record-replay.md) ──
+// Every question this module asks the filesystem is a record, and every change it makes
+// is a record of the call and its status. Under replay the answers come from the trace
+// and no change is made: a replay never creates, removes or renames anything.
+
+// A call answering with a status (0 or -1 with errno set), through the trace.
+fn fsStatus(kind: string, arg: &string, live: () => i64): i64 {
+    if replayOff() {
+        return live()
+    }
+    return replayRet(kind, arg, false, live)
+}
+
+// A call answering with bytes: `=` and the answer, or `!` and the errno. Returns the
+// answer, or None with errno set.
+fn fsText(kind: string, arg: &string, live: () => Option<string>): Option<string> {
+    if replayOff() {
+        return live()
+    }
+    let p = replayBlob(kind, arg, (): string => {
+        match live() {
+            Option.Some(v) => {
+                return "=" + v
+            }
+            Option.None => {
+                return "!" + getErrno().toString()
+            }
+        }
+    })
+    if p.len() > 0 && p[0] == '=' {
+        return Option.Some(p.substr(1, p.len()))
+    }
+    var err: i32 = 0
+    for i in 1..p.len() {
+        err = err * 10 + ((p[i] - '0') as i32)
+    }
+    setErrno(err)
+    return Option.None
+}
+
+fn statText(info: Option<FileInfo>): Option<string> {
+    match info {
+        Option.Some(fi) => {
+            return Option.Some(fi.size.toString() + " " + fi.mode.toString())
+        }
+        Option.None => {
+            return Option.None
+        }
+    }
+}
+
+fn statFromText(t: Option<string>): Option<FileInfo> {
+    match t {
+        Option.Some(v) => {
+            let parts = v.split(" ")
+            var size: i64 = 0
+            var mode: i32 = 0
+            for i in 0..parts[0].len() {
+                size = size * 10 + ((parts[0][i] - '0') as i64)
+            }
+            for i in 0..parts[1].len() {
+                mode = mode * 10 + ((parts[1][i] - '0') as i32)
+            }
+            return Option.Some(FileInfo {
+                size: size, mode: mode
+            })
+        }
+        Option.None => {
+            return Option.None
+        }
+    }
 }
 
 // File metadata from stat().
@@ -76,6 +152,15 @@ pub struct FileInfo {
 // Get file metadata, or None when the path cannot be inspected. Use read/open
 // operations when the failure reason matters.
 pub fn fileInfo(path: &string): Option<FileInfo> {
+    if !replayOff() {
+        return statFromText(fsText("fs.stat", path, (): Option<string> => {
+            return statText(fileInfoLive(path))
+        }))
+    }
+    return fileInfoLive(path)
+}
+
+fn fileInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
     unsafe { r = stat(path, buf) }
@@ -101,7 +186,11 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
 
 // Check whether a path is visible to this process.
 pub fn pathExists(path: &string): bool {
-    unsafe { return access(path, 0) == 0 }
+    return fsStatus("fs.access", "0 " + path, (): i64 => {
+        unsafe {
+            return access(path, 0) as i64
+        }
+    }) == 0
 }
 
 // Check if a path is a directory.
@@ -110,14 +199,16 @@ pub fn isDir(path: &string): bool {
     // missing path) — arch- and libc-independent, unlike reading the S_IFDIR bit
     // out of a struct stat whose st_mode offset differs across Linux arches
     // (24 on x86_64, 16 on arm64) while std/platform is only OS-split.
-    unsafe {
-        let dir = opendir(path)
-        if dir as i64 == 0 as i64 {
-            return false
+    return fsStatus("fs.isdir", path, (): i64 => {
+        unsafe {
+            let dir = opendir(path)
+            if dir as i64 == 0 as i64 {
+                return 0
+            }
+            closedir(dir)
+            return 1
         }
-        closedir(dir)
-        return true
-    }
+    }) == 1
 }
 
 // Check if a path is a regular file. Defined as "exists and is not a directory"
@@ -159,6 +250,59 @@ pub struct DirEntry {
 
 // List directory contents. An empty directory is distinct from a failed read.
 pub fn readDir(path: &string): Result<Vec<DirEntry>, IoError> {
+    if !replayOff() {
+        // Each entry is name NUL kind, the kind 'd' directory, 'f' file, 'o' other.
+        let listing = fsText("fs.readdir", path, (): Option<string> => {
+            match readDirLive(path) {
+                Result.Ok(es) => {
+                    var out = String.withCapacity(256)
+                    for e in es {
+                        out.pushStr(e.name)
+                        out.push(0)
+                        if e.isDir {
+                            out.push('d')
+                        } else if e.isFile {
+                            out.push('f')
+                        } else {
+                            out.push('o')
+                        }
+                    }
+                    return Option.Some(out)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        })
+        match listing {
+            Option.Some(t) => {
+                var entries: Vec<DirEntry> = Vec.new()
+                var name = String.withCapacity(32)
+                var i: i64 = 0
+                while i < t.len() {
+                    if t[i] == 0 && i + 1 < t.len() {
+                        let k = t[i + 1]
+                        entries.push(DirEntry {
+                            name: name, isDir: k == 'd', isFile: k == 'f'
+                        })
+                        name = String.withCapacity(32)
+                        i += 2
+                    } else {
+                        name.push(t[i])
+                        i += 1
+                    }
+                }
+                return Result.Ok(entries)
+            }
+            Option.None => {
+                return Result.Err(ioError(path))
+            }
+        }
+    }
+    return readDirLive(path)
+}
+
+fn readDirLive(path: &string): Result<Vec<DirEntry>, IoError> {
     var entries: Vec<DirEntry> = Vec.new()
     unsafe {
         let dir = opendir(path)
@@ -253,60 +397,101 @@ fn errFd(msg: &string): Result<Unit, IoError> {
 }
 
 pub fn removeFile(path: &string): Result<Unit, IoError> {
-    unsafe {
-        if unlink(path) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.unlink", path, (): i64 => {
+        unsafe {
+            return unlink(path) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn makeDir(path: &string, mode: i32): Result<Unit, IoError> {
-    unsafe {
-        if mkdir(path, mode as u32) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.mkdir", path, (): i64 => {
+        unsafe {
+            return mkdir(path, mode as u32) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn removeDir(path: &string): Result<Unit, IoError> {
-    unsafe {
-        if rmdir(path) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.rmdir", path, (): i64 => {
+        unsafe {
+            return rmdir(path) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn renameFile(oldPath: &string, newPath: &string): Result<Unit, IoError> {
-    unsafe {
-        if rename(oldPath, newPath) != 0 {
-            return errPath(oldPath)
+    let r = fsStatus("fs.rename", oldPath + " " + newPath, (): i64 => {
+        unsafe {
+            return rename(oldPath, newPath) as i64
         }
+    })
+    if r != 0 {
+        return errPath(oldPath)
     }
     return ok()
 }
 
 pub fn hardLink(existing: &string, newPath: &string): Result<Unit, IoError> {
-    unsafe {
-        if link(existing, newPath) != 0 {
-            return errPath(existing)
+    let r = fsStatus("fs.link", existing + " " + newPath, (): i64 => {
+        unsafe {
+            return link(existing, newPath) as i64
         }
+    })
+    if r != 0 {
+        return errPath(existing)
     }
     return ok()
 }
 
 pub fn softLink(target: &string, path: &string): Result<Unit, IoError> {
-    unsafe {
-        if symlink(target, path) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.symlink", target + " " + path, (): i64 => {
+        unsafe {
+            return symlink(target, path) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn readLink(path: &string): Result<string, IoError> {
+    if !replayOff() {
+        match fsText("fs.readlink", path, (): Option<string> => {
+            match readLinkLive(path) {
+                Result.Ok(t) => {
+                    return Option.Some(t)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        }) {
+            Option.Some(t) => {
+                return Result.Ok(t)
+            }
+            Option.None => {
+                return Result.Err(ioError(path))
+            }
+        }
+    }
+    return readLinkLive(path)
+}
+
+fn readLinkLive(path: &string): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = readlink(path, buf as *u8, 4095)
@@ -319,6 +504,29 @@ pub fn readLink(path: &string): Result<string, IoError> {
 }
 
 pub fn realPath(path: &string): Result<string, IoError> {
+    if !replayOff() {
+        match fsText("fs.realpath", path, (): Option<string> => {
+            match realPathLive(path) {
+                Result.Ok(t) => {
+                    return Option.Some(t)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        }) {
+            Option.Some(t) => {
+                return Result.Ok(t)
+            }
+            Option.None => {
+                return Result.Err(ioError(path))
+            }
+        }
+    }
+    return realPathLive(path)
+}
+
+fn realPathLive(path: &string): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let r = realpath(path, buf as *u8)
@@ -330,82 +538,109 @@ pub fn realPath(path: &string): Result<string, IoError> {
 }
 
 pub fn setMode(path: &string, mode: i32): Result<Unit, IoError> {
-    unsafe {
-        if chmod(path, mode as u32) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.chmod", mode.toString() + " " + path, (): i64 => {
+        unsafe {
+            return chmod(path, mode as u32) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError> {
-    unsafe {
-        if fchmod(fd, mode as u32) != 0 {
-            return errFd("fchmod failed")
+    let r = fsStatus("fs.fchmod", fd.toString() + " " + mode.toString(), (): i64 => {
+        unsafe {
+            return fchmod(fd, mode as u32) as i64
         }
+    })
+    if r != 0 {
+        return errFd("fchmod failed")
     }
     return ok()
 }
 
 pub fn setOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
-    unsafe {
-        if chown(path, uid, gid) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.chown", path, (): i64 => {
+        unsafe {
+            return chown(path, uid, gid) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError> {
-    unsafe {
-        if fchown(fd, uid, gid) != 0 {
-            return errFd("fchown failed")
+    let r = fsStatus("fs.fchown", fd.toString(), (): i64 => {
+        unsafe {
+            return fchown(fd, uid, gid) as i64
         }
+    })
+    if r != 0 {
+        return errFd("fchown failed")
     }
     return ok()
 }
 
 pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
-    unsafe {
-        if lchown(path, uid, gid) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.lchown", path, (): i64 => {
+        unsafe {
+            return lchown(path, uid, gid) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError> {
-    unsafe {
-        if truncate(path, length) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.truncate", length.toString() + " " + path, (): i64 => {
+        unsafe {
+            return truncate(path, length) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
-    unsafe {
-        if ftruncate(fd, length) != 0 {
-            return errFd("ftruncate failed")
+    let r = fsStatus("fs.ftruncate", fd.toString() + " " + length.toString(), (): i64 => {
+        unsafe {
+            return ftruncate(fd, length) as i64
         }
+    })
+    if r != 0 {
+        return errFd("ftruncate failed")
     }
     return ok()
 }
 
 pub fn syncFd(fd: i32): Result<Unit, IoError> {
-    unsafe {
-        if fsync(fd) != 0 {
-            return errFd("fsync failed")
+    let r = fsStatus("fs.fsync", fd.toString(), (): i64 => {
+        unsafe {
+            return fsync(fd) as i64
         }
+    })
+    if r != 0 {
+        return errFd("fsync failed")
     }
     return ok()
 }
 
 pub fn dataSyncFd(fd: i32): Result<Unit, IoError> {
-    unsafe {
-        if fdatasync(fd) != 0 {
-            return errFd("fdatasync failed")
+    let r = fsStatus("fs.fdatasync", fd.toString(), (): i64 => {
+        unsafe {
+            return fdatasync(fd) as i64
         }
+    })
+    if r != 0 {
+        return errFd("fdatasync failed")
     }
     return ok()
 }
@@ -419,6 +654,29 @@ pub fn dataSyncFd(fd: i32): Result<Unit, IoError> {
 //
 // Needs POSIX mkdtemp, so it does not link on Windows.
 pub fn makeTempDir(prefix: &string): Result<string, IoError> {
+    if !replayOff() {
+        match fsText("fs.mkdtemp", prefix, (): Option<string> => {
+            match makeTempDirLive(prefix) {
+                Result.Ok(t) => {
+                    return Option.Some(t)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        }) {
+            Option.Some(t) => {
+                return Result.Ok(t)
+            }
+            Option.None => {
+                return Result.Err(ioError(prefix))
+            }
+        }
+    }
+    return makeTempDirLive(prefix)
+}
+
+fn makeTempDirLive(prefix: &string): Result<string, IoError> {
     // mkdtemp modifies template in place — copy into mutable buffer
     var buf: [u8; 4096] = [0; 4096]
     let tmpl = prefix + "XXXXXX"
@@ -451,6 +709,29 @@ pub fn makeTempDir(prefix: &string): Result<string, IoError> {
 // Pairs with makeTempDir, and like it needs POSIX mkstemp, so it does not link
 // on Windows.
 pub fn makeTempFile(prefix: &string): Result<string, IoError> {
+    if !replayOff() {
+        match fsText("fs.mkstemp", prefix, (): Option<string> => {
+            match makeTempFileLive(prefix) {
+                Result.Ok(t) => {
+                    return Option.Some(t)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        }) {
+            Option.Some(t) => {
+                return Result.Ok(t)
+            }
+            Option.None => {
+                return Result.Err(ioError(prefix))
+            }
+        }
+    }
+    return makeTempFileLive(prefix)
+}
+
+fn makeTempFileLive(prefix: &string): Result<string, IoError> {
     // mkstemp modifies template in place — copy into mutable buffer
     var buf: [u8; 4096] = [0; 4096]
     let tmpl = prefix + "XXXXXX"
@@ -466,12 +747,35 @@ pub fn makeTempFile(prefix: &string): Result<string, IoError> {
         if fd < 0 {
             return Result.Err(ioError(prefix))
         }
-        close(fd)
+        sysClose(fd)
         return Result.Ok(_cstrToString(buf as *u8))
     }
 }
 
 pub fn currentDir(): Result<string, IoError> {
+    if !replayOff() {
+        match fsText("fs.getcwd", "", (): Option<string> => {
+            match currentDirLive() {
+                Result.Ok(t) => {
+                    return Option.Some(t)
+                }
+                Result.Err(_) => {
+                    return Option.None
+                }
+            }
+        }) {
+            Option.Some(t) => {
+                return Result.Ok(t)
+            }
+            Option.None => {
+                return Result.Err(IoError.Other("getcwd failed"))
+            }
+        }
+    }
+    return currentDirLive()
+}
+
+fn currentDirLive(): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let r = getcwd(buf as *u8, 4096)
@@ -483,15 +787,27 @@ pub fn currentDir(): Result<string, IoError> {
 }
 
 pub fn changeDir(path: &string): Result<Unit, IoError> {
-    unsafe {
-        if chdir(path) != 0 {
-            return errPath(path)
+    let r = fsStatus("fs.chdir", path, (): i64 => {
+        unsafe {
+            return chdir(path) as i64
         }
+    })
+    if r != 0 {
+        return errPath(path)
     }
     return ok()
 }
 
 pub fn lstatInfo(path: &string): Option<FileInfo> {
+    if !replayOff() {
+        return statFromText(fsText("fs.lstat", path, (): Option<string> => {
+            return statText(lstatInfoLive(path))
+        }))
+    }
+    return lstatInfoLive(path)
+}
+
+fn lstatInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
     unsafe { r = lstat(path, buf) }
@@ -521,9 +837,13 @@ pub fn isSymlink(path: &string): bool {
     // splits by OS only, so the bit test reads the wrong field on arm64 Linux.
     // readlink is arch- and libc-independent — it fails with EINVAL on anything
     // that is not a symlink. removeAll's refusal to follow links rests on this.
-    var buf: [u8; 4096] = [0; 4096]
-    unsafe {
-        return readlink(path, buf as *u8, 4095) >= 0
+    match readLink(path) {
+        Result.Ok(_) => {
+            return true
+        }
+        Result.Err(_) => {
+            return false
+        }
     }
 }
 
@@ -871,8 +1191,13 @@ pub fn mkdirAll(path: &string, mode: i32): Result<Unit, IoError> {
         if isDir(cur) {
             continue
         }
+        let made = fsStatus("fs.mkdir", cur, (): i64 => {
+            unsafe {
+                return mkdir(cur, mode as u32) as i64
+            }
+        })
         unsafe {
-            if mkdir(cur, mode as u32) != 0 {
+            if made != 0 {
                 // EEXIST here means either a concurrent creator won the race (fine)
                 // or the name is taken by a file (not fine) — re-check rather than
                 // trusting errno to tell those apart.
@@ -971,41 +1296,44 @@ pub fn copyFile(src: &string, dst: &string): Result<Unit, IoError> {
         return Result.Err(IoError.IsDirectory(src.clone()))
     }
     unsafe {
-        let srcFd = open(src, 0)
+        let srcFd = sysOpen(src, 0, 0)
         if srcFd < 0 {
             return errPath(src)
         }
-        let dstFd = open(dst, oWriteCreateTrunc(), 420)
+        let dstFd = sysOpen(dst, oWriteCreateTrunc(), 420)
         if dstFd < 0 {
-            close(srcFd)
+            sysClose(srcFd)
             return errPath(dst)
         }
         var buf: [u8; 65536] = [0; 65536]
         while true {
             let n = readFd(srcFd, buf as *u8, 65536)
             if n < 0 {
-                close(srcFd)
-                close(dstFd)
+                sysClose(srcFd)
+                sysClose(dstFd)
                 return errPath(src)
             }
             if n == 0 {
                 break
             }
             if writeFd(dstFd, buf as *u8, n) != n {
-                close(srcFd)
-                close(dstFd)
+                sysClose(srcFd)
+                sysClose(dstFd)
                 return errPath(dst)
             }
         }
-        close(srcFd)
-        close(dstFd)
+        sysClose(srcFd)
+        sysClose(dstFd)
     }
     // X_OK = 1. access() answers "can this process execute it", which is the
     // question a copied program cares about, and unlike st_mode it is portable.
-    unsafe {
-        if access(src, 1) == 0 {
-            setMode(dst, 493)?
+    let executable = fsStatus("fs.access", "1 " + src, (): i64 => {
+        unsafe {
+            return access(src, 1) as i64
         }
+    })
+    if executable == 0 {
+        setMode(dst, 493)?
     }
     return ok()
 }

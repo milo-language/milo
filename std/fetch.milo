@@ -7,7 +7,9 @@ from "std/net" import {
     TcpStream, NetError, resolve
 }
 from "std/os" import {
-    connectFdIn, socket
+    connectFdIn,
+    sysClose,
+    sysSocket
 }
 from "std/openssl" import {
     SSL_CTX_free, SSL_CTX_load_verify_locations, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl,
@@ -15,7 +17,11 @@ from "std/openssl" import {
     TLS_client_method, sslConnectFd, sslReadFd, sslWriteFd
 }
 from "std/platform" import {
-    makeSockaddr, close, ensureNetInit
+    makeSockaddr,
+    ensureNetInit
+}
+from "std/replay" import {
+    replayRet
 }
 from "std/json" import {
     Json
@@ -62,7 +68,7 @@ impl Drop for TlsStream {
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self.fd > 0 {
-                close(self.fd)
+                sysClose(self.fd)
             }
         }
     }
@@ -85,15 +91,15 @@ impl TlsStream {
 
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
+        unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
         if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
         }
 
         var addr = makeSockaddr(port, ip)
 
         if connectFdIn(fd, addr) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
 
@@ -111,7 +117,7 @@ impl TlsStream {
             let ctx = SSL_CTX_new(method)
             let ctxAddr = ctx as i64
             if ctxAddr == 0 {
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
             }
             SSL_CTX_set_default_verify_paths(ctx)
@@ -120,7 +126,7 @@ impl TlsStream {
             if caFile.len > 0 {
                 if SSL_CTX_load_verify_locations(ctx, caFile, 0 as *u8) != 1 {
                     SSL_CTX_free(ctx)
-                    close(fd)
+                    sysClose(fd)
                     return Result.Err(NetError.TlsError("SSL_CTX_load_verify_locations failed"))
                 }
             }
@@ -134,7 +140,7 @@ impl TlsStream {
             let sslAddr = ssl as i64
             if sslAddr == 0 {
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("SSL_new failed"))
             }
 
@@ -151,17 +157,22 @@ impl TlsStream {
             if r != 1 {
                 SSL_free(ssl)
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("SSL handshake failed"))
             }
             // Not redundant with SSL_VERIFY_PEER, despite appearances: with the
             // set_verify line removed, this alone still rejects an untrusted chain
             // (verified by deleting each in turn). Two independent mechanisms, so
             // losing either one in a refactor cannot silently reopen the hole.
-            if SSL_get_verify_result(ssl) != X509_V_OK {
+            let verdict = replayRet("tls.verify", fd.toString(), false, (): i64 => {
+                unsafe {
+                    return SSL_get_verify_result(ssl)
+                }
+            })
+            if verdict != X509_V_OK {
                 SSL_free(ssl)
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("certificate verification failed"))
             }
 

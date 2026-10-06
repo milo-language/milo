@@ -1,8 +1,16 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
 from "std/os" import {
-    connectFdIn, readFd, writeFd, htons, malloc, free,
-    memcpy, socket, connectFd
+    connectFdIn,
+    readFd,
+    writeFd,
+    htons,
+    malloc,
+    free,
+    memcpy,
+    connectFd,
+    sysClose,
+    sysSocket
 }
 from "std/openssl" import {
     TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_new,
@@ -17,8 +25,7 @@ from "std/base64" import {
 }
 from "std/platform" import {
     SockAddrIn,
-    makeSockaddr,
-    close
+    makeSockaddr
 }
 from "std/random" import {
     Random
@@ -72,7 +79,7 @@ impl Drop for WsConn {
                 }
                 // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
                 if self.fd > 0 {
-                    close(self.fd)
+                    sysClose(self.fd)
                 }
             }
         }
@@ -315,7 +322,7 @@ impl WsConn {
         if !self._closed {
             let _ = self._sendFrame(WsOpcode.Close, "", true)
             self._closed = true
-            unsafe { close(self.fd) }
+            sysClose(self.fd)
         }
     }
 
@@ -437,14 +444,14 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let SOCK_STREAM: i32 = 1
 
     var fd: i32 = 0
-    unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
+    unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
     if fd < 0 {
-        return Result.Err("socket() failed")
+        return Result.Err("sysSocket() failed")
     }
 
     var addr = makeSockaddr(port, ip)
     if connectFdIn(fd, addr) < 0 {
-        unsafe { close(fd) }
+        sysClose(fd)
         return Result.Err("connect() failed")
     }
 
@@ -461,7 +468,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 
     let n = writeFd(fd, req, req.len)
     if n < 0 {
-        unsafe { close(fd) }
+        sysClose(fd)
         return Result.Err("failed to send upgrade request")
     }
 
@@ -469,7 +476,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     var buf: [u8; 4096] = [0; 4096]
     let respLen = readFd(fd, buf, 4096)
     if respLen <= 0 {
-        unsafe { close(fd) }
+        sysClose(fd)
         return Result.Err("no response from server")
     }
 
@@ -479,7 +486,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     }
 
     if !resp.startsWith("HTTP/1.1 101") {
-        unsafe { close(fd) }
+        sysClose(fd)
         return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
     }
 
@@ -487,7 +494,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let expectedAccept = computeAcceptKey(clientKey)
     let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
     if actualAccept != expectedAccept {
-        unsafe { close(fd) }
+        sysClose(fd)
         return Result.Err("invalid Sec-WebSocket-Accept")
     }
 
@@ -503,21 +510,21 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
     let SOCK_STREAM: i32 = 1
 
     unsafe {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let fd = sysSocket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
-            return Result.Err("socket() failed")
+            return Result.Err("sysSocket() failed")
         }
 
         var addr = makeSockaddr(port, ip)
         if connectFdIn(fd, addr) < 0 {
-            close(fd)
+            sysClose(fd)
             return Result.Err("connect() failed")
         }
 
         let method = TLS_client_method()
         let ctx = SSL_CTX_new(method)
         if ctx as i64 == 0 {
-            close(fd)
+            sysClose(fd)
             return Result.Err("SSL_CTX_new failed")
         }
         SSL_CTX_set_default_verify_paths(ctx)
@@ -529,7 +536,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         let ssl = SSL_new(ctx)
         if ssl as i64 == 0 {
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("SSL_new failed")
         }
 
@@ -543,7 +550,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         if sslConnectFd(ssl, fd) != 1 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("TLS handshake failed")
         }
 
@@ -563,7 +570,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         if sslWriteFd(ssl, fd, req, req.len as i32) <= 0 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("failed to send upgrade request")
         }
 
@@ -573,7 +580,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         if respLen <= 0 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("no response from server")
         }
 
@@ -585,7 +592,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         if !resp.startsWith("HTTP/1.1 101") {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
         }
 
@@ -594,7 +601,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         if actualAccept != expectedAccept {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
-            close(fd)
+            sysClose(fd)
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 

@@ -15,7 +15,13 @@ from "std/net" import {
     NetError, ignoreSigpipe
 }
 from "std/os" import {
-    acceptFd, bindIn, getSockPort, listen, setsockopt, socket
+    acceptFd,
+    bindIn,
+    getSockPort,
+    setsockopt,
+    sysClose,
+    sysSocket,
+    sysListen
 }
 from "std/openssl" import {
     SSL_CTX_check_private_key, SSL_CTX_free, SSL_CTX_new, SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_free,
@@ -23,7 +29,10 @@ from "std/openssl" import {
     sslWriteFd
 }
 from "std/platform" import {
-    makeSockaddr, close, ensureNetInit, solSocket, soReuseaddr
+    makeSockaddr,
+    ensureNetInit,
+    solSocket,
+    soReuseaddr
 }
 
 // ── TlsConn ──
@@ -52,7 +61,7 @@ impl Drop for TlsConn {
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self.fd > 0 {
-                close(self.fd)
+                sysClose(self.fd)
             }
         }
     }
@@ -124,7 +133,7 @@ impl Drop for TlsListener {
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self.fd > 0 {
-                close(self.fd)
+                sysClose(self.fd)
             }
         }
     }
@@ -141,9 +150,9 @@ impl TlsListener {
         ignoreSigpipe()
         ensureNetInit()
         var fd: i32 = 0
-        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
+        unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
         if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
         }
 
         var one: i32 = 1
@@ -151,13 +160,13 @@ impl TlsListener {
 
         var addr = makeSockaddr(port, 0)
         if bindIn(fd, addr) < 0 {
-            unsafe { close(fd) }
+            sysClose(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }
         unsafe {
-            if listen(fd, 1024) < 0 {
-                unsafe { close(fd) }
-                return Result.Err(NetError.ConnectionFailed("listen() failed"))
+            if sysListen(fd, 1024) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("sysListen() failed"))
             }
         }
 
@@ -165,17 +174,17 @@ impl TlsListener {
             let ctx = SSL_CTX_new(TLS_server_method())
             let ctxAddr = ctx as i64
             if ctxAddr == 0 {
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
             }
             if SSL_CTX_use_certificate_chain_file(ctx, certPath) != 1 {
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("failed to load certificate chain: " + certPath.clone()))
             }
             if SSL_CTX_use_PrivateKey_file(ctx, keyPath, SSL_FILETYPE_PEM) != 1 {
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("failed to load private key: " + keyPath.clone()))
             }
             // Cert and key load independently, so a mismatched pair gets this far. Left
@@ -183,7 +192,7 @@ impl TlsListener {
             // nothing on the server naming the cause.
             if SSL_CTX_check_private_key(ctx) != 1 {
                 SSL_CTX_free(ctx)
-                close(fd)
+                sysClose(fd)
                 return Result.Err(NetError.TlsError("private key does not match certificate"))
             }
             return Result.Ok(TlsListener { fd: fd, ctx: ctxAddr })
@@ -204,13 +213,13 @@ impl TlsListener {
             let ssl = SSL_new(self.ctx as *u8)
             let sslAddr = ssl as i64
             if sslAddr == 0 {
-                close(clientFd)
+                sysClose(clientFd)
                 return Result.Err(NetError.TlsError("SSL_new failed"))
             }
             SSL_set_fd(ssl, clientFd)
             if sslAcceptFd(ssl, clientFd) != 1 {
                 SSL_free(ssl)
-                close(clientFd)
+                sysClose(clientFd)
                 return Result.Err(NetError.TlsError("SSL_accept failed"))
             }
             return Result.Ok(TlsConn { fd: clientFd, ssl: sslAddr })
