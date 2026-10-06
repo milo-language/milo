@@ -146,7 +146,7 @@ int main(void) { printf("%lld %lld\\n", fromA(), fromB()); return 0; }
 // flag alone: a module that HAS a main is no safer, because --no-entry renames it to
 // @_milo_unused_main and strands the init call in dead code.
 test("emit-obj --no-entry rejects a global whose initializer has to run", () => {
-  const lib = write("no_entry_runtime_global.milo", `pub let GREETING: string = "hello"\npub fn greet(): string { return GREETING }\n`);
+  const lib = write("no_entry_runtime_global.milo", `pub let GREETING: string = "hello"\npub fn greet(): string { return GREETING.clone() }\n`);
   const r = milo(`emit-obj ${lib} --no-entry -o ${join(DIR, "no_entry_runtime_global.o")}`);
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("global 'GREETING' needs an initializer that runs");
