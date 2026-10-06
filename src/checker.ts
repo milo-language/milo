@@ -416,6 +416,9 @@ export interface CheckResult {
   matchSubjectMut: Set<Expr>;
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
+  // `o == Option.None` / `!=` on an enum with payloads: lowered as the tag test of
+  // `operand` (the non-literal side) against `tag`.
+  variantTagCompares: Map<Expr, { operand: Expr; tag: number }>;
   staticCalls: Map<Expr, string>;
   rewrittenStructLits: Map<Expr, string>;
   movedExprs: Set<Expr>;
@@ -572,17 +575,6 @@ export class TypeChecker {
   // and the names to substitute — there is no instantiation to record anywhere.
   private aliasTypeParams = new Map<string, string[]>();
   private rangeCheckedExprs = new Map<Expr, { min: number; max: number; typeName: string }>();
-  private returnHint: TypeKind | null = null;
-  // The expression `returnHint` was supplied FOR. `returnHint` itself stays set while that
-  // expression's children are checked, so on its own it cannot tell `let a: Arena<Node> =
-  // Arena.new()` (the hint is the call's type) from `let n: i64 = Arena.new().len()` (it
-  // is not). See `expectedTypeOf`.
-  private returnHintExpr: Expr | null = null;
-  // An if or match expression's expected type, queued for each branch or arm tail and
-  // applied when checkExpr reaches it. Without it `let x: Option<i64> = if c { Some(5) }
-  // else { Option.None }` cannot infer the None: the hint names the if, never the arm.
-  // Nested ifs and matches pass it on in turn.
-  private tailHints = new Map<Expr, TypeKind>();
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
@@ -648,6 +640,7 @@ export class TypeChecker {
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
   private staticCalls = new Map<Expr, string>();
+  private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
   private borrowedExprs = new Set<Expr>();
@@ -683,13 +676,6 @@ export class TypeChecker {
   // callee known to read a returned field without retaining or dropping it. Only the
   // move-out-of-a-borrow rule reads it; see the FieldAccess branch of tryMove.
   private keyExtractorDepth = 0;
-  private closureParamHints: TypeKind[] | null = null;
-  // The expected RETURN type of a closure being checked against a fn-typed hint. Without
-  // it an un-annotated `() => 0` always infers i64, so `opt.unwrapOrElse(() => 0)` on an
-  // Option<i32> failed with "callback must return i32, got i64" — the literal never saw
-  // the context that would have coerced it. Param hints were already propagated; this is
-  // the other half.
-  private closureRetHint: TypeKind | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   // Origin file of the fn body being checked; see checkFieldPrivacy.
   private currentFnFile: string | undefined;
@@ -2446,7 +2432,7 @@ export class TypeChecker {
   // declared type is unified structurally against the argument's actual type — the same
   // `inferTypeParamsFromHint` a generic free-function call uses — and the return hint
   // supplies any parameter no argument mentions.
-  private inferMethodTypeArgs(key: string, expr: Extract<Expr, { kind: "MethodCall" }>): TypeKind[] | null {
+  private inferMethodTypeArgs(key: string, expr: Extract<Expr, { kind: "MethodCall" }>, expected: TypeKind | null): TypeKind[] | null {
     const tpl = must(this.genericMethods, key, "generic methods");
     const names = (tpl.decl.typeParams ?? []).map(t => t.name);
     const typeMap = new Map<string, TypeKind>();
@@ -2458,7 +2444,6 @@ export class TypeChecker {
       if (argType.tag === "unknown") return null;
       this.inferTypeParamsFromHint(declaredType(declared), argType, names, typeMap);
     }
-    const expected = this.expectedTypeOf(expr);
     if (expected) this.inferTypeParamsFromHint(tpl.decl.retType, expected, names, typeMap);
     if (names.some(n => !typeMap.has(n))) return null;
     return names.map(n => must(typeMap, n, "method type map"));
@@ -3029,6 +3014,7 @@ export class TypeChecker {
       matchSubjectMut: this.matchSubjectMut,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
+      variantTagCompares: this.variantTagCompares,
       staticCalls: this.staticCalls,
       rewrittenStructLits: this.rewrittenStructLits,
       movedExprs: this.movedExprs,
@@ -3650,7 +3636,7 @@ export class TypeChecker {
     }
     for (const g of program.globals) {
       const hint = g.type ? this.resolve(g.type) : null;
-      const valType = this.checkExprWithHint(g.value, hint);
+      const valType = this.checkExpr(g.value, hint);
       const finalType = hint ?? valType;
       if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
         this.error(`global '${g.name}': type mismatch: expected ${this.show(hint)}, got ${this.show(valType)}`, g.span);
@@ -5551,7 +5537,7 @@ export class TypeChecker {
       const expected = sig.params[i + 1];
       if (!expected) break;
       const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
-      const argType = this.checkExprWithHint(expr.args[i]!, bare);
+      const argType = this.checkExpr(expr.args[i]!, bare);
       if (!typeEq(bare, argType) && argType.tag !== "unknown") {
         this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i]!.span);
       }
@@ -6096,8 +6082,9 @@ export class TypeChecker {
     this.popScope();
   }
 
-  private checkStmt(stmt: Stmt, fnRetType: TypeKind) {
-    this.checkStmtBody(stmt, fnRetType);
+  // `valueTail` is set for the tail statement of an if/match arm in value position.
+  private checkStmt(stmt: Stmt, fnRetType: TypeKind, valueTail: { expected: TypeKind | null } | null = null) {
+    this.checkStmtBody(stmt, fnRetType, valueTail);
     // Lock any flexible const-int binding that was read but not widened during
     // this statement: its width is now fixed at the default. This is what keeps
     // widening sound — a binding can only adopt a wider width at its FIRST read
@@ -6108,7 +6095,7 @@ export class TypeChecker {
     }
   }
 
-  private checkStmtBody(stmt: Stmt, fnRetType: TypeKind) {
+  private checkStmtBody(stmt: Stmt, fnRetType: TypeKind, valueTail: { expected: TypeKind | null } | null) {
     const sp = stmt.span;
     switch (stmt.kind) {
       case "LetDecl": {
@@ -6119,7 +6106,7 @@ export class TypeChecker {
         }
         const frozenBeforeRhs = this.openBorrowWindow();
         const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
-        const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
+        const valType = deferred ?? this.checkExpr(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
@@ -6175,7 +6162,7 @@ export class TypeChecker {
         }
         const frozenBeforeRhs = this.openBorrowWindow();
         const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
-        const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
+        const valType = deferred ?? this.checkExpr(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
@@ -6306,7 +6293,7 @@ export class TypeChecker {
         // must not leak a freeze onto the next statement. Snapshot which vars are
         // already frozen, then release any newly-frozen by the RHS afterward.
         const frozenBeforeRhs = this.openBorrowWindow();
-        const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
+        const valType = this.checkExpr(stmt.value, targetInfo.type);
         this.lintStringConcatInLoop(stmt.target, stmt.value, targetInfo.type, sp);
         if (targetInfo.type.tag === "cfn" && valType.tag !== "unknown"
             && !this.checkCFnStore(stmt.value, targetInfo.type, valType, `cannot assign to '${this.describeExpr(stmt.target)}'`, sp)) {
@@ -6352,7 +6339,7 @@ export class TypeChecker {
         } else {
           const prev = this.inReturnInLoop;
           if (this.loopDepth > 0) this.inReturnInLoop = true;
-          const valType = this.checkExprWithHint(stmt.value, fnRetType);
+          const valType = this.checkExpr(stmt.value, fnRetType);
           if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
             const isStringToPtr = valType.tag === "string" && fnRetType.tag === "ptr" && fnRetType.inner.tag === "int" && fnRetType.inner.bits === 8;
             // Coerce a concrete type to an interface at return position
@@ -6637,9 +6624,9 @@ export class TypeChecker {
         // binding to outlive the statement, so its freeze must not survive it either —
         // same reasoning as the RHS snapshot in Assign, which this mirrors.
         const frozenBefore = this.openBorrowWindow();
-        const exprType = this.checkExpr(stmt.expr);
+        const exprType = this.checkExpr(stmt.expr, valueTail?.expected ?? null);
         for (const vi of this.newlyFrozenSince(frozenBefore)) this.unfreeze(vi);
-        let warned = this.valueTails.has(stmt.expr);
+        let warned = valueTail !== null;
         if (!warned && exprType.tag === "enum") {
           const enumInfo = this.enums.get(exprType.name);
           const base = enumInfo?.baseName;
@@ -7236,7 +7223,7 @@ export class TypeChecker {
   // the second pass reports against the concrete types — the ones the user can act on.
   // Returning null anywhere leaves the existing "spell its type arguments" error in
   // place, so a shape this cannot infer is no worse off than before.
-  private inferGenericStaticTypeArgs(expr: Extract<Expr, { kind: "EnumLit" }>): MiloType[] | "argError" | null {
+  private inferGenericStaticTypeArgs(expr: Extract<Expr, { kind: "EnumLit" }>, expected: TypeKind | null): MiloType[] | "argError" | null {
     const generic = this.genericStructs.get(expr.enumName);
     if (!generic || generic.typeParams.length === 0) return null;
     let method: import("./ast").Function | undefined;
@@ -7273,10 +7260,9 @@ export class TypeChecker {
     // A parameter no argument mentions comes from the type the context expects of the
     // call: `var a: Arena<Node> = Arena.new()`, a `&mut Arena<Node>` parameter, a return
     // type. `Self` in the declared return type means the generic type over its own
-    // parameters. Only the hint meant for this call counts (`expectedTypeOf`), and a
+    // parameters. Only the hint meant for this call counts (`expected`), and a
     // wrong guess cannot slip through: the explicit path below re-checks the call
     // against the substituted signature, and the binding against its annotation.
-    const expected = this.expectedTypeOf(expr);
     if (expected && generic.typeParams.some(tp => !typeMap.has(tp))) {
       const ret: MiloType = method.retType.name === "Self" && !method.retType.typeArgs?.length
         ? { name: expr.enumName, typeArgs: generic.typeParams.map(tp => ({ name: tp })) } as MiloType
@@ -7294,7 +7280,7 @@ export class TypeChecker {
   // static path only looked in `inherentImpls`, so the call reported "no static method".
   // Arguments are typed twice, as in `inferGenericStaticTypeArgs`: once to unify (that
   // pass's diagnostics are dropped), once against the substituted signature.
-  private checkGenericStaticMethodCall(expr: ExprOf<"EnumLit">, key: string, sp: Span | undefined): TypeKind {
+  private checkGenericStaticMethodCall(expr: ExprOf<"EnumLit">, key: string, sp: Span | undefined, expected: TypeKind | null): TypeKind {
     const tpl = must(this.genericMethods, key, "generic methods");
     const names = (tpl.decl.typeParams ?? []).map(t => t.name);
     const typeMap = new Map<string, TypeKind>();
@@ -7312,7 +7298,6 @@ export class TypeChecker {
       this.inferTypeParamsFromHint(declaredType(tpl.decl.params[i]!), argType, names, typeMap);
     }
     this.diagnostics.length = mark;
-    const expected = this.expectedTypeOf(expr);
     if (expected) this.inferTypeParamsFromHint(tpl.decl.retType, expected, names, typeMap);
     const missing = names.filter(p => !typeMap.has(p));
     if (missing.length > 0) {
@@ -7326,13 +7311,6 @@ export class TypeChecker {
     this.checkStaticCallArgs(sig, expr, sp);
     this.staticCalls.set(expr, mangled);
     return this.setType(expr, sig.ret);
-  }
-
-  // The type the context expects `expr` itself to have (a binding's annotation, a
-  // parameter, a return type), or null when the only hint in scope belongs to an
-  // enclosing expression.
-  private expectedTypeOf(expr: Expr): TypeKind | null {
-    return this.returnHintExpr === expr ? this.returnHint : null;
   }
 
   private inferTypeParamsFromHint(retType: MiloType, hint: TypeKind, typeParams: string[], typeMap: Map<string, TypeKind>) {
@@ -7942,10 +7920,10 @@ export class TypeChecker {
     return false;
   }
 
-  // Retype a constant-int subtree to `t`. Leaves go through checkExprWithHint
+  // Retype a constant-int subtree to `t`. Leaves go through checkExpr
   // so per-literal range/overflow checks still fire against the target type.
   private retypeConstInt(e: Expr, t: TypeKind) {
-    if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExprWithHint(e, t); return; }
+    if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExpr(e, t); return; }
     if (e.kind === "BinOp") {
       this.retypeConstInt(e.left, t); this.retypeConstInt(e.right, t); this.exprTypes.set(e, t);
       // Re-check overflow against the (possibly narrower) target: the folded result can exceed
@@ -8548,16 +8526,24 @@ export class TypeChecker {
       || this.genericEnums.has(name) || this.typeAliases.has(name) || this.cSigs.has(name);
   }
 
-  private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
+  // The hint an expression of this kind consumes when the context expects `expected`. An
+  // `Option<T>` slot hands a plain value `T`, which is auto-wrapped (`let o: Option<i64> =
+  // 5`). An enum literal (`Option.None`) needs the Option itself, and an if or match hands
+  // the whole expected type to each branch tail, where this applies again at the leaf.
+  private hintFor(expr: Expr, expected: TypeKind): TypeKind {
+    if (expr.kind === "EnumLit" || expr.kind === "IfExpr" || expr.kind === "MatchExpr") return expected;
+    return this.optionInnerType(expected) ?? expected;
+  }
+
+  // Bidirectional checking: `expected` is the type the context wants this expression to
+  // have (a binding's annotation, a parameter, a return type, a sibling operand), or null
+  // when nothing constrains it. It is a parameter rather than checker state so that a
+  // child checked with plain `checkExpr(child)` cannot see a hint meant for an ancestor.
+  // A hint is a request, not a check: callers still compare the result against what
+  // they wanted and report the mismatch in their own words.
+  private checkExpr(expr: Expr, expected: TypeKind | null = null): TypeKind {
     this.canonicalizePreludeVariant(expr);
-    // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping).
-    // Not for an if or match expression: it hands the hint to each branch or arm tail
-    // (tailHints), and a tail that is `Option.None` needs the Option itself. A
-    // plain-value tail unwraps there.
-    if (hint && expr.kind !== "EnumLit" && expr.kind !== "IfExpr" && expr.kind !== "MatchExpr") {
-      const inner = this.optionInnerType(hint);
-      if (inner) hint = inner;
-    }
+    const hint = expected && this.hintFor(expr, expected);
     if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
       if (expr.kind === "IntLit") {
         const v = expr.value;
@@ -8597,7 +8583,7 @@ export class TypeChecker {
         // Same discard as the array literals: the fill value was hint-checked and the
         // answer dropped, so `Vec<i64> = Vec.filled(3, "a")` reached clang as `%String`
         // where an `i64` was expected.
-        const fillType = this.checkExprWithHint(expr.args[1], hint.element);
+        const fillType = this.checkExpr(expr.args[1], hint.element);
         if (!this.elementFits(fillType, hint.element, expr.args[1])) {
           this.error(`'Vec.filled' value has type ${this.show(fillType)}, but the Vec is declared ${this.show(hint)}`, expr.args[1].span);
         }
@@ -8626,7 +8612,7 @@ export class TypeChecker {
     }
     if (hint && expr.kind === "ArrayLit" && hint.tag === "array") {
       for (const elem of expr.elements) {
-        const et = this.checkExprWithHint(elem, hint.element);
+        const et = this.checkExpr(elem, hint.element);
         if (!this.elementFits(et, hint.element, elem)) {
           this.error(`array element has type ${this.show(et)}, but the array is declared ${this.show(hint)}`, elem.span);
         }
@@ -8637,7 +8623,7 @@ export class TypeChecker {
     // Vec literal: `let v: Vec<T> = [a, b, c]` lowers to Vec.new() + N pushes in codegen.
     if (hint && expr.kind === "ArrayLit" && hint.tag === "vec") {
       for (const elem of expr.elements) {
-        const et = this.checkExprWithHint(elem, hint.element);
+        const et = this.checkExpr(elem, hint.element);
         if (!this.elementFits(et, hint.element, elem)) {
           this.error(`Vec element has type ${this.show(et)}, but the Vec is declared ${this.show(hint)}`, elem.span);
         }
@@ -8646,7 +8632,7 @@ export class TypeChecker {
       return this.setType(expr, hint);
     }
     if (hint && expr.kind === "ArrayRepeat" && hint.tag === "array") {
-      const rt = this.checkExprWithHint(expr.value, hint.element);
+      const rt = this.checkExpr(expr.value, hint.element);
       if (!this.elementFits(rt, hint.element, expr.value)) {
         this.error(`repeated element has type ${this.show(rt)}, but the array is declared ${this.show(hint)}`, expr.value.span);
       }
@@ -8663,7 +8649,7 @@ export class TypeChecker {
           this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
         }
         for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
-          let argType = this.checkExprWithHint(expr.args[i], variant.fields[i]);
+          let argType = this.checkExpr(expr.args[i], variant.fields[i]);
           // Coerce a constant-int operand to the field's int width, as fn args do.
           if (variant.fields[i].tag === "int" && argType.tag === "int" && !typeEq(variant.fields[i], argType) && this.isConstIntExpr(expr.args[i])) {
             this.retypeConstInt(expr.args[i], variant.fields[i]);
@@ -8689,17 +8675,7 @@ export class TypeChecker {
         return this.checkStructLitAsInstance(expr, hint);
       }
     }
-    if (hint && expr.kind === "Closure" && hint.tag === "fn") {
-      this.closureParamHints = hint.params;
-      this.closureRetHint = hint.ret;
-    }
-    const prevHint = this.returnHint;
-    const prevHintExpr = this.returnHintExpr;
-    this.returnHint = hint;
-    this.returnHintExpr = expr;
-    const result = this.checkExpr(expr);
-    this.returnHint = prevHint;
-    this.returnHintExpr = prevHintExpr;
+    const result = this.checkExprKind(expr, hint);
     // Coerce a constant-int subtree (`-1`, `a + 1` where every leaf is a literal)
     // to an int hint — the bare-literal branch above only catches a lone `IntLit`,
     // so a UnaryOp/BinOp wrapper (`return -1`, `let x: i64 = -1`) would otherwise
@@ -8728,20 +8704,14 @@ export class TypeChecker {
   // ownership arms are the reason it matters: they are the ones that have to be readable
   // in isolation to be reviewable at all. Arms that are a single `return` stay inline —
   // extracting those buys no isolation and costs a jump.
-  private checkExpr(expr: Expr): TypeKind {
-    const tailHint = this.tailHints.get(expr);
-    if (tailHint) {
-      // Deleted first: checkExprWithHint re-enters checkExpr on this same node.
-      this.tailHints.delete(expr);
-      return this.checkExprWithHint(expr, tailHint);
-    }
-    this.canonicalizePreludeVariant(expr);
+  // `expected` goes only to the arms that consume it; see checkExpr.
+  private checkExprKind(expr: Expr, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     switch (expr.kind) {
       case "IntLit":
         // Context-free int literals default to i64 (decision 2026-07-13): this codebase is
         // i64-dominant (arithmetic, indices, loop counters); i32 is the annotated exception.
-        // Literals WITH a target-type hint still coerce via checkExprWithHint (let x: i32 = 5).
+        // Literals WITH a target-type hint still coerce via checkExpr's hint path (let x: i32 = 5).
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
       case "FloatLit":
         return this.setType(expr, { tag: "float", bits: 64 });
@@ -8759,7 +8729,7 @@ export class TypeChecker {
       case "UnaryOp":
         return this.checkUnaryOpExpr(expr);
       case "Call":
-        return this.checkCallExpr(expr);
+        return this.checkCallExpr(expr, expected);
       case "StructLit":
         return this.checkStructLitExpr(expr);
       case "FieldAccess":
@@ -8771,7 +8741,7 @@ export class TypeChecker {
       case "IndexAccess":
         return this.checkIndexAccessExpr(expr);
       case "EnumLit":
-        return this.checkEnumLitExpr(expr);
+        return this.checkEnumLitExpr(expr, expected);
       case "Unwrap":
         return this.checkUnwrapExpr(expr);
       case "Propagate":
@@ -8781,18 +8751,18 @@ export class TypeChecker {
       case "CastExpr":
         return this.checkCastExprExpr(expr);
       case "Closure":
-        return this.checkClosureExpr(expr);
+        return this.checkClosureExpr(expr, expected);
       case "MethodCall":
-        return this.checkMethodCallExpr(expr);
+        return this.checkMethodCallExpr(expr, expected);
       case "RangeExpr":
         this.error("range expressions can only be used in 'for' loops", sp);
         return this.setType(expr, { tag: "unknown" });
       case "IsExpr":
         return this.checkIsExprExpr(expr);
       case "IfExpr":
-        return this.checkIfExprExpr(expr);
+        return this.checkIfExprExpr(expr, expected);
       case "MatchExpr":
-        return this.checkMatchExprExpr(expr);
+        return this.checkMatchExprExpr(expr, expected);
     }
     // A missing arm here is a SILENT skip: the walker simply does not descend, and every
     // analysis built on it stops seeing that subtree with no error to say so. Binding the
@@ -8892,8 +8862,20 @@ export class TypeChecker {
       if (rt.tag !== "bool" && rt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${this.show(rt)}`, sp);
       return this.setType(expr, { tag: "bool" });
     }
-    let lt = this.checkExpr(expr.left);
-    let rt = this.checkExpr(expr.right);
+    // An operand that takes its type from context (an if/match whose arms are literals,
+    // `Option.None`) gets the other operand's type as its expected type: synthesise one
+    // side, check the other against it. Left to right as evaluation runs, except an
+    // argument-less enum literal on the left, which has no effects to order.
+    const contextTyped = (e: Expr) => e.kind === "IfExpr" || e.kind === "MatchExpr" || e.kind === "EnumLit";
+    const sibling = (t: TypeKind) => t.tag === "unknown" ? null : t;
+    let lt: TypeKind, rt: TypeKind;
+    if (expr.left.kind === "EnumLit" && expr.left.args.length === 0 && !contextTyped(expr.right)) {
+      rt = this.checkExpr(expr.right);
+      lt = this.checkExpr(expr.left, sibling(rt));
+    } else {
+      lt = this.checkExpr(expr.left);
+      rt = this.checkExpr(expr.right, contextTyped(expr.right) ? sibling(lt) : null);
+    }
     // `x == f64.NAN` / `!=` is a dead comparison: NaN equals nothing, itself included,
     // so the branch is unreachable (==) or always taken (!=). Steer to isNan.
     if (expr.op === "==" || expr.op === "!=") {
@@ -8985,7 +8967,17 @@ export class TypeChecker {
             for (const [, v] of info.variants) {
               if (v.fields.length > 0) { hasPayload = true; break; }
             }
-            if (hasPayload) {
+            // Against a payload-free variant literal (`o == Option.None`) equality is
+            // the tag test `o is Option.None`, which needs no payload comparison.
+            const variantSide = (e: Expr) => {
+              if (e.kind !== "EnumLit" || e.args.length !== 0 || this.staticCalls.has(e)) return null;
+              const v = info.variants.get(e.variant);
+              return v && v.fields.length === 0 ? v : null;
+            };
+            const rv = variantSide(expr.right), lv = rv ? null : variantSide(expr.left);
+            if (hasPayload && typeEq(lt, rt) && (rv || lv)) {
+              this.variantTagCompares.set(expr, { operand: rv ? expr.left : expr.right, tag: (rv ?? lv)!.tag });
+            } else if (hasPayload) {
               this.error(`cannot use '${expr.op}' on enum '${lt.name}' with payload-bearing variants`, sp, `use 'match' to compare`);
             }
           }
@@ -9087,7 +9079,7 @@ export class TypeChecker {
     return userFnShadowsBuiltin(name, { functions: this.functions, genericFns: this.genericFns });
   }
 
-  private checkCallExpr(expr: ExprOf<"Call">): TypeKind {
+  private checkCallExpr(expr: ExprOf<"Call">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     this.lintBorrowThatClones(expr);
     // `old(e)` is contract-only syntax, not a function: it names the value `e` held when
@@ -9260,7 +9252,7 @@ export class TypeChecker {
       if (!place.mutable) this.error(`cannot replace through an immutable place`, expr.args[0].span, `declare it with 'var'`);
       // value moves in, old occupant moves out to the caller — the place stays valid,
       // so it is NOT invalidated here (only the by-value argument is consumed).
-      const vt = this.checkExprWithHint(expr.args[1], place.type);
+      const vt = this.checkExpr(expr.args[1], place.type);
       if (vt.tag !== "unknown" && place.type.tag !== "unknown" && !typeEq(vt, place.type)) {
         this.error(`replace: value type ${this.show(vt)} does not match place type ${this.show(place.type)}`, expr.args[1].span);
       }
@@ -9468,8 +9460,7 @@ export class TypeChecker {
 
       // infer missing type params from return type hint
       let missing = genericFn.typeParams.filter(p => !typeMap.has(p));
-      const expected = this.expectedTypeOf(expr);
-      if (missing.length > 0 && expected) {
+        if (missing.length > 0 && expected) {
         this.inferTypeParamsFromHint(genericFn.decl.retType, expected, genericFn.typeParams, typeMap);
         missing = genericFn.typeParams.filter(p => !typeMap.has(p));
       }
@@ -9543,7 +9534,7 @@ export class TypeChecker {
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
           const paramType = fnType.params[i];
           const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-          const argType = this.checkExprWithHint(expr.args[i], hint);
+          const argType = this.checkExpr(expr.args[i], hint);
           if (paramType.tag === "ref") {
             if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
               continue;
@@ -9578,7 +9569,7 @@ export class TypeChecker {
       }
       // Promise(fn) → Promise<T>.run(fn) with T inferred from closure return type
       if (expr.func === "Promise" && this.genericStructs.has("Promise") && expr.args.length === 1) {
-        const argType = this.checkExprWithHint(expr.args[0], { tag: "fn", params: [], ret: { tag: "unknown" } });
+        const argType = this.checkExpr(expr.args[0], { tag: "fn", params: [], ret: { tag: "unknown" } });
         if (argType.tag !== "fn") {
           this.error(`Promise() argument must be a function`, sp);
           return this.setType(expr, { tag: "unknown" });
@@ -9654,7 +9645,7 @@ export class TypeChecker {
     for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
       const paramType = sig.params[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-      const argType = this.checkExprWithHint(expr.args[i], hint);
+      const argType = this.checkExpr(expr.args[i], hint);
       if (paramType.tag === "ref") {
         if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
           // A `&[T]` slice is a %Vec *value*, not a bare pointer. To match the `ptr`
@@ -9796,7 +9787,7 @@ export class TypeChecker {
     for (const f of expr.fields) {
       const fieldDef = hintInfo.fields.find(d => d.name === f.name);
       if (!fieldDef) continue;
-      let valType = this.checkExprWithHint(f.value, fieldDef.type);
+      let valType = this.checkExpr(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);
         valType = fieldDef.type;
@@ -9898,7 +9889,7 @@ export class TypeChecker {
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
       if (!fieldDef) continue;
-      let valType = this.checkExprWithHint(f.value, fieldDef.type);
+      let valType = this.checkExpr(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);
         valType = fieldDef.type;
@@ -10065,7 +10056,7 @@ export class TypeChecker {
   }
 
   private checkArrayRepeatExpr(expr: ExprOf<"ArrayRepeat">): TypeKind {
-    const elemType = this.checkExprWithHint(expr.value, null);
+    const elemType = this.checkExpr(expr.value, null);
     return this.setType(expr, { tag: "array", element: elemType, size: expr.count });
   }
 
@@ -10110,7 +10101,7 @@ export class TypeChecker {
     for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
       const paramType = expectedParams[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-      const argType = this.checkExprWithHint(expr.args[i], hint);
+      const argType = this.checkExpr(expr.args[i], hint);
       if (paramType.tag === "ref") {
         if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
           this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
@@ -10130,7 +10121,7 @@ export class TypeChecker {
     return paramOffset;
   }
 
-  private checkEnumLitExpr(expr: ExprOf<"EnumLit">): TypeKind {
+  private checkEnumLitExpr(expr: ExprOf<"EnumLit">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     // Promise.all(args) / Promise.race(args) → promiseAll(args) / promiseRace(args)
     if (expr.enumName === "Promise" && (expr.variant === "all" || expr.variant === "race")) {
@@ -10247,7 +10238,7 @@ export class TypeChecker {
     // sees the same shape the turbofish produces.
     if ((!expr.typeArgs || expr.typeArgs.length === 0) && this.genericStructs.has(expr.enumName)
         && !this.enums.has(expr.enumName) && !this.structs.has(expr.enumName)) {
-      const inferred = this.inferGenericStaticTypeArgs(expr);
+      const inferred = this.inferGenericStaticTypeArgs(expr, expected);
       if (inferred === "argError") return this.setType(expr, { tag: "unknown" });
       if (inferred) expr.typeArgs = inferred;
     }
@@ -10275,7 +10266,7 @@ export class TypeChecker {
           return this.setType(expr, sig.ret);
         }
       }
-      const asMethod2 = this.staticCallOnVariable(expr);
+      const asMethod2 = this.staticCallOnVariable(expr, expected);
       if (asMethod2) return asMethod2;
       this.error(`'${expr.enumName}<...>' has no static method '${expr.variant}'`, sp);
       return this.setType(expr, { tag: "unknown" });
@@ -10318,9 +10309,9 @@ export class TypeChecker {
       const genericKey = `${expr.enumName}$${expr.variant}`;
       const genericTpl = this.genericMethods.get(genericKey);
       if (genericTpl && genericTpl.decl.params[0]?.name !== "self") {
-        return this.checkGenericStaticMethodCall(expr, genericKey, sp);
+        return this.checkGenericStaticMethodCall(expr, genericKey, sp, expected);
       }
-      const asMethod = this.staticCallOnVariable(expr);
+      const asMethod = this.staticCallOnVariable(expr, expected);
       if (asMethod) return asMethod;
       this.errorUnknownStatic(expr.enumName, expr.variant, sp);
       return this.setType(expr, { tag: "unknown" });
@@ -10331,7 +10322,7 @@ export class TypeChecker {
       this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
     }
     for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
-      let argType = this.checkExprWithHint(expr.args[i], variant.fields[i]);
+      let argType = this.checkExpr(expr.args[i], variant.fields[i]);
       if (variant.fields[i].tag === "int" && argType.tag === "int" && !typeEq(variant.fields[i], argType) && this.isConstIntExpr(expr.args[i])) {
         this.retypeConstInt(expr.args[i], variant.fields[i]);
         argType = variant.fields[i];
@@ -10410,7 +10401,7 @@ export class TypeChecker {
       this.error(`'??' requires Option or Result type, got ${this.show(operandType)}`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
-    const defaultType = this.checkExprWithHint(expr.default, inner);
+    const defaultType = this.checkExpr(expr.default, inner);
     if (!typeEq(inner, defaultType) && defaultType.tag !== "unknown") {
       this.error(`'??' default type mismatch: expected ${this.show(inner)}, got ${this.show(defaultType)}`, sp);
     }
@@ -10462,12 +10453,10 @@ export class TypeChecker {
     return this.setType(expr, toType);
   }
 
-  private checkClosureExpr(expr: ExprOf<"Closure">): TypeKind {
+  private checkClosureExpr(expr: ExprOf<"Closure">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
-    const paramHints = this.closureParamHints;
-    this.closureParamHints = null;
-    const retHint = this.closureRetHint;
-    this.closureRetHint = null;
+    const paramHints = expected?.tag === "fn" ? expected.params : null;
+    const retHint = expected?.tag === "fn" ? expected.ret : null;
     this.pushScope();
     const frame = { depth: this.scopes.length - 1, captures: new Map<string, CaptureInfo>() };
     this.closureFrames.push(frame);
@@ -10558,7 +10547,7 @@ export class TypeChecker {
       : { tag: "fn", params: paramTypes, ret: inferredRet });
   }
 
-  private checkMethodCallExpr(expr: ExprOf<"MethodCall">): TypeKind {
+  private checkMethodCallExpr(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
       // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md).
@@ -10651,7 +10640,7 @@ export class TypeChecker {
           return this.setType(expr, inner);
         }
         if (inner) {
-          const at = this.checkExprWithHint(expr.args[0], inner);
+          const at = this.checkExpr(expr.args[0], inner);
           if (!typeEq(inner, at) && at.tag !== "unknown") {
             this.error(`'unwrapOr': default must be ${this.show(inner)}, got ${this.show(at)}`, sp);
           }
@@ -10674,7 +10663,7 @@ export class TypeChecker {
         const inner = this.unwrapableInner(objType);
         if (!inner) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbType.tag !== "fn") {
           this.error(`'map' argument must be a function`, sp);
@@ -10698,7 +10687,7 @@ export class TypeChecker {
         }
         if (inner) {
           const cbHint: TypeKind = { tag: "fn", params: [], ret: inner };
-          const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+          const cbType = this.checkExpr(expr.args[0], cbHint);
           this.checkCallbackSig(cbType, cbHint, "unwrapOrElse", sp);
           if (cbType.tag !== "fn") {
             this.error(`'unwrapOrElse' argument must be a function`, sp);
@@ -10723,7 +10712,7 @@ export class TypeChecker {
         const inner = this.unwrapableInner(objType);
         if (!inner) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "andThen", sp);
         if (cbType.tag !== "fn") {
           this.error(`'andThen' argument must be a function`, sp);
@@ -10745,7 +10734,7 @@ export class TypeChecker {
         const inner = this.unwrapableInner(objType);
         if (!inner) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [], ret: objType };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "orElse", sp);
         if (cbType.tag !== "fn") {
           this.error(`'orElse' argument must be a function`, sp);
@@ -10780,7 +10769,7 @@ export class TypeChecker {
           return this.setType(expr, inner);
         }
         if (inner) {
-          const at = this.checkExprWithHint(expr.args[0], inner);
+          const at = this.checkExpr(expr.args[0], inner);
           if (!typeEq(inner, at) && at.tag !== "unknown") {
             this.error(`'unwrapOr': default must be ${this.show(inner)}, got ${this.show(at)}`, sp);
           }
@@ -10801,7 +10790,7 @@ export class TypeChecker {
           this.error(`'context' needs the prelude's Error and ErrorContext (compiled with --no-prelude?)`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
-        const noteT = this.checkExprWithHint(expr.args[0], { tag: "string" });
+        const noteT = this.checkExpr(expr.args[0], { tag: "string" });
         if (noteT.tag !== "string" && noteT.tag !== "unknown") {
           this.error(`'context': note must be a string, got ${this.show(noteT)}`, sp);
         }
@@ -10824,7 +10813,7 @@ export class TypeChecker {
         const errT = this.unwrapableErr(objType);
         if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbType.tag !== "fn") {
           this.error(`'map' argument must be a function`, sp);
@@ -10846,7 +10835,7 @@ export class TypeChecker {
         const errT = this.unwrapableErr(objType);
         if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner: errT, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "mapErr", sp);
         if (cbType.tag !== "fn") {
           this.error(`'mapErr' argument must be a function`, sp);
@@ -10869,7 +10858,7 @@ export class TypeChecker {
         const errT = this.unwrapableErr(objType);
         if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "andThen", sp);
         if (cbType.tag !== "fn") {
           this.error(`'andThen' argument must be a function`, sp);
@@ -10903,7 +10892,7 @@ export class TypeChecker {
         }
         if (inner && errT) {
           const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner: errT, mutable: false }], ret: inner };
-          const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+          const cbType = this.checkExpr(expr.args[0], cbHint);
           this.checkCallbackSig(cbType, cbHint, "unwrapOrElse", sp);
           if (cbType.tag !== "fn") {
             this.error(`'unwrapOrElse' argument must be a function`, sp);
@@ -10928,7 +10917,7 @@ export class TypeChecker {
         const errT = this.unwrapableErr(objType);
         if (!inner || !errT) return this.setType(expr, { tag: "unknown" });
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner: errT, mutable: false }], ret: { tag: "unknown" } };
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "orElse", sp);
         if (cbType.tag !== "fn") {
           this.error(`'orElse' argument must be a function`, sp);
@@ -10957,7 +10946,7 @@ export class TypeChecker {
         // Must return, not fall through: `this.error` accumulates a diagnostic
         // and keeps going, so with zero args the `args[0]` below is undefined.
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const argType = this.checkExprWithHint(expr.args[0], objType);
+        const argType = this.checkExpr(expr.args[0], objType);
         if (!typeEq(objType, argType) && argType.tag !== "unknown") {
           this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
         }
@@ -10965,7 +10954,7 @@ export class TypeChecker {
       }
       if (checkedMethods.includes(expr.method)) {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const argType = this.checkExprWithHint(expr.args[0], objType);
+        const argType = this.checkExpr(expr.args[0], objType);
         if (!typeEq(objType, argType) && argType.tag !== "unknown") {
           this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
         }
@@ -10991,7 +10980,7 @@ export class TypeChecker {
       if (expr.method === "rotateLeft" || expr.method === "rotateRight") {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
         else {
-          const at = this.checkExprWithHint(expr.args[0], objType);
+          const at = this.checkExpr(expr.args[0], objType);
           if (!typeEq(objType, at) && at.tag !== "unknown") {
             this.error(`'${expr.method}': shift amount must be ${this.show(objType)}, got ${this.show(at)}`, sp);
           }
@@ -11049,7 +11038,7 @@ export class TypeChecker {
         // element type. Resolve the shared placeholder object in place so the
         // binding, its exprType, and every later use all see the real element.
         if (this.inferVecElems.has(objType.element as object)) {
-          const argType = this.checkExprWithHint(expr.args[0], null);
+          const argType = this.checkExpr(expr.args[0], null);
           // A pushed borrow would outlive the scope that owns the borrowed
           // value — the Vec survives it. Same rule as a struct field.
           if (argType.tag === "ref") {
@@ -11061,7 +11050,7 @@ export class TypeChecker {
           this.holdPointerArgsIn(expr.object, expr.args);
           return this.setType(expr, { tag: "void" });
         }
-        const argType = this.checkExprWithHint(expr.args[0], objType.element);
+        const argType = this.checkExpr(expr.args[0], objType.element);
         if (argType.tag === "ref") {
           this.error(`push: cannot store a reference in a Vec`, sp, `references are second-class — push an owned value (clone it if needed)`);
         }
@@ -11105,7 +11094,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -11116,7 +11105,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "filter", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'filter' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -11127,7 +11116,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "void" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "each", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "void" });
@@ -11137,7 +11126,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "int", bits: 64, signed: true }, elemRef], ret: { tag: "void" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "enumerate", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "void" });
@@ -11147,7 +11136,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "find", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'find' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -11158,7 +11147,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "any", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "bool" });
@@ -11168,7 +11157,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "all", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "bool" });
@@ -11217,7 +11206,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [accType, elemRef], ret: accType };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[1], cbHint);
+        const cbType = this.checkExpr(expr.args[1], cbHint);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'${expr.method}' argument 2 must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
         // `fold` checked the callback's RETURN against the accumulator and never its
@@ -11239,7 +11228,7 @@ export class TypeChecker {
       }
       if (expr.method === "contains") {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument`, sp); return this.setType(expr, { tag: "bool" }); }
-        const argType = this.checkExprWithHint(expr.args[0], objType.element);
+        const argType = this.checkExpr(expr.args[0], objType.element);
         if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
           this.error(`'contains': expected ${this.show(objType.element)}, got ${this.show(argType)}`, sp);
         }
@@ -11270,7 +11259,7 @@ export class TypeChecker {
         }
         const idxType = this.checkExpr(expr.args[0]);
         if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'insert' index must be an integer, got ${this.show(idxType)}`, sp); }
-        const valType = this.checkExprWithHint(expr.args[1], objType.element);
+        const valType = this.checkExpr(expr.args[1], objType.element);
         if (!typeEq(objType.element, valType) && valType.tag !== "unknown") {
           this.error(`'insert' value: expected ${this.show(objType.element)}, got ${this.show(valType)}`, sp);
         }
@@ -11306,7 +11295,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "int", bits: 32, signed: true } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortBy", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'sortBy' argument must be a comparator function`, sp); }
@@ -11323,7 +11312,7 @@ export class TypeChecker {
         // The one position where a closure may hand back a field of its borrowed
         // parameter: the sort reads the key to compare it and never stores or drops it.
         this.keyExtractorDepth++;
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortByKey", sp);
         this.keyExtractorDepth--;
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11390,7 +11379,7 @@ export class TypeChecker {
             `use 'position' with a predicate instead`);
           return this.setType(expr, { tag: "unknown" });
         }
-        const argType = this.checkExprWithHint(expr.args[0], el);
+        const argType = this.checkExpr(expr.args[0], el);
         if (!typeEq(el, argType) && argType.tag !== "unknown") {
           this.error(`'indexOf': expected ${this.show(el)}, got ${this.show(argType)}`, sp);
         }
@@ -11401,7 +11390,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "position", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'position' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -11414,7 +11403,7 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot extend an immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
-        const otherType = this.checkExprWithHint(expr.args[0], objType);
+        const otherType = this.checkExpr(expr.args[0], objType);
         if (otherType.tag === "ref") {
           this.error(`'extend' takes ownership of the other Vec`, sp, `clone it if you still need it: 'v.extend(other.clone())'`);
         } else if (!typeEq(objType, otherType) && otherType.tag !== "unknown") {
@@ -11433,7 +11422,7 @@ export class TypeChecker {
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+        const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "retain", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'retain' argument must be a predicate function`, sp); }
@@ -11465,11 +11454,11 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot insert into immutable HashMap`, sp, `declare with 'var' to make it mutable`);
         }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`insert key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
-        const valType = this.checkExprWithHint(expr.args[1], objType.value);
+        const valType = this.checkExpr(expr.args[1], objType.value);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`insert value: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
@@ -11480,7 +11469,7 @@ export class TypeChecker {
       }
       if (expr.method === "get") {
         if (expr.args.length !== 1) { this.error(`'get' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`get key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
@@ -11490,11 +11479,11 @@ export class TypeChecker {
       }
       if (expr.method === "getOrDefault") {
         if (expr.args.length !== 2) { this.error(`'getOrDefault' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`getOrDefault key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
-        const valType = this.checkExprWithHint(expr.args[1], objType.value);
+        const valType = this.checkExpr(expr.args[1], objType.value);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
@@ -11508,34 +11497,34 @@ export class TypeChecker {
       // remove from the map it is reaching into.
       if (expr.method === "modify") {
         if (expr.args.length !== 2) { this.error(`'modify' expects 2 arguments (key, callback), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`modify key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const valRef: TypeKind = { tag: "ref", inner: objType.value, mutable: true };
         const cbHint: TypeKind = { tag: "fn", params: [valRef], ret: { tag: "void" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[1], cbHint);
+        const cbSig = this.checkExpr(expr.args[1], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "modify", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "bool" });
       }
       if (expr.method === "getOrInsertWith") {
         if (expr.args.length !== 2) { this.error(`'getOrInsertWith' expects 2 arguments (key, init), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`getOrInsertWith key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const cbHint: TypeKind = { tag: "fn", params: [], ret: objType.value };
         const cbBorrow = this.borrowDuringCallback(expr.object);
-        const cbSig = this.checkExprWithHint(expr.args[1], cbHint);
+        const cbSig = this.checkExpr(expr.args[1], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "bool" });
       }
       if (expr.method === "contains") {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`contains key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
@@ -11546,7 +11535,7 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot remove from immutable HashMap`, sp, `declare with 'var' to make it mutable`);
         }
-        const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+        const keyType = this.checkExpr(expr.args[0], objType.key);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`remove key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
@@ -11612,7 +11601,7 @@ export class TypeChecker {
         // explicit `as u8` only because this checked without a hint, unlike Vec.push.
         // An out-of-range literal is still rejected by the coercion itself.
         const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
-        const argType = this.checkExprWithHint(expr.args[0], u8t);
+        const argType = this.checkExpr(expr.args[0], u8t);
         if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
           this.error(`string.push: expected u8, got ${this.show(argType)}`, sp);
         }
@@ -11783,7 +11772,7 @@ export class TypeChecker {
             const expected = ifaceMethod.params[i + 1];
             if (!expected) break;
             const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
-            const argType = this.checkExprWithHint(expr.args[i], bare);
+            const argType = this.checkExpr(expr.args[i], bare);
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
               this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
@@ -11811,7 +11800,7 @@ export class TypeChecker {
     // resolution path: until a call supplies them there is no signature to resolve against.
     const genericKey = `${objTName}$${expr.method}`;
     if (this.genericMethods.has(genericKey)) {
-      const typeArgs = this.inferMethodTypeArgs(genericKey, expr);
+      const typeArgs = this.inferMethodTypeArgs(genericKey, expr, expected);
       if (!typeArgs) {
         const tpl = must(this.genericMethods, genericKey, "generic methods");
         const unresolved = (tpl.decl.typeParams ?? []).map(t => `'${t.name}'`).join(", ");
@@ -11846,7 +11835,7 @@ export class TypeChecker {
       for (let i = 0; i < expr.args.length; i++) {
         const expected = sig.params[i + 1];
         if (!expected) break;
-        const argType = this.checkExprWithHint(expr.args[i], expected.type.tag === "ref" ? expected.type.inner : expected.type);
+        const argType = this.checkExpr(expr.args[i], expected.type.tag === "ref" ? expected.type.inner : expected.type);
         const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
         if (!typeEq(bare, argType) && argType.tag !== "unknown") {
           // Only a struct: codegen's stringifier has no scalar path, so the
@@ -11910,7 +11899,7 @@ export class TypeChecker {
             const expected = fnType.params[i];
             if (!expected) break;
             const bare = expected.tag === "ref" ? expected.inner : expected;
-            const argType = this.checkExprWithHint(expr.args[i], bare);
+            const argType = this.checkExpr(expr.args[i], bare);
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
               this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
@@ -11959,7 +11948,7 @@ export class TypeChecker {
     return this.setType(expr, { tag: "bool" });
   }
 
-  private checkIfExprExpr(expr: ExprOf<"IfExpr">): TypeKind {
+  private checkIfExprExpr(expr: ExprOf<"IfExpr">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     const condType = this.checkExpr(expr.cond);
     if (condType.tag !== "bool" && condType.tag !== "unknown") {
@@ -11967,16 +11956,10 @@ export class TypeChecker {
     }
     const fnRetType = this.currentFnRetType;
     const preMoves = this.snapshotMoveState();
-    const want = this.expectedTypeOf(expr);
-    if (want) {
-      for (const body of [expr.thenBody, expr.elseBody]) {
-        const t = this.tailExprOf(body);
-        if (t) this.tailHints.set(t, want);
-      }
-    }
+    const want = expected;
 
     this.pushScope();
-    this.checkValueBody(expr.thenBody, fnRetType);
+    this.checkValueBody(expr.thenBody, fnRetType, want);
     this.popScope();
     const thenType = this.blockExprType(expr.thenBody);
 
@@ -11984,7 +11967,7 @@ export class TypeChecker {
     this.restoreMoveState(preMoves);
 
     this.pushScope();
-    this.checkValueBody(expr.elseBody, fnRetType);
+    this.checkValueBody(expr.elseBody, fnRetType, want);
     this.popScope();
     const elseType = this.blockExprType(expr.elseBody);
 
@@ -12021,16 +12004,10 @@ export class TypeChecker {
     return this.setType(expr, finalThen.tag !== "unknown" ? finalThen : finalElse);
   }
 
-  private checkMatchExprExpr(expr: ExprOf<"MatchExpr">): TypeKind {
+  private checkMatchExprExpr(expr: ExprOf<"MatchExpr">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
-    const want = this.expectedTypeOf(expr);
-    if (want) {
-      for (const arm of expr.arms) {
-        const t = this.tailExprOf(arm.body);
-        if (t) this.tailHints.set(t, want);
-      }
-    }
-    const armTypes = this.checkMatchLike(expr.subject, expr.arms, sp, this.currentFnRetType);
+    const want = expected;
+    const armTypes = this.checkMatchLike(expr.subject, expr.arms, sp, this.currentFnRetType, false, want);
     // Unify arm value types. Coerce const-int arms to an int target (the
     // outer hint, else the first concrete non-literal arm) so
     // `match x { A => 1, B => 2 }` in an i64 slot doesn't stall at i32 —
@@ -12204,7 +12181,7 @@ export class TypeChecker {
   // the real one. Only `var b = ...; match b { ... }` can observe the discard.
   // Does an element of a literal fit the annotated element type?
   //
-  // Both array-literal paths used to call `checkExprWithHint(elem, hint.element)` and throw
+  // Both array-literal paths used to call `checkExpr(elem, hint.element)` and throw
   // the answer away, so nothing ever compared them: `var x: [i64; 2] = ["a", "b"]` and
   // `var v: Vec<i64> = ["a"]` type-checked, and the mismatch surfaced as an LLVM error
   // about `%String` where an `i64` was expected — a type error escaping to clang, reported
@@ -12221,7 +12198,7 @@ export class TypeChecker {
 
   // Does a callback's DECLARED signature match what the combinator will actually pass it?
   //
-  // Every combinator built a `cbHint` and handed it to `checkExprWithHint`, and at best
+  // Every combinator built a `cbHint` and handed it to `checkExpr`, and at best
   // asked whether the answer was a function at all. Nobody compared the parameters, so a
   // closure could declare any type it liked and receive something else:
   //
@@ -12386,7 +12363,7 @@ export class TypeChecker {
       "match".length);
   }
 
-  private checkMatchLike(subject: Expr, arms: MatchArm[], sp: Span | undefined, fnRetType: TypeKind, isStmt = false): TypeKind[] {
+  private checkMatchLike(subject: Expr, arms: MatchArm[], sp: Span | undefined, fnRetType: TypeKind, isStmt = false, expected: TypeKind | null = null): TypeKind[] {
     const armTypes: TypeKind[] = [];
     const rawSubjType = this.checkExpr(subject);
     // Both match lints are advisory rewrites, so a hit inside std/ or a dependency is not
@@ -12471,7 +12448,7 @@ export class TypeChecker {
         this.restoreMoveState(preMoves);
         this.pushScope();
         if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
-        else this.checkValueBody(arm.body, fnRetType);
+        else this.checkValueBody(arm.body, fnRetType, expected);
         armTypes.push(this.blockExprType(arm.body));
         this.popScope();
         // An arm that always exits never falls through to the code after the match,
@@ -12574,7 +12551,7 @@ export class TypeChecker {
           }
         }
         if (isStmt) for (const s of arm.body) this.checkStmt(s, fnRetType);
-        else this.checkValueBody(arm.body, fnRetType);
+        else this.checkValueBody(arm.body, fnRetType, expected);
         if (patternMovedInfo) this.movedByPattern.delete(patternMovedInfo);
         armTypes.push(this.blockExprType(arm.body));
         this.popScope();
@@ -12627,15 +12604,12 @@ export class TypeChecker {
   }
 
   // The tail of an `if`/`match` arm in value position is the arm's value, not a
-  // discarded statement, so `let next = if fwd { n.next } else { n.prev }` must not
-  // warn "unused Option value" on each arm (it did, and pushed people back to the
-  // statement form). Registered before the body is checked; ExprStmt consults it.
-  private valueTails = new Set<Expr>();
-
-  private checkValueBody(body: Stmt[], fnRetType: TypeKind): void {
+  // discarded statement: it is checked against the if/match's expected type, and
+  // `let next = if fwd { n.next } else { n.prev }` must not warn "unused Option value"
+  // on each arm (it did, and pushed people back to the statement form).
+  private checkValueBody(body: Stmt[], fnRetType: TypeKind, expected: TypeKind | null): void {
     const tail = this.tailExprOf(body);
-    if (tail) this.valueTails.add(tail);
-    for (const s of body) this.checkStmt(s, fnRetType);
+    for (const s of body) this.checkStmt(s, fnRetType, s.kind === "ExprStmt" && s.expr === tail ? { expected } : null);
   }
 
   // The integer-literal leaf expressions an expression's value is built from —
@@ -12650,9 +12624,9 @@ export class TypeChecker {
   //
   // Called only from the two "no such static" error paths, so anything that
   // resolves as a static call today keeps resolving that way.
-  private staticCallOnVariable(expr: any): TypeKind | null {
+  private staticCallOnVariable(expr: any, expected: TypeKind | null): TypeKind | null {
     if (!this.rewriteStaticToMember(expr)) return null;
-    return this.checkExpr(expr as Expr);
+    return this.checkExpr(expr as Expr, expected);
   }
 
   // The rewrite half of staticCallOnVariable, without the re-check: mutates the

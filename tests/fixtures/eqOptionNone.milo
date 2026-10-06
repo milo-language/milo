@@ -1,0 +1,31 @@
+// `Option.None` compared with a typed Option takes its T from the other operand. It used
+// to report "cannot infer type parameter(s) 'T' for Option.None".
+fn find(xs: &Vec<i64>, want: i64): Option<i64> {
+    for x in xs {
+        if x == want {
+            return Option.Some(x)
+        }
+    }
+    return Option.None
+}
+
+pub fn main(): i32 {
+    let xs: Vec<i64> = [1, 2, 3]
+    let o = find(xs, 9)
+    if o == Option.None {
+        print("none")
+    }
+    let p = find(xs, 2)
+    if p != Option.None {
+        print("found")
+    }
+    if Option.None == p {
+        print("wrong")
+    } else {
+        print("left side too")
+    }
+    return 0
+}
+// @expect: none
+// @expect: found
+// @expect: left side too

@@ -1,0 +1,12 @@
+// `==` against a payload-free variant is a tag test; against a variant WITH a payload it
+// would have to compare payloads, which enums do not derive, so it stays an error.
+enum Shape { Dot, Circle(i64) }
+
+pub fn main(): i32 {
+    let s = Shape.Circle(2)
+    if s == Shape.Circle(2) {
+        print("same")
+    }
+    return 0
+}
+// @error: cannot use '==' on enum 'Shape' with payload-bearing variants

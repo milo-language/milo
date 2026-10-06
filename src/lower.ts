@@ -676,6 +676,11 @@ class LowerCtx {
       case "Ident":
         return { kind: "Ident", name: expr.name, type, isMove: this.c.movedExprs.has(expr), span: expr.span };
       case "BinOp": {
+        const tagCompare = this.c.variantTagCompares.get(expr);
+        if (tagCompare) {
+          const isCheck: HIRExpr = { kind: "IsCheck", operand: this.lowerExpr(tagCompare.operand), tag: tagCompare.tag, type: { tag: "bool" }, span: expr.span };
+          return expr.op === "!=" ? { kind: "UnaryOp", op: "!", operand: isCheck, type: { tag: "bool" }, span: expr.span } : isCheck;
+        }
         const resolvedOp = this.c.resolvedOperators.get(expr);
         if (resolvedOp) {
           const args: HIRArg[] = [expr.left, expr.right].map(a => ({

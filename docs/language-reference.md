@@ -1151,6 +1151,11 @@ enum Shape {
 let s = Shape.Circle(3.14)
 ```
 
+`==` and `!=` compare enums without payloads. On an enum with payloads they work only
+against a variant that carries none, where they test the tag: `s == Shape.Point`,
+`opt != Option.None` (the literal takes its type arguments from the other operand).
+Anything else is a `match`.
+
 ### Integer-Repr Enums
 
 A C-like enum with an explicit integer representation — `enum Name: i32 { ... }` — carries no payloads and maps each variant to an integer discriminant. Discriminants auto-assign from `0`, or you set them explicitly with `= N` (sparse and out-of-order is fine; counting resumes after an explicit value):

@@ -1,0 +1,27 @@
+// An if or match next to a typed operand takes that operand's type as its expected type,
+// so its literal arms become u8 here. The arms used to default to i64 and the `+` failed
+// with "type mismatch in '+': u8 vs i64".
+fn cond(): bool {
+    return true
+}
+
+fn pick(): i64 {
+    return 2
+}
+
+pub fn main(): i32 {
+    let a: u8 = 7
+    let c = cond()
+    let b = a + (if c { 1 } else { 2 })
+    print(b.toString())
+    let k = pick()
+    let d = a * (match k { 1 => 3, _ => 5 })
+    print(d.toString())
+    if a == (if c { 7 } else { 0 }) {
+        print("same")
+    }
+    return 0
+}
+// @expect: 8
+// @expect: 35
+// @expect: same

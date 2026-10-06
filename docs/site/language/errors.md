@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 376 distinct messages across 464 programs the compiler must reject.
+Every error message the test suite pins: 377 distinct messages across 465 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -213,6 +213,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot take 'Texture' out of a container by index: it carries @noCopy`](#cannot-take-texture-out-of-a-container-by-index-it-carries-nocopy)
 - [`cannot take a view of a temporary`](#cannot-take-a-view-of-a-temporary)
 - [`cannot take type parameters`](#cannot-take-type-parameters)
+- [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
 - [`casts only to an integer type`](#casts-only-to-an-integer-type)
 - [`closure returns string but can reach the end of its body without a 'return'`](#closure-returns-string-but-can-reach-the-end-of-its-body-without-a-return)
@@ -5385,6 +5386,25 @@ fn main() {
 ```
 
 <sub>[tests/errors/interfaceGenericMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/interfaceGenericMethod.milo)</sub>
+
+## `cannot use '==' on enum 'Shape' with payload-bearing variants` {#cannot-use-on-enum-shape-with-payload-bearing-variants}
+
+`==` against a payload-free variant is a tag test; against a variant WITH a payload it would have to compare payloads, which enums do not derive, so it stays an error.
+
+```milo skip
+enum Shape { Dot, Circle(i64) }
+
+pub fn main(): i32 {
+    let s = Shape.Circle(2)
+    if s == Shape.Circle(2) {
+        print("same")
+    }
+    return 0
+}
+// @error: cannot use '==' on enum 'Shape' with payload-bearing variants
+```
+
+<sub>[tests/errors/eqPayloadVariant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/eqPayloadVariant.milo)</sub>
 
 ## `carries a payload in 'Num'` {#carries-a-payload-in-num}
 
