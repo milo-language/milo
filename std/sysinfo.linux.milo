@@ -50,7 +50,7 @@ pub extern fn getloadavg(loadavg: *f64, nelem: i32): i32
 
 pub fn hostname(): string {
     var buf: [u8; 256] = [0; 256]
-    gethostname(buf, 256)
+    unsafe { gethostname(buf, 256) }
     unsafe {
         return _cstrToString(buf as *u8)
     }
@@ -65,27 +65,27 @@ pub fn cwd(): string {
 }
 
 pub fn pid(): i32 {
-    return getpid()
+    unsafe { return getpid() }
 }
 
 pub fn ppid(): i32 {
-    return getppid()
+    unsafe { return getppid() }
 }
 
 pub fn uid(): u32 {
-    return getuid()
+    unsafe { return getuid() }
 }
 
 pub fn gid(): u32 {
-    return getgid()
+    unsafe { return getgid() }
 }
 
 pub fn euid(): u32 {
-    return geteuid()
+    unsafe { return geteuid() }
 }
 
 pub fn egid(): u32 {
-    return getegid()
+    unsafe { return getegid() }
 }
 
 // The first whitespace-delimited field of `text`, or "" — /proc files are
@@ -117,7 +117,8 @@ fn procField(path: string, key: &string): string {
 
 pub fn cpuCount(): i64 {
     // _SC_NPROCESSORS_ONLN — 84 on Linux (58 on darwin; the numbers are not portable).
-    let n = sysconf(84)
+    var n: i64 = 0
+    unsafe { n = sysconf(84) }
     if n < 1 {
         return 1
     }
@@ -176,7 +177,7 @@ pub fn uptime(): i64 {
 
 pub fn loadAvg(): [f64; 3] {
     var avg: [f64; 3] = [0.0; 3]
-    getloadavg(avg, 3)
+    unsafe { getloadavg(avg, 3) }
     return avg
 }
 
@@ -189,5 +190,5 @@ pub fn osRelease(): string {
 }
 
 pub fn setCwd(path: string): bool {
-    return chdir(path) == 0
+    unsafe { return chdir(path) == 0 }
 }

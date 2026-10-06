@@ -84,7 +84,8 @@ impl TlsStream {
         let SOCK_STREAM: i32 = 1
 
         ensureNetInit()
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var fd: i32 = 0
+        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
@@ -92,7 +93,7 @@ impl TlsStream {
         var addr = makeSockaddr(port, ip)
 
         if connectFdIn(fd, addr) < 0 {
-            close(fd)
+            unsafe { close(fd) }
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
 

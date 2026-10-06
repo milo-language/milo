@@ -233,7 +233,7 @@ pub fn ensureNetInit(): void {
 }
 
 pub fn netErrno(): i32 {
-    return WSAGetLastError()
+    unsafe { return WSAGetLastError() }
 }
 
 // The Winsock analogue of EAGAIN: a non-blocking socket op that cannot complete now.
@@ -258,7 +258,7 @@ pub fn netEinprogress(): i32 {
 pub extern fn closesocket(s: i64): i32
 
 pub fn closeSocket(fd: i32): i32 {
-    return closesocket(fd as i64)
+    unsafe { return closesocket(fd as i64) }
 }
 
 // ── socket data IO seam ──
@@ -350,8 +350,10 @@ pub extern fn IsThreadAFiber(): i32
 thread_local var currentFiber: i64 = 0
 
 pub fn getcontext(ucp: *u8): i32 {
-    if IsThreadAFiber() == 0 {
-        currentFiber = ConvertThreadToFiber(0 as *u8)
+    unsafe {
+        if IsThreadAFiber() == 0 {
+            unsafe { currentFiber = ConvertThreadToFiber(0 as *u8) }
+        }
     }
     unsafe {
         let slot = ucp as *i64
@@ -428,8 +430,10 @@ pub fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64
 // MEM_RELEASE (0x8000) requires the size to be 0 and the address to be the exact base
 // returned by VirtualAlloc — it always frees the whole reservation, unlike munmap.
 pub fn munmap(addr: *u8, _len: i64): i32 {
-    if VirtualFree(addr, 0, 32768 as u32) == 0 {
-        return -1
+    unsafe {
+        if VirtualFree(addr, 0, 32768 as u32) == 0 {
+            return -1
+        }
     }
     return 0
 }
@@ -494,17 +498,17 @@ pub extern fn CloseHandle(handle: i64): i32
 pub extern fn GetCurrentThreadId(): u32
 
 pub fn pthread_mutex_init(mutex: *u8, _attr: *u8): i32 {
-    InitializeSRWLock(mutex)
+    unsafe { InitializeSRWLock(mutex) }
     return 0
 }
 
 pub fn pthread_mutex_lock(mutex: *u8): i32 {
-    AcquireSRWLockExclusive(mutex)
+    unsafe { AcquireSRWLockExclusive(mutex) }
     return 0
 }
 
 pub fn pthread_mutex_unlock(mutex: *u8): i32 {
-    ReleaseSRWLockExclusive(mutex)
+    unsafe { ReleaseSRWLockExclusive(mutex) }
     return 0
 }
 
@@ -514,24 +518,24 @@ pub fn pthread_mutex_destroy(_mutex: *u8): i32 {
 }
 
 pub fn pthread_cond_init(cond: *u8, _attr: *u8): i32 {
-    InitializeConditionVariable(cond)
+    unsafe { InitializeConditionVariable(cond) }
     return 0
 }
 
 // INFINITE (0xFFFFFFFF) and flags 0 = wait on the lock held exclusively, matching the
 // SRWLOCK acquired by pthread_mutex_lock above.
 pub fn pthread_cond_wait(cond: *u8, mutex: *u8): i32 {
-    SleepConditionVariableSRW(cond, mutex, 4294967295 as u32, 0 as u32)
+    unsafe { SleepConditionVariableSRW(cond, mutex, 4294967295 as u32, 0 as u32) }
     return 0
 }
 
 pub fn pthread_cond_signal(cond: *u8): i32 {
-    WakeConditionVariable(cond)
+    unsafe { WakeConditionVariable(cond) }
     return 0
 }
 
 pub fn pthread_cond_broadcast(cond: *u8): i32 {
-    WakeAllConditionVariable(cond)
+    unsafe { WakeAllConditionVariable(cond) }
     return 0
 }
 
@@ -544,7 +548,8 @@ pub fn pthread_cond_destroy(_cond: *u8): i32 {
 // in RCX and return in RAX, and the return value is discarded by every caller in std, so
 // the mismatch is confined to a wider return register than Win32 reads back.
 pub fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
-    let h = CreateThread(0 as *u8, 0, start, arg, 0 as u32, 0 as *u8)
+    var h: i64 = 0
+    unsafe { h = CreateThread(0 as *u8, 0, start, arg, 0 as u32, 0 as *u8) }
     if h == 0 {
         return -1
     }
@@ -556,13 +561,15 @@ pub fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
 }
 
 pub fn pthread_join(thread: i64, _retval: *u8): i32 {
-    WaitForSingleObject(thread, 4294967295 as u32)
-    CloseHandle(thread)
+    unsafe {
+        WaitForSingleObject(thread, 4294967295 as u32)
+        CloseHandle(thread)
+    }
     return 0
 }
 
 pub fn pthread_detach(thread: i64): i32 {
-    CloseHandle(thread)
+    unsafe { CloseHandle(thread) }
     return 0
 }
 
@@ -570,21 +577,21 @@ pub fn pthread_detach(thread: i64): i32 {
 // here (they only compare it for equality to recognize "this same thread"), and unlike
 // GetCurrentThread()'s pseudo-handle it is unique process-wide.
 pub fn pthread_self(): u64 {
-    return GetCurrentThreadId() as u64
+    unsafe { return GetCurrentThreadId() as u64 }
 }
 
 pub fn pthread_rwlock_init(rwlock: *u8, _attr: *u8): i32 {
-    InitializeSRWLock(rwlock)
+    unsafe { InitializeSRWLock(rwlock) }
     return 0
 }
 
 pub fn pthread_rwlock_rdlock(rwlock: *u8): i32 {
-    AcquireSRWLockShared(rwlock)
+    unsafe { AcquireSRWLockShared(rwlock) }
     return 0
 }
 
 pub fn pthread_rwlock_wrlock(rwlock: *u8): i32 {
-    AcquireSRWLockExclusive(rwlock)
+    unsafe { AcquireSRWLockExclusive(rwlock) }
     return 0
 }
 
@@ -592,7 +599,7 @@ pub fn pthread_rwlock_wrlock(rwlock: *u8): i32 {
 // single unlock cannot serve both. std/sync only ever takes these exclusively; a shared
 // reader that reached here would corrupt the lock state, which is why this is exclusive.
 pub fn pthread_rwlock_unlock(rwlock: *u8): i32 {
-    ReleaseSRWLockExclusive(rwlock)
+    unsafe { ReleaseSRWLockExclusive(rwlock) }
     return 0
 }
 
@@ -654,9 +661,9 @@ pub fn gettimeofday(tv: *u8, _tz: *u8): i32 {
 pub fn usleep(usec: u32): i32 {
     let ms = (usec as i64) / 1000
     if ms < 1 {
-        Sleep(1 as u32)
+        unsafe { Sleep(1 as u32) }
     } else {
-        Sleep(ms as u32)
+        unsafe { Sleep(ms as u32) }
     }
     return 0
 }
@@ -670,7 +677,7 @@ pub fn usleep(usec: u32): i32 {
 pub extern fn _pipe(fds: *i32, size: u32, mode: i32): i32
 
 pub fn pipe(fds: *i32): i32 {
-    return _pipe(fds, 4096 as u32, 32768)
+    unsafe { return _pipe(fds, 4096 as u32, 32768) }
 }
 
 // ── fd I/O ──
@@ -728,29 +735,29 @@ pub fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
     if fd < 0 {
         return -1
     }
-    return _read(fd, buf, clampCount(nbyte)) as i64
+    unsafe { return _read(fd, buf, clampCount(nbyte)) as i64 }
 }
 
 pub fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
     if fd < 0 {
         return -1
     }
-    return _write(fd, buf, clampCount(nbyte)) as i64
+    unsafe { return _write(fd, buf, clampCount(nbyte)) as i64 }
 }
 
 pub fn close(fd: i32): i32 {
     if fd < 0 {
         return -1
     }
-    return _close(fd)
+    unsafe { return _close(fd) }
 }
 
 pub fn lseek(fd: i32, offset: i64, whence: i32): i64 {
-    return _lseeki64(fd, offset, whence)
+    unsafe { return _lseeki64(fd, offset, whence) }
 }
 
 pub fn access(path: *u8, mode: i32): i32 {
-    return _access(path, mode)
+    unsafe { return _access(path, mode) }
 }
 
 // <process.h>, not <unistd.h>; the oldnames shim exports `getpid` too, but binding the
@@ -759,7 +766,7 @@ pub fn access(path: *u8, mode: i32): i32 {
 extern fn _getpid(): i32
 
 pub fn getpid(): i32 {
-    return _getpid()
+    unsafe { return _getpid() }
 }
 
 // The bit-bucket device. Windows spells it NUL (case-insensitive, no path); the CRT's

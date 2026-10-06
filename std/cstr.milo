@@ -18,9 +18,11 @@ impl CStr {
         if ptr as i64 == 0 as i64 {
             return Option.None
         }
-        return Option.Some(CStr {
-            _ptr: ptr, _len: strlen(ptr) as i64
-        })
+        unsafe {
+            return Option.Some(CStr {
+                _ptr: ptr, _len: strlen(ptr) as i64
+            })
+        }
     }
 
     fn toString(self: &Self): string {
@@ -47,6 +49,6 @@ impl CStr {
         if self._len != other._len {
             return false
         }
-        return strncmp(self._ptr, other._ptr, self._len) == 0
+        unsafe { return strncmp(self._ptr, other._ptr, self._len) == 0 }
     }
 }

@@ -81,7 +81,7 @@ impl DateTime {
     fn fromEpochLocal(epochSec: i64): DateTime {
         // POSIX doesn't require localtime_r to imply tzset(); call it so TZ
         // changes (and the first call) always take effect.
-        tzset()
+        unsafe { tzset() }
         var t: [i64; 1] = [0; 1]
         t[0] = epochSec
         var tm: [u8; 128] = [0; 128]

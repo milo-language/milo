@@ -551,12 +551,12 @@ pub fn renderResponse(response: &Response, extraHeaders: &Vec<Param>): string {
 
 fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void {
     let resp = renderRaw(status, contentType, body, extraHeaders)
-    write(fd, resp, resp.len)
+    unsafe { write(fd, resp, resp.len) }
 }
 
 fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
     let resp = renderResponse(response, headers)
-    write(fd, resp, resp.len)
+    unsafe { write(fd, resp, resp.len) }
 }
 
 // ── Socket with automatic cleanup ──
@@ -569,7 +569,7 @@ impl Drop for Socket {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
         if self.fd > 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
@@ -587,7 +587,8 @@ fn openListener(port: u16?): Result<Socket> {
     if let Option.Some(p) = port {
         bindPort = p
     }
-    let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+    var rawFd: i32 = 0
+    unsafe { rawFd = socket(AF_INET, SOCK_STREAM, 0) }
     if rawFd < 0 {
         return Result.Err("socket() failed")
     }
@@ -595,18 +596,29 @@ fn openListener(port: u16?): Result<Socket> {
         fd: rawFd
     }
     var one: i32 = 1
-    setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
+    unsafe { setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4) }
     var addr = makeSockaddr(bindPort, 0)
     if bindIn(sock.fd, addr) < 0 {
         return Result.Err("bind() failed")
     }
-    if listen(sock.fd, BACKLOG) < 0 {
-        return Result.Err("listen() failed")
+    unsafe {
+        if listen(sock.fd, BACKLOG) < 0 {
+            return Result.Err("listen() failed")
+        }
     }
     // family-agnostic: works for a v4 or v6 listener
     let actualPort = getSockPort(sock.fd)
     print($"listening on http://localhost:{actualPort}")
     return Result.Ok(sock)
+}
+
+// accept() on `listenFd`, discarding the peer address; -1 on failure. The address is
+// storage-sized: accept lets the kernel pick the peer family, and a v6 peer does not
+// fit a 16-byte sockaddr_in.
+fn acceptPeer(listenFd: i32): i32 {
+    var clientAddr = makeZeroedSockaddrStorage()
+    var addrlen: u32 = sockAddrStorageLen()
+    unsafe { return accept(listenFd, &mut clientAddr, &mut addrlen) }
 }
 
 // The simplest server: every request goes to `handler`. Good for a static file server
@@ -616,24 +628,21 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
     let sock = openListener(port)?
 
     while true {
-        // storage-sized: accept lets the kernel pick the peer family, and a v6 peer
-        // does not fit a 16-byte sockaddr_in
-        var clientAddr = makeZeroedSockaddrStorage()
-        var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(sock.fd, &mut clientAddr, &mut addrlen)
+        let clientFd = acceptPeer(sock.fd)
         if clientFd < 0 {
             continue
         }
 
         var buf: [u8; 8192] = [0; 8192]
-        let n = read(clientFd, buf, BUF_SIZE)
+        var n: i64 = 0
+        unsafe { n = read(clientFd, buf, BUF_SIZE) }
         if n > 0 {
             let req = parseRequest(buf, n)
             let resp = handler(req)
             let noHeaders: Vec<Param> = []
             sendResponse(clientFd, resp, noHeaders)
         }
-        close(clientFd)
+        unsafe { close(clientFd) }
     }
     return Result.Err("server exited")
 }
@@ -757,23 +766,20 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
     let sock = openListener(port)?
 
     while true {
-        // storage-sized: accept lets the kernel pick the peer family, and a v6 peer
-        // does not fit a 16-byte sockaddr_in
-        var clientAddr = makeZeroedSockaddrStorage()
-        var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(sock.fd, &mut clientAddr, &mut addrlen)
+        let clientFd = acceptPeer(sock.fd)
         if clientFd < 0 {
             continue
         }
 
         var buf: [u8; 8192] = [0; 8192]
-        let n = read(clientFd, buf, BUF_SIZE)
+        var n: i64 = 0
+        unsafe { n = read(clientFd, buf, BUF_SIZE) }
         if n > 0 {
             let req = parseRequest(buf, n)
             let handled = router.handle(req)
             sendResponse(clientFd, handled.response, handled.headers)
         }
-        close(clientFd)
+        unsafe { close(clientFd) }
     }
     return Result.Err("server exited")
 }
@@ -797,7 +803,8 @@ fn writeAll(fd: i32, buf: string): void {
         if sent > 0 {
             chunk = buf.slice(sent, buf.len).clone()
         }
-        let n = write(fd, chunk, chunk.len)
+        var n: i64 = 0
+        unsafe { n = write(fd, chunk, chunk.len) }
         if n > 0 {
             sent += n
             continue
@@ -818,14 +825,15 @@ fn handleConn(clientFd: i32): void {
     // Park until the request is actually there. A blocking read here would stop
     // the scheduler thread, which is the entire thing this loop exists to avoid.
     schedulerWaitRead(clientFd)
-    let n = read(clientFd, buf, 8192)
+    var n: i64 = 0
+    unsafe { n = read(clientFd, buf, 8192) }
     if n > 0 && activeRouter.len > 0 {
         let req = parseRequest(buf, n)
         let handled = activeRouter[0].handle(req)
         let wire = renderResponse(handled.response, handled.headers)
         writeAll(clientFd, wire)
     }
-    close(clientFd)
+    unsafe { close(clientFd) }
 }
 
 // Like serveRouter, but each connection is handled in its own green task.
@@ -853,9 +861,7 @@ pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
             // Drain: one readiness notification can cover several pending
             // connections, and leaving them queued would stall until the next.
             while true {
-                var clientAddr = makeZeroedSockaddrStorage()
-                var addrlen: u32 = sockAddrStorageLen()
-                let clientFd = accept(listenFd, &mut clientAddr, &mut addrlen)
+                let clientFd = acceptPeer(listenFd)
                 if clientFd < 0 {
                     break
                 }

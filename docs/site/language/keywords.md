@@ -114,6 +114,8 @@ Declares a function implemented **outside** Milo. There is no body: the C linker
 
 A call needs **no** `unsafe` when every argument auto-coerces (scalar, `&T`, a Milo `fn`, `string` / `[T; N]` → `*T`, a matching `*T`, or a by-value `extern struct`) **and** the return is scalar, `void`, or an `extern struct`. A pointer return has provenance the compiler cannot see, so it forces an `unsafe` block at every call.
 
+A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `fdIsTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A `@pure` extern (libm) is exempt.
+
 `@cSig` / `@cLayout` on the declaration make the C compiler check this signature (and a struct's layout) against the real header, rather than trusting that the hand-written declaration matches.
 
 ### `false`
@@ -360,7 +362,7 @@ unsafe {
     let v = *p
 }
 ```
-Opens a block for the operations the compiler cannot verify: dereferencing or indexing a raw pointer, `x.addrOf()`, and extern calls whose return or arguments break the safe-coercion rule.
+Opens a block for the operations the compiler cannot verify: dereferencing or indexing a raw pointer, `x.addrOf()`, and extern calls (one that breaks the safe-coercion rule is an error outside `unsafe`; any other warns `extern-call`).
 
 It does not turn checking off — everything else inside the block is checked exactly as usual; it marks the seam where **you** own the invariant. `0 as *T` (a null pointer literal) needs no `unsafe`, and `string.cstr()` hands out a `*u8` without one because the string stays alive in the caller's scope.
 

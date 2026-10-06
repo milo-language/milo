@@ -140,22 +140,25 @@ impl TlsListener {
 
         ignoreSigpipe()
         ensureNetInit()
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var fd: i32 = 0
+        unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
         if fd < 0 {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
 
         var one: i32 = 1
-        setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
+        unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
 
         var addr = makeSockaddr(port, 0)
         if bindIn(fd, addr) < 0 {
-            close(fd)
+            unsafe { close(fd) }
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }
-        if listen(fd, 1024) < 0 {
-            close(fd)
-            return Result.Err(NetError.ConnectionFailed("listen() failed"))
+        unsafe {
+            if listen(fd, 1024) < 0 {
+                unsafe { close(fd) }
+                return Result.Err(NetError.ConnectionFailed("listen() failed"))
+            }
         }
 
         unsafe {

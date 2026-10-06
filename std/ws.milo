@@ -321,7 +321,7 @@ impl WsConn {
         if !self._closed {
             let _ = self._sendFrame(WsOpcode.Close, "", true)
             self._closed = true
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 
@@ -445,14 +445,15 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
 
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    var fd: i32 = 0
+    unsafe { fd = socket(AF_INET, SOCK_STREAM, 0) }
     if fd < 0 {
         return Result.Err("socket() failed")
     }
 
     var addr = makeSockaddr(port, ip)
     if connectFdIn(fd, addr) < 0 {
-        close(fd)
+        unsafe { close(fd) }
         return Result.Err("connect() failed")
     }
 
@@ -469,7 +470,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 
     let n = writeFd(fd, req, req.len)
     if n < 0 {
-        close(fd)
+        unsafe { close(fd) }
         return Result.Err("failed to send upgrade request")
     }
 
@@ -477,7 +478,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     var buf: [u8; 4096] = [0; 4096]
     let respLen = readFd(fd, buf, 4096)
     if respLen <= 0 {
-        close(fd)
+        unsafe { close(fd) }
         return Result.Err("no response from server")
     }
 
@@ -487,7 +488,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     }
 
     if !resp.startsWith("HTTP/1.1 101") {
-        close(fd)
+        unsafe { close(fd) }
         return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
     }
 
@@ -495,7 +496,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let expectedAccept = computeAcceptKey(clientKey)
     let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
     if actualAccept != expectedAccept {
-        close(fd)
+        unsafe { close(fd) }
         return Result.Err("invalid Sec-WebSocket-Accept")
     }
 

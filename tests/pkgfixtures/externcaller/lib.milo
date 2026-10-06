@@ -1,0 +1,8 @@
+// Fixture package for tests/externCall.test.ts: a bare extern call inside a dependency
+// must not reach the consumer as an extern-call warning (or error under --deny).
+
+extern fn getppid(): i32
+
+pub fn parentPid(): i32 {
+    return getppid()
+}

@@ -117,7 +117,7 @@ pub struct Pty {
 
 // True if fd is attached to a console (the ConPTY analogue of isatty).
 pub fn fdIsTerminal(fd: i32): bool {
-    return GetFileType(_get_osfhandle(fd)) == 2 as u32
+    unsafe { return GetFileType(_get_osfhandle(fd)) == 2 as u32 }
 }
 
 pub fn isInteractive(): bool {
@@ -262,7 +262,7 @@ impl Pty {
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
         self._rows = rows
         self._cols = cols
-        return ResizePseudoConsole(self._hpcon, packCoord(rows, cols))
+        unsafe { return ResizePseudoConsole(self._hpcon, packCoord(rows, cols)) }
     }
 
     fn winSize(self: &Self): WinSize {
@@ -287,7 +287,7 @@ impl Pty {
     requires
     self.childPid > 0
     {
-        TerminateProcess(self._childHandle, 1 as u32)
+        unsafe { TerminateProcess(self._childHandle, 1 as u32) }
     }
 
     fn close(self: &mut Self): void {
@@ -301,16 +301,18 @@ impl Pty {
         }
         // Closing the pseudoconsole signals the child's console has gone away.
         if self._hpcon != 0 {
-            ClosePseudoConsole(self._hpcon)
+            unsafe { ClosePseudoConsole(self._hpcon) }
             self._hpcon = 0
         }
         if self._attrList as i64 != 0 {
-            DeleteProcThreadAttributeList(self._attrList)
-            free(self._attrList)
+            unsafe {
+                DeleteProcThreadAttributeList(self._attrList)
+                free(self._attrList)
+            }
             self._attrList = 0 as *u8
         }
         if self._childHandle != 0 {
-            CloseHandle(self._childHandle)
+            unsafe { CloseHandle(self._childHandle) }
             self._childHandle = 0
         }
     }

@@ -106,7 +106,8 @@ pub fn restoreTerminal(state: &TermState): void {
 // read a keypress without blocking; returns KEY_* constant
 pub fn readKey(): i32 {
     var buf: [u8; 3] = [0; 3]
-    let n = read(0, buf, 1)
+    var n: i64 = 0
+    unsafe { n = read(0, buf, 1) }
     if n <= 0 {
         return KEY_NONE
     }
@@ -120,7 +121,8 @@ pub fn readKey(): i32 {
         return KEY_SPACE
     }
     if buf[0] == 27 {
-        let n2 = read(0, buf, 2)
+        var n2: i64 = 0
+        unsafe { n2 = read(0, buf, 2) }
         if n2 == 2 && buf[0] == 91 {
             if buf[1] == 65 {
                 return KEY_UP

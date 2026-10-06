@@ -107,8 +107,11 @@ pub extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i3
 
 pub extern fn getsockopt(fd: i32, level: i32, opt: i32, val: &mut i32, len: &mut u32): i32
 
+// Byte-order swaps: pure, so callable without `unsafe` (see the extern-call warning).
+@pure
 pub extern fn htons(hostshort: u16): u16
 
+@pure
 pub extern fn ntohs(netshort: u16): u16
 
 // Same shape as accept: the kernel writes back whatever family the socket is, so the
@@ -277,6 +280,9 @@ pub extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
 pub extern fn dup2(oldfd: i32, newfd: i32): i32
 
+// A new descriptor for the same open file. Prefer OwnedFd.dup, which owns the result.
+pub extern fn dup(oldfd: i32): i32
+
 pub extern fn kill(pid: i32, sig: i32): i32
 
 pub extern fn setsid(): i32
@@ -318,7 +324,8 @@ pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
         }
     }
     while true {
-        let n = read(fd, buf, len)
+        var n: i64 = 0
+        unsafe { n = read(fd, buf, len) }
         if n < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -413,7 +420,8 @@ pub fn acceptFd(fd: i32): i32 {
         // peer used, and a v6 peer needs 28 bytes.
         var clientAddr = makeZeroedSockaddrStorage()
         var addrlen: u32 = sockAddrStorageLen()
-        let clientFd = accept(fd, &mut clientAddr, &mut addrlen)
+        var clientFd: i32 = 0
+        unsafe { clientFd = accept(fd, &mut clientAddr, &mut addrlen) }
         if clientFd < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -434,7 +442,8 @@ pub fn acceptFdNb(fd: i32): i32 {
     setNonblocking(fd)
     var clientAddr = makeZeroedSockaddrStorage()
     var addrlen: u32 = sockAddrStorageLen()
-    let clientFd = accept(fd, &mut clientAddr, &mut addrlen)
+    var clientFd: i32 = 0
+    unsafe { clientFd = accept(fd, &mut clientAddr, &mut addrlen) }
     if clientFd >= 0 {
         setNonblocking(clientFd)
     }
@@ -447,10 +456,11 @@ pub fn acceptFdNb(fd: i32): i32 {
 // entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
 pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if schedulerCurrent() as i64 == 0 {
-        return connect(fd, addr, addrlen)
+        unsafe { return connect(fd, addr, addrlen) }
     }
     setNonblocking(fd)
-    let r = connect(fd, addr, addrlen)
+    var r: i32 = 0
+    unsafe { r = connect(fd, addr, addrlen) }
     if r == 0 {
         return 0
     }
@@ -464,8 +474,10 @@ pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     schedulerWaitWrite(fd)
     var err: i32 = 0
     var len: u32 = 4
-    if getsockopt(fd, solSocket(), soError(), &mut err, &mut len) < 0 {
-        return -1
+    unsafe {
+        if getsockopt(fd, solSocket(), soError(), &mut err, &mut len) < 0 {
+            return -1
+        }
     }
     if err != 0 {
         return -1

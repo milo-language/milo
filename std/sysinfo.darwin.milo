@@ -46,7 +46,7 @@ pub extern fn host_statistics64(host: u32, flavor: i32, info: *u8, count: *u32):
 
 pub fn hostname(): string {
     var buf: [u8; 256] = [0; 256]
-    gethostname(buf, 256)
+    unsafe { gethostname(buf, 256) }
     unsafe {
         return _cstrToString(buf as *u8)
     }
@@ -61,31 +61,32 @@ pub fn cwd(): string {
 }
 
 pub fn pid(): i32 {
-    return getpid()
+    unsafe { return getpid() }
 }
 
 pub fn ppid(): i32 {
-    return getppid()
+    unsafe { return getppid() }
 }
 
 pub fn uid(): u32 {
-    return getuid()
+    unsafe { return getuid() }
 }
 
 pub fn gid(): u32 {
-    return getgid()
+    unsafe { return getgid() }
 }
 
 pub fn euid(): u32 {
-    return geteuid()
+    unsafe { return geteuid() }
 }
 
 pub fn egid(): u32 {
-    return getegid()
+    unsafe { return getegid() }
 }
 
 pub fn cpuCount(): i64 {
-    let n = sysconf(58)
+    var n: i64 = 0
+    unsafe { n = sysconf(58) }
     if n < 1 {
         return 1
     }
@@ -149,7 +150,7 @@ pub fn uptime(): i64 {
 
 pub fn loadAvg(): [f64; 3] {
     var avg: [f64; 3] = [0.0; 3]
-    getloadavg(avg, 3)
+    unsafe { getloadavg(avg, 3) }
     return avg
 }
 
@@ -163,5 +164,5 @@ pub fn osRelease(): string {
 }
 
 pub fn setCwd(path: string): bool {
-    return chdir(path) == 0
+    unsafe { return chdir(path) == 0 }
 }

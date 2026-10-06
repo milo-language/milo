@@ -32,6 +32,8 @@ from "std/sort" import {
     sortStrings
 }
 from "std/io" import {
+    OwnedFd,
+    adoptFd,
     fdChannel
 }
 from "std/sync" import {
@@ -67,6 +69,9 @@ pub extern fn TerminateProcess(handle: i64, exitCode: u32): i32
 
 @cSig("windows.h", "BOOL CloseHandle(HANDLE)")
 pub extern fn CloseHandle(handle: i64): i32
+
+@cSig("windows.h", "HANDLE OpenProcess(DWORD, BOOL, DWORD)")
+extern fn OpenProcess(access: u32, inherit: i32, pid: u32): *u8
 
 // Returns *u8, not i64 like the HANDLE-taking calls above: a HANDLE is a void* and the
 // @cSig guard rejects an integer return for one.
@@ -124,8 +129,11 @@ fn stdHandleId(stream: i32): u32 {
 pub fn run(cmd: &string): Result<i32> {
     // system() reads a C string; a milo string is not guaranteed NUL-terminated.
     let buf = cstrCopy(cmd)
-    let status = system(buf)
-    free(buf)
+    var status: i32 = 0
+    unsafe {
+        status = system(buf)
+        free(buf)
+    }
     if status < 0 {
         return Result.Err("system() failed")
     }
@@ -159,10 +167,28 @@ impl Process {
     fn signal(self: &Self, _sig: i32): Result<i32> {
         // Windows has no signals to a process; the only portable "signal" is a forced
         // termination. Any sig maps to TerminateProcess, exit code 1.
-        if TerminateProcess(self.handle, 1 as u32) == 0 {
-            return Result.Err("TerminateProcess() failed")
+        unsafe {
+            if TerminateProcess(self.handle, 1 as u32) == 0 {
+                return Result.Err("TerminateProcess() failed")
+            }
         }
         return Result.Ok(0)
+    }
+}
+
+// Whether a process with this pid exists and has not exited. Same surface as the POSIX
+// arm's signal-0 probe; opening the process for a query changes nothing in it.
+pub fn processAlive(pid: i32): bool {
+    unsafe {
+        // PROCESS_QUERY_LIMITED_INFORMATION; an exit code of STILL_ACTIVE (259) means running.
+        let h = OpenProcess(4096 as u32, 0, pid as u32) as i64
+        if h == 0 {
+            return false
+        }
+        var codeBuf: [u32; 1] = [0]
+        let ok = GetExitCodeProcess(h, codeBuf as *u32)
+        CloseHandle(h)
+        return ok != 0 && codeBuf[0] == 259 as u32
     }
 }
 
@@ -240,6 +266,20 @@ impl Child {
         return fdChannel(self.stderrFd)
     }
 
+    // See the POSIX arm.
+    fn takeStdout(self: &mut Self): OwnedFd {
+        let fd = self.stdoutFd
+        self.stdoutFd = -1
+        unsafe { return adoptFd(fd) }
+    }
+
+    // See the POSIX arm.
+    fn takeStderr(self: &mut Self): OwnedFd {
+        let fd = self.stderrFd
+        self.stderrFd = -1
+        unsafe { return adoptFd(fd) }
+    }
+
     fn closeStdin(self: &mut Self): void {
         if self.stdinFd >= 0 {
             close(self.stdinFd)
@@ -252,8 +292,10 @@ impl Child {
     }
 
     fn signal(self: &Self, _sig: i32): Result<i32> {
-        if TerminateProcess(self.handle, 1 as u32) == 0 {
-            return Result.Err("TerminateProcess() failed")
+        unsafe {
+            if TerminateProcess(self.handle, 1 as u32) == 0 {
+                return Result.Err("TerminateProcess() failed")
+            }
         }
         return Result.Ok(0)
     }
@@ -269,7 +311,7 @@ impl Child {
             self.stderrFd = -1
         }
         if self.handle != 0 {
-            CloseHandle(self.handle)
+            unsafe { CloseHandle(self.handle) }
             self.handle = 0
         }
     }
@@ -351,7 +393,7 @@ fn createProcess(program: &string, args: &Vec<string>, childIn: i32, childOut: i
 }
 
 fn makeInheritable(fd: i32): void {
-    SetHandleInformation(_get_osfhandle(fd), handleFlagInherit(), handleFlagInherit())
+    unsafe { SetHandleInformation(_get_osfhandle(fd), handleFlagInherit(), handleFlagInherit()) }
 }
 
 // ── Command ──
@@ -665,10 +707,10 @@ fn commandSpawn(cmd: &Command): Result<Child> {
     }
     let res = createProcess(cmd.program, cmd.argv, inFds.child, outFds.child, childErr, mergeErr, envBlock, curDir)
     if envBlock as i64 != 0 {
-        free(envBlock)
+        unsafe { free(envBlock) }
     }
     if curDir as i64 != 0 {
-        free(curDir)
+        unsafe { free(curDir) }
     }
 
     // The parent no longer needs the child-side ends regardless of outcome.

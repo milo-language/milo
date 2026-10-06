@@ -164,6 +164,23 @@ green task — the uniform async-read API shared with pty/socket/pipe.
 `for chunk in child.stdout()`; closes at EOF (child exits / closes stdout).
 Only valid when stdout is a pipe (the default).
 
+#### `Child.takeStderr`
+
+```milo
+fn Child.takeStderr(self: &mut Child): OwnedFd
+```
+
+As takeStdout, for a separate stderr pipe (a -1 handle when stderr was merged).
+
+#### `Child.takeStdout`
+
+```milo
+fn Child.takeStdout(self: &mut Child): OwnedFd
+```
+
+Hand the stdout pipe to the caller: the Child stops tracking it, and the returned
+handle closes it when dropped. For a pump task that must be the fd's last user.
+
 #### `Child.wait`
 
 ```milo
@@ -410,6 +427,16 @@ pub fn freeArgv(argv: *u8, argc: i64): void
 ```
 
 Only on .
+
+#### `processAlive`
+
+```milo
+pub fn processAlive(pid: i32): bool
+```
+
+Whether a process with this pid exists and this process may signal it. Sends
+nothing (signal 0), so it is safe on any pid, including one that is not our child
+and so cannot be waited on. A pid can be reused once its process is reaped.
 
 #### `quoteArg`
 

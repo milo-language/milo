@@ -49,7 +49,7 @@ impl Drop for UnixStream {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
         if self.fd > 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
@@ -63,13 +63,14 @@ impl UnixStream {
         if path.len > sockAddrUnMaxPath() {
             return Result.Err("unix socket path too long")
         }
-        let fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0)
+        var fd: i32 = 0
+        unsafe { fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
         if fd < 0 {
             return Result.Err("socket() failed")
         }
         var addr = makeSockaddrUn(path)
         if connectFdUn(fd, addr) < 0 {
-            close(fd)
+            unsafe { close(fd) }
             return Result.Err("connect() failed")
         }
         return Result.Ok(UnixStream { fd: fd })
@@ -125,7 +126,7 @@ impl Drop for UnixListener {
     fn drop(self: &mut Self): void {
         // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
         if self.fd > 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
@@ -139,19 +140,22 @@ impl UnixListener {
         if path.len > sockAddrUnMaxPath() {
             return Result.Err("unix socket path too long")
         }
-        unlink(path)
-        let fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0)
+        unsafe { unlink(path) }
+        var fd: i32 = 0
+        unsafe { fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
         if fd < 0 {
             return Result.Err("socket() failed")
         }
         var addr = makeSockaddrUn(path)
         if bindUn(fd, addr) < 0 {
-            close(fd)
+            unsafe { close(fd) }
             return Result.Err("bind() failed")
         }
-        if listen(fd, 128) < 0 {
-            close(fd)
-            return Result.Err("listen() failed")
+        unsafe {
+            if listen(fd, 128) < 0 {
+                unsafe { close(fd) }
+                return Result.Err("listen() failed")
+            }
         }
         return Result.Ok(UnixListener { fd: fd })
     }
@@ -169,5 +173,5 @@ impl UnixListener {
 
 // Remove a socket file. Dropping a UnixListener closes its fd but leaves the path behind.
 pub fn removeSocketFile(path: &string): void {
-    unlink(path)
+    unsafe { unlink(path) }
 }

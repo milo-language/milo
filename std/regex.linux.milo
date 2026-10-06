@@ -56,7 +56,8 @@ fn regexNewFlags(pattern: string, cflags: i32): Result<Regex> {
     var r = Regex {
         _preg: [0; 64], _valid: false
     }
-    let rc = regcomp(r._preg, pattern, cflags)
+    var rc: i32 = 0
+    unsafe { rc = regcomp(r._preg, pattern, cflags) }
     if rc != 0 {
         return Result.Err("invalid regular expression")
     }
@@ -100,7 +101,7 @@ fn regexMatch(re: &Regex, input: &string): bool {
     var pmatch: [u8; 80] = [0; 80]
     writeMatchI32(&mut pmatch, 0, 0)
     writeMatchI32(&mut pmatch, 4, input.len)
-    return regexec(re._preg, input, 1, pmatch, REG_STARTEND) == 0
+    unsafe { return regexec(re._preg, input, 1, pmatch, REG_STARTEND) == 0 }
 }
 
 // Match result: start and end byte offsets.
@@ -115,7 +116,8 @@ fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     var pmatch: [u8; 80] = [0; 80]
     writeMatchI32(&mut pmatch, 0, 0)
     writeMatchI32(&mut pmatch, 4, input.len)
-    let rc = regexec(re._preg, input, 1, pmatch, REG_STARTEND)
+    var rc: i32 = 0
+    unsafe { rc = regexec(re._preg, input, 1, pmatch, REG_STARTEND) }
     if rc != 0 {
         return Option.None
     }
@@ -140,7 +142,8 @@ fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
         if offset > 0 {
             eflags = REG_STARTEND | 1
         }
-        let rc = regexec(re._preg, input, 1, pmatch, eflags)
+        var rc: i32 = 0
+        unsafe { rc = regexec(re._preg, input, 1, pmatch, eflags) }
         if rc != 0 {
             break
         }

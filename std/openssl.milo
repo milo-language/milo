@@ -88,26 +88,33 @@ fn sslWantWrite(): i32 {
     return 3
 }
 
+// After an SSL_* call on a green task returned `r`: park on the direction OpenSSL is
+// waiting for and return true to retry, or false when the error is final.
+fn sslParkForRetry(ssl: *u8, fd: i32, r: i32): bool {
+    var e: i32 = 0
+    unsafe { e = SSL_get_error(ssl, r) }
+    if e == sslWantRead() {
+        schedulerWaitRead(fd)
+        return true
+    }
+    if e == sslWantWrite() {
+        schedulerWaitWrite(fd)
+        return true
+    }
+    return false
+}
+
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
 pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     while true {
-        let r = SSL_connect(ssl)
+        var r: i32 = 0
+        unsafe { r = SSL_connect(ssl) }
         if r == 1 {
             return 1
         }
-        if schedulerCurrent() as i64 == 0 {
+        if schedulerCurrent() as i64 == 0 || !sslParkForRetry(ssl, fd, r) {
             return r
         }
-        let e = SSL_get_error(ssl, r)
-        if e == sslWantRead() {
-            schedulerWaitRead(fd)
-            continue
-        }
-        if e == sslWantWrite() {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return r
     }
     return -1
 }
@@ -116,23 +123,14 @@ pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
 // Returns 1 on success (SSL_accept result otherwise).
 pub fn sslAcceptFd(ssl: *u8, fd: i32): i32 {
     while true {
-        let r = SSL_accept(ssl)
+        var r: i32 = 0
+        unsafe { r = SSL_accept(ssl) }
         if r == 1 {
             return 1
         }
-        if schedulerCurrent() as i64 == 0 {
+        if schedulerCurrent() as i64 == 0 || !sslParkForRetry(ssl, fd, r) {
             return r
         }
-        let e = SSL_get_error(ssl, r)
-        if e == sslWantRead() {
-            schedulerWaitRead(fd)
-            continue
-        }
-        if e == sslWantWrite() {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return r
     }
     return -1
 }
@@ -140,23 +138,14 @@ pub fn sslAcceptFd(ssl: *u8, fd: i32): i32 {
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
 pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
-        let n = SSL_read(ssl, buf, len)
+        var n: i32 = 0
+        unsafe { n = SSL_read(ssl, buf, len) }
         if n > 0 {
             return n
         }
-        if schedulerCurrent() as i64 == 0 {
+        if schedulerCurrent() as i64 == 0 || !sslParkForRetry(ssl, fd, n) {
             return n
         }
-        let e = SSL_get_error(ssl, n)
-        if e == sslWantRead() {
-            schedulerWaitRead(fd)
-            continue
-        }
-        if e == sslWantWrite() {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return n
     }
     return -1
 }
@@ -164,23 +153,14 @@ pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
 pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
-        let n = SSL_write(ssl, buf, len)
+        var n: i32 = 0
+        unsafe { n = SSL_write(ssl, buf, len) }
         if n > 0 {
             return n
         }
-        if schedulerCurrent() as i64 == 0 {
+        if schedulerCurrent() as i64 == 0 || !sslParkForRetry(ssl, fd, n) {
             return n
         }
-        let e = SSL_get_error(ssl, n)
-        if e == sslWantRead() {
-            schedulerWaitRead(fd)
-            continue
-        }
-        if e == sslWantWrite() {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return n
     }
     return -1
 }
