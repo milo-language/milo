@@ -429,6 +429,34 @@ the same per-module change as stage 5 of item 1 and should ride with it, not bef
   like any other. Zero blast radius today; gate: an error fixture with a pointer-taking
   `@pure` extern called outside `unsafe`. S.
 
+## Item 10: closure bodies never dropped their locals (fixed 863481fd)
+
+Found building replay: a `TcpStream` accepted inside a `Task.spawn` closure was never
+closed, so the peer's read-to-EOF hung forever. Any local declared in any closure body
+(plain, `move`, by-reference, spawned, generic) skipped its Drop unless the body ended in
+an explicit `return`.
+
+- Root cause (src/codegen.ts `genClosure`): the fall-off end emitted `ret void` with no
+  `emitDropGlue`, where `genFunction` runs it before its fall-off `ret`. `Return` already
+  dropped, which is why the early-return path worked and the common shape did not.
+  Second bug in the same save/restore block: `currentFnSret` leaked into the closure, so a
+  `return x` inside a closure in a method or generic fn returning a >=128-byte aggregate
+  wrote the enclosing fn's `%__sret.out` and emitted `ret void` in an `i64` closure
+  (invalid IR, did not compile).
+- src-milo had the same fall-off gap (`genClosure` in src-milo/codegen/stmt.milo), plus
+  three things the new drops exposed: the move-record set (`movedLocalAddrs`) was not
+  per-closure, and temps restart at 0 in each closure, so a slot moved in one closure
+  suppressed a same-named local's drop in the next; closure allocas were not hoisted to
+  entry as genFn's are; and literal-match / if-expr arms never scoped their locals, so a
+  body-end drop read a slot allocated in an arm that may not have run. `genArmBody` now
+  drops and pops the arm's own locals, for every arm kind.
+- Gates: fixtures `closureBodyDrop`, `closureBodyDropLoop`, `closureBodyDropKinds`,
+  `closureBodyDropSpawn`, `closureBodyDropTcp` (hangs on the old compiler),
+  `closureReturnInSretFn`; all fail on the compiler before 863481fd. ASan:
+  "closure body drops run clean under --sanitize" in tests/sanitize.test.ts. Five of the
+  six are on the milo-self manifest; `closureBodyDropKinds` is not, because src-milo
+  emits no environment drop glue for `move` captures (a separate, older gap).
+
 ## Execution order
 
 Small landable steps, each with its gate, highest score first.
