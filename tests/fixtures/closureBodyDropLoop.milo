@@ -1,0 +1,45 @@
+// `break` and `continue` in a loop inside a closure drop the iteration's locals, and the
+// local declared before the loop drops when the closure body falls off its end. The
+// last line is what the compiler before 2026-10-06 skipped: a closure body's fallthrough
+// ran no drop glue.
+// @expect: drop 10
+// @expect: drop 11
+// @expect: drop 12
+// @expect: loop done
+// @expect: drop 1
+// @expect: end
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+pub fn main(): i32 {
+    let f = (): void => {
+        let outer = R {
+            id: 1
+        }
+        var i: i32 = 0
+        while true {
+            let it = R {
+                id: 10 + i
+            }
+            i = i + 1
+            if i == 1 {
+                continue
+            }
+            if i == 3 {
+                break
+            }
+        }
+        print("loop done")
+    }
+    f()
+    print("end")
+    return 0
+}

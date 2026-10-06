@@ -1,0 +1,45 @@
+// A local declared in a Task.spawn closure drops when the task's body ends, newest
+// first, while the task is still running (before the next task's output). Before
+// 2026-10-06 a spawned body that fell off its end dropped nothing, which is how a
+// TcpStream accepted inside a task stayed open forever.
+// @expect: task 1
+// @expect: drop 2
+// @expect: drop 1
+// @expect: task 2
+// @expect: drop 3
+// @expect: end
+
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+pub fn main(): i32 {
+    Task.spawn(move(): void => {
+        let a = R {
+            id: 1
+        }
+        let b = R {
+            id: 2
+        }
+        print("task 1")
+    })
+    Task.spawn(move(): void => {
+        let c = R {
+            id: 3
+        }
+        print("task 2")
+    })
+    schedulerRunToCompletion()
+    print("end")
+    return 0
+}

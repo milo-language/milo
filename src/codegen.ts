@@ -6219,6 +6219,7 @@ export class Codegen {
     const savedDroppable = this.droppableLocals;
     const savedLoopHeader = this.loopHeader;
     const savedLoopExit = this.loopExit;
+    const savedFnSret = this.currentFnSret;
     const savedEntryAllocas = this.entryAllocas;
     const savedEmittedAddrs = this.emittedAddrs;
     const savedFnName = this.currentFnName;
@@ -6231,6 +6232,9 @@ export class Codegen {
     this.emittedAddrs = new Set();
     this.loopHeader = null;
     this.loopExit = null;
+    // a closure is never sret-lowered: its Return must `ret` the value, not write the
+    // enclosing fn's %__sret.out
+    this.currentFnSret = false;
     // a Return inside the closure body must not assert the enclosing fn's ensures
     this.currentEnsures = [];
     this.currentFnName = closureName;
@@ -6368,6 +6372,10 @@ export class Codegen {
       if (terminated) { hasTerminator = true; break; }
     }
     if (!hasTerminator) {
+      // Falling off the end is a scope exit, as in genFunction: the body's locals drop
+      // here. Without it a local declared in a closure body (a TcpStream accepted inside
+      // a spawned task) never ran its Drop unless the body ended in an explicit return.
+      this.emitDropGlue(closureBody);
       if (retTy === "void") closureBody.push("  ret void");
       else { closureBody.push("  call void @llvm.trap()"); closureBody.push("  unreachable"); } // see genFn's fall-off
     }
@@ -6388,6 +6396,7 @@ export class Codegen {
     this.emittedAddrs = savedEmittedAddrs;
     this.loopHeader = savedLoopHeader;
     this.loopExit = savedLoopExit;
+    this.currentFnSret = savedFnSret;
     this.currentFnName = savedFnName;
     this.currentSubprogramId = savedSubprogram;
     this.currentEnsures = savedEnsures;

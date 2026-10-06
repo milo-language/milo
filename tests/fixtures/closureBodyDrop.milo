@@ -1,0 +1,85 @@
+// A local declared in a closure body drops when the body ends, exactly as it would in
+// a fn body: newest first, nested blocks at their own end, a moved-out local not at all.
+// Before 2026-10-06 a closure body that fell off its end dropped nothing (only an
+// explicit `return` ran the glue), so every Drop below except the early-return ones was
+// silently skipped.
+// @expect: body
+// @expect: inner
+// @expect: drop 3
+// @expect: drop 2
+// @expect: drop 1
+// @expect: took 4
+// @expect: drop 4
+// @expect: after take
+// @expect: drop 5
+// @expect: early 6
+// @expect: drop 6
+// @expect: late 6
+// @expect: drop 7
+// @expect: drop 6
+// @expect: end
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn take(r: R): void {
+    print("took ", r.id)
+}
+
+pub fn main(): i32 {
+    let f = (): void => {
+        let a = R {
+            id: 1
+        }
+        let b = R {
+            id: 2
+        }
+        print("body")
+        if a.id == 1 {
+            let c = R {
+                id: 3
+            }
+            print("inner")
+        }
+    }
+    f()
+
+    // a local moved into a callee is the callee's to drop, and must not drop again here
+    let g = (): void => {
+        let d = R {
+            id: 4
+        }
+        let e = R {
+            id: 5
+        }
+        take(d)
+        print("after take")
+    }
+    g()
+
+    // early return and fallthrough on the same closure
+    let h = (early: bool): void => {
+        let x = R {
+            id: 6
+        }
+        if early {
+            print("early ", x.id)
+            return
+        }
+        let y = R {
+            id: 7
+        }
+        print("late ", x.id)
+    }
+    h(true)
+    h(false)
+    print("end")
+    return 0
+}

@@ -79,6 +79,10 @@ cLayoutOpaque
 closureArgEnvOwnership
 closureBasic
 closureBlock
+closureBodyDrop
+closureBodyDropLoop
+closureBodyDropSpawn
+closureBodyDropTcp
 closureCapture
 closureCaptureClosure
 closureCaptureHeap
@@ -94,6 +98,7 @@ closureMutCapture
 closureNoCapture
 closureNonRetainingArg
 closureParamOwnership
+closureReturnInSretFn
 closureStoredMove
 closureWrapperMethodForward
 coalesceHeapPayload

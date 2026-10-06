@@ -135,3 +135,71 @@ pub fn main(): i32 {
     expect(out.trim().split("\n")).toEqual(want);
   }
 }, 240_000);
+
+// Closure bodies drop their own locals at every exit (2026-10-06; before, only an explicit
+// `return` did). The new drops must not double-free what the body moved out, what a
+// `break` already dropped, or a `move` capture the environment still owns. The inline
+// program puts a heap buffer behind each of those paths so a second free is an ASan
+// report, not just a duplicated line of output.
+test("closure body drops run clean under --sanitize", () => {
+  const heap = join(dir, "closureBodyHeap.milo");
+  writeFileSync(heap, `fn take(s: string): i64 {
+    return s.len
+}
+
+fn big(tag: string): string {
+    var s = "a heap string long enough to need an allocation: ".clone()
+    s.pushStr(tag)
+    return s
+}
+
+pub fn main(): i32 {
+    let cap = big("cap")
+    let m = move(): i64 => {
+        let a = big("a")
+        let b = big("b")
+        let n = take(a)
+        return n + b.len + cap.len
+    }
+    print(m().toString())
+    let f = (early: bool): void => {
+        let x = big("x")
+        if early {
+            return
+        }
+        var i = 0
+        while i < 3 {
+            let y = big("y")
+            i = i + 1
+            if i == 2 {
+                break
+            }
+            if i == 1 {
+                continue
+            }
+        }
+        let z = big("z")
+        print(take(z).toString())
+    }
+    f(true)
+    f(false)
+    return 0
+}
+`);
+  const cases: [string, string[]][] = [[heap, ["152", "50"]]];
+  for (const name of ["closureBodyDrop", "closureBodyDropLoop", "closureBodyDropKinds", "closureBodyDropSpawn", "closureBodyDropTcp", "closureReturnInSretFn"]) {
+    const src = join(import.meta.dir, "fixtures", `${name}.milo`);
+    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    cases.push([src, want]);
+  }
+  for (const [src, want] of cases) {
+    let out = "";
+    try {
+      out = execSync(`bun ${MILO} run --sanitize ${src} 2>&1`, { encoding: "utf-8", env: ENV, timeout: 60_000 });
+    } catch (e: any) {
+      out = (e.stdout ?? "") + (e.stderr ?? "");
+    }
+    expect(out).not.toContain("AddressSanitizer");
+    expect(out.trim().split("\n")).toEqual(want);
+  }
+}, 300_000);

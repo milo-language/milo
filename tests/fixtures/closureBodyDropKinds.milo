@@ -1,0 +1,85 @@
+// Every closure shape drops its body's locals at the end of the body: a `move` closure
+// (its capture stays owned by the environment and is NOT dropped by the body), a
+// by-reference closure passed down to a callee, a closure nested in a closure, and a
+// closure in a generic fn holding a local of the type parameter. Before 2026-10-06 none
+// of these body locals dropped.
+// @expect: move body 1
+// @expect: drop 2
+// @expect: env still has 1
+// @expect: move body 1
+// @expect: drop 2
+// @expect: byref
+// @expect: drop 3
+// @expect: inner
+// @expect: drop 5
+// @expect: outer
+// @expect: drop 4
+// @expect: generic 6
+// @expect: drop 6
+// @expect: end
+// @expect: drop 1
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn callIt(f: () => void): void {
+    f()
+}
+
+fn holdOne<T>(mk: () => T): void {
+    let g = (): void => {
+        let v = mk()
+        print("generic 6")
+    }
+    g()
+}
+
+pub fn main(): i32 {
+    let cap = R {
+        id: 1
+    }
+    let m = move(): void => {
+        let local = R {
+            id: 2
+        }
+        print("move body ", cap.id)
+    }
+    m()
+    print("env still has 1")
+    m()
+
+    callIt((): void => {
+        let r = R {
+            id: 3
+        }
+        print("byref")
+    })
+
+    let outer = (): void => {
+        let a = R {
+            id: 4
+        }
+        let inner = (): void => {
+            let b = R {
+                id: 5
+            }
+            print("inner")
+        }
+        inner()
+        print("outer")
+    }
+    outer()
+
+    holdOne((): R => R {
+        id: 6
+    })
+    print("end")
+    return 0
+}

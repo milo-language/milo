@@ -1,0 +1,61 @@
+// A `return` inside a closure returns from the closure, even when the enclosing fn is
+// sret-lowered (a method or generic fn returning a >=128-byte aggregate is compiled as
+// `void @f(ptr %__sret.out, ...)`). Before 2026-10-06 the closure inherited that flag and
+// its `return x + 1` wrote the enclosing fn's sret buffer and emitted `ret void` inside
+// an `i64` closure: invalid IR, so the program did not compile. The closure's local also
+// drops on both paths.
+// @expect: drop 1
+// @expect: 5
+// @expect: drop 2
+// @expect: 8
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+pub struct Big {
+    a: [i64; 20],
+}
+
+impl Big {
+    fn make(n: i64): Big {
+        let f = (x: i64): i64 => {
+            let r = R {
+                id: 1
+            }
+            if x > 0 {
+                return x + 1
+            }
+            return 0
+        }
+        return Big {
+            a: [f(n); 20]
+        }
+    }
+}
+
+fn makeGeneric<T>(_x: T): Big {
+    let f = (y: i64): i64 => {
+        let r = R {
+            id: 2
+        }
+        return y * 2
+    }
+    return Big {
+        a: [f(4); 20]
+    }
+}
+
+pub fn main(): i32 {
+    let b = Big.make(4)
+    print(b.a[3])
+    let c = makeGeneric(1)
+    print(c.a[3])
+    return 0
+}

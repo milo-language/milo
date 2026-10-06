@@ -1,0 +1,55 @@
+// @skip-os: win32
+// Skipped on Windows for the same reason as ioSocketStream: std/net TcpStream needs the
+// async tier the Windows port does not have yet.
+//
+// A TcpStream accepted inside a spawned task closes when the task's body ends, so the
+// peer reading to EOF (`recv`) returns. Before 2026-10-06 a closure body's locals never
+// dropped, the accepted socket stayed open, and the client's recv blocked forever: the
+// bug replay hit. If this fixture hangs, closure body drops have regressed.
+// @expect: server sent
+// @expect: client got: hello
+// @expect: done
+
+from "std/net" import {
+    TcpListener, TcpStream, NetError, ip4
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+
+fn greet(ar: &Result<TcpStream, NetError>): void {
+    match ar {
+        Result.Ok(conn) => {
+            match conn.send("hello") {
+                Result.Ok(_n) => {
+                    print("server sent")
+                }
+                Result.Err(_e) => {
+                    print("send failed")
+                }
+            }
+        }
+        Result.Err(_e) => {
+            print("accept failed")
+        }
+    }
+}
+
+pub fn main(): i32 {
+    let lis = TcpListener.bind(0)!
+    let port = lis.port() as u16
+    Task.spawn(move(): void => {
+        // The accepted stream is a local of the closure body itself, not of a nested
+        // block (block-scope drops already worked): only the body's own exit closes it.
+        let ar = lis.accept()
+        greet(ar)
+    })
+
+    let cli = TcpStream.connect(ip4(127, 0, 0, 1), port)!
+    // main is not a green task: run the server to completion before the blocking read
+    schedulerRunToCompletion()
+    let got = cli.recv()!
+    print("client got: " + got)
+    print("done")
+    return 0
+}

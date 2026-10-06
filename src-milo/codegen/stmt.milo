@@ -34,7 +34,7 @@ from "src-milo/codegen/strings.milo" import {
     genStringAppendInPlace, genStringEq, genStringLit, emitStringLit, ensureStrFind
 }
 from "src-milo/codegen/emit.milo" import {
-    isFixedArrayTy
+    isFixedArrayTy, hoistAllocas
 }
 
 // -- Assignment --
@@ -1073,6 +1073,11 @@ pub struct MatchGen {
 // diverging return/break/continue, which runs as an ordinary statement and
 // contributes no value — never silently coerced to a zero/void Val).
 pub fn genArmBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, wantValue: bool, hintTy: string): MatchGen {
+    // The arm is a block: its own locals drop at its end and leave scope. Only the enum
+    // match used to do this (for its bindings, after this returns); a literal-match or
+    // if-expr arm left its locals in `locs`, so the enclosing body's exit dropped a slot
+    // that was never initialized when the arm did not run.
+    let armPreLen = locs.len
     var terminated = false
     var produced = false
     var val = Val {
@@ -1106,6 +1111,17 @@ pub fn genArmBody(cg: &mut Cgen, body: &Vec<Heap<HStmt>>, locs: &mut Vec<Local>,
         // synthesize a plausible-looking value if that guarantee ever slips.
         eprint("codegen: match-expression arm produced no value and did not diverge")
         exit(1)
+    }
+    // a terminated arm already dropped everything on its way out (return/break/continue)
+    if !terminated {
+        var armSkip = ""
+        if wantValue {
+            armSkip = trailingIdentName(body)
+        }
+        emitScopeDrops(&mut cg, locs, armPreLen, armSkip)
+    }
+    while locs.len > armPreLen {
+        let _ = locs.pop()
     }
     return MatchGen {
         terminated: terminated, val: val
@@ -1311,6 +1327,11 @@ fn trailingIdentName(body: &Vec<Heap<HStmt>>): string {
                             return ""
                         }
                     }
+                }
+                // the lowered form too, as genReturnValue reads it: genArmBody now drops
+                // the arm's own locals, and a lowered tail ident is just as moved out
+                HExpr.Ident(n, isMove) => {
+                    return n.clone()
                 }
                 _ => {
                     return ""
@@ -2842,6 +2863,12 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     // into the caller's fnBuf and the lifted function comes out with an empty body.
     let savedFnBuf = cg.fnBuf.clone()
     let savedInFn = cg.inFn
+    // Move records are keyed by slot name, and temps restart at 0 in here: without a
+    // fresh set, a temp an earlier closure moved out matched this closure's local of
+    // the same name and skipped its drop (and this body's moves leaked out to the
+    // enclosing fn the same way).
+    let savedMoved = cg.movedLocalAddrs.clone()
+    cg.movedLocalAddrs = Vec.new()
     cg.inFn = false
     cg.fnBuf = ""
     cg.body = ""
@@ -2907,6 +2934,9 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
     }
     let retLl = llType(retTyStr)
     if !term {
+        // Falling off the end is a scope exit, as in genFn: the body's own locals drop
+        // (captures and params are isRef and skipped). Missing before 2026-10-06.
+        emitScopeDrops(&mut cg, clocs, 0, "")
         if retLl == "void" {
             emit(&mut cg, "  ret void\n")
         } else {
@@ -2920,10 +2950,14 @@ pub fn genClosure(cg: &mut Cgen, nodeId: u32, params: &Vec<Param>, retType: &Opt
         hdr = hdr + ", ptr %" + params[pi].name.clone()
     }
     hdr = hdr + ") {\n"
-    let closureIR = hdr + cg.body.clone() + "}\n\n"
+    // Entry-block allocas, as genFn does: an int-literal match arm leaves its locals in
+    // clocs, so the fall-off drops above read a slot allocated inside that arm, which
+    // does not dominate the end of the body unless it is hoisted.
+    let closureIR = hoistAllocas(hdr + cg.body.clone() + "}\n\n")
     cg.body = savedBody
     cg.fnBuf = savedFnBuf
     cg.inFn = savedInFn
+    cg.movedLocalAddrs = savedMoved
     cg.temp = savedTemp
     cg.label = savedLabel
     cg.curRetTy = savedRet
