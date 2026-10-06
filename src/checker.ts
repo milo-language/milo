@@ -576,6 +576,11 @@ export class TypeChecker {
   // Arena.new()` (the hint is the call's type) from `let n: i64 = Arena.new().len()` (it
   // is not). See `expectedTypeOf`.
   private returnHintExpr: Expr | null = null;
+  // An if-expression's expected type, queued for each branch's tail value and applied
+  // when checkExpr reaches it. Without it `let x: Option<i64> = if c { Some(5) } else
+  // { Option.None }` cannot infer the None: the hint names the if, never the arm.
+  // Nested ifs pass it on in turn.
+  private tailHints = new Map<Expr, TypeKind>();
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
@@ -8450,8 +8455,10 @@ export class TypeChecker {
 
   private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
     this.canonicalizePreludeVariant(expr);
-    // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping)
-    if (hint && expr.kind !== "EnumLit") {
+    // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping).
+    // Not for an if-expression: it hands the hint to each branch tail (tailHints), and a
+    // tail that is `Option.None` needs the Option itself. A plain-value tail unwraps there.
+    if (hint && expr.kind !== "EnumLit" && expr.kind !== "IfExpr") {
       const inner = this.optionInnerType(hint);
       if (inner) hint = inner;
     }
@@ -8626,6 +8633,12 @@ export class TypeChecker {
   // in isolation to be reviewable at all. Arms that are a single `return` stay inline —
   // extracting those buys no isolation and costs a jump.
   private checkExpr(expr: Expr): TypeKind {
+    const tailHint = this.tailHints.get(expr);
+    if (tailHint) {
+      // Deleted first: checkExprWithHint re-enters checkExpr on this same node.
+      this.tailHints.delete(expr);
+      return this.checkExprWithHint(expr, tailHint);
+    }
     this.canonicalizePreludeVariant(expr);
     const sp = expr.span;
     switch (expr.kind) {
@@ -11826,6 +11839,13 @@ export class TypeChecker {
     }
     const fnRetType = this.currentFnRetType;
     const preMoves = this.snapshotMoveState();
+    const want = this.expectedTypeOf(expr);
+    if (want) {
+      for (const body of [expr.thenBody, expr.elseBody]) {
+        const t = this.tailExprOf(body);
+        if (t) this.tailHints.set(t, want);
+      }
+    }
 
     this.pushScope();
     this.checkValueBody(expr.thenBody, fnRetType);
