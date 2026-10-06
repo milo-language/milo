@@ -640,8 +640,11 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
       continue;
     }
     if (r.kind === "refuse") {
-      console.error(`hot: restart (${r.reason})`);
+      // Announced only once the old process is gone: input sent on seeing this line must
+      // queue for the new one, not be read by the old one in the moment before SIGKILL
+      // lands (tests/hot.test.ts read a stale counter that way on a CI runner).
       await kill();
+      console.error(`hot: restart (${r.reason})`);
       start();
       continue;
     }
@@ -657,7 +660,7 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
       await kill(); start(); continue;
     }
     const a = await awaitAck(ack, n);
-    if (!a.ok) { console.error(`hot: restart (apply failed: ${a.msg})`); await kill(); start(); continue; }
+    if (!a.ok) { await kill(); console.error(`hot: restart (apply failed: ${a.msg})`); start(); continue; }
     Object.assign(current, r.hashes);
     const ms = (a: number, b: number) => Math.round(b - a);
     const tDone = performance.now();
