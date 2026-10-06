@@ -26,6 +26,7 @@ diff instead of as a crash.
 Implemented:
 
 - **Safe extern call expansion** — no `unsafe` when all pointer params receive auto-coerced args (`string`→`*u8`, `[T;N]`→`*T`, matching `*T`), fn-typed params receive matching Milo fns, and the return is scalar or `void`. Calls returning `*T` still require `unsafe` (unknown provenance).
+- **`extern-call` warning** (2026-10) — every other extern call outside `unsafe` warns; std is held to zero, `@pure` externs are exempt, manifest dependencies are not reported. Owning types (`OwnedFd`, `Child.takeStdout`) replace raw `close`. Staged: a warning for one cycle before it can become the error.
 - **`string.cstr()`** — safe non-owning `*u8` borrow; string stays alive in caller scope.
 - **`extern type`** — opaque foreign handles, only behind `*T`; distinct types prevent handle mixups.
 - **Pointer-to-struct field access** — `ptr.field` auto-derefs `*Struct` (requires `unsafe`); no manual byte-offset arithmetic.

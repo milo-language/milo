@@ -3204,6 +3204,8 @@ The compiler determines whether an extern call needs `unsafe` based on the argum
 - Return type is a pointer (`*T`) — unknown provenance
 - A param takes a raw `*T` that isn't from auto-coercion
 
+A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `fdIsTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A `@pure` extern (libm) is exempt.
+
 ```milo
 extern fn puts(s: *u8): i32
 extern fn write(fd: i32, buf: *u8, len: i64): i64

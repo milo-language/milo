@@ -38,7 +38,7 @@ pub struct Instant {
 // Capture the current wall-clock time.
 pub fn now(): Instant {
     var tv: [u8; 16] = [0; 16]
-    gettimeofday(tv, 0 as *u8)
+    unsafe { gettimeofday(tv, 0 as *u8) }
     let sec = readI64FromBuf(tv, 0)
     let usec = readI64FromBuf(tv, 8)
     return Instant { sec: sec, usec: usec }
@@ -509,7 +509,7 @@ fn usleepLong(us: i64): void {
         if chunk > 1000000 {
             chunk = 1000000
         }
-        usleep(chunk as u32)
+        unsafe { usleep(chunk as u32) }
         left -= chunk
     }
 }

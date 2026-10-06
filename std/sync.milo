@@ -1022,16 +1022,16 @@ impl WaitGroup {
     fn add(self: &Self, n: i64): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        pthread_mutex_lock(mtx)
+        unsafe { pthread_mutex_lock(mtx) }
         nodeStoreI64(p, 16, nodeLoadI64(p, 16) + n)
-        pthread_mutex_unlock(mtx)
+        unsafe { pthread_mutex_unlock(mtx) }
     }
 
     // Decrement the counter by one. Call it from each task when it finishes.
     fn done(self: &Self): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        pthread_mutex_lock(mtx)
+        unsafe { pthread_mutex_lock(mtx) }
         let c = nodeLoadI64(p, 16) - 1
         nodeStoreI64(p, 16, c)
         if c <= 0 {
@@ -1041,9 +1041,9 @@ impl WaitGroup {
                 h = wakeOne(h)
             }
             nodeStorePtr(p, 24, 0 as *u8)
-            pthread_cond_broadcast(nodeLoadPtr(p, 8))
+            unsafe { pthread_cond_broadcast(nodeLoadPtr(p, 8)) }
         }
-        pthread_mutex_unlock(mtx)
+        unsafe { pthread_mutex_unlock(mtx) }
     }
 
     // Block until the counter reaches zero.
@@ -1212,10 +1212,10 @@ fn onceRejectReentry(p: *u8, mtx: *u8): void {
     } else {
         // Owner is not a green task, so anything on its OS thread — including a green
         // task its initializer just spawned — is downstream of it and cannot proceed.
-        reentrant = (pthread_self() as i64) == nodeLoadI64(p, 40)
+        unsafe { reentrant = (pthread_self() as i64) == nodeLoadI64(p, 40) }
     }
     if reentrant {
-        pthread_mutex_unlock(mtx)
+        unsafe { pthread_mutex_unlock(mtx) }
         eprint("std/sync: Once.run re-entered while this Once's initializer is still running on the same thread (directly, or through another Once that calls back) — it would wait for itself forever")
         exit(1)
     }
@@ -1276,19 +1276,21 @@ impl Once {
     fn _claim(self: &Self): bool {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        pthread_mutex_lock(mtx)
+        unsafe { pthread_mutex_lock(mtx) }
         while _atomicLoadI64(onceStatePtr(p)) != ONCE_DONE {
             if _atomicLoadI64(onceStatePtr(p)) == ONCE_IDLE {
                 _atomicStoreI64(onceStatePtr(p), ONCE_RUNNING)
                 nodeStorePtr(p, 32, schedulerCurrent())
-                nodeStoreI64(p, 40, pthread_self() as i64)
-                pthread_mutex_unlock(mtx)
+                unsafe {
+                    nodeStoreI64(p, 40, pthread_self() as i64)
+                    pthread_mutex_unlock(mtx)
+                }
                 return true
             }
             onceRejectReentry(p, mtx)
             onceWait(p, mtx)
         }
-        pthread_mutex_unlock(mtx)
+        unsafe { pthread_mutex_unlock(mtx) }
         return false
     }
 
@@ -1296,15 +1298,17 @@ impl Once {
     fn _complete(self: &Self): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        pthread_mutex_lock(mtx)
+        unsafe { pthread_mutex_lock(mtx) }
         _atomicStoreI64(onceStatePtr(p), ONCE_DONE)
         var h = nodeLoadPtr(p, 24)
         while h as i64 != 0 {
             h = wakeOne(h)
         }
         nodeStorePtr(p, 24, 0 as *u8)
-        pthread_cond_broadcast(nodeLoadPtr(p, 8))
-        pthread_mutex_unlock(mtx)
+        unsafe {
+            pthread_cond_broadcast(nodeLoadPtr(p, 8))
+            pthread_mutex_unlock(mtx)
+        }
     }
 
 }

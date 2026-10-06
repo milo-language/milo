@@ -61,7 +61,7 @@ pub struct Pty {
 
 // Returns true if fd is connected to a terminal.
 pub fn fdIsTerminal(fd: i32): bool {
-    return isatty(fd) == 1
+    unsafe { return isatty(fd) == 1 }
 }
 
 // Returns true if stdin is a terminal (process is interactive).
@@ -211,7 +211,7 @@ impl Pty {
         if self.masterFd < 0 {
             return -1
         }
-        return write(self.masterFd, s, s.len)
+        unsafe { return write(self.masterFd, s, s.len) }
     }
 
     // Pump this pty's output on a background green task and return a channel of
@@ -250,7 +250,7 @@ impl Pty {
     self.childPid > 0
     {
         var status: [u8; 4] = [0; 4]
-        waitpid(self.childPid, status, 0)
+        unsafe { waitpid(self.childPid, status, 0) }
         return status[1] as i32
     }
 
@@ -260,14 +260,14 @@ impl Pty {
     requires
     self.childPid > 0
     {
-        kill(self.childPid, 9)
+        unsafe { kill(self.childPid, 9) }
     }
 
     // Idempotent: closing the master also unwedges a child blocked writing to a
     // full PTY buffer (its write returns EIO), letting a pending SIGKILL land.
     fn close(self: &mut Self): void {
         if self.masterFd >= 0 {
-            close(self.masterFd)
+            unsafe { close(self.masterFd) }
             self.masterFd = -1
         }
     }

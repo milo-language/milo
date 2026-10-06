@@ -360,7 +360,7 @@ fn taskCellDecref(cell: *u8): void {
     let rc = rtReadI64(cell, 8) - 1
     rtWriteI64(cell, 8, rc)
     if rc == 0 {
-        free(cell)
+        unsafe { free(cell) }
     }
 }
 
@@ -418,7 +418,7 @@ fn taskEntry(): void {
     _callClosureVoid(fnPtr, envPtr)
 
     rtWriteI32(task, tState(), taskDone())
-    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
+    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
 }
 
 // ── public API ──
@@ -819,7 +819,7 @@ pub fn schedulerYield(): void {
         return
     }
     rtWriteI32(task, tState(), taskReady())
-    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
+    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
 }
 
 // Park until `fd` is readable. @parks: see schedulerYield.
@@ -846,7 +846,7 @@ pub fn schedulerWaitRead(fd: i32): void {
     // move task to waiting list
     enqueueWait(sched, task)
 
-    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
+    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
 }
 
 // Park until `fd` is writable. @parks: see schedulerYield.
@@ -875,7 +875,7 @@ pub fn schedulerWaitWrite(fd: i32): void {
     eventRegisterWrite(el, fd)
     enqueueWait(sched, task)
 
-    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
+    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
 }
 
 // Run the program's `main` as a green task, given its raw entry pointer.
@@ -942,7 +942,7 @@ pub fn schedulerPark(): void {
         return
     }
     rtWriteI32(task, tState(), taskWaitingPark())
-    swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
+    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
 }
 
 // Make a parked task runnable. Safe from any thread: on the task's own
@@ -962,10 +962,10 @@ pub fn schedulerUnpark(task: *u8): void {
         enqueueRun(home, task)
     } else {
         let mtx = rtReadPtr(home, sXferMutex())
-        pthread_mutex_lock(mtx)
+        unsafe { pthread_mutex_lock(mtx) }
         rtWritePtr(task, tNext(), rtReadPtr(home, sXferHead()))
         rtWritePtr(home, sXferHead(), task)
-        pthread_mutex_unlock(mtx)
+        unsafe { pthread_mutex_unlock(mtx) }
         var el = eventLoopFromFd(rtReadI32(home, sElFd()))
         eventLoopNotify(el, rtReadI32(home, sWakeupId()))
     }
@@ -974,10 +974,10 @@ pub fn schedulerUnpark(task: *u8): void {
 // move cross-thread unparked tasks onto the run queue (scheduler thread only)
 fn drainXfer(sched: *u8): void {
     let mtx = rtReadPtr(sched, sXferMutex())
-    pthread_mutex_lock(mtx)
+    unsafe { pthread_mutex_lock(mtx) }
     var cur = rtReadPtr(sched, sXferHead())
     rtWritePtr(sched, sXferHead(), 0 as *u8)
-    pthread_mutex_unlock(mtx)
+    unsafe { pthread_mutex_unlock(mtx) }
     while cur as i64 != 0 {
         let next = rtReadPtr(cur, tNext())
         rtWriteI32(cur, tState(), taskReady())
@@ -1010,11 +1010,13 @@ pub fn selectStateNew(): *u8 {
 pub fn selectStateFree(st: *u8): void {
     let m = rtReadPtr(st, ssMtx())
     let c = rtReadPtr(st, ssCond())
-    pthread_cond_destroy(c)
-    free(c)
-    pthread_mutex_destroy(m)
-    free(m)
-    free(st)
+    unsafe {
+        pthread_cond_destroy(c)
+        free(c)
+        pthread_mutex_destroy(m)
+        free(m)
+        free(st)
+    }
 }
 
 // Claim the select for `arm` if nothing has won yet, and wake the owning task
@@ -1022,7 +1024,7 @@ pub fn selectStateFree(st: *u8): void {
 // pthread firing a channel takes this path); unpark itself is thread-safe.
 pub fn selectTryClaim(st: *u8, arm: i64): void {
     let m = rtReadPtr(st, ssMtx())
-    pthread_mutex_lock(m)
+    unsafe { pthread_mutex_lock(m) }
     if rtReadI64(st, ssClaimed()) == -1 {
         rtWriteI64(st, ssClaimed(), arm)
         if rtReadI64(st, ssParked()) == 1 {
@@ -1030,9 +1032,9 @@ pub fn selectTryClaim(st: *u8, arm: i64): void {
         }
         // Wakes a no-scheduler main context blocked in _selectWaitState. Signalled under
         // the lock so it cannot be missed between the claim and the wait.
-        pthread_cond_signal(rtReadPtr(st, ssCond()))
+        unsafe { pthread_cond_signal(rtReadPtr(st, ssCond())) }
     }
-    pthread_mutex_unlock(m)
+    unsafe { pthread_mutex_unlock(m) }
 }
 
 // Task side, called after every arm is registered. Returns the winning arm
@@ -1051,16 +1053,16 @@ pub fn selectTryClaim(st: *u8, arm: i64): void {
 pub fn selectWaitState(st: *u8): i64 {
     let m = rtReadPtr(st, ssMtx())
     while true {
-        pthread_mutex_lock(m)
+        unsafe { pthread_mutex_lock(m) }
         let already = rtReadI64(st, ssClaimed())
         if already >= 0 {
-            pthread_mutex_unlock(m)
+            unsafe { pthread_mutex_unlock(m) }
             return already
         }
         if schedulerCurrent() as i64 != 0 {
             rtWriteI64(st, ssParked(), 1)
             rtWritePtr(st, ssTask(), schedulerCurrent())
-            pthread_mutex_unlock(m)
+            unsafe { pthread_mutex_unlock(m) }
             schedulerPark()
             return rtReadI64(st, ssClaimed())
         }
@@ -1073,11 +1075,13 @@ pub fn selectWaitState(st: *u8): i64 {
             // same ladder channels use. Note fd and timer arms cannot fire here at all:
             // they need the event loop, and Select.wait refuses that combination up front
             // rather than blocking on a wake that can never come.
-            pthread_cond_wait(rtReadPtr(st, ssCond()), m)
-            pthread_mutex_unlock(m)
+            unsafe {
+                pthread_cond_wait(rtReadPtr(st, ssCond()), m)
+                pthread_mutex_unlock(m)
+            }
             continue
         }
-        pthread_mutex_unlock(m)
+        unsafe { pthread_mutex_unlock(m) }
         schedulerPollMainSelect()
     }
     return -1
@@ -1318,8 +1322,10 @@ fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 fn reapTask(sched: *u8, task: *u8): void {
     let joiner = rtReadPtr(task, tJoiner())
     let cell = rtReadPtr(task, tJoinCell())
-    munmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize()))
-    free(rtReadPtr(task, tCtx()))
+    unsafe {
+        munmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize()))
+        free(rtReadPtr(task, tCtx()))
+    }
     // Release the task's closure environment: slot 0 holds its drop glue, which drops
     // every capture the body did not consume and frees the block. Null glue means a
     // by-reference closure whose environment is a stack frame in the spawner — freeing
@@ -1337,7 +1343,7 @@ fn reapTask(sched: *u8, task: *u8): void {
             _callClosureVoid(taskGlue, taskEnv)
         }
     }
-    free(task)
+    unsafe { free(task) }
     rtWriteI64(sched, sNumTasks(), rtReadI64(sched, sNumTasks()) - 1)
     if cell as i64 != 0 {
         rtWriteI64(cell, 0, 1)
@@ -1385,7 +1391,7 @@ fn schedulerRunOnce(timeoutMs: i32): void {
         rtWriteI32(task, tState(), taskRunning())
         rtWritePtr(sched, sCurrent(), task)
 
-        swapcontext(rtReadPtr(sched, sCtx()), rtReadPtr(task, tCtx()))
+        unsafe { swapcontext(rtReadPtr(sched, sCtx()), rtReadPtr(task, tCtx())) }
 
         let state = rtReadI32(task, tState())
         if state == taskDone() {
@@ -1506,13 +1512,15 @@ fn schedulerShutdown(): void {
     if sched as i64 == 0 {
         return
     }
-    free(rtReadPtr(sched, sCtx()))
+    unsafe { free(rtReadPtr(sched, sCtx())) }
     var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
     eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
     eventLoopClose(el)
     let xmtx = rtReadPtr(sched, sXferMutex())
-    pthread_mutex_destroy(xmtx)
-    free(xmtx)
-    free(sched)
+    unsafe {
+        pthread_mutex_destroy(xmtx)
+        free(xmtx)
+        free(sched)
+    }
     setSched(0 as *u8)
 }

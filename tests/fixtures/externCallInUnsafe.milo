@@ -1,0 +1,18 @@
+// Calls that satisfy the extern-call rule: an extern inside `unsafe`, a std function that
+// wraps one, and a `@pure` extern (exempt). tests/externCall.test.ts also checks this file
+// under --deny=extern-call, which is what proves none of them is reported.
+from "std/sysinfo" import { pid }
+from "std/os" import { htons }
+
+extern fn getpid(): i32
+
+fn rawPid(): i32 {
+    unsafe { return getpid() }
+}
+
+fn main() {
+    print(rawPid() == pid())
+    print(htons(1 as u16) != 0 as u16)
+}
+// @expect: true
+// @expect: true

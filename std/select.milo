@@ -220,7 +220,7 @@ impl Select {
 
     fn destroy(self: &Self): void {
         selectStateFree(self._state)
-        free(self._nodes)
+        unsafe { free(self._nodes) }
     }
 }
 

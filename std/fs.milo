@@ -77,7 +77,8 @@ pub struct FileInfo {
 // operations when the failure reason matters.
 pub fn fileInfo(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
-    let r = stat(path, buf)
+    var r: i32 = 0
+    unsafe { r = stat(path, buf) }
     if r != 0 {
         return Option.None
     }
@@ -100,7 +101,7 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
 
 // Check whether a path is visible to this process.
 pub fn pathExists(path: &string): bool {
-    return access(path, 0) == 0
+    unsafe { return access(path, 0) == 0 }
 }
 
 // Check if a path is a directory.
@@ -252,43 +253,55 @@ fn errFd(msg: &string): Result<Unit, IoError> {
 }
 
 pub fn removeFile(path: &string): Result<Unit, IoError> {
-    if unlink(path) != 0 {
-        return errPath(path)
+    unsafe {
+        if unlink(path) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn makeDir(path: &string, mode: i32): Result<Unit, IoError> {
-    if mkdir(path, mode as u32) != 0 {
-        return errPath(path)
+    unsafe {
+        if mkdir(path, mode as u32) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn removeDir(path: &string): Result<Unit, IoError> {
-    if rmdir(path) != 0 {
-        return errPath(path)
+    unsafe {
+        if rmdir(path) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn renameFile(oldPath: &string, newPath: &string): Result<Unit, IoError> {
-    if rename(oldPath, newPath) != 0 {
-        return errPath(oldPath)
+    unsafe {
+        if rename(oldPath, newPath) != 0 {
+            return errPath(oldPath)
+        }
     }
     return ok()
 }
 
 pub fn hardLink(existing: &string, newPath: &string): Result<Unit, IoError> {
-    if link(existing, newPath) != 0 {
-        return errPath(existing)
+    unsafe {
+        if link(existing, newPath) != 0 {
+            return errPath(existing)
+        }
     }
     return ok()
 }
 
 pub fn softLink(target: &string, path: &string): Result<Unit, IoError> {
-    if symlink(target, path) != 0 {
-        return errPath(path)
+    unsafe {
+        if symlink(target, path) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
@@ -317,64 +330,82 @@ pub fn realPath(path: &string): Result<string, IoError> {
 }
 
 pub fn setMode(path: &string, mode: i32): Result<Unit, IoError> {
-    if chmod(path, mode as u32) != 0 {
-        return errPath(path)
+    unsafe {
+        if chmod(path, mode as u32) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError> {
-    if fchmod(fd, mode as u32) != 0 {
-        return errFd("fchmod failed")
+    unsafe {
+        if fchmod(fd, mode as u32) != 0 {
+            return errFd("fchmod failed")
+        }
     }
     return ok()
 }
 
 pub fn setOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
-    if chown(path, uid, gid) != 0 {
-        return errPath(path)
+    unsafe {
+        if chown(path, uid, gid) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError> {
-    if fchown(fd, uid, gid) != 0 {
-        return errFd("fchown failed")
+    unsafe {
+        if fchown(fd, uid, gid) != 0 {
+            return errFd("fchown failed")
+        }
     }
     return ok()
 }
 
 pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
-    if lchown(path, uid, gid) != 0 {
-        return errPath(path)
+    unsafe {
+        if lchown(path, uid, gid) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError> {
-    if truncate(path, length) != 0 {
-        return errPath(path)
+    unsafe {
+        if truncate(path, length) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
-    if ftruncate(fd, length) != 0 {
-        return errFd("ftruncate failed")
+    unsafe {
+        if ftruncate(fd, length) != 0 {
+            return errFd("ftruncate failed")
+        }
     }
     return ok()
 }
 
 pub fn syncFd(fd: i32): Result<Unit, IoError> {
-    if fsync(fd) != 0 {
-        return errFd("fsync failed")
+    unsafe {
+        if fsync(fd) != 0 {
+            return errFd("fsync failed")
+        }
     }
     return ok()
 }
 
 pub fn dataSyncFd(fd: i32): Result<Unit, IoError> {
-    if fdatasync(fd) != 0 {
-        return errFd("fdatasync failed")
+    unsafe {
+        if fdatasync(fd) != 0 {
+            return errFd("fdatasync failed")
+        }
     }
     return ok()
 }
@@ -452,15 +483,18 @@ pub fn currentDir(): Result<string, IoError> {
 }
 
 pub fn changeDir(path: &string): Result<Unit, IoError> {
-    if chdir(path) != 0 {
-        return errPath(path)
+    unsafe {
+        if chdir(path) != 0 {
+            return errPath(path)
+        }
     }
     return ok()
 }
 
 pub fn lstatInfo(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
-    let r = lstat(path, buf)
+    var r: i32 = 0
+    unsafe { r = lstat(path, buf) }
     if r != 0 {
         return Option.None
     }
@@ -837,14 +871,16 @@ pub fn mkdirAll(path: &string, mode: i32): Result<Unit, IoError> {
         if isDir(cur) {
             continue
         }
-        if mkdir(cur, mode as u32) != 0 {
-            // EEXIST here means either a concurrent creator won the race (fine)
-            // or the name is taken by a file (not fine) — re-check rather than
-            // trusting errno to tell those apart.
-            if isDir(cur) {
-                continue
+        unsafe {
+            if mkdir(cur, mode as u32) != 0 {
+                // EEXIST here means either a concurrent creator won the race (fine)
+                // or the name is taken by a file (not fine) — re-check rather than
+                // trusting errno to tell those apart.
+                if isDir(cur) {
+                    continue
+                }
+                return errPath(cur)
             }
-            return errPath(cur)
         }
     }
     return ok()
@@ -966,8 +1002,10 @@ pub fn copyFile(src: &string, dst: &string): Result<Unit, IoError> {
     }
     // X_OK = 1. access() answers "can this process execute it", which is the
     // question a copied program cares about, and unlike st_mode it is portable.
-    if access(src, 1) == 0 {
-        setMode(dst, 493)?
+    unsafe {
+        if access(src, 1) == 0 {
+            setMode(dst, 493)?
+        }
     }
     return ok()
 }

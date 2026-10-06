@@ -46,7 +46,7 @@ pub struct TermState {
 }
 
 pub fn stdinHandle(): i64 {
-    return GetStdHandle(-10)
+    unsafe { return GetStdHandle(-10) }
 }
 
 pub fn getConsoleModeOf(handle: i64): u32 {
@@ -67,7 +67,7 @@ pub fn rawModeFrom(saved: u32): u32 {
 pub fn enableRawMode(): TermState {
     let h = stdinHandle()
     let saved = getConsoleModeOf(h)
-    SetConsoleMode(h, rawModeFrom(saved))
+    unsafe { SetConsoleMode(h, rawModeFrom(saved)) }
     return TermState { saved: saved }
 }
 
@@ -79,7 +79,7 @@ pub fn enableRawModeBlocking(): TermState {
 }
 
 pub fn restoreTerminal(state: &TermState): void {
-    SetConsoleMode(stdinHandle(), state.saved)
+    unsafe { SetConsoleMode(stdinHandle(), state.saved) }
 }
 
 // read a keypress without blocking; returns KEY_* constant.

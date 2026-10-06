@@ -35,7 +35,8 @@ pub struct EventLoop {
 
 // @internal
 pub fn eventLoopNew(): Result<EventLoop, string> {
-    let fd = kqueue()
+    var fd: i32 = 0
+    unsafe { fd = kqueue() }
     if fd < 0 {
         return Result.Err("kqueue() failed")
     }
@@ -55,22 +56,24 @@ impl EventLoop {
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
 pub fn setNonblocking(fd: i32): i32 {
-    let flags = fcntl(fd, fGetfl())
+    var flags: i32 = 0
+    unsafe { flags = fcntl(fd, fGetfl()) }
     if flags < 0 {
         return -1
     }
-    return fcntl(fd, fSetfl(), flags | oNonblock())
+    unsafe { return fcntl(fd, fSetfl(), flags | oNonblock()) }
 }
 
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
 pub fn clearNonblocking(fd: i32): i32 {
-    let flags = fcntl(fd, fGetfl())
+    var flags: i32 = 0
+    unsafe { flags = fcntl(fd, fGetfl()) }
     if flags < 0 {
         return -1
     }
-    return fcntl(fd, fSetfl(), flags & ~oNonblock())
+    unsafe { return fcntl(fd, fSetfl(), flags & ~oNonblock()) }
 }
 
 // Watch `fd` for readability.
@@ -241,5 +244,5 @@ pub fn eventLoopFd(el: &EventLoop): i32 {
 
 // Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
-    close(el.kqfd)
+    unsafe { close(el.kqfd) }
 }

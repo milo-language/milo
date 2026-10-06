@@ -280,7 +280,7 @@ coloring/blocking ergonomics; Milo's edge over Go is the left half of this doc
 
 C interop from day one; keep `unsafe` at the thinnest possible seam.
 
-- **Safe extern calls** — no `unsafe` needed when all pointer params receive auto-coerced args (`string`→`*u8`, `[T;N]`→`*T`, matching `*T`), function-typed params receive matching Milo functions, and the return is scalar or `void`. Calls returning `*T` still require `unsafe` — unknown provenance.
+- **Safe extern calls** — no `unsafe` needed when all pointer params receive auto-coerced args (`string`→`*u8`, `[T;N]`→`*T`, matching `*T`), function-typed params receive matching Milo functions, and the return is scalar or `void`. Calls returning `*T` still require `unsafe` — unknown provenance. The safe ones warn `extern-call` outside `unsafe` (see the language reference): std is the layer that wraps them.
 - **`extern type sqlite3`** — opaque foreign handles, only exist behind `*T`; each extern type is distinct, preventing handle mixups at compile time.
 - **`extern struct`** — C-layout structs; field access through `*ExternStruct` uses GEP and requires `unsafe`.
 - **`string.cstr()`** — non-owning `*u8` borrow without `unsafe`; the string stays alive in the caller's scope.

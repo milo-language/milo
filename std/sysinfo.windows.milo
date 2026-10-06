@@ -54,11 +54,11 @@ pub fn cwd(): string {
 }
 
 pub fn setCwd(path: string): bool {
-    return SetCurrentDirectoryA(path) != 0
+    unsafe { return SetCurrentDirectoryA(path) != 0 }
 }
 
 pub fn pid(): i32 {
-    return GetCurrentProcessId() as i32
+    unsafe { return GetCurrentProcessId() as i32 }
 }
 
 // No getppid on Windows without a Toolhelp process walk; degrade to 0 like a failed
@@ -153,7 +153,7 @@ pub fn freeMem(): i64 {
 }
 
 pub fn uptime(): i64 {
-    return (GetTickCount64() / 1000 as u64) as i64
+    unsafe { return (GetTickCount64() / 1000 as u64) as i64 }
 }
 
 // Windows has no load-average metric; the darwin/linux arms return this array too, so

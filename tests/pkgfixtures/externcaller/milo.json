@@ -1,0 +1,7 @@
+{
+  "name": "externcaller",
+  "version": "0.1.0",
+  "description": "test fixture: a dependency that calls an extern outside unsafe, which the consumer cannot fix",
+  "license": "MIT",
+  "lib": "lib.milo"
+}

@@ -321,7 +321,7 @@ pub fn netEinprogress(): i32 {
 // A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
 // closesocket(), which is why this name exists on all arms.
 pub fn closeSocket(fd: i32): i32 {
-    return close(fd)
+    unsafe { return close(fd) }
 }
 
 // ── ucontext (stackful coroutines) ──
@@ -383,7 +383,8 @@ pub extern fn proc_pidpath(pid: i32, buf: *u8, bufsize: u32): i32
 
 // Absolute path of the running executable into `buf`. Returns bytes written, or -1.
 pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
-    let n = proc_pidpath(getpid(), buf, bufsize as u32)
+    var n: i32 = 0
+    unsafe { n = proc_pidpath(getpid(), buf, bufsize as u32) }
     if n <= 0 {
         return -1
     }
@@ -408,12 +409,12 @@ pub extern fn _NSGetEnviron(): ***u8
 
 // Set `name` to `value`, replacing any existing value. 0 on success.
 pub fn envSet(name: *u8, value: *u8): i32 {
-    return setenv(name, value, 1)
+    unsafe { return setenv(name, value, 1) }
 }
 
 // Remove `name` from the environment. 0 on success; removing an unset name succeeds.
 pub fn envUnset(name: *u8): i32 {
-    return unsetenv(name)
+    unsafe { return unsetenv(name) }
 }
 
 // The live NULL-terminated `NAME=VALUE` array, reflecting every setenv/unsetenv so far.
@@ -524,11 +525,11 @@ pub extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 // Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
 // CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
-    return read(fd, buf, nbyte)
+    unsafe { return read(fd, buf, nbyte) }
 }
 
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
-    return write(fd, buf, nbyte)
+    unsafe { return write(fd, buf, nbyte) }
 }
 
 @cSig("fcntl.h", "int open(const char *, int, ...)")

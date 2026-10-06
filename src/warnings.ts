@@ -32,7 +32,7 @@ interface WarningInfo {
 }
 
 /** Warnings whose reference entry is finished. Ratchet: may only grow. */
-export const DOCUMENTED_FLOOR = 26;
+export const DOCUMENTED_FLOOR = 27;
 
 export const WARNINGS: WarningInfo[] = [
   // Reported when `--expect=<name>` was given and that warning never fired. On by
@@ -68,6 +68,18 @@ fn main() {
     example: `fn main() {
   let os = targetOs()
   print(os)
+}
+`,
+  },
+  {
+    name: "extern-call",
+    doc: "An `extern fn` runs C code the checker cannot see into. Even one with only scalar arguments can break an invariant safe code relies on: `close(fd)` on a descriptor a `TcpStream` still owns compiles clean and leaves the stream writing to a closed or reused fd. Every extern call belongs inside `unsafe`; std wraps the harmless ones (`getpid`, `isatty`, ...) in safe functions and gives the dangerous ones owning types. Staged as a warning; `--deny=extern-call` holds a project to it. Not reported inside a manifest dependency.",
+    fix: "Call the std wrapper or owning type instead, or wrap the call in `unsafe { ... }` and say why it is sound.",
+    example: `extern fn getpid(): i32
+
+fn main() {
+  let pid = getpid()
+  print(pid > 0)
 }
 `,
   },

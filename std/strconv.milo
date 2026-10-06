@@ -49,7 +49,7 @@ pub fn parseIntRadix(s: string, base: i32): Option<i64> {
         }
         i += 1
     }
-    return Option.Some(strtoll(s, 0 as **u8, base))
+    unsafe { return Option.Some(strtoll(s, 0 as **u8, base)) }
 }
 
 // Parse a floating-point number, or None if the string isn't a complete float

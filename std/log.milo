@@ -142,7 +142,7 @@ fn logWriteLine(line: &string): void {
     // print/eprint go through stdio's buffer; this goes straight at the fd. Drain
     // first or a log line redirected to stdout lands before output already
     // written. fflush on an empty buffer is not a syscall.
-    fflush(0 as *u8)
+    unsafe { fflush(0 as *u8) }
     writeFd(gSinkFd, line, line.len)
 }
 
@@ -390,7 +390,7 @@ impl Log {
     // module never closes it, and it must outlive the last record.
     fn setSinkFd(fd: i32): void {
         if gSinkOwned {
-            close(gSinkFd)
+            unsafe { close(gSinkFd) }
         }
         gSinkFd = fd
         gSinkOwned = false
@@ -400,12 +400,13 @@ impl Log {
     // and owned here for the life of the process (or until the sink is replaced).
     // O_APPEND is what makes concurrent whole-record writes atomic at any size.
     fn setSinkPath(path: &string): Result<Unit, IoError> {
-        let fd = open(path, oWriteCreateAppend(), 420)
+        var fd: i32 = 0
+        unsafe { fd = open(path, oWriteCreateAppend(), 420) }
         if fd < 0 {
             return Result.Err(ioError(path))
         }
         if gSinkOwned {
-            close(gSinkFd)
+            unsafe { close(gSinkFd) }
         }
         gSinkFd = fd
         gSinkOwned = true

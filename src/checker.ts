@@ -779,6 +779,8 @@ export class TypeChecker {
   // true while checking a function from the user's own file (not imported code);
   // gates lints that would otherwise flood every compile with stdlib noise
   private currentFnIsUser = true;
+  // true while checking a function from a manifest dependency (see fnIsDependencyCode)
+  private currentFnIsDep = false;
 
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
@@ -1356,6 +1358,40 @@ export class TypeChecker {
       }
     }
     return null;
+  }
+
+  // extern-call: an extern the signature rule above lets through (scalars,
+  // auto-coerced strings) still runs C code that can break invariants the checker is
+  // relying on elsewhere: `close(fd)` on an fd a TcpStream still owns compiles clean and
+  // leaves the stream writing to a closed or reused descriptor. Every extern call is meant
+  // to sit inside `unsafe` (std wraps the harmless ones in safe pub fns), staged as a
+  // warning so existing programs get a cycle to migrate.
+  //
+  // A `@pure` extern is exempt: purity (reads only its arguments, no effects) is a
+  // stronger claim than this rule asks for, the purity pass already trusts it, and a
+  // `@pure` caller may not contain `unsafe` at all, so Math.sqrt could not call libm.
+  //
+  // Not reported inside a manifest dependency: the reader cannot edit it. std IS
+  // reported, because std is where the wrappers live and it is held to zero.
+  //
+  // `exit` is exempt too: codegen compiles every `exit(n)` as the safe builtin whether or
+  // not std/os's extern of the same name is in scope, and in the flat namespace one
+  // user import of that extern would otherwise retarget every builtin `exit` in std.
+  private noteSafeExternCall(name: string, attrs: { name: string }[] | undefined, span?: Span) {
+    if (name === "exit" || attrs?.some(a => a.name === "pure")) return;
+    if (this.unsafeDepth > 0) {
+      if (this.unsafeUsedStack.length > 0) this.unsafeUsedStack[this.unsafeUsedStack.length - 1] = true;
+      return;
+    }
+    if (this.currentFnIsDep) return;
+    this.warn("extern-call", `calling extern function '${name}' outside an 'unsafe' block`, span,
+      `wrap the call in 'unsafe { ... }', or call the std function that wraps it`);
+  }
+
+  // Manifest deps are the only mangled code, so a `<pkg>$` prefix settles it.
+  private fnIsDependencyCode(name: string): boolean {
+    const firstSep = name.indexOf("$");
+    return firstSep > 0 && !!this._packageNames?.has(name.slice(0, firstSep));
   }
 
   private requireUnsafeCall(decl: { attributes?: { name: string }[] } | undefined, name: string, span?: Span) {
@@ -3507,8 +3543,8 @@ export class TypeChecker {
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern, ...mustUseOf(fn) });
       // The call site needs the declaration for contracts and for `@unsafe`; recording it
       // only for contracts meant an `@unsafe fn` with no `requires` clause was declared
-      // unsafe and called freely.
-      if ((fn.contracts && fn.contracts.length > 0) || fn.attributes?.some(a => a.name === "unsafe")) {
+      // unsafe and called freely. A `@pure` extern is recorded for the extern-call rule.
+      if ((fn.contracts && fn.contracts.length > 0) || fn.attributes?.some(a => a.name === "unsafe" || (fn.isExtern && a.name === "pure"))) {
         this.fnDecls.set(fn.name, fn);
       }
     }
@@ -5913,6 +5949,7 @@ export class TypeChecker {
     // type's methods (some returning void), which would otherwise leave
     // currentFnRetType clobbered and make a later `?` see a void return.
     const savedIsUser = this.currentFnIsUser;
+    const savedIsDep = this.currentFnIsDep;
     const savedRetType = this.currentFnRetType;
     const savedScopeFloor = this.fnScopeFloor;
     const savedFnFile = this.currentFnFile;
@@ -5923,6 +5960,7 @@ export class TypeChecker {
       this.checkFunctionBody(fn);
     } finally {
       this.currentFnIsUser = savedIsUser;
+      this.currentFnIsDep = savedIsDep;
       this.currentFnRetType = savedRetType;
       this.fnScopeFloor = savedScopeFloor;
       this.currentFnFile = savedFnFile;
@@ -5931,6 +5969,7 @@ export class TypeChecker {
 
   private checkFunctionBody(fn: Function) {
     this.currentFnIsUser = this.fnIsUserCode(fn.name);
+    this.currentFnIsDep = this.fnIsDependencyCode(fn.name);
     // `sourceFile` first: a derived method's spans name the synthetic
     // `<derive Json for S>` unit, but the resolver-style origin is the struct's file,
     // which is where generated code has to count as living for field privacy.
@@ -9675,6 +9714,7 @@ export class TypeChecker {
           break;
         }
       }
+      if (argsSafe) this.noteSafeExternCall(expr.func, this.fnDecls.get(expr.func)?.attributes, sp);
       if (!argsSafe) {
         // teach the rule, not just the verdict — it's otherwise learned by trial-and-error
         const why = !retSafe

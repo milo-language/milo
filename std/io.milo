@@ -1,6 +1,7 @@
 // std/io — file and directory I/O with automatic cleanup
 
 from "std/os" import {
+    dup,
     fflush,
     readFd,
     recvFd,
@@ -120,7 +121,7 @@ pub trait Writer {
 // buffer first or the two interleave in the wrong order. fflush on an already-empty
 // buffer is not a syscall, so a program that only ever uses this pays nothing.
 pub fn writeStdout(s: &string): void {
-    fflush(0 as *u8)
+    unsafe { fflush(0 as *u8) }
     writeFd(1, s, s.len)
 }
 
@@ -297,7 +298,7 @@ impl Drop for File {
         // all-zero — the zero value must drop as a no-op or we close fd 0 (stdin).
         // See TcpStream.drop in std/net for the full story.
         if self.fd > 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
@@ -305,7 +306,8 @@ impl Drop for File {
 impl File {
     // Open a file for reading.
     fn openRead(path: &string): Result<File, IoError> {
-        let fd = open(path, 0)
+        var fd: i32 = 0
+        unsafe { fd = open(path, 0) }
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -316,7 +318,8 @@ impl File {
 
     // Open a file for writing, creating it or truncating it (mode 0644).
     fn openWrite(path: &string): Result<File, IoError> {
-        let fd = open(path, oWriteCreateTrunc(), 420)
+        var fd: i32 = 0
+        unsafe { fd = open(path, oWriteCreateTrunc(), 420) }
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -327,7 +330,8 @@ impl File {
 
     // Open a file for appending, creating it if missing (mode 0644).
     fn openAppend(path: &string): Result<File, IoError> {
-        let fd = open(path, oWriteCreateAppend(), 420)
+        var fd: i32 = 0
+        unsafe { fd = open(path, oWriteCreateAppend(), 420) }
         if fd < 0 {
             return Result.Err(ioError(path))
         }
@@ -338,9 +342,13 @@ impl File {
 
     // Size of the open file in bytes. The read position is left where it was.
     fn size(self: &Self): i64 {
-        let cur = lseek(self.fd, 0, 1)
-        let size = lseek(self.fd, 0, 2)
-        lseek(self.fd, cur, 0)
+        var cur: i64 = 0
+        unsafe { cur = lseek(self.fd, 0, 1) }
+        var size: i64 = 0
+        unsafe {
+            size = lseek(self.fd, 0, 2)
+            lseek(self.fd, cur, 0)
+        }
         return size
     }
 
@@ -356,7 +364,7 @@ impl File {
         // then overflowed to INT64_MIN — a negative-capacity crash. 1 GiB is a
         // generous ceiling that also bounds a hostile presize.
         if size > 0 && size <= 1073741824 {
-            lseek(self.fd, 0, 0)
+            unsafe { lseek(self.fd, 0, 0) }
             // One malloc, one read per 64 KiB, one memcpy at the end. The previous
             // version appended the read buffer to a String ONE BYTE AT A TIME, which
             // cost more than the read syscalls themselves — 33ms of a 47ms grep over
@@ -417,7 +425,8 @@ impl File {
     // offset. A BufReader over this file caches bytes past its own cursor, so
     // seeking underneath one desynchronizes it — seek first, then wrap.
     fn seek(self: &Self, pos: i64): Result<i64, IoError> {
-        let at = lseek(self.fd, pos, 0)
+        var at: i64 = 0
+        unsafe { at = lseek(self.fd, pos, 0) }
         if at < 0 {
             return Result.Err(IoError.Other("seek failed"))
         }
@@ -426,7 +435,7 @@ impl File {
 
     // Current cursor offset, or -1 for a stream that cannot report one (pipe, tty).
     fn tell(self: &Self): i64 {
-        return lseek(self.fd, 0, 1)
+        unsafe { return lseek(self.fd, 0, 1) }
     }
 
     // Close now instead of at drop, and report failure. Drop closes silently, which
@@ -439,8 +448,10 @@ impl File {
         }
         let fd = self.fd
         self.fd = 0 as i32
-        if close(fd) < 0 {
-            return Result.Err(ioError("close"))
+        unsafe {
+            if close(fd) < 0 {
+                return Result.Err(ioError("close"))
+            }
         }
         return Result.Ok(Unit {
         })
@@ -521,6 +532,62 @@ pub fn readStdin(): string {
         }
     }
     return result
+}
+
+// ── OwnedFd ──
+
+// Sole owner of a descriptor that is neither a File nor a socket: a pipe end taken from
+// a Child, a dup of a pty master. Closes it on drop, so the move checker allows one
+// closer per descriptor, and a task that owns one is the last user of the number by
+// construction. There is no safe way to build one from a bare integer: adopting a
+// number something else will also close is the double close (or the close of a
+// reused number) this type exists to rule out. Get one from an owner, or by `dup`.
+pub struct OwnedFd {
+    _fd: i32,
+}
+
+impl Drop for OwnedFd {
+    fn drop(self: &mut Self): void {
+        // `> 0`: the zero value must drop as a no-op (see TcpStream.drop in std/net).
+        if self._fd > 0 {
+            unsafe { close(self._fd) }
+        }
+    }
+}
+
+// Take ownership of `fd`. The caller vouches that nothing else will close it; this is
+// how an owner elsewhere in std (Child.takeStdout) hands its descriptor over.
+@unsafe
+pub fn adoptFd(fd: i32): OwnedFd {
+    return OwnedFd {
+        _fd: fd
+    }
+}
+
+impl OwnedFd {
+    // A new descriptor for the same open file as `fd`, owned by the result. Whoever
+    // owns `fd` keeps it: closing one of the two leaves the other open.
+    fn dup(fd: i32): Result<OwnedFd, IoError> {
+        var n: i32 = -1
+        unsafe { n = dup(fd) }
+        if n < 0 {
+            return Result.Err(IoError.Other("dup failed"))
+        }
+        return Result.Ok(OwnedFd {
+            _fd: n
+        })
+    }
+
+    // The descriptor number, still owned by this handle: valid only while it lives.
+    fn fd(self: &Self): i32 {
+        return self._fd
+    }
+
+    // Stream the descriptor's bytes as a channel (see fdChannel). Keep this handle alive
+    // until the channel closes: dropping it closes the fd under the pump.
+    fn channel(self: &Self): Channel<string> {
+        return fdChannel(self._fd)
+    }
 }
 
 // ── fd-backed streams ──

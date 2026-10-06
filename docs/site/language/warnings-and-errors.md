@@ -36,6 +36,7 @@ build rather than quietly teaching the wrong thing.
 | [`unfulfilled-expectation`](#unfulfilled-expectation) | warn |
 | [`bare-embedfile`](#bare-embedfile) | warn |
 | [`bare-targetos`](#bare-targetos) | warn |
+| [`extern-call`](#extern-call) | warn |
 | [`external-linkage-not-pub`](#external-linkage-not-pub) | warn |
 | [`borrow-that-clones`](#borrow-that-clones) | warn |
 | [`index-clone`](#index-clone) | warn |
@@ -105,6 +106,23 @@ fn main() {
 ```
 
 **Fix:** Write `@targetOs()` instead of `targetOs()`.
+
+### extern-call
+
+_On by default._
+
+An `extern fn` runs C code the checker cannot see into. Even one with only scalar arguments can break an invariant safe code relies on: `close(fd)` on a descriptor a `TcpStream` still owns compiles clean and leaves the stream writing to a closed or reused fd. Every extern call belongs inside `unsafe`; std wraps the harmless ones (`getpid`, `isatty`, ...) in safe functions and gives the dangerous ones owning types. Staged as a warning; `--deny=extern-call` holds a project to it. Not reported inside a manifest dependency.
+
+```milo
+extern fn getpid(): i32
+
+fn main() {
+  let pid = getpid()
+  print(pid > 0)
+}
+```
+
+**Fix:** Call the std wrapper or owning type instead, or wrap the call in `unsafe { ... }` and say why it is sound.
 
 ### external-linkage-not-pub
 
