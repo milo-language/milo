@@ -1,0 +1,28 @@
+// @expect: worker 7 ok
+// @expect: exit 0
+// @expect: Process { name: "worker", id: 7 }
+// A private type may share its name with a std type this file never imports. std/process
+// declares `pub struct Process`; importing only `Command` used to fail with "'Process' is
+// defined as a struct in ... and as a struct in 'std/process.milo'". The resolver now
+// renames the user's private type for the merge, and `print` still shows its own name.
+from "std/process" import { Command }
+
+struct Process {
+    name: string,
+    id: i64,
+}
+
+impl Process {
+    fn describe(self: &Self): string {
+        return $"{self.name} {self.id} ok"
+    }
+}
+
+fn main() {
+    let p = Process { name: "worker", id: 7 }
+    print(p.describe())
+    var child = Command.new("true").spawn()!
+    print($"exit {child.wait()!}")
+    child.close()
+    print(p)
+}

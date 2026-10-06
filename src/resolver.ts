@@ -644,15 +644,35 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
   }
 
+  // Type names std keeps flat: what a non-prelude std module declares minus the private
+  // ones stage 4 just renamed. A private user type with one of these names is renamed
+  // (owner decision 2026-10-06, docs/plans/friction-2026-10-analysis.md item 1): a std
+  // release adding `pub struct Process` must not break a program whose own private
+  // `Process` never met it. Types only: a type has no override semantics, any body
+  // difference was already a hard error. Fns keep the flat `shadows-stdlib` behaviour,
+  // and the prelude (Option, Result, Vec...) is excluded so redeclaring one stays an error.
+  const stdPubTypes = new Set<string>();
+  for (const u of units) {
+    if (u.pkg !== "" || preludeFiles.has(u.file) || !u.file.startsWith(stdModuleRoot)) continue;
+    const all = emptyPkgDecls();
+    collectPkgDecls(u.prog, all);
+    const renamed = modulePlan.get(u.file)?.priv.types;
+    for (const n of all.types) if (!renamed?.has(n)) stdPubTypes.add(n);
+  }
+
   for (const u of userUnits) {
     const priv = emptyPkgDecls();
     collectModulePrivateDecls(u.prog, priv);
+    // A file that imports the std name AND declares its own is a real ambiguity in that
+    // file; it keeps the duplicate-type error rather than silently picking one.
+    const imported = new Set(u.targets.flatMap(t => t.names));
+    const shadowsStdType = (n: string) => stdPubTypes.has(n) && !imported.has(n);
     if (!mangleAll) {
       for (const n of [...priv.values]) if ((declCount.get(n) ?? 0) < 2) priv.values.delete(n);
-      for (const n of [...priv.types]) if ((declCount.get(n) ?? 0) < 2) priv.types.delete(n);
+      for (const n of [...priv.types]) if ((declCount.get(n) ?? 0) < 2 && !shadowsStdType(n)) priv.types.delete(n);
     } else {
       for (const n of [...priv.values]) if (stdNames.has(n)) priv.values.delete(n);
-      for (const n of [...priv.types]) if (stdNames.has(n)) priv.types.delete(n);
+      for (const n of [...priv.types]) if (stdNames.has(n) && !shadowsStdType(n)) priv.types.delete(n);
     }
     if (priv.values.size === 0 && priv.types.size === 0) continue;
     modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });

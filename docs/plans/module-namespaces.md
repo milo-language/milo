@@ -3,7 +3,7 @@ system: module-namespace-plan
 purpose: implementation plan for per-module name scoping, replacing the flat one-namespace merge
 key-files: src/mangle.ts, src/resolver.ts, src/checker.ts, docs/breaking-changes.md
 update-when: the mangling granularity, the std carve-out, or the staging changes
-last-verified: 2026-09-20
+last-verified: 2026-10-06 (private user types vs std pub types; earlier: stages 3-4)
 -->
 
 # Per-module namespaces — implementation plan
@@ -102,7 +102,17 @@ The gate that cannot be gamed is `MILO_MANGLE_ALL=1`: it renames EVERY private n
 every user module, and the fixture suite must not notice. Before display names it turned
 59 error fixtures red; after, 0, and a 40-fixture sample of print/derive/interface output
 is byte-identical. A private user name that also names a std decl is never renamed under
-that switch, so the `shadows-stdlib` diagnostics keep firing.
+that switch, so the `shadows-stdlib` diagnostics keep firing. The one exception is a type
+(below).
+
+**Private user types vs std pub types (2026-10-06).** A private user TYPE whose name a
+non-prelude std module declares `pub` is renamed like a user-vs-user collision, unless the
+file imports that std name (then it is ambiguous in that file and stays the duplicate-type
+error). A std release adding `pub struct Process` used to break every program with a
+private `Process`. Types only: a type has no override semantics, while a user fn with a
+std fn's name is a real (warned) override. A `pub` user type still collides, since its
+importers would need rewriting (`tests/errors/pubUserTypeNamedLikeStd.milo`). Fixture:
+`tests/fixtures/userTypeNamedLikeStd.milo`.
 
 std: every non-`pub` top-level name in a std module is `<module>$<name>` (a platform arm
 takes its base module's id, so all arms produce the same symbols). `pub` std names stay

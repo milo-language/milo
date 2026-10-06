@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo
+key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-09-21
+last-verified: 2026-10-06
 -->
 
 # Breaking changes
@@ -16,6 +16,28 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## `std/testing.assert` and `std/os.exit` are removed: both are builtins (2026-10-06)
+
+Builtins and program fns share one namespace, so a std `pub` fn named like a builtin
+replaced the builtin for the whole program once any file imported its module.
+`std/testing`'s one-argument `assert` turned every `assert(cond, msg)` in the program
+into a bare "assertion failed" with no message and no location. `assert(cond)` and
+`assert(cond, msg)` are the builtin; `exit(code)` is the builtin. Drop `assert` from
+`std/testing` import lists and `exit` from `std/os` (or `std/process`) import lists; the
+calls compile unchanged. A shim is impossible for the same reason the break exists.
+
+## `Child` and `Process` fields are private (2026-10-06)
+
+`std/process`'s `Child` (`pid`, `stdinFd`, `stdoutFd`, `stderrFd`) and `Process` (`pid`)
+had public fields, so any file could build a `Child` around a pid it never spawned and
+signal it. The fields are `_`-private; read them with the accessors.
+
+| was | now |
+|---|---|
+| `child.pid`, `child.stdinFd`, `child.stdoutFd`, `child.stderrFd` | `child.pid()`, `child.stdinFd()`, `child.stdoutFd()`, `child.stderrFd()` |
+| `proc.pid` | `proc.pid()` |
+| `Child { pid: -1, ... }` as a placeholder | bind from the spawn: `let child = match Child.spawn(...) { ... }` |
 
 ## `Json.parse`, the `Json.obj()`/`Json.arr()` builders and derived `fromJson` borrow their strings (2026-09-21)
 

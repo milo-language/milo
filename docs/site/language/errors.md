@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 374 distinct messages across 462 programs the compiler must reject.
+Every error message the test suite pins: 376 distinct messages across 464 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -75,6 +75,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)`](#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop)
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
+- [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process-milo)
+- [`'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'`](#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process-milo)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
@@ -1671,6 +1673,45 @@ fn main() {
 ```
 
 <sub>[tests/errors/structLitTypeArgsNotGeneric.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsNotGeneric.milo)</sub>
+
+## `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process.milo'` {#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process-milo}
+
+Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
+
+```milo skip
+from "std/process" import { Command }
+
+pub struct Process {
+    id: i64,
+}
+
+fn main() {
+    let p = Process { id: 7 }
+    print(p.id)
+    let _c = Command.new("true")
+}
+```
+
+<sub>[tests/errors/pubUserTypeNamedLikeStd.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubUserTypeNamedLikeStd.milo)</sub>
+
+## `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'` {#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process-milo}
+
+A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
+
+```milo skip
+from "std/process" import { Process }
+
+struct Process {
+    id: i64,
+}
+
+fn main() {
+    let p = Process { id: 7 }
+    print(p.id)
+}
+```
+
+<sub>[tests/errors/userTypeShadowsImportedStd.milo](https://github.com/milo-language/milo/blob/main/tests/errors/userTypeShadowsImportedStd.milo)</sub>
 
 ## `'ptr' is not available on Heap<Shape>` {#ptr-is-not-available-on-heap-shape}
 

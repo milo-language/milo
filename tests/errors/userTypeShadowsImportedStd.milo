@@ -1,0 +1,14 @@
+// @error: 'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process.milo'
+// A file that imports std's `Process` AND declares its own has two meanings for one name
+// in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so
+// the duplicate-type error stays.
+from "std/process" import { Process }
+
+struct Process {
+    id: i64,
+}
+
+fn main() {
+    let p = Process { id: 7 }
+    print(p.id)
+}
