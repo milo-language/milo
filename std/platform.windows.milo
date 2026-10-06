@@ -67,7 +67,7 @@ pub fn afInet6(): i32 {
 
 pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     var a = SockAddrIn6 {
-        sin6_family: 23 as u16,
+        sin6_family: 23,
         sin6_port: htons(port),
         sin6_flowinfo: 0,
         sin6_addr: [0; 16],
@@ -91,7 +91,7 @@ pub fn sockAddrIn6Len(): u32 {
 
 pub fn makeSockaddrUn(path: &string): SockAddrUn {
     var a = SockAddrUn {
-        sun_family: 1 as u16,
+        sun_family: 1,
         sun_path: [0; 108],
     }
     var i: i64 = 0
@@ -117,7 +117,7 @@ pub fn sockAddrStorageLen(): u32 {
 
 pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     return SockAddrIn {
-        sin_family: 2 as u16,
+        sin_family: 2,
         sin_port: htons(port),
         sin_addr: addr,
         sin_zero: [0; 8],
@@ -227,7 +227,7 @@ pub fn ensureNetInit(): void {
     // read back (we only need the version negotiation to succeed).
     var data: [u8; 512] = [0; 512]
     unsafe {
-        WSAStartup(514 as u16, data as *u8)
+        WSAStartup(514, data as *u8)
     }
     wsaInited = true
 }
@@ -423,7 +423,7 @@ pub fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64
         return 0 as *u8
     }
     unsafe {
-        return VirtualAlloc(0 as *u8, len, 12288 as u32, 4 as u32)
+        return VirtualAlloc(0 as *u8, len, 12288, 4)
     }
 }
 
@@ -431,7 +431,7 @@ pub fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64
 // returned by VirtualAlloc — it always frees the whole reservation, unlike munmap.
 pub fn munmap(addr: *u8, _len: i64): i32 {
     unsafe {
-        if VirtualFree(addr, 0, 32768 as u32) == 0 {
+        if VirtualFree(addr, 0, 32768) == 0 {
             return -1
         }
     }
@@ -443,7 +443,7 @@ pub fn munmap(addr: *u8, _len: i64): i32 {
 pub fn mprotect(addr: *u8, len: i64, _prot: i32): i32 {
     var old: u32 = 0
     unsafe {
-        if VirtualProtect(addr, len, 1 as u32, old.addrOf() as *u8) == 0 {
+        if VirtualProtect(addr, len, 1, old.addrOf() as *u8) == 0 {
             return -1
         }
     }
@@ -525,7 +525,7 @@ pub fn pthread_cond_init(cond: *u8, _attr: *u8): i32 {
 // INFINITE (0xFFFFFFFF) and flags 0 = wait on the lock held exclusively, matching the
 // SRWLOCK acquired by pthread_mutex_lock above.
 pub fn pthread_cond_wait(cond: *u8, mutex: *u8): i32 {
-    unsafe { SleepConditionVariableSRW(cond, mutex, 4294967295 as u32, 0 as u32) }
+    unsafe { SleepConditionVariableSRW(cond, mutex, 4294967295, 0) }
     return 0
 }
 
@@ -549,7 +549,7 @@ pub fn pthread_cond_destroy(_cond: *u8): i32 {
 // the mismatch is confined to a wider return register than Win32 reads back.
 pub fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
     var h: i64 = 0
-    unsafe { h = CreateThread(0 as *u8, 0, start, arg, 0 as u32, 0 as *u8) }
+    unsafe { h = CreateThread(0 as *u8, 0, start, arg, 0, 0 as *u8) }
     if h == 0 {
         return -1
     }
@@ -562,7 +562,7 @@ pub fn pthread_create(thread: *u8, _attr: *u8, start: *u8, arg: *u8): i32 {
 
 pub fn pthread_join(thread: i64, _retval: *u8): i32 {
     unsafe {
-        WaitForSingleObject(thread, 4294967295 as u32)
+        WaitForSingleObject(thread, 4294967295)
         CloseHandle(thread)
     }
     return 0
@@ -661,7 +661,7 @@ pub fn gettimeofday(tv: *u8, _tz: *u8): i32 {
 pub fn usleep(usec: u32): i32 {
     let ms = (usec as i64) / 1000
     if ms < 1 {
-        unsafe { Sleep(1 as u32) }
+        unsafe { Sleep(1) }
     } else {
         unsafe { Sleep(ms as u32) }
     }
@@ -677,7 +677,7 @@ pub fn usleep(usec: u32): i32 {
 pub extern fn _pipe(fds: *i32, size: u32, mode: i32): i32
 
 pub fn pipe(fds: *i32): i32 {
-    unsafe { return _pipe(fds, 4096 as u32, 32768) }
+    unsafe { return _pipe(fds, 4096, 32768) }
 }
 
 // ── fd I/O ──
@@ -718,10 +718,10 @@ extern fn _access(path: *u8, mode: i32): i32
 // would silently transfer the low 32 bits of the requested length.
 fn clampCount(nbyte: i64): u32 {
     if nbyte > 2147483647 {
-        return 2147483647 as u32
+        return 2147483647
     }
     if nbyte < 0 {
-        return 0 as u32
+        return 0
     }
     return nbyte as u32
 }

@@ -93,3 +93,18 @@ pub fn main(): i32 {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// std is held to zero on every target, not just the host: the platform arms
+// (platform.linux.milo, platform.windows.milo, event.windows.milo) only load for
+// their target, and a cast left there surfaced in users' `check --json` on Linux CI.
+test("std has no redundant casts on any target's platform arms", () => {
+  const dir = mkdtempSync(join(tmpdir(), "milo-redundant-cast-std-"));
+  const src = join(dir, "main.milo");
+  writeFileSync(src, 'from "std/os" import {\n    strlen\n}\nfrom "std/sync" import {\n    Channel\n}\n\npub fn main(): i32 {\n    print(strlen("hi"))\n    return 0\n}\n');
+  for (const target of ["linux-x64", "windows-x64", "macos-arm64"]) {
+    const r = spawnSync("bun", ["run", MAIN, "check", "--target", target, "--json", src], { encoding: "utf8" });
+    const hits = JSON.parse(r.stdout).diagnostics.filter((d: any) => d.code === "redundant-cast")
+      .map((d: any) => `${d.file}:${d.line}`);
+    expect({ target, hits }).toEqual({ target, hits: [] });
+  }
+});

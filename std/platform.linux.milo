@@ -65,7 +65,7 @@ pub fn afInet6(): i32 {
 // index for a link-local address (fe80::/10), 0 otherwise.
 pub fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
     var a = SockAddrIn6 {
-        sin6_family: 10 as u16,
+        sin6_family: 10,
         sin6_port: htons(port),
         sin6_flowinfo: 0,
         sin6_addr: [0; 16],
@@ -93,7 +93,7 @@ pub fn sockAddrIn6Len(): u32 {
 // silently shortened one (UnixListener/UnixStream do).
 pub fn makeSockaddrUn(path: &string): SockAddrUn {
     var a = SockAddrUn {
-        sun_family: 1 as u16,
+        sun_family: 1,
         sun_path: [0; 108],
     }
     var i: i64 = 0
@@ -120,7 +120,7 @@ pub fn sockAddrStorageLen(): u32 {
 pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     unsafe {
         return SockAddrIn {
-            sin_family: 2 as u16,
+            sin_family: 2,
             sin_port: htons(port),
             sin_addr: addr,
             sin_zero: [0; 8],
@@ -130,7 +130,7 @@ pub fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
 
 pub fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sin_family: 0 as u16, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
     }
 }
 

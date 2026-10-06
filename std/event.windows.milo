@@ -383,7 +383,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
             i += 1
         }
 
-        var ms: u32 = 4294967295 as u32
+        var ms: u32 = 4294967295
         if timeoutMs >= 0 {
             ms = timeoutMs as u32
         }
@@ -395,7 +395,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
         // is only so the runtime calls eventLoopDrainWakeup (a no-op here) — the real cross-
         // thread work is the xfer list it drains every poll regardless, so a missed report
         // costs nothing.
-        if WaitForSingleObject(wlGet(st, 0), 0 as u32) == 0 as u32 {
+        if WaitForSingleObject(wlGet(st, 0), 0) == 0 as u32 {
             readyFds[k as i64] = wakeupIdentBase()
             k += 1
         }
