@@ -5,7 +5,7 @@
 // monomorphized instances, which is why they cannot run per function, and they reach
 // the checker only through `ProgramPassHost` (its recorded maps and diagnostics) plus
 // the `ProgramView` it builds once for all of them (design pass 2026-09, F5).
-import type { Program, Function, Stmt, Expr, Span } from "./ast";
+import type { Program, Function, Stmt, Expr, Span, Pattern } from "./ast";
 import type { TypeKind } from "./types";
 import type { CaptureInfo, FnSig } from "./checker";
 import { RETAINING_MEMBERS, MUTATING_COLLECTION_METHODS } from "./builtin-members";
@@ -184,6 +184,10 @@ function retainsParam(host: ProgramPassHost, fns: Map<string, Function>, fnName:
 // even for a `var` capture, at the cost of dropping the write-back — and it is what
 // every diagnostic here names.
 
+// The statement-list fields that open a block scope (if/else, loops, match arms,
+// `if let`, `unsafe`, closure bodies, if/match expressions).
+const BLOCK_KEYS: ReadonlySet<string> = new Set(["body", "thenBody", "elseBody"]);
+
 export function checkEscapingClosures(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const seen = new Set<string>();
   const { fns } = view;
@@ -212,12 +216,14 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
     }
     return out;
   };
-  const check = (value: Expr, bound: Map<string, Expr>, message: (names: string) => string, holder: string) => {
+  const check = (value: Expr, bound: Map<string, Expr>, message: (names: string) => string, holder: string,
+    capFilter?: (cap: CaptureInfo) => boolean) => {
     let c: Expr | null = null;
     if (value.kind === "Closure") c = value;
     else if (value.kind === "Ident") c = bound.get(value.name) ?? null;
     if (!c) return;
-    const caps = borrowedCaps(c, bound, new Set());
+    let caps = borrowedCaps(c, bound, new Set());
+    if (capFilter) caps = caps.filter(capFilter);
     if (caps.length === 0) return;
     const span = value.span ?? c.span;
     const key = `${span?.line ?? 0}:${span?.col ?? 0}`;
@@ -234,6 +240,27 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
   // walks the callee's body and was being run for every argument of every call.
   const mayBeClosure = (value: Expr, bound: Map<string, Expr>) =>
     value.kind === "Closure" || (value.kind === "Ident" && bound.has(value.name));
+  // Block nesting of the local bindings in scope, innermost last, for the `Assign` arm. A
+  // name in no block (a parameter, `self`) belongs to the whole body: depth 0.
+  let blocks: Map<string, number>[] = [];
+  const declareLocal = (name: string) => blocks[blocks.length - 1]?.set(name, blocks.length - 1);
+  const depthOf = (name: string): number => {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const d = blocks[i]!.get(name);
+      if (d !== undefined) return d;
+    }
+    return 0;
+  };
+  // The bindings a block introduces before its first statement: loop variables, closure
+  // params, the names a match arm or `if let` pattern binds.
+  const blockBindings = (n: Record<string, unknown> & { kind?: string }, key: string): string[] => {
+    const patternNames = (p: unknown) => (p as Pattern | undefined)?.kind === "EnumPattern" ? (p as Extract<Pattern, { kind: "EnumPattern" }>).bindings : [];
+    if (n.kind === "ForInStmt" && key === "body") return [n.varName as string, ...(n.varName2 ? [n.varName2 as string] : [])];
+    if (n.kind === "Closure" && key === "body") return (n.params as { name: string }[]).map(p => p.name);
+    if (n.kind === "IfLetStmt" && key === "thenBody") return patternNames(n.pattern);
+    if (n.kind === undefined && key === "body" && "pattern" in n) return patternNames(n.pattern);
+    return [];
+  };
   // Structural walk rather than a per-node switch: a missing arm here would silently
   // skip a whole subtree, which is exactly the class of bug this pass exists to close.
   const visit = (node: unknown, bound: Map<string, Expr>) => {
@@ -242,6 +269,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
     const n = node as Record<string, unknown> & { kind?: string };
     switch (n.kind) {
       case "LetDecl": case "VarDecl": {
+        declareLocal(n.name as string);
         const v = n.value as Expr | undefined;
         if (v?.kind === "Closure") bound.set(n.name as string, v);
         // `let g = f` aliases the same closure. Without this the alias launders a
@@ -263,15 +291,26 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
         if (n.value) check(n.value as Expr, bound,
           names => `cannot return a closure that captures ${names} by reference`, "the caller");
         break;
+      case "LetElseStmt":
+        // Its bindings land in the enclosing block, after the else.
+        for (const b of (n.pattern as Pattern).kind === "EnumPattern" ? (n.pattern as Extract<Pattern, { kind: "EnumPattern" }>).bindings : []) declareLocal(b);
+        break;
       case "Assign": {
-        // Assigning to a bare local is fine — the local dies with the same frame the
-        // captures live in. A field, an element, or a global is a place that outlives it.
+        // A field, an element, or a global is a place that outlives the frame. A bare
+        // local lives as long as its own block, so it may hold the closure only if every
+        // capture was declared in that block or an enclosing one: `var f` assigned a
+        // closure over a `let s` from an inner `if` block outlived `s` and read it freed.
         const t = n.target as Expr;
         const where = t.kind === "FieldAccess" ? "the struct holding it"
           : t.kind === "IndexAccess" ? "the collection holding it"
           : t.kind === "Ident" && globals.has(t.name) ? "a global"
           : null;
         if (where) check(n.value as Expr, bound, cannotStore, where);
+        else if (t.kind === "Ident") {
+          const targetDepth = depthOf(t.name);
+          check(n.value as Expr, bound, cannotStore, `'${t.name}', declared outside the block they live in,`,
+            cap => depthOf(cap.name) > targetDepth);
+        }
         break;
       }
       case "Call": {
@@ -338,10 +377,19 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
         // other kind is still descended into structurally, so nothing is skipped.
         break;
     }
-    for (const k of Object.keys(n)) { if (k !== "span" && k !== "type") visit(n[k], bound); }
+    for (const k of Object.keys(n)) {
+      if (k === "span" || k === "type") continue;
+      if (BLOCK_KEYS.has(k) && Array.isArray(n[k])) {
+        blocks.push(new Map());
+        for (const b of blockBindings(n, k)) declareLocal(b);
+        visit(n[k], bound);
+        blocks.pop();
+      } else visit(n[k], bound);
+    }
   };
   for (const fn of [...program.functions, ...host.monomorphizedFns]) {
     if (fn.isExtern || !fn.body) continue;
+    blocks = [new Map()];
     visit(fn.body, new Map<string, Expr>());
   }
 }

@@ -1,0 +1,12 @@
+// @error: cannot store a closure that captures 'x' by reference
+// Same rule as byRefClosureOutlivesScope, through a loop body and an alias: `g` is bound
+// in the body, `x` is the loop variable, and `f` outlives both.
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    for x in 0..3 {
+        let g = (): i64 => x * 10
+        f = g
+    }
+    print(f().toString())
+    return 0
+}

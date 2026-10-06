@@ -1,0 +1,18 @@
+// @error: cannot store a closure that captures 's' by reference
+// A by-reference closure lives as long as the local it is assigned to. `f` is declared
+// outside the `if` block that `s` lives in, so the closure outlives `s`: this printed 0
+// for 40 (the same program without the `if` prints 40). The frame is not the lifetime,
+// the scope is.
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    if cond() {
+        let s = "a string long enough to live on the heap".clone()
+        f = (): i64 => s.len
+    }
+    print(f().toString())
+    return 0
+}

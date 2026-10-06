@@ -1,0 +1,21 @@
+// @error: use of moved variable 's'
+// The loop is left from its condition too, which can be before the body ever ran: a
+// re-assignment inside the body does not make `s` valid after the loop. The exit state
+// used to be the end of the body alone, so this read an emptied string when n is 0.
+fn take(s: string): void {
+    print(s)
+}
+
+fn run(n: i64): void {
+    var s = "hello".clone()
+    take(s)
+    for _i in 0..n {
+        s = "again".clone()
+    }
+    print(s)
+}
+
+pub fn main(): i32 {
+    run(0)
+    return 0
+}

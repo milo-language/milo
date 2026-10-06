@@ -748,7 +748,10 @@ impl Router {
         while m >= 0 {
             let mw = self.middleware[m]
             let next = final
-            final = (c: &mut Context) => {
+            // `move`: `mw` and `next` are this iteration's locals and `final` outlives
+            // them. Captured by reference, every link read the last iteration's slots,
+            // so two or more middleware recursed forever.
+            final = move(c: &mut Context) => {
                 return mw(&mut c, next)
             }
             m -= 1

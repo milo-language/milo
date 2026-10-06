@@ -1,0 +1,12 @@
+// @error: variable 'args' already declared in this scope
+// The redeclaration is the one mistake here. The later lines were written against the
+// second `args`, so they resolve to it; they used to resolve to the first (an i64) and
+// report "type 'i64' has no method 'push'" and "cannot access field 'len'" as well.
+// tests/checkerRecovery.test.ts pins that this reports exactly one error.
+pub fn main(): i32 {
+    let args = 1
+    var args: Vec<string> = Vec.new()
+    args.push("a")
+    print(args.len.toString())
+    return 0
+}

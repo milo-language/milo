@@ -1,0 +1,21 @@
+// @error: use of moved variable 's'
+// The if-statement join drops a path that ends in `break` (it does not fall through to
+// the statement after the if), but that path still reaches the code after the loop. Its
+// move used to be lost there, and `print(s)` read an emptied string.
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        if n == 1 {
+            take(s)
+            break
+        }
+    }
+    print(s)
+    return 0
+}

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 369 distinct messages across 452 programs the compiler must reject.
+Every error message the test suite pins: 372 distinct messages across 460 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -202,6 +202,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
 - [`cannot store a closure that captures 'n' by reference`](#cannot-store-a-closure-that-captures-n-by-reference)
+- [`cannot store a closure that captures 's' by reference`](#cannot-store-a-closure-that-captures-s-by-reference)
+- [`cannot store a closure that captures 'x' by reference`](#cannot-store-a-closure-that-captures-x-by-reference)
 - [`cannot store a reference in a Vec`](#cannot-store-a-reference-in-a-vec)
 - [`cannot take 'Fd' out of a container by index: it carries Drop`](#cannot-take-fd-out-of-a-container-by-index-it-carries-drop)
 - [`cannot take 'Handle' out of a container by index: it carries a raw pointer field ('p')`](#cannot-take-handle-out-of-a-container-by-index-it-carries-a-raw-pointer-field-p)
@@ -384,6 +386,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`value -1 is out of range`](#value-1-is-out-of-range)
 - [`value 60000 is out of range`](#value-60000-is-out-of-range)
 - [`variable 'a' already declared in this scope`](#variable-a-already-declared-in-this-scope)
+- [`variable 'args' already declared in this scope`](#variable-args-already-declared-in-this-scope)
 - [`variant 'Some' has 1 fields, but pattern has 2 bindings`](#variant-some-has-1-fields-but-pattern-has-2-bindings)
 - [`was already moved out of it`](#was-already-moved-out-of-it)
 - [`which implements Drop`](#which-implements-drop)
@@ -3762,6 +3765,27 @@ fn main(): i32 {
 
 <sub>[tests/errors/moveInLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveInLoop.milo)</sub>
 
+A path that ends in `continue` starts the next iteration, so a move on it runs again: the second `take(s)` used to receive an emptied string.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    for i in 0..3 {
+        if i < 2 {
+            take(s)
+            continue
+        }
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnContinueLoopsAgain.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnContinueLoopsAgain.milo)</sub>
+
 ## `cannot move 'self.inner.s' out of the borrowed 'self'` {#cannot-move-self-inner-s-out-of-the-borrowed-self}
 
 The same hazard through a field chain and through `self`: with only the one-level check, `self.inner.s` slipped past and the callee zeroed the caller's field, so the caller read an empty string afterwards.
@@ -5010,6 +5034,46 @@ fn main() {
 ```
 
 <sub>[tests/errors/escapingClosureMoveLaunderStore.milo](https://github.com/milo-language/milo/blob/main/tests/errors/escapingClosureMoveLaunderStore.milo)</sub>
+
+## `cannot store a closure that captures 's' by reference` {#cannot-store-a-closure-that-captures-s-by-reference}
+
+A by-reference closure lives as long as the local it is assigned to. `f` is declared outside the `if` block that `s` lives in, so the closure outlives `s`: this printed 0 for 40 (the same program without the `if` prints 40). The frame is not the lifetime, the scope is.
+
+```milo skip
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    if cond() {
+        let s = "a string long enough to live on the heap".clone()
+        f = (): i64 => s.len
+    }
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/byRefClosureOutlivesScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/byRefClosureOutlivesScope.milo)</sub>
+
+## `cannot store a closure that captures 'x' by reference` {#cannot-store-a-closure-that-captures-x-by-reference}
+
+Same rule as byRefClosureOutlivesScope, through a loop body and an alias: `g` is bound in the body, `x` is the loop variable, and `f` outlives both.
+
+```milo skip
+pub fn main(): i32 {
+    var f: () => i64 = (): i64 => 0
+    for x in 0..3 {
+        let g = (): i64 => x * 10
+        f = g
+    }
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/byRefClosureOutlivesLoopBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/byRefClosureOutlivesLoopBody.milo)</sub>
 
 ## `cannot store a reference in a Vec` {#cannot-store-a-reference-in-a-vec}
 
@@ -8868,6 +8932,85 @@ fn main(): i32 {
 
 <sub>[tests/errors/moveAfterClosureCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveAfterClosureCapture.milo)</sub>
 
+Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose arms both break: each break carries the move to the loop exit.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var o: Option<i64> = Option.Some(1)
+    for i in 0..3 {
+        match o {
+            Option.Some(n) => {
+                take(s)
+                if n > i {
+                    break
+                } else {
+                    break
+                }
+            }
+            Option.None => {}
+        }
+        o = Option.None
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnBreakInMatchArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakInMatchArm.milo)</sub>
+
+The if-statement join drops a path that ends in `break` (it does not fall through to the statement after the if), but that path still reaches the code after the loop. Its move used to be lost there, and `print(s)` read an emptied string.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var n = 0
+    while n < 3 {
+        n = n + 1
+        if n == 1 {
+            take(s)
+            break
+        }
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveOnBreakUsedAfterLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakUsedAfterLoop.milo)</sub>
+
+The loop is left from its condition too, which can be before the body ever ran: a re-assignment inside the body does not make `s` valid after the loop. The exit state used to be the end of the body alone, so this read an emptied string when n is 0.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+fn run(n: i64): void {
+    var s = "hello".clone()
+    take(s)
+    for _i in 0..n {
+        s = "again".clone()
+    }
+    print(s)
+}
+
+pub fn main(): i32 {
+    run(0)
+    return 0
+}
+```
+
+<sub>[tests/errors/moveReassignedOnlyInLoopBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveReassignedOnlyInLoopBody.milo)</sub>
+
 ```milo skip
 fn consume(s: string): void {
 }
@@ -8881,6 +9024,28 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/useAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMove.milo)</sub>
+
+`while let` desugars to `while true { if let ... else { break } }`, so the body's own `break` is the only way the move reaches the code after the loop.
+
+```milo skip
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    while let Option.Some(_x) = v.pop() {
+        take(s)
+        break
+    }
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/whileLetBreakMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/whileLetBreakMove.milo)</sub>
 
 ## `use of moved variable 'value'` {#use-of-moved-variable-value}
 
@@ -9006,6 +9171,22 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/matchArmDuplicateBinding.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchArmDuplicateBinding.milo)</sub>
+
+## `variable 'args' already declared in this scope` {#variable-args-already-declared-in-this-scope}
+
+The redeclaration is the one mistake here. The later lines were written against the second `args`, so they resolve to it; they used to resolve to the first (an i64) and report "type 'i64' has no method 'push'" and "cannot access field 'len'" as well. tests/checkerRecovery.test.ts pins that this reports exactly one error.
+
+```milo skip
+pub fn main(): i32 {
+    let args = 1
+    var args: Vec<string> = Vec.new()
+    args.push("a")
+    print(args.len.toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/redeclareSameScopeNoCascade.milo](https://github.com/milo-language/milo/blob/main/tests/errors/redeclareSameScopeNoCascade.milo)</sub>
 
 ## `variant 'Some' has 1 fields, but pattern has 2 bindings` {#variant-some-has-1-fields-but-pattern-has-2-bindings}
 

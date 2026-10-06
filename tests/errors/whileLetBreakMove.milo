@@ -1,0 +1,18 @@
+// @error: use of moved variable 's'
+// `while let` desugars to `while true { if let ... else { break } }`, so the body's own
+// `break` is the only way the move reaches the code after the loop.
+fn take(s: string): void {
+    print(s)
+}
+
+pub fn main(): i32 {
+    let s = "hello".clone()
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    while let Option.Some(_x) = v.pop() {
+        take(s)
+        break
+    }
+    print(s)
+    return 0
+}

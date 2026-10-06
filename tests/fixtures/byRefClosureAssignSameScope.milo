@@ -1,0 +1,27 @@
+// A by-reference closure assigned to a local is fine when everything it captures lives at
+// least as long as that local: captures from the local's own block or an enclosing one.
+fn cond(): bool {
+    return true
+}
+
+pub fn main(): i32 {
+    let s = "a string long enough to live on the heap".clone()
+    var f: () => i64 = (): i64 => 0
+    if cond() {
+        f = (): i64 => s.len
+    }
+    print(f().toString())
+    var n = 0
+    for i in 0..3 {
+        var g: () => i64 = (): i64 => 0
+        let t = "abc".clone()
+        if i == 1 {
+            g = (): i64 => t.len + s.len
+        }
+        n = n + g()
+    }
+    print(n.toString())
+    return 0
+}
+// @expect: 40
+// @expect: 43
