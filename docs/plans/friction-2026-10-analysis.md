@@ -3,7 +3,7 @@ system: planning
 purpose: root-cause analysis of each item in friction-2026-10.md, with the root fix, blast radius, gate, effort, and an execution order
 key-files: src/checker.ts (expectedTypeOf, checkExprWithHint, checkIfExprExpr, bodyAlwaysReturns, mergeMoveState, checkClosureExpr, declare), src/checker-program-passes.ts (closure escape pass), src/resolver.ts (per-module rename, duplicate-type), std/process.milo, std/runtime.milo
 update-when: an item is fixed, a step of the execution order lands, or the owner decides one of the open questions
-last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1, steps 5-6 on friction-2)
+last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1, steps 5-6 on friction-2, steps 7-9 on friction-3)
 -->
 
 # Friction 2026-10: analysis and root fixes
@@ -477,11 +477,40 @@ Small landable steps, each with its gate, highest score first.
    ones stage 4 renamed); a private user type in it is renamed unless the file imports
    that name. Fixtures `userTypeNamedLikeStd` (passes under `MILO_MANGLE_ALL=1` too),
    errors `pubUserTypeNamedLikeStd` and `userTypeShadowsImportedStd`.
-7. Item 3 refactor: `checkExpr(expr, expected)`, delete the five side channels, sibling
-   hints for binop/comparison. M.
-8. Item 4 full: `reachable` flag, single `join`, internal `never`, `exit` diverges,
-   if-expression arms may diverge. M.
-9. Item 7 `redundant-cast` lint + fix, run over std/examples/dapweb. S.
+7. **Done 8b999fc6.** Item 3 refactor: `checkExpr(expr, expected)`, delete the five side
+   channels, sibling hints for binop/comparison. M. As landed: `checkExprWithHint` is
+   `checkExpr`; `returnHint`, `returnHintExpr`, `tailHints`, `closureParamHints`,
+   `closureRetHint`, `expectedTypeOf` and `valueTails` are gone. The dispatcher
+   (`checkExprKind`) hands `expected` to Call, MethodCall, EnumLit, Closure, IfExpr,
+   MatchExpr (and, since step 9, CastExpr and UnaryOp); `hintFor` is the one Option-unwrap
+   rule; an if/match passes it to each arm tail through `checkValueBody` -> `checkStmt`'s
+   `valueTail`. Binop: an if/match/enum-literal operand is checked against the other
+   operand's type (an argument-less enum literal on the left is checked second). Making
+   `o == Option.None` type was not enough, since `==` on an enum with payloads was an
+   error; it is now the tag test `o is Option.None` when one side is a payload-free
+   variant literal (`variantTagCompares`, lowered to `IsCheck`). Fixtures
+   `binopSiblingHint`, `eqOptionNone` (both fail on 083b5a34); error `eqPayloadVariant`.
+8. **Done 5374137b.** Item 4 full: `reachable` flag, single `join`, internal `never`, `exit`
+   diverges, if-expression arms may diverge. M. As landed: `this.reachable`, cleared by
+   return/break/continue, a `never`-typed expression (builtins `exit` and `todo` return
+   `never`) and a loop with no reachable exit; `joinPaths`/`checkPath` are the one join for
+   if, if-let, match (stmt and expr) and the if expression, and `endLoopMoves` uses the
+   flag for the end of the body. `returnOnlyMovesStack`/`inReturnInLoop` are deleted.
+   `never` is a `TypeKind` tag the checker uses only: lowering's `typeOf` maps it to `void`,
+   and an if whose arms both diverge stays `void`. `bodyAlwaysReturns` stays for the
+   unreachable-code error and the let-else "must diverge" rule (so `let … else { exit(1) }`
+   is still rejected). Fixtures `exitDivergesMoves`, `ifExprReturnArm` (both fail on
+   083b5a34), error `moveOnArmBesideExit`.
+9. **Done a99d99cb (lint), 650602c2 (std/examples).** Item 7 `redundant-cast` lint + fix,
+   run over std/examples/dapweb. S. As landed: fires for an int/float literal (or its
+   negation) cast to exactly the expected type, in range; not in a manifest dependency
+   (std is held to zero, as for extern-call), not in a generic instance body, not on a cast
+   first checked with no expected type (generic inference). `milo fix` drops the cast and
+   its own parentheses, never a call's. Counts before/after: std 145/0, examples 84/0,
+   dapweb 131/0 (dapweb branch `friction-3`; 8 of its hits sit inside `$"…{…}"`
+   interpolations, whose diagnostics point at the string start, so `milo fix` declines
+   them and they were edited by hand), src-milo 27 (left alone: a src-milo change is
+   gated by the self-host fixpoint). Tests: tests/redundantCastLint.test.ts.
 10. Item 2 non-escaping fn params (after owner decision). M.
 11. Item 6 layer 1 per std module; `Task.scope` after 10 if the owner wants it. S-M each; L.
 
