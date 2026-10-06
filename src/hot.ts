@@ -156,9 +156,10 @@ function signature(h: Header): string {
 }
 
 /**
- * Functions the thunk cannot forward. Varargs: `musttail` can forward `...` only from a
- * varargs caller, and a varargs thunk of a varargs body is legal, but codegen emits none
- * today and the path is untested, so they stay direct (not patchable).
+ * Functions left direct (no thunk, not patchable). Varargs: forwarding `...` needs a
+ * varargs musttail thunk, a path codegen never exercises (it defines no varargs
+ * functions today), so it is skipped rather than shipped untested. Intrinsics are never
+ * defined; the check keeps a future one from being thunked.
  */
 function unpatchableReason(f: Func, h: Header): string | null {
   if (h.params.some(p => p.includes("..."))) return "varargs";
@@ -236,9 +237,10 @@ function thunk(exp: string, h: Header, typedefs: Map<string, string>): string {
   return `define ${h.ret} ${q(exp)}(${params})${suffix} {\nentry:\n  %p = load atomic ptr, ptr ${q(exp + ".slot")} acquire, align 8\n${body}\n}`;
 }
 
-// Conservative across targets: x86-64 returns up to 4 integer and 2 SSE values in
-// registers, AArch64 8 of each.
-const RET_MAX_INT = 4, RET_MAX_FP = 2;
+// Conservative across targets: x86-64 returns at most 3 small integers (AL/DL/CL, a 4th
+// i32 finds EAX..ECX taken; seen on an {i1, %String} Option) and 2 SSE values in
+// registers; AArch64 allows 8 of each.
+const RET_MAX_INT = 3, RET_MAX_FP = 2;
 
 function returnFitsRegisters(ret: string, typedefs: Map<string, string>): boolean {
   const count = { int: 0, fp: 0 };
@@ -494,7 +496,7 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     restarting = false;
   };
   const cleanup = () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} };
-  process.on("SIGINT", () => { child?.kill("SIGKILL"); cleanup(); process.exit(130); });
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => { child?.kill("SIGKILL"); cleanup(); process.exit(130); });
 
   if (!start()) { cleanup(); return 1; }
 

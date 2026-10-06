@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: fast-iteration-plan
 purpose: cut the edit-to-running loop to well under a second via measurement, finer object caching, mixed opt levels, a daemon, a HIR interpreter, hot patching and a cheap dev backend
-key-files: src/cgu.ts, src/objcache.ts, src/main.ts, scripts/edit-loop.ts
+key-files: src/cgu.ts, src/objcache.ts, src/main.ts, src/hot.ts, scripts/edit-loop.ts
 update-when: a step ships or is abandoned, or the edit-loop numbers move
 last-verified: 2026-10-05
 -->
@@ -142,3 +142,15 @@ patching), cr.h (whole-dylib reload, state in host).
 - 2026-10-05: next order: daemon (3), hot reload MVP (5, body-only edits on redline),
   then the interpreter (4) for the agent loop. Hot reload serves long-running stateful
   programs; agents mostly need 3 and 4.
+- 2026-10-05: hot reload MVP shipped (`src/hot.ts`, `tools/hot/hot_runtime.c`, `milo hot`,
+  `milo build --hot`). Body-only edits patch; type layout, signature, function-set and
+  mutable-global changes refuse and restart. Redline one-line body edit (`mph`), save to
+  ack, quiet machine: **~0.46s** in `milo hot` (0.50s wall incl. the 50ms poll):
+  frontend+codegen 0.19, diff 0.013, clang 0.046, apply 0.20. Apply is almost all
+  `dlopen`: macOS assesses every new dylib on first load (a trivial C dylib takes
+  130-220ms once, 0.1ms after, per file), so the 0.3s target needs either that check
+  gone or a loader that does not hand dyld a new file. Deviations from the design: std
+  is thunked too (one indirect branch per call at -O0); a large aggregate return (more
+  than 3 int or 2 fp scalars) gets a plain call in its thunk because musttail fails in
+  the backend there (AArch64 sret demotion, x86-64 at 4 ints); new functions (a first
+  call to a new generic instantiation) refuse in v1.

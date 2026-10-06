@@ -5,6 +5,8 @@
 // For each one it dlopens the library and, for every name, stores the library's
 // `<name>.v<N>` into the host's `<name>.slot`, then appends `ok N` (or `err N <msg>`)
 // to the file named by MILO_HOT_ACK.
+// glibc defines RTLD_DEFAULT only under _GNU_SOURCE.
+#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
