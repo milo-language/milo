@@ -338,6 +338,17 @@ pub fn since(start: Instant): Duration
 
 Elapsed time since an instant.
 
+#### `sleepBlockingMs`
+
+```milo
+pub fn sleepBlockingMs(ms: i64): void
+```
+
+Sleep the calling OS thread for the given number of milliseconds, even inside
+a green task: it never parks, so no other green task on this scheduler runs
+until it returns. For a caller whose shared state must not be observed half
+torn down while it waits; anything else wants sleepMs.
+
 #### `sleepFor`
 
 ```milo

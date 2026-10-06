@@ -1,0 +1,29 @@
+// @expect: other task saw 0
+// @expect: slept >= 50ms: true
+// @expect: other task ran after: 1
+
+// sleepBlockingMs inside a green task must not park: a task spawned before it
+// sleeps cannot run until the sleep returns, unlike sleepMs.
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/time" import {
+    sleepBlockingMs, epochMillis
+}
+
+var gRan: i64 = 0
+
+pub fn main(): i32 {
+    Task.spawn(move(): void => {
+        Task.spawn(move(): void => {
+            gRan = gRan + 1
+        })
+        let t0 = epochMillis()
+        sleepBlockingMs(60)
+        print($"other task saw {gRan}")
+        print($"slept >= 50ms: {epochMillis() - t0 >= 50}")
+    })
+    schedulerRunToCompletion()
+    print($"other task ran after: {gRan}")
+    return 0
+}

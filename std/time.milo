@@ -538,6 +538,16 @@ pub fn sleepMs(ms: i64): void {
     usleepLong(ms * 1000)
 }
 
+// Sleep the calling OS thread for the given number of milliseconds, even inside
+// a green task: it never parks, so no other green task on this scheduler runs
+// until it returns. For a caller whose shared state must not be observed half
+// torn down while it waits; anything else wants sleepMs.
+pub fn sleepBlockingMs(ms: i64): void {
+    if ms > 0 {
+        usleepLong(ms * 1000)
+    }
+}
+
 // Sleep for the given number of seconds.
 pub fn sleepSecs(secs: i64): void {
     sleepMs(secs * 1000)
