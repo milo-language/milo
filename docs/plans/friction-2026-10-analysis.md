@@ -461,3 +461,14 @@ Small landable steps, each with its gate, highest score first.
    item 2, and only with a thread-sharing rule for the M:N scheduler.
 4. **Item 4: internal `never` type and `exit` returning it?** Recommend yes, no surface
    syntax.
+
+## Owner decisions (2026-10-06)
+
+- Closures capturing references: yes, Swift-style. Plain fn params are non-escaping (a
+  closure passed there may borrow locals and `self`); params that store or spawn the
+  closure are marked `move`.
+- Type names: rename a private user type that collides with an unimported std type; std
+  pub names stay flat until a real function clash is reported.
+- `never` type: yes, internal only (not user-writable syntax).
+- `Task.scope`: after borrow-capturing closures land, with a rule for borrows across the
+  M:N scheduler's OS threads designed first. Owned fd types now.
