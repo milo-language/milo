@@ -1,0 +1,25 @@
+// A match expression bound to an Option type hands the Option to each arm tail, so
+// `Option.None` in an arm infers its T (the if-expression case is ifExprOptionNoneHint).
+
+// @expect: 0 20 7
+pub fn main(): i32 {
+    let k: i64 = 2
+    let a: Option<i64> = match k {
+        1 => Option.Some(10 as i64),
+        _ => Option.None,
+    }
+    let b: Option<i64> = match k {
+        2 => {
+            Option.Some(20 as i64)
+        }
+        _ => {
+            Option.None
+        }
+    }
+    let w: Option<u8> = match k {
+        2 => 7,
+        _ => 9,
+    }
+    print((a ?? (0 as i64)).toString(), " ", (b ?? (0 as i64)).toString(), " ", (w ?? (0 as u8)).toString())
+    return 0
+}

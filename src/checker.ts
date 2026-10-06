@@ -576,10 +576,10 @@ export class TypeChecker {
   // Arena.new()` (the hint is the call's type) from `let n: i64 = Arena.new().len()` (it
   // is not). See `expectedTypeOf`.
   private returnHintExpr: Expr | null = null;
-  // An if-expression's expected type, queued for each branch's tail value and applied
-  // when checkExpr reaches it. Without it `let x: Option<i64> = if c { Some(5) } else
-  // { Option.None }` cannot infer the None: the hint names the if, never the arm.
-  // Nested ifs pass it on in turn.
+  // An if or match expression's expected type, queued for each branch or arm tail and
+  // applied when checkExpr reaches it. Without it `let x: Option<i64> = if c { Some(5) }
+  // else { Option.None }` cannot infer the None: the hint names the if, never the arm.
+  // Nested ifs and matches pass it on in turn.
   private tailHints = new Map<Expr, TypeKind>();
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
@@ -8456,9 +8456,10 @@ export class TypeChecker {
   private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
     this.canonicalizePreludeVariant(expr);
     // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping).
-    // Not for an if-expression: it hands the hint to each branch tail (tailHints), and a
-    // tail that is `Option.None` needs the Option itself. A plain-value tail unwraps there.
-    if (hint && expr.kind !== "EnumLit" && expr.kind !== "IfExpr") {
+    // Not for an if or match expression: it hands the hint to each branch or arm tail
+    // (tailHints), and a tail that is `Option.None` needs the Option itself. A
+    // plain-value tail unwraps there.
+    if (hint && expr.kind !== "EnumLit" && expr.kind !== "IfExpr" && expr.kind !== "MatchExpr") {
       const inner = this.optionInnerType(hint);
       if (inner) hint = inner;
     }
@@ -11896,6 +11897,13 @@ export class TypeChecker {
 
   private checkMatchExprExpr(expr: ExprOf<"MatchExpr">): TypeKind {
     const sp = expr.span;
+    const want = this.expectedTypeOf(expr);
+    if (want) {
+      for (const arm of expr.arms) {
+        const t = this.tailExprOf(arm.body);
+        if (t) this.tailHints.set(t, want);
+      }
+    }
     const armTypes = this.checkMatchLike(expr.subject, expr.arms, sp, this.currentFnRetType);
     // Unify arm value types. Coerce const-int arms to an int target (the
     // outer hint, else the first concrete non-literal arm) so
