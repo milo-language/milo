@@ -63,9 +63,46 @@ export function fixFor(d: Diagnostic, source: string): Fix | null {
       if (!m) return null;
       return { title: `Import '${m[2]}' from '${m[1]}'`, edits: [addImportName(source, m[1]!, m[2]!)] };
     }
+    case "redundant-cast": {
+      const edits = dropLiteralCast(source, at);
+      return edits ? { title: "Remove the redundant cast", edits } : null;
+    }
     default:
       return null;
   }
+}
+
+// `(0 as i64)` -> `0`, `-1 as i64` -> `-1`, at the offset of the literal. The parentheses
+// go only when they wrap exactly the cast; anything else in the text is not this shape
+// and gets no fix.
+const GROUPING_KEYWORDS = new Set(["return", "if", "while", "match", "in", "else", "and", "or", "not"]);
+
+function dropLiteralCast(source: string, start: number): TextEdit[] | null {
+  // `-1 as i64` is `-(1 as i64)`, reported at the `1`: the minus belongs inside the parens.
+  let s = start - 1;
+  while (s >= 0 && (source[s] === " " || source[s] === "\t")) s--;
+  if (source[s] === "-") start = s;
+  const m =/^-?\s*[0-9][0-9A-Za-z_.]*(\s+as\s+[A-Za-z_][A-Za-z0-9_]*)/.exec(source.slice(start));
+  if (!m) return null;
+  const castEnd = start + m[0].length;
+  const asStart = castEnd - m[1]!.length;
+  let before = start - 1;
+  while (before >= 0 && (source[before] === " " || source[before] === "\t")) before--;
+  let after = castEnd;
+  while (after < source.length && (source[after] === " " || source[after] === "\t")) after++;
+  // `f(0 as i64)`: those parentheses are the call's. A `(` right after a name, `)`, `]`
+  // or `>` opens a call (or a generic one); after a keyword it is grouping.
+  let p = before - 1;
+  while (p >= 0 && (source[p] === " " || source[p] === "\t")) p--;
+  const word = /[A-Za-z0-9_]+$/.exec(source.slice(0, p + 1))?.[0];
+  const opensCall = /[)\]>]/.test(source[p] ?? "") || (word !== undefined && !GROUPING_KEYWORDS.has(word));
+  if (source[before] === "(" && source[after] === ")" && !opensCall) {
+    return [
+      { offset: before, len: start - before, newText: "" },
+      { offset: asStart, len: after + 1 - asStart, newText: "" },
+    ];
+  }
+  return [{ offset: asStart, len: castEnd - asStart, newText: "" }];
 }
 
 // Apply edits to `source`, latest offset first so earlier offsets stay valid. Edits that

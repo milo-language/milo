@@ -32,7 +32,7 @@ interface WarningInfo {
 }
 
 /** Warnings whose reference entry is finished. Ratchet: may only grow. */
-export const DOCUMENTED_FLOOR = 27;
+export const DOCUMENTED_FLOOR = 28;
 
 export const WARNINGS: WarningInfo[] = [
   // Reported when `--expect=<name>` was given and that warning never fired. On by
@@ -255,6 +255,22 @@ fn main() {
     report()
   })
   print(ticks.toString())
+}
+`,
+  },
+  // Only where the context supplies the type (an annotation, a parameter, a return type,
+  // a `??` default): there the literal alone already gets it. A cast that is the only
+  // source of the type (`let x = 0 as u8`) is not redundant and never fires.
+  {
+    name: "redundant-cast",
+    doc: "A cast of an integer or float literal to the type the context already expects. The literal takes that type without it, so `(0 as i64)` where an `i64` is wanted, or `?? (-1 as i64)` on an `Option<i64>`, only adds noise. It was needed before literals took their type from context.",
+    fix: "Drop the cast and its parentheses: write `0`, `?? -1`. `milo fix` does it.",
+    example: `fn port(arg: Option<i64>): i64 {
+  return arg ?? (8080 as i64)
+}
+
+fn main() {
+  print(port(Option.None).toString())
 }
 `,
   },

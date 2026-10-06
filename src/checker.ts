@@ -2463,6 +2463,7 @@ export class TypeChecker {
       JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
       (_key, value) => {
       if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
+      if (value && typeof value === "object" && value.kind === "CastExpr") this.instanceCasts.add(value);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
@@ -8737,7 +8738,7 @@ export class TypeChecker {
       case "BinOp":
         return this.checkBinOpExpr(expr);
       case "UnaryOp":
-        return this.checkUnaryOpExpr(expr);
+        return this.checkUnaryOpExpr(expr, expected);
       case "Call":
         return this.checkCallExpr(expr, expected);
       case "StructLit":
@@ -8759,7 +8760,7 @@ export class TypeChecker {
       case "DefaultValue":
         return this.checkDefaultValueExpr(expr);
       case "CastExpr":
-        return this.checkCastExprExpr(expr);
+        return this.checkCastExprExpr(expr, expected);
       case "Closure":
         return this.checkClosureExpr(expr, expected);
       case "MethodCall":
@@ -9013,9 +9014,14 @@ export class TypeChecker {
     return this.setType(expr, { tag: "unknown" });
   }
 
-  private checkUnaryOpExpr(expr: ExprOf<"UnaryOp">): TypeKind {
+  private checkUnaryOpExpr(expr: ExprOf<"UnaryOp">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
-    const ot = this.checkExpr(expr.operand);
+    // `-1 as i64` parses as `-(1 as i64)`; the cast is the operand, and in a signed slot
+    // negating it changes nothing about its type, so it sees the expected type (for the
+    // redundant-cast lint). Nothing else under a unary op does: that would retype it.
+    const castHint = expr.op === "-" && expr.operand.kind === "CastExpr"
+      && (expected?.tag === "float" || (expected?.tag === "int" && expected.signed)) ? expected : null;
+    const ot = this.checkExpr(expr.operand, castHint);
     if (expr.op === "*") {
       if (ot.tag === "ref") return this.setType(expr, ot.inner);
       if (ot.tag === "heap") return this.setType(expr, ot.inner);
@@ -10430,10 +10436,11 @@ export class TypeChecker {
     return this.setType(expr, inner);
   }
 
-  private checkCastExprExpr(expr: ExprOf<"CastExpr">): TypeKind {
+  private checkCastExprExpr(expr: ExprOf<"CastExpr">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     const fromType = this.checkExpr(expr.operand);
     const toType = this.resolve(expr.targetType);
+    this.lintRedundantCast(expr, toType, expected);
     // A repr'd (C-like) enum casts to its integer value — always defined, since every
     // variant has a discriminant. Only to an integer type: `Kind.tryFrom` is the reverse.
     const fromReprEnum = fromType.tag === "enum" && !!this.enums.get(fromType.name)?.reprType;
@@ -10461,6 +10468,34 @@ export class TypeChecker {
       this.requireUnsafe(`cast to pointer type requires 'unsafe' block`, sp);
     }
     return this.setType(expr, toType);
+  }
+
+  // `(0 as i64)` where an i64 is expected: the literal would get that type from the
+  // context anyway (checkExpr's hint path). Two shapes must not fire, because there the
+  // cast is what fixes the type: a cast first checked with no expected type (generic
+  // inference types the arguments bare, then again against the signature it inferred
+  // FROM them), and a cast in a generic instance's body (the target may have been `T`).
+  private castsCheckedBare = new WeakSet<Expr>();
+  private instanceCasts = new WeakSet<object>();
+  private lintRedundantCast(expr: ExprOf<"CastExpr">, toType: TypeKind, expected: TypeKind | null) {
+    const neg = expr.operand.kind === "UnaryOp" && expr.operand.op === "-";
+    const lit = neg && expr.operand.kind === "UnaryOp" ? expr.operand.operand : expr.operand;
+    if (lit.kind !== "IntLit" && lit.kind !== "FloatLit") return;
+    if (this.currentFnIsDep) return; // as extern-call: a dependency is not the reader's to edit; std is held to zero
+    if (!expected) { this.castsCheckedBare.add(expr); return; }
+    if (this.castsCheckedBare.has(expr) || this.instanceCasts.has(expr) || !typeEq(expected, toType)) return;
+    if (expected.tag === "int" && expected.min !== undefined) return; // a range type checks the literal; the cast skips that
+    if (lit.kind === "FloatLit" ? toType.tag !== "float" : toType.tag !== "int") return;
+    if (lit.kind === "IntLit" && toType.tag === "int") {
+      // `300 as u8` truncates; only a value the type holds is unchanged by the cast.
+      const v = neg ? -lit.value : lit.value;
+      const min = toType.signed ? -(2n ** BigInt(toType.bits - 1)) : 0n;
+      const max = toType.signed ? 2n ** BigInt(toType.bits - 1) - 1n : 2n ** BigInt(toType.bits) - 1n;
+      if (v < min || v > max) return;
+    }
+    const t = this.show(toType);
+    this.warn("redundant-cast", `redundant cast: this literal is already '${t}' here`, expr.span,
+      `the expected type makes it '${t}'; drop ' as ${t}' (and its parentheses)`);
   }
 
   private checkClosureExpr(expr: ExprOf<"Closure">, expected: TypeKind | null): TypeKind {

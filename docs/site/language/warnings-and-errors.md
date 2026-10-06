@@ -48,6 +48,7 @@ build rather than quietly teaching the wrong thing.
 | [`mut-param-bundle`](#mut-param-bundle) | allow |
 | [`nan-comparison`](#nan-comparison) | warn |
 | [`opaque-call-on-thread`](#opaque-call-on-thread) | allow |
+| [`redundant-cast`](#redundant-cast) | warn |
 | [`shadows-stdlib-override`](#shadows-stdlib-override) | warn |
 | [`single-variant-match`](#single-variant-match) | allow |
 | [`string-concat-in-loop`](#string-concat-in-loop) | warn |
@@ -343,6 +344,24 @@ fn main() {
 ```
 
 **Fix:** Call a named function instead, or make the globals it might touch atomics from `std/sync`.
+
+### redundant-cast
+
+_On by default._
+
+A cast of an integer or float literal to the type the context already expects. The literal takes that type without it, so `(0 as i64)` where an `i64` is wanted, or `?? (-1 as i64)` on an `Option<i64>`, only adds noise. It was needed before literals took their type from context.
+
+```milo
+fn port(arg: Option<i64>): i64 {
+  return arg ?? (8080 as i64)
+}
+
+fn main() {
+  print(port(Option.None).toString())
+}
+```
+
+**Fix:** Drop the cast and its parentheses: write `0`, `?? -1`. `milo fix` does it.
 
 ### shadows-stdlib-override
 
