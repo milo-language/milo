@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-09-21 (milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-06 (non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -2888,7 +2888,7 @@ let result = apply(double, 21)   // 42
 
 ### Capturing Variables
 
-Regular closures capture by reference — mutations are visible outside:
+Regular closures capture by reference: mutations are visible outside.
 
 ```milo
 var count: i32 = 0
@@ -2898,13 +2898,70 @@ inc()
 print(count)   // 2
 ```
 
+A by-reference closure may also capture references: `self` inside a method, a `&T`
+parameter, a slice. The capture borrows what it points at for as long as the closure is
+in scope, the same as a slice would.
+
+### Non-escaping closure parameters
+
+A plain closure-typed parameter, `f: (A) => R`, is **non-escaping** (Swift's rule): the
+function may call it, and may pass it on to another plain closure parameter, and nothing
+else. A closure handed to it therefore cannot outlive the call, so it may borrow the
+caller's locals and `self`, and a closure literal passed there stays by-reference:
+
+```milo
+struct Conn {
+    fd: i32,
+}
+
+fn apply(s: &string, f: (&string) => i32): i32 {
+    return f(s)
+}
+
+impl Conn {
+    fn send(self: &Self, s: &string): i32 {
+        return apply(s, (b: &string): i32 => self.fd + (b.len as i32))
+    }
+}
+```
+
+A parameter the function keeps (stores in a struct, a global or a collection, returns,
+captures in a `move` closure, passes to a `move` parameter or to `Task.spawn`) has to say
+so in its type: `f: move (A) => R`. The check is in the callee, so the signature alone
+tells a caller what happens to its closure:
+
+```milo error
+struct Box {
+    f: () => i64,
+}
+
+fn keep(f: () => i64): Box {
+    return Box { f: f }         // non-escaping closure parameter 'f' is stored in a struct
+}
+```
+
+```milo
+struct Box {
+    f: move () => i64,
+}
+
+fn keep(f: move () => i64): Box {
+    return Box { f: f }         // fine: `move` says keep may hold on to it
+}
+```
+
+A parameter declared as a bare type parameter (`x: T`) promises nothing, so when `T` is a
+closure type it is treated as `move`.
+
 ### Move Closures
 
 `move` closures capture by value (copy into a heap-allocated environment).
-Safe to return from functions, store in structs, and send to threads.
+Safe to return from functions, store in structs, and send to threads. Because they may
+outlive the frame, they cannot capture a reference (`self`, a `&T` parameter, a slice):
+`cannot capture 'self' in a 'move' closure`.
 
 Because it holds that environment, a `move` closure that captured something **owns** it,
-and its type says so: `move (T) => R`. That type is not `Copy` — there is exactly one of
+and its type says so: `move (T) => R`. That type is not `Copy`: there is exactly one of
 the value, and passing it on transfers it:
 
 ```milo
@@ -2916,7 +2973,7 @@ fn run(f: move () => void): void {
 The reason is ownership, not ceremony. A closure value is a pair of pointers, one of them
 to the environment; if the value could be duplicated, two copies would own one environment
 and any release of it would be a double free. That is why a plain function pointer and a
-by-reference closure stay `Copy` — they own nothing — and why only a `move` closure that
+by-reference closure stay `Copy` (they own nothing) and why only a `move` closure that
 actually captured something is restricted. `move` with no captures owns nothing either, so
 it is `Copy` like the rest.
 
@@ -2934,16 +2991,22 @@ fn run(f: move () => void): void {
 
 fn demo(): void {
     run(bare)                       // a function value
-    run((): void => {               // a by-reference closure
+    run((): void => {               // a closure with no captures
         print("hi")
     }
     )
 }
 ```
 
-A closure **literal** passed to a function that takes an owned `Fn` parameter has `move` inferred — no keyword needed — because a literal has no other user. That inference is the only place it happens, and it declines when a capture is a `var`, since move-capturing would drop the write-back to the original.
+A closure **literal** passed to a `move` parameter has `move` inferred, no keyword needed,
+because a literal has no other user. A literal whose body moves a capture out (hands it to
+a callee by value) is a `move` closure wherever it is written, since only an owned capture
+can be given away. Inference declines when a capture is assigned to in the body (a `var`
+write), since move-capturing would drop the write-back to the original.
 
-Everywhere else, a closure that captures by reference **may not escape the function it was written in**. It is a pointer into that frame, so it is safe to call and unsafe to keep, and all of these are rejected:
+Everywhere else, a closure that captures by reference **may not escape the scope of what
+it captures**. It is a pointer into that frame, so it is safe to call and unsafe to keep,
+and all of these are rejected:
 
 ```milo error
 fn make(): () => i64 {
@@ -2952,38 +3015,38 @@ fn make(): () => i64 {
 }
 ```
 
-The same applies to every other way out of the frame — a field, a collection, or a callee
-that keeps what you hand it:
+The same applies to every other way out of the frame: a field, a collection, or a callee
+that keeps what you hand it (a `move` parameter):
 
 ```milo error
 struct Box {
     f: (i64) => i64,
 }
 
-fn wrap(g: (i64) => i64): Box {
-    return Box { f: g }         // (fine here: `g` is wrap's own parameter)
+fn wrap(g: move (i64) => i64): Box {
+    return Box { f: g }
 }
 
 fn make(): Box {
     let n = 5
     let f = (x: i64) => x + n
     var b = Box { f: move (x: i64) => x }
-    b.f = f                     // cannot store … — the field outlives the frame
+    b.f = f                     // cannot store … (the field outlives the frame)
     return wrap(f)              // cannot pass … to 'wrap', which keeps it
 }
 ```
 
-Whether a callee *keeps* its argument is worked out from its body, not declared: a fn-typed parameter that is only ever **called** is consumed during the call, so passing it a borrowing closure is fine. `each` below is accepted for that reason, and so is a one-line wrapper that forwards to it.
+Passing the same closure to a plain parameter is fine, since that callee cannot keep it:
 
 ```milo
 fn each(g: (i64) => i64) { print(g(1)) }
 
 let n = 5
 let f = (x: i64) => x + n
-each(f)                         // fine — `each` calls `g`, it does not keep it
+each(f)                         // fine: `each` can only call `g`
 ```
 
-`move` is the escape hatch in every case, including a `var` capture. It is deliberately not applied for you: the allocation is real, and a `move` you wrote is a move the checker can see at the point it happens — so a read of the capture afterwards is a proper `use of moved variable` rather than a silently empty value.
+`move` is the escape hatch in every case, including a `var` capture. It is deliberately not applied for you outside a `move` parameter: the allocation is real, and a `move` you wrote is a move the checker can see at the point it happens, so a read of the capture afterwards is a proper `use of moved variable` rather than a silently empty value.
 
 ```milo
 fn makeAdder(n: i32): (i32) => i32 {
@@ -3002,8 +3065,8 @@ let add5 = makeAdder(5)
 print(add5(3))    // 8
 print(add5(10))   // 15
 
-// Compose closures
-fn compose(f: (i32) => i32, g: (i32) => i32): (i32) => i32 {
+// Compose closures: the result keeps f and g, so they are `move` parameters
+fn compose(f: move (i32) => i32, g: move (i32) => i32): (i32) => i32 {
     return move (x: i32): i32 => { return f(g(x)) }
 }
 let add5ThenDouble = compose(makeMultiplier(2), makeAdder(5))

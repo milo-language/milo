@@ -478,10 +478,12 @@ every worker and welds the set itself, so there is no way for a window to be
 missing at the weld. Workers that need to differ from each other, or more windows
 than workers, are `parallelMapWith`.
 
-`f` is a plain function rather than a closure because each worker needs its own
-copy: a capturing closure would be moved into the first task and gone for the rest.
-Everything the work depends on therefore travels in the window itself, which is
-also what keeps the workers from sharing anything.
+`f` runs on every worker at once, so it should be a plain function: everything the
+work depends on travels in the window itself, which is what keeps the workers from
+sharing anything. A capturing closure literal is accepted (it arrives `move`, owning
+its captures, and every worker reads the one environment). One that writes a
+capture is rejected, since it would stay by-reference; an explicit `move` closure
+that writes its own captures races, which is what `parallelMapWith`'s states avoid.
 
 #### `parallelMapWith`
 
@@ -524,10 +526,9 @@ is the writing equivalent.
     for n in scanned.results { total = total + n }
 
 `f` borrows the window and returns whatever the scan produced: a count, a position
-list, a checksum. It is a plain function for the reason `parallelMap`'s is: each
-worker needs its own copy, and a capturing closure would be moved into the first
-task and gone for the rest. Anything the scan depends on beyond the bytes travels
-as a global or a constant inside `f`.
+list, a checksum. It should be a plain function for the reason `parallelMap`'s
+should: every worker runs it at once. Anything the scan depends on beyond the bytes
+travels as a global or a constant inside `f`.
 
 A match that begins inside a window's overlap is also visible to the next window,
 so a counting `f` must stop at `w.ownLen()`, not `w.len()`.

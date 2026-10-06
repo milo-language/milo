@@ -3,7 +3,7 @@ system: planning
 purpose: root-cause analysis of each item in friction-2026-10.md, with the root fix, blast radius, gate, effort, and an execution order
 key-files: src/checker.ts (expectedTypeOf, checkExprWithHint, checkIfExprExpr, bodyAlwaysReturns, mergeMoveState, checkClosureExpr, declare), src/checker-program-passes.ts (closure escape pass), src/resolver.ts (per-module rename, duplicate-type), std/process.milo, std/runtime.milo
 update-when: an item is fixed, a step of the execution order lands, or the owner decides one of the open questions
-last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1, steps 5-6 on friction-2, steps 7-9 on friction-3)
+last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1, steps 5-6 on friction-2, steps 7-9 on friction-3, step 10 on closures)
 -->
 
 # Friction 2026-10: analysis and root fixes
@@ -80,6 +80,8 @@ an error fixture where the user file imports `Process` AND declares it (must sta
 error); the `MILO_MANGLE_ALL=1` fixture run. **Effort** S-M.
 
 ## Item 2: closures cannot capture references, including `self`
+
+**Done** (execution order step 10).
 
 **Repro** (`check p2.milo`):
 
@@ -511,7 +513,34 @@ Small landable steps, each with its gate, highest score first.
    interpolations, whose diagnostics point at the string start, so `milo fix` declines
    them and they were edited by hand), src-milo 27 (left alone: a src-milo change is
    gated by the self-host fixpoint). Tests: tests/redundantCastLint.test.ts.
-10. Item 2 non-escaping fn params (after owner decision). M.
+10. **Done d62f3d26 (rule), 1ecac7ee (by-reference captures), b832a53e (std/ws), docs in
+   the commit that records this.** Item 2 as landed: `checkNonEscapingParams`
+   (checker-program-passes.ts, ~80 lines) holds a plain closure param to "called, or passed
+   to another plain closure param"; storing, returning, `move`-capturing, or passing it to a
+   `move` param / builtin / enum payload is `non-escaping closure parameter 'f' ...`.
+   `retainsParam` answers from the signature for a closure-typed param. A param declared as
+   a bare `T` instantiated with a closure type counts as `move` (`substituteParamType`).
+   Call sites: `autoMoveClosureArg` moves a literal only for a `move` param (still always
+   through a fn value and `Promise(fn)`, whose param types cannot promise anything because
+   `typeEq` ignores `move`). The ref-capture error applies to `move` closures only; codegen
+   loads a captured reference like a `&T` param. The check flagged the http router fns,
+   `Promise.run` and the three std/shard entry points (now `move`); `Once.run`
+   (sync.milo:1264) and `serve`/`serveTls` only call theirs and stay plain. std/shard's
+   workers share a non-owning alias of `f`, sound because every worker is awaited; that is
+   the `Task.scope` shape. Found on the way: a by-reference closure that moves a capture out
+   double-freed (`let f = () => take(s)`, ASan, on main too), now promoted to `move`
+   (call-once); a closure assigning to its capture skipped every borrow check
+   (`isCapturedMutation`), a heap-use-after-free once a match binding could be captured
+   (`closureWritesBorrowedCapture`), now it skips only capture borrows (`BorrowKind`
+   `"capture"`); `substituteBody` dropped `&`/`&mut` from a type parameter inside a local's
+   fn type. Fixtures (all fail on b8820699): errors `nonEscapingParam{StoredInStruct,
+   StoredInGlobal,Pushed,Returned,MoveCapture,ToMoveParam,Spawned}`,
+   `moveClosureCapturesSelf`, `closureToMoveParamCapturesSelf`,
+   `closureWritesBorrowedCapture`, `closureConsumesCaptureCalledTwice`; fixtures
+   `closureCaptureSelf` (the p2 repro), `closureBorrowedCallbacks` (sort comparator over a
+   `&Vec`, p2d); pass guard `nonEscapingParamCallForward`; ASan gate in
+   tests/sanitize.test.ts. Not done: an impl method may declare `move` where its trait or
+   interface says plain (not compared, same `typeEq` reason).
 11. Item 6 layer 1 per std module; `Task.scope` after 10 if the owner wants it. S-M each; L.
 
 ## Decisions for the owner

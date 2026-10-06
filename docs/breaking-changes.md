@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
+key-files: src/checker-program-passes.ts, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
 last-verified: 2026-10-06
 -->
@@ -16,6 +16,31 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## A plain closure parameter is non-escaping; one the function keeps is `move` (2026-10-06)
+
+A closure-typed parameter written `f: (A) => R` may now only be called or passed on to
+another plain closure parameter. Storing it (in a struct, a global, a `Vec`), returning
+it, capturing it in a `move` closure, or passing it to a `move` parameter or
+`Task.spawn` is the error `non-escaping closure parameter 'f' ...`. In exchange a
+closure passed to such a parameter stays by-reference and may capture `self`, `&T`
+parameters and slices. Declare a parameter the function keeps as `move`:
+
+| was | now |
+|---|---|
+| `fn wrap(f: (i64) => i64): Box { return Box { f: f } }` | `fn wrap(f: move (i64) => i64): Box { ... }` |
+| `fn compose(f: (A) => B, g: ...) { return move (x) => f(g(x)) }` | `f: move (A) => B, g: move ...` |
+
+Callers do not change: a closure literal passed to a `move` parameter is moved, as
+every literal passed to a closure parameter was before. std's own keepers are now
+`move`: `Router.get`/`post`/`put`/`delete`/`all`/`use`/`addRoute` (std/http),
+`Promise.run` (std/runtime), and `parallelMap`/`parallelMapWith`/`parallelScanStr`
+(std/shard). Two smaller rules come with it: a closure literal that moves a capture out
+is a `move` closure (call-once) even when not written `move` (by reference it was a
+double free), and `cannot capture 'x' in a closure` is now
+`cannot capture 'x' in a 'move' closure`, since only a `move` closure rejects a reference
+capture. No compat shim: which parameters escape is exactly what the old rule could not
+see from a signature.
 
 ## `std/testing.assert` and `std/os.exit` are removed: both are builtins (2026-10-06)
 
