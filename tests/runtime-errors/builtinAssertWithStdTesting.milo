@@ -1,0 +1,11 @@
+// @runtime-error: :10:5: ordering is broken
+// std/testing used to export a one-argument `pub fn assert`. Builtins and program fns
+// share one namespace, so importing anything from std/testing replaced the builtin in
+// this file too: the call below printed a bare "assertion failed", dropping both the
+// message and the location. `assert` is only the builtin now.
+from "std/testing" import { assertEq }
+
+fn main() {
+    assertEq(2 + 2, 4)
+    assert(1 > 2, "ordering is broken")
+}

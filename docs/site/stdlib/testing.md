@@ -11,14 +11,6 @@ from "std/testing" import { assert, assertEqual, assertStrEqual }
 
 ## API reference
 
-### `assert`
-
-```milo
-pub fn assert(cond: bool): void
-```
-
-Abort if `cond` is false.
-
 ### `assertBool`
 
 ```milo

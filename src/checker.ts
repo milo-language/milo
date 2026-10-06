@@ -1393,12 +1393,8 @@ export class TypeChecker {
   //
   // Not reported inside a manifest dependency: the reader cannot edit it. std IS
   // reported, because std is where the wrappers live and it is held to zero.
-  //
-  // `exit` is exempt too: codegen compiles every `exit(n)` as the safe builtin whether or
-  // not std/os's extern of the same name is in scope, and in the flat namespace one
-  // user import of that extern would otherwise retarget every builtin `exit` in std.
   private noteSafeExternCall(name: string, attrs: { name: string }[] | undefined, allScalar: boolean, span?: Span) {
-    if (name === "exit" || (allScalar && attrs?.some(a => a.name === "pure"))) return;
+    if (allScalar && attrs?.some(a => a.name === "pure")) return;
     if (this.unsafeDepth > 0) {
       if (this.unsafeUsedStack.length > 0) this.unsafeUsedStack[this.unsafeUsedStack.length - 1] = true;
       return;
@@ -7131,6 +7127,9 @@ export class TypeChecker {
   private nonExhaustiveMatches = new WeakSet<MatchArm[]>();
 
   private builtinFnNames = new Set<string>();
+  // Read by tests/stdBuiltinNames.test.ts: a std pub fn with one of these names would
+  // replace the builtin for the whole program.
+  get builtinNames(): ReadonlySet<string> { return this.builtinFnNames; }
 
   // Every Stmt kind, so the scan below can recognize a statement list by shape.
   private static readonly STMT_KINDS: ReadonlySet<string> = new Set([

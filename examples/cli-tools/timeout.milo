@@ -1,7 +1,7 @@
 // @run: 2 echo hi
 // timeout — run a command with a time limit (GNU timeout for macOS)
 from "std/os" import {
-    fork, waitpid, kill, exit, system
+    fork, waitpid, kill, system
 }
 from "std/time" import {
     Duration, sleepMs, epochMillis

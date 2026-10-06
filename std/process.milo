@@ -22,7 +22,6 @@ from "std/os" import {
     dup2,
     execl,
     execvp,
-    exit,
     fork,
     free,
     kill,

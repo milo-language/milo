@@ -23,7 +23,6 @@ from "std/term" import {
 }
 from "std/os" import {
     ioctl,
-    exit,
     isatty
 }
 from "std/io" import {

@@ -6,24 +6,16 @@
 //
 // Assertions take `&T`, not `T`, so asserting on a value does not move it — a test can
 // keep using the thing it just checked.
+//
+// Plain `assert(cond)` / `assert(cond, msg)` is the builtin, not part of this module: a
+// std fn of that name would replace the builtin in every file of the program.
 
-from "std/os" import {
-    exit
-}
 from "std/math" import {
     Math
 }
 
 fn testFail(): void {
     exit(1)
-}
-
-// Abort if `cond` is false.
-pub fn assert(cond: bool): void {
-    if !cond {
-        eprint("  assertion failed")
-        testFail()
-    }
 }
 
 // Abort with `msg` if `cond` is false.

@@ -1,8 +1,5 @@
 // Import resolver — recursively parse imported files and merge into a single Program
 
-from "std/process" import {
-    exit
-}
 from "std/fs" import {
     pathExists, readFile
 }

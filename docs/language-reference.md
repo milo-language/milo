@@ -4848,7 +4848,7 @@ fn main(): i32 {
 ### Assertions (std/testing)
 
 ```milo
-from "std/testing" import { assert, assertEqual, assertEqual64, assertStrEqual, assertMsg }
+from "std/testing" import { assertEqual, assertEqual64, assertStrEqual, assertMsg }
 
 fn testArithmetic(): void {
     assertEqual(2 + 2, 4)
@@ -4866,7 +4866,7 @@ fn testStrings(): void {
 
 | Function | Description |
 |----------|-------------|
-| `assert(cond)` | Fail if false |
+| `assert(cond)` | Fail if false (the builtin; no import) |
 | `assertMsg(cond, msg)` | Fail with message |
 | `assertEqual(got, expected)` | Compare i32 values |
 | `assertEqual64(got, expected)` | Compare i64 values |

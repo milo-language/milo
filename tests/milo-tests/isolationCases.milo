@@ -6,7 +6,7 @@
 // and runs each test in its own process precisely so this file reports 2 pass / 2 fail
 // rather than dying at the first trap.
 from "std/testing" import {
-    assert, assertEq
+    assertEq
 }
 
 fn testPassesBeforeTheTrap(): void {

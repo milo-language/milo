@@ -266,8 +266,6 @@ pub extern fn fflush(stream: *u8): i32
 
 // ── Process ──
 
-pub extern fn exit(status: i32): void
-
 pub extern fn getenv(name: *u8): *u8
 
 pub extern fn system(cmd: *u8): i32
