@@ -198,6 +198,21 @@ pub fn processAlive(pid: i32): bool {
     }
 }
 
+// Ask a process you did not spawn to exit. Windows has no SIGTERM, so this ends it
+// with TerminateProcess (exit code 1). See the POSIX arm for the pid-reuse caveat.
+pub fn terminateProcess(pid: i32): bool {
+    unsafe {
+        // PROCESS_TERMINATE
+        let h = OpenProcess(1 as u32, 0, pid as u32) as i64
+        if h == 0 {
+            return false
+        }
+        let ok = TerminateProcess(h, 1 as u32)
+        CloseHandle(h)
+        return ok != 0
+    }
+}
+
 // ── Child with piped stdio ──
 //
 // Same shape and contract as the POSIX arm: parent writes stdin, reads stdout/stderr;

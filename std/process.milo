@@ -157,6 +157,17 @@ pub fn processAlive(pid: i32): bool {
     return r == 0
 }
 
+// Ask a process you did not spawn to exit (SIGTERM; TerminateProcess on Windows).
+// For a process you spawned, use its `Child`, which cannot be forged. Here the pid
+// is all you have, so it may have been reused by an unrelated process: check
+// processAlive and anything else you know about it first. True if the signal was
+// delivered.
+pub fn terminateProcess(pid: i32): bool {
+    var r: i32 = -1
+    unsafe { r = kill(pid, 15) }
+    return r == 0
+}
+
 // ── Child with piped stdio ──
 //
 // Bidirectional pipe to a spawned process: parent writes the child's stdin and

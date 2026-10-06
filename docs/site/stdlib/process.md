@@ -489,4 +489,16 @@ pub fn run(cmd: &string): Result<i32>
 Execute a shell command and return its exit code.
 Example: let code = run("ls -la")!
 
+#### `terminateProcess`
+
+```milo
+pub fn terminateProcess(pid: i32): bool
+```
+
+Ask a process you did not spawn to exit (SIGTERM; TerminateProcess on Windows).
+For a process you spawned, use its `Child`, which cannot be forged. Here the pid
+is all you have, so it may have been reused by an unrelated process: check
+processAlive and anything else you know about it first. True if the signal was
+delivered.
+
 <!-- /generated:api -->

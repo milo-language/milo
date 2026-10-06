@@ -1,0 +1,33 @@
+// @skip-os: win32
+// terminateProcess ends a process we hold only a pid for (no Child handle): spawn a
+// sleeper through the shell, read its pid, terminate it, and see it gone.
+from "std/process" import {
+    Command, processAlive, terminateProcess
+}
+from "std/time" import {
+    sleepBlockingMs
+}
+from "std/fs" import {
+    readFile
+}
+
+// @expect: alive true
+// @expect: terminated true
+// @expect: alive false
+pub fn main(): i32 {
+    let f = "/tmp/milo_terminate_process_pid"
+    var sh = Command.new("sh").arg("-c").arg($"sleep 30 >/dev/null 2>&1 & echo $! > {f}").spawn()!
+    let _w = sh.wait()
+    let pid = readFile(f)!.trim().parseInt()!as i32
+    print("alive ", processAlive(pid).toString())
+    print("terminated ", terminateProcess(pid).toString())
+    var gone = false
+    var i = 0
+    while i < 50 && !gone {
+        sleepBlockingMs(20)
+        gone = !processAlive(pid)
+        i += 1
+    }
+    print("alive ", (!gone).toString())
+    return 0
+}
