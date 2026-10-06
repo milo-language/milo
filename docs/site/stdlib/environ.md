@@ -42,5 +42,6 @@ pub fn envVars(): Vec<EnvEntry>
 ```
 
 Every variable in the process environment, in the order the OS supplies them.
+Recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay).
 
 <!-- /generated:api -->

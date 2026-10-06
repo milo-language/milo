@@ -1636,13 +1636,17 @@ async function runTests(
 // rlimits, and one runaway allocation (e.g. a milo-self memory bug) swaps the
 // whole machine to death. Raise with MILO_RUN_MEM_MB, disable with
 // MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
-async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks: boolean | null = null, contractChecks: boolean | null = null) {
+async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks: boolean | null = null, contractChecks: boolean | null = null, replayEnv: Record<string, string> = {}) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize, overflowChecks, false, contractChecks);
+  // An explicit flag replaces an inherited variable of the other kind: `--replay` from a
+  // shell that exported MILO_RECORD must not trip the both-set error.
+  const childEnv = Object.keys(replayEnv).length === 0 ? process.env
+    : { ...process.env, MILO_RECORD: "", MILO_REPLAY: "", ...replayEnv };
   // Before the program starts, so its output never interleaves with the table.
   timingReport();
   try {
     if (target.arch === "wasm64") {
-      runWasm(bin, extraArgs); // process.exit()s itself with the wasm program's exit code
+      runWasm(bin, extraArgs, childEnv); // process.exit()s itself with the wasm program's exit code
       return;
     }
     if (target.bareMetal) {
@@ -1650,7 +1654,7 @@ async function runFile(sourcePath: string, extraArgs: string[], target: TargetIn
       return;
     }
     const memMb = Number(process.env.MILO_RUN_MEM_MB || 0) || DEFAULT_MEM_MB;
-    const child = spawn(bin, extraArgs, { stdio: "inherit" });
+    const child = spawn(bin, extraArgs, { stdio: "inherit", env: childEnv });
     let breached = false;
     // The watchdog reads phys_footprint / proc rss through POSIX interfaces that don't
     // exist on Windows. It also isn't needed there for the reason it exists here: the
@@ -1742,13 +1746,13 @@ function runBareMetalQemu(bin: string, target: TargetInfo) {
 // feature shipped unflagged). This is a real engine capability gap, not a style
 // choice, and it matters beyond this CLI path: it's the same gap a browser embedding
 // would hit depending on which engine renders the page.
-function runWasm(bin: string, extraArgs: string[]) {
+function runWasm(bin: string, extraArgs: string[], env: NodeJS.ProcessEnv = process.env) {
   const loader = join(wasmDir(), "run.mjs");
   if (!existsSync(loader)) {
     console.error(`error: wasm64 loader not found at ${loader} (need run.mjs)`);
     process.exit(1);
   }
-  const r = spawnSync("node", [loader, bin, ...extraArgs], { stdio: "inherit" });
+  const r = spawnSync("node", [loader, bin, ...extraArgs], { stdio: "inherit", env });
   if (r.error) { console.error(`error: failed to run node ${loader}: ${r.error.message}`); process.exit(1); }
   process.exit(r.status ?? 1);
 }
@@ -1763,7 +1767,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean; hot: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean | null; contractChecks: boolean | null; staticDeps: boolean; emitAll: boolean; emitSpans: boolean; stripPanicLocations: boolean; hot: boolean; replayEnv: Record<string, string> } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -1789,6 +1793,9 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let emitAll = false;
   let emitSpans = false;
   let hot = false;
+  // `run --record/--replay <file>` is sugar for the env vars std/replay reads at process
+  // start, so a binary built any other way is recorded the same way.
+  const replayEnv: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
@@ -1799,6 +1806,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     // A later explicit --overflow-checks still wins (the loop is order-sensitive).
     else if (args[i] === "--fast") { optFlag = "-O0"; overflowChecks = false; contractChecks = false; }
     else if (args[i] === "--hot") { hot = true; }
+    else if (args[i] === "--record" && i + 1 < args.length) { replayEnv.MILO_RECORD = resolve(args[++i]); }
+    else if (args[i] === "--replay" && i + 1 < args.length) { replayEnv.MILO_REPLAY = resolve(args[++i]); }
     else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     // Codegen units: clang is ~95% of build time and parallelises across processes.
     // `--cgus=1` forces the single module back (the shape release builds and -g already
@@ -1873,7 +1882,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // A hot host is -O0 and one unit: patches are compiled at -O0 against it, and the hot
   // transform runs on the whole module before any split could see it.
   if (hot) { optFlag = "-O0"; cguOverride = 1; }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -2420,7 +2429,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -2607,7 +2616,11 @@ async function main() {
   }
 
   if (cmd === "run") {
-    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks);
+    if (replayEnv.MILO_RECORD && replayEnv.MILO_REPLAY) {
+      console.error("error: --record and --replay are exclusive");
+      process.exit(1);
+    }
+    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks, contractChecks, replayEnv);
   } else if (cmd === "build") {
     const t0 = Date.now();
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks, staticDeps, contractChecks, stripPanicLocations, hot);

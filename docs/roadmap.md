@@ -159,9 +159,9 @@ Green-tier concurrency with one OS-thread escape hatch:
 - **`main` is itself a green task** wherever the program can reach `spawn`. Before this, a blocking call in `main` starved the very tasks that would satisfy it — `main` ran on the OS thread and nothing else could progress. Codegen decides this per program, so a program with no spawn keeps a plain `main`. Std APIs that block must therefore branch on `schedulerCurrent()` rather than assume they are off-scheduler
 - Public `Thread`/`Mutex`/`RwLock`/`parallel` were **removed** 2026-07-10 (green tier only — see [concurrency-simplification.md](concurrency-simplification.md))
 
-### Standard Library (<!-- stat:std-modules -->85<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->86<!-- /stat --> modules)
 
-I/O & system: `io`, `fs`, `path`, `env`, `environ`, `args`, `process`, `signal`, `dl`, `sysinfo`, `mem`, `os`, `platform`, `term`, `pty`, `keys`, `ansi`, `foreign` (views over memory C allocated)
+I/O & system: `io`, `fs`, `path`, `env`, `environ`, `args`, `replay` (record/replay of clock, entropy, env, argv), `process`, `signal`, `dl`, `sysinfo`, `mem`, `os`, `platform`, `term`, `pty`, `keys`, `ansi`, `foreign` (views over memory C allocated)
 Networking: `net` (TCP + DNS), `unix` (AF_UNIX), `fetch` (HTTPS client + TLS), `tls` (TLS server transport), `openssl` (the libssl binding both use), `https` (HTTPS server), `http`, `httpmw`, `multipart`, `mime`, `html`, `ws`, `url`
 Data: `json`, `csv`, `base64`, `base32`, `hex`, `binary`, `sqlite`, `arena`, `seal`, `shard`, `set`, `pool`, `png`
 Compression: `deflate`, `inflate`, `zip`, `zstd`

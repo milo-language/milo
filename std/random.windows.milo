@@ -11,13 +11,17 @@
 // BCRYPT_USE_SYSTEM_PREFERRED_RNG (2) is what allows the NULL algorithm handle.
 // Returns an NTSTATUS: 0 is success, and any failure here is a broken OS RNG rather
 // than something a caller could recover from.
+from "std/replay" import {
+    replayOff, replayActive, replayTakeI64, replayPutI64, replayTakeInto, replayPutFrom
+}
+
 pub extern fn BCryptGenRandom(alg: *u8, buf: *u8, len: u32, flags: u32): i32
 
-fn randBytes(buf: *u8, n: i64): void {
+fn osRandBytes(buf: *u8, n: i64): void {
     unsafe { BCryptGenRandom(0 as *u8, buf, n as u32, 2) }
 }
 
-fn randU32(): u32 {
+fn osRandU32(): u32 {
     var v: u32 = 0
     unsafe {
         BCryptGenRandom(0 as *u8, v.addrOf() as *u8, 4, 2)
@@ -79,6 +83,33 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
         v[j] = tmp
         i -= 1
     }
+}
+
+// Recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay), like every
+// entropy read in this file.
+fn randU32(): u32 {
+    if replayOff() {
+        return osRandU32()
+    }
+    if replayActive() {
+        return replayTakeI64("random.u32", "") as u32
+    }
+    let v = osRandU32()
+    replayPutI64("random.u32", "", v as i64)
+    return v
+}
+
+fn randBytes(buf: *u8, n: i64): void {
+    if replayOff() {
+        osRandBytes(buf, n)
+        return
+    }
+    if replayActive() {
+        replayTakeInto("random.bytes", buf, n)
+        return
+    }
+    osRandBytes(buf, n)
+    replayPutFrom("random.bytes", buf, n)
 }
 
 // Random namespace — Random.int/range/float/bool/bytes/... (platform RNG).

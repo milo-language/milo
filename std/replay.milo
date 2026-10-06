@@ -1,0 +1,344 @@
+// std/replay — deterministic record/replay of a program's nondeterministic inputs.
+//
+// Every std entry point that asks the OS something whose answer can differ between
+// runs (the clock, entropy, the environment, argv) calls through here. With neither
+// MILO_RECORD nor MILO_REPLAY set the hook is one global compare and the call goes
+// straight to the OS. With MILO_RECORD=<file> each answer is appended to a trace;
+// with MILO_REPLAY=<file> each call returns the next recorded answer instead, so the
+// program computes exactly what it computed when recorded. Format and phases:
+// docs/record-replay.md.
+//
+// The mode is decided once, at process start (a global initializer), and both
+// variables are then removed from this process's environment: a child process that
+// inherited MILO_RECORD would truncate and interleave into the parent's trace.
+
+from "std/os" import {
+    getenv
+}
+from "std/platform" import {
+    open, read, write, close, envUnset, oReadBinary, oWriteCreateTrunc
+}
+
+// Bumped only when the record framing changes. A new record kind is additive: an
+// older replayer meeting it reports a divergence naming the kind, which is the truth.
+let TRACE_VERSION: i64 = 1
+
+// Divergence, a corrupt or missing trace, and a failed trace write all exit with this,
+// so a driver (a test, dapweb's reverse step) can tell "replay broke" from the
+// program's own failure codes 1 and 2.
+pub let REPLAY_EXIT_CODE: i32 = 3
+
+// All of the state is per OS thread, and only the main thread (which runs `main` and
+// every green task) ever decides to record or replay: the global initializer below
+// runs there, and by the time any other OS thread exists both variables are gone from
+// the environment, so a Promise.blocking worker that reaches a hook decides "off" and
+// asks the OS. That keeps the trace single-writer with no lock on the hot path, and
+// makes worker-thread reads an unrecorded hole like an extern call (phase 3 decides
+// what threads get under replay).
+//
+// 0 = not decided yet, 1 = off, 2 = recording, 3 = replaying. A hook that runs before
+// the global initializer (another module's initializer reading the clock) finds 0 and
+// decides on the spot; after that every hooked call costs this one compare.
+thread_local var rrMode: i64 = 0
+thread_local var rrFd: i32 = -1
+// Sequence number of the last record written or consumed; records count from 1.
+thread_local var rrSeq: i64 = 0
+// Replay: the whole trace, and the read cursor into it. Phase 1 traces are small;
+// the framing is length-prefixed, so a streaming reader can replace this without a
+// format change when IO payloads arrive.
+thread_local var rrTrace: string = ""
+thread_local var rrPos: i64 = 0
+// Last, so the state above is already initialized when this runs.
+let rrBooted: bool = replayBoot()
+
+// True when neither recording nor replaying. The single check every hook makes
+// before touching the OS; a not-yet-decided mode reads as "not off" so the slow
+// path gets to decide it.
+pub fn replayOff(): bool {
+    return rrMode == 1
+}
+
+// True when hooked calls must return recorded answers instead of asking the OS.
+pub fn replayActive(): bool {
+    return replayModeNow() == 3
+}
+
+fn replayModeNow(): i64 {
+    if rrMode == 0 {
+        replayBoot()
+    }
+    return rrMode
+}
+
+fn replayFail(msg: string): void {
+    eprint(msg)
+    exit(REPLAY_EXIT_CODE)
+}
+
+fn envPath(name: string): string {
+    unsafe {
+        let p = getenv(name)
+        if p as i64 == 0 {
+            return ""
+        }
+        return _cstrToString(p)
+    }
+}
+
+fn replayBoot(): bool {
+    if rrMode != 0 {
+        return true
+    }
+    let recordPath = envPath("MILO_RECORD")
+    let replayPath = envPath("MILO_REPLAY")
+    if recordPath.len() > 0 && replayPath.len() > 0 {
+        replayFail("MILO_RECORD and MILO_REPLAY are both set; pick one")
+    }
+    if recordPath.len() == 0 && replayPath.len() == 0 {
+        rrMode = 1
+        return true
+    }
+    unsafe {
+        envUnset("MILO_RECORD" as *u8)
+        envUnset("MILO_REPLAY" as *u8)
+    }
+    if recordPath.len() > 0 {
+        startRecording(recordPath)
+    } else {
+        startReplay(replayPath)
+    }
+    return true
+}
+
+fn traceHeader(): string {
+    return "milo-trace " + TRACE_VERSION.toString() + "\n"
+}
+
+fn startRecording(path: string): void {
+    var fd: i32 = -1
+    unsafe {
+        let pathC = path.clone()
+        fd = open(pathC as *u8, oWriteCreateTrunc(), 420)
+    }
+    if fd < 0 {
+        replayFail("record: cannot create trace file " + path)
+    }
+    rrFd = fd
+    rrMode = 2
+    writeAll(traceHeader())
+}
+
+fn startReplay(path: string): void {
+    var fd: i32 = -1
+    unsafe {
+        let pathC = path.clone()
+        fd = open(pathC as *u8, oReadBinary())
+    }
+    if fd < 0 {
+        replayFail("replay: cannot open trace file " + path)
+    }
+    var data = String.withCapacity(4096)
+    var chunk: [u8; 4096] = [0; 4096]
+    var going = true
+    while going {
+        var n: i64 = 0
+        unsafe {
+            n = read(fd, chunk as *u8, 4096)
+        }
+        if n <= 0 {
+            going = false
+        } else {
+            for i in 0..n {
+                data.push(chunk[i])
+            }
+        }
+    }
+    unsafe {
+        close(fd)
+    }
+    let header = traceHeader()
+    if data.len() < header.len() || !data.startsWith(header) {
+        replayFail("replay: " + path + " is not a milo-trace version " + TRACE_VERSION.toString() + " file")
+    }
+    rrTrace = data
+    rrPos = header.len()
+    rrMode = 3
+}
+
+// One write per record, unbuffered: a program that crashes or exits mid-run still
+// leaves every record it made on disk, which is the run worth replaying.
+fn writeAll(s: string): void {
+    var off: i64 = 0
+    while off < s.len() {
+        var n: i64 = 0
+        unsafe {
+            n = write(rrFd, (s as *u8 as i64 + off) as *u8, s.len() - off)
+        }
+        if n <= 0 {
+            replayFail("record: write to trace file failed")
+        }
+        off += n
+    }
+}
+
+fn callName(kind: &string, arg: &string): string {
+    if arg.len() == 0 {
+        return kind.clone()
+    }
+    return kind + "(" + arg + ")"
+}
+
+// Append one record: `<seq> <kind> <argLen> <payloadLen>\n<arg>\n<payload>\n`.
+// `arg` names the call (an env var name, a byte count) so replay can tell a
+// different call of the same kind from the recorded one; `payload` is the answer.
+// No-op unless recording.
+pub fn replayPut(kind: &string, arg: &string, payload: &string): void {
+    if replayModeNow() != 2 {
+        return
+    }
+    rrSeq += 1
+    var rec = String.withCapacity(32 + kind.len() + arg.len() + payload.len())
+    rec.pushStr(rrSeq.toString())
+    rec.push(' ')
+    rec.pushStr(kind)
+    rec.push(' ')
+    rec.pushStr(arg.len().toString())
+    rec.push(' ')
+    rec.pushStr(payload.len().toString())
+    rec.push('\n')
+    rec.pushStr(arg)
+    rec.push('\n')
+    rec.pushStr(payload)
+    rec.push('\n')
+    writeAll(rec)
+}
+
+// replayPut with a decimal payload.
+pub fn replayPutI64(kind: &string, arg: &string, v: i64): void {
+    replayPut(kind, arg, v.toString())
+}
+
+fn corrupt(seq: i64): void {
+    replayFail("replay trace corrupt at record " + seq.toString())
+}
+
+// Decimal field up to `stop`, advancing the cursor past the stop byte.
+fn takeField(seq: i64, stop: u8): string {
+    var out = String.withCapacity(16)
+    while rrPos < rrTrace.len() && rrTrace[rrPos] != stop {
+        out.push(rrTrace[rrPos])
+        rrPos += 1
+    }
+    if rrPos >= rrTrace.len() {
+        corrupt(seq)
+    }
+    rrPos += 1
+    return out
+}
+
+fn decimal(s: &string): i64 {
+    var v: i64 = 0
+    var neg = false
+    for i in 0..s.len() {
+        let c = s[i]
+        if i == 0 && c == '-' {
+            neg = true
+        } else {
+            v = v * 10 + ((c - '0') as i64)
+        }
+    }
+    if neg {
+        return 0 - v
+    }
+    return v
+}
+
+fn takeBytes(seq: i64, n: i64): string {
+    if n < 0 || rrPos + n + 1 > rrTrace.len() || rrTrace[rrPos + n] != '\n' {
+        corrupt(seq)
+    }
+    var out = String.withCapacity(n)
+    for i in 0..n {
+        out.push(rrTrace[rrPos + i])
+    }
+    rrPos += n + 1
+    return out
+}
+
+// The recorded answer to this call. Exits with "replay diverged at record N:
+// expected <recorded call>, got <this call>" when the next record is a different
+// call, or the trace has run out.
+pub fn replayTake(kind: &string, arg: &string): string {
+    let seq = rrSeq + 1
+    if rrPos >= rrTrace.len() {
+        replayFail("replay diverged at record " + seq.toString() + ": expected end of trace, got " + callName(kind, arg))
+    }
+    let seqText = takeField(seq, ' ')
+    let recKind = takeField(seq, ' ')
+    let argLen = decimal(takeField(seq, ' '))
+    let payloadLen = decimal(takeField(seq, '\n'))
+    if decimal(seqText) != seq {
+        corrupt(seq)
+    }
+    let recArg = takeBytes(seq, argLen)
+    if recKind != kind || recArg != arg {
+        replayFail("replay diverged at record " + seq.toString() + ": expected " + callName(recKind, recArg) + ", got " + callName(kind, arg))
+    }
+    let payload = takeBytes(seq, payloadLen)
+    rrSeq = seq
+    return payload
+}
+
+// replayTake of a decimal payload.
+pub fn replayTakeI64(kind: &string, arg: &string): i64 {
+    return decimal(replayTake(kind, arg))
+}
+
+// Strings joined with a NUL after each: the encoding for argv and the environment,
+// whose entries are C strings and so can never contain one.
+pub fn replayJoinNul(items: &Vec<string>): string {
+    var out = String.withCapacity(64)
+    for s in items {
+        out.pushStr(s)
+        out.push(0)
+    }
+    return out
+}
+
+// The inverse of replayJoinNul.
+pub fn replaySplitNul(payload: &string): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    var cur = String.withCapacity(16)
+    for i in 0..payload.len() {
+        let c = payload[i]
+        if c == 0 {
+            out.push(cur)
+            cur = String.withCapacity(16)
+        } else {
+            cur.push(c)
+        }
+    }
+    return out
+}
+
+// Replay: copy the recorded `n` bytes into `buf`. The byte count is the call's arg,
+// so a request for a different count diverges instead of reading past the record.
+pub fn replayTakeInto(kind: &string, buf: *u8, n: i64): void {
+    let p = replayTake(kind, n.toString())
+    unsafe {
+        for i in 0..n {
+            buf[i] = p[i]
+        }
+    }
+}
+
+// Record: the `n` bytes the OS just wrote into `buf`.
+pub fn replayPutFrom(kind: &string, buf: *u8, n: i64): void {
+    var p = String.withCapacity(n)
+    unsafe {
+        for i in 0..n {
+            p.push(buf[i])
+        }
+    }
+    replayPut(kind, n.toString(), p)
+}

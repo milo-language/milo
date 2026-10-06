@@ -38,7 +38,13 @@ interface CliCommand {
 }
 
 export const COMPILER_COMMANDS: CliCommand[] = [
-  { name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)" },
+  {
+    name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)",
+    flags: [
+      { flag: "--record <trace>", help: "record clock, entropy, env and argv reads to <trace> (= MILO_RECORD)" },
+      { flag: "--replay <trace>", help: "answer those reads from <trace> instead of the OS (= MILO_REPLAY)" },
+    ],
+  },
   { name: "build", usage: "build <file> [-o out]", summary: "compile to executable" },
   {
     name: "hot", usage: "hot <file> [-- args]", summary: "run and patch function bodies on every save",

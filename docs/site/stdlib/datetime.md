@@ -74,6 +74,9 @@ Same components as fromEpoch but in the host timezone (TZ env /
 tm_isdst) on both macOS and glibc — only those leading fields are read, so
 the trailing platform differences (tm_gmtoff/tm_zone) don't matter.
 
+The host timezone is an input like the clock (TZ, /etc/localtime), so the
+breakdown is recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay).
+
 #### `DateTime.localNow`
 
 ```milo

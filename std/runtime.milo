@@ -38,7 +38,7 @@ from "std/sync" import {
     Channel
 }
 from "std/time" import {
-    epochMillis
+    unrecordedEpochMillis
 }
 
 // ── constants ──
@@ -1148,7 +1148,7 @@ fn selMinTimeout(sched: *u8, cap: i32): i32 {
     // no timer returns -1 so the poll blocks until an fd/wakeup fires.
     var haveBound = cap >= 0
     var best: i64 = cap as i64
-    let nowMs = epochMillis()
+    let nowMs = unrecordedEpochMillis()
     var cur = rtReadPtr(sched, sSelFdHead())
     while cur as i64 != 0 {
         if rtReadI64(cur, nodeKind()) == kindSelTimer() {
@@ -1193,7 +1193,7 @@ fn wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
 
 // Claim select timer arms whose deadline has passed.
 fn wakeSelectTimers(sched: *u8): void {
-    let nowMs = epochMillis()
+    let nowMs = unrecordedEpochMillis()
     var cur = rtReadPtr(sched, sSelFdHead())
     while cur as i64 != 0 {
         let next = rtReadPtr(cur, nodeNext())

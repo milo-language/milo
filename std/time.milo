@@ -15,6 +15,10 @@ from "std/platform" import {
     gettimeofday, usleep
 }
 
+from "std/replay" import {
+    replayOff, replayActive, replayTake, replayPut
+}
+
 // ── helpers ──
 
 fn readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
@@ -35,13 +39,55 @@ pub struct Instant {
     usec: i64,
 }
 
-// Capture the current wall-clock time.
-pub fn now(): Instant {
+fn osNow(): Instant {
     var tv: [u8; 16] = [0; 16]
     unsafe { gettimeofday(tv, 0 as *u8) }
     let sec = readI64FromBuf(tv, 0)
     let usec = readI64FromBuf(tv, 8)
     return Instant { sec: sec, usec: usec }
+}
+
+// Capture the current wall-clock time. Recorded and replayed under MILO_RECORD /
+// MILO_REPLAY (std/replay), as is everything built on it: epochMillis, since, DateTime.now.
+pub fn now(): Instant {
+    if replayOff() {
+        return osNow()
+    }
+    return recordedNow()
+}
+
+// Payload "<sec> <usec>".
+fn recordedNow(): Instant {
+    if replayActive() {
+        let p = replayTake("time.wall", "")
+        var sec: i64 = 0
+        var usec: i64 = 0
+        var inUsec = false
+        for i in 0..p.len() {
+            let c = p[i]
+            if c == ' ' {
+                inUsec = true
+            } else if inUsec {
+                usec = usec * 10 + ((c - '0') as i64)
+            } else {
+                sec = sec * 10 + ((c - '0') as i64)
+            }
+        }
+        return Instant { sec: sec, usec: usec }
+    }
+    let t = osNow()
+    replayPut("time.wall", "", t.sec.toString() + " " + t.usec.toString())
+    return t
+}
+
+// Milliseconds since the Unix epoch, read from the OS even under replay. For the
+// scheduler's timer deadlines only: how often it polls the clock depends on real
+// readiness timing, so recording those reads would make every trace with a sleep in
+// it diverge. Scheduling order gets its own record kind in replay phase 3. Programs
+// want epochMillis.
+pub fn unrecordedEpochMillis(): i64 {
+    let t = osNow()
+    return t.sec * 1000 + t.usec / 1000
 }
 
 // Milliseconds since Unix epoch.

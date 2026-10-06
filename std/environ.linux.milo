@@ -14,13 +14,47 @@ from "std/platform" import {
 // is FROZEN at exec: it never reflects a later Env.set, so it is only the fallback for
 // the case where the `environ` symbol cannot be resolved (a fully static binary).
 
+from "std/replay" import {
+    replayOff, replayActive, replayTake, replayPut, replaySplitNul
+}
+
 pub struct EnvEntry {
     name: string,
     value: string,
 }
 
 // Every variable in the process environment, in the order the OS supplies them.
+// Recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay).
 pub fn envVars(): Vec<EnvEntry> {
+    if replayOff() {
+        return osEnvVars()
+    }
+    // Payload: name NUL value NUL, per entry.
+    if replayActive() {
+        let fields = replaySplitNul(replayTake("env.vars", ""))
+        var out: Vec<EnvEntry> = Vec.new()
+        var i: i64 = 0
+        while i + 1 < fields.len() {
+            out.push(EnvEntry {
+                name: fields[i].clone(), value: fields[i + 1].clone()
+            })
+            i += 2
+        }
+        return out
+    }
+    let live = osEnvVars()
+    var flat = String.withCapacity(256)
+    for e in live {
+        flat.pushStr(e.name)
+        flat.push(0)
+        flat.pushStr(e.value)
+        flat.push(0)
+    }
+    replayPut("env.vars", "", flat)
+    return live
+}
+
+fn osEnvVars(): Vec<EnvEntry> {
     var out: Vec<EnvEntry> = Vec.new()
     unsafe {
         let block = environBlock()

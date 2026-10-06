@@ -52,6 +52,11 @@ milo run <file> [args]
 
 Compile and run (no artifacts left behind).
 
+| Flag | Effect |
+|---|---|
+| `--record <trace>` | Record clock, entropy, env and argv reads to \<trace\> (= MILO\_RECORD). |
+| `--replay <trace>` | Answer those reads from \<trace\> instead of the OS (= MILO\_REPLAY). |
+
 ### build
 
 ```sh

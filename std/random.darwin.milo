@@ -3,6 +3,10 @@
 // Uses arc4random (macOS/BSD) — no seeding required, cryptographically strong.
 // For Linux compat, could fall back to /dev/urandom via std/io.
 
+from "std/replay" import {
+    replayOff, replayActive, replayTakeI64, replayPutI64, replayTakeInto, replayPutFrom
+}
+
 pub extern fn arc4random(): u32
 
 pub extern fn arc4random_uniform(upper: u32): u32
@@ -10,7 +14,7 @@ pub extern fn arc4random_uniform(upper: u32): u32
 pub extern fn arc4random_buf(buf: *u8, nbytes: i64): void
 
 // Random u32 in [0, 2^32).
-fn randU32(): u32 {
+fn osRandU32(): u32 {
     unsafe { return arc4random() }
 }
 
@@ -19,7 +23,18 @@ fn randInt(max: i64): i64 {
     if max <= 0 {
         eprint("randInt: max must be > 0")
     }
-    unsafe { return arc4random_uniform(max as u32) as i64 }
+    if replayOff() {
+        unsafe { return arc4random_uniform(max as u32) as i64 }
+    }
+    // Its own kind, not random.u32: arc4random_uniform rejection-samples internally,
+    // so the answer is not a function of one recorded u32.
+    if replayActive() {
+        return replayTakeI64("random.uniform", max.toString())
+    }
+    var v: i64 = 0
+    unsafe { v = arc4random_uniform(max as u32) as i64 }
+    replayPutI64("random.uniform", max.toString(), v)
+    return v
 }
 
 // Random i64 in [min, max]. Panics if min > max.
@@ -60,8 +75,35 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
 }
 
 // Fill a buffer with random bytes.
-fn randBytes(buf: *u8, n: i64): void {
+fn osRandBytes(buf: *u8, n: i64): void {
     unsafe { arc4random_buf(buf, n) }
+}
+
+// Recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay), like every
+// entropy read in this file.
+fn randU32(): u32 {
+    if replayOff() {
+        return osRandU32()
+    }
+    if replayActive() {
+        return replayTakeI64("random.u32", "") as u32
+    }
+    let v = osRandU32()
+    replayPutI64("random.u32", "", v as i64)
+    return v
+}
+
+fn randBytes(buf: *u8, n: i64): void {
+    if replayOff() {
+        osRandBytes(buf, n)
+        return
+    }
+    if replayActive() {
+        replayTakeInto("random.bytes", buf, n)
+        return
+    }
+    osRandBytes(buf, n)
+    replayPutFrom("random.bytes", buf, n)
 }
 
 // Random namespace — Random.int/range/float/bool/bytes/... (platform RNG).

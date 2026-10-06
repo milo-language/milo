@@ -4,6 +4,9 @@
 from "std/time" import {
     epochSecs, since
 }
+from "std/replay" import {
+    replayOff, replayActive, replayTake, replayPut
+}
 
 pub extern fn localtime_r(timep: *u8, result: *u8): *u8
 
@@ -78,25 +81,52 @@ impl DateTime {
     // (tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday,
     // tm_isdst) on both macOS and glibc — only those leading fields are read, so
     // the trailing platform differences (tm_gmtoff/tm_zone) don't matter.
+    //
+    // The host timezone is an input like the clock (TZ, /etc/localtime), so the
+    // breakdown is recorded and replayed under MILO_RECORD / MILO_REPLAY (std/replay).
     fn fromEpochLocal(epochSec: i64): DateTime {
-        // POSIX doesn't require localtime_r to imply tzset(); call it so TZ
-        // changes (and the first call) always take effect.
-        unsafe { tzset() }
-        var t: [i64; 1] = [0; 1]
-        t[0] = epochSec
-        var tm: [u8; 128] = [0; 128]
-        unsafe {
-            let _r = localtime_r(t as *u8, tm as *u8)
+        if replayOff() {
+            return osLocalBreakdown(epochSec)
         }
-        return DateTime {
-            year: tmI32(tm, 20) + 1900,
-            month: tmI32(tm, 16) + 1,
-            day: tmI32(tm, 12),
-            hour: tmI32(tm, 8),
-            minute: tmI32(tm, 4),
-            second: tmI32(tm, 0),
-            weekday: tmI32(tm, 24),
+        // Payload: year month day hour minute second weekday, space-separated.
+        if replayActive() {
+            let p = replayTake("time.local", epochSec.toString())
+            var f: [i64; 7] = [0; 7]
+            var k: i64 = 0
+            var neg = false
+            for i in 0..p.len() {
+                let c = p[i]
+                if c == ' ' {
+                    if neg {
+                        f[k] = 0 - f[k]
+                    }
+                    neg = false
+                    k += 1
+                } else if c == '-' {
+                    neg = true
+                } else if k < 7 {
+                    f[k] = f[k] * 10 + ((c - '0') as i64)
+                }
+            }
+            return DateTime {
+                year: f[0] as i32,
+                month: f[1] as i32,
+                day: f[2] as i32,
+                hour: f[3] as i32,
+                minute: f[4] as i32,
+                second: f[5] as i32,
+                weekday: f[6] as i32,
+            }
         }
+        let d = osLocalBreakdown(epochSec)
+        let fields = [d.year, d.month, d.day, d.hour, d.minute, d.second, d.weekday]
+        var p = String.withCapacity(32)
+        for v in fields {
+            p.pushStr(v.toString())
+            p.push(' ')
+        }
+        replayPut("time.local", epochSec.toString(), p)
+        return d
     }
 
     // Current time in the host timezone.
@@ -200,6 +230,27 @@ fn padI32(val: i32, width: i32): string {
 }
 
 // Little-endian i32 read out of the struct tm buffer.
+fn osLocalBreakdown(epochSec: i64): DateTime {
+    // POSIX doesn't require localtime_r to imply tzset(); call it so TZ
+    // changes (and the first call) always take effect.
+    unsafe { tzset() }
+    var t: [i64; 1] = [0; 1]
+    t[0] = epochSec
+    var tm: [u8; 128] = [0; 128]
+    unsafe {
+        let _r = localtime_r(t as *u8, tm as *u8)
+    }
+    return DateTime {
+        year: tmI32(tm, 20) + 1900,
+        month: tmI32(tm, 16) + 1,
+        day: tmI32(tm, 12),
+        hour: tmI32(tm, 8),
+        minute: tmI32(tm, 4),
+        second: tmI32(tm, 0),
+        weekday: tmI32(tm, 24),
+    }
+}
+
 fn tmI32(buf: &[u8; 128], off: i64): i32 {
     var v: i64 = 0
     var i: i64 = 3

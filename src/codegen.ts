@@ -400,6 +400,85 @@ export class Codegen {
     if (this.target.os === "none") return; // freestanding: no environment, no stdio streams
     this.needsSetvbuf = true;
     lines.push(`  call void @${Codegen.LINE_BUF_INIT_FN}()`);
+    // Before global init too: an initializer may build a HashMap.
+    this.needsRrHashInit = true;
+    lines.push(`  call void @${Codegen.RR_HASH_INIT_FN}()`);
+  }
+
+  // HashMap seeds are entropy, and they decide iteration order, which a program can
+  // print. Under record/replay (MILO_RECORD / MILO_REPLAY, std/replay) seeds come from
+  // a fixed sequence instead, so a recorded run and its replay iterate every map the
+  // same way without a trace record per map. The decision is made here, at process
+  // start, because std/replay removes both variables from the environment once it
+  // has read them (so child processes do not write into the parent's trace).
+  private static readonly RR_HASH_INIT_FN = "__milo_rr_hash_init";
+  private static readonly HASH_SEED_FN = "__milo_hash_seed";
+  private static readonly RR_HASH_SEED_GLOBAL = "__milo_rr_hseed";
+  private needsRrHashInit = false;
+
+  private rrHashInitFn(): string[] {
+    const lines: string[] = [];
+    lines.push(`define internal void @${Codegen.RR_HASH_INIT_FN}() {`);
+    lines.push("entry.bb:");
+    // A program with no HashMap has no seed to fix; keep its startup to a bare call.
+    if (!this.needsGetentropy) {
+      lines.push("  ret void");
+      lines.push("}");
+      return lines;
+    }
+    lines.push(`  br label %rr.check0`);
+    // Set and non-empty, matching std/replay, which treats an empty value as unset.
+    const vars = ["MILO_RECORD", "MILO_REPLAY"];
+    vars.forEach((_, i) => {
+      const next = i + 1 < vars.length ? `rr.check${i + 1}` : "rr.done";
+      lines.push(`rr.check${i}:`);
+      lines.push(`  %v${i} = call ptr @getenv(ptr @.milo_rr_env${i})`);
+      lines.push(`  %null${i} = icmp eq ptr %v${i}, null`);
+      lines.push(`  br i1 %null${i}, label %${next}, label %rr.byte${i}`);
+      lines.push(`rr.byte${i}:`);
+      lines.push(`  %b${i} = load i8, ptr %v${i}`);
+      lines.push(`  %empty${i} = icmp eq i8 %b${i}, 0`);
+      lines.push(`  br i1 %empty${i}, label %${next}, label %rr.det`);
+    });
+    lines.push("rr.det:");
+    // Any nonzero start works; this one spells "milorr".
+    lines.push(`  store i64 120364506550898, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
+    lines.push("  br label %rr.done");
+    lines.push("rr.done:");
+    lines.push("  ret void");
+    lines.push("}");
+    vars.forEach((name, i) => {
+      lines.push(`@.milo_rr_env${i} = private unnamed_addr constant [${name.length + 1} x i8] c"${name}\\00"`);
+    });
+    return lines;
+  }
+
+  private hashSeedFn(): string[] {
+    const lines: string[] = [];
+    lines.push(`@${Codegen.RR_HASH_SEED_GLOBAL} = internal global i64 0`);
+    lines.push(`define internal i64 @${Codegen.HASH_SEED_FN}() {`);
+    lines.push("entry.bb:");
+    lines.push("  %buf = alloca i64");
+    lines.push(`  %det = load i64, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
+    lines.push("  %isDet = icmp ne i64 %det, 0");
+    lines.push("  br i1 %isDet, label %seed.det, label %seed.os");
+    lines.push("seed.det:");
+    // Golden-ratio step (0x9E3779B97F4A7C15): consecutive maps get well-spread seeds.
+    // Atomic because maps can be built on Promise.blocking threads too; the sequence
+    // is only reproducible for maps built in a reproducible order, which is the main
+    // thread's.
+    lines.push(`  %old = atomicrmw add ptr @${Codegen.RR_HASH_SEED_GLOBAL}, i64 -7046029254386353131 monotonic`);
+    lines.push("  %next = add i64 %old, -7046029254386353131");
+    lines.push("  ret i64 %next");
+    lines.push("seed.os:");
+    // 2 = BCRYPT_USE_SYSTEM_PREFERRED_RNG, which is what permits the NULL algorithm
+    // handle; the length is a 32-bit ULONG here, not getentropy's size_t.
+    if (this.isWindows) lines.push(`  call i32 @BCryptGenRandom(ptr null, ptr %buf, i32 8, i32 2)`);
+    else lines.push(`  call i32 @getentropy(ptr %buf, i64 8)`);
+    lines.push("  %v = load i64, ptr %buf");
+    lines.push("  ret i64 %v");
+    lines.push("}");
+    return lines;
   }
 
   // Emitted once, as its own function rather than inline in main, for two reasons: the
@@ -1786,7 +1865,9 @@ export class Codegen {
       );
     for (const decl of this.fpSatIntrinsics)
       this.output.splice(1, 0, decl);
-    if (this.needsGetentropy && !declaredExterns.has("getentropy"))
+    // Checked under the name actually declared: std/random.windows declares
+    // BCryptGenRandom itself, and a second declare is an LLVM error.
+    if (this.needsGetentropy && !declaredExterns.has(this.isWindows ? "BCryptGenRandom" : "getentropy"))
       this.output.splice(1, 0, this.isWindows
         // BCryptGenRandom(NULL, buf, len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) is the
         // UCRT-era CSPRNG; passing the system-preferred flag is what lets the algorithm
@@ -1978,6 +2059,9 @@ export class Codegen {
 
     if (this.needsSetvbuf) fnBodies.push(this.lineBufferInitFn());
     if (this.wrapMainGreen) fnBodies.push(this.greenMainEntry());
+    // After greenMainEntry, which is what sets the flag on a green-wrapped program.
+    if (this.needsRrHashInit) fnBodies.push(this.rrHashInitFn());
+    if (this.needsGetentropy) fnBodies.push(this.hashSeedFn());
 
     // append function bodies
     for (const body of fnBodies) {
@@ -10162,14 +10246,8 @@ export class Codegen {
     lines.push(`${preLabel}:`);
     lines.push(`  br i1 ${seedIsZero}, label %${initLabel}, label %${haveLabel}`);
     lines.push(`${initLabel}:`);
-    const seedBuf = this.nextTemp();
-    lines.push(`  ${seedBuf} = alloca i64`);
-    // 2 = BCRYPT_USE_SYSTEM_PREFERRED_RNG, which is what permits the NULL algorithm
-    // handle; the length is a 32-bit ULONG here, not getentropy's size_t.
-    if (this.isWindows) lines.push(`  call i32 @BCryptGenRandom(ptr null, ptr ${seedBuf}, i32 8, i32 2)`);
-    else lines.push(`  call i32 @getentropy(ptr ${seedBuf}, i64 8)`);
     const newSeed = this.nextTemp();
-    lines.push(`  ${newSeed} = load i64, ptr ${seedBuf}`);
+    lines.push(`  ${newSeed} = call i64 @${Codegen.HASH_SEED_FN}()`);
     const isStillZero = this.nextTemp();
     lines.push(`  ${isStillZero} = icmp eq i64 ${newSeed}, 0`);
     const finalSeed = this.nextTemp();

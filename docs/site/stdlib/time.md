@@ -328,7 +328,8 @@ Seconds since Unix epoch.
 pub fn now(): Instant
 ```
 
-Capture the current wall-clock time.
+Capture the current wall-clock time. Recorded and replayed under MILO_RECORD /
+MILO_REPLAY (std/replay), as is everything built on it: epochMillis, since, DateTime.now.
 
 #### `since`
 
@@ -378,5 +379,17 @@ pub fn sleepSecs(secs: i64): void
 ```
 
 Sleep for the given number of seconds.
+
+#### `unrecordedEpochMillis`
+
+```milo
+pub fn unrecordedEpochMillis(): i64
+```
+
+Milliseconds since the Unix epoch, read from the OS even under replay. For the
+scheduler's timer deadlines only: how often it polls the clock depends on real
+readiness timing, so recording those reads would make every trace with a sleep in
+it diverge. Scheduling order gets its own record kind in replay phase 3. Programs
+want epochMillis.
 
 <!-- /generated:api -->

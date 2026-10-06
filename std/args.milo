@@ -1,8 +1,25 @@
 // std/args — command-line argument parsing
 
+from "std/replay" import {
+    replayOff, replayActive, replayTake, replayPut, replayJoinNul, replaySplitNul
+}
+
 // Return all command-line arguments as a Vec<string>.
-// Index 0 is the program name.
+// Index 0 is the program name. Recorded and replayed under MILO_RECORD /
+// MILO_REPLAY (std/replay); payload is each argument followed by a NUL.
 pub fn args(): Vec<string> {
+    if replayOff() {
+        return osArgs()
+    }
+    if replayActive() {
+        return replaySplitNul(replayTake("args", ""))
+    }
+    let live = osArgs()
+    replayPut("args", "", replayJoinNul(live))
+    return live
+}
+
+fn osArgs(): Vec<string> {
     var result: Vec<string> = Vec.new()
     let n = _miloArgCount()
     for i in 0..n {

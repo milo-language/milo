@@ -33,7 +33,8 @@ pub fn args(): Vec<string>
 ```
 
 Return all command-line arguments as a Vec&lt;string>.
-Index 0 is the program name.
+Index 0 is the program name. Recorded and replayed under MILO_RECORD /
+MILO_REPLAY (std/replay); payload is each argument followed by a NUL.
 
 ### `getFlag`
 
