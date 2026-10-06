@@ -39,7 +39,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 ];
 
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
-const GLOBAL_INIT_FN = "__milo.global_init";
+export const GLOBAL_INIT_FN = "__milo.global_init";
 
 // Scratch size for one formatted f64. Worst case at 17 significant digits is
 // "-1.2345678901234567e-308" — 24 bytes plus the NUL.

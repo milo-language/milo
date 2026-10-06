@@ -14,8 +14,9 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
   parseModule, mapSymbols, mapGlobalSymbols, referencedSymbols, referencedInGlobal,
-  declareFor, externDeclFor, textHash, quoteIfNeeded, type Module, type Func, type Global,
+  declareFor, externDeclFor, endOfType, textHash, quoteIfNeeded, type Module, type Func, type Global,
 } from "./cgu";
+import { GLOBAL_INIT_FN } from "./codegen";
 import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 
 // Module-local symbols are exported from the host under this prefix. Exporting them under
@@ -33,6 +34,13 @@ export type HotManifest = {
   types: Record<string, string>;
   /** mutable global -> its declaration shape (linkage dropped) */
   globals: Record<string, string>;
+  /** named global -> hash of its static initializer */
+  inits: Record<string, string>;
+  /** runtime-initialized global -> hash of its piece of the startup initializer */
+  startup: Record<string, string>;
+  startupTail: string;
+  /** `var` globals: an initializer edit keeps the running value instead of patching it */
+  vars: string[];
 };
 
 type Header = { name: string; ret: string; params: string[]; suffix: string };
@@ -110,10 +118,17 @@ class View {
     const hit = this.cache?.get(raw);
     if (hit && hit.consts.every(([n, h]) => this.constHash(n) === h)) return hit.norm;
     const consts: [string, string][] = [];
-    const text = mapSymbols(f.text, n => {
+    const norm = this.bodyHash(f.text, consts);
+    this.cache?.set(raw, { norm, consts });
+    return norm;
+  }
+
+  /** Hash of IR body text with constant numbering and local value/label names factored out. */
+  bodyHash(text: string, consts?: [string, string][]): string {
+    const mapped = mapSymbols(text, n => {
       if (!this.localConsts.has(n)) return undefined;
       const h = this.constHash(n);
-      consts.push([n, h]);
+      consts?.push([n, h]);
       return `__c.${h}`;
     });
     // Value and label names renumbered by first appearance: some synthesized functions
@@ -121,13 +136,46 @@ class View {
     // `%t.N` without changing a single instruction.
     const local = new Map<string, string>();
     const canon = (n: string) => { let c = local.get(n); if (c === undefined) local.set(n, (c = `_${local.size}`)); return c; };
-    const normalized = text.replace(/%("(?:[^"\\]|\\.)*"|[-a-zA-Z$._0-9]+)|^([-a-zA-Z$._0-9]+):/gm, (m, ref?: string, label?: string) => {
+    const normalized = mapped.replace(/%("(?:[^"\\]|\\.)*"|[-a-zA-Z$._0-9]+)|^([-a-zA-Z$._0-9]+):/gm, (m, ref?: string, label?: string) => {
       if (label !== undefined) return `${canon(label)}:`;
       return this.typeNames.has(ref!) ? m : `%${canon(ref!)}`;
     });
-    const norm = textHash(normalized);
-    this.cache?.set(raw, { norm, consts });
-    return norm;
+    return textHash(normalized);
+  }
+
+  /** A named global's static initializer, with constant references hashed by content. */
+  initKey(g: Global): string {
+    const body = g.text.replace(/^@\S+\s*=\s*/, "");
+    return textHash(mapGlobalSymbols(body, n => this.localConsts.has(n) ? `__c.${this.constHash(n)}` : undefined));
+  }
+
+  /** Named globals: everything but the module-local constants (string literals and such). */
+  namedGlobals(): Global[] {
+    return this.mod.globals.filter(g => !this.localConsts.has(g.name));
+  }
+
+  /**
+   * The startup initializer split per global: each global's code runs up to and including
+   * the `store ..., ptr @G` that fills it (codegen emits one Assign per runtime-initialized
+   * global, in dependency order). `tail` is whatever follows the last store.
+   */
+  startupSegments(): { segs: Record<string, string>; tail: string } {
+    const segs: Record<string, string> = {};
+    const f = this.fns.get(GLOBAL_INIT_FN);
+    if (!f) return { segs, tail: "" };
+    const lines = f.text.split("\n").slice(1);
+    let start = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^\s*store .*, ptr @("(?:[^"\\]|\\.)*"|[-a-zA-Z$._0-9]+)\s*$/.exec(lines[i]!);
+      if (!m) continue;
+      const name = m[1]!.startsWith('"') ? m[1]!.slice(1, -1) : m[1]!;
+      if (!this.globals.has(name) || this.localConsts.has(name)) continue;
+      // A global stored twice keeps both pieces, so neither edit goes unseen.
+      const h = this.bodyHash(lines.slice(start, i + 1).join("\n"));
+      segs[name] = segs[name] === undefined ? h : textHash(segs[name] + h);
+      start = i + 1;
+    }
+    return { segs, tail: this.bodyHash(lines.slice(start).join("\n")) };
   }
 
   private constHashes = new Map<string, string>();
@@ -174,11 +222,16 @@ function unpatchableReason(f: Func, h: Header): string | null {
  * store a new pointer into the slot. Module-local functions and mutable globals are
  * promoted and exported (under HOT_PREFIX) so a patch dylib can bind to them.
  */
-export function hostTransform(ir: string): { ir: string; manifest: HotManifest } | { error: string } {
+export function hostTransform(ir: string, vars: string[] = []): { ir: string; manifest: HotManifest } | { error: string } {
   const mod = parseModule(ir);
   if (!mod) return { error: "the IR has a shape the hot transform does not recognize" };
   const v = new View(mod);
-  const manifest: HotManifest = { version: 1, fns: {}, types: typesOf(mod), globals: Object.fromEntries(v.mutableGlobals()) };
+  const startup = v.startupSegments();
+  const manifest: HotManifest = {
+    version: 1, fns: {}, types: typesOf(mod), globals: Object.fromEntries(v.mutableGlobals()),
+    inits: Object.fromEntries(v.namedGlobals().map(g => [g.name, v.initKey(g)])),
+    startup: startup.segs, startupTail: startup.tail, vars,
+  };
   const rn = (t: string) => mapSymbols(t, n => v.rename.get(n));
   const typedefMap = new Map(Object.entries(manifest.types));
 
@@ -295,8 +348,14 @@ function typesOf(mod: Module): Record<string, string> {
 
 export type PatchResult =
   | { kind: "refuse"; reason: string }
-  | { kind: "none" }
-  | { kind: "patch"; ir: string; changed: string[]; exported: string[]; hashes: Record<string, string> };
+  /** `notes`: changes deliberately not applied (a `var` initializer); `hashes` still records them */
+  | { kind: "none"; notes: string[]; hashes: Record<string, string> }
+  | {
+    kind: "patch"; ir: string; changed: string[]; exported: string[];
+    /** `let` globals whose new initializer bytes the patch carries */
+    data: string[]; dataExported: string[];
+    hashes: Record<string, string>; notes: string[];
+  };
 
 /**
  * Diff `newIr` against the host manifest and emit a patch module holding only the changed
@@ -323,15 +382,53 @@ export function emitPatch(manifest: HotManifest, current: Record<string, string>
   for (const name of globals.keys()) if (!(name in manifest.globals)) return { kind: "refuse", reason: `global ${name} added` };
   for (const name of Object.keys(manifest.fns)) if (!v.fns.has(name)) return { kind: "refuse", reason: `function ${name} removed` };
 
+  const hashes: Record<string, string> = {};
+  const notes: string[] = [];
+  const vars = new Set(manifest.vars);
+  const varNote = (name: string) => {
+    const note = `var ${name} initializer changed, keeping the running value`;
+    if (!notes.includes(note)) notes.push(note);
+  };
+
+  // Startup initializers first: a global that moved between static and runtime
+  // initialization changes both, and only this check can explain that.
+  const startup = v.startupSegments();
+  if (startup.tail !== manifest.startupTail) return { kind: "refuse", reason: "startup initializer code changed" };
+  for (const name of new Set([...Object.keys(startup.segs), ...Object.keys(manifest.startup)])) {
+    const key = `${STARTUP_KEY}${name}`, now = startup.segs[name] ?? "";
+    if (now === (current[key] ?? manifest.startup[name] ?? "")) continue;
+    if (!vars.has(name)) return { kind: "refuse", reason: `global ${name} initializer changed (runs at startup)` };
+    varNote(name);
+    hashes[key] = now;
+  }
+
+  // Static initializers. A `var` keeps its running value (that state is the point of hot
+  // reload); a `let` gets the new bytes copied over the host's, which is what the user
+  // edited a tuning constant to see.
+  const data: Global[] = [];
+  for (const g of v.namedGlobals()) {
+    const key = `${INIT_KEY}${g.name}`, now = v.initKey(g);
+    const was = current[key] ?? manifest.inits[g.name];
+    if (was === undefined || now === was) continue;
+    hashes[key] = now;
+    if (vars.has(g.name)) { varNote(g.name); continue; }
+    if (isConstant(g) || /\bthread_local\b/.test(g.text) || !v.rename.has(g.name)) {
+      return { kind: "refuse", reason: `global ${g.name} initializer changed` };
+    }
+    data.push(g);
+  }
+
   const changed: Func[] = [];
   const headers = new Map<string, Header>();
-  const hashes: Record<string, string> = {};
   for (const f of mod.funcs) {
     const was = manifest.fns[f.name];
     if (!was) return { kind: "refuse", reason: `function ${f.name} added` };
     const h = splitHeader(f.header);
     if (!h) return { kind: "refuse", reason: `cannot parse the header of @${f.name}` };
     if (signature(h) !== was.sig) return { kind: "refuse", reason: `signature of ${f.name} changed` };
+    // Runs once, before main; every change in it was attributed to a global above (a
+    // refusal or a var note), and patching it would change nothing.
+    if (f.name === GLOBAL_INIT_FN) continue;
     const hash = v.fnHash(f);
     if (hash === current[f.name]) continue;
     if (!was.patchable) return { kind: "refuse", reason: `${f.name} changed but is not patchable` };
@@ -339,14 +436,14 @@ export function emitPatch(manifest: HotManifest, current: Record<string, string>
     headers.set(f.name, h);
     changed.push(f);
   }
-  if (changed.length === 0) return { kind: "none" };
+  if (changed.length === 0 && data.length === 0) return { kind: "none", notes, hashes };
 
-  // Everything the changed bodies reach: host functions and mutable globals become
-  // declarations bound by (exported) name; module-local constants are copied in.
+  // Everything the changed bodies and initializers reach: host functions and mutable
+  // globals become declarations bound by (exported) name; module-local constants are copied in.
   const fnDecls = new Set<string>();
   const globalDecls = new Set<string>();
   const consts = new Set<string>();
-  const work: Set<string>[] = changed.map(f => referencedSymbols(f.text));
+  const work: Set<string>[] = [...changed.map(f => referencedSymbols(f.text)), ...data.map(g => referencedInGlobal(g.text))];
   while (work.length) {
     for (const s of work.pop()!) {
       if (v.fns.has(s)) fnDecls.add(s);
@@ -375,9 +472,27 @@ export function emitPatch(manifest: HotManifest, current: Record<string, string>
     const h = headers.get(f.name)!;
     parts.push(`define ${h.ret} ${q(v.exported(f.name) + ".v" + n)}(${h.params.join(", ")})${h.suffix} {${rn(f.text.slice(f.text.indexOf("\n")))}`, "");
   }
-  parts.push(...mod.attrs, ...mod.metadata.map(rn));
-  return { kind: "patch", ir: parts.join("\n") + "\n", changed: changed.map(f => f.name), exported: changed.map(f => v.exported(f.name)), hashes };
+  // New initializer bytes plus their size, which the runtime copies over the host global.
+  // The size comes from LLVM (the gep-from-null idiom) so this file never computes a layout;
+  // the type is the host's, since a retyped global was refused above.
+  for (const g of data) {
+    const m = /^@\S+\s*=\s*(?:[a-z_]+(?:\([^)]*\))?\s+)*?global\s+(.*)$/.exec(g.text);
+    if (!m) return { kind: "refuse", reason: `global ${g.name} initializer changed` };
+    const tyEnd = endOfType(m[1]!, 0);
+    const ty = m[1]!.slice(0, tyEnd);
+    const sym = `${v.exported(g.name)}.init.v${n}`;
+    parts.push(`${q(sym)} = constant ${ty} ${mapGlobalSymbols(m[1]!.slice(tyEnd).trim(), s => v.rename.get(s))}`);
+    parts.push(`${q(sym + ".size")} = constant i64 ptrtoint (ptr getelementptr (${ty}, ptr null, i32 1) to i64)`);
+  }
+  parts.push("", ...mod.attrs, ...mod.metadata.map(rn));
+  return {
+    kind: "patch", ir: parts.join("\n") + "\n", changed: changed.map(f => f.name), exported: changed.map(f => v.exported(f.name)),
+    data: data.map(g => g.name), dataExported: data.map(g => v.exported(g.name)), hashes, notes,
+  };
 }
+
+const INIT_KEY = "@init:", STARTUP_KEY = "@startup:";
+
 
 /** The hashes a fresh host starts from. */
 export function initialHashes(m: HotManifest): Record<string, string> {
@@ -412,9 +527,9 @@ export function patchLibName(dir: string, n: number, os: string): string {
 
 /** Tell a running host to apply a patch. The fifo is opened per message, non-blocking:
  *  a host that died has no reader, and the open then fails instead of hanging. */
-export function sendPatch(fifo: string, lib: string, n: number, exported: string[]): void {
+export function sendPatch(fifo: string, lib: string, n: number, exported: string[], dataExported: string[] = []): void {
   const fd = openSync(fifo, fsConst.O_WRONLY | fsConst.O_NONBLOCK);
-  try { writeSync(fd, `${lib}\t${n}\t${exported.join(",")}\n`); } finally { closeSync(fd); }
+  try { writeSync(fd, `${lib}\t${n}\t${exported.join(",")}\t${dataExported.join(",")}\n`); } finally { closeSync(fd); }
 }
 
 /** Wait for the host's `ok N` / `err N ...` line in the ack file. */
@@ -519,7 +634,11 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     const tCompiled = performance.now();
     const r = emitPatch(manifest!, current, ir, n + 1, hashCache);
     const tDiffed = performance.now();
-    if (r.kind === "none") continue;
+    if (r.kind === "none") {
+      for (const note of r.notes) console.error(`hot: ${note}`);
+      Object.assign(current, r.hashes);
+      continue;
+    }
     if (r.kind === "refuse") {
       console.error(`hot: restart (${r.reason})`);
       await kill();
@@ -532,7 +651,7 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     try {
       compilePatch(deps.cc, r.ir, lib, deps.os);
       tClang = performance.now();
-      sendPatch(fifo, lib, n, r.exported);
+      sendPatch(fifo, lib, n, r.exported, r.dataExported);
     } catch (e: any) {
       console.error(`hot: patch failed, restarting:\n${e.stderr?.toString() ?? e.message}`);
       await kill(); start(); continue;
@@ -542,7 +661,8 @@ export async function runHot(args: string[], deps: HotDeps): Promise<number> {
     Object.assign(current, r.hashes);
     const ms = (a: number, b: number) => Math.round(b - a);
     const tDone = performance.now();
-    console.error(`hot: patched ${r.changed.join(", ")} in ${ms(t0, tDone)}ms`);
+    for (const note of r.notes) console.error(`hot: ${note}`);
+    console.error(`hot: patched ${[...r.changed, ...r.data].join(", ")} in ${ms(t0, tDone)}ms`);
     if (process.env.MILO_VERBOSE === "1") {
       console.error(`hot:   frontend+codegen ${ms(t0, tCompiled)}, diff ${ms(tCompiled, tDiffed)}, clang ${ms(tDiffed, tClang)}, apply ${ms(tClang, tDone)} (${a.msg})`);
     }

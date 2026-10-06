@@ -293,7 +293,7 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 // `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
 // neither) — see Codegen.cDeclGuards. It rides alongside the IR because only codegen
 // knows the field offsets and return widths it asserts.
-function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[] } {
+function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
   const ir = phase("codegen", () => cg.generate(hirModule));
@@ -301,7 +301,8 @@ function compileWithGuards(source: string, target: TargetInfo, filePath?: string
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
   return { ir, cGuards: cg.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [], hasMain,
-           nonConstGlobals: hirModule.nonConstGlobals ?? [] };
+           nonConstGlobals: hirModule.nonConstGlobals ?? [],
+           varGlobals: hirModule.globals.filter(g => g.mutable).map(g => g.name) };
 }
 
 // Compile the @cLayout/@cSig guard TU against the real system headers and fail the build
@@ -1301,7 +1302,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
       console.error(`error: --hot needs a hosted darwin or linux target (dlopen), not ${target.triple}`);
       process.exit(1);
     }
-    const h = hostTransform(ir);
+    const h = hostTransform(ir, compiled.varGlobals);
     if ("error" in h) { console.error(`error: --hot: ${h.error}`); process.exit(1); }
     ir = h.ir;
     writeFileSync(`${out}.hot.json`, JSON.stringify(h.manifest));

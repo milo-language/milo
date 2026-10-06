@@ -51,6 +51,27 @@ fn main() {
 }
 `;
 
+const GLOBALS = `from "std/io" import { readLine }
+
+let LIMIT: i64 = 10
+var N: i64 = 10
+let NAME: string = "aa"
+var counter: i64 = 0
+
+fn main() {
+    while true {
+        match readLine() {
+            Some(line) => {
+                counter = counter + 1
+                N = N + 1
+                print($"{NAME} {LIMIT} {N} {counter}")
+            }
+            None => { return }
+        }
+    }
+}
+`;
+
 function milo(args: string[]): string {
   const r = spawnSync("bun", ["run", MAIN, ...args], { cwd: ROOT, encoding: "utf-8" });
   if (r.status !== 0) throw new Error(`milo ${args.join(" ")} failed:\n${r.stderr}`);
@@ -134,11 +155,12 @@ class Host {
     // --debug: the same -O0 codegen settings `build --hot` used for the host.
     const ir = milo(["emit-ir", "--debug", this.src]);
     const r = emitPatch(this.manifest, this.current, ir, this.n + 1, this.cache);
+    if (r.kind === "none") Object.assign(this.current, r.hashes);
     if (r.kind !== "patch") return r;
     this.n++;
     const lib = patchLibName(this.dir, this.n, OS);
     compilePatch("clang", r.ir, lib, OS);
-    sendPatch(this.fifo, lib, this.n, r.exported);
+    sendPatch(this.fifo, lib, this.n, r.exported, r.dataExported);
     const a = await awaitAck(this.ack, this.n);
     if (!a.ok) throw new Error(`apply failed: ${a.msg}`);
     Object.assign(this.current, r.hashes);
@@ -179,6 +201,32 @@ describe.skipIf(process.platform === "win32")("hot reload", () => {
       expect(r4.kind).toBe("patch");
       expect(await h.send()).toBe("v=106 16 t7");
       expect((await h.edit(PROGRAM)).kind).toBe("none");
+    } finally { h.stop(); }
+  }, 60000);
+
+  test("global initializer edits: let patched in place, var reported and kept, startup let refused", async () => {
+    const h = new Host();
+    h.start(GLOBALS);
+    try {
+      expect(await h.send()).toBe("aa 10 11 1");
+      expect(await h.send()).toBe("aa 10 12 2");
+
+      // A `let` tuning constant: the patch carries the new bytes; N and counter keep running.
+      const r = await h.edit(GLOBALS.replace("let LIMIT: i64 = 10", "let LIMIT: i64 = 20"));
+      expect(r.kind).toBe("patch");
+      if (r.kind === "patch") { expect(r.data).toEqual(["LIMIT"]); expect(r.changed).toEqual([]); }
+      expect(await h.send()).toBe("aa 20 13 3");
+      // Applied state is remembered: the same source again is not a second patch.
+      expect((await h.edit(GLOBALS.replace("let LIMIT: i64 = 10", "let LIMIT: i64 = 20"))).kind).toBe("none");
+
+      // A `var`: reported, not applied.
+      const r2 = await h.edit(GLOBALS.replace("let LIMIT: i64 = 10", "let LIMIT: i64 = 20").replace("var N: i64 = 10", "var N: i64 = 99"));
+      expect(r2).toMatchObject({ kind: "none", notes: ["var N initializer changed, keeping the running value"] });
+      expect(await h.send()).toBe("aa 20 14 4");
+
+      // A `let` filled at startup (a string) cannot be re-run, so it is refused.
+      const r3 = await h.edit(GLOBALS.replace(`let NAME: string = "aa"`, `let NAME: string = "bb"`));
+      expect(r3).toEqual({ kind: "refuse", reason: "global NAME initializer changed (runs at startup)" });
     } finally { h.stop(); }
   }, 60000);
 
@@ -236,6 +284,10 @@ describe.skipIf(process.platform === "win32")("hot reload", () => {
       writeFileSync(src, PROGRAM.replace("return 100", "return 300"));
       expect(await err.until(/^hot: (patched|restart)/)).toMatch(/^hot: patched compute in \d+ms$/);
       expect(await send()).toBe("v=302 12 t3");
+      // A var initializer edit is reported, not applied: the running count carries on.
+      writeFileSync(src, PROGRAM.replace("return 100", "return 300").replace("var counter: i64 = 0", "var counter: i64 = 50"));
+      expect(await err.until(/^hot: /)).toBe("hot: var counter initializer changed, keeping the running value");
+      expect(await send()).toBe("v=303 13 t4");
       writeFileSync(src, PROGRAM.replace("struct Point { x: i64, y: i64 }", "struct Point { x: i64, y: i64, z: i64 }")
         .replace("Point { x: a, y: a + 1 }", "Point { x: a, y: a + 1, z: 0 }"));
       expect(await err.until(/^hot: (patched|restart)/)).toBe("hot: restart (type %Point changed layout)");

@@ -1,10 +1,11 @@
 // Hot-reload apply runtime, linked only into `--hot` hosts (src/hot.ts hostLinkFlags).
 //
 // If MILO_HOT_FIFO is set, a background thread reads lines
-//   <patch library path> \t <N> \t <name1>,<name2>,...
-// For each one it dlopens the library and, for every name, stores the library's
-// `<name>.v<N>` into the host's `<name>.slot`, then appends `ok N` (or `err N <msg>`)
-// to the file named by MILO_HOT_ACK.
+//   <patch library path> \t <N> \t <fn1>,<fn2>,... \t <global1>,<global2>,...
+// For each one it dlopens the library, copies every global's new initializer
+// (`<global>.init.v<N>`, `<global>.init.v<N>.size` bytes) over the host's `<global>`,
+// stores the library's `<fn>.v<N>` into the host's `<fn>.slot`, then appends `ok N`
+// (or `err N <msg>`) to the file named by MILO_HOT_ACK.
 // glibc defines RTLD_DEFAULT only under _GNU_SOURCE.
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -39,6 +40,8 @@ static void apply(char *line) {
   names = strchr(n, '\t');
   if (!names) { ack("err", n, "malformed request"); return; }
   *names++ = 0;
+  char *datas = strchr(names, '\t');
+  if (datas) *datas++ = 0;
 
   // Never dlclose: a thread may be inside an old version's code (a frame loop that called
   // the previous body), and unmapping it would crash that frame.
@@ -69,6 +72,28 @@ static void apply(char *line) {
     }
     count++;
   }
+  static void *dsts[MAX];
+  static const void *srcs[MAX];
+  static long long sizes[MAX];
+  int ndata = 0;
+  for (char *save = NULL, *name = datas ? strtok_r(datas, ",", &save) : NULL; name; name = strtok_r(NULL, ",", &save)) {
+    if (ndata == MAX) { ack("err", n, "too many globals in one patch"); return; }
+    dsts[ndata] = dlsym(RTLD_DEFAULT, name);
+    snprintf(sym, sizeof sym, "%s.init.v%s", name, n);
+    srcs[ndata] = dlsym(h, sym);
+    snprintf(sym, sizeof sym, "%s.init.v%s.size", name, n);
+    const long long *size = (const long long *)dlsym(h, sym);
+    if (!dsts[ndata] || !srcs[ndata] || !size) {
+      char msg[1100];
+      snprintf(msg, sizeof msg, "missing %s for global %s", dsts[ndata] ? "initializer" : "host symbol", name);
+      ack("err", n, msg);
+      return;
+    }
+    sizes[ndata++] = *size;
+  }
+  // Data before code, so a new body never runs against the old value. The copy is not
+  // atomic: a thread reading the global during it can see a mix of old and new bytes.
+  for (int i = 0; i < ndata; i++) memcpy(dsts[i], srcs[i], (size_t)sizes[i]);
   // Release pairs with the thunk's acquire load: a caller that sees the new pointer also
   // sees everything dlopen wrote (relocations, the patch's constants).
   for (int i = 0; i < count; i++) __atomic_store_n(slots[i], fns[i], __ATOMIC_RELEASE);

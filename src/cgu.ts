@@ -383,7 +383,7 @@ function promoteDefinition(text: string): string {
  * yields `[19`, which is accepted nowhere and is the kind of truncation that shows up as
  * a parse error hundreds of lines away.
  */
-function endOfType(text: string, start: number): number {
+export function endOfType(text: string, start: number): number {
   let depth = 0;
   let i = start;
   for (; i < text.length; i++) {
