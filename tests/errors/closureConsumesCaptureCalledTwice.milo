@@ -1,0 +1,15 @@
+// @error: moves a captured value out of itself when it runs
+// A closure that moves a capture out owns it, `move` written or not: by reference, the
+// move emptied the caller's variable behind its back, the caller then freed it again
+// (an ASan double free), and a second call read the emptied slot.
+fn take(s: string): i64 {
+    return s.len
+}
+
+pub fn main(): i32 {
+    let s = "a string long enough to live on the heap".clone()
+    let f = (): i64 => take(s)
+    print(f().toString())
+    print(f().toString())
+    return 0
+}

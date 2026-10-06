@@ -1,0 +1,60 @@
+// @expect: 15
+// @expect: 4
+// @expect: 8
+// A closure passed to a plain (non-escaping) parameter stays by-reference, so it may
+// capture `self` and `&T` parameters: the callee cannot keep it past the call. This was
+// `error: cannot capture 'self' in a closure` (docs/plans/friction-2026-10.md item 2).
+struct Conn {
+    fd: i32,
+}
+
+impl Conn {
+    fn send(self: &Self, s: &string): i32 {
+        return apply(s, (b: &string): i32 => self.fd + (b.len as i32))
+    }
+}
+
+fn apply(s: &string, f: (&string) => i32): i32 {
+    return f(s)
+}
+
+struct Counter {
+    n: i64,
+    name: string,
+}
+
+fn repeat(k: i64, f: () => void) {
+    var i: i64 = 0
+    while i < k {
+        f()
+        i = i + 1
+    }
+}
+
+fn get(f: () => i64): i64 {
+    return f()
+}
+
+impl Counter {
+    // `&mut self` captured and written through.
+    fn bump(self: &mut Self, k: i64) {
+        repeat(k, (): void => {
+            self.n = self.n + 1
+        })
+    }
+
+    fn nameLen(self: &Self): i64 {
+        return get((): i64 => self.name.len + self.n)
+    }
+}
+
+pub fn main(): i32 {
+    let c = Conn { fd: 10 }
+    let s = "hello".clone()
+    print(c.send(s).toString())
+    var k = Counter { n: 1, name: "abcd".clone() }
+    k.bump(3)
+    print(k.n.toString())
+    print(k.nameLen().toString())
+    return 0
+}

@@ -1,0 +1,33 @@
+// @error: cannot assign to 'h.o' because 'h' is borrowed
+// `s` borrows the payload of `h.o`, and the closure capturing `h` must not replace it
+// while `s` is live: written without a closure this is rejected, and inside one it was a
+// heap-use-after-free (`print(s)` read the freed string). A closure may assign to its
+// own captures past the capture's own borrow, never past another one.
+struct Holder {
+    o: Option<string>,
+}
+
+fn apply(f: () => i64): i64 {
+    return f()
+}
+
+fn viaClosure(h: &mut Holder): i64 {
+    match h.o {
+        Option.Some(s) => {
+            return apply((): i64 => {
+                h.o = Option.None
+                print(s)
+                return s.len
+            })
+        }
+        Option.None => {
+            return 0
+        }
+    }
+}
+
+pub fn main(): i32 {
+    var h = Holder { o: Option.Some("a string long enough to live on the heap".clone()) }
+    print(viaClosure(&mut h).toString())
+    return 0
+}

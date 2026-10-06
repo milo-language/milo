@@ -9,7 +9,7 @@
 // distinguishes the two, so it is what this test asserts.
 import { test, expect } from "bun:test";
 import { execSync } from "child_process";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -100,3 +100,38 @@ test("without --sanitize the same program is not instrumented", () => {
   const ir = execSync(`bun ${MILO} emit-ir ${src}`, { encoding: "utf-8" });
   expect(ir).not.toContain("sanitize_address");
 });
+
+// Borrow-capturing closures write through pointers into the caller's frame and into
+// `self`. These run clean under ASan; on the compiler before them, a closure moving a
+// capture out by reference was a double free (the closure emptied the caller's
+// variable and the caller freed it again), which is the inline program below.
+test("borrow-capturing closures run clean under --sanitize", () => {
+  const consume = join(dir, "closureConsume.milo");
+  writeFileSync(consume, `fn take(s: string): i64 {
+    return s.len
+}
+
+pub fn main(): i32 {
+    let s = "a string long enough to live on the heap".clone()
+    let f = (): i64 => take(s)
+    print(f().toString())
+    return 0
+}
+`);
+  const cases: [string, string[]][] = [[consume, ["40"]]];
+  for (const name of ["closureCaptureSelf", "closureBorrowedCallbacks", "closureCaptureHeap"]) {
+    const src = join(import.meta.dir, "fixtures", `${name}.milo`);
+    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    cases.push([src, want]);
+  }
+  for (const [src, want] of cases) {
+    let out = "";
+    try {
+      out = execSync(`bun ${MILO} run --sanitize ${src} 2>&1`, { encoding: "utf-8", env: ENV });
+    } catch (e: any) {
+      out = (e.stdout ?? "") + (e.stderr ?? "");
+    }
+    expect(out).not.toContain("AddressSanitizer");
+    expect(out.trim().split("\n")).toEqual(want);
+  }
+}, 240_000);

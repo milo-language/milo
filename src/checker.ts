@@ -128,7 +128,9 @@ export function isForeignModule(file: string | undefined): boolean {
 // `v.ptr()` / `s.cstr()` / `h.ptr()`: it survives an index write like a view does, and
 // unlike either it does not forbid a MOVE of its source; the move ends the holder
 // instead, except through `forget` (see `tryMoveLeaf`).
-type BorrowKind = "view" | "iteration" | "pointer";
+// `capture`: a closure captured the binding. It is a view for everyone else, but the
+// closures that capture a binding may still assign to it (see the Assign arm).
+type BorrowKind = "view" | "iteration" | "pointer" | "capture";
 
 // The binding that holds a pointer borrow, so the diagnostic can name both ends:
 // `'v' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on
@@ -2988,13 +2990,13 @@ export class TypeChecker {
     return kinds.some((k, i) => k === "iteration" && this.borrowCollides(paths?.[i], mutFields));
   }
 
-  private frozenAgainst(info: VarInfo, target: Expr | null): boolean {
+  private frozenAgainst(info: VarInfo, target: Expr | null, ignore?: BorrowKind): boolean {
     if (!info.borrowed) return false;
     const paths = info.borrowedPaths;
     if (!paths || paths.length === 0) return true;
     const mut = target ? this.accessPath(target) : null;
     const mutFields = mut ? mut.fields : null;
-    return paths.some(p => this.borrowCollides(p, mutFields));
+    return paths.some((p, i) => (ignore === undefined || info.borrowKinds?.[i] !== ignore) && this.borrowCollides(p, mutFields));
   }
 
   private lookup(name: string): VarInfo | null {
@@ -6319,7 +6321,10 @@ export class TypeChecker {
               this.pointerHint(ph));
             break;
           }
-          if (info && !isCapturedMutation && this.frozenAgainst(info, stmt.target)) {
+          // A closure assigning to its own capture is exempt only from the capture
+          // borrows; any other borrow (a match binding or view into it, now that a
+          // by-reference closure can capture those) still forbids the write.
+          if (info && this.frozenAgainst(info, stmt.target, isCapturedMutation ? "capture" : undefined)) {
             const place = this.describeExpr(stmt.target);
             const why = place === assignPath.root ? "it is borrowed" : `'${assignPath.root}' is borrowed`;
             this.error(`cannot assign to '${place}' because ${why}`, sp,
@@ -9513,18 +9518,11 @@ export class TypeChecker {
           this.setAutoBorrowChecked(expr.args[i], sigParamTy.mutable, sp);
           continue;
         }
-        // Auto-move closure args (parity with the non-generic call path):
-        // without this, a closure passed to a generic fn keeps its non-Copy
-        // captures owned by the enclosing scope, which then drops them while
-        // the closure still references them — a use-after-free. Skip when the
-        // closure mutates a capture (it must write back to the original).
-        if (expr.args[i].kind === "Closure" && i < concreteSig.params.length
-            && concreteSig.params[i].type.tag === "fn" && !(expr.args[i] as any).isMove) {
-          const caps = this.closureCaptures.get(expr.args[i]);
-          // A capture mutated in place needs write-back, so it cannot be
-          // move-captured; one merely read or moved-out is safe to move.
-          if (!caps?.some(c => c.mutatedInClosure)) (expr.args[i] as any).isMove = true;
-        }
+        // Same rule as the non-generic path: a literal for a `move` parameter (which a
+        // bare `T` parameter instantiated with a closure type is) owns its captures.
+        // Here only a capture mutated in place blocks the move; one merely read or
+        // moved out is safe to move.
+        this.autoMoveClosureArg(expr.args[i], concreteSig.params[i]?.type, c => !!c.mutatedInClosure);
         this.tryMove(expr.args[i]);
       }
       // check requires contracts at call site (generic fn)
@@ -9581,10 +9579,9 @@ export class TypeChecker {
         }
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
           if (fnType.params[i].tag === "ref") continue;
-          if (expr.args[i].kind === "Closure" && fnType.params[i].tag === "fn" && !(expr.args[i] as any).isMove) {
-            const caps = this.closureCaptures.get(expr.args[i]);
-            if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
-          }
+          // Through a fn value: its parameter types cannot promise what the target does
+          // with the argument (`typeEq` ignores `move`), so a literal is moved as before.
+          this.autoMoveClosureArg(expr.args[i], fnType.params[i], c => c.mutable, true);
           this.tryMove(expr.args[i]);
         }
         // Calling a closure that moves a capture out consumes the closure: the call
@@ -9617,10 +9614,7 @@ export class TypeChecker {
           this.error(`'${mangled}' has no 'run' method`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
-        if (expr.args[0].kind === "Closure" && !(expr.args[0] as any).isMove) {
-          const caps = this.closureCaptures.get(expr.args[0]);
-          if (!caps?.some(c => c.mutable)) (expr.args[0] as any).isMove = true;
-        }
+        this.autoMoveClosureArg(expr.args[0], argType, c => c.mutable, true);
         this.tryMove(expr.args[0]);
         this.rewrittenCalls.set(expr, `${mangled}$run`);
         return this.setType(expr, runSig.ret);
@@ -9752,11 +9746,7 @@ export class TypeChecker {
       const paramType = sig.params[i].type;
       if (argType?.tag === "string" && paramType.tag === "ptr") continue;
       if (argType?.tag === "array" && paramType.tag === "ptr") continue;
-      // auto-move: closure literal passed to owned fn param (skip if closure mutates captures)
-      if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
-        const caps = this.closureCaptures.get(expr.args[i]);
-        if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
-      }
+      this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       this.tryMove(expr.args[i]);
     }
     this.checkCallSiteExclusivity(expr.args, sp);
@@ -10144,10 +10134,7 @@ export class TypeChecker {
       } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
         this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
       }
-      if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
-        const caps = this.closureCaptures.get(expr.args[i]);
-        if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
-      }
+      this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
     }
     return paramOffset;
@@ -10514,6 +10501,33 @@ export class TypeChecker {
       `the expected type makes it '${t}'; drop ' as ${t}' (and its parentheses)`);
   }
 
+  // A closure literal passed to a `move` parameter becomes a move closure: the callee may
+  // keep it, so it must own its captures. One passed to a plain parameter stays
+  // by-reference, since the callee cannot keep it (checkNonEscapingParams), and that is
+  // what lets it borrow locals and `self`. `keepsWriteBack` names the captures that need
+  // write-back to the original, which a move would drop; such a literal stays
+  // by-reference and checkEscapingClosures rejects it at a `move` parameter. `always` is
+  // for a call through a fn value, whose parameter types cannot say what the target does.
+  private autoMoveClosureArg(arg: Expr, param: TypeKind | undefined, keepsWriteBack: (c: CaptureInfo) => boolean, always = false): void {
+    if (arg.kind !== "Closure" || (arg as { isMove?: boolean }).isMove || param?.tag !== "fn") return;
+    if (!always && !param.owning) return;
+    const caps = this.closureCaptures.get(arg) ?? [];
+    if (caps.some(keepsWriteBack)) return;
+    (arg as { isMove?: boolean }).isMove = true;
+    this.errorOnRefCaptures(arg, caps, "this closure is passed to a 'move' parameter, so it owns its captures");
+  }
+
+  // A move closure's env is storage that outlives the frame, and references are
+  // second-class: `let s = v[0..2]; return move () => s[0]` read freed memory. A
+  // by-reference closure may capture one, since it cannot leave the borrow's scope.
+  private errorOnRefCaptures(expr: Expr, captures: CaptureInfo[], why: string) {
+    for (const cap of captures) {
+      if (cap.type.tag !== "ref") continue;
+      this.error(`cannot capture '${cap.name}' in a 'move' closure`, expr.span,
+        `'${cap.name}' is a reference, and ${why} and may outlive what '${cap.name}' points into; capture an owned value (.clone() it) instead`);
+    }
+  }
+
   private checkClosureExpr(expr: ExprOf<"Closure">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     const paramHints = expected?.tag === "fn" ? expected.params : null;
@@ -10576,7 +10590,24 @@ export class TypeChecker {
     this.popScope();
     const captures = Array.from(frame.captures.values());
     this.closureCaptures.set(expr, captures);
-    if ((expr as any).isMove && captures.some(c => c.consumedInClosure)) this.onceClosures.add(expr);
+    // A closure that moves a capture out has to own it: through a by-reference slot the
+    // move would empty the caller's variable behind its back, and the caller's own drop
+    // then freed it a second time. So such a literal is a move closure (call-once), like
+    // one written `move`; one that also writes another capture back cannot be either.
+    const consumed = captures.find(c => c.consumedInClosure);
+    if (consumed && !(expr as { isMove?: boolean }).isMove) {
+      const written = captures.find(c => c.mutatedInClosure);
+      if (written) {
+        this.error(`closure moves '${consumed.name}' out and also assigns to '${written.name}'`, expr.span,
+          `moving a capture out needs a 'move' closure, which owns copies of its captures, so the write to '${written.name}' would be lost; return the new value instead, or clone '${consumed.name}' before moving it`);
+      } else {
+        (expr as { isMove?: boolean }).isMove = true;
+        this.errorOnRefCaptures(expr, captures, `this closure moves '${consumed.name}' out, so it owns its captures`);
+      }
+    } else if ((expr as { isMove?: boolean }).isMove) {
+      this.errorOnRefCaptures(expr, captures, "a 'move' closure owns its captures");
+    }
+    if ((expr as any).isMove && consumed) this.onceClosures.add(expr);
     for (const cap of captures) {
       for (let i = this.scopes.length - 1; i >= 0; i--) {
         const info = this.scopes[i].get(cap.name);
@@ -10586,14 +10617,7 @@ export class TypeChecker {
           // until `x + n` against an i32 narrows it. Re-read the type now so the env
           // slot matches the width every use in the body was checked against.
           cap.type = info.type;
-          // A closure env is storage, and references are second-class. Capturing a
-          // view outlived its source once the closure escaped the frame that owned
-          // the Vec — `let s = v[0..2]; return move () => s[0]` read freed memory.
-          if (info.type.tag === "ref") {
-            this.error(`cannot capture '${cap.name}' in a closure`, expr.span,
-              `'${cap.name}' is a reference — a closure stores its captures, and a closure can outlive the storage this points into; capture an owned value (.clone() it) instead`);
-          }
-          this.freeze(info, null);
+          this.freeze(info, null, "capture");
           break;
         }
       }
@@ -11927,6 +11951,7 @@ export class TypeChecker {
         if (expected.type.tag === "ref") {
           this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
         } else {
+          this.autoMoveClosureArg(expr.args[i], expected.type, c => c.mutable);
           this.tryMove(expr.args[i]);
         }
       }

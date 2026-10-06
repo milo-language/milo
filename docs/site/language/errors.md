@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 384 distinct messages across 473 programs the compiler must reject.
+Every error message the test suite pins: 387 distinct messages across 477 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -132,6 +132,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`can only be used as a pointer`](#can-only-be-used-as-a-pointer)
 - [`can't appear inside an expression`](#can-t-appear-inside-an-expression)
 - [`cannot assign to 'h.data' because 'h' is borrowed`](#cannot-assign-to-h-data-because-h-is-borrowed)
+- [`cannot assign to 'h.o' because 'h' is borrowed`](#cannot-assign-to-h-o-because-h-is-borrowed)
 - [`cannot assign to 'lb.buf' because 'lb' is borrowed`](#cannot-assign-to-lb-buf-because-lb-is-borrowed)
 - [`cannot assign to 'n' because it is borrowed`](#cannot-assign-to-n-because-it-is-borrowed)
 - [`cannot assign to 's' because it is borrowed`](#cannot-assign-to-s-because-it-is-borrowed)
@@ -146,7 +147,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'push' on 'items' because it is borrowed`](#cannot-call-push-on-items-because-it-is-borrowed)
 - [`cannot call 'push' on 's' because it is borrowed`](#cannot-call-push-on-s-because-it-is-borrowed)
 - [`cannot call 'push' on 't' because it is borrowed`](#cannot-call-push-on-t-because-it-is-borrowed)
-- [`cannot capture 's' in a closure`](#cannot-capture-s-in-a-closure)
+- [`cannot capture 's' in a 'move' closure`](#cannot-capture-s-in-a-move-closure)
+- [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
 - [`cannot carry a payload`](#cannot-carry-a-payload)
 - [`cannot cast [u8; 4] to i64: only to a pointer`](#cannot-cast-u8-4-to-i64-only-to-a-pointer)
 - [`cannot clear an immutable Vec`](#cannot-clear-an-immutable-vec)
@@ -355,6 +357,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
 - [`the ranges 0..2 and 1..3 overlap`](#the-ranges-0-2-and-1-3-overlap)
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
+- [`this closure is passed to a 'move' parameter, so it owns its captures`](#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures)
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
@@ -2929,6 +2932,43 @@ fn main(): i32 {
 
 <sub>[tests/errors/fieldAssignUnderView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldAssignUnderView.milo)</sub>
 
+## `cannot assign to 'h.o' because 'h' is borrowed` {#cannot-assign-to-h-o-because-h-is-borrowed}
+
+`s` borrows the payload of `h.o`, and the closure capturing `h` must not replace it while `s` is live: written without a closure this is rejected, and inside one it was a heap-use-after-free (`print(s)` read the freed string). A closure may assign to its own captures past the capture's own borrow, never past another one.
+
+```milo skip
+struct Holder {
+    o: Option<string>,
+}
+
+fn apply(f: () => i64): i64 {
+    return f()
+}
+
+fn viaClosure(h: &mut Holder): i64 {
+    match h.o {
+        Option.Some(s) => {
+            return apply((): i64 => {
+                h.o = Option.None
+                print(s)
+                return s.len
+            })
+        }
+        Option.None => {
+            return 0
+        }
+    }
+}
+
+pub fn main(): i32 {
+    var h = Holder { o: Option.Some("a string long enough to live on the heap".clone()) }
+    print(viaClosure(&mut h).toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/closureWritesBorrowedCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureWritesBorrowedCapture.milo)</sub>
+
 ## `cannot assign to 'lb.buf' because 'lb' is borrowed` {#cannot-assign-to-lb-buf-because-lb-is-borrowed}
 
 A string slice off a \*field\* has to freeze the root, the way the array/vec slice path already did. It only froze `expr.object` when that was an identifier, so slicing `lb.buf` recorded no borrow at all and the reassignment below freed the bytes `w` points into. This is ripgrep's LineBuffer shape: a match view held across a fill that rolls the buffer.
@@ -3278,7 +3318,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/viewSameFieldFrozen.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewSameFieldFrozen.milo)</sub>
 
-## `cannot capture 's' in a closure` {#cannot-capture-s-in-a-closure}
+## `cannot capture 's' in a 'move' closure` {#cannot-capture-s-in-a-move-closure}
 
 a closure stores its captures and can outlive the frame that owns the Vec, so a view captured by one dangles — this returned garbage from freed memory before the check
 
@@ -3294,10 +3334,35 @@ fn main(): i32 {
     print(g())
     return 0
 }
-// @error: cannot capture 's' in a closure
+// @error: cannot capture 's' in a 'move' closure
 ```
 
 <sub>[tests/errors/viewCaptureClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewCaptureClosure.milo)</sub>
+
+## `cannot capture 'self' in a 'move' closure` {#cannot-capture-self-in-a-move-closure}
+
+A `move` closure owns its captures and may outlive the call, so it cannot hold a reference; only a by-reference closure (one passed to a plain parameter) may.
+
+```milo skip
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn getter(self: &Self): move () => i64 {
+        return move (): i64 => self.n
+    }
+}
+
+pub fn main(): i32 {
+    let c = C { n: 3 }
+    let g = c.getter()
+    print(g().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/moveClosureCapturesSelf.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveClosureCapturesSelf.milo)</sub>
 
 ## `cannot carry a payload` {#cannot-carry-a-payload}
 
@@ -6988,6 +7053,24 @@ fn main(): i32 {
 
 ## `moves a captured value out of itself when it runs` {#moves-a-captured-value-out-of-itself-when-it-runs}
 
+A closure that moves a capture out owns it, `move` written or not: by reference, the move emptied the caller's variable behind its back, the caller then freed it again (an ASan double free), and a second call read the emptied slot.
+
+```milo skip
+fn take(s: string): i64 {
+    return s.len
+}
+
+pub fn main(): i32 {
+    let s = "a string long enough to live on the heap".clone()
+    let f = (): i64 => take(s)
+    print(f().toString())
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/closureConsumesCaptureCalledTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureConsumesCaptureCalledTwice.milo)</sub>
+
 A `move` closure whose body moves a capture out can only run once. Captures live in the environment's own slots, so handing one to a callee by value zeroes the slot it came from. A second call therefore reads an emptied capture. That used to be a double free; once captures aliased their slots it became a silent wrong answer (this program printed 52 then 0), which is worse to debug than either.
 
 ```milo skip
@@ -8119,6 +8202,34 @@ fn main() {
 ```
 
 <sub>[tests/errors/jsonFieldAttrWithoutDerive.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonFieldAttrWithoutDerive.milo)</sub>
+
+## `this closure is passed to a 'move' parameter, so it owns its captures` {#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures}
+
+A literal passed to a `move` parameter becomes a move closure, so its reference captures are rejected there, not silently dangling once the task outlives `self`.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn report(self: &Self) {
+        Task.spawn((): void => print(self.n))
+    }
+}
+
+pub fn main(): i32 {
+    let c = C { n: 3 }
+    c.report()
+    return 0
+}
+```
+
+<sub>[tests/errors/closureToMoveParamCapturesSelf.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureToMoveParamCapturesSelf.milo)</sub>
 
 ## `two fields map to the JSON name 'id'` {#two-fields-map-to-the-json-name-id}
 

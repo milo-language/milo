@@ -1,0 +1,19 @@
+// @error: cannot capture 'self' in a 'move' closure
+// A `move` closure owns its captures and may outlive the call, so it cannot hold a
+// reference; only a by-reference closure (one passed to a plain parameter) may.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn getter(self: &Self): move () => i64 {
+        return move (): i64 => self.n
+    }
+}
+
+pub fn main(): i32 {
+    let c = C { n: 3 }
+    let g = c.getter()
+    print(g().toString())
+    return 0
+}

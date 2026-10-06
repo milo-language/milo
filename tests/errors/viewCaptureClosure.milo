@@ -11,4 +11,4 @@ fn main(): i32 {
     print(g())
     return 0
 }
-// @error: cannot capture 's' in a closure
+// @error: cannot capture 's' in a 'move' closure

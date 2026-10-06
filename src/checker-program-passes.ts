@@ -78,10 +78,11 @@ export interface ProgramPassHost {
 // `assert` is here because trapping is not an effect under this definition.
 const PURE_BUILTINS = new Set(["format", "max", "min", "assert"]);
 
-// Does `fnName` KEEP its idx-th argument past the call? A fn-typed parameter that is
-// only ever CALLED is consumed during the call and is safe to hand a borrowing closure;
-// one that is stored, returned, or forwarded to something that stores it is not. The
-// distinction falls out of the AST for free: `g(1)` parses as `Call{func:"g"}` and
+// Does `fnName` KEEP its idx-th argument past the call? For a closure-typed parameter
+// the signature answers (`move` keeps it, a plain one cannot). For any other parameter
+// (a generic `T` a closure may arrive in) the body does: one only ever CALLED is
+// consumed during the call; one stored, returned, or forwarded to something that stores
+// it is not. The distinction falls out of the AST for free: `g(1)` parses as `Call{func:"g"}` and
 // contributes no `Ident` node at all, so "appears as an Ident anywhere in the body" is
 // exactly "used as a value rather than called".
 //
@@ -207,8 +208,8 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
   // the inner closure was written in. `let f = (x) => x + n; return move () => f(3)`
   // printed -1 for 8 through exactly that hole, so resolve through move captures until we
   // reach a borrowing closure or run out of bindings. A capture we cannot resolve here is
-  // a fn-typed *parameter*; those are caught one frame up by `retainsParam`, which counts
-  // a capture as retention.
+  // a fn-typed *parameter*: a plain one may not be captured by a `move` closure at all
+  // (checkNonEscapingParams), and a `move` one owns nothing in this frame.
   const borrowedCaps = (c: Expr, bound: Map<string, Expr>, visited: Set<Expr>): CaptureInfo[] => {
     if (visited.has(c)) return [];
     visited.add(c);

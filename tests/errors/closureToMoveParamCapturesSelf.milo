@@ -1,0 +1,22 @@
+// @error: this closure is passed to a 'move' parameter, so it owns its captures
+// A literal passed to a `move` parameter becomes a move closure, so its reference
+// captures are rejected there, not silently dangling once the task outlives `self`.
+from "std/runtime" import {
+    Task
+}
+
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn report(self: &Self) {
+        Task.spawn((): void => print(self.n))
+    }
+}
+
+pub fn main(): i32 {
+    let c = C { n: 3 }
+    c.report()
+    return 0
+}

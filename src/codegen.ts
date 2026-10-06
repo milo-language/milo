@@ -6199,8 +6199,14 @@ export class Codegen {
         closureBody.push(`  ${gepPtr} = ${capSlot}`);
         const loadedPtr = this.nextTemp();
         closureBody.push(`  ${loadedPtr} = load ptr, ptr ${gepPtr}`);
-        // the capture is a pointer to the original variable's alloca
-        this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: true, addr: `${gepPtr}.ref` });
+        // the capture is a pointer to the original variable's alloca, or, for a captured
+        // reference (`self`, a `&T` param), the pointer that reference holds, which the
+        // creating side loaded for us. Either way the slot points at the value, so a
+        // reference is described like a `&T` parameter: by its pointee.
+        const viaRef = cap.type.tag === "ref" ? cap.type : null;
+        this.locals.set(cap.name, viaRef
+          ? { type: this.llvmType(viaRef.inner), typeKind: viaRef.inner, mutable: viaRef.mutable, isRef: true, addr: `${gepPtr}.ref` }
+          : { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: true, addr: `${gepPtr}.ref` });
         closureBody.push(`  ${gepPtr}.ref = alloca ptr`);
         closureBody.push(`  store ptr ${loadedPtr}, ptr ${gepPtr}.ref`);
       }
