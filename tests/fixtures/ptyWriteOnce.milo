@@ -1,0 +1,66 @@
+// @skip-os: win32
+// The ConPTY arm's writeOnce is a plain pipe write (a CRT fd has no non-blocking
+// mode), so the "full master refuses at once" half has nothing to check there.
+
+// @expect: wrote 3
+// @expect: echoed: hi
+// @expect: full master refused without blocking: true
+// @expect: closed: -1
+
+// Pty.writeOnce: the bytes reach the child, and once the master is non-blocking
+// a child that never reads its input fills it until writeOnce refuses rather
+// than waiting.
+from "std/os" import {
+    readFd
+}
+from "std/event" import {
+    setNonblocking
+}
+from "std/pty" import {
+    Pty
+}
+
+pub fn main(): i32 {
+    var cat = Pty.open()!
+    var catArgs: Vec<string> = Vec.new()
+    let _p = cat.spawn("cat", catArgs)!
+    // blocking master: waits for the child to open its side, as write(2) does
+    print($"wrote {cat.writeOnce("hi\n")}")
+    var buf: [u8; 64] = [0; 64]
+    let n = readFd(cat.fd(), buf, 64)
+    var s = ""
+    for i in 0..n {
+        if buf[i] != 13 && buf[i] != 10 {
+            s.push(buf[i])
+        }
+    }
+    // the first read returns at least the tty's echo of the line
+    print($"echoed: {s.substr(0, 2)}")
+    cat.kill()
+    let _w = cat.wait()
+    cat.close()
+
+    var idle = Pty.open()!
+    var sleepArgs: Vec<string> = Vec.new()
+    sleepArgs.push("5")
+    let _q = idle.spawn("sleep", sleepArgs)!
+    let _nb = setNonblocking(idle.fd())
+    var chunk = ""
+    for _i in 0..1024 {
+        chunk.push('x')
+    }
+    var refused = false
+    var tries: i64 = 0
+    while tries < 4096 && !refused {
+        if idle.writeOnce(chunk) < chunk.len {
+            refused = true
+        }
+        tries += 1
+    }
+    print($"full master refused without blocking: {refused}")
+    idle.kill()
+    let _x = idle.wait()
+    idle.close()
+    print($"closed: {idle.writeOnce("late")}")
+    return 0
+}

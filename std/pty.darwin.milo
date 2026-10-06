@@ -22,7 +22,8 @@ from "std/os" import {
 }
 from "std/platform" import {
     close,
-    open
+    open,
+    write
 }
 from "std/sync" import {
     Channel
@@ -199,6 +200,18 @@ impl Pty {
         unsafe {
             return writeFd(self.masterFd, s as *u8, s.len)
         }
+    }
+
+    // One write(2) of `s`, never retried and never parked: returns the bytes the
+    // master took (possibly fewer than s.len), or -1. Once the master is
+    // non-blocking (output() and any green read make it so), a full input queue
+    // returns -1 at once instead of waiting for the child to drain it, which is
+    // what a task that must keep serving other requests wants; write() parks.
+    fn writeOnce(self: &Self, s: &string): i64 {
+        if self.masterFd < 0 {
+            return -1
+        }
+        return write(self.masterFd, s, s.len)
     }
 
     // Pump this pty's output on a background green task and return a channel of

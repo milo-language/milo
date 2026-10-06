@@ -249,6 +249,12 @@ impl Pty {
         }
     }
 
+    // Surface parity with the POSIX arms. A CRT pipe fd has no non-blocking mode,
+    // so this one write can block while the ConPTY input pipe is full.
+    fn writeOnce(self: &Self, s: &string): i64 {
+        return write(self._inputFd, s, s.len)
+    }
+
     fn output(self: &Self): Channel<string> {
         return fdChannel(self.masterFd)
     }

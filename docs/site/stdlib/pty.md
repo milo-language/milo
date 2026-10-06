@@ -119,6 +119,18 @@ fn Pty.winSize(self: &Pty): WinSize
 fn Pty.write(self: &Pty, buf: *u8, len: i64): i64
 ```
 
+#### `Pty.writeOnce`
+
+```milo
+fn Pty.writeOnce(self: &Pty, s: &string): i64
+```
+
+One write(2) of `s`, never retried and never parked: returns the bytes the
+master took (possibly fewer than s.len), or -1. Once the master is
+non-blocking (output() and any green read make it so), a full input queue
+returns -1 at once instead of waiting for the child to drain it, which is
+what a task that must keep serving other requests wants; write() parks.
+
 #### `Pty.writeStdout`
 
 ```milo
