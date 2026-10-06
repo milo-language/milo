@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: planning
-purpose: candidate std and toolchain additions for the agent era, for consideration, with a design sketch for deterministic record/replay
+purpose: accepted std and toolchain additions for the agent era, for consideration, with a design sketch for deterministic record/replay
 key-files: std/ (http, json, testing, runtime, time, rng, fs, net, process), src/checker.ts (attributes, extern calls)
 update-when: an item is accepted, built, or rejected
 last-verified: 2026-10-06 (std module list checked; items marked "no" are absent from std/)
@@ -97,3 +97,21 @@ Phases, each useful alone:
 3. Scheduler order recorded; divergence detection.
 4. dapweb reverse-step on top of replay.
 5. Simulation mode: seeded scheduler, simulated clock and network, run many seeds.
+
+## Execution order (accepted 2026-10-06)
+
+Serial, one agent at a time, each landed green before the next:
+
+1. Extern calls need `unsafe`, owning fd/process types (branch `extern-unsafe`, running).
+   Replay depends on it: it makes every unrecorded hole visible.
+2. Root-cause fixes from `friction-2026-10.md` (analysis first, then fixes by rank).
+3. Replay phase 1: time, randomness, env and args.
+4. Replay phases 2-3: IO through the trace, scheduler order, divergence detection.
+5. Protocol primitives: SSE, deadlines/cancellation/retry, JSON-RPC framing into std.
+6. JSON Schema derivation, then `@tool` + MCP serving.
+7. diff/patch, glob, semver, gitignore; property testing and fuzzing in `std/testing`.
+8. `milo doc <symbol>`; capabilities.
+9. Culmination: dapweb reverse debugging of a Milo program. dapweb advertises DAP
+   `supportsStepBack`; "step back" and "reverse continue" re-run the program under
+   `--replay` to the previous recorded call and stop there. Demo: record a failing run of
+   a Milo program, open it in dapweb, run to the failure, step backwards to the cause.
