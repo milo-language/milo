@@ -183,6 +183,46 @@ pub fn getErrno(): i32 {
     }
 }
 
+// Replay (std/replay) answers a failed call with the errno the recorded run saw.
+pub fn setErrno(v: i32): void {
+    unsafe {
+        let p = _errno() as *i32
+        p[0] = v
+    }
+}
+
+@cSig("winsock2.h", "void WSASetLastError(int)")
+extern fn WSASetLastError(err: i32): void
+
+// A socket call's error lives in WSAGetLastError, not errno.
+pub fn setNetErrno(v: i32): void {
+    unsafe { WSASetLastError(v) }
+}
+
+@cSig("stdlib.h", "int atexit(void (*)(void))")
+extern fn atexit(f: *u8): i32
+
+@cSig("stdlib.h", "void _exit(int)")
+extern fn _exit(code: i32): void
+
+@cSig("windows.h", "void DebugBreak(void)")
+extern fn DebugBreak(): void
+
+// Run `f` (a plain `fn(): void`) when the process exits normally.
+pub fn atExit(f: *u8): void {
+    unsafe { atexit(f) }
+}
+
+// Exit now, skipping atexit handlers.
+pub fn exitNow(code: i32): void {
+    unsafe { _exit(code) }
+}
+
+// Stop under a debugger (a breakpoint exception; ends the process when none is attached).
+pub fn debugTrap(): void {
+    unsafe { DebugBreak() }
+}
+
 // C errno values (errno.h), NOT the Winsock ones. Socket calls on Windows do not set
 // errno at all — they report through WSAGetLastError(), where the corresponding codes are
 // WSAEWOULDBLOCK 10035 and WSAEINPROGRESS 10036. std/net therefore cannot work by reading

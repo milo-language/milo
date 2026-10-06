@@ -549,6 +549,11 @@ pub fn since(start: Instant): Duration {
 // usleep takes a u32, so anything past ~71 minutes truncates into a short nap.
 // Sleep in one-second bites instead.
 fn usleepLong(us: i64): void {
+    // Under replay a sleep takes no time: what happened after it is already in the
+    // trace (a scheduler sleep is a timer arm, which the recorded schedule fires).
+    if replayActive() {
+        return
+    }
     var left = us
     while left > 0 {
         var chunk = left

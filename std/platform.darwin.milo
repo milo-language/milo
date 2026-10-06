@@ -207,6 +207,42 @@ pub fn getErrno(): i32 {
     }
 }
 
+// Replay (std/replay) answers a failed call with the errno the recorded run saw, so a
+// caller's strerror or EAGAIN check after it behaves as it did then.
+pub fn setErrno(v: i32): void {
+    unsafe {
+        let p = __error() as *i32
+        p[0] = v
+    }
+}
+
+// setErrno for a socket call's error, which is errno here (WSAGetLastError on Windows).
+pub fn setNetErrno(v: i32): void {
+    setErrno(v)
+}
+
+extern fn atexit(f: *u8): i32
+
+extern fn _exit(code: i32): void
+
+extern fn raise(sig: i32): i32
+
+// Run `f` (a plain `fn(): void`) when the process exits normally: std/replay checks for
+// unconsumed records there.
+pub fn atExit(f: *u8): void {
+    unsafe { atexit(f) }
+}
+
+// Exit now, skipping atexit handlers (an atexit handler must not call exit again).
+pub fn exitNow(code: i32): void {
+    unsafe { _exit(code) }
+}
+
+// Stop under a debugger: SIGTRAP, which ends the process when none is attached.
+pub fn debugTrap(): void {
+    unsafe { raise(5) }
+}
+
 // ── kqueue ──
 
 pub extern fn kqueue(): i32

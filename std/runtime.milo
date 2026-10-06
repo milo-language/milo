@@ -40,6 +40,9 @@ from "std/sync" import {
 from "std/time" import {
     unrecordedEpochMillis
 }
+from "std/replay" import {
+    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadWarn
+}
 
 // ── constants ──
 
@@ -604,6 +607,9 @@ fn osThreadTrampoline(arg: *u8): *u8 {
 // rejects unsynchronized mutable globals reached from its body.
 @thread
 pub fn spawnOsThreadDetached(f: move () => void): void {
+    if !replayOff() {
+        replayThreadWarn()
+    }
     unsafe {
         let packed = malloc(16)
         memcpy(packed, (f.addrOf()) as *u8, 16)
@@ -839,9 +845,12 @@ pub fn schedulerWaitRead(fd: i32): void {
     rtWriteI32(task, tState(), taskWaitingIo())
     rtWriteI32(task, tWaitFd(), fd)
 
-    // register with event loop
-    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-    eventRegisterRead(el, fd)
+    // register with event loop; under replay the fd is synthetic and the trace says
+    // when it is ready (see pollAndWakeTraced)
+    if !replayActive() {
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        eventRegisterRead(el, fd)
+    }
 
     // move task to waiting list
     enqueueWait(sched, task)
@@ -871,8 +880,10 @@ pub fn schedulerWaitWrite(fd: i32): void {
         memcpy((task as i64 + tWaitWrite()) as *u8, (one.addrOf()) as *u8, 1)
     }
 
-    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-    eventRegisterWrite(el, fd)
+    if !replayActive() {
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        eventRegisterWrite(el, fd)
+    }
     enqueueWait(sched, task)
 
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
@@ -1096,7 +1107,7 @@ pub fn selectRegisterFd(node: *u8): void {
         return
     }
     let kind = rtReadI64(node, nodeKind())
-    if kind == kindSelRead() || kind == kindSelWrite() {
+    if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
         var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         let fd = rtReadI32(node, nodeFd())
         if kind == kindSelWrite() {
@@ -1128,7 +1139,7 @@ pub fn selectUnregisterFd(node: *u8): void {
                 rtWritePtr(prev, nodeNext(), next)
             }
             let kind = rtReadI64(node, nodeKind())
-            if kind == kindSelRead() || kind == kindSelWrite() {
+            if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
                 var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
                 eventDeregister(el, rtReadI32(node, nodeFd()), kind == kindSelWrite())
             }
@@ -1209,6 +1220,10 @@ fn wakeSelectTimers(sched: *u8): void {
 // poll the event loop once and make everything runnable that became ready:
 // io-waiting tasks whose fd fired, and cross-thread unparks via the wakeup event
 fn pollAndWake(sched: *u8, timeoutMs: i32): void {
+    if !replayOff() {
+        pollAndWakeTraced(sched, timeoutMs)
+        return
+    }
     unsafe {
         var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         var readyBuf: [u8; 256] = [0; 256]
@@ -1229,6 +1244,176 @@ fn pollAndWake(sched: *u8, timeoutMs: i32): void {
         }
         wakeSelectTimers(sched)
         drainXfer(sched)
+    }
+}
+
+// ── record/replay of scheduling (std/replay, docs/record-replay.md) ──
+//
+// Given the same inputs the scheduler is deterministic except here: which fds the
+// poll reports ready, which timer arms are past their deadline (real time), and which
+// tasks a foreign OS thread unparked. Recording writes each poll's outcome as one
+// token list, `f<fd>` per ready fd, `t<i>` per due timer node (its position in the
+// select list), `x<n>` for n cross-thread unparks, and acts on that same list; replay
+// reads the list instead of polling. Everything else (the run queue, the wait list,
+// the batch limit) follows from those, so tasks interleave as they did when recorded,
+// and a sleep under replay takes no time: its timer fires at the recorded poll.
+
+fn pollAndWakeTraced(sched: *u8, timeoutMs: i32): void {
+    if replayActive() {
+        applyPick(sched, replaySchedTake(), 0 as *u8)
+        return
+    }
+    var picked = String.withCapacity(32)
+    unsafe {
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        var readyBuf: [u8; 256] = [0; 256]
+        let effTimeout = selMinTimeout(sched, timeoutMs)
+        let n = eventPoll(el, readyBuf as *i32, 64, effTimeout)
+        let wakeupId = rtReadI32(sched, sWakeupId())
+        let fds = readyBuf as *i32
+        var i: i32 = 0
+        while i < n {
+            if fds[i as i64] == wakeupId {
+                eventLoopDrainWakeup(el, wakeupId)
+            } else {
+                picked.push('f')
+                picked.pushStr(fds[i as i64].toString())
+                picked.push(' ')
+            }
+            i += 1
+        }
+    }
+    let nowMs = unrecordedEpochMillis()
+    var idx: i64 = 0
+    var cur = rtReadPtr(sched, sSelFdHead())
+    while cur as i64 != 0 {
+        if rtReadI64(cur, nodeKind()) == kindSelTimer() && nowMs >= rtReadI64(cur, nodeDeadline()) {
+            picked.push('t')
+            picked.pushStr(idx.toString())
+            picked.push(' ')
+        }
+        idx += 1
+        cur = rtReadPtr(cur, nodeNext())
+    }
+    // Detach the cross-thread list once, so the count recorded is exactly what runs.
+    let mtx = rtReadPtr(sched, sXferMutex())
+    unsafe { pthread_mutex_lock(mtx) }
+    let xfer = rtReadPtr(sched, sXferHead())
+    rtWritePtr(sched, sXferHead(), 0 as *u8)
+    unsafe { pthread_mutex_unlock(mtx) }
+    var nx: i64 = 0
+    var x = xfer
+    while x as i64 != 0 {
+        nx += 1
+        x = rtReadPtr(x, tNext())
+    }
+    if nx > 0 {
+        picked.push('x')
+        picked.pushStr(nx.toString())
+        picked.push(' ')
+    }
+    replaySchedPut(picked)
+    applyPick(sched, picked, xfer)
+}
+
+// Act on one poll's token list (see pollAndWakeTraced). `xfer` is the detached
+// cross-thread list when recording; replay waits for the recorded number of foreign
+// unparks to arrive, which is how a Promise.blocking result lands at the same point.
+fn applyPick(sched: *u8, picked: &string, xfer: *u8): void {
+    var readyBuf: [i32; 64] = [0; 64]
+    var nReady: i32 = 0
+    var i: i64 = 0
+    var xferWanted: i64 = 0
+    while i < picked.len() {
+        let tag = picked[i]
+        var j = i + 1
+        var v: i64 = 0
+        while j < picked.len() && picked[j] != ' ' {
+            v = v * 10 + ((picked[j] - '0') as i64)
+            j += 1
+        }
+        if tag == 'f' && nReady < 64 {
+            readyBuf[nReady as i64] = v as i32
+            nReady += 1
+        } else if tag == 't' {
+            claimTimerAt(sched, v)
+        } else if tag == 'x' {
+            xferWanted = v
+        }
+        i = j + 1
+    }
+    if nReady > 0 {
+        unsafe {
+            wakeReadyTasks(sched, readyBuf as *i32, nReady)
+            wakeSelectFds(sched, readyBuf as *i32, nReady)
+        }
+    }
+    if xfer as i64 != 0 {
+        enqueueXferList(sched, xfer)
+    } else if xferWanted > 0 {
+        enqueueXferList(sched, awaitXfer(sched, xferWanted))
+    }
+}
+
+// Timer arms are named by position in the select list, which the program builds the
+// same way under replay, so the same position is the same arm.
+fn claimTimerAt(sched: *u8, at: i64): void {
+    var idx: i64 = 0
+    var cur = rtReadPtr(sched, sSelFdHead())
+    while cur as i64 != 0 {
+        if idx == at {
+            if rtReadI64(cur, nodeKind()) == kindSelTimer() {
+                selectTryClaim(rtReadPtr(cur, nodeA()), rtReadI64(cur, nodeArm()))
+            }
+            return
+        }
+        idx += 1
+        cur = rtReadPtr(cur, nodeNext())
+    }
+}
+
+fn xferCount(sched: *u8): i64 {
+    let mtx = rtReadPtr(sched, sXferMutex())
+    unsafe { pthread_mutex_lock(mtx) }
+    var n: i64 = 0
+    var x = rtReadPtr(sched, sXferHead())
+    while x as i64 != 0 {
+        n += 1
+        x = rtReadPtr(x, tNext())
+    }
+    unsafe { pthread_mutex_unlock(mtx) }
+    return n
+}
+
+// Replay: block on the real wakeup event (the only thing registered with the poller
+// under replay) until `want` foreign unparks are queued, then detach them all.
+fn awaitXfer(sched: *u8, want: i64): *u8 {
+    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+    let wakeupId = rtReadI32(sched, sWakeupId())
+    while xferCount(sched) < want {
+        var readyBuf: [u8; 256] = [0; 256]
+        unsafe {
+            let n = eventPoll(el, readyBuf as *i32, 64, 10)
+            if n > 0 {
+                eventLoopDrainWakeup(el, wakeupId)
+            }
+        }
+    }
+    let mtx = rtReadPtr(sched, sXferMutex())
+    unsafe { pthread_mutex_lock(mtx) }
+    let head = rtReadPtr(sched, sXferHead())
+    rtWritePtr(sched, sXferHead(), 0 as *u8)
+    unsafe { pthread_mutex_unlock(mtx) }
+    return head
+}
+
+fn enqueueXferList(sched: *u8, head: *u8): void {
+    var cur = head
+    while cur as i64 != 0 {
+        let next = rtReadPtr(cur, tNext())
+        rtWriteI32(cur, tState(), taskReady())
+        enqueueRun(sched, cur)
+        cur = next
     }
 }
 
@@ -1288,10 +1473,12 @@ fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 
             if woken {
                 // deregister from event loop using correct filter
-                var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
                 var isWrite: u8 = 0
                 memcpy((isWrite.addrOf()) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
-                eventDeregister(el, waitFd, isWrite != 0)
+                if !replayActive() {
+                    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+                    eventDeregister(el, waitFd, isWrite != 0)
+                }
                 // reset waitWrite flag
                 var zero: u8 = 0
                 memcpy((cur as i64 + tWaitWrite()) as *u8, (zero.addrOf()) as *u8, 1)

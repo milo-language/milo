@@ -1,3 +1,6 @@
+from "std/replay" import {
+    replayActive
+}
 from "std/os" import {
     malloc,
     free,
@@ -173,6 +176,10 @@ pub fn maskToNet(mask: i32): i32 {
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
 pub fn setNonblocking(fd: i32): i32 {
+    // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
+    if replayActive() {
+        return 0
+    }
     var flag: u32 = 1
     unsafe {
         return ioctlsocket(fd as i64, fionbio(), flag.addrOf() as *u8)
@@ -181,6 +188,10 @@ pub fn setNonblocking(fd: i32): i32 {
 
 // Restore blocking mode; same socket-only caveat as setNonblocking.
 pub fn clearNonblocking(fd: i32): i32 {
+    // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
+    if replayActive() {
+        return 0
+    }
     var flag: u32 = 0
     unsafe {
         return ioctlsocket(fd as i64, fionbio(), flag.addrOf() as *u8)

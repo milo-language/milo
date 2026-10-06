@@ -21,6 +21,10 @@ from "std/event" import {
 from "std/runtime" import {
     schedulerCurrent, schedulerWaitRead, schedulerWaitWrite
 }
+from "std/replay" import {
+    replayOff, replayActive, replayRead, replayWrite, replayOpen, replayClose, replayLseek, replayRet, replayFdOpened,
+    replayHex
+}
 
 // ── I/O ──
 
@@ -127,6 +131,15 @@ pub extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 // space because the kernel picks the family; sin_port and sin6_port BOTH sit at offset 2
 // (same invariant as sun_path), so one read serves v4 and v6. Returns -1 on failure.
 pub fn getSockPort(fd: i32): i32 {
+    if !replayOff() {
+        return replayRet("net.port", fd.toString(), true, (): i64 => {
+            return getSockPortLive(fd) as i64
+        }) as i32
+    }
+    return getSockPortLive(fd)
+}
+
+fn getSockPortLive(fd: i32): i32 {
     unsafe {
         var st = makeZeroedSockaddrStorage()
         var len: u32 = sockAddrStorageLen()
@@ -140,38 +153,199 @@ pub fn getSockPort(fd: i32): i32 {
 
 pub fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
-        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
+        return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
 pub fn bindIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
-        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
+        return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
 pub fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
-        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
+        return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
 }
 
 pub fn connectIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
-        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
+        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
 pub fn connectIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
-        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
+        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
 pub fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
-        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
+        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
+}
+
+// ── replay-aware descriptor calls ──
+// The single syscalls std's fd IO is built from, each one a record under MILO_RECORD
+// and an answer from the trace under MILO_REPLAY (std/replay, docs/record-replay.md).
+// When neither is set each is the raw call behind one compare. Std code reaches the OS
+// through these rather than the raw externs, so a replayed program's descriptors can be
+// synthetic: a TcpStream, File or Child under replay has no OS fd behind it and works.
+
+// One read(2): bytes read, 0 at EOF, <0 with errno set.
+pub fn sysRead(fd: i32, buf: *u8, len: i64): i64 {
+    if replayOff() {
+        unsafe { return read(fd, buf, len) }
+    }
+    return replayRead(fd, buf, len, false)
+}
+
+// One write(2): bytes written, <0 with errno set.
+pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64 {
+    if replayOff() {
+        unsafe { return write(fd, buf, len) }
+    }
+    return replayWrite(fd, buf, len, false)
+}
+
+// One socket read (recv on Windows, where a SOCKET is not a CRT fd).
+pub fn sysRecv(fd: i32, buf: *u8, len: i64): i64 {
+    if replayOff() {
+        return sockRead(fd, buf, len)
+    }
+    return replayRead(fd, buf, len, true)
+}
+
+// One socket write (send on Windows).
+pub fn sysSend(fd: i32, buf: *u8, len: i64): i64 {
+    if replayOff() {
+        return sockWrite(fd, buf, len)
+    }
+    return replayWrite(fd, buf, len, true)
+}
+
+// open(2) with a creation mode (ignored unless `flags` creates). The fd, or <0.
+pub fn sysOpen(path: &string, flags: i32, mode: i32): i32 {
+    if replayOff() {
+        unsafe { return open(path, flags, mode) }
+    }
+    return replayOpen(path, flags, mode)
+}
+
+// close(2). Under replay a synthetic descriptor is forgotten, never passed to the OS.
+pub fn sysClose(fd: i32): i32 {
+    if replayOff() {
+        unsafe { return close(fd) }
+    }
+    return replayClose(fd)
+}
+
+// lseek(2): the new offset, or <0.
+pub fn sysLseek(fd: i32, off: i64, whence: i32): i64 {
+    if replayOff() {
+        unsafe { return lseek(fd, off, whence) }
+    }
+    return replayLseek(fd, off, whence)
+}
+
+// socket(2). Under replay the recorded number comes back as a synthetic socket.
+pub fn sysSocket(domain: i32, sockType: i32, protocol: i32): i32 {
+    if replayOff() {
+        unsafe { return socket(domain, sockType, protocol) }
+    }
+    let fd = replayRet("net.socket", domain.toString() + " " + sockType.toString(), true, (): i64 => {
+        unsafe {
+            return socket(domain, sockType, protocol) as i64
+        }
+    }) as i32
+    replayFdOpened(fd, 'n')
+    return fd
+}
+
+// listen(2).
+pub fn sysListen(fd: i32, backlog: i32): i32 {
+    if replayOff() {
+        unsafe { return listen(fd, backlog) }
+    }
+    return replayRet("net.listen", fd.toString(), true, (): i64 => {
+        unsafe {
+            return listen(fd, backlog) as i64
+        }
+    }) as i32
+}
+
+// bind(2) on a raw address; the per-family bindIn/bindIn6/bindUn are what callers use.
+fn bindFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
+    if replayOff() {
+        unsafe { return bind(fd, addr, addrlen) }
+    }
+    var arg = fd.toString() + " "
+    unsafe { arg.pushStr(replayHex(addr as *u8, addrlen as i64)) }
+    return replayRet("net.bind", arg, true, (): i64 => {
+        unsafe {
+            return bind(fd, addr, addrlen) as i64
+        }
+    }) as i32
+}
+
+// One connect(2) attempt. The address is part of the record, so a replay connecting
+// somewhere else diverges.
+fn connectOnce(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
+    if replayOff() {
+        unsafe { return connect(fd, addr, addrlen) }
+    }
+    var arg = fd.toString() + " "
+    unsafe { arg.pushStr(replayHex(addr as *u8, addrlen as i64)) }
+    return replayRet("net.connect", arg, true, (): i64 => {
+        unsafe {
+            return connect(fd, addr, addrlen) as i64
+        }
+    }) as i32
+}
+
+// accept(2), discarding the peer address. Under replay the recorded client fd comes
+// back as a synthetic socket.
+pub fn sysAccept(fd: i32): i32 {
+    if replayOff() {
+        return acceptLive(fd)
+    }
+    let client = replayRet("net.accept", fd.toString(), true, (): i64 => {
+        return acceptLive(fd) as i64
+    }) as i32
+    replayFdOpened(client, 'n')
+    return client
+}
+
+// Storage-sized, not sockaddr_in-sized: the kernel writes whatever family the peer
+// used, and a v6 peer needs 28 bytes.
+fn acceptLive(fd: i32): i32 {
+    var clientAddr = makeZeroedSockaddrStorage()
+    var addrlen: u32 = sockAddrStorageLen()
+    unsafe { return accept(fd, &mut clientAddr, &mut addrlen) }
+}
+
+// The pending error of a non-blocking connect (SO_ERROR): 0 when it succeeded, the
+// errno it failed with, or -1 when the query itself fails.
+fn connectResult(fd: i32): i32 {
+    if replayOff() {
+        return connectResultLive(fd)
+    }
+    return replayRet("net.connected", fd.toString(), true, (): i64 => {
+        return connectResultLive(fd) as i64
+    }) as i32
+}
+
+fn connectResultLive(fd: i32): i32 {
+    var err: i32 = 0
+    var len: u32 = 4
+    unsafe {
+        if getsockopt(fd, solSocket(), soError(), &mut err, &mut len) < 0 {
+            return -1
+        }
+    }
+    return err
 }
 
 // ── DNS ──
@@ -322,8 +496,7 @@ pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
         }
     }
     while true {
-        var n: i64 = 0
-        unsafe { n = read(fd, buf, len) }
+        let n = sysRead(fd, buf, len)
         if n < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -344,7 +517,7 @@ pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     unsafe {
         var sent: i64 = 0
         while sent < len {
-            let n = write(fd, (buf as i64 + sent) as *u8, len - sent)
+            let n = sysWrite(fd, (buf as i64 + sent) as *u8, len - sent)
             if n < 0 && inGreen && netErrno() == netEagain() {
                 schedulerWaitWrite(fd)
                 continue
@@ -371,7 +544,7 @@ pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
         }
     }
     while true {
-        let n = sockRead(fd, buf, len)
+        let n = sysRecv(fd, buf, len)
         if n < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -391,7 +564,7 @@ pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     unsafe {
         var sent: i64 = 0
         while sent < len {
-            let n = sockWrite(fd, (buf as i64 + sent) as *u8, len - sent)
+            let n = sysSend(fd, (buf as i64 + sent) as *u8, len - sent)
             if n < 0 && inGreen && netErrno() == netEagain() {
                 schedulerWaitWrite(fd)
                 continue
@@ -414,12 +587,7 @@ pub fn acceptFd(fd: i32): i32 {
         setNonblocking(fd)
     }
     while true {
-        // Storage-sized, not sockaddr_in-sized: the kernel writes whatever family the
-        // peer used, and a v6 peer needs 28 bytes.
-        var clientAddr = makeZeroedSockaddrStorage()
-        var addrlen: u32 = sockAddrStorageLen()
-        var clientFd: i32 = 0
-        unsafe { clientFd = accept(fd, &mut clientAddr, &mut addrlen) }
+        let clientFd = sysAccept(fd)
         if clientFd < 0 && inGreen && netErrno() == netEagain() {
             schedulerWaitRead(fd)
             continue
@@ -438,10 +606,7 @@ pub fn acceptFd(fd: i32): i32 {
 // until the next connection arrives (milojs's cold-fetch hang).
 pub fn acceptFdNb(fd: i32): i32 {
     setNonblocking(fd)
-    var clientAddr = makeZeroedSockaddrStorage()
-    var addrlen: u32 = sockAddrStorageLen()
-    var clientFd: i32 = 0
-    unsafe { clientFd = accept(fd, &mut clientAddr, &mut addrlen) }
+    let clientFd = sysAccept(fd)
     if clientFd >= 0 {
         setNonblocking(clientFd)
     }
@@ -454,11 +619,10 @@ pub fn acceptFdNb(fd: i32): i32 {
 // entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
 pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if schedulerCurrent() as i64 == 0 {
-        unsafe { return connect(fd, addr, addrlen) }
+        return connectOnce(fd, addr, addrlen)
     }
     setNonblocking(fd)
-    var r: i32 = 0
-    unsafe { r = connect(fd, addr, addrlen) }
+    let r = connectOnce(fd, addr, addrlen)
     if r == 0 {
         return 0
     }
@@ -470,14 +634,7 @@ pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
         return -1
     }
     schedulerWaitWrite(fd)
-    var err: i32 = 0
-    var len: u32 = 4
-    unsafe {
-        if getsockopt(fd, solSocket(), soError(), &mut err, &mut len) < 0 {
-            return -1
-        }
-    }
-    if err != 0 {
+    if connectResult(fd) != 0 {
         return -1
     }
     return 0

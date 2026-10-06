@@ -1,5 +1,8 @@
 // std/event — cross-platform event loop (macOS/kqueue implementation)
 
+from "std/replay" import {
+    replayActive
+}
 from "std/os" import {
     malloc,
     free,
@@ -56,6 +59,10 @@ impl EventLoop {
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
 pub fn setNonblocking(fd: i32): i32 {
+    // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
+    if replayActive() {
+        return 0
+    }
     var flags: i32 = 0
     unsafe { flags = fcntl(fd, fGetfl()) }
     if flags < 0 {
@@ -68,6 +75,10 @@ pub fn setNonblocking(fd: i32): i32 {
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
 pub fn clearNonblocking(fd: i32): i32 {
+    // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
+    if replayActive() {
+        return 0
+    }
     var flags: i32 = 0
     unsafe { flags = fcntl(fd, fGetfl()) }
     if flags < 0 {

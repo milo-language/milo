@@ -161,7 +161,7 @@ test("a different call order stops with the divergence message and exit code 3",
   const bin = build("diverges", DIVERGES);
   const r = run(bin, [], { MILO_REPLAY: recorded() });
   expect(r.code).toBe(3);
-  expect(r.err).toBe("replay diverged at record 2: expected time.wall, got random.u32\n");
+  expect(r.err.split("\n")[0]).toBe("replay diverged at record 2: expected time.wall, got random.u32");
 });
 
 test("a call of the right kind with a different argument also diverges", () => {
@@ -179,7 +179,7 @@ fn main() {
   expect(run(bin, [], { MILO_RECORD: trace }).code).toBe(0);
   const r = run(binB, [], { MILO_REPLAY: trace });
   expect(r.code).toBe(3);
-  expect(r.err).toBe("replay diverged at record 1: expected env.get(RR_A), got env.get(RR_B)\n");
+  expect(r.err.split("\n")[0]).toBe("replay diverged at record 1: expected env.get(RR_A), got env.get(RR_B)");
 });
 
 test("running past the end of the trace diverges", () => {
@@ -193,7 +193,7 @@ fn main() {
   const bin = build("diverges2", DIVERGES);
   const r = run(bin, [], { MILO_REPLAY: trace });
   expect(r.code).toBe(3);
-  expect(r.err).toBe("replay diverged at record 2: expected end of trace, got random.u32\n");
+  expect(r.err.split("\n")[0]).toBe("replay diverged at record 2: expected end of trace, got random.u32");
 });
 
 test("a missing or foreign trace, or both variables set, is refused with exit code 3", () => {
@@ -249,7 +249,8 @@ fn main() {
   expect(rec.code).toBe(0);
   expect(rec.out).toBe("main rec\nworker rec\n");
   const rep = run(bin, [], { MILO_REPLAY: trace, RR_VALUE: "live" });
-  expect(rep.err).toBe("");
+  // Said once, so a replay that may diverge on the thread's timing is not silent.
+  expect(rep.err).toContain("starts an OS thread");
   expect(rep.out).toBe("main rec\nworker live\n");
 });
 

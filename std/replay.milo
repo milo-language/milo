@@ -1,22 +1,23 @@
 // std/replay — deterministic record/replay of a program's nondeterministic inputs.
 //
 // Every std entry point that asks the OS something whose answer can differ between
-// runs (the clock, entropy, the environment, argv) calls through here. With neither
-// MILO_RECORD nor MILO_REPLAY set the hook is one global compare and the call goes
-// straight to the OS. With MILO_RECORD=<file> each answer is appended to a trace;
-// with MILO_REPLAY=<file> each call returns the next recorded answer instead, so the
-// program computes exactly what it computed when recorded. Format and phases:
-// docs/record-replay.md.
+// runs (the clock, entropy, the environment, argv, file/socket/subprocess IO, which
+// green task the scheduler wakes) calls through here. With neither MILO_RECORD nor
+// MILO_REPLAY set the hook is one global compare and the call goes straight to the OS.
+// With MILO_RECORD=<file> each answer is appended to a trace; with MILO_REPLAY=<file>
+// each call returns the next recorded answer instead, so the program computes exactly
+// what it computed when recorded. Format, kinds and phases: docs/record-replay.md.
 //
 // The mode is decided once, at process start (a global initializer), and both
 // variables are then removed from this process's environment: a child process that
 // inherited MILO_RECORD would truncate and interleave into the parent's trace.
 
 from "std/os" import {
-    getenv
+    getenv, fflush
 }
 from "std/platform" import {
-    open, read, write, close, envUnset, oReadBinary, oWriteCreateTrunc
+    open, read, write, close, lseek, sockRead, sockWrite, envUnset, oReadBinary, oWriteCreateTrunc,
+    getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap
 }
 
 // Bumped only when the record framing changes. A new record kind is additive: an
@@ -28,13 +29,16 @@ let TRACE_VERSION: i64 = 1
 // program's own failure codes 1 and 2.
 pub let REPLAY_EXIT_CODE: i32 = 3
 
+// How many consumed records a divergence report shows for context.
+let RECENT_SHOWN: i64 = 6
+
 // All of the state is per OS thread, and only the main thread (which runs `main` and
 // every green task) ever decides to record or replay: the global initializer below
 // runs there, and by the time any other OS thread exists both variables are gone from
 // the environment, so a Promise.blocking worker that reaches a hook decides "off" and
 // asks the OS. That keeps the trace single-writer with no lock on the hot path, and
-// makes worker-thread reads an unrecorded hole like an extern call (phase 3 decides
-// what threads get under replay).
+// makes worker-thread reads an unrecorded hole like an extern call (replayThreadWarn
+// says so once).
 //
 // 0 = not decided yet, 1 = off, 2 = recording, 3 = replaying. A hook that runs before
 // the global initializer (another module's initializer reading the clock) finds 0 and
@@ -43,11 +47,36 @@ thread_local var rrMode: i64 = 0
 thread_local var rrFd: i32 = -1
 // Sequence number of the last record written or consumed; records count from 1.
 thread_local var rrSeq: i64 = 0
-// Replay: the whole trace, and the read cursor into it. Phase 1 traces are small;
-// the framing is length-prefixed, so a streaming reader can replace this without a
-// format change when IO payloads arrive.
-thread_local var rrTrace: string = ""
+// Replay reads the trace through a window: rrBuf holds bytes from the file not yet
+// consumed (from rrPos on), refilled a chunk at a time, so memory is bounded by the
+// largest record rather than the trace.
+thread_local var rrBuf: string = ""
 thread_local var rrPos: i64 = 0
+thread_local var rrEof: bool = false
+// The next record's header, once peeked (the scheduler peeks to tell an idle poll from
+// a call; a divergence report names what the trace holds).
+thread_local var rrPeeked: bool = false
+thread_local var rrNextSeq: i64 = 0
+thread_local var rrNextKind: string = ""
+thread_local var rrNextArgLen: i64 = 0
+thread_local var rrNextPayloadLen: i64 = 0
+// The last RECENT_SHOWN records consumed, one line each, for divergence reports.
+thread_local var rrRecent: string = ""
+// Scheduler polls that woke nothing. Recording counts them and writes one sched.idle
+// record before the next record; replay counts down the polls a sched.idle record owes.
+thread_local var rrIdle: i64 = 0
+thread_local var rrPastEnd: i64 = 0
+// MILO_REPLAY_STOP: the record at which replay calls miloReplayStop (0 = none).
+thread_local var rrStopAt: i64 = 0
+thread_local var rrStopPrint: bool = false
+// Set once replay is exiting with a divergence, so the exit hook stays quiet.
+thread_local var rrFailing: bool = false
+thread_local var rrThreadWarned: bool = false
+// Per fd: what it is ('f' file, 'n' socket, 'p' child pipe, 't' pty), which names its
+// record kinds (fs.read, net.read, ...), and under replay whether the number is
+// synthetic, handed out from the trace with no OS descriptor behind it.
+thread_local var rrFdCat: string = ""
+thread_local var rrFdSynth: string = ""
 // Last, so the state above is already initialized when this runs.
 let rrBooted: bool = replayBoot()
 
@@ -63,6 +92,11 @@ pub fn replayActive(): bool {
     return replayModeNow() == 3
 }
 
+// True when hooked calls append their answers to a trace.
+pub fn replayRecording(): bool {
+    return replayModeNow() == 2
+}
+
 fn replayModeNow(): i64 {
     if rrMode == 0 {
         replayBoot()
@@ -71,6 +105,8 @@ fn replayModeNow(): i64 {
 }
 
 fn replayFail(msg: string): void {
+    rrFailing = true
+    unsafe { fflush(0 as *u8) }
     eprint(msg)
     exit(REPLAY_EXIT_CODE)
 }
@@ -98,13 +134,18 @@ fn replayBoot(): bool {
         rrMode = 1
         return true
     }
+    let stopAt = envPath("MILO_REPLAY_STOP")
+    rrStopPrint = envPath("MILO_REPLAY_STOP_PRINT").len() > 0
     unsafe {
         envUnset("MILO_RECORD" as *u8)
         envUnset("MILO_REPLAY" as *u8)
+        envUnset("MILO_REPLAY_STOP" as *u8)
+        envUnset("MILO_REPLAY_STOP_PRINT" as *u8)
     }
     if recordPath.len() > 0 {
         startRecording(recordPath)
     } else {
+        rrStopAt = decimal(stopAt)
         startReplay(replayPath)
     }
     return true
@@ -137,33 +178,18 @@ fn startReplay(path: string): void {
     if fd < 0 {
         replayFail("replay: cannot open trace file " + path)
     }
-    var data = String.withCapacity(4096)
-    var chunk: [u8; 4096] = [0; 4096]
-    var going = true
-    while going {
-        var n: i64 = 0
-        unsafe {
-            n = read(fd, chunk as *u8, 4096)
-        }
-        if n <= 0 {
-            going = false
-        } else {
-            for i in 0..n {
-                data.push(chunk[i])
-            }
-        }
-    }
-    unsafe {
-        close(fd)
-    }
+    rrFd = fd
     let header = traceHeader()
-    if data.len() < header.len() || !data.startsWith(header) {
+    fillTo(header.len())
+    if rrBuf.len() < header.len() || !rrBuf.startsWith(header) {
         replayFail("replay: " + path + " is not a milo-trace version " + TRACE_VERSION.toString() + " file")
     }
-    rrTrace = data
     rrPos = header.len()
     rrMode = 3
+    unsafe { atExit(replayAtExit as *u8) }
 }
+
+// ── trace writing ──
 
 // One write per record, unbuffered: a program that crashes or exits mid-run still
 // leaves every record it made on disk, which is the run worth replaying.
@@ -188,14 +214,7 @@ fn callName(kind: &string, arg: &string): string {
     return kind + "(" + arg + ")"
 }
 
-// Append one record: `<seq> <kind> <argLen> <payloadLen>\n<arg>\n<payload>\n`.
-// `arg` names the call (an env var name, a byte count) so replay can tell a
-// different call of the same kind from the recorded one; `payload` is the answer.
-// No-op unless recording.
-pub fn replayPut(kind: &string, arg: &string, payload: &string): void {
-    if replayModeNow() != 2 {
-        return
-    }
+fn writeRecord(kind: &string, arg: &string, payload: &string): void {
     rrSeq += 1
     var rec = String.withCapacity(32 + kind.len() + arg.len() + payload.len())
     rec.pushStr(rrSeq.toString())
@@ -213,27 +232,86 @@ pub fn replayPut(kind: &string, arg: &string, payload: &string): void {
     writeAll(rec)
 }
 
+// Idle scheduler polls are owed to the trace before any later record, so replay
+// knows how many polls passed before it.
+fn flushIdle(): void {
+    if rrIdle > 0 {
+        let n = rrIdle
+        rrIdle = 0
+        writeRecord("sched.idle", "", n.toString())
+    }
+}
+
+// Append one record: `<seq> <kind> <argLen> <payloadLen>\n<arg>\n<payload>\n`.
+// `arg` names the call (an env var name, a byte count) so replay can tell a
+// different call of the same kind from the recorded one; `payload` is the answer.
+// No-op unless recording.
+pub fn replayPut(kind: &string, arg: &string, payload: &string): void {
+    if replayModeNow() != 2 {
+        return
+    }
+    flushIdle()
+    writeRecord(kind, arg, payload)
+}
+
 // replayPut with a decimal payload.
 pub fn replayPutI64(kind: &string, arg: &string, v: i64): void {
     replayPut(kind, arg, v.toString())
 }
 
+// ── trace reading ──
+
 fn corrupt(seq: i64): void {
     replayFail("replay trace corrupt at record " + seq.toString())
 }
 
-// Decimal field up to `stop`, advancing the cursor past the stop byte.
-fn takeField(seq: i64, stop: u8): string {
-    var out = String.withCapacity(16)
-    while rrPos < rrTrace.len() && rrTrace[rrPos] != stop {
-        out.push(rrTrace[rrPos])
-        rrPos += 1
+// Make at least `n` unread bytes available past rrPos, unless the file ends first.
+// Consumed bytes are dropped once they dominate the window.
+fn fillTo(n: i64): void {
+    if rrBuf.len() - rrPos >= n || rrEof {
+        return
     }
-    if rrPos >= rrTrace.len() {
-        corrupt(seq)
+    if rrPos > 65536 && rrPos * 2 > rrBuf.len() {
+        rrBuf = rrBuf.substr(rrPos, rrBuf.len())
+        rrPos = 0
     }
-    rrPos += 1
-    return out
+    var chunk: [u8; 65536] = [0; 65536]
+    while rrBuf.len() - rrPos < n && !rrEof {
+        var got: i64 = 0
+        unsafe {
+            got = read(rrFd, chunk as *u8, 65536)
+        }
+        if got <= 0 {
+            rrEof = true
+        } else {
+            unsafe { rrBuf.pushStr(_bytesToString(chunk as *u8, got)) }
+        }
+    }
+}
+
+// The bytes up to the next newline, consuming it. None at a clean end of trace.
+fn takeLine(seq: i64): Option<string> {
+    var scanned: i64 = 0
+    while true {
+        var i = rrPos + scanned
+        while i < rrBuf.len() {
+            if rrBuf[i] == '\n' {
+                let line = rrBuf.substr(rrPos, i)
+                rrPos = i + 1
+                return Option.Some(line)
+            }
+            i += 1
+        }
+        scanned = rrBuf.len() - rrPos
+        if rrEof {
+            if scanned == 0 {
+                return Option.None
+            }
+            corrupt(seq)
+        }
+        fillTo(scanned + 4096)
+    }
+    return Option.None
 }
 
 fn decimal(s: &string): i64 {
@@ -243,7 +321,7 @@ fn decimal(s: &string): i64 {
         let c = s[i]
         if i == 0 && c == '-' {
             neg = true
-        } else {
+        } else if c >= '0' && c <= '9' {
             v = v * 10 + ((c - '0') as i64)
         }
     }
@@ -253,16 +331,92 @@ fn decimal(s: &string): i64 {
     return v
 }
 
+// Read the next record's header line without consuming the record. False at the end
+// of the trace.
+fn peekHeader(): bool {
+    if rrPeeked {
+        return true
+    }
+    let seq = rrSeq + 1
+    match takeLine(seq) {
+        Option.None => {
+            return false
+        }
+        Option.Some(line) => {
+            let fields = line.split(" ")
+            if fields.len != 4 || decimal(fields[0]) != seq {
+                corrupt(seq)
+            }
+            rrNextSeq = seq
+            rrNextKind = fields[1].clone()
+            rrNextArgLen = decimal(fields[2])
+            rrNextPayloadLen = decimal(fields[3])
+            rrPeeked = true
+            return true
+        }
+    }
+}
+
 fn takeBytes(seq: i64, n: i64): string {
-    if n < 0 || rrPos + n + 1 > rrTrace.len() || rrTrace[rrPos + n] != '\n' {
+    fillTo(n + 1)
+    if n < 0 || rrPos + n + 1 > rrBuf.len() || rrBuf[rrPos + n] != '\n' {
         corrupt(seq)
     }
-    var out = String.withCapacity(n)
-    for i in 0..n {
-        out.push(rrTrace[rrPos + i])
-    }
+    let out = rrBuf.substr(rrPos, rrPos + n)
     rrPos += n + 1
     return out
+}
+
+fn shortArg(arg: &string): string {
+    var out = String.withCapacity(64)
+    for i in 0..arg.len() {
+        if i >= 60 {
+            out.pushStr("...")
+            break
+        }
+        let c = arg[i]
+        if c < 32 || c > 126 {
+            out.push('.')
+        } else {
+            out.push(c)
+        }
+    }
+    return out
+}
+
+fn noteConsumed(seq: i64, kind: &string, arg: &string, payloadLen: i64): void {
+    rrSeq = seq
+    rrPeeked = false
+    let line = "  " + seq.toString() + " " + callName(kind, shortArg(arg)) + " -> " + payloadLen.toString() + " bytes\n"
+    rrRecent.pushStr(line)
+    var lines: i64 = 0
+    var i = rrRecent.len() - 1
+    while i >= 0 {
+        if rrRecent[i] == '\n' {
+            lines += 1
+            if lines > RECENT_SHOWN {
+                rrRecent = rrRecent.substr(i + 1, rrRecent.len())
+                break
+            }
+        }
+        i -= 1
+    }
+    if seq == rrStopAt {
+        replayStopHit(seq, callName(kind, shortArg(arg)))
+    }
+}
+
+fn recentContext(): string {
+    if rrRecent.len() == 0 {
+        return ""
+    }
+    return "\nlast records replayed:\n" + rrRecent.substr(0, rrRecent.len() - 1)
+}
+
+// Exit with "replay diverged at record N: expected <recorded>, got <this run>",
+// followed by the records consumed just before it.
+fn diverge(seq: i64, expected: &string, got: &string): void {
+    replayFail("replay diverged at record " + seq.toString() + ": expected " + expected + ", got " + got + recentContext())
 }
 
 // The recorded answer to this call. Exits with "replay diverged at record N:
@@ -270,22 +424,18 @@ fn takeBytes(seq: i64, n: i64): string {
 // call, or the trace has run out.
 pub fn replayTake(kind: &string, arg: &string): string {
     let seq = rrSeq + 1
-    if rrPos >= rrTrace.len() {
-        replayFail("replay diverged at record " + seq.toString() + ": expected end of trace, got " + callName(kind, arg))
+    if rrIdle > 0 {
+        diverge(seq, "sched.idle (" + rrIdle.toString() + " more scheduler polls)", callName(kind, arg))
     }
-    let seqText = takeField(seq, ' ')
-    let recKind = takeField(seq, ' ')
-    let argLen = decimal(takeField(seq, ' '))
-    let payloadLen = decimal(takeField(seq, '\n'))
-    if decimal(seqText) != seq {
-        corrupt(seq)
+    if !peekHeader() {
+        diverge(seq, "end of trace", callName(kind, arg))
     }
-    let recArg = takeBytes(seq, argLen)
-    if recKind != kind || recArg != arg {
-        replayFail("replay diverged at record " + seq.toString() + ": expected " + callName(recKind, recArg) + ", got " + callName(kind, arg))
+    let recArg = takeBytes(seq, rrNextArgLen)
+    if rrNextKind != kind || recArg != arg {
+        diverge(seq, callName(rrNextKind, recArg), callName(kind, arg))
     }
-    let payload = takeBytes(seq, payloadLen)
-    rrSeq = seq
+    let payload = takeBytes(seq, rrNextPayloadLen)
+    noteConsumed(seq, kind, arg, payload.len())
     return payload
 }
 
@@ -293,6 +443,78 @@ pub fn replayTake(kind: &string, arg: &string): string {
 pub fn replayTakeI64(kind: &string, arg: &string): i64 {
     return decimal(replayTake(kind, arg))
 }
+
+// ── stopping at a record ──
+
+// The function a debugger breaks on to stop a replay at a chosen record: with
+// MILO_REPLAY_STOP=<N>, replay calls it right after consuming record N, so the
+// replaying program is stopped with record N's call just answered. External linkage
+// keeps the symbol (`b miloReplayStop`); it then raises SIGTRAP, so a debugger
+// attached without a breakpoint stops here too. With MILO_REPLAY_STOP_PRINT=1 it
+// prints instead and the replay continues (for tests and a UI that only wants the
+// position).
+@externalLinkage
+pub fn miloReplayStop(seq: i64): void {
+    if rrStopPrint {
+        eprint("replay: stop at record " + seq.toString())
+        return
+    }
+    debugTrap()
+}
+
+fn replayStopHit(seq: i64, call: string): void {
+    if rrStopPrint {
+        eprint("replay: reached record " + seq.toString() + " " + call)
+    }
+    miloReplayStop(seq)
+}
+
+// ── clean exit ──
+
+// Records left over when the program exits mean this run made fewer calls than the
+// recorded one, which is a divergence like any other.
+fn replayAtExit(): void {
+    if rrMode != 3 || rrFailing {
+        return
+    }
+    let seq = rrSeq + 1
+    var expected = ""
+    if rrIdle > 0 {
+        expected = "sched.idle (" + rrIdle.toString() + " more scheduler polls)"
+    } else if peekHeader() {
+        let arg = takeBytes(seq, rrNextArgLen)
+        let _ = takeBytes(seq, rrNextPayloadLen)
+        expected = callName(rrNextKind, shortArg(arg))
+        rrPeeked = false
+    } else {
+        return
+    }
+    var left: i64 = 1
+    var going = true
+    while going {
+        match takeLine(seq) {
+            Option.None => {
+                going = false
+            }
+            Option.Some(line) => {
+                let fields = line.split(" ")
+                if fields.len != 4 {
+                    going = false
+                } else {
+                    let _ = takeBytes(seq, decimal(fields[2]))
+                    let _ = takeBytes(seq, decimal(fields[3]))
+                    left += 1
+                }
+            }
+        }
+    }
+    rrFailing = true
+    unsafe { fflush(0 as *u8) }
+    eprint("replay diverged at record " + seq.toString() + ": expected " + expected + ", got end of program (" + left.toString() + " records not replayed)" + recentContext())
+    exitNow(REPLAY_EXIT_CODE)
+}
+
+// ── encodings shared by the hooks ──
 
 // Strings joined with a NUL after each: the encoding for argv and the environment,
 // whose entries are C strings and so can never contain one.
@@ -341,4 +563,369 @@ pub fn replayPutFrom(kind: &string, buf: *u8, n: i64): void {
         }
     }
     replayPut(kind, n.toString(), p)
+}
+
+// A status-style result: the return value, then the errno when it is negative.
+fn encodeRet(r: i64, err: i32): string {
+    if r < 0 {
+        return r.toString() + " " + err.toString()
+    }
+    return r.toString()
+}
+
+fn decodeRet(p: &string, net: bool): i64 {
+    var sp: i64 = -1
+    for i in 0..p.len() {
+        if p[i] == ' ' && sp < 0 {
+            sp = i
+        }
+    }
+    if sp < 0 {
+        return decimal(p)
+    }
+    let err = decimal(p.substr(sp + 1, p.len())) as i32
+    if net {
+        setNetErrno(err)
+    } else {
+        setErrno(err)
+    }
+    return decimal(p.substr(0, sp))
+}
+
+// Run a call that answers with a number (an fd, a status, an offset; negative with
+// errno set on failure) through the trace: recorded with its errno, or answered from
+// the trace with errno restored. `net` picks the socket error channel (WSAGetLastError
+// on Windows). Callers check replayOff() first, so the closure costs nothing when off.
+pub fn replayRet(kind: &string, arg: &string, net: bool, live: () => i64): i64 {
+    if replayActive() {
+        return decodeRet(replayTake(kind, arg), net)
+    }
+    let r = live()
+    var err: i32 = 0
+    if r < 0 {
+        if net {
+            err = netErrno()
+        } else {
+            err = getErrno()
+        }
+    }
+    replayPut(kind, arg, encodeRet(r, err))
+    // Writing the record is a syscall too; the caller reads errno after this returns.
+    if r < 0 {
+        if net {
+            setNetErrno(err)
+        } else {
+            setErrno(err)
+        }
+    }
+    return r
+}
+
+// Run a call that answers with arbitrary bytes the caller encodes itself (a stat
+// result, a directory listing, a resolved address).
+pub fn replayBlob(kind: &string, arg: &string, live: () => string): string {
+    if replayActive() {
+        return replayTake(kind, arg)
+    }
+    let p = live()
+    replayPut(kind, arg, p)
+    return p
+}
+
+// ── file descriptors ──
+
+fn byteAt(table: &string, fd: i32): u8 {
+    if fd < 0 || fd as i64 >= table.len() {
+        return 0
+    }
+    return table[fd as i64]
+}
+
+fn setByte(table: &mut string, fd: i32, v: u8): void {
+    if fd < 0 || fd > 1048576 {
+        return
+    }
+    while table.len() <= fd as i64 {
+        table.push(0)
+    }
+    unsafe {
+        let p = table as *u8
+        p[fd as i64] = v
+    }
+}
+
+// Note an fd std just opened (or that replay just handed out) and what it is: 'f' a
+// file, 'n' a socket, 'p' a child's pipe, 't' a pty. Under replay the number came from
+// the trace and has no OS descriptor behind it.
+pub fn replayFdOpened(fd: i32, cat: u8): void {
+    if fd < 0 || rrMode < 2 {
+        return
+    }
+    setByte(&mut rrFdCat, fd, cat)
+    if rrMode == 3 {
+        setByte(&mut rrFdSynth, fd, 1)
+    }
+}
+
+// True when `fd` is a replay-synthetic descriptor: every operation on it is answered
+// from the trace, and the OS must never see the number.
+pub fn replayFdSynthetic(fd: i32): bool {
+    return rrMode == 3 && byteAt(rrFdSynth, fd) == 1
+}
+
+// The record kind for `op` on `fd`: fs.read, net.write, proc.read, pty.read,
+// stdin.read, stdout.write; fd.<op> for a descriptor std did not open.
+fn fdKind(fd: i32, op: string): string {
+    let cat = byteAt(rrFdCat, fd)
+    if cat == 'f' {
+        return "fs." + op
+    }
+    if cat == 'n' {
+        return "net." + op
+    }
+    if cat == 'p' {
+        return "proc." + op
+    }
+    if cat == 't' {
+        return "pty." + op
+    }
+    if fd == 0 {
+        return "stdin." + op
+    }
+    if fd == 1 {
+        return "stdout." + op
+    }
+    if fd == 2 {
+        return "stderr." + op
+    }
+    return "fd." + op
+}
+
+// One read(2) or recv through the trace. The payload is `=` and the bytes, or `!` and
+// the errno (EAGAIN included: a green read that would block is recorded too, and the
+// park that follows is what the scheduler records replay).
+pub fn replayRead(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
+    let kind = fdKind(fd, "read")
+    let arg = fd.toString() + " " + len.toString()
+    if replayActive() {
+        let p = replayTake(kind, arg)
+        if p.len() == 0 {
+            corrupt(rrSeq)
+        }
+        if p[0] == '!' {
+            let err = decimal(p.substr(1, p.len())) as i32
+            if socket {
+                setNetErrno(err)
+            } else {
+                setErrno(err)
+            }
+            return -1
+        }
+        let n = p.len() - 1
+        if n > len {
+            corrupt(rrSeq)
+        }
+        unsafe {
+            for i in 0..n {
+                buf[i] = p[i + 1]
+            }
+        }
+        return n
+    }
+    var n: i64 = 0
+    unsafe {
+        if socket {
+            n = sockRead(fd, buf, len)
+        } else {
+            n = read(fd, buf, len)
+        }
+    }
+    if n < 0 {
+        var err: i32 = 0
+        if socket {
+            err = netErrno()
+        } else {
+            err = getErrno()
+        }
+        replayPut(kind, arg, "!" + err.toString())
+        if socket {
+            setNetErrno(err)
+        } else {
+            setErrno(err)
+        }
+        return n
+    }
+    var p = String.withCapacity(n + 1)
+    p.push('=')
+    unsafe { p.pushStr(_bytesToString(buf, n)) }
+    replayPut(kind, arg, p)
+    return n
+}
+
+// One write(2) or send through the trace: what is recorded is that it happened, to
+// which fd, how many bytes were offered and how many went (or the errno). Under replay
+// the write reaches the OS only for the inherited stdout and stderr, so the user sees
+// the program's output; a write to a file, socket, pipe or pty is answered from the
+// trace and never performed (the peer does not exist, and a replay must not change
+// the filesystem).
+pub fn replayWrite(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
+    let kind = fdKind(fd, "write")
+    let arg = fd.toString() + " " + len.toString()
+    if replayActive() {
+        let n = decodeRet(replayTake(kind, arg), socket)
+        if n > 0 && (fd == 1 || fd == 2) && !replayFdSynthetic(fd) {
+            var off: i64 = 0
+            while off < n {
+                var w: i64 = 0
+                unsafe { w = write(fd, (buf as i64 + off) as *u8, n - off) }
+                if w <= 0 {
+                    break
+                }
+                off += w
+            }
+        }
+        return n
+    }
+    var n: i64 = 0
+    unsafe {
+        if socket {
+            n = sockWrite(fd, buf, len)
+        } else {
+            n = write(fd, buf, len)
+        }
+    }
+    var err: i32 = 0
+    if n < 0 {
+        if socket {
+            err = netErrno()
+        } else {
+            err = getErrno()
+        }
+    }
+    replayPut(kind, arg, encodeRet(n, err))
+    if n < 0 {
+        if socket {
+            setNetErrno(err)
+        } else {
+            setErrno(err)
+        }
+    }
+    return n
+}
+
+// open(2) through the trace. Under replay nothing is opened (a write-mode open does
+// not create or truncate the file) and the recorded fd comes back as a synthetic one.
+pub fn replayOpen(path: &string, flags: i32, mode: i32): i32 {
+    let arg = flags.toString() + " " + path
+    let fd = replayRet("fs.open", arg, false, (): i64 => {
+        unsafe {
+            return open(path, flags, mode) as i64
+        }
+    }) as i32
+    replayFdOpened(fd, 'f')
+    return fd
+}
+
+// close(2), unrecorded: when a program closes is deterministic given its inputs. A
+// synthetic fd is only forgotten; the OS never had it.
+pub fn replayClose(fd: i32): i32 {
+    if fd < 0 {
+        return -1
+    }
+    let synthetic = replayFdSynthetic(fd)
+    setByte(&mut rrFdCat, fd, 0)
+    setByte(&mut rrFdSynth, fd, 0)
+    if synthetic {
+        return 0
+    }
+    unsafe { return close(fd) }
+}
+
+// lseek(2) through the trace: a file's size and position are answers from the OS.
+pub fn replayLseek(fd: i32, off: i64, whence: i32): i64 {
+    let arg = fd.toString() + " " + off.toString() + " " + whence.toString()
+    return replayRet(fdKind(fd, "seek"), arg, false, (): i64 => {
+        unsafe {
+            return lseek(fd, off, whence)
+        }
+    })
+}
+
+// Lowercase hex of `n` raw bytes (socket addresses in a record's arg).
+pub fn replayHex(p: *u8, n: i64): string {
+    let digits = "0123456789abcdef"
+    var out = String.withCapacity(n * 2)
+    unsafe {
+        for i in 0..n {
+            let b = p[i]
+            out.push(digits[(b >> 4) as i64])
+            out.push(digits[(b & 15) as i64])
+        }
+    }
+    return out
+}
+
+// ── scheduler ──
+
+// Recording: one green-scheduler poll's outcome (std/runtime: pollAndWake). An empty
+// payload is a poll that woke nothing and only bumps a counter; anything else is a
+// sched.pick record naming the fds that came ready and the timer arms that fired.
+pub fn replaySchedPut(payload: &string): void {
+    if rrMode != 2 {
+        return
+    }
+    if payload.len() == 0 {
+        rrIdle += 1
+        return
+    }
+    flushIdle()
+    writeRecord("sched.pick", "", payload)
+}
+
+// Replay: what the poll at this point woke when recorded ("" for nothing). A poll
+// past the end of the trace is idle: the recorded run's trailing idle polls were
+// never written.
+pub fn replaySchedTake(): string {
+    if rrIdle > 0 {
+        rrIdle -= 1
+        return ""
+    }
+    if !peekHeader() {
+        // Trailing idle polls are legitimate (the recorded run's were never written),
+        // but a replay that keeps polling past the trace is waiting for an event the
+        // recording never had.
+        rrPastEnd += 1
+        if rrPastEnd > 1000000 {
+            diverge(rrSeq + 1, "end of trace", "a scheduler poll still waiting for an event")
+        }
+        return ""
+    }
+    let seq = rrNextSeq
+    if rrNextKind == "sched.idle" {
+        let _ = takeBytes(seq, rrNextArgLen)
+        let p = takeBytes(seq, rrNextPayloadLen)
+        noteConsumed(seq, "sched.idle", "", p.len())
+        rrIdle = decimal(p) - 1
+        return ""
+    }
+    if rrNextKind == "sched.pick" {
+        let _ = takeBytes(seq, rrNextArgLen)
+        let p = takeBytes(seq, rrNextPayloadLen)
+        noteConsumed(seq, "sched.pick", "", p.len())
+        return p
+    }
+    let arg = takeBytes(seq, rrNextArgLen)
+    diverge(seq, callName(rrNextKind, arg), "a scheduler poll")
+    return ""
+}
+
+// Called where std starts an OS thread. Recording and replay cover the main thread
+// only (which runs every green task); a thread's own OS reads go unrecorded and when
+// its result arrives is real time, so say so once instead of diverging silently.
+pub fn replayThreadWarn(): void {
+    if rrMode < 2 || rrThreadWarned {
+        return
+    }
+    rrThreadWarned = true
+    eprint("milo replay: warning: this program starts an OS thread (Promise.blocking); record/replay covers the main thread and its green tasks only, so the thread's own OS reads are not recorded and when its result arrives may differ under replay")
 }
