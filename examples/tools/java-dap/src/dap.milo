@@ -11,9 +11,6 @@
 from "std/io" import {
     FdReader, fdReaderAttach
 }
-from "std/os" import {
-    exit
-}
 from "std/fs" import {
     pathExists, readFile
 }
@@ -349,13 +346,8 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
         argv.push(a.clone())
     }
 
-    var child: Child = Child {
-        pid: -1 as i32, stdinFd: -1 as i32, stdoutFd: -1 as i32, stderrFd: -1 as i32
-    }
-    match Child.spawn(java, argv, false) {
-        Ok(c) => {
-            child = c
-        }
+    let child = match Child.spawn(java, argv, false) {
+        Ok(c) => c
         Err(e) => {
             return Err("failed to spawn java: " + e)
         }
