@@ -3,7 +3,7 @@ system: planning
 purpose: root-cause analysis of each item in friction-2026-10.md, with the root fix, blast radius, gate, effort, and an execution order
 key-files: src/checker.ts (expectedTypeOf, checkExprWithHint, checkIfExprExpr, bodyAlwaysReturns, mergeMoveState, checkClosureExpr, declare), src/checker-program-passes.ts (closure escape pass), src/resolver.ts (per-module rename, duplicate-type), std/process.milo, std/runtime.milo
 update-when: an item is fixed, a step of the execution order lands, or the owner decides one of the open questions
-last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1)
+last-verified: 2026-10-06 (every repro below run on main 5ea6e0b5; execution-order steps 1-4 landed on branch friction-1, steps 5-6 on friction-2)
 -->
 
 # Friction 2026-10: analysis and root fixes
@@ -456,9 +456,27 @@ Small landable steps, each with its gate, highest score first.
    instance in std: `Router.handle` (std/http.milo) built its middleware chain from
    by-reference closures over loop-body locals, so two or more middleware recursed forever.
    The links are `move` now (fixtures `httpRouterMiddlewareChain`, `byRefClosureOutlivesLoopBody`).
-5. Item 9 three fixes, item 8 `exit` rename + gate. S each.
-6. Item 1 type-only rename of private user types colliding with std types (after the
-   owner agrees on the scope). S-M.
+5. **Done 9b7ac2bb (item 9), 3047871c (item 8).** Item 9 as landed: `Child` and `Process`
+   (both arms) have `_`-private fields and `pid()`/`stdinFd()`/`stdoutFd()`/`stderrFd()`
+   accessors (error fixtures `childForgedFromPid`, `childForgedPrivateFields`; java-dap's
+   placeholder `Child` went in 5cd52b5b, dapweb's three forged ones in its own
+   `friction-2` branch). Windows `close` is `@unsafe`; tests/platformParity.test.ts now
+   requires a Windows Milo shim of a posix `pub extern` to be `@unsafe`, with the 36 shims
+   not yet aligned (read, write, mmap, the pthread family, ...) in a shrink-only
+   `SAFE_WINDOWS_SHIMS` ratchet. `@pure` exempts an extern only when every param and the
+   return are scalar (tests/externCall.test.ts). Found on the way, not fixed: `Child` is
+   Copy (all-`i32` fields), so a copy can `close()` fds the original still uses; it wants
+   a Drop or a non-Copy marker. Item 8 as landed: `std/os.exit` and `std/testing.assert`
+   are removed rather than renamed (the builtins are the same operation), the extern-call
+   `exit` exemption is gone, and tests/stdBuiltinNames.test.ts gates std pub fn names
+   against the checker's builtins. The observable bug was `assert`: importing anything
+   from std/testing turned the builtin `assert(cond, msg)` into a bare "assertion failed"
+   (runtime-error fixture `builtinAssertWithStdTesting`).
+6. **Done 4bb78061.** Item 1 type-only rename of private user types colliding with std
+   types. As landed: `stdPubTypes` in resolver.ts (non-prelude std type names minus the
+   ones stage 4 renamed); a private user type in it is renamed unless the file imports
+   that name. Fixtures `userTypeNamedLikeStd` (passes under `MILO_MANGLE_ALL=1` too),
+   errors `pubUserTypeNamedLikeStd` and `userTypeShadowsImportedStd`.
 7. Item 3 refactor: `checkExpr(expr, expected)`, delete the five side channels, sibling
    hints for binop/comparison. M.
 8. Item 4 full: `reachable` flag, single `join`, internal `never`, `exit` diverges,
