@@ -6631,7 +6631,10 @@ export class Codegen {
   private genIfExpr(expr: HIRExpr & { kind: "IfExpr" }, lines: string[]): Gen {
     const resultTy = this.llvmType(expr.type);
     const resultAddr = `%__ifexpr.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
+    // A void-typed if-expression (a redirected void extern call, lower.ts) has no value
+    // to carry: no slot, and nothing to load at the end.
+    const isVoid = resultTy === "void";
+    if (!isVoid) this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
 
     const [condLines, condVal] = this.genExpr(expr.cond);
     lines.push(...condLines);
@@ -6653,7 +6656,7 @@ export class Codegen {
       if (last.kind === "ExprStmt") {
         const [vl, vv] = this.genExpr(last.expr);
         lines.push(...vl);
-        if (vv !== "void") lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+        if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
       } else {
         const [sl, t] = this.genStmt(last);
         lines.push(...sl);
@@ -6674,7 +6677,7 @@ export class Codegen {
       if (last.kind === "ExprStmt") {
         const [vl, vv] = this.genExpr(last.expr);
         lines.push(...vl);
-        if (vv !== "void") lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+        if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
       } else {
         const [sl, t] = this.genStmt(last);
         lines.push(...sl);
@@ -6688,6 +6691,7 @@ export class Codegen {
       lines.push(`  unreachable`);
       return [lines, "void", "void"];
     }
+    if (isVoid) return [lines, "void", "void"];
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
     return [lines, result, resultTy];

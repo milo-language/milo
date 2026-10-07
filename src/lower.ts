@@ -895,6 +895,35 @@ class LowerCtx {
             }
           }
           args.push({ expr: { kind: "StringLit", value: rr.site, type: { tag: "string" }, span: expr.span }, passByRef: false, refMut: false });
+          // The off test is made here, at the call site, as a load of std/replay's mode
+          // word: the wrapper usually lands in another codegen unit, where clang cannot
+          // inline it, and a call per extern call is what record/replay costs a default
+          // build when it is off. Only one branch runs, so each arg is evaluated once.
+          // std/replay's private globals carry its module prefix (src/mangle.ts).
+          const modeWord = ["replay$rrMode", "rrMode"].find(n => this.c.globalTypes?.has(n));
+          if (modeWord) {
+            const i64t: TypeKind = { tag: "int", bits: 64, signed: true };
+            const direct: HIRExpr = {
+              kind: "Call", func: expr.func, type, span: expr.span,
+              variadic: this.c.functions.get(expr.func)?.variadic ?? false,
+              args: expr.args.map((arg) => {
+                const borrowed = this.c.autoBorrowed.get(arg);
+                return { expr: this.lowerExpr(arg), passByRef: !!borrowed, refMut: borrowed?.mutable ?? false };
+              }),
+            };
+            const recorded: HIRExpr = { kind: "Call", func: funcName, args, type, variadic: false, span: expr.span };
+            return {
+              kind: "IfExpr",
+              cond: {
+                kind: "BinOp", op: "==", type: { tag: "bool" }, span: expr.span,
+                left: { kind: "Ident", name: modeWord, type: i64t, span: expr.span },
+                right: { kind: "IntLit", value: 1n, type: i64t, span: expr.span },
+              },
+              thenBody: [{ kind: "ExprStmt", expr: direct, span: expr.span }],
+              elseBody: [{ kind: "ExprStmt", expr: recorded, span: expr.span }],
+              type, span: expr.span,
+            };
+          }
         }
         return { kind: "Call", func: funcName, args, type, variadic: sig?.variadic ?? false, span: expr.span };
       }

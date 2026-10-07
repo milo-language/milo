@@ -150,12 +150,12 @@ class Gen {
       case "ret": return `${s.k} * (${retVar} as i64)`;
       case "param": {
         const p = params.get(s.name);
-        if (!p || !isScalar(p.type) || FLOAT_NAMES.has(p.type.name)) throw new Unsupported(`size param ${s.name}`);
+        if (!p || !isScalar(p.type) || FLOAT_NAMES.has(p.type.name)) throw new Unsupported(`no integer param '${s.name}' to size it by`);
         return `${s.k} * (${s.name} as i64)`;
       }
       case "deref": {
         const p = params.get(s.name);
-        if (!p) throw new Unsupported(`size param ${s.name}`);
+        if (!p) throw new Unsupported(`no param '${s.name}' to size it by`);
         const inner = pointee(p.type);
         if (!INT_NAMES.has(inner)) throw new Unsupported(`size param ${s.name} does not point at an integer`);
         return `${s.k} * ((${ptrExpr(p)} as *${inner})[0] as i64)`;
@@ -181,16 +181,24 @@ class Gen {
     const outs = e.outs.filter(o => o.size.tag !== "deep");
     for (const o of e.outs) {
       const p = byName.get(o.param);
-      if (!p || !isPtrish(p.type)) throw new Unsupported(`out ${o.param}`);
+      if (!p || !isPtrish(p.type)) throw new Unsupported(`no pointer param '${o.param}' to record`);
     }
     const retPtr = isPtrish(ret);
     if (retPtr && !e.ret) throw new Unsupported("pointer return with no description");
     if (!retPtr && !isVoid(ret) && !isScalar(ret)) throw new Unsupported("non-scalar return");
 
+    // A small shell LLVM inlines into every call site, so the cost when neither variable
+    // is set is the one compare; the recording and replaying body is its own fn.
+    const slow = `${name}_rr`;
+    const fwd = [...ps.map(p => (p.type.isRefMut && !p.type.isNullableRef) ? `&mut ${p.name}` : p.name),
+      ...Array.from({ length: extra }, (_, i) => `va${i}`), "_site"].join(", ");
     L.push(this.sig(fn, name, extra));
     L.push(`    if replayOff() {`);
     L.push(isVoid(ret) ? `        unsafe { ${call} }\n        return` : `        unsafe { return ${call} }`);
     L.push(`    }`);
+    L.push(isVoid(ret) ? `    ${slow}(${fwd})` : `    return ${slow}(${fwd})`);
+    L.push(`}`, ``);
+    L.push(this.sig(fn, slow, extra));
     // One unsafe block for the rest: it casts pointers and calls the extern throughout.
     L.push(`    unsafe {`);
     L.push(`    var c = replayCallBegin("${e.kind}")`);
@@ -356,6 +364,7 @@ export function planReplayWrappers(programs: Program[], target: Target): { plans
     const plan: ReplayPlan = { wrapper: base, variadic: fn.isVariadic, fixed, ...(c.hole && { hole: c.hole }) };
     const names = fn.isVariadic ? [...arities].filter(n => n >= fixed).map(n => ({ name: `${base}_${n}`, extra: n - fixed })) : [{ name: base, extra: 0 }];
     let ok = true;
+    let reason = "";
     const body: string[] = [];
     for (const w of names) {
       try {
@@ -363,12 +372,15 @@ export function planReplayWrappers(programs: Program[], target: Target): { plans
       } catch (err) {
         if (!(err instanceof Unsupported)) throw err;
         ok = false;
+        reason = err.message;
       }
     }
     if (!ok) {
       // The description cannot be turned into a wrapper on this target: report it as a
       // hole rather than record it wrong.
-      const why = `its description cannot be recorded on ${target.os}`;
+      // A catalog entry names std's declaration's params; a program that redeclares the
+      // extern under other names, or a size the target has no value for, lands here.
+      const why = `its description cannot be recorded on ${target.os} (${reason}); describe it with @records`;
       body.length = 0;
       const holeBase = `__rrh_${name}`;
       for (const w of names) body.push(...gen.hole(fn, w.name.replace(base, holeBase), w.extra), "");
