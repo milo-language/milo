@@ -172,3 +172,13 @@ hard to write but not impossible. Finish it:
 2. Convert the remaining std pub fns that take or return raw `i32` fds (~69 at the
    friction analysis) to owning types (`OwnedFd`, `TcpStream`, `Pty`, `Child`), keeping
    raw-fd entry points `@unsafe` for FFI.
+
+## Dogfood: chadsmith.dev/todo in Milo (accepted 2026-10-07)
+
+After the todo app's Node hardening lands (digitalocean repo, todo/) and SSE is in std:
+port todo/server.js to Milo with the same HTTP API and the same public/ frontend
+(std/http routing, std/sqlite on the existing todo.db, std/jwt, fetch for the Google
+OAuth callback, std SSE for live sync). Gate: a differential test that runs one request
+script against the Node and Milo servers and compares responses. Deploy side by side on
+another port, switch nginx /todo/ when the diff passes, keep a one-line rollback. Then run
+it under MILO_RECORD so a production bug can be replayed and stepped backwards in dapweb.
