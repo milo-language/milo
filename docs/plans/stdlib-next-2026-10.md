@@ -169,6 +169,10 @@ hard to write but not impossible. Finish it:
    borrow (`&conn`) instead of taking a raw fd by value. Needs the rule for borrows
    shared across the M:N scheduler's OS threads (owner decision: after borrowing
    closures, which have landed). Then dapweb's ws writer borrows its connection.
+   **Done 2026-10-07**: design and rules in [task-scope-2026-10.md](task-scope-2026-10.md)
+   (scoped tasks stay on the caller's OS thread, so no Send/Sync bound; a borrowed
+   binding is read-only to the whole scope or owned by one task); `WsConn.recv` takes
+   `&Self`; dapweb's writer is a scoped task borrowing the conn.
 2. Convert the remaining std pub fns that take or return raw `i32` fds (~69 at the
    friction analysis) to owning types (`OwnedFd`, `TcpStream`, `Pty`, `Child`), keeping
    raw-fd entry points `@unsafe` for FFI.

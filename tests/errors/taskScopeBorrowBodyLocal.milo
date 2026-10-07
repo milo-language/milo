@@ -1,0 +1,14 @@
+// @error: a scoped task borrows 'local', which is declared inside the Task.scope body
+// The body returns before the scope joins its tasks, so a task may not borrow the
+// body's own locals; a `move` closure may own them.
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    Task.scope((s) => {
+        let local = "body".clone()
+        s.spawn(() => print(local))
+    })
+    return 0
+}

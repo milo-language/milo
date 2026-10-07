@@ -1,0 +1,23 @@
+// A by-reference closure whose body hands a capture to a `move` closure moves the
+// binding the capture points at; the owner must then not drop it too. Before the fix the
+// move copied the Vec out and left the owner's copy live: a double free under ASan.
+from "std/runtime" import {
+    Promise
+}
+
+fn apply(f: () => void): void {
+    f()
+}
+
+pub fn main(): i32 {
+    let names: Vec<string> = ["a".clone(), "b".clone()]
+    apply(() => {
+        let p = Promise.blocking(() => names.len)
+        print(p.await()!)
+    })
+    print("end")
+    return 0
+}
+
+// @expect: 2
+// @expect: end

@@ -1,0 +1,24 @@
+// @error: a scoped task writes 'v', and another task in the same scope reads it
+// One task pushes while another iterates across a park: the push could reallocate the
+// buffer under the reader's loop variable (soundness finding #5, with a local).
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        s.spawn(() => {
+            for i in 0..1000 {
+                v.push(i)
+            }
+        })
+    })
+    return 0
+}

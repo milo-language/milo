@@ -418,6 +418,172 @@ export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
   return t?.tag === "fn" && !t.owning;
 }
 
+// ── Task.scope ─────────────────────────────────────────────────────────────────
+//
+// `Task.scope(body)` joins every task spawned on its handle before returning, so a
+// scoped task may borrow the enclosing fn's locals. std/runtime's `TaskScope.spawn` keeps
+// its plain closure param past the call to do that, which is sound only if every call
+// site obeys the three rules below (docs/plans/task-scope-2026-10.md). Mangled names:
+// a private user type named `TaskScope` is renamed by the resolver, so these are std's.
+export const TASK_SCOPE_FN = "Task$scope";
+export const SCOPED_SPAWN_FN = "TaskScope$spawn";
+
+export function checkTaskScopes(host: ProgramPassHost, program: Program, view: ProgramView): void {
+  const seen = new Set<string>();
+  const report = (msg: string, span: Span | undefined, hint: string) => {
+    const key = `${span?.file ?? ""}:${span?.line ?? 0}:${span?.col ?? 0}:${msg}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    host.error(msg, span, hint);
+  };
+  type Spawn = { lit: Expr & { kind: "Closure" }; inLoop: boolean; span?: Span };
+  // One open `Task.scope((s) => ...)` literal. `depth` counts closures entered since its
+  // body began (0 = directly in the body) and `loops` the loops around the current
+  // point inside the body; a spawn is legal only at depth 0.
+  type Frame = { handle: string; body: Expr & { kind: "Closure" }; spawns: Spawn[]; depth: number; loops: number };
+
+  const namesIn = (node: unknown, out: Set<string>): Set<string> => {
+    if (!node || typeof node !== "object") return out;
+    if (Array.isArray(node)) { for (const x of node) namesIn(x, out); return out; }
+    const n = node as Record<string, unknown>;
+    if (n.kind === "Ident") out.add(n.name as string);
+    for (const k of Object.keys(n)) if (k !== "span" && k !== "type") namesIn(n[k], out);
+    return out;
+  };
+  // Every binding a body introduces, at any depth. Name-based and conservative: a spawn
+  // capturing a name the body also declares is rejected even when it meant the outer
+  // one, since a shadowed outer name and the body's own local cannot be told apart here.
+  const declaredIn = (node: unknown, out: Set<string>): Set<string> => {
+    if (!node || typeof node !== "object") return out;
+    if (Array.isArray(node)) { for (const x of node) declaredIn(x, out); return out; }
+    const n = node as Record<string, unknown>;
+    if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") out.add(n.name);
+    if (n.kind === "ForInStmt") { out.add(n.varName as string); if (n.varName2) out.add(n.varName2 as string); }
+    if (typeof n.bindName === "string") out.add(n.bindName);
+    if (Array.isArray(n.bindings)) for (const b of n.bindings) if (typeof b === "string") out.add(b);
+    if (n.kind === "Closure") for (const p of n.params as { name: string }[]) out.add(p.name);
+    for (const k of Object.keys(n)) if (k !== "span" && k !== "type") declaredIn(n[k], out);
+    return out;
+  };
+  const writes = (c: CaptureInfo | undefined) => !!c && (!!c.mutatedInClosure || !!c.consumedInClosure);
+  const isLoop = (n: Record<string, unknown>) => n.kind === "WhileStmt" || n.kind === "ForInStmt";
+
+  const finish = (f: Frame) => {
+    const bodyCaps = new Map((host.closureCaptures.get(f.body) ?? []).map(c => [c.name, c]));
+    const bodyDecls = declaredIn(f.body.body, new Set(f.body.params.map(p => p.name)));
+    // The body's own mentions, without the spawned literals (those are the tasks).
+    const spawnLits = new Set<unknown>(f.spawns.map(s => s.lit));
+    const bodyNames = new Set<string>();
+    const scanBody = (node: unknown): void => {
+      if (!node || typeof node !== "object" || spawnLits.has(node)) return;
+      if (Array.isArray(node)) { for (const x of node) scanBody(x); return; }
+      const n = node as Record<string, unknown>;
+      if (n.kind === "Ident") bodyNames.add(n.name as string);
+      for (const k of Object.keys(n)) if (k !== "span" && k !== "type") scanBody(n[k]);
+    };
+    scanBody(f.body.body);
+
+    // Rule 2: a borrowing task captures only what outlives the scope.
+    const borrowed = new Map<string, Spawn[]>();
+    for (const sp of f.spawns) {
+      if ((sp.lit as { isMove?: boolean }).isMove) continue;
+      for (const c of host.closureCaptures.get(sp.lit) ?? []) {
+        if (!bodyCaps.has(c.name) || bodyDecls.has(c.name)) {
+          report(`a scoped task borrows '${c.name}', which is declared inside the Task.scope body`, sp.span,
+            `the body returns before the scope joins its tasks, so '${c.name}' would be gone while the task runs; declare it before 'Task.scope', or spawn a 'move' closure that owns it`);
+          continue;
+        }
+        borrowed.set(c.name, [...(borrowed.get(c.name) ?? []), sp]);
+      }
+    }
+
+    // Rule 3: read by everyone, or touched by exactly one task.
+    for (const [name, users] of borrowed) {
+      const capOf = (sp: Spawn) => (host.closureCaptures.get(sp.lit) ?? []).find(c => c.name === name);
+      const writers = users.filter(sp => writes(capOf(sp)));
+      if (writers.length === 0) {
+        if (writes(bodyCaps.get(name))) {
+          report(`'${name}' is borrowed by a scoped task and written by the Task.scope body`, users[0]!.span,
+            `the body and the task interleave at every park, so a write could free memory the task is reading; let one side own '${name}' (a 'move' closure), or share it through a Channel or Mutex`);
+        }
+        continue;
+      }
+      const w = writers[0]!;
+      const fail = (why: string, span: Span | undefined) =>
+        report(`a scoped task writes '${name}', ${why}`, span,
+          `a task that writes a borrowed binding must be the only one touching it until the scope joins; tasks interleave at every park, so another reader could see freed memory. Share it through a Channel or Mutex, or give each task its own`);
+      if (writers.length > 1) fail("and so does another task in the same scope", writers[1]!.span);
+      else if (w.inLoop) fail("and it is spawned in a loop, so several tasks write it", w.span);
+      else if (users.length > 1) fail("and another task in the same scope reads it", users.find(u => u !== w)!.span);
+      else if (bodyNames.has(name)) fail("and the Task.scope body uses it too", w.span);
+    }
+  };
+
+  const visit = (node: unknown, frames: Frame[]): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const x of node) visit(x, frames); return; }
+    const n = node as Record<string, unknown> & { kind?: string; span?: Span };
+    const top = frames[frames.length - 1];
+    const handleFrame = (name: string) => frames.find(fr => fr.handle === name);
+
+    if (n.kind === "MethodCall" && view.calleeOf(n as unknown as Expr) === SCOPED_SPAWN_FN) {
+      const obj = n.object as Expr;
+      const fr = obj.kind === "Ident" ? handleFrame(obj.name) : undefined;
+      if (!fr || fr !== top || fr.depth !== 0) {
+        report(`'spawn' on a task scope must be called directly in the body of the Task.scope closure that provides the scope`, n.span,
+          `write it as 'Task.scope((s) => { s.spawn(() => ...) })'; inside a nested closure or a helper fn the task could outlive what it borrows`);
+      }
+      const arg = (n.args as Expr[])[0];
+      if (arg?.kind !== "Closure") {
+        report(`a scoped task must be a closure literal`, arg?.span ?? n.span,
+          `write 's.spawn(() => ...)'; a closure value may borrow a frame that is gone before the scope joins`);
+        visit(n.args, frames);
+        return;
+      }
+      if (fr && fr === top && fr.depth === 0) fr.spawns.push({ lit: arg, inLoop: fr.loops > 0, span: arg.span ?? n.span });
+      for (const fr2 of frames) fr2.depth++;
+      visit(arg.body, frames);
+      for (const fr2 of frames) fr2.depth--;
+      return;
+    }
+    if (n.kind === "Ident" && handleFrame(n.name as string)) {
+      report(`the task scope '${n.name}' can only be used as '${n.name}.spawn(...)'`, n.span,
+        `a scope handle that is stored, passed on or captured could spawn tasks after Task.scope has joined`);
+      return;
+    }
+    if ((n.kind === "EnumLit" || n.kind === "Call") && view.calleeOf(n as unknown as Expr) === TASK_SCOPE_FN) {
+      const lit = (n.args as Expr[])[0];
+      if (lit?.kind === "Closure" && lit.params.length === 1) {
+        const fr: Frame = { handle: lit.params[0]!.name, body: lit, spawns: [], depth: 0, loops: 0 };
+        for (const fr2 of frames) fr2.depth++;
+        visit(lit.body, [...frames, fr]);
+        for (const fr2 of frames) fr2.depth--;
+        finish(fr);
+        return;
+      }
+    }
+    if (n.kind === "Closure") {
+      for (const fr of frames) fr.depth++;
+      visit(n.body, frames);
+      for (const fr of frames) fr.depth--;
+      return;
+    }
+    if (isLoop(n) && top) {
+      visit(n.kind === "WhileStmt" ? n.cond : n.iterable, frames);
+      top.loops++;
+      visit(n.body, frames);
+      top.loops--;
+      return;
+    }
+    for (const k of Object.keys(n)) if (k !== "span" && k !== "type") visit(n[k], frames);
+  };
+
+  for (const fn of [...program.functions, ...host.monomorphizedFns]) {
+    if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
+    visit(fn.body, []);
+  }
+}
+
 export function checkNonEscapingParams(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const seen = new Set<string>();
   // The callee parameter an argument lands in, or null when it cannot be resolved (a
@@ -436,6 +602,8 @@ export function checkNonEscapingParams(host: ProgramPassHost, program: Program, 
   };
   for (const fn of [...program.functions, ...host.monomorphizedFns]) {
     if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
+    // The one callee that keeps a plain closure param: checkTaskScopes holds its callers.
+    if (fn.name === SCOPED_SPAWN_FN) continue;
     const sig = host.functions.get(fn.name);
     if (!sig) continue;
     const params = new Set(sig.params.filter(p => isNonEscapingFnParam(p.type)).map(p => p.name));

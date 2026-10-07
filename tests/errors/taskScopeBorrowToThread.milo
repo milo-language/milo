@@ -1,0 +1,23 @@
+// @error: cannot capture
+// A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and
+// a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking
+// takes a `move` closure, which may not capture a reference), so no Send/Sync bound is
+// needed on what a scoped task borrows (docs/plans/task-scope-2026-10.md).
+from "std/runtime" import {
+    Task, Promise
+}
+
+fn count(names: &Vec<string>): void {
+    Task.scope((s) => {
+        s.spawn(() => {
+            let p = Promise.blocking(() => names.len)
+            print(p.await()!)
+        })
+    })
+}
+
+pub fn main(): i32 {
+    let names: Vec<string> = ["a"]
+    count(names)
+    return 0
+}

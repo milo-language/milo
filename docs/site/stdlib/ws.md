@@ -53,10 +53,12 @@ Send a ping.
 #### `WsConn.recv`
 
 ```milo
-fn WsConn.recv(self: &mut WsConn): Result<WsMessage, string>
+fn WsConn.recv(self: &WsConn): Result<WsMessage, string>
 ```
 
 Read next WebSocket message. Handles fragmentation, responds to ping automatically.
+`&Self`, like the sends: a read changes nothing in the handle, so one task can read
+while scoped tasks borrowing the same connection write (`Task.scope`).
 
 #### `WsConn.sendBinary`
 
@@ -108,9 +110,9 @@ fn WsConn.view(fd: i32, ssl: i64, isClient: bool): WsConn
 ```
 
 A second handle over a socket some other WsConn owns: same fd and TLS handle, but
-this one never closes them. It is how one task reads while another writes on the
-same connection (`ws.fd()` / `ws.tlsHandle()` are the values to pass). The owner
-must outlive it.
+this one never closes them (`ws.fd()` / `ws.tlsHandle()` are the values to pass).
+The owner must outlive it, and nothing checks that. For a reader and a writer on
+one connection prefer `Task.scope`, whose tasks borrow the owner instead.
 
 ### `WsMessage`
 

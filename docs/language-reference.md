@@ -4468,6 +4468,7 @@ Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure
 | One-shot result off the main flow | `Promise(fn)` → `.await()!`; fan-out with `Promise.all`, first-wins with `Promise.race` |
 | Stream of values over time | `Channel<T>` — producer `send`s + `close()`s, consumer `for val in ch` |
 | Fleet of fire-and-forget workers | `Task.spawn` + `WaitGroup` |
+| Helper tasks that borrow your locals and finish before you continue | `Task.scope((s) => { s.spawn(() => ...) })` |
 | Wait on first-of-many sources | `std/select` |
 | CPU-bound work or blocking FFI | `Promise.blocking(fn)` → `.await()!`; fan out across cores via `Promise.all` |
 | Shared state across parallel workers | channels (pass ownership) or atomics (counters, flags) |
@@ -4517,6 +4518,41 @@ fn acceptLoop(fd: i32): void {
 Task.spawn(move (): void => { acceptLoop(0) })   // never returns in a real server
 schedulerRunToCompletion()                       // main blocks here
 ```
+
+### Scoped tasks
+
+`Task.scope` runs a body, then waits for every task the body spawned on its handle. Because
+no scoped task can outlive the call, its closure may **borrow** the enclosing function's
+locals instead of owning copies:
+
+```milo
+from "std/runtime" import { Task }
+
+let names: Vec<string> = ["a", "b"]
+var total: i64 = 0
+Task.scope((s) => {
+    s.spawn(() => print(names.len.toString()))   // borrows names
+    s.spawn(() => {
+        total = 42                               // this task alone touches total
+    })
+})
+print(total.toString())                          // 42: the scope joined both tasks
+```
+
+The join runs however the body exits (falling off the end or an early `return`; a panic
+aborts the process). The checker holds the rest (design: `docs/plans/task-scope-2026-10.md`):
+
+- `s` is used only as `s.spawn(<closure literal>)`, directly in the body: not stored, passed
+  to a function, or used inside a nested closure.
+- A borrowing task captures only bindings declared outside the body (the body returns
+  before the join). A `move` closure may own a body local.
+- A binding a task borrows is either only read by everyone in the scope, or touched by that
+  one task alone (not by the body, a sibling, or a task spawned in a loop). Tasks interleave
+  at every park, so a write beside a reader could free what the reader is looking at. Share
+  mutable state through a `Channel` or `Mutex` instead.
+
+Scoped tasks are green tasks on the caller's OS thread (tasks never migrate), so what they
+borrow needs no `Send` or `Sync`.
 
 ### Escape hatch: OS threads
 
@@ -4770,6 +4806,7 @@ Callers do `ensureTable()` and then read `gTable` directly. There is no `Lazy<T>
 |----------|-------------|
 | `Task.spawn(move () => {...})` | Spawn a green task |
 | `t.join()` | Wait for a task to finish |
+| `Task.scope((s) => { s.spawn(() => {...}) })` | Spawn borrowing tasks; all joined before `scope` returns |
 | `Promise(fn)` / `Promise<T>.run(fn)` | Run `fn` on a green task, result via `await` |
 | `Promise<T>.blocking(fn)` | Run `fn` on an OS thread (CPU-bound / blocking FFI) |
 | `p.await()` | Wait for a promise's result |

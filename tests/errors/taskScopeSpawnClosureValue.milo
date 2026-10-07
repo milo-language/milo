@@ -1,0 +1,15 @@
+// @error: a scoped task must be a closure literal
+// A closure value passed to spawn may borrow a frame the scope does not outlive (here the
+// body's), so spawn takes a literal only.
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    let outer = "outer".clone()
+    Task.scope((s) => {
+        let f = () => print(outer)
+        s.spawn(f)
+    })
+    return 0
+}

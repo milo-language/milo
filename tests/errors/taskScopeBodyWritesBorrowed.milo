@@ -1,0 +1,22 @@
+// @error: 'v' is borrowed by a scoped task and written by the Task.scope body
+// A task reads `v` across a park while the body pushes to it.
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        schedulerYield()
+        for i in 0..1000 {
+            v.push(i)
+        }
+    })
+    return 0
+}

@@ -1,0 +1,14 @@
+// @error: a scoped task writes 'v', and the Task.scope body uses it too
+// The body reads what a task writes; they interleave at the body's parks.
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = []
+    Task.scope((s) => {
+        s.spawn(() => v.push(1))
+        print(v.len)
+    })
+    return 0
+}

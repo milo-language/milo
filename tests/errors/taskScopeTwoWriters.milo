@@ -1,0 +1,20 @@
+// @error: a scoped task writes 'total', and so does another task in the same scope
+// Two tasks writing one borrowed binding interleave at every park: rejected, as Rust
+// rejects two `&mut` (docs/plans/task-scope-2026-10.md, rule 3).
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var total: i64 = 0
+    Task.scope((s) => {
+        s.spawn(() => {
+            total = total + 1
+        })
+        s.spawn(() => {
+            total = total + 2
+        })
+    })
+    print(total)
+    return 0
+}

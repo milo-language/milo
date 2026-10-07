@@ -563,6 +563,56 @@ impl Task {
             }
         }
     }
+
+    // Run `body`, then wait for every task it spawned on `s`. Tasks spawned with
+    // `s.spawn` may borrow the enclosing function's locals (`&conn`), because none of them
+    // can outlive this call: the join below runs however `body` exits, and a panic aborts.
+    //
+    //   Task.scope((s) => {
+    //       s.spawn(() => writer(&conn))
+    //       reader(&conn)
+    //   })
+    //
+    // The checker holds the rest (checkTaskScopes, docs/plans/task-scope-2026-10.md): `s`
+    // is used only as `s.spawn(<closure literal>)` directly in `body`, a borrowing task
+    // captures only bindings declared outside `body`, and a binding a task borrows is
+    // either read by everyone in the scope or touched by that one task alone.
+    fn scope(body: (&mut TaskScope) => void): void {
+        var s = TaskScope {
+            _tasks: []
+        }
+        body(&mut s)
+        for t in s._tasks {
+            t.join()
+        }
+    }
+}
+
+// The handle `Task.scope` passes its body. Its only use is `s.spawn(...)`; the private
+// field is what stops code outside std from building one with no join behind it.
+//
+// Scoped tasks borrow without a Send/Sync bound because green tasks never leave the OS
+// thread that spawned them (the scheduler is thread-local and nothing migrates a task).
+// If work stealing is ever added, a task spawned here must stay pinned.
+pub struct TaskScope {
+    _tasks: Vec<Task>,
+}
+
+impl TaskScope {
+    // Start a green task running `f`; `Task.scope` joins it before returning. `f` is a
+    // plain closure param on purpose: it may borrow. This fn is the one place a plain
+    // closure param is kept past the call (checkNonEscapingParams exempts it by name),
+    // which is sound only with checkTaskScopes' rules at every call site. The literal's
+    // environment is on the heap (lowering does it for this callee) and the reap frees it.
+    fn spawn(self: &mut Self, f: () => void): void {
+        unsafe {
+            var fnPtr: *u8 = 0 as *u8
+            var envPtr: *u8 = 0 as *u8
+            memcpy((fnPtr.addrOf()) as *u8, (f.addrOf()) as *u8, 8)
+            memcpy((envPtr.addrOf()) as *u8, ((f.addrOf()) as i64 + 8) as *u8, 8)
+            self._tasks.push(Task.spawnRaw(fnPtr, envPtr, defaultStackSize()))
+        }
+    }
 }
 
 // ── OS-thread escape hatch (internal — powers Promise.blocking) ──

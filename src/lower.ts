@@ -8,6 +8,7 @@ import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsB
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
+import { SCOPED_SPAWN_FN } from "./checker-program-passes";
 
 const isStdReplayFile = (f: string | undefined) => !!f && /[\\/]std[\\/]replay\.milo$/.test(f);
 import { typeFromAst, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
@@ -1534,6 +1535,10 @@ class LowerCtx {
             const borrowed = this.c.autoBorrowed.get(a);
             const jsonType = this.c.autoJsonStringify.get(a);
             let lowered = this.lowerExpr(a);
+            // A scoped task's by-reference literal is created in the Task.scope body's
+            // frame, which returns before the scope joins the task: its environment (the
+            // pointers to what it borrows) goes on the heap, and the task's reap frees it.
+            if (resolved === SCOPED_SPAWN_FN && lowered.kind === "Closure" && !lowered.isMove) lowered.heapEnv = true;
             if (jsonType) {
               const codec = this.c.autoJsonToJson.get(a);
               lowered = codec

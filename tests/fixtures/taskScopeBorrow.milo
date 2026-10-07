@@ -1,0 +1,148 @@
+// Task.scope: scoped tasks borrow the enclosing fn's locals (no move, no clone), the
+// scope joins every task before it returns, and a task that owns its binding may write it.
+from "std/runtime" import {
+    Task, schedulerYield
+}
+from "std/sync" import {
+    Channel
+}
+
+struct Conn {
+    name: string,
+}
+
+impl Conn {
+    fn label(self: &Self): string {
+        return self.name.clone()
+    }
+}
+
+// Readers share `names` and `conn`; each parks between items, so they interleave.
+fn readers(): void {
+    let names: Vec<string> = ["a", "b", "c"]
+    let conn = Conn { name: "conn".clone() }
+    Task.scope((s) => {
+        s.spawn(() => {
+            for n in names {
+                print($"r1 {n} {conn.label()}")
+                schedulerYield()
+            }
+        })
+        s.spawn(() => {
+            for n in names {
+                print($"r2 {n}")
+                schedulerYield()
+            }
+        })
+        print($"body {names.len}")
+    })
+    print("readers joined")
+}
+
+// One task owns `total` for the scope's duration, so it may write it; after the
+// scope the write is visible, which is only true if the scope joined the task.
+fn writer(): void {
+    var total: i64 = 0
+    let items: Vec<i64> = [1, 2, 3, 4]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in items {
+                total = total + x
+                schedulerYield()
+            }
+        })
+    })
+    print($"total {total}")
+}
+
+// The dapweb shape: a writer task drains a borrowed channel while the body produces;
+// closing the channel ends the writer, and the scope waits for it.
+fn pipeline(): void {
+    let ch = Channel<string>.new(4)!
+    var log: Vec<string> = []
+    Task.scope((s) => {
+        s.spawn(() => {
+            while true {
+                match ch.recv() {
+                    Result.Ok(m) => {
+                        log.push(m)
+                    }
+                    Result.Err(_e) => {
+                        break
+                    }
+                }
+            }
+        })
+        for i in 0..3 {
+            ch.send($"m{i}")!
+        }
+        ch.close()
+    })
+    print($"log {log.len} {log[0]} {log[2]}")
+}
+
+// An early return from the body still joins; a move task may own a body local.
+fn earlyReturn(stop: bool): void {
+    let greeting = "hi".clone()
+    Task.scope((s) => {
+        let mine = "owned".clone()
+        s.spawn(move () => print($"move {mine}"))
+        s.spawn(() => {
+            schedulerYield()
+            print($"late {greeting}")
+        })
+        if stop {
+            return
+        }
+        print("not reached")
+    })
+    print("early joined")
+}
+
+// Nested scopes: the inner task borrows a local of the outer task's closure, which is
+// alive until the inner scope (inside that task) has joined.
+// A `move` task may also take an outer binding; the enclosing fn must not drop it again.
+fn nested(): void {
+    let outer = "outer".clone()
+    let given = "given".clone()
+    Task.scope((s) => {
+        s.spawn(move () => print($"took {given}"))
+        s.spawn(() => {
+            let inner = $"{outer}+inner"
+            Task.scope((s2) => {
+                s2.spawn(() => print($"nested {inner}"))
+            })
+        })
+    })
+    print("nested joined")
+}
+
+pub fn main(): i32 {
+    readers()
+    writer()
+    pipeline()
+    earlyReturn(true)
+    nested()
+    // A scope inside a green task parks that task on the joins instead of blocking main.
+    let t = Task.spawn(move(): void => writer())
+    t.join()
+    return 0
+}
+
+// @expect: body 3
+// @expect: r1 a conn
+// @expect: r2 a
+// @expect: r1 b conn
+// @expect: r2 b
+// @expect: r1 c conn
+// @expect: r2 c
+// @expect: readers joined
+// @expect: total 10
+// @expect: log 3 m0 m2
+// @expect: move owned
+// @expect: late hi
+// @expect: early joined
+// @expect: took given
+// @expect: nested outer+inner
+// @expect: nested joined
+// @expect: total 10

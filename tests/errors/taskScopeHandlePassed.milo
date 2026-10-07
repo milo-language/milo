@@ -1,0 +1,18 @@
+// @error: the task scope 's' can only be used as 's.spawn(...)'
+// Passing the handle to a helper is rejected: the helper's locals die before the join,
+// and a task it spawned could borrow them.
+from "std/runtime" import {
+    Task, TaskScope
+}
+
+fn helper(s: &mut TaskScope): void {
+    let local = "gone".clone()
+    s.spawn(() => print(local))
+}
+
+pub fn main(): i32 {
+    Task.scope((s) => {
+        helper(&mut s)
+    })
+    return 0
+}

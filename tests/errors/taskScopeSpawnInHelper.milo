@@ -1,0 +1,16 @@
+// @error: 'spawn' on a task scope must be called directly in the body of the Task.scope closure
+// A named fn handed to Task.scope cannot spawn: its frame is gone before the join, so a
+// task borrowing its locals would read a dead frame.
+from "std/runtime" import {
+    Task, TaskScope
+}
+
+fn body(s: &mut TaskScope): void {
+    let local = "gone".clone()
+    s.spawn(() => print(local))
+}
+
+pub fn main(): i32 {
+    Task.scope(body)
+    return 0
+}

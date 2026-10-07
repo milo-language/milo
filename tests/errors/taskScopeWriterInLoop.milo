@@ -1,0 +1,18 @@
+// @error: a scoped task writes 'n', and it is spawned in a loop
+// Each iteration spawns another task, so a writing task in a loop is several writers.
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var n: i64 = 0
+    Task.scope((s) => {
+        for i in 0..3 {
+            s.spawn(() => {
+                n = n + i
+            })
+        }
+    })
+    print(n)
+    return 0
+}

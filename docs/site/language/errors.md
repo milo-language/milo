@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 387 distinct messages across 477 programs the compiler must reject.
+Every error message the test suite pins: 397 distinct messages across 489 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -87,6 +87,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`'shatter' is private to shard.milo`](#shatter-is-private-to-shard-milo)
 - [`'sign' returns i64 but can reach the end of its body without a 'return'`](#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
+- [`'spawn' on a task scope must be called directly in the body of the Task.scope closure`](#spawn-on-a-task-scope-must-be-called-directly-in-the-body-of-the-task-scope-closure)
 - [`'square' is not imported`](#square-is-not-imported)
 - [`'step' can park this task while the loop variable is a reference into 'g's buffer`](#step-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`'strlen' is not imported`](#strlen-is-not-imported)
@@ -95,6 +96,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Unit' is defined as a struct in 'std/prelude.milo' and as a struct in`](#unit-is-defined-as-a-struct-in-std-prelude-milo-and-as-a-struct-in)
 - [`'unwrapOrElse' on a non-Copy Result<string>`](#unwraporelse-on-a-non-copy-result-string)
 - [`'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)`](#v-goes-out-of-scope-before-p-which-would-still-point-into-its-buffer-from-v-ptr-on-line-13)
+- [`'v' is borrowed by a scoped task and written by the Task.scope body`](#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body)
 - [`'v' is borrowed mutably and shared in the same call`](#v-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-reassigned-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'v' is written here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-written-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
@@ -112,6 +114,12 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
 - [`a nested fixed array`](#a-nested-fixed-array)
+- [`a scoped task borrows 'local', which is declared inside the Task.scope body`](#a-scoped-task-borrows-local-which-is-declared-inside-the-task-scope-body)
+- [`a scoped task must be a closure literal`](#a-scoped-task-must-be-a-closure-literal)
+- [`a scoped task writes 'n', and it is spawned in a loop`](#a-scoped-task-writes-n-and-it-is-spawned-in-a-loop)
+- [`a scoped task writes 'total', and so does another task in the same scope`](#a-scoped-task-writes-total-and-so-does-another-task-in-the-same-scope)
+- [`a scoped task writes 'v', and another task in the same scope reads it`](#a-scoped-task-writes-v-and-another-task-in-the-same-scope-reads-it)
+- [`a scoped task writes 'v', and the Task.scope body uses it too`](#a-scoped-task-writes-v-and-the-task-scope-body-uses-it-too)
 - [`ambiguous From conversion`](#ambiguous-from-conversion)
 - [`an array of references is not expressible`](#an-array-of-references-is-not-expressible)
 - [`an interface value has no clone`](#an-interface-value-has-no-clone)
@@ -147,6 +155,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'push' on 'items' because it is borrowed`](#cannot-call-push-on-items-because-it-is-borrowed)
 - [`cannot call 'push' on 's' because it is borrowed`](#cannot-call-push-on-s-because-it-is-borrowed)
 - [`cannot call 'push' on 't' because it is borrowed`](#cannot-call-push-on-t-because-it-is-borrowed)
+- [`cannot capture`](#cannot-capture)
 - [`cannot capture 's' in a 'move' closure`](#cannot-capture-s-in-a-move-closure)
 - [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
 - [`cannot carry a payload`](#cannot-carry-a-payload)
@@ -357,6 +366,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
 - [`the ranges 0..2 and 1..3 overlap`](#the-ranges-0-2-and-1-3-overlap)
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
+- [`the task scope 's' can only be used as 's.spawn(...)'`](#the-task-scope-s-can-only-be-used-as-s-spawn)
 - [`this closure is passed to a 'move' parameter, so it owns its captures`](#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures)
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
@@ -1972,6 +1982,54 @@ fn main(): i32 {
 
 <sub>[tests/errors/fallOffEndFn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fallOffEndFn.milo)</sub>
 
+## `'spawn' on a task scope must be called directly in the body of the Task.scope closure` {#spawn-on-a-task-scope-must-be-called-directly-in-the-body-of-the-task-scope-closure}
+
+A named fn handed to Task.scope cannot spawn: its frame is gone before the join, so a task borrowing its locals would read a dead frame.
+
+```milo skip
+from "std/runtime" import {
+    Task, TaskScope
+}
+
+fn body(s: &mut TaskScope): void {
+    let local = "gone".clone()
+    s.spawn(() => print(local))
+}
+
+pub fn main(): i32 {
+    Task.scope(body)
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeSpawnInHelper.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeSpawnInHelper.milo)</sub>
+
+A spawn inside a nested closure could run after that closure's frame (and any local it declared) is gone, so only the body itself may spawn.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+fn each(xs: &Vec<i64>, f: (i64) => void): void {
+    for x in xs {
+        f(x)
+    }
+}
+
+pub fn main(): i32 {
+    let xs: Vec<i64> = [1, 2]
+    Task.scope((s) => {
+        each(xs, (x: i64) => {
+            s.spawn(() => print(x))
+        })
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeSpawnNested.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeSpawnNested.milo)</sub>
+
 ## `'square' is not imported` {#square-is-not-imported}
 
 The import list is the whole of what a module lends this file: `square` is exported by lib/math, but this file only asked for `add`. Before 2026-09-20 the list was validated and then ignored, so any export of any imported module was callable.
@@ -2138,6 +2196,35 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/ptrAssignedFromInnerScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrAssignedFromInnerScope.milo)</sub>
+
+## `'v' is borrowed by a scoped task and written by the Task.scope body` {#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body}
+
+A task reads `v` across a park while the body pushes to it.
+
+```milo skip
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        schedulerYield()
+        for i in 0..1000 {
+            v.push(i)
+        }
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeBodyWritesBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBodyWritesBorrowed.milo)</sub>
 
 ## `'v' is borrowed mutably and shared in the same call` {#v-is-borrowed-mutably-and-shared-in-the-same-call}
 
@@ -2553,6 +2640,149 @@ fn main() {
 ```
 
 <sub>[tests/errors/nestedFixedArray.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedFixedArray.milo)</sub>
+
+## `a scoped task borrows 'local', which is declared inside the Task.scope body` {#a-scoped-task-borrows-local-which-is-declared-inside-the-task-scope-body}
+
+The body returns before the scope joins its tasks, so a task may not borrow the body's own locals; a `move` closure may own them.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    Task.scope((s) => {
+        let local = "body".clone()
+        s.spawn(() => print(local))
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeBorrowBodyLocal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBorrowBodyLocal.milo)</sub>
+
+## `a scoped task must be a closure literal` {#a-scoped-task-must-be-a-closure-literal}
+
+A closure value passed to spawn may borrow a frame the scope does not outlive (here the body's), so spawn takes a literal only.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    let outer = "outer".clone()
+    Task.scope((s) => {
+        let f = () => print(outer)
+        s.spawn(f)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeSpawnClosureValue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeSpawnClosureValue.milo)</sub>
+
+## `a scoped task writes 'n', and it is spawned in a loop` {#a-scoped-task-writes-n-and-it-is-spawned-in-a-loop}
+
+Each iteration spawns another task, so a writing task in a loop is several writers.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var n: i64 = 0
+    Task.scope((s) => {
+        for i in 0..3 {
+            s.spawn(() => {
+                n = n + i
+            })
+        }
+    })
+    print(n)
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeWriterInLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeWriterInLoop.milo)</sub>
+
+## `a scoped task writes 'total', and so does another task in the same scope` {#a-scoped-task-writes-total-and-so-does-another-task-in-the-same-scope}
+
+Two tasks writing one borrowed binding interleave at every park: rejected, as Rust rejects two `&mut` (docs/plans/task-scope-2026-10.md, rule 3).
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var total: i64 = 0
+    Task.scope((s) => {
+        s.spawn(() => {
+            total = total + 1
+        })
+        s.spawn(() => {
+            total = total + 2
+        })
+    })
+    print(total)
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeTwoWriters.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeTwoWriters.milo)</sub>
+
+## `a scoped task writes 'v', and another task in the same scope reads it` {#a-scoped-task-writes-v-and-another-task-in-the-same-scope-reads-it}
+
+One task pushes while another iterates across a park: the push could reallocate the buffer under the reader's loop variable (soundness finding #5, with a local).
+
+```milo skip
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        s.spawn(() => {
+            for i in 0..1000 {
+                v.push(i)
+            }
+        })
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeWriterAndReader.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeWriterAndReader.milo)</sub>
+
+## `a scoped task writes 'v', and the Task.scope body uses it too` {#a-scoped-task-writes-v-and-the-task-scope-body-uses-it-too}
+
+The body reads what a task writes; they interleave at the body's parks.
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = []
+    Task.scope((s) => {
+        s.spawn(() => v.push(1))
+        print(v.len)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeWriterAndBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeWriterAndBody.milo)</sub>
 
 ## `ambiguous From conversion` {#ambiguous-from-conversion}
 
@@ -3317,6 +3547,33 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/viewSameFieldFrozen.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewSameFieldFrozen.milo)</sub>
+
+## `cannot capture` {#cannot-capture}
+
+A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking takes a `move` closure, which may not capture a reference), so no Send/Sync bound is needed on what a scoped task borrows (docs/plans/task-scope-2026-10.md).
+
+```milo skip
+from "std/runtime" import {
+    Task, Promise
+}
+
+fn count(names: &Vec<string>): void {
+    Task.scope((s) => {
+        s.spawn(() => {
+            let p = Promise.blocking(() => names.len)
+            print(p.await()!)
+        })
+    })
+}
+
+pub fn main(): i32 {
+    let names: Vec<string> = ["a"]
+    count(names)
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeBorrowToThread.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBorrowToThread.milo)</sub>
 
 ## `cannot capture 's' in a 'move' closure` {#cannot-capture-s-in-a-move-closure}
 
@@ -8202,6 +8459,48 @@ fn main() {
 ```
 
 <sub>[tests/errors/jsonFieldAttrWithoutDerive.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonFieldAttrWithoutDerive.milo)</sub>
+
+## `the task scope 's' can only be used as 's.spawn(...)'` {#the-task-scope-s-can-only-be-used-as-s-spawn}
+
+Passing the handle to a helper is rejected: the helper's locals die before the join, and a task it spawned could borrow them.
+
+```milo skip
+from "std/runtime" import {
+    Task, TaskScope
+}
+
+fn helper(s: &mut TaskScope): void {
+    let local = "gone".clone()
+    s.spawn(() => print(local))
+}
+
+pub fn main(): i32 {
+    Task.scope((s) => {
+        helper(&mut s)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeHandlePassed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeHandlePassed.milo)</sub>
+
+The scope handle cannot be copied out of the body: a second name for it could spawn after the scope has joined (docs/plans/task-scope-2026-10.md, rule 1).
+
+```milo skip
+from "std/runtime" import {
+    Task
+}
+
+pub fn main(): i32 {
+    Task.scope((s) => {
+        let h = s
+        h.spawn(() => print("x"))
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeHandleStored.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeHandleStored.milo)</sub>
 
 ## `this closure is passed to a 'move' parameter, so it owns its captures` {#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures}
 

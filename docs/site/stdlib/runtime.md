@@ -130,6 +130,26 @@ fn Task.raw(self: &Task): *u8
 The scheduler's pointer to this task, for `schedulerPark`/`schedulerUnpark`. Opaque:
 pass it back to std, never read through it.
 
+#### `Task.scope`
+
+```milo
+fn Task.scope(body: (&mut TaskScope) => void): void
+```
+
+Run `body`, then wait for every task it spawned on `s`. Tasks spawned with
+`s.spawn` may borrow the enclosing function's locals (`&conn`), because none of them
+can outlive this call: the join below runs however `body` exits, and a panic aborts.
+
+  Task.scope((s) => {
+      s.spawn(() => writer(&conn))
+      reader(&conn)
+  })
+
+The checker holds the rest (checkTaskScopes, docs/plans/task-scope-2026-10.md): `s`
+is used only as `s.spawn(<closure literal>)` directly in `body`, a borrowing task
+captures only bindings declared outside `body`, and a binding a task borrows is
+either read by everyone in the scope or touched by that one task alone.
+
 #### `Task.spawn`
 
 ```milo
@@ -171,6 +191,31 @@ space rather than resident memory.
 
 A task's stack does not grow: one that is too small overflows rather than
 reallocating.
+
+### `TaskScope`
+
+```milo
+pub struct TaskScope
+```
+
+The handle `Task.scope` passes its body. Its only use is `s.spawn(...)`; the private
+field is what stops code outside std from building one with no join behind it.
+
+Scoped tasks borrow without a Send/Sync bound because green tasks never leave the OS
+thread that spawned them (the scheduler is thread-local and nothing migrates a task).
+If work stealing is ever added, a task spawned here must stay pinned.
+
+#### `TaskScope.spawn`
+
+```milo
+fn TaskScope.spawn(self: &mut TaskScope, f: () => void): void
+```
+
+Start a green task running `f`; `Task.scope` joins it before returning. `f` is a
+plain closure param on purpose: it may borrow. This fn is the one place a plain
+closure param is kept past the call (checkNonEscapingParams exempts it by name),
+which is sound only with checkTaskScopes' rules at every call site. The literal's
+environment is on the heap (lowering does it for this callee) and the reap frees it.
 
 ### Functions
 

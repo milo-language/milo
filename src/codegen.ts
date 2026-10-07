@@ -6493,7 +6493,7 @@ export class Codegen {
       // a spanning flag so a closure created *inside* another closure's body during
       // global init still gets a per-call frame env (that body runs many times).
       const staticEnv = !isMove && this.currentFnName === GLOBAL_INIT_FN;
-      if (isMove) {
+      if (isMove || expr.heapEnv) {
         // heap-allocate env for move closures (safe to send to other threads)
         this.needsMalloc = true;
         lines.push(`  ${envAddr} = call ptr @malloc(i64 ${Math.max(envSize, 16)})`);
@@ -6505,7 +6505,10 @@ export class Codegen {
       }
       // Slot 0: how to release this environment. A move closure owns its captures and
       // the block itself; a by-reference one owns neither, and stores null.
-      const dropFnName = isMove ? this.emitClosureEnvDrop(closureName, envStructTy, captures, capFlagSlot) : null;
+      // A heap by-reference environment (a scoped task's) owns only the block: its glue
+      // frees it and drops no capture.
+      const dropFnName = isMove ? this.emitClosureEnvDrop(closureName, envStructTy, captures, capFlagSlot)
+        : expr.heapEnv ? this.emitClosureEnvDrop(closureName, envStructTy, [], capFlagSlot) : null;
       const hdrSlot = this.nextTemp();
       lines.push(`  ${hdrSlot} = getelementptr ${envStructTy}, ptr ${envAddr}, i32 0, i32 0`);
       lines.push(`  store ptr ${dropFnName === null ? "null" : `@${dropFnName}`}, ptr ${hdrSlot}`);
@@ -6531,6 +6534,11 @@ export class Codegen {
             const val = this.nextTemp();
             lines.push(`  ${val} = load ${capTy}, ptr ${innerPtr}`);
             lines.push(`  store ${capTy} ${val}, ptr ${gepSlot}`);
+            // A by-reference closure's capture moved into this one moves the binding it
+            // points at (the checker marks that binding moved), so the owner must not
+            // drop it again: zero it, as a move out of the owner's own frame does. Without
+            // this, `apply(() => Promise.blocking(() => v.len))` freed `v` twice.
+            if (cap.type.tag !== "ref" && this.needsDropCg(cap.type)) lines.push(this.zeroStore(capTy, innerPtr));
           } else {
             lines.push(`  ${loaded} = load ${capTy}, ptr ${capAddr}`);
             lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);

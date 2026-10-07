@@ -171,9 +171,9 @@ fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
 
 impl WsConn {
     // A second handle over a socket some other WsConn owns: same fd and TLS handle, but
-    // this one never closes them. It is how one task reads while another writes on the
-    // same connection (`ws.fd()` / `ws.tlsHandle()` are the values to pass). The owner
-    // must outlive it.
+    // this one never closes them (`ws.fd()` / `ws.tlsHandle()` are the values to pass).
+    // The owner must outlive it, and nothing checks that. For a reader and a writer on
+    // one connection prefer `Task.scope`, whose tasks borrow the owner instead.
     fn view(fd: i32, ssl: i64, isClient: bool): WsConn {
         return WsConn { fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
     }
@@ -192,7 +192,9 @@ impl WsConn {
     }
 
     // Read next WebSocket message. Handles fragmentation, responds to ping automatically.
-    fn recv(self: &mut Self): Result<WsMessage, string> {
+    // `&Self`, like the sends: a read changes nothing in the handle, so one task can read
+    // while scoped tasks borrowing the same connection write (`Task.scope`).
+    fn recv(self: &Self): Result<WsMessage, string> {
         var resultPayload: string = ""
         var resultOpcode: WsOpcode = WsOpcode.Continuation
 
@@ -268,8 +270,9 @@ impl WsConn {
             if opcode == WsOpcode.Pong {
                 continue
             }
+            // Not marked `_closed`: that flag skips teardown in drop, so setting it here
+            // leaked the fd (and the TLS handle) of every peer that closed cleanly.
             if opcode == WsOpcode.Close {
-                self._closed = true
                 let _ = self._sendFrame(WsOpcode.Close, "", true)
                 return Result.Err("close")
             }

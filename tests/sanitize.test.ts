@@ -207,3 +207,24 @@ pub fn main(): i32 {
     expect(lines).toEqual(want);
   }
 }, 300_000);
+
+// Task.scope (2026-10-07): a scoped task's by-reference environment is heap-allocated and
+// freed by the task's reap, while the pointers in it reach the enclosing fn's frame. A
+// stack env, a missing free, or a double free in the reap glue is an ASan report here.
+// byRefCaptureMovedIntoThread: a by-reference capture moved into a nested `move` closure
+// was freed by both that closure and its owner.
+test("scoped tasks and nested capture moves run clean under --sanitize", () => {
+  for (const name of ["taskScopeBorrow", "byRefCaptureMovedIntoThread"]) {
+    const src = join(import.meta.dir, "fixtures", `${name}.milo`);
+    const want = readFileSync(src, "utf-8").split("\n").filter(l => l.startsWith("// @expect: ")).map(l => l.slice(12));
+    let out = "";
+    try {
+      out = execSync(`bun ${MILO} run --sanitize ${src} 2>&1`, { encoding: "utf-8", env: ENV, timeout: 60_000 });
+    } catch (e: any) {
+      out = (e.stdout ?? "") + (e.stderr ?? "");
+    }
+    expect(out).not.toContain("AddressSanitizer");
+    const lines = out.trim().split("\n").filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
+    expect(lines).toEqual(want);
+  }
+}, 240_000);

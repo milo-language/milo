@@ -1,0 +1,22 @@
+// @error: 'spawn' on a task scope must be called directly in the body of the Task.scope closure
+// A spawn inside a nested closure could run after that closure's frame (and any local
+// it declared) is gone, so only the body itself may spawn.
+from "std/runtime" import {
+    Task
+}
+
+fn each(xs: &Vec<i64>, f: (i64) => void): void {
+    for x in xs {
+        f(x)
+    }
+}
+
+pub fn main(): i32 {
+    let xs: Vec<i64> = [1, 2]
+    Task.scope((s) => {
+        each(xs, (x: i64) => {
+            s.spawn(() => print(x))
+        })
+    })
+    return 0
+}

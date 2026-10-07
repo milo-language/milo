@@ -14,7 +14,7 @@ import type { Diagnostic, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -3852,6 +3852,7 @@ export class TypeChecker {
     // checked, and the auto-`move` promotions have all settled by now.
     checkEscapingClosures(host, program, view);
     checkNonEscapingParams(host, program, view);
+    checkTaskScopes(host, program, view);
 
     // Same reason: the `@thread` entry points, their call sites, and the closure captures
     // are all resolved by now.
