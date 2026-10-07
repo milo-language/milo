@@ -6332,7 +6332,11 @@ export class Codegen {
       t.tag === "ref" && (t.inner.tag === "string" || (t.inner.tag === "array" && t.inner.size === null))
         ? "ptr" : this.llvmType(t);
     const closureParams = [`ptr %env`, ...expr.params.map(p => `${closureParamTy(p.type)} %${p.name}`)].join(", ");
-    closureBody.push(`define ${retTy} @${closureName}(${closureParams}) {`);
+    // Internal, like every other Milo fn: an external closure outlives its dead enclosing
+    // fn (globaldce cannot drop it), so a std fn never called on Windows still linked its
+    // closure's POSIX calls (std/fs's `lstat`, `opendir`...) and failed the link. cgu.ts
+    // promotes one that another codegen unit references.
+    closureBody.push(`define internal ${retTy} @${closureName}(${closureParams}) {`);
     closureBody.push("entry.bb:");
 
     // load captures from env struct
