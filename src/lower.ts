@@ -873,6 +873,19 @@ class LowerCtx {
             refMut: borrowed?.mutable ?? false,
           };
         });
+        const rr = this.c.replaySites?.get(expr);
+        if (rr) {
+          // A record/replay wrapper (src/replay-externs.ts): a variadic tail arrives widened
+          // to i64, and the last param is the call site a hole report names.
+          const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+          if (rr.fixed !== undefined) {
+            for (let i = rr.fixed; i < args.length; i++) {
+              const a = args[i].expr;
+              args[i] = { ...args[i], expr: { kind: "Cast", operand: a, targetType: i64, type: i64, span: a.span } };
+            }
+          }
+          args.push({ expr: { kind: "StringLit", value: rr.site, type: { tag: "string" }, span: expr.span }, passByRef: false, refMut: false });
+        }
         return { kind: "Call", func: funcName, args, type, variadic: sig?.variadic ?? false, span: expr.span };
       }
       case "StructLit": {

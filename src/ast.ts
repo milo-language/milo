@@ -212,6 +212,9 @@ export interface Function {
   // fn lowers as if it had a per-fn `@wrapping` — without polluting `attributes` (which the
   // formatter reprints). Per-file: only fns parsed from the wrapping module get it.
   fromWrappingModule?: boolean;
+  // Set by a file-level `@!replayHooked`: this fn records its own extern calls, so record/
+  // replay must not redirect them (src/replay-externs.ts).
+  fromReplayHookedModule?: boolean;
   sourceFile?: string; // set by the resolver; used to diagnose cross-module name collisions
   // The name as written, when `name` is a compiler-generated one. A monomorphized
   // instance is called `foo_i64`, which nobody typed — diagnostics about the generic's
@@ -351,6 +354,10 @@ export interface Program {
   // stamps `fromWrappingModule` on the file's own fns; this flag is kept so the formatter
   // can reprint the directive.
   moduleWrapping?: boolean;
+  moduleReplayHooked?: boolean;
+  // Set by the resolver: the externs this program calls that record/replay redirects to a
+  // generated wrapper (src/replay-externs.ts), keyed by extern name.
+  replayPlans?: Map<string, import("./replay-externs").ReplayPlan>;
   declOrigins?: DeclOrigins; // set by the resolver; absent for a bare Parser program
   // What each file's import lines admit, keyed by resolved path. `names` are the
   // declared names listed in `from "x" import { … }` (an alias is already rewritten to

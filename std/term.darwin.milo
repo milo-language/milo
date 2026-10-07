@@ -1,5 +1,8 @@
 // std/term — terminal raw mode and keyboard input (macOS)
 
+from "std/replay" import {
+    replayOff, replayBlob, replayInts
+}
 from "std/os" import {
     ioctl,
     tcgetattr,
@@ -154,6 +157,20 @@ pub struct TermSize {
 }
 
 pub fn terminalSize(): TermSize {
+    if replayOff() {
+        return terminalSizeLive()
+    }
+    // Recorded as term.size: the window is an answer from outside, and the ioctl that
+    // asks for it cannot be recorded generically (what it writes depends on the request).
+    let v = replayInts(replayBlob("term.size", "", (): string => {
+        let s = terminalSizeLive()
+        return s.rows.toString() + " " + s.cols.toString()
+    }))
+    return TermSize { rows: v[0], cols: v[1] }
+}
+
+@replayHooked
+fn terminalSizeLive(): TermSize {
     // struct winsize is four u16s: rows, cols, xpixel, ypixel.
     var ws: [u16; 4] = [0; 4]
     unsafe {

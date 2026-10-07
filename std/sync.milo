@@ -1,5 +1,8 @@
 // std/sync — synchronization primitives (channel, waitgroup, once, atomics) via pthreads
 
+// std/replay orders this module's operations itself; its extern calls stay direct.
+@!replayHooked
+
 from "std/platform" import {
     pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_self
 }

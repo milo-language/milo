@@ -15,6 +15,7 @@ import type {
   Program, Function, Expr, Stmt, MiloType, Pattern, Span,
   DeclOrigins, DeclOrigin,
 } from "./ast";
+import { RR_WRAPPER_FILE } from "./replay-externs";
 
 interface VisibilityViolation {
   name: string;
@@ -80,6 +81,9 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
     name: string, refFile: string | undefined, span?: Span,
   ) => {
     if (!refFile || shadowed) return;
+    // The generated record/replay wrappers call each extern under its own name, private
+    // or not: they stand in for the call the owning file made.
+    if (refFile === RR_WRAPPER_FILE) return;
     const o = m.get(name);
     if (!o) return;            // not a user top-level decl (builtin/unknown) — skip
     if (o.files.has(refFile)) return; // this file defines it itself

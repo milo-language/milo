@@ -165,8 +165,10 @@ test("milo trace lists the scenario's records by kind", () => {
   const r = spawnSync("bun", ["run", MAIN, "trace", scenarioTrace(), "--json"], { encoding: "utf-8" });
   expect(r.status).toBe(0);
   const t = JSON.parse(r.stdout);
-  expect(t.version).toBe(1);
+  expect(t.version).toBe(2);
   expect(t.total).toBe(t.records.length);
+  // Everything the scenario touches goes through std, so the recording has no gaps.
+  expect(t.holes).toEqual([]);
   const kinds = new Set(t.records.map((x: any) => x.kind));
   for (const k of ["args", "fs.open", "fs.read", "net.socket", "net.accept", "net.connect", "net.read", "net.write", "net.resolve", "proc.spawn", "proc.read", "proc.wait", "sched.pick"]) {
     expect(kinds).toContain(k);

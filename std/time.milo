@@ -39,6 +39,7 @@ pub struct Instant {
     usec: i64,
 }
 
+@replayHooked
 fn osNow(): Instant {
     var tv: [u8; 16] = [0; 16]
     unsafe { gettimeofday(tv, 0 as *u8) }
@@ -548,6 +549,7 @@ pub fn since(start: Instant): Duration {
 
 // usleep takes a u32, so anything past ~71 minutes truncates into a short nap.
 // Sleep in one-second bites instead.
+@replayHooked
 fn usleepLong(us: i64): void {
     // Under replay a sleep takes no time: what happened after it is already in the
     // trace (a scheduler sleep is a timer arm, which the recorded schedule fires).

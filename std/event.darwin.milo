@@ -1,5 +1,8 @@
 // std/event — cross-platform event loop (macOS/kqueue implementation)
 
+// std/replay orders this module's operations itself; its extern calls stay direct.
+@!replayHooked
+
 from "std/replay" import {
     replayActive
 }

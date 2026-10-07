@@ -119,6 +119,7 @@ impl Pty {
         })
     }
 
+    @replayHooked
     fn _openLive(): Result<Pty, string> {
         unsafe {
             // O_RDWR=2 | O_NOCTTY=0x100
@@ -180,6 +181,7 @@ impl Pty {
         return Result.Ok(pid)
     }
 
+    @replayHooked
     fn _spawnLive(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string> {
         unsafe {
             let argc = args.len + 2
@@ -285,6 +287,7 @@ impl Pty {
         return fdChannel(self.masterFd)
     }
 
+    @replayHooked
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
         self._rows = rows
         self._cols = cols
@@ -299,6 +302,7 @@ impl Pty {
         }) as i32
     }
 
+    @replayHooked
     fn winSize(self: &Self): WinSize {
         var ws = WinSize {
             rows: 0, cols: 0, xpixel: 0, ypixel: 0

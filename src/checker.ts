@@ -4,6 +4,7 @@
 // Error recovery: an erroneous declaration still binds, an erroneous expression is typed
 // `unknown`, and nothing reports about `unknown` (enforced in `error()`).
 import { attributesFor } from "./attributes";
+import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from "./replay-externs";
 import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
@@ -417,6 +418,10 @@ export interface CheckResult {
   // payload, so an arm can write `v = v + 1` in place (lower emits subjectIsMut).
   matchSubjectMut: Set<Expr>;
   rewrittenCalls: Map<Expr, string>;
+  // Extern calls redirected to a record/replay wrapper (src/replay-externs.ts): the
+  // `file:line` the wrapper is handed, and for a variadic extern how many args are fixed
+  // (the rest are widened to i64 for the wrapper's tail).
+  replaySites: Map<Expr, { site: string; fixed?: number }>;
   rewrittenEnums: Map<Expr, string>;
   // `o == Option.None` / `!=` on an enum with payloads: lowered as the tag test of
   // `operand` (the non-literal side) against `tag`.
@@ -640,6 +645,10 @@ export class TypeChecker {
   private matchSubjectRef = new Set<Expr>();
   private matchSubjectMut = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
+  private replaySites = new Map<Expr, { site: string; fixed?: number }>();
+  private replayPlans: Map<string, ReplayPlan> | undefined;
+  // The fn being checked records its own extern calls (`@replayHooked`), so they stay direct.
+  private currentFnReplayHooked = false;
   private rewrittenEnums = new Map<Expr, string>();
   private staticCalls = new Map<Expr, string>();
   private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
@@ -800,6 +809,10 @@ export class TypeChecker {
     // every one of them, and the fix ("just delete it") would break the build — so the
     // projects that don't do that opt in.
     if (!config.denied.has("unused-import") && !config.expected?.has("unused-import")) config.allowed.add("unused-import");
+    // replay-hole is OFF unless asked for (`--replay-holes`, or `--deny=replay-hole` to fail
+    // a build that has one): an unrecorded extern only matters to a program that is
+    // recorded, and the run itself reports the first call to each one.
+    if (!config.denied.has("replay-hole") && !config.expected?.has("replay-hole") && !config.warned?.has("replay-hole")) config.allowed.add("replay-hole");
     // large-stack-array is OFF unless asked for. Big fixed-size locals are a real
     // stack-overflow footgun, but plenty are intentional (main-thread framebuffers
     // that work fine), so warning by default would nag every graphics program. The
@@ -1394,6 +1407,32 @@ export class TypeChecker {
     if (this.currentFnIsDep) return;
     this.warn("extern-call", `calling extern function '${name}' outside an 'unsafe' block`, span,
       `wrap the call in 'unsafe { ... }', or call the std function that wraps it`);
+  }
+
+  // Record/replay: send this extern call through its generated wrapper, which records it
+  // under MILO_RECORD and answers it under MILO_REPLAY, or, for an extern that cannot be
+  // recorded, reports the hole at run time (and here, as `replay-hole`, when asked).
+  // Calls inside a `@replayHooked` fn (std's own recording wrappers) stay direct.
+  private redirectForReplay(expr: Expr & { kind: "Call" }, sp: Span | undefined) {
+    const plan = this.replayPlans?.get(expr.func);
+    if (!plan || this.currentFnReplayHooked) return;
+    if (plan.hole) {
+      this.warn("replay-hole", `'${expr.func}' is not recorded under MILO_RECORD: ${plan.hole}`, sp,
+        `describe what it writes with @records("buf[len]") on its extern declaration, or call the std function that wraps it`);
+    }
+    let wrapper = plan.wrapper;
+    if (plan.variadic) {
+      wrapper = `${plan.wrapper}_${expr.args.length}`;
+      // The tail is widened to i64; a float there would change bits, so leave it direct.
+      for (let i = plan.fixed; i < expr.args.length; i++) {
+        const t = this.exprTypes.get(expr.args[i]);
+        if (!t || (t.tag !== "int" && t.tag !== "ptr" && t.tag !== "bool")) return;
+      }
+    }
+    if (!this.functions.has(wrapper)) return;
+    if (process.env.MILO_DEBUG_REPLAY_SITES) console.error(`rr-site ${expr.func} ${plan.hole ? "HOLE" : "rec"} ${replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd())}`);
+    this.rewrittenCalls.set(expr, wrapper);
+    this.replaySites.set(expr, { site: replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd()), ...(plan.variadic && { fixed: plan.fixed }) });
   }
 
   // Manifest deps are the only mangled code, so a `<pkg>$` prefix settles it.
@@ -2380,6 +2419,7 @@ export class TypeChecker {
       // generic that declared them.
       ...(generic.decl.attributes && { attributes: generic.decl.attributes }),
       ...(generic.decl.fromWrappingModule && { fromWrappingModule: true }),
+      ...(generic.decl.fromReplayHookedModule && { fromReplayHookedModule: true }),
       // The instance belongs to the file that DEFINED the generic, not the one that
       // happened to instantiate it — its code is the generic's body. Unlike the impl-method
       // paths below, this decl is built field by field rather than spread from the generic,
@@ -3050,6 +3090,7 @@ export class TypeChecker {
       matchSubjectRef: this.matchSubjectRef,
       matchSubjectMut: this.matchSubjectMut,
       rewrittenCalls: this.rewrittenCalls,
+      replaySites: this.replaySites,
       rewrittenEnums: this.rewrittenEnums,
       variantTagCompares: this.variantTagCompares,
       staticCalls: this.staticCalls,
@@ -3099,6 +3140,7 @@ export class TypeChecker {
 
   private checkProgram(program: Program): void {
     this._userFnNames = program.userFnNames;
+    this.replayPlans = program.replayPlans;
     this.entryFile = program.entryFile;
     for (const u of program.unusedImports ?? []) {
       this.warn("unused-import",
@@ -3582,6 +3624,17 @@ export class TypeChecker {
             if (fn.isExtern) {
               this.error(`'@unsafe' on extern fn '${fn.name}': an extern call's unsafety is already decided by its signature`, undefined,
                 `drop '@unsafe'; see the extern rules in docs/language-reference.md`);
+            }
+          }
+          else if (attr.name === "replayHooked") {
+            if (attr.args.length > 0) this.error(`'@replayHooked' takes no arguments`, undefined, `write '@replayHooked fn ${fn.name}(...)'`);
+          }
+          else if (attr.name === "records") {
+            if (!fn.isExtern) {
+              this.error(`'@records' on '${fn.name}': only an extern has calls for record/replay to capture`, undefined, `drop '@records'`);
+            } else {
+              for (const msg of recordsAttrErrors(fn)) this.error(`'@records' on extern fn '${fn.name}': ${msg}`, undefined,
+                `write one string per output buffer, e.g. @records("buf[ret]"); see 'milo explain @records'`);
             }
           }
           else this.error(`'@${attr.name}' is not supported on functions — '${fn.name}'`, undefined,
@@ -6049,6 +6102,7 @@ export class TypeChecker {
     this.reachable = true;
     this.currentFnIsUser = this.fnIsUserCode(fn.name);
     this.currentFnIsDep = this.fnIsDependencyCode(fn.name);
+    this.currentFnReplayHooked = isReplayHookedFn(fn);
     // `sourceFile` first: a derived method's spans name the synthetic
     // `<derive Json for S>` unit, but the resolver-style origin is the struct's file,
     // which is where generated code has to count as living for field privacy.
@@ -9791,6 +9845,7 @@ export class TypeChecker {
           `extern calls are safe only when every arg is scalar, &T, fn, string/array→*T, or a by-value extern struct, AND the return is scalar/void/extern-struct — here ${why}`);
       }
     }
+    if (sig.isExtern) this.redirectForReplay(expr, sp);
     // check requires contracts at call site
     const fnDecl = this.fnDecls.get(expr.func);
     if (fnDecl) this.checkCallSiteContracts(fnDecl, expr.args, sp);

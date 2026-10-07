@@ -361,6 +361,7 @@ pub fn netEinprogress(): i32 {
 
 // A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
 // closesocket(), which is why this name exists on all arms.
+@replayHooked
 pub fn closeSocket(fd: i32): i32 {
     unsafe { return close(fd) }
 }
@@ -459,6 +460,7 @@ pub fn envUnset(name: *u8): i32 {
 }
 
 // The live NULL-terminated `NAME=VALUE` array, reflecting every setenv/unsetenv so far.
+@replayHooked
 pub fn environBlock(): **u8 {
     unsafe {
         return *_NSGetEnviron()
@@ -469,6 +471,7 @@ pub fn environBlock(): **u8 {
 // this; macOS does not, so the process's environ pointer is overwritten first and plain
 // execvp picks it up. Correct only between fork and exec, where no other code can
 // observe the clobbered environ.
+@replayHooked
 pub fn execvpWithEnv(file: *u8, argv: *u8, envp: *u8): i32 {
     unsafe {
         var slot: *u8 = envp
@@ -565,10 +568,12 @@ pub extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 // Socket data IO seam. On POSIX read()/write() work on socket fds, so these alias them; the
 // Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
 // CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
+@replayHooked
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return read(fd, buf, nbyte) }
 }
 
+@replayHooked
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return write(fd, buf, nbyte) }
 }

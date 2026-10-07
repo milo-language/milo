@@ -115,6 +115,7 @@ struct SslStep {
     e: i32,
 }
 
+@replayHooked
 fn sslStep(kind: string, arg: string, ssl: *u8, success: i32, live: () => i32): SslStep {
     if replayOff() {
         let r = live()
@@ -140,6 +141,7 @@ fn sslStep(kind: string, arg: string, ssl: *u8, success: i32, live: () => i32): 
 }
 
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
+@replayHooked
 pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     while true {
         let st = sslStep("tls.connect", fd.toString(), ssl, 1, (): i32 => {
@@ -159,6 +161,7 @@ pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
 
 // Drive SSL_accept to completion — the server-side mirror of sslConnectFd.
 // Returns 1 on success (SSL_accept result otherwise).
+@replayHooked
 pub fn sslAcceptFd(ssl: *u8, fd: i32): i32 {
     while true {
         let st = sslStep("tls.accept", fd.toString(), ssl, 1, (): i32 => {
@@ -177,6 +180,7 @@ pub fn sslAcceptFd(ssl: *u8, fd: i32): i32 {
 }
 
 // One SSL_read attempt through the trace: `=` and the plaintext, or `!r e`.
+@replayHooked
 fn sslReadOnce(ssl: *u8, fd: i32, buf: *u8, len: i32): SslStep {
     if replayOff() {
         var n: i32 = 0
@@ -240,6 +244,7 @@ pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
 // Recorded as tls.write with the size; under replay nothing is sent.
+@replayHooked
 pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
         let st = sslStep("tls.write", fd.toString() + " " + len.toString(), ssl, len, (): i32 => {

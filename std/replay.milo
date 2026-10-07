@@ -2,27 +2,31 @@
 //
 // Every std entry point that asks the OS something whose answer can differ between
 // runs (the clock, entropy, the environment, argv, file/socket/subprocess IO, which
-// green task the scheduler wakes) calls through here. With neither MILO_RECORD nor
-// MILO_REPLAY set the hook is one global compare and the call goes straight to the OS.
-// With MILO_RECORD=<file> each answer is appended to a trace; with MILO_REPLAY=<file>
-// each call returns the next recorded answer instead, so the program computes exactly
-// what it computed when recorded. Format, kinds and phases: docs/record-replay.md.
+// green task the scheduler wakes) calls through here, and so does every extern call the
+// compiler redirects (src/replay-externs.ts). With neither MILO_RECORD nor MILO_REPLAY
+// set the hook is one global compare and the call goes straight to the OS. With
+// MILO_RECORD=<file> each answer is appended to a trace; with MILO_REPLAY=<file> each
+// call returns the next recorded answer instead, so the program computes exactly what it
+// computed when recorded. Format, kinds and phases: docs/record-replay.md.
 //
 // The mode is decided once, at process start (a global initializer), and both
 // variables are then removed from this process's environment: a child process that
 // inherited MILO_RECORD would truncate and interleave into the parent's trace.
 
+@!replayHooked
+
 from "std/os" import {
-    getenv, fflush
+    getenv, fflush, malloc
 }
 from "std/platform" import {
     open, read, write, close, lseek, sockRead, sockWrite, envUnset, oReadBinary, oWriteCreateTrunc,
-    getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap
+    getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap, usleep
 }
 
 // Bumped only when the record framing changes. A new record kind is additive: an
 // older replayer meeting it reports a divergence naming the kind, which is the truth.
-let TRACE_VERSION: i64 = 1
+// Version 2 added the thread field.
+let TRACE_VERSION: i64 = 2
 
 // Divergence, a corrupt or missing trace, and a failed trace write all exit with this,
 // so a driver (a test, dapweb's reverse step) can tell "replay broke" from the
@@ -32,54 +36,115 @@ pub let REPLAY_EXIT_CODE: i32 = 3
 // How many consumed records a divergence report shows for context.
 let RECENT_SHOWN: i64 = 6
 
-// All of the state is per OS thread, and only the main thread (which runs `main` and
-// every green task) ever decides to record or replay: the global initializer below
-// runs there, and by the time any other OS thread exists both variables are gone from
-// the environment, so a Promise.blocking worker that reaches a hook decides "off" and
-// asks the OS. That keeps the trace single-writer with no lock on the hot path, and
-// makes worker-thread reads an unrecorded hole like an extern call (replayThreadWarn
-// says so once).
+// ── state ──
+//
+// One trace serves every OS thread. Each record carries the number of the thread that
+// made it (0 is the main thread, which runs `main` and every green task; a thread std
+// starts gets the next number when its parent records `thread.spawn`), and the trace
+// order is the order the records were made. Under replay a thread answers its next call
+// only when the record at the head of the trace is its own, so every thread sees the
+// answers it saw when recorded AND in the same interleaving with the other threads. The
+// sync primitives (std/sync) record each operation's outcome, so who got the lock, which
+// message a receive took and what an atomic returned replay too. docs/record-replay.md
+// §Threads.
+//
+// The shared state below is written only inside `rrLock.run`, which serializes every
+// thread's access to the trace. Reads of rrMode outside it are safe: it is written once,
+// while the process has a single thread, before any hook can run elsewhere.
 //
 // 0 = not decided yet, 1 = off, 2 = recording, 3 = replaying. A hook that runs before
 // the global initializer (another module's initializer reading the clock) finds 0 and
 // decides on the spot; after that every hooked call costs this one compare.
-thread_local var rrMode: i64 = 0
-thread_local var rrFd: i32 = -1
+var rrMode: i64 = 0
+var rrFd: i32 = -1
 // Sequence number of the last record written or consumed; records count from 1.
-thread_local var rrSeq: i64 = 0
+var rrSeq: i64 = 0
 // Replay reads the trace through a window: rrBuf holds bytes from the file not yet
 // consumed (from rrPos on), refilled a chunk at a time, so memory is bounded by the
 // largest record rather than the trace.
-thread_local var rrBuf: string = ""
-thread_local var rrPos: i64 = 0
-thread_local var rrEof: bool = false
+var rrBuf: string = ""
+var rrPos: i64 = 0
+var rrEof: bool = false
 // The next record's header, once peeked (the scheduler peeks to tell an idle poll from
-// a call; a divergence report names what the trace holds).
-thread_local var rrPeeked: bool = false
-thread_local var rrNextSeq: i64 = 0
-thread_local var rrNextKind: string = ""
-thread_local var rrNextArgLen: i64 = 0
-thread_local var rrNextPayloadLen: i64 = 0
+// a call; a waiting thread peeks to see whose turn it is).
+var rrPeeked: bool = false
+var rrNextSeq: i64 = 0
+var rrNextKind: string = ""
+var rrNextArgLen: i64 = 0
+var rrNextPayloadLen: i64 = 0
+var rrNextTid: i64 = 0
 // The last RECENT_SHOWN records consumed, one line each, for divergence reports.
-thread_local var rrRecent: string = ""
-// Scheduler polls that woke nothing. Recording counts them and writes one sched.idle
-// record before the next record; replay counts down the polls a sched.idle record owes.
-thread_local var rrIdle: i64 = 0
-thread_local var rrPastEnd: i64 = 0
+var rrRecent: string = ""
 // MILO_REPLAY_STOP: the record at which replay calls miloReplayStop (0 = none).
-thread_local var rrStopAt: i64 = 0
-thread_local var rrStopPrint: bool = false
-thread_local var rrStopCall: string = ""
+var rrStopAt: i64 = 0
+var rrStopPrint: bool = false
+var rrStopCall: string = ""
 // Set once replay is exiting with a divergence, so the exit hook stays quiet.
-thread_local var rrFailing: bool = false
-thread_local var rrThreadWarned: bool = false
+var rrFailing: bool = false
 // Per fd: what it is ('f' file, 'n' socket, 'p' child pipe, 't' pty), which names its
 // record kinds (fs.read, net.read, ...), and under replay whether the number is
 // synthetic, handed out from the trace with no OS descriptor behind it.
-thread_local var rrFdCat: string = ""
-thread_local var rrFdSynth: string = ""
+var rrFdCat: string = ""
+var rrFdSynth: string = ""
+// Threads: how many have been numbered (main included), whether any other than main
+// was ever started (sync operations are ordered only from then on), and per thread
+// number a 1 once that thread has finished, so a replay waiting on a finished thread's
+// record reports the divergence instead of waiting forever.
+var rrThreads: i64 = 1
+var rrThreaded: bool = false
+var rrThreadDone: string = ""
+// Unrecorded externs this run has called, one name per line; each is reported once.
+var rrHoles: string = ""
+
+// Per thread: its number, the scheduler polls it owes the trace (recording) or the trace
+// owes it (replay), and whether it holds rrLock (so a divergence raised inside the lock
+// can still run the exit hook).
+thread_local var rrTid: i64 = 0
+thread_local var rrIdle: i64 = 0
+thread_local var rrPastEnd: i64 = 0
+thread_local var rrHeld: bool = false
+// The payload the last successful take on this thread consumed.
+thread_local var rrTaken: string = ""
+
+// The lock word behind rrLock. Only ever touched through atomics.
+var rrLockWord: i64 = 0
+
+// The one lock around the trace. A spin lock with a sleep, not a pthread mutex: it has
+// to work before any initializer has run (a hook can fire from another module's global
+// initializer), and the critical sections are a record's worth of work. Reentrant per
+// thread, so a divergence reported while it is held can still run the exit hook.
+// `@synchronized` tells the checker's thread pass that the shared state above, written
+// only inside `run`, is not racing.
+pub struct ReplayLock {
+    _unused: i64,
+}
+
+impl ReplayLock {
+    @synchronized
+    fn run(self: &Self, f: () => void): void {
+        if rrHeld {
+            f()
+            return
+        }
+        var spins: i64 = 0
+        unsafe {
+            while _atomicCasI64(rrLockWord.addrOf() as *u8, 0, 1) != 0 {
+                spins += 1
+                if spins > 64 {
+                    usleep(20)
+                }
+            }
+        }
+        rrHeld = true
+        f()
+        rrHeld = false
+        unsafe { _atomicStoreI64(rrLockWord.addrOf() as *u8, 0) }
+    }
+}
+
+let rrLock: ReplayLock = ReplayLock { _unused: 0 }
 // Last, so the state above is already initialized when this runs.
-let rrBooted: bool = replayBoot()
+let rrBooted: bool = replayModeNow() > 0
 
 // True when neither recording nor replaying. The single check every hook makes
 // before touching the OS; a not-yet-decided mode reads as "not off" so the slow
@@ -100,13 +165,17 @@ pub fn replayRecording(): bool {
 
 fn replayModeNow(): i64 {
     if rrMode == 0 {
-        replayBoot()
+        rrLock.run((): void => {
+            replayBoot()
+        })
     }
     return rrMode
 }
 
 fn replayFail(msg: string): void {
-    rrFailing = true
+    rrLock.run((): void => {
+        rrFailing = true
+    })
     unsafe { fflush(0 as *u8) }
     eprint(msg)
     exit(REPLAY_EXIT_CODE)
@@ -122,9 +191,9 @@ fn envPath(name: string): string {
     }
 }
 
-fn replayBoot(): bool {
+fn replayBoot(): void {
     if rrMode != 0 {
-        return true
+        return
     }
     let recordPath = envPath("MILO_RECORD")
     let replayPath = envPath("MILO_REPLAY")
@@ -133,7 +202,7 @@ fn replayBoot(): bool {
     }
     if recordPath.len() == 0 && replayPath.len() == 0 {
         rrMode = 1
-        return true
+        return
     }
     let stopAt = envPath("MILO_REPLAY_STOP")
     rrStopPrint = envPath("MILO_REPLAY_STOP_PRINT").len() > 0
@@ -149,7 +218,6 @@ fn replayBoot(): bool {
         rrStopAt = decimal(stopAt)
         startReplay(replayPath)
     }
-    return true
 }
 
 fn traceHeader(): string {
@@ -215,9 +283,11 @@ fn callName(kind: &string, arg: &string): string {
     return kind + "(" + arg + ")"
 }
 
+// `<seq> <kind> <argLen> <payloadLen>[ <thread>]`: the thread is left out for the main
+// thread, so a single-threaded trace reads as it always did.
 fn writeRecord(kind: &string, arg: &string, payload: &string): void {
     rrSeq += 1
-    var rec = String.withCapacity(32 + kind.len() + arg.len() + payload.len())
+    var rec = String.withCapacity(40 + kind.len() + arg.len() + payload.len())
     rec.pushStr(rrSeq.toString())
     rec.push(' ')
     rec.pushStr(kind)
@@ -225,6 +295,10 @@ fn writeRecord(kind: &string, arg: &string, payload: &string): void {
     rec.pushStr(arg.len().toString())
     rec.push(' ')
     rec.pushStr(payload.len().toString())
+    if rrTid != 0 {
+        rec.push(' ')
+        rec.pushStr(rrTid.toString())
+    }
     rec.push('\n')
     rec.pushStr(arg)
     rec.push('\n')
@@ -233,8 +307,8 @@ fn writeRecord(kind: &string, arg: &string, payload: &string): void {
     writeAll(rec)
 }
 
-// Idle scheduler polls are owed to the trace before any later record, so replay
-// knows how many polls passed before it.
+// Idle scheduler polls are owed to the trace before this thread's next record, so
+// replay knows how many polls passed before it.
 fn flushIdle(): void {
     if rrIdle > 0 {
         let n = rrIdle
@@ -251,8 +325,10 @@ pub fn replayPut(kind: &string, arg: &string, payload: &string): void {
     if replayModeNow() != 2 {
         return
     }
-    flushIdle()
-    writeRecord(kind, arg, payload)
+    rrLock.run((): void => {
+        flushIdle()
+        writeRecord(kind, arg, payload)
+    })
 }
 
 // replayPut with a decimal payload.
@@ -345,13 +421,17 @@ fn peekHeader(): bool {
         }
         Option.Some(line) => {
             let fields = line.split(" ")
-            if fields.len != 4 || decimal(fields[0]) != seq {
+            if (fields.len != 4 && fields.len != 5) || decimal(fields[0]) != seq {
                 corrupt(seq)
             }
             rrNextSeq = seq
             rrNextKind = fields[1].clone()
             rrNextArgLen = decimal(fields[2])
             rrNextPayloadLen = decimal(fields[3])
+            rrNextTid = 0
+            if fields.len == 5 {
+                rrNextTid = decimal(fields[4])
+            }
             rrPeeked = true
             return true
         }
@@ -385,10 +465,17 @@ fn shortArg(arg: &string): string {
     return out
 }
 
+fn threadNote(tid: i64): string {
+    if tid == 0 {
+        return ""
+    }
+    return " [thread " + tid.toString() + "]"
+}
+
 fn noteConsumed(seq: i64, kind: &string, arg: &string, payloadLen: i64): void {
     rrSeq = seq
     rrPeeked = false
-    let line = "  " + seq.toString() + " " + callName(kind, shortArg(arg)) + " -> " + payloadLen.toString() + " bytes\n"
+    let line = "  " + seq.toString() + " " + callName(kind, shortArg(arg)) + threadNote(rrTid) + " -> " + payloadLen.toString() + " bytes\n"
     rrRecent.pushStr(line)
     var lines: i64 = 0
     var i = rrRecent.len() - 1
@@ -420,24 +507,70 @@ fn diverge(seq: i64, expected: &string, got: &string): void {
     replayFail("replay diverged at record " + seq.toString() + ": expected " + expected + ", got " + got + recentContext())
 }
 
-// The recorded answer to this call. Exits with "replay diverged at record N:
-// expected <recorded call>, got <this call>" when the next record is a different
-// call, or the trace has run out.
-pub fn replayTake(kind: &string, arg: &string): string {
+// The head record's call, for a divergence report.
+fn headCall(): string {
+    let arg = takeBytes(rrNextSeq, rrNextArgLen)
+    return callName(rrNextKind, shortArg(arg)) + threadNote(rrNextTid)
+}
+
+fn threadFinished(tid: i64): bool {
+    return tid >= 0 && tid < rrThreadDone.len() && rrThreadDone[tid] == 1
+}
+
+// One attempt at this thread's next record. 1 when the head of the trace is this
+// thread's and was consumed into `out`, 0 when another thread has the head.
+fn tryTake(kind: &string, arg: &string): i64 {
     let seq = rrSeq + 1
     if rrIdle > 0 {
-        diverge(seq, "sched.idle (" + rrIdle.toString() + " more scheduler polls)", callName(kind, arg))
+        diverge(seq, "sched.idle (" + rrIdle.toString() + " more scheduler polls)", callName(kind, arg) + threadNote(rrTid))
     }
     if !peekHeader() {
-        diverge(seq, "end of trace", callName(kind, arg))
+        diverge(seq, "end of trace", callName(kind, arg) + threadNote(rrTid))
+    }
+    if rrNextTid != rrTid {
+        if threadFinished(rrNextTid) {
+            diverge(seq, headCall(), "thread " + rrNextTid.toString() + " already finished (" + callName(kind, arg) + threadNote(rrTid) + " waiting)")
+        }
+        return 0
     }
     let recArg = takeBytes(seq, rrNextArgLen)
     if rrNextKind != kind || recArg != arg {
-        diverge(seq, callName(rrNextKind, recArg), callName(kind, arg))
+        diverge(seq, callName(rrNextKind, recArg) + threadNote(rrNextTid), callName(kind, arg) + threadNote(rrTid))
     }
     let payload = takeBytes(seq, rrNextPayloadLen)
     noteConsumed(seq, kind, arg, payload.len())
-    return payload
+    rrTaken = payload
+    return 1
+}
+
+// Under replay, a thread whose record is not at the head of the trace waits here for
+// the threads whose records come first. Sleeps after a short spin: a turn is often
+// only a record away, but another thread may be computing for a long time.
+fn waitTurn(spins: i64): void {
+    if spins > 32 {
+        unsafe { usleep(50) }
+    }
+}
+
+// The recorded answer to this call. Exits with "replay diverged at record N:
+// expected <recorded call>, got <this call>" when the next record of this thread is a
+// different call, or the trace has run out. With several threads, waits until this
+// thread's record reaches the head of the trace.
+pub fn replayTake(kind: &string, arg: &string): string {
+    var got: i64 = 0
+    var spins: i64 = 0
+    while got == 0 {
+        rrLock.run((): void => {
+            got = tryTake(kind, arg)
+        })
+        if got == 0 {
+            spins += 1
+            waitTurn(spins)
+        }
+    }
+    let taken = rrTaken.clone()
+    rrTaken = ""
+    return taken
 }
 
 // replayTake of a decimal payload.
@@ -473,6 +606,12 @@ fn replayStopHit(seq: i64, call: string): void {
 // Records left over when the program exits mean this run made fewer calls than the
 // recorded one, which is a divergence like any other.
 fn replayAtExit(): void {
+    rrLock.run((): void => {
+        atExitCheck()
+    })
+}
+
+fn atExitCheck(): void {
     if rrMode != 3 || rrFailing {
         return
     }
@@ -483,7 +622,7 @@ fn replayAtExit(): void {
     } else if peekHeader() {
         let arg = takeBytes(seq, rrNextArgLen)
         let _ = takeBytes(seq, rrNextPayloadLen)
-        expected = callName(rrNextKind, shortArg(arg))
+        expected = callName(rrNextKind, shortArg(arg)) + threadNote(rrNextTid)
         rrPeeked = false
     } else {
         return
@@ -497,7 +636,7 @@ fn replayAtExit(): void {
             }
             Option.Some(line) => {
                 let fields = line.split(" ")
-                if fields.len != 4 {
+                if fields.len != 4 && fields.len != 5 {
                     going = false
                 } else {
                     let _ = takeBytes(seq, decimal(fields[2]))
@@ -669,27 +808,40 @@ pub fn replayFdOpened(fd: i32, cat: u8): void {
     if fd < 0 || rrMode < 2 {
         return
     }
-    setByte(&mut rrFdCat, fd, cat)
-    if rrMode == 3 {
-        setByte(&mut rrFdSynth, fd, 1)
-    }
+    rrLock.run((): void => {
+        setByte(&mut rrFdCat, fd, cat)
+        if rrMode == 3 {
+            setByte(&mut rrFdSynth, fd, 1)
+        }
+    })
 }
 
 // What std recorded `fd` as (see replayFdOpened), 0 when nothing.
 pub fn replayFdCategory(fd: i32): u8 {
-    return byteAt(rrFdCat, fd)
+    var c: u8 = 0
+    rrLock.run((): void => {
+        c = byteAt(rrFdCat, fd)
+    })
+    return c
 }
 
 // True when `fd` is a replay-synthetic descriptor: every operation on it is answered
 // from the trace, and the OS must never see the number.
 pub fn replayFdSynthetic(fd: i32): bool {
-    return rrMode == 3 && byteAt(rrFdSynth, fd) == 1
+    if rrMode != 3 {
+        return false
+    }
+    var s = false
+    rrLock.run((): void => {
+        s = byteAt(rrFdSynth, fd) == 1
+    })
+    return s
 }
 
 // The record kind for `op` on `fd`: fs.read, net.write, proc.read, pty.read,
 // stdin.read, stdout.write; fd.<op> for a descriptor std did not open.
 fn fdKind(fd: i32, op: string): string {
-    let cat = byteAt(rrFdCat, fd)
+    let cat = replayFdCategory(fd)
     if cat == 'f' {
         return "fs." + op
     }
@@ -845,9 +997,12 @@ pub fn replayClose(fd: i32): i32 {
     if fd < 0 {
         return -1
     }
-    let synthetic = replayFdSynthetic(fd)
-    setByte(&mut rrFdCat, fd, 0)
-    setByte(&mut rrFdSynth, fd, 0)
+    var synthetic = false
+    rrLock.run((): void => {
+        synthetic = rrMode == 3 && byteAt(rrFdSynth, fd) == 1
+        setByte(&mut rrFdCat, fd, 0)
+        setByte(&mut rrFdSynth, fd, 0)
+    })
     if synthetic {
         return 0
     }
@@ -891,17 +1046,19 @@ pub fn replaySchedPut(payload: &string): void {
         rrIdle += 1
         return
     }
-    flushIdle()
-    writeRecord("sched.pick", "", payload)
+    rrLock.run((): void => {
+        flushIdle()
+        writeRecord("sched.pick", "", payload)
+    })
 }
 
-// Replay: what the poll at this point woke when recorded ("" for nothing). A poll
-// past the end of the trace is idle: the recorded run's trailing idle polls were
-// never written.
-pub fn replaySchedTake(): string {
+// One attempt at a scheduler poll's record: 1 with `out` set when answered (an idle
+// poll answers ""), 0 when another thread has the head of the trace.
+fn trySchedTake(): i64 {
+    rrTaken = ""
     if rrIdle > 0 {
         rrIdle -= 1
-        return ""
+        return 1
     }
     if !peekHeader() {
         // Trailing idle polls are legitimate (the recorded run's were never written),
@@ -909,36 +1066,426 @@ pub fn replaySchedTake(): string {
         // recording never had.
         rrPastEnd += 1
         if rrPastEnd > 1000000 {
-            diverge(rrSeq + 1, "end of trace", "a scheduler poll still waiting for an event")
+            diverge(rrSeq + 1, "end of trace", "a scheduler poll still waiting for an event" + threadNote(rrTid))
         }
-        return ""
+        return 1
     }
     let seq = rrNextSeq
+    if rrNextTid != rrTid {
+        if threadFinished(rrNextTid) {
+            diverge(seq, headCall(), "thread " + rrNextTid.toString() + " already finished (a scheduler poll" + threadNote(rrTid) + " waiting)")
+        }
+        return 0
+    }
     if rrNextKind == "sched.idle" {
         let _ = takeBytes(seq, rrNextArgLen)
         let p = takeBytes(seq, rrNextPayloadLen)
         noteConsumed(seq, "sched.idle", "", p.len())
         rrIdle = decimal(p) - 1
-        return ""
+        return 1
     }
     if rrNextKind == "sched.pick" {
         let _ = takeBytes(seq, rrNextArgLen)
         let p = takeBytes(seq, rrNextPayloadLen)
         noteConsumed(seq, "sched.pick", "", p.len())
-        return p
+        rrTaken = p
+        return 1
     }
     let arg = takeBytes(seq, rrNextArgLen)
-    diverge(seq, callName(rrNextKind, arg), "a scheduler poll")
-    return ""
+    diverge(seq, callName(rrNextKind, arg), "a scheduler poll" + threadNote(rrTid))
+    return 1
 }
 
-// Called where std starts an OS thread. Recording and replay cover the main thread
-// only (which runs every green task); a thread's own OS reads go unrecorded and when
-// its result arrives is real time, so say so once instead of diverging silently.
-pub fn replayThreadWarn(): void {
-    if rrMode < 2 || rrThreadWarned {
+// Replay: what the poll at this point woke when recorded ("" for nothing). A poll
+// past the end of the trace is idle: the recorded run's trailing idle polls were
+// never written.
+pub fn replaySchedTake(): string {
+    var got: i64 = 0
+    var spins: i64 = 0
+    while got == 0 {
+        rrLock.run((): void => {
+            got = trySchedTake()
+        })
+        if got == 0 {
+            spins += 1
+            waitTurn(spins)
+        }
+    }
+    let taken = rrTaken.clone()
+    rrTaken = ""
+    return taken
+}
+
+// ── threads ──
+
+// Called where std starts an OS thread, before it starts: numbers the new thread and
+// records that it was started (`thread.spawn`, payload the number), so the numbering
+// replays. From here on every sync operation is ordered. Returns 0 when off.
+pub fn replayThreadSpawn(): i64 {
+    if replayOff() {
+        return 0
+    }
+    var tid: i64 = 0
+    if replayActive() {
+        tid = replayTakeI64("thread.spawn", "")
+        rrLock.run((): void => {
+            if tid + 1 > rrThreads {
+                rrThreads = tid + 1
+            }
+            rrThreaded = true
+        })
+        return tid
+    }
+    rrLock.run((): void => {
+        tid = rrThreads
+        rrThreads += 1
+        rrThreaded = true
+        flushIdle()
+        writeRecord("thread.spawn", "", tid.toString())
+    })
+    return tid
+}
+
+// First thing on a thread std started: take the number its parent recorded.
+pub fn replayThreadStart(tid: i64): void {
+    rrTid = tid
+}
+
+// Last thing on a thread std started. Under replay a thread waiting for a finished
+// thread's record is then a divergence, not a hang.
+pub fn replayThreadExit(): void {
+    if rrMode < 2 || rrTid == 0 {
         return
     }
-    rrThreadWarned = true
-    eprint("milo replay: warning: this program starts an OS thread (Promise.blocking); record/replay covers the main thread and its green tasks only, so the thread's own OS reads are not recorded and when its result arrives may differ under replay")
+    rrLock.run((): void => {
+        flushIdle()
+        while rrThreadDone.len() <= rrTid {
+            rrThreadDone.push(0)
+        }
+        unsafe {
+            let p = rrThreadDone as *u8
+            p[rrTid] = 1
+        }
+    })
+}
+
+// True when cross-thread sync operations are ordered: recording or replaying a run that
+// has started an OS thread. Before the first thread exists every sync operation happens
+// on the main thread, whose order the scheduler records already.
+pub fn replaySyncOn(): bool {
+    return rrMode >= 2 && rrThreaded
+}
+
+// Replay: wait until this thread's next record is at the head of the trace. std/sync
+// calls it before taking a primitive's own lock, so the operation runs exactly when it
+// ran in the recording, after every operation recorded before it. No-op when recording.
+pub fn replaySyncEnter(): void {
+    if rrMode != 3 {
+        return
+    }
+    var ready = false
+    var spins: i64 = 0
+    while !ready {
+        rrLock.run((): void => {
+            if !peekHeader() || rrNextTid == rrTid || threadFinished(rrNextTid) {
+                ready = true
+            }
+        })
+        if !ready {
+            spins += 1
+            waitTurn(spins)
+        }
+    }
+}
+
+// One ordered sync operation, made while the primitive's lock is held: what it did
+// (`op`, e.g. "recv") and how it came out (`outcome`: ready or not, the value an atomic
+// returned). Recorded as `sync.<op>` with both in the arg; under replay the same
+// operation must come out the same way, or the run has diverged.
+pub fn replaySyncNote(op: &string, outcome: i64): void {
+    let kind = "sync." + op
+    if rrMode == 3 {
+        let _ = replayTake(kind, outcome.toString())
+        return
+    }
+    replayPut(kind, outcome.toString(), "")
+}
+
+// ── externs (src/replay-externs.ts generates the callers) ──
+
+// Report, once per name, that this run called an extern the trace cannot answer, and
+// note it in the trace (`trace.hole`: arg the name, payload where), so `milo trace`
+// shows a recording with gaps. Under replay the note is consumed silently; the call
+// itself runs for real in both.
+pub fn replayHole(name: &string, site: *u8): void {
+    let mode = replayModeNow()
+    if mode < 2 {
+        return
+    }
+    var where = ""
+    unsafe {
+        if site as i64 != 0 {
+            where = _cstrToString(site)
+        }
+    }
+    var first = false
+    rrLock.run((): void => {
+        let line = name + "\n"
+        if !rrHoles.contains(line) {
+            rrHoles.pushStr(line)
+            first = true
+        }
+    })
+    if !first {
+        return
+    }
+    if mode == 3 {
+        let _ = replayTake("trace.hole", name)
+        return
+    }
+    eprint("replay: this run called unrecorded " + name + " at " + where + "; a replay may diverge")
+    replayPut("trace.hole", name, where)
+}
+
+// One extern call through the trace. The payload is a header line `<ret> <errno>` and
+// one length per output buffer (-1 for one the call did not get), then the outputs'
+// bytes back to back.
+pub struct ReplayCall {
+    kind: string,
+    arg: string,
+    ret: i64,
+    err: i32,
+    lens: Vec<i64>,
+    data: string,
+    dataPos: i64,
+    outIdx: i64,
+}
+
+// Start one recorded extern call of kind `kind` (`x.<name>`).
+pub fn replayCallBegin(kind: string): ReplayCall {
+    return ReplayCall {
+        kind: kind,
+        arg: "",
+        ret: 0,
+        err: 0,
+        lens: Vec.new(),
+        data: "",
+        dataPos: 0,
+        outIdx: 0
+    }
+}
+
+// The bits of a float, for recording a float argument or return.
+pub fn replayF64Bits(v: f64): i64 {
+    var b: i64 = 0
+    var x = v
+    unsafe {
+        let src = x.addrOf() as *u8
+        let dst = b.addrOf() as *u8
+        for i in 0..8 {
+            dst[i] = src[i]
+        }
+    }
+    return b
+}
+
+pub fn replayF64FromBits(b: i64): f64 {
+    var v: f64 = 0.0
+    var x = b
+    unsafe {
+        let src = x.addrOf() as *u8
+        let dst = v.addrOf() as *u8
+        for i in 0..8 {
+            dst[i] = src[i]
+        }
+    }
+    return v
+}
+
+impl ReplayCall {
+    fn sep(self: &mut Self): void {
+        if self.arg.len() > 0 {
+            self.arg.push(' ')
+        }
+    }
+
+    // A scalar argument, part of what names the call.
+    fn argInt(self: &mut Self, v: i64): void {
+        self.sep()
+        self.arg.pushStr(v.toString())
+    }
+
+    // A C string argument (a path, a variable name); `-` for null.
+    fn argCstr(self: &mut Self, p: *u8): void {
+        self.sep()
+        unsafe {
+            if p as i64 == 0 {
+                self.arg.push('-')
+            } else {
+                self.arg.pushStr(_cstrToString(p))
+            }
+        }
+    }
+
+    // `n` bytes an argument points at, in hex.
+    fn argBytes(self: &mut Self, p: *u8, n: i64): void {
+        self.sep()
+        if p as i64 == 0 || n <= 0 {
+            self.arg.push('-')
+            return
+        }
+        self.arg.pushStr(replayHex(p, n))
+    }
+
+    // True when the call is to be answered from the trace.
+    fn replaying(self: &Self): bool {
+        return rrMode == 3
+    }
+
+    // Replay: fetch this call's record and restore its errno.
+    fn take(self: &mut Self, net: bool): void {
+        let p = replayTake(self.kind, self.arg)
+        var nl: i64 = -1
+        for i in 0..p.len() {
+            if nl < 0 && p[i] == '\n' {
+                nl = i
+            }
+        }
+        if nl < 0 {
+            corrupt(rrSeq)
+        }
+        let fields = replayInts(p.substr(0, nl))
+        if fields.len < 2 {
+            corrupt(rrSeq)
+        }
+        self.ret = fields[0]
+        self.err = fields[1] as i32
+        for i in 2..fields.len {
+            self.lens.push(fields[i])
+        }
+        self.data = p.substr(nl + 1, p.len())
+        self.dataPos = 0
+        if net {
+            setNetErrno(self.err)
+        } else {
+            setErrno(self.err)
+        }
+    }
+
+    // Replay: the recorded return value (a float's bits, a handle's address).
+    fn retVal(self: &Self): i64 {
+        return self.ret
+    }
+
+    fn nextLen(self: &mut Self): i64 {
+        if self.outIdx >= self.lens.len {
+            corrupt(rrSeq)
+        }
+        let n = self.lens[self.outIdx]
+        self.outIdx += 1
+        return n
+    }
+
+    // Replay: copy the next recorded output into `p` (skipped when the recording had
+    // none, or `p` is null).
+    fn outInto(self: &mut Self, p: *u8): void {
+        let n = self.nextLen()
+        if n < 0 {
+            return
+        }
+        if self.dataPos + n > self.data.len() {
+            corrupt(rrSeq)
+        }
+        if p as i64 != 0 {
+            unsafe {
+                for i in 0..n {
+                    p[i] = self.data[self.dataPos + i]
+                }
+            }
+        }
+        self.dataPos += n
+    }
+
+    // Replay: the next recorded output as a fresh heap copy (a returned string or
+    // structure), null when the recording returned null.
+    fn outCopy(self: &mut Self): *u8 {
+        let n = self.nextLen()
+        if n < 0 {
+            return 0 as *u8
+        }
+        if self.dataPos + n > self.data.len() {
+            corrupt(rrSeq)
+        }
+        unsafe {
+            let p = malloc(n + 1)
+            for i in 0..n {
+                p[i] = self.data[self.dataPos + i]
+            }
+            p[n] = 0
+            self.dataPos += n
+            return p
+        }
+    }
+
+    // Record: errno right after the live call, before anything else can touch it.
+    fn saveErrno(self: &mut Self, net: bool): void {
+        if net {
+            self.err = netErrno()
+        } else {
+            self.err = getErrno()
+        }
+    }
+
+    fn setRet(self: &mut Self, r: i64): void {
+        self.ret = r
+    }
+
+    // Record: `n` bytes at `p` as the next output (absent when `p` is null or `n` < 0).
+    fn outFrom(self: &mut Self, p: *u8, n: i64): void {
+        if p as i64 == 0 || n < 0 {
+            self.lens.push(-1)
+            return
+        }
+        self.lens.push(n)
+        unsafe { self.data.pushStr(_bytesToString(p, n)) }
+    }
+
+    // Record: the NUL-terminated string at `p` (within `cap` bytes when `cap` >= 0),
+    // terminator included.
+    fn outCstr(self: &mut Self, p: *u8, cap: i64): void {
+        if p as i64 == 0 {
+            self.lens.push(-1)
+            return
+        }
+        var n: i64 = 0
+        unsafe {
+            while (cap < 0 || n < cap) && p[n] != 0 {
+                n += 1
+            }
+        }
+        if cap < 0 || n < cap {
+            n += 1
+        }
+        self.outFrom(p, n)
+    }
+
+    // Record: write the record, then put errno back (the write is a syscall too).
+    fn put(self: &mut Self, net: bool): void {
+        var p = String.withCapacity(32 + self.data.len())
+        p.pushStr(self.ret.toString())
+        p.push(' ')
+        p.pushStr(self.err.toString())
+        for n in self.lens {
+            p.push(' ')
+            p.pushStr(n.toString())
+        }
+        p.push('\n')
+        p.pushStr(self.data)
+        replayPut(self.kind, self.arg, p)
+        if net {
+            setNetErrno(self.err)
+        } else {
+            setErrno(self.err)
+        }
+    }
 }

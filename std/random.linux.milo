@@ -7,6 +7,7 @@ from "std/replay" import {
 pub extern fn getentropy(_buf: *u8, _len: i64): i32
 
 // Random u32 in [0, 2^32).
+@replayHooked
 fn osRandU32(): u32 {
     var val: u32 = 0
     unsafe {
@@ -16,6 +17,7 @@ fn osRandU32(): u32 {
 }
 
 // Random i64 in [0, max). Panics if max <= 0.
+@replayHooked
 fn randInt(max: i64): i64 {
     if max <= 0 {
         eprint("randInt: max must be > 0")
@@ -62,6 +64,7 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
 }
 
 // Fill a buffer with random bytes.
+@replayHooked
 fn osRandBytes(buf: *u8, n: i64): void {
     unsafe {
         // getentropy limited to 256 bytes per call

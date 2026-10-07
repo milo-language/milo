@@ -139,6 +139,7 @@ pub fn getSockPort(fd: i32): i32 {
     return getSockPortLive(fd)
 }
 
+@replayHooked
 fn getSockPortLive(fd: i32): i32 {
     unsafe {
         var st = makeZeroedSockaddrStorage()
@@ -195,6 +196,7 @@ pub fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
 // synthetic: a TcpStream, File or Child under replay has no OS fd behind it and works.
 
 // One read(2): bytes read, 0 at EOF, <0 with errno set.
+@replayHooked
 pub fn sysRead(fd: i32, buf: *u8, len: i64): i64 {
     if replayOff() {
         unsafe { return read(fd, buf, len) }
@@ -203,6 +205,7 @@ pub fn sysRead(fd: i32, buf: *u8, len: i64): i64 {
 }
 
 // One write(2): bytes written, <0 with errno set.
+@replayHooked
 pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64 {
     if replayOff() {
         unsafe { return write(fd, buf, len) }
@@ -227,6 +230,7 @@ pub fn sysSend(fd: i32, buf: *u8, len: i64): i64 {
 }
 
 // open(2) with a creation mode (ignored unless `flags` creates). The fd, or <0.
+@replayHooked
 pub fn sysOpen(path: &string, flags: i32, mode: i32): i32 {
     if replayOff() {
         unsafe { return open(path, flags, mode) }
@@ -236,6 +240,7 @@ pub fn sysOpen(path: &string, flags: i32, mode: i32): i32 {
 
 // dup(2). Under replay the duplicate of a descriptor is synthetic like everything else
 // the trace hands out, and keeps the original's record kinds.
+@replayHooked
 pub fn sysDup(fd: i32): i32 {
     if replayOff() {
         unsafe { return dup(fd) }
@@ -251,6 +256,7 @@ pub fn sysDup(fd: i32): i32 {
 
 // waitpid(2) through the trace: the return value and the status word the kernel wrote.
 // Under replay no child exists; the recorded exit comes back.
+@replayHooked
 pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
     if replayOff() {
         unsafe { return waitpid(pid, status, options) }
@@ -280,6 +286,7 @@ pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
 
 // kill(2) through the trace. Under replay no signal is sent: the pid is the recorded
 // run's, and whatever has it now is not ours.
+@replayHooked
 pub fn sysKill(pid: i32, sig: i32): i32 {
     if replayOff() {
         unsafe { return kill(pid, sig) }
@@ -292,6 +299,7 @@ pub fn sysKill(pid: i32, sig: i32): i32 {
 }
 
 // isatty(3) through the trace: whether a descriptor is a terminal is an input too.
+@replayHooked
 pub fn sysIsatty(fd: i32): bool {
     if replayOff() {
         unsafe { return isatty(fd) == 1 }
@@ -304,6 +312,7 @@ pub fn sysIsatty(fd: i32): bool {
 }
 
 // close(2). Under replay a synthetic descriptor is forgotten, never passed to the OS.
+@replayHooked
 pub fn sysClose(fd: i32): i32 {
     if replayOff() {
         unsafe { return close(fd) }
@@ -312,6 +321,7 @@ pub fn sysClose(fd: i32): i32 {
 }
 
 // lseek(2): the new offset, or <0.
+@replayHooked
 pub fn sysLseek(fd: i32, off: i64, whence: i32): i64 {
     if replayOff() {
         unsafe { return lseek(fd, off, whence) }
@@ -320,6 +330,7 @@ pub fn sysLseek(fd: i32, off: i64, whence: i32): i64 {
 }
 
 // socket(2). Under replay the recorded number comes back as a synthetic socket.
+@replayHooked
 pub fn sysSocket(domain: i32, sockType: i32, protocol: i32): i32 {
     if replayOff() {
         unsafe { return socket(domain, sockType, protocol) }
@@ -334,6 +345,7 @@ pub fn sysSocket(domain: i32, sockType: i32, protocol: i32): i32 {
 }
 
 // listen(2).
+@replayHooked
 pub fn sysListen(fd: i32, backlog: i32): i32 {
     if replayOff() {
         unsafe { return listen(fd, backlog) }
@@ -346,6 +358,7 @@ pub fn sysListen(fd: i32, backlog: i32): i32 {
 }
 
 // bind(2) on a raw address; the per-family bindIn/bindIn6/bindUn are what callers use.
+@replayHooked
 fn bindFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if replayOff() {
         unsafe { return bind(fd, addr, addrlen) }
@@ -361,6 +374,7 @@ fn bindFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
 
 // One connect(2) attempt. The address is part of the record, so a replay connecting
 // somewhere else diverges.
+@replayHooked
 fn connectOnce(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if replayOff() {
         unsafe { return connect(fd, addr, addrlen) }
@@ -389,6 +403,7 @@ pub fn sysAccept(fd: i32): i32 {
 
 // Storage-sized, not sockaddr_in-sized: the kernel writes whatever family the peer
 // used, and a v6 peer needs 28 bytes.
+@replayHooked
 fn acceptLive(fd: i32): i32 {
     var clientAddr = makeZeroedSockaddrStorage()
     var addrlen: u32 = sockAddrStorageLen()
@@ -406,6 +421,7 @@ fn connectResult(fd: i32): i32 {
     }) as i32
 }
 
+@replayHooked
 fn connectResultLive(fd: i32): i32 {
     var err: i32 = 0
     var len: u32 = 4

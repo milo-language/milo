@@ -91,6 +91,7 @@ var sigPipeW: [i32; 64] = [-1; 64]
 // The handler is shared across signals, so it learns which pipe to write from its
 // argument — the only input a C signal handler gets. Bounds-checked because a signal
 // number outside the table would otherwise index off the end inside a handler.
+@replayHooked
 fn sigPipeHandler(sig: i32): void {
     unsafe {
         if sig > 0 && sig < 64 {
@@ -108,6 +109,7 @@ fn sigPipeHandler(sig: i32): void {
 // call drainSignalFd after it wakes. One pipe per signal, so several can be armed at
 // once (SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
 // Re-installing the same signal replaces its pipe.
+@replayHooked
 pub fn installSignalPipe(sig: i32): i32 {
     if sig <= 0 || sig >= 64 {
         return -1
@@ -130,6 +132,7 @@ pub fn installSignalPipe(sig: i32): i32 {
 }
 
 // Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
+@replayHooked
 pub fn drainSignalFd(fd: i32): void {
     unsafe {
         var buf: [u8; 64] = [0; 64]

@@ -58,6 +58,7 @@ from "std/platform" import {
 
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
+@replayHooked
 pub fn run(cmd: &string): Result<i32> {
     let status = replayRet("proc.run", cmd, false, (): i64 => {
         unsafe {
@@ -129,6 +130,7 @@ impl Process {
     }
 }
 
+@replayHooked
 fn processSpawnLive(path: &string): i32 {
     var pid: i32 = 0
     unsafe { pid = fork() }
@@ -526,6 +528,7 @@ fn noStreamFds(): StreamFds {
 
 // Open one standard stream. `childWrites` selects the direction, which is what makes
 // Stdio.Read valid only on stdin and Stdio.Write/Append only on stdout and stderr.
+@replayHooked
 fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> {
     unsafe {
         match mode {
@@ -603,6 +606,7 @@ fn openStdio(mode: &Stdio, childWrites: bool, label: string): Result<StreamFds> 
     }
 }
 
+@replayHooked
 fn closeStreamFds(fds: &StreamFds): void {
     if fds.child >= 0 {
         unsafe { close(fds.child) }
@@ -650,6 +654,7 @@ fn commandSpawn(cmd: &Command): Result<Child> {
     })
 }
 
+@replayHooked
 fn commandSpawnLive(cmd: &Command): Result<Child> {
     unsafe {
         let inFds = match openStdio(cmd.inMode, false, "stdin") {
@@ -918,6 +923,7 @@ pub fn freeArgv(argv: *u8, argc: i64): void {
 
 // Run `cmd` through the shell and return its stdout and stderr, merged. Errs if the
 // command exits non-zero.
+@replayHooked
 pub fn capture(cmd: &string): Result<string> {
     // Process-unique: a fixed path here let concurrent callers (e.g. milo-self
     // builds under the sweep harness) truncate/read each other's capture file

@@ -8,6 +8,9 @@
 // registration silently watched fd 0: no green-IO fixture ever completed on
 // linux-arm64. We store the fd in `data` as an i32 and read it back from the same offset.
 
+// std/replay orders this module's operations itself; its extern calls stay direct.
+@!replayHooked
+
 from "std/replay" import {
     replayActive
 }

@@ -415,6 +415,7 @@ pub fn resolve(hostname: &string): Result<u32, NetError> {
     return resolveLive(hostname)
 }
 
+@replayHooked
 fn resolveLive(hostname: &string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {

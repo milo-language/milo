@@ -26,6 +26,7 @@ export class Parser {
   private pos = 0;
   private codePointLoopCounter = 0;
   private moduleWrapping = false; // set by a file-level `@!wrapping` directive
+  private moduleReplayHooked = false; // set by a file-level `@!replayHooked` directive
 
   // Builtins that may be written with the `@` sigil in expression position. These
   // are compile-time-only: the compiler, not the runtime, does the work.
@@ -150,9 +151,10 @@ export class Parser {
       while (this.at(TokenKind.At)) {
         const a = this.parseAttribute();
         if (a.inner) {
-          if (a.name !== "wrapping") this.error(`unknown module directive '@!${a.name}' — only '@!wrapping' is supported`, this.peek());
-          else if (a.args.length > 0) this.error(`'@!wrapping' takes no arguments`, this.peek());
-          else this.moduleWrapping = true;
+          if (a.name !== "wrapping" && a.name !== "replayHooked") this.error(`unknown module directive '@!${a.name}' — only '@!wrapping' and '@!replayHooked' are supported`, this.peek());
+          else if (a.args.length > 0) this.error(`'@!${a.name}' takes no arguments`, this.peek());
+          else if (a.name === "wrapping") this.moduleWrapping = true;
+          else this.moduleReplayHooked = true;
           continue;
         }
         if (!attrs) attrs = [];
@@ -251,7 +253,13 @@ export class Parser {
     if (this.moduleWrapping) {
       for (const f of functions) if (!f.isExtern) f.fromWrappingModule = true;
     }
-    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates, ...(this.moduleWrapping && { moduleWrapping: true }) };
+    // `@!replayHooked`: every fn and method of this file records its own extern calls
+    // (std/replay and the runtime under it), so the compiler must not redirect them.
+    if (this.moduleReplayHooked) {
+      for (const f of functions) if (!f.isExtern) f.fromReplayHookedModule = true;
+      for (const im of impls) for (const m of im.methods) m.fromReplayHookedModule = true;
+    }
+    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals, deriveTemplates, ...(this.moduleWrapping && { moduleWrapping: true }), ...(this.moduleReplayHooked && { moduleReplayHooked: true }) };
   }
 
   private parseImport(): ImportDecl {

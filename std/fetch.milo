@@ -111,6 +111,7 @@ impl TlsStream {
     // socket must carry plaintext first, so TLS setup cannot own the connect() too.
     // OWNERSHIP: fd is taken over by the returned TlsStream, and closed on every error
     // path here. The caller must neither close it nor keep using it.
+    @replayHooked
     fn fromFd(fd: i32, hostname: &string, caFile: &string): Result<TlsStream, NetError> {
         unsafe {
             let method = TLS_client_method()

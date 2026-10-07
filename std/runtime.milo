@@ -21,6 +21,8 @@
 // arms register their fd with the event loop; the poll loop claims the owning
 // Select when the fd fires or a timer deadline passes.
 
+@!replayHooked
+
 from "std/os" import {
     malloc, free, memcpy, memset
 }
@@ -41,7 +43,7 @@ from "std/time" import {
     unrecordedEpochMillis
 }
 from "std/replay" import {
-    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadWarn
+    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadSpawn, replayThreadStart, replayThreadExit
 }
 
 // ── constants ──
@@ -563,13 +565,17 @@ impl Task {
 // foreign-thread branch → xfer list + eventLoopNotify) is what lets a green
 // awaiter park and be woken from this foreign thread.
 
-// pthread entry: unpacks { fnPtr, envPtr }, runs the void closure, frees both.
+// pthread entry: unpacks { fnPtr, envPtr, replay thread number }, runs the void
+// closure, frees both.
 fn osThreadTrampoline(arg: *u8): *u8 {
     unsafe {
         var fnPtr: *u8 = 0 as *u8
         var envPtr: *u8 = 0 as *u8
+        var rrTid: i64 = 0
         memcpy((fnPtr.addrOf()) as *u8, arg, 8)
         memcpy((envPtr.addrOf()) as *u8, (arg as i64 + 8) as *u8, 8)
+        memcpy((rrTid.addrOf()) as *u8, (arg as i64 + 16) as *u8, 8)
+        replayThreadStart(rrTid)
         _callClosureVoid(fnPtr, envPtr)
         // A closure environment's first word is its drop glue, and that glue is the whole
         // destructor: it drops each capture still live and then frees the block. Calling it
@@ -595,6 +601,7 @@ fn osThreadTrampoline(arg: *u8): *u8 {
             free(envPtr)
         }
         free(arg)
+        replayThreadExit()
         return 0 as *u8
     }
 }
@@ -607,12 +614,16 @@ fn osThreadTrampoline(arg: *u8): *u8 {
 // rejects unsynchronized mutable globals reached from its body.
 @thread
 pub fn spawnOsThreadDetached(f: move () => void): void {
+    // Under record/replay the thread is numbered (and the number recorded) before it
+    // exists, so its records and the order of its sync operations replay.
+    var rrTid: i64 = 0
     if !replayOff() {
-        replayThreadWarn()
+        rrTid = replayThreadSpawn()
     }
     unsafe {
-        let packed = malloc(16)
+        let packed = malloc(24)
         memcpy(packed, (f.addrOf()) as *u8, 16)
+        memcpy((packed as i64 + 16) as *u8, (rrTid.addrOf()) as *u8, 8)
         var tid: i64 = 0
         let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, osThreadTrampoline as *u8, packed)
         if r == 0 {

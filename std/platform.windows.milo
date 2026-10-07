@@ -13,6 +13,10 @@
 // The real APIs (VirtualAlloc, ioctlsocket/FIONBIO, CreateFiber, FindFirstFile) are the
 // later tiers in docs/roadmap.md.
 
+// The POSIX shims below are what std's own recording wrappers (std/os sys*, std/replay)
+// call, so their extern calls stay direct; a call that reaches them is already recorded.
+@!replayHooked
+
 from "std/os" import {
     htons
 }

@@ -39,6 +39,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct. |
 | `src/derive-template.ts` | User-defined `@derive(Trait)` — the template mechanism that lets a derive ship in a package instead of a compiler PR. |
 | `src/diagnostics.ts` | Elm-style error formatting: source context, carets and severity, shared by the CLI and the LSP so a message reads the same in a terminal and an editor. |
+| `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |
 | `src/fixes.ts` | Machine-applicable fixes for diagnostics whose hint is mechanical: the edit that makes the diagnostic go away, computed from the diagnostic and the file's text, and nothing else. |
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
@@ -57,6 +58,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/pkg.ts` | milo package-manager data layer: manifest (milo.json), lockfile (milo.lock), dependency source specs, cache-path resolution, and content-addressed tree hashing. |
 | `src/pkgcli.ts` | milo package-manager CLI verbs: init/new/add/remove/install/update/tree/why/ vendor/publish and the `tool` namespace (install/uninstall/list/run). |
 | `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
+| `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |

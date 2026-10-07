@@ -1781,6 +1781,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let heapSize: number | null = null;
   const rest: string[] = [];
   const denied = new Set<string>();
+  const warned = new Set<string>();
   const allowed = new Set<string>();
   // `--expect=<name>`: suppress like `--allow`, but report if the warning stops firing.
   const expected = new Set<string>();
@@ -1835,6 +1836,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--deny" && i + 1 < args.length) { denied.add(args[++i]); }
     else if (args[i].startsWith("--expect=")) { expected.add(args[i].slice(9)); }
     else if (args[i] === "--expect" && i + 1 < args.length) { expected.add(args[++i]); }
+    // `--replay-holes`: list every extern call record/replay cannot capture, as warnings.
+    else if (args[i] === "--replay-holes") { warned.add("replay-hole"); }
     else if (args[i].startsWith("--allow=")) { allowed.add(args[i].slice(8)); }
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
     else if (args[i].startsWith("--max-stack-array=") || args[i] === "--max-stack-array") {
@@ -1882,7 +1885,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   // A hot host is -O0 and one unit: patches are compiled at -O0 against it, and the hot
   // transform runs on the whole module before any split could see it.
   if (hot) { optFlag = "-O0"; cguOverride = 1; }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed, expected, warned, maxStackArrayBytes }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks, contractChecks, staticDeps, emitAll, emitSpans, stripPanicLocations, hot, replayEnv };
 }
 
 const SKILL_TEXT = `# Milo Language Guide

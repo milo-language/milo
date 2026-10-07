@@ -1,6 +1,9 @@
 from "std/replay" import {
     replayActive
 }
+// std/replay orders this module's operations itself; its extern calls stay direct.
+@!replayHooked
+
 from "std/os" import {
     malloc,
     free,

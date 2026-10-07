@@ -160,6 +160,7 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
     return fileInfoLive(path)
 }
 
+@replayHooked
 fn fileInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
@@ -185,6 +186,7 @@ fn fileInfoLive(path: &string): Option<FileInfo> {
 }
 
 // Check whether a path is visible to this process.
+@replayHooked
 pub fn pathExists(path: &string): bool {
     return fsStatus("fs.access", "0 " + path, (): i64 => {
         unsafe {
@@ -194,6 +196,7 @@ pub fn pathExists(path: &string): bool {
 }
 
 // Check if a path is a directory.
+@replayHooked
 pub fn isDir(path: &string): bool {
     // opendir succeeds only for a directory (ENOTDIR for a file, ENOENT for a
     // missing path) — arch- and libc-independent, unlike reading the S_IFDIR bit
@@ -302,6 +305,7 @@ pub fn readDir(path: &string): Result<Vec<DirEntry>, IoError> {
     return readDirLive(path)
 }
 
+@replayHooked
 fn readDirLive(path: &string): Result<Vec<DirEntry>, IoError> {
     var entries: Vec<DirEntry> = Vec.new()
     unsafe {
@@ -396,6 +400,7 @@ fn errFd(msg: &string): Result<Unit, IoError> {
     return Result.Err(IoError.Other(msg.clone()))
 }
 
+@replayHooked
 pub fn removeFile(path: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.unlink", path, (): i64 => {
         unsafe {
@@ -408,6 +413,7 @@ pub fn removeFile(path: &string): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn makeDir(path: &string, mode: i32): Result<Unit, IoError> {
     let r = fsStatus("fs.mkdir", path, (): i64 => {
         unsafe {
@@ -420,6 +426,7 @@ pub fn makeDir(path: &string, mode: i32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn removeDir(path: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.rmdir", path, (): i64 => {
         unsafe {
@@ -432,6 +439,7 @@ pub fn removeDir(path: &string): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn renameFile(oldPath: &string, newPath: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.rename", oldPath + " " + newPath, (): i64 => {
         unsafe {
@@ -444,6 +452,7 @@ pub fn renameFile(oldPath: &string, newPath: &string): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn hardLink(existing: &string, newPath: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.link", existing + " " + newPath, (): i64 => {
         unsafe {
@@ -456,6 +465,7 @@ pub fn hardLink(existing: &string, newPath: &string): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn softLink(target: &string, path: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.symlink", target + " " + path, (): i64 => {
         unsafe {
@@ -491,6 +501,7 @@ pub fn readLink(path: &string): Result<string, IoError> {
     return readLinkLive(path)
 }
 
+@replayHooked
 fn readLinkLive(path: &string): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
@@ -526,6 +537,7 @@ pub fn realPath(path: &string): Result<string, IoError> {
     return realPathLive(path)
 }
 
+@replayHooked
 fn realPathLive(path: &string): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
@@ -537,6 +549,7 @@ fn realPathLive(path: &string): Result<string, IoError> {
     }
 }
 
+@replayHooked
 pub fn setMode(path: &string, mode: i32): Result<Unit, IoError> {
     let r = fsStatus("fs.chmod", mode.toString() + " " + path, (): i64 => {
         unsafe {
@@ -549,6 +562,7 @@ pub fn setMode(path: &string, mode: i32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError> {
     let r = fsStatus("fs.fchmod", fd.toString() + " " + mode.toString(), (): i64 => {
         unsafe {
@@ -561,6 +575,7 @@ pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn setOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
     let r = fsStatus("fs.chown", path, (): i64 => {
         unsafe {
@@ -573,6 +588,7 @@ pub fn setOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError> {
     let r = fsStatus("fs.fchown", fd.toString(), (): i64 => {
         unsafe {
@@ -585,6 +601,7 @@ pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
     let r = fsStatus("fs.lchown", path, (): i64 => {
         unsafe {
@@ -597,6 +614,7 @@ pub fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError> {
     let r = fsStatus("fs.truncate", length.toString() + " " + path, (): i64 => {
         unsafe {
@@ -609,6 +627,7 @@ pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
     let r = fsStatus("fs.ftruncate", fd.toString() + " " + length.toString(), (): i64 => {
         unsafe {
@@ -621,6 +640,7 @@ pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn syncFd(fd: i32): Result<Unit, IoError> {
     let r = fsStatus("fs.fsync", fd.toString(), (): i64 => {
         unsafe {
@@ -633,6 +653,7 @@ pub fn syncFd(fd: i32): Result<Unit, IoError> {
     return ok()
 }
 
+@replayHooked
 pub fn dataSyncFd(fd: i32): Result<Unit, IoError> {
     let r = fsStatus("fs.fdatasync", fd.toString(), (): i64 => {
         unsafe {
@@ -676,6 +697,7 @@ pub fn makeTempDir(prefix: &string): Result<string, IoError> {
     return makeTempDirLive(prefix)
 }
 
+@replayHooked
 fn makeTempDirLive(prefix: &string): Result<string, IoError> {
     // mkdtemp modifies template in place — copy into mutable buffer
     var buf: [u8; 4096] = [0; 4096]
@@ -731,6 +753,7 @@ pub fn makeTempFile(prefix: &string): Result<string, IoError> {
     return makeTempFileLive(prefix)
 }
 
+@replayHooked
 fn makeTempFileLive(prefix: &string): Result<string, IoError> {
     // mkstemp modifies template in place — copy into mutable buffer
     var buf: [u8; 4096] = [0; 4096]
@@ -775,6 +798,7 @@ pub fn currentDir(): Result<string, IoError> {
     return currentDirLive()
 }
 
+@replayHooked
 fn currentDirLive(): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
@@ -786,6 +810,7 @@ fn currentDirLive(): Result<string, IoError> {
     }
 }
 
+@replayHooked
 pub fn changeDir(path: &string): Result<Unit, IoError> {
     let r = fsStatus("fs.chdir", path, (): i64 => {
         unsafe {
@@ -807,6 +832,7 @@ pub fn lstatInfo(path: &string): Option<FileInfo> {
     return lstatInfoLive(path)
 }
 
+@replayHooked
 fn lstatInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
@@ -1164,6 +1190,7 @@ pub fn glob(root: &string, pattern: &string): Result<Vec<string>, IoError> {
 //
 // Intermediate directories briefly exist before the leaf does, so a failure part
 // way through leaves the prefix it managed to create.
+@replayHooked
 pub fn mkdirAll(path: &string, mode: i32): Result<Unit, IoError> {
     if path.len == 0 {
         return Result.Err(IoError.Other("mkdirAll: empty path"))
@@ -1291,6 +1318,7 @@ pub fn removeAll(path: &string): Result<Unit, IoError> {
 // not copied either, and a sparse file is copied dense.
 //
 // On failure `dst` is left truncated or partially written, not removed.
+@replayHooked
 pub fn copyFile(src: &string, dst: &string): Result<Unit, IoError> {
     if isDir(src) {
         return Result.Err(IoError.IsDirectory(src.clone()))

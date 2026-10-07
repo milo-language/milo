@@ -51,6 +51,7 @@ pub fn envVars(): Vec<EnvEntry> {
     return live
 }
 
+@replayHooked
 fn osEnvVars(): Vec<EnvEntry> {
     var out: Vec<EnvEntry> = Vec.new()
     unsafe {

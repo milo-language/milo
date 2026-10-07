@@ -114,7 +114,7 @@ test("record, then replay under a different env, argv and clock: byte-identical 
   expect(rec.err).toBe("");
   expect(rec.code).toBe(0);
   recordedOut = rec.out;
-  expect(readFileSync(recorded(), "utf-8").startsWith("milo-trace 1\n")).toBe(true);
+  expect(readFileSync(recorded(), "utf-8").startsWith("milo-trace 2\n")).toBe(true);
   // The child-inheritance guard: std/replay removes the variable once it has read it.
   expect(rec.out).toContain("record var <unset>\n");
 
@@ -204,7 +204,7 @@ test("a missing or foreign trace, or both variables set, is refused with exit co
   writeFileSync(foreign, "1 time.wall 0 3\n\n1 2\n");
   const bad = run(prog, [], { MILO_REPLAY: foreign });
   expect(bad.code).toBe(3);
-  expect(bad.err).toContain("is not a milo-trace version 1 file");
+  expect(bad.err).toContain("is not a milo-trace version 2 file");
   const both = run(prog, [], { MILO_REPLAY: recorded(), MILO_RECORD: join(dir, "x.mrr") });
   expect(both.code).toBe(3);
   expect(both.err).toContain("MILO_RECORD and MILO_REPLAY are both set");
@@ -227,12 +227,11 @@ test("with neither variable set (or set empty) every read goes to the OS, as bef
   expect(existsSync(join(dir, "x.mrr"))).toBe(false);
 }, 60000);
 
-// The trace is single-writer: only the main OS thread (main plus every green task)
-// records or replays. A Promise.blocking worker reaching a hook asks the OS, which is
-// what lets std/replay keep its state in thread-locals with no lock, and is what the
-// checker's thread-boundary race check requires to compile at all (dapweb reads the
-// environment on a worker).
-test("a hooked call on an OS thread compiles and reads the OS, unrecorded", () => {
+// Phase 4: a Promise.blocking worker's hooked calls are recorded too, tagged with the
+// worker's thread number, and replayed on that thread. It still has to compile under the
+// checker's thread-boundary race check (dapweb reads the environment on a worker), which
+// is why std/replay's shared state is only written inside its @synchronized lock.
+test("a hooked call on an OS thread is recorded and replayed on that thread", () => {
   const bin = build("worker", `from "std/env" import { Env }
 from "std/runtime" import { Promise }
 
@@ -249,9 +248,10 @@ fn main() {
   expect(rec.code).toBe(0);
   expect(rec.out).toBe("main rec\nworker rec\n");
   const rep = run(bin, [], { MILO_REPLAY: trace, RR_VALUE: "live" });
-  // Said once, so a replay that may diverge on the thread's timing is not silent.
-  expect(rep.err).toContain("starts an OS thread");
-  expect(rep.out).toBe("main rec\nworker live\n");
+  expect(rep.code).toBe(0);
+  expect(rep.err).toBe("");
+  expect(rep.out).toBe("main rec\nworker rec\n");
+  expect(readFileSync(trace, "latin1")).toMatch(/\n\d+ env\.get 8 \d+ 1\n/);
 });
 
 test("HashMap iteration order is fixed under record and replay, entropy-seeded otherwise", () => {

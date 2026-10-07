@@ -203,6 +203,26 @@ export const ATTRIBUTES: AttrInfo[] = [
     doc: "Give this function external C linkage so a dlopen'd library can resolve it.",
   },
   {
+    name: "records",
+    targets: ["fn", "extern"],
+    takesArgs: true,
+    doc:
+      "Describe what an extern writes so record/replay can capture it: one string per output " +
+      "buffer, `@records(\"buf[ret]\", \"len[4]\")` (sizes: a param, `ret`, a byte count, " +
+      "`*p` for the count `p` points at, `cstr`). Under MILO_RECORD the call's return value, " +
+      "errno and those bytes are recorded; under MILO_REPLAY the call is not made and they are " +
+      "copied back. With no arguments, only the return value is recorded. An extern taking a " +
+      "pointer that has neither this nor a std catalog entry is a replay hole (`replay-hole`).",
+  },
+  {
+    name: "replayHooked",
+    targets: ["fn", "method"],
+    doc:
+      "This function records its own extern calls through std/replay (std's `sys*` wrappers), " +
+      "so the compiler must not redirect them under record/replay. Also a file-level " +
+      "directive, `@!replayHooked`, for std/replay and the runtime beneath it.",
+  },
+  {
     name: "link",
     targets: ["fn", "extern"],
     takesArgs: true,

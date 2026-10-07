@@ -23,6 +23,8 @@ export interface WarningConfig {
   // that outlives its cause is silent forever and nothing ever deletes it; an `expect`
   // deletes itself the moment the code it excused is fixed.
   expected?: Set<string>;
+  // Off-by-default warnings turned on as warnings rather than errors (`--replay-holes`).
+  warned?: Set<string>;
   // Byte threshold for the `large-stack-array` lint (`--max-stack-array`).
   // Undefined → the checker's built-in default (512 KiB).
   maxStackArrayBytes?: number;

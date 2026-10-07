@@ -10,6 +10,7 @@ import { suggestions, didYouMean, importHint, stdModuleNames } from "./suggest";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
+import { planReplayWrappers, RR_WRAPPER_FILE, RR_IMPORTS } from "./replay-externs";
 import { collectModulePrivateDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type DisplayNames, type PkgDeclNames } from "./mangle";
 
 // repo root: walk up from src/ to find the directory containing std/.
@@ -490,6 +491,26 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   processImports(program, sourceDir, "", entryUnit);
 
+  // Record/replay wrappers for the externs this program calls (src/replay-externs.ts).
+  // Planned twice: the first pass only decides whether std/replay is needed at all (a
+  // program with no such call compiles exactly as before); loading it brings in std/os
+  // and std/platform, whose own calls the second pass then sees.
+  let replayPlans: Map<string, import("./replay-externs").ReplayPlan> | undefined;
+  if (!process.env.MILO_NO_REPLAY_WRAPPERS && planReplayWrappers(units.map(u => u.prog), target)) {
+    const importLine = `from "std/replay" import { ${RR_IMPORTS.join(", ")} }\n`;
+    const stub = new Parser(new Lexer(importLine).tokenize(), importLine, RR_WRAPPER_FILE).parse();
+    const rrUnit: Unit = { prog: stub, file: RR_WRAPPER_FILE, pkg: "", targets: [] };
+    processImports(stub, STDLIB_DIR, "", rrUnit);
+    const planned = planReplayWrappers(units.map(u => u.prog), target);
+    if (planned) {
+      const wrappers = new Parser(new Lexer(planned.source).tokenize(), planned.source, RR_WRAPPER_FILE).parse();
+      for (const f of wrappers.functions) f.sourceFile = RR_WRAPPER_FILE;
+      rrUnit.prog = wrappers;
+      units.push(rrUnit);
+      replayPlans = planned.plans;
+    }
+  }
+
   // Imported names the entry file never mentions. Computed here because this is the last
   // point the entry's own AST exists apart from the merged one — and, since mangling
   // rewrites references in place, the last point its names are still as written.
@@ -913,5 +934,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible, ...(replayPlans && { replayPlans }) };
 }
