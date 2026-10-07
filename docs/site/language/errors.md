@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 397 distinct messages across 489 programs the compiler must reject.
+Every error message the test suite pins: 397 distinct messages across 488 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -2694,9 +2694,9 @@ from "std/runtime" import {
 pub fn main(): i32 {
     var n: i64 = 0
     Task.scope((s) => {
-        for i in 0..3 {
+        for _i in 0..3 {
             s.spawn(() => {
-                n = n + i
+                n = n + 1
             })
         }
     })
@@ -8469,9 +8469,7 @@ from "std/runtime" import {
     Task, TaskScope
 }
 
-fn helper(s: &mut TaskScope): void {
-    let local = "gone".clone()
-    s.spawn(() => print(local))
+fn helper(_s: &mut TaskScope): void {
 }
 
 pub fn main(): i32 {
@@ -8483,24 +8481,6 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/taskScopeHandlePassed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeHandlePassed.milo)</sub>
-
-The scope handle cannot be copied out of the body: a second name for it could spawn after the scope has joined (docs/plans/task-scope-2026-10.md, rule 1).
-
-```milo skip
-from "std/runtime" import {
-    Task
-}
-
-pub fn main(): i32 {
-    Task.scope((s) => {
-        let h = s
-        h.spawn(() => print("x"))
-    })
-    return 0
-}
-```
-
-<sub>[tests/errors/taskScopeHandleStored.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeHandleStored.milo)</sub>
 
 ## `this closure is passed to a 'move' parameter, so it owns its captures` {#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures}
 

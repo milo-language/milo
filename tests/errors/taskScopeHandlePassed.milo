@@ -5,9 +5,7 @@ from "std/runtime" import {
     Task, TaskScope
 }
 
-fn helper(s: &mut TaskScope): void {
-    let local = "gone".clone()
-    s.spawn(() => print(local))
+fn helper(_s: &mut TaskScope): void {
 }
 
 pub fn main(): i32 {

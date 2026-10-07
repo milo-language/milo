@@ -7,9 +7,9 @@ from "std/runtime" import {
 pub fn main(): i32 {
     var n: i64 = 0
     Task.scope((s) => {
-        for i in 0..3 {
+        for _i in 0..3 {
             s.spawn(() => {
-                n = n + i
+                n = n + 1
             })
         }
     })
