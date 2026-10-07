@@ -39,7 +39,9 @@
 from "std/os" import {
     htons,
     execvp,
-    memcpy
+    memcpy,
+    waitpid,
+    kill
 }
 
 // Fields carry C's spelling, not Milo camelCase — see platform.darwin.milo's comment.
@@ -607,4 +609,29 @@ pub extern fn dlerror(): *u8
 // replay says addresses may differ.
 pub fn aslrReexec(_argv: *u8): bool {
     return false
+}
+
+// ── child processes: waitpid(2), kill(2) ──
+// What std/os's sysWaitpid and sysKill call. They live per target because Windows has
+// neither symbol: std/os is loaded everywhere, and its direct calls left every Windows
+// program that imports it with two unresolved externals at link time.
+
+// waitpid(2): the reaped pid, 0 with WNOHANG and nothing to reap, or <0 with errno set.
+@replayHooked
+pub fn waitpidRaw(pid: i32, status: *u8, options: i32): i32 {
+    unsafe { return waitpid(pid, status, options) }
+}
+
+// kill(2): 0 when the signal was sent, <0 with errno set.
+@replayHooked
+pub fn killRaw(pid: i32, sig: i32): i32 {
+    unsafe { return kill(pid, sig) }
+}
+
+// ── record/replay: core dumps ──
+
+// Whether [p, p+len) goes into a core dump. Only Linux can exclude a range (see
+// platform.linux.milo); here every mapping is dumped as the OS decides.
+pub fn memSetDumpable(_p: *u8, _len: i64, _yes: bool): void {
+    return
 }

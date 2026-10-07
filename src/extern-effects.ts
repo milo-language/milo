@@ -134,6 +134,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   mmap: local(man(2, "mmap")),
   munmap: local(man(2, "munmap")),
   mprotect: local(man(2, "mprotect")),
+  madvise: local(man(2, "madvise")),
   VirtualAlloc: local(win("VirtualAlloc")),
   VirtualFree: local(win("VirtualFree")),
   VirtualProtect: local(win("VirtualProtect")),

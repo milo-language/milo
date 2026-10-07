@@ -492,18 +492,19 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   processImports(program, sourceDir, "", entryUnit);
 
   // Record/replay wrappers for the externs this program calls (src/replay-externs.ts).
-  // Planned twice: the first pass only decides whether std/replay is needed at all (a
-  // program with no such call compiles exactly as before); loading it brings in std/os
-  // and std/platform, whose own calls the second pass then sees.
+  // Only for a program that already links the engine: one that loads no std module
+  // importing std/replay has no recorder, so MILO_RECORD records nothing for it and a
+  // wrapper would have nothing to write to. Importing std/replay here instead would pull
+  // std/replay, std/os and std/platform (~560 fns, 7x the IR of a small FFI program) into
+  // a program that never asked for them, and put their flat pub names (`pipe`, `close`)
+  // into its namespace, where they rebind the program's own decls of those names.
   let replayPlans: Map<string, import("./replay-externs").ReplayPlan> | undefined;
-  if (planReplayWrappers(units.map(u => u.prog), target)) {
+  const replayFile = resolve(STDLIB_DIR, "std", "replay.milo");
+  if (units.some(u => u.file === replayFile)) {
     const importLine = `from "std/replay" import { ${RR_IMPORTS.join(", ")} }\n`;
     const stub = new Parser(new Lexer(importLine).tokenize(), importLine, RR_WRAPPER_FILE).parse();
     const rrUnit: Unit = { prog: stub, file: RR_WRAPPER_FILE, pkg: "", targets: [] };
-    const before = units.length;
     processImports(stub, STDLIB_DIR, "", rrUnit);
-    // The modules this pulled in merge after the entry file, exactly as an import of
-    // them would: the merge is last-wins (see the extern-attribute carry below).
     const planned = planReplayWrappers(units.map(u => u.prog), target);
     if (planned) {
       const wrappers = new Parser(new Lexer(planned.source).tokenize(), planned.source, RR_WRAPPER_FILE).parse();

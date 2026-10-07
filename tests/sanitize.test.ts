@@ -200,6 +200,10 @@ pub fn main(): i32 {
       out = (e.stdout ?? "") + (e.stderr ?? "");
     }
     expect(out).not.toContain("AddressSanitizer");
-    expect(out.trim().split("\n")).toEqual(want);
+    // Linux ASan's swapcontext interceptor prints this once per process whenever green
+    // tasks switch stacks (closureBodyDropSpawn); it is a notice, not a finding, and no
+    // ASAN_OPTIONS turns it off.
+    const lines = out.trim().split("\n").filter(l => !/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext/.test(l));
+    expect(lines).toEqual(want);
   }
 }, 300_000);

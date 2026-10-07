@@ -1,7 +1,7 @@
 // platform-specific constants and helpers for Linux
 
 from "std/os" import {
-    htons, readlink, memcpy
+    htons, readlink, memcpy, waitpid, kill
 }
 
 // C's spelling, not Milo camelCase — @cLayout emits offsetof() with the name verbatim.
@@ -637,4 +637,39 @@ pub fn aslrReexec(argv: *u8): bool {
         execve("/proc/self/exe" as *u8, argv, environBlock() as *u8)
     }
     return false
+}
+
+// ── child processes: waitpid(2), kill(2) ──
+// What std/os's sysWaitpid and sysKill call. They live per target because Windows has
+// neither symbol: std/os is loaded everywhere, and its direct calls left every Windows
+// program that imports it with two unresolved externals at link time.
+
+// waitpid(2): the reaped pid, 0 with WNOHANG and nothing to reap, or <0 with errno set.
+@replayHooked
+pub fn waitpidRaw(pid: i32, status: *u8, options: i32): i32 {
+    unsafe { return waitpid(pid, status, options) }
+}
+
+// kill(2): 0 when the signal was sent, <0 with errno set.
+@replayHooked
+pub fn killRaw(pid: i32, sig: i32): i32 {
+    unsafe { return kill(pid, sig) }
+}
+
+// ── record/replay: core dumps ──
+
+@cSig("sys/mman.h", "int madvise(void *, size_t, int)")
+pub extern fn madvise(addr: *u8, len: i64, advice: i32): i32
+
+// Whether [p, p+len) goes into a core dump (MADV_DODUMP / MADV_DONTDUMP). std/replay's
+// fixed heap reserves 8 GB per region and marks only what it has handed out: a core of
+// the whole reservation is 8 GB of zeros written down systemd-coredump's or apport's
+// pipe, which is how a replay stopped by SIGTRAP took 30 s to die on a CI runner.
+@replayHooked
+pub fn memSetDumpable(p: *u8, len: i64, yes: bool): void {
+    var advice: i32 = 16
+    if yes {
+        advice = 17
+    }
+    unsafe { madvise(p, len, advice) }
 }

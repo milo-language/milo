@@ -117,6 +117,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/regex`](regex) | Regular expression matching — `Regex.compile`, `.isMatch`, `.find` |
 | [`std/sort`](sort) | Sorting for Vec — `sortI32`, `sortI64`, `sortStrings` |
 | [`std/testing`](testing) | `assert`, `assertEqual`, `assertStrEqual` |
+| [`std/replay`](replay) | The record/replay engine behind `MILO_RECORD` / `MILO_REPLAY`: `replayOff`, `replayRet`, `replayBlob` |
 | [`std/log`](log) | Leveled structured logging — `Log`, `Logger`, `LogLevel`, `LogFormat` |
 | [`std/mem`](mem) | `mmapAnon`, `mmapFile`, `Bump` bump allocator |
 | [`std/pool`](pool) | Fixed-size block pool allocator: `Pool` |

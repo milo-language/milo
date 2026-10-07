@@ -21,7 +21,7 @@ from "std/os" import {
 from "std/platform" import {
     open, read, write, close, lseek, sockRead, sockWrite, envUnset, oReadBinary, oWriteCreateTrunc,
     getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap, usleep,
-    envSet, aslrReexec, mmap, mprotect, protRead, protWrite, mapPrivate, mapAnon
+    envSet, aslrReexec, mmap, mprotect, protRead, protWrite, mapPrivate, mapAnon, memSetDumpable
 }
 
 // Bumped only when the record framing changes. A new record kind is additive: an
@@ -299,6 +299,9 @@ var rrHeapOn: i64 = 0
 var rrHeapMapped: [i64; 16] = [0; 16]
 var rrHeapBump: [i64; 16] = [0; 16]
 var rrHeapPageBump: [i64; 16] = [0; 16]
+// How far into each region's small-object and page areas a core dump reaches (heapDumpTo).
+var rrHeapDumpTo: [i64; 16] = [0; 16]
+var rrPageDumpTo: [i64; 16] = [0; 16]
 var rrHeapLocks: [i64; 16] = [0; 16]
 var rrHeapFree: [i64; 512] = [0; 512]
 // Freed page blocks per region, as (address, length) pairs, reused by exact length.
@@ -357,7 +360,24 @@ fn heapMapRegion(r: i64): bool {
             return false
         }
         slots[r] = 1
+        // Out of core dumps until handed out: heapDumpTo adds it back as the bumps grow.
+        memSetDumpable(got, RR_REGION, false)
         return true
+    }
+}
+
+// Put region `r`'s area at offset `area` back into core dumps up to `used` bytes, in 1 MB
+// steps so a run of small allocations costs one madvise per megabyte. `marks` is the
+// area's per-region watermark array. Called with the region's lock held.
+fn heapDumpTo(marks: *i64, r: i64, area: i64, used: i64): void {
+    unsafe {
+        let have = marks[r]
+        if used <= have {
+            return
+        }
+        let to = (used + 1048575) / 1048576 * 1048576
+        memSetDumpable((RR_HEAP_BASE + r * RR_REGION + area + have) as *u8, to - have, true)
+        marks[r] = to
     }
 }
 
@@ -401,6 +421,7 @@ fn heapAlloc(n: i64): *u8 {
             }
             blk = RR_HEAP_BASE + r * RR_REGION + bumps[r]
             bumps[r] = bumps[r] + size
+            heapDumpTo(rrHeapDumpTo as *i64, r, 0, bumps[r])
         }
         let hdr = blk as *i64
         hdr[0] = c
@@ -521,6 +542,7 @@ pub fn replayHeapMap(len: i64): *u8 {
         }
         let p = RR_HEAP_BASE + r * RR_REGION + RR_PAGES_AT + bumps[r]
         bumps[r] = bumps[r] + want
+        heapDumpTo(rrPageDumpTo as *i64, r, RR_PAGES_AT, bumps[r])
         heapUnlock(r)
         return p as *u8
     }

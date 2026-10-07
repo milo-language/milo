@@ -133,7 +133,11 @@ used to bypass the trace. Now the compiler records it. For every extern a progra
 from code that does not record its own calls, `src/replay-externs.ts` generates a Milo
 wrapper, and the checker sends the call there (`redirectForReplay`); std's own recording
 functions (`sys*`, the `*Live` halves of the hooks, std/replay and the runtime under it)
-are marked `@replayHooked` / `@!replayHooked` and keep calling C directly. A wrapper:
+are marked `@replayHooked` / `@!replayHooked` and keep calling C directly. Wrappers are
+generated only for a program that already links std/replay (it imports any std module
+built on it: std/os, std/fs, std/io, std/runtime...). A program that links none has no
+recorder at all, so it is compiled exactly as before, with no engine and no wrappers. A
+wrapper:
 
 - with neither variable set, is skipped: the call site tests std/replay's mode word and
   calls the extern directly, one load and compare;

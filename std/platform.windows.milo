@@ -953,3 +953,25 @@ pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
 pub fn aslrReexec(_argv: *u8): bool {
     return false
 }
+
+// ── child processes: waitpid(2), kill(2) ──
+// The POSIX names std/os's sysWaitpid and sysKill call. The UCRT has neither; a Windows
+// child is a HANDLE (std/process.windows), never a pid these could act on, so both fail.
+
+// No waitpid on Windows: always -1.
+pub fn waitpidRaw(_pid: i32, _status: *u8, _options: i32): i32 {
+    return -1
+}
+
+// No kill on Windows: always -1.
+pub fn killRaw(_pid: i32, _sig: i32): i32 {
+    return -1
+}
+
+// ── record/replay: core dumps ──
+
+// Whether [p, p+len) goes into a core dump. Only Linux can exclude a range (see
+// platform.linux.milo); here every mapping is dumped as the OS decides.
+pub fn memSetDumpable(_p: *u8, _len: i64, _yes: bool): void {
+    return
+}

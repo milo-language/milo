@@ -244,6 +244,7 @@ const stdlibSidebar = [
       { text: 'std/regex', link: '/stdlib/regex' },
       { text: 'std/sort', link: '/stdlib/sort' },
       { text: 'std/testing', link: '/stdlib/testing' },
+      { text: 'std/replay', link: '/stdlib/replay' },
       { text: 'std/log', link: '/stdlib/log' },
       { text: 'std/mem', link: '/stdlib/mem' },
       { text: 'std/foreign', link: '/stdlib/foreign' },

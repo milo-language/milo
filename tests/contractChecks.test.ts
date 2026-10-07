@@ -15,6 +15,9 @@ import { tmpdir } from "os";
 const ROOT = join(import.meta.dir, "..");
 const MAIN = join(ROOT, "src", "main.ts");
 let dir = "";
+// A program that imports std/random links the std/os + std/replay cluster, whose IR is past
+// the 1 MB default; a truncated read is ENOBUFS, not a contract failure.
+const IR_BUF = 64 * 1024 * 1024;
 
 // randRange keeps the argument out of reach of constant folding — a literal -1 is a
 // compile error at every -O, which would test the checker instead of the codegen gate.
@@ -97,7 +100,7 @@ function build(out: string, extra: string[], src = "contract.milo") {
 
 function emitIr(extra: string[]): string {
   return execFileSync("bun", ["run", MAIN, "emit-ir", join(dir, "contract.milo"), ...extra],
-    { cwd: ROOT, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    { cwd: ROOT, encoding: "utf-8", maxBuffer: IR_BUF, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function run(bin: string): { out: string; code: number } {
@@ -171,7 +174,7 @@ test("old() costs nothing when contracts are not checked", () => {
   const r = run("oldRelease");
   expect(r.code).toBe(0);
   const ir = execFileSync("bun", ["run", MAIN, "emit-ir", join(dir, "old.milo"), "--release"],
-    { cwd: ROOT, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    { cwd: ROOT, encoding: "utf-8", maxBuffer: IR_BUF, stdio: ["pipe", "pipe", "pipe"] });
   expect(ir).not.toContain("contract_kind_ensures");
 }, 120000);
 

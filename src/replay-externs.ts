@@ -344,8 +344,11 @@ export function planReplayWrappers(programs: Program[], target: Target): { plans
   const calls = new Map<string, Set<number>>();
   for (const p of programs) {
     for (const f of p.functions) {
-      // Last wins, as in the resolver's merge: the decl the program ends up with.
+      // Last wins, as in the resolver's merge: the decl the program ends up with. A Milo
+      // fn that wins over an extern of the same name (a program's own `fn pipe` next to
+      // std/platform's `extern fn pipe`) is what every call binds to, wrapper included.
       if (f.isExtern) { externs.set(f.name, f); continue; }
+      externs.delete(f.name);
       if (!isReplayHookedFn(f)) collectCalls(f.body, calls);
     }
     for (const im of p.impls) for (const m of im.methods) if (!isReplayHookedFn(m)) collectCalls(m.body, calls);

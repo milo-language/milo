@@ -73,7 +73,7 @@ fn main() {
 `;
 
 function milo(args: string[]): string {
-  const r = spawnSync("bun", ["run", MAIN, ...args], { cwd: ROOT, encoding: "utf-8" });
+  const r = spawnSync("bun", ["run", MAIN, ...args], { cwd: ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`milo ${args.join(" ")} failed:\n${r.stderr}`);
   return r.stdout;
 }

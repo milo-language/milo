@@ -12,7 +12,7 @@ from "std/platform" import {
     pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy,
     mmap, munmap, mprotect,
     pipe,
-    read, write, open, close, lseek, access, getpid,
+    read, write, open, close, lseek, access, getpid, waitpidRaw, killRaw,
     sockRead, sockWrite
 }
 from "std/event" import {
@@ -259,13 +259,13 @@ pub fn sysDup(fd: i32): i32 {
 @replayHooked
 pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
     if replayOff() {
-        unsafe { return waitpid(pid, status, options) }
+        return waitpidRaw(pid, status, options)
     }
     let p = replayBlob("proc.wait", pid.toString() + " " + options.toString(), (): string => {
         var r: i32 = 0
         var st: i32 = 0
         unsafe {
-            r = waitpid(pid, status, options)
+            r = waitpidRaw(pid, status, options)
             st = _loadI32(status)
         }
         return r.toString() + " " + st.toString() + " " + getErrno().toString()
@@ -289,12 +289,10 @@ pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
 @replayHooked
 pub fn sysKill(pid: i32, sig: i32): i32 {
     if replayOff() {
-        unsafe { return kill(pid, sig) }
+        return killRaw(pid, sig)
     }
     return replayRet("proc.kill", pid.toString() + " " + sig.toString(), false, (): i64 => {
-        unsafe {
-            return kill(pid, sig) as i64
-        }
+        return killRaw(pid, sig) as i64
     }) as i32
 }
 
