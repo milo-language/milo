@@ -685,9 +685,21 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     for (const n of all.types) if (!renamed?.has(n)) stdPubTypes.add(n);
   }
 
+  // C functions std declares. A program's own fn with one of these names, `pub` or not,
+  // is renamed in its module: in the flat namespace it would otherwise take every call
+  // std makes to the C function (examples/games/neon's `pub fn kill(w, slot)` against
+  // std/os's sysKill calling kill(2)), and the shadows-stdlib check does not cover externs.
+  const stdExternNames = new Set<string>();
+  for (const u of units) {
+    if (u.pkg !== "" || !(preludeFiles.has(u.file) || u.file.startsWith(stdModuleRoot))) continue;
+    for (const f of u.prog.functions) if (f.isExtern) stdExternNames.add(f.name);
+  }
+
   for (const u of userUnits) {
     const priv = emptyPkgDecls();
     collectModulePrivateDecls(u.prog, priv);
+    const shadowsStdExtern = u.prog.functions.filter(f => !f.isExtern && f.name !== "main" && stdExternNames.has(f.name)
+      && !f.attributes?.some(a => a.name === "externalLinkage")).map(f => f.name);
     // A file that imports the std name AND declares its own is a real ambiguity in that
     // file; it keeps the duplicate-type error rather than silently picking one.
     const imported = new Set(u.targets.flatMap(t => t.names));
@@ -699,6 +711,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       for (const n of [...priv.values]) if (stdNames.has(n)) priv.values.delete(n);
       for (const n of [...priv.types]) if (stdNames.has(n) && !shadowsStdType(n)) priv.types.delete(n);
     }
+    for (const n of shadowsStdExtern) priv.values.add(n);
     if (priv.values.size === 0 && priv.types.size === 0) continue;
     modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
   }

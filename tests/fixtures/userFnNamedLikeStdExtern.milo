@@ -1,0 +1,21 @@
+// @expect: 3
+// @expect: true
+// A program's own `pub fn kill` and `fn pipe` share names with C functions std declares
+// (kill(2), pipe(2)). In the flat namespace they used to take std's own calls to those
+// functions, which then failed to type-check inside std/platform; the resolver now
+// renames the program's fns in their module instead.
+from "std/platform" import { getpid }
+
+pub fn kill(a: i64, b: i64): i64 {
+    return a + b
+}
+
+fn pipe(s: &string): bool {
+    return s.len() > 0
+}
+
+pub fn main(): i32 {
+    print(kill(1, 2))
+    unsafe { print(getpid() > 0 && pipe("x")) }
+    return 0
+}
