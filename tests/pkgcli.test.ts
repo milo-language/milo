@@ -106,7 +106,9 @@ describe("add / install / lock", () => {
     const lock = JSON.parse(readFileSync(join(dir, "milo.lock"), "utf-8"));
     expect(lock.lockVersion).toBe(1);
     expect(lock.packages.greet.url).toBe(GREET());
-    expect(lock.packages.greet.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // a path dep is edited in place, so neither pinned nor hashed
+    expect(lock.packages.greet.commit).toBe("local");
+    expect(lock.packages.greet.hash).toBe("local");
     expect(lock.packages.greet.deps).toEqual([]);
 
     // The whole point: the compiler resolves the import out of the cache the
@@ -225,15 +227,97 @@ describe("add / install / lock", () => {
     expect(run.out).toContain("1");    // a real enum still resolves as a type
   });
 
-  test("run auto-installs a locked dep whose cache entry is gone", () => {
+  test("a locked path dep needs no cache entry at all", () => {
     const dir = project("autoapp");
     expect(milo(dir, "init").code).toBe(0);
     expect(milo(dir, "add", GREET()).code).toBe(0);
     writeFileSync(join(dir, "main.milo"), `from "greet" import { greeting }\n\nfn main() {\n  print(greeting())\n}\n`);
-    rmSync(join(ROOT, "cache", "milo", "local"), { recursive: true, force: true });
+    rmSync(join(ROOT, "cache"), { recursive: true, force: true });
     const run = milo(dir, "run", "main.milo");
     expect(run.code).toBe(0);
     expect(run.out).toContain("hi from greet");
+  });
+});
+
+// A path dependency resolves straight to its directory, relative to the milo.json
+// that declares it. It used to be snapshotted into the cache keyed by the literal
+// spec, so every package whose tests/milo.json says "../" shared one entry
+// (milo-json-rpc and milo-sdl clobbered each other), and an edit to the dependency
+// compiled the stale snapshot until someone re-ran `milo install`.
+describe("local path deps", () => {
+  function selfTested(name: string, files: Record<string, string>): string {
+    const dir = writePkg(`self-${name}`, `{ "name": "${name}", "version": "0.1.0", "lib": "lib.milo" }`, {
+      "lib.milo": `pub fn id(): i32 {\n  return 1\n}\n`,
+      ...files,
+    });
+    mkdirSync(join(dir, "tests"), { recursive: true });
+    writeFileSync(join(dir, "tests", "milo.json"),
+      `{ "name": "${name}-tests", "version": "0.1.0", "deps": { "${name}": "../" } }`);
+    return dir;
+  }
+
+  test("two projects that both name \"../\" do not share an entry", () => {
+    const a = selfTested("la", { "frame.milo": `pub fn two(): i32 {\n  return 2\n}\n` });
+    const b = selfTested("lb", {});
+    writeFileSync(join(a, "tests", "t.milo"), `from "la/frame" import { two }\n\nfn main() {\n  print(two().toString())\n}\n`);
+    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    expect(milo(join(b, "tests"), "install").code).toBe(0);
+    const run = milo(join(a, "tests"), "run", "t.milo");
+    expect(run.err).not.toContain("cannot open module");
+    expect(run.code).toBe(0);
+    expect(run.out.trim()).toBe("2");
+  });
+
+  test("an edit to the dependency is live without re-installing", () => {
+    const a = selfTested("lc", { "frame.milo": `pub fn two(): i32 {\n  return 2\n}\n` });
+    writeFileSync(join(a, "tests", "t.milo"), `from "lc/frame" import { two }\n\nfn main() {\n  print(two().toString())\n}\n`);
+    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "run", "t.milo").out.trim()).toBe("2");
+    writeFileSync(join(a, "frame.milo"), `pub fn two(): i32 {\n  return 5\n}\n`);
+    expect(milo(join(a, "tests"), "run", "t.milo").out.trim()).toBe("5");
+  });
+
+  test("the lock records the spelled path and a 'local' commit, and stays put across edits", () => {
+    const a = selfTested("ld", {});
+    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    const lockPath = join(a, "tests", "milo.lock");
+    const lock = JSON.parse(readFileSync(lockPath, "utf-8"));
+    expect(lock.packages.ld.url).toBe("../");
+    expect(lock.packages.ld.commit).toBe("local");
+    writeFileSync(join(a, "lib.milo"), `pub fn id(): i32 {\n  return 7\n}\n`);
+    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "install", "--frozen").code).toBe(0);
+    expect(readFileSync(lockPath, "utf-8")).toBe(JSON.stringify(lock, null, 2) + "\n");
+  });
+
+  // A dependency's own path deps are relative to ITS manifest, not the root's.
+  test("a transitive path dep resolves relative to the manifest that declares it", () => {
+    const inner = writePkg("nest/inner", `{ "name": "inner", "version": "0.1.0", "lib": "lib.milo" }`, {
+      "lib.milo": `pub fn deep(): i32 {\n  return 9\n}\n`,
+    });
+    writePkg("nest/outer", `{ "name": "outer", "version": "0.1.0", "lib": "lib.milo", "deps": { "inner": "../inner" } }`, {
+      "lib.milo": `from "inner" import { deep }\n\npub fn wrap(): i32 {\n  return deep()\n}\n`,
+    });
+    expect(existsSync(inner)).toBe(true);
+    const dir = project("nestapp");
+    writeFileSync(join(dir, "milo.json"),
+      `{ "name": "nestapp", "version": "0.1.0", "deps": { "outer": "../../pkgs/nest/outer" } }`);
+    writeFileSync(join(dir, "main.milo"), `from "outer" import { wrap }\n\nfn main() {\n  print(wrap().toString())\n}\n`);
+    expect(milo(dir, "install").code).toBe(0);
+    const run = milo(dir, "run", "main.milo");
+    expect(run.err).toBe("");
+    expect(run.out.trim()).toBe("9");
+  });
+
+  // vendor rewrites a vendored package's deps to its siblings ("../inner" from
+  // vendor/outer/), which only works because the path is relative to that manifest.
+  test("vendor flattens a transitive path dep and still builds", () => {
+    const dir = project("nestapp");
+    expect(milo(dir, "vendor").code).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, "vendor", "outer", "milo.json"), "utf-8")).deps.inner).toBe("../inner");
+    const run = milo(dir, "run", "main.milo");
+    expect(run.err).toBe("");
+    expect(run.out.trim()).toBe("9");
   });
 });
 

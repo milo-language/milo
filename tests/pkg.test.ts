@@ -1,7 +1,7 @@
 // Data-layer unit tests for the package manager (src/pkg.ts). No network: only
 // the local-path fetch and pure parse/serialize/hash paths are exercised.
 import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -15,10 +15,13 @@ import {
   stringifyLock,
   sha256Tree,
   cachePathFor,
-  fetchLocal,
+  depDirForSpec,
   type Manifest,
   type Lockfile,
+  type RemoteSource,
 } from "../src/pkg";
+
+const remote = (spec: string) => parseSource(spec) as RemoteSource;
 
 const tmps: string[] = [];
 function scratch(): string {
@@ -211,21 +214,15 @@ describe("sha256Tree", () => {
 describe("cachePathFor", () => {
   test("git layout matches resolver's host/org/repo/version", () => {
     const src = parseSource("github.com/foo/bar@v1.2.0");
-    const p = cachePathFor(src, "v1.2.0");
+    const p = cachePathFor(src as RemoteSource, "v1.2.0");
     expect(p.endsWith(join("github.com", "foo", "bar", "v1.2.0"))).toBe(true);
-  });
-
-  test("local layout rewrites '/' to '_' under host 'local' (resolver convention)", () => {
-    const src = parseSource("./vendor/bar");
-    const p = cachePathFor(src, "main");
-    expect(p.endsWith(join("local", "._vendor_bar", "main"))).toBe(true);
   });
 
   test("honors XDG_CACHE_HOME", () => {
     const prev = process.env.XDG_CACHE_HOME;
     process.env.XDG_CACHE_HOME = "/tmp/xdgcache";
     try {
-      const p = cachePathFor(parseSource("github.com/foo/bar"), "v1");
+      const p = cachePathFor(remote("github.com/foo/bar"), "v1");
       expect(p).toBe(join("/tmp/xdgcache", "milo", "github.com", "foo", "bar", "v1"));
     } finally {
       if (prev === undefined) delete process.env.XDG_CACHE_HOME;
@@ -234,22 +231,21 @@ describe("cachePathFor", () => {
   });
 });
 
-describe("fetchLocal", () => {
-  test("copies a local package tree into destDir", () => {
-    const srcDir = scratch();
-    mkdirSync(join(srcDir, "src"), { recursive: true });
-    writeFileSync(join(srcDir, "milo.json"), `{ "name": "bar", "version": "0.1.0", "lib": "lib.milo" }`);
-    writeFileSync(join(srcDir, "lib.milo"), "pub fn hi() {}");
-    writeFileSync(join(srcDir, "src", "extra.milo"), "fn helper() {}");
+describe("depDirForSpec", () => {
+  // A path dep is used in place, relative to the manifest that declares it. Keying
+  // a shared cache entry by its spelling made every project's "../" collide.
+  test("a local path resolves against the declaring manifest's directory", () => {
+    expect(depDirForSpec("../", "/w/a/tests")).toBe("/w/a");
+    expect(depDirForSpec("../", "/w/b/tests")).toBe("/w/b");
+    expect(depDirForSpec("./vendor/bar", "/w/app")).toBe("/w/app/vendor/bar");
+    expect(depDirForSpec("/abs/pkg", "/w/app")).toBe("/abs/pkg");
+  });
 
-    const dest = join(scratch(), "extracted");
-    fetchLocal({ kind: "local", path: srcDir }, dest);
-
-    expect(readdirSync(dest).sort()).toEqual(["lib.milo", "milo.json", "src"]);
-    expect(readFileSync(join(dest, "lib.milo"), "utf-8")).toBe("pub fn hi() {}");
-    expect(readFileSync(join(dest, "src", "extra.milo"), "utf-8")).toBe("fn helper() {}");
-    // a valid manifest survives the copy
-    expect(parseManifest(readFileSync(join(dest, "milo.json"), "utf-8")).name).toBe("bar");
+  test("a git spec maps to its cache entry, defaulting the version to main", () => {
+    expect(depDirForSpec("github.com/foo/bar@v1.2.0", "/w/app"))
+      .toBe(cachePathFor(remote("github.com/foo/bar"), "v1.2.0"));
+    expect(depDirForSpec("github.com/foo/bar", "/w/app"))
+      .toBe(cachePathFor(remote("github.com/foo/bar"), "main"));
   });
 });
 

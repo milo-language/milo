@@ -2,10 +2,10 @@
 // dependency source specs, cache-path resolution, and content-addressed tree
 // hashing. Parse / serialize / hash only — see docs/plans/package-manager.md §P1.
 //
-// The cache layout here MUST stay byte-for-byte compatible with resolvePath in
-// src/resolver.ts, which reads ~/.milo/cache/<host>/<org>/<repo>/<version>/ and
-// maps local-path deps to host "local" with '/' rewritten to '_'. Diverging would
-// silently break import resolution against an already-populated cache.
+// resolvePath in src/resolver.ts finds a package's files through depDirForSpec
+// below, the same function the installer writes through, so the two cannot drift.
+// Remote packages live at ~/.milo/cache/<host>/<org>/<repo>/<version>/; a local
+// path dependency is never copied anywhere and resolves to its own directory.
 //
 // Fetching lives here too (git subprocess / tarball download+verify); the CLI verbs
 // that drive it are in src/pkgcli.ts.
@@ -362,17 +362,15 @@ function blobsRoot(): string {
   return join(cacheRoot(), ".blobs");
 }
 
-// The ~/.milo/cache/<host>/<org>/<repo>/<version>/ directory for a source. The
-// git and local layouts match resolver.ts exactly; giturl/tarball have no
-// resolver read-path yet, so their layout here is best-effort and internal-only.
-export function cachePathFor(source: Source, version: string): string {
+export type RemoteSource = Exclude<Source, { kind: "local" }>;
+
+// The ~/.milo/cache/<host>/<org>/<repo>/<version>/ directory for a remote source.
+// Local paths have no cache entry: see depDirForSpec.
+export function cachePathFor(source: RemoteSource, version: string): string {
   const root = cacheRoot();
   switch (source.kind) {
     case "git":
       return join(root, source.host, source.org, source.repo, version);
-    case "local":
-      // resolver maps local deps to host "local" with '/' rewritten to '_'.
-      return join(root, "local", source.path.replace(/\//g, "_"), version);
     case "giturl":
       return join(root, "giturl", sanitizeSegment(source.url), version);
     case "tarball":
@@ -384,25 +382,20 @@ function sanitizeSegment(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-// The cache directory a dependency spec resolves to. This is the ONE function the
-// installer and the resolver have to agree on, so it deliberately reproduces
-// resolver.ts:parsePkgUrl's quirks rather than improving on them: the version
-// segment defaults to "main" when the spec carries no ref, and a local path keeps
-// its literal spelling (with '/' → '_') as the key.
+// The directory a dependency spec resolves to: the ONE function the installer
+// and the resolver share. A remote spec maps to its cache entry, with the version
+// segment defaulting to "main" when the spec carries no ref.
 //
-// Because the key is the literal spec string, a local path is resolved relative to
-// the ROOT project — two packages naming "./vendor/x" share one cache entry, which
-// is exactly what `milo vendor` depends on.
-export function cacheDirForSpec(spec: string): string {
+// A local path resolves against baseDir, the directory of the milo.json that
+// declares it, and is used in place. It used to be snapshotted into the cache
+// keyed by its literal spelling, so every project naming "../" shared one entry
+// (the last `milo install` won, and every other project lost its imports), and
+// an edit to the dependency compiled stale code until the next install.
+export function depDirForSpec(spec: string, baseDir: string): string {
   const source = parseSource(spec);
   switch (source.kind) {
-    case "local": {
-      // resolver splits at the FIRST '@' for every scheme; mirror it here.
-      const at = spec.indexOf("@");
-      const path = at === -1 ? spec : spec.slice(0, at);
-      const version = at === -1 ? "main" : spec.slice(at + 1);
-      return cachePathFor({ kind: "local", path }, version);
-    }
+    case "local":
+      return resolve(baseDir, source.path);
     case "git":
     case "giturl":
       return cachePathFor(source, source.ref ?? "main");
@@ -442,15 +435,6 @@ export function specUrl(spec: string): string {
 
 // ── Fetch ──────────────────────────────────────────────────────────────────────
 
-// Copy a local-path package tree into destDir. baseDir is what a relative path is
-// resolved against (the root project dir — see cacheDirForSpec); it defaults to the
-// process cwd so the original single-argument callers are unchanged.
-export function fetchLocal(source: { kind: "local"; path: string }, destDir: string, baseDir?: string): void {
-  const src = baseDir === undefined ? resolve(source.path) : resolve(baseDir, source.path);
-  if (!existsSync(src)) throw new Error(`local dependency not found: ${src}`);
-  cpSync(src, destDir, { recursive: true });
-}
-
 interface FetchResult {
   // The pin: an exact git commit SHA, or "sha256:<hex>" for a tarball, or "local".
   commit: string;
@@ -462,7 +446,7 @@ interface FetchResult {
 // exact revision it landed on. Networked: git subprocess for git/giturl, HTTP for
 // tarballs. The declared #sha256= of a tarball is verified against the bytes that
 // actually arrived — a mismatch is fatal, never a warning.
-export async function fetchRemote(source: Source, destDir: string): Promise<FetchResult> {
+export async function fetchRemote(source: RemoteSource, destDir: string): Promise<FetchResult> {
   switch (source.kind) {
     case "git":
       return fetchGit(gitCloneUrl(source), source.ref, destDir);
@@ -471,8 +455,6 @@ export async function fetchRemote(source: Source, destDir: string): Promise<Fetc
       return fetchGit(source.url.replace(/^git\+/, ""), source.ref, destDir);
     case "tarball":
       return await fetchTarball(source, destDir);
-    case "local":
-      throw new Error("fetchRemote: local sources are handled by fetchLocal");
   }
 }
 

@@ -21,7 +21,7 @@ import { spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import {
   parseManifest, stringifyManifest, isPublishable, parseSource, parseLock, stringifyLock,
-  sha256Tree, cacheDirForSpec, specUrl, specVersion, fetchLocal, fetchRemote,
+  sha256Tree, depDirForSpec, specUrl, specVersion, fetchRemote,
   binRoot, dataRoot, listRemoteTags, checkMiloConstraint,
   type Manifest, type Lockfile, type LockPackage,
 } from "./pkg";
@@ -114,6 +114,12 @@ function allDeps(m: Manifest): Record<string, string> {
 
 // ── Materializing packages into the cache ────────────────────────────────────
 
+// The lock's commit AND hash for a path dependency. It is not pinned: it is edited
+// in place, so a recorded digest would churn milo.lock on every edit and could
+// never be enforced. Hashing it would also walk whatever the path names ("../" is
+// often a whole repo).
+const LOCAL = "local";
+
 interface Present {
   dir: string;
   // The revision, when this call actually fetched. null on a cache hit, where the
@@ -121,16 +127,14 @@ interface Present {
   commit: string | null;
 }
 
-async function ensurePresent(spec: string, rootDir: string, force: boolean): Promise<Present> {
+// baseDir is the directory of the milo.json that declares `spec`; a path dep is
+// relative to it and is used in place, so there is nothing to fetch.
+async function ensurePresent(spec: string, baseDir: string, force: boolean): Promise<Present> {
   const source = parseSource(spec);
-  const dir = cacheDirForSpec(spec);
+  const dir = depDirForSpec(spec, baseDir);
   if (source.kind === "local") {
-    // Always re-copied: a path dependency is expected to change under you, and it is
-    // never hash-locked, so there is nothing a stale copy could be validated against.
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(dirname(dir), { recursive: true });
-    fetchLocal(source, dir, rootDir);
-    return { dir, commit: "local" };
+    if (!existsSync(dir)) fail(`local dependency not found: ${dir} (from '${spec}' in ${join(baseDir, "milo.json")})`);
+    return { dir, commit: LOCAL };
   }
   if (!force && existsSync(dir) && readdirSync(dir).length > 0) return { dir, commit: null };
   const r = await fetchRemote(source, dir);
@@ -147,7 +151,8 @@ function packageNameFor(spec: string, dir: string): string {
   const last = specUrl(spec).split("/").filter((s) => s.length > 0).pop() ?? "pkg";
   const cleaned = last.replace(/\.git$/, "").replace(/\.tar\.gz.*$/, "");
   // "milo-http2" is the conventional repo name for the package "http2".
-  return source.kind === "local" ? cleaned : cleaned.replace(/^milo-/, "");
+  if (source.kind === "local") return basename(dir);
+  return cleaned.replace(/^milo-/, "");
 }
 
 // A spec with no `@ref` means "the latest release", not "whatever is on main":
@@ -185,28 +190,30 @@ interface ResolveOpts {
 // (docs/plans/package-manager.md §Libraries vs binaries).
 async function resolveGraph(root: Project, existing: Lockfile | null, opts: ResolveOpts): Promise<Lockfile> {
   const packages: Record<string, LockPackage> = {};
-  const seenSpec = new Map<string, string>();
-  const queue: { name: string; spec: string }[] = [];
+  // name → where it resolved. Compared by directory, not spelling: "../x" written in
+  // two manifests can be two different packages, and two spellings can be one.
+  const seen = new Map<string, { spec: string; dir: string }>();
+  const queue: { name: string; spec: string; baseDir: string }[] = [];
 
-  for (const [name, spec] of Object.entries(root.manifest.deps ?? {})) queue.push({ name, spec });
+  for (const [name, spec] of Object.entries(root.manifest.deps ?? {})) queue.push({ name, spec, baseDir: root.dir });
   if (opts.includeDev) {
-    for (const [name, spec] of Object.entries(root.manifest.devDeps ?? {})) queue.push({ name, spec });
+    for (const [name, spec] of Object.entries(root.manifest.devDeps ?? {})) queue.push({ name, spec, baseDir: root.dir });
   }
 
   while (queue.length > 0) {
-    const { name, spec } = queue.shift()!;
-    const prior = seenSpec.get(name);
+    const { name, spec, baseDir } = queue.shift()!;
+    const prior = seen.get(name);
     if (prior !== undefined) {
-      if (prior !== spec) {
-        fail(`dependency name collision: '${name}' is required as both '${prior}' and '${spec}'\n` +
+      if (prior.dir !== depDirForSpec(spec, baseDir)) {
+        fail(`dependency name collision: '${name}' is required as both '${prior.spec}' and '${spec}'\n` +
              `  the flat namespace admits one package per name — vendor one of them or rename it`);
       }
       continue;
     }
-    seenSpec.set(name, spec);
+    seen.set(name, { spec, dir: depDirForSpec(spec, baseDir) });
 
     const force = opts.refresh === "all" || opts.refresh.has(name);
-    const { dir, commit } = await ensurePresent(spec, root.dir, force);
+    const { dir, commit } = await ensurePresent(spec, baseDir, force);
     const manifest = readManifestAt(dir);
     if (manifest) {
       // A dependency's bound is checked here rather than at build time: this is where the
@@ -223,7 +230,7 @@ async function resolveGraph(root: Project, existing: Lockfile | null, opts: Reso
       fail(binOnlyMessage(manifest.name, spec));
     }
 
-    const hash = sha256Tree(dir);
+    const hash = commit === LOCAL ? LOCAL : sha256Tree(dir);
     const prev = existing?.packages[name];
     const url = specUrl(spec);
     const version = specVersion(spec);
@@ -234,12 +241,12 @@ async function resolveGraph(root: Project, existing: Lockfile | null, opts: Reso
       if (prev && prev.url === url && prev.version === version) {
         resolvedCommit = prev.commit;
       } else {
-        resolvedCommit = (await ensurePresent(spec, root.dir, true)).commit ?? "unknown";
+        resolvedCommit = (await ensurePresent(spec, baseDir, true)).commit ?? "unknown";
       }
     }
     // A local path is never hash-locked; everything else is verified on every pass,
     // so a moved tag or a poisoned cache entry fails loudly instead of building.
-    if (prev && prev.commit === resolvedCommit && prev.hash !== hash && resolvedCommit !== "local") {
+    if (prev && prev.commit === resolvedCommit && prev.hash !== hash && resolvedCommit !== LOCAL) {
       fail(`hash mismatch for '${name}' at ${resolvedCommit}\n` +
            `  locked ${prev.hash}\n  actual ${hash}\n` +
            `  the upstream tag moved or the cache entry was modified`);
@@ -248,7 +255,7 @@ async function resolveGraph(root: Project, existing: Lockfile | null, opts: Reso
     const depNames: string[] = [];
     for (const [dn, dspec] of Object.entries(manifest?.deps ?? {})) {
       depNames.push(dn);
-      queue.push({ name: dn, spec: dspec });
+      queue.push({ name: dn, spec: dspec, baseDir: dir });
     }
     packages[name] = { url, version, commit: resolvedCommit, hash, deps: depNames.sort() };
   }
@@ -575,15 +582,15 @@ async function cmdInstall(cwd: string, args: string[]): Promise<number> {
 async function installFromLock(project: Project, lock: Lockfile): Promise<void> {
   const specs = specsFromLock(project, lock);
   for (const [name, entry] of Object.entries(lock.packages)) {
-    const spec = specs.get(name);
-    if (spec === undefined) {
+    const declared = specs.get(name);
+    if (declared === undefined) {
       fail(`'${name}' is in milo.lock but no milo.json declares it — run 'milo install' to re-resolve`);
     }
-    const { dir, commit } = await ensurePresent(spec, project.dir, false);
-    if (commit !== null && commit !== entry.commit && entry.commit !== "local") {
+    const { dir, commit } = await ensurePresent(declared.spec, declared.baseDir, false);
+    if (commit !== null && commit !== entry.commit && entry.commit !== LOCAL) {
       fail(`'${name}' resolved to ${commit} but milo.lock pins ${entry.commit}`);
     }
-    if (entry.commit !== "local") {
+    if (entry.commit !== LOCAL && commit !== LOCAL) {
       const hash = sha256Tree(dir);
       if (hash !== entry.hash) {
         fail(`hash mismatch for '${name}'\n  locked ${entry.hash}\n  actual ${hash}`);
@@ -592,20 +599,25 @@ async function installFromLock(project: Project, lock: Lockfile): Promise<void> 
   }
 }
 
-// Spec strings live in manifests, not the lock (the cache key is the literal spec —
-// see cacheDirForSpec), so gather them from the root plus each installed package.
-function specsFromLock(project: Project, lock: Lockfile): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const [n, s] of Object.entries(allDeps(project.manifest))) out.set(n, s);
+// A spec plus the directory of the milo.json that declares it, which is what a
+// path spec is relative to.
+interface DeclaredSpec { spec: string; baseDir: string }
+
+// Spec strings live in manifests, not the lock, so gather them from the root plus
+// each installed package.
+function specsFromLock(project: Project, lock: Lockfile): Map<string, DeclaredSpec> {
+  const out = new Map<string, DeclaredSpec>();
+  for (const [n, s] of Object.entries(allDeps(project.manifest))) out.set(n, { spec: s, baseDir: project.dir });
   let grew = true;
   while (grew) {
     grew = false;
-    for (const [name, spec] of [...out]) {
+    for (const [name, d] of [...out]) {
       if (!lock.packages[name]) continue;
-      const m = readManifestAt(cacheDirForSpec(spec));
+      const dir = depDirForSpec(d.spec, d.baseDir);
+      const m = readManifestAt(dir);
       for (const [dn, ds] of Object.entries(m?.deps ?? {})) {
         if (!out.has(dn)) {
-          out.set(dn, ds);
+          out.set(dn, { spec: ds, baseDir: dir });
           grew = true;
         }
       }
@@ -710,20 +722,18 @@ async function cmdVendor(cwd: string): Promise<number> {
   mkdirSync(vendorDir, { recursive: true });
 
   for (const name of Object.keys(lock.packages)) {
-    const spec = specs.get(name);
-    if (spec === undefined) continue;
-    const from = cacheDirForSpec(spec);
+    const declared = specs.get(name);
+    if (declared === undefined) continue;
+    const from = depDirForSpec(declared.spec, declared.baseDir);
     if (!existsSync(from)) fail(`'${name}' is not installed — run 'milo install' first`);
     const to = join(vendorDir, name);
     rmSync(to, { recursive: true, force: true });
     cpSync(from, to, { recursive: true });
-    // Rewrite the vendored package's own deps to the same "./vendor/<name>" spelling
-    // the root uses. The cache key is the literal spec string, so every package that
-    // names "./vendor/x" shares one entry — which is what makes this flat and works
-    // regardless of which directory the reference is written in.
+    // Rewrite the vendored package's own deps to its siblings. A path is relative to
+    // the manifest that declares it, so from vendor/<name>/ a sibling is "../<dep>".
     const m = readManifestAt(to);
     if (m && m.deps) {
-      for (const dn of Object.keys(m.deps)) m.deps[dn] = `./vendor/${dn}`;
+      for (const dn of Object.keys(m.deps)) m.deps[dn] = `../${dn}`;
       writeFileSync(join(to, "milo.json"), stringifyManifest(m));
     }
     console.log(`vendored ${name} -> vendor/${name}`);
@@ -888,17 +898,15 @@ function existingBinaryConflict(target: string, pkgName: string): string | null 
 }
 
 // A tool's own library deps must be in the cache before its bins can compile.
-// rootDir stays fixed down the whole closure — the same rule resolveGraph follows,
-// because the cache key is the literal spec string (see cacheDirForSpec), so a
-// relative path has to mean one thing per dependency tree.
-async function installToolDeps(manifest: Manifest, rootDir: string, seen = new Set<string>()): Promise<void> {
+// manifestDir is the directory of `manifest`, which its path deps are relative to.
+async function installToolDeps(manifest: Manifest, manifestDir: string, seen = new Set<string>()): Promise<void> {
   for (const [name, spec] of Object.entries(manifest.deps ?? {})) {
     if (seen.has(name)) continue;
     seen.add(name);
-    const { dir } = await ensurePresent(spec, rootDir, false);
+    const { dir } = await ensurePresent(spec, manifestDir, false);
     const sub = readManifestAt(dir);
     if (sub && sub.lib === undefined && sub.bin !== undefined) fail(binOnlyMessage(name, spec));
-    if (sub) await installToolDeps(sub, rootDir, seen);
+    if (sub) await installToolDeps(sub, dir, seen);
   }
 }
 
@@ -1069,14 +1077,14 @@ export async function ensureDepsInstalled(sourcePath: string): Promise<void> {
     // absent while every dep is already cached is a silent no-op — a build should
     // not print progress for work it isn't doing.
     const needFetch = Object.values(deps).some(spec => {
-      try { return !existsSync(cacheDirForSpec(spec)); } catch { return true; }
+      try { return !existsSync(depDirForSpec(spec, project.dir)); } catch { return true; }
     });
     if (needFetch) console.error(`installing dependencies for ${project.manifest.name}...`);
     writeLock(project.dir, await resolveGraph(project, lock, { includeDev: true, refresh: new Set() }));
     return;
   }
   const specs = specsFromLock(project, lock);
-  const missing = [...specs].filter(([, spec]) => !existsSync(cacheDirForSpec(spec)));
+  const missing = [...specs].filter(([, d]) => !existsSync(depDirForSpec(d.spec, d.baseDir)));
   if (missing.length === 0) return;
   console.error(`installing ${missing.length} missing package(s)...`);
   await installFromLock(project, lock);

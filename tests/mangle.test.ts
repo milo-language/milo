@@ -5,13 +5,11 @@
 // Before mangling this exact program was a hard `duplicate-fn` error in code the
 // consumer did not write.
 //
-// No network: the dependency is a local-path dep, staged into a throwaway cache
-// under a temp HOME (the resolver reads ~/.milo/cache/<host>/<path>/<version>/,
-// and local-path deps map to host "local" with '/' rewritten to '_' — the same
-// layout `milo install` writes).
+// No network: the dependency is a local-path dep, which the resolver reads in
+// place. HOME is still a throwaway so nothing lands in the real ~/.milo.
 import { test, expect } from "bun:test";
 import { spawnSync } from "child_process";
-import { writeFileSync, mkdtempSync, mkdirSync, cpSync } from "fs";
+import { writeFileSync, mkdtempSync } from "fs";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
 
@@ -20,11 +18,6 @@ const FIXTURE = resolve(import.meta.dir, "pkgfixtures", "colliding");
 
 const HOME = mkdtempSync(join(tmpdir(), "milo-mangle-home-"));
 const PROJECT = mkdtempSync(join(tmpdir(), "milo-mangle-proj-"));
-
-// Stage the local-path dep exactly where resolvePath will look for it.
-const cacheDir = join(HOME, ".milo", "cache", "local", FIXTURE.replace(/\//g, "_"), "main");
-mkdirSync(cacheDir, { recursive: true });
-cpSync(FIXTURE, cacheDir, { recursive: true });
 
 writeFileSync(join(PROJECT, "milo.json"), JSON.stringify({
   name: "consumer",

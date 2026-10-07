@@ -295,7 +295,7 @@ Generated, committed, JSON, flat. Nested trees are npm's mistake.
 |---|---|---|
 | Git host shorthand | `"github.com/foo/bar@v1.2.0"` | primary form; `parsePkgUrl` handles it today. Also gitlab.com, codeberg.org, sr.ht |
 | Explicit git | `"git+ssh://git@internal/bar.git@v1.2.0"` | private and self-hosted |
-| Local path | `"./vendor/bar"`, `"../shared"` | monorepos, and the output of `milo vendor`. Never hash-locked |
+| Local path | `"./vendor/bar"`, `"../shared"` | monorepos, a package's own `tests/` (`"../"`), and the output of `milo vendor`. Relative to the `milo.json` that declares it; used in place, never copied, pinned or hash-locked (the lock records the path with commit and hash `"local"`) |
 | Tarball | `"https://…/bar-1.2.0.tar.gz#sha256=abc…"` | hash mandatory in the URL |
 
 Refs: `@v1.2.0` tag · `@a1b2c3d` SHA · `@main` branch. Branch refs are allowed but warn — unreproducible without the lock.
@@ -315,6 +315,8 @@ No semver ranges. Ranges require enumerating available versions, which requires 
 ```
 
 The readable path stays because it is debuggable and already wired. `.blobs/` deduplicates the download layer.
+
+A local path dependency has no cache entry: imports resolve straight into its directory, so an edit is live without `milo install`. It used to be snapshotted under `local/<spec with '/' → '_'>/`, keyed by the spelling, so every project naming `"../"` shared one entry and the last `milo install` won.
 
 ### Verbs
 

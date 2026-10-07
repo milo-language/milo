@@ -3,7 +3,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname, sep } from "path";
-import { cacheRoot } from "./pkg";
+import { depDirForSpec } from "./pkg";
 import type { Program, Span, DeclOrigins, DeclOrigin, ImportDecl, FileImports } from "./ast";
 import { ParseError } from "./diagnostics";
 import { suggestions, didYouMean, importHint, stdModuleNames } from "./suggest";
@@ -17,13 +17,6 @@ import { collectModulePrivateDecls, collectPkgDecls, emptyPkgDecls, manglePackag
 // MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
 // (e.g. a `bun build --compile` binary, whose module URLs point into the bundle).
 const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.url).pathname), "..");
-// Read path for installed packages. Shares cacheRoot() with the installer in
-// src/pkg.ts — it used to hardcode ~/.milo/cache, which silently diverged from the
-// writer whenever XDG_CACHE_HOME was set, leaving installed packages unresolvable.
-// Read per call, not once at module load, so a test can point it elsewhere.
-function cacheDir(): string {
-  return cacheRoot();
-}
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts).
 // Loaded ONLY when std/ isn't on disk (a shipped `bun build --compile` binary).
@@ -83,15 +76,19 @@ function readSource(absPath: string): string {
   return readFileSync(absPath, "utf-8");
 }
 
+// A manifest's deps plus the directory it sits in: a path dep is relative to that
+// directory, so the two travel together.
+interface DepsAt { deps: Record<string, string>; dir: string }
+
 // find milo.json by walking up from a directory
-function findManifest(startDir: string): Record<string, string> | null {
+function findManifest(startDir: string): DepsAt | null {
   let dir = startDir;
   for (let i = 0; i < 20; i++) {
     const manifestPath = resolve(dir, "milo.json");
     if (existsSync(manifestPath)) {
       try {
         const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-        return raw.deps ?? {};
+        return { deps: raw.deps ?? {}, dir };
       } catch { return null; }
     }
     const parent = dirname(dir);
@@ -99,25 +96,6 @@ function findManifest(startDir: string): Record<string, string> | null {
     dir = parent;
   }
   return null;
-}
-
-// parse "github.com/user/repo@v1.0" or local path → { host, path, version }
-function parsePkgUrl(url: string): { host: string; path: string; version: string } | null {
-  const atIdx = url.indexOf("@");
-  let version = "main";
-  let fullPath = url;
-  if (atIdx !== -1) {
-    version = url.slice(atIdx + 1);
-    fullPath = url.slice(0, atIdx);
-  }
-  // local paths
-  if (fullPath.startsWith("/") || fullPath.startsWith(".")) {
-    const safe = fullPath.replace(/\//g, "_");
-    return { host: "local", path: safe, version };
-  }
-  const slashIdx = fullPath.indexOf("/");
-  if (slashIdx === -1) return null;
-  return { host: fullPath.slice(0, slashIdx), path: fullPath.slice(slashIdx + 1), version };
 }
 
 // A name declared twice at the top level of ONE file. The flat namespace would
@@ -191,8 +169,8 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // from the importing file reaches the project root anyway in the ordinary case, and this
   // only adds an answer where there was none. Memoized per directory because the walk hits
   // the filesystem and a large tree imports from the same handful of directories.
-  const depsByDir = new Map<string, Record<string, string> | null>();
-  const depsFor = (dir: string): Record<string, string> | null => {
+  const depsByDir = new Map<string, DepsAt | null>();
+  const depsFor = (dir: string): DepsAt | null => {
     let d = depsByDir.get(dir);
     if (d === undefined) {
       d = findManifest(dir);
@@ -275,13 +253,15 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     if (deps) {
       const firstSlash = importPath.indexOf("/");
       const pkgName = firstSlash !== -1 ? importPath.slice(0, firstSlash) : importPath;
-      const pkgUrl = deps[pkgName];
+      const pkgUrl = deps.deps[pkgName];
       if (pkgUrl) {
-        const parsed = parsePkgUrl(pkgUrl);
-        if (parsed) {
-          const cacheBase = resolve(cacheDir(), parsed.host, parsed.path, parsed.version);
+        // The installer's own spec→directory mapping, so the writer and this reader
+        // cannot disagree. A spec it rejects is not a package import.
+        let cacheBase: string | null = null;
+        try { cacheBase = depDirForSpec(pkgUrl, deps.dir); } catch { cacheBase = null; }
+        if (cacheBase !== null) {
           checkPkgTarget(pkgName, cacheBase);
-          // import "pkg/module" → ~/.milo/cache/host/org/repo/version/module.milo
+          // import "pkg/module" → <package dir>/module.milo
           const subPath = firstSlash !== -1 ? importPath.slice(firstSlash + 1) : "";
           if (subPath) {
             const pkgPath = resolve(cacheBase, subPath + ".milo");
