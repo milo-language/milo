@@ -95,15 +95,17 @@ fn sslWantWrite(): i32 {
 // the direction OpenSSL is waiting for and return true to retry, or false when the
 // error is final.
 fn sslParkForRetry(e: i32, fd: i32): bool {
-    if e == sslWantRead() {
-        schedulerWaitRead(fd)
-        return true
+    unsafe {
+        if e == sslWantRead() {
+            schedulerWaitRead(fd)
+            return true
+        }
+        if e == sslWantWrite() {
+            schedulerWaitWrite(fd)
+            return true
+        }
+        return false
     }
-    if e == sslWantWrite() {
-        schedulerWaitWrite(fd)
-        return true
-    }
-    return false
 }
 
 // One SSL_* attempt: its return value, and SSL_get_error's verdict when it is not a
@@ -142,6 +144,7 @@ fn sslStep(kind: string, arg: string, ssl: *u8, success: i32, live: () => i32): 
 
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
 @replayHooked
+@unsafe
 pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     while true {
         let st = sslStep("tls.connect", fd.toString(), ssl, 1, (): i32 => {
@@ -162,6 +165,7 @@ pub fn sslConnectFd(ssl: *u8, fd: i32): i32 {
 // Drive SSL_accept to completion — the server-side mirror of sslConnectFd.
 // Returns 1 on success (SSL_accept result otherwise).
 @replayHooked
+@unsafe
 pub fn sslAcceptFd(ssl: *u8, fd: i32): i32 {
     while true {
         let st = sslStep("tls.accept", fd.toString(), ssl, 1, (): i32 => {
@@ -229,6 +233,7 @@ fn sslReadOnce(ssl: *u8, fd: i32, buf: *u8, len: i32): SslStep {
 }
 
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
+@unsafe
 pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
         let st = sslReadOnce(ssl, fd, buf, len)
@@ -245,6 +250,7 @@ pub fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
 // Recorded as tls.write with the size; under replay nothing is sent.
 @replayHooked
+@unsafe
 pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     while true {
         let st = sslStep("tls.write", fd.toString() + " " + len.toString(), ssl, len, (): i32 => {

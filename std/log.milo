@@ -10,7 +10,7 @@
 // PIPE_BUF on a pipe can tear. Keep records under 4 KiB and log from as many
 // tasks as you like.
 //
-// Configuration (`setLevel`, `setFormat`, `setSinkFd`, `setSinkPath`,
+// Configuration (`setLevel`, `setFormat`, `setSinkStdout`, `setSinkFd`, `setSinkPath`,
 // `setTimestamps`) is process-wide mutable state meant to be set once at
 // startup. Reconfiguring while other tasks are logging cannot corrupt anything —
 // each setting is a single machine word — but concurrent readers may observe the
@@ -26,7 +26,9 @@ from "std/fmt" import {
 }
 from "std/io" import {
     IoError,
-    ioError
+    ioError,
+    OwnedFd,
+    AsFd
 }
 from "std/json" import {
     jsonEscapeStr
@@ -139,11 +141,13 @@ fn logOneLine(s: &string): string {
 }
 
 fn logWriteLine(line: &string): void {
-    // print/eprint go through stdio's buffer; this goes straight at the fd. Drain
-    // first or a log line redirected to stdout lands before output already
-    // written. fflush on an empty buffer is not a syscall.
-    unsafe { fflush(0 as *u8) }
-    writeFd(gSinkFd, line, line.len)
+    unsafe {
+        // print/eprint go through stdio's buffer; this goes straight at the fd. Drain
+        // first or a log line redirected to stdout lands before output already
+        // written. fflush on an empty buffer is not a syscall.
+        unsafe { fflush(0 as *u8) }
+        writeFd(gSinkFd, line, line.len)
+    }
 }
 
 fn logRenderText(f: &LogFields, level: LogLevel, msg: &string): string {
@@ -349,6 +353,16 @@ impl Logger {
 pub struct Log {
 }
 
+// A free fn, not a Log method: methods are as public as their type, and this one takes a
+// bare descriptor number. `owned` says whether the sink closes it on replacement.
+fn logSetSink(fd: i32, owned: bool): void {
+    if gSinkOwned {
+        unsafe { sysClose(gSinkFd) }
+    }
+    gSinkFd = fd
+    gSinkOwned = owned
+}
+
 impl Log {
     // Discard records below `level`. Defaults to `Info`; `LogLevel.Off` silences
     // the logger entirely.
@@ -385,15 +399,26 @@ impl Log {
         gTimestamps = enabled
     }
 
-    // Send records to an already-open descriptor — 2 (the default) for stderr,
-    // 1 for stdout, or a descriptor you opened. The descriptor stays yours: this
-    // module never closes it, and it must outlive the last record.
-    fn setSinkFd(fd: i32): void {
-        if gSinkOwned {
-            sysClose(gSinkFd)
-        }
-        gSinkFd = fd
-        gSinkOwned = false
+    // Send records to stderr (the default).
+    fn setSinkStderr(): void {
+        logSetSink(2, false)
+    }
+
+    // Send records to stdout.
+    fn setSinkStdout(): void {
+        logSetSink(1, false)
+    }
+
+    // Send records to a descriptor you opened (a pipe end, a socket). The log takes it
+    // over: it is closed when the sink is replaced, so no record can be written to a
+    // number something else has since reused.
+    fn setSinkFd(fd: OwnedFd): void {
+        var owned = fd
+        var raw: i32 = -1
+        unsafe { raw = owned.rawFd() }
+        // The OwnedFd would close `raw` at the end of this call; the log owns it now.
+        forget(owned)
+        logSetSink(raw, true)
     }
 
     // Append records to `path`, creating it if absent. The descriptor is opened
@@ -405,11 +430,7 @@ impl Log {
         if fd < 0 {
             return Result.Err(ioError(path))
         }
-        if gSinkOwned {
-            sysClose(gSinkFd)
-        }
-        gSinkFd = fd
-        gSinkOwned = true
+        logSetSink(fd, true)
         return Result.Ok(Unit {
         })
     }

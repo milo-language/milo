@@ -548,26 +548,33 @@ pub fn renderResponse(response: &Response, extraHeaders: &Vec<Param>): string {
 }
 
 fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void {
-    let resp = renderRaw(status, contentType, body, extraHeaders)
-    sysWrite(fd, resp, resp.len)
+    unsafe {
+        let resp = renderRaw(status, contentType, body, extraHeaders)
+        sysWrite(fd, resp, resp.len)
+    }
 }
 
 fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
-    let resp = renderResponse(response, headers)
-    sysWrite(fd, resp, resp.len)
+    unsafe {
+        let resp = renderResponse(response, headers)
+        sysWrite(fd, resp, resp.len)
+    }
 }
 
 // ── Socket with automatic cleanup ──
 
-pub struct Socket {
+// File-private: its field is a bare descriptor, and nothing outside serve needs one.
+struct Socket {
     fd: i32,
 }
 
 impl Drop for Socket {
     fn drop(self: &mut Self): void {
-        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-        if self.fd > 0 {
-            sysClose(self.fd)
+        unsafe {
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+            if self.fd > 0 {
+                sysClose(self.fd)
+            }
         }
     }
 }
@@ -578,69 +585,75 @@ impl Drop for Socket {
 // socket/bind/listen prologue is how one of them ends up with a setsockopt or an
 // address-family fix the other never got.
 fn openListener(port: u16?): Result<Socket> {
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
-    let BACKLOG: i32 = 1024
-    var bindPort: u16 = 0
-    if let Option.Some(p) = port {
-        bindPort = p
-    }
-    var rawFd: i32 = 0
-    unsafe { rawFd = sysSocket(AF_INET, SOCK_STREAM, 0) }
-    if rawFd < 0 {
-        return Result.Err("sysSocket() failed")
-    }
-    let sock = Socket {
-        fd: rawFd
-    }
-    var one: i32 = 1
-    unsafe { setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4) }
-    var addr = makeSockaddr(bindPort, 0)
-    if bindIn(sock.fd, addr) < 0 {
-        return Result.Err("bind() failed")
-    }
     unsafe {
-        if sysListen(sock.fd, BACKLOG) < 0 {
-            return Result.Err("sysListen() failed")
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+        let BACKLOG: i32 = 1024
+        var bindPort: u16 = 0
+        if let Option.Some(p) = port {
+            bindPort = p
         }
+        var rawFd: i32 = 0
+        unsafe { rawFd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+        if rawFd < 0 {
+            return Result.Err("sysSocket() failed")
+        }
+        let sock = Socket {
+            fd: rawFd
+        }
+        var one: i32 = 1
+        unsafe { setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4) }
+        var addr = makeSockaddr(bindPort, 0)
+        if bindIn(sock.fd, addr) < 0 {
+            return Result.Err("bind() failed")
+        }
+        unsafe {
+            if sysListen(sock.fd, BACKLOG) < 0 {
+                return Result.Err("sysListen() failed")
+            }
+        }
+        // family-agnostic: works for a v4 or v6 listener
+        let actualPort = getSockPort(sock.fd)
+        print($"listening on http://localhost:{actualPort}")
+        return Result.Ok(sock)
     }
-    // family-agnostic: works for a v4 or v6 listener
-    let actualPort = getSockPort(sock.fd)
-    print($"listening on http://localhost:{actualPort}")
-    return Result.Ok(sock)
 }
 
 // accept() on `listenFd`, discarding the peer address; -1 on failure. The address is
 // storage-sized: accept lets the kernel pick the peer family, and a v6 peer does not
 // fit a 16-byte sockaddr_in.
 fn acceptPeer(listenFd: i32): i32 {
-    return sysAccept(listenFd)
+    unsafe {
+        return sysAccept(listenFd)
+    }
 }
 
 // The simplest server: every request goes to `handler`. Good for a static file server
 // or a single-handler app. Answers one connection at a time.
 pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
-    let BUF_SIZE: i64 = 8192
-    let sock = openListener(port)?
+    unsafe {
+        let BUF_SIZE: i64 = 8192
+        let sock = openListener(port)?
 
-    while true {
-        let clientFd = acceptPeer(sock.fd)
-        if clientFd < 0 {
-            continue
-        }
+        while true {
+            let clientFd = acceptPeer(sock.fd)
+            if clientFd < 0 {
+                continue
+            }
 
-        var buf: [u8; 8192] = [0; 8192]
-        var n: i64 = 0
-        unsafe { n = sysRead(clientFd, buf, BUF_SIZE) }
-        if n > 0 {
-            let req = parseRequest(buf, n)
-            let resp = handler(req)
-            let noHeaders: Vec<Param> = []
-            sendResponse(clientFd, resp, noHeaders)
+            var buf: [u8; 8192] = [0; 8192]
+            var n: i64 = 0
+            unsafe { n = sysRead(clientFd, buf, BUF_SIZE) }
+            if n > 0 {
+                let req = parseRequest(buf, n)
+                let resp = handler(req)
+                let noHeaders: Vec<Param> = []
+                sendResponse(clientFd, resp, noHeaders)
+            }
+            sysClose(clientFd)
         }
-        sysClose(clientFd)
+        return Result.Err("server exited")
     }
-    return Result.Err("server exited")
 }
 
 // ── Router ──
@@ -761,26 +774,28 @@ impl Router {
 
 // Start an HTTP server using a Router (headers from Context are sent on the wire).
 pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
-    let BUF_SIZE: i64 = 8192
-    let sock = openListener(port)?
+    unsafe {
+        let BUF_SIZE: i64 = 8192
+        let sock = openListener(port)?
 
-    while true {
-        let clientFd = acceptPeer(sock.fd)
-        if clientFd < 0 {
-            continue
-        }
+        while true {
+            let clientFd = acceptPeer(sock.fd)
+            if clientFd < 0 {
+                continue
+            }
 
-        var buf: [u8; 8192] = [0; 8192]
-        var n: i64 = 0
-        unsafe { n = sysRead(clientFd, buf, BUF_SIZE) }
-        if n > 0 {
-            let req = parseRequest(buf, n)
-            let handled = router.handle(req)
-            sendResponse(clientFd, handled.response, handled.headers)
+            var buf: [u8; 8192] = [0; 8192]
+            var n: i64 = 0
+            unsafe { n = sysRead(clientFd, buf, BUF_SIZE) }
+            if n > 0 {
+                let req = parseRequest(buf, n)
+                let handled = router.handle(req)
+                sendResponse(clientFd, handled.response, handled.headers)
+            }
+            sysClose(clientFd)
         }
-        sysClose(clientFd)
+        return Result.Err("server exited")
     }
-    return Result.Err("server exited")
 }
 
 // The router the concurrent server is handing connections to. A spawned task
@@ -794,45 +809,49 @@ var activeRouter: Vec<Router> = []
 // written all of it. serveRouter's single write is safe only because its socket
 // blocks; here a short write would truncate the body with no error anywhere.
 fn writeAll(fd: i32, buf: string): void {
-    var sent: i64 = 0
-    while sent < buf.len {
-        // The whole buffer on the first pass, so the common case is one write
-        // and no copy; only a short write pays for the remainder.
-        var chunk = buf.clone()
-        if sent > 0 {
-            chunk = buf.slice(sent, buf.len).clone()
+    unsafe {
+        var sent: i64 = 0
+        while sent < buf.len {
+            // The whole buffer on the first pass, so the common case is one write
+            // and no copy; only a short write pays for the remainder.
+            var chunk = buf.clone()
+            if sent > 0 {
+                chunk = buf.slice(sent, buf.len).clone()
+            }
+            var n: i64 = 0
+            unsafe { n = sysWrite(fd, chunk, chunk.len) }
+            if n > 0 {
+                sent += n
+                continue
+            }
+            // Non-blocking socket: EAGAIN is "not yet", not an error. Park until the
+            // kernel says there is room, or a 240KB body would be silently truncated
+            // at whatever the socket buffer happened to hold.
+            if n < 0 {
+                schedulerWaitWrite(fd)
+                continue
+            }
+            return
         }
-        var n: i64 = 0
-        unsafe { n = sysWrite(fd, chunk, chunk.len) }
-        if n > 0 {
-            sent += n
-            continue
-        }
-        // Non-blocking socket: EAGAIN is "not yet", not an error. Park until the
-        // kernel says there is room, or a 240KB body would be silently truncated
-        // at whatever the socket buffer happened to hold.
-        if n < 0 {
-            schedulerWaitWrite(fd)
-            continue
-        }
-        return
     }
 }
 
 fn handleConn(clientFd: i32): void {
-    var buf: [u8; 8192] = [0; 8192]
-    // Park until the request is actually there. A blocking read here would stop
-    // the scheduler thread, which is the entire thing this loop exists to avoid.
-    schedulerWaitRead(clientFd)
-    var n: i64 = 0
-    unsafe { n = sysRead(clientFd, buf, 8192) }
-    if n > 0 && activeRouter.len > 0 {
-        let req = parseRequest(buf, n)
-        let handled = activeRouter[0].handle(req)
-        let wire = renderResponse(handled.response, handled.headers)
-        writeAll(clientFd, wire)
+    unsafe {
+        var buf: [u8; 8192] = [0; 8192]
+        // Park until the request is actually there. A blocking read here would stop
+        // the scheduler thread, which is the entire thing this loop exists to avoid.
+        schedulerWaitRead(clientFd)
+        var n: i64 = 0
+        unsafe { n = sysRead(clientFd, buf, 8192) }
+        if n > 0 && activeRouter.len > 0 {
+            let req = parseRequest(buf, n)
+            let handled = activeRouter[0].handle(req)
+            let wire = renderResponse(handled.response, handled.headers)
+            writeAll(clientFd, wire)
+        }
+        sysClose(clientFd)
     }
-    sysClose(clientFd)
 }
 
 // Like serveRouter, but each connection is handled in its own green task.
@@ -845,34 +864,36 @@ fn handleConn(clientFd: i32): void {
 // Never returns: the scheduler drives the accept task and the handlers it
 // spawns, exactly as a green-threaded server's main is supposed to.
 pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
-    let sock = openListener(port)?
-    if activeRouter.len == 0 {
-        activeRouter.push(router)
-    }
-    let listenFd = sock.fd
-    // accept() has no green-aware wrapper: on a blocking listener it parks the
-    // OS thread and no other task ever runs. Non-blocking plus an explicit
-    // kqueue/epoll wait is what makes the accept loop a cooperating task.
-    setNonblocking(listenFd)
-    Task.spawn(move(): void => {
-        while true {
-            schedulerWaitRead(listenFd)
-            // Drain: one readiness notification can cover several pending
-            // connections, and leaving them queued would stall until the next.
-            while true {
-                let clientFd = acceptPeer(listenFd)
-                if clientFd < 0 {
-                    break
-                }
-                setNonblocking(clientFd)
-                Task.spawn(move(): void => {
-                    handleConn(clientFd)
-                })
-            }
+    unsafe {
+        let sock = openListener(port)?
+        if activeRouter.len == 0 {
+            activeRouter.push(router)
         }
-    })
-    schedulerRunToCompletion()
-    return Result.Err("server exited")
+        let listenFd = sock.fd
+        // accept() has no green-aware wrapper: on a blocking listener it parks the
+        // OS thread and no other task ever runs. Non-blocking plus an explicit
+        // kqueue/epoll wait is what makes the accept loop a cooperating task.
+        setNonblocking(listenFd)
+        Task.spawn(move(): void => {
+            while true {
+                schedulerWaitRead(listenFd)
+                // Drain: one readiness notification can cover several pending
+                // connections, and leaving them queued would stall until the next.
+                while true {
+                    let clientFd = acceptPeer(listenFd)
+                    if clientFd < 0 {
+                        break
+                    }
+                    setNonblocking(clientFd)
+                    Task.spawn(move(): void => {
+                        handleConn(clientFd)
+                    })
+                }
+            }
+        })
+        schedulerRunToCompletion()
+        return Result.Err("server exited")
+    }
 }
 
 // ── Path matching ──

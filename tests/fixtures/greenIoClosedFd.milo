@@ -23,23 +23,26 @@ from "std/os" import {
 }
 
 pub fn main(): i32 {
-    var fds: [u8; 8] = [0; 8]
-    var rfd: i32 = 0
-    var wfd: i32 = 0
+    // Raw descriptor IO is what this fixture exercises, and every raw-fd call in std is @unsafe.
     unsafe {
-        pipe(fds as *i32)
-        let p = fds as *i32
-        rfd = p[0]
-        wfd = p[1]
-        close(rfd)
-        close(wfd)
+        var fds: [u8; 8] = [0; 8]
+        var rfd: i32 = 0
+        var wfd: i32 = 0
+        unsafe {
+            pipe(fds as *i32)
+            let p = fds as *i32
+            rfd = p[0]
+            wfd = p[1]
+            close(rfd)
+            close(wfd)
+        }
+        Task.spawn(move(): void => {
+            var buf: [u8; 4] = [0; 4]
+            print("read ", readFd(rfd, buf, 4))
+            print("write ", writeFd(wfd, buf, 4))
+            print("still running")
+        })
+        schedulerRunToCompletion()
+        return 0
     }
-    Task.spawn(move(): void => {
-        var buf: [u8; 4] = [0; 4]
-        print("read ", readFd(rfd, buf, 4))
-        print("write ", writeFd(wfd, buf, 4))
-        print("still running")
-    })
-    schedulerRunToCompletion()
-    return 0
 }

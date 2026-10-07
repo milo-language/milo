@@ -5,8 +5,8 @@
 // Child-exit Select arm — the leftover half of backlog C2.
 //
 // No new API was needed; the pieces just never existed at the same time:
-//   installSignalPipe(sigchld())  -> SIGCHLD makes an fd readable (the self-pipe trick)
-//   sel.onRead(fd)               -> arm it like any other fd
+//   installSignalPipe(sigchld())  -> SIGCHLD makes a SignalPipe readable (the self-pipe trick)
+//   sel.onRead(pipe)             -> arm it like any other descriptor handle
 //   waitpid(pid, buf, WNOHANG)   -> reap on wake without blocking the runtime
 //
 // SIGCHLD landed earlier today (it is the one signal whose number differs per platform:
@@ -17,7 +17,7 @@
 // top of std/select.milo. The timeout arm must NOT win: if it does, the signal fd never
 // fired and the arm is broken.
 from "std/signal" import {
-    sigchld, installSignalPipe, drainSignalFd
+    sigchld, installSignalPipe
 }
 from "std/select" import {
     Select
@@ -40,9 +40,10 @@ pub fn main(): i32 {
         sleepMs(200)
     })
 
-    let fd = installSignalPipe(sigchld())
+    let pipeRes = installSignalPipe(sigchld())
     // @expect: pipe ok true
-    print("pipe ok ", fd >= 0)
+    print("pipe ok ", pipeRes.isOk())
+    let fd = pipeRes!
 
     // /usr/bin/true exits at once and prints nothing, so it can't pollute stdout here.
     let p = Process.spawn("/usr/bin/true")!
@@ -55,7 +56,7 @@ pub fn main(): i32 {
     // @expect: arm 0
     print("arm ", w)
 
-    drainSignalFd(fd)
+    fd.drain()
 
     unsafe {
         var status: [i32; 1] = [0]

@@ -176,6 +176,9 @@ hard to write but not impossible. Finish it:
 2. Convert the remaining std pub fns that take or return raw `i32` fds (~69 at the
    friction analysis) to owning types (`OwnedFd`, `TcpStream`, `Pty`, `Child`), keeping
    raw-fd entry points `@unsafe` for FFI.
+   **Done 2026-10-07**: inventory, dispositions and the gate (`tests/rawFdApi.test.ts`) in
+   [raw-fd-2026-10.md](raw-fd-2026-10.md); handles are borrowed through `AsFd`, and
+   `@unsafe` now applies to methods.
 
 ## Dogfood: chadsmith.dev/todo in Milo (accepted 2026-10-07)
 

@@ -23,8 +23,6 @@ pub struct UnixListener
 A listening unix-domain socket. Closes its fd on drop — but NOT the socket file; call
 removeSocketFile to clean that up.
 
-Fields: `fd: i32`.
-
 #### `UnixListener.accept`
 
 ```milo
@@ -53,7 +51,14 @@ pub struct UnixStream
 
 A connected unix-domain socket. Closes its fd on drop.
 
-Fields: `fd: i32`.
+#### `UnixStream.close`
+
+```milo
+fn UnixStream.close(self: &mut UnixStream): void
+```
+
+Close the socket now rather than at drop: the peer sees EOF here. Afterwards the
+stream is inert and its drop is a no-op.
 
 #### `UnixStream.connect`
 
@@ -94,6 +99,7 @@ fn UnixStream.take(self: &mut UnixStream): i32
 ```
 
 Release the fd to the caller; this stream no longer closes it on drop.
+`@unsafe` for the same reason as TcpStream.take.
 
 ### Functions
 

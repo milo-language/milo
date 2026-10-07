@@ -10,14 +10,17 @@
 // Pty.writeOnce: the bytes reach the child, and once the master is non-blocking
 // a child that never reads its input fills it until writeOnce refuses rather
 // than waiting.
-from "std/os" import {
-    readFd
-}
 from "std/event" import {
     setNonblocking
 }
+from "std/os" import {
+    readFd
+}
 from "std/pty" import {
     Pty
+}
+from "std/io" import {
+    AsFd
 }
 
 pub fn main(): i32 {
@@ -27,7 +30,8 @@ pub fn main(): i32 {
     // blocking master: waits for the child to open its side, as write(2) does
     print($"wrote {cat.writeOnce("hi\n")}")
     var buf: [u8; 64] = [0; 64]
-    let n = readFd(cat.fd(), buf, 64)
+    var n: i64 = 0
+    unsafe { n = readFd(cat.rawFd(), buf, 64) }
     var s = ""
     for i in 0..n {
         if buf[i] != 13 && buf[i] != 10 {
@@ -44,7 +48,8 @@ pub fn main(): i32 {
     var sleepArgs: Vec<string> = Vec.new()
     sleepArgs.push("5")
     let _q = idle.spawn("sleep", sleepArgs)!
-    let _nb = setNonblocking(idle.fd())
+    // No Pty method flips the master to non-blocking; this test needs exactly that.
+    unsafe { let _nb = setNonblocking(idle.rawFd()) }
     var chunk = ""
     for _i in 0..1024 {
         chunk.push('x')

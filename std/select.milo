@@ -9,7 +9,7 @@
 //
 //   var sel = Select.new()
 //   sel.onRecv(ch)        // arm 0
-//   sel.onRead(fd)        // arm 1
+//   sel.onRead(sock)      // arm 1 (any AsFd: TcpStream, Pty, SignalPipe, Stdin {}, ...)
 //   sel.onTimeout(5000)   // arm 2
 //   match sel.wait() {
 //     0 => { let v = ch.recv()! ... }
@@ -45,6 +45,9 @@ from "std/sync" import {
 from "std/time" import {
     unrecordedEpochMillis
 }
+from "std/io" import {
+    AsFd
+}
 from "std/runtime" import {
     schedulerExists,
     selectStateNew, selectStateFree, selectWaitState, selectTryClaim,
@@ -69,6 +72,20 @@ pub struct Select {
     _state: *u8, // SelectState (runtime)
     _nodes: *u8, // array of _maxArms nodes, nodeSize() bytes each
     _count: i64,
+}
+
+// A free fn, not a Select method: methods are as public as their type, and this takes a
+// bare descriptor number (onRead/onWrite borrow the handle it came from).
+fn armFd(sel: &mut Select, kind: i64, fd: i32): void {
+    if sel._count >= maxArms() {
+        return
+    }
+    let node = sel._node(sel._count)
+    rtWriteI64(node, nodeKind(), kind)
+    rtWritePtr(node, nodeA(), sel._state)
+    rtWriteI64(node, nodeArm(), sel._count)
+    rtWriteI64(node, nodeFd(), fd as i64)
+    sel._count += 1
 }
 
 impl Select {
@@ -111,28 +128,16 @@ impl Select {
         self.armChan(kindSelSend(), ch.rawPtr())
     }
 
-    fn onRead(self: &mut Self, fd: i32): void {
-        if self._count >= maxArms() {
-            return
-        }
-        let node = self._node(self._count)
-        rtWriteI64(node, nodeKind(), kindSelRead())
-        rtWritePtr(node, nodeA(), self._state)
-        rtWriteI64(node, nodeArm(), self._count)
-        rtWriteI64(node, nodeFd(), fd as i64)
-        self._count += 1
+    // Arm on `h` becoming readable. The arm holds the descriptor number until wait()
+    // returns, so `h` must stay alive across the wait; borrowing it here is what keeps
+    // a caller from arming a number nothing owns.
+    fn onRead<T: AsFd>(self: &mut Self, h: &T): void {
+        unsafe { armFd(&mut self, kindSelRead(), h.rawFd()) }
     }
 
-    fn onWrite(self: &mut Self, fd: i32): void {
-        if self._count >= maxArms() {
-            return
-        }
-        let node = self._node(self._count)
-        rtWriteI64(node, nodeKind(), kindSelWrite())
-        rtWritePtr(node, nodeA(), self._state)
-        rtWriteI64(node, nodeArm(), self._count)
-        rtWriteI64(node, nodeFd(), fd as i64)
-        self._count += 1
+    // Arm on `h` accepting a write without blocking.
+    fn onWrite<T: AsFd>(self: &mut Self, h: &T): void {
+        unsafe { armFd(&mut self, kindSelWrite(), h.rawFd()) }
     }
 
     fn onTimeout(self: &mut Self, ms: i64): void {

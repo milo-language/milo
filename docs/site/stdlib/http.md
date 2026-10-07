@@ -341,14 +341,6 @@ fn Router.use(self: &mut Router, mw: move (&mut Context, (&mut Context) => Respo
 Add middleware. It receives the context and `next`, the rest of the chain, and
 returns the response.
 
-### `Socket`
-
-```milo
-pub struct Socket
-```
-
-Fields: `fd: i32`.
-
 ### Functions
 
 #### `parseRequest`

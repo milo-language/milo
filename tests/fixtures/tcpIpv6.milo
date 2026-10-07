@@ -20,12 +20,6 @@ from "std/net" import {
 from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
-from "std/os" import {
-    getSockPort
-}
-from "std/platform" import {
-    close
-}
 
 pub fn main(): i32 {
     // @expect: parsed ::1 true
@@ -40,8 +34,8 @@ pub fn main(): i32 {
     // it to bind6 doesn't move it.
     let loopback = ip6("::1")!
     let lis = TcpListener.bind6(loopback, 0)!
-    // getSockPort is family-agnostic: sin_port and sin6_port both sit at offset 2
-    let port = getSockPort(lis.fd) as u16
+    // port() is family-agnostic: sin_port and sin6_port both sit at offset 2
+    let port = lis.port() as u16
 
     Task.spawn(move(): void => {
         match lis.accept() {
@@ -55,10 +49,9 @@ pub fn main(): i32 {
         }
     })
 
-    let cli = TcpStream.connect6(loopback, port, 0)!
+    var cli = TcpStream.connect6(loopback, port, 0)!
     let _n = cli.send("hello over v6")!
-    let fd = cli.take()
-    close(fd)
+    cli.close()
 
     // @expect: server got hello over v6
     schedulerRunToCompletion()

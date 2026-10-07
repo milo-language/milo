@@ -35,13 +35,13 @@ from "std/select" import {
     Select
 }
 from "std/signal" import {
-    installSignalPipe, drainSignalFd, SIGWINCH
+    installSignalPipe, SignalPipe, SIGWINCH
 }
 from "std/term" import {
     enableRawMode, restoreTerminal
 }
 from "std/io" import {
-    writeStdout, flush
+    writeStdout, flush, AsFd, Stdin
 }
 from "std/args" import {
     args
@@ -50,7 +50,6 @@ from "std/env" import {
     Env
 }
 from "std/os" import {
-    acceptFd,
     ioctl
 }
 from "std/platform" import {
@@ -70,6 +69,20 @@ pub let PREFIX: u8 = 2 // Ctrl-B
 pub let TIOCSWINSZ: i64 = 2148037735 // 0x80087467 (macOS)
 
 pub let RESIZE_MARK: u8 = 30 // 0x1e RS — brackets a "rows;cols" size message
+
+// The daemon juggles its listener, its one attached client and the attach side's
+// socket as bare descriptor numbers (closing and replacing them by hand), so this lends
+// such a number to Select, which only arms handles. `rawFd` is @unsafe like std's.
+pub struct HeldFd {
+    n: i32,
+}
+
+impl AsFd for HeldFd {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self.n
+    }
+}
 
 pub fn setNonblock(fd: i32): void {
     fcntl(fd, fSetfl(), fcntl(fd, fGetfl()) | oNonblock())
@@ -151,7 +164,7 @@ pub fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, active
     var j: i64 = 0
     while j < m {
         let gi = idxs[j]
-        setPtySize(ptys[gi].fd(), gridRows, paneW)
+        unsafe { setPtySize(ptys[gi].rawFd(), gridRows, paneW) }
         terms[gi] = newTerm(gridRows, paneW)
         j += 1
     }
@@ -242,7 +255,7 @@ pub fn shellArgs(): Vec<string> {
 
 // ── server: N windows, each N tiled shells; composite the active window ──
 
-pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
+pub fn serveMulti(listener: &TcpListener, shell: &string, rows: i64, cols0: i64): void {
     var gridRows = rows - 1
     let sa = shellArgs()
     var ptys: Vec<Pty> = Vec.new()
@@ -252,7 +265,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     while k < 2 {
         match openAndSpawn(shell, sa) {
             Ok(p) => {
-                setNonblock(p.fd())
+                unsafe { setNonblock(p.rawFd()) }
                 ptys.push(p)
                 terms.push(newTerm(gridRows, 1))
                 paneWin.push(0)
@@ -281,13 +294,13 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         var ai: i64 = 0
         while ai < ptys.len {
             if paneWin[ai] >= 0 { // skip closed panes (marked -1)
-                sel.onRead(ptys[ai].fd())
+                sel.onRead(ptys[ai])
             }
             ai += 1
         }
-        sel.onRead(listenFd)
+        sel.onRead(listener)
         if clientFd >= 0 {
-            sel.onRead(clientFd)
+            sel.onRead(HeldFd { n: clientFd })
         }
         sel.wait()
         sel.destroy()
@@ -301,7 +314,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         while di < ptys.len {
             if paneWin[di] >= 0 {
                 unsafe {
-                    let nn = read(ptys[di].fd(), buf as *u8, 4096)
+                    let nn = read(ptys[di].rawFd(), buf as *u8, 4096)
                     if nn == 0 {
                         ptys[di].close()
                         ptys[di].wait()
@@ -349,12 +362,13 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
             dirty = true
         }
 
-        let newFd = acceptFd(listenFd)
-        if newFd >= 0 {
+        if let Result.Ok(conn) = listener.acceptNb() {
             if clientFd >= 0 {
                 close(clientFd)
             }
-            clientFd = newFd
+            var c = conn
+            // The client is replaced and closed by hand below, so it is held as a number.
+            unsafe { clientFd = c.take() }
             setNonblock(clientFd)
             dirty = true
         }
@@ -475,7 +489,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
                                     Ok(p) => {
-                                        setNonblock(p.fd())
+                                        unsafe { setNonblock(p.rawFd()) }
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
                                         paneWin.push(activeWin)
@@ -492,7 +506,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
                                     Ok(p) => {
-                                        setNonblock(p.fd())
+                                        unsafe { setNonblock(p.rawFd()) }
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
                                         paneWin.push(winCount)
@@ -545,7 +559,7 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                 }
                 if fwdN > 0 {
                     unsafe {
-                        write(ptys[focus].fd(), fwd as *u8, fwdN)
+                        write(ptys[focus].rawFd(), fwd as *u8, fwdN)
                     }
                 }
             }
@@ -581,10 +595,10 @@ pub fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
 pub fn runServe(): void {
     match TcpListener.bind(PORT) {
         Ok(listener) => {
-            setNonblock(listener.fd)
+            unsafe { setNonblock(listener.rawFd()) }
             let shell = Env.getOr("SHELL", "/bin/sh")
             print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
-            serveMulti(listener.fd, shell, 24, 80)
+            serveMulti(listener, shell, 24, 80)
             print("tmuxd: stopped")
         }
         Err(_) => {
@@ -612,32 +626,22 @@ pub fn sendSize(sockFd: i32): void {
     }
 }
 
-pub fn attachLoop(sockFd: i32, winchFd: i32): void {
+pub fn attachLoop(sockFd: i32, winch: &SignalPipe): void {
     var buf: [u8; 4096] = [0; 4096]
     var one: [u8; 1] = [0; 1]
     var prefixArmed = false
     var done = false
     while !done {
         var sel = Select.new()
-        sel.onRead(0)
-        sel.onRead(sockFd)
-        if winchFd >= 0 {
-            sel.onRead(winchFd)
-        }
+        sel.onRead(Stdin {})
+        sel.onRead(HeldFd { n: sockFd })
+        sel.onRead(winch)
         sel.wait()
         sel.destroy()
 
         // terminal resized → tell the daemon the new size
-        if winchFd >= 0 {
-            var wb: [u8; 1] = [0; 1]
-            var got = false
-            unsafe {
-                got = read(winchFd, wb as *u8, 1) > 0
-            }
-            if got {
-                drainSignalFd(winchFd)
-                sendSize(sockFd)
-            }
+        if winch.drain() {
+            sendSize(sockFd)
         }
 
         // keyboard → daemon. Ctrl-B d detaches here (client-side); every other
@@ -688,16 +692,17 @@ pub fn runAttach(): void {
     match TcpStream.connect(ip4(127, 0, 0, 1), PORT) {
         Ok(stream) => {
             var s = stream
-            let sockFd = s.take() // own the fd ourselves; close on the way out
+            var sockFd: i32 = -1
+            unsafe { sockFd = s.take() } // own the fd ourselves; close on the way out
             setNonblock(sockFd)
             let termState = enableRawMode()
-            let winchFd = installSignalPipe(SIGWINCH)
+            let winch = installSignalPipe(SIGWINCH)!
             // SGR mouse reporting: clicks arrive on stdin and are forwarded to the
             // daemon, which focuses the clicked pane.
             writeStdout("\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H")
             flush()
             sendSize(sockFd) // negotiate size up front
-            attachLoop(sockFd, winchFd)
+            attachLoop(sockFd, winch)
             writeStdout("\x1b[?1000l\x1b[?1006l") // disable mouse
             restoreTerminal(termState)
             writeStdout("\x1b[0m\r\n")

@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: src/checker-program-passes.ts, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-06
+last-verified: 2026-10-07
 -->
 
 # Breaking changes
@@ -16,6 +16,56 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## Raw descriptor numbers leave the safe std API (2026-10-07)
+
+A descriptor is an `i32`, and an `i32` is Copy: nothing stopped one outliving the handle
+that owned it, after which it named whatever the kernel reused the number for (the
+dapweb ws writer wrote to a socket its owner had closed). Every pub std fn or method that
+takes or returns a bare descriptor is now `@unsafe`, takes a handle, or is gone; the gate
+is `tests/rawFdApi.test.ts`. `@unsafe` now applies to methods too. The plan and the full
+inventory are in [plans/raw-fd-2026-10.md](plans/raw-fd-2026-10.md).
+
+Borrowing goes through the new `AsFd` trait (std/io). `File`, `OwnedFd`, `FdStream`,
+`TcpStream`, `TcpListener`, `UnixStream`, `UnixListener`, `WsConn`, `Pty`, `SignalPipe`
+and the new stdio handles `Stdin {}`, `Stdout {}`, `Stderr {}` implement it:
+
+| was | now |
+|---|---|
+| `sel.onRead(0)` / `sel.onRead(pty.fd())` / `sel.onWrite(fd)` | `sel.onRead(Stdin {})` / `sel.onRead(pty)` / `sel.onWrite(conn)` (`Select.onRead<T: AsFd>(h: &T)`) |
+| `waitReadable(fd, d)` / `waitWritable(fd, d)` | `waitReadable(conn, d)` / `waitWritable(conn, d)` |
+| `fdIsTerminal(1)` | `isTerminal(Stdout {})` (std/pty) |
+| `OwnedFd.dup(pty.fd())` | `OwnedFd.dup(pty)` |
+| `let fd = installSignalPipe(sig)` (`-1` on failure), `drainSignalFd(fd)` | `let p = installSignalPipe(sig)!` (a `Result<SignalPipe, string>`), `sel.onRead(p)`, `p.drain()` (true when the signal fired). Dropping the `SignalPipe` uninstalls it |
+| `wsAccept(stream.take(), raw)` | `wsAccept(stream, raw)`: the `WsConn` takes the `TcpStream` over |
+| `TlsStream.fromFd(fd, host, ca)` | `TlsStream.fromTcp(stream, host, ca)`; `fromFd` remains, `@unsafe` |
+| `Log.setSinkFd(1)` / `Log.setSinkFd(2)` | `Log.setSinkStdout()` / `Log.setSinkStderr()`; `Log.setSinkFd(fd: OwnedFd)` takes ownership of a descriptor you opened |
+| `mmapFile(fd, size)` | `mmapFile(file, size)` (`&File`) |
+| `syncFd(fd)`, `dataSyncFd(fd)`, `setFdMode(fd, m)`, `setFdOwner(fd, u, g)`, `truncateFd(fd, n)` (std/fs) | `syncFile(f)`, `dataSyncFile(f)`, `setFileMode(f, m)`, `setFileOwner(f, u, g)`, `truncateOpenFile(f, n)`, each over `&File` |
+| `let fd = s.take(); close(fd)` to close a stream early | `s.close()` (new on `TcpStream` and `UnixStream`) |
+| `conn.fd`, `listener.fd`, `file.fd`, `pty.masterFd`, `ws.fd` (public fields) | private (`_fd`, `_masterFd`); `x.rawFd()` inside `unsafe` |
+| `pty.fd()`, `ws.fd()`, `ownedFd.fd()`, `file.rawFd()`, `stream.rawFd()` | `x.rawFd()` (`AsFd`), `@unsafe` |
+
+Now `@unsafe` (wrap the call in `unsafe { }`, or use the handle above): the std/os
+syscall layer (`sysRead`, `sysWrite`, `sysOpen`, `sysClose`, `sysDup`, `sysLseek`,
+`sysSocket`, `sysListen`, `sysAccept`, `sysIsatty`, `readFd`, `writeFd`, `recvFd`,
+`sendFd`, `acceptFd`, `acceptFdNb`, `bindIn`, `bindIn6`, `bindUn`, `connectFdIn`,
+`connectFdIn6`, `connectFdUn`, `getSockPort`), `closeSocket`/`sockRead`/`sockWrite`
+(std/platform), `setNonblocking`, `clearNonblocking` and the `eventRegister*`/
+`eventLoopFd`/`eventLoopFromFd` calls (std/event), `schedulerWaitRead`/`Write`
+(std/runtime), `fdChannel`, `FdStream.onFd`/`onSocket`, `TcpStream.take`,
+`UnixStream.take`, `WsConn.view`, `Child.stdinFd`/`stdoutFd`/`stderrFd`, the
+`ssl*Fd` helpers (std/openssl) and the `replay*` descriptor calls (std/replay). The
+Windows shims `read`, `write`, `lseek`, `mmap` and `pipe` are `@unsafe` like the posix
+externs they stand in for.
+
+Removed: `connectIn`, `connectIn6` and `connectUn` (std/os; unused, `connectFdIn` and
+friends are the green-aware spellings), `drainSignalFd` (`SignalPipe.drain`),
+`fdIsTerminal` (`isTerminal`). Now file-private: `connectFd`, `sysRecv`, `sysSend`
+(std/os), `replayFdSynthetic` (std/replay) and std/http's `Socket`. `FdReader` is a
+struct with private fields instead of an enum, so `FdReader.Green(fd)` no longer builds
+one; `fdReaderAttach` is the constructor. No compat shims: the point is that the old
+spellings stop compiling.
 
 ## A plain closure parameter is non-escaping; one the function keeps is `move` (2026-10-06)
 

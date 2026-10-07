@@ -8,9 +8,6 @@
 // pick the family from its first bytes, so bind/connect can't be declared per-family. With
 // the raw *SockAddr extern + typed wrappers, AF_UNIX is an ordinary consumer — this module
 // contains no unsafe at all.
-from "std/platform" import {
-    close
-}
 from "std/unix" import {
     UnixListener, UnixStream, removeSocketFile
 }
@@ -36,11 +33,10 @@ pub fn main(): i32 {
         }
     })
 
-    let cli = UnixStream.connect(path)!
+    var cli = UnixStream.connect(path)!
     let _n = cli.send("hello over unix")!
     // Close the client so the server's recv() sees EOF and returns.
-    let fd = cli.take()
-    close(fd)
+    cli.close()
 
     // @expect: server got hello over unix
     // Go exit semantics: main no longer drains implicitly, so wait for the server task.

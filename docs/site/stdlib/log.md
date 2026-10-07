@@ -202,12 +202,12 @@ the logger entirely.
 #### `Log.setSinkFd`
 
 ```milo
-fn Log.setSinkFd(fd: i32): void
+fn Log.setSinkFd(fd: OwnedFd): void
 ```
 
-Send records to an already-open descriptor — 2 (the default) for stderr,
-1 for stdout, or a descriptor you opened. The descriptor stays yours: this
-module never closes it, and it must outlive the last record.
+Send records to a descriptor you opened (a pipe end, a socket). The log takes it
+over: it is closed when the sink is replaced, so no record can be written to a
+number something else has since reused.
 
 #### `Log.setSinkPath`
 
@@ -218,6 +218,22 @@ fn Log.setSinkPath(path: &string): Result<Unit, IoError>
 Append records to `path`, creating it if absent. The descriptor is opened
 and owned here for the life of the process (or until the sink is replaced).
 O_APPEND is what makes concurrent whole-record writes atomic at any size.
+
+#### `Log.setSinkStderr`
+
+```milo
+fn Log.setSinkStderr(): void
+```
+
+Send records to stderr (the default).
+
+#### `Log.setSinkStdout`
+
+```milo
+fn Log.setSinkStdout(): void
+```
+
+Send records to stdout.
 
 #### `Log.setTimestamps`
 

@@ -21,7 +21,7 @@ from "std/pty" import { Pty, openAndSpawn, isInteractive }
 pub struct Pty
 ```
 
-Fields: `masterFd: i32`, `slavePath: string`, `childPid: i32`.
+Fields: `slavePath: string`, `childPid: i32`.
 
 #### `Pty.close`
 
@@ -31,15 +31,6 @@ fn Pty.close(self: &mut Pty): void
 
 Idempotent: closing the master also unwedges a child blocked writing to a
 full PTY buffer (its write returns EIO), letting a pending SIGKILL land.
-
-#### `Pty.fd`
-
-```milo
-fn Pty.fd(self: &Pty): i32
-```
-
-The OS file descriptor for the master side. Callers poll, select and fcntl on it,
-which is why it is exposed at all.
 
 #### `Pty.kill`
 
@@ -151,14 +142,6 @@ Fields: `rows: u16`, `cols: u16`, `xpixel: u16`, `ypixel: u16`.
 
 ### Functions
 
-#### `fdIsTerminal`
-
-```milo
-pub fn fdIsTerminal(fd: i32): bool
-```
-
-Returns true if fd is connected to a terminal.
-
 #### `freeArgv`
 
 ```milo
@@ -174,6 +157,14 @@ pub fn isInteractive(): bool
 ```
 
 Returns true if stdin is a terminal (process is interactive).
+
+#### `isTerminal`
+
+```milo
+pub fn isTerminal<T: AsFd>(h: &T): bool
+```
+
+Returns true if `h` is connected to a terminal: `isTerminal(Stdout {})`.
 
 #### `openAndSpawn`
 

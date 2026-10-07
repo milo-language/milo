@@ -52,15 +52,41 @@ fn main(): i32 {
 
 ## API reference
 
-### `drainSignalFd`
+### `SignalPipe`
 
 ```milo
-pub fn drainSignalFd(fd: i32): void
+pub struct SignalPipe
 ```
 
-Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
+An installed self-pipe for one signal (see installSignalPipe). It goes readable each
+time the signal fires: arm it with `sel.onRead(p)` and call `p.drain()` after it wakes.
+Dropping it uninstalls: the signal goes back to its default action, and both ends of
+the pipe close. It owns the descriptors, so the read end cannot be closed under a
+Select that still has it armed, nor outlive the handler that writes to it.
 
-### `ignoreSignal`
+#### `SignalPipe.channel`
+
+```milo
+fn SignalPipe.channel(self: &SignalPipe): Channel<string>
+```
+
+One message per wake, pumped on a green task (see fdChannel): `for _ in p.channel()`
+runs its body each time the signal fires. Keep the SignalPipe alive while consuming;
+dropping it closes the pipe under the pump.
+
+#### `SignalPipe.drain`
+
+```milo
+fn SignalPipe.drain(self: &SignalPipe): bool
+```
+
+Drain pending bytes (call after the pipe wakes a Select). True when there were
+any, i.e. the signal fired since the last drain: a loop that wakes for several
+reasons asks this rather than peeking at the pipe itself.
+
+### Functions
+
+#### `ignoreSignal`
 
 ```milo
 pub fn ignoreSignal(sig: i32): void
@@ -68,19 +94,18 @@ pub fn ignoreSignal(sig: i32): void
 
 Ignore a signal.
 
-### `installSignalPipe`
+#### `installSignalPipe`
 
 ```milo
-pub fn installSignalPipe(sig: i32): i32
+pub fn installSignalPipe(sig: i32): Result<SignalPipe, string>
 ```
 
-Install a self-pipe for `sig` and return its read fd (or -1 on failure). The
-fd goes readable each time the signal fires; arm it with Select.onRead and
-call drainSignalFd after it wakes. One pipe per signal, so several can be armed at
-once (SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
-Re-installing the same signal replaces its pipe.
+Install a self-pipe for `sig`. One pipe per signal, so several can be armed at once
+(SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
+Re-installing the same signal replaces its pipe. Errs on a signal number out of range
+or when the pipe cannot be created.
 
-### `onSignal`
+#### `onSignal`
 
 ```milo
 pub fn onSignal(sig: i32, handler: *u8): void
@@ -96,7 +121,7 @@ called it with the signal number in the env slot and the handler read garbage as
 `sig` (observed: 1794499728 instead of 20). Nothing caught it because the only in-tree
 handler, _sigPipeHandler, ignores its argument.
 
-### `resetSignal`
+#### `resetSignal`
 
 ```milo
 pub fn resetSignal(sig: i32): void
@@ -104,7 +129,7 @@ pub fn resetSignal(sig: i32): void
 
 Reset a signal to default behavior.
 
-### `sigchld`
+#### `sigchld`
 
 ```milo
 pub fn sigchld(): i32

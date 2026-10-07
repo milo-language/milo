@@ -299,15 +299,6 @@ Note an fd std just opened (or that replay just handed out) and what it is: 'f' 
 file, 'n' a socket, 'p' a child's pipe, 't' a pty. Under replay the number came from
 the trace and has no OS descriptor behind it.
 
-#### `replayFdSynthetic`
-
-```milo
-pub fn replayFdSynthetic(fd: i32): bool
-```
-
-True when `fd` is a replay-synthetic descriptor: every operation on it is answered
-from the trace, and the OS must never see the number.
-
 #### `replayHeapDepthIn`
 
 ```milo

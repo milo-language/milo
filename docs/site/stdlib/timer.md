@@ -55,7 +55,7 @@ one. `waitReadable` and `waitWritable` are the timeout *under* a blocking read o
 check first, then do the IO knowing it will not park forever.
 
 ```milo
-if !waitReadable(conn.fd(), Duration.secs(10)) {
+if !waitReadable(conn, Duration.secs(10)) {
     print("client idle, closing")
 }
 ```
@@ -173,10 +173,10 @@ something from std/timer. A free function names its dependency.
 #### `waitReadable`
 
 ```milo
-pub fn waitReadable(fd: i32, d: &Duration): bool
+pub fn waitReadable<T: AsFd>(h: &T, d: &Duration): bool
 ```
 
-Wait until `fd` is readable, or `d` elapses. False on timeout.
+Wait until `h` is readable, or `d` elapses. False on timeout.
 
 This is the timeout under a blocking read: check first, then read knowing the
 read won't park forever. It reads nothing itself.
@@ -184,9 +184,9 @@ read won't park forever. It reads nothing itself.
 #### `waitWritable`
 
 ```milo
-pub fn waitWritable(fd: i32, d: &Duration): bool
+pub fn waitWritable<T: AsFd>(h: &T, d: &Duration): bool
 ```
 
-Wait until `fd` accepts a write without blocking, or `d` elapses.
+Wait until `h` accepts a write without blocking, or `d` elapses.
 
 <!-- /generated:api -->

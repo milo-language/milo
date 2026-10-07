@@ -9,7 +9,6 @@ from "std/os" import {
     acceptFd,
     acceptFdNb,
     bind,
-    connectFd,
     freeaddrinfo,
     getSockPort,
     getaddrinfo,
@@ -43,7 +42,8 @@ from "std/sync" import {
 }
 from "std/io" import {
     fdChannel,
-    FdStream
+    FdStream,
+    AsFd
 }
 
 // ── NetError ──
@@ -62,19 +62,21 @@ pub enum NetError {
 
 // TCP connection handle. Automatically closes the fd when dropped.
 pub struct TcpStream {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Drop for TcpStream {
     fn drop(self: &mut Self): void {
-        // `> 0`, not `>= 0`: drop glue runs on moved-from slots, which move-zeroing
-        // leaves all-zero — every Drop impl must be a no-op on the zero value, or a
-        // loop like `let ar = listener.accept()` + `match ar` closes fd 0 (stdin) on
-        // each reassign-drop and every later accept() returns the freed fd 0.
-        // Tradeoff: a real socket on fd 0 (only possible if stdin was closed at
-        // startup) is leaked instead of closed.
-        if self.fd > 0 {
-            sysClose(self.fd)
+        unsafe {
+            // `> 0`, not `>= 0`: drop glue runs on moved-from slots, which move-zeroing
+            // leaves all-zero — every Drop impl must be a no-op on the zero value, or a
+            // loop like `let ar = listener.accept()` + `match ar` closes fd 0 (stdin) on
+            // each reassign-drop and every later accept() returns the freed fd 0.
+            // Tradeoff: a real socket on fd 0 (only possible if stdin was closed at
+            // startup) is leaked instead of closed.
+            if self._fd > 0 {
+                sysClose(self._fd)
+            }
         }
     }
 }
@@ -114,74 +116,82 @@ pub fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
 impl TcpStream {
     // Open a TCP connection to an IPv4 address (see `ip4`, `resolve`).
     fn connect(ip: u32, port: u16): Result<TcpStream, NetError> {
-        ignoreSigpipe()
-        let AF_INET: i32 = 2
-        let SOCK_STREAM: i32 = 1
+        unsafe {
+            ignoreSigpipe()
+            let AF_INET: i32 = 2
+            let SOCK_STREAM: i32 = 1
 
-        ensureNetInit()
-        var fd: i32 = 0
-        fd = sysSocket(AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            ensureNetInit()
+            var fd: i32 = 0
+            fd = sysSocket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+
+            var addr = makeSockaddr(port, ip)
+
+            if connectFdIn(fd, addr) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
+
+            return Result.Ok(TcpStream {
+                _fd: fd
+            })
         }
-
-        var addr = makeSockaddr(port, ip)
-
-        if connectFdIn(fd, addr) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("connect() failed"))
-        }
-
-        return Result.Ok(TcpStream {
-            fd: fd
-        })
     }
 
     // IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot hold
     // a 128-bit address, so the v4 entry point keeps its shape. `scopeId` is the interface
     // index for a link-local peer (fe80::/10), 0 otherwise.
     fn connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream, NetError> {
-        ensureNetInit()
-        var fd: i32 = 0
-        fd = sysSocket(afInet6(), 1, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+        unsafe {
+            ensureNetInit()
+            var fd: i32 = 0
+            fd = sysSocket(afInet6(), 1, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+            var sa = makeSockaddr6(port, addr, scopeId)
+            if connectFdIn6(fd, sa) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
+            return Result.Ok(TcpStream {
+                _fd: fd
+            })
         }
-        var sa = makeSockaddr6(port, addr, scopeId)
-        if connectFdIn6(fd, sa) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("connect() failed"))
-        }
-        return Result.Ok(TcpStream {
-            fd: fd
-        })
     }
 
     // Send `data`. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
-        let n = writeFd(self.fd, data, data.len)
-        if n < 0 {
-            return Result.Err(NetError.SendFailed("tcp send failed"))
+        unsafe {
+            let n = writeFd(self._fd, data, data.len)
+            if n < 0 {
+                return Result.Err(NetError.SendFailed("tcp send failed"))
+            }
+            return Result.Ok(n)
         }
-        return Result.Ok(n)
     }
 
     // Read everything until the peer closes, as one string (blocks to EOF).
     // Prefer `incoming()` for streaming/incremental consumption — it delivers
     // chunks as they arrive instead of buffering the whole response.
     fn recv(self: &Self): Result<string, NetError> {
-        var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
-        while true {
-            let n = readFd(self.fd, buf, 4096)
-            if n <= 0 {
-                break
+        unsafe {
+            var result: string = ""
+            var buf: [u8; 4096] = [0; 4096]
+            while true {
+                let n = readFd(self._fd, buf, 4096)
+                if n <= 0 {
+                    break
+                }
+                for i in 0..n {
+                    result.push(buf[i])
+                }
             }
-            for i in 0..n {
-                result.push(buf[i])
-            }
+            return Result.Ok(result)
         }
-        return Result.Ok(result)
     }
 
     // Stream inbound bytes as an iterable channel, pumped on a background green
@@ -189,25 +199,27 @@ impl TcpStream {
     // `for chunk in stream.incoming()`; the channel closes when the peer does.
     // (Plaintext only — TlsStream needs an SSL-aware pump.)
     fn incoming(self: &Self): Channel<string> {
-        return fdChannel(self.fd)
+        unsafe { return fdChannel(self._fd) }
+    }
+
+    // Close the socket now rather than at drop: the peer sees EOF here. Afterwards the
+    // stream is inert and its drop is a no-op.
+    fn close(self: &mut Self): void {
+        if self._fd > 0 {
+            unsafe { sysClose(self._fd) }
+        }
+        self._fd = -1
     }
 
     // Release the underlying fd to the caller. After this the stream no longer
-    // closes it on drop — hand it to an fd-based API (e.g. a WebSocket upgrade)
-    // without risking a double close.
+    // closes it on drop, and the number is the caller's to close exactly once.
+    // `@unsafe` because nothing tracks it from here; `wsAccept` and
+    // `TlsStream.fromTcp` take the stream itself, which is the safe hand-off.
+    @unsafe
     fn take(self: &mut Self): i32 {
-        let f = self.fd
-        self.fd = -1
+        let f = self._fd
+        self._fd = -1
         return f
-    }
-
-    // Borrow the underlying fd read-only, WITHOUT transferring ownership: the stream
-    // still closes it on drop. Use when you want to do a bounded read/write on the raw
-    // fd and let the stream's own Drop close it — avoids `take()` (which needs `&mut`,
-    // forcing a move out of an immutable match binding) and the manual close that pairs
-    // with it. Do not close the returned fd yourself.
-    fn rawFd(self: &Self): i32 {
-        return self.fd
     }
 
     // A non-owning std/io Reader+Writer view of this socket, so `BufReader` and
@@ -218,7 +230,7 @@ impl TcpStream {
     // `TcpStream.connect(...)!.stream()` on a temporary is wrong. Bind the stream to
     // a name first; see FdStream in std/io.
     fn stream(self: &Self): FdStream {
-        return FdStream.onSocket(self.fd)
+        unsafe { return FdStream.onSocket(self._fd) }
     }
 
     // A single read of whatever is currently available, unlike `recv()` which loops until
@@ -226,15 +238,34 @@ impl TcpStream {
     // for the response, so `recv()` would deadlock; this returns after one segment — enough
     // for a request's headers.
     fn recvOnce(self: &Self): string {
-        var result: string = ""
-        var buf: [u8; 65536] = [0; 65536]
-        let n = readFd(self.fd, buf, 65536)
-        if n > 0 {
-            for i in 0..n {
-                result.push(buf[i])
+        unsafe {
+            var result: string = ""
+            var buf: [u8; 65536] = [0; 65536]
+            let n = readFd(self._fd, buf, 65536)
+            if n > 0 {
+                for i in 0..n {
+                    result.push(buf[i])
+                }
             }
+            return result
         }
-        return result
+    }
+}
+
+// Borrow the underlying fd WITHOUT transferring ownership: the stream still closes it
+// on drop. `@unsafe` (see AsFd in std/io); `sel.onRead(stream)` and friends take the
+// stream itself.
+impl AsFd for TcpStream {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
+    }
+}
+
+impl AsFd for TcpListener {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
     }
 }
 
@@ -243,14 +274,16 @@ impl TcpStream {
 // Listening TCP socket. Accepts inbound connections; closes the fd on drop.
 // Server counterpart to TcpStream.connect — no raw syscalls required in user code.
 pub struct TcpListener {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Drop for TcpListener {
     fn drop(self: &mut Self): void {
-        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop).
-        if self.fd > 0 {
-            sysClose(self.fd)
+        unsafe {
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop).
+            if self._fd > 0 {
+                sysClose(self._fd)
+            }
         }
     }
 }
@@ -296,57 +329,61 @@ impl TcpListener {
     // is the loopback-only listener a local dev server wants: `bind` takes every
     // interface, so anything it serves is reachable from the network.
     fn bindAddr(addr: u32, port: u16): Result<TcpListener, NetError> {
-        ignoreSigpipe()
-        let AF_INET: i32 = 2
-        let SOCK_STREAM: i32 = 1
+        unsafe {
+            ignoreSigpipe()
+            let AF_INET: i32 = 2
+            let SOCK_STREAM: i32 = 1
 
-        ensureNetInit()
-        var fd: i32 = 0
-        fd = sysSocket(AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
-        }
+            ensureNetInit()
+            var fd: i32 = 0
+            fd = sysSocket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
 
-        var one: i32 = 1
-        unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
+            var one: i32 = 1
+            unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
 
-        var sa = makeSockaddr(port, addr)
-        if bindIn(fd, sa) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("bind() failed"))
+            var sa = makeSockaddr(port, addr)
+            if bindIn(fd, sa) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("bind() failed"))
+            }
+            if sysListen(fd, 1024) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("listen() failed"))
+            }
+            return Result.Ok(TcpListener {
+                _fd: fd
+            })
         }
-        if sysListen(fd, 1024) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("listen() failed"))
-        }
-        return Result.Ok(TcpListener {
-            fd: fd
-        })
     }
 
     // Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
     // or all-zero for the v6 wildcard "::").
     fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
-        ensureNetInit()
-        var fd: i32 = 0
-        fd = sysSocket(afInet6(), 1, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+        unsafe {
+            ensureNetInit()
+            var fd: i32 = 0
+            fd = sysSocket(afInet6(), 1, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+            var one: i32 = 1
+            unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
+            var sa = makeSockaddr6(port, addr, 0)
+            if bindIn6(fd, sa) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("bind() failed"))
+            }
+            if sysListen(fd, 1024) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("listen() failed"))
+            }
+            return Result.Ok(TcpListener {
+                _fd: fd
+            })
         }
-        var one: i32 = 1
-        unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
-        var sa = makeSockaddr6(port, addr, 0)
-        if bindIn6(fd, sa) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("bind() failed"))
-        }
-        if sysListen(fd, 1024) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("listen() failed"))
-        }
-        return Result.Ok(TcpListener {
-            fd: fd
-        })
     }
 
     // The bound port — the point of `bind(0)`, which asks the OS to pick one.
@@ -357,20 +394,24 @@ impl TcpListener {
     // -1 if getsockname fails, mirroring getSockPort rather than reporting a
     // plausible-looking port number.
     fn port(self: &Self): i32 {
-        return getSockPort(self.fd)
+        unsafe {
+            return getSockPort(self._fd)
+        }
     }
 
     // Accept one connection. Inside the green scheduler this yields (via the
     // event loop) until a client is ready rather than blocking the whole
     // runtime; outside it, it blocks.
     fn accept(self: &Self): Result<TcpStream, NetError> {
-        let clientFd = acceptFd(self.fd)
-        if clientFd < 0 {
-            return Result.Err(NetError.ConnectionFailed("accept() failed"))
+        unsafe {
+            let clientFd = acceptFd(self._fd)
+            if clientFd < 0 {
+                return Result.Err(NetError.ConnectionFailed("accept() failed"))
+            }
+            return Result.Ok(TcpStream {
+                _fd: clientFd
+            })
         }
-        return Result.Ok(TcpStream {
-            fd: clientFd
-        })
     }
 
     // Accept without parking: Ok(stream) only when a connection is already
@@ -378,13 +419,15 @@ impl TcpListener {
     // event sources — accept() parks the calling task on the listener, which
     // stalls everything else that task drives until a client connects.
     fn acceptNb(self: &Self): Result<TcpStream, NetError> {
-        let clientFd = acceptFdNb(self.fd)
-        if clientFd < 0 {
-            return Result.Err(NetError.ConnectionFailed("no pending connection"))
+        unsafe {
+            let clientFd = acceptFdNb(self._fd)
+            if clientFd < 0 {
+                return Result.Err(NetError.ConnectionFailed("no pending connection"))
+            }
+            return Result.Ok(TcpStream {
+                _fd: clientFd
+            })
         }
-        return Result.Ok(TcpStream {
-            fd: clientFd
-        })
     }
 }
 

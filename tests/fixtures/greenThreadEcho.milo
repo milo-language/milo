@@ -32,81 +32,86 @@ from "std/runtime" import {
 }
 
 pub fn doClient(port: u16, id: i32): void {
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    var addr = makeSockaddr(port, 16777343)
-    connectFdIn(fd, addr)
-    print("client ", id, " connected")
-    let msg = format("hello from ", id)
-    sendFd(fd, msg, msg.len)
-    var buf: [u8; 4096] = [0; 4096]
-    let n = recvFd(fd, buf, 4096)
-    if n > 0 {
-        var resp: string = ""
-        var i: i64 = 0
-        while i < n {
-            resp.push(buf[i])
-            i = i + 1
+    // Raw descriptor IO is what this fixture exercises, and every raw-fd call in std is @unsafe.
+    unsafe {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var addr = makeSockaddr(port, 16777343)
+        connectFdIn(fd, addr)
+        print("client ", id, " connected")
+        let msg = format("hello from ", id)
+        sendFd(fd, msg, msg.len)
+        var buf: [u8; 4096] = [0; 4096]
+        let n = recvFd(fd, buf, 4096)
+        if n > 0 {
+            var resp: string = ""
+            var i: i64 = 0
+            while i < n {
+                resp.push(buf[i])
+                i = i + 1
+            }
+            print(resp)
         }
-        print(resp)
+        closeSocket(fd)
     }
-    closeSocket(fd)
 }
 
 pub fn main(): i32 {
-    // no-op on POSIX; runs WSAStartup on Windows so socket() below returns a valid handle
-    ensureNetInit()
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
+    unsafe {
+        // no-op on POSIX; runs WSAStartup on Windows so socket() below returns a valid handle
+        ensureNetInit()
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
 
-    let serverFd = socket(AF_INET, SOCK_STREAM, 0)
-    var one: i32 = 1
-    setsockopt(serverFd, solSocket(), soReuseaddr(), one, 4)
-    var addr = makeSockaddr(0 as u16, 0)
-    bindIn(serverFd, addr)
-    listen(serverFd, 128)
+        let serverFd = socket(AF_INET, SOCK_STREAM, 0)
+        var one: i32 = 1
+        setsockopt(serverFd, solSocket(), soReuseaddr(), one, 4)
+        var addr = makeSockaddr(0 as u16, 0)
+        bindIn(serverFd, addr)
+        listen(serverFd, 128)
 
-    let port = getSockPort(serverFd)
+        let port = getSockPort(serverFd)
 
-    print("server ready")
+        print("server ready")
 
-    // spawn server accept loop
-    Task.spawn(move(): void => {
-        var handled = 0
-        while handled < 2 {
-            let clientFd = acceptFd(serverFd)
-            if clientFd < 0 {
-                continue
-            }
-            let fd = clientFd
-            Task.spawn(move(): void => {
-                var buf: [u8; 4096] = [0; 4096]
-                let n = recvFd(fd, buf, 4096)
-                if n > 0 {
-                    var msg: string = ""
-                    var i: i64 = 0
-                    while i < n {
-                        msg.push(buf[i])
-                        i = i + 1
-                    }
-                    let resp = "echo: " + msg
-                    sendFd(fd, resp, resp.len)
+        // spawn server accept loop
+        Task.spawn(move(): void => {
+            var handled = 0
+            while handled < 2 {
+                let clientFd = acceptFd(serverFd)
+                if clientFd < 0 {
+                    continue
                 }
-                closeSocket(fd)
-            })
-            handled = handled + 1
-        }
-        closeSocket(serverFd)
-    })
+                let fd = clientFd
+                Task.spawn(move(): void => {
+                    var buf: [u8; 4096] = [0; 4096]
+                    let n = recvFd(fd, buf, 4096)
+                    if n > 0 {
+                        var msg: string = ""
+                        var i: i64 = 0
+                        while i < n {
+                            msg.push(buf[i])
+                            i = i + 1
+                        }
+                        let resp = "echo: " + msg
+                        sendFd(fd, resp, resp.len)
+                    }
+                    closeSocket(fd)
+                })
+                handled = handled + 1
+            }
+            closeSocket(serverFd)
+        })
 
-    // run clients sequentially so output order is deterministic
-    Task.spawn(move(): void => {
-        doClient(port as u16, 1)
-        doClient(port as u16, 2)
-    })
+        // run clients sequentially so output order is deterministic
+        Task.spawn(move(): void => {
+            doClient(port as u16, 1)
+            doClient(port as u16, 2)
+        })
 
-    print("done")
-    schedulerRunToCompletion()
-    return 0
+        print("done")
+        schedulerRunToCompletion()
+        return 0
+    }
 }

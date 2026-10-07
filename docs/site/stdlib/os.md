@@ -53,17 +53,6 @@ pub fn bindIn6(fd: i32, addr: &SockAddrIn6): i32
 pub fn bindUn(fd: i32, addr: &SockAddrUn): i32
 ```
 
-### `connectFd`
-
-```milo
-pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32
-```
-
-connect(2). In a green task: nonblocking connect, park until writable,
-then check SO_ERROR. Returns 0 on success, &lt;0 on failure.
-Green-aware connect. Takes the raw seam so it serves every family; the per-family
-entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
-
 ### `connectFdIn`
 
 ```milo
@@ -80,24 +69,6 @@ pub fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32
 
 ```milo
 pub fn connectFdUn(fd: i32, addr: &SockAddrUn): i32
-```
-
-### `connectIn`
-
-```milo
-pub fn connectIn(fd: i32, addr: &SockAddrIn): i32
-```
-
-### `connectIn6`
-
-```milo
-pub fn connectIn6(fd: i32, addr: &SockAddrIn6): i32
-```
-
-### `connectUn`
-
-```milo
-pub fn connectUn(fd: i32, addr: &SockAddrUn): i32
 ```
 
 ### `getSockPort`
@@ -210,22 +181,6 @@ pub fn sysRead(fd: i32, buf: *u8, len: i64): i64
 ```
 
 One read(2): bytes read, 0 at EOF, &lt;0 with errno set.
-
-### `sysRecv`
-
-```milo
-pub fn sysRecv(fd: i32, buf: *u8, len: i64): i64
-```
-
-One socket read (recv on Windows, where a SOCKET is not a CRT fd).
-
-### `sysSend`
-
-```milo
-pub fn sysSend(fd: i32, buf: *u8, len: i64): i64
-```
-
-One socket write (send on Windows).
 
 ### `sysSocket`
 

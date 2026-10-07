@@ -200,22 +200,27 @@ pub struct Child {
 impl Child {
     // The OS process id. These accessors are read-only: the fields are private so a
     // Child cannot be built around a pid or fds this program does not own, and an fd
-    // read here stays owned by the Child (takeStdout/takeStderr hand one over).
+    // read here stays owned by the Child (takeStdout/takeStderr hand one over). The fd
+    // accessors are `@unsafe`: the number outlives nothing and names whatever reused it
+    // once the Child closes or hands the pipe over.
     fn pid(self: &Self): i32 {
         return self._pid
     }
 
     // The parent end of the child's stdin pipe, or -1 when stdin is not a pipe or closed.
+    @unsafe
     fn stdinFd(self: &Self): i32 {
         return self._stdinFd
     }
 
     // The parent end of the child's stdout pipe, or -1 when not a pipe or taken.
+    @unsafe
     fn stdoutFd(self: &Self): i32 {
         return self._stdoutFd
     }
 
     // The parent end of the child's stderr pipe, or -1 when merged, not a pipe, or taken.
+    @unsafe
     fn stderrFd(self: &Self): i32 {
         return self._stderrFd
     }
@@ -238,7 +243,7 @@ impl Child {
     requires
     self._stdinFd >= 0
     {
-        return sysWrite(self._stdinFd, buf, len)
+        unsafe { return sysWrite(self._stdinFd, buf, len) }
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64
@@ -256,7 +261,7 @@ impl Child {
     requires
     self._stdoutFd >= 0
     {
-        return sysRead(self._stdoutFd, buf, len)
+        unsafe { return sysRead(self._stdoutFd, buf, len) }
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
@@ -264,7 +269,7 @@ impl Child {
     requires
     self._stderrFd >= 0
     {
-        return sysRead(self._stderrFd, buf, len)
+        unsafe { return sysRead(self._stderrFd, buf, len) }
     }
 
     // Stream the child's stdout as an iterable channel, pumped on a background
@@ -275,7 +280,7 @@ impl Child {
     requires
     self._stdoutFd >= 0
     {
-        return fdChannel(self._stdoutFd)
+        unsafe { return fdChannel(self._stdoutFd) }
     }
 
     // Stream the child's stderr the same way. Only valid when stderr is a
@@ -284,7 +289,7 @@ impl Child {
     requires
     self._stderrFd >= 0
     {
-        return fdChannel(self._stderrFd)
+        unsafe { return fdChannel(self._stderrFd) }
     }
 
     // Hand the stdout pipe to the caller: the Child stops tracking it, and the returned
@@ -304,9 +309,11 @@ impl Child {
 
     // Close the child's stdin, sending EOF. Idempotent.
     fn closeStdin(self: &mut Self): void {
-        if self._stdinFd >= 0 {
-            sysClose(self._stdinFd)
-            self._stdinFd = -1
+        unsafe {
+            if self._stdinFd >= 0 {
+                sysClose(self._stdinFd)
+                self._stdinFd = -1
+            }
         }
     }
 
@@ -331,14 +338,16 @@ impl Child {
 
     // Close any still-open parent-side fds. Call after wait().
     fn close(self: &mut Self): void {
-        self.closeStdin()
-        if self._stdoutFd >= 0 {
-            sysClose(self._stdoutFd)
-            self._stdoutFd = -1
-        }
-        if self._stderrFd >= 0 {
-            sysClose(self._stderrFd)
-            self._stderrFd = -1
+        unsafe {
+            self.closeStdin()
+            if self._stdoutFd >= 0 {
+                sysClose(self._stdoutFd)
+                self._stdoutFd = -1
+            }
+            if self._stderrFd >= 0 {
+                sysClose(self._stderrFd)
+                self._stderrFd = -1
+            }
         }
     }
 }
@@ -621,37 +630,39 @@ fn closeStreamFds(fds: &StreamFds): void {
 // redirect file is opened, and the recorded pipe ends come back as synthetic fds whose
 // reads and writes are answered from the trace.
 fn commandSpawn(cmd: &Command): Result<Child> {
-    if replayOff() {
-        return commandSpawnLive(cmd)
-    }
-    var line = cmd.program.clone()
-    for a in cmd.argv {
-        line.push(' ')
-        line.pushStr(a)
-    }
-    let p = replayBlob("proc.spawn", line, (): string => {
-        match commandSpawnLive(cmd) {
-            Result.Ok(c) => {
-                return c._pid.toString() + " " + c._stdinFd.toString() + " " + c._stdoutFd.toString() + " " + c._stderrFd.toString()
-            }
-            Result.Err(e) => {
-                return "!" + e
-            }
+    unsafe {
+        if replayOff() {
+            return commandSpawnLive(cmd)
         }
-    })
-    if p.len() > 0 && p[0] == '!' {
-        return Result.Err(p.substr(1, p.len()))
+        var line = cmd.program.clone()
+        for a in cmd.argv {
+            line.push(' ')
+            line.pushStr(a)
+        }
+        let p = replayBlob("proc.spawn", line, (): string => {
+            match commandSpawnLive(cmd) {
+                Result.Ok(c) => {
+                    return c._pid.toString() + " " + c._stdinFd.toString() + " " + c._stdoutFd.toString() + " " + c._stderrFd.toString()
+                }
+                Result.Err(e) => {
+                    return "!" + e
+                }
+            }
+        })
+        if p.len() > 0 && p[0] == '!' {
+            return Result.Err(p.substr(1, p.len()))
+        }
+        let v = replayInts(p)
+        for i in 1..4 {
+            replayFdOpened(v[i] as i32, 'p')
+        }
+        return Result.Ok(Child {
+            _pid: v[0] as i32,
+            _stdinFd: v[1] as i32,
+            _stdoutFd: v[2] as i32,
+            _stderrFd: v[3] as i32,
+        })
     }
-    let v = replayInts(p)
-    for i in 1..4 {
-        replayFdOpened(v[i] as i32, 'p')
-    }
-    return Result.Ok(Child {
-        _pid: v[0] as i32,
-        _stdinFd: v[1] as i32,
-        _stdoutFd: v[2] as i32,
-        _stderrFd: v[3] as i32,
-    })
 }
 
 @replayHooked

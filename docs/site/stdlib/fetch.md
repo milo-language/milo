@@ -109,7 +109,7 @@ pub struct TlsStream
 
 TLS/SSL connection handle. Frees SSL context and closes fd on drop.
 
-Fields: `fd: i32`, `ssl: i64`, `ctx: i64`.
+Fields: `ssl: i64`, `ctx: i64`.
 
 #### `TlsStream.connect`
 
@@ -137,11 +137,21 @@ An empty caFile is exactly connect().
 fn TlsStream.fromFd(fd: i32, hostname: &string, caFile: &string): Result<TlsStream, NetError>
 ```
 
-Client handshake over an ALREADY-connected fd. This is the entry point a protocol
-with in-band TLS negotiation needs — Postgres' SSLRequest, SMTP STARTTLS: the
-socket must carry plaintext first, so TLS setup cannot own the connect() too.
-OWNERSHIP: fd is taken over by the returned TlsStream, and closed on every error
-path here. The caller must neither close it nor keep using it.
+`fromTcp` over a bare descriptor. OWNERSHIP: fd is taken over by the returned
+TlsStream, and closed on every error path here. `@unsafe` because the caller must
+vouch it owns `fd` outright and neither closes nor uses it again.
+
+#### `TlsStream.fromTcp`
+
+```milo
+fn TlsStream.fromTcp(conn: TcpStream, hostname: &string, caFile: &string): Result<TlsStream, NetError>
+```
+
+Client handshake over an ALREADY-connected socket. This is the entry point a
+protocol with in-band TLS negotiation needs — Postgres' SSLRequest, SMTP STARTTLS:
+the socket must carry plaintext first, so TLS setup cannot own the connect() too.
+The stream is consumed: the returned TlsStream owns its fd, and every error path
+closes it, so nothing is left behind to use after the handshake.
 
 #### `TlsStream.incoming`
 

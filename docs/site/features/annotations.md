@@ -127,9 +127,9 @@ This method's closure argument is a critical section: the primitive provides the
 
 ### `@unsafe`
 
-_Goes on: `fn`._
+_Goes on: `fn`, `method`._
 
-Calling this function requires an `unsafe` block. For a routine whose contract the compiler cannot check (`std/foreign`'s view constructors assert that a raw pointer really addresses `len` initialized elements), where every operation in the body is individually checkable and so no other rule would ever ask the CALLER to opt in.
+Calling this function requires an `unsafe` block. For a routine whose contract the compiler cannot check (`std/foreign`'s view constructors assert that a raw pointer really addresses `len` initialized elements), where every operation in the body is individually checkable and so no other rule would ever ask the CALLER to opt in. On a method it guards the raw-descriptor seams of std's owning handles (`OwnedFd.fromRaw`, `rawFd()`): the number names whatever reused it once the owner drops.
 
 ### `@mustUse`
 

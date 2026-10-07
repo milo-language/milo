@@ -36,7 +36,7 @@ pub fn keventSize(): i64 {
 // A kqueue/epoll/IOCP poller handle. Create one with `EventLoop.new()`; release it with
 // `eventLoopClose`.
 pub struct EventLoop {
-    kqfd: i32,
+    _kqfd: i32,
 }
 
 // @internal
@@ -47,7 +47,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
         return Result.Err("kqueue() failed")
     }
     return Result.Ok(EventLoop {
-        kqfd: fd
+        _kqfd: fd
     })
 }
 
@@ -61,6 +61,7 @@ impl EventLoop {
 // Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
+@unsafe
 pub fn setNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -77,6 +78,7 @@ pub fn setNonblocking(fd: i32): i32 {
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
+@unsafe
 pub fn clearNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -91,6 +93,7 @@ pub fn clearNonblocking(fd: i32): i32 {
 }
 
 // Watch `fd` for readability.
+@unsafe
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
@@ -101,11 +104,12 @@ pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
             data: 0,
             udata: 0 as *u8,
         }
-        return kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        return kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 
 // Watch `fd` for writability.
+@unsafe
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev = Kevent {
@@ -116,11 +120,12 @@ pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
             data: 0,
             udata: 0 as *u8,
         }
-        return kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        return kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 
 // Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
+@unsafe
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
     unsafe {
         var filter = evfiltRead()
@@ -135,7 +140,7 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
             data: 0,
             udata: 0 as *u8,
         }
-        return kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        return kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 
@@ -160,7 +165,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32)
         if timeoutMs < 0 {
             tsPtr = 0 as *u8
         }
-        let n = kevent(el.kqfd, 0 as *u8, 0, evBuf, maxEvents, tsPtr)
+        let n = kevent(el._kqfd, 0 as *u8, 0, evBuf, maxEvents, tsPtr)
 
         if n > 0 {
             for i in 0..n {
@@ -190,6 +195,7 @@ pub fn wakeupIdentBase(): i32 {
 // Arm a wakeup that breaks a blocked `eventPoll` from elsewhere; this is how a
 // `Promise.blocking` worker tells the scheduler its result is ready. Returns the id to
 // pass to eventLoopNotify, eventLoopDrainWakeup and eventLoopCloseWakeup.
+@unsafe
 pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
     unsafe {
         var ev = Kevent {
@@ -200,7 +206,7 @@ pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
             data: 0,
             udata: 0 as *u8,
         }
-        let r = kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        let r = kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
         if r < 0 {
             return -1
         }
@@ -209,6 +215,7 @@ pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
 }
 
 // safe from any thread: kevent on a shared kqueue is thread-safe
+@unsafe
 pub fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
     unsafe {
         var ev = Kevent {
@@ -219,16 +226,18 @@ pub fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
             data: 0,
             udata: 0 as *u8,
         }
-        return kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        return kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 
 // Consume a delivered wakeup so the next poll does not report it again.
+@unsafe
 pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
     // EV_CLEAR already reset the event; nothing to consume on darwin
 }
 
 // Tear down a wakeup made by eventLoopInitWakeup.
+@unsafe
 pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var ev = Kevent {
@@ -239,24 +248,26 @@ pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
             data: 0,
             udata: 0 as *u8,
         }
-        kevent(el.kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        kevent(el._kqfd, (ev.addrOf()) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 
 // Wrap a poller that another runtime already owns. Does not take ownership: closing it
 // is still the original owner's job.
+@unsafe
 pub fn eventLoopFromFd(fd: i32): EventLoop {
     return EventLoop {
-        kqfd: fd
+        _kqfd: fd
     }
 }
 
 // The poller's descriptor, to hand to another runtime's poller when embedding.
+@unsafe
 pub fn eventLoopFd(el: &EventLoop): i32 {
-    return el.kqfd
+    return el._kqfd
 }
 
 // Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
-    unsafe { close(el.kqfd) }
+    unsafe { close(el._kqfd) }
 }

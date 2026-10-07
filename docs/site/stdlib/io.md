@@ -25,6 +25,30 @@ let _ = f.writeAll($"{n}\n")
 
 ## API reference
 
+### `AsFd`
+
+```milo
+pub trait AsFd
+```
+
+A handle that owns (or, for the stdio streams, outlives) an OS descriptor. Generic
+std calls that only need the number for the duration of the call take `&T` with
+`T: AsFd` (`Select.onRead`, `waitReadable`, `isTerminal`, `OwnedFd.dup`), so the
+borrow checker, not the caller, guarantees the owner is alive while they use it.
+
+`rawFd` is the escape hatch and every std impl declares it `@unsafe`: the integer it
+returns outlives the borrow it came from, and once the owner drops it names whatever
+the kernel hands that number to next. Implement it on your own owning type to make
+that type usable with the generic calls.
+
+#### `AsFd.rawFd`
+
+```milo
+fn AsFd.rawFd(self: &AsFd): i32
+```
+
+The descriptor number, still owned by this handle: valid only while it lives.
+
 ### `BufReader`
 
 ```milo
@@ -204,7 +228,7 @@ Take the accumulated bytes out, leaving the writer empty and reusable.
 ### `FdReader`
 
 ```milo
-pub enum FdReader
+pub struct FdReader
 ```
 
 A read cursor over a raw fd whose read strategy is fixed at construction:
@@ -218,12 +242,8 @@ unrepresentable: a Green reader implies a non-blocking fd, a Blocking one a
 blocking read path.
 
 The reader borrows the fd; it does not own or close it. Keep the owning
-source (File / Pty / Child / socket) alive for the reader's lifetime.
-
-Variants:
-
-- `Green(i32)`
-- `Blocking(i32)`
+source (File / Pty / Child / socket) alive for the reader's lifetime. The fields
+are private so the only way to aim one at a number is `fdReaderAttach`.
 
 #### `FdReader.readByte`
 
@@ -268,15 +288,15 @@ When you do not need the handle back, do not use a view at all: `File` implement
 Reader and Writer itself, so `BufReader<File>.new(f)` takes ownership and the
 question cannot arise.
 
-Fields: `fd: i32`, `socket: bool`.
-
 #### `FdStream.onFd`
 
 ```milo
 fn FdStream.onFd(fd: i32): FdStream
 ```
 
-A CRT file descriptor: file, pipe, tty, pty.
+A CRT file descriptor: file, pipe, tty, pty. `@unsafe`: the view outlives
+nothing, so the caller vouches the owner of `fd` outlives the stream. The safe
+spellings are the owners' own `stream()` and the stdio constructors below.
 
 #### `FdStream.onSocket`
 
@@ -285,12 +305,6 @@ fn FdStream.onSocket(fd: i32): FdStream
 ```
 
 A socket handle. Not interchangeable with `onFd` on Windows.
-
-#### `FdStream.rawFd`
-
-```milo
-fn FdStream.rawFd(self: &FdStream): i32
-```
 
 #### `FdStream.stderr`
 
@@ -322,8 +336,6 @@ pub struct File
 ```
 
 Owned file handle. Automatically closes the fd when dropped.
-
-Fields: `fd: i32`.
 
 #### `File.close`
 
@@ -358,15 +370,6 @@ fn File.openWrite(path: &string): Result<File, IoError>
 ```
 
 Open a file for writing, creating it or truncating it (mode 0644).
-
-#### `File.rawFd`
-
-```milo
-fn File.rawFd(self: &File): i32
-```
-
-Borrow the fd without transferring ownership — the File still closes it on
-drop. For handing the fd to an fd-taking API; do not close it yourself.
 
 #### `File.readAll`
 
@@ -459,19 +462,30 @@ until the channel closes: dropping it closes the fd under the pump.
 #### `OwnedFd.dup`
 
 ```milo
-fn OwnedFd.dup(fd: i32): Result<OwnedFd, IoError>
+fn OwnedFd.dup<T: AsFd>(h: &T): Result<OwnedFd, IoError>
 ```
 
-A new descriptor for the same open file as `fd`, owned by the result. Whoever
-owns `fd` keeps it: closing one of the two leaves the other open.
+A new descriptor for the same open file as `h`'s, owned by the result. `h` keeps
+its own: closing one of the two leaves the other open. This is how a task gets a
+descriptor it can outlive its owner with (a pump over a pty, a writer on a socket).
 
-#### `OwnedFd.fd`
+#### `OwnedFd.isOpen`
 
 ```milo
-fn OwnedFd.fd(self: &OwnedFd): i32
+fn OwnedFd.isOpen(self: &OwnedFd): bool
 ```
 
-The descriptor number, still owned by this handle: valid only while it lives.
+Whether this handle holds a descriptor at all: `Child.takeStderr` hands back an
+empty one when stderr was not a pipe. `> 0` matches drop, for which 0 is the
+moved-from value.
+
+#### `OwnedFd.stream`
+
+```milo
+fn OwnedFd.stream(self: &OwnedFd): FdStream
+```
+
+A non-owning Reader+Writer view; the same rule as File.stream.
 
 ### `Reader`
 
@@ -499,6 +513,28 @@ reasons, and `IoError` is the enum that already carries them.
 fn Reader.read(self: &mut Reader, max: i64): Result<string, IoError>
 ```
 
+### `Stderr`
+
+```milo
+pub struct Stderr
+```
+
+### `Stdin`
+
+```milo
+pub struct Stdin
+```
+
+The process's standard streams as handles. They live as long as the process, so
+lending their number can never outlive an owner: `sel.onRead(Stdin {})`,
+`isTerminal(Stdout {})`.
+
+### `Stdout`
+
+```milo
+pub struct Stdout
+```
+
 ### `Writer`
 
 ```milo
@@ -511,7 +547,7 @@ pub trait Writer
 fn Writer.flush(self: &mut Writer): Result<Unit, IoError>
 ```
 
-No-op: this layer holds no buffer. Use `syncFd` from std/fs to force the
+No-op: this layer holds no buffer. Use `syncFile` from std/fs to force the
 kernel's page cache out to the device.
 
 #### `Writer.write`
@@ -565,7 +601,9 @@ at EOF (read returns &lt;= 0). Milo's answer to a node.js Readable, minus the fd
 LIFETIME: the detached pump holds the raw fd. Keep the owning source (Pty /
 TcpStream / Child) alive and open for as long as you consume the channel —
 closing or dropping it out from under the pump strands the pump (parks
-forever), and for a TLS source would read freed SSL state.
+forever), and for a TLS source would read freed SSL state. That is why it is
+`@unsafe`: the safe spellings are `OwnedFd.channel`, `stdinChannel` and the owning
+types' own channel methods, which tie the number to a live owner.
 
 #### `fdReaderAttach`
 
@@ -574,9 +612,13 @@ pub fn fdReaderAttach(fd: i32): FdReader
 ```
 
 Capture the read strategy from the current runtime context, flipping the fd
-non-blocking iff we will park on it so the two never drift apart. Free fn (not
-an FdReader method) because milo resolves `FdReader.attach` as a variant, not
-a static method.
+non-blocking iff we will park on it so the two never drift apart.
+
+The one safe std entry point that still takes a bare descriptor (allowlisted in
+tests/rawFdApi.test.ts): the published milo-json-rpc@v0.1.0, which
+examples/tools/java-dap builds against, calls it outside `unsafe`. It reads and
+never closes, so a stale number misreads rather than double-closes. It becomes
+`@unsafe` once a milo-json-rpc release reads frames through a handle.
 
 #### `ioError`
 

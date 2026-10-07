@@ -9,7 +9,7 @@
 // All diagnostics go to stderr: stdout carries DAP frames only.
 
 from "std/io" import {
-    FdReader, fdReaderAttach
+    FdReader, fdReaderAttach, Stdin
 }
 from "std/fs" import {
     pathExists, readFile
@@ -218,7 +218,7 @@ pub fn dapServe(): i64 {
     // ── phase 2: attached ──
     while true {
         var sel = Select.new()
-        sel.onRead(0) // arm 0: DAP request
+        sel.onRead(Stdin {}) // arm 0: DAP request
         sel.onRecv(sess.eventCh) // arm 1: JDWP/synthetic event
         let arm = sel.wait()
         sel.destroy()

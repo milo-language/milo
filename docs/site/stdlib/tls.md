@@ -28,7 +28,7 @@ LIFETIME: `ctx` is deliberately absent. The SSL_CTX comes from the TlsListener a
 shared by every connection it accepts, so freeing it here would pull it out from under
 the next accept(). The listener must outlive the connections it hands out.
 
-Fields: `fd: i32`, `ssl: i64`.
+Fields: `ssl: i64`.
 
 #### `TlsConn.recv`
 
@@ -66,7 +66,7 @@ pub struct TlsListener
 Listening TLS socket: a TCP listener plus the server SSL_CTX holding the certificate
 chain and private key. Frees the ctx and closes the fd on drop.
 
-Fields: `fd: i32`, `ctx: i64`.
+Fields: `ctx: i64`.
 
 #### `TlsListener.accept`
 

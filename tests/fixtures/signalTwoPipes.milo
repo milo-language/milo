@@ -12,7 +12,10 @@
 //
 // Both directions are asserted: each signal must hit its OWN pipe and only its own.
 from "std/signal" import {
-    sigchld, installSignalPipe, SIGWINCH
+    sigchld, installSignalPipe, SignalPipe, SIGWINCH
+}
+from "std/io" import {
+    AsFd
 }
 from "std/os" import {
     kill
@@ -22,17 +25,18 @@ from "std/platform" import {
     read
 }
 
-// The pipes are O_NONBLOCK, so this never stalls when empty.
-pub fn drained(fd: i32): bool {
+// The pipes are O_NONBLOCK, so this never stalls when empty. A raw read rather than
+// SignalPipe.drain because the test needs to know whether a byte was there.
+pub fn drained(p: &SignalPipe): bool {
     unsafe {
         var buf: [u8; 8] = [0; 8]
-        return read(fd, buf as *u8, 8) > 0
+        return read(p.rawFd(), buf as *u8, 8) > 0
     }
 }
 
 pub fn main(): i32 {
-    let winchFd = installSignalPipe(SIGWINCH)
-    let childFd = installSignalPipe(sigchld())
+    let winchFd = installSignalPipe(SIGWINCH)!
+    let childFd = installSignalPipe(sigchld())!
 
     kill(getpid(), SIGWINCH)
     // @expect: winch->winch true
@@ -48,6 +52,6 @@ pub fn main(): i32 {
 
     // Out-of-range signals are rejected rather than indexing off the table.
     // @expect: rejected true
-    print("rejected ", installSignalPipe(99) < 0)
+    print("rejected ", installSignalPipe(99).isErr())
     return 0
 }

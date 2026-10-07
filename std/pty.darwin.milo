@@ -37,7 +37,9 @@ from "std/sync" import {
     Channel
 }
 from "std/io" import {
-    fdChannel
+    fdChannel,
+    AsFd,
+    Stdin
 }
 
 pub fn tiocgwinsz(): i64 {
@@ -60,30 +62,33 @@ pub struct WinSize {
 }
 
 pub struct Pty {
-    masterFd: i32,
+    _masterFd: i32,
     slavePath: string,
     childPid: i32,
     _rows: u16,
     _cols: u16,
 }
 
-// Returns true if fd is connected to a terminal.
-pub fn fdIsTerminal(fd: i32): bool {
-    return sysIsatty(fd)
+// Returns true if `h` is connected to a terminal: `isTerminal(Stdout {})`.
+pub fn isTerminal<T: AsFd>(h: &T): bool {
+    unsafe { return sysIsatty(h.rawFd()) }
 }
 
 // Returns true if stdin is a terminal (process is interactive).
 pub fn isInteractive(): bool {
-    return fdIsTerminal(0)
+    return isTerminal(Stdin {})
+}
+
+// The master side's descriptor (see AsFd in std/io). `sel.onRead(pty)`, `isTerminal`
+// and `OwnedFd.dup(pty)` take the Pty itself.
+impl AsFd for Pty {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._masterFd
+    }
 }
 
 impl Pty {
-    // The OS file descriptor for the master side. Callers poll, select and fcntl on it,
-    // which is why it is exposed at all.
-    fn fd(self: &Pty): i32 {
-        return self.masterFd
-    }
-
     // The spawned child's pid, or -1 before spawn.
     fn pid(self: &Pty): i32 {
         return self.childPid
@@ -92,31 +97,33 @@ impl Pty {
     // Opening is one record (pty.open): the master fd and the slave's path. Under
     // replay no pty exists and the master is a synthetic fd answered from the trace.
     fn open(): Result<Pty, string> {
-        if replayOff() {
-            return Pty._openLive()
-        }
-        let p = replayBlob("pty.open", "", (): string => {
-            match Pty._openLive() {
-                Result.Ok(pty) => {
-                    return pty.masterFd.toString() + " " + pty.slavePath
-                }
-                Result.Err(e) => {
-                    return "!" + e
-                }
+        unsafe {
+            if replayOff() {
+                return Pty._openLive()
             }
-        })
-        if p.len() > 0 && p[0] == '!' {
-            return Result.Err(p.substr(1, p.len()))
+            let p = replayBlob("pty.open", "", (): string => {
+                match Pty._openLive() {
+                    Result.Ok(pty) => {
+                        return pty._masterFd.toString() + " " + pty.slavePath
+                    }
+                    Result.Err(e) => {
+                        return "!" + e
+                    }
+                }
+            })
+            if p.len() > 0 && p[0] == '!' {
+                return Result.Err(p.substr(1, p.len()))
+            }
+            var sp: i64 = 0
+            while sp < p.len() && p[sp] != ' ' {
+                sp += 1
+            }
+            let master = replayInts(p.substr(0, sp)) [0] as i32
+            replayFdOpened(master, 't')
+            return Result.Ok(Pty {
+                _masterFd: master, slavePath: p.substr(sp + 1, p.len()), childPid: -1, _rows: 24, _cols: 80
+            })
         }
-        var sp: i64 = 0
-        while sp < p.len() && p[sp] != ' ' {
-            sp += 1
-        }
-        let master = replayInts(p.substr(0, sp)) [0] as i32
-        replayFdOpened(master, 't')
-        return Result.Ok(Pty {
-            masterFd: master, slavePath: p.substr(sp + 1, p.len()), childPid: -1, _rows: 24, _cols: 80
-        })
     }
 
     @replayHooked
@@ -145,7 +152,7 @@ impl Pty {
 
             let name = _cstrToString(namePtr)
             return Result.Ok(Pty {
-                masterFd: master, slavePath: name, childPid: -1, _rows: 24, _cols: 80
+                _masterFd: master, slavePath: name, childPid: -1, _rows: 24, _cols: 80
             })
         }
     }
@@ -154,7 +161,7 @@ impl Pty {
     // nothing is forked.
     fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
     requires
-    self.masterFd >= 0
+    self._masterFd >= 0
     {
         if replayOff() {
             return self._spawnLive(program, args)
@@ -253,19 +260,19 @@ impl Pty {
     requires
     len > 0
     {
-        return readFd(self.masterFd, buf, len)
+        unsafe { return readFd(self._masterFd, buf, len) }
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
     requires
     len > 0
     {
-        return writeFd(self.masterFd, buf, len)
+        unsafe { return writeFd(self._masterFd, buf, len) }
     }
 
     fn writeStdout(self: &Self, s: &string): i64 {
         unsafe {
-            return writeFd(self.masterFd, s as *u8, s.len)
+            return writeFd(self._masterFd, s as *u8, s.len)
         }
     }
 
@@ -275,10 +282,10 @@ impl Pty {
     // returns -1 at once instead of waiting for the child to drain it, which is
     // what a task that must keep serving other requests wants; write() parks.
     fn writeOnce(self: &Self, s: &string): i64 {
-        if self.masterFd < 0 {
+        if self._masterFd < 0 {
             return -1
         }
-        unsafe { return sysWrite(self.masterFd, s as *u8, s.len) }
+        unsafe { return sysWrite(self._masterFd, s as *u8, s.len) }
     }
 
     // Pump this pty's output on a background green task and return a channel of
@@ -287,7 +294,9 @@ impl Pty {
     // child exits (read returns <= 0). This is node-pty's `.onData` ergonomics
     // with green-task semantics underneath.
     fn output(self: &Self): Channel<string> {
-        return fdChannel(self.masterFd)
+        unsafe {
+            return fdChannel(self._masterFd)
+        }
     }
 
     @replayHooked
@@ -297,7 +306,7 @@ impl Pty {
         var ws = WinSize {
             rows: rows, cols: cols, xpixel: 0, ypixel: 0
         }
-        let fd = self.masterFd
+        let fd = self._masterFd
         return replayRet("pty.resize", fd.toString() + " " + rows.toString() + " " + cols.toString(), false, (): i64 => {
             unsafe {
                 return ioctl(fd, tiocswinsz(), (ws.addrOf()) as *u8) as i64
@@ -310,7 +319,7 @@ impl Pty {
         var ws = WinSize {
             rows: 0, cols: 0, xpixel: 0, ypixel: 0
         }
-        let fd = self.masterFd
+        let fd = self._masterFd
         if replayOff() {
             unsafe {
                 ioctl(fd, tiocgwinsz(), (ws.addrOf()) as *u8)
@@ -350,9 +359,11 @@ impl Pty {
     // Idempotent: closing the master also unwedges a child blocked writing to a
     // full PTY buffer (its write returns EIO), letting a pending SIGKILL land.
     fn close(self: &mut Self): void {
-        if self.masterFd >= 0 {
-            sysClose(self.masterFd)
-            self.masterFd = -1
+        unsafe {
+            if self._masterFd >= 0 {
+                sysClose(self._masterFd)
+                self._masterFd = -1
+            }
         }
     }
 }

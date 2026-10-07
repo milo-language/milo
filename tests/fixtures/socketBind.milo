@@ -17,19 +17,22 @@ pub extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 pub extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 pub fn main(): i32 {
-    ensureNetInit()
-    let fd = socket(2, 1, 0)
-    if fd < 0 {
-        print("socket failed")
-        return 1
+    // Raw descriptor IO is what this fixture exercises, and every raw-fd call in std is @unsafe.
+    unsafe {
+        ensureNetInit()
+        let fd = socket(2, 1, 0)
+        if fd < 0 {
+            print("socket failed")
+            return 1
+        }
+        var addr = makeSockaddr(0, 0)
+        let result = bindIn(fd, addr)
+        if result == 0 {
+            print("bind ok")
+        } else {
+            print("bind failed: ", result)
+        }
+        closeSocket(fd)
+        return 0
     }
-    var addr = makeSockaddr(0, 0)
-    let result = bindIn(fd, addr)
-    if result == 0 {
-        print("bind ok")
-    } else {
-        print("bind failed: ", result)
-    }
-    closeSocket(fd)
-    return 0
 }

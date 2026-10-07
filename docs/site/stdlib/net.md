@@ -57,8 +57,6 @@ pub struct TcpListener
 Listening TCP socket. Accepts inbound connections; closes the fd on drop.
 Server counterpart to TcpStream.connect — no raw syscalls required in user code.
 
-Fields: `fd: i32`.
-
 #### `TcpListener.accept`
 
 ```milo
@@ -131,7 +129,14 @@ pub struct TcpStream
 
 TCP connection handle. Automatically closes the fd when dropped.
 
-Fields: `fd: i32`.
+#### `TcpStream.close`
+
+```milo
+fn TcpStream.close(self: &mut TcpStream): void
+```
+
+Close the socket now rather than at drop: the peer sees EOF here. Afterwards the
+stream is inert and its drop is a no-op.
 
 #### `TcpStream.connect`
 
@@ -161,18 +166,6 @@ Stream inbound bytes as an iterable channel, pumped on a background green
 task — the uniform async-read API shared with pty/child/pipe. Iterate with
 `for chunk in stream.incoming()`; the channel closes when the peer does.
 (Plaintext only — TlsStream needs an SSL-aware pump.)
-
-#### `TcpStream.rawFd`
-
-```milo
-fn TcpStream.rawFd(self: &TcpStream): i32
-```
-
-Borrow the underlying fd read-only, WITHOUT transferring ownership: the stream
-still closes it on drop. Use when you want to do a bounded read/write on the raw
-fd and let the stream's own Drop close it — avoids `take()` (which needs `&mut`,
-forcing a move out of an immutable match binding) and the manual close that pairs
-with it. Do not close the returned fd yourself.
 
 #### `TcpStream.recv`
 
@@ -224,8 +217,9 @@ fn TcpStream.take(self: &mut TcpStream): i32
 ```
 
 Release the underlying fd to the caller. After this the stream no longer
-closes it on drop — hand it to an fd-based API (e.g. a WebSocket upgrade)
-without risking a double close.
+closes it on drop, and the number is the caller's to close exactly once.
+`@unsafe` because nothing tracks it from here; `wsAccept` and
+`TlsStream.fromTcp` take the stream itself, which is the safe hand-off.
 
 ### Functions
 

@@ -38,7 +38,7 @@ from "std/replay" import {
     replayOff, replayRet, replayBlob
 }
 from "std/io" import {
-    File, IoError, ioError
+    File, IoError, ioError, AsFd
 }
 from "std/path" import {
     Path
@@ -562,8 +562,11 @@ pub fn setMode(path: &string, mode: i32): Result<Unit, IoError> {
     return ok()
 }
 
+// Change an open file's permission bits (fchmod).
 @replayHooked
-pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError> {
+pub fn setFileMode(f: &File, mode: i32): Result<Unit, IoError> {
+    var fd: i32 = -1
+    unsafe { fd = f.rawFd() }
     let r = fsStatus("fs.fchmod", fd.toString() + " " + mode.toString(), (): i64 => {
         unsafe {
             return fchmod(fd, mode as u32) as i64
@@ -588,8 +591,11 @@ pub fn setOwner(path: &string, uid: u32, gid: u32): Result<Unit, IoError> {
     return ok()
 }
 
+// Change an open file's owner and group (fchown).
 @replayHooked
-pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError> {
+pub fn setFileOwner(f: &File, uid: u32, gid: u32): Result<Unit, IoError> {
+    var fd: i32 = -1
+    unsafe { fd = f.rawFd() }
     let r = fsStatus("fs.fchown", fd.toString(), (): i64 => {
         unsafe {
             return fchown(fd, uid, gid) as i64
@@ -627,8 +633,11 @@ pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError> {
     return ok()
 }
 
+// Truncate or extend an open file to `length` bytes (ftruncate).
 @replayHooked
-pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
+pub fn truncateOpenFile(f: &File, length: i64): Result<Unit, IoError> {
+    var fd: i32 = -1
+    unsafe { fd = f.rawFd() }
     let r = fsStatus("fs.ftruncate", fd.toString() + " " + length.toString(), (): i64 => {
         unsafe {
             return ftruncate(fd, length) as i64
@@ -640,8 +649,11 @@ pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError> {
     return ok()
 }
 
+// Flush an open file's data and metadata to the device (fsync).
 @replayHooked
-pub fn syncFd(fd: i32): Result<Unit, IoError> {
+pub fn syncFile(f: &File): Result<Unit, IoError> {
+    var fd: i32 = -1
+    unsafe { fd = f.rawFd() }
     let r = fsStatus("fs.fsync", fd.toString(), (): i64 => {
         unsafe {
             return fsync(fd) as i64
@@ -653,8 +665,11 @@ pub fn syncFd(fd: i32): Result<Unit, IoError> {
     return ok()
 }
 
+// Flush an open file's data to the device, skipping metadata not needed to read it (fdatasync).
 @replayHooked
-pub fn dataSyncFd(fd: i32): Result<Unit, IoError> {
+pub fn dataSyncFile(f: &File): Result<Unit, IoError> {
+    var fd: i32 = -1
+    unsafe { fd = f.rawFd() }
     let r = fsStatus("fs.fdatasync", fd.toString(), (): i64 => {
         unsafe {
             return fdatasync(fd) as i64

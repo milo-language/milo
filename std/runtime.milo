@@ -904,67 +904,73 @@ pub fn schedulerYield(): void {
 //
 // Returns at once when the caller is not on the scheduler.
 @parks
+@unsafe
 pub fn schedulerWaitRead(fd: i32): void {
-    let sched = getSched()
-    if sched as i64 == 0 {
-        return
+    unsafe {
+        let sched = getSched()
+        if sched as i64 == 0 {
+            return
+        }
+        let task = rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 {
+            return
+        }
+
+        rtWriteI32(task, tState(), taskWaitingIo())
+        rtWriteI32(task, tWaitFd(), fd)
+
+        // register with event loop; under replay the fd is synthetic and the trace says
+        // when it is ready (see pollAndWakeTraced)
+        if !replayActive() {
+            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            eventRegisterRead(el, fd)
+        }
+
+        // move task to waiting list
+        enqueueWait(sched, task)
+
+        // Each context keeps its own record/replay engine depth (std/replay §addresses).
+        let rrDepth3 = replayHeapDepthOut()
+        unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+        replayHeapDepthIn(rrDepth3)
     }
-    let task = rtReadPtr(sched, sCurrent())
-    if task as i64 == 0 {
-        return
-    }
-
-    rtWriteI32(task, tState(), taskWaitingIo())
-    rtWriteI32(task, tWaitFd(), fd)
-
-    // register with event loop; under replay the fd is synthetic and the trace says
-    // when it is ready (see pollAndWakeTraced)
-    if !replayActive() {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-        eventRegisterRead(el, fd)
-    }
-
-    // move task to waiting list
-    enqueueWait(sched, task)
-
-    // Each context keeps its own record/replay engine depth (std/replay §addresses).
-    let rrDepth3 = replayHeapDepthOut()
-    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
-    replayHeapDepthIn(rrDepth3)
 }
 
 // Park until `fd` is writable. @parks: see schedulerYield.
 //
 // Returns at once when the caller is not on the scheduler.
 @parks
+@unsafe
 pub fn schedulerWaitWrite(fd: i32): void {
-    let sched = getSched()
-    if sched as i64 == 0 {
-        return
-    }
-    let task = rtReadPtr(sched, sCurrent())
-    if task as i64 == 0 {
-        return
-    }
-
-    rtWriteI32(task, tState(), taskWaitingIo())
-    rtWriteI32(task, tWaitFd(), fd)
-    // mark as write-wait so deregister uses correct filter
-    var one: u8 = 1
     unsafe {
-        memcpy((task as i64 + tWaitWrite()) as *u8, (one.addrOf()) as *u8, 1)
-    }
+        let sched = getSched()
+        if sched as i64 == 0 {
+            return
+        }
+        let task = rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 {
+            return
+        }
 
-    if !replayActive() {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-        eventRegisterWrite(el, fd)
-    }
-    enqueueWait(sched, task)
+        rtWriteI32(task, tState(), taskWaitingIo())
+        rtWriteI32(task, tWaitFd(), fd)
+        // mark as write-wait so deregister uses correct filter
+        var one: u8 = 1
+        unsafe {
+            memcpy((task as i64 + tWaitWrite()) as *u8, (one.addrOf()) as *u8, 1)
+        }
 
-    // Each context keeps its own record/replay engine depth (std/replay §addresses).
-    let rrDepth4 = replayHeapDepthOut()
-    unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
-    replayHeapDepthIn(rrDepth4)
+        if !replayActive() {
+            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            eventRegisterWrite(el, fd)
+        }
+        enqueueWait(sched, task)
+
+        // Each context keeps its own record/replay engine depth (std/replay §addresses).
+        let rrDepth4 = replayHeapDepthOut()
+        unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+        replayHeapDepthIn(rrDepth4)
+    }
 }
 
 // Run the program's `main` as a green task, given its raw entry pointer.
@@ -1042,24 +1048,26 @@ pub fn schedulerPark(): void {
 // it is pushed onto the mutex-guarded transfer list and the scheduler's
 // wakeup event is signaled so a blocked poll returns promptly.
 pub fn schedulerUnpark(task: *u8): void {
-    if task as i64 == 0 {
-        return
-    }
-    let home = rtReadPtr(task, tSched())
-    if home as i64 == 0 {
-        return
-    }
-    if home as i64 == getSched() as i64 {
-        rtWriteI32(task, tState(), taskReady())
-        enqueueRun(home, task)
-    } else {
-        let mtx = rtReadPtr(home, sXferMutex())
-        unsafe { pthread_mutex_lock(mtx) }
-        rtWritePtr(task, tNext(), rtReadPtr(home, sXferHead()))
-        rtWritePtr(home, sXferHead(), task)
-        unsafe { pthread_mutex_unlock(mtx) }
-        var el = eventLoopFromFd(rtReadI32(home, sElFd()))
-        eventLoopNotify(el, rtReadI32(home, sWakeupId()))
+    unsafe {
+        if task as i64 == 0 {
+            return
+        }
+        let home = rtReadPtr(task, tSched())
+        if home as i64 == 0 {
+            return
+        }
+        if home as i64 == getSched() as i64 {
+            rtWriteI32(task, tState(), taskReady())
+            enqueueRun(home, task)
+        } else {
+            let mtx = rtReadPtr(home, sXferMutex())
+            unsafe { pthread_mutex_lock(mtx) }
+            rtWritePtr(task, tNext(), rtReadPtr(home, sXferHead()))
+            rtWritePtr(home, sXferHead(), task)
+            unsafe { pthread_mutex_unlock(mtx) }
+            var el = eventLoopFromFd(rtReadI32(home, sElFd()))
+            eventLoopNotify(el, rtReadI32(home, sWakeupId()))
+        }
     }
 }
 
@@ -1183,51 +1191,55 @@ pub fn selectWaitState(st: *u8): i64 {
 // for fd arms, register the fd with the event loop. Scheduler thread only
 // (arms are always set up from the task that owns the Select).
 pub fn selectRegisterFd(node: *u8): void {
-    let sched = getSched()
-    if sched as i64 == 0 {
-        return
-    }
-    let kind = rtReadI64(node, nodeKind())
-    if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
-        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-        let fd = rtReadI32(node, nodeFd())
-        if kind == kindSelWrite() {
-            eventRegisterWrite(el, fd)
-        } else {
-            eventRegisterRead(el, fd)
+    unsafe {
+        let sched = getSched()
+        if sched as i64 == 0 {
+            return
         }
+        let kind = rtReadI64(node, nodeKind())
+        if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
+            var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+            let fd = rtReadI32(node, nodeFd())
+            if kind == kindSelWrite() {
+                eventRegisterWrite(el, fd)
+            } else {
+                eventRegisterRead(el, fd)
+            }
+        }
+        rtWritePtr(node, nodeNext(), rtReadPtr(sched, sSelFdHead()))
+        rtWritePtr(sched, sSelFdHead(), node)
     }
-    rtWritePtr(node, nodeNext(), rtReadPtr(sched, sSelFdHead()))
-    rtWritePtr(sched, sSelFdHead(), node)
 }
 
 // Unlink a node from the select list and deregister its fd. Idempotent: a node
 // that already fell off the list (never happens today, but cheap to guard) is
 // skipped.
 pub fn selectUnregisterFd(node: *u8): void {
-    let sched = getSched()
-    if sched as i64 == 0 {
-        return
-    }
-    var prev: *u8 = 0 as *u8
-    var cur = rtReadPtr(sched, sSelFdHead())
-    while cur as i64 != 0 {
-        let next = rtReadPtr(cur, nodeNext())
-        if cur as i64 == node as i64 {
-            if prev as i64 == 0 {
-                rtWritePtr(sched, sSelFdHead(), next)
-            } else {
-                rtWritePtr(prev, nodeNext(), next)
-            }
-            let kind = rtReadI64(node, nodeKind())
-            if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
-                var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-                eventDeregister(el, rtReadI32(node, nodeFd()), kind == kindSelWrite())
-            }
+    unsafe {
+        let sched = getSched()
+        if sched as i64 == 0 {
             return
         }
-        prev = cur
-        cur = next
+        var prev: *u8 = 0 as *u8
+        var cur = rtReadPtr(sched, sSelFdHead())
+        while cur as i64 != 0 {
+            let next = rtReadPtr(cur, nodeNext())
+            if cur as i64 == node as i64 {
+                if prev as i64 == 0 {
+                    rtWritePtr(sched, sSelFdHead(), next)
+                } else {
+                    rtWritePtr(prev, nodeNext(), next)
+                }
+                let kind = rtReadI64(node, nodeKind())
+                if (kind == kindSelRead() || kind == kindSelWrite()) && !replayActive() {
+                    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+                    eventDeregister(el, rtReadI32(node, nodeFd()), kind == kindSelWrite())
+                }
+                return
+            }
+            prev = cur
+            cur = next
+        }
     }
 }
 
@@ -1469,23 +1481,25 @@ fn xferCount(sched: *u8): i64 {
 // Replay: block on the real wakeup event (the only thing registered with the poller
 // under replay) until `want` foreign unparks are queued, then detach them all.
 fn awaitXfer(sched: *u8, want: i64): *u8 {
-    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-    let wakeupId = rtReadI32(sched, sWakeupId())
-    while xferCount(sched) < want {
-        var readyBuf: [u8; 256] = [0; 256]
-        unsafe {
-            let n = eventPoll(el, readyBuf as *i32, 64, 10)
-            if n > 0 {
-                eventLoopDrainWakeup(el, wakeupId)
+    unsafe {
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        let wakeupId = rtReadI32(sched, sWakeupId())
+        while xferCount(sched) < want {
+            var readyBuf: [u8; 256] = [0; 256]
+            unsafe {
+                let n = eventPoll(el, readyBuf as *i32, 64, 10)
+                if n > 0 {
+                    eventLoopDrainWakeup(el, wakeupId)
+                }
             }
         }
+        let mtx = rtReadPtr(sched, sXferMutex())
+        unsafe { pthread_mutex_lock(mtx) }
+        let head = rtReadPtr(sched, sXferHead())
+        rtWritePtr(sched, sXferHead(), 0 as *u8)
+        unsafe { pthread_mutex_unlock(mtx) }
+        return head
     }
-    let mtx = rtReadPtr(sched, sXferMutex())
-    unsafe { pthread_mutex_lock(mtx) }
-    let head = rtReadPtr(sched, sXferHead())
-    rtWritePtr(sched, sXferHead(), 0 as *u8)
-    unsafe { pthread_mutex_unlock(mtx) }
-    return head
 }
 
 fn enqueueXferList(sched: *u8, head: *u8): void {
@@ -1781,19 +1795,21 @@ pub fn schedulerRunToCompletion(): void {
 // the ground out from under the caller — so the wrapper does it after the main
 // task has been reaped.
 fn schedulerShutdown(): void {
-    let sched = getSched()
-    if sched as i64 == 0 {
-        return
-    }
-    unsafe { free(rtReadPtr(sched, sCtx())) }
-    var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-    eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
-    eventLoopClose(el)
-    let xmtx = rtReadPtr(sched, sXferMutex())
     unsafe {
-        pthread_mutex_destroy(xmtx)
-        free(xmtx)
-        free(sched)
+        let sched = getSched()
+        if sched as i64 == 0 {
+            return
+        }
+        unsafe { free(rtReadPtr(sched, sCtx())) }
+        var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
+        eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
+        eventLoopClose(el)
+        let xmtx = rtReadPtr(sched, sXferMutex())
+        unsafe {
+            pthread_mutex_destroy(xmtx)
+            free(xmtx)
+            free(sched)
+        }
+        setSched(0 as *u8)
     }
-    setSched(0 as *u8)
 }

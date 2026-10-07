@@ -29,6 +29,9 @@ from "std/sync" import {
     AtomicBool, Channel
 }
 
+from "std/io" import {
+    AsFd
+}
 from "std/select" import {
     Select
 }
@@ -193,26 +196,26 @@ pub fn recvTimeout<T>(ch: &Channel<T>, d: &Duration): Option<T> {
     return Option.None
 }
 
-// Wait until `fd` is readable, or `d` elapses. False on timeout.
+// Wait until `h` is readable, or `d` elapses. False on timeout.
 //
 // This is the timeout under a blocking read: check first, then read knowing the
 // read won't park forever. It reads nothing itself.
-pub fn waitReadable(fd: i32, d: &Duration): bool {
-    return waitFd(fd, d, true)
+pub fn waitReadable<T: AsFd>(h: &T, d: &Duration): bool {
+    return waitFd(h, d, true)
 }
 
-// Wait until `fd` accepts a write without blocking, or `d` elapses.
-pub fn waitWritable(fd: i32, d: &Duration): bool {
-    return waitFd(fd, d, false)
+// Wait until `h` accepts a write without blocking, or `d` elapses.
+pub fn waitWritable<T: AsFd>(h: &T, d: &Duration): bool {
+    return waitFd(h, d, false)
 }
 
-fn waitFd(fd: i32, d: &Duration, forRead: bool): bool {
+fn waitFd<T: AsFd>(h: &T, d: &Duration, forRead: bool): bool {
     ensureTimersLive()
     var sel = Select.new()
     if forRead {
-        sel.onRead(fd)
+        sel.onRead(h)
     } else {
-        sel.onWrite(fd)
+        sel.onWrite(h)
     }
     sel.onTimeout(timeoutMs(d))
     let winner = sel.wait()

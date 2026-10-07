@@ -19,9 +19,6 @@ from "std/io" import {
 from "std/runtime" import {
     Task, schedulerRunToCompletion
 }
-from "std/os" import {
-    getSockPort
-}
 
 fn serve(lis: TcpListener): void {
     match lis.accept() {
@@ -49,7 +46,7 @@ fn serve(lis: TcpListener): void {
 
 pub fn main(): i32 {
     let lis = TcpListener.bind(0)!
-    let port = getSockPort(lis.fd) as u16
+    let port = lis.port() as u16
     Task.spawn(move(): void => {
         serve(lis)
     })

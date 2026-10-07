@@ -8,8 +8,8 @@
 // read the family from its first bytes, so ONE extern must serve every family — Milo can't
 // declare `bind` twice (the resolver merges every decl of an imported file, so a second one
 // at another type just loses). std/os declares them raw against `*SockAddr` and exposes a
-// typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, and holds
-// no unsafe of its own.
+// typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, whose
+// only unsafe is vouching that it still owns the descriptor it hands them.
 from "std/os" import {
     acceptFd,
     readFd,
@@ -30,7 +30,8 @@ from "std/sync" import {
     Channel
 }
 from "std/io" import {
-    fdChannel
+    fdChannel,
+    AsFd
 }
 
 // 1 on both darwin and linux (verified), so unlike AF_INET6 it needs no platform split.
@@ -42,14 +43,16 @@ pub let SOCK_STREAM_UNIX: i32 = 1
 
 // A connected unix-domain socket. Closes its fd on drop.
 pub struct UnixStream {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Drop for UnixStream {
     fn drop(self: &mut Self): void {
-        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-        if self.fd > 0 {
-            sysClose(self.fd)
+        unsafe {
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+            if self._fd > 0 {
+                sysClose(self._fd)
+            }
         }
     }
 }
@@ -58,58 +61,75 @@ impl UnixStream {
     // Connect to a listening socket at `path`. Inside the green scheduler this yields
     // rather than blocking the whole runtime.
     fn connect(path: &string): Result<UnixStream, string> {
-        // Reject rather than connect to a silently truncated path: sun_path is a fixed
-        // 104/108 bytes, and a shortened path is a different socket.
-        if path.len > sockAddrUnMaxPath() {
-            return Result.Err("unix socket path too long")
+        unsafe {
+            // Reject rather than connect to a silently truncated path: sun_path is a fixed
+            // 104/108 bytes, and a shortened path is a different socket.
+            if path.len > sockAddrUnMaxPath() {
+                return Result.Err("unix socket path too long")
+            }
+            var fd: i32 = 0
+            unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
+            if fd < 0 {
+                return Result.Err("sysSocket() failed")
+            }
+            var addr = makeSockaddrUn(path)
+            if connectFdUn(fd, addr) < 0 {
+                sysClose(fd)
+                return Result.Err("connect() failed")
+            }
+            return Result.Ok(UnixStream { _fd: fd })
         }
-        var fd: i32 = 0
-        unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
-        if fd < 0 {
-            return Result.Err("sysSocket() failed")
-        }
-        var addr = makeSockaddrUn(path)
-        if connectFdUn(fd, addr) < 0 {
-            sysClose(fd)
-            return Result.Err("connect() failed")
-        }
-        return Result.Ok(UnixStream { fd: fd })
     }
 
     fn send(self: &Self, data: &string): Result<i64, string> {
-        let n = writeFd(self.fd, data, data.len)
-        if n < 0 {
-            return Result.Err("send failed")
+        unsafe {
+            let n = writeFd(self._fd, data, data.len)
+            if n < 0 {
+                return Result.Err("send failed")
+            }
+            return Result.Ok(n)
         }
-        return Result.Ok(n)
     }
 
     // Read until the peer closes. Prefer incoming() to consume as bytes arrive.
     fn recv(self: &Self): Result<string, string> {
-        var result: string = ""
-        var buf: [u8; 4096] = [0; 4096]
-        while true {
-            let n = readFd(self.fd, buf, 4096)
-            if n <= 0 {
-                break
+        unsafe {
+            var result: string = ""
+            var buf: [u8; 4096] = [0; 4096]
+            while true {
+                let n = readFd(self._fd, buf, 4096)
+                if n <= 0 {
+                    break
+                }
+                for i in 0..n {
+                    result.push(buf[i])
+                }
             }
-            for i in 0..n {
-                result.push(buf[i])
-            }
+            return Result.Ok(result)
         }
-        return Result.Ok(result)
     }
 
     // Inbound bytes as an iterable channel, pumped on a green task — the same shape as
     // TcpStream.incoming.
     fn incoming(self: &Self): Channel<string> {
-        return fdChannel(self.fd)
+        unsafe { return fdChannel(self._fd) }
+    }
+
+    // Close the socket now rather than at drop: the peer sees EOF here. Afterwards the
+    // stream is inert and its drop is a no-op.
+    fn close(self: &mut Self): void {
+        if self._fd > 0 {
+            unsafe { sysClose(self._fd) }
+        }
+        self._fd = -1
     }
 
     // Release the fd to the caller; this stream no longer closes it on drop.
+    // `@unsafe` for the same reason as TcpStream.take.
+    @unsafe
     fn take(self: &mut Self): i32 {
-        let f = self.fd
-        self.fd = -1
+        let f = self._fd
+        self._fd = -1
         return f
     }
 }
@@ -119,14 +139,16 @@ impl UnixStream {
 // A listening unix-domain socket. Closes its fd on drop — but NOT the socket file; call
 // removeSocketFile to clean that up.
 pub struct UnixListener {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Drop for UnixListener {
     fn drop(self: &mut Self): void {
-        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-        if self.fd > 0 {
-            sysClose(self.fd)
+        unsafe {
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+            if self._fd > 0 {
+                sysClose(self._fd)
+            }
         }
     }
 }
@@ -137,37 +159,55 @@ impl UnixListener {
     // removed first. That is the standard dance, and it is why the path should live
     // somewhere only this daemon writes.
     fn bind(path: &string): Result<UnixListener, string> {
-        if path.len > sockAddrUnMaxPath() {
-            return Result.Err("unix socket path too long")
-        }
-        unsafe { unlink(path) }
-        var fd: i32 = 0
-        unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
-        if fd < 0 {
-            return Result.Err("sysSocket() failed")
-        }
-        var addr = makeSockaddrUn(path)
-        if bindUn(fd, addr) < 0 {
-            sysClose(fd)
-            return Result.Err("bind() failed")
-        }
         unsafe {
-            if sysListen(fd, 128) < 0 {
-                sysClose(fd)
-                return Result.Err("sysListen() failed")
+            if path.len > sockAddrUnMaxPath() {
+                return Result.Err("unix socket path too long")
             }
+            unsafe { unlink(path) }
+            var fd: i32 = 0
+            unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
+            if fd < 0 {
+                return Result.Err("sysSocket() failed")
+            }
+            var addr = makeSockaddrUn(path)
+            if bindUn(fd, addr) < 0 {
+                sysClose(fd)
+                return Result.Err("bind() failed")
+            }
+            unsafe {
+                if sysListen(fd, 128) < 0 {
+                    sysClose(fd)
+                    return Result.Err("sysListen() failed")
+                }
+            }
+            return Result.Ok(UnixListener { _fd: fd })
         }
-        return Result.Ok(UnixListener { fd: fd })
     }
 
     // Accept one connection. Inside the green scheduler this yields instead of blocking the
     // runtime — acceptFd is family-agnostic and already green-aware.
     fn accept(self: &Self): Result<UnixStream, string> {
-        let clientFd = acceptFd(self.fd)
-        if clientFd < 0 {
-            return Result.Err("accept() failed")
+        unsafe {
+            let clientFd = acceptFd(self._fd)
+            if clientFd < 0 {
+                return Result.Err("accept() failed")
+            }
+            return Result.Ok(UnixStream { _fd: clientFd })
         }
-        return Result.Ok(UnixStream { fd: clientFd })
+    }
+}
+
+impl AsFd for UnixStream {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
+    }
+}
+
+impl AsFd for UnixListener {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
     }
 }
 

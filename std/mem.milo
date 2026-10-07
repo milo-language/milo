@@ -7,6 +7,10 @@ from "std/platform" import {
     mapPrivateAnon,
     mmap, munmap
 }
+from "std/io" import {
+    File,
+    AsFd
+}
 
 // ── MappedMemory ──
 
@@ -43,13 +47,14 @@ pub fn mmapAnon(size: i64): Result<MappedMemory> {
     })
 }
 
-// Memory-map a file descriptor for reading.
-pub fn mmapFile(fFd: i32, size: i64): Result<MappedMemory> {
+// Memory-map `size` bytes of an open file for reading. The mapping keeps the pages,
+// not the descriptor: `f` may close once this returns.
+pub fn mmapFile(f: &File, size: i64): Result<MappedMemory> {
     let PROT_READ: i32 = 1
     let MAP_PRIVATE: i32 = 2
     var addr: i64 = 0
     unsafe {
-        let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, fFd, 0)
+        let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, f.rawFd(), 0)
         addr = p as i64
     }
     let mapFailed: i64 = -1

@@ -1,7 +1,7 @@
 // std/log — level filtering, structured fields, named loggers, both formats.
 //
 // The sink starts at stderr, so every line below arriving on stdout is itself
-// the redirection test: none of this is asserted unless setSinkFd took effect.
+// the redirection test: none of this is asserted unless setSinkStdout took effect.
 // Timestamps are off so the output is byte-reproducible.
 
 // @expect: INFO  default threshold is info
@@ -24,7 +24,7 @@ from "std/log" import {
 }
 
 pub fn main(): i32 {
-    Log.setSinkFd(1)
+    Log.setSinkStdout()
     Log.setTimestamps(false)
 
     Log.debug("suppressed by the default threshold")

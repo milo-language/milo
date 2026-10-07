@@ -83,9 +83,10 @@ Allocate an anonymous (non-file-backed) memory-mapped region.
 #### `mmapFile`
 
 ```milo
-pub fn mmapFile(fFd: i32, size: i64): Result<MappedMemory>
+pub fn mmapFile(f: &File, size: i64): Result<MappedMemory>
 ```
 
-Memory-map a file descriptor for reading.
+Memory-map `size` bytes of an open file for reading. The mapping keeps the pages,
+not the descriptor: `f` may close once this returns.
 
 <!-- /generated:api -->

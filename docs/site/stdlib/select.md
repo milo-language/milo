@@ -47,8 +47,12 @@ fn Select.new(): Select
 #### `Select.onRead`
 
 ```milo
-fn Select.onRead(self: &mut Select, fd: i32): void
+fn Select.onRead<T: AsFd>(self: &mut Select, h: &T): void
 ```
+
+Arm on `h` becoming readable. The arm holds the descriptor number until wait()
+returns, so `h` must stay alive across the wait; borrowing it here is what keeps
+a caller from arming a number nothing owns.
 
 #### `Select.onRecv`
 
@@ -75,8 +79,10 @@ fn Select.onTimeout(self: &mut Select, ms: i64): void
 #### `Select.onWrite`
 
 ```milo
-fn Select.onWrite(self: &mut Select, fd: i32): void
+fn Select.onWrite<T: AsFd>(self: &mut Select, h: &T): void
 ```
+
+Arm on `h` accepting a write without blocking.
 
 #### `Select.wait`
 

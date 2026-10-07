@@ -3279,7 +3279,7 @@ The compiler determines whether an extern call needs `unsafe` based on the argum
 - Return type is a pointer (`*T`) — unknown provenance
 - A param takes a raw `*T` that isn't from auto-coercion
 
-A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `fdIsTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A `@pure` extern (libm) is exempt.
+A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `isTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A std API that still takes or returns a bare descriptor number is itself `@unsafe` (`tests/rawFdApi.test.ts` holds that line); borrowing a handle goes through `AsFd`. A `@pure` extern (libm) is exempt.
 
 ```milo
 extern fn puts(s: *u8): i32
@@ -3332,6 +3332,10 @@ unsafe {
 Calling one outside an `unsafe` block is an error. Nothing about the body is checked
 differently. The attribute is a claim about the *contract*, so it is never inferred and
 never applies to an `extern fn`, whose unsafety is already decided by its signature.
+
+It goes on a method the same way, static or instance, inherent or in a trait impl: std's
+raw-descriptor seams are `@unsafe` methods (`OwnedFd`'s `rawFd`, `TcpStream.take`,
+`WsConn.view`), because the integer they hand out outlives the borrow it came from.
 
 ### string.cstr()
 
@@ -4879,19 +4883,21 @@ fn main(): i32 {
 
 ### I/O Waiting
 
-Green threads can yield until a file descriptor is ready for reading or writing. This integrates with the platform event loop (kqueue on macOS, epoll on Linux):
+Green threads can yield until a file descriptor is ready for reading or writing. This integrates with the platform event loop (kqueue on macOS, epoll on Linux). Both calls take a bare descriptor number, so both are `@unsafe`: the caller vouches that whatever owns the fd keeps it open across the wait. Code holding a handle (a `TcpStream`, a `Pty`, `Stdin {}`) uses `waitReadable(h, d)` from `std/timer` or a `Select` arm instead.
 
 ```milo
 from "std/runtime" import { Task, schedulerWaitRead, schedulerWaitWrite }
 from "std/event" import { setNonblocking }
 
-let fd: i32 = 0    // e.g. an accepted socket
+let fd: i32 = 0    // stdin: open for the life of the process
 Task.spawn(move (): void => {
-    setNonblocking(fd)
-    // ... attempt read ...
-    // if EAGAIN:
-    schedulerWaitRead(fd)    // yields until fd is readable
-    // ... retry read ...
+    unsafe {
+        setNonblocking(fd)
+        // ... attempt read ...
+        // if EAGAIN:
+        schedulerWaitRead(fd)    // yields until fd is readable
+        // ... retry read ...
+    }
 })
 ```
 

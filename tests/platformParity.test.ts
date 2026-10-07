@@ -86,8 +86,8 @@ for (const [names, arms, why] of [
 }
 
 const SAFE_WINDOWS_SHIMS = new Set<string>([
-  "access", "dlclose", "dlerror", "dlopen", "dlsym", "getcontext", "getpid", "gettimeofday", "lseek",
-  "makecontext", "mmap", "mprotect", "munmap", "pipe", "read", "swapcontext", "usleep", "write",
+  "access", "dlclose", "dlerror", "dlopen", "dlsym", "getcontext", "getpid", "gettimeofday",
+  "makecontext", "mprotect", "munmap", "swapcontext", "usleep",
   "pthread_cond_broadcast", "pthread_cond_destroy", "pthread_cond_init", "pthread_cond_signal",
   "pthread_cond_wait", "pthread_create", "pthread_detach", "pthread_join", "pthread_mutex_destroy",
   "pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_rwlock_destroy",

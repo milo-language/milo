@@ -55,7 +55,7 @@ fn epollDataOffset(): i64 {
 // A kqueue/epoll/IOCP poller handle. Create one with `EventLoop.new()`; release it with
 // `eventLoopClose`.
 pub struct EventLoop {
-    epfd: i32,
+    _epfd: i32,
 }
 
 // @internal
@@ -66,7 +66,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
             return Result.Err("epoll_create1() failed")
         }
         return Result.Ok(EventLoop {
-            epfd: fd
+            _epfd: fd
         })
     }
 }
@@ -81,6 +81,7 @@ impl EventLoop {
 // Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
+@unsafe
 pub fn setNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -98,6 +99,7 @@ pub fn setNonblocking(fd: i32): i32 {
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
+@unsafe
 pub fn clearNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -113,6 +115,7 @@ pub fn clearNonblocking(fd: i32): i32 {
 }
 
 // Watch `fd` for readability.
+@unsafe
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev: [u8; 16] = [0; 16]
@@ -120,11 +123,12 @@ pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
         pEvents[0] = epollIn()
         let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
         pData[0] = fd
-        return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
+        return epoll_ctl(el._epfd, epollCtlAdd(), fd, ev as *u8)
     }
 }
 
 // Watch `fd` for writability.
+@unsafe
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev: [u8; 16] = [0; 16]
@@ -132,15 +136,16 @@ pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
         pEvents[0] = epollOut()
         let pData = (((ev as *u8) as i64) + epollDataOffset()) as *i32
         pData[0] = fd
-        return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
+        return epoll_ctl(el._epfd, epollCtlAdd(), fd, ev as *u8)
     }
 }
 
 // Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
+@unsafe
 pub fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
     unsafe {
         var ev: [u8; 16] = [0; 16]
-        return epoll_ctl(el.epfd, epollCtlDel(), fd, ev as *u8)
+        return epoll_ctl(el._epfd, epollCtlDel(), fd, ev as *u8)
     }
 }
 
@@ -155,7 +160,7 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32)
         let evBuf = malloc(bufSize)
         memset(evBuf, 0, bufSize)
 
-        let n = epoll_wait(el.epfd, evBuf, maxEvents, timeoutMs)
+        let n = epoll_wait(el._epfd, evBuf, maxEvents, timeoutMs)
 
         if n > 0 {
             let base = evBuf as i64
@@ -185,6 +190,7 @@ pub fn efdCloexec(): i32 {
 // Arm a wakeup that breaks a blocked `eventPoll` from elsewhere; this is how a
 // `Promise.blocking` worker tells the scheduler its result is ready. Returns the id to
 // pass to eventLoopNotify, eventLoopDrainWakeup and eventLoopCloseWakeup.
+@unsafe
 pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
     unsafe {
         let efd = eventfd(0, efdNonblock() | efdCloexec())
@@ -200,6 +206,7 @@ pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
 }
 
 // safe from any thread: write(2) on an eventfd is atomic
+@unsafe
 pub fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
     unsafe {
         var one: u64 = 1
@@ -213,6 +220,7 @@ pub fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
 
 // eventfd is level-triggered under epoll; the counter must be consumed or
 // every subsequent poll reports it ready again
+@unsafe
 pub fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var buf: u64 = 0
@@ -221,6 +229,7 @@ pub fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
 }
 
 // Tear down a wakeup made by eventLoopInitWakeup.
+@unsafe
 pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
     unsafe {
         eventDeregister(el, wakeupId, false)
@@ -230,20 +239,22 @@ pub fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
 
 // Wrap a poller that another runtime already owns. Does not take ownership: closing it
 // is still the original owner's job.
+@unsafe
 pub fn eventLoopFromFd(fd: i32): EventLoop {
     return EventLoop {
-        epfd: fd
+        _epfd: fd
     }
 }
 
 // The poller's descriptor, to hand to another runtime's poller when embedding.
+@unsafe
 pub fn eventLoopFd(el: &EventLoop): i32 {
-    return el.epfd
+    return el._epfd
 }
 
 // Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
     unsafe {
-        close(el.epfd)
+        close(el._epfd)
     }
 }

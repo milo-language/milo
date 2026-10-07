@@ -21,7 +21,6 @@ pub struct WsConn
 
 Fields:
 
-- `fd: i32`
 - `ssl: i64`: TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
 
 #### `WsConn.close`
@@ -31,16 +30,6 @@ fn WsConn.close(self: &mut WsConn): void
 ```
 
 Send close frame and mark connection closed.
-
-#### `WsConn.fd`
-
-```milo
-fn WsConn.fd(self: &WsConn): i32
-```
-
-The socket fd. Callers select and poll on it, which is why it is reachable at all;
-going through a method is what lets `_ctx`, `_closed` and `_isClient` stay
-file-private.
 
 #### `WsConn.ping`
 
@@ -110,9 +99,9 @@ fn WsConn.view(fd: i32, ssl: i64, isClient: bool): WsConn
 ```
 
 A second handle over a socket some other WsConn owns: same fd and TLS handle, but
-this one never closes them (`ws.fd()` / `ws.tlsHandle()` are the values to pass).
-The owner must outlive it, and nothing checks that. For a reader and a writer on
-one connection prefer `Task.scope`, whose tasks borrow the owner instead.
+this one never closes them (`ws.rawFd()` / `ws.tlsHandle()` are the values to pass).
+The owner must outlive it, and nothing checks that, hence `@unsafe`. For a reader
+and a writer on one connection use `Task.scope`, whose tasks borrow the owner.
 
 ### `WsMessage`
 
@@ -168,11 +157,12 @@ Check if raw HTTP request bytes contain a WebSocket upgrade request.
 #### `wsAccept`
 
 ```milo
-pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
+pub fn wsAccept(conn: TcpStream, rawRequest: &string): Result<WsConn, string>
 ```
 
-Accept a WebSocket upgrade on an already-accepted TCP fd.
-Pass the raw HTTP request bytes so the handshake can be completed.
+Accept a WebSocket upgrade on an already-accepted TCP connection, which the WsConn
+takes over (on error it is dropped, closing the socket). Pass the raw HTTP request
+bytes so the handshake can be completed.
 
 #### `wsConnect`
 

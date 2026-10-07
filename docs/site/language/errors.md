@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 397 distinct messages across 488 programs the compiler must reject.
+Every error message the test suite pins: 399 distinct messages across 490 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -135,6 +135,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`C header disagrees`](#c-header-disagrees)
 - [`callback parameter 1 is declared`](#callback-parameter-1-is-declared)
 - [`calling 'adopt' requires an unsafe block`](#calling-adopt-requires-an-unsafe-block)
+- [`calling 'rawFd' requires an unsafe block`](#calling-rawfd-requires-an-unsafe-block)
 - [`calling 'withRaw' requires an unsafe block`](#calling-withraw-requires-an-unsafe-block)
 - [`calling a C function pointer requires 'unsafe' block`](#calling-a-c-function-pointer-requires-unsafe-block)
 - [`can only be used as a pointer`](#can-only-be-used-as-a-pointer)
@@ -371,6 +372,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
+- [`type 'i64' does not implement trait 'AsFd'`](#type-i64-does-not-implement-trait-asfd)
 - [`type 'Math' has no static method 'minimum'`](#type-math-has-no-static-method-minimum)
 - [`type alias 'A' is cyclic`](#type-alias-a-is-cyclic)
 - [`type alias 'Loop' is cyclic`](#type-alias-loop-is-cyclic)
@@ -3067,6 +3069,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/adoptNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/adoptNeedsUnsafe.milo)</sub>
+
+## `calling 'rawFd' requires an unsafe block` {#calling-rawfd-requires-an-unsafe-block}
+
+`@unsafe` on a method is the same obligation as on a free fn. A descriptor number read out of its owner outlives the borrow it came from, so `rawFd` is @unsafe on every std handle; reading it bare would let `n` name whatever reuses the fd after `out` drops.
+
+```milo skip
+from "std/io" import { OwnedFd, Stdout, AsFd }
+
+fn main() {
+    let out = OwnedFd.dup(Stdout {})!
+    let n = out.rawFd()
+    print(n)
+}
+```
+
+<sub>[tests/errors/rawFdNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rawFdNeedsUnsafe.milo)</sub>
 
 ## `calling 'withRaw' requires an unsafe block` {#calling-withraw-requires-an-unsafe-block}
 
@@ -8567,6 +8585,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/deriveCloneNoCopyAbsent.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveCloneNoCopyAbsent.milo)</sub>
+
+## `type 'i64' does not implement trait 'AsFd'` {#type-i64-does-not-implement-trait-asfd}
+
+Select arms borrow a handle (`T: AsFd`), not a bare number: a number can name a descriptor its owner already closed. The bound error points at this call, not into std/select.milo. `sel.onRead(Stdin {})` is the stdin spelling.
+
+```milo skip
+from "std/select" import { Select }
+
+fn main() {
+    var sel = Select.new()
+    sel.onRead(0)
+    sel.destroy()
+}
+```
+
+<sub>[tests/errors/rawFdSelectArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rawFdSelectArm.milo)</sub>
 
 ## `type 'Math' has no static method 'minimum'` {#type-math-has-no-static-method-minimum}
 

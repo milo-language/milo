@@ -130,6 +130,7 @@ pub extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 // The bound port, whatever family the socket is. getsockname writes into storage-sized
 // space because the kernel picks the family; sin_port and sin6_port BOTH sit at offset 2
 // (same invariant as sun_path), so one read serves v4 and v6. Returns -1 on failure.
+@unsafe
 pub fn getSockPort(fd: i32): i32 {
     if !replayOff() {
         return replayRet("net.port", fd.toString(), true, (): i64 => {
@@ -152,39 +153,24 @@ fn getSockPortLive(fd: i32): i32 {
     }
 }
 
+@unsafe
 pub fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
         return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
+@unsafe
 pub fn bindIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
         return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
+@unsafe
 pub fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
         return bindFd(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
-    }
-}
-
-pub fn connectIn(fd: i32, addr: &SockAddrIn): i32 {
-    unsafe {
-        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
-    }
-}
-
-pub fn connectIn6(fd: i32, addr: &SockAddrIn6): i32 {
-    unsafe {
-        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
-    }
-}
-
-pub fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
-    unsafe {
-        return connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
     }
 }
 
@@ -194,64 +180,85 @@ pub fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
 // When neither is set each is the raw call behind one compare. Std code reaches the OS
 // through these rather than the raw externs, so a replayed program's descriptors can be
 // synthetic: a TcpStream, File or Child under replay has no OS fd behind it and works.
+//
+// Every pub fn here that takes or returns a descriptor number is `@unsafe`: the number
+// is an integer, so nothing stops it outliving its owner and naming whatever reused it.
+// Application code goes through the owning types (File, TcpStream, OwnedFd, Pty, Child);
+// std's own handles call these inside `unsafe`, vouching that they still own the fd.
 
 // One read(2): bytes read, 0 at EOF, <0 with errno set.
 @replayHooked
+@unsafe
 pub fn sysRead(fd: i32, buf: *u8, len: i64): i64 {
-    if replayOff() {
-        unsafe { return read(fd, buf, len) }
+    unsafe {
+        if replayOff() {
+            unsafe { return read(fd, buf, len) }
+        }
+        return replayRead(fd, buf, len, false)
     }
-    return replayRead(fd, buf, len, false)
 }
 
 // One write(2): bytes written, <0 with errno set.
 @replayHooked
+@unsafe
 pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64 {
-    if replayOff() {
-        unsafe { return write(fd, buf, len) }
+    unsafe {
+        if replayOff() {
+            unsafe { return write(fd, buf, len) }
+        }
+        return replayWrite(fd, buf, len, false)
     }
-    return replayWrite(fd, buf, len, false)
 }
 
 // One socket read (recv on Windows, where a SOCKET is not a CRT fd).
-pub fn sysRecv(fd: i32, buf: *u8, len: i64): i64 {
-    if replayOff() {
-        return sockRead(fd, buf, len)
+fn sysRecv(fd: i32, buf: *u8, len: i64): i64 {
+    unsafe {
+        if replayOff() {
+            return sockRead(fd, buf, len)
+        }
+        return replayRead(fd, buf, len, true)
     }
-    return replayRead(fd, buf, len, true)
 }
 
 // One socket write (send on Windows).
-pub fn sysSend(fd: i32, buf: *u8, len: i64): i64 {
-    if replayOff() {
-        return sockWrite(fd, buf, len)
+fn sysSend(fd: i32, buf: *u8, len: i64): i64 {
+    unsafe {
+        if replayOff() {
+            return sockWrite(fd, buf, len)
+        }
+        return replayWrite(fd, buf, len, true)
     }
-    return replayWrite(fd, buf, len, true)
 }
 
 // open(2) with a creation mode (ignored unless `flags` creates). The fd, or <0.
 @replayHooked
+@unsafe
 pub fn sysOpen(path: &string, flags: i32, mode: i32): i32 {
-    if replayOff() {
-        unsafe { return open(path, flags, mode) }
+    unsafe {
+        if replayOff() {
+            unsafe { return open(path, flags, mode) }
+        }
+        return replayOpen(path, flags, mode)
     }
-    return replayOpen(path, flags, mode)
 }
 
 // dup(2). Under replay the duplicate of a descriptor is synthetic like everything else
 // the trace hands out, and keeps the original's record kinds.
 @replayHooked
+@unsafe
 pub fn sysDup(fd: i32): i32 {
-    if replayOff() {
-        unsafe { return dup(fd) }
-    }
-    let n = replayRet("fd.dup", fd.toString(), false, (): i64 => {
-        unsafe {
-            return dup(fd) as i64
+    unsafe {
+        if replayOff() {
+            unsafe { return dup(fd) }
         }
-    }) as i32
-    replayFdOpened(n, replayFdCategory(fd))
-    return n
+        let n = replayRet("fd.dup", fd.toString(), false, (): i64 => {
+            unsafe {
+                return dup(fd) as i64
+            }
+        }) as i32
+        replayFdOpened(n, replayFdCategory(fd))
+        return n
+    }
 }
 
 // waitpid(2) through the trace: the return value and the status word the kernel wrote.
@@ -298,6 +305,7 @@ pub fn sysKill(pid: i32, sig: i32): i32 {
 
 // isatty(3) through the trace: whether a descriptor is a terminal is an input too.
 @replayHooked
+@unsafe
 pub fn sysIsatty(fd: i32): bool {
     if replayOff() {
         unsafe { return isatty(fd) == 1 }
@@ -311,39 +319,49 @@ pub fn sysIsatty(fd: i32): bool {
 
 // close(2). Under replay a synthetic descriptor is forgotten, never passed to the OS.
 @replayHooked
+@unsafe
 pub fn sysClose(fd: i32): i32 {
-    if replayOff() {
-        unsafe { return close(fd) }
+    unsafe {
+        if replayOff() {
+            unsafe { return close(fd) }
+        }
+        return replayClose(fd)
     }
-    return replayClose(fd)
 }
 
 // lseek(2): the new offset, or <0.
 @replayHooked
+@unsafe
 pub fn sysLseek(fd: i32, off: i64, whence: i32): i64 {
-    if replayOff() {
-        unsafe { return lseek(fd, off, whence) }
+    unsafe {
+        if replayOff() {
+            unsafe { return lseek(fd, off, whence) }
+        }
+        return replayLseek(fd, off, whence)
     }
-    return replayLseek(fd, off, whence)
 }
 
 // socket(2). Under replay the recorded number comes back as a synthetic socket.
 @replayHooked
+@unsafe
 pub fn sysSocket(domain: i32, sockType: i32, protocol: i32): i32 {
-    if replayOff() {
-        unsafe { return socket(domain, sockType, protocol) }
-    }
-    let fd = replayRet("net.socket", domain.toString() + " " + sockType.toString(), true, (): i64 => {
-        unsafe {
-            return socket(domain, sockType, protocol) as i64
+    unsafe {
+        if replayOff() {
+            unsafe { return socket(domain, sockType, protocol) }
         }
-    }) as i32
-    replayFdOpened(fd, 'n')
-    return fd
+        let fd = replayRet("net.socket", domain.toString() + " " + sockType.toString(), true, (): i64 => {
+            unsafe {
+                return socket(domain, sockType, protocol) as i64
+            }
+        }) as i32
+        replayFdOpened(fd, 'n')
+        return fd
+    }
 }
 
 // listen(2).
 @replayHooked
+@unsafe
 pub fn sysListen(fd: i32, backlog: i32): i32 {
     if replayOff() {
         unsafe { return listen(fd, backlog) }
@@ -388,15 +406,18 @@ fn connectOnce(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
 
 // accept(2), discarding the peer address. Under replay the recorded client fd comes
 // back as a synthetic socket.
+@unsafe
 pub fn sysAccept(fd: i32): i32 {
-    if replayOff() {
-        return acceptLive(fd)
+    unsafe {
+        if replayOff() {
+            return acceptLive(fd)
+        }
+        let client = replayRet("net.accept", fd.toString(), true, (): i64 => {
+            return acceptLive(fd) as i64
+        }) as i32
+        replayFdOpened(client, 'n')
+        return client
     }
-    let client = replayRet("net.accept", fd.toString(), true, (): i64 => {
-        return acceptLive(fd) as i64
-    }) as i32
-    replayFdOpened(client, 'n')
-    return client
 }
 
 // Storage-sized, not sockaddr_in-sized: the kernel writes whatever family the peer
@@ -559,37 +580,43 @@ pub extern fn execvp(file: *u8, argv: *u8): i32
 //   * anything else: on POSIX it does not happen; on Windows it means a
 //     non-socket fd, which needs the IOCP tier. Say so and stop rather than hang.
 fn greenNonblocking(fd: i32, what: string): bool {
-    if setNonblocking(fd) == 0 {
-        return true
-    }
-    if getErrno() == ebadf() {
+    unsafe {
+        if setNonblocking(fd) == 0 {
+            return true
+        }
+        if getErrno() == ebadf() {
+            return false
+        }
+        eprint($"milo: green {what} is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
+        exit(1)
         return false
     }
-    eprint($"milo: green {what} is not supported on this platform (could not set non-blocking) — see docs/roadmap.md")
-    exit(1)
-    return false
 }
 
 // One read(2). Returns bytes read, 0 at EOF, <0 on error.
+@unsafe
 pub fn readFd(fd: i32, buf: *u8, len: i64): i64 {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen {
-        if !greenNonblocking(fd, "IO on this fd") {
-            return -1
+    unsafe {
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen {
+            if !greenNonblocking(fd, "IO on this fd") {
+                return -1
+            }
         }
-    }
-    while true {
-        let n = sysRead(fd, buf, len)
-        if n < 0 && inGreen && netErrno() == netEagain() {
-            schedulerWaitRead(fd)
-            continue
+        while true {
+            let n = sysRead(fd, buf, len)
+            if n < 0 && inGreen && netErrno() == netEagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            return n
         }
-        return n
+        return -1
     }
-    return -1
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
+@unsafe
 pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
@@ -619,24 +646,28 @@ pub fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
 // Windows a SOCKET is NOT a CRT fd — the CRT _read/_write behind read/write fast-fail on one,
 // so socket data must go through recv/send. Socket code (std/net, raw-socket programs) must
 // use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/stdin/pipes.
+@unsafe
 pub fn recvFd(fd: i32, buf: *u8, len: i64): i64 {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen {
-        if !greenNonblocking(fd, "socket IO") {
-            return -1
+    unsafe {
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen {
+            if !greenNonblocking(fd, "socket IO") {
+                return -1
+            }
         }
-    }
-    while true {
-        let n = sysRecv(fd, buf, len)
-        if n < 0 && inGreen && netErrno() == netEagain() {
-            schedulerWaitRead(fd)
-            continue
+        while true {
+            let n = sysRecv(fd, buf, len)
+            if n < 0 && inGreen && netErrno() == netEagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            return n
         }
-        return n
+        return -1
     }
-    return -1
 }
 
+@unsafe
 pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
@@ -664,77 +695,88 @@ pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
 // Accept one connection; returns the client fd (<0 on error). In a green task
 // the client fd is left nonblocking so later readFd/writeFd calls skip a
 // redundant fcntl round-trip.
+@unsafe
 pub fn acceptFd(fd: i32): i32 {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen {
-        setNonblocking(fd)
-    }
-    while true {
-        let clientFd = sysAccept(fd)
-        if clientFd < 0 && inGreen && netErrno() == netEagain() {
-            schedulerWaitRead(fd)
-            continue
+    unsafe {
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen {
+            setNonblocking(fd)
         }
-        if clientFd >= 0 && inGreen {
-            setNonblocking(clientFd)
+        while true {
+            let clientFd = sysAccept(fd)
+            if clientFd < 0 && inGreen && netErrno() == netEagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            if clientFd >= 0 && inGreen {
+                setNonblocking(clientFd)
+            }
+            return clientFd
         }
-        return clientFd
+        return -1
     }
-    return -1
 }
 
 // Single-shot nonblocking accept: the client fd, or -1 when no connection is
 // pending. For event loops that multiplex accept with other work and must not
 // park on the listener — a blocking accept stops every other event source
 // until the next connection arrives (milojs's cold-fetch hang).
+@unsafe
 pub fn acceptFdNb(fd: i32): i32 {
-    setNonblocking(fd)
-    let clientFd = sysAccept(fd)
-    if clientFd >= 0 {
-        setNonblocking(clientFd)
+    unsafe {
+        setNonblocking(fd)
+        let clientFd = sysAccept(fd)
+        if clientFd >= 0 {
+            setNonblocking(clientFd)
+        }
+        return clientFd
     }
-    return clientFd
 }
 
 // connect(2). In a green task: nonblocking connect, park until writable,
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
 // Green-aware connect. Takes the raw seam so it serves every family; the per-family
 // entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
-pub fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
-    if schedulerCurrent() as i64 == 0 {
-        return connectOnce(fd, addr, addrlen)
-    }
-    setNonblocking(fd)
-    let r = connectOnce(fd, addr, addrlen)
-    if r == 0 {
+fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
+    unsafe {
+        if schedulerCurrent() as i64 == 0 {
+            return connectOnce(fd, addr, addrlen)
+        }
+        setNonblocking(fd)
+        let r = connectOnce(fd, addr, addrlen)
+        if r == 0 {
+            return 0
+        }
+        // Socket would-block/in-progress is netErrno(), not errno: Windows reports socket
+        // errors through WSAGetLastError with its own numbering (WSAEWOULDBLOCK 10035), so a
+        // raw getErrno() here reads the wrong value and the green park path is never taken.
+        // On POSIX netErrno/netEinprogress fold straight back to errno/EINPROGRESS.
+        if netErrno() != netEinprogress() {
+            return -1
+        }
+        schedulerWaitWrite(fd)
+        if connectResult(fd) != 0 {
+            return -1
+        }
         return 0
     }
-    // Socket would-block/in-progress is netErrno(), not errno: Windows reports socket
-    // errors through WSAGetLastError with its own numbering (WSAEWOULDBLOCK 10035), so a
-    // raw getErrno() here reads the wrong value and the green park path is never taken.
-    // On POSIX netErrno/netEinprogress fold straight back to errno/EINPROGRESS.
-    if netErrno() != netEinprogress() {
-        return -1
-    }
-    schedulerWaitWrite(fd)
-    if connectResult(fd) != 0 {
-        return -1
-    }
-    return 0
 }
 
+@unsafe
 pub fn connectFdIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
     }
 }
 
+@unsafe
 pub fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
     }
 }
 
+@unsafe
 pub fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
     unsafe {
         return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())

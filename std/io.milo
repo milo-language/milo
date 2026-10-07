@@ -121,8 +121,10 @@ pub trait Writer {
 // buffer first or the two interleave in the wrong order. fflush on an already-empty
 // buffer is not a syscall, so a program that only ever uses this pays nothing.
 pub fn writeStdout(s: &string): void {
-    unsafe { fflush(0 as *u8) }
-    writeFd(1, s, s.len)
+    unsafe {
+        fflush(0 as *u8)
+        writeFd(1, s, s.len)
+    }
 }
 
 // ── Async byte streams ──
@@ -136,17 +138,20 @@ pub fn writeStdout(s: &string): void {
 // LIFETIME: the detached pump holds the raw fd. Keep the owning source (Pty /
 // TcpStream / Child) alive and open for as long as you consume the channel —
 // closing or dropping it out from under the pump strands the pump (parks
-// forever), and for a TLS source would read freed SSL state.
+// forever), and for a TLS source would read freed SSL state. That is why it is
+// `@unsafe`: the safe spellings are `OwnedFd.channel`, `stdinChannel` and the owning
+// types' own channel methods, which tie the number to a live owner.
+@unsafe
 pub fn fdChannel(fd: i32): Channel<string> {
     let ch = Channel<string>.new(256)!
     let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
-    setNonblocking(fd)
+    unsafe { setNonblocking(fd) }
     Task.spawn(move(): void => {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             var n: i64 = 0
-            schedulerWaitRead(fd)
             unsafe {
+                schedulerWaitRead(fd)
                 n = readFd(fd, buf as *u8, 4096)
             }
             if n <= 0 {
@@ -172,7 +177,8 @@ pub fn fdChannel(fd: i32): Channel<string> {
 // blocking readLine/readStdin on the same tty may return early. Pick one style
 // per stdin session; don't mix streaming and blocking reads of the same fd.
 pub fn stdinChannel(): Channel<string> {
-    return fdChannel(0)
+    // fd 0 lives as long as the process, so no owner can close it under the pump.
+    unsafe { return fdChannel(0) }
 }
 
 // ── FdReader: green-aware byte reads ──
@@ -188,51 +194,41 @@ pub fn stdinChannel(): Channel<string> {
 // blocking read path.
 //
 // The reader borrows the fd; it does not own or close it. Keep the owning
-// source (File / Pty / Child / socket) alive for the reader's lifetime.
-pub enum FdReader {
-    Green(i32),
-    Blocking(i32),
+// source (File / Pty / Child / socket) alive for the reader's lifetime. The fields
+// are private so the only way to aim one at a number is `fdReaderAttach`.
+pub struct FdReader {
+    _fd: i32,
+    _green: bool,
 }
 
 // Capture the read strategy from the current runtime context, flipping the fd
-// non-blocking iff we will park on it so the two never drift apart. Free fn (not
-// an FdReader method) because milo resolves `FdReader.attach` as a variant, not
-// a static method.
+// non-blocking iff we will park on it so the two never drift apart.
+//
+// The one safe std entry point that still takes a bare descriptor (allowlisted in
+// tests/rawFdApi.test.ts): the published milo-json-rpc@v0.1.0, which
+// examples/tools/java-dap builds against, calls it outside `unsafe`. It reads and
+// never closes, so a stale number misreads rather than double-closes. It becomes
+// `@unsafe` once a milo-json-rpc release reads frames through a handle.
 pub fn fdReaderAttach(fd: i32): FdReader {
     if schedulerCurrent() as i64 != 0 {
-        setNonblocking(fd)
-        return FdReader.Green(fd)
+        unsafe { setNonblocking(fd) }
+        return FdReader {
+            _fd: fd,
+            _green: true
+        }
     }
-    return FdReader.Blocking(fd)
+    return FdReader {
+        _fd: fd,
+        _green: false
+    }
 }
 
 impl FdReader {
-    fn _fd(self: &Self): i32 {
-        match self {
-            FdReader.Green(f) => {
-                return f
-            }
-            FdReader.Blocking(f) => {
-                return f
-            }
-        }
-    }
-
-    fn _green(self: &Self): bool {
-        match self {
-            FdReader.Green(_f) => {
-                return true
-            }
-            FdReader.Blocking(_f) => {
-                return false
-            }
-        }
-    }
 
     // Read one byte, returned as 0..255. Returns -1 at EOF or on error.
     fn readByte(self: &Self): i64 {
-        let fd = self._fd()
-        let green = self._green()
+        let fd = self._fd
+        let green = self._green
         var b: [u8; 1] = [0; 1]
         unsafe {
             while true {
@@ -244,7 +240,7 @@ impl FdReader {
                     return -1
                 }
                 if green && getErrno() == eagain() {
-                    schedulerWaitRead(fd)
+                    unsafe { schedulerWaitRead(fd) }
                     continue
                 }
                 return -1
@@ -255,8 +251,8 @@ impl FdReader {
 
     // Read exactly n bytes into a string. Err if the stream ends first.
     fn readExact(self: &Self, n: i64): Result<string> {
-        let fd = self._fd()
-        let green = self._green()
+        let fd = self._fd
+        let green = self._green
         var out: string = String.withCapacity(n + 1)
         var buf: [u8; 4096] = [0; 4096]
         var got: i64 = 0
@@ -270,7 +266,7 @@ impl FdReader {
                 r = sysRead(fd, buf as *u8, want)
             }
             if r < 0 && green && getErrno() == eagain() {
-                schedulerWaitRead(fd)
+                unsafe { schedulerWaitRead(fd) }
                 continue
             }
             if r <= 0 {
@@ -289,7 +285,7 @@ impl FdReader {
 
 // Owned file handle. Automatically closes the fd when dropped.
 pub struct File {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Drop for File {
@@ -297,8 +293,8 @@ impl Drop for File {
         // `> 0`: drop glue runs on moved-from slots, which move-zeroing leaves
         // all-zero — the zero value must drop as a no-op or we close fd 0 (stdin).
         // See TcpStream.drop in std/net for the full story.
-        if self.fd > 0 {
-            sysClose(self.fd)
+        if self._fd > 0 {
+            unsafe { sysClose(self._fd) }
         }
     }
 }
@@ -306,104 +302,110 @@ impl Drop for File {
 impl File {
     // Open a file for reading.
     fn openRead(path: &string): Result<File, IoError> {
-        let fd = sysOpen(path, 0, 0)
-        if fd < 0 {
-            return Result.Err(ioError(path))
+        unsafe {
+            let fd = sysOpen(path, 0, 0)
+            if fd < 0 {
+                return Result.Err(ioError(path))
+            }
+            return Result.Ok(File {
+                _fd: fd
+            })
         }
-        return Result.Ok(File {
-            fd: fd
-        })
     }
 
     // Open a file for writing, creating it or truncating it (mode 0644).
     fn openWrite(path: &string): Result<File, IoError> {
-        let fd = sysOpen(path, oWriteCreateTrunc(), 420)
-        if fd < 0 {
-            return Result.Err(ioError(path))
+        unsafe {
+            let fd = sysOpen(path, oWriteCreateTrunc(), 420)
+            if fd < 0 {
+                return Result.Err(ioError(path))
+            }
+            return Result.Ok(File {
+                _fd: fd
+            })
         }
-        return Result.Ok(File {
-            fd: fd
-        })
     }
 
     // Open a file for appending, creating it if missing (mode 0644).
     fn openAppend(path: &string): Result<File, IoError> {
-        let fd = sysOpen(path, oWriteCreateAppend(), 420)
-        if fd < 0 {
-            return Result.Err(ioError(path))
+        unsafe {
+            let fd = sysOpen(path, oWriteCreateAppend(), 420)
+            if fd < 0 {
+                return Result.Err(ioError(path))
+            }
+            return Result.Ok(File {
+                _fd: fd
+            })
         }
-        return Result.Ok(File {
-            fd: fd
-        })
     }
 
     // Size of the open file in bytes. The read position is left where it was.
     fn size(self: &Self): i64 {
-        let cur = sysLseek(self.fd, 0, 1)
-        let size = sysLseek(self.fd, 0, 2)
-        sysLseek(self.fd, cur, 0)
-        return size
+        unsafe {
+            let cur = sysLseek(self._fd, 0, 1)
+            let size = sysLseek(self._fd, 0, 2)
+            sysLseek(self._fd, cur, 0)
+            return size
+        }
     }
 
     fn readAll(self: &Self): Result<string, IoError> {
-        let size = self.size()
-        // A negative size means lseek couldn't measure this fd — NOT that the read must
-        // fail. procfs seq_files (/proc/uptime, /proc/meminfo, /proc/cpuinfo), pipes and
-        // char devices all report -1 for SEEK_END, and every one of them reads fine.
-        // Those take the growing path below.
-        //
-        // Cap the presize: opening a DIRECTORY (or some char devices) and asking
-        // lseek(SEEK_END) yields a garbage, near-INT64_MAX "size", and `size + 1`
-        // then overflowed to INT64_MIN — a negative-capacity crash. 1 GiB is a
-        // generous ceiling that also bounds a hostile presize.
-        if size > 0 && size <= 1073741824 {
-            sysLseek(self.fd, 0, 0)
-            // One malloc, one read per 64 KiB, one memcpy at the end. The previous
-            // version appended the read buffer to a String ONE BYTE AT A TIME, which
-            // cost more than the read syscalls themselves — 33ms of a 47ms grep over
-            // a 67 MB file was this loop, not the I/O.
-            var raw: Vec<u8> = Vec.filled(size, 0)
-            var got: i64 = 0
-            unsafe {
-                let base = raw.ptr() as i64
-                while got < size {
-                    let n = readFd(self.fd, (base + got) as *u8, size - got)
-                    if n <= 0 {
-                        break
+        unsafe {
+            let size = self.size()
+            // A negative size means lseek couldn't measure this fd — NOT that the read must
+            // fail. procfs seq_files (/proc/uptime, /proc/meminfo, /proc/cpuinfo), pipes and
+            // char devices all report -1 for SEEK_END, and every one of them reads fine.
+            // Those take the growing path below.
+            //
+            // Cap the presize: opening a DIRECTORY (or some char devices) and asking
+            // lseek(SEEK_END) yields a garbage, near-INT64_MAX "size", and `size + 1`
+            // then overflowed to INT64_MIN — a negative-capacity crash. 1 GiB is a
+            // generous ceiling that also bounds a hostile presize.
+            if size > 0 && size <= 1073741824 {
+                sysLseek(self._fd, 0, 0)
+                // One malloc, one read per 64 KiB, one memcpy at the end. The previous
+                // version appended the read buffer to a String ONE BYTE AT A TIME, which
+                // cost more than the read syscalls themselves — 33ms of a 47ms grep over
+                // a 67 MB file was this loop, not the I/O.
+                var raw: Vec<u8> = Vec.filled(size, 0)
+                var got: i64 = 0
+                unsafe {
+                    let base = raw.ptr() as i64
+                    while got < size {
+                        let n = readFd(self._fd, (base + got) as *u8, size - got)
+                        if n <= 0 {
+                            break
+                        }
+                        got += n
                     }
-                    got += n
+                    return Result.Ok(_bytesToString(base as *u8, got))
                 }
-                return Result.Ok(_bytesToString(base as *u8, got))
             }
-        }
 
-        // Unmeasurable fd (pipe, procfs, char device): grow as the reads come in.
-        var result: string = ""
-        var buf: [u8; 65536] = [0; 65536]
-        while true {
-            let n = readFd(self.fd, buf, 65536)
-            if n <= 0 {
-                break
+            // Unmeasurable fd (pipe, procfs, char device): grow as the reads come in.
+            var result: string = ""
+            var buf: [u8; 65536] = [0; 65536]
+            while true {
+                let n = readFd(self._fd, buf, 65536)
+                if n <= 0 {
+                    break
+                }
+                unsafe {
+                    result.pushStr(_bytesToString(buf[0].addrOf() as *u8, n))
+                }
             }
-            unsafe {
-                result.pushStr(_bytesToString(buf[0].addrOf() as *u8, n))
-            }
+            return Result.Ok(result)
         }
-        return Result.Ok(result)
     }
 
     fn writeAll(self: &Self, data: &string): Result<i64, IoError> {
-        let n = writeFd(self.fd, data, data.len)
-        if n < 0 {
-            return Result.Err(IoError.Other("write failed"))
+        unsafe {
+            let n = writeFd(self._fd, data, data.len)
+            if n < 0 {
+                return Result.Err(IoError.Other("write failed"))
+            }
+            return Result.Ok(n)
         }
-        return Result.Ok(n)
-    }
-
-    // Borrow the fd without transferring ownership — the File still closes it on
-    // drop. For handing the fd to an fd-taking API; do not close it yourself.
-    fn rawFd(self: &Self): i32 {
-        return self.fd
     }
 
     // A non-owning Reader+Writer view of this file, for when the File itself must
@@ -411,40 +413,46 @@ impl File {
     // The File must outlive the view and the compiler does not check that — see
     // FdStream. Prefer `BufReader<File>.new(f)`, which owns the handle outright.
     fn stream(self: &Self): FdStream {
-        return FdStream.onFd(self.fd)
+        unsafe { return FdStream.onFd(self._fd) }
     }
 
     // Move the read/write cursor to an absolute byte offset. Returns the new
     // offset. A BufReader over this file caches bytes past its own cursor, so
     // seeking underneath one desynchronizes it — seek first, then wrap.
     fn seek(self: &Self, pos: i64): Result<i64, IoError> {
-        let at = sysLseek(self.fd, pos, 0)
-        if at < 0 {
-            return Result.Err(IoError.Other("seek failed"))
+        unsafe {
+            let at = sysLseek(self._fd, pos, 0)
+            if at < 0 {
+                return Result.Err(IoError.Other("seek failed"))
+            }
+            return Result.Ok(at)
         }
-        return Result.Ok(at)
     }
 
     // Current cursor offset, or -1 for a stream that cannot report one (pipe, tty).
     fn tell(self: &Self): i64 {
-        return sysLseek(self.fd, 0, 1)
+        unsafe {
+            return sysLseek(self._fd, 0, 1)
+        }
     }
 
     // Close now instead of at drop, and report failure. Drop closes silently, which
     // is fine for reads but hides a write error that only surfaces at close (NFS,
     // full filesystems). After this the File is inert and its drop is a no-op.
     fn close(self: &mut Self): Result<Unit, IoError> {
-        if self.fd <= 0 {
+        unsafe {
+            if self._fd <= 0 {
+                return Result.Ok(Unit {
+                })
+            }
+            let fd = self._fd
+            self._fd = 0
+            if sysClose(fd) < 0 {
+                return Result.Err(ioError("close"))
+            }
             return Result.Ok(Unit {
             })
         }
-        let fd = self.fd
-        self.fd = 0
-        if sysClose(fd) < 0 {
-            return Result.Err(ioError("close"))
-        }
-        return Result.Ok(Unit {
-        })
     }
 }
 
@@ -452,16 +460,16 @@ impl File {
 // takes ownership and closes the fd when the reader goes out of scope.
 impl Reader for File {
     fn read(self: &mut Self, max: i64): Result<string, IoError> {
-        return fdRead(self.fd, false, max)
+        return fdRead(self._fd, false, max)
     }
 }
 
 impl Writer for File {
     fn write(self: &mut Self, data: &string): Result<Unit, IoError> {
-        return fdWrite(self.fd, false, data)
+        return fdWrite(self._fd, false, data)
     }
 
-    // No-op: this layer holds no buffer. Use `syncFd` from std/fs to force the
+    // No-op: this layer holds no buffer. Use `syncFile` from std/fs to force the
     // kernel's page cache out to the device.
     fn flush(self: &mut Self): Result<Unit, IoError> {
         return Result.Ok(Unit {
@@ -480,26 +488,28 @@ pub fn putChar(ch: u8): void {
 
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
 fn readLineFd(fd: i32): Option<string> {
-    var _rlBuf: [u8; 1] = [0; 1]
-    var _rlResult = ""
-    var _rlGot = false
-    while true {
-        let n = readFd(fd, _rlBuf, 1)
-        if n <= 0 {
-            if _rlGot {
+    unsafe {
+        var _rlBuf: [u8; 1] = [0; 1]
+        var _rlResult = ""
+        var _rlGot = false
+        while true {
+            let n = readFd(fd, _rlBuf, 1)
+            if n <= 0 {
+                if _rlGot {
+                    return Option.Some(_rlResult)
+                }
+                return Option.None
+            }
+            _rlGot = true
+            if _rlBuf[0] == 10 {
                 return Option.Some(_rlResult)
             }
-            return Option.None
+            if _rlBuf[0] != 13 {
+                _rlResult.push(_rlBuf[0])
+            }
         }
-        _rlGot = true
-        if _rlBuf[0] == 10 {
-            return Option.Some(_rlResult)
-        }
-        if _rlBuf[0] != 13 {
-            _rlResult.push(_rlBuf[0])
-        }
+        return Option.None
     }
-    return Option.None
 }
 
 // Read a single line from stdin. Returns None at EOF.
@@ -510,18 +520,75 @@ pub fn readLine(): Option<string> {
 // Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
 // streaming/incremental consumption.
 pub fn readStdin(): string {
-    var result: string = ""
-    var buf: [u8; 4096] = [0; 4096]
-    while true {
-        let n = readFd(0, buf, 4096)
-        if n <= 0 {
-            break
+    unsafe {
+        var result: string = ""
+        var buf: [u8; 4096] = [0; 4096]
+        while true {
+            let n = readFd(0, buf, 4096)
+            if n <= 0 {
+                break
+            }
+            for i in 0..n {
+                result.push(buf[i])
+            }
         }
-        for i in 0..n {
-            result.push(buf[i])
-        }
+        return result
     }
-    return result
+}
+
+// ── AsFd: lending a descriptor to std ──
+
+// A handle that owns (or, for the stdio streams, outlives) an OS descriptor. Generic
+// std calls that only need the number for the duration of the call take `&T` with
+// `T: AsFd` (`Select.onRead`, `waitReadable`, `isTerminal`, `OwnedFd.dup`), so the
+// borrow checker, not the caller, guarantees the owner is alive while they use it.
+//
+// `rawFd` is the escape hatch and every std impl declares it `@unsafe`: the integer it
+// returns outlives the borrow it came from, and once the owner drops it names whatever
+// the kernel hands that number to next. Implement it on your own owning type to make
+// that type usable with the generic calls.
+pub trait AsFd {
+    fn rawFd(self: &Self): i32
+}
+
+// The process's standard streams as handles. They live as long as the process, so
+// lending their number can never outlive an owner: `sel.onRead(Stdin {})`,
+// `isTerminal(Stdout {})`.
+pub struct Stdin {
+}
+
+pub struct Stdout {
+}
+
+pub struct Stderr {
+}
+
+impl AsFd for Stdin {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return 0
+    }
+}
+
+impl AsFd for Stdout {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return 1
+    }
+}
+
+impl AsFd for Stderr {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return 2
+    }
+}
+
+impl AsFd for File {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
+    }
 }
 
 // ── OwnedFd ──
@@ -540,7 +607,7 @@ impl Drop for OwnedFd {
     fn drop(self: &mut Self): void {
         // `> 0`: the zero value must drop as a no-op (see TcpStream.drop in std/net).
         if self._fd > 0 {
-            sysClose(self._fd)
+            unsafe { sysClose(self._fd) }
         }
     }
 }
@@ -555,10 +622,12 @@ pub fn adoptFd(fd: i32): OwnedFd {
 }
 
 impl OwnedFd {
-    // A new descriptor for the same open file as `fd`, owned by the result. Whoever
-    // owns `fd` keeps it: closing one of the two leaves the other open.
-    fn dup(fd: i32): Result<OwnedFd, IoError> {
-        let n = sysDup(fd)
+    // A new descriptor for the same open file as `h`'s, owned by the result. `h` keeps
+    // its own: closing one of the two leaves the other open. This is how a task gets a
+    // descriptor it can outlive its owner with (a pump over a pty, a writer on a socket).
+    fn dup<T: AsFd>(h: &T): Result<OwnedFd, IoError> {
+        var n: i32 = -1
+        unsafe { n = sysDup(h.rawFd()) }
         if n < 0 {
             return Result.Err(IoError.Other("dup failed"))
         }
@@ -567,15 +636,30 @@ impl OwnedFd {
         })
     }
 
-    // The descriptor number, still owned by this handle: valid only while it lives.
-    fn fd(self: &Self): i32 {
-        return self._fd
-    }
-
     // Stream the descriptor's bytes as a channel (see fdChannel). Keep this handle alive
     // until the channel closes: dropping it closes the fd under the pump.
     fn channel(self: &Self): Channel<string> {
-        return fdChannel(self._fd)
+        unsafe { return fdChannel(self._fd) }
+    }
+
+    // Whether this handle holds a descriptor at all: `Child.takeStderr` hands back an
+    // empty one when stderr was not a pipe. `> 0` matches drop, for which 0 is the
+    // moved-from value.
+    fn isOpen(self: &Self): bool {
+        return self._fd > 0
+    }
+
+    // A non-owning Reader+Writer view; the same rule as File.stream.
+    fn stream(self: &Self): FdStream {
+        unsafe { return FdStream.onFd(self._fd) }
+    }
+}
+
+impl AsFd for OwnedFd {
+    // The descriptor number, still owned by this handle: valid only while it lives.
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
     }
 }
 
@@ -592,43 +676,47 @@ fn fdError(op: &string, fd: i32): IoError {
 // read/write: on Windows a SOCKET is not a CRT descriptor and _read fast-fails on
 // one, so the distinction is semantic, not cosmetic.
 fn fdRead(fd: i32, socket: bool, max: i64): Result<string, IoError> {
-    if max <= 0 {
-        return Result.Ok("")
+    unsafe {
+        if max <= 0 {
+            return Result.Ok("")
+        }
+        // withCapacity, not filled: this buffer is only ever a landing pad for the
+        // kernel, so pre-zeroing it is a wasted memset of `max` bytes per read.
+        var raw: Vec<u8> = Vec.withCapacity(max)
+        let base = raw.ptr()
+        var n: i64 = 0
+        if socket {
+            n = recvFd(fd, base, max)
+        } else {
+            n = readFd(fd, base, max)
+        }
+        if n < 0 {
+            return Result.Err(fdError("read", fd))
+        }
+        return Result.Ok(_bytesToString(base, n))
     }
-    // withCapacity, not filled: this buffer is only ever a landing pad for the
-    // kernel, so pre-zeroing it is a wasted memset of `max` bytes per read.
-    var raw: Vec<u8> = Vec.withCapacity(max)
-    let base = raw.ptr()
-    var n: i64 = 0
-    if socket {
-        n = recvFd(fd, base, max)
-    } else {
-        n = readFd(fd, base, max)
-    }
-    if n < 0 {
-        return Result.Err(fdError("read", fd))
-    }
-    return Result.Ok(_bytesToString(base, n))
 }
 
 fn fdWrite(fd: i32, socket: bool, data: &string): Result<Unit, IoError> {
-    if data.len == 0 {
+    unsafe {
+        if data.len == 0 {
+            return Result.Ok(Unit {
+            })
+        }
+        var n: i64 = 0
+        if socket {
+            n = sendFd(fd, data, data.len)
+        } else {
+            n = writeFd(fd, data, data.len)
+        }
+        // readFd/writeFd already loop over partial writes, so a short count here is a
+        // real failure rather than something to retry.
+        if n < 0 || n != data.len {
+            return Result.Err(fdError("write", fd))
+        }
         return Result.Ok(Unit {
         })
     }
-    var n: i64 = 0
-    if socket {
-        n = sendFd(fd, data, data.len)
-    } else {
-        n = writeFd(fd, data, data.len)
-    }
-    // readFd/writeFd already loop over partial writes, so a short count here is a
-    // real failure rather than something to retry.
-    if n < 0 || n != data.len {
-        return Result.Err(fdError("write", fd))
-    }
-    return Result.Ok(Unit {
-    })
 }
 
 // A borrowed byte stream over an OS handle — the adapter that turns anything with
@@ -652,29 +740,36 @@ fn fdWrite(fd: i32, socket: bool, data: &string): Result<Unit, IoError> {
 // Reader and Writer itself, so `BufReader<File>.new(f)` takes ownership and the
 // question cannot arise.
 pub struct FdStream {
-    fd: i32,
-    socket: bool,
+    _fd: i32,
+    _socket: bool,
 }
 
 impl FdStream {
-    // A CRT file descriptor: file, pipe, tty, pty.
+    // A CRT file descriptor: file, pipe, tty, pty. `@unsafe`: the view outlives
+    // nothing, so the caller vouches the owner of `fd` outlives the stream. The safe
+    // spellings are the owners' own `stream()` and the stdio constructors below.
+    @unsafe
     fn onFd(fd: i32): FdStream {
         return FdStream {
-            fd: fd,
-            socket: false
+            _fd: fd,
+            _socket: false
         }
     }
 
     // A socket handle. Not interchangeable with `onFd` on Windows.
+    @unsafe
     fn onSocket(fd: i32): FdStream {
         return FdStream {
-            fd: fd,
-            socket: true
+            _fd: fd,
+            _socket: true
         }
     }
 
     fn stdin(): FdStream {
-        return FdStream.onFd(0)
+        return FdStream {
+            _fd: 0,
+            _socket: false
+        }
     }
 
     // Writes here go straight at fd 1, bypassing the stdio buffer `print` uses, so
@@ -682,27 +777,36 @@ impl FdStream {
     // why this does not fflush on your behalf: doing so per write would defeat the
     // buffering you wrapped it in a BufWriter to get.
     fn stdout(): FdStream {
-        return FdStream.onFd(1)
+        return FdStream {
+            _fd: 1,
+            _socket: false
+        }
     }
 
     fn stderr(): FdStream {
-        return FdStream.onFd(2)
+        return FdStream {
+            _fd: 2,
+            _socket: false
+        }
     }
+}
 
+impl AsFd for FdStream {
+    @unsafe
     fn rawFd(self: &Self): i32 {
-        return self.fd
+        return self._fd
     }
 }
 
 impl Reader for FdStream {
     fn read(self: &mut Self, max: i64): Result<string, IoError> {
-        return fdRead(self.fd, self.socket, max)
+        return fdRead(self._fd, self._socket, max)
     }
 }
 
 impl Writer for FdStream {
     fn write(self: &mut Self, data: &string): Result<Unit, IoError> {
-        return fdWrite(self.fd, self.socket, data)
+        return fdWrite(self._fd, self._socket, data)
     }
 
     // No-op: the kernel owns the buffering below this point.

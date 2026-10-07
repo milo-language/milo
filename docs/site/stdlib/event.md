@@ -26,11 +26,16 @@ byte *was* available, not that the next read will return.
 passed bare, and returns how many fds are ready, or -1 on error. A negative
 `timeoutMs` blocks indefinitely.
 
+Every call here that takes a descriptor number is `@unsafe`: the poller holds the number,
+not the handle, so the caller vouches that its owner keeps it open while registered.
+
 ```milo
 let fd: i32 = 0                 // stdin, or any descriptor you own
 var el = EventLoop.new()!
-setNonblocking(fd)
-eventRegisterRead(el, fd)
+unsafe {
+    setNonblocking(fd)
+    eventRegisterRead(el, fd)
+}
 
 var ready: [i32; 8] = [0; 8]
 let n = eventPoll(el, ready, 8, 1000)
@@ -59,8 +64,6 @@ pub struct EventLoop
 
 A kqueue/epoll/IOCP poller handle. Create one with `EventLoop.new()`; release it with
 `eventLoopClose`.
-
-Fields: `kqfd: i32`.
 
 #### `EventLoop.new`
 

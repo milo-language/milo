@@ -2,12 +2,14 @@
 // next dup reuses the number), Child.takeStdout moves the pipe out of the Child, and
 // processAlive probes a pid without signalling it.
 from "std/process" import { Child, processAlive }
-from "std/io" import { OwnedFd, FdStream }
+from "std/io" import { OwnedFd, Stdout, AsFd }
 from "std/sysinfo" import { pid }
 
 fn dupNumber(): i32 {
-    let a = OwnedFd.dup(1)!
-    return a.fd()
+    let a = OwnedFd.dup(Stdout {})!
+    // Reading the number is @unsafe: it is only meaningful while `a` lives, and the
+    // point here is to see it reused once `a` has dropped.
+    unsafe { return a.rawFd() }
 }
 
 fn main() {
@@ -18,12 +20,13 @@ fn main() {
     args.push("hello")
     var c = Child.spawn("echo", args, false)!
     let out = c.takeStdout()
-    print(c.stdoutFd())
+    unsafe { print(c.stdoutFd()) }
+    print(out.isOpen())
     var acc = ""
     if @targetOs() == "windows" {
         // channel() is green IO, and Windows readiness is sockets-only: a pipe fd there
         // exits with "needs the IOCP tier" (std/event.windows.milo). Read it blocking.
-        var s = FdStream.onFd(out.fd())
+        var s = out.stream()
         while true {
             let chunk = s.read(4096)!
             if chunk.len == 0 {
@@ -44,6 +47,7 @@ fn main() {
 }
 // @expect: true
 // @expect: -1
+// @expect: true
 // @expect: hello
 // @expect: true
 // @expect: false

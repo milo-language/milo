@@ -306,6 +306,7 @@ pub fn netEinprogress(): i32 {
 @cSig("winsock2.h", "int closesocket(SOCKET)")
 pub extern fn closesocket(s: i64): i32
 
+@unsafe
 pub fn closeSocket(fd: i32): i32 {
     unsafe { return closesocket(fd as i64) }
 }
@@ -322,12 +323,14 @@ pub extern fn recv(s: i64, buf: *u8, len: i32, flags: i32): i32
 @cSig("winsock2.h", "int send(SOCKET, const char *, int, int)")
 pub extern fn send(s: i64, buf: *u8, len: i32, flags: i32): i32
 
+@unsafe
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe {
         return recv(fd as i64, buf, clampCount(nbyte) as i32, 0) as i64
     }
 }
 
+@unsafe
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe {
         return send(fd as i64, buf, clampCount(nbyte) as i32, 0) as i64
@@ -467,6 +470,7 @@ pub extern fn VirtualFree(addr: *u8, size: i64, freeType: u32): i32
 pub extern fn VirtualProtect(addr: *u8, size: i64, protect: u32, old: *u8): i32
 
 // MEM_COMMIT|MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04.
+@unsafe
 pub fn mmap(_addr: *u8, len: i64, _prot: i32, _flags: i32, fd: i32, _offset: i64): *u8 {
     if fd >= 0 {
         return 0 as *u8
@@ -725,6 +729,7 @@ pub fn usleep(usec: u32): i32 {
 // caller that counts bytes.
 pub extern fn _pipe(fds: *i32, size: u32, mode: i32): i32
 
+@unsafe
 pub fn pipe(fds: *i32): i32 {
     unsafe { return _pipe(fds, 4096, 32768) }
 }
@@ -780,6 +785,7 @@ fn clampCount(nbyte: i64): u32 {
 // is to terminate the process on the spot — so std code that reads a closed or absent
 // stream (Child.readStdout on a stream redirected away from a pipe, say) would be a
 // harmless -1 on POSIX and a silent whole-process kill here.
+@unsafe
 pub fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
     if fd < 0 {
         return -1
@@ -787,6 +793,7 @@ pub fn read(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return _read(fd, buf, clampCount(nbyte)) as i64 }
 }
 
+@unsafe
 pub fn write(fd: i32, buf: *u8, nbyte: i64): i64 {
     if fd < 0 {
         return -1
@@ -806,6 +813,7 @@ pub fn close(fd: i32): i32 {
     unsafe { return _close(fd) }
 }
 
+@unsafe
 pub fn lseek(fd: i32, offset: i64, whence: i32): i64 {
     unsafe { return _lseeki64(fd, offset, whence) }
 }

@@ -8,7 +8,6 @@ from "std/os" import {
     malloc,
     free,
     memcpy,
-    connectFd,
     sysClose,
     sysSocket
 }
@@ -33,6 +32,12 @@ from "std/random" import {
 from "std/seal" import {
     Sealed, Shared, sealedWith, sharedWith
 }
+from "std/net" import {
+    TcpStream
+}
+from "std/io" import {
+    AsFd
+}
 
 // ── Frame opcodes ──
 
@@ -56,7 +61,7 @@ pub struct WsMessage {
 }
 
 pub struct WsConn {
-    fd: i32,
+    _fd: i32,
     // TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
     ssl: i64,
     // SSL_CTX owned by this conn (0 = none/borrowed). Only the owner frees ssl+ctx on drop.
@@ -78,8 +83,8 @@ impl Drop for WsConn {
                     SSL_CTX_free(self._ctx as *u8)
                 }
                 // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-                if self.fd > 0 {
-                    sysClose(self.fd)
+                if self._fd > 0 {
+                    sysClose(self._fd)
                 }
             }
         }
@@ -109,9 +114,10 @@ pub fn extractWsKey(raw: &string): string {
     return findHeaderValue(raw, "Sec-WebSocket-Key")
 }
 
-// Accept a WebSocket upgrade on an already-accepted TCP fd.
-// Pass the raw HTTP request bytes so the handshake can be completed.
-pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
+// Accept a WebSocket upgrade on an already-accepted TCP connection, which the WsConn
+// takes over (on error it is dropped, closing the socket). Pass the raw HTTP request
+// bytes so the handshake can be completed.
+pub fn wsAccept(conn: TcpStream, rawRequest: &string): Result<WsConn, string> {
     if !isWsUpgrade(rawRequest) {
         return Result.Err("not a WebSocket upgrade request")
     }
@@ -129,12 +135,26 @@ pub fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     resp = resp + "Sec-WebSocket-Accept: " + acceptKey + "\r\n"
     resp += "\r\n"
 
-    let n = writeFd(fd, resp, resp.len)
+    var tcp = conn
+    var fd: i32 = -1
+    unsafe { fd = tcp.take() }
+    var n: i64 = 0
+    unsafe { n = writeFd(fd, resp, resp.len) }
     if n < 0 {
+        unsafe { sysClose(fd) }
         return Result.Err("failed to send handshake response")
     }
 
-    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
+    return Result.Ok(WsConn { _fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
+}
+
+// The socket fd, for `WsConn.view` (see AsFd in std/io). `sel.onRead(conn)` and
+// friends take the connection itself.
+impl AsFd for WsConn {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._fd
+    }
 }
 
 // ── Frame reading ──
@@ -171,18 +191,12 @@ fn readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
 
 impl WsConn {
     // A second handle over a socket some other WsConn owns: same fd and TLS handle, but
-    // this one never closes them (`ws.fd()` / `ws.tlsHandle()` are the values to pass).
-    // The owner must outlive it, and nothing checks that. For a reader and a writer on
-    // one connection prefer `Task.scope`, whose tasks borrow the owner instead.
+    // this one never closes them (`ws.rawFd()` / `ws.tlsHandle()` are the values to pass).
+    // The owner must outlive it, and nothing checks that, hence `@unsafe`. For a reader
+    // and a writer on one connection use `Task.scope`, whose tasks borrow the owner.
+    @unsafe
     fn view(fd: i32, ssl: i64, isClient: bool): WsConn {
-        return WsConn { fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
-    }
-
-    // The socket fd. Callers select and poll on it, which is why it is reachable at all;
-    // going through a method is what lets `_ctx`, `_closed` and `_isClient` stay
-    // file-private.
-    fn fd(self: &WsConn): i32 {
-        return self.fd
+        return WsConn { _fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
     }
 
     // The TLS handle, 0 for plain TCP. Opaque to callers: pass it back to std, never
@@ -200,7 +214,7 @@ impl WsConn {
 
         while true {
             var header: [u8; 2] = [0; 2]
-            if !readExact(self.fd, self.ssl, header, 2) {
+            if !readExact(self._fd, self.ssl, header, 2) {
                 return Result.Err("connection closed")
             }
 
@@ -216,7 +230,7 @@ impl WsConn {
 
             if payloadLen == 126 {
                 var extLen: [u8; 2] = [0; 2]
-                if !readExact(self.fd, self.ssl, extLen, 2) {
+                if !readExact(self._fd, self.ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
                 let hi = extLen[0] as i64
@@ -224,7 +238,7 @@ impl WsConn {
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
                 var extLen: [u8; 8] = [0; 8]
-                if !readExact(self.fd, self.ssl, extLen, 8) {
+                if !readExact(self._fd, self.ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
                 payloadLen = 0
@@ -235,7 +249,7 @@ impl WsConn {
 
             var maskKey: [u8; 4] = [0; 4]
             if masked {
-                if !readExact(self.fd, self.ssl, maskKey, 4) {
+                if !readExact(self._fd, self.ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
                 }
             }
@@ -245,7 +259,7 @@ impl WsConn {
             if payloadLen > 0 {
                 unsafe {
                     let buf = malloc(payloadLen)
-                    if !readExact(self.fd, self.ssl, buf, payloadLen) {
+                    if !readExact(self._fd, self.ssl, buf, payloadLen) {
                         free(buf)
                         return Result.Err("connection closed reading payload")
                     }
@@ -322,16 +336,18 @@ impl WsConn {
 
     // Send close frame and mark connection closed.
     fn close(self: &mut Self): void {
-        if !self._closed {
-            let _ = self._sendFrame(WsOpcode.Close, "", true)
-            self._closed = true
-            sysClose(self.fd)
+        unsafe {
+            if !self._closed {
+                let _ = self._sendFrame(WsOpcode.Close, "", true)
+                self._closed = true
+                sysClose(self._fd)
+            }
         }
     }
 
     // The frame writer behind every send.
     fn _sendFrame(self: &Self, opcode: WsOpcode, payload: &string, fin: bool): Result<i32, string> {
-        let fd = self.fd
+        let fd = self._fd
         let ssl = self.ssl
         let isClient = self._isClient
         // header: 1 (fin+op) + 1..9 (len) + 4 (mask key, client only)
@@ -443,65 +459,67 @@ impl WsConn {
 // Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
 // Returns a WsConn on successful 101 response.
 pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
+    unsafe {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
 
-    var fd: i32 = 0
-    unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
-    if fd < 0 {
-        return Result.Err("sysSocket() failed")
+        var fd: i32 = 0
+        unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+        if fd < 0 {
+            return Result.Err("sysSocket() failed")
+        }
+
+        var addr = makeSockaddr(port, ip)
+        if connectFdIn(fd, addr) < 0 {
+            sysClose(fd)
+            return Result.Err("connect() failed")
+        }
+
+        // generate a 16-byte base64 key (use a fixed key — sufficient for non-encrypted sessions)
+        let clientKey = "dGVybXBhaXItbWlsbw=="
+
+        var req: string = "GET " + path + " HTTP/1.1\r\n"
+        req += "Host: localhost\r\n"
+        req += "Upgrade: websocket\r\n"
+        req += "Connection: Upgrade\r\n"
+        req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
+        req += "Sec-WebSocket-Version: 13\r\n"
+        req += "\r\n"
+
+        let n = writeFd(fd, req, req.len)
+        if n < 0 {
+            sysClose(fd)
+            return Result.Err("failed to send upgrade request")
+        }
+
+        // read response — expect "HTTP/1.1 101"
+        var buf: [u8; 4096] = [0; 4096]
+        let respLen = readFd(fd, buf, 4096)
+        if respLen <= 0 {
+            sysClose(fd)
+            return Result.Err("no response from server")
+        }
+
+        var resp: string = ""
+        for i in 0..respLen {
+            resp.push(buf[i])
+        }
+
+        if !resp.startsWith("HTTP/1.1 101") {
+            sysClose(fd)
+            return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
+        }
+
+        // validate Sec-WebSocket-Accept
+        let expectedAccept = computeAcceptKey(clientKey)
+        let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
+        if actualAccept != expectedAccept {
+            sysClose(fd)
+            return Result.Err("invalid Sec-WebSocket-Accept")
+        }
+
+        return Result.Ok(WsConn { _fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
     }
-
-    var addr = makeSockaddr(port, ip)
-    if connectFdIn(fd, addr) < 0 {
-        sysClose(fd)
-        return Result.Err("connect() failed")
-    }
-
-    // generate a 16-byte base64 key (use a fixed key — sufficient for non-encrypted sessions)
-    let clientKey = "dGVybXBhaXItbWlsbw=="
-
-    var req: string = "GET " + path + " HTTP/1.1\r\n"
-    req += "Host: localhost\r\n"
-    req += "Upgrade: websocket\r\n"
-    req += "Connection: Upgrade\r\n"
-    req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
-    req += "Sec-WebSocket-Version: 13\r\n"
-    req += "\r\n"
-
-    let n = writeFd(fd, req, req.len)
-    if n < 0 {
-        sysClose(fd)
-        return Result.Err("failed to send upgrade request")
-    }
-
-    // read response — expect "HTTP/1.1 101"
-    var buf: [u8; 4096] = [0; 4096]
-    let respLen = readFd(fd, buf, 4096)
-    if respLen <= 0 {
-        sysClose(fd)
-        return Result.Err("no response from server")
-    }
-
-    var resp: string = ""
-    for i in 0..respLen {
-        resp.push(buf[i])
-    }
-
-    if !resp.startsWith("HTTP/1.1 101") {
-        sysClose(fd)
-        return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
-    }
-
-    // validate Sec-WebSocket-Accept
-    let expectedAccept = computeAcceptKey(clientKey)
-    let actualAccept = findHeaderValue(resp, "Sec-WebSocket-Accept")
-    if actualAccept != expectedAccept {
-        sysClose(fd)
-        return Result.Err("invalid Sec-WebSocket-Accept")
-    }
-
-    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
 }
 
 // Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
@@ -609,7 +627,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         }
 
         return Result.Ok(WsConn {
-            fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
+            _fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
         })
     }
 }

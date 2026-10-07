@@ -20,7 +20,9 @@ from "std/sync" import {
     Channel
 }
 from "std/io" import {
-    fdChannel
+    fdChannel,
+    AsFd,
+    Stdin
 }
 
 // ── bindings ──
@@ -104,7 +106,7 @@ pub struct WinSize {
 }
 
 pub struct Pty {
-    masterFd: i32, // CRT fd for the pseudoconsole OUTPUT pipe (child -> parent)
+    _masterFd: i32, // CRT fd for the pseudoconsole OUTPUT pipe (child -> parent)
     slavePath: string, // always "" on Windows — no pts device path exists
     childPid: i32,
     _rows: u16,
@@ -115,22 +117,26 @@ pub struct Pty {
     _attrList: *u8,
 }
 
-// True if fd is attached to a console (the ConPTY analogue of isatty).
-pub fn fdIsTerminal(fd: i32): bool {
-    unsafe { return GetFileType(_get_osfhandle(fd)) == 2 as u32 }
+// True if `h` is attached to a console (the ConPTY analogue of isatty):
+// `isTerminal(Stdout {})`.
+pub fn isTerminal<T: AsFd>(h: &T): bool {
+    unsafe { return GetFileType(_get_osfhandle(h.rawFd())) == 2 as u32 }
 }
 
 pub fn isInteractive(): bool {
-    return fdIsTerminal(0)
+    return isTerminal(Stdin {})
+}
+
+// The master side's descriptor (see AsFd in std/io). `sel.onRead(pty)`, `isTerminal`
+// and `OwnedFd.dup(pty)` take the Pty itself.
+impl AsFd for Pty {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._masterFd
+    }
 }
 
 impl Pty {
-    // The OS file descriptor for the master side. Callers poll, select and fcntl on it,
-    // which is why it is exposed at all.
-    fn fd(self: &Pty): i32 {
-        return self.masterFd
-    }
-
     // The spawned child's pid, or -1 before spawn.
     fn pid(self: &Pty): i32 {
         return self.childPid
@@ -171,7 +177,7 @@ impl Pty {
             let masterFd = _open_osfhandle(outRead, 32768)
             let inputFd = _open_osfhandle(inWrite, 32768)
             return Result.Ok(Pty {
-                masterFd: masterFd,
+                _masterFd: masterFd,
                 slavePath: "",
                 childPid: -1,
                 _rows: 24,
@@ -186,7 +192,7 @@ impl Pty {
 
     fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
     requires
-    self.masterFd >= 0
+    self._masterFd >= 0
     {
         unsafe {
             let cmdLine = buildCmdLine(program, args)
@@ -233,14 +239,14 @@ impl Pty {
     requires
     len > 0
     {
-        return read(self.masterFd, buf, len)
+        unsafe { return read(self._masterFd, buf, len) }
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
     requires
     len > 0
     {
-        return write(self._inputFd, buf, len)
+        unsafe { return write(self._inputFd, buf, len) }
     }
 
     fn writeStdout(self: &Self, s: &string): i64 {
@@ -252,11 +258,15 @@ impl Pty {
     // Surface parity with the POSIX arms. A CRT pipe fd has no non-blocking mode,
     // so this one write can block while the ConPTY input pipe is full.
     fn writeOnce(self: &Self, s: &string): i64 {
-        return write(self._inputFd, s, s.len)
+        unsafe {
+            return write(self._inputFd, s, s.len)
+        }
     }
 
     fn output(self: &Self): Channel<string> {
-        return fdChannel(self.masterFd)
+        unsafe {
+            return fdChannel(self._masterFd)
+        }
     }
 
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
@@ -291,9 +301,9 @@ impl Pty {
     }
 
     fn close(self: &mut Self): void {
-        if self.masterFd >= 0 {
-            unsafe { close(self.masterFd) }
-            self.masterFd = -1
+        if self._masterFd >= 0 {
+            unsafe { close(self._masterFd) }
+            self._masterFd = -1
         }
         if self._inputFd >= 0 {
             unsafe { close(self._inputFd) }

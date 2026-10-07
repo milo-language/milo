@@ -37,7 +37,7 @@ pub fn main(): i32 {
     Log.str("k", "v").error("structured too")
 
     // Replacing the sink closes the descriptor this module opened.
-    Log.setSinkFd(1)
+    Log.setSinkStdout()
     let contents = readFile(path) ?? ""
     for line in contents.lines() {
         print("file: " + line)

@@ -1,0 +1,11 @@
+// `@unsafe` on a method is the same obligation as on a free fn. A descriptor number read
+// out of its owner outlives the borrow it came from, so `rawFd` is @unsafe on every std
+// handle; reading it bare would let `n` name whatever reuses the fd after `out` drops.
+// @error: calling 'rawFd' requires an unsafe block
+from "std/io" import { OwnedFd, Stdout, AsFd }
+
+fn main() {
+    let out = OwnedFd.dup(Stdout {})!
+    let n = out.rawFd()
+    print(n)
+}

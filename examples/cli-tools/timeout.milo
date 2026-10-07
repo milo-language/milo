@@ -10,7 +10,7 @@ from "std/args" import {
     args
 }
 from "std/signal" import {
-    sigchld, installSignalPipe, drainSignalFd, resetSignal
+    sigchld, installSignalPipe, resetSignal
 }
 from "std/select" import {
     Select
@@ -226,7 +226,7 @@ pub fn main(): i32 {
     schedulerEnsureInit()
     // Install BEFORE forking. A child that exits in the window between fork and install
     // would deliver SIGCHLD to a default handler and we'd wait for an event already gone.
-    let sigFd = installSignalPipe(sigchld())
+    let sigPipe = installSignalPipe(sigchld())!
 
     let pid = fork()
     if pid < 0 {
@@ -253,7 +253,7 @@ pub fn main(): i32 {
         }
 
         var sel = Select.new()
-        sel.onRead(sigFd) // arm 0 — some child exited
+        sel.onRead(sigPipe) // arm 0 — some child exited
         sel.onTimeout(remainMs) // arm 1 — deadline
         let w = sel.wait()
         sel.destroy()
@@ -279,7 +279,7 @@ pub fn main(): i32 {
             continue
         }
 
-        drainSignalFd(sigFd)
+        sigPipe.drain()
         let r = waitpid(pid, status, 1)
         if r > 0 {
             let sig = status[0] as i32 & 127

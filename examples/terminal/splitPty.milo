@@ -10,13 +10,13 @@ from "std/pty" import {
     Pty, WinSize, isInteractive
 }
 from "std/io" import {
-    writeStdout
+    writeStdout, Stdin
 }
 from "std/select" import {
     Select
 }
 from "std/signal" import {
-    installSignalPipe, drainSignalFd, SIGWINCH
+    installSignalPipe, SIGWINCH
 }
 from "std/term" import {
     enableRawMode, restoreTerminal, readKey, KEY_QUIT
@@ -208,7 +208,7 @@ pub fn main(): void {
     let termState = enableRawMode()
     // SIGWINCH as a readable fd: a resize wakes the select loop like any event,
     // so no timer poll is needed to notice it
-    let winchFd = installSignalPipe(SIGWINCH)
+    let winch = installSignalPipe(SIGWINCH)!
 
     match Pty.open() {
         Ok(pty1) => {
@@ -243,10 +243,13 @@ pub fn main(): void {
                                 Ok(_) => {
                                     drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
-                                    let f1 = fcntl(pty1.fd(), fGetfl())
-                                    fcntl(pty1.fd(), fSetfl(), f1 | oNonblock())
-                                    let f2 = fcntl(pty2.fd(), fGetfl())
-                                    fcntl(pty2.fd(), fSetfl(), f2 | oNonblock())
+                                    // The masters go non-blocking for the select loop; fcntl needs the raw number.
+                                    unsafe {
+                                        let f1 = fcntl(pty1.rawFd(), fGetfl())
+                                        fcntl(pty1.rawFd(), fSetfl(), f1 | oNonblock())
+                                        let f2 = fcntl(pty2.rawFd(), fGetfl())
+                                        fcntl(pty2.rawFd(), fSetfl(), f2 | oNonblock())
+                                    }
 
                                     var out1 = ""
                                     var out2 = ""
@@ -258,17 +261,13 @@ pub fn main(): void {
                                         // fires (resize, via its self-pipe fd). No
                                         // poll, no timer — every source is an fd.
                                         var sel = Select.new()
-                                        sel.onRead(0)
-                                        sel.onRead(pty1.fd())
-                                        sel.onRead(pty2.fd())
-                                        if winchFd >= 0 {
-                                            sel.onRead(winchFd)
-                                        }
+                                        sel.onRead(Stdin {})
+                                        sel.onRead(pty1)
+                                        sel.onRead(pty2)
+                                        sel.onRead(winch)
                                         sel.wait()
                                         sel.destroy()
-                                        if winchFd >= 0 {
-                                            drainSignalFd(winchFd)
-                                        }
+                                        winch.drain()
 
                                         // check for terminal resize, propagate to child PTYs
                                         let newWs = termSize()

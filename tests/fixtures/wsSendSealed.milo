@@ -36,36 +36,39 @@ pub fn main(): i32 {
             return 1
         }
     }
-    // Views on every end so no Drop closes the pipe fds. One server sender
-    // (unmasked) and one client sender (masked).
-    let sa = WsConn.view(a[1], 0, false)
-    let sb = WsConn.view(b[1], 0, true)
-    var ra = WsConn.view(a[0], 0, true)
-    var rb = WsConn.view(b[0], 0, false)
+    // WsConn.view is @unsafe: these views borrow pipe fds that nothing else owns.
+    unsafe {
+        // Views on every end so no Drop closes the pipe fds. One server sender
+        // (unmasked) and one client sender (masked).
+        let sa = WsConn.view(a[1], 0, false)
+        let sb = WsConn.view(b[1], 0, true)
+        var ra = WsConn.view(a[0], 0, true)
+        var rb = WsConn.view(b[0], 0, false)
 
-    // 200 bytes: past the 7-bit length, so the 16-bit length header is exercised too.
-    var text: string = ""
-    for i in 0..200 {
-        text.push(97 + (i % 26) as u8)
+        // 200 bytes: past the 7-bit length, so the 16-bit length header is exercised too.
+        var text: string = ""
+        for i in 0..200 {
+            text.push(97 + (i % 26) as u8)
+        }
+        let want = text.clone()
+        let msg = seal(text).share()
+        let forA = msg.clone()
+        let forB = msg.clone()
+        print($"holders {msg.holders()}")
+        sendClone(sa, forA)
+        sendClone(sb, forB)
+        print($"holders after {msg.holders()}")
+
+        let ma = ra.recv()!
+        print($"{ma.opcode} {ma.payload.len} {ma.payload == want}")
+        let mb = rb.recv()!
+        print($"{mb.opcode} {mb.payload.len} {mb.payload == want}")
+
+        let sc = WsConn.view(c[1], 0, false)
+        var rc = WsConn.view(c[0], 0, true)
+        let _ = sc.sendSealed(seal("hello".clone()))
+        let m3 = rc.recv()!
+        print($"sealed {m3.opcode} {m3.payload.len} {m3.payload}")
+        return 0
     }
-    let want = text.clone()
-    let msg = seal(text).share()
-    let forA = msg.clone()
-    let forB = msg.clone()
-    print($"holders {msg.holders()}")
-    sendClone(sa, forA)
-    sendClone(sb, forB)
-    print($"holders after {msg.holders()}")
-
-    let ma = ra.recv()!
-    print($"{ma.opcode} {ma.payload.len} {ma.payload == want}")
-    let mb = rb.recv()!
-    print($"{mb.opcode} {mb.payload.len} {mb.payload == want}")
-
-    let sc = WsConn.view(c[1], 0, false)
-    var rc = WsConn.view(c[0], 0, true)
-    let _ = sc.sendSealed(seal("hello".clone()))
-    let m3 = rc.recv()!
-    print($"sealed {m3.opcode} {m3.payload.len} {m3.payload}")
-    return 0
 }

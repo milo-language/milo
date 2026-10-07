@@ -340,6 +340,7 @@ pub fn netEinprogress(): i32 {
 // A POSIX socket IS an fd, so closing it is just close(); Windows needs a distinct
 // closesocket(), which is why this name exists on all arms.
 @replayHooked
+@unsafe
 pub fn closeSocket(fd: i32): i32 {
     unsafe { return close(fd) }
 }
@@ -568,11 +569,13 @@ pub extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 // Windows arm routes to recv()/send() because a SOCKET there is not a CRT fd (calling the
 // CRT _read/_write on one fast-fails). Named so std/os's green helpers stay single-source.
 @replayHooked
+@unsafe
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return read(fd, buf, nbyte) }
 }
 
 @replayHooked
+@unsafe
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     unsafe { return write(fd, buf, nbyte) }
 }

@@ -8,7 +8,15 @@ from "std/platform" import {
     sigchldNum,
     pipe,
     read,
-    write
+    write,
+    close
+}
+from "std/io" import {
+    AsFd,
+    fdChannel
+}
+from "std/sync" import {
+    Channel
 }
 
 pub extern fn signal(signum: i32, handler: *u8): *u8
@@ -104,20 +112,80 @@ fn sigPipeHandler(sig: i32): void {
     }
 }
 
-// Install a self-pipe for `sig` and return its read fd (or -1 on failure). The
-// fd goes readable each time the signal fires; arm it with Select.onRead and
-// call drainSignalFd after it wakes. One pipe per signal, so several can be armed at
-// once (SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
-// Re-installing the same signal replaces its pipe.
+// An installed self-pipe for one signal (see installSignalPipe). It goes readable each
+// time the signal fires: arm it with `sel.onRead(p)` and call `p.drain()` after it wakes.
+// Dropping it uninstalls: the signal goes back to its default action, and both ends of
+// the pipe close. It owns the descriptors, so the read end cannot be closed under a
+// Select that still has it armed, nor outlive the handler that writes to it.
+pub struct SignalPipe {
+    _sig: i32,
+    _r: i32,
+    _w: i32,
+}
+
+impl Drop for SignalPipe {
+    fn drop(self: &mut Self): void {
+        // `> 0`: the zero value (a moved-from slot) must drop as a no-op.
+        if self._r > 0 {
+            unsafe {
+                // Only if this pipe is still the installed one: a re-install already
+                // pointed the handler at a newer pipe, which must keep working.
+                if sigPipeW[self._sig as i64] == self._w {
+                    sigPipeW[self._sig as i64] = -1
+                    signal(self._sig, 0 as *u8)
+                }
+                close(self._r)
+                close(self._w)
+            }
+        }
+    }
+}
+
+impl SignalPipe {
+    // Drain pending bytes (call after the pipe wakes a Select). True when there were
+    // any, i.e. the signal fired since the last drain: a loop that wakes for several
+    // reasons asks this rather than peeking at the pipe itself.
+    @replayHooked
+    fn drain(self: &Self): bool {
+        unsafe {
+            var buf: [u8; 64] = [0; 64]
+            var n = read(self._r, buf as *u8, 64)
+            let fired = n > 0
+            while n == 64 {
+                n = read(self._r, buf as *u8, 64)
+            }
+            return fired
+        }
+    }
+
+    // One message per wake, pumped on a green task (see fdChannel): `for _ in p.channel()`
+    // runs its body each time the signal fires. Keep the SignalPipe alive while consuming;
+    // dropping it closes the pipe under the pump.
+    fn channel(self: &Self): Channel<string> {
+        unsafe { return fdChannel(self._r) }
+    }
+}
+
+impl AsFd for SignalPipe {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self._r
+    }
+}
+
+// Install a self-pipe for `sig`. One pipe per signal, so several can be armed at once
+// (SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
+// Re-installing the same signal replaces its pipe. Errs on a signal number out of range
+// or when the pipe cannot be created.
 @replayHooked
-pub fn installSignalPipe(sig: i32): i32 {
+pub fn installSignalPipe(sig: i32): Result<SignalPipe, string> {
     if sig <= 0 || sig >= 64 {
-        return -1
+        return Result.Err("signal number out of range")
     }
     unsafe {
         var fds: [i32; 2] = [0; 2]
         if pipe(fds as *i32) != 0 {
-            return -1
+            return Result.Err("pipe() failed")
         }
         let r = fds[0]
         let w = fds[1]
@@ -127,18 +195,10 @@ pub fn installSignalPipe(sig: i32): i32 {
         fcntl(w, fSetfl(), fcntl(w, fGetfl()) | oNonblock())
         sigPipeW[sig as i64] = w
         signal(sig, sigPipeHandler as *u8)
-        return r
-    }
-}
-
-// Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
-@replayHooked
-pub fn drainSignalFd(fd: i32): void {
-    unsafe {
-        var buf: [u8; 64] = [0; 64]
-        var n = read(fd, buf as *u8, 64)
-        while n == 64 {
-            n = read(fd, buf as *u8, 64)
-        }
+        return Result.Ok(SignalPipe {
+            _sig: sig,
+            _r: r,
+            _w: w
+        })
     }
 }

@@ -26,7 +26,7 @@ from "./tmuxVt" import {
     Term, newTerm, renderTerm
 }
 from "std/io" import {
-    writeStdout, flush
+    writeStdout, flush, Stdin
 }
 from "std/term" import {
     enableRawMode, restoreTerminal
@@ -35,7 +35,7 @@ from "std/select" import {
     Select
 }
 from "std/signal" import {
-    installSignalPipe, drainSignalFd, SIGWINCH
+    installSignalPipe, SIGWINCH
 }
 from "std/env" import {
     Env
@@ -560,7 +560,7 @@ pub fn main(): void {
 
     // resize is the one thing no data fd reports — turn SIGWINCH into a readable
     // fd we can arm in the select, so a resize wakes the loop like any other event
-    let winchFd = installSignalPipe(SIGWINCH)
+    let winch = installSignalPipe(SIGWINCH)!
 
     match Pty.open() {
         Ok(pty0) => {
@@ -590,10 +590,13 @@ pub fn main(): void {
                         }
                     }
                     if ok0 && ok1 {
-                        let f0 = fcntl(pty0.fd(), fGetfl())
-                        fcntl(pty0.fd(), fSetfl(), f0 | oNonblock())
-                        let f1 = fcntl(pty1.fd(), fGetfl())
-                        fcntl(pty1.fd(), fSetfl(), f1 | oNonblock())
+                        // The masters go non-blocking for the select loop; fcntl needs the raw number.
+                        unsafe {
+                            let f0 = fcntl(pty0.rawFd(), fGetfl())
+                            fcntl(pty0.rawFd(), fSetfl(), f0 | oNonblock())
+                            let f1 = fcntl(pty1.rawFd(), fGetfl())
+                            fcntl(pty1.rawFd(), fSetfl(), f1 | oNonblock())
+                        }
 
                         var term0 = newTerm(paneRows, paneCols)
                         var term1 = newTerm(paneRows, paneCols)
@@ -610,12 +613,10 @@ pub fn main(): void {
                             // no timeout — a pure event wait that wakes the instant
                             // a fd is readable (std/select is kqueue-backed).
                             var sel = Select.new()
-                            sel.onRead(0)
-                            sel.onRead(pty0.fd())
-                            sel.onRead(pty1.fd())
-                            if winchFd >= 0 {
-                                sel.onRead(winchFd)
-                            }
+                            sel.onRead(Stdin {})
+                            sel.onRead(pty0)
+                            sel.onRead(pty1)
+                            sel.onRead(winch)
                             sel.wait()
                             sel.destroy()
 
@@ -623,32 +624,24 @@ pub fn main(): void {
                             // shells (they repaint), rebuild the grids at the new
                             // size, and redraw. Draining the self-pipe clears the
                             // wake so we don't spin on it.
-                            if winchFd >= 0 {
-                                var wbuf: [u8; 1] = [0; 1]
-                                var got = false
-                                unsafe {
-                                    got = read(winchFd, wbuf as *u8, 1) > 0
+                            if winch.drain() {
+                                ws = termSize()
+                                half = (ws.cols as i64 - 2) / 2
+                                paneRows = ws.rows as i64 - 6
+                                if half < 20 {
+                                    half = 20
                                 }
-                                if got {
-                                    drainSignalFd(winchFd)
-                                    ws = termSize()
-                                    half = (ws.cols as i64 - 2) / 2
-                                    paneRows = ws.rows as i64 - 6
-                                    if half < 20 {
-                                        half = 20
-                                    }
-                                    if paneRows < 5 {
-                                        paneRows = 5
-                                    }
-                                    paneCols = half - 1
-                                    pty0.resize(paneRows as u16, paneCols as u16)
-                                    pty1.resize(paneRows as u16, paneCols as u16)
-                                    term0 = newTerm(paneRows, paneCols)
-                                    term1 = newTerm(paneRows, paneCols)
-                                    drawBorder(focus, half, paneRows, shellName)
-                                    drawFooter(prefixArmed, paneRows)
-                                    prefixShown = prefixArmed
+                                if paneRows < 5 {
+                                    paneRows = 5
                                 }
+                                paneCols = half - 1
+                                pty0.resize(paneRows as u16, paneCols as u16)
+                                pty1.resize(paneRows as u16, paneCols as u16)
+                                term0 = newTerm(paneRows, paneCols)
+                                term1 = newTerm(paneRows, paneCols)
+                                drawBorder(focus, half, paneRows, shellName)
+                                drawFooter(prefixArmed, paneRows)
+                                prefixShown = prefixArmed
                             }
 
                             // A wakeup means at least one source is ready, but not

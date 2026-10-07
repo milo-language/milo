@@ -1209,6 +1209,7 @@ fn setByte(table: &mut string, fd: i32, v: u8): void {
 // Note an fd std just opened (or that replay just handed out) and what it is: 'f' a
 // file, 'n' a socket, 'p' a child's pipe, 't' a pty. Under replay the number came from
 // the trace and has no OS descriptor behind it.
+@unsafe
 pub fn replayFdOpened(fd: i32, cat: u8): void {
     if fd < 0 || rrMode < 2 {
         return
@@ -1222,6 +1223,7 @@ pub fn replayFdOpened(fd: i32, cat: u8): void {
 }
 
 // What std recorded `fd` as (see replayFdOpened), 0 when nothing.
+@unsafe
 pub fn replayFdCategory(fd: i32): u8 {
     var c: u8 = 0
     rrLock.run((): void => {
@@ -1232,7 +1234,7 @@ pub fn replayFdCategory(fd: i32): u8 {
 
 // True when `fd` is a replay-synthetic descriptor: every operation on it is answered
 // from the trace, and the OS must never see the number.
-pub fn replayFdSynthetic(fd: i32): bool {
+fn replayFdSynthetic(fd: i32): bool {
     if rrMode != 3 {
         return false
     }
@@ -1246,34 +1248,37 @@ pub fn replayFdSynthetic(fd: i32): bool {
 // The record kind for `op` on `fd`: fs.read, net.write, proc.read, pty.read,
 // stdin.read, stdout.write; fd.<op> for a descriptor std did not open.
 fn fdKind(fd: i32, op: string): string {
-    let cat = replayFdCategory(fd)
-    if cat == 'f' {
-        return "fs." + op
+    unsafe {
+        let cat = replayFdCategory(fd)
+        if cat == 'f' {
+            return "fs." + op
+        }
+        if cat == 'n' {
+            return "net." + op
+        }
+        if cat == 'p' {
+            return "proc." + op
+        }
+        if cat == 't' {
+            return "pty." + op
+        }
+        if fd == 0 {
+            return "stdin." + op
+        }
+        if fd == 1 {
+            return "stdout." + op
+        }
+        if fd == 2 {
+            return "stderr." + op
+        }
+        return "fd." + op
     }
-    if cat == 'n' {
-        return "net." + op
-    }
-    if cat == 'p' {
-        return "proc." + op
-    }
-    if cat == 't' {
-        return "pty." + op
-    }
-    if fd == 0 {
-        return "stdin." + op
-    }
-    if fd == 1 {
-        return "stdout." + op
-    }
-    if fd == 2 {
-        return "stderr." + op
-    }
-    return "fd." + op
 }
 
 // One read(2) or recv through the trace. The payload is `=` and the bytes, or `!` and
 // the errno (EAGAIN included: a green read that would block is recorded too, and the
 // park that follows is what the scheduler records replay).
+@unsafe
 pub fn replayRead(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
     let kind = fdKind(fd, "read")
     let arg = fd.toString() + " " + len.toString()
@@ -1338,6 +1343,7 @@ pub fn replayRead(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
 // the program's output; a write to a file, socket, pipe or pty is answered from the
 // trace and never performed (the peer does not exist, and a replay must not change
 // the filesystem).
+@unsafe
 pub fn replayWrite(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
     let kind = fdKind(fd, "write")
     let arg = fd.toString() + " " + len.toString()
@@ -1385,19 +1391,23 @@ pub fn replayWrite(fd: i32, buf: *u8, len: i64, socket: bool): i64 {
 
 // open(2) through the trace. Under replay nothing is opened (a write-mode open does
 // not create or truncate the file) and the recorded fd comes back as a synthetic one.
+@unsafe
 pub fn replayOpen(path: &string, flags: i32, mode: i32): i32 {
-    let arg = flags.toString() + " " + path
-    let fd = replayRet("fs.open", arg, false, (): i64 => {
-        unsafe {
-            return open(path, flags, mode) as i64
-        }
-    }) as i32
-    replayFdOpened(fd, 'f')
-    return fd
+    unsafe {
+        let arg = flags.toString() + " " + path
+        let fd = replayRet("fs.open", arg, false, (): i64 => {
+            unsafe {
+                return open(path, flags, mode) as i64
+            }
+        }) as i32
+        replayFdOpened(fd, 'f')
+        return fd
+    }
 }
 
 // close(2), unrecorded: when a program closes is deterministic given its inputs. A
 // synthetic fd is only forgotten; the OS never had it.
+@unsafe
 pub fn replayClose(fd: i32): i32 {
     if fd < 0 {
         return -1
@@ -1415,6 +1425,7 @@ pub fn replayClose(fd: i32): i32 {
 }
 
 // lseek(2) through the trace: a file's size and position are answers from the OS.
+@unsafe
 pub fn replayLseek(fd: i32, off: i64, whence: i32): i64 {
     let arg = fd.toString() + " " + off.toString() + " " + whence.toString()
     return replayRet(fdKind(fd, "seek"), arg, false, (): i64 => {

@@ -45,7 +45,7 @@ from "std/platform" import {
 // shared by every connection it accepts, so freeing it here would pull it out from under
 // the next accept(). The listener must outlive the connections it hands out.
 pub struct TlsConn {
-    fd: i32,
+    _fd: i32,
     ssl: i64,
 }
 
@@ -60,8 +60,8 @@ impl Drop for TlsConn {
                 SSL_free(self.ssl as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-            if self.fd > 0 {
-                sysClose(self.fd)
+            if self._fd > 0 {
+                sysClose(self._fd)
             }
         }
     }
@@ -71,7 +71,7 @@ impl TlsConn {
     // Write `data` through the TLS record layer. Returns the byte count OpenSSL accepted.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self.ssl as *u8, self.fd, data, data.len as i32)
+            let n = sslWriteFd(self.ssl as *u8, self._fd, data, data.len as i32)
             if n < 0 {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
@@ -86,7 +86,7 @@ impl TlsConn {
         var result: string = ""
         var buf: [u8; 8192] = [0; 8192]
         unsafe {
-            let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 8192)
+            let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
                 for i in 0..n as i64 {
                     result.push(buf[i])
@@ -103,7 +103,7 @@ impl TlsConn {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
-                let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 4096)
+                let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 4096)
                 if n <= 0 {
                     break
                 }
@@ -121,7 +121,7 @@ impl TlsConn {
 // Listening TLS socket: a TCP listener plus the server SSL_CTX holding the certificate
 // chain and private key. Frees the ctx and closes the fd on drop.
 pub struct TlsListener {
-    fd: i32,
+    _fd: i32,
     ctx: i64,
 }
 
@@ -132,8 +132,8 @@ impl Drop for TlsListener {
                 SSL_CTX_free(self.ctx as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-            if self.fd > 0 {
-                sysClose(self.fd)
+            if self._fd > 0 {
+                sysClose(self._fd)
             }
         }
     }
@@ -143,86 +143,90 @@ impl TlsListener {
     // Bind 0.0.0.0:port and serve `certPath` (PEM chain, leaf first) with `keyPath`.
     // Port 0 lets the OS pick — recover it with port().
     fn bind(port: u16, certPath: &string, keyPath: &string): Result<TlsListener, NetError> {
-        let AF_INET: i32 = 2
-        let SOCK_STREAM: i32 = 1
-        let SSL_FILETYPE_PEM: i32 = 1
-
-        ignoreSigpipe()
-        ensureNetInit()
-        var fd: i32 = 0
-        unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
-        }
-
-        var one: i32 = 1
-        unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
-
-        var addr = makeSockaddr(port, 0)
-        if bindIn(fd, addr) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("bind() failed"))
-        }
         unsafe {
-            if sysListen(fd, 1024) < 0 {
-                sysClose(fd)
-                return Result.Err(NetError.ConnectionFailed("sysListen() failed"))
-            }
-        }
+            let AF_INET: i32 = 2
+            let SOCK_STREAM: i32 = 1
+            let SSL_FILETYPE_PEM: i32 = 1
 
-        unsafe {
-            let ctx = SSL_CTX_new(TLS_server_method())
-            let ctxAddr = ctx as i64
-            if ctxAddr == 0 {
-                sysClose(fd)
-                return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
+            ignoreSigpipe()
+            ensureNetInit()
+            var fd: i32 = 0
+            unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
             }
-            if SSL_CTX_use_certificate_chain_file(ctx, certPath) != 1 {
-                SSL_CTX_free(ctx)
+
+            var one: i32 = 1
+            unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
+
+            var addr = makeSockaddr(port, 0)
+            if bindIn(fd, addr) < 0 {
                 sysClose(fd)
-                return Result.Err(NetError.TlsError("failed to load certificate chain: " + certPath.clone()))
+                return Result.Err(NetError.ConnectionFailed("bind() failed"))
             }
-            if SSL_CTX_use_PrivateKey_file(ctx, keyPath, SSL_FILETYPE_PEM) != 1 {
-                SSL_CTX_free(ctx)
-                sysClose(fd)
-                return Result.Err(NetError.TlsError("failed to load private key: " + keyPath.clone()))
+            unsafe {
+                if sysListen(fd, 1024) < 0 {
+                    sysClose(fd)
+                    return Result.Err(NetError.ConnectionFailed("sysListen() failed"))
+                }
             }
-            // Cert and key load independently, so a mismatched pair gets this far. Left
-            // unchecked it surfaces only as every client's handshake failing, with
-            // nothing on the server naming the cause.
-            if SSL_CTX_check_private_key(ctx) != 1 {
-                SSL_CTX_free(ctx)
-                sysClose(fd)
-                return Result.Err(NetError.TlsError("private key does not match certificate"))
+
+            unsafe {
+                let ctx = SSL_CTX_new(TLS_server_method())
+                let ctxAddr = ctx as i64
+                if ctxAddr == 0 {
+                    sysClose(fd)
+                    return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
+                }
+                if SSL_CTX_use_certificate_chain_file(ctx, certPath) != 1 {
+                    SSL_CTX_free(ctx)
+                    sysClose(fd)
+                    return Result.Err(NetError.TlsError("failed to load certificate chain: " + certPath.clone()))
+                }
+                if SSL_CTX_use_PrivateKey_file(ctx, keyPath, SSL_FILETYPE_PEM) != 1 {
+                    SSL_CTX_free(ctx)
+                    sysClose(fd)
+                    return Result.Err(NetError.TlsError("failed to load private key: " + keyPath.clone()))
+                }
+                // Cert and key load independently, so a mismatched pair gets this far. Left
+                // unchecked it surfaces only as every client's handshake failing, with
+                // nothing on the server naming the cause.
+                if SSL_CTX_check_private_key(ctx) != 1 {
+                    SSL_CTX_free(ctx)
+                    sysClose(fd)
+                    return Result.Err(NetError.TlsError("private key does not match certificate"))
+                }
+                return Result.Ok(TlsListener { _fd: fd, ctx: ctxAddr })
             }
-            return Result.Ok(TlsListener { fd: fd, ctx: ctxAddr })
         }
     }
 
     // Accept one connection and run the server handshake on it.
     fn accept(self: &Self): Result<TlsConn, NetError> {
-        // acceptFd, not TcpListener.accept: a TcpStream built here would close the client
-        // fd when it dropped, out from under the TlsConn that took it over. acceptFd also
-        // leaves the client fd blocking outside a green task and nonblocking inside one —
-        // the same split connectFd makes, and the one sslAcceptFd assumes.
-        let clientFd = acceptFd(self.fd)
-        if clientFd < 0 {
-            return Result.Err(NetError.ConnectionFailed("accept() failed"))
-        }
         unsafe {
-            let ssl = SSL_new(self.ctx as *u8)
-            let sslAddr = ssl as i64
-            if sslAddr == 0 {
-                sysClose(clientFd)
-                return Result.Err(NetError.TlsError("SSL_new failed"))
+            // acceptFd, not TcpListener.accept: a TcpStream built here would close the client
+            // fd when it dropped, out from under the TlsConn that took it over. acceptFd also
+            // leaves the client fd blocking outside a green task and nonblocking inside one —
+            // the same split connectFd makes, and the one sslAcceptFd assumes.
+            let clientFd = acceptFd(self._fd)
+            if clientFd < 0 {
+                return Result.Err(NetError.ConnectionFailed("accept() failed"))
             }
-            SSL_set_fd(ssl, clientFd)
-            if sslAcceptFd(ssl, clientFd) != 1 {
-                SSL_free(ssl)
-                sysClose(clientFd)
-                return Result.Err(NetError.TlsError("SSL_accept failed"))
+            unsafe {
+                let ssl = SSL_new(self.ctx as *u8)
+                let sslAddr = ssl as i64
+                if sslAddr == 0 {
+                    sysClose(clientFd)
+                    return Result.Err(NetError.TlsError("SSL_new failed"))
+                }
+                SSL_set_fd(ssl, clientFd)
+                if sslAcceptFd(ssl, clientFd) != 1 {
+                    SSL_free(ssl)
+                    sysClose(clientFd)
+                    return Result.Err(NetError.TlsError("SSL_accept failed"))
+                }
+                return Result.Ok(TlsConn { _fd: clientFd, ssl: sslAddr })
             }
-            return Result.Ok(TlsConn { fd: clientFd, ssl: sslAddr })
         }
     }
 
@@ -230,6 +234,8 @@ impl TlsListener {
     // -1 if getsockname fails, mirroring getSockPort rather than reporting a
     // plausible-looking port number.
     fn port(self: &Self): i32 {
-        return getSockPort(self.fd)
+        unsafe {
+            return getSockPort(self._fd)
+        }
     }
 }

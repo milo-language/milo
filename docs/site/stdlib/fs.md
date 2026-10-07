@@ -111,11 +111,13 @@ On failure `dst` is left truncated or partially written, not removed.
 pub fn currentDir(): Result<string, IoError>
 ```
 
-#### `dataSyncFd`
+#### `dataSyncFile`
 
 ```milo
-pub fn dataSyncFd(fd: i32): Result<Unit, IoError>
+pub fn dataSyncFile(f: &File): Result<Unit, IoError>
 ```
+
+Flush an open file's data to the device, skipping metadata not needed to read it (fdatasync).
 
 #### `devNull`
 
@@ -399,17 +401,21 @@ pub fn removeFile(path: &string): Result<Unit, IoError>
 pub fn renameFile(oldPath: &string, newPath: &string): Result<Unit, IoError>
 ```
 
-#### `setFdMode`
+#### `setFileMode`
 
 ```milo
-pub fn setFdMode(fd: i32, mode: i32): Result<Unit, IoError>
+pub fn setFileMode(f: &File, mode: i32): Result<Unit, IoError>
 ```
 
-#### `setFdOwner`
+Change an open file's permission bits (fchmod).
+
+#### `setFileOwner`
 
 ```milo
-pub fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<Unit, IoError>
+pub fn setFileOwner(f: &File, uid: u32, gid: u32): Result<Unit, IoError>
 ```
+
+Change an open file's owner and group (fchown).
 
 #### `setLinkOwner`
 
@@ -443,23 +449,27 @@ pub fn splitLines(content: &string): Vec<string>
 
 Split a string into lines on newline boundaries.
 
-#### `syncFd`
+#### `syncFile`
 
 ```milo
-pub fn syncFd(fd: i32): Result<Unit, IoError>
+pub fn syncFile(f: &File): Result<Unit, IoError>
 ```
 
-#### `truncateFd`
-
-```milo
-pub fn truncateFd(fd: i32, length: i64): Result<Unit, IoError>
-```
+Flush an open file's data and metadata to the device (fsync).
 
 #### `truncateFile`
 
 ```milo
 pub fn truncateFile(path: &string, length: i64): Result<Unit, IoError>
 ```
+
+#### `truncateOpenFile`
+
+```milo
+pub fn truncateOpenFile(f: &File, length: i64): Result<Unit, IoError>
+```
+
+Truncate or extend an open file to `length` bytes (ftruncate).
 
 #### `walkDir`
 

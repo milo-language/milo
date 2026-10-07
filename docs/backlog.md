@@ -202,7 +202,7 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 ## Dependency notes
 
 - **Byte views (#7) gate the zero-copy form of the JSON byte-feed (#8).** #8 works without it (materialize per event), but hands out copies until #7 lands.
-- **The child-exit arm is the pattern to copy** for any event-driven child wait: `installSignalPipe(sigchld())` + `sel.onRead(fd)` + `waitpid(..., WNOHANG)` (`tests/fixtures/selectChildExit.milo`, and `examples/cli-tools/timeout.milo` for a real use incl. the fork/inherit hazards).
+- **The child-exit arm is the pattern to copy** for any event-driven child wait: `installSignalPipe(sigchld())!` + `sel.onRead(pipe)` + `waitpid(..., WNOHANG)` (`tests/fixtures/selectChildExit.milo`, and `examples/cli-tools/timeout.milo` for a real use incl. the fork/inherit hazards).
 - **Compile-time reduction likely wants MIR (Tier 3)** for real wins — profile before committing.
 
 ## milojs backlog moved

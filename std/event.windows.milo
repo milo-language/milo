@@ -178,6 +178,7 @@ pub fn maskToNet(mask: i32): i32 {
 // Make `fd` non-blocking. 0 on success, -1 on error. Register only non-blocking fds: a
 // poller that reports ready and then hangs in `read` is the usual symptom otherwise,
 // because readiness says a byte was available, not that the next read will return.
+@unsafe
 pub fn setNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -190,6 +191,7 @@ pub fn setNonblocking(fd: i32): i32 {
 }
 
 // Restore blocking mode; same socket-only caveat as setNonblocking.
+@unsafe
 pub fn clearNonblocking(fd: i32): i32 {
     // Under replay descriptors are synthetic (std/replay) and nothing waits on the OS.
     if replayActive() {
@@ -205,7 +207,7 @@ pub fn clearNonblocking(fd: i32): i32 {
 
 // EventLoop is just the table slot; all real state hangs off _winLoopAt(slot).
 pub struct EventLoop {
-    slot: i32,
+    _slot: i32,
 }
 
 // @internal
@@ -227,7 +229,7 @@ pub fn eventLoopNew(): Result<EventLoop, string> {
         memset(st, 0, wlSize())
         tbl[slot as i64] = st as i64
         return Result.Ok(EventLoop {
-            slot: slot
+            _slot: slot
         })
     }
 }
@@ -242,8 +244,9 @@ impl EventLoop {
 // Auto-reset Event, initially non-signaled. Auto-reset means a single wait consumes the
 // signal and there is nothing to drain; multiple notifies before a wait coalesce into one
 // wakeup, which is exactly right — a wakeup only means "re-check runnable state".
+@unsafe
 pub fn eventLoopInitWakeup(el: &EventLoop): i32 {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     unsafe {
         wlSet(st, 0, CreateEventA(0 as *u8, 0, 0, 0 as *u8))
     }
@@ -258,8 +261,9 @@ pub fn wakeupIdentBase(): i32 {
 
 // safe from any thread: SetEvent is thread-safe, and the slot's wakeup handle was written at
 // init before this loop was reachable cross-thread.
+@unsafe
 pub fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     unsafe {
         SetEvent(wlGet(st, 0))
     }
@@ -267,13 +271,15 @@ pub fn eventLoopNotify(el: &EventLoop, _wakeupId: i32): i32 {
 }
 
 // Consume a delivered wakeup so the next poll does not report it again.
+@unsafe
 pub fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
     // auto-reset Event was reset by the wait that observed it; nothing to consume
 }
 
 // Tear down a wakeup made by eventLoopInitWakeup.
+@unsafe
 pub fn eventLoopCloseWakeup(el: &EventLoop, _wakeupId: i32): void {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     unsafe {
         let h = wlGet(st, 0)
         if h != 0 {
@@ -334,18 +340,21 @@ fn wlRegister(st: *u8, fd: i32, bit: i32): i32 {
 }
 
 // Watch `fd` for readability.
+@unsafe
 pub fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
-    return wlRegister(winLoopAt(el.slot), fd, maskRead())
+    return wlRegister(winLoopAt(el._slot), fd, maskRead())
 }
 
 // Watch `fd` for writability.
+@unsafe
 pub fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
-    return wlRegister(winLoopAt(el.slot), fd, maskWrite())
+    return wlRegister(winLoopAt(el._slot), fd, maskWrite())
 }
 
 // Stop watching `fd`. `forWrite` picks the write registration rather than the read one.
+@unsafe
 pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     let idx = wlFind(st, fd)
     if idx < 0 {
         return 0
@@ -383,7 +392,7 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
 // Event and every registered socket's WSAEVENT together. On wake, reports the wakeup (if it
 // fired) plus every socket with a pending network event, as a flat fd list.
 pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     unsafe {
         let n = wlGet(st, 1)
 
@@ -435,20 +444,22 @@ pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32
 
 // Wrap a poller that another runtime already owns. Does not take ownership: closing it
 // is still the original owner's job.
+@unsafe
 pub fn eventLoopFromFd(slot: i32): EventLoop {
     return EventLoop {
-        slot: slot
+        _slot: slot
     }
 }
 
 // The poller's descriptor, to hand to another runtime's poller when embedding.
+@unsafe
 pub fn eventLoopFd(el: &EventLoop): i32 {
-    return el.slot
+    return el._slot
 }
 
 // Release the poller.
 pub fn eventLoopClose(el: &EventLoop): void {
-    let st = winLoopAt(el.slot)
+    let st = winLoopAt(el._slot)
     unsafe {
         if st as i64 != 0 {
             let h = wlGet(st, 0)
@@ -464,7 +475,7 @@ pub fn eventLoopClose(el: &EventLoop): void {
             }
             free(st)
             let tbl = winLoopTable as *i64
-            tbl[el.slot as i64] = 0
+            tbl[el._slot as i64] = 0
         }
     }
 }

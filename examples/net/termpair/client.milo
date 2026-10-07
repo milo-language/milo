@@ -323,12 +323,21 @@ fn main(): i32 {
     var done = AtomicBool.new(false)
 
     // extract raw values so each move-closure gets its own copy
-    // (move zeroes the source — can't move the same var into multiple closures)
-    let ptyFd1 = pty.fd()
-    let ptyFd2 = pty.fd()
-    let ptyFd3 = pty.fd()
-    let wsFd1 = ws.fd()
-    let wsFd3 = ws.fd()
+    // (move zeroes the source — can't move the same var into multiple closures).
+    // Reading them is @unsafe: `pty` and `ws` stay alive in this frame until every
+    // task below has stopped, which is what keeps the numbers valid.
+    var ptyFd1: i32 = -1
+    var ptyFd2: i32 = -1
+    var ptyFd3: i32 = -1
+    var wsFd1: i32 = -1
+    var wsFd3: i32 = -1
+    unsafe {
+        ptyFd1 = pty.rawFd()
+        ptyFd2 = pty.rawFd()
+        ptyFd3 = pty.rawFd()
+        wsFd1 = ws.rawFd()
+        wsFd3 = ws.rawFd()
+    }
     let wsSsl1 = ws.tlsHandle()
     let wsSsl3 = ws.tlsHandle()
     let done1 = done.clone()
@@ -345,57 +354,61 @@ fn main(): i32 {
     let allowControlB = allowControl
 
     // set fds non-blocking before spawning green threads
-    setNonblocking(ptyFd1)
-    setNonblocking(wsFd1)
-    setNonblocking(0)
+    unsafe {
+        setNonblocking(ptyFd1)
+        setNonblocking(wsFd1)
+        setNonblocking(0)
+    }
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move(): void => {
-        var sendWs = WsConn.view(wsFd1, wsSsl1, true)
-        var buf: [u8; 4096] = [0; 4096]
-        var msgCount: i64 = 0
-        while !done1.load() {
-            unsafe {
-                schedulerWaitRead(ptyFd1)
-                let n = read(ptyFd1, buf as *u8, 4095)
-                if n < 0 && getErrno() == eagain() {
-                    continue
-                }
-                if n <= 0 {
-                    done1.store(true)
-                    break
-                }
-
-                write(1, buf as *u8, n)
-
-                var rawOutput: string = ""
-                for i in 0..n {
-                    rawOutput.push(buf[i])
-                }
-                let plaintext = ptyOutputJson(rawOutput)
-
-                var payload: string = ""
-                if isPublicA {
-                    payload = Base64.encode(plaintext)
-                } else {
-                    msgCount += 1
-                    match encryptWithKey(unixKeyA, msgCount, plaintext) {
-                        Ok(v) => {
-                            payload = v
-                        }
-                        Err(_) => {
-                            continue
-                        }
+        unsafe {
+            var sendWs = WsConn.view(wsFd1, wsSsl1, true)
+            var buf: [u8; 4096] = [0; 4096]
+            var msgCount: i64 = 0
+            while !done1.load() {
+                unsafe {
+                    schedulerWaitRead(ptyFd1)
+                    let n = read(ptyFd1, buf as *u8, 4095)
+                    if n < 0 && getErrno() == eagain() {
+                        continue
                     }
-                }
-
-                let msg = makeNewOutput(payload)
-                match sendWs.sendText(msg) {
-                    Err(_) => {
+                    if n <= 0 {
                         done1.store(true)
                         break
                     }
-                    _ => {
+
+                    write(1, buf as *u8, n)
+
+                    var rawOutput: string = ""
+                    for i in 0..n {
+                        rawOutput.push(buf[i])
+                    }
+                    let plaintext = ptyOutputJson(rawOutput)
+
+                    var payload: string = ""
+                    if isPublicA {
+                        payload = Base64.encode(plaintext)
+                    } else {
+                        msgCount += 1
+                        match encryptWithKey(unixKeyA, msgCount, plaintext) {
+                            Ok(v) => {
+                                payload = v
+                            }
+                            Err(_) => {
+                                continue
+                            }
+                        }
+                    }
+
+                    let msg = makeNewOutput(payload)
+                    match sendWs.sendText(msg) {
+                        Err(_) => {
+                            done1.store(true)
+                            break
+                        }
+                        _ => {
+                        }
                     }
                 }
             }
@@ -426,74 +439,76 @@ fn main(): i32 {
 
     // task 3: WebSocket → control handling (browser joins, resize requests)
     Task.spawn(move(): void => {
-        var recvWs = WsConn.view(wsFd3, wsSsl3, true)
-        var bootstrapCount: i64 = 0
-        var browserCount: i64 = 0
-        while !done3.load() {
-            match recvWs.recv() {
-                Ok(msg) => {
-                    let raw = msg.payload
-                    let ev = parseEvent(raw)
-                    if ev == "new_browser_connected" {
-                        if !isPublicB {
-                            // hand the unix/browser keys to the new browser, wrapped
-                            // under the bootstrap key it derived from the URL fragment.
-                            browserCount += 1
-                            let c1 = bootstrapCount + 1
-                            let c2 = bootstrapCount + 2
-                            bootstrapCount += 2
-                            var eu: string = ""
-                            var eb: string = ""
-                            if let Ok(v) = encryptWithKey(bootKeyB, c1, unixKeyB) {
-                                eu = v
-                            }
-                            if let Ok(v) = encryptWithKey(bootKeyB, c2, browserKeyB) {
-                                eb = v
-                            }
-                            if eu.len > 0 && eb.len > 0 {
-                                let km = aesKeysMessage(eu, eb, browserCount)
-                                let _ = recvWs.sendText(km)
-                            }
-                        }
-                    } else if ev == "command" {
-                        // Browser→shell input: payload is base64(IV‖ct‖tag) under the
-                        // browser key, wrapping {"data":"<keys>","salt":..}. Decrypt,
-                        // pull `data`, feed it to the PTY. Server only relays these when
-                        // allow_browser_control is set, but re-check defensively.
-                        if allowControlB {
-                            let enc = parseField(raw, "payload")
-                            if let Ok(plain) = decryptWithKey(browserKeyB, enc) {
-                                let data = parseField(plain, "data")
-                                // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
-                                var dlen = data.len
-                                if dlen > 4096 {
-                                    dlen = 4096
+        unsafe {
+            var recvWs = WsConn.view(wsFd3, wsSsl3, true)
+            var bootstrapCount: i64 = 0
+            var browserCount: i64 = 0
+            while !done3.load() {
+                match recvWs.recv() {
+                    Ok(msg) => {
+                        let raw = msg.payload
+                        let ev = parseEvent(raw)
+                        if ev == "new_browser_connected" {
+                            if !isPublicB {
+                                // hand the unix/browser keys to the new browser, wrapped
+                                // under the bootstrap key it derived from the URL fragment.
+                                browserCount += 1
+                                let c1 = bootstrapCount + 1
+                                let c2 = bootstrapCount + 2
+                                bootstrapCount += 2
+                                var eu: string = ""
+                                var eb: string = ""
+                                if let Ok(v) = encryptWithKey(bootKeyB, c1, unixKeyB) {
+                                    eu = v
                                 }
-                                if dlen > 0 {
-                                    var wbuf: [u8; 4096] = [0; 4096]
-                                    for i in 0..dlen {
-                                        wbuf[i] = data[i]
-                                    }
-                                    unsafe {
-                                        write(ptyFd3, wbuf as *u8, dlen)
-                                    }
+                                if let Ok(v) = encryptWithKey(bootKeyB, c2, browserKeyB) {
+                                    eb = v
+                                }
+                                if eu.len > 0 && eb.len > 0 {
+                                    let km = aesKeysMessage(eu, eb, browserCount)
+                                    let _ = recvWs.sendText(km)
                                 }
                             }
+                        } else if ev == "command" {
+                            // Browser→shell input: payload is base64(IV‖ct‖tag) under the
+                            // browser key, wrapping {"data":"<keys>","salt":..}. Decrypt,
+                            // pull `data`, feed it to the PTY. Server only relays these when
+                            // allow_browser_control is set, but re-check defensively.
+                            if allowControlB {
+                                let enc = parseField(raw, "payload")
+                                if let Ok(plain) = decryptWithKey(browserKeyB, enc) {
+                                    let data = parseField(plain, "data")
+                                    // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
+                                    var dlen = data.len
+                                    if dlen > 4096 {
+                                        dlen = 4096
+                                    }
+                                    if dlen > 0 {
+                                        var wbuf: [u8; 4096] = [0; 4096]
+                                        for i in 0..dlen {
+                                            wbuf[i] = data[i]
+                                        }
+                                        unsafe {
+                                            write(ptyFd3, wbuf as *u8, dlen)
+                                        }
+                                    }
+                                }
+                            }
+                        } else if ev == "request_terminal_dimensions" {
+                            let ts2 = termSize()
+                            let r2 = if ts2.rows > 1 {
+                                ts2.rows - 1
+                            } else {
+                                ts2.rows
+                            }
+                            let _ = recvWs.sendText(makeResizeMsg(r2, ts2.cols))
                         }
-                    } else if ev == "request_terminal_dimensions" {
-                        let ts2 = termSize()
-                        let r2 = if ts2.rows > 1 {
-                            ts2.rows - 1
-                        } else {
-                            ts2.rows
-                        }
-                        let _ = recvWs.sendText(makeResizeMsg(r2, ts2.cols))
+                        // `request_key_rotation` ignored: keys are fixed for the session.
                     }
-                    // `request_key_rotation` ignored: keys are fixed for the session.
-                }
-                Err(e) => {
-                    done3.store(true)
-                    break
+                    Err(e) => {
+                        done3.store(true)
+                        break
+                    }
                 }
             }
         }
@@ -506,7 +521,7 @@ fn main(): i32 {
 
     // clear O_NONBLOCK we set on stdin — fd 0 is shared with the parent shell,
     // and leaving it non-blocking makes the shell's reads return EAGAIN (hang).
-    clearNonblocking(0)
+    unsafe { clearNonblocking(0) }
     restoreTerminal(termState)
 
     print("")

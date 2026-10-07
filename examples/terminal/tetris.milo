@@ -1,7 +1,7 @@
 // tetris — event-driven terminal Tetris, no polling.
 //
 // The whole game is one green task that parks on a Select with two arms:
-//   arm 0  onRead(0)      — stdin became readable (a keypress)
+//   arm 0  onRead(Stdin {})      — stdin became readable (a keypress)
 //   arm 1  onTimeout(ms)  — gravity deadline reached
 // The task sleeps in the scheduler until one fires; there is no busy loop and
 // no sleepMs. Gravity uses an ABSOLUTE deadline (nextDrop) so that input events
@@ -16,7 +16,7 @@ from "std/term" import {
     KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_QUIT, KEY_SPACE
 }
 from "std/io" import {
-    writeStdout
+    writeStdout, Stdin
 }
 from "std/time" import {
     epochMillis
@@ -65,7 +65,7 @@ pub let NUM_KINDS: i64 = 7
 pub let SPAWN_X: i64 = 3
 
 // Select arm indices — the two events the game task parks on. Order matches the
-// arm order in the loop: onRead(0) is armed first, onTimeout second.
+// arm order in the loop: onRead(Stdin {}) is armed first, onTimeout second.
 pub let ARM_KEY: i64 = 0
 
 pub let ARM_TICK: i64 = 1
@@ -388,7 +388,7 @@ pub fn waitForQuit(): void {
     var done = false
     while !done {
         var sel = Select.new()
-        sel.onRead(0)
+        sel.onRead(Stdin {})
         sel.wait()
         sel.destroy()
         var k = readKey()
@@ -424,7 +424,7 @@ pub fn runGame(): void {
         }
 
         var sel = Select.new()
-        sel.onRead(0)
+        sel.onRead(Stdin {})
         sel.onTimeout(waitMs)
         let winner = sel.wait()
         sel.destroy()

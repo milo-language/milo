@@ -229,22 +229,27 @@ pub struct Child {
 impl Child {
     // The OS process id. These accessors are read-only: the fields are private so a
     // Child cannot be built around a pid or fds this program does not own, and an fd
-    // read here stays owned by the Child (takeStdout/takeStderr hand one over).
+    // read here stays owned by the Child (takeStdout/takeStderr hand one over). The fd
+    // accessors are `@unsafe`: the number outlives nothing and names whatever reused it
+    // once the Child closes or hands the pipe over.
     fn pid(self: &Self): i32 {
         return self._pid
     }
 
     // The parent end of the child's stdin pipe, or -1 when stdin is not a pipe or closed.
+    @unsafe
     fn stdinFd(self: &Self): i32 {
         return self._stdinFd
     }
 
     // The parent end of the child's stdout pipe, or -1 when not a pipe or taken.
+    @unsafe
     fn stdoutFd(self: &Self): i32 {
         return self._stdoutFd
     }
 
     // The parent end of the child's stderr pipe, or -1 when merged, not a pipe, or taken.
+    @unsafe
     fn stderrFd(self: &Self): i32 {
         return self._stderrFd
     }
@@ -267,7 +272,7 @@ impl Child {
     requires
     self._stdinFd >= 0
     {
-        return write(self._stdinFd, buf, len)
+        unsafe { return write(self._stdinFd, buf, len) }
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64
@@ -284,14 +289,14 @@ impl Child {
     requires
     self._stdoutFd >= 0
     {
-        return read(self._stdoutFd, buf, len)
+        unsafe { return read(self._stdoutFd, buf, len) }
     }
 
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stderrFd >= 0
     {
-        return read(self._stderrFd, buf, len)
+        unsafe { return read(self._stderrFd, buf, len) }
     }
 
     // Only valid when stdout is a pipe (the default).
@@ -299,14 +304,14 @@ impl Child {
     requires
     self._stdoutFd >= 0
     {
-        return fdChannel(self._stdoutFd)
+        unsafe { return fdChannel(self._stdoutFd) }
     }
 
     fn stderr(self: &Self): Channel<string>
     requires
     self._stderrFd >= 0
     {
-        return fdChannel(self._stderrFd)
+        unsafe { return fdChannel(self._stderrFd) }
     }
 
     // See the POSIX arm.

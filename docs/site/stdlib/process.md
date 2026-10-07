@@ -111,7 +111,9 @@ fn Child.pid(self: &Child): i32
 
 The OS process id. These accessors are read-only: the fields are private so a
 Child cannot be built around a pid or fds this program does not own, and an fd
-read here stays owned by the Child (takeStdout/takeStderr hand one over).
+read here stays owned by the Child (takeStdout/takeStderr hand one over). The fd
+accessors are `@unsafe`: the number outlives nothing and names whatever reused it
+once the Child closes or hands the pipe over.
 
 #### `Child.readStderr`
 

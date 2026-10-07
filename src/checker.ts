@@ -301,6 +301,10 @@ export interface FnSig {
 
 // The `mustUse` field of an FnSig, from the declaration's attributes. Spread into every
 // registration so a method and a monomorphized generic carry it like a plain fn.
+function isUnsafeDecl(decl: { attributes?: { name: string }[] } | undefined): boolean {
+  return !!decl?.attributes?.some(a => a.name === "unsafe");
+}
+
 function mustUseOf(decl: { attributes?: { name: string }[] } | undefined): { mustUse?: boolean } {
   return decl?.attributes?.some(a => a.name === "mustUse") ? { mustUse: true } : {};
 }
@@ -557,6 +561,9 @@ export class TypeChecker {
   private _nonConstGlobals: string[] = [];
   private functions = new Map<string, FnSig>();
   private fnDecls = new Map<string, Function>();
+  // Mangled names of `@unsafe` methods (`Type$m`, `Type$Trait$m`). Trait method declarations
+  // carry no attributes, so an impl's own `@unsafe` is what a monomorphized call checks.
+  private unsafeMethods = new Set<string>();
   // Which contract clause is being checked, if any. `old()` is legal only inside `ensures`,
   // and the error for it elsewhere reads better naming the clause it was found in.
   private contractScope: "requires" | "ensures" | "invariant" | "decreases" | null = null;
@@ -1456,6 +1463,14 @@ export class TypeChecker {
   private fnIsDependencyCode(name: string): boolean {
     const firstSep = name.indexOf("$");
     return firstSep > 0 && !!this._packageNames?.has(name.slice(0, firstSep));
+  }
+
+  // `@unsafe` on a method: the same obligation as on a free fn. Keyed by the mangled
+  // symbol the call resolved to, so `T.make()` and `x.raw()` share one check.
+  private requireUnsafeMethod(mangled: string, name: string, span?: Span) {
+    if (!this.unsafeMethods.has(mangled)) return;
+    this.requireUnsafe(`calling '${name}' requires an unsafe block`, span,
+      `'${name}' is declared '@unsafe': it has a precondition the compiler cannot check, so the caller vouches for it`);
   }
 
   private requireUnsafeCall(decl: { attributes?: { name: string }[] } | undefined, name: string, span?: Span) {
@@ -2384,12 +2399,14 @@ export class TypeChecker {
     generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
 
     // check trait bounds
+    let boundFailed = false;
     for (let i = 0; i < generic.decl.typeParams.length; i++) {
       const tp = generic.decl.typeParams[i];
       const concreteType = typeArgs[i];
       for (const bound of tp.bounds) {
         if (!this.typeImplementsTrait(typeName(concreteType), bound)) {
-          this.error(`type '${this.show(concreteType)}' does not implement trait '${bound}'`);
+          this.error(`type '${this.show(concreteType)}' does not implement trait '${bound}'`, sp);
+          boundFailed = true;
         }
       }
       if (this.copyOnlyParams(generic.decl.attributes, generic.typeParams).has(tp.name)) {
@@ -2411,6 +2428,10 @@ export class TypeChecker {
     // The signature above stays registered so the call types through without a cascade;
     // the body is never checked, because its by-index read would only repeat this at a
     // line inside the generic's own file.
+    // A failed bound is reported at the call; checking the body as well would only repeat
+    // it as a "no method" error inside the generic's own file.
+    if (boundFailed) return mangled;
+
     const blocker = this.copyOutBlocker(generic.decl.attributes, typeArgs);
     if (blocker) {
       this.error(`'${baseName}<${typeArgs.map(a => this.show(a)).join(", ")}>' is not allowed: ${this.copyOutReason(`'${baseName}'`, blocker)}`, sp,
@@ -2465,6 +2486,7 @@ export class TypeChecker {
     if (!tpl) return null;
     const names = (tpl.decl.typeParams ?? []).map(t => t.name);
     const mangled = `${key}_${typeArgs.map(a => this.mangleTypeName(a)).join("_")}`;
+    if (this.unsafeMethods.has(key)) this.unsafeMethods.add(mangled);
     if (this.functions.has(mangled)) return mangled;
 
     if (this.monoDepth >= TypeChecker.MAX_MONO_DEPTH) {
@@ -2477,10 +2499,12 @@ export class TypeChecker {
     }
     this.monoDepth++;
     try {
+      let boundFailed = false;
       for (let i = 0; i < (tpl.decl.typeParams ?? []).length; i++) {
         for (const bound of tpl.decl.typeParams![i]!.bounds) {
           if (!this.typeImplementsTrait(typeName(typeArgs[i]!), bound)) {
-            this.error(`type '${this.show(typeArgs[i]!)}' does not implement trait '${bound}'`);
+            this.error(`type '${this.show(typeArgs[i]!)}' does not implement trait '${bound}'`, sp);
+            boundFailed = true;
           }
         }
       }
@@ -2498,6 +2522,8 @@ export class TypeChecker {
       const params = concrete.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
       const ret = this.resolve(concrete.retType);
       this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(tpl.decl) });
+      // As in monomorphizeFn: the bound error at the call is the whole story.
+      if (boundFailed) return mangled;
       this.monomorphizedFns.push(concrete);
       this.checkFunction(concrete);
       return mangled;
@@ -5546,6 +5572,7 @@ export class TypeChecker {
         const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
         const ret = this.resolve(concreteFn.retType);
         this.checkImplMethodSignature(impl, m, trait, traitMethod, params, ret);
+        if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
         this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
         methods.set(m.name, { params, ret, variadic: false, ...mustUseOf(m) });
         this.monomorphizedFns.push(concreteFn);
@@ -5595,6 +5622,7 @@ export class TypeChecker {
           };
           const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
+          if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
           this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
           existing.methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
           this.monomorphizedFns.push(concreteFn);
@@ -5613,6 +5641,7 @@ export class TypeChecker {
           // A method with its own type parameters is a template, not a signature. Checking
           // its body here would type `R` as a struct nobody declared; the call site
           // instantiates it instead.
+          if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
           if (m.typeParams && m.typeParams.length > 0) {
             this.genericMethods.set(mangled, { decl: concreteFn, owner: typeName });
             continue;
@@ -5662,6 +5691,7 @@ export class TypeChecker {
       else this.tryMove(expr.args[i]!);
     }
     this.resolvedMethods.set(expr, mangled);
+    this.requireUnsafeMethod(mangled, expr.method, sp);
     return this.setType(expr, sig.ret);
   }
 
@@ -7429,6 +7459,7 @@ export class TypeChecker {
     const sig = must(this.functions, mangled, "instantiated static method");
     this.checkStaticCallArgs(sig, expr, sp);
     this.staticCalls.set(expr, mangled);
+    this.requireUnsafeMethod(mangled, `${expr.enumName}.${expr.variant}`, sp);
     return this.setType(expr, sig.ret);
   }
 
@@ -10360,6 +10391,7 @@ export class TypeChecker {
           const mangledMethod = `${mangled}$${expr.variant}`;
           this.checkStaticCallArgs(sig, expr, sp);
           this.staticCalls.set(expr, mangledMethod);
+          this.requireUnsafeMethod(mangledMethod, `${expr.enumName}.${expr.variant}`, sp);
           // Send enforcement for thread-crossing closures lives in checkThreadBoundary,
           // driven by `@thread` on the declaration — see the comment there for what the
           // hardcoded version that used to sit here missed.
@@ -10382,6 +10414,7 @@ export class TypeChecker {
           // static methods have no self param — check args directly
           const paramOffset = this.checkStaticCallArgs(sig, expr, sp);
           this.staticCalls.set(expr, mangled);
+          this.requireUnsafeMethod(mangled, `${expr.enumName}.${expr.variant}`, sp);
           // Precondition checking on a static method call (Math.sqrt(-1.0) etc).
           // Only when there is no `self` param, so args align 1:1 with the sig's
           // params the way checkCallSiteContracts expects.
@@ -12037,6 +12070,7 @@ export class TypeChecker {
         }
       }
       this.resolvedMethods.set(expr, mangled);
+      this.requireUnsafeMethod(mangled, expr.method, sp);
       if (this.isViewReturn(sig.ret)) this.freezeViewSource(expr.object, sp, this.viewReturnFields.get(mangled));
       return this.setType(expr, sig.ret);
     }

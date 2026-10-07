@@ -367,6 +367,7 @@ pub fn netEinprogress(): i32 {
     return einprogress()
 }
 
+@unsafe
 pub fn closeSocket(fd: i32): i32 {
     return close(fd)
 }
@@ -563,10 +564,12 @@ pub extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 @cSig("unistd.h", "ssize_t write(int, const void *, size_t)")
 pub extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
+@unsafe
 pub fn sockRead(fd: i32, buf: *u8, nbyte: i64): i64 {
     return read(fd, buf, nbyte)
 }
 
+@unsafe
 pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
     return write(fd, buf, nbyte)
 }

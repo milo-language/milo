@@ -359,8 +359,9 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
     match TcpStream.connect(ip, port) {
         Ok(s) => {
             var stream = s
-            // take() detaches the fd so the stream's Drop won't close it.
-            fd = stream.take()
+            // take() detaches the fd so the stream's Drop won't close it; the JDWP
+            // connection lives for the rest of the process, so nothing closes it.
+            unsafe { fd = stream.take() }
         }
         Err(_e) => {
             return Err("cannot connect to JDWP agent at " + host.clone() + ":" + port.toString())

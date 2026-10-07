@@ -86,35 +86,37 @@ pub fn restoreTerminal(state: &TermState): void {
 // Identical decoding to the POSIX arms because ENABLE_VIRTUAL_TERMINAL_INPUT makes the
 // console emit the same ANSI sequences.
 pub fn readKey(): i32 {
-    var buf: [u8; 3] = [0; 3]
-    let n = read(0, buf, 1)
-    if n <= 0 {
-        return KEY_NONE
-    }
-    if buf[0] == 113 || buf[0] == 3 {
-        return KEY_QUIT
-    }
-    if buf[0] == 32 {
-        return KEY_SPACE
-    }
-    if buf[0] == 27 {
-        let n2 = read(0, buf, 2)
-        if n2 == 2 && buf[0] == 91 {
-            if buf[1] == 65 {
-                return KEY_UP
-            }
-            if buf[1] == 66 {
-                return KEY_DOWN
-            }
-            if buf[1] == 68 {
-                return KEY_LEFT
-            }
-            if buf[1] == 67 {
-                return KEY_RIGHT
+    unsafe {
+        var buf: [u8; 3] = [0; 3]
+        let n = read(0, buf, 1)
+        if n <= 0 {
+            return KEY_NONE
+        }
+        if buf[0] == 113 || buf[0] == 3 {
+            return KEY_QUIT
+        }
+        if buf[0] == 32 {
+            return KEY_SPACE
+        }
+        if buf[0] == 27 {
+            let n2 = read(0, buf, 2)
+            if n2 == 2 && buf[0] == 91 {
+                if buf[1] == 65 {
+                    return KEY_UP
+                }
+                if buf[1] == 66 {
+                    return KEY_DOWN
+                }
+                if buf[1] == 68 {
+                    return KEY_LEFT
+                }
+                if buf[1] == 67 {
+                    return KEY_RIGHT
+                }
             }
         }
+        return KEY_NONE
     }
-    return KEY_NONE
 }
 
 pub struct TermSize {

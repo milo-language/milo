@@ -29,34 +29,37 @@ pub fn main(): i32 {
         }
     }
 
-    // Client masks outgoing frames, server does not — so this also exercises the
-    // masked path. Views on both ends so neither Drop closes the pipe fds.
-    let sender = WsConn.view(fds[1], 0, true)
-    var receiver = WsConn.view(fds[0], 0, false)
+    // WsConn.view and writeFd are @unsafe: both name pipe fds that nothing owns.
+    unsafe {
+        // Client masks outgoing frames, server does not — so this also exercises the
+        // masked path. Views on both ends so neither Drop closes the pipe fds.
+        let sender = WsConn.view(fds[1], 0, true)
+        var receiver = WsConn.view(fds[0], 0, false)
 
-    let _ = sender.sendText("hello ws")
-    let msg = receiver.recv()!
-    print($"{msg.opcode} {msg.opcode as i32} {msg.payload}")
-    print($"same variant: {msg.opcode == WsOpcode.Text}")
+        let _ = sender.sendText("hello ws")
+        let msg = receiver.recv()!
+        print($"{msg.opcode} {msg.opcode as i32} {msg.payload}")
+        print($"same variant: {msg.opcode == WsOpcode.Text}")
 
-    let _ = sender.sendBinary("ab")
-    let msg2 = receiver.recv()!
-    print($"{msg2.opcode} {msg2.opcode as i32} {msg2.payload.len}")
+        let _ = sender.sendBinary("ab")
+        let msg2 = receiver.recv()!
+        print($"{msg2.opcode} {msg2.opcode as i32} {msg2.payload.len}")
 
-    // Hand-rolled frame carrying reserved opcode 3: FIN|0x03, unmasked, length 0.
-    // RFC 6455 §5.2 says the connection must fail rather than treat it as data.
-    var raw: string = ""
-    raw.push(131)
-    raw.push(0)
-    let _ = writeFd(fds[1], raw, raw.len)
-    match receiver.recv() {
-        Result.Ok(_) => {
-            print("BUG: reserved opcode accepted")
+        // Hand-rolled frame carrying reserved opcode 3: FIN|0x03, unmasked, length 0.
+        // RFC 6455 §5.2 says the connection must fail rather than treat it as data.
+        var raw: string = ""
+        raw.push(131)
+        raw.push(0)
+        let _ = writeFd(fds[1], raw, raw.len)
+        match receiver.recv() {
+            Result.Ok(_) => {
+                print("BUG: reserved opcode accepted")
+            }
+            Result.Err(e) => {
+                print($"rejected: {e}")
+            }
         }
-        Result.Err(e) => {
-            print($"rejected: {e}")
-        }
+
+        return 0
     }
-
-    return 0
 }

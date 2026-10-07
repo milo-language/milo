@@ -48,7 +48,7 @@ let X509_V_OK: i64 = 0
 
 // TLS/SSL connection handle. Frees SSL context and closes fd on drop.
 pub struct TlsStream {
-    fd: i32,
+    _fd: i32,
     ssl: i64,
     ctx: i64,
 }
@@ -67,8 +67,8 @@ impl Drop for TlsStream {
                 SSL_CTX_free(self.ctx as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
-            if self.fd > 0 {
-                sysClose(self.fd)
+            if self._fd > 0 {
+                sysClose(self._fd)
             }
         }
     }
@@ -86,32 +86,43 @@ impl TlsStream {
     // for is disabling verification, which throws the whole guarantee away.
     // An empty caFile is exactly connect().
     fn connectWithCA(ip: u32, port: u16, hostname: &string, caFile: &string): Result<TlsStream, NetError> {
-        let AF_INET: i32 = 2
-        let SOCK_STREAM: i32 = 1
+        unsafe {
+            let AF_INET: i32 = 2
+            let SOCK_STREAM: i32 = 1
 
-        ensureNetInit()
-        var fd: i32 = 0
-        unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
+            ensureNetInit()
+            var fd: i32 = 0
+            unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
+            }
+
+            var addr = makeSockaddr(port, ip)
+
+            if connectFdIn(fd, addr) < 0 {
+                sysClose(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
+
+            unsafe { return TlsStream.fromFd(fd, hostname, caFile) }
         }
-
-        var addr = makeSockaddr(port, ip)
-
-        if connectFdIn(fd, addr) < 0 {
-            sysClose(fd)
-            return Result.Err(NetError.ConnectionFailed("connect() failed"))
-        }
-
-        return TlsStream.fromFd(fd, hostname, caFile)
     }
 
-    // Client handshake over an ALREADY-connected fd. This is the entry point a protocol
-    // with in-band TLS negotiation needs — Postgres' SSLRequest, SMTP STARTTLS: the
-    // socket must carry plaintext first, so TLS setup cannot own the connect() too.
-    // OWNERSHIP: fd is taken over by the returned TlsStream, and closed on every error
-    // path here. The caller must neither close it nor keep using it.
+    // Client handshake over an ALREADY-connected socket. This is the entry point a
+    // protocol with in-band TLS negotiation needs — Postgres' SSLRequest, SMTP STARTTLS:
+    // the socket must carry plaintext first, so TLS setup cannot own the connect() too.
+    // The stream is consumed: the returned TlsStream owns its fd, and every error path
+    // closes it, so nothing is left behind to use after the handshake.
+    fn fromTcp(conn: TcpStream, hostname: &string, caFile: &string): Result<TlsStream, NetError> {
+        var s = conn
+        unsafe { return TlsStream.fromFd(s.take(), hostname, caFile) }
+    }
+
+    // `fromTcp` over a bare descriptor. OWNERSHIP: fd is taken over by the returned
+    // TlsStream, and closed on every error path here. `@unsafe` because the caller must
+    // vouch it owns `fd` outright and neither closes nor uses it again.
     @replayHooked
+    @unsafe
     fn fromFd(fd: i32, hostname: &string, caFile: &string): Result<TlsStream, NetError> {
         unsafe {
             let method = TLS_client_method()
@@ -178,7 +189,7 @@ impl TlsStream {
             }
 
             return Result.Ok(TlsStream {
-                fd: fd, ssl: sslAddr, ctx: ctxAddr
+                _fd: fd, ssl: sslAddr, ctx: ctxAddr
             })
         }
     }
@@ -186,7 +197,7 @@ impl TlsStream {
     // Send `data` over the TLS connection. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self.ssl as *u8, self.fd, data, data.len as i32)
+            let n = sslWriteFd(self.ssl as *u8, self._fd, data, data.len as i32)
             if n < 0 {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
@@ -201,7 +212,7 @@ impl TlsStream {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
-                let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 4096)
+                let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 4096)
                 if n <= 0 {
                     break
                 }
@@ -220,7 +231,7 @@ impl TlsStream {
         var result: string = ""
         var buf: [u8; 8192] = [0; 8192]
         unsafe {
-            let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 8192)
+            let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
                 for i in 0..n as i64 {
                     result.push(buf[i])
@@ -237,37 +248,39 @@ impl TlsStream {
     // LIFETIME: keep this TlsStream alive while consuming — the detached pump
     // reads through its SSL handle; dropping it frees that state under the pump.
     fn incoming(self: &Self): Channel<string> {
-        let ch = Channel<string>.new(256)!
-        let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
-        let ssl = self.ssl
-        let fd = self.fd
-        // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
-        // WANT_READ park path is dead code — one read would freeze the whole
-        // scheduler. connect() sets this when called from a green task, but not
-        // if it ran outside one, so enforce it here.
-        setNonblocking(fd)
-        Task.spawn(move(): void => {
-            var buf: [u8; 4096] = [0; 4096]
-            while true {
-                var n: i32 = 0
-                unsafe {
-                    n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096)
+        unsafe {
+            let ch = Channel<string>.new(256)!
+            let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
+            let ssl = self.ssl
+            let fd = self._fd
+            // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
+            // WANT_READ park path is dead code — one read would freeze the whole
+            // scheduler. connect() sets this when called from a green task, but not
+            // if it ran outside one, so enforce it here.
+            setNonblocking(fd)
+            Task.spawn(move(): void => {
+                var buf: [u8; 4096] = [0; 4096]
+                while true {
+                    var n: i32 = 0
+                    unsafe {
+                        n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096)
+                    }
+                    if n <= 0 {
+                        break
+                    }
+                    var data: string = ""
+                    for i in 0..n as i64 {
+                        data.push(buf[i])
+                    }
+                    // if-let, not .isErr(): keep std in milo-self's subset (no isErr builtin)
+                    if let Result.Err(_) = chPump.send(data) {
+                        break
+                    }
                 }
-                if n <= 0 {
-                    break
-                }
-                var data: string = ""
-                for i in 0..n as i64 {
-                    data.push(buf[i])
-                }
-                // if-let, not .isErr(): keep std in milo-self's subset (no isErr builtin)
-                if let Result.Err(_) = chPump.send(data) {
-                    break
-                }
-            }
-            chPump.close()
-        })
-        return ch
+                chPump.close()
+            })
+            return ch
+        }
     }
 }
 

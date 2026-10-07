@@ -1,0 +1,11 @@
+// Select arms borrow a handle (`T: AsFd`), not a bare number: a number can name a
+// descriptor its owner already closed. The bound error points at this call, not into
+// std/select.milo. `sel.onRead(Stdin {})` is the stdin spelling.
+// @error: type 'i64' does not implement trait 'AsFd'
+from "std/select" import { Select }
+
+fn main() {
+    var sel = Select.new()
+    sel.onRead(0)
+    sel.destroy()
+}
