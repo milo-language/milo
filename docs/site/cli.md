@@ -55,8 +55,8 @@ Compile and run (no artifacts left behind).
 
 | Flag | Effect |
 |---|---|
-| `--record <trace>` | Record every OS answer and scheduling decision to \<trace\> (= MILO\_RECORD). |
-| `--replay <trace>` | Answer them from \<trace\> instead of the OS (= MILO\_REPLAY). |
+| `--record <trace>` | Record this run to \<trace\> so it can be replayed exactly, e.g. to debug a failure after the fact (also MILO\_RECORD=\<trace\>). |
+| `--replay <trace>` | Replay a recorded run: identical to the original, even if its files, servers or clock have changed since (also MILO\_REPLAY=\<trace\>). |
 
 ### build
 

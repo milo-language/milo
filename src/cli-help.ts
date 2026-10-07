@@ -41,8 +41,8 @@ export const COMPILER_COMMANDS: CliCommand[] = [
   {
     name: "run", usage: "run <file> [args]", summary: "compile and run (no artifacts left behind)",
     flags: [
-      { flag: "--record <trace>", help: "record every OS answer and scheduling decision to <trace> (= MILO_RECORD)" },
-      { flag: "--replay <trace>", help: "answer them from <trace> instead of the OS (= MILO_REPLAY)" },
+      { flag: "--record <trace>", help: "record this run to <trace> so it can be replayed exactly, e.g. to debug a failure after the fact (also MILO_RECORD=<trace>)" },
+      { flag: "--replay <trace>", help: "replay a recorded run: identical to the original, even if its files, servers or clock have changed since (also MILO_REPLAY=<trace>)" },
     ],
   },
   { name: "build", usage: "build <file> [-o out]", summary: "compile to executable" },
