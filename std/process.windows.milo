@@ -315,6 +315,13 @@ impl Child {
     }
 
     // See the POSIX arm.
+    fn takeStdin(self: &mut Self): OwnedFd {
+        let fd = self._stdinFd
+        self._stdinFd = -1
+        unsafe { return adoptFd(fd) }
+    }
+
+    // See the POSIX arm.
     fn takeStdout(self: &mut Self): OwnedFd {
         let fd = self._stdoutFd
         self._stdoutFd = -1

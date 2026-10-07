@@ -8,6 +8,7 @@ from "std/os" import {
     strerror,
     writeFd,
     sysRead,
+    sysWrite,
     sysOpen,
     sysClose,
     sysLseek,
@@ -195,7 +196,8 @@ pub fn stdinChannel(): Channel<string> {
 //
 // The reader borrows the fd; it does not own or close it. Keep the owning
 // source (File / Pty / Child / socket) alive for the reader's lifetime. The fields
-// are private so the only way to aim one at a number is `fdReaderAttach`.
+// are private so the only ways to aim one at a descriptor are `FdReader.attach` on a
+// handle and the raw `fdReaderAttach`.
 pub struct FdReader {
     _fd: i32,
     _green: bool,
@@ -224,6 +226,12 @@ pub fn fdReaderAttach(fd: i32): FdReader {
 }
 
 impl FdReader {
+    // A reader over `h`'s descriptor: `readFrameWith(FdReader.attach(pipe))` reads a
+    // framed protocol off a pipe, socket or pty without its number ever reaching the
+    // caller. The same view rule as `OwnedFd.stream`: `h` must outlive the reader.
+    fn attach<T: AsFd>(h: &T): FdReader {
+        unsafe { return fdReaderAttach(h.rawFd()) }
+    }
 
     // Read one byte, returned as 0..255. Returns -1 at EOF or on error.
     fn readByte(self: &Self): i64 {
@@ -652,6 +660,19 @@ impl OwnedFd {
     // A non-owning Reader+Writer view; the same rule as File.stream.
     fn stream(self: &Self): FdStream {
         unsafe { return FdStream.onFd(self._fd) }
+    }
+
+    // One write(2) of `s`, never retried and never parked: the bytes the descriptor
+    // took (possibly fewer than s.len), or -1. Unlike `stream().write`, which parks a
+    // green task until every byte is out, nothing else runs between the first byte and
+    // the last, so two green tasks writing whole messages to one blocking pipe (a
+    // protocol's requests from two senders) cannot interleave them. Same contract as
+    // `Pty.writeOnce`.
+    fn writeOnce(self: &Self, s: &string): i64 {
+        if self._fd <= 0 {
+            return -1
+        }
+        unsafe { return sysWrite(self._fd, s as *u8, s.len) }
     }
 }
 

@@ -243,7 +243,18 @@ blocking read path.
 
 The reader borrows the fd; it does not own or close it. Keep the owning
 source (File / Pty / Child / socket) alive for the reader's lifetime. The fields
-are private so the only way to aim one at a number is `fdReaderAttach`.
+are private so the only ways to aim one at a descriptor are `FdReader.attach` on a
+handle and the raw `fdReaderAttach`.
+
+#### `FdReader.attach`
+
+```milo
+fn FdReader.attach<T: AsFd>(h: &T): FdReader
+```
+
+A reader over `h`'s descriptor: `readFrameWith(FdReader.attach(pipe))` reads a
+framed protocol off a pipe, socket or pty without its number ever reaching the
+caller. The same view rule as `OwnedFd.stream`: `h` must outlive the reader.
 
 #### `FdReader.readByte`
 
@@ -486,6 +497,19 @@ fn OwnedFd.stream(self: &OwnedFd): FdStream
 ```
 
 A non-owning Reader+Writer view; the same rule as File.stream.
+
+#### `OwnedFd.writeOnce`
+
+```milo
+fn OwnedFd.writeOnce(self: &OwnedFd, s: &string): i64
+```
+
+One write(2) of `s`, never retried and never parked: the bytes the descriptor
+took (possibly fewer than s.len), or -1. Unlike `stream().write`, which parks a
+green task until every byte is out, nothing else runs between the first byte and
+the last, so two green tasks writing whole messages to one blocking pipe (a
+protocol's requests from two senders) cannot interleave them. Same contract as
+`Pty.writeOnce`.
 
 ### `Reader`
 

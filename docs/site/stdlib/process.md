@@ -201,6 +201,16 @@ fn Child.takeStderr(self: &mut Child): OwnedFd
 
 As takeStdout, for a separate stderr pipe (a -1 handle when stderr was merged).
 
+#### `Child.takeStdin`
+
+```milo
+fn Child.takeStdin(self: &mut Child): OwnedFd
+```
+
+Hand the stdin pipe to the caller, as takeStdout does stdout: the Child stops
+tracking it (closeStdin and close skip it), and the child sees EOF on stdin once
+the returned handle and every dup of it have dropped.
+
 #### `Child.takeStdout`
 
 ```milo
