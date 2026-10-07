@@ -61,8 +61,11 @@ for dir in "$ROOT"/*/; do
                 ;;
         esac
         out=$(cd "$dir" && timeout 600 "$MILO" test "tests/$base" 2>&1)
+        rc=$?
         line=$(printf '%s\n' "$out" | tail -1)
-        if printf '%s' "$line" | grep -q " 0 fail"; then
+        # Exit status AND a non-zero pass count: a suite that fails to compile prints
+        # "0 pass, 0 fail" and exits 1, which a match on " 0 fail" alone read as ok.
+        if [ "$rc" -eq 0 ] && printf '%s' "$line" | grep -q " 0 fail" && ! printf '%s' "$line" | grep -q "^0 pass"; then
             echo "ok   $name/$base — $line"
         else
             echo "FAIL $name/$base — $line"
