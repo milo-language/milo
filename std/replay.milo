@@ -122,6 +122,7 @@ pub struct ReplayLock {
 }
 
 impl ReplayLock {
+    // Run `f` holding the record/replay engine's lock; re-entrant on the same thread.
     @synchronized
     fn run(self: &Self, f: () => void): void {
         if rrHeld {
@@ -435,6 +436,8 @@ pub fn replayHeapMalloc(n: i64): *u8 {
     return heapAlloc(n)
 }
 
+// free() for Milo allocations: blocks from the fixed-address heap go back to it, any
+// other pointer (libc's, the engine's own) goes to libc.
 pub fn replayHeapFree(p: *u8): void {
     unsafe {
         if p as i64 == 0 {
@@ -448,6 +451,8 @@ pub fn replayHeapFree(p: *u8): void {
     heapFree(p)
 }
 
+// realloc() for Milo allocations: a block from the fixed-address heap grows within it,
+// so its new address replays too; any other pointer goes to libc.
 pub fn replayHeapRealloc(p: *u8, n: i64): *u8 {
     unsafe {
         if p as i64 == 0 {
@@ -477,6 +482,7 @@ pub fn replayHeapDepthOut(): i64 {
     return d
 }
 
+// Restore the engine depth replayHeapDepthOut took, after a green-task switch back.
 pub fn replayHeapDepthIn(d: i64): void {
     rrDepth = d
 }
@@ -1697,6 +1703,7 @@ pub fn replayF64Bits(v: f64): i64 {
     return b
 }
 
+// The float with these bits: the inverse of replayF64Bits, for a replayed float.
 pub fn replayF64FromBits(b: i64): f64 {
     var v: f64 = 0.0
     var x = b
@@ -1711,6 +1718,7 @@ pub fn replayF64FromBits(b: i64): f64 {
 }
 
 impl ReplayCall {
+    // Separate the next argument from the previous one in the call's name.
     fn sep(self: &mut Self): void {
         if self.arg.len() > 0 {
             self.arg.push(' ')
@@ -1785,6 +1793,8 @@ impl ReplayCall {
         return self.ret
     }
 
+    // Replay: the recorded length of the next output buffer (-1 when the call did not
+    // write it); a trace with fewer lengths than outputs is corrupt.
     fn nextLen(self: &mut Self): i64 {
         if self.outIdx >= self.lens.len {
             corrupt(rrSeq)
@@ -1844,6 +1854,7 @@ impl ReplayCall {
         }
     }
 
+    // Record: the call's return value (a float's bits, a handle's address).
     fn setRet(self: &mut Self, r: i64): void {
         self.ret = r
     }

@@ -619,6 +619,8 @@ pub extern fn personality(persona: u64): i32
 
 pub extern fn execve(path: *u8, argv: *u8, envp: *u8): i32
 
+// Re-execute this program once with ADDR_NO_RANDOMIZE so recorded and replayed runs get
+// the same addresses. False when no re-exec was needed or it failed (the caller warns).
 @replayHooked
 pub fn aslrReexec(argv: *u8): bool {
     unsafe {
