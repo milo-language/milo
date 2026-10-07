@@ -26,8 +26,8 @@ from "std/platform" import {
 
 // Bumped only when the record framing changes. A new record kind is additive: an
 // older replayer meeting it reports a divergence naming the kind, which is the truth.
-// Version 2 added the thread field.
-let TRACE_VERSION: i64 = 2
+// So is a thread's record: `net.read@2` is net.read made on thread 2 (writeRecord).
+let TRACE_VERSION: i64 = 1
 
 // Divergence, a corrupt or missing trace, and a failed trace write all exit with this,
 // so a driver (a test, dapweb's reverse step) can tell "replay broke" from the
@@ -614,22 +614,23 @@ fn callName(kind: &string, arg: &string): string {
     return kind + "(" + arg + ")"
 }
 
-// `<seq> <kind> <argLen> <payloadLen>[ <thread>]`: the thread is left out for the main
-// thread, so a single-threaded trace reads as it always did.
+// `<seq> <kind>[@<thread>] <argLen> <payloadLen>`: a record made on a thread other than
+// the main one names it after its kind, which keeps the framing (and every reader of
+// it) unchanged, and leaves a single-threaded trace exactly as it always was.
 fn writeRecord(kind: &string, arg: &string, payload: &string): void {
     rrSeq += 1
     var rec = String.withCapacity(40 + kind.len() + arg.len() + payload.len())
     rec.pushStr(rrSeq.toString())
     rec.push(' ')
     rec.pushStr(kind)
+    if rrTid != 0 {
+        rec.push('@')
+        rec.pushStr(rrTid.toString())
+    }
     rec.push(' ')
     rec.pushStr(arg.len().toString())
     rec.push(' ')
     rec.pushStr(payload.len().toString())
-    if rrTid != 0 {
-        rec.push(' ')
-        rec.pushStr(rrTid.toString())
-    }
     rec.push('\n')
     rec.pushStr(arg)
     rec.push('\n')
@@ -752,17 +753,22 @@ fn peekHeader(): bool {
         }
         Option.Some(line) => {
             let fields = line.split(" ")
-            if (fields.len != 4 && fields.len != 5) || decimal(fields[0]) != seq {
+            if fields.len != 4 || decimal(fields[0]) != seq {
                 corrupt(seq)
             }
             rrNextSeq = seq
             rrNextKind = fields[1].clone()
+            rrNextTid = 0
+            match fields[1].indexOf("@") {
+                Option.Some(at) => {
+                    rrNextKind = fields[1].substr(0, at)
+                    rrNextTid = decimal(fields[1].substr(at + 1, fields[1].len()))
+                }
+                Option.None => {
+                }
+            }
             rrNextArgLen = decimal(fields[2])
             rrNextPayloadLen = decimal(fields[3])
-            rrNextTid = 0
-            if fields.len == 5 {
-                rrNextTid = decimal(fields[4])
-            }
             rrPeeked = true
             return true
         }
@@ -1007,7 +1013,7 @@ fn atExitCheck(): void {
             }
             Option.Some(line) => {
                 let fields = line.split(" ")
-                if fields.len != 4 && fields.len != 5 {
+                if fields.len != 4 {
                     going = false
                 } else {
                     let _ = takeBytes(seq, decimal(fields[2]))

@@ -114,7 +114,7 @@ test("record, then replay under a different env, argv and clock: byte-identical 
   expect(rec.err).toBe("");
   expect(rec.code).toBe(0);
   recordedOut = rec.out;
-  expect(readFileSync(recorded(), "utf-8").startsWith("milo-trace 2\n")).toBe(true);
+  expect(readFileSync(recorded(), "utf-8").startsWith("milo-trace 1\n")).toBe(true);
   // The child-inheritance guard: std/replay removes the variable once it has read it.
   expect(rec.out).toContain("record var <unset>\n");
 
@@ -204,7 +204,7 @@ test("a missing or foreign trace, or both variables set, is refused with exit co
   writeFileSync(foreign, "1 time.wall 0 3\n\n1 2\n");
   const bad = run(prog, [], { MILO_REPLAY: foreign });
   expect(bad.code).toBe(3);
-  expect(bad.err).toContain("is not a milo-trace version 2 file");
+  expect(bad.err).toContain("is not a milo-trace version 1 file");
   const both = run(prog, [], { MILO_REPLAY: recorded(), MILO_RECORD: join(dir, "x.mrr") });
   expect(both.code).toBe(3);
   expect(both.err).toContain("MILO_RECORD and MILO_REPLAY are both set");
@@ -251,7 +251,7 @@ fn main() {
   expect(rep.code).toBe(0);
   expect(rep.err).toBe("");
   expect(rep.out).toBe("main rec\nworker rec\n");
-  expect(readFileSync(trace, "latin1")).toMatch(/\n\d+ env\.get 8 \d+ 1\n/);
+  expect(readFileSync(trace, "latin1")).toMatch(/\n\d+ env\.get@1 8 \d+\n/);
 });
 
 test("HashMap iteration order is fixed under record and replay, entropy-seeded otherwise", () => {

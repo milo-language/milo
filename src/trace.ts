@@ -9,14 +9,13 @@ export interface TraceRecord {
   kind: string;
   arg: string;
   payloadLen: number;
-  /** The OS thread that made it: 0 is the main thread (version 2 traces). */
+  /** The OS thread that made it: 0 is the main thread (a `kind@<n>` record). */
   thread: number;
   /** Byte offset of the record's header line in the file. */
   offset: number;
 }
 
-// Version 2 added the thread field; a version 1 trace lists the same way.
-const HEADERS = ["milo-trace 2\n", "milo-trace 1\n"];
+const HEADER = "milo-trace 1\n";
 
 function readAt(fd: number, pos: number, len: number): Buffer {
   const buf = Buffer.alloc(len);
@@ -28,17 +27,17 @@ function readAt(fd: number, pos: number, len: number): Buffer {
 export function* traceRecords(path: string): Generator<TraceRecord> {
   const fd = openSync(path, "r");
   try {
-    const head = readAt(fd, 0, HEADERS[0].length).toString("latin1");
-    const header = HEADERS.find(h => h === head);
-    if (!header) throw new Error(`${path} is not a milo-trace file (version 1 or 2)`);
-    let pos = header.length;
+    if (readAt(fd, 0, HEADER.length).toString("latin1") !== HEADER) {
+      throw new Error(`${path} is not a milo-trace version 1 file`);
+    }
+    let pos = HEADER.length;
     for (let seq = 1; ; seq++) {
       let chunk = readAt(fd, pos, 4096);
       if (chunk.length === 0) return;
       const nl = chunk.indexOf(10);
       if (nl < 0) throw new Error(`trace corrupt at record ${seq}`);
       const fields = chunk.subarray(0, nl).toString("latin1").split(" ");
-      if ((fields.length !== 4 && fields.length !== 5) || Number(fields[0]) !== seq) throw new Error(`trace corrupt at record ${seq}`);
+      if (fields.length !== 4 || Number(fields[0]) !== seq) throw new Error(`trace corrupt at record ${seq}`);
       const argLen = Number(fields[2]);
       const payloadLen = Number(fields[3]);
       if (nl + 1 + argLen + 1 > chunk.length) chunk = readAt(fd, pos, nl + 1 + argLen + 1);
@@ -46,7 +45,10 @@ export function* traceRecords(path: string): Generator<TraceRecord> {
       const end = pos + nl + 1 + argLen + 1 + payloadLen + 1;
       const tail = readAt(fd, end - 1, 1);
       if (tail.length !== 1 || tail[0] !== 10) throw new Error(`trace corrupt at record ${seq}`);
-      yield { seq, kind: fields[1], arg, payloadLen, thread: fields.length === 5 ? Number(fields[4]) : 0, offset: pos };
+      // A record made on another OS thread names it after its kind: `net.read@2`.
+      const at = fields[1].lastIndexOf("@");
+      const kind = at < 0 ? fields[1] : fields[1].slice(0, at);
+      yield { seq, kind, arg, payloadLen, thread: at < 0 ? 0 : Number(fields[1].slice(at + 1)), offset: pos };
       pos = end;
     }
   } finally {
@@ -110,7 +112,7 @@ export function runTrace(args: string[]): number {
       if (json) records.push(rec);
       else console.log(`${String(rec.seq).padStart(6)}  ${rec.thread ? `t${rec.thread}`.padEnd(4) : "    "}${rec.kind.padEnd(14)} ${shortArg(rec.arg).padEnd(24)} ${rec.payloadLen} bytes`);
     }
-    if (json) console.log(JSON.stringify({ version: 2, total, holes, records }));
+    if (json) console.log(JSON.stringify({ version: 1, total, holes, records }));
     else for (const h of holes) console.log(`hole: this run called unrecorded ${h.name} at ${h.site} (record ${h.seq}); a replay may diverge`);
     return 0;
   } catch (e) {
