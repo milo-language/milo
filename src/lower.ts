@@ -623,6 +623,16 @@ class LowerCtx {
 
   // The checker's own guard, asked of its result: a call the checker typed as a user fn
   // must never lower as the builtin of the same name.
+  // A thread closure that shares unsafe memory reports the replay hole when it starts
+  // (checkThreadBoundary found it; std/replay says it once per run, under record).
+  private withRawShareReport(expr: Expr, body: HIRStmt[]): HIRStmt[] {
+    const site = this.c.replayRawShares?.get(expr);
+    if (!site || !this.c.functions.has("replayHoleAt")) return body;
+    const str = (value: string): HIRArg => ({ expr: { kind: "StringLit", value, type: { tag: "string" }, span: expr.span }, passByRef: false, refMut: false });
+    const call: HIRExpr = { kind: "Call", func: "replayHoleAt", args: [str("unsafe shared memory"), str(site)], type: { tag: "void" }, variadic: false, span: expr.span };
+    return [{ kind: "ExprStmt", expr: call, span: expr.span }, ...body];
+  }
+
   private shadowedByUserFn(name: string): boolean {
     return userFnShadowsBuiltin(name, { functions: this.c.functions, genericFns: this.c.genericFnNames });
   }
@@ -1538,7 +1548,7 @@ class LowerCtx {
             const resolvedType = pType?.tag === "fn" ? pType.params[expr.params.indexOf(p)] : { tag: "unknown" as const };
             return { name: p.name, type: resolvedType };
           }),
-          body: expr.body.map(s => this.lowerStmt(s, retType)),
+          body: this.withRawShareReport(expr, expr.body.map(s => this.lowerStmt(s, retType))),
           captures,
           retType,
           type,

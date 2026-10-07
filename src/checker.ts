@@ -422,6 +422,8 @@ export interface CheckResult {
   // `file:line` the wrapper is handed, and for a variadic extern how many args are fixed
   // (the rest are widened to i64 for the wrapper's tail).
   replaySites: Map<Expr, { site: string; fixed?: number }>;
+  // Thread closures that share unsafe memory: the `file:line` the run's hole report names.
+  replayRawShares: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
   // `o == Option.None` / `!=` on an enum with payloads: lowered as the tag test of
   // `operand` (the non-literal side) against `tag`.
@@ -646,6 +648,8 @@ export class TypeChecker {
   private matchSubjectMut = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
   private replaySites = new Map<Expr, { site: string; fixed?: number }>();
+  private replayRawShares = new Map<Expr, string>();
+  private declOrigins: import("./ast").DeclOrigins | undefined;
   private replayPlans: Map<string, ReplayPlan> | undefined;
   // The fn being checked records its own extern calls (`@replayHooked`), so they stay direct.
   private currentFnReplayHooked = false;
@@ -1176,6 +1180,16 @@ export class TypeChecker {
   // Whether a value of `ty` holds a raw pointer anywhere inside it. `@copy` is not an
   // exemption here (unlike `resourceKind`): this asks "can it dangle", not "does copying
   // it duplicate an owner".
+  // Whether a struct/enum type's every declaration is in std (a std type that carries a
+  // raw pointer, like a Channel, is std's own audited sharing).
+  private typeDeclaredInStd(ty: TypeKind): boolean {
+    if (ty.tag !== "struct" && ty.tag !== "enum") return false;
+    const base = ty.name.split("<")[0];
+    const files = this.declOrigins?.types.get(base)?.files;
+    if (!files || files.size === 0) return false;
+    return [...files].every(f => f.startsWith(STDLIB_DIR + sep));
+  }
+
   private carriesRawPointer(ty: TypeKind, seen: Set<string> = new Set()): boolean {
     switch (ty.tag) {
       case "ptr": return true;
@@ -1430,7 +1444,6 @@ export class TypeChecker {
       }
     }
     if (!this.functions.has(wrapper)) return;
-    if (process.env.MILO_DEBUG_REPLAY_SITES) console.error(`rr-site ${expr.func} ${plan.hole ? "HOLE" : "rec"} ${replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd())}`);
     this.rewrittenCalls.set(expr, wrapper);
     this.replaySites.set(expr, { site: replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd()), ...(plan.variadic && { fixed: plan.fixed }) });
   }
@@ -3091,6 +3104,7 @@ export class TypeChecker {
       matchSubjectMut: this.matchSubjectMut,
       rewrittenCalls: this.rewrittenCalls,
       replaySites: this.replaySites,
+      replayRawShares: this.replayRawShares,
       rewrittenEnums: this.rewrittenEnums,
       variantTagCompares: this.variantTagCompares,
       staticCalls: this.staticCalls,
@@ -3141,6 +3155,7 @@ export class TypeChecker {
   private checkProgram(program: Program): void {
     this._userFnNames = program.userFnNames;
     this.replayPlans = program.replayPlans;
+    this.declOrigins = program.declOrigins;
     this.entryFile = program.entryFile;
     for (const u of program.unusedImports ?? []) {
       this.warn("unused-import",
@@ -4915,6 +4930,9 @@ export class TypeChecker {
       whyNotSend: (ty) => this.whyNotSend(ty),
       pointerViewsIn: (e) => this.pointerViewsIn(e),
       carriesRawPointer: (t) => this.carriesRawPointer(t),
+      userRawPointerType: (t) => this.carriesRawPointer(t) && !this.typeDeclaredInStd(t),
+      replayRawShares: this.replayRawShares,
+      replaySiteOf: (sp) => replaySite(sp, STDLIB_DIR, process.cwd()),
     };
   }
 

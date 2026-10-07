@@ -98,6 +98,9 @@ const sched = mk("sched");
 const hole = (src: string, why: string, x: Omit<Partial<ExternEffect>, "effect" | "src" | "why"> = {}): ExternEffect => ({ effect: "hole", src, why, ...x });
 
 const E = "errno" as const;
+// Declared by the shared std/os for every target, but the MSVC CRT has no such layout
+// (no dirent, no termios) or a different one this table does not describe.
+const noWinLayout = { windows: { effect: "hole" as const, why: "the MSVC CRT layout of what it writes is not described" } };
 const man = (sec: number, name: string) => `man ${sec} ${name}`;
 const win = (name: string) => `learn.microsoft.com ${name}`;
 const sqlite = (page: string) => `sqlite.org/c3ref/${page}`;
@@ -311,9 +314,9 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   fcntl: input(man(2, "fcntl"), { va: ["i64"], errno: E }),
   ioctl: hole(man(2, "ioctl"), "what it writes depends on the request code"),
   isatty: input(man(3, "isatty"), { errno: E }),
-  stat: input(man(2, "stat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E }),
-  lstat: input(man(2, "lstat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E }),
-  fstat: input(man(2, "fstat"), { out: ["buf[sizeof(struct stat)]"], errno: E }),
+  stat: input(man(2, "stat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
+  lstat: input(man(2, "lstat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
+  fstat: input(man(2, "fstat"), { out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
   access: input(man(2, "access"), { in: ["path"], errno: E }),
   _access: input(win("_access"), { in: ["path"], errno: E }),
   readlink: input(man(2, "readlink"), { in: ["path"], out: ["buf[ret]"], errno: E }),
@@ -321,7 +324,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   getcwd: input(man(3, "getcwd"), { out: ["buf[cstr:size]"], ret: "param:buf", errno: E }),
   GetCurrentDirectoryA: input(win("GetCurrentDirectoryA"), { out: ["buf[cstr:len]"] }),
   opendir: input(man(3, "opendir"), { in: ["path"], ret: "handle", errno: E }),
-  readdir: input(man(3, "readdir"), { ret: "static:sizeof(struct dirent)", errno: E }),
+  readdir: input(man(3, "readdir"), { ret: "static:sizeof(struct dirent)", errno: E, os: noWinLayout }),
   closedir: effect(man(3, "closedir"), { errno: E }),
   mkdir: effect(man(2, "mkdir"), { in: ["path"], errno: E }),
   rmdir: effect(man(2, "rmdir"), { in: ["path"], errno: E }),
@@ -342,7 +345,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   SetCurrentDirectoryA: effect(win("SetCurrentDirectoryA"), { in: ["path"] }),
   mkdtemp: effect(man(3, "mkdtemp"), { out: ["template[cstr]"], ret: "param:template", errno: E }),
   mkstemp: effect(man(3, "mkstemp"), { out: ["template[cstr]"], errno: E }),
-  tcgetattr: input(man(3, "tcgetattr"), { out: ["termios[sizeof(struct termios)]"], errno: E }),
+  tcgetattr: input(man(3, "tcgetattr"), { out: ["termios[sizeof(struct termios)]"], errno: E, os: noWinLayout }),
   tcsetattr: effect(man(3, "tcsetattr"), { errno: E }),
   GetFileType: input(win("GetFileType")),
   GetConsoleMode: input(win("GetConsoleMode"), { out: ["mode[4]"] }),

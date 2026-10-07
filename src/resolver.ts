@@ -496,7 +496,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // program with no such call compiles exactly as before); loading it brings in std/os
   // and std/platform, whose own calls the second pass then sees.
   let replayPlans: Map<string, import("./replay-externs").ReplayPlan> | undefined;
-  if (!process.env.MILO_NO_REPLAY_WRAPPERS && planReplayWrappers(units.map(u => u.prog), target)) {
+  if (planReplayWrappers(units.map(u => u.prog), target)) {
     const importLine = `from "std/replay" import { ${RR_IMPORTS.join(", ")} }\n`;
     const stub = new Parser(new Lexer(importLine).tokenize(), importLine, RR_WRAPPER_FILE).parse();
     const rrUnit: Unit = { prog: stub, file: RR_WRAPPER_FILE, pkg: "", targets: [] };

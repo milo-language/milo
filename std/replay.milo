@@ -1211,6 +1211,26 @@ pub fn replaySyncNote(op: &string, outcome: i64): void {
     replayPut(kind, outcome.toString(), "")
 }
 
+// One ordered atomic operation (std/sync's Atomic* types): `f` performs it and returns
+// its result. Recording runs it inside the trace lock, so the record order is the order
+// the operations really happened in; replay runs it on this thread's turn and checks it
+// returned what it returned when recorded.
+pub fn replaySyncAtomic(op: &string, f: () => i64): i64 {
+    if rrMode == 3 {
+        replaySyncEnter()
+        let r = f()
+        replaySyncNote(op, r)
+        return r
+    }
+    var r: i64 = 0
+    rrLock.run((): void => {
+        r = f()
+        flushIdle()
+        writeRecord("sync." + op, r.toString(), "")
+    })
+    return r
+}
+
 // ── externs (src/replay-externs.ts generates the callers) ──
 
 // Report, once per name, that this run called an extern the trace cannot answer, and
@@ -1245,6 +1265,15 @@ pub fn replayHole(name: &string, site: *u8): void {
     }
     eprint("replay: this run called unrecorded " + name + " at " + where + "; a replay may diverge")
     replayPut("trace.hole", name, where)
+}
+
+// replayHole with C strings, for a report the compiler inserts (a thread closure that
+// shares unsafe memory, see src/checker-program-passes.ts: checkThreadBoundary).
+pub fn replayHoleAt(name: *u8, site: *u8): void {
+    if replayOff() {
+        return
+    }
+    unsafe { replayHole(_cstrToString(name), site) }
 }
 
 // One extern call through the trace. The payload is a header line `<ret> <errno>` and

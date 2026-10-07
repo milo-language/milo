@@ -57,6 +57,12 @@ export interface ProgramPassHost {
   // or enum with a pointer field, `Vec<*T>`, ...). `@copy` does not exempt: a non-owning
   // view is exactly what must not outlive its buffer.
   carriesRawPointer(ty: TypeKind): boolean;
+  // A type that carries a raw pointer and was declared outside std: sharing one with an
+  // OS thread is memory record/replay cannot order.
+  userRawPointerType(ty: TypeKind): boolean;
+  // Thread closures that share unsafe memory, with the `file:line` a run reports.
+  replayRawShares: Map<Expr, string>;
+  replaySiteOf(span: Span | undefined): string;
 }
 
 
@@ -811,7 +817,31 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
           arg.span, host.whyNotSend(cap.type));
       }
       scan(arg, entry);
+      noteRawShare(arg);
     }
+  };
+
+  // Record/replay orders what threads share through std/sync. Memory a thread reaches
+  // through `unsafe` (a raw pointer captured inside a user type that vouched for itself
+  // with `unsafe impl Send`, or an `unsafe` block in the thread's own body) is not
+  // ordered, so it is a replay hole: listed under `--replay-holes`, and reported by the
+  // run when the thread starts (lower.ts prepends the report to the closure body).
+  const noteRawShare = (closure: Expr) => {
+    if (!closure.span?.file || closure.span.file.includes("/std/")) return;
+    const raw = (host.closureCaptures.get(closure) ?? []).find(c => host.userRawPointerType(c.type));
+    let unsafeBlock = false;
+    const look = (node: unknown) => {
+      if (unsafeBlock || !node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const n of node) look(n); return; }
+      if ((node as { kind?: string }).kind === "UnsafeBlock") { unsafeBlock = true; return; }
+      for (const [k, v] of Object.entries(node)) if (k !== "span") look(v);
+    };
+    look((closure as Extract<Expr, { kind: "Closure" }>).body);
+    if (!raw && !unsafeBlock) return;
+    const why = raw ? `it captures '${raw.name}', which carries a raw pointer` : `its body has an 'unsafe' block`;
+    host.warn("replay-hole", `this closure runs on an OS thread and ${why}: memory shared that way is not ordered under record/replay`, closure.span,
+      `share state between threads through std/sync (Channel, AtomicI64, WaitGroup, Once), which record/replay orders`);
+    host.replayRawShares.set(closure, host.replaySiteOf(closure.span));
   };
 
   const findCalls = (node: unknown) => {

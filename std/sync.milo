@@ -9,8 +9,51 @@ from "std/platform" import {
 from "std/os" import {
     free, malloc, memcpy, memset
 }
+from "std/replay" import {
+    replayOff, replayActive, replaySyncOn, replaySyncEnter, replaySyncNote, replaySyncAtomic
+}
 from "std/runtime" import {
     schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, schedulerBlockMain, schedulerPollMain, selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
+}
+
+// ── ordering under record/replay ──
+//
+// Once a recorded or replayed program has started an OS thread, every operation below
+// whose outcome another thread can change is one ordered record (std/replay, threads):
+// each time an operation looks at a primitive's state under its lock (a receive finding
+// the queue empty or not, a WaitGroup's count, an atomic's value), the outcome is
+// recorded, and a replay makes the same thread look at the same moment. What keeps this
+// deadlock-free: a thread waits for its turn BEFORE taking a primitive's lock (syncLock),
+// never while holding it, and under replay it never sleeps on a condition variable,
+// because the wakeup it would wait for is itself a later turn (syncCondWait).
+
+fn syncOrdered(): bool {
+    return !replayOff() && replaySyncOn()
+}
+
+fn syncLock(mtx: *u8): void {
+    if syncOrdered() {
+        replaySyncEnter()
+    }
+    unsafe { pthread_mutex_lock(mtx) }
+}
+
+// One look at a primitive's state, made with its lock held. `outcome` is what was seen.
+fn syncNote(op: string, outcome: i64): void {
+    if syncOrdered() {
+        replaySyncNote(op, outcome)
+    }
+}
+
+fn syncCondWait(cond: *u8, mtx: *u8): void {
+    unsafe {
+        if syncOrdered() && replayActive() {
+            pthread_mutex_unlock(mtx)
+            syncLock(mtx)
+            return
+        }
+        pthread_cond_wait(cond, mtx)
+    }
 }
 
 // ── Channel<T> ──
@@ -195,7 +238,7 @@ fn chParkRecv(inner: *ChannelInner): void {
         (*inner).recvWaitHead = wp
         pthread_mutex_unlock((*inner).mtx)
         schedulerPark()
-        pthread_mutex_lock((*inner).mtx)
+        syncLock((*inner).mtx)
     }
 }
 
@@ -209,7 +252,7 @@ fn chParkSend(inner: *ChannelInner): void {
         (*inner).sendWaitHead = wp
         pthread_mutex_unlock((*inner).mtx)
         schedulerPark()
-        pthread_mutex_lock((*inner).mtx)
+        syncLock((*inner).mtx)
     }
 }
 
@@ -234,11 +277,13 @@ fn chWakeOneSend(inner: *ChannelInner): void {
 pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
-        pthread_mutex_lock((*inner).mtx)
+        syncLock((*inner).mtx)
         if (*inner).closed == 1 || (*inner).len > 0 {
+            syncNote("arm.recv", 1)
             pthread_mutex_unlock((*inner).mtx)
             return true
         }
+        syncNote("arm.recv", 0)
         nodeStorePtr(node, nodeNext(), (*inner).recvWaitHead)
         (*inner).recvWaitHead = node
         pthread_mutex_unlock((*inner).mtx)
@@ -252,11 +297,13 @@ pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
 pub fn channelArmSend(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
-        pthread_mutex_lock((*inner).mtx)
+        syncLock((*inner).mtx)
         if (*inner).closed == 1 || (*inner).len < (*inner).capacity {
+            syncNote("arm.send", 1)
             pthread_mutex_unlock((*inner).mtx)
             return true
         }
+        syncNote("arm.send", 0)
         nodeStorePtr(node, nodeNext(), (*inner).sendWaitHead)
         (*inner).sendWaitHead = node
         pthread_mutex_unlock((*inner).mtx)
@@ -370,13 +417,15 @@ impl Channel<T> {
             let mtx = (*inner).mtx
             let cap = (*inner).capacity
 
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
             if (*inner).closed == 1 {
+                syncNote("send", 2)
                 pthread_mutex_unlock(mtx)
                 return Result.Err("channel closed")
             }
             var curLen: i64 = (*inner).len
             while curLen == cap {
+                syncNote("send", 0)
                 // in a green task, park the task so the scheduler keeps
                 // running; on the main thread with a live scheduler, drive it
                 // so a green receiver can drain the buffer (blocking the cond
@@ -388,16 +437,18 @@ impl Channel<T> {
                 } else if schedulerExists() {
                     pthread_mutex_unlock(mtx)
                     schedulerPollMain()
-                    pthread_mutex_lock(mtx)
+                    syncLock(mtx)
                 } else {
-                    pthread_cond_wait((*inner).condNotFull, mtx)
+                    syncCondWait((*inner).condNotFull, mtx)
                 }
                 if (*inner).closed == 1 {
+                    syncNote("send", 2)
                     pthread_mutex_unlock(mtx)
                     return Result.Err("channel closed")
                 }
                 curLen = (*inner).len
             }
+            syncNote("send", 1)
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
@@ -421,13 +472,15 @@ impl Channel<T> {
             let mtx = (*inner).mtx
             let cap = (*inner).capacity
 
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
             var curLen: i64 = (*inner).len
             while curLen == 0 {
                 if (*inner).closed == 1 {
+                    syncNote("recv", 2)
                     pthread_mutex_unlock(mtx)
                     return Result.Err("channel closed")
                 }
+                syncNote("recv", 0)
                 // green task: park (scheduler keeps running). main thread with
                 // a live scheduler: drive it so a green sender can fill the
                 // buffer — the two-branch version deadlocked here because the
@@ -438,12 +491,13 @@ impl Channel<T> {
                 } else if schedulerExists() {
                     pthread_mutex_unlock(mtx)
                     schedulerPollMain()
-                    pthread_mutex_lock(mtx)
+                    syncLock(mtx)
                 } else {
-                    pthread_cond_wait((*inner).condNotEmpty, mtx)
+                    syncCondWait((*inner).condNotEmpty, mtx)
                 }
                 curLen = (*inner).len
             }
+            syncNote("recv", 1)
             var head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
             memcpy((val.addrOf()) as *u8, slotPtr, sizeOf<T>())
@@ -463,13 +517,15 @@ impl Channel<T> {
             let inner = self.h._ptr as *ChannelInner
             let mtx = (*inner).mtx
 
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
             let curLen: i64 = (*inner).len
             let cap = (*inner).capacity
             if curLen == cap {
+                syncNote("trySend", 0)
                 pthread_mutex_unlock(mtx)
                 return false
             }
+            syncNote("trySend", 1)
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
@@ -490,12 +546,14 @@ impl Channel<T> {
             let inner = self.h._ptr as *ChannelInner
             let mtx = (*inner).mtx
 
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
             let curLen: i64 = (*inner).len
             if curLen == 0 {
+                syncNote("tryRecv", 0)
                 pthread_mutex_unlock(mtx)
                 return Option.None
             }
+            syncNote("tryRecv", 1)
             let cap = (*inner).capacity
             var head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
@@ -514,8 +572,9 @@ impl Channel<T> {
         unsafe {
             let inner = self.h._ptr as *ChannelInner
             let mtx = (*inner).mtx
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
             let n: i64 = (*inner).len
+            syncNote("len", n)
             pthread_mutex_unlock(mtx)
             return n
         }
@@ -541,7 +600,8 @@ impl Channel<T> {
         unsafe {
             let inner = self.h._ptr as *ChannelInner
             let mtx = (*inner).mtx
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
+            syncNote("close", 0)
             (*inner).closed = 1
             // every parked green task must observe closed and error out
             while (*inner).recvWaitHead as i64 != 0 {
@@ -667,32 +727,64 @@ impl AtomicI64 {
 
     // Atomic read.
     fn load(self: &Self): i64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.load", (): i64 => {
+                return _atomicLoadI64(self._ptr)
+            })
+        }
         return _atomicLoadI64(self._ptr)
     }
 
     // Atomic write.
     fn store(self: &Self, val: i64): void {
+        if syncOrdered() {
+            let _ = replaySyncAtomic("atomic.store", (): i64 => {
+                _atomicStoreI64(self._ptr, val)
+                return 0
+            })
+            return
+        }
         _atomicStoreI64(self._ptr, val)
     }
 
     // Atomic add. Returns the OLD value. Wraps on overflow.
     fn add(self: &Self, val: i64): i64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.add", (): i64 => {
+                return _atomicAddI64(self._ptr, val)
+            })
+        }
         return _atomicAddI64(self._ptr, val)
     }
 
     // Atomic subtract. Returns the OLD value. Wraps on underflow.
     fn sub(self: &Self, val: i64): i64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.sub", (): i64 => {
+                return _atomicSubI64(self._ptr, val)
+            })
+        }
         return _atomicSubI64(self._ptr, val)
     }
 
     // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: i64): i64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.swap", (): i64 => {
+                return _atomicSwapI64(self._ptr, val)
+            })
+        }
         return _atomicSwapI64(self._ptr, val)
     }
 
     // Store `desired` only if the current value is `expected`. Returns the value that
     // was there — equal to `expected` exactly when the swap happened.
     fn cas(self: &Self, expected: i64, desired: i64): i64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.cas", (): i64 => {
+                return _atomicCasI64(self._ptr, expected, desired)
+            })
+        }
         return _atomicCasI64(self._ptr, expected, desired)
     }
 }
@@ -753,22 +845,53 @@ impl AtomicBool {
 
     // Atomic read.
     fn load(self: &Self): bool {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.load", (): i64 => {
+                if _atomicLoadBool(self._ptr) {
+                    return 1
+                }
+                return 0
+            }) != 0
+        }
         return _atomicLoadBool(self._ptr)
     }
 
     // Atomic write.
     fn store(self: &Self, val: bool): void {
+        if syncOrdered() {
+            let _ = replaySyncAtomic("atomic.store", (): i64 => {
+                _atomicStoreBool(self._ptr, val)
+                return 0
+            })
+            return
+        }
         _atomicStoreBool(self._ptr, val)
     }
 
     // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: bool): bool {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.swap", (): i64 => {
+                if _atomicSwapBool(self._ptr, val) {
+                    return 1
+                }
+                return 0
+            }) != 0
+        }
         return _atomicSwapBool(self._ptr, val)
     }
 
     // Returns the value that was there — equal to `expected` exactly when the swap
     // happened, which is how a caller claims a one-shot flag: `f.cas(false, true) == false`.
     fn cas(self: &Self, expected: bool, desired: bool): bool {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.cas", (): i64 => {
+                if _atomicCasBool(self._ptr, expected, desired) {
+                    return 1
+                }
+                return 0
+            }) != 0
+        }
         return _atomicCasBool(self._ptr, expected, desired)
     }
 }
@@ -828,32 +951,64 @@ impl AtomicI32 {
 
     // Atomic read.
     fn load(self: &Self): i32 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.load", (): i64 => {
+                return (_atomicLoadI32(self._ptr)) as i64
+            }) as i32
+        }
         return _atomicLoadI32(self._ptr)
     }
 
     // Atomic write.
     fn store(self: &Self, val: i32): void {
+        if syncOrdered() {
+            let _ = replaySyncAtomic("atomic.store", (): i64 => {
+                _atomicStoreI32(self._ptr, val)
+                return 0
+            })
+            return
+        }
         _atomicStoreI32(self._ptr, val)
     }
 
     // Returns the OLD value. Wraps on overflow.
     fn add(self: &Self, val: i32): i32 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.add", (): i64 => {
+                return (_atomicAddI32(self._ptr, val)) as i64
+            }) as i32
+        }
         return _atomicAddI32(self._ptr, val)
     }
 
     // Returns the OLD value. Wraps on underflow.
     fn sub(self: &Self, val: i32): i32 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.sub", (): i64 => {
+                return (_atomicSubI32(self._ptr, val)) as i64
+            }) as i32
+        }
         return _atomicSubI32(self._ptr, val)
     }
 
     // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: i32): i32 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.swap", (): i64 => {
+                return (_atomicSwapI32(self._ptr, val)) as i64
+            }) as i32
+        }
         return _atomicSwapI32(self._ptr, val)
     }
 
     // Store `desired` only if the current value is `expected`. Returns the value that
     // was there — equal to `expected` exactly when the swap happened.
     fn cas(self: &Self, expected: i32, desired: i32): i32 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.cas", (): i64 => {
+                return (_atomicCasI32(self._ptr, expected, desired)) as i64
+            }) as i32
+        }
         return _atomicCasI32(self._ptr, expected, desired)
     }
 }
@@ -919,32 +1074,64 @@ impl AtomicU64 {
 
     // Atomic read.
     fn load(self: &Self): u64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.load", (): i64 => {
+                return (_atomicLoadI64(self._ptr) as u64) as i64
+            }) as u64
+        }
         return _atomicLoadI64(self._ptr) as u64
     }
 
     // Atomic write.
     fn store(self: &Self, val: u64): void {
+        if syncOrdered() {
+            let _ = replaySyncAtomic("atomic.store", (): i64 => {
+                _atomicStoreI64(self._ptr, val as i64)
+                return 0
+            })
+            return
+        }
         _atomicStoreI64(self._ptr, val as i64)
     }
 
     // Returns the OLD value. Wraps on overflow.
     fn add(self: &Self, val: u64): u64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.add", (): i64 => {
+                return (_atomicAddI64(self._ptr, val as i64) as u64) as i64
+            }) as u64
+        }
         return _atomicAddI64(self._ptr, val as i64) as u64
     }
 
     // Returns the OLD value. Wraps on underflow.
     fn sub(self: &Self, val: u64): u64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.sub", (): i64 => {
+                return (_atomicSubI64(self._ptr, val as i64) as u64) as i64
+            }) as u64
+        }
         return _atomicSubI64(self._ptr, val as i64) as u64
     }
 
     // Atomic swap. Returns the old value.
     fn swap(self: &Self, val: u64): u64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.swap", (): i64 => {
+                return (_atomicSwapI64(self._ptr, val as i64) as u64) as i64
+            }) as u64
+        }
         return _atomicSwapI64(self._ptr, val as i64) as u64
     }
 
     // Store `desired` only if the current value is `expected`. Returns the value that
     // was there — equal to `expected` exactly when the swap happened.
     fn cas(self: &Self, expected: u64, desired: u64): u64 {
+        if syncOrdered() {
+            return replaySyncAtomic("atomic.cas", (): i64 => {
+                return (_atomicCasI64(self._ptr, expected as i64, desired as i64) as u64) as i64
+            }) as u64
+        }
         return _atomicCasI64(self._ptr, expected as i64, desired as i64) as u64
     }
 }
@@ -1025,8 +1212,9 @@ impl WaitGroup {
     fn add(self: &Self, n: i64): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        unsafe { pthread_mutex_lock(mtx) }
+        syncLock(mtx)
         nodeStoreI64(p, 16, nodeLoadI64(p, 16) + n)
+        syncNote("wg.add", nodeLoadI64(p, 16))
         unsafe { pthread_mutex_unlock(mtx) }
     }
 
@@ -1034,9 +1222,10 @@ impl WaitGroup {
     fn done(self: &Self): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        unsafe { pthread_mutex_lock(mtx) }
+        syncLock(mtx)
         let c = nodeLoadI64(p, 16) - 1
         nodeStoreI64(p, 16, c)
+        syncNote("wg.done", c)
         if c <= 0 {
             // wake every parked green waiter, then broadcast to pthreads
             var h = nodeLoadPtr(p, 24)
@@ -1056,8 +1245,9 @@ impl WaitGroup {
             let mtx = nodeLoadPtr(p, 0)
             let cur = schedulerCurrent()
             if cur as i64 != 0 {
-                pthread_mutex_lock(mtx)
+                syncLock(mtx)
                 while nodeLoadI64(p, 16) > 0 {
+                    syncNote("wg.wait", 0)
                     var w: [u8; 48] = [0; 48]
                     let wp = w as *u8
                     nodeStoreI64(wp, nodeKind(), kindPlain())
@@ -1066,15 +1256,21 @@ impl WaitGroup {
                     nodeStorePtr(p, 24, wp)
                     pthread_mutex_unlock(mtx)
                     schedulerPark()
-                    pthread_mutex_lock(mtx)
+                    syncLock(mtx)
                 }
+                syncNote("wg.wait", 1)
                 pthread_mutex_unlock(mtx)
             } else if schedulerExists() {
                 // main thread with live tasks: drive the scheduler (blocking on
                 // the wakeup fd) until a worker's done() drops the count to zero
                 while true {
-                    pthread_mutex_lock(mtx)
+                    syncLock(mtx)
                     let c = nodeLoadI64(p, 16)
+                    if c <= 0 {
+                        syncNote("wg.wait", 1)
+                    } else {
+                        syncNote("wg.wait", 0)
+                    }
                     pthread_mutex_unlock(mtx)
                     if c <= 0 {
                         return
@@ -1082,10 +1278,12 @@ impl WaitGroup {
                     schedulerBlockMain()
                 }
             } else {
-                pthread_mutex_lock(mtx)
+                syncLock(mtx)
                 while nodeLoadI64(p, 16) > 0 {
-                    pthread_cond_wait(nodeLoadPtr(p, 8), mtx)
+                    syncNote("wg.wait", 0)
+                    syncCondWait(nodeLoadPtr(p, 8), mtx)
                 }
+                syncNote("wg.wait", 1)
                 pthread_mutex_unlock(mtx)
             }
         }
@@ -1190,16 +1388,16 @@ fn onceWait(p: *u8, mtx: *u8): void {
             nodeStorePtr(p, 24, wp)
             pthread_mutex_unlock(mtx)
             schedulerPark()
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
         } else if schedulerExists() {
             // bounded poll, not schedulerBlockMain: the wake condition is a state
             // word flipped under a mutex, not an fd event, so a -1 poll would sleep
             // straight past a foreign thread's completion.
             pthread_mutex_unlock(mtx)
             schedulerPollMain()
-            pthread_mutex_lock(mtx)
+            syncLock(mtx)
         } else {
-            pthread_cond_wait(nodeLoadPtr(p, 8), mtx)
+            syncCondWait(nodeLoadPtr(p, 8), mtx)
         }
     }
 }
@@ -1265,7 +1463,9 @@ impl Once {
     // so it aborts with that message instead of hanging.
     @synchronized
     fn run(self: &Self, f: () => void): void {
-        if _atomicLoadI64(onceStatePtr(self._p)) == ONCE_DONE {
+        // The unlocked fast path is skipped while ordered: whether it sees DONE depends on
+        // another thread's timing, and _claim records what it sees.
+        if !syncOrdered() && _atomicLoadI64(onceStatePtr(self._p)) == ONCE_DONE {
             return
         }
         if self._claim() {
@@ -1279,8 +1479,9 @@ impl Once {
     fn _claim(self: &Self): bool {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        unsafe { pthread_mutex_lock(mtx) }
+        syncLock(mtx)
         while _atomicLoadI64(onceStatePtr(p)) != ONCE_DONE {
+            syncNote("once", _atomicLoadI64(onceStatePtr(p)))
             if _atomicLoadI64(onceStatePtr(p)) == ONCE_IDLE {
                 _atomicStoreI64(onceStatePtr(p), ONCE_RUNNING)
                 nodeStorePtr(p, 32, schedulerCurrent())
@@ -1293,6 +1494,7 @@ impl Once {
             onceRejectReentry(p, mtx)
             onceWait(p, mtx)
         }
+        syncNote("once", ONCE_DONE)
         unsafe { pthread_mutex_unlock(mtx) }
         return false
     }
@@ -1301,7 +1503,8 @@ impl Once {
     fn _complete(self: &Self): void {
         let p = self._p
         let mtx = nodeLoadPtr(p, 0)
-        unsafe { pthread_mutex_lock(mtx) }
+        syncLock(mtx)
+        syncNote("once.done", 0)
         _atomicStoreI64(onceStatePtr(p), ONCE_DONE)
         var h = nodeLoadPtr(p, 24)
         while h as i64 != 0 {
