@@ -50,6 +50,7 @@ build rather than quietly teaching the wrong thing.
 | [`opaque-call-on-thread`](#opaque-call-on-thread) | allow |
 | [`redundant-cast`](#redundant-cast) | warn |
 | [`shadows-stdlib-override`](#shadows-stdlib-override) | warn |
+| [`replay-hole`](#replay-hole) | allow |
 | [`single-variant-match`](#single-variant-match) | allow |
 | [`string-concat-in-loop`](#string-concat-in-loop) | warn |
 | [`unused-import`](#unused-import) | allow |
@@ -381,6 +382,24 @@ fn main() {
 ```
 
 **Fix:** Rename the function, or pass `--allow=shadows-stdlib-override` when the override is deliberate.
+
+### replay-hole
+
+_Off by default — enable with `--deny=replay-hole` or `--expect=replay-hole`._
+
+Under `MILO_RECORD` every extern call is recorded so `MILO_REPLAY` can answer it: from the std extern catalog, from an `@records(...)` attribute on the declaration, or by return value when every param is a scalar. An extern that takes or returns a pointer and has none of these cannot be recorded, so a replay runs it for real and may diverge. A recorded run reports the first call to each one on stderr; `--replay-holes` lists them at compile time, and `--deny=replay-hole` fails a build that has one.
+
+```milo
+extern fn fillBuffer(buf: *u8, n: i64): i32
+
+fn main() {
+  var b: [u8; 8] = [0; 8]
+  unsafe { fillBuffer(b as *u8, 8) }
+  print(b[0].toString())
+}
+```
+
+**Fix:** Describe what the extern writes with `@records("buf[len]")` on its declaration, or call the std function that wraps it.
 
 ### single-variant-match
 

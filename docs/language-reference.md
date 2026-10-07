@@ -3463,6 +3463,34 @@ The compiler rejects using an opaque type by value — only `*sqlite3` is valid.
 let db: *sqlite3 = 0 as *sqlite3
 ```
 
+### Extern calls under record/replay: `@records`
+
+A program run with `MILO_RECORD` records every extern call it makes so `MILO_REPLAY` can
+answer it ([record-replay.md](record-replay.md)). A call to an extern with only scalar
+params and return is recorded by its return value; std's externs are described by a
+catalog. An extern of your own that writes through a pointer says what it writes:
+
+```milo
+@records("buf[cstr:len]")
+extern fn confstr(name: i32, buf: *u8, len: i64): i64
+
+@records("out[ret]", "outLen[4]")
+extern fn readPacket(fd: i32, out: *u8, cap: i64, outLen: *u32): i64
+```
+
+One string per output buffer, `<param>[<size>]`, where the size is a param (`buf[len]`),
+`ret`, a byte count, a multiple (`buf[8*ret]`), the count an integer param points at
+(`buf[*lenp]`), or `cstr` / `cstr:<cap>` for a NUL-terminated string; `ret[cstr]`
+describes a returned string. Under replay the call is not made: the recorded return
+value, errno and bytes are copied back. `@records` with no arguments records only the
+return value. An extern taking a pointer with no description is a replay hole: a recorded
+run reports its first call on stderr, and `milo check --replay-holes` lists every call
+site (`--deny=replay-hole` fails the build).
+
+`@replayHooked` marks a fn that records its own extern calls through `std/replay` (std's
+`sys*` wrappers); the compiler leaves its calls direct. std/replay and the runtime under
+it use the file-level form, `@!replayHooked`.
+
 ### Extern Structs
 
 `extern struct` declares a C-layout struct. The compiler knows field offsets and generates GEP instructions for field access:

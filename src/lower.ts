@@ -873,7 +873,8 @@ class LowerCtx {
             span: expr.span,
           };
         }
-        const funcName = this.c.rewrittenCalls.get(expr) ?? expr.func;
+        const rr = this.c.replaySites?.get(expr);
+        const funcName = rr?.wrapper ?? this.c.rewrittenCalls.get(expr) ?? expr.func;
         const sig = this.c.functions.get(funcName);
         const args: HIRArg[] = expr.args.map((arg) => {
           const borrowed = this.c.autoBorrowed.get(arg);
@@ -883,7 +884,6 @@ class LowerCtx {
             refMut: borrowed?.mutable ?? false,
           };
         });
-        const rr = this.c.replaySites?.get(expr);
         if (rr) {
           // A record/replay wrapper (src/replay-externs.ts): a variadic tail arrives widened
           // to i64, and the last param is the call site a hole report names.

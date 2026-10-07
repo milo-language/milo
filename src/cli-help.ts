@@ -217,6 +217,7 @@ export const OPTIONS: CliOption[] = [
   { flag: "--safety=<level>", help: ["enforce safety profile (e.g. --safety=do178)"] },
   { flag: "--target=<name>", help: ["cross-compile target (e.g. cortex-m3)"] },
   { flag: "--heap-size=<N>", help: ["bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM"] },
+  { flag: "--replay-holes", help: ["List every extern call record/replay cannot capture (warning replay-hole)"] },
   { flag: "--max-stack-array=<N>", help: ["large-stack-array warning threshold, bytes or k/m (default: 512k)"] },
   { flag: "--no-entry", help: ["omit the C entry point, for a freestanding image with its own reset vector"] },
   { flag: "--emit-header", help: ["with emit-obj, also write a C header for the exported symbols"] },

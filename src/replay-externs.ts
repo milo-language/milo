@@ -336,7 +336,8 @@ export function planReplayWrappers(programs: Program[], target: Target): { plans
   const calls = new Map<string, Set<number>>();
   for (const p of programs) {
     for (const f of p.functions) {
-      if (f.isExtern) { if (!externs.has(f.name)) externs.set(f.name, f); continue; }
+      // Last wins, as in the resolver's merge: the decl the program ends up with.
+      if (f.isExtern) { externs.set(f.name, f); continue; }
       if (!isReplayHookedFn(f)) collectCalls(f.body, calls);
     }
     for (const im of p.impls) for (const m of im.methods) if (!isReplayHookedFn(m)) collectCalls(m.body, calls);

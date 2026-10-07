@@ -427,11 +427,12 @@ Parsed by every command that takes a source file. Each acts on the ones that app
 | `--deny=<warning>` | Treat warning as error (e.g. --deny=unused-variable). |
 | `--allow=<warning>` | Suppress warning (e.g. --allow=unused-result). |
 | `--expect=<warning>` | Suppress it, and report if it stops occurring (e.g. --expect=index-clone). |
-| `--deny-all` | Treat all warnings as errors (off-by-default warnings: large-stack-array, mut-param-bundle, opaque-call-on-thread, single-variant-match, unused-import, unowned-pointer-copy, unchecked-ffi-contract, unused-move, unverified-extern). |
+| `--deny-all` | Treat all warnings as errors (off-by-default warnings: large-stack-array, mut-param-bundle, opaque-call-on-thread, replay-hole, single-variant-match, unused-import, unowned-pointer-copy, unchecked-ffi-contract, unused-move, unverified-extern). |
 | `--json` | Machine-readable output, for tooling instead of a human (api, lang, explain, check, prove, safety, test; see docs/json-api.md). |
 | `--safety=<level>` | Enforce safety profile (e.g. --safety=do178). |
 | `--target=<name>` | Cross-compile target (e.g. cortex-m3). |
 | `--heap-size=<N>` | Bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM. |
+| `--replay-holes` | List every extern call record/replay cannot capture (warning replay-hole). |
 | `--max-stack-array=<N>` | Large-stack-array warning threshold, bytes or k/m (default: 512k). |
 | `--no-entry` | Omit the C entry point, for a freestanding image with its own reset vector. |
 | `--emit-header` | With emit-obj, also write a C header for the exported symbols. |

@@ -500,7 +500,13 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     const importLine = `from "std/replay" import { ${RR_IMPORTS.join(", ")} }\n`;
     const stub = new Parser(new Lexer(importLine).tokenize(), importLine, RR_WRAPPER_FILE).parse();
     const rrUnit: Unit = { prog: stub, file: RR_WRAPPER_FILE, pkg: "", targets: [] };
+    const before = units.length;
     processImports(stub, STDLIB_DIR, "", rrUnit);
+    // The modules this pulled in go ahead of the entry file, where they would have been
+    // had the program imported them: the merge is last-wins, and a user decl that shares
+    // a std name (an extern redeclared, a documented override) must stay the one kept.
+    const added = units.splice(before);
+    units.splice(units.indexOf(entryUnit), 0, ...added);
     const planned = planReplayWrappers(units.map(u => u.prog), target);
     if (planned) {
       const wrappers = new Parser(new Lexer(planned.source).tokenize(), planned.source, RR_WRAPPER_FILE).parse();

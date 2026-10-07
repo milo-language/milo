@@ -421,7 +421,7 @@ export interface CheckResult {
   // Extern calls redirected to a record/replay wrapper (src/replay-externs.ts): the
   // `file:line` the wrapper is handed, and for a variadic extern how many args are fixed
   // (the rest are widened to i64 for the wrapper's tail).
-  replaySites: Map<Expr, { site: string; fixed?: number }>;
+  replaySites: Map<Expr, { wrapper: string; site: string; fixed?: number }>;
   // Thread closures that share unsafe memory: the `file:line` the run's hole report names.
   replayRawShares: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
@@ -647,7 +647,7 @@ export class TypeChecker {
   private matchSubjectRef = new Set<Expr>();
   private matchSubjectMut = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
-  private replaySites = new Map<Expr, { site: string; fixed?: number }>();
+  private replaySites = new Map<Expr, { wrapper: string; site: string; fixed?: number }>();
   private replayRawShares = new Map<Expr, string>();
   private declOrigins: import("./ast").DeclOrigins | undefined;
   private replayPlans: Map<string, ReplayPlan> | undefined;
@@ -1444,8 +1444,9 @@ export class TypeChecker {
       }
     }
     if (!this.functions.has(wrapper)) return;
-    this.rewrittenCalls.set(expr, wrapper);
-    this.replaySites.set(expr, { site: replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd()), ...(plan.variadic && { fixed: plan.fixed }) });
+    // Kept out of rewrittenCalls on purpose: every other pass (purity, the thread
+    // boundary, call graphs) should keep seeing the extern the program wrote.
+    this.replaySites.set(expr, { wrapper, site: replaySite(sp ?? expr.span, STDLIB_DIR, process.cwd()), ...(plan.variadic && { fixed: plan.fixed }) });
   }
 
   // Manifest deps are the only mangled code, so a `<pkg>$` prefix settles it.
