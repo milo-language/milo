@@ -126,3 +126,23 @@ Serial, one agent at a time, each landed green before the next:
    `supportsStepBack`; "step back" and "reverse continue" re-run the program under
    `--replay` to the previous recorded call and stop there. Demo: record a failing run of
    a Milo program, open it in dapweb, run to the failure, step backwards to the cause.
+
+## Replay phase 4: close the gaps (accepted 2026-10-06, after the dapweb demo)
+
+Phases 1-3 record what goes through std; raw `unsafe` extern calls and OS threads are
+unrecorded. Both can be closed, the way rr closes them for Linux syscalls:
+
+1. An extern effect catalog: for every extern std declares (POSIX/libc on darwin and
+   linux, Win32 on windows), what it returns and what it writes through pointers, with
+   output sizes (`read` writes `buf[ret]`, `stat` writes `sizeof(stat)`, `getaddrinfo`
+   writes a list). Built from the man pages and Win32 docs, like rr's syscall table.
+2. The compiler records catalogued extern calls automatically under MILO_RECORD and
+   replays them under MILO_REPLAY; `@pure` externs need nothing; externs with only scalar
+   params and return are recorded with no catalog entry. User code describes its own
+   externs with one attribute (e.g. `@records(buf[len])`).
+3. Holes are never silent: uncatalogued pointer-taking externs are listed at compile time
+   and reported once per recorded run ("this run called unrecorded foo at x.milo:42").
+4. OS threads: safe Milo shares memory between threads only through std sync primitives
+   (Mutex, Channel, atomics), so recording their acquisition/message order per thread is
+   enough to replay multithreaded programs deterministically; rr instead serializes all
+   threads onto one core. `unsafe` shared memory is reported as a hole.
