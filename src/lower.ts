@@ -7,6 +7,9 @@ import type { CheckResult, EnumInfo } from "./checker";
 import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract } from "./hir";
 import type { TypeKind } from "./types";
+import { RR_WRAPPER_FILE } from "./replay-externs";
+
+const isStdReplayFile = (f: string | undefined) => !!f && /[\\/]std[\\/]replay\.milo$/.test(f);
 import { typeFromAst, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 import { readFileSync, existsSync, statSync } from "fs";
 import { resolve, dirname } from "path";
@@ -69,6 +72,7 @@ class LowerCtx {
   }
 
   lowerProgram(program: Program): HIRModule {
+    this.replayFns = new Set(program.functions.filter(f => isStdReplayFile(f.sourceFile)).map(f => f.name));
     const structs: HIRStruct[] = [];
     const opaqueTypes: string[] = [];
     for (const s of program.structs) {
@@ -276,6 +280,7 @@ class LowerCtx {
       ...((fn.fromWrappingModule || fn.attributes?.some(a => a.name === "wrapping")) && { isWrapping: true }),
       ...(fn.isPub && { isPub: true }),
       ...(fn.sourceFile && { sourceFile: fn.sourceFile }),
+      ...(this.isReplayEngine(fn) && { replayEngine: true }),
       // AST fns carry no span; proxy the decl line with the first body stmt that has one
       ...((): { line: number } | {} => {
         const l = fn.body.map(s => s.span?.line).find(x => x !== undefined);
@@ -631,6 +636,28 @@ class LowerCtx {
     const str = (value: string): HIRArg => ({ expr: { kind: "StringLit", value, type: { tag: "string" }, span: expr.span }, passByRef: false, refMut: false });
     const call: HIRExpr = { kind: "Call", func: "replayHoleAt", args: [str("unsafe shared memory"), str(site)], type: { tag: "void" }, variadic: false, span: expr.span };
     return [{ kind: "ExprStmt", expr: call, span: expr.span }, ...body];
+  }
+
+  private replayFns = new Set<string>();
+
+  // Whether `fn` belongs to the record/replay engine (see HIRFunction.replayEngine):
+  // std/replay itself except its allocator, a generated extern wrapper, a `@replayHooked`
+  // fn, or any fn that calls into std/replay (a hook). The allocator is left out because
+  // it is what reads the flag, on every allocation.
+  private isReplayEngine(fn: import("./ast").Function): boolean {
+    if (this.replayFns.size === 0) return false;
+    if (isStdReplayFile(fn.sourceFile)) return !/heap|Heap/.test(fn.name);
+    if (fn.sourceFile === RR_WRAPPER_FILE || fn.attributes?.some(a => a.name === "replayHooked")) return true;
+    let calls = false;
+    const walk = (n: unknown): void => {
+      if (calls || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+      const e = n as { kind?: string; func?: unknown };
+      if (e.kind === "Call" && typeof e.func === "string" && this.replayFns.has(e.func) && !/heap|Heap/.test(e.func)) { calls = true; return; }
+      for (const [k, v] of Object.entries(n)) if (k !== "span") walk(v);
+    };
+    walk(fn.body);
+    return calls;
   }
 
   private shadowedByUserFn(name: string): boolean {

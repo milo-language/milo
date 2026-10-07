@@ -611,3 +611,62 @@ pub extern fn dlclose(_handle: *u8): i32
 
 @cSig("dlfcn.h", "char *dlerror(void)")
 pub extern fn dlerror(): *u8
+
+// ── record/replay: addresses ──
+// A process cannot turn ASLR off for itself once it runs, so std/replay re-executes the
+// program once at startup, in place (POSIX_SPAWN_SETEXEC keeps the pid), with
+// _POSIX_SPAWN_DISABLE_ASLR: the flag lldb launches with. Then the image, the stack and
+// every fixed-address mapping land where they landed in the recording.
+@cSig("spawn.h", "int posix_spawnattr_init(posix_spawnattr_t *)")
+pub extern fn posix_spawnattr_init(attr: *u8): i32
+
+@cSig("spawn.h", "int posix_spawnattr_setflags(posix_spawnattr_t *, short)")
+pub extern fn posix_spawnattr_setflags(attr: *u8, flags: i16): i32
+
+pub extern fn posix_spawn(pid: *i32, path: *u8, actions: *u8, attr: *u8, argv: *u8, envp: *u8): i32
+
+@cSig("sys/sysctl.h", "int sysctl(int *, u_int, void *, size_t *, void *, size_t)")
+pub extern fn sysctl(name: *i32, namelen: u32, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
+
+// True when a debugger traces this process (kinfo_proc.kp_proc.p_flag & P_TRACED): the
+// debugger launched it, and lldb launches with ASLR off already.
+@replayHooked
+fn processTraced(): bool {
+    var mib: [i32; 4] = [1, 14, 1, 0]
+    var info: [u8; 648] = [0; 648]
+    var len: i64 = 648
+    unsafe {
+        mib[3] = getpid()
+        if sysctl(mib as *i32, 4, info as *u8, len.addrOf() as *i64, 0 as *u8, 0) != 0 {
+            return false
+        }
+        let flag = (info as *u8 as i64 + 32) as *i32
+        return (flag[0] & 2048) != 0
+    }
+}
+
+// Re-execute this program in place with ASLR off. Returns only when it did not: when
+// a debugger traces the process (it chose), or the spawn failed (false).
+@replayHooked
+pub fn aslrReexec(argv: *u8): bool {
+    if argv as i64 == 0 || processTraced() {
+        return true
+    }
+    var path: [u8; 4096] = [0; 4096]
+    var n: i32 = 0
+    unsafe { n = proc_pidpath(getpid(), path as *u8, 4095) }
+    if n <= 0 {
+        return false
+    }
+    var attr: *u8 = 0 as *u8
+    var pid: i32 = 0
+    unsafe {
+        if posix_spawnattr_init(attr.addrOf() as *u8) != 0 {
+            return false
+        }
+        // POSIX_SPAWN_SETEXEC (0x40) | _POSIX_SPAWN_DISABLE_ASLR (0x100)
+        posix_spawnattr_setflags(attr.addrOf() as *u8, 320)
+        posix_spawn(pid.addrOf() as *i32, path as *u8, 0 as *u8, attr.addrOf() as *u8, argv, environBlock() as *u8)
+    }
+    return false
+}

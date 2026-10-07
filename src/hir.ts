@@ -216,6 +216,10 @@ export interface HIRFunction {
   isPub?: boolean;
   sourceFile?: string; // origin file — DWARF DIFile/DISubprogram (set by lower from the resolver-stamped AST fn)
   line?: number;       // 1-based decl-line proxy (first body stmt) — DISubprogram line
+  // Part of the record/replay engine (std/replay, a recording hook, a generated extern
+  // wrapper): while it runs, its thread's allocations go to libc's malloc rather than the
+  // fixed-address heap, because they differ between recording and replaying.
+  replayEngine?: boolean;
 }
 
 export interface HIRStruct {

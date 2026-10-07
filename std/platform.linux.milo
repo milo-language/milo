@@ -610,3 +610,29 @@ pub extern fn dlclose(_handle: *u8): i32
 
 @cSig("dlfcn.h", "char *dlerror(void)")
 pub extern fn dlerror(): *u8
+
+// ── record/replay: addresses ──
+// ASLR is a persona flag on Linux: set ADDR_NO_RANDOMIZE and re-execute this program
+// (/proc/self/exe), which is what gdb does. A persona that already has it (our own
+// re-exec, or a debugger's launch) is left alone.
+pub extern fn personality(persona: u64): i32
+
+pub extern fn execve(path: *u8, argv: *u8, envp: *u8): i32
+
+@replayHooked
+pub fn aslrReexec(argv: *u8): bool {
+    unsafe {
+        let cur = personality(4294967295)
+        if cur < 0 {
+            return false
+        }
+        if (cur & 262144) != 0 || argv as i64 == 0 {
+            return true
+        }
+        if personality((cur | 262144) as u64) < 0 {
+            return false
+        }
+        execve("/proc/self/exe" as *u8, argv, environBlock() as *u8)
+    }
+    return false
+}

@@ -43,7 +43,7 @@ from "std/time" import {
     unrecordedEpochMillis
 }
 from "std/replay" import {
-    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadSpawn, replayThreadStart, replayThreadExit
+    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadSpawn, replayThreadStart, replayThreadExit, replayHeapMap, replayHeapUnmap, replayHeapDepthOut, replayHeapDepthIn
 }
 
 // ── constants ──
@@ -423,7 +423,10 @@ fn taskEntry(): void {
     _callClosureVoid(fnPtr, envPtr)
 
     rtWriteI32(task, tState(), taskDone())
+    // Each context keeps its own record/replay engine depth (std/replay §addresses).
+    let rrDepth1 = replayHeapDepthOut()
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+    replayHeapDepthIn(rrDepth1)
 }
 
 // ── public API ──
@@ -487,7 +490,12 @@ impl Task {
             rtWritePtr(task, tJoinCell(), cell)
 
             let total = guardPageSize() + stackBytes
-            let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0)
+            // Under record/replay a stack comes from the fixed-address heap, so a local's
+            // address in a task replays too (std/replay §addresses).
+            var stackMem = replayHeapMap(total)
+            if stackMem as i64 == 0 {
+                stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0)
+            }
             rtWritePtr(task, tStack(), stackMem)
             rtWriteI64(task, tStackSize(), total)
 
@@ -836,7 +844,10 @@ pub fn schedulerYield(): void {
         return
     }
     rtWriteI32(task, tState(), taskReady())
+    // Each context keeps its own record/replay engine depth (std/replay §addresses).
+    let rrDepth2 = replayHeapDepthOut()
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+    replayHeapDepthIn(rrDepth2)
 }
 
 // Park until `fd` is readable. @parks: see schedulerYield.
@@ -866,7 +877,10 @@ pub fn schedulerWaitRead(fd: i32): void {
     // move task to waiting list
     enqueueWait(sched, task)
 
+    // Each context keeps its own record/replay engine depth (std/replay §addresses).
+    let rrDepth3 = replayHeapDepthOut()
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+    replayHeapDepthIn(rrDepth3)
 }
 
 // Park until `fd` is writable. @parks: see schedulerYield.
@@ -897,7 +911,10 @@ pub fn schedulerWaitWrite(fd: i32): void {
     }
     enqueueWait(sched, task)
 
+    // Each context keeps its own record/replay engine depth (std/replay §addresses).
+    let rrDepth4 = replayHeapDepthOut()
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+    replayHeapDepthIn(rrDepth4)
 }
 
 // Run the program's `main` as a green task, given its raw entry pointer.
@@ -964,7 +981,10 @@ pub fn schedulerPark(): void {
         return
     }
     rtWriteI32(task, tState(), taskWaitingPark())
+    // Each context keeps its own record/replay engine depth (std/replay §addresses).
+    let rrDepth5 = replayHeapDepthOut()
     unsafe { swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx())) }
+    replayHeapDepthIn(rrDepth5)
 }
 
 // Make a parked task runnable. Safe from any thread: on the task's own
@@ -1521,7 +1541,9 @@ fn reapTask(sched: *u8, task: *u8): void {
     let joiner = rtReadPtr(task, tJoiner())
     let cell = rtReadPtr(task, tJoinCell())
     unsafe {
-        munmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize()))
+        if !replayHeapUnmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize())) {
+            munmap(rtReadPtr(task, tStack()), rtReadI64(task, tStackSize()))
+        }
         free(rtReadPtr(task, tCtx()))
     }
     // Release the task's closure environment: slot 0 holds its drop glue, which drops
@@ -1589,7 +1611,10 @@ fn schedulerRunOnce(timeoutMs: i32): void {
         rtWriteI32(task, tState(), taskRunning())
         rtWritePtr(sched, sCurrent(), task)
 
+        // Each context keeps its own record/replay engine depth (std/replay §addresses).
+        let rrDepth6 = replayHeapDepthOut()
         unsafe { swapcontext(rtReadPtr(sched, sCtx()), rtReadPtr(task, tCtx())) }
+        replayHeapDepthIn(rrDepth6)
 
         let state = rtReadI32(task, tState())
         if state == taskDone() {

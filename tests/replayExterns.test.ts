@@ -217,6 +217,99 @@ fn main() {
   expect(new Set(kinds.filter((r: any) => r.kind === "fs.open").map((r: any) => r.thread))).toEqual(new Set([1, 2, 3]));
 }, 60000);
 
+// Addresses replay too: the process restarts with ASLR off (a global's address, the image)
+// and the program's allocations come from a fixed-address heap whose state depends only
+// on its own allocations (strings, Vecs, a HashMap's storage, a linked structure, a green
+// task's stack). Run outside any debugger, which would otherwise turn ASLR off itself.
+const ADDRESSES = `from "std/runtime" import { Task }
+from "std/time" import { sleepMs, epochMillis }
+from "std/env" import { Env }
+
+struct Node {
+    v: i64,
+    next: Option<Heap<Node>>,
+}
+
+var gCounter: i64 = 0
+
+fn strAddr(s: &string): string {
+    unsafe { return (s as *u8 as i64).toString() }
+}
+
+fn main() {
+    var local: i64 = 42
+    gCounter += 1
+    unsafe {
+        print("global " + (gCounter.addrOf() as i64).toString())
+        print("stack main " + (local.addrOf() as i64).toString())
+    }
+    // Hooked calls in between: their own allocations must not move the program's.
+    let started = epochMillis()
+    let home = Env.getOr("HOME", "-")
+    var strs: Vec<string> = Vec.new()
+    for i in 0..24 {
+        var s = String.withCapacity(8 + i * 8)
+        s.pushStr("item" + i.toString())
+        strs.push(s)
+    }
+    for s in strs {
+        print("str " + strAddr(s))
+    }
+    var vecs: Vec<Vec<i64>> = Vec.new()
+    for i in 0..8 {
+        var v: Vec<i64> = Vec.new()
+        for j in 0..(i * 3 + 1) {
+            v.push(j)
+        }
+        unsafe { print("vec " + (v.ptr() as i64).toString()) }
+        vecs.push(v)
+    }
+    var m: HashMap<string, Vec<i64>> = HashMap.new()
+    for i in 0..12 {
+        var v: Vec<i64> = Vec.new()
+        v.push(i)
+        unsafe { print("map value " + (v.ptr() as i64).toString()) }
+        m.insert("k" + i.toString(), v)
+    }
+    var head: Option<Heap<Node>> = Option.None
+    for i in 0..8 {
+        let n = Heap(Node { v: i, next: head })
+        unsafe { print("node " + (n.ptr() as i64).toString()) }
+        head = Option.Some(n)
+    }
+    let t = Task.spawn(move (): void => {
+        var inTask: i64 = 7
+        unsafe { print("stack task " + (inTask.addrOf() as i64).toString()) }
+        sleepMs(2)
+        let s = "task " + inTask.toString()
+        print("task str " + strAddr(s))
+    })
+    t.join()
+    print("done " + m.len().toString() + " " + home.len().toString() + " " + (epochMillis() >= started).toString())
+}
+`;
+
+test("addresses replay: globals, the heap and green-task stacks land where they did when recorded", () => {
+  const bin = build("addresses", ADDRESSES);
+  const a = run(bin), b = run(bin);
+  expect(a.code).toBe(0);
+  // Unrecorded runs place things differently (ASLR, libc's randomized malloc regions).
+  expect(a.out).not.toBe(b.out);
+  const trace = join(dir, "addresses.mrr");
+  const rec = run(bin, { MILO_RECORD: trace });
+  expect(rec.err).toBe("");
+  expect(rec.code).toBe(0);
+  for (let i = 0; i < 3; i++) {
+    const rep = run(bin, { MILO_REPLAY: trace });
+    expect(rep.err).toBe("");
+    expect(rep.out).toBe(rec.out);
+  }
+  // A second recording agrees with the first: the addresses are a function of the
+  // program, not of the run.
+  const rec2 = run(bin, { MILO_RECORD: join(dir, "addresses2.mrr") });
+  expect(rec2.out.split("\n").filter(l => !l.startsWith("done"))).toEqual(rec.out.split("\n").filter(l => !l.startsWith("done")));
+}, 60000);
+
 test("a thread closure sharing unsafe memory is a hole, listed and reported", () => {
   const file = write("rawshare", `from "std/runtime" import { Promise }
 from "std/os" import { malloc }

@@ -387,6 +387,13 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   execvp: hole(man(3, "execvp"), "replaces the process image, ending the recording"),
   execvpe: hole(man(3, "execvpe"), "replaces the process image, ending the recording"),
   execl: hole(man(3, "execl"), "replaces the process image, ending the recording"),
+  // std/replay's restart with ASLR off (std/platform: aslrReexec), which runs before
+  // anything is recorded.
+  posix_spawnattr_init: local(man(3, "posix_spawnattr_init")),
+  posix_spawnattr_setflags: local(man(3, "posix_spawnattr_setflags")),
+  posix_spawn: hole(man(2, "posix_spawn"), "starts or becomes another program, whose calls are not this trace's"),
+  personality: local(man(2, "personality")),
+  execve: hole(man(2, "execve"), "replaces the process image, ending the recording"),
   waitpid: effect(man(2, "waitpid"), { out: ["status[4]"], errno: E }),
   kill: effect(man(2, "kill"), { errno: E }),
   setsid: effect(man(2, "setsid"), { errno: E }),

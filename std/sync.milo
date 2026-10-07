@@ -10,7 +10,7 @@ from "std/os" import {
     free, malloc, memcpy, memset
 }
 from "std/replay" import {
-    replayOff, replayActive, replaySyncOn, replaySyncEnter, replaySyncNote, replaySyncAtomic
+    replayActive, replaySyncOn, replaySyncEnter, replaySyncNote, replaySyncAtomic
 }
 from "std/runtime" import {
     schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, schedulerBlockMain, schedulerPollMain, selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
@@ -28,7 +28,7 @@ from "std/runtime" import {
 // because the wakeup it would wait for is itself a later turn (syncCondWait).
 
 fn syncOrdered(): bool {
-    return !replayOff() && replaySyncOn()
+    return replaySyncOn()
 }
 
 fn syncLock(mtx: *u8): void {

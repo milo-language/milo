@@ -1184,10 +1184,11 @@ export class TypeChecker {
   // raw pointer, like a Channel, is std's own audited sharing).
   private typeDeclaredInStd(ty: TypeKind): boolean {
     if (ty.tag !== "struct" && ty.tag !== "enum") return false;
-    const base = ty.name.split("<")[0];
-    const files = this.declOrigins?.types.get(base)?.files;
-    if (!files || files.size === 0) return false;
-    return [...files].every(f => f.startsWith(STDLIB_DIR + sep));
+    const files = this.declOrigins?.types.get(ty.name)?.files;
+    if (files && files.size > 0) return [...files].every(f => f.startsWith(STDLIB_DIR + sep));
+    // A generic's instance (`Channel_i64`) is declared where the generic is.
+    const inst = this.monomorphizedStructDecls.find(d => d.name === ty.name);
+    return !!inst?.span?.file?.startsWith(STDLIB_DIR + sep);
   }
 
   private carriesRawPointer(ty: TypeKind, seen: Set<string> = new Set()): boolean {
@@ -2233,6 +2234,8 @@ export class TypeChecker {
         name: f.name,
         type: this.substituteMiloType(f.type, generic.typeParams, typeArgs),
       })),
+      // Where the generic lives: record/replay asks whether a type is std's own.
+      ...(generic.decl.span && { span: generic.decl.span }),
     };
     this.monomorphizedStructDecls.push(decl);
 

@@ -601,3 +601,10 @@ pub extern fn dlclose(_handle: *u8): i32
 
 @cSig("dlfcn.h", "char *dlerror(void)")
 pub extern fn dlerror(): *u8
+
+// ── record/replay: addresses ──
+// Not done on this target (docs/record-replay.md §Addresses): returns false so the
+// replay says addresses may differ.
+pub fn aslrReexec(_argv: *u8): bool {
+    return false
+}

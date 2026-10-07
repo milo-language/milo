@@ -398,6 +398,10 @@ export class Codegen {
 
   private emitStdoutBufferingOptIn(lines: string[]): void {
     if (this.target.os === "none") return; // freestanding: no environment, no stdio streams
+    // Record/replay decides first, before any I/O or initializer: under MILO_RECORD or
+    // MILO_REPLAY it restarts the process with ASLR off, and turns on the fixed-address
+    // heap so initializers' allocations already land where they will on replay.
+    if (this.fnSigs.has("miloReplayStart")) lines.push(`  call void @miloReplayStart(ptr %_milo_argv)`);
     this.needsSetvbuf = true;
     lines.push(`  call void @${Codegen.LINE_BUF_INIT_FN}()`);
     // Before global init too: an initializer may build a HashMap.
@@ -1839,7 +1843,7 @@ export class Codegen {
 
     // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
-    for (const fn of functions) fnBodies.push(this.genFunction(fn));
+    for (const fn of functions) fnBodies.push(this.replayEngineScope(fn, this.genFunction(fn)));
     if (initFn) fnBodies.push(this.genFunction(initFn));
 
     // auto-declare C functions needed by built-ins and bounds checks
@@ -2101,6 +2105,7 @@ export class Codegen {
     // and the attribute group this inserts sits before the metadata.
     if (this.sanitize) this.applySanitizeAttribute();
 
+    if (this.fnSigs.has("replayHeapMalloc")) this.output = this.replayHeapCalls(this.output);
     return this.output.join("\n") + "\n";
   }
 
@@ -2178,6 +2183,76 @@ export class Codegen {
     out.push(`!${dbgVer} = !{i32 2, !"Debug Info Version", i32 3}`);
     out.push(`!llvm.dbg.cu = !{!${cu}}`);
     out.push(`!llvm.module.flags = !{!${dwarfVer}, !${dbgVer}}`);
+  }
+
+  // Record/replay's fixed-address heap (std/replay): every allocation Milo code makes goes
+  // through std/replay's malloc/realloc/free, which hand them to libc unless the heap is
+  // on, and every free goes to whichever heap the block came from. std/replay's own code
+  // too: it frees blocks the program allocated (a string moved into it).
+  private replayHeapCalls(lines: string[]): string[] {
+    // Over the whole module, compiler-emitted helpers included (string concatenation is
+    // one): every allocation in it is the program's. The allocator's own fns (std/replay's
+    // heap fns) are what call libc's. The three entry points are declared an allocation
+    // family, like malloc/realloc/free, so LLVM still removes an allocation that never
+    // escapes and its free: without that, every short-lived string and Vec would cost a
+    // real allocation it does not cost today.
+    let inAllocator = false;
+    return lines.map(l => {
+      if (l.startsWith("define ")) {
+        inAllocator = /@(?:replayHeap|replay\$heap)\w*\(/.test(l);
+        if (/@replayHeapMalloc\(i64 %n\)/.test(l)) return l.replace(/\) \{$/, `) allockind("alloc,uninitialized") allocsize(0) "alloc-family"="milo" {`);
+        if (/@replayHeapRealloc\(ptr %p, i64 %n\)/.test(l)) return l.replace("ptr %p,", "ptr allocptr %p,").replace(/\) \{$/, `) allockind("realloc") allocsize(1) "alloc-family"="milo" {`);
+        if (/@replayHeapFree\(ptr %p\)/.test(l)) return l.replace("ptr %p)", "ptr allocptr %p)").replace(/\) \{$/, `) allockind("free") "alloc-family"="milo" {`);
+      }
+      if (inAllocator || l.startsWith("declare ") || !(l.includes("@malloc(") || l.includes("@realloc(") || l.includes("@free("))) return l;
+      return l.replace(/@malloc\(/g, "@replayHeapMalloc(").replace(/@realloc\(/g, "@replayHeapRealloc(").replace(/@free\(/g, "@replayHeapFree(");
+    });
+  }
+
+  // A record/replay engine fn (HIRFunction.replayEngine) raises its thread's engine depth
+  // on entry and lowers it before every return, while the fixed heap is on: its
+  // allocations then go to libc and leave the program's heap as the recording left it.
+  // With the heap off (no MILO_RECORD/MILO_REPLAY) it is one load and branch each way.
+  private replayEngineScope(fn: HIRFunction, lines: string[]): string[] {
+    if (!fn.replayEngine || !this.globalVars.has("replay$rrDepth") || !this.globalVars.has("replay$rrHeapOn")) return lines;
+    const out: string[] = [];
+    let n = 0;
+    const on = () => {
+      const id = n++;
+      out.push(`  %rre.on.${id} = load i64, ptr @replay$rrHeapOn`);
+      out.push(`  %rre.c.${id} = icmp ne i64 %rre.on.${id}, 0`);
+      return id;
+    };
+    let entered = false;
+    for (const l of lines) {
+      if (!entered && l === "entry.bb:") {
+        out.push(l);
+        const id = on();
+        out.push(`  br i1 %rre.c.${id}, label %rre.in.${id}, label %rre.go.${id}`);
+        out.push(`rre.in.${id}:`);
+        out.push(`  %rre.d.${id} = load i64, ptr @replay$rrDepth`);
+        out.push(`  %rre.d1.${id} = add i64 %rre.d.${id}, 1`);
+        out.push(`  store i64 %rre.d1.${id}, ptr @replay$rrDepth`);
+        out.push(`  br label %rre.go.${id}`);
+        out.push(`rre.go.${id}:`);
+        entered = true;
+        continue;
+      }
+      if (entered && /^\s+ret\b/.test(l)) {
+        const id = on();
+        out.push(`  %rre.d.${id} = load i64, ptr @replay$rrDepth`);
+        out.push(`  %rre.pos.${id} = icmp sgt i64 %rre.d.${id}, 0`);
+        out.push(`  %rre.both.${id} = and i1 %rre.c.${id}, %rre.pos.${id}`);
+        out.push(`  br i1 %rre.both.${id}, label %rre.out.${id}, label %rre.ret.${id}`);
+        out.push(`rre.out.${id}:`);
+        out.push(`  %rre.d1.${id} = sub i64 %rre.d.${id}, 1`);
+        out.push(`  store i64 %rre.d1.${id}, ptr @replay$rrDepth`);
+        out.push(`  br label %rre.ret.${id}`);
+        out.push(`rre.ret.${id}:`);
+      }
+      out.push(l);
+    }
+    return entered ? out : lines;
   }
 
   private genFunction(fn: HIRFunction): string[] {

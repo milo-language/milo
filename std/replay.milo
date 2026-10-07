@@ -16,11 +16,12 @@
 @!replayHooked
 
 from "std/os" import {
-    getenv, fflush, malloc
+    getenv, fflush, malloc, free, realloc, memcpy
 }
 from "std/platform" import {
     open, read, write, close, lseek, sockRead, sockWrite, envUnset, oReadBinary, oWriteCreateTrunc,
-    getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap, usleep
+    getErrno, setErrno, netErrno, setNetErrno, atExit, exitNow, debugTrap, usleep,
+    envSet, aslrReexec, mmap, mprotect, protRead, protWrite, mapPrivate, mapAnon
 }
 
 // Bumped only when the record framing changes. A new record kind is additive: an
@@ -103,6 +104,7 @@ thread_local var rrTid: i64 = 0
 thread_local var rrIdle: i64 = 0
 thread_local var rrPastEnd: i64 = 0
 thread_local var rrHeld: bool = false
+thread_local var rrBooting: bool = false
 // The payload the last successful take on this thread consumed.
 thread_local var rrTaken: string = ""
 
@@ -165,9 +167,15 @@ pub fn replayRecording(): bool {
 
 fn replayModeNow(): i64 {
     if rrMode == 0 {
+        // A hook reached while deciding (the ASLR restart asks the OS things) is off.
+        if rrBooting {
+            return 1
+        }
+        rrBooting = true
         rrLock.run((): void => {
             replayBoot()
         })
+        rrBooting = false
     }
     return rrMode
 }
@@ -204,6 +212,8 @@ fn replayBoot(): void {
         rrMode = 1
         return
     }
+    aslrOff()
+    heapStart()
     let stopAt = envPath("MILO_REPLAY_STOP")
     rrStopPrint = envPath("MILO_REPLAY_STOP_PRINT").len() > 0
     unsafe {
@@ -218,6 +228,327 @@ fn replayBoot(): void {
         rrStopAt = decimal(stopAt)
         startReplay(replayPath)
     }
+}
+
+// ── addresses ──
+//
+// Values replay; addresses have to be made to. Two things move them between runs: ASLR
+// (where the image, the stacks and the kernel's mappings land) and the allocator (libc's
+// malloc places its regions at random, and the engine's own allocations differ between
+// recording and replaying). So under either variable the process restarts once with ASLR
+// off, and every allocation the program makes is served from a heap at a fixed address
+// whose state depends only on the program's own allocations: std/replay's (and the hooks')
+// allocations go to libc's malloc instead, by rrDepth. docs/record-replay.md §Addresses.
+
+// argv as main received it, for the restart (miloReplayStart).
+var rrArgv: *u8 = 0 as *u8
+
+var rrAslrDone: bool = false
+
+fn aslrOff(): void {
+    if rrAslrDone {
+        return
+    }
+    rrAslrDone = true
+    // The restarted process finds the marker and goes on; anything else restarts.
+    if envPath("MILO_RR_REEXEC").len() > 0 {
+        unsafe { envUnset("MILO_RR_REEXEC" as *u8) }
+        return
+    }
+    if rrArgv as i64 == 0 {
+        return
+    }
+    var traced = false
+    unsafe {
+        envSet("MILO_RR_REEXEC" as *u8, "1" as *u8)
+        traced = aslrReexec(rrArgv)
+        envUnset("MILO_RR_REEXEC" as *u8)
+    }
+    if !traced {
+        eprint("milo replay: warning: could not restart with ASLR off; addresses may differ between recording and replay")
+    }
+}
+
+// Called first thing in main, before any global initializer: decides record/replay (so
+// an initializer's allocations already come from the fixed heap) and restarts with ASLR
+// off when needed, which must happen before the trace is opened.
+//
+// Only the restart and the heap happen here: the rest of the decision waits for
+// std/replay's own initializer, because its state (the trace window, the fd tables) is
+// set up by the global initializers that run after this.
+@externalLinkage
+pub fn miloReplayStart(argv: *u8): void {
+    if envPath("MILO_RECORD").len() == 0 && envPath("MILO_REPLAY").len() == 0 {
+        return
+    }
+    rrArgv = argv
+    aslrOff()
+    heapStart()
+}
+
+// The fixed heap: 16 regions, one per thread number (threads past 15 share the last),
+// each served by its own size-class free lists, so a thread's allocations land where
+// they landed when recorded whatever the other threads do. The top of a region holds
+// page-granular blocks (green-task stacks, std/runtime).
+let RR_HEAP_BASE: i64 = 35184372088832
+let RR_REGION: i64 = 8589934592
+let RR_PAGES_AT: i64 = 6442450944
+let RR_CLASSES: i64 = 32
+var rrHeapOn: i64 = 0
+var rrHeapMapped: [i64; 16] = [0; 16]
+var rrHeapBump: [i64; 16] = [0; 16]
+var rrHeapPageBump: [i64; 16] = [0; 16]
+var rrHeapLocks: [i64; 16] = [0; 16]
+var rrHeapFree: [i64; 512] = [0; 512]
+// Freed page blocks per region, as (address, length) pairs, reused by exact length.
+var rrPageFreeAt: [i64; 512] = [0; 512]
+var rrPageFreeLen: [i64; 512] = [0; 512]
+// Nonzero while this thread runs std/replay or a recording hook: its allocations go to
+// libc's malloc. Codegen raises and lowers it around every such fn (src/lower.ts).
+thread_local var rrDepth: i64 = 0
+
+fn heapStart(): void {
+    if rrHeapOn != 0 || @targetOs() == "windows" {
+        return
+    }
+    rrHeapOn = 1
+    // This fn runs inside the engine, whose entry did not count while the heap was off.
+    rrDepth = 1
+}
+
+fn heapRegion(): i64 {
+    if rrTid > 15 {
+        return 15
+    }
+    return rrTid
+}
+
+fn heapLock(r: i64): void {
+    unsafe {
+        let w = (rrHeapLocks as *i64 as i64 + r * 8) as *u8
+        while _atomicCasI64(w, 0, 1) != 0 {
+            usleep(1)
+        }
+    }
+}
+
+fn heapUnlock(r: i64): void {
+    unsafe { _atomicStoreI64((rrHeapLocks as *i64 as i64 + r * 8) as *u8, 0) }
+}
+
+// Map region `r` at its fixed address on first use. False when the kernel will not
+// place it there (something else already lives at that address).
+fn heapMapRegion(r: i64): bool {
+    unsafe {
+        let slots = rrHeapMapped as *i64
+        if slots[r] != 0 {
+            return true
+        }
+        let want = RR_HEAP_BASE + r * RR_REGION
+        // MAP_NORESERVE on Linux (no effect asked for on darwin, whose anonymous memory
+        // is reserved lazily anyway).
+        var extra: i32 = 0
+        if @targetOs() == "linux" {
+            extra = 16384
+        }
+        let got = mmap(want as *u8, RR_REGION, protRead() | protWrite(), mapPrivate() | mapAnon() | extra, -1, 0)
+        if got as i64 != want {
+            return false
+        }
+        slots[r] = 1
+        return true
+    }
+}
+
+fn heapInArena(p: *u8): bool {
+    let a = p as i64
+    return rrHeapOn != 0 && a >= RR_HEAP_BASE && a < RR_HEAP_BASE + 16 * RR_REGION
+}
+
+fn heapFail(): void {
+    rrHeapOn = 0
+    replayFail("record/replay: cannot place the fixed-address heap at 35184372088832 (0x200000000000): the address is taken")
+}
+
+fn heapAlloc(n: i64): *u8 {
+    var c: i64 = 0
+    while (16 << c) < n + 16 && c < RR_CLASSES - 1 {
+        c += 1
+    }
+    let size: i64 = 16 << c
+    if size < n + 16 {
+        unsafe { return malloc(n) }
+    }
+    let r = heapRegion()
+    heapLock(r)
+    if !heapMapRegion(r) {
+        heapUnlock(r)
+        heapFail()
+    }
+    unsafe {
+        let lists = rrHeapFree as *i64
+        let bumps = rrHeapBump as *i64
+        var blk = lists[r * RR_CLASSES + c]
+        if blk != 0 {
+            lists[r * RR_CLASSES + c] = (blk as *i64) [0]
+        } else {
+            if bumps[r] + size > RR_PAGES_AT {
+                heapUnlock(r)
+                // The region is spent: the rest of the run allocates from libc, and
+                // says so once, since addresses past here may differ.
+                return malloc(n)
+            }
+            blk = RR_HEAP_BASE + r * RR_REGION + bumps[r]
+            bumps[r] = bumps[r] + size
+        }
+        let hdr = blk as *i64
+        hdr[0] = c
+        hdr[1] = r
+        heapUnlock(r)
+        return (blk + 16) as *u8
+    }
+}
+
+fn heapFree(p: *u8): void {
+    unsafe {
+        let blk = p as i64 - 16
+        let hdr = blk as *i64
+        let c = hdr[0]
+        let r = hdr[1]
+        heapLock(r)
+        let lists = rrHeapFree as *i64
+        hdr[0] = lists[r * RR_CLASSES + c]
+        lists[r * RR_CLASSES + c] = blk
+        heapUnlock(r)
+    }
+}
+
+// malloc, free and realloc for every allocation Milo code makes: codegen calls these in
+// place of libc's when std/replay is in the program (src/codegen.ts). With neither
+// variable set they are one compare in front of libc.
+pub fn replayHeapMalloc(n: i64): *u8 {
+    unsafe {
+        if rrHeapOn == 0 || rrDepth > 0 {
+            return malloc(n)
+        }
+    }
+    return heapAlloc(n)
+}
+
+pub fn replayHeapFree(p: *u8): void {
+    unsafe {
+        if p as i64 == 0 {
+            return
+        }
+        if !heapInArena(p) {
+            free(p)
+            return
+        }
+    }
+    heapFree(p)
+}
+
+pub fn replayHeapRealloc(p: *u8, n: i64): *u8 {
+    unsafe {
+        if p as i64 == 0 {
+            return replayHeapMalloc(n)
+        }
+        if !heapInArena(p) {
+            return realloc(p, n)
+        }
+        let c = (p as i64 - 16) as *i64
+        let room = (16 << c[0]) - 16
+        if n <= room {
+            return p
+        }
+        // A block grows within the heap it came from, whoever grows it.
+        let q = heapAlloc(n)
+        memcpy(q, p, room)
+        heapFree(p)
+        return q
+    }
+}
+
+// Green tasks switch inside a thread, so the engine depth belongs to a context, not to
+// the thread: std/runtime takes it out before a swapcontext and puts it back after.
+pub fn replayHeapDepthOut(): i64 {
+    let d = rrDepth
+    rrDepth = 0
+    return d
+}
+
+pub fn replayHeapDepthIn(d: i64): void {
+    rrDepth = d
+}
+
+// Page-granular memory (a green task's stack) from the fixed heap, or null when the
+// heap is off or this is the engine's own: the caller then maps it itself.
+pub fn replayHeapMap(len: i64): *u8 {
+    if rrHeapOn == 0 || rrDepth > 0 {
+        return 0 as *u8
+    }
+    let r = heapRegion()
+    let want = (len + 65535) / 65536 * 65536
+    heapLock(r)
+    if !heapMapRegion(r) {
+        heapUnlock(r)
+        heapFail()
+    }
+    unsafe {
+        let at = rrPageFreeAt as *i64
+        let lens = rrPageFreeLen as *i64
+        for i in 0..32 {
+            if at[r * 32 + i] != 0 && lens[r * 32 + i] == want {
+                let p = at[r * 32 + i]
+                at[r * 32 + i] = 0
+                heapUnlock(r)
+                // Its last user left a guard page protected, and darwin's makecontext
+                // zeroes the whole stack before std/runtime protects it again.
+                mprotect(p as *u8, want, protRead() | protWrite())
+                return p as *u8
+            }
+        }
+        let bumps = rrHeapPageBump as *i64
+        if RR_PAGES_AT + bumps[r] + want > RR_REGION {
+            heapUnlock(r)
+            return 0 as *u8
+        }
+        let p = RR_HEAP_BASE + r * RR_REGION + RR_PAGES_AT + bumps[r]
+        bumps[r] = bumps[r] + want
+        heapUnlock(r)
+        return p as *u8
+    }
+}
+
+// Give back a block replayHeapMap handed out. False when `p` is not one (the caller
+// unmaps it itself).
+pub fn replayHeapUnmap(p: *u8, len: i64): bool {
+    if !heapInArena(p) {
+        return false
+    }
+    let r = (p as i64 - RR_HEAP_BASE) / RR_REGION
+    let want = (len + 65535) / 65536 * 65536
+    heapLock(r)
+    unsafe {
+        let at = rrPageFreeAt as *i64
+        let lens = rrPageFreeLen as *i64
+        for i in 0..32 {
+            if at[r * 32 + i] == p as i64 {
+                heapUnlock(r)
+                return true
+            }
+        }
+        for i in 0..32 {
+            if at[r * 32 + i] == 0 {
+                at[r * 32 + i] = p as i64
+                lens[r * 32 + i] = want
+                heapUnlock(r)
+                return true
+            }
+        }
+    }
+    heapUnlock(r)
+    return true
 }
 
 fn traceHeader(): string {
@@ -571,6 +902,46 @@ pub fn replayTake(kind: &string, arg: &string): string {
     let taken = rrTaken.clone()
     rrTaken = ""
     return taken
+}
+
+// Replay: consume this thread's next record if it is `kind(arg)`, once it is this
+// thread's turn. False, consuming nothing, when the next record is something else.
+fn replayTakeIfNext(kind: &string, arg: &string): bool {
+    var state: i64 = 0
+    var spins: i64 = 0
+    while state == 0 {
+        rrLock.run((): void => {
+            if !peekHeader() {
+                state = 2
+                return
+            }
+            if rrNextTid != rrTid {
+                if threadFinished(rrNextTid) {
+                    state = 2
+                }
+                return
+            }
+            if rrNextKind != kind || rrNextArgLen != arg.len() {
+                state = 2
+                return
+            }
+            // Compared in place, so a different note is left in the trace untouched.
+            fillTo(rrNextArgLen + 1)
+            if rrPos + rrNextArgLen > rrBuf.len() || rrBuf.substr(rrPos, rrPos + rrNextArgLen) != arg {
+                state = 2
+                return
+            }
+            let _ = takeBytes(rrNextSeq, rrNextArgLen)
+            let p = takeBytes(rrNextSeq, rrNextPayloadLen)
+            noteConsumed(rrNextSeq, kind, arg, p.len())
+            state = 1
+        })
+        if state == 0 {
+            spins += 1
+            waitTurn(spins)
+        }
+    }
+    return state == 1
 }
 
 // replayTake of a decimal payload.
@@ -1242,6 +1613,12 @@ pub fn replayHole(name: &string, site: *u8): void {
     if mode < 2 {
         return
     }
+    // Under replay the note is wherever the recording put it: on the thread that got
+    // there first, which another thread reaching the same extern now must not take.
+    if mode == 3 {
+        let _ = replayTakeIfNext("trace.hole", name)
+        return
+    }
     var where = ""
     unsafe {
         if site as i64 != 0 {
@@ -1257,10 +1634,6 @@ pub fn replayHole(name: &string, site: *u8): void {
         }
     })
     if !first {
-        return
-    }
-    if mode == 3 {
-        let _ = replayTake("trace.hole", name)
         return
     }
     eprint("replay: this run called unrecorded " + name + " at " + where + "; a replay may diverge")

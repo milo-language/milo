@@ -946,3 +946,10 @@ pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
         return n as i64
     }
 }
+
+// ── record/replay: addresses ──
+// Not done on this target (docs/record-replay.md §Addresses): returns false so the
+// replay says addresses may differ.
+pub fn aslrReexec(_argv: *u8): bool {
+    return false
+}
