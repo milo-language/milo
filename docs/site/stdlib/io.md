@@ -255,6 +255,10 @@ fn FdReader.attach<T: AsFd>(h: &T): FdReader
 A reader over `h`'s descriptor: `readFrameWith(FdReader.attach(pipe))` reads a
 framed protocol off a pipe, socket or pty without its number ever reaching the
 caller. The same view rule as `OwnedFd.stream`: `h` must outlive the reader.
+The reader copies h's number and does not keep h alive: build it where it is
+used (as `readFrameWith(FdReader.attach(&h))` does), not stored past h. It never
+closes, so a stale reader misreads rather than double-closes; same gap as
+fdReaderAttach until a reader can borrow its handle.
 
 #### `FdReader.readByte`
 
