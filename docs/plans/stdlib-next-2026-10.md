@@ -129,7 +129,7 @@ Serial, one agent at a time, each landed green before the next:
 
 ## Replay phase 4: close the gaps (accepted 2026-10-06, after the dapweb demo; done 2026-10-06)
 
-**Done** (292c0bdf, 3540b8d9, 485a5df0, 94ad5f6d, d70aca75, 979f6649; described in
+**Done** (292c0bdf, 3540b8d9, 485a5df0, 94ad5f6d, d70aca75, 979f6649, d16b3309; described in
 [record-replay.md](../record-replay.md) §Phase 4): the extern catalog
 (`src/extern-effects.ts`, every std extern, gated by tests/externEffects.test.ts),
 compiler-generated wrappers for every extern call (`@records` for a program's own,
