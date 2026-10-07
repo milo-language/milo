@@ -146,3 +146,16 @@ unrecorded. Both can be closed, the way rr closes them for Linux syscalls:
    (Mutex, Channel, atomics), so recording their acquisition/message order per thread is
    enough to replay multithreaded programs deterministically; rr instead serializes all
    threads onto one core. `unsafe` shared memory is reported as a hole.
+
+## Fd ownership, finished (accepted 2026-10-06, after replay phase 4)
+
+The websocket writer bug (a task wrote to a socket fd after its owner closed it) is now
+hard to write but not impossible. Finish it:
+
+1. `Task.scope`: tasks spawned in a scope must finish before it returns, so they may
+   borrow (`&conn`) instead of taking a raw fd by value. Needs the rule for borrows
+   shared across the M:N scheduler's OS threads (owner decision: after borrowing
+   closures, which have landed). Then dapweb's ws writer borrows its connection.
+2. Convert the remaining std pub fns that take or return raw `i32` fds (~69 at the
+   friction analysis) to owning types (`OwnedFd`, `TcpStream`, `Pty`, `Child`), keeping
+   raw-fd entry points `@unsafe` for FFI.
