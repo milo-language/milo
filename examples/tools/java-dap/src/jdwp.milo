@@ -11,14 +11,11 @@
 // sent. All IDs are stored as i64 (HotSpot uses 8 bytes for everything, but
 // the codec honors whatever the VM reports).
 
-from "std/platform" import {
-    write
-}
 from "std/net" import {
     TcpStream, resolve
 }
 from "std/io" import {
-    FdReader, fdReaderAttach
+    FdReader, OwnedFd
 }
 from "std/sync" import {
     Channel
@@ -336,7 +333,7 @@ pub fn readPacketFrom(reader: &FdReader): Result<Packet> {
 // Client.
 
 pub struct JdwpIo {
-    fd: i32,
+    conn: TcpStream,
     nextId: i64,
     sizes: IdSizes,
     replyCh: Channel<Packet>,
@@ -355,22 +352,18 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
             return Err("cannot resolve " + host.clone())
         }
     }
-    var fd: i32 = -1
-    match TcpStream.connect(ip, port) {
-        Ok(s) => {
-            var stream = s
-            // take() detaches the fd so the stream's Drop won't close it; the JDWP
-            // connection lives for the rest of the process, so nothing closes it.
-            unsafe { fd = stream.take() }
-        }
-        Err(_e) => {
-            return Err("cannot connect to JDWP agent at " + host.clone() + ":" + port.toString())
-        }
+    let Ok(conn) = TcpStream.connect(ip, port) else {
+        return Err("cannot connect to JDWP agent at " + host.clone() + ":" + port.toString())
     }
-    var reader = fdReaderAttach(fd)
+    // The reader task gets its own descriptor for the socket, so it reads off a
+    // handle it owns rather than a number JdwpIo's TcpStream could close under it.
+    let Ok(taskFd) = OwnedFd.dup(conn) else {
+        return Err("cannot dup the JDWP socket")
+    }
+    let reader = FdReader.attach(conn)
 
     let magic: string = "JDWP-Handshake"
-    writeAllFd(fd, magic)?
+    writeAll(conn, magic)?
     let echo = reader.readExact(14)?
     if echo != magic {
         return Err("bad JDWP handshake reply")
@@ -383,7 +376,7 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
     head.u8(0)
     head.u8(1)
     head.u8(7)
-    writeAllFd(fd, head.buf)?
+    writeAll(conn, head.buf)?
     var sizes = defaultSizes()
     while true {
         let pkt = readPacketFrom(reader)?
@@ -405,10 +398,10 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
     let replyCh = Channel<Packet>.new(8)!
     let replyChReader = replyCh.clone() // reader task's owner; JdwpIo keeps `replyCh`
     // FdReader is unbuffered (1-byte read syscalls), so attaching a fresh
-    // reader inside the task loses nothing. Capture the raw fd, not the boot
+    // reader inside the task loses nothing. The task owns taskFd, not the boot
     // FdReader struct.
     Task.spawn(move(): void => {
-        let taskReader = fdReaderAttach(fd)
+        let taskReader = FdReader.attach(taskFd)
         while true {
             match readPacketFrom(taskReader) {
                 Ok(pkt) => {
@@ -439,12 +432,12 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
     })
 
     return Ok(JdwpIo {
-        fd: fd, nextId: 2, sizes: sizes, replyCh: replyCh
+        conn: conn, nextId: 2, sizes: sizes, replyCh: replyCh
     })
 }
 
-pub fn writeAllFd(fd: i32, data: &string): Result<i64> {
-    let n = write(fd, data, data.len)
+pub fn writeAll(conn: &TcpStream, data: &string): Result<i64> {
+    let n = conn.send(data) ?? -1
     if n < data.len as i64 {
         return Err("short write to JVM socket")
     }
@@ -463,7 +456,7 @@ impl JdwpIo {
         head.u8(cmdSet)
         head.u8(cmd)
         let msg = head.buf + body.clone()
-        writeAllFd(self.fd, msg)?
+        writeAll(self.conn, msg)?
 
         // Single outstanding request: the next reply is ours (assert anyway).
         match self.replyCh.recv() {

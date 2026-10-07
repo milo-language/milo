@@ -256,9 +256,9 @@ A reader over `h`'s descriptor: `readFrameWith(FdReader.attach(pipe))` reads a
 framed protocol off a pipe, socket or pty without its number ever reaching the
 caller. The same view rule as `OwnedFd.stream`: `h` must outlive the reader.
 The reader copies h's number and does not keep h alive: build it where it is
-used (as `readFrameWith(FdReader.attach(&h))` does), not stored past h. It never
-closes, so a stale reader misreads rather than double-closes; same gap as
-fdReaderAttach until a reader can borrow its handle.
+used (as `readFrameWith(FdReader.attach(h))` does), not stored past h. It never
+closes, so a stale reader misreads rather than double-closes. Closing this gap
+needs a reader that borrows its handle.
 
 #### `FdReader.readByte`
 
@@ -642,11 +642,8 @@ pub fn fdReaderAttach(fd: i32): FdReader
 Capture the read strategy from the current runtime context, flipping the fd
 non-blocking iff we will park on it so the two never drift apart.
 
-The one safe std entry point that still takes a bare descriptor (allowlisted in
-tests/rawFdApi.test.ts): the published milo-json-rpc@v0.1.0, which
-examples/tools/java-dap builds against, calls it outside `unsafe`. It reads and
-never closes, so a stale number misreads rather than double-closes. It becomes
-`@unsafe` once a milo-json-rpc release reads frames through a handle.
+`@unsafe`: the caller vouches that `fd` stays open while the reader is used. Safe
+code builds one from a handle with `FdReader.attach`.
 
 #### `ioError`
 

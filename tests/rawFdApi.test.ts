@@ -33,9 +33,6 @@ const ALLOWED: Record<string, string> = {
   // platform.linux.milo: the epoll_event layout event.linux fills in; plain data with no
   // methods or Drop, so a forged value does nothing until passed to an @unsafe call.
   "EpollEvent.dataFd": "epoll_event layout mirror, built by std/event.linux in another file",
-  "fdReaderAttach":
-    "published milo-json-rpc@v0.1.0 (examples/tools/java-dap) calls it outside unsafe; it " +
-    "only reads, never closes. Becomes @unsafe once a milo-json-rpc release takes a handle",
 };
 
 // `wakeupId`: the event loop's wakeup handle, an eventfd on Linux.

@@ -64,7 +64,7 @@ friends are the green-aware spellings), `drainSignalFd` (`SignalPipe.drain`),
 `fdIsTerminal` (`isTerminal`). Now file-private: `connectFd`, `sysRecv`, `sysSend`
 (std/os), `replayFdSynthetic` (std/replay) and std/http's `Socket`. `FdReader` is a
 struct with private fields instead of an enum, so `FdReader.Green(fd)` no longer builds
-one; `fdReaderAttach` is the constructor. No compat shims: the point is that the old
+one; `FdReader.attach(handle)` is the constructor (`fdReaderAttach(fd)` is `@unsafe`). No compat shims: the point is that the old
 spellings stop compiling.
 
 ## A plain closure parameter is non-escaping; one the function keeps is `move` (2026-10-06)

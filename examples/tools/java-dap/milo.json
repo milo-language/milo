@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "description": "DAP debug adapter for the JVM — example app, not a publishable package",
   "deps": {
-    "json-rpc": "github.com/milo-language/milo-json-rpc@v0.1.0"
+    "json-rpc": "github.com/milo-language/milo-json-rpc@v0.2.0"
   }
 }

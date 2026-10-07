@@ -3,9 +3,9 @@
   "packages": {
     "json-rpc": {
       "url": "github.com/milo-language/milo-json-rpc",
-      "version": "v0.1.0",
-      "commit": "9d84306d805ac7419e2aa3ce19ccd47925fd240d",
-      "hash": "sha256:32927cc0c3a65cf6c8c41c15ebadbf5a82bd89a5062b4141e3a4dff24a3deaa0",
+      "version": "v0.2.0",
+      "commit": "7594d1121b9a5bbdb188d7720b3df2ae2836ff89",
+      "hash": "sha256:a0bbde550f5cf6160bf0bd30bc09c85967fe8d309d54fc6257a36b16195b72d4",
       "deps": []
     }
   }

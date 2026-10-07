@@ -9,7 +9,7 @@
 // All diagnostics go to stderr: stdout carries DAP frames only.
 
 from "std/io" import {
-    FdReader, fdReaderAttach, Stdin
+    Stdin, Stdout, OwnedFd
 }
 from "std/fs" import {
     pathExists, readFile
@@ -56,11 +56,14 @@ from "jdwp" import {
 
 pub struct DapOut {
     seq: i64,
+    // stdout as an owned handle: writeFrame's one-write(2)-per-frame guarantee is
+    // OwnedFd.writeOnce's.
+    w: OwnedFd,
 }
 
 impl DapOut {
-    fn sendRaw(_self: &mut DapOut, json: &string): void {
-        match writeFrame(1, json) {
+    fn sendRaw(self: &mut DapOut, json: &string): void {
+        match writeFrame(self.w, json) {
             Ok(_n) => {
             }
             Err(_e) => {
@@ -158,7 +161,7 @@ pub struct Sess {
 
 pub fn dapServe(): i64 {
     var out = DapOut {
-        seq: 0
+        seq: 0, w: OwnedFd.dup(Stdout {})!
     }
     let eventCh = Channel<Packet>.new(256)!
 
@@ -168,7 +171,7 @@ pub fn dapServe(): i64 {
     var program: string = ""
     var sourceRoots: Vec<string> = []
     while true {
-        let Ok(raw) = readFrame(0) else {
+        let Ok(raw) = readFrame(Stdin {}) else {
             eprint("client hung up before attach")
             return 0
         }
@@ -223,7 +226,7 @@ pub fn dapServe(): i64 {
         let arm = sel.wait()
         sel.destroy()
         if arm == 0 {
-            match readFrame(0) {
+            match readFrame(Stdin {}) {
                 Ok(raw) => {
                     if sess.dispatch(raw) {
                         return 0
