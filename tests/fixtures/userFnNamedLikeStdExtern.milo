@@ -1,21 +1,18 @@
-// @expect: 3
+// @expect: -12345
 // @expect: true
-// A program's own `pub fn kill` and `fn pipe` share names with C functions std declares
-// (kill(2), pipe(2)). In the flat namespace they used to take std's own calls to those
-// functions, which then failed to type-check inside std/platform; the resolver now
-// renames the program's fns in their module instead.
-from "std/platform" import { getpid }
+// A program's own `pub fn kill` shares its name with a C function std declares (kill(2),
+// which std/platform's killRaw calls). In the flat namespace it used to take std's own
+// call, which then failed to type-check inside std/platform; the resolver now renames
+// the program's fn in its module instead. (Without that rename the C kill wins this file's
+// own call; the arguments are a pid nothing has and signal 0, so it would only fail.)
+from "std/platform" import { devNullPath }
 
 pub fn kill(a: i64, b: i64): i64 {
     return a + b
 }
 
-fn pipe(s: &string): bool {
-    return s.len() > 0
-}
-
 pub fn main(): i32 {
-    print(kill(1, 2))
-    unsafe { print(getpid() > 0 && pipe("x")) }
+    print(kill(-12345, 0))
+    print(devNullPath().len() > 0)
     return 0
 }

@@ -21,6 +21,8 @@ let dir = "";
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), "milo-replay-io-")); });
 afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
 
+// Every test here compiles one or two programs; a slow macOS release runner took over
+// bun's 5 s default for that alone, so each test carries its own timeout.
 function build(name: string, src: string): string {
   const file = join(dir, `${name}.milo`);
   const out = join(dir, name);
@@ -184,7 +186,7 @@ test("milo trace lists the scenario's records by kind", () => {
   const read = t.records.find((x: any) => x.kind === "fs.read");
   const payload = spawnSync("bun", ["run", MAIN, "trace", scenarioTrace(), "--payload", String(read.seq)], { encoding: "utf-8" });
   expect(payload.stdout).toBe("=file v1\n");
-});
+}, 60000);
 
 // Sleeps under replay take no time: the recorded schedule says when each timer fired.
 test("replaying a program that sleeps is faster than recording it", () => {
@@ -216,7 +218,7 @@ fn main() {
   expect(rec.out).toBe("main slept\ntask done\n");
   expect(recordMs).toBeGreaterThan(400);
   expect(replayMs).toBeLessThan(recordMs / 2);
-});
+}, 60000);
 
 const READER = (path: string, n: number) => `from "std/fs" import { readFile }
 
@@ -237,7 +239,7 @@ test("a program changed to read a different file diverges at that read, with con
   const lines = r.err.split("\n");
   expect(lines[0]).toBe("replay diverged at record 1: expected fs.open(0 a.txt), got fs.open(0 b.txt)");
   expect(r.out).toBe("");
-});
+}, 60000);
 
 test("a replay that ends with records left over is a divergence naming the first", () => {
   writeFileSync(join(dir, "a.txt"), "aaa\n");
@@ -251,7 +253,7 @@ test("a replay that ends with records left over is a divergence naming the first
   expect(lines[0]).toMatch(/^replay diverged at record \d+: expected fs\.open\(0 a\.txt\), got end of program \(\d+ records not replayed\)$/);
   expect(lines[1]).toBe("last records replayed:");
   expect(lines.slice(2).join("\n")).toContain("fs.read(");
-});
+}, 60000);
 
 test("MILO_REPLAY_STOP stops at the requested record", () => {
   writeFileSync(join(dir, "a.txt"), "aaa\n");
@@ -272,7 +274,7 @@ test("MILO_REPLAY_STOP stops at the requested record", () => {
   const trapped = run(bin, [], { MILO_REPLAY: trace, MILO_REPLAY_STOP: String(second.seq), MILO_LINE_BUFFERED: "1" });
   expect(trapped.signal).toBe("SIGTRAP");
   expect(trapped.out).toBe("aaa\n");
-});
+}, 60000);
 
 const lldb = spawnSync("lldb", ["--version"], { encoding: "utf-8" }).status === 0;
 
@@ -296,7 +298,7 @@ test("with neither variable set the IO hooks are inert: live reads, no trace", (
   expect(r.err).toBe("");
   expect(r.out).toBe("live one\n");
   expect(existsSync(join(dir, "a.txt.mrr"))).toBe(false);
-});
+}, 60000);
 
 // A replay never changes the world: a write to a file is recorded (that it happened,
 // how many bytes) and answered from the trace, and the file is not created.
@@ -318,4 +320,4 @@ fn main() {
   expect(existsSync(out)).toBe(false);
   const kinds = spawnSync("bun", ["run", MAIN, "trace", trace], { encoding: "utf-8" }).stdout;
   expect(kinds).toMatch(/fs\.write +\d+ 12 +2 bytes/);
-});
+}, 60000);

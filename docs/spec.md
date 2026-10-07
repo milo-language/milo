@@ -13762,10 +13762,10 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `3`
+- `-12345`
 - `true`
 
-**Rationale.** A program's own `pub fn kill` and `fn pipe` share names with C functions std declares (kill(2), pipe(2)). In the flat namespace they used to take std's own calls to those functions, which then failed to type-check inside std/platform; the resolver now renames the program's fns in their module instead.
+**Rationale.** A program's own `pub fn kill` shares its name with a C function std declares (kill(2), which std/platform's killRaw calls). In the flat namespace it used to take std's own call, which then failed to type-check inside std/platform; the resolver now renames the program's fn in its module instead. (Without that rename the C kill wins this file's own call; the arguments are a pid nothing has and signal 0, so it would only fail.)
 
 *Program:* [`tests/fixtures/userFnNamedLikeStdExtern.milo`](../tests/fixtures/userFnNamedLikeStdExtern.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
