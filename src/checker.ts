@@ -1185,10 +1185,12 @@ export class TypeChecker {
   private typeDeclaredInStd(ty: TypeKind): boolean {
     if (ty.tag !== "struct" && ty.tag !== "enum") return false;
     const files = this.declOrigins?.types.get(ty.name)?.files;
-    if (files && files.size > 0) return [...files].every(f => f.startsWith(STDLIB_DIR + sep));
+    // STDLIB_DIR holds std/ (in a checkout it is the repo root, tests/ included).
+    const stdRoot = resolvePath(STDLIB_DIR, "std") + sep;
+    if (files && files.size > 0) return [...files].every(f => f.startsWith(stdRoot));
     // A generic's instance (`Channel_i64`) is declared where the generic is.
     const inst = this.monomorphizedStructDecls.find(d => d.name === ty.name);
-    return !!inst?.span?.file?.startsWith(STDLIB_DIR + sep);
+    return !!inst?.span?.file?.startsWith(stdRoot);
   }
 
   private carriesRawPointer(ty: TypeKind, seen: Set<string> = new Set()): boolean {
@@ -3159,6 +3161,7 @@ export class TypeChecker {
   private checkProgram(program: Program): void {
     this._userFnNames = program.userFnNames;
     this.replayPlans = program.replayPlans;
+    for (const fn of program.droppedExterns ?? []) this.checkVariadicExtern(fn);
     this.declOrigins = program.declOrigins;
     this.entryFile = program.entryFile;
     for (const u of program.unusedImports ?? []) {

@@ -3,7 +3,7 @@ system: planning
 purpose: accepted std and toolchain additions for the agent era, for consideration, with a design sketch for deterministic record/replay
 key-files: std/ (http, json, testing, runtime, time, rng, fs, net, process), src/checker.ts (attributes, extern calls)
 update-when: an item is accepted, built, or rejected
-last-verified: 2026-10-06 (replay phases 1-3 landed; std module list checked; items marked "no" are absent from std/)
+last-verified: 2026-10-06 (replay phases 1-4 landed; std module list checked; items marked "no" are absent from std/)
 -->
 
 # What std should include next (2026-10)
@@ -127,7 +127,20 @@ Serial, one agent at a time, each landed green before the next:
    `--replay` to the previous recorded call and stop there. Demo: record a failing run of
    a Milo program, open it in dapweb, run to the failure, step backwards to the cause.
 
-## Replay phase 4: close the gaps (accepted 2026-10-06, after the dapweb demo)
+## Replay phase 4: close the gaps (accepted 2026-10-06, after the dapweb demo; done 2026-10-06)
+
+**Done** (292c0bdf, 3540b8d9, 485a5df0, 94ad5f6d, d70aca75, 979f6649; described in
+[record-replay.md](../record-replay.md) §Phase 4): the extern catalog
+(`src/extern-effects.ts`, every std extern, gated by tests/externEffects.test.ts),
+compiler-generated wrappers for every extern call (`@records` for a program's own,
+return value for scalar-only ones), holes listed by `--replay-holes` and reported once
+per recorded run and in the trace, OS threads in one tagged trace with std/sync's
+operations ordered, `unsafe` memory shared with a thread reported as a hole, and (added
+during the phase) deterministic addresses: a restart with ASLR off and a fixed-address
+heap for the program's allocations and green stacks. std has no Mutex or Thread type, so
+"Mutex lock acquisition" and "Thread spawn/join" are Channel/WaitGroup/Once/atomics and
+`thread.spawn` for Promise.blocking workers.
+
 
 Phases 1-3 record what goes through std; raw `unsafe` extern calls and OS threads are
 unrecorded. Both can be closed, the way rr closes them for Linux syscalls:

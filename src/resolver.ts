@@ -502,11 +502,8 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     const rrUnit: Unit = { prog: stub, file: RR_WRAPPER_FILE, pkg: "", targets: [] };
     const before = units.length;
     processImports(stub, STDLIB_DIR, "", rrUnit);
-    // The modules this pulled in go ahead of the entry file, where they would have been
-    // had the program imported them: the merge is last-wins, and a user decl that shares
-    // a std name (an extern redeclared, a documented override) must stay the one kept.
-    const added = units.splice(before);
-    units.splice(units.indexOf(entryUnit), 0, ...added);
+    // The modules this pulled in merge after the entry file, exactly as an import of
+    // them would: the merge is last-wins (see the extern-attribute carry below).
     const planned = planReplayWrappers(units.map(u => u.prog), target);
     if (planned) {
       const wrappers = new Parser(new Lexer(planned.source).tokenize(), planned.source, RR_WRAPPER_FILE).parse();
@@ -922,6 +919,35 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     if (!prev) globalDefs.set(g.name, { file: g.file, decl: g.decl });
   }
 
+  const droppedExterns: (typeof functions)[number][] = [];
+  // An extern redeclared with the same signature binds the same C symbol, so the copy
+  // the merge keeps also carries the attributes the others were written with: a program
+  // that declares `@records` or `@externalLinkage` on its own `extern fn getpid` keeps it
+  // when std (pulled in by an import, or by record/replay's wrappers) declares getpid too.
+  {
+    const sigOf = (f: (typeof functions)[number]) =>
+      JSON.stringify([f.params.map(p => p.type), f.retType, f.isVariadic], (k, v) => k === "span" ? undefined : v);
+    const kept = new Map<string, (typeof functions)[number]>();
+    for (const f of functions) if (f.isExtern) kept.set(f.name, f);
+    // STDLIB_DIR is the directory holding std/ (the repo root in a checkout).
+    const isStd = (f: (typeof functions)[number]) => !!f.sourceFile?.startsWith(resolve(STDLIB_DIR, "std") + sep);
+    for (const f of functions) {
+      const k = kept.get(f.name);
+      if (!f.isExtern || !k || k === f) continue;
+      // A program's own declaration the merge drops is still the program's to get right:
+      // the checker validates it as written (droppedExterns).
+      if (!isStd(f)) droppedExterns.push(f);
+      if (!f.attributes?.length || sigOf(f) !== sigOf(k)) continue;
+      // The program's own attribute wins over std's of the same name: it is the one
+      // the program wrote and the one a diagnostic should be about.
+      const mine = !isStd(f);
+      const names = new Set(f.attributes.map(a => a.name));
+      k.attributes = mine
+        ? [...(k.attributes ?? []).filter(a => !names.has(a.name)), ...f.attributes]
+        : [...(k.attributes ?? []), ...f.attributes.filter(a => !(k.attributes ?? []).some(b => b.name === a.name))];
+    }
+  }
+
   // dedup: keep last occurrence of each name (user wins over prelude)
   function dedup<T extends { name: string }>(arr: T[]): T[] {
     const seen = new Set<string>();
@@ -940,5 +966,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible, ...(replayPlans && { replayPlans }) };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible, ...(replayPlans && { replayPlans }), ...(droppedExterns.length > 0 && { droppedExterns }) };
 }

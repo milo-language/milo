@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: record-replay
-purpose: deterministic record/replay of a program's nondeterministic inputs: what is captured, how replay answers it, scheduling, the trace format, divergence, stopping at a record, `milo trace`
-key-files: std/replay.milo, std/os.milo (sys* calls), std/runtime.milo (pollAndWakeTraced), std/fs.milo, std/io.milo, std/net.milo, std/process.milo, std/pty.*.milo, std/openssl.milo, std/time.milo, std/env.milo, std/args.milo, src/trace.ts, src/main.ts (run --record/--replay), tests/replay.test.ts, tests/replayIo.test.ts
-update-when: a std entry point starts reading the OS or changing the world, a record kind is added, the framing changes, or a later phase lands
-last-verified: 2026-10-06 (phases 1-3: clock, entropy, env, argv; file, socket, DNS, TLS, subprocess, pty and stdin IO; green-scheduler order)
+purpose: deterministic record/replay of a program's nondeterministic inputs: what is captured, how replay answers it, scheduling, extern calls and the extern catalog, OS threads, addresses, holes, the trace format, divergence, stopping at a record, `milo trace`
+key-files: std/replay.milo, std/os.milo (sys* calls), std/sync.milo (thread ordering), std/runtime.milo (pollAndWakeTraced, stacks), src/extern-effects.ts (catalog), src/replay-externs.ts (wrappers), src/checker.ts (redirectForReplay), src/lower.ts, src/codegen.ts (engine scope, heap calls), src/trace.ts, tests/replay.test.ts, tests/replayIo.test.ts, tests/replayExterns.test.ts, tests/externEffects.test.ts
+update-when: a std entry point starts reading the OS or changing the world, std declares a new extern, a record kind is added, the framing changes, or a later phase lands
+last-verified: 2026-10-06 (phases 1-4: clock, entropy, env, argv; file, socket, DNS, TLS, subprocess, pty and stdin IO; green-scheduler order; extern calls, OS threads, addresses, holes)
 -->
 
 # Record and replay
@@ -19,8 +19,10 @@ starts. `milo run --record <file>` and `milo run --replay <file>` are the same t
 the CLI, and `milo trace <file>` lists what a trace holds.
 
 Design and the phase plan: [plans/stdlib-next-2026-10.md](plans/stdlib-next-2026-10.md)
-§Deterministic record/replay. Phases 1-3 are built; phase 4 (dapweb reverse step) builds
-on the stop-at-record hook below.
+§Deterministic record/replay. Phases 1-4 are built. Phase 4 closed the gaps: every extern
+call is recorded by the compiler from a catalog or an `@records` attribute, OS threads
+are recorded and replayed in their recorded interleaving, addresses replay as well as
+values, and whatever still cannot be recorded is a reported hole, never a silent one.
 
 ```sh
 MILO_RECORD=run.mrr ./server --port 8080      # or: milo run server.milo --record run.mrr --port 8080
@@ -84,8 +86,8 @@ master, accepted client) is synthetic: the number the recorded run got, with not
 behind it. std remembers which numbers are synthetic, so `sysClose` forgets one instead of
 closing whatever real descriptor shares the number, `setNonblocking` and the event-loop
 registration skip them, and every read, write and query on them is answered from the
-trace. Code that hands such a number to a raw extern (`unsafe`) gets a meaningless fd,
-which is the extern-call hole below.
+trace. A raw extern call on such a number is recorded too (§Phase 4: extern calls), so
+under replay it is answered from the trace rather than made against a meaningless fd.
 
 ### Phase 3: scheduling
 
@@ -124,25 +126,142 @@ Consequences:
 The scheduler's deadline clock (`std/time.milo: unrecordedEpochMillis`) stays unrecorded:
 it only feeds the decisions, and the decisions are what is recorded.
 
-### OS threads
+### Phase 4: extern calls
 
-Recording and replay cover the main OS thread, which runs `main` and every green task. A
-`Promise.blocking` worker's own OS reads go to the OS unrecorded (its hook state is
-thread-local and decides "off"), and when its result arrives is real time. Replay makes the
-arrival point deterministic where it can: an `x<n>` token makes the replaying scheduler
-wait for `n` cross-thread unparks at that poll. The worker's computation is only
-reproduced if it is itself deterministic. A program that starts one gets, once, on stderr
-under either variable:
+Anything a program reaches through `extern fn` (in `unsafe`, or an `extern-call` warning)
+used to bypass the trace. Now the compiler records it. For every extern a program calls
+from code that does not record its own calls, `src/replay-externs.ts` generates a Milo
+wrapper, and the checker sends the call there (`redirectForReplay`); std's own recording
+functions (`sys*`, the `*Live` halves of the hooks, std/replay and the runtime under it)
+are marked `@replayHooked` / `@!replayHooked` and keep calling C directly. A wrapper:
 
-```
-milo replay: warning: this program starts an OS thread (Promise.blocking); record/replay covers the main thread and its green tasks only, ...
-```
+- with neither variable set, is skipped: the call site tests std/replay's mode word and
+  calls the extern directly, one load and compare;
+- recording, makes the call, then appends an `x.<name>` record: the arg is the scalar
+  arguments and the contents of the pointer arguments that name the call (a path), the
+  payload is the return value, errno and every buffer the call wrote;
+- replaying, does not make the call: it takes the record, copies the bytes back into the
+  caller's buffers, restores errno and returns the recorded value.
+
+What a call writes comes from one of three places:
+
+| Source | Covers | Example |
+|---|---|---|
+| The extern catalog, `src/extern-effects.ts` | every extern std declares, on darwin, linux and windows | `read` writes `buf[ret]`, `stat` writes `buf[sizeof(struct stat)]`, `getcwd` writes `buf[cstr:size]` and returns `buf` |
+| `@records(...)` on the declaration | a program's own externs | `@records("buf[cstr:len]") extern fn confstr(name: i32, buf: *u8, len: i64): i64` |
+| The signature | an extern with only scalar params and return, not `@pure` | `extern fn getpid(): i32` is recorded by its return value |
+
+**The catalog.** One entry per extern std declares (rr keeps the same table for Linux
+syscalls), built from the man pages and Microsoft's Win32 reference: its effect
+(`pure` and `local` are left alone; `input` and `effect` are recorded, and under replay
+neither is performed, so a replay touches nothing; `sync`, `sched` and `hole` are holes
+outside std), each output buffer and its size, how a pointer return replays (`cstr`,
+`handle`, `param:<p>`, `static:<size>`), which pointer params name the call, the errno
+channel and the variadic tail. C type sizes per target live next to it.
+`tests/externEffects.test.ts` fails when std declares an extern the catalog does not
+describe (listing them), when an entry describes nothing std declares, and when a
+description does not turn into a wrapper on a target it is declared for. SQLite, for
+one, is fully recorded this way: every `sqlite3_*` call is answered from the trace, so a
+replay needs no database file, and its handles are synthetic like descriptors.
+
+**`@records`.** The same output grammar as the catalog, one string per buffer:
+`buf[len]` (a param), `buf[ret]`, `buf[16]`, `buf[8*ret]`, `buf[*lenp]` (the count an
+integer param points at), `buf[cstr]` / `buf[cstr:len]`, and `ret[cstr]` for a returned
+string. With no arguments only the return value is recorded. See
+[language-reference.md](language-reference.md) §Extern calls under record/replay.
+
+### Holes
+
+An extern that cannot be recorded by copying bytes is a hole: one that takes or returns
+a pointer and has neither a catalog entry nor `@records`, a catalog `hole` (`fork`, the
+`exec*` family, `dlopen`/`dlsym`, `getaddrinfo`, `ioctl`), a raw lock or event-loop
+primitive used outside std, and a catalog description that names a param the program's
+own redeclaration of the extern does not have. A hole is never silent:
+
+- **At compile time**: `milo check --replay-holes` (and `build`) lists every call site as
+  warning `replay-hole`; `--deny=replay-hole` fails the build. Off by default, because it
+  only matters to a program that is recorded.
+- **At run time**: the first call to each one in a recorded run prints, once,
+  `replay: this run called unrecorded uname at x.milo:19; a replay may diverge`, and
+  writes a `trace.hole` record (arg the name, payload where), which `milo trace` reports
+  (`hole: ...` lines, `holes` in `--json`). The call itself runs for real, recorded or
+  replayed.
+- **std is held to it**: `tests/externEffects.test.ts` checks every std module on each
+  target with `--replay-holes` and allows only `dlopen` and `dlsym` (std/dl), whose loaded
+  code is invisible by nature.
+
+### Phase 4: OS threads
+
+One trace serves every OS thread. A thread std starts (`Promise.blocking`, std/shard) is
+numbered when its parent records `thread.spawn`, so the numbering replays, and every
+record a thread makes names it after its kind: `fs.read@2`. The trace order is the order
+the records were made, under std/replay's lock. Under replay a thread answers its next
+call only when the record at the head of the trace is its own, so each thread gets the
+answers it got when recorded, in the same interleaving with the others; its own std OS
+calls are recorded and replayed on it like the main thread's.
+
+Safe Milo shares memory between threads only through std/sync, so ordering std/sync is
+ordering everything a safe program can observe. Once a recorded or replayed program has
+started a thread, every look a primitive's operation takes at its state under its lock
+is a `sync.*` record with the outcome in the arg: a channel send, receive, `trySend`,
+`tryRecv`, `len`, `close` and Select arm finding the queue ready or not; a WaitGroup's
+count; a `Once`'s state; and each atomic operation's returned value (`sync.atomic.add`).
+Recording writes the record while the primitive's lock is held (an atomic runs inside the
+trace lock), so the record order is the order the operations really took effect in.
+Replay keeps it: a thread waits for its turn before taking a primitive's lock, never
+while holding one, and never sleeps on a condition variable, because the wakeup it would
+wait for is itself a later turn. A different outcome under replay is a divergence. The
+cross-thread unpark a `Promise.blocking` result does (an `x<n>` scheduler token) waits
+for the real unpark as before, which the ordering now makes deterministic.
+
+A thread whose closure shares memory through `unsafe` (it captures a value of a user type
+that carries a raw pointer and vouched for itself with `unsafe impl Send`, or its body
+has an `unsafe` block) is a hole: listed under `--replay-holes`, and reported as
+`unsafe shared memory` when the thread starts in a recorded run. A replay that waits on a
+thread that has finished reports the divergence instead of hanging.
+
+std has no `Mutex` or thread type; OS threads come from `Promise.blocking` (and std/shard
+on top of it), and a one-slot `Channel` carrying the protected value is the lock
+(tests/replayExterns.test.ts uses one).
+
+### Phase 4: addresses
+
+Values replay; addresses have to be made to. Under either variable:
+
+1. **ASLR off.** A process cannot turn ASLR off for itself once it runs, so std/replay
+   (`miloReplayStart`, which `main` calls before any global initializer) restarts the
+   program once, in place: on darwin `posix_spawn` with `POSIX_SPAWN_SETEXEC |
+   _POSIX_SPAWN_DISABLE_ASLR` (what lldb launches with), on linux
+   `personality(ADDR_NO_RANDOMIZE)` and `execve("/proc/self/exe")` (what gdb does). An
+   environment marker makes it happen once; a process a debugger traces is left as the
+   debugger launched it. If the restart fails the run says so (`could not restart with
+   ASLR off; addresses may differ`). Windows has no per-process switch (ASLR is per image),
+   so there the restart and the heap below are not done.
+2. **A fixed-address heap.** libc's malloc places its regions at random even with ASLR
+   off, and the engine's own allocations differ between recording and replaying. So every
+   allocation Milo code makes (`malloc`, `realloc` and `free` in all generated code and
+   std) goes through std/replay's allocator, served from 16 regions at a fixed address
+   (0x200000000000, 8 GiB each, mapped on first use, one per thread number, size-class
+   free lists), and green-task stacks come from the top of the same regions. The engine
+   (std/replay, every recording hook, every generated wrapper) runs with a per-context
+   depth raised, and its allocations go to libc's malloc, so the program's heap is shaped
+   by the program's own allocations alone. Values a hooked call returns (the environment
+   string, a recorded file's bytes) are allocated by the engine and live in libc's heap.
+   With neither variable set the three entry points are one compare in front of libc,
+   declared an allocation family so LLVM still removes allocations that never escape.
+
+So a program that prints a pointer, hashes by address or sorts by it replays the same:
+globals, heap blocks and green-task stack locals print the same addresses under record
+and under replay, outside a debugger (tests/replayExterns.test.ts). Not covered: memory
+libc or a C library allocates for itself, the stacks of OS threads, and a block one
+thread frees for another (its reuse timing is not ordered).
 
 ## The hook
 
-`std/replay.milo` holds the mode in one thread-local global, decided by a global
-initializer at process start (0 undecided, 1 off, 2 recording, 3 replaying). Each hooked
-entry point is:
+`std/replay.milo` holds the mode in one global, decided at process start (0 undecided,
+1 off, 2 recording, 3 replaying) and never changed after; everything else the trace needs
+is shared by all threads and written only inside its lock (`ReplayLock.run`, a spin lock
+the checker's thread pass knows as `@synchronized`). Each hooked entry point is:
 
 ```
 if replayOff() { return <ask the OS> }      // one load and compare when off
@@ -165,11 +284,21 @@ truncate and interleave into the parent's trace. Only the top process is recorde
 
 ## Overhead when off
 
-One thread-local load and compare per hooked call, against a syscall-sized call it guards.
-Measured 2026-10-06 (darwin arm64, -O2, `MILO_RECORD`/`MILO_REPLAY` unset), before and
-after phases 2-3, five alternating runs each: 2,000,000 one-byte `FdStream` reads of
+One compare against a syscall-sized call it guards, per hooked call; per extern call, a
+load and compare at the call site; per allocation, a load and compare in std/replay's
+allocator, which LLVM still treats as an allocation family. Measured 2026-10-06 (darwin
+arm64, default `milo build` -O2, `MILO_RECORD`/`MILO_REPLAY` unset), the main checkout
+against phase 4, five alternating runs each, fastest four shown:
+
+| Loop | before (ms) | phase 4 (ms) |
+|---|---|---|
+| 40M extern calls (`getppid`, uncatalogued `strtol`) | 1458-1467 | 1467-1473 |
+| 2 OS threads ping-pong 200k channel messages, an atomic per hop | 420-424 | 430-432 |
+| 5M short-lived strings and two-element Vecs | 349-364 | 358-364 |
+
+Within a percent or two. Phases 2-3 (earlier): 2,000,000 one-byte `FdStream` reads of
 `/dev/zero` 557-575 ms before, 559-564 ms after; 50,000 `readFile` plus `pathExists` of
-`/etc/hosts` 401-406 ms before, 403-409 ms after. Within run-to-run noise.
+`/etc/hosts` 401-406 ms before, 403-409 ms after.
 
 ## Trace format (version 1)
 
@@ -178,12 +307,16 @@ rewritten:
 
 ```
 milo-trace 1\n
-<seq> <kind> <argLen> <payloadLen>\n<arg bytes>\n<payload bytes>\n
+<seq> <kind>[@<thread>] <argLen> <payloadLen>\n<arg bytes>\n<payload bytes>\n
 ...
 ```
 
 - `seq` counts from 1 and must match the reader's position; a mismatch is a corrupt trace.
 - `kind` is a dotted ASCII name with no spaces (`time.wall`, `net.read`, `sched.pick`).
+  A record made on an OS thread other than the main one names it after the kind:
+  `fs.read@2` (thread numbers come from `thread.spawn` records). The framing did not
+  change, so readers of it (dapweb's timeline) keep working; one that does not know
+  threads shows the suffixed kind.
 - `arg` and `payload` are length-prefixed raw bytes, so a payload can be binary and any
   size with no escaping. The trailing newlines are redundant framing that a reader checks,
   and they make a text-only trace readable with `less`.
@@ -191,6 +324,9 @@ milo-trace 1\n
   record made before it on disk.
 - Replay streams the trace through a window refilled 64 KiB at a time, so memory is
   bounded by the largest record, not the trace.
+
+Phase 4 kinds: `x.<extern>` (payload `<ret> <errno> <len>...` then the output bytes),
+`thread.spawn`, `sync.<op>` (outcome in the arg), `sync.atomic.<op>`, `trace.hole`.
 
 The version is bumped only when the framing changes. A new kind is additive: an older
 replayer meeting it reports a divergence that names the kind.
@@ -251,31 +387,38 @@ time.
 ```
 milo trace run.mrr                     # seq, kind, call argument (60 chars), payload size
 milo trace run.mrr --kind net.         # only kinds starting with net.
-milo trace run.mrr --json              # {version, total, records: [{seq, kind, arg, payloadLen, offset}]}
+milo trace run.mrr --json              # {version, total, holes, records: [{seq, kind, arg, payloadLen, thread, offset}]}
 milo trace run.mrr --payload 42        # record 42's payload bytes on stdout
 ```
 
 It streams the file and skips payloads, so a large trace lists in constant memory;
 `offset` is the byte position of the record's header line, for a UI that wants to read a
-payload itself. `src/trace.ts`.
+payload itself. A record made on another OS thread shows its number (`t2`), and a trace
+with holes ends with one `hole: this run called unrecorded <name> at <where> (record N)`
+line per hole. `src/trace.ts`.
 
 ## Not captured
 
-- **Raw extern calls bypass the hook.** Anything a program or package reaches through
-  `extern fn` (in `unsafe`, see the `extern-call` warning) is invisible to the trace:
-  `localtime_r`, `getenv`, `read` or `socket` called directly, OpenSSL's own entropy. The
-  `unsafe` requirement is what makes those holes listable. Under replay such a call also
-  runs for real, against synthetic descriptor numbers.
+Everything below is reported, not silent, except where it says otherwise.
+
+- **Holes** (above): externs nothing describes, the catalog's `hole` entries, raw locks
+  and event-loop calls outside std, `unsafe` memory shared with a thread. Reported at
+  compile time on request and once per recorded run.
 - **Signals.** `std/signal`'s self-pipe is real under replay and signal arrival is not
-  recorded.
-- **Windows subprocesses and ptys** (`std/process.windows.milo`, `std/pty.windows.milo`)
-  are not hooked; on Windows a replay spawns for real.
-- Local configuration calls are not records: `setsockopt`, `tcgetattr`/`tcsetattr`
-  (`std/term` raw mode still changes the real terminal under replay), `fcntl` flags.
-- `std/sysinfo` (uptime, hostname, memory, CPU counts) and `getpid` outside `capture`.
+  recorded (not reported).
+- **Windows**: the subprocess and pty calls are now recorded through the catalog, but
+  there is no ASLR restart or fixed-address heap, std's Windows POSIX shims
+  (`std/platform.windows.milo`) are Milo functions, so a program calling one of them
+  directly bypasses the catalog, and std/dl's loader calls are not listed as holes there.
+  Not exercised end to end: a std program that touches std/os does not link for Windows
+  today (`waitpid` and `kill` referenced from std/os closures), before and after phase 4.
+- **Addresses** not covered (see §addresses): libc's own allocations, OS-thread stacks,
+  cross-thread frees.
+- **std internal locks** (a DNS cache in std/net, arena identity) are not ordered between
+  threads; their order does not reach a program's output.
 - **Simulation** (seeded scheduler, simulated clock and network, many seeds): phase 5.
 - Traces are platform-specific: `random.uniform` exists only on darwin, and record kinds
-  carry platform values (open flags, sockaddr bytes, errno numbers).
+  carry platform values (open flags, sockaddr bytes, errno numbers, struct layouts).
 
 ## Tests
 
@@ -298,3 +441,22 @@ mode, in trap mode (SIGTRAP after the first read's output) and under lldb (break
 Each mechanism was checked by disabling it: replay ignoring `sched.pick` fails the scenario
 and the sleep test, a replay read that asks the OS fails the scenario, and no exit check
 fails the unconsumed-records test.
+
+`tests/replayExterns.test.ts` (phase 4): a program with its own externs (scalar `getpid`
+and `clock`, catalogued `gethostname`, `@records` `confstr`, undescribed `uname`) replays
+its recording byte for byte, and prints the hostname and confstr bytes a hand-edited
+trace holds, so they come from the trace; `--replay-holes` lists exactly the `uname`
+calls, `--deny=replay-hole` fails, and a recorded run reports `uname` once and
+`milo trace` shows the hole; four OS threads contending on a channel lock and an atomic
+print in a different order on unrecorded runs and replay byte-identically 20 times;
+`Promise.blocking` workers reading a file and the environment replay with the file
+deleted, their records tagged with their threads; a program printing global, heap,
+HashMap-value, linked-node and green-stack addresses replays them identically (and two
+recordings agree); a thread closure sharing unsafe memory is listed and reported.
+`tests/externEffects.test.ts`: catalog completeness and no stale entries, every
+description generates a wrapper on every target, and std's own holes per target are
+exactly the documented ones. Checked by disabling: ordering off in std/sync fails the
+threads test; the checker not redirecting extern calls fails the own-externs test; no
+ASLR restart fails the addresses test (the global's address moves); no fixed heap fails
+it too (every heap address moves); a std module losing `@!replayHooked` fails the
+std-holes gate.

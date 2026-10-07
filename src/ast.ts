@@ -358,6 +358,9 @@ export interface Program {
   // Set by the resolver: the externs this program calls that record/replay redirects to a
   // generated wrapper (src/replay-externs.ts), keyed by extern name.
   replayPlans?: Map<string, import("./replay-externs").ReplayPlan>;
+  // Set by the resolver: a program's own extern declarations the merge dropped for a
+  // same-named one (std's), still validated as written.
+  droppedExterns?: Function[];
   declOrigins?: DeclOrigins; // set by the resolver; absent for a bare Parser program
   // What each file's import lines admit, keyed by resolved path. `names` are the
   // declared names listed in `from "x" import { … }` (an alias is already rewritten to

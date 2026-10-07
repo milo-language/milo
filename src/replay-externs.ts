@@ -398,7 +398,7 @@ export function planReplayWrappers(programs: Program[], target: Target): { plans
 export function replaySite(span: Span | undefined, stdlibDir: string, cwd: string): string {
   if (!span?.file) return "?";
   let f = span.file;
-  if (f.startsWith(stdlibDir + "/")) f = f.slice(stdlibDir.length + 1);
+  if (f.startsWith(stdlibDir + "/std/")) f = f.slice(stdlibDir.length + 1);
   else if (f.startsWith(cwd + "/")) f = f.slice(cwd.length + 1);
   return `${f}:${span.line ?? 0}`;
 }
