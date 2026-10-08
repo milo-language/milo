@@ -61,6 +61,7 @@ match "hello".indexOf("l") {
 | `pushInt(n: i64)` | appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string |
 | `clear()` | empties the string, keeping its capacity |
 | `truncate(len: i64)` | keeps the first len BYTES and the capacity; len past the end is a no-op, a len inside a multibyte character aborts |
+| `setByte(i: i64, b: u8)` | overwrites byte i in place, the write-side twin of s[i]; i outside 0..len aborts. A byte op like s[i]: it does not keep the text valid UTF-8 |
 | `cstr(): *u8` | NUL-terminated view; the string must outlive the pointer |
 | `clone(): string` |  |
 
