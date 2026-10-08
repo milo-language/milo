@@ -142,6 +142,33 @@ test("noalias is withheld where a global or a closure can alias the param", () =
   expect(defineOf(ir, "callWith")).not.toContain("noalias");
 });
 
+test("noalias follows where a global's address goes, not just that it is touched", () => {
+  const ir = emitIr(`
+struct H { a: i64, b: i64 }
+var GH = H { a: 1, b: 2 }
+var COUNT: i64 = 0
+// gets a pointer into GH and writes GH by name: an alias, withheld
+fn poke(x: &mut i64): i64 {
+    x = 5
+    GH.a = 7
+    return x
+}
+// writes a global no param can point into: applied
+fn tally(x: &mut i64): i64 {
+    x = x + 1
+    COUNT = COUNT + 1
+    return x
+}
+fn main(): i32 {
+    var n: i64 = 0
+    print(poke(&mut GH.b) + tally(&mut n))
+    return 0
+}
+`, "--noalias");
+  expect(defineOf(ir, "poke")).not.toContain("noalias");
+  expect(defineOf(ir, "tally")).toContain("ptr noalias nonnull");
+});
+
 test("noalias is off without the flag", () => {
   const ir = emitIr(NOALIAS_SRC, "--no-noalias");
   expect(ir.split("\n").filter(l => l.startsWith("define ") && l.includes("noalias"))).toEqual([]);

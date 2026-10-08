@@ -283,6 +283,8 @@ export class Codegen {
   private closureCounter = 0;
   // `&mut` params that carry pointer attributes, per fn: what applyNoalias may mark.
   private noaliasCandidates = new Map<string, string[]>();
+  // Closures whose environment holds pointers to the creator's locals, for applyNoalias.
+  private byRefClosures = new Set<string>();
   // Mutable module globals by IR name, for applyNoalias.
   private mutableGlobals = new Set<string>();
   public scopeCounter = 0;
@@ -2417,121 +2419,259 @@ export class Codegen {
     });
   }
 
-  // `noalias` on a `&mut` parameter promises LLVM that, for the whole call, nothing reaches
-  // the pointee except through that parameter. The checker's call-site exclusivity check
-  // (every call form, receivers and moved arguments included) plus emitAliasGuards rule out
-  // a second PARAMETER naming the storage. Two other routes remain in safe code, and this
-  // pass withholds the attribute wherever either can occur, decided on the final IR so no
-  // codegen path can slip past it:
-  //   - a mutable global whose address escapes (passed by ref, stored, or a pointer loaded
-  //     out of it escapes), accessed by the callee or anything it may call: `f(&mut G)`
-  //     where f also writes G;
-  //   - a closure body (its environment holds pointers to the creator's locals, so it can
-  //     write what a `&mut` argument points at: `f(&mut n, () => { n = n + 1 })`).
-  // "May call" follows direct calls, sends indirect calls to every address-taken fn, and
-  // treats any extern outside SAFE_LIBC (a C library that may call back, or a Milo fn
-  // defined in another object) as unknown code. Unsafe raw pointers are not tracked: an
-  // aliasing `*T` built in unsafe code is the user's responsibility, as everywhere else.
-  private static readonly SAFE_LIBC = new Set([
-    "malloc", "calloc", "realloc", "free", "memcpy", "memmove", "memset", "memcmp", "memchr",
-    "strlen", "strcmp", "strncmp", "printf", "dprintf", "snprintf", "putchar", "puts", "fflush",
-    "fwrite", "write", "atof", "strtod", "strtoll", "strtol", "abort",
+  // `noalias` on a `&mut` parameter promises LLVM that, for the whole call, the pointee is
+  // reached only through that parameter. The checker's call-site exclusivity check (every
+  // call form, receivers and moved arguments included) plus emitAliasGuards rule out a
+  // second PARAMETER naming the storage. Two routes remain in safe code, and this pass
+  // withholds the attribute wherever either can occur. It runs on the final IR, so every
+  // codegen path, builtins and the replay heap included, is seen:
+  //   - a mutable global G: `f(&mut G)` where f, or anything it may call, also reads or
+  //     writes G by name. A pointer "reaches G" when it is G's address, derived from it,
+  //     loaded through it, or a slot holding such a pointer; that reach is propagated from
+  //     call arguments into callee params and from `ret` back to callers. A pointer that
+  //     reaches G and goes anywhere the pass cannot follow (a store outside a stack slot,
+  //     an indirect or C call) makes G reach every param in the module.
+  //   - a closure body: its environment points at the creator's locals, so it can write
+  //     what a `&mut` argument points at (`f(&mut n, () => { n = n + 1 })`). A function
+  //     that may run one (directly or through an indirect call) gets no noalias at all.
+  // "May call" follows direct calls and sends an indirect call to every address-taken fn.
+  // A C call goes there too (C can only call back what it was handed, or an exported
+  // symbol) unless it is a libc/OS function that std or codegen declares and that is not in
+  // CALLBACK_LIBC (those run code they were handed: threads, context switches, signal and
+  // exit handlers). An extern the PROGRAM declares may be any C library and is assumed to
+  // call back. A Milo fn defined in another object is unknown code. Raw pointers built in
+  // unsafe code are not tracked: an aliasing `*T` is the user's responsibility, as it is
+  // everywhere else.
+  private static readonly CALLBACK_LIBC = new Set([
+    "pthread_create", "pthread_once", "makecontext", "swapcontext", "setcontext", "atexit",
+    "on_exit", "exit", "signal", "sigaction", "raise", "kill", "qsort", "bsearch", "dlopen",
+    "dlclose", "fork",
   ]);
+  // libc/OS calls std makes that hold on to a pointer argument past the call (a stdio
+  // buffer, an event's udata, a thread or context argument, a handler). Any other std or
+  // codegen libc call only uses its pointers while it runs.
+  private static readonly RETAINING_LIBC = new Set([
+    "setvbuf", "setbuf", "kevent", "kevent64", "epoll_ctl", "pthread_create", "makecontext",
+    "sigaction", "signal", "atexit", "on_exit", "aio_read", "aio_write", "io_uring_enter",
+  ]);
+  private externKeepsPointers(name: string): boolean {
+    if (name.startsWith("llvm.")) return false;
+    return Codegen.RETAINING_LIBC.has(name) || this.externCallsBack(name);
+  }
+  private externCallsBack(name: string): boolean {
+    if (name.startsWith("llvm.")) return false;
+    if (Codegen.CALLBACK_LIBC.has(name)) return true;
+    const fn = this.hirFns.get(name);
+    if (!fn) return false; // declared by codegen itself (printf, malloc, abort, ...)
+    return !(fn.sourceFile ?? "").startsWith(resolve(STDLIB_DIR, "std") + "/");
+  }
   private applyNoalias(lines: string[]): string[] {
-    type Fn = { start: number; end: number; callees: Set<string>; unknown: boolean; globals: Set<string> };
+    type Fn = {
+      start: number; end: number; params: string[];
+      callees: Set<string>; unknown: boolean; mayCallAny: boolean; mayCallC: boolean; touches: Set<string>;
+      paramReach: Set<string>[]; retReach: Set<string>;
+    };
+    // Top-level comma split of a call's argument list (types like `{ ptr, ptr }` nest).
+    const splitArgs = (s: string): string[] => {
+      const out: string[] = [];
+      let depth = 0, cur = "";
+      for (const ch of s) {
+        if (ch === "(" || ch === "{" || ch === "[" || ch === "<") depth++;
+        if (ch === ")" || ch === "}" || ch === "]" || ch === ">") { if (depth === 0) break; depth--; }
+        if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+        cur += ch;
+      }
+      if (cur.trim()) out.push(cur);
+      return out;
+    };
     const fns = new Map<string, Fn>();
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].startsWith("define ") ? lines[i].match(/@([\w$.\-]+)\(/) : null;
       if (!m) continue;
       let end = i + 1;
       while (end < lines.length && lines[end] !== "}") end++;
-      fns.set(m[1], { start: i, end, callees: new Set(), unknown: false, globals: new Set() });
+      const paramList = splitArgs(lines[i].slice((m.index ?? 0) + m[0].length));
+      const params = paramList.map(p => p.match(/(%[\w.$\-]+)\s*$/)?.[1] ?? "");
+      fns.set(m[1], { start: i, end, params, callees: new Set(), unknown: false, mayCallAny: false, mayCallC: false, touches: new Set(), paramReach: params.map(() => new Set()), retReach: new Set() });
       i = end;
     }
-    const isMutGlobal = (n: string) => this.mutableGlobals.has(n);
     const refRe = /@([\w$.\-]+)/g;
+    const valRe = /%[\w.$\-]+/g;
     const addrTaken = new Set<string>();
-    const escaped = new Set<string>();
-    let anyIndirect = false;
-    const indirectFns: string[] = [];
-    // Function references outside a call's callee slot: the targets of indirect calls.
     for (const l of lines) {
       if (l.startsWith("define ") || l.startsWith("declare ")) continue;
       const call = l.match(/\bcall\b[^@%]*?[@%][\w$.\-]+\(/);
       const calleeAt = call ? (call.index ?? 0) + call[0].lastIndexOf("@") : -1;
       for (const r of l.matchAll(refRe)) if (fns.has(r[1]) && r.index !== calleeAt) addrTaken.add(r[1]);
     }
-    for (const [name, f] of fns) {
-      // values derived from a mutable global's address, and which globals they carry
-      const taint = new Map<string, Set<string>>();
-      const originsIn = (text: string): Set<string> => {
-        const out = new Set<string>();
-        for (const r of text.matchAll(refRe)) if (isMutGlobal(r[1])) { out.add(r[1]); }
-        for (const r of text.matchAll(/%[\w.$\-]+/g)) for (const g of taint.get(r[0]) ?? []) out.add(g);
-        return out;
-      };
-      for (let i = f.start + 1; i < f.end; i++) {
-        const l = lines[i];
-        for (const r of l.matchAll(refRe)) if (isMutGlobal(r[1])) f.globals.add(r[1]);
-        const call = l.match(/\bcall\b[^@%]*?([@%])([\w$.\-]+)\(/);
-        if (call) {
-          if (call[1] === "%") { anyIndirect = true; indirectFns.push(name); }
-          else if (fns.has(call[2])) f.callees.add(call[2]);
-          else if (call[2].startsWith("llvm.") || Codegen.SAFE_LIBC.has(call[2])) { /* never calls back */ }
-          // a Milo fn defined in another object: its body is not here to analyse
-          else if (this.hirFns.get(call[2])?.isExtern === false) f.unknown = true;
-          // C: may call back into anything whose address it was ever given
-          else { anyIndirect = true; indirectFns.push(name); }
-          const args = l.slice(l.indexOf(`${call[1]}${call[2]}(`) + call[2].length + 2);
-          for (const g of originsIn(args)) escaped.add(g);
-          const def = l.match(/^\s*(%[\w.$\-]+) = /);
-          if (def) { const o = originsIn(args); if (o.size) taint.set(def[1], o); }
-          continue;
-        }
-        const st = l.match(/^\s*store\s+(.*), ptr (.*)$/);
-        if (st) { for (const g of originsIn(st[1])) escaped.add(g); continue; }
-        if (/^\s*ret\s/.test(l)) { for (const g of originsIn(l)) escaped.add(g); continue; }
-        const def = l.match(/^\s*(%[\w.$\-]+) = (\w+)(.*)$/);
-        if (!def || def[2] === "icmp" || def[2] === "fcmp") continue;
-        // a scalar loaded out of a global is a value, not an address into it
-        if (def[2] === "load" && /^\s+(i\d+|float|double),/.test(def[3])) continue;
-        const o = originsIn(def[3]);
-        if (o.size) taint.set(def[1], o);
-      }
-    }
     // C may also call an exported symbol it was never handed
     for (const e of this.exportedFnNames) if (e !== "main" && fns.has(e)) addrTaken.add(e);
-    if (anyIndirect) for (const n of new Set(indirectFns)) for (const t of addrTaken) fns.get(n)!.callees.add(t);
-    // poison: touches an escaped global, is a closure body, or runs unknown code
-    const poisoned = new Set<string>();
+    const wild = new Set<string>(); // globals that reach every param
+    const addAll = (into: Set<string>, from: Iterable<string>): boolean => {
+      let grew = false;
+      for (const g of from) if (!into.has(g)) { into.add(g); grew = true; }
+      return grew;
+    };
+    // Each body is parsed once into the operands the dataflow needs.
+    type Opnd = { vals: string[]; globals: string[] };
+    type Ins =
+      | { k: "call"; def?: string; callee: string; indirect: boolean; args: Opnd[]; scalarRet: boolean }
+      | { k: "store"; val: Opnd; dst: string }
+      | { k: "ret"; o: Opnd }
+      | { k: "def"; def: string; op: string; o: Opnd; gepBase?: string };
+    // A typed operand of integer or float type carries no address (only unsafe code turns
+    // one back into a pointer), so it reaches nothing.
+    const scalarTyped = (text: string) => /^\s*(i\d+|float|double)\s/.test(text);
+    const opnd = (text: string, typed = true): Opnd => typed && scalarTyped(text) ? { vals: [], globals: [] } : ({
+      vals: [...text.matchAll(valRe)].map(r => r[0]),
+      globals: [...text.matchAll(refRe)].map(r => r[1]).filter(g => this.mutableGlobals.has(g)),
+    });
+    const bodies = new Map<string, Ins[]>();
+    const callers = new Map<string, Set<string>>();
     for (const [name, f] of fns) {
-      if (f.unknown || name.startsWith("__closure_") || [...f.globals].some(g => escaped.has(g))) poisoned.add(name);
+      const ins: Ins[] = [];
+      for (let i = f.start + 1; i < f.end; i++) {
+        const l = lines[i];
+        if (l.includes("@")) for (const r of l.matchAll(refRe)) if (this.mutableGlobals.has(r[1])) f.touches.add(r[1]);
+        const def = l.match(/^\s*(%[\w.$\-]+) = (\w+)(.*)$/);
+        const call = l.includes("call") ? l.match(/\bcall\b[^@%]*?([@%])([\w$.\-]+)\(/) : null;
+        if (call) {
+          const args = splitArgs(l.slice(l.indexOf(`${call[1]}${call[2]}(`) + call[2].length + 2)).map(opnd);
+          ins.push({ k: "call", def: def?.[1], callee: call[2], indirect: call[1] === "%", args, scalarRet: /\bcall (i\d+|float|double|void) [@%]/.test(l) });
+          if (call[1] === "@" && fns.has(call[2])) {
+            f.callees.add(call[2]);
+            (callers.get(call[2]) ?? callers.set(call[2], new Set()).get(call[2])!).add(name);
+          } else if (call[1] === "%") f.mayCallAny = true;
+          else if (this.hirFns.get(call[2])?.isExtern === false) f.unknown = true;
+          else if (this.externCallsBack(call[2])) f.mayCallC = true;
+          continue;
+        }
+        const st = l.match(/^\s*store\s+(.*), ptr (%[\w.$\-]+|@[\w$.\-]+)(,.*)?$/);
+        if (st) { ins.push({ k: "store", val: opnd(st[1]), dst: st[2] }); continue; }
+        if (/^\s*ret\s/.test(l)) { ins.push({ k: "ret", o: opnd(l.replace(/^\s*ret/, "")) }); continue; }
+        if (!def || def[2] === "icmp" || def[2] === "fcmp") continue;
+        // a scalar loaded out of reachable memory is a value, not an address
+        if (def[2] === "load" && /^\s+(i\d+|float|double),/.test(def[3])) continue;
+        ins.push({ k: "def", def: def[1], op: def[2], o: opnd(def[3], false), gepBase: def[2] === "getelementptr" ? def[3].match(/ptr (%[\w.$\-]+)/)?.[1] : undefined });
+      }
+      bodies.set(name, ins);
     }
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const [name, f] of fns) {
-        if (poisoned.has(name)) continue;
-        for (const c of f.callees) if (poisoned.has(c)) { poisoned.add(name); changed = true; break; }
+    // Reach dataflow, worklist over fns: a fn is redone when a caller widens one of its
+    // params' reach or a callee widens its return's reach. `wild` growing redoes all.
+    const flow = (name: string, f: Fn, requeue: (n: string) => void): boolean => {
+      const taint = new Map<string, Set<string>>();
+      f.params.forEach((p, k) => { if (f.paramReach[k].size) taint.set(p, new Set(f.paramReach[k])); });
+      const slotBase = new Map<string, string>(); // stack slot (or a GEP into one) -> its alloca
+      const origins = (o: Opnd): Set<string> => {
+        const out = new Set<string>(o.globals);
+        for (const v of o.vals) { const t = taint.get(v); if (t) for (const g of t) out.add(g); }
+        return out;
+      };
+      const taintVal = (v: string, o: Set<string>): boolean => {
+        if (o.size === 0) return false;
+        const t = taint.get(v);
+        if (!t) { taint.set(v, new Set(o)); return true; }
+        return addAll(t, o);
+      };
+      let wildGrew = false;
+      let cur: Ins | null = null;
+      const toWild = (o: Set<string>) => { if (addAll(wild, o)) { wildGrew = true; if (process.env.MILO_NOALIAS_DEBUG) console.error(`noalias-wild ${name} ${[...o].join(",")} ${JSON.stringify(cur).slice(0, 200)}`); } };
+      // Until stable: a loop's back edge carries a slot's taint to loads written above the store.
+      for (let local = true; local;) {
+        local = false;
+        for (const ins of bodies.get(name)!) {
+          cur = ins;
+          if (ins.k === "def") {
+            if (ins.op === "alloca") { slotBase.set(ins.def, ins.def); continue; }
+            if (ins.gepBase && slotBase.has(ins.gepBase)) slotBase.set(ins.def, slotBase.get(ins.gepBase)!);
+            if (taintVal(ins.def, origins(ins.o))) local = true;
+          } else if (ins.k === "store") {
+            const o = origins(ins.val);
+            if (!o.size) continue;
+            const base = slotBase.get(ins.dst);
+            if (base) { if (taintVal(ins.dst, o) || taintVal(base, o)) local = true; }
+            else toWild(o); // the heap or a global: not followed
+          } else if (ins.k === "ret") {
+            if (addAll(f.retReach, origins(ins.o))) for (const c of callers.get(name) ?? []) requeue(c);
+          } else {
+            const all = new Set<string>();
+            for (const a of ins.args) for (const g of origins(a)) all.add(g);
+            const callee = ins.indirect ? undefined : fns.get(ins.callee);
+            if (callee) {
+              ins.args.forEach((a, k) => { if (k < callee.paramReach.length && addAll(callee.paramReach[k], origins(a))) requeue(ins.callee); });
+              if (ins.def && taintVal(ins.def, callee.retReach)) local = true;
+            } else if (/^(llvm\.)?mem(cpy|move)/.test(ins.callee) && ins.args.length >= 2) {
+              // a copy moves reach from the source's contents into the destination's
+              const o = origins(ins.args[1]);
+              const dst = ins.args[0].vals[0];
+              const base = dst ? slotBase.get(dst) : undefined;
+              if (base) { if (taintVal(dst!, o) || taintVal(base, o)) local = true; }
+              else toWild(o);
+            } else if (ins.indirect || this.externKeepsPointers(ins.callee)) {
+              // it may keep a pointer it was given and hand it back later
+              toWild(all);
+            }
+            if (ins.def && !callee && !ins.scalarRet && taintVal(ins.def, all)) local = true;
+          }
+        }
+      }
+      return wildGrew;
+    };
+    {
+      const queue = [...fns.keys()];
+      const queued = new Set(queue);
+      const requeue = (n: string) => { if (!queued.has(n)) { queued.add(n); queue.push(n); } };
+      while (queue.length) {
+        const n = queue.shift()!;
+        queued.delete(n);
+        // wild reaches every param already (see the verdict below), so it needs no requeue
+        flow(n, fns.get(n)!, requeue);
       }
     }
-    if (process.env.MILO_NOALIAS_DEBUG) {
-      for (const [name] of this.noaliasCandidates) {
-        const f = fns.get(name);
-        if (!f) continue;
-        const why = f.unknown ? "unknown code" : name.startsWith("__closure_") ? "closure" : [...f.globals].filter(g => escaped.has(g)).map(g => `global ${g}`).join(",") || [...f.callees].filter(c => poisoned.has(c)).slice(0, 3).map(c => `calls ${c}`).join(",");
-        console.error(`noalias ${name}: ${poisoned.has(name) ? `withheld (${why})` : "applied"}`);
+    // Which fns may run (transitively) a closure body or unknown code, and which globals
+    // each may touch by name.
+    // C never runs a by-ref closure: one cannot leave its creator's stack (it is not
+    // owning, so it is neither stored nor sent to a task), and a C fn pointer carries no
+    // environment. A context switch or thread start runs task entries and move closures.
+    for (const f of fns.values()) {
+      if (f.mayCallAny) for (const t of addrTaken) f.callees.add(t);
+      else if (f.mayCallC) for (const t of addrTaken) if (!this.byRefClosures.has(t)) f.callees.add(t);
+    }
+    const opaque = new Set<string>();
+    // A move closure owns copies of its captures, so only a by-ref one reaches a caller's locals.
+    for (const [name, f] of fns) if (f.unknown || this.byRefClosures.has(name)) opaque.add(name);    for (let changed = true; changed;) {
+      changed = false;
+      for (const [name, f] of fns) {
+        for (const c of f.callees) {
+          const cf = fns.get(c)!;
+          if (!opaque.has(name) && opaque.has(c)) { opaque.add(name); changed = true; }
+          if (addAll(f.touches, cf.touches)) changed = true;
+        }
       }
     }
     const out = lines.slice();
+    const debug = !!process.env.MILO_NOALIAS_DEBUG;
     for (const [name, params] of this.noaliasCandidates) {
       const f = fns.get(name);
-      if (!f || poisoned.has(name)) continue;
+      if (!f) continue;
       let l = out[f.start];
-      for (const p of params) l = l.replace(new RegExp(`ptr (nonnull dereferenceable\\(\\d+\\) align \\d+ %${p.replace(/[$.]/g, "\\$&")})([,)])`), "ptr noalias $1$2");
+      for (const p of params) {
+        const k = f.params.indexOf(`%${p}`);
+        const clash = [...(k >= 0 ? f.paramReach[k] : [])].filter(g => f.touches.has(g));
+        // A global whose address went where the pass cannot follow may be reached through
+        // any loaded pointer in any fn, not only by name, so it poisons every candidate.
+        const why = opaque.has(name) ? "may run a closure or unknown code"
+          : wild.size ? `address of ${[...wild].slice(0, 3).join(",")} escapes untracked`
+          : clash.length ? `reaches and touches ${clash.slice(0, 3).join(",")}` : "";
+        if (debug) console.error(`noalias ${name} %${p}: ${why ? `withheld (${why})` : "applied"}`);
+        if (why) continue;
+        l = l.replace(new RegExp(`ptr (nonnull dereferenceable\\(\\d+\\) align \\d+ %${p.replace(/[$.]/g, "\\$&")})([,)])`), "ptr noalias $1$2");
+      }
       out[f.start] = l;
     }
     return out;
   }
+
 
   // A record/replay engine fn (HIRFunction.replayEngine) raises its thread's engine depth
   // on entry and lowers it before every return, while the fixed heap is on: its
@@ -6572,6 +6712,7 @@ export class Codegen {
     const retTy = this.llvmType(expr.retType);
 
     const isMove = !!(expr as any).isMove;
+    if (!isMove) this.byRefClosures.add(closureName);
     // by-ref closures: env holds ptrs to original allocas
     // move closures: env holds copies of captured values
     // Slot 0 of every environment is the drop function; captures start at 1. A by-
