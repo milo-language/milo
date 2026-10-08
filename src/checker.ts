@@ -174,6 +174,13 @@ function stepKey(s: PlaceStep): string {
   }
 }
 
+// `a` or `a.b.c`: reading it evaluates nothing, so it may be type-checked out of order.
+function isFieldChain(e: Expr): boolean {
+  while (e.kind === "FieldAccess") e = e.object;
+  // ident-ok: the root of a syntactic field chain, before any place resolution
+  return e.kind === "Ident";
+}
+
 function stepsEq(a: PlaceStep[], b: PlaceStep[]): boolean {
   return a.length === b.length && a.every((s, i) => stepKey(s) === stepKey(b[i]));
 }
@@ -9209,11 +9216,17 @@ export class TypeChecker {
     // An operand that takes its type from context (an if/match whose arms are literals,
     // `Option.None`) gets the other operand's type as its expected type: synthesise one
     // side, check the other against it. Left to right as evaluation runs, except an
-    // argument-less enum literal on the left, which has no effects to order.
+    // argument-less enum literal on the left, which has no effects to order, or one
+    // facing a plain place, whose read has none either (`Some(x) == a`).
+    // A bare prelude variant (`None`, `Some(x)`) is an Ident or Call until checkExpr
+    // rewrites it, which would be too late for it to count as context-typed here.
+    this.canonicalizePreludeVariant(expr.left);
+    this.canonicalizePreludeVariant(expr.right);
     const contextTyped = (e: Expr) => e.kind === "IfExpr" || e.kind === "MatchExpr" || e.kind === "EnumLit";
     const sibling = (t: TypeKind) => t.tag === "unknown" ? null : t;
     let lt: TypeKind, rt: TypeKind;
-    if (expr.left.kind === "EnumLit" && expr.left.args.length === 0 && !contextTyped(expr.right)) {
+    if (expr.left.kind === "EnumLit" && !contextTyped(expr.right)
+        && (expr.left.args.length === 0 || isFieldChain(expr.right))) {
       rt = this.checkExpr(expr.right);
       lt = this.checkExpr(expr.left, sibling(rt));
     } else {

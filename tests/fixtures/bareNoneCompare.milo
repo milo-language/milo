@@ -1,0 +1,38 @@
+// Bare `None` in a comparison takes its Option<T> from the other operand, in either
+// order and for `!=` too; it was "cannot infer type parameter(s) 'T' for Option.None"
+// while the qualified `Option.None` compiled. A match arm producing bare None/Some
+// takes the binding's type the same way.
+struct Id { at: i32 }
+
+fn find(k: i64): Option<Id> {
+    if k > 0 { return Some(Id { at: k as i32 }) }
+    return None
+}
+
+struct Holder { slot: Option<i64> }
+
+fn main(): i32 {
+    let a: Option<Id> = None
+    if a == None { print("a == None") }
+    if None == a { print("None == a") }
+    let b = find(3)
+    if b != None { print("b != None") }
+    if None != b { print("None != b") }
+    if a == Option.None { print("qualified") }
+    let h = Holder { slot: Some(4) }
+    if None != h.slot { print("field") }
+    let k: i64 = 2
+    let m: Option<i64> = match k {
+        1 => None,
+        _ => Some(k)
+    }
+    if m != None { print(m!) }
+    return 0
+}
+// @expect: a == None
+// @expect: None == a
+// @expect: b != None
+// @expect: None != b
+// @expect: qualified
+// @expect: field
+// @expect: 2
