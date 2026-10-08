@@ -341,8 +341,12 @@ fits (`&R`) or matches (`&mut R`), and `Vec<i32>` / `Option<i32>` are different 
 pointers in `unsafe`, and integers that arrive from C (an `extern fn` returning `R`, or an
 `extern struct` field of type `R`).
 
-**Enum layout and `sizeOf`.** An enum is `{ i32 tag, payload }`, with the payload padded to
-8 bytes: `sizeOf<Option<i32>>()` is 16. An enum shaped like `Option` (two variants, one
+**Enum layout and `sizeOf`.** An enum is `{ i32 tag, payload }`. The payload is a union of
+the variants' fields, each variant laid out like a struct of its fields (natural size and
+alignment, declaration order); the union is as big as the largest variant and as aligned as
+its most-aligned field, and the tag is padded only up to that alignment. So
+`sizeOf<Option<i32>>()` is 8, `Option<i8>` is 8 (the i32 tag sets the alignment),
+`enum E { A(i32, i32), B }` is 12 and `Option<i64>` is 16. An enum shaped like `Option` (two variants, one
 fieldless, the other with one field) whose payload has a value safe code cannot produce is
 laid out as the payload alone, with that value meaning the fieldless variant (Rust's *niche*).
 The niche sources are a ranged int (the first value past the declared range that the width
@@ -357,8 +361,8 @@ struct Node { key: i32, left: Option<NodeId>, right: Option<NodeId> }
 
 fn main() {
     print(sizeOf<Option<NodeId>>())   // 4: None is at == 2147483647
-    print(sizeOf<Node>())             // 12, where an `at: i32` NodeId makes it 40
-    print(sizeOf<Option<i32>>())      // 16: every i32 is a valid payload, so it keeps a tag
+    print(sizeOf<Node>())             // 12, where an `at: i32` NodeId makes it 20
+    print(sizeOf<Option<i32>>())      // 8: every i32 is a valid payload, so it keeps a tag
 }
 ```
 

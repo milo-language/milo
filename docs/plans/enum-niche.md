@@ -3,7 +3,7 @@ system: enum-niche-plan
 purpose: implementation plan for null-pointer niche optimization of eligible enums
 key-files: src/codegen.ts, src/checker.ts, src/types.ts, tests/rangedSoundness.test.ts, tests/fixtures/enumNicheInt*.milo
 update-when: enum layout, niche eligibility, or the implementation sequence changes
-last-verified: 2026-10-08 (integer niche shipped; null-pointer niche still planned)
+last-verified: 2026-10-08 (integer niche and packed tagged layout shipped; null-pointer niche still planned)
 -->
 
 # Enum niche optimization (null-pointer niche) — implementation plan
@@ -126,6 +126,15 @@ Left to the user: raw-pointer writes in `unsafe`, and integers that come from C 
 **Gates.** `tests/fixtures/enumNicheInt.milo` and `enumNicheIntOps.milo` (sizes, then every
 operation above; the non-size output equals the same program with the ranges removed, run on
 the tag-encoded compiler), `tests/rangedSoundness.test.ts`, the debugInfo niche case.
+
+**Packed tagged layout (2026-10-08).** A non-niche enum is `{ i32, [size/align x i<align*8>] }`:
+the payload union is sized to the largest variant's field struct and aligned to its most-aligned
+field, so `Option<i32>` is 8 (was 16) and `enum E { A(i32, i32), B }` 12 (was 16). Payload
+fields were already reached through the variant's own `{ fields }` struct off
+`enumPayloadPtr`, so only `typeSize`/`typeAlign`, the `%T = type` emission and DWARF changed.
+`assertEnumPayloadPacked` rejects any IR that indexes into the union, extracts it as a value,
+or steps an `i64`/`[N x i64]` GEP off a payload address (the old slot math).
+`tests/fixtures/enumPackSizes.milo` and `enumPackRoundTrip.milo` pin it.
 
 **Left out of this slice.** Niches in multi-field structs (a field other than the first),
 payloads with a `Drop` impl, the null-pointer niche, bool/char niches, and using several

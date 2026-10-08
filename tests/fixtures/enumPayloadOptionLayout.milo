@@ -1,7 +1,7 @@
 // An Option whose payload is itself a multi-slot enum must reserve room for the
 // WHOLE payload enum — its tag word included — not just that enum's payload blob.
 //
-// Enums lower to `{ i32 tag, [slots x i64] }`. Getting this one slot short does not
+// Enums lower to `{ i32 tag, payload union }`. Getting the union one word short does not
 // fail to compile and does not fail any test that only reads the Option back: the
 // store simply runs 8 bytes past the end of the alloca and lands on whatever local
 // the stack allocator put next. In the self-hosted compiler that neighbour was a
