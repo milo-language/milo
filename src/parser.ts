@@ -473,7 +473,7 @@ export class Parser {
       const fieldAttrs = this.parseFieldAttributes();
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
-      const fieldType = this.parseType();
+      const fieldType = this.parseSpannedType();
       fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
       this.match(TokenKind.Comma);
     }
@@ -570,8 +570,13 @@ export class Parser {
     return { params, variadic };
   }
 
+  private parseSpannedType(): MiloType {
+    const start = this.peek();
+    return { ...this.parseType(), span: this.span(start) };
+  }
+
   private parseReturnType(): MiloType {
-    if (this.match(TokenKind.Colon)) return this.parseType();
+    if (this.match(TokenKind.Colon)) return this.parseSpannedType();
     return { name: "void", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 
@@ -605,7 +610,7 @@ export class Parser {
       const fieldAttrs = this.parseFieldAttributes();
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
-      const fieldType = this.parseType();
+      const fieldType = this.parseSpannedType();
       fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
       this.match(TokenKind.Comma);
     }

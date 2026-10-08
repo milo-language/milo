@@ -27,6 +27,9 @@ export interface MiloType {
   fnRet?: MiloType;
   rangeMin?: number;   // i32(0..50000) — range constraint
   rangeMax?: number;
+  // Where the type was written. Set only where a diagnostic points at a type (a return
+  // type, a struct field type); most types carry none.
+  span?: Span;
 }
 
 export function simpleType(name: string): MiloType {

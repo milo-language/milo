@@ -1,0 +1,10 @@
+// @error: function 'dangle': cannot return a reference
+// @error-at: 6:14
+// @note: 8:12 this returns a view of 'local'
+// One error for one mistake: the caret is on the '&string' return type, and the
+// return that hands out the view is a note, not a second error.
+fn dangle(): &string {
+    let local = "hi there".clone()
+    return local[0..2]
+}
+fn main(): void { print(dangle()) }

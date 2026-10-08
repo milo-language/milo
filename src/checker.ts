@@ -620,6 +620,10 @@ export class TypeChecker {
   // fns already flagged for a reference return — the declaration scan and checkFunction
   // both see plain fns, and only the second sees impl methods
   private refReturnReported = new Set<Function>();
+  // The "cannot return a reference" error per function, so the return that hands out
+  // the view can be attached to it as a note instead of a second error for one mistake.
+  private refReturnDiags = new Map<Function, Diagnostic>();
+  private currentFnDecl: Function | null = null;
   private structs = new Map<string, StructInfo>();
   private enums = new Map<string, EnumInfo>();
   private genericEnums = new Map<string, GenericEnumInfo>();
@@ -6238,7 +6242,14 @@ export class TypeChecker {
     const places = this.placesOf(value);
     const offending = places.find(p => p.tag === "path" && p.root !== "self");
     if (!offending || offending.tag !== "path") return; // all self, or no named place
-    this.error(`cannot return a view of '${offending.root}'`, sp,
+    // A free function returning a view already got "cannot return a reference" on its
+    // signature; this return is the same mistake, so it is a note on that error.
+    const sigError = this.currentFnDecl ? this.refReturnDiags.get(this.currentFnDecl) : undefined;
+    if (sigError) {
+      (sigError.notes ??= []).push({ message: `this returns a view of '${offending.root}'`, span: value.span ?? sp });
+      return;
+    }
+    this.error(`cannot return a view of '${offending.root}'`, value.span ?? sp,
       `a returned view may only point into the receiver's own storage ('self...') — the call site freezes the receiver, so any other source could be moved or reallocated while the view is live`);
   }
 
@@ -6248,17 +6259,17 @@ export class TypeChecker {
       // the call site took for it — the second-class rule has to hold through a payload.
       this.refReturnReported.add(fn);
       const outer = ret.tag === "enum" ? (this.enums.get(ret.name)?.baseName ?? ret.name) : typeName(ret);
-      this.error(`function '${fn.name}': cannot return a reference stored inside '${outer}'`, fn.span,
+      this.error(`function '${fn.name}': cannot return a reference stored inside '${outer}'`, fn.retType.span ?? fn.span,
         `references are second-class — return an owned value, or return the view directly and let the caller match on emptiness another way`);
       return;
     }
     if (ret.tag !== "ref" || this.refReturnReported.has(fn)) return;
     if (this.isViewReturn(ret) && this.hasSelfReceiver(fn)) return;
     this.refReturnReported.add(fn);
-    this.error(`function '${fn.name}': cannot return a reference`, fn.span,
+    this.refReturnDiags.set(fn, this.errorWithNotes(`function '${fn.name}': cannot return a reference`, fn.retType.span ?? fn.span,
       this.isViewReturn(ret)
         ? `only a method can return a '${this.show(ret)}' view, and only of its own receiver's storage — take the slice at the call site ('v[a..b]') or return an owned value`
-        : `references are second-class — return an owned value instead`);
+        : `references are second-class — return an owned value instead`, []));
   }
 
   private checkFunction(fn: Function) {
@@ -6273,6 +6284,8 @@ export class TypeChecker {
     const savedScopeFloor = this.fnScopeFloor;
     const savedFnFile = this.currentFnFile;
     const savedReachable = this.reachable;
+    const savedFnDecl = this.currentFnDecl;
+    this.currentFnDecl = fn;
     // The restore is a `finally` because a `fatal()` anywhere below unwinds past
     // it — leaving currentFnRetType pointing at an abandoned function would make
     // the NEXT function's `return`/`?` check answer against the wrong signature.
@@ -6285,6 +6298,7 @@ export class TypeChecker {
       this.fnScopeFloor = savedScopeFloor;
       this.currentFnFile = savedFnFile;
       this.reachable = savedReachable;
+      this.currentFnDecl = savedFnDecl;
     }
   }
 
@@ -6614,7 +6628,10 @@ export class TypeChecker {
           if (fnRetType.tag !== "void") this.error(`return without value in function returning ${this.show(fnRetType)}`, sp);
         } else {
           const valType = this.checkExpr(stmt.value, fnRetType);
-          if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && !(valType.tag === "never" && fnRetType.tag === "void") && fnRetType.tag !== "unknown") {
+          // The signature's reference return was already rejected: a mismatch against it,
+          // or a "move out of the borrowed" for handing a view back, is that error again.
+          const retRejected = this.currentFnDecl !== null && this.refReturnReported.has(this.currentFnDecl);
+          if (!retRejected && !typeEq(fnRetType, valType) && valType.tag !== "unknown" && !(valType.tag === "never" && fnRetType.tag === "void") && fnRetType.tag !== "unknown") {
             const isStringToPtr = valType.tag === "string" && fnRetType.tag === "ptr" && fnRetType.inner.tag === "int" && fnRetType.inner.bits === 8;
             // Coerce a concrete type to an interface at return position
             // (`return Heap(Circle{})` where the fn returns Heap<Shape>), as
@@ -6634,7 +6651,7 @@ export class TypeChecker {
           // borrowed struct is the shape docs/backlog.md #7 is about — the field spelling
           // is a hard error, the index spelling silently deep-copies.
           this.lintIndexClone(stmt.value, valType, sp);
-          this.tryMove(stmt.value);
+          if (!retRejected) this.tryMove(stmt.value);
         }
         this.reachable = false;
         break;
