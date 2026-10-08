@@ -61,6 +61,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
+| `src/skill.ts` | `milo skill`: the agent guide. |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
 | `src/stdout.ts` | Synchronous stdout, for command output that a caller pipes. |
 | `src/suggest.ts` | "Did you mean ...?" hints for the checker. |

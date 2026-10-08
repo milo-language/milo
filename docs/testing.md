@@ -208,6 +208,7 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `swapCodegen.test.ts` | large-aggregate swap alias-safe lowering |
 | `guard.test.ts` | memory/timeout guard wrapper |
 | `docs.test.ts` / `stdDocs.test.ts` / `apiDocs.test.ts` | doc + stdlib-API-doc consistency |
+| `skillText.test.ts` | every ```` ```milo ```` fence in `milo skill` output type-checks; its std module list covers `std/` |
 | `header.test.ts` | generated C header correctness |
 | `embedded.test.ts` | embedded/no-runtime target |
 
