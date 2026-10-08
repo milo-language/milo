@@ -1,0 +1,38 @@
+// @skip-os: win32
+// The file half of memViews: makeTempFile goes through POSIX mkstemp, which the MSVC
+// CRT does not export. Unskip once std/fs grows a Windows temp-file arm.
+// A file mapping is read-only, so the mutable views refuse rather than fault.
+from "std/mem" import {
+    MappedMemory, mmapFile
+}
+from "std/fs" import {
+    makeTempFile, writeFile, removeFile
+}
+from "std/io" import {
+    File
+}
+
+pub fn main(): i32 {
+    let path = makeTempFile("milo_memViewsFile")!
+    writeFile(path, "hello")!
+    let f = File.openRead(path)!
+    let fm = mmapFile(f, 5)!
+    print(fm.isWritable())
+    fm.read((bytes: &[u8]) => {
+        print(bytes.len)
+        print(bytes[0] as i64)
+    })
+    var fmut = fm
+    print(fmut.write((bytes: &mut [u8]) => {
+        bytes[0] = 0
+    }))
+    print(fmut.withMut((bytes: &mut [u8]): i64 => 1).isNone())
+    removeFile(path)!
+
+    return 0
+}
+// @expect: false
+// @expect: 5
+// @expect: 104
+// @expect: false
+// @expect: true

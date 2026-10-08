@@ -2,13 +2,7 @@
 // views lent to a closure, and a Bump allocation is a BumpSpan that goes stale at the
 // next reset instead of aliasing whatever is allocated over it.
 from "std/mem" import {
-    Bump, BumpSpan, MappedMemory, mmapAnon, mmapFile
-}
-from "std/fs" import {
-    writeFile, removeFile
-}
-from "std/io" import {
-    File
+    Bump, BumpSpan, MappedMemory, mmapAnon
 }
 
 fn sum(bytes: &[u8]): i64 {
@@ -37,23 +31,6 @@ pub fn main(): i32 {
     print(last ?? 0)
     print(m.with((bytes: &[u8]): i64 => bytes[10] as i64))
 
-    // file mapping: read-only, so the mutable views refuse rather than fault
-    let path = "/tmp/milo_memViews.txt"
-    writeFile(path, "hello")!
-    let f = File.openRead(path)!
-    let fm = mmapFile(f, 5)!
-    print(fm.isWritable())
-    fm.read((bytes: &[u8]) => {
-        print(bytes.len)
-        print(bytes[0] as i64)
-    })
-    var fmut = fm
-    print(fmut.write((bytes: &mut [u8]) => {
-        bytes[0] = 0
-    }))
-    print(fmut.withMut((bytes: &mut [u8]): i64 => 1).isNone())
-    removeFile(path)!
-
     // bump spans: zeroed, writable, rejected after reset or from another Bump
     var bump = Bump.new(64)!
     let a = bump.alloc(8)!
@@ -78,11 +55,6 @@ pub fn main(): i32 {
 // @expect: 3
 // @expect: 2
 // @expect: 40
-// @expect: false
-// @expect: 5
-// @expect: 104
-// @expect: false
-// @expect: true
 // @expect: true
 // @expect: 9
 // @expect: false
