@@ -12,8 +12,8 @@ pub fn main(): i32 {
     let remaining = bump.remaining()
     print(remaining)
 
-    let ptr = bump.alloc(64)!
-    print(ptr > 0)
+    let span = bump.alloc(64)!
+    print(span.len() == 64)
 
     bump.reset()
     print(bump.remaining())

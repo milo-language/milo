@@ -1,0 +1,91 @@
+// std/mem hands out no addresses: a MappedMemory is read and written through slice
+// views lent to a closure, and a Bump allocation is a BumpSpan that goes stale at the
+// next reset instead of aliasing whatever is allocated over it.
+from "std/mem" import {
+    Bump, BumpSpan, MappedMemory, mmapAnon, mmapFile
+}
+from "std/fs" import {
+    writeFile, removeFile
+}
+from "std/io" import {
+    File
+}
+
+fn sum(bytes: &[u8]): i64 {
+    var t: i64 = 0
+    for b in bytes {
+        t += b as i64
+    }
+    return t
+}
+
+pub fn main(): i32 {
+    // anonymous mapping: zero-filled, writable, round-trips through the views
+    var m = mmapAnon(4096)!
+    print(m.len())
+    print(m.isWritable())
+    print(m.with((bytes: &[u8]): i64 => sum(bytes)))
+    print(m.write((bytes: &mut [u8]) => {
+        bytes[0] = 1
+        bytes[4095] = 2
+    }))
+    print(m.with((bytes: &[u8]): i64 => sum(bytes)))
+    let last = m.withMut((bytes: &mut [u8]): u8 => {
+        bytes[10] = 40
+        return bytes[4095]
+    })
+    print(last ?? 0)
+    print(m.with((bytes: &[u8]): i64 => bytes[10] as i64))
+
+    // file mapping: read-only, so the mutable views refuse rather than fault
+    let path = "/tmp/milo_memViews.txt"
+    writeFile(path, "hello")!
+    let f = File.openRead(path)!
+    let fm = mmapFile(f, 5)!
+    print(fm.isWritable())
+    fm.read((bytes: &[u8]) => {
+        print(bytes.len)
+        print(bytes[0] as i64)
+    })
+    var fmut = fm
+    print(fmut.write((bytes: &mut [u8]) => {
+        bytes[0] = 0
+    }))
+    print(fmut.withMut((bytes: &mut [u8]): i64 => 1).isNone())
+    removeFile(path)!
+
+    // bump spans: zeroed, writable, rejected after reset or from another Bump
+    var bump = Bump.new(64)!
+    let a = bump.alloc(8)!
+    print(bump.write(a, (bytes: &mut [u8]) => {
+        bytes[7] = 9
+    }))
+    print(bump.with(a, (bytes: &[u8]): i64 => sum(bytes)) ?? -1)
+    bump.reset()
+    print(bump.valid(a))
+    let b = bump.alloc(8)!
+    print(bump.with(b, (bytes: &[u8]): i64 => sum(bytes)) ?? -1)
+    print(bump.with(a, (bytes: &[u8]): i64 => sum(bytes)) ?? -1)
+    var other = Bump.new(64)!
+    let _o = other.alloc(8)!
+    print(other.valid(b))
+    return 0
+}
+// @expect: 4096
+// @expect: true
+// @expect: 0
+// @expect: true
+// @expect: 3
+// @expect: 2
+// @expect: 40
+// @expect: false
+// @expect: 5
+// @expect: 104
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: 9
+// @expect: false
+// @expect: 0
+// @expect: -1
+// @expect: false

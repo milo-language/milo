@@ -1,0 +1,9 @@
+// MappedMemory's address field is private to std/mem: safe code cannot read it out as a
+// number and cannot build a mapping over an address of its choosing.
+// @error: field '_ptr' of 'MappedMemory' is private to 'std/mem.milo'
+from "std/mem" import { MappedMemory, mmapAnon }
+
+fn main() {
+    let m = mmapAnon(4096)!
+    print(m._ptr as i64)
+}

@@ -32,7 +32,7 @@ fn main(): i32 {
         print(0)
         return 1
     }
-    let m = match mmapFile(f.fd, size) {
+    let m = match mmapFile(f, size) {
         Result.Ok(mm) => mm,
         Result.Err(e) => {
             print("grep: mmap failed")
@@ -42,7 +42,9 @@ fn main(): i32 {
 
     var count: i64 = 0
     unsafe {
-        let base = m.ptr
+        // memchr wants a C pointer, so this reads the mapping's address through the
+        // @unsafe accessor; `m` outlives every use of `base` below.
+        let base = m.ptr() as i64
         let np = pat.cstr()
         let plen = pat.len
         let c0 = pat[0] as i32

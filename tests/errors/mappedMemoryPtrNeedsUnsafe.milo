@@ -1,0 +1,10 @@
+// A mapping's base address used to be a public `ptr: i64` field. It is private now, and
+// the one accessor that yields it is @unsafe: the pointer outlives the mapping's drop.
+// @error: calling 'ptr' requires an unsafe block
+from "std/mem" import { MappedMemory, mmapAnon }
+
+fn main() {
+    let m = mmapAnon(4096)!
+    let p = m.ptr()
+    print(m.len())
+}
