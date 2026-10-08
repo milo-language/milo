@@ -1,207 +1,319 @@
-// std/pool — fixed-size block pool allocator with compiler-verified safety contracts
+// std/pool — fixed-size block pool allocator addressed by generational handles
 //
-// Safety-critical pattern: one malloc at init, then O(1) alloc/free with no
-// syscalls. Fits the "no dynamic allocation after init" rule that DO-178C DAL A
-// coding standards impose; using it does not make a program certifiable.
-// Free-list is embedded in unused blocks — zero overhead.
+// Safety-critical pattern: one malloc (plus two side tables) at init, then O(1)
+// alloc/free with no syscalls and no further heap allocation. Fits the "no dynamic
+// allocation after init" rule that DO-178C DAL A coding standards impose; using it
+// does not make a program certifiable.
+//
+// A block is named by a PoolBlock, never by its address. The handle is the
+// std/arena Handle<T> pattern applied to raw byte blocks: a pool identity plus a
+// per-block generation, so a handle from another pool, or one kept past `free`
+// or `reset`, is rejected instead of aliasing whatever block now lives there.
+// Bytes are reached only through `with` / `withMut`, which lend the block as a
+// bounds-checked slice for the duration of a closure.
 
 from "std/os" import {
-    free, malloc
+    free, malloc, memset
+}
+from "std/foreign" import {
+    withRaw, withRawMut
 }
 
+// A copyable token naming one block of one Pool. Get it from `pool.alloc()` and
+// pass it back to `with` / `withMut` / `free`. Every field is private, so a
+// handle cannot be built or edited outside this file; the only way to hold one
+// is to have been given it by `alloc`.
+@derive(Eq)
+pub struct PoolBlock {
+    _poolId: i64,
+    _index: i32,
+    _generation: i32,
+}
+
+// A pool of `blockCount` blocks of `blockSize` bytes each.
+//
+// `_gens` holds one generation per block, same encoding as std/arena: positive
+// is live (and equals the generation of the one valid handle), negative is free
+// (its magnitude is the generation the next alloc will publish), zero is retired
+// because the counter hit i32 max. `_freeList` is a stack of free indices sized
+// to `blockCount` at init, so push and pop never reallocate.
 pub struct Pool {
-    base: i64,
-    blockSize: i64,
-    blockCount: i64,
-    freeHead: i64,
-    liveCount: i64,
+    _id: i64,
+    _base: *u8,
+    _blockSize: i64,
+    _blockCount: i64,
+    _gens: Vec<i32>,
+    _freeList: Vec<i32>,
+    _liveCount: i64,
 }
 
 impl Drop for Pool {
     fn drop(self: &mut Self): void {
-        if self.base != 0 {
-            unsafe {
-                free(self.base as *u8)
+        unsafe {
+            if self._base as i64 != 0 {
+                free(self._base)
             }
         }
     }
 }
 
-// Create a pool of `count` blocks, each `size` bytes (minimum 8 for free-list pointer).
-// Single malloc at init — no further heap allocation.
-// The product is bounded (1 GB) because `size >= 8, count > 0` alone promises that
+// Pools may be created on Promise.blocking workers, so identity allocation uses the
+// atomic primitive rather than a racy increment (same reason as std/arena).
+var nextPoolId: i64 = 1
+
+fn freshPoolId(): i64 {
+    unsafe {
+        return _atomicAddI64((nextPoolId.addrOf()) as *u8, 1)
+    }
+}
+
+// Mark every block free with generation 1 next, and stack the indices so block 0
+// is handed out first.
+fn rethread(p: &mut Pool): void {
+    p._gens.clear()
+    p._freeList.clear()
+    var i: i64 = 0
+    while i < p._blockCount {
+        p._gens.push(-1)
+        p._freeList.push((p._blockCount - 1 - i) as i32)
+        i += 1
+    }
+}
+
+// Create a pool of `count` blocks, each `size` bytes.
+// The product is bounded (1 GB) because `size >= 1, count > 0` alone promises that
 // `Pool.new(i64::MAX, 1)` works, and it exhausts memory instead (found by
-// `milo test --contracts`). Clause order matters: the division relies on `size >= 8`.
+// `milo test --contracts`). Clause order matters: the division relies on `size >= 1`.
+// The count is also bounded by i32 max because a handle stores its index as i32.
 fn poolNew(size: i64, count: i64): Result<Pool>
-requires size >= 8
+requires size >= 1
 requires count > 0
 requires size <= 1073741824 && count <= 1073741824 / size
 {
-    // Checked at runtime as well as by the `requires`, because the contract is dropped at
-    // the default -O2 and this body is unsafe. The free list threads an 8-byte pointer
-    // through each block, so a block SMALLER than 8 writes past the allocation — ASan
-    // reports a heap-buffer-overflow WRITE of size 8 for `Pool.new(2, 64)`. A `requires`
-    // alone cannot hold that line in a release build; see docs/backlog.md #27.
-    if size < 8 {
-        return Result.Err("pool: block size must be at least 8 bytes, got " + size.toString())
+    // Checked at runtime as well as by the `requires`, because the contract is dropped
+    // at the default -O2 and this body is unsafe (see docs/backlog.md #27).
+    if size < 1 {
+        return Result.Err("pool: block size must be positive, got " + size.toString())
     }
     if count <= 0 {
         return Result.Err("pool: count must be positive, got " + count.toString())
     }
-    let totalSize = size * count
+    if size > 1073741824 || count > 1073741824 / size {
+        return Result.Err("pool: size * count exceeds 1 GB")
+    }
     unsafe {
-        let p = malloc(totalSize)
-        let addr = p as i64
-        if addr == 0 {
+        let base = malloc(size * count)
+        if base as i64 == 0 {
             return Result.Err("pool allocation failed")
         }
-        // thread free-list through blocks: each block stores pointer to next
-        var i: i64 = 0
-        while i < count - 1 {
-            let blockAddr = addr + i * size
-            let nextAddr = addr + (i + 1) * size
-            let slot = blockAddr as *i64
-            slot[0] = nextAddr
-            i += 1
+        var p = Pool {
+            _id: freshPoolId(),
+            _base: base,
+            _blockSize: size,
+            _blockCount: count,
+            _gens: Vec.withCapacity(count),
+            _freeList: Vec.withCapacity(count),
+            _liveCount: 0,
         }
-        // last block points to 0 (null)
-        let lastAddr = addr + (count - 1) * size
-        let lastSlot = lastAddr as *i64
-        lastSlot[0] = 0
-        return Result.Ok(Pool {
-            base: addr,
-            blockSize: size,
-            blockCount: count,
-            freeHead: addr,
-            liveCount: 0,
-        })
+        rethread(&mut p)
+        return Result.Ok(p)
     }
 }
 
-// Allocate one block. O(1). Returns Err when pool is exhausted.
-fn poolAlloc(p: &mut Pool): Result<i64>
-ensures p.liveCount <= p.blockCount
+// The block's index when `b` names a live block of this pool, else -1.
+fn liveIndex(p: &Pool, b: PoolBlock): i64 {
+    if b._poolId != p._id {
+        return -1
+    }
+    let idx = b._index as i64
+    if idx < 0 || idx >= p._blockCount {
+        return -1
+    }
+    if p._gens[idx] <= 0 || p._gens[idx] != b._generation {
+        return -1
+    }
+    return idx
+}
+
+// Address of block `idx`. Callers have checked `idx` with liveIndex; the result
+// never leaves this file.
+@unsafe
+fn blockPtr(p: &Pool, idx: i64): *u8 {
+    unsafe {
+        return (p._base as i64 + idx * p._blockSize) as *u8
+    }
+}
+
+// Allocate one zeroed block. O(blockSize) for the zeroing, O(1) otherwise. Errs when
+// every block is live. The zeroing is what keeps a safe reader from seeing the
+// previous tenant's bytes or malloc's uninitialized ones.
+fn poolAlloc(p: &mut Pool): Result<PoolBlock>
+ensures p._liveCount <= p._blockCount
 {
-    if p.freeHead == 0 {
+    if p._freeList.len == 0 || p._liveCount >= p._blockCount {
         return Result.Err("pool exhausted")
     }
-    let block = p.freeHead
+    let fi = p._freeList[p._freeList.len - 1]
+    p._freeList.pop()!
+    let idx = fi as i64
+    p._gens[idx] = -p._gens[idx]
     unsafe {
-        let slot = block as *i64
-        p.freeHead = slot[0]
+        memset(blockPtr(p, idx), 0, p._blockSize)
     }
-    p.liveCount += 1
-    return Result.Ok(block)
+    p._liveCount += 1
+    return Result.Ok(PoolBlock {
+        _poolId: p._id, _index: fi, _generation: p._gens[idx]
+    })
 }
 
-// Free one block back to pool. O(1).
-// Caller must pass a pointer previously returned by poolAlloc.
-fn poolFree(p: &mut Pool, block: i64): void
-requires block >= p.base
-requires block < p.base + p.blockCount * p.blockSize
-requires (block - p.base) % p.blockSize == 0
-requires p.liveCount > 0
-ensures p.liveCount >= 0
+// Return a block to the pool. False, and no effect, when `b` is stale, already
+// freed, or from another pool, so a double free is a no-op rather than a fault.
+// A block whose generation reaches i32 max is retired rather than wrapped back
+// onto an old handle; the pool then has one block fewer until `reset`.
+fn poolFree(p: &mut Pool, b: PoolBlock): bool
+ensures p._liveCount <= old(p._liveCount)
 {
-    // The contract is dropped at -O2 and this store goes through `block` as an address:
-    // a wrong handle would be an arbitrary write. A handle is a program bug, not peer
-    // input, so the check aborts like a bounds check does. The asserts restate the
-    // contract so the prover sees them discharged by it.
-    assert(block >= p.base && block < p.base + p.blockCount * p.blockSize && (block - p.base) % p.blockSize == 0, "pool: free of a block this pool did not allocate")
-    assert(p.liveCount > 0, "pool: free with no live blocks")
-    unsafe {
-        let slot = block as *i64
-        slot[0] = p.freeHead
+    let idx = liveIndex(p, b)
+    if idx < 0 || p._liveCount <= 0 {
+        return false
     }
-    p.freeHead = block
-    p.liveCount -= 1
+    if p._gens[idx] < 2147483647 {
+        p._gens[idx] = -(p._gens[idx] + 1)
+        p._freeList.push(b._index)
+    } else {
+        p._gens[idx] = 0
+    }
+    p._liveCount -= 1
+    return true
 }
 
 // Number of blocks currently in use.
 fn poolLive(p: &Pool): i64
-requires p.liveCount >= 0
-requires p.liveCount <= p.blockCount
+requires p._liveCount >= 0
+requires p._liveCount <= p._blockCount
 ensures result >= 0
-ensures result <= p.blockCount
+ensures result <= p._blockCount
 {
-    return p.liveCount
+    return p._liveCount
 }
 
 // Number of blocks available.
 fn poolAvailable(p: &Pool): i64
-requires p.liveCount >= 0
-requires p.liveCount <= p.blockCount
+requires p._liveCount >= 0
+requires p._liveCount <= p._blockCount
 ensures result >= 0
-ensures result <= p.blockCount
+ensures result <= p._blockCount
 {
-    return p.blockCount - p.liveCount
+    return p._blockCount - p._liveCount
 }
 
-// Check if pool is fully exhausted.
-fn poolFull(p: &Pool): bool {
-    return p.liveCount == p.blockCount
-}
-
-// Check if pool has no live allocations.
-fn poolEmpty(p: &Pool): bool {
-    return p.liveCount == 0
-}
-
-// Reset pool to initial state — all blocks free.
-// Existing pointers become invalid.
+// Reset pool to initial state: all blocks free. The pool takes a fresh identity, so
+// every handle issued before this point is rejected afterwards, and retired blocks
+// come back into service.
 fn poolReset(p: &mut Pool): void
-ensures p.liveCount == 0
+ensures p._liveCount == 0
 {
-    // re-thread free list
-    unsafe {
-        var i: i64 = 0
-        while i < p.blockCount - 1 {
-            let blockAddr = p.base + i * p.blockSize
-            let nextAddr = p.base + (i + 1) * p.blockSize
-            let slot = blockAddr as *i64
-            slot[0] = nextAddr
-            i += 1
-        }
-        let lastAddr = p.base + (p.blockCount - 1) * p.blockSize
-        let lastSlot = lastAddr as *i64
-        lastSlot[0] = 0
-    }
-    p.freeHead = p.base
-    p.liveCount = 0
+    p._id = freshPoolId()
+    rethread(&mut p)
+    p._liveCount = 0
 }
 
 impl Pool {
+    // A pool of `count` blocks of `size` bytes, from one malloc. Errs on a
+    // non-positive size or count, or a total above 1 GB.
     fn new(size: i64, count: i64): Result<Pool>
-    requires size >= 8
+    requires size >= 1
     requires count > 0
     requires size <= 1073741824 && count <= 1073741824 / size
     {
         return poolNew(size, count)
     }
 
-    fn alloc(self: &mut Self): Result<i64> {
+    // Take a free block, zeroed, and return the handle naming it. Errs when the
+    // pool is exhausted.
+    fn alloc(self: &mut Self): Result<PoolBlock> {
         return poolAlloc(&mut self)
     }
 
-    fn free(self: &mut Self, block: i64): void
-    requires
-    block >= self.base
-    requires
-    block < self.base + self.blockCount * self.blockSize
-    requires
-    (block - self.base) % self.blockSize == 0
-    requires
-    self.liveCount > 0
-    {
-        poolFree(&mut self, block)
+    // Release `b`. Every copy of `b` goes stale. False when `b` was already stale
+    // or belongs to another pool.
+    @mustUse
+    fn free(self: &mut Self, b: PoolBlock): bool {
+        return poolFree(&mut self, b)
+    }
+
+    // Whether `b` names a live block of THIS pool.
+    @mustUse
+    fn valid(self: &Self, b: PoolBlock): bool {
+        return liveIndex(self, b) >= 0
+    }
+
+    // Lend the block's bytes to `f` and return what it returns. None, and `f` is not
+    // called, when `b` is stale. Indexing past `blockSize` traps like any slice.
+    fn with<R>(self: &Self, b: PoolBlock, f: (&[u8]) => R): Option<R> {
+        let idx = liveIndex(self, b)
+        if idx < 0 {
+            return Option.None
+        }
+        unsafe {
+            return withRaw(blockPtr(self, idx), self._blockSize, f)
+        }
+    }
+
+    // `with` with a mutable view: writes land in the block.
+    fn withMut<R>(self: &mut Self, b: PoolBlock, f: (&mut [u8]) => R): Option<R> {
+        let idx = liveIndex(self, b)
+        if idx < 0 {
+            return Option.None
+        }
+        unsafe {
+            return withRawMut(blockPtr(self, idx), self._blockSize, f)
+        }
+    }
+
+    // `with` for a closure that returns nothing. False, and `f` is not called, when
+    // `b` is stale.
+    @mustUse
+    fn read(self: &Self, b: PoolBlock, f: (&[u8]) => void): bool {
+        let idx = liveIndex(self, b)
+        if idx < 0 {
+            return false
+        }
+        unsafe {
+            return withRaw(blockPtr(self, idx), self._blockSize, (bytes: &[u8]): bool => {
+                f(bytes)
+                return true
+            }) ?? false
+        }
+    }
+
+    // `withMut` for a closure that returns nothing. False, and `f` is not called,
+    // when `b` is stale.
+    @mustUse
+    fn write(self: &mut Self, b: PoolBlock, f: (&mut [u8]) => void): bool {
+        let idx = liveIndex(self, b)
+        if idx < 0 {
+            return false
+        }
+        unsafe {
+            return withRawMut(blockPtr(self, idx), self._blockSize, (bytes: &mut [u8]): bool => {
+                f(&mut bytes)
+                return true
+            }) ?? false
+        }
+    }
+
+    // Bytes per block.
+    fn blockSize(self: &Self): i64 {
+        return self._blockSize
     }
 
     // Restate poolLive's preconditions (Pool has no struct invariant): without them the
     // wrapper can't discharge the callee's `requires`, so its own `ensures result >= 0`
-    // is unbacked — same restating pattern as `free` above.
+    // is unbacked.
     fn live(self: &Self): i64
-    requires self.liveCount >= 0
-    requires self.liveCount <= self.blockCount
+    requires self._liveCount >= 0
+    requires self._liveCount <= self._blockCount
     ensures
     result >= 0
     {
@@ -209,8 +321,8 @@ impl Pool {
     }
 
     fn available(self: &Self): i64
-    requires self.liveCount >= 0
-    requires self.liveCount <= self.blockCount
+    requires self._liveCount >= 0
+    requires self._liveCount <= self._blockCount
     ensures
     result >= 0
     {
@@ -218,16 +330,17 @@ impl Pool {
     }
 
     fn full(self: &Self): bool {
-        return poolFull(self)
+        return self._liveCount == self._blockCount
     }
 
     fn empty(self: &Self): bool {
-        return poolEmpty(self)
+        return self._liveCount == 0
     }
 
+    // Free every block at once; every outstanding handle goes stale.
     fn reset(self: &mut Self): void
     ensures
-    self.liveCount == 0
+    self._liveCount == 0
     {
         poolReset(&mut self)
     }

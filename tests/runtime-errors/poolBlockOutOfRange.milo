@@ -1,0 +1,22 @@
+// A pool block is lent as a slice of exactly `blockSize` bytes, so a write one past the
+// end traps on the slice bounds check instead of landing in the neighbouring block.
+// @runtime-error: index out of bounds
+from "std/pool" import {
+    Pool
+}
+
+fn runtimeIndex(n: i64): i64 {
+    return n
+}
+
+pub fn main(): i32 {
+    var pool = Pool.new(8, 2)!
+    let a = pool.alloc()!
+    let _b = pool.alloc()!
+    let i = runtimeIndex(8)
+    let ok = pool.write(a, (bytes: &mut [u8]) => {
+        bytes[i] = 1
+    })
+    print(ok)
+    return 0
+}

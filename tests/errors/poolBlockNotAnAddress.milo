@@ -1,0 +1,11 @@
+// `Pool.alloc` used to return the block's address as an i64, which safe code could do
+// arithmetic on and hand back to `free`. It returns a PoolBlock handle now, and a handle
+// is not an integer.
+// @error: 'addr' declared as i64 but got PoolBlock
+from "std/pool" import { Pool }
+
+fn main() {
+    var pool = Pool.new(16, 4)!
+    let addr: i64 = pool.alloc()!
+    print(addr + 16)
+}

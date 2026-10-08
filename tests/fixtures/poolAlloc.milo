@@ -2,7 +2,9 @@
 // @expect: 1
 // @expect: 2
 // @expect: 3
+// @expect: true
 // @expect: 2
+// @expect: true
 // @expect: 1
 // @expect: true
 // @expect: true
@@ -19,12 +21,12 @@ pub fn main(): i32 {
     print(pool.live())
     let b = pool.alloc()!
     print(pool.live())
-    let c = pool.alloc()!
+    let _c = pool.alloc()!
     print(pool.live())
 
-    pool.free(b)
+    print(pool.free(b))
     print(pool.live())
-    pool.free(a)
+    print(pool.free(a))
     print(pool.live())
 
     print(pool.full() == false)

@@ -1,0 +1,77 @@
+// Pool hands out generational PoolBlock handles, never addresses. A handle kept past
+// `free` or `reset`, or one from another pool, is rejected: it never reaches the block
+// that now lives in the reused slot.
+from "std/pool" import {
+    Pool, PoolBlock
+}
+
+fn firstByte(p: &Pool, b: PoolBlock): i64 {
+    return p.with(b, (bytes: &[u8]): i64 => bytes[0] as i64) ?? -1
+}
+
+pub fn main(): i32 {
+    var pool = Pool.new(16, 2)!
+    print(pool.blockSize())
+    let a = pool.alloc()!
+    let b = pool.alloc()!
+    print(a == b)
+    print(pool.write(a, (bytes: &mut [u8]) => {
+        bytes[0] = 7
+        bytes[15] = 9
+    }))
+    print(pool.write(b, (bytes: &mut [u8]) => {
+        bytes[0] = 5
+    }))
+    print(firstByte(pool, a))
+    print(firstByte(pool, b))
+    print(pool.alloc().isErr())
+
+    // free, then reuse the same slot: the stale handle must not alias the new tenant
+    print(pool.free(a))
+    print(pool.valid(a))
+    print(pool.free(a))
+    let c = pool.alloc()!
+    print(pool.valid(c))
+    print(firstByte(pool, c))
+    print(firstByte(pool, a))
+    print(pool.write(a, (bytes: &mut [u8]) => {
+        bytes[0] = 1
+    }))
+    print(firstByte(pool, c))
+
+    // reset invalidates every handle issued before it
+    pool.reset()
+    print(pool.live())
+    print(pool.valid(b))
+    print(pool.valid(c))
+
+    // a handle from another pool is rejected even when its slot index is live here
+    var other = Pool.new(16, 2)!
+    let o = other.alloc()!
+    let d = pool.alloc()!
+    print(pool.valid(d))
+    print(pool.valid(o))
+    print(firstByte(pool, o))
+    return 0
+}
+// @expect: 16
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: 7
+// @expect: 5
+// @expect: true
+// @expect: true
+// @expect: false
+// @expect: false
+// @expect: true
+// @expect: 0
+// @expect: -1
+// @expect: false
+// @expect: 0
+// @expect: 0
+// @expect: false
+// @expect: false
+// @expect: true
+// @expect: false
+// @expect: -1

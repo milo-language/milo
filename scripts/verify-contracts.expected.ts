@@ -63,9 +63,11 @@ export const EXPECTED: Record<string, Expected> = {
   // exactly as the free fns they replaced did.
   "std/math.milo": { proven: 4, unknown: 1, errors: 0 },
   "std/mem.milo": { proven: 4, unknown: 2, errors: 0 },
-  // 15 = free-fn VCs plus the `impl Pool` wrappers, which restate poolLive/poolAvailable's
-  // liveCount preconditions (Pool has no struct invariant to supply them).
-  "std/pool.milo": { proven: 22, unknown: 1, errors: 0 },
+  // Free-fn VCs plus the `impl Pool` wrappers, which restate poolLive/poolAvailable's
+  // liveCount preconditions (Pool has no struct invariant to supply them). Was 22: the
+  // seven that went were `free`'s address-range requires and the asserts restating them,
+  // which no longer exist because a block is a generational PoolBlock, not an address.
+  "std/pool.milo": { proven: 15, unknown: 2, errors: 0 },
   "std/process.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/process.windows.milo": { proven: 0, unknown: 0, errors: 0 },
   "std/pty.darwin.milo": { proven: 0, unknown: 0, errors: 0 },

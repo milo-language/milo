@@ -1,13 +1,15 @@
-// @expect: too-small rejected
+// @expect: zero-size rejected
+// @expect: true
 // @expect: zero-count rejected
 // @expect: valid pool alloc ok
 
-// The free list threads an 8-byte pointer through each block, so a block SMALLER than 8
-// writes past the allocation. `requires size >= 8` said so, and a `requires` is dropped at
-// the default -O2 — ASan reported a heap-buffer-overflow WRITE of size 8 for
-// `Pool.new(2, 64)` in an ordinary build. Same shape as the AES-GCM read, one worse:
-// a write. Sizes are derived at runtime here so the prover cannot reject them statically,
-// which is what makes this a test of the RELEASE build rather than of the contract.
+// The free list used to thread an 8-byte pointer through each block, so a block SMALLER
+// than 8 wrote past the allocation: `requires size >= 8` said so, a `requires` is dropped
+// at the default -O2, and ASan reported a heap-buffer-overflow WRITE for `Pool.new(2, 64)`.
+// The free list now lives in a side table, so a 2-byte block is legal; a zero size and a
+// zero count must still be refused at runtime. Sizes are derived at runtime here so the
+// prover cannot reject them statically, which is what makes this a test of the RELEASE
+// build rather than of the contract.
 from "std/pool" import {
     Pool
 }
@@ -17,12 +19,24 @@ fn runtimeVal(n: i64): i64 {
 }
 
 pub fn main(): i32 {
-    match Pool.new(runtimeVal(2), 64) {
+    match Pool.new(runtimeVal(0), 64) {
         Result.Ok(p) => {
-            print("BAD: accepted a 2-byte block")
+            print("BAD: accepted a 0-byte block")
         }
         Result.Err(e) => {
-            print("too-small rejected")
+            print("zero-size rejected")
+        }
+    }
+    match Pool.new(runtimeVal(2), 64) {
+        Result.Ok(p) => {
+            var small = p
+            let b = small.alloc()!
+            print(small.write(b, (bytes: &mut [u8]) => {
+                bytes[1] = 3
+            }))
+        }
+        Result.Err(e) => {
+            print("BAD: rejected a 2-byte block")
         }
     }
     match Pool.new(16, runtimeVal(0)) {
@@ -37,7 +51,7 @@ pub fn main(): i32 {
         Result.Ok(p) => {
             var pool = p
             match pool.alloc() {
-                Result.Ok(addr) => {
+                Result.Ok(block) => {
                     print("valid pool alloc ok")
                 }
                 Result.Err(e) => {

@@ -1,0 +1,10 @@
+// A PoolBlock's fields are private to std/pool, so safe code cannot forge a handle to a
+// block it was never given (or edit a stale one's generation to revive it).
+// @error: field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'
+from "std/pool" import { Pool, PoolBlock }
+
+fn main() {
+    var pool = Pool.new(16, 4)!
+    let b = PoolBlock { _poolId: 1, _index: 0, _generation: 1 }
+    print(pool.free(b))
+}
