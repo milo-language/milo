@@ -1,0 +1,15 @@
+// @expect: declare ptr @malloc(i64)
+// @expect: call void @free(ptr %p)
+
+// A string literal that spells an allocator call must reach the binary unchanged. The
+// record/replay heap redirect rewrites malloc/realloc/free calls in the emitted IR; it
+// once rewrote the text of string constants too, which grew the bytes without growing
+// the declared array type and produced IR clang rejected (milo-self emits these lines).
+from "std/time" import { now }
+
+pub fn main(): i32 {
+    print("declare ptr @malloc(i64)")
+    print("call void @free(ptr %p)")
+    let _ = now()
+    return 0
+}

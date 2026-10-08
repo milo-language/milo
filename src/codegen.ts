@@ -2614,7 +2614,10 @@ export class Codegen {
         if (/@replayHeapRealloc\(ptr %p, i64 %n\)/.test(l)) return l.replace("ptr %p,", "ptr allocptr %p,").replace(/\) \{$/, `) allockind("realloc") allocsize(1) "alloc-family"="milo" {`);
         if (/@replayHeapFree\(ptr %p\)/.test(l)) return l.replace("ptr %p)", "ptr allocptr %p)").replace(/\) \{$/, `) allockind("free") "alloc-family"="milo" {`);
       }
-      if (inAllocator || l.startsWith("declare ") || !(l.includes("@malloc(") || l.includes("@realloc(") || l.includes("@free("))) return l;
+      // Only instructions (indented, inside a body) call anything. A global's line can hold
+      // the same text as data, a string constant spelling "@malloc(", and rewriting it would
+      // change its bytes but not its declared [N x i8] length.
+      if (inAllocator || !l.startsWith(" ") || !(l.includes("@malloc(") || l.includes("@realloc(") || l.includes("@free("))) return l;
       return l.replace(/@malloc\(/g, "@replayHeapMalloc(").replace(/@realloc\(/g, "@replayHeapRealloc(").replace(/@free\(/g, "@replayHeapFree(");
     });
   }
