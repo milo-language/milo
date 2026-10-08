@@ -54,6 +54,10 @@ fn main(): i32 {
 }
 `;
 
+// Each case compiles and links a whole program; a TLS build ran past bun's 5s default on a
+// loaded CI runner while taking 2.5s locally, so the limit has to fit the slow host.
+const BUILD_TIMEOUT = 60_000;
+
 test("a program that does not use TLS does not link OpenSSL", () => {
   const bin = build("plain", PLAIN);
   try {
@@ -65,7 +69,7 @@ test("a program that does not use TLS does not link OpenSSL", () => {
   } finally {
     try { unlinkSync(bin); } catch {}
   }
-});
+}, BUILD_TIMEOUT);
 
 test("a program that does use TLS still links OpenSSL", () => {
   // Guards the opposite failure: dropping libs so aggressively that real users break.
@@ -75,7 +79,7 @@ test("a program that does use TLS still links OpenSSL", () => {
   } finally {
     try { unlinkSync(bin); } catch {}
   }
-});
+}, BUILD_TIMEOUT);
 
 // The Windows counterpart of the OpenSSL dead-strip tests, but a HARD link check,
 // not a load-command inspection: the xwin sysroot ships no OpenSSL, so if a plain-TCP
@@ -143,4 +147,5 @@ test.skipIf(!isDarwin || !existsSync("/opt/homebrew/opt/openssl@3/lib/libssl.a")
       try { unlinkSync(bin); } catch {}
     }
   },
+  BUILD_TIMEOUT,
 );
