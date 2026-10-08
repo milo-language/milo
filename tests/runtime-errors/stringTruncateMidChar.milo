@@ -1,0 +1,8 @@
+// @runtime-error: truncate(2) lands inside a multibyte UTF-8 character
+// truncate takes a byte length, and byte 2 of "aéb" is the second byte of the é:
+// cutting there would leave half a character, so it aborts the way charAt does.
+pub fn main(): void {
+    var s = "aéb".clone()
+    s.truncate(2)
+    print(s)
+}

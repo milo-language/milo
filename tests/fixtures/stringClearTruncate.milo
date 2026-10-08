@@ -1,0 +1,66 @@
+// @expect: 0
+// @expect: 5 hello
+// @expect: 3 hel
+// @expect: 3 hel
+// @expect: 0
+// @expect: 3 aé
+// @expect: 1 a
+// @expect: 4 abcd
+// @expect: 0 true
+// @expect: 2 hi
+// @expect: 3 req
+// @expect: 6 9
+
+// string.clear() and truncate(n) keep the buffer and its capacity, so a reused output buffer
+// does not regrow from zero on every round. truncate takes a BYTE length: past
+// the end is a no-op, negative empties, and a cut inside a multibyte character aborts
+// (tests/runtime-errors/stringTruncateMidChar.milo).
+fn main(): i32 {
+    var out = "hello".clone()
+    out.pushStr(" world, a longer tail")
+    out.clear()
+    print($"{out.len}")
+
+    out.pushStr("hello")
+    print($"{out.len} {out}")
+
+    out.truncate(3)
+    print($"{out.len} {out}")
+    out.truncate(10)
+    print($"{out.len} {out}")
+    out.truncate(-1)
+    print(out.len)
+
+    // truncate on a character boundary of a multibyte string
+    var u = "aéb".clone()
+    u.truncate(3)
+    print($"{u.len} {u}")
+    u.truncate(1)
+    print($"{u.len} {u}")
+
+    // a static literal (cap 0) is copied out before it is shortened
+    var lit = "abcdef"
+    lit.truncate(4)
+    print($"{lit.len} {lit}")
+    var lit2 = "xyz"
+    lit2.clear()
+    print($"{lit2.len} {lit2.isEmpty()}")
+    lit2.pushStr("hi")
+    print($"{lit2.len} {lit2}")
+
+    // the reuse pattern clear() exists for
+    var buf = ""
+    var total: i64 = 0
+    for i in 0..1000 {
+        buf.clear()
+        buf.pushStr("req")
+        if i == 999 {
+            print($"{buf.len} {buf}")
+        }
+        total += buf.len
+    }
+    buf.clear()
+    buf.pushStr("abcdef")
+    print($"{buf.len} {total / 333}")
+    return 0
+}

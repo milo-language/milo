@@ -1456,6 +1456,9 @@ class LowerCtx {
           if (expr.method === "pushInt") {
             return { kind: "StringPushInt", str: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
+          if (expr.method === "clear" || expr.method === "truncate") {
+            return { kind: "StringTruncate", str: this.lowerExpr(expr.object), length: expr.method === "clear" ? null : this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
           if (expr.method === "substr") {
             return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }

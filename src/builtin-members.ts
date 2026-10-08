@@ -72,6 +72,8 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "push", sig: "(c: u8)", grows: true },
     { name: "pushStr", sig: "(s: &string)", grows: true },
     { name: "pushInt", sig: "(n: i64)", note: "appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string", grows: true },
+    { name: "clear", sig: "()", note: "empties the string, keeping its capacity" },
+    { name: "truncate", sig: "(len: i64)", note: "keeps the first len BYTES and the capacity; len past the end is a no-op, a len inside a multibyte character aborts" },
     { name: "cstr", sig: "(): *u8", note: "NUL-terminated view; the string must outlive the pointer" },
     { name: "clone", sig: "(): string" },
   ],

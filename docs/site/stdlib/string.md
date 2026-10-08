@@ -59,6 +59,8 @@ match "hello".indexOf("l") {
 | `push(c: u8)` |  |
 | `pushStr(s: &string)` |  |
 | `pushInt(n: i64)` | appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string |
+| `clear()` | empties the string, keeping its capacity |
+| `truncate(len: i64)` | keeps the first len BYTES and the capacity; len past the end is a no-op, a len inside a multibyte character aborts |
 | `cstr(): *u8` | NUL-terminated view; the string must outlive the pointer |
 | `clone(): string` |  |
 

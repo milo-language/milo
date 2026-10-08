@@ -39,7 +39,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
   "OptionOp", "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
-  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSlice",
+  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
   "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert", "VecIsEmpty",
   "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
@@ -5923,6 +5923,8 @@ export class Codegen {
         return this.genStringPushStr(expr, lines);
       case "StringPushInt":
         return this.genStringPushInt(expr, lines);
+      case "StringTruncate":
+        return this.genStringTruncate(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
       case "StringSlice":
@@ -9900,6 +9902,93 @@ export class Codegen {
     const [vLines, vVal, vTy] = this.genExpr(expr.value);
     lines.push(...vLines);
     this.emitAppendFormatParts(lines, strPtr, [{ val: vVal, ty: vTy, tk: expr.value.type }], expr.span);
+    return [lines, "void", "void"];
+  }
+
+  // s.truncate(n) / s.clear(): shorten to n bytes, keeping the buffer and its capacity.
+  // A negative n empties the string and an n at or past the end is a no-op, as for
+  // Vec.truncate. An n inside a multibyte character aborts, the check charAt makes
+  // (std/string strCharAt): cutting there would leave invalid UTF-8 behind. A cap-0
+  // string is a static literal that cannot take the NUL a shorter string needs at its
+  // new end (cstr() reads up to it), so it is copied out to an owned buffer first.
+  private genStringTruncate(expr: HIRExpr & { kind: "StringTruncate" }, lines: string[]): Gen {
+    this.hasStringType = true;
+    const [strPtrLines, strPtr] = this.genLValue(expr.str);
+    lines.push(...strPtrLines);
+    let n = "0";
+    if (expr.length) {
+      const raw = this.genBoundI64(expr.length, lines);
+      const neg = this.nextTemp();
+      lines.push(`  ${neg} = icmp slt i64 ${raw}, 0`);
+      n = this.nextTemp();
+      lines.push(`  ${n} = select i1 ${neg}, i64 0, i64 ${raw}`);
+    }
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const noop = this.nextTemp();
+    lines.push(`  ${noop} = icmp uge i64 ${n}, ${len}`);
+    const cutL = this.nextLabel("strtrunc.cut");
+    const doneL = this.nextLabel("strtrunc.done");
+    lines.push(`  br i1 ${noop}, label %${doneL}, label %${cutL}`);
+    lines.push(`${cutL}:`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    if (expr.length) {
+      const at = this.nextTemp();
+      lines.push(`  ${at} = getelementptr i8, ptr ${data}, i64 ${n}`);
+      const b = this.nextTemp();
+      lines.push(`  ${b} = load i8, ptr ${at}`);
+      const hi = this.nextTemp();
+      lines.push(`  ${hi} = and i8 ${b}, -64`);
+      const inside = this.nextTemp();
+      lines.push(`  ${inside} = icmp eq i8 ${hi}, -128`);
+      const badL = this.nextLabel("strtrunc.mid");
+      const okL = this.nextLabel("strtrunc.ok");
+      lines.push(`  br i1 ${inside}, label %${badL}, label %${okL}`);
+      lines.push(`${badL}:`);
+      const { label: errLabel, length: errLen } = this.addString(
+        `milo: truncate(%lld) lands inside a multibyte UTF-8 character; truncate takes a byte length that must end on a character boundary, at ${this.panicAt(expr.span)}\n`,
+      );
+      const errPtr = this.nextTemp();
+      lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+      this.emitFdPrintf(lines, 2, errPtr, `, i64 ${n}`);
+      this.panicAbort(lines);
+      lines.push(`  unreachable`);
+      lines.push(`${okL}:`);
+    }
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+    const owned = this.nextTemp();
+    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
+    const inPlaceL = this.nextLabel("strtrunc.inplace");
+    const copyL = this.nextLabel("strtrunc.copy");
+    lines.push(`  br i1 ${owned}, label %${inPlaceL}, label %${copyL}`);
+    lines.push(`${inPlaceL}:`);
+    const end = this.nextTemp();
+    lines.push(`  ${end} = getelementptr i8, ptr ${data}, i64 ${n}`);
+    lines.push(`  store i8 0, ptr ${end}`);
+    lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
+    lines.push(`  br label %${doneL}`);
+    lines.push(`${copyL}:`);
+    this.needsMemcpy = true;
+    const size = this.nextTemp();
+    lines.push(`  ${size} = add i64 ${n}, 1`);
+    const { buf } = this.emitAllocBytes(lines, size, 1, "strtrunc", expr.span);
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${n})`);
+    const bend = this.nextTemp();
+    lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${n}`);
+    lines.push(`  store i8 0, ptr ${bend}`);
+    lines.push(`  store ptr ${buf}, ptr ${dataPtr}`);
+    lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
+    lines.push(`  store i64 ${size}, ptr ${capPtr}`);
+    lines.push(`  br label %${doneL}`);
+    lines.push(`${doneL}:`);
     return [lines, "void", "void"];
   }
 

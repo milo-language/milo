@@ -48,12 +48,19 @@ s.pushStr(" there")    // a whole string, appended in place
 reallocates and recopies the whole accumulator on every concat.
 
 `s.pushInt(n)` appends an integer's decimal digits with no temporary string, and
-`s.pushStr($"...")` writes the interpolation's parts straight into `s`.
+`s.pushStr($"...")` writes the interpolation's parts straight into `s`. To reuse a
+buffer, `s.clear()` empties it and `s.truncate(n)` keeps the first `n` bytes; both
+keep the capacity, so the next round does not regrow from zero. `truncate` takes a
+byte length and aborts if `n` falls inside a multibyte character.
 
 ```milo
-var out = "id="
-out.pushInt(42)
-print(out)
+var out = ""
+for id in 0..3 {
+    out.clear()
+    out.pushStr("id=")
+    out.pushInt(id)
+    print(out)
+}
 ```
 
 ## Iterating

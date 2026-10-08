@@ -12085,6 +12085,23 @@ export class TypeChecker {
         }
         return this.setType(expr, { tag: "void" });
       }
+      if (expr.method === "clear" || expr.method === "truncate") {
+        // Same arity and length rules as Vec's; a string keeps its capacity either way.
+        const want = expr.method === "clear" ? 0 : 1;
+        if (expr.args.length !== want) {
+          this.error(`'${expr.method}' expects ${want} argument${want === 1 ? "" : "s"}, got ${expr.args.length}`, sp);
+        }
+        if (want === 1 && expr.args.length === 1) {
+          const nType = this.checkExpr(expr.args[0]);
+          if (nType.tag !== "int" && nType.tag !== "unknown") {
+            this.error(`'truncate': expected an integer byte length, got ${this.show(nType)}`, sp);
+          }
+        }
+        if (!this.isRootMutable(expr.object)) {
+          this.error(`cannot ${expr.method} an immutable string`, sp, `declare with 'var' to make it mutable`);
+        }
+        return this.setType(expr, { tag: "void" });
+      }
       if (expr.method === "substr") {
         if (expr.args.length !== 2) { this.error(`'substr' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const startType = this.checkExpr(expr.args[0]);
