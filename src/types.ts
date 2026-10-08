@@ -85,26 +85,36 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; ptrDepth?: numbe
   return result;
 }
 
-export function typeEq(a: TypeKind, b: TypeKind): boolean {
+// Top-level int comparison ignores a range: a value flowing into a ranged slot is
+// range-checked at that flow (checker `enforceRangeInto`). Under a container, a pointer
+// or a fn type there is no flow to check, so ranges must match exactly: `Vec<i32>` passed
+// off as `Vec<i32(0..9)>` would hand out unchecked elements as in-range, and a niche
+// `Option<i32(0..9)>` built from one would read an out-of-range element as `None`.
+export function typeEq(a: TypeKind, b: TypeKind, rangeStrict = false): boolean {
   if (a.tag !== b.tag) return false;
+  const nested = (x: TypeKind, y: TypeKind) => typeEq(x, y, true);
   switch (a.tag) {
-    case "int": return (b as typeof a).bits === a.bits && (b as typeof a).signed === a.signed;
+    case "int": {
+      const bi = b as typeof a;
+      if (bi.bits !== a.bits || bi.signed !== a.signed) return false;
+      return !rangeStrict || (a.min === bi.min && a.max === bi.max);
+    }
     case "float": return (b as typeof a).bits === a.bits;
     case "bool": case "void": case "string": case "never": case "unknown": return true;
-    case "ptr": return typeEq(a.inner, (b as typeof a).inner);
-    case "heap": return typeEq(a.inner, (b as typeof a).inner);
-    case "vec": return typeEq(a.element, (b as typeof a).element);
-    case "hashmap": return typeEq(a.key, (b as typeof a).key) && typeEq(a.value, (b as typeof a).value);
-    case "ref": return typeEq(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
+    case "ptr": return nested(a.inner, (b as typeof a).inner);
+    case "heap": return nested(a.inner, (b as typeof a).inner);
+    case "vec": return nested(a.element, (b as typeof a).element);
+    case "hashmap": return nested(a.key, (b as typeof a).key) && nested(a.value, (b as typeof a).value);
+    case "ref": return nested(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
     case "struct": return a.name === (b as typeof a).name;
     case "enum": return a.name === (b as typeof a).name;
     case "array": {
       const ba = b as typeof a;
-      return typeEq(a.element, ba.element) && a.size === ba.size;
+      return nested(a.element, ba.element) && a.size === ba.size;
     }
     case "fn": case "cfn": {
       const bf = b as typeof a;
-      return a.params.length === bf.params.length && a.params.every((p, i) => typeEq(p, bf.params[i])) && typeEq(a.ret, bf.ret);
+      return a.params.length === bf.params.length && a.params.every((p, i) => nested(p, bf.params[i])) && nested(a.ret, bf.ret);
     }
     case "interface": return a.name === (b as typeof a).name;
   }

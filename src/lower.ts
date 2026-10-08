@@ -608,7 +608,8 @@ class LowerCtx {
     // statement) means every position — let/var, call arg, return, reassignment — enforces
     // it uniformly.
     const rc = this.c.rangeCheckedExprs.get(expr);
-    if (rc) return { kind: "RangeCheck", value: lowered, min: rc.min, max: rc.max, typeName: rc.typeName, type: lowered.type, span: expr.span };
+    // An auto-wrapped value's check guards the payload; lowerExprInner applied it inside the Some.
+    if (rc && !this.c.autoWrappedOption.has(expr)) return { kind: "RangeCheck", value: lowered, min: rc.min, max: rc.max, typeName: rc.typeName, type: lowered.type, span: expr.span };
     // A fixed array passed where a slice is expected. Done HERE rather than in each call
     // path because the checker marks the argument expression itself, and every position
     // that can carry one — free call, method call, variadic — funnels through this method.
@@ -681,7 +682,9 @@ class LowerCtx {
     // T → Option<T> auto-wrapping: wrap value in Some(value)
     const optionName = this.c.autoWrappedOption.get(expr);
     if (optionName) {
-      const inner = this.lowerExprRaw(expr, type);
+      const raw = this.lowerExprRaw(expr, type);
+      const rc = this.c.rangeCheckedExprs.get(expr);
+      const inner: HIRExpr = rc ? { kind: "RangeCheck", value: raw, min: rc.min, max: rc.max, typeName: rc.typeName, type: raw.type, span: expr.span } : raw;
       const optionType: TypeKind = { tag: "enum", name: optionName };
       return { kind: "EnumLit", enumName: optionName, variant: "Some", args: [inner], type: optionType, span: expr.span };
     }

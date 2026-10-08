@@ -1536,6 +1536,37 @@ export class TypeChecker {
     }
   }
 
+  // A call argument against its parameter. By value it is a flow, checked like any other
+  // (`enforceRangeInto`). By reference nothing flows, so the ranges themselves must agree:
+  // a `&R` param fed an unranged int would read an unchecked value as in-range, and a
+  // `&mut` either way lets one side write what the other side's range forbids.
+  private enforceArgRange(arg: Expr, argType: TypeKind, paramType: TypeKind, sp?: Span) {
+    if (paramType.tag !== "ref") {
+      if (paramType.tag === "int") this.enforceRangeInto(arg, argType, paramType, sp);
+      return;
+    }
+    const want = paramType.inner;
+    const got = argType.tag === "ref" ? argType.inner : argType;
+    if (want.tag !== "int" || got.tag !== "int") return;
+    if (want.min === undefined && got.min === undefined) return;
+    const fits = paramType.mutable
+      ? want.min === got.min && want.max === got.max
+      : want.min === undefined || (got.min !== undefined && got.min >= want.min && got.max! <= want.max!);
+    if (!fits) {
+      this.error(`a ${this.show(paramType)} parameter cannot borrow a ${this.show(got)}: the ranges must ${paramType.mutable ? "match" : "fit"}, since a borrow is not range-checked`, sp,
+        `copy the value into a binding of type ${this.show(want)} first (that copy is checked)`);
+    }
+  }
+
+  // `T` auto-wrapped into `Option<T>`: the value flows into the payload, so a ranged
+  // payload checks it. Lowering applies the check to the value before the Some wrap.
+  private enforceWrapRange(expr: Expr) {
+    const opt = this.autoWrappedOption.get(expr);
+    const inner = opt ? this.optionInnerType({ tag: "enum", name: opt }) : null;
+    const valType = this.exprTypes.get(expr);
+    if (inner?.tag === "int" && valType) this.enforceRangeInto(expr, valType, inner, expr.span);
+  }
+
   private constFloatValue(expr: import("./ast").Expr): number | null {
     if (expr.kind === "FloatLit") return expr.value;
     if (expr.kind === "UnaryOp" && expr.op === "-" && expr.operand.kind === "FloatLit") return -expr.operand.value;
@@ -1891,9 +1922,14 @@ export class TypeChecker {
   }
 
   private mangleTypeName(t: TypeKind): string {
+    const rangeSym = (n: number) => n < 0 ? `n${-n}` : `${n}`;
     switch (t.tag) {
       case "cfn": return `cfn${t.params.length}`;
-      case "int": return `${t.signed ? "i" : "u"}${t.bits}`;
+      // A ranged int keeps its range in the name: `Option<i32(0..9)>` is a different
+      // instance from `Option<i32>` (its layout can use the excluded values as a niche),
+      // and the instances being distinct is what stops an `Option<i32>` holding an
+      // out-of-range value from being passed off as the ranged one.
+      case "int": return `${t.signed ? "i" : "u"}${t.bits}${t.min !== undefined && t.max !== undefined ? `r${rangeSym(t.min)}_${rangeSym(t.max)}` : ""}`;
       case "float": return `f${t.bits}`;
       case "bool": return "bool";
       case "void": return "void";
@@ -5687,6 +5723,7 @@ export class TypeChecker {
       if (!typeEq(bare, argType) && argType.tag !== "unknown") {
         this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i]!.span);
       }
+      this.enforceArgRange(expr.args[i]!, argType, expected.type, expr.args[i]!.span);
       if (expected.type.tag === "ref") this.setAutoBorrowChecked(expr.args[i]!, expected.type.mutable, sp);
       else this.tryMove(expr.args[i]!);
     }
@@ -6263,6 +6300,7 @@ export class TypeChecker {
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
           if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, hint.name);
+            this.enforceWrapRange(stmt.value);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
           } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
@@ -6319,6 +6357,7 @@ export class TypeChecker {
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
           if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, hint.name);
+            this.enforceWrapRange(stmt.value);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
           } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
@@ -6457,6 +6496,7 @@ export class TypeChecker {
           const isStringToPtr = valType.tag === "string" && targetInfo.type.tag === "ptr" && targetInfo.type.inner.tag === "int" && targetInfo.type.inner.bits === 8;
           if (optInner && typeEq(optInner, valType) && targetInfo.type.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, targetInfo.type.name);
+            this.enforceWrapRange(stmt.value);
           } else if (!isStringToPtr) {
             this.error(`type mismatch: cannot assign ${this.show(valType)} to ${this.show(targetInfo.type)}`, sp);
           }
@@ -8800,6 +8840,7 @@ export class TypeChecker {
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${this.show(variant.fields[i])}, got ${this.show(argType)}`, sp);
           }
+          if (variant.fields[i].tag === "int") this.enforceRangeInto(expr.args[i], argType, variant.fields[i], expr.args[i].span);
           this.tryMove(expr.args[i]);
         }
         this.rewrittenEnums.set(expr, hint.name);
@@ -9625,6 +9666,7 @@ export class TypeChecker {
       const concreteSig = must(this.functions, mangled, "functions");
       for (let i = 0; i < expr.args.length; i++) {
         const sigParamTy = i < concreteSig.params.length ? concreteSig.params[i].type : undefined;
+        if (sigParamTy) this.enforceArgRange(expr.args[i], this.exprTypes.get(expr.args[i]) ?? { tag: "unknown" }, sigParamTy, expr.args[i].span);
         if (sigParamTy?.tag === "ref") {
           this.setAutoBorrowChecked(expr.args[i], sigParamTy.mutable, sp);
           continue;
@@ -9676,6 +9718,7 @@ export class TypeChecker {
           const paramType = fnType.params[i];
           const hint = paramType.tag === "ref" ? paramType.inner : paramType;
           const argType = this.checkExpr(expr.args[i], hint);
+          this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
           if (paramType.tag === "ref") {
             if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
               continue;
@@ -9783,6 +9826,7 @@ export class TypeChecker {
       const paramType = sig.params[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
       const argType = this.checkExpr(expr.args[i], hint);
+      if (paramType.tag === "ref") this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
       if (paramType.tag === "ref") {
         if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
           // A `&[T]` slice is a %Vec *value*, not a bare pointer. To match the `ptr`
@@ -9830,6 +9874,7 @@ export class TypeChecker {
         const flexInfo = paramType.tag === "int" ? this.flexIntBinding(expr.args[i]) : null;
         if (isOptionWrap) {
           this.autoWrappedOption.set(expr.args[i], paramType.name);
+          this.enforceWrapRange(expr.args[i]);
         } else if (flexInfo && this.resolveFlexInt(flexInfo, paramType, expr.args[i])) {
           // resolved
         } else if (!isStringToPtr && !isArrayToPtr) {
@@ -9929,6 +9974,7 @@ export class TypeChecker {
       if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
         this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
       }
+      if (fieldDef.type.tag === "int") this.enforceRangeInto(f.value, valType, fieldDef.type, f.value.span);
       this.tryMove(f.value);
     }
     for (const d of hintInfo.fields) {
@@ -10004,6 +10050,7 @@ export class TypeChecker {
         if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
           this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
         }
+        if (fieldDef.type.tag === "int") this.enforceRangeInto(f.value, valType, fieldDef.type, f.value.span);
         // Record the move of the field value out of its source. Without this a non-Copy
         // value (Vec/String/…) moved into a *generic* struct field was never marked moved,
         // so its source kept its alive-flag and was dropped again at scope exit — a
@@ -10036,6 +10083,7 @@ export class TypeChecker {
       } else if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
         this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
       }
+      if (fieldDef.type.tag === "int") this.enforceRangeInto(f.value, valType, fieldDef.type, f.value.span);
       this.tryMove(f.value);
     }
     for (const d of info.fields) {
@@ -10236,6 +10284,7 @@ export class TypeChecker {
       const paramType = expectedParams[i].type;
       const hint = paramType.tag === "ref" ? paramType.inner : paramType;
       const argType = this.checkExpr(expr.args[i], hint);
+      this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
       if (paramType.tag === "ref") {
         if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
           this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
@@ -10463,6 +10512,7 @@ export class TypeChecker {
       if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
         this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${this.show(variant.fields[i])}, got ${this.show(argType)}`, expr.args[i].span);
       }
+      if (variant.fields[i].tag === "int") this.enforceRangeInto(expr.args[i], argType, variant.fields[i], expr.args[i].span);
       this.tryMove(expr.args[i]);
     }
     return this.setType(expr, { tag: "enum", name: expr.enumName });
@@ -10535,6 +10585,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     const defaultType = this.checkExpr(expr.default, inner);
+    if (inner.tag === "int") this.enforceRangeInto(expr.default, defaultType, inner, expr.default.span);
     if (!typeEq(inner, defaultType) && defaultType.tag !== "unknown") {
       this.error(`'??' default type mismatch: expected ${this.show(inner)}, got ${this.show(defaultType)}`, sp);
     }
@@ -10583,6 +10634,13 @@ export class TypeChecker {
     const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0n;
     if (toType.tag === "ptr" && !isNullPtrConst) {
       this.requireUnsafe(`cast to pointer type requires 'unsafe' block`, sp);
+    }
+    // `x as i32(0..9)` is a checked conversion: the cast converts to the base width and
+    // the result is range-checked like any flow into the type. Unchecked, the cast was a
+    // safe way to mint an out-of-range value, which a niche Option would read as None.
+    if (toType.tag === "int" && toType.min !== undefined) {
+      const viaBase: TypeKind = isNumeric(fromType) && fromType.tag === "int" && fromType.bits <= toType.bits ? fromType : { tag: "int", bits: toType.bits, signed: toType.signed };
+      this.enforceRangeInto(expr, viaBase, toType, sp);
     }
     return this.setType(expr, toType);
   }
@@ -11251,6 +11309,7 @@ export class TypeChecker {
           return this.setType(expr, { tag: "void" });
         }
         const argType = this.checkExpr(expr.args[0], objType.element);
+        if (objType.element.tag === "int") this.enforceRangeInto(expr.args[0], argType, objType.element, expr.args[0].span);
         if (argType.tag === "ref") {
           this.error(`push: cannot store a reference in a Vec`, sp, `references are second-class — push an owned value (clone it if needed)`);
         }
@@ -11460,6 +11519,7 @@ export class TypeChecker {
         const idxType = this.checkExpr(expr.args[0]);
         if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'insert' index must be an integer, got ${this.show(idxType)}`, sp); }
         const valType = this.checkExpr(expr.args[1], objType.element);
+        if (objType.element.tag === "int") this.enforceRangeInto(expr.args[1], valType, objType.element, expr.args[1].span);
         if (!typeEq(objType.element, valType) && valType.tag !== "unknown") {
           this.error(`'insert' value: expected ${this.show(objType.element)}, got ${this.show(valType)}`, sp);
         }
@@ -11655,10 +11715,12 @@ export class TypeChecker {
           this.error(`cannot insert into immutable HashMap`, sp, `declare with 'var' to make it mutable`);
         }
         const keyType = this.checkExpr(expr.args[0], objType.key);
+        if (objType.key.tag === "int") this.enforceRangeInto(expr.args[0], keyType, objType.key, expr.args[0].span);
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`insert key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const valType = this.checkExpr(expr.args[1], objType.value);
+        if (objType.value.tag === "int") this.enforceRangeInto(expr.args[1], valType, objType.value, expr.args[1].span);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`insert value: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
@@ -11684,6 +11746,7 @@ export class TypeChecker {
           this.error(`getOrDefault key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const valType = this.checkExpr(expr.args[1], objType.value);
+        if (objType.value.tag === "int") this.enforceRangeInto(expr.args[1], valType, objType.value, expr.args[1].span);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
@@ -11976,6 +12039,7 @@ export class TypeChecker {
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
               this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
+            this.enforceArgRange(expr.args[i], argType, expected.type, expr.args[i].span);
             if (expected.type.tag === "ref") {
               this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
             } else {
@@ -12062,6 +12126,7 @@ export class TypeChecker {
             this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
           }
         }
+        this.enforceArgRange(expr.args[i], argType, expected.type, expr.args[i].span);
         if (expected.type.tag === "ref") {
           this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
         } else {
@@ -12105,6 +12170,7 @@ export class TypeChecker {
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
               this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
             }
+            this.enforceArgRange(expr.args[i], argType, expected, expr.args[i].span);
             if (expected.tag === "ref") {
               this.setAutoBorrowChecked(expr.args[i], expected.mutable, sp);
             } else {
@@ -12398,9 +12464,13 @@ export class TypeChecker {
   // Mirrors the binding rule rather than inventing one: an unknown is already an error
   // reported elsewhere, an Option auto-wraps, and an interface coerces.
   private elementFits(elemType: TypeKind, want: TypeKind, elem: Expr): boolean {
+    if (want.tag === "int") this.enforceRangeInto(elem, elemType, want, elem.span);
     if (typeEq(want, elemType) || elemType.tag === "unknown") return true;
     const optInner = this.optionInnerType(want);
-    if (optInner && typeEq(optInner, elemType) && want.tag === "enum") return true;
+    if (optInner && typeEq(optInner, elemType) && want.tag === "enum") {
+      if (optInner.tag === "int") this.enforceRangeInto(elem, elemType, optInner, elem.span);
+      return true;
+    }
     return this.tryInterfaceCoercion(elem, elemType, want);
   }
 
