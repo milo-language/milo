@@ -58,7 +58,8 @@ fn main(): i32 {
 `;
 
 test("by-ref params get nonnull, dereferenceable(store size) and align", () => {
-  const ir = emitIr(SRC);
+  // noalias off so the &mut params here spell exactly the pointer attributes
+  const ir = emitIr(SRC, "--no-noalias");
   expect(defineOf(ir, "fp")).toContain("ptr nonnull dereferenceable(16) align 8 %p");
   expect(defineOf(ir, "farr")).toContain("ptr nonnull dereferenceable(16) align 4 %a");
   expect(defineOf(ir, "fbool")).toContain("ptr nonnull dereferenceable(1) align 1 %b");
@@ -195,7 +196,8 @@ fn main(): i32 {
   expect(defineOf(ir, "tally")).toContain("ptr noalias nonnull");
 });
 
-test("noalias is off without the flag", () => {
+test("noalias is on by default and --no-noalias turns it off", () => {
+  expect(defineOf(emitIr(NOALIAS_SRC), "axpy")).toContain("ptr noalias nonnull");
   const ir = emitIr(NOALIAS_SRC, "--no-noalias");
   expect(ir.split("\n").filter(l => l.startsWith("define ") && l.includes("noalias"))).toEqual([]);
 });

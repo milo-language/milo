@@ -23,11 +23,13 @@ import { display } from "./mangle";
 // `v.remove(0)` as a statement therefore destroyed nothing. `tests/ownedTempCoverage.test.ts`
 // requires every kind in `HIRExpr` to appear either here or in `isOwnedTempExpr`, so a
 // newly added node cannot inherit an answer nobody chose.
-// `--noalias` (main.ts) sets MILO_NOALIAS=1. An environment variable rather than a Codegen
+// On by default: scripts/differential.ts over every fixture and runnable example showed no
+// output or exit-code change at -O2 or -O3. `--no-noalias` (main.ts) sets MILO_NOALIAS=0 to
+// rule it out when chasing a miscompile. An environment variable rather than a Codegen
 // constructor argument so the flag reaches every compile path, `milo run`/`test` and
 // separately compiled modules included, without threading through each signature.
 export function noaliasEnabled(): boolean {
-  return process.env.MILO_NOALIAS === "1";
+  return process.env.MILO_NOALIAS !== "0";
 }
 
 export const NOT_OWNED_TEMP: readonly string[] = [

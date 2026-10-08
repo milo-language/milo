@@ -192,6 +192,8 @@ export const OPTIONS: CliOption[] = [
   { flag: "--contract-checks", help: ["assert requires/ensures/invariant at any -O (default: only --debug)"] },
   { flag: "--no-contract-checks", help: ["drop those asserts at any -O (e.g. fast -O0 builds)"] },
   { flag: "--strip-panic-locations", help: ["blank source paths out of runtime panic messages (-g still embeds them)"] },
+  { flag: "--noalias", help: ["emit LLVM noalias on &mut parameters where no alias is reachable (the default)"] },
+  { flag: "--no-noalias", help: ["omit LLVM noalias on &mut parameters (on by default; for ruling it out of a miscompile)"] },
   { flag: "--hot", help: ["build a hot-reload host: -O0, patchable functions, writes <out>.hot.json"] },
   { flag: "--fast", help: ["quick edit-loop build: -O0, wrapping (~2x faster compile)"] },
   { flag: "--cgus=<n>", help: ["codegen units compiled in parallel (default: auto, 1 for --release/-g)"] },
