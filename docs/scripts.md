@@ -41,7 +41,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/check-breaking.ts` | Detects source-level breaks in the public std surface since the last release tag, and requires each one to be written up in docs/breaking-changes.md. |
 | `scripts/check-packages.sh` | Run the sibling Milo packages' OWN test suites against this checkout's compiler. |
 | `scripts/corpus-census.ts` | Census of every .milo file in the org: what the ownership model costs real programs. |
-| `scripts/differential.ts` | Differential gate for codegen changes that must not change behaviour (LLVM attributes, optimisation flags): builds every runtime fixture and every `// @run:` example twice, as A and B, runs both and… |
+| `scripts/differential.ts` | Differential gate: builds every runtime fixture and `// @run:` example twice (A and B flags or checkouts) and compares stdout and exit code; any difference is a finding. |
 | `scripts/dup-scan.ts` | Duplicate-code scanner: finds maximal runs of identical normalized lines shared by two or more places, within or across files. |
 | `scripts/ecosystem-check.ts` | Compile every published milo-language package against THIS checkout. |
 | `scripts/edit-loop.ts` | Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios over a fixed set of real programs, with the MILO_TIMING phase breakdown per build. |

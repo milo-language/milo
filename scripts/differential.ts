@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// Differential gate for codegen changes that must not change behaviour (LLVM attributes,
-// optimisation flags): builds every runtime fixture and every `// @run:` example twice,
-// as A and B, runs both and compares stdout and exit code. Any difference is a finding.
+// Differential gate: builds every runtime fixture and `// @run:` example twice (A and B
+// flags or checkouts) and compares stdout and exit code; any difference is a finding.
+// For codegen changes that must not change behaviour (LLVM attributes, optimisation flags).
 //
 // A program whose A build disagrees with itself across two runs (hash seeds, clocks,
 // addresses) is reported as nondeterministic rather than compared, so a real diff is

@@ -2563,7 +2563,7 @@ export class Codegen {
         const def = l.match(/^\s*(%[\w.$\-]+) = (\w+)(.*)$/);
         const call = l.includes("call") ? l.match(/\bcall\b[^@%]*?([@%])([\w$.\-]+)\(/) : null;
         if (call) {
-          const args = splitArgs(l.slice(l.indexOf(`${call[1]}${call[2]}(`) + call[2].length + 2)).map(opnd);
+          const args = splitArgs(l.slice(l.indexOf(`${call[1]}${call[2]}(`) + call[2].length + 2)).map(a => opnd(a));
           ins.push({ k: "call", def: def?.[1], callee: call[2], indirect: call[1] === "%", args, scalarRet: /\bcall (i\d+|float|double|void) [@%]/.test(l) });
           if (call[1] === "@" && fns.has(call[2])) {
             f.callees.add(call[2]);

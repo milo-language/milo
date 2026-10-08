@@ -421,6 +421,8 @@ Parsed by every command that takes a source file. Each acts on the ones that app
 | `--contract-checks` | Assert requires/ensures/invariant at any -O (default: only --debug). |
 | `--no-contract-checks` | Drop those asserts at any -O (e.g. fast -O0 builds). |
 | `--strip-panic-locations` | Blank source paths out of runtime panic messages (-g still embeds them). |
+| `--noalias` | Emit LLVM noalias on &mut parameters where no alias is reachable (the default). |
+| `--no-noalias` | Omit LLVM noalias on &mut parameters (on by default; for ruling it out of a miscompile). |
 | `--hot` | Build a hot-reload host: -O0, patchable functions, writes \<out\>.hot.json. |
 | `--fast` | Quick edit-loop build: -O0, wrapping (~2x faster compile). |
 | `--cgus=<n>` | Codegen units compiled in parallel (default: auto, 1 for --release/-g). |
