@@ -55,16 +55,22 @@ test("no allocas outside any function's entry block", () => {
   const offenders: string[] = [];
   let currentFn = "";
   let pastEntryBlock = false;
+  let sawBody = false;
   for (const line of ir.split("\n")) {
     const def = line.match(/^define .*@(\S+)\(/);
-    if (def) { currentFn = def[1]; pastEntryBlock = false; continue; }
+    if (def) { currentFn = def[1]; pastEntryBlock = false; sawBody = false; continue; }
     if (line === "}") { currentFn = ""; continue; }
     if (!currentFn) continue;
-    // block labels are column-0 lines ending in ':'; the first one is the entry
+    // block labels are column-0 lines ending in ':'. A label is the entry block only when
+    // nothing precedes it in the body, whatever its name (user fns use entry.bb, emitted
+    // helpers like @milo.fmt.u64 use entry); a body that starts unlabelled has an implicit
+    // entry, so its first label already starts a second block.
     if (line.length > 0 && line[0] !== " " && line.endsWith(":")) {
-      if (line !== "entry.bb:") pastEntryBlock = true;
+      if (sawBody) pastEntryBlock = true;
+      sawBody = true;
       continue;
     }
+    if (line.trim().length > 0) sawBody = true;
     if (pastEntryBlock && /^ {2}%\S+ = alloca /.test(line)) {
       offenders.push(`${currentFn}: ${line.trim()}`);
     }
