@@ -416,7 +416,7 @@ export class Parser {
       }
       this.expect(TokenKind.Gt);
     }
-    let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: this.span(tok) };
     // i32(0..50000) — range constraint on integer types (must be on same line to avoid ambiguity)
     if (this.at(TokenKind.LParen) && !typeArgs && this.peek().line === tok.line) {
       const isIntType = /^[iu]\d+$|^int$|^byte$/.test(tok.value);
@@ -438,7 +438,7 @@ export class Parser {
     }
     // T? desugars to Option<T>
     if (this.match(TokenKind.Question)) {
-      result = { name: "Option", typeArgs: [result], isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+      result = { name: "Option", typeArgs: [result], isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: result.span };
     }
     return result;
   }
@@ -811,14 +811,17 @@ export class Parser {
 
   private parseImplDecl(isUnsafe = false): ImplDecl {
     const tok = this.expect(TokenKind.Impl);
-    const firstName = this.expect(TokenKind.Ident).value;
+    const firstTok = this.expect(TokenKind.Ident);
+    const firstName = firstTok.value;
     let traitName: string | null = null;
     let typeName: string;
+    let typeTok = firstTok;
     const leadingTypeParams = this.parseTypeParams();
     let typeParams = leadingTypeParams;
     if (this.match(TokenKind.For)) {
       traitName = firstName;
-      typeName = this.expect(TokenKind.Ident).value;
+      typeTok = this.expect(TokenKind.Ident);
+      typeName = typeTok.value;
       const targetTypeParams = this.parseTypeParams();
       if (targetTypeParams.length > 0) typeParams = targetTypeParams;
     } else {
@@ -846,7 +849,7 @@ export class Parser {
       methods.push(m);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "ImplDecl", traitName, typeName, typeParams, methods, isUnsafe, span: this.span(tok) };
+    return { kind: "ImplDecl", traitName, typeName, typeParams, methods, isUnsafe, span: this.span(tok), typeSpan: this.span(typeTok) };
   }
 
   // ── Statements ──

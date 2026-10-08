@@ -1,0 +1,79 @@
+// @expect: 3
+// @expect: crate
+// @expect: 24
+// @expect: 2.5
+// @expect: 8
+// @expect: 8
+// @expect: 42
+// Every kind of name a type position may hold that is NOT an unknown type: generic
+// parameters (fn, struct, enum, impl, method, impl-for target, alias), aliases, imported names,
+// and names declared after their first use. None may be reported as unknown.
+from "./lib/typeNames" import { Crate, Shape, crateOf, tagOf }
+
+fn wrapOne<T>(x: T): Vec<T> {
+    var v: Vec<T> = Vec.new()
+    v.push(x)
+    return v
+}
+
+// Used before it is declared.
+fn area(r: Rect): i64 { return r.w * r.h }
+
+struct Rect { w: i64, h: i64 }
+
+struct Pair<A, B> { a: A, b: B }
+
+enum Either<L, R> { Left(L), Right(R) }
+
+impl Pair<A, B> {
+    fn sizeB(self: &Self): i64 { return sizeOf<B>() as i64 }
+    fn mapA<C>(self: Self, f: (A) => C): C { return f(self.a) }
+}
+
+trait Width {
+    fn width(self: &Self, extra: i64): i64
+}
+
+impl Width for Rect {
+    fn width(self: &Self, extra: i64): i64 { return self.w + extra }
+}
+
+impl Width for Vec<T> {
+    fn width(self: &Self, extra: i64): i64 { return self.len + extra }
+}
+
+type Transform<T> = (T) => T
+type Grid = Vec<Vec<Cell>>
+type Cell = i64
+
+fn applyTwice<T>(f: Transform<T>, x: T): T {
+    let y: T = f(x)
+    return f(y)
+}
+
+fn byteSize<T>(): i64 { return sizeOf<T>() as i64 }
+
+pub fn main(): void {
+    let v: Vec<i64> = wrapOne(3)
+    print(v[0])
+    let c: Crate<i64> = crateOf(5)
+    print(tagOf(c))
+    let pr = Pair { a: 0, b: "zz" }
+    print(pr.sizeB())
+    let m: f64 = 2.5
+    let s = Shape.Circle(m)
+    match s {
+        Shape.Circle(r) => print(r),
+        Shape.Square(r) => print(r),
+    }
+    print(byteSize<i64>())
+    let n = Pair { a: 1, b: "xy" }.mapA((t: i64): i64 => t + 1)
+    let e: Either<i64, string> = Either.Left(n + area(Rect { w: 2, h: 3 }))
+    match e {
+        Either.Left(k) => print(k),
+        Either.Right(_) => print(0),
+    }
+    let grid: Grid = [[1]]
+    let r = Rect { w: 40, h: 1 }
+    print(applyTwice((x: i64): i64 => x + 1, r.width(grid[0][0] - 1)) - grid[0][0] + 1)
+}

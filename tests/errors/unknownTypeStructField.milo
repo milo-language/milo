@@ -1,0 +1,9 @@
+// @error: unknown type 'Foo'
+// @error-at: 5:15
+// A field of an undeclared type is reported once, at the type; the construction
+// and the read below add no 'expected Foo, got i64' behind it.
+struct S { a: Foo }
+pub fn main(): void {
+    let s = S { a: 1 }
+    print(s.a)
+}

@@ -1,0 +1,5 @@
+// @error: unknown type 'Widget'
+// @error-at: 4:18
+pub fn main(): void {
+    print(sizeOf<Widget>())
+}

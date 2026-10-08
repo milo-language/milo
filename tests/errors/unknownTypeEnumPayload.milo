@@ -1,0 +1,10 @@
+// @error: unknown type 'Payload'
+// @error-at: 3:12
+enum E { A(Payload), B }
+pub fn main(): void {
+    let e = E.A(1)
+    match e {
+        E.A(_) => print(1),
+        E.B => print(2),
+    }
+}

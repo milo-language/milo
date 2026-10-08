@@ -1,0 +1,8 @@
+// @error: unknown type 'Widget'
+// @error-at: 3:6
+impl Widget {
+    fn get(self: &Self): i64 { return 1 }
+}
+pub fn main(): void {
+    print(1)
+}

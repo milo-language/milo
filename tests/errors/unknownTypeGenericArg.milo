@@ -1,0 +1,6 @@
+// @error: unknown type 'Widget'
+// @error-at: 4:16
+pub fn main(): void {
+    let v: Vec<Widget> = [1, 2]
+    print(v.len)
+}

@@ -280,6 +280,7 @@ export interface ImplDecl {
   methods: Function[];
   isUnsafe?: boolean;
   span?: Span;
+  typeSpan?: Span; // where `typeName` was written
 }
 
 // A user-defined `@derive(Name)`. The body is captured as a raw TOKEN slice rather than

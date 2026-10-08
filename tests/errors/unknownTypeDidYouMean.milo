@@ -1,0 +1,7 @@
+// @error: did you mean 'Point'?
+// @error-at: 4:9
+struct Point { x: i64 }
+fn f(p: Piont): i64 { return p.x }
+pub fn main(): void {
+    print(f(Point { x: 1 }))
+}

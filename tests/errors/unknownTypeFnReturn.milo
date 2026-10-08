@@ -1,0 +1,6 @@
+// @error: unknown type 'Widget'
+// @error-at: 3:9
+fn f(): Widget { return 1 }
+pub fn main(): void {
+    let _ = f()
+}

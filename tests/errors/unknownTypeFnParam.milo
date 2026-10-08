@@ -1,0 +1,6 @@
+// @error: unknown type 'Widget'
+// @error-at: 3:9
+fn f(w: Widget): i64 { return 0 }
+pub fn main(): void {
+    print(f(1))
+}

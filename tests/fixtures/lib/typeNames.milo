@@ -1,0 +1,20 @@
+// Types for tests/fixtures/typeNamesResolve.milo: exported across a module boundary,
+// and a private one referenced before its declaration.
+pub struct Crate<T> {
+    item: T,
+    tag: Label,
+}
+
+struct Label { text: string }
+
+pub type Meters = f64
+
+pub enum Shape { Circle(Meters), Square(Meters) }
+
+pub fn crateOf<T>(item: T): Crate<T> {
+    return Crate { item: item, tag: Label { text: "crate" } }
+}
+
+pub fn tagOf<T>(c: &Crate<T>): string {
+    return c.tag.text.clone()
+}

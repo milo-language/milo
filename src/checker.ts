@@ -9,7 +9,9 @@ import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
-import { typeFromAst, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+// Type names the checker builds in rather than reading from a declaration.
+const BUILTIN_GENERIC_TYPE_NAMES = ["Vec", "HashMap", "Heap", "Option", "Result"] as const;
 import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
@@ -639,6 +641,8 @@ export class TypeChecker {
   // stack trace instead of a diagnostic. It exits 1 either way, so this is a message fix
   // rather than a silent-success one.
   private expandingAliases = new Set<string>();
+  // Type names reported undeclared by reportUnknownTypeNames; `resolve` maps them to `unknown`.
+  private unknownTypeNames = new Set<string>();
   // Parameters of a GENERIC alias, by alias name. An alias is a template expanded at the
   // use site rather than a type of its own, so this is the arity to check the use against
   // and the names to substitute — there is no instantiation to record anywhere.
@@ -1108,15 +1112,99 @@ export class TypeChecker {
       this.error(`type '${typeName_}' has no static method '${member}'`, sp, hint);
       return;
     }
-    const fromStd = importHint(typeName_);
-    if (fromStd) { this.error(`unknown type '${typeName_}'`, sp, fromStd); return; }
-    const names = new Set<string>([
+    this.error(`unknown type '${typeName_}'`, sp, this.unknownTypeHint(typeName_));
+  }
+
+  // A missing std import gets the import line; otherwise the nearest declared type,
+  // then the nearest std export.
+  private unknownTypeHint(name: string, extra: Iterable<string> = []): string {
+    const fromStd = importHint(name);
+    if (fromStd) return fromStd;
+    const declared = new Set<string>([
       ...this.structs.keys(), ...this.enums.keys(),
       ...this.genericStructs.keys(), ...this.genericEnums.keys(),
-      ...stdExportNames(),
+      ...this.typeAliases.keys(), ...this.interfaces.keys(),
+      ...PRIMITIVE_TYPE_NAMES, ...BUILTIN_GENERIC_TYPE_NAMES, ...extra,
+    ].filter(n => !n.includes("$")));
+    return didYouMean(suggestions(name, declared))
+      ?? didYouMean(suggestions(name, stdExportNames()))
+      ?? `no type named '${name}' is declared or imported here`;
+  }
+
+  // Every type written in the program, checked against the declared names before any
+  // of them is resolved. `resolve` cannot do this itself: it runs before every decl is
+  // registered (forward references) and inside generic templates whose parameters are
+  // plain names, so an unknown name there looks exactly like a struct not yet seen.
+  // Undeclared names are recorded in `unknownTypeNames`, which `resolve` maps to
+  // `unknown` so the one mistake does not come back as a mismatch at every use.
+  private reportUnknownTypeNames(program: Program): void {
+    const known = new Set<string>([
+      ...PRIMITIVE_TYPE_NAMES, ...BUILTIN_GENERIC_TYPE_NAMES, "Self",
+      ...program.structs.map(s => s.name), ...program.enums.map(e => e.name),
+      ...program.typeAliases.map(a => a.name), ...program.interfaces.map(i => i.name),
+      ...program.traits.map(t => t.name),
+      ...this.structs.keys(), ...this.enums.keys(), ...this.interfaces.keys(),
     ]);
-    this.error(`unknown type '${typeName_}'`, sp,
-      didYouMean(suggestions(typeName_, names)) ?? `no type named '${typeName_}' is declared or imported here`);
+    const reported = new Set<string>();
+    const typeParamNames = new Set<string>();
+    const unknown = new Map<string, Span | undefined>();
+    const isMiloType = (v: any): v is MiloType =>
+      typeof v.name === "string" && typeof v.isPtr === "boolean" && typeof v.isArray === "boolean" && !("kind" in v);
+    const checkType = (ty: MiloType, scope: ReadonlySet<string>, fallback: Span | undefined) => {
+      if (ty.isFn) {
+        for (const p of ty.fnParams ?? []) checkType(p, scope, fallback);
+        if (ty.fnRet) checkType(ty.fnRet, scope, fallback);
+        return;
+      }
+      for (const a of ty.typeArgs ?? []) checkType(a, scope, ty.span ?? fallback);
+      if (known.has(ty.name) || scope.has(ty.name)) return;
+      const sp = ty.span ?? fallback;
+      const key = `${sp?.file}:${sp?.line}:${sp?.col}:${ty.name}`;
+      if (reported.has(key)) return;
+      reported.add(key);
+      if (!unknown.has(ty.name)) unknown.set(ty.name, sp);
+      this.error(`unknown type '${ty.name}'`, sp, this.unknownTypeHint(ty.name, known));
+    };
+    // Statements and expressions hold types in many node kinds (let annotations, casts,
+    // turbofish args, closure params); a structural walk finds all of them without a
+    // case per node that a new node kind would silently miss.
+    const walk = (node: any, scope: ReadonlySet<string>, fallback: Span | undefined): void => {
+      if (node === null || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const n of node) walk(n, scope, fallback); return; }
+      if (isMiloType(node)) { checkType(node, scope, fallback); return; }
+      const here: Span | undefined = node.span && typeof node.span.line === "number" ? node.span : fallback;
+      for (const k in node) if (k !== "span") walk(node[k], scope, here);
+    };
+    const withParams = (outer: ReadonlySet<string>, tps: readonly { name: string }[] | undefined): ReadonlySet<string> => {
+      if (!tps?.length) return outer;
+      for (const tp of tps) typeParamNames.add(tp.name);
+      return new Set([...outer, ...tps.map(tp => tp.name)]);
+    };
+    const none = new Set<string>();
+    const checkFn = (fn: { typeParams?: { name: string }[]; params: unknown; retType: unknown; body: unknown; contracts?: unknown; span?: Span }, outer: ReadonlySet<string>) => {
+      const scope = withParams(outer, fn.typeParams);
+      walk([fn.params, fn.retType, fn.contracts ?? [], fn.body ?? []], scope, fn.span);
+    };
+    for (const s of program.structs) walk(s.fields, withParams(none, s.typeParams), s.span);
+    for (const e of program.enums) walk(e.variants, withParams(none, e.typeParams), e.span);
+    for (const a of program.typeAliases) walk(a.type, withParams(none, a.typeParams), a.span);
+    for (const g of program.globals) walk([g.type, g.value], none, g.span);
+    for (const fn of program.functions) checkFn(fn, none);
+    for (const t of program.traits) {
+      const scope = withParams(none, t.typeParams);
+      for (const m of t.methods) checkFn({ ...m, contracts: [] }, scope);
+    }
+    for (const i of program.interfaces) for (const m of i.methods) checkFn({ ...m, contracts: [] }, none);
+    for (const impl of program.impls) {
+      const scope = withParams(none, impl.typeParams);
+      if (!known.has(impl.typeName) && !scope.has(impl.typeName)) {
+        checkType({ name: impl.typeName, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }, scope, impl.typeSpan ?? impl.span);
+      }
+      for (const m of impl.methods) checkFn(m, scope);
+    }
+    // A name some declaration also uses as a type parameter must still resolve to that
+    // parameter there, so only names that are never one are poisoned.
+    for (const name of unknown.keys()) if (!typeParamNames.has(name)) this.unknownTypeNames.add(name);
   }
 
   // Nearest in-scope binding or function to a name that didn't resolve. Scopes are
@@ -1843,6 +1931,7 @@ export class TypeChecker {
       // at the call site but the callee never dropped it, so every capture leaked anyway.
       return (ty as { isMoveFn?: boolean }).isMoveFn ? { ...fnTy, owning: true } : fnTy;
     }
+    if (this.unknownTypeNames.has(ty.name)) return { tag: "unknown" };
     // type alias resolution
     const alias = this.typeAliases.get(ty.name);
     const aliasParams = this.aliasTypeParams.get(ty.name);
@@ -3440,6 +3529,8 @@ export class TypeChecker {
         this.interfaces.set(iface.name, { name: iface.name, methods: new Map() });
       }
     }
+
+    this.reportUnknownTypeNames(program);
 
     // register structs — two passes so generic structs are available when resolving fields
     for (const s of program.structs) {
