@@ -1136,13 +1136,14 @@ export class Codegen {
   // Address of field `k` of `variant`'s payload in the enum at `addr`. Every variant has its
   // own offsets, so a payload address is only meaningful for the variant it was computed
   // for; the caller must already know (or have branched on) the tag. A niche enum's single
-  // payload is the enum itself. The temp is named `%vp.<n>.<tag>.<k>.<enum>` so
-  // assertEnumPayloadPacked can check every use against that variant's field type.
+  // payload is the enum itself. The temp is named `%enum.vp.<n>.<tag>.<k>.<enum>` (`enum`
+  // is a keyword, so no local's `%name.addr` can collide) so assertEnumPayloadPacked can
+  // check every use against that variant's field type.
   private enumFieldPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number, k: number): string {
     const v = this.enumVariantOf(enumTy, variant);
     if (k >= v.fieldTypes.length) throw new Error(`internal: ${enumTy} variant ${v.tag} has no field ${k}`);
     if (this.nicheOfEnumTy(enumTy)) return addr;
-    const p = `%vp.${this.tempCounter++}.${v.tag}.${k}.${enumTy.slice(1)}`;
+    const p = `%enum.vp.${this.tempCounter++}.${v.tag}.${k}.${enumTy.slice(1)}`;
     lines.push(`  ${p} = getelementptr inbounds i8, ptr ${addr}, i64 ${this.variantFieldOffsets(v.fieldTypes)[k]}`);
     return p;
   }
@@ -1196,7 +1197,7 @@ export class Codegen {
     const fieldTy = (name: string, line: string): string => {
       const hit = fieldTyOf.get(name);
       if (hit !== undefined) return hit;
-      const pm = name.match(/^%vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
+      const pm = name.match(/^%enum\.vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
       const layout = pm ? this.enumLayouts.get(pm[3]) : undefined;
       const v = layout && [...layout.variants.values()].find(x => x.tag === Number(pm![1]));
       if (!pm || !v || Number(pm[2]) >= v.fieldTypes.length) return fail(line, `unknown payload pointer ${name}`);
@@ -1211,7 +1212,7 @@ export class Codegen {
       if (want.startsWith("%") && this.nicheOfEnumTy(want)?.intTy === ty) return;
       fail(line, `${name} is a ${want} field, used as ${ty}`);
     };
-    const vp = "(%vp\\.[\\w.$-]+)";
+    const vp = "(%enum\\.vp\\.[\\w.$-]+)";
     const def = new RegExp(`^\\s*${vp} = getelementptr inbounds i8, ptr [^,]+, i64 (\\d+)`);
     const load = new RegExp(`= load (.+), ptr ${vp}(?:,|$)`);
     const store = new RegExp(`^\\s*store (.+) [^ ]+, ptr ${vp}(?:,|$)`);
@@ -1219,16 +1220,16 @@ export class Codegen {
     // An untyped use (a call argument, a stored pointer) cannot be type-checked, so it
     // must sit in the block that computed the pointer: that block already knows the
     // variant, and a pointer carried across a branch on the tag is the reuse this is for.
-    const vpAll = /%vp\.[\w.$-]+/g;
+    const vpAll = /%enum\.vp\.[\w.$-]+/g;
     let block = "";
     let defBlock = new Map<string, string>();
     for (const line of ir.split("\n")) {
       if (line.startsWith("define ")) { block = "entry"; defBlock = new Map(); continue; }
       if (line.length > 0 && line[0] !== " " && line.endsWith(":")) { block = line; continue; }
-      if (!line.includes("%vp.")) continue;
+      if (!line.includes("%enum.vp.")) continue;
       const d = line.match(def);
       if (d) {
-        const pm = d[1].match(/^%vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
+        const pm = d[1].match(/^%enum\.vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
         const v = pm && [...(this.enumLayouts.get(pm[3])?.variants.values() ?? [])].find(x => x.tag === Number(pm[1]));
         if (!pm || !v || this.variantFieldOffsets(v.fieldTypes)[Number(pm[2])] !== Number(d[2])) fail(line, "wrong offset");
         defBlock.set(d[1], block);
@@ -7596,11 +7597,11 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
     if (resultTy === "void") return [lines, "", "void"];
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
     if (this.needsDropCg(expr.type) && expr.operand.kind === "Ident") {
@@ -7725,11 +7726,11 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
     if (resultTy === "void") return [lines, "", "void"];
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
     if (this.needsDropCg(expr.type) && expr.operand.kind === "Ident") {
