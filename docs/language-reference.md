@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-06 (non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-08 (integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -326,6 +326,40 @@ type MediumInt = i32(0..200)
 let a: SmallInt = 50
 let b: SmallInt = 100
 let sum: MediumInt = a + b   // no runtime check — compiler proves (0..100)+(0..100) ⊆ (0..200)
+```
+
+A range is an invariant, not a hint: every safe way a value enters a ranged type is checked
+(a literal at compile time, anything else at run time). That covers bindings, assignment and
+compound assignment, call and method arguments, returns, struct-literal fields, enum and
+`Option` payloads (including the auto-wrap `let o: Option<R> = x`), `Vec`/`HashMap` stores,
+`??` defaults, `x as R` (a checked conversion), and a `@derive(Json)` decode (an out-of-range
+number is a decode error). An operator's result has the operands' width but no range unless
+range propagation proves one, so `r + 1`, `-r` or `r | k` is checked when it flows back into
+`R`. A borrow is not a flow, so `&R` / `&mut R` parameters take only an argument whose range
+fits (`&R`) or matches (`&mut R`), and `Vec<i32>` / `Option<i32>` are different types from
+`Vec<R>` / `Option<R>`. What stays the caller's responsibility: values written through raw
+pointers in `unsafe`, and integers that arrive from C (an `extern fn` returning `R`, or an
+`extern struct` field of type `R`).
+
+**Enum layout and `sizeOf`.** An enum is `{ i32 tag, payload }`, with the payload padded to
+8 bytes: `sizeOf<Option<i32>>()` is 16. An enum shaped like `Option` (two variants, one
+fieldless, the other with one field) whose payload has a value safe code cannot produce is
+laid out as the payload alone, with that value meaning the fieldless variant (Rust's *niche*).
+The niche sources are a ranged int (the first value past the declared range that the width
+can hold: `i32(0..2147483646)` uses `2147483647`) and a struct with exactly one field that has
+one (and no `Drop` impl). An enum never crosses the C ABI by value, so the layout is not
+visible to C.
+
+```milo
+type Idx = i32(0..2147483646)
+struct NodeId { at: Idx }
+struct Node { key: i32, left: Option<NodeId>, right: Option<NodeId> }
+
+fn main() {
+    print(sizeOf<Option<NodeId>>())   // 4: None is at == 2147483647
+    print(sizeOf<Node>())             // 12, where an `at: i32` NodeId makes it 40
+    print(sizeOf<Option<i32>>())      // 16: every i32 is a valid payload, so it keeps a tag
+}
 ```
 
 ### Bitwise Operators

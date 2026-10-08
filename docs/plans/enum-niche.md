@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: enum-niche-plan
 purpose: implementation plan for null-pointer niche optimization of eligible enums
-key-files: src/codegen.ts, src/types.ts, src/hir.ts, tests/
+key-files: src/codegen.ts, src/checker.ts, src/types.ts, tests/rangedSoundness.test.ts, tests/fixtures/enumNicheInt*.milo
 update-when: enum layout, niche eligibility, or the implementation sequence changes
-last-verified: 2026-07-30
+last-verified: 2026-10-08 (integer niche shipped; null-pointer niche still planned)
 -->
 
 # Enum niche optimization (null-pointer niche) — implementation plan
@@ -53,3 +53,80 @@ A wrong encoding = silent corruption (a null read as a live pointer, or a tag mi
 3. Tag read + match + payload extract.
 4. Drop glue.
 5. Benchmark + widen eligibility (&T, ptr) once Heap<T> is proven.
+
+## Integer niche (shipped 2026-10-08)
+
+**Status.** Done for ranged-int payloads. The null-pointer niche above is still planned.
+
+**Why first.** A BST whose links are `Option<NodeId>` with `struct NodeId { at: i32 }` has
+40-byte nodes (each link is a 16-byte tagged Option). Hand-packing the links as `i32` with a
+`-1` sentinel was 2x faster and 4x smaller. With `at: i32(0..2147483646)` the idiomatic
+Option version gets the packed layout automatically: `Option<NodeId>` is 4 bytes, the node 16.
+Measured on `bst_big` (500k inserts, macOS arm64, `--release`, best of 3): 0.60 s / 73 MB
+before, 0.32 s / 29.5 MB after, same checksum.
+
+**Eligibility** (`Codegen.enumNiche` / `nicheOf`). Two variants, one fieldless, the other with
+exactly one field whose type has a niche:
+- a ranged int `iN(lo..hi)`: the niche is `hi + 1` if the width holds it, else `lo - 1`; none
+  when the range covers the width, or a bound is not a safe JS integer (the range itself is
+  stored as a JS number);
+- a struct with exactly one field that has a niche, and no `Drop` impl (recursive; the field
+  is at offset 0).
+Plain `i32`, 3+ variants, multi-field payloads and `Option<Option<R>>` (the inner Option's
+niche is used) stay tag-encoded.
+
+**Encoding.** `%Option_X = type { P }` (the payload's own LLVM type, wrapped so the name and
+`sizeOf` path are unchanged); size and alignment are P's. None = the niche value stored in the
+leading integer; Some(x) = x. All tag and payload access goes through three helpers,
+`loadEnumTag` (load, compare with the niche, select the tag), `storeEnumTag` (None writes the
+niche, Some writes nothing because its payload store is the whole value) and `enumPayloadPtr`
+(the enum's own address). Every former `getelementptr %Enum, ..., i32 0, i32 {0,1}` site in
+codegen was routed through them: construction (EnumLit, auto-wrap), match / if let /
+while let / let-else (one switch on the loaded tag), `?`, `!`, `??`, isSome/isNone, map,
+andThen, orElse, unwrapOr(Else), for-in over `next()`, Vec pop/get/first/last/min/max/find/
+indexOf/position, HashMap get, `tryFrom`, the clone and drop glue, and the `?`
+conversion paths. `assertNicheAccessRouted` scans the finished module and throws if any
+niche enum is still indexed as `{ i32, payload }` (or used with extract/insertvalue), so a
+missed site is a compile-time error, not a miscompile. Zero bytes are `Some(0)` in both
+encodings, so code that zeroes a moved-from enum is unaffected.
+
+Other touch points: `typeSize`/`typeAlign` (so struct fields, Vec elements, HashMap values and
+`sizeOf` all agree), the `%T = type` emission, and DWARF (a struct with one member named like
+`Some (None = 2147483647)`, since a debugger has no other way to learn the encoding). `==` on a
+payload-bearing enum is rejected by the checker, so there is no enum-equality path to change.
+Printing and `@derive(Json)` are Milo-level code over `match`, so they follow automatically.
+Enums cannot cross the C ABI by value (`externSigError`, `isValidExternStructField`), so the
+layout never reaches C; `tests/errors/nicheOptionExtern.milo` pins it.
+
+**Soundness.** The niche value must be unreachable from safe code, or a `Some` reads back as
+`None`. That turned out to need real checker work, because a range was enforced at `let`,
+assignment, call arguments and `return` only. Closed (each with a case in
+`tests/rangedSoundness.test.ts`):
+- flows that were unchecked: struct-literal fields, enum and Option payloads, the
+  `T -> Option<T>` auto-wrap, Vec push/insert/literal/filled, HashMap insert/getOrDefault,
+  method and static-call arguments, `??` defaults;
+- `x as R` is now a checked conversion;
+- a generic instance keeps the range in its name (`Option_i32r0_2147483646`), so `Option<R>`
+  and `Option<i32>` are different types; under a container, pointer, borrow or fn type the
+  range must match exactly (`typeEq` is range-strict when nested), so `Vec<i32>` cannot be
+  passed off as `Vec<R>`; a `&R` / `&mut R` parameter takes only an argument whose range fits /
+  matches;
+- operator results carry the width only (`r | 1`, `-r`, `~r`, `r + x`), unless range
+  propagation proves a range, and propagation now gives up (no range) where the op could
+  overflow instead of clamping, because a `@wrapping` fn or `--no-overflow-checks` wraps;
+- if/match results join their branch ranges; a constant operand or branch gets the width, not
+  the other side's range; a constant expression is folded before the range check, and one
+  that cannot be folded is checked at run time;
+- `wrapping*`/`saturating*`/`checked*` methods return the width (`r.checkedAdd(1)` is an
+  `Option<i32>`, whose Some may hold the niche value);
+- `@derive(Json)` decode reports an out-of-range number as a decode error.
+Left to the user: raw-pointer writes in `unsafe`, and integers that come from C (an
+`extern fn` returning `R`, an `extern struct` field of type `R`).
+
+**Gates.** `tests/fixtures/enumNicheInt.milo` and `enumNicheIntOps.milo` (sizes, then every
+operation above; the non-size output equals the same program with the ranges removed, run on
+the tag-encoded compiler), `tests/rangedSoundness.test.ts`, the debugInfo niche case.
+
+**Left out of this slice.** Niches in multi-field structs (a field other than the first),
+payloads with a `Drop` impl, the null-pointer niche, bool/char niches, and using several
+excluded values for enums with more than one fieldless variant.

@@ -154,6 +154,38 @@ test("enums emit an enumerated tag and a per-variant payload union", () => {
   }
 });
 
+const NICHE_SRC = `type R = i32(0..2147483646)
+struct NodeId { at: R }
+fn main() {
+    let a: Option<NodeId> = Some(NodeId { at: 3 })
+    let b: Option<R> = None
+    match a { Some(n) => print(n.at), None => print(0) }
+    print(b ?? 1)
+}
+`;
+
+// A niche Option has no tag word, so its DWARF is the payload alone, with the member
+// name carrying which value is None (a debugger cannot learn the encoding otherwise).
+test("niche Options describe the payload-only layout", () => {
+  const f = join(tmpdir(), "milo_dbg_niche_ir.milo");
+  writeFileSync(f, NICHE_SRC);
+  try {
+    const ir = emitIr(f, true);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "Option_NodeId", size: 32,/);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "Option_i32r0_2147483646", size: 32,/);
+    expect(ir).toContain(`DW_TAG_member, name: "Some (None = 2147483647)"`);
+    expect(ir).not.toContain(`"Option_NodeId$payload"`);
+    if (have("llvm-as")) {
+      const ll = join(tmpdir(), "milo_dbg_niche_ir.ll");
+      writeFileSync(ll, ir);
+      execSync(`llvm-as ${ll} -o /dev/null`, { stdio: ["pipe", "pipe", "pipe"] });
+      unlinkSync(ll);
+    }
+  } finally {
+    unlinkSync(f);
+  }
+});
+
 test("frame variable renders enum variants by name with typed payloads", () => {
   if (!have("lldb")) return; // toolchain-gated
   const f = join(tmpdir(), "milo_dbg_enum.milo");

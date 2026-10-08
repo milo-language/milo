@@ -714,7 +714,8 @@ export class Codegen {
     this.diTypes.set(key, id); // reserve before recursing into payloads (Heap<Self> variants)
 
     // A niche enum has no tag word: it is the payload, and the fieldless variant is the
-    // niche value. Shown as a struct with one member named for the payload variant.
+    // niche value. Shown as a struct with one member whose name says which value is None,
+    // since a debugger has no other way to learn the encoding.
     if (layout.niche) {
       const niche = layout.niche;
       const some = [...layout.variants].find(([, v]) => v.tag === niche.someTag);
@@ -723,7 +724,7 @@ export class Codegen {
       const members: number[] = [];
       if (some && baseId !== null) {
         const mid = this.metaCounter++;
-        this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(some[0])}", baseType: !${baseId}, size: ${bits}, offset: 0)`);
+        this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(`${some[0]} (${[...layout.variants].find(([, v]) => v.tag === niche.noneTag)?.[0] ?? "None"} = ${niche.value})`)}", baseType: !${baseId}, size: ${bits}, offset: 0)`);
         members.push(mid);
       }
       const tuple = this.metaCounter++;
