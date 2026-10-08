@@ -150,7 +150,7 @@ export class Codegen {
   private tempCounter = 0;
   private labelCounter = 0;
   private locals = new Map<string, LocalInfo>();
-  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[] }>();
+  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[]; refAttrs?: string[] }>();
   // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
   // first param (see genStoreInto). Excludes main and exported fns (C ABI).
   private sretFns = new Set<string>();
@@ -1335,6 +1335,40 @@ export class Codegen {
     return result;
   }
 
+  // True when typeSize/typeAlign compute `ty` exactly rather than falling through to their
+  // 8-byte default. dereferenceable/align are promises LLVM speculates loads on, so an
+  // unknown leaf (i128, an opaque foreign type) must drop the attribute, not guess.
+  private layoutExact(ty: string, depth = 0): boolean {
+    if (depth > 32) return false;
+    if (/^(i1|i8|i16|i32|i64|float|double|ptr|\{ ptr, ptr \}|%String|%Vec|%HashMap)$/.test(ty)) return true;
+    const arr = ty.match(/^\[(\d+) x (.+)\]$/);
+    if (arr) return this.layoutExact(arr[2], depth + 1);
+    const structName = this.getStructName(ty);
+    if (structName) return must(this.structLayouts, structName, "struct layouts").fields.every(f => this.layoutExact(f.type, depth + 1));
+    const enumMatch = ty.match(/^%(.+)$/);
+    const layout = enumMatch && this.enumLayouts.get(enumMatch[1]);
+    if (layout) {
+      if (layout.niche) return this.layoutExact(layout.niche.payloadTy, depth + 1);
+      return [...layout.variants.values()].every(v => v.fieldTypes.every(f => this.layoutExact(f, depth + 1)));
+    }
+    return false;
+  }
+
+  // Facts every by-ref argument satisfies: the caller passes the address of a live place of
+  // the pointee type (refs are second-class, so none is ever null, stored or dangling across
+  // the call). A zero-sized pointee gets nothing: its "place" may be a null or dangling
+  // address (an element of a Vec of ZSTs), and dereferenceable(0) says nothing anyway.
+  // Callers that are not Milo get nothing either: extern decls and exported symbols keep the
+  // plain C ABI, since a C caller makes none of these promises.
+  private refParamAttrs(fn: HIRFunction, p: HIRFunction["params"][number]): string {
+    if (!(p.isRef || p.isRefMut) || fn.isExtern || fn.name === "main" || this.exportedFnNames.has(fn.name)) return "";
+    const ty = this.llvmType(p.type);
+    if (!this.layoutExact(ty)) return "";
+    const size = this.typeSize(ty);
+    if (size === 0) return "";
+    return ` nonnull dereferenceable(${size}) align ${this.typeAlign(ty)}`;
+  }
+
   // Natural alignment of an LLVM type, mirroring typeSize's cases. `min(size,8)` is
   // WRONG for aggregates — a 12-byte nested struct or [3 x i32] aligns to 4, not 8 —
   // which corrupts sizeof/offsetof (and, later, ABI classification) for nested fields.
@@ -1899,6 +1933,9 @@ export class Codegen {
       }
     }
 
+    // Before the signatures: refParamAttrs reads it, and an exported fn's call sites must
+    // agree with its attribute-free definition.
+    this.exportedFnNames = module.exportedFnNames ?? module.userFnNames ?? new Set();
     // register function signatures
     for (const fn of module.functions) {
       this.hirFns.set(fn.name, fn);
@@ -1916,6 +1953,9 @@ export class Codegen {
         // address of the %String struct vs. the character buffer. The LLVM type can't
         // tell them apart, so record it here; see the String coercion in genCall.
         wantsStringAddr: fn.params.map(p => (p.isRef || p.isRefMut) && p.type.tag === "string"),
+        // Repeated on the call so the caller's optimizer sees them before the callee is
+        // inlined or analysed.
+        refAttrs: fn.params.map(p => this.refParamAttrs(fn, p)),
       });
       // classify by-value struct params/return for extern fns → native ABI lowering.
       // A `&Struct`/`*Struct` param crosses by reference (already "ptr"), so only bare
@@ -2422,7 +2462,7 @@ export class Codegen {
 
     const params = fn.params.map(p => {
       const lt = p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type);
-      return `${lt} %${p.name}`;
+      return `${lt}${this.refParamAttrs(fn, p)} %${p.name}`;
     }).join(", ");
     // main is the process entry point: the OS reads its return register as the exit code, so it
     // must always be i32 even when the Milo signature is void (`fn main()`). A `void @main` leaves
@@ -5921,7 +5961,7 @@ export class Codegen {
       this.flushArgTempDrops(r[0], tempMark);
       return r;
     }
-    const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+    const argsStr = argVals.map((a, i) => `${a.type}${a.type === "ptr" ? sig?.refAttrs?.[i] ?? "" : ""} ${a.val}`).join(", ");
     const retTy = sig?.retType ?? "i32";
     if (this.sretFns.has(expr.func)) {
       const dest = sretDest ?? this.nextTemp();
