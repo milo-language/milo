@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 399 distinct messages across 491 programs the compiler must reject.
+Every error message the test suite pins: 402 distinct messages across 498 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -48,6 +48,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'b' may reallocate here while 'p' still points into its buffer (from 'b.bytes.ptr()' on line 26)`](#b-may-reallocate-here-while-p-still-points-into-its-buffer-from-b-bytes-ptr-on-line-26)
 - [`'break' outside of loop`](#break-outside-of-loop)
 - [`'bump' in 'impl Counter for Tally' takes 'self: &Tally' by shared reference; the trait 'Counter' declares 'self: &mut Self'`](#bump-in-impl-counter-for-tally-takes-self-tally-by-shared-reference-the-trait-counter-declares-self-mut-self)
+- [`'bx' is moved and borrowed in the same call`](#bx-is-moved-and-borrowed-in-the-same-call)
 - [`'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)`](#cells-vec-i64-is-not-allowed-cells-is-copyonly-and-vec-i64-is-not-a-copy-type-it-owns-heap-memory)
 - [`'clone' would copy 'Res' out of the Vec: it carries Drop`](#clone-would-copy-res-out-of-the-vec-it-carries-drop)
 - [`'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))`](#context-error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self)
@@ -78,6 +79,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process)
 - [`'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
+- [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
+- [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
 - [`'saturatingSub' expects 1 argument`](#saturatingsub-expects-1-argument)
@@ -1047,6 +1050,29 @@ fn main(): i32 {
 
 <sub>[tests/errors/implReceiverModeMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/implReceiverModeMismatch.milo)</sub>
 
+## `'bx' is moved and borrowed in the same call` {#bx-is-moved-and-borrowed-in-the-same-call}
+
+Moving a value into a call while also borrowing into it: the callee owns `b`, may drop it (freeing the buffer `x` points into) and keep writing through `x`.
+
+```milo skip
+struct Box2 { v: Vec<i64> }
+
+fn takeAndPoke(x: &mut i64, b: Box2): i64 {
+    x = 5
+    return b.v[0]
+}
+
+fn main(): i32 {
+    var bx = Box2 { v: Vec.new() }
+    bx.v.push(1)
+    print(takeAndPoke(&mut bx.v[0], bx))
+    return 0
+}
+// @error: 'bx' is moved and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasMoveAndBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMoveAndBorrow.milo)</sub>
+
 ## `'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)` {#cells-vec-i64-is-not-allowed-cells-is-copyonly-and-vec-i64-is-not-a-copy-type-it-owns-heap-memory}
 
 The diagnostic names the type the user WROTE. Monomorphization calls this instance `Cells_Vec_i64`, and that spelling used to leak into messages (backlog Tier 1 #33); nobody typed it, so nobody should have to read it. A nested generic is rejected on the same rule: `Vec<i64>` owns heap memory, so it is not Copy. The struct's body is beside the point; the attribute is a promise about how T is handled, not a scan.
@@ -1764,6 +1790,133 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/heapPtrInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapPtrInterface.milo)</sub>
 
+## `'s' is borrowed mutably and shared in the same call` {#s-is-borrowed-mutably-and-shared-in-the-same-call}
+
+Calling a closure value with by-ref parameters is checked like a plain call.
+
+```milo skip
+struct S { a: i64, b: i64 }
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    let c = (x: &mut S, y: &S): i64 => {
+        x.a = 5
+        return y.a
+    }
+    print(c(&mut s, s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call
+```
+
+<sub>[tests/errors/aliasClosureCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasClosureCall.milo)</sub>
+
+Matching a `&mut` subject binds each payload as a `&mut` view into the subject under a new name. `both(&mut inner, s)` therefore passes two parameters over one place, which the root-name comparison missed because the roots are spelled `inner` and `s`.
+
+```milo skip
+struct Inner { v: i64 }
+enum Slot { Full(Inner), Empty }
+
+fn peek(s: &Slot): i64 {
+    match s {
+        Slot.Full(i) => { return i.v }
+        Slot.Empty => { return 0 }
+    }
+}
+
+fn both(x: &mut Inner, s: &Slot): i64 {
+    x.v = 10
+    return peek(s)
+}
+
+fn viaMatch(s: &mut Slot): i64 {
+    match s {
+        Slot.Full(inner) => { return both(&mut inner, s) }
+        Slot.Empty => { return 0 }
+    }
+}
+
+fn main(): i32 {
+    var s = Slot.Full(Inner { v: 1 })
+    print(viaMatch(&mut s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call
+```
+
+<sub>[tests/errors/aliasMatchBindingAndSubject.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMatchBindingAndSubject.milo)</sub>
+
+Two arguments of a method call, neither of them the receiver, may not alias either.
+
+```milo skip
+struct S { a: i64, b: i64 }
+struct T { n: i64 }
+
+impl T {
+    fn both(self: &Self, x: &mut S, y: &S): i64 {
+        x.a = 5
+        return y.a + self.n
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    let t = T { n: 0 }
+    print(t.both(&mut s, s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call
+```
+
+<sub>[tests/errors/aliasMethodArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMethodArgs.milo)</sub>
+
+A static method call (`S.copyInto(...)`) is a call like any other for exclusivity.
+
+```milo skip
+struct S { a: i64, b: i64 }
+
+impl S {
+    fn copyInto(x: &mut S, y: &S): i64 {
+        x.a = y.b
+        return x.a
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    print(S.copyInto(&mut s, s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call
+```
+
+<sub>[tests/errors/aliasStaticCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasStaticCall.milo)</sub>
+
+## `'s' is borrowed mutably twice in the same call` {#s-is-borrowed-mutably-twice-in-the-same-call}
+
+The receiver is a method's first argument: `s.setFrom(&mut s.b)` hands the callee `&mut s` and `&mut s.b`, two mutable references where one contains the other. Method calls skipped the exclusivity check entirely, and the runtime guard only compares equal addresses, which `&s` and `&s.b` are not.
+
+```milo skip
+struct S { a: i64, b: i64 }
+
+impl S {
+    fn setFrom(self: &mut Self, x: &mut i64): i64 {
+        self.b = 10
+        x = x + 1
+        return self.b
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    print(s.setFrom(&mut s.b))
+    return 0
+}
+// @error: 's' is borrowed mutably twice in the same call
+```
+
+<sub>[tests/errors/aliasMethodReceiverArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMethodReceiverArg.milo)</sub>
+
 ## `'S' is not imported` {#s-is-not-imported}
 
 Types too: a struct named in a signature or literal has to be in the list, even when a function that returns it is.
@@ -2229,6 +2382,25 @@ pub fn main(): i32 {
 <sub>[tests/errors/taskScopeBodyWritesBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBodyWritesBorrowed.milo)</sub>
 
 ## `'v' is borrowed mutably and shared in the same call` {#v-is-borrowed-mutably-and-shared-in-the-same-call}
+
+Call-site exclusivity ran only for plain calls, so a generic call passed `&mut v` and a borrow into `v` together: the callee's push freed what the shared argument points into, and two parameters naming one place is what `noalias` on `&mut` params must never see.
+
+```milo skip
+fn grow<T>(a: &mut Vec<T>, b: &T) {
+    a.push(b.clone())
+}
+
+fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("x")
+    grow(&mut v, v[0])
+    print(v.len())
+    return 0
+}
+// @error: 'v' is borrowed mutably and shared in the same call
+```
+
+<sub>[tests/errors/aliasGenericCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasGenericCall.milo)</sub>
 
 An inline `v.ptr()` argument is a shared borrow of `v` for the call, so it cannot sit beside a `&mut v` argument: the callee pushes through the reference and then reads the stale pointer. Same rule as `grow(v, v[0])`, one more way of spelling the shared side.
 
