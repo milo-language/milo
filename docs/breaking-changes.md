@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: src/checker-program-passes.ts, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
+key-files: src/checker-program-passes.ts, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-07
+last-verified: 2026-10-08
 -->
 
 # Breaking changes
@@ -16,6 +16,29 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json` (see
 [the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
 marker is added here each time a version is cut.
+
+## Raw addresses leave std/pool and std/mem (2026-10-08)
+
+`Pool.alloc` and `Bump.alloc` returned a block's address as an `i64`, `Pool.free` took one
+back, and `MappedMemory` had a public `ptr: i64` field. Safe code could do arithmetic on
+those numbers, forge one, or keep one past `free`, and the next store went wherever it
+pointed. A block is now a generational handle (the std/arena `Handle<T>` pattern), its
+bytes are reached through a bounds-checked slice lent to a closure, and the one accessor
+that yields an address is `@unsafe`. Every field of these types is private.
+
+| was | now |
+|---|---|
+| `let p: i64 = pool.alloc()!` | `let b: PoolBlock = pool.alloc()!` (the block is zeroed) |
+| `pool.free(p)` (aborted on a foreign address) | `pool.free(b)`, `@mustUse bool`: false for a stale, double-freed or foreign handle |
+| reading/writing the block through `p as *T` in `unsafe` | `pool.with(b, (bytes: &[u8]): R => ...)` / `pool.withMut(b, ...)` (`Option<R>`, None when stale), or `pool.read(b, f)` / `pool.write(b, f)` for a `void` closure (`bool`) |
+| `Pool.new(size, count)` required `size >= 8` | `size >= 1`: the free list moved out of the blocks into a side table |
+| `pool.base`, `pool.blockSize`, `pool.freeHead`, `pool.liveCount` fields | private; `pool.blockSize()`, `pool.live()`, `pool.available()`, `pool.valid(b)` |
+| `let p: i64 = bump.alloc(n)!` | `let s: BumpSpan = bump.alloc(n)!`; `bump.with(s, f)` / `withMut` / `read` / `write`, `s.len()`; a span from before `bump.reset()` is rejected |
+| `bump.base`, `bump.cap`, `bump.used` fields | private; `bump.remaining()` |
+| `m.ptr`, `m.len` (`MappedMemory` fields) | `m.with(f)` / `m.read(f)` for the bytes, `m.len()`; `m.withMut(f)` / `m.write(f)` on an `mmapAnon` mapping (None/false on a read-only `mmapFile` one, `m.isWritable()` says which); `m.ptr()` is `@unsafe` for handing the address to C |
+
+`mmapAnon(0)` and `mmapFile(f, 0)` now return `Err` instead of a zero-length mapping. No
+compat shims: the point is that the old spellings stop compiling.
 
 ## Raw descriptor numbers leave the safe std API (2026-10-07)
 

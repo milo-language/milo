@@ -1,12 +1,18 @@
 # std/pool
 
-A fixed-size block pool allocator: one `malloc` at construction, then O(1) `alloc` and
-`free` with no syscalls. That is the pattern safety-critical code uses to avoid dynamic
-allocation after startup. The free list is kept inside the unused blocks, so it costs no
-extra memory. Blocks are raw addresses.
+A fixed-size block pool allocator: one `malloc` (plus a generation table and a free-index
+stack, both sized at construction) and then O(1) `alloc` and `free` with no syscalls and
+no further heap allocation. That is the pattern safety-critical code uses to avoid dynamic
+allocation after startup.
+
+A block is never an address. `alloc` returns a `PoolBlock`, a generational handle in the
+std/arena `Handle<T>` style: it carries the pool's identity and the block's generation, so
+a handle kept past `free` or `reset`, or one from another pool, is rejected instead of
+reaching whatever block now lives in that slot. The bytes are lent as a bounds-checked
+`&[u8]` / `&mut [u8]` for the duration of a closure, and a fresh block is zeroed.
 
 ```milo
-from "std/pool" import { Pool }
+from "std/pool" import { Pool, PoolBlock }
 ```
 
 ## Example
@@ -15,7 +21,12 @@ from "std/pool" import { Pool }
 var pool = Pool.new(64, 16)!    // 16 blocks of 64 bytes, one malloc
 let block = pool.alloc()!
 print(pool.available())          // 15
-pool.free(block)
+let ok = pool.write(block, (bytes: &mut [u8]) => {
+    bytes[0] = 42
+})
+print(pool.with(block, (bytes: &[u8]): u8 => bytes[0]) ?? 0)   // 42
+print(pool.free(block))          // true
+print(pool.valid(block))         // false: the handle went stale
 ```
 
 <!-- generated:api -->
@@ -29,19 +40,36 @@ pool.free(block)
 pub struct Pool
 ```
 
-Fields: `base: i64`, `blockSize: i64`, `blockCount: i64`, `freeHead: i64`, `liveCount: i64`.
+A pool of `blockCount` blocks of `blockSize` bytes each.
+
+`_gens` holds one generation per block, same encoding as std/arena: positive
+is live (and equals the generation of the one valid handle), negative is free
+(its magnitude is the generation the next alloc will publish), zero is retired
+because the counter hit i32 max. `_freeList` is a stack of free indices sized
+to `blockCount` at init, so push and pop never reallocate.
 
 #### `Pool.alloc`
 
 ```milo
-fn Pool.alloc(self: &mut Pool): Result<i64>
+fn Pool.alloc(self: &mut Pool): Result<PoolBlock>
 ```
+
+Take a free block, zeroed, and return the handle naming it. Errs when the
+pool is exhausted.
 
 #### `Pool.available`
 
 ```milo
 fn Pool.available(self: &Pool): i64
 ```
+
+#### `Pool.blockSize`
+
+```milo
+fn Pool.blockSize(self: &Pool): i64
+```
+
+Bytes per block.
 
 #### `Pool.empty`
 
@@ -52,8 +80,11 @@ fn Pool.empty(self: &Pool): bool
 #### `Pool.free`
 
 ```milo
-fn Pool.free(self: &mut Pool, block: i64): void
+fn Pool.free(self: &mut Pool, b: PoolBlock): bool
 ```
+
+Release `b`. Every copy of `b` goes stale. False when `b` was already stale
+or belongs to another pool.
 
 #### `Pool.full`
 
@@ -69,7 +100,7 @@ fn Pool.live(self: &Pool): i64
 
 Restate poolLive's preconditions (Pool has no struct invariant): without them the
 wrapper can't discharge the callee's `requires`, so its own `ensures result >= 0`
-is unbacked — same restating pattern as `free` above.
+is unbacked.
 
 #### `Pool.new`
 
@@ -77,10 +108,69 @@ is unbacked — same restating pattern as `free` above.
 fn Pool.new(size: i64, count: i64): Result<Pool>
 ```
 
+A pool of `count` blocks of `size` bytes, from one malloc. Errs on a
+non-positive size or count, or a total above 1 GB.
+
+#### `Pool.read`
+
+```milo
+fn Pool.read(self: &Pool, b: PoolBlock, f: (&[u8]) => void): bool
+```
+
+`with` for a closure that returns nothing. False, and `f` is not called, when
+`b` is stale.
+
 #### `Pool.reset`
 
 ```milo
 fn Pool.reset(self: &mut Pool): void
 ```
+
+Free every block at once; every outstanding handle goes stale.
+
+#### `Pool.valid`
+
+```milo
+fn Pool.valid(self: &Pool, b: PoolBlock): bool
+```
+
+Whether `b` names a live block of THIS pool.
+
+#### `Pool.with`
+
+```milo
+fn Pool.with<R>(self: &Pool, b: PoolBlock, f: (&[u8]) => R): Option<R>
+```
+
+Lend the block's bytes to `f` and return what it returns. None, and `f` is not
+called, when `b` is stale. Indexing past `blockSize` traps like any slice.
+
+#### `Pool.withMut`
+
+```milo
+fn Pool.withMut<R>(self: &mut Pool, b: PoolBlock, f: (&mut [u8]) => R): Option<R>
+```
+
+`with` with a mutable view: writes land in the block.
+
+#### `Pool.write`
+
+```milo
+fn Pool.write(self: &mut Pool, b: PoolBlock, f: (&mut [u8]) => void): bool
+```
+
+`withMut` for a closure that returns nothing. False, and `f` is not called,
+when `b` is stale.
+
+### `PoolBlock`
+
+```milo
+pub struct PoolBlock
+```
+
+A copyable token naming one block of one Pool. Get it from `pool.alloc()` and
+pass it back to `with` / `withMut` / `free`. Every field is private, so a
+handle cannot be built or edited outside this file; the only way to hold one
+is to have been given it by `alloc`.
 
 <!-- /generated:api -->

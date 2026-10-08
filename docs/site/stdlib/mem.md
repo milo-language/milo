@@ -1,11 +1,30 @@
 # std/mem
 
-Memory mapping and bump allocation primitives.
+Memory mapping and bump allocation primitives. Neither hands safe code an address: a
+mapping's bytes are lent as a slice to a closure (`with`, `withMut`, `read`, `write`), and
+a `Bump` allocation is a `BumpSpan` handle that goes stale at the next `reset`. The one way
+to get a mapping's address, for passing it to C, is the `@unsafe` `MappedMemory.ptr`.
 
-> This is the raw bump allocator. For a generational arena with typed `Handle<T>`, see `std/arena` — that module owns the name `Arena`.
+> This is the byte bump allocator. For a generational arena of typed values with `Handle<T>`, see `std/arena`, which owns the name `Arena`.
 
 ```milo
-from "std/mem" import { MappedMemory, Bump, mmapAnon, mmapFile }
+from "std/mem" import { MappedMemory, Bump, BumpSpan, mmapAnon, mmapFile }
+```
+
+## Example
+
+```milo
+var m = mmapAnon(4096)!
+let wrote = m.write((bytes: &mut [u8]) => {
+    bytes[0] = 7
+})
+print(m.with((bytes: &[u8]): u8 => bytes[0]))   // 7
+
+var bump = Bump.new(1024)!
+let span = bump.alloc(16)!
+print(bump.with(span, (bytes: &[u8]): i64 => bytes.len) ?? 0)   // 16
+bump.reset()
+print(bump.valid(span))                                           // false
 ```
 
 <!-- generated:api -->
@@ -22,18 +41,19 @@ pub struct Bump
 Bump allocator with automatic cleanup. Named Bump, not Arena: std/arena owns
 the name `Arena` for its generational typed-handle arena, and Milo merges every
 module into one flat namespace, so a program cannot import both under one name.
-All allocations are 8-byte aligned. Use bumpReset() to reclaim without freeing.
+All allocations are 8-byte aligned. Use reset() to reclaim without freeing.
 
-Fields: `base: i64`, `cap: i64`, `used: i64`.
+`_epoch` counts resets; every BumpSpan carries the epoch it was cut in, so a span kept
+past a reset is rejected instead of aliasing whatever was allocated over it.
 
 #### `Bump.alloc`
 
 ```milo
-fn Bump.alloc(self: &mut Bump, size: i64): Result<i64>
+fn Bump.alloc(self: &mut Bump, size: i64): Result<BumpSpan>
 ```
 
-Bump-allocate `size` bytes (8-byte aligned) and return the address. Errs when the
-region is full.
+Bump-allocate `size` zeroed bytes (8-byte aligned) and return the span naming
+them. Errs when the region is full.
 
 #### `Bump.new`
 
@@ -43,6 +63,14 @@ fn Bump.new(capacity: i64): Result<Bump>
 
 Create a bump allocator over `capacity` bytes of heap. The whole region is freed
 when the Bump drops.
+
+#### `Bump.read`
+
+```milo
+fn Bump.read(self: &Bump, s: BumpSpan, f: (&[u8]) => void): bool
+```
+
+`with` for a closure that returns nothing. False when the span is stale.
 
 #### `Bump.remaining`
 
@@ -58,7 +86,57 @@ Bytes still available.
 fn Bump.reset(self: &mut Bump): void
 ```
 
-Reclaim every allocation at once by resetting the used count to zero.
+Reclaim every allocation at once. Every span issued before this goes stale.
+
+#### `Bump.valid`
+
+```milo
+fn Bump.valid(self: &Bump, s: BumpSpan): bool
+```
+
+Whether `s` still names live bytes of THIS Bump.
+
+#### `Bump.with`
+
+```milo
+fn Bump.with<R>(self: &Bump, s: BumpSpan, f: (&[u8]) => R): Option<R>
+```
+
+Lend the span's bytes to `f` and return what it returns. None, and `f` is not
+called, when the span is from another Bump or from before a reset.
+
+#### `Bump.withMut`
+
+```milo
+fn Bump.withMut<R>(self: &mut Bump, s: BumpSpan, f: (&mut [u8]) => R): Option<R>
+```
+
+`with` with a mutable view: writes land in the span.
+
+#### `Bump.write`
+
+```milo
+fn Bump.write(self: &mut Bump, s: BumpSpan, f: (&mut [u8]) => void): bool
+```
+
+`withMut` for a closure that returns nothing. False when the span is stale.
+
+### `BumpSpan`
+
+```milo
+pub struct BumpSpan
+```
+
+A copyable token naming `len` bytes of one Bump, valid until that Bump's next reset.
+Private fields: only Bump.alloc can make one.
+
+#### `BumpSpan.len`
+
+```milo
+fn BumpSpan.len(self: &BumpSpan): i64
+```
+
+Length of the span in bytes.
 
 ### `MappedMemory`
 
@@ -66,9 +144,70 @@ Reclaim every allocation at once by resetting the used count to zero.
 pub struct MappedMemory
 ```
 
-Memory-mapped region. Automatically unmapped on drop.
+Memory-mapped region. Automatically unmapped on drop. The fields are private so the
+only way to hold one is from mmapAnon / mmapFile, which keeps `_ptr` a live mapping of
+`_len` bytes for as long as the value lives.
 
-Fields: `ptr: i64`, `len: i64`.
+#### `MappedMemory.isWritable`
+
+```milo
+fn MappedMemory.isWritable(self: &MappedMemory): bool
+```
+
+Whether `withMut` can write this mapping (true for mmapAnon, false for mmapFile).
+
+#### `MappedMemory.len`
+
+```milo
+fn MappedMemory.len(self: &MappedMemory): i64
+```
+
+Length of the mapping in bytes.
+
+#### `MappedMemory.ptr`
+
+```milo
+fn MappedMemory.ptr(self: &MappedMemory): *u8
+```
+
+The mapping's base address, for handing to C (memchr over a mapped file). The
+caller must not use it after this MappedMemory drops, and must not write through
+it when `isWritable()` is false.
+
+#### `MappedMemory.read`
+
+```milo
+fn MappedMemory.read(self: &MappedMemory, f: (&[u8]) => void): void
+```
+
+`with` for a closure that returns nothing.
+
+#### `MappedMemory.with`
+
+```milo
+fn MappedMemory.with<R>(self: &MappedMemory, f: (&[u8]) => R): R
+```
+
+Lend the mapped bytes to `f` and return what it returns. The view cannot outlive
+the call, so it cannot outlive the mapping.
+
+#### `MappedMemory.withMut`
+
+```milo
+fn MappedMemory.withMut<R>(self: &mut MappedMemory, f: (&mut [u8]) => R): Option<R>
+```
+
+`with` with a mutable view. None, and `f` is not called, when the mapping is
+read-only: a write there would fault rather than fail.
+
+#### `MappedMemory.write`
+
+```milo
+fn MappedMemory.write(self: &mut MappedMemory, f: (&mut [u8]) => void): bool
+```
+
+`withMut` for a closure that returns nothing. False, and `f` is not called, when
+the mapping is read-only.
 
 ### Functions
 
@@ -78,7 +217,7 @@ Fields: `ptr: i64`, `len: i64`.
 pub fn mmapAnon(size: i64): Result<MappedMemory>
 ```
 
-Allocate an anonymous (non-file-backed) memory-mapped region.
+Allocate an anonymous (non-file-backed), zero-filled, writable memory-mapped region.
 
 #### `mmapFile`
 
@@ -87,6 +226,7 @@ pub fn mmapFile(f: &File, size: i64): Result<MappedMemory>
 ```
 
 Memory-map `size` bytes of an open file for reading. The mapping keeps the pages,
-not the descriptor: `f` may close once this returns.
+not the descriptor: `f` may close once this returns. The mapping is read-only, so
+`withMut` on it returns None.
 
 <!-- /generated:api -->

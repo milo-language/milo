@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 405 distinct messages across 508 programs the compiler must reject.
+Every error message the test suite pins: 409 distinct messages across 512 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -39,6 +39,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'&mut' on an argument to a '&P' parameter of 'show'; only a '&mut' parameter takes '&mut'`](#mut-on-an-argument-to-a-p-parameter-of-show-only-a-mut-parameter-takes-mut)
 - [`'&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'`](#x-is-not-an-expression-shared-borrows-are-implicit-pass-x-bare-only-a-mut-argument-is-spelled-out-f-mut-x)
 - [`'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'`](#add-in-impl-add-for-res-takes-self-res-by-value-the-trait-add-declares-self-self)
+- [`'addr' declared as i64 but got PoolBlock`](#addr-declared-as-i64-but-got-poolblock)
 - [`'andThen': callback must return an Option, got i64`](#andthen-callback-must-return-an-option-got-i64)
 - [`'andThen': callback's error type must be string, got i64`](#andthen-callback-s-error-type-must-be-string-got-i64)
 - [`'area' in 'impl Shape for Sq' returns 'i64'; the trait 'Shape' declares 'f64'`](#area-in-impl-shape-for-sq-returns-i64-the-trait-shape-declares-f64)
@@ -140,6 +141,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`C header disagrees`](#c-header-disagrees)
 - [`callback parameter 1 is declared`](#callback-parameter-1-is-declared)
 - [`calling 'adopt' requires an unsafe block`](#calling-adopt-requires-an-unsafe-block)
+- [`calling 'ptr' requires an unsafe block`](#calling-ptr-requires-an-unsafe-block)
 - [`calling 'rawFd' requires an unsafe block`](#calling-rawfd-requires-an-unsafe-block)
 - [`calling 'withRaw' requires an unsafe block`](#calling-withraw-requires-an-unsafe-block)
 - [`calling a C function pointer requires 'unsafe' block`](#calling-a-c-function-pointer-requires-unsafe-block)
@@ -261,6 +263,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`extern 'fcntl' declares 3 fixed parameters but C fixes only 2`](#extern-fcntl-declares-3-fixed-parameters-but-c-fixes-only-2)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
+- [`field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'`](#field-poolid-of-poolblock-is-private-to-std-pool-milo)
+- [`field '_ptr' of 'MappedMemory' is private to 'std/mem.milo'`](#field-ptr-of-mappedmemory-is-private-to-std-mem-milo)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
@@ -799,6 +803,22 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/implMethodByValueVsTraitRef.milo](https://github.com/milo-language/milo/blob/main/tests/errors/implMethodByValueVsTraitRef.milo)</sub>
+
+## `'addr' declared as i64 but got PoolBlock` {#addr-declared-as-i64-but-got-poolblock}
+
+`Pool.alloc` used to return the block's address as an i64, which safe code could do arithmetic on and hand back to `free`. It returns a PoolBlock handle now, and a handle is not an integer.
+
+```milo skip
+from "std/pool" import { Pool }
+
+fn main() {
+    var pool = Pool.new(16, 4)!
+    let addr: i64 = pool.alloc()!
+    print(addr + 16)
+}
+```
+
+<sub>[tests/errors/poolBlockNotAnAddress.milo](https://github.com/milo-language/milo/blob/main/tests/errors/poolBlockNotAnAddress.milo)</sub>
 
 ## `'andThen': callback must return an Option, got i64` {#andthen-callback-must-return-an-option-got-i64}
 
@@ -3433,6 +3453,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/adoptNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/adoptNeedsUnsafe.milo)</sub>
+
+## `calling 'ptr' requires an unsafe block` {#calling-ptr-requires-an-unsafe-block}
+
+A mapping's base address used to be a public `ptr: i64` field. It is private now, and the one accessor that yields it is @unsafe: the pointer outlives the mapping's drop.
+
+```milo skip
+from "std/mem" import { MappedMemory, mmapAnon }
+
+fn main() {
+    let m = mmapAnon(4096)!
+    let p = m.ptr()
+    print(m.len())
+}
+```
+
+<sub>[tests/errors/mappedMemoryPtrNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mappedMemoryPtrNeedsUnsafe.milo)</sub>
 
 ## `calling 'rawFd' requires an unsafe block` {#calling-rawfd-requires-an-unsafe-block}
 
@@ -6693,6 +6729,37 @@ fn main() {
 ```
 
 <sub>[tests/errors/childForgedPrivateFields.milo](https://github.com/milo-language/milo/blob/main/tests/errors/childForgedPrivateFields.milo)</sub>
+
+## `field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'` {#field-poolid-of-poolblock-is-private-to-std-pool-milo}
+
+A PoolBlock's fields are private to std/pool, so safe code cannot forge a handle to a block it was never given (or edit a stale one's generation to revive it).
+
+```milo skip
+from "std/pool" import { Pool, PoolBlock }
+
+fn main() {
+    var pool = Pool.new(16, 4)!
+    let b = PoolBlock { _poolId: 1, _index: 0, _generation: 1 }
+    print(pool.free(b))
+}
+```
+
+<sub>[tests/errors/poolBlockForged.milo](https://github.com/milo-language/milo/blob/main/tests/errors/poolBlockForged.milo)</sub>
+
+## `field '_ptr' of 'MappedMemory' is private to 'std/mem.milo'` {#field-ptr-of-mappedmemory-is-private-to-std-mem-milo}
+
+MappedMemory's address field is private to std/mem: safe code cannot read it out as a number and cannot build a mapping over an address of its choosing.
+
+```milo skip
+from "std/mem" import { MappedMemory, mmapAnon }
+
+fn main() {
+    let m = mmapAnon(4096)!
+    print(m._ptr as i64)
+}
+```
+
+<sub>[tests/errors/mappedMemoryPtrField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mappedMemoryPtrField.milo)</sub>
 
 ## `field '_x' of 'S' is private to` {#field-x-of-s-is-private-to}
 
