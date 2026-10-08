@@ -1,0 +1,8 @@
+// @error: 'for b in &mut' iterates a Vec, array or slice, not 'string'
+// string bytes are not handed out mutably; use setByte.
+pub fn main(): void {
+    var s = "abc"
+    for b in &mut s {
+        print(b)
+    }
+}

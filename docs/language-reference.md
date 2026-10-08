@@ -1819,6 +1819,32 @@ compiler cannot check and a wrong answer does not announce. There is no
 `chunks`/`windows` either — both hand back a collection of slices, and a slice is a
 second-class reference that cannot be stored in a `Vec`.
 
+### Writing elements in a loop: `for x in &mut v`
+
+`for x in v` binds each element as a read-only `&T`. `for x in &mut v` binds it as a
+`&mut T` into the buffer, so assignments and mutating methods on `x` change the
+element in place, with no index loop and no copy:
+
+```milo
+var scores: Vec<i64> = [70, 85, 90]
+for s in &mut scores {
+    s += 5
+}
+var rows: Vec<Vec<i64>> = [[1], [2, 3]]
+for i, row in &mut rows {    // the enumerate form; i is the index
+    row.push(i)
+}
+print(scores[0])             // 75
+```
+
+It works on a `var` Vec or fixed array, a `&mut Vec<T>` parameter, a `&mut [T]` slice
+and a field (`for it in &mut self.items`). While the loop runs, `x` is the only path to
+the elements, so the body may not name the collection at all: not `v.push` or `v.pop`
+(which could move the buffer), and not `v[0]`, `v.len()`, `f(v)` or a closure that
+captures `v` (a second view of the element `x` points at). For a field, the root is off
+limits too (`self.helper()` could reach `self.items`), while a disjoint field
+(`self.total`) is not. A body that needs the whole collection loops by index instead.
+
 ### Growing and shrinking
 
 ```milo

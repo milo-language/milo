@@ -1,0 +1,135 @@
+// `for x in &mut v` binds each element as a `&mut T`: assignments and mutating
+// methods on `x` write into the collection itself, with no index loop. Covers Vec
+// of ints, strings (the old string is dropped on assignment), structs and nested
+// Vecs; the enumerate form; fixed arrays; a `&mut Vec` parameter; a `&mut [T]`
+// slice; a field reached through `self`; and an early break.
+
+pub struct Item {
+    name: string,
+    count: i64,
+}
+
+pub struct Bag {
+    items: Vec<Item>,
+    total: i64,
+}
+
+impl Bag {
+    fn bumpAll(self: &mut Bag, by: i64) {
+        for it in &mut self.items {
+            it.count += by
+        }
+        // a disjoint field of the same root stays usable after the loop
+        self.total += by
+    }
+}
+
+pub fn doubleAll(v: &mut Vec<i64>) {
+    for x in &mut v {
+        x = x * 2
+    }
+}
+
+pub fn negateSlice(s: &mut [i64]) {
+    for x in &mut s {
+        x = 0 - x
+    }
+}
+
+// @expect: 10 20 30
+// @expect: A! B! C!
+// @expect: apple 2 pear 4
+// @expect: 3 2
+// @expect: 0:5 1:6 2:7
+// @expect: 1 4 9 16
+// @expect: 20 40 60
+// @expect: -20 -40 60
+// @expect: 11 12
+// @expect: 4 7
+// @expect: 100 2 3
+// @expect: 2 3 4
+pub fn bump(n: &mut i64) {
+    n += 1
+}
+
+pub fn main() {
+    var nums: Vec<i64> = [1, 2, 3]
+    for n in &mut nums {
+        n *= 10
+    }
+    print($"{nums[0]} {nums[1]} {nums[2]}")
+
+    var words: Vec<string> = ["a", "b", "c"]
+    for w in &mut words {
+        w = w.toUpper() + "!"
+    }
+    print($"{words[0]} {words[1]} {words[2]}")
+
+    var items: Vec<Item> = Vec.new()
+    items.push(Item { name: "apple", count: 1 })
+    items.push(Item { name: "pear", count: 3 })
+    for it in &mut items {
+        it.count += 1
+    }
+    print($"{items[0].name} {items[0].count} {items[1].name} {items[1].count}")
+
+    var grid: Vec<Vec<i64>> = Vec.new()
+    grid.push([1, 2])
+    grid.push([3])
+    for row in &mut grid {
+        row.push(0)
+    }
+    print($"{grid[0].len()} {grid[1].len()}")
+
+    var seq: Vec<i64> = [5, 5, 5]
+    for i, x in &mut seq {
+        x += i
+    }
+    print($"0:{seq[0]} 1:{seq[1]} 2:{seq[2]}")
+
+    var arr = [1, 2, 3, 4]
+    for a in &mut arr {
+        a = a * a
+    }
+    print($"{arr[0]} {arr[1]} {arr[2]} {arr[3]}")
+
+    var tens: Vec<i64> = [10, 20, 30]
+    doubleAll(&mut tens)
+    print($"{tens[0]} {tens[1]} {tens[2]}")
+    negateSlice(&mut tens[0..2])
+    print($"{tens[0]} {tens[1]} {tens[2]}")
+
+    var bag = Bag { items: Vec.new(), total: 0 }
+    bag.items.push(Item { name: "x", count: 1 })
+    bag.items.push(Item { name: "y", count: 2 })
+    bag.bumpAll(10)
+    print($"{bag.items[0].count} {bag.items[1].count}")
+
+    // another collection is free to use inside the loop
+    var acc: Vec<i64> = [1, 2]
+    let add: Vec<i64> = [3, 5]
+    for i, x in &mut acc {
+        x += add[i]
+    }
+    print($"{acc[0]} {acc[1]}")
+
+    var stop: Vec<i64> = [1, 2, 3]
+    for s in &mut stop {
+        if s == 1 {
+            s = 100
+            break
+        }
+    }
+    print($"{stop[0]} {stop[1]} {stop[2]}")
+
+    // a '&mut' element is itself iterable with '&mut', and passes on as '&mut'
+    var g: Vec<Vec<i64>> = Vec.new()
+    g.push([1, 2])
+    g.push([3])
+    for row in &mut g {
+        for c in &mut row {
+            bump(&mut c)
+        }
+    }
+    print($"{g[0][0]} {g[0][1]} {g[1][0]}")
+}

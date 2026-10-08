@@ -158,7 +158,8 @@ export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr;
 export interface LetElseStmt { kind: "LetElseStmt"; pattern: Pattern; value: Expr; elseBody: Stmt[]; bindName?: string; span?: Span }
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
-export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; invariants: Contract[]; body: Stmt[]; span?: Span }
+// `mutRef`: the `for x in &mut v` form, which binds each element as a `&mut T`.
+export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; invariants: Contract[]; body: Stmt[]; mutRef?: boolean; span?: Span }
 export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | LetElseStmt | UnsafeBlock | ForInStmt;
 
 // ── Top-level ──

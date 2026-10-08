@@ -1,0 +1,8 @@
+// @error: cannot use 'v' inside 'for x in &mut v'
+// v[0] is a second path to the element x may point at.
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = v[0]
+    }
+}

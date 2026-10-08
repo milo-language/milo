@@ -1,0 +1,22 @@
+// @error: cannot use 'self' inside 'for it in &mut self.items'
+// a method call on self may reach self.items, so the root is off limits while it is iterated.
+pub struct Bag {
+    items: Vec<i64>,
+}
+
+impl Bag {
+    fn size(self: &Bag): i64 {
+        return self.items.len()
+    }
+
+    fn fill(self: &mut Bag) {
+        for it in &mut self.items {
+            it = self.size()
+        }
+    }
+}
+
+pub fn main(): void {
+    var b = Bag { items: [1, 2] }
+    b.fill()
+}

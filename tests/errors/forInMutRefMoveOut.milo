@@ -1,0 +1,10 @@
+// @error: cannot move the borrowed value out of 'w'
+// the element stays in the Vec, so it can only be cloned out.
+pub fn main(): void {
+    var ws: Vec<string> = ["a"]
+    var keep: Vec<string> = Vec.new()
+    for w in &mut ws {
+        keep.push(w)
+    }
+    print(keep.len())
+}

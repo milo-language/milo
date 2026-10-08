@@ -1,0 +1,7 @@
+// @error: 'for i in &mut' iterates a Vec, array or slice, not a range
+// a range has no storage to write back to.
+pub fn main(): void {
+    for i in &mut 0..3 {
+        print(i)
+    }
+}

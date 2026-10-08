@@ -535,13 +535,14 @@ class LowerCtx {
         let iterableKind: "vec" | "string" | "hashmap" | "array";
         let varType: TypeKind;
         let varType2: TypeKind | null = null;
+        const mutElem = !!stmt.mutRef;
         if (iterType?.tag === "vec") {
           iterableKind = "vec";
           if (stmt.varName2) {
             varType = { tag: "int", bits: 64, signed: true };
-            varType2 = { tag: "ref", inner: iterType.element, mutable: false };
+            varType2 = { tag: "ref", inner: iterType.element, mutable: mutElem };
           } else {
-            varType = { tag: "ref", inner: iterType.element, mutable: false };
+            varType = { tag: "ref", inner: iterType.element, mutable: mutElem };
           }
         } else if (iterType?.tag === "string") {
           iterableKind = "string";
@@ -559,9 +560,9 @@ class LowerCtx {
           iterableKind = "array";
           if (stmt.varName2) {
             varType = { tag: "int", bits: 64, signed: true };
-            varType2 = { tag: "ref", inner: iterType.element, mutable: false };
+            varType2 = { tag: "ref", inner: iterType.element, mutable: mutElem };
           } else {
-            varType = { tag: "ref", inner: iterType.element, mutable: false };
+            varType = { tag: "ref", inner: iterType.element, mutable: mutElem };
           }
         } else {
           iterableKind = "vec";

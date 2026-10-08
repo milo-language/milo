@@ -1,0 +1,8 @@
+// @error: cannot iterate 'v' with '&mut': it is not mutable
+// a 'let' Vec cannot be written through.
+pub fn main(): void {
+    let v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = 0
+    }
+}

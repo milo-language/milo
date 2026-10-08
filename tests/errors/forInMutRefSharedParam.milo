@@ -1,0 +1,12 @@
+// @error: cannot iterate 'v' with '&mut': it is not mutable
+// a '&' parameter is read-only, so its elements cannot be handed out as '&mut'.
+pub fn zero(v: &Vec<i64>) {
+    for x in &mut v {
+        x = 0
+    }
+}
+
+pub fn main(): void {
+    let v: Vec<i64> = [1]
+    zero(v)
+}

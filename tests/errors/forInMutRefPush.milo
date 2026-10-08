@@ -1,0 +1,9 @@
+// @error: cannot call 'push' on 'v' because it is borrowed
+// growing the Vec under a '&mut' element view would move the elements it points at.
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x += 1
+        v.push(4)
+    }
+}

@@ -113,7 +113,7 @@ var_decl    = "var" ( IDENT [ ":" type ] | field_bindings ) "=" expr ;
 return_stmt = "return" [ expr ] ;
 if_stmt     = "if" ( expr | "let" pattern "=" expr ) block [ "else" ( if_stmt | block ) ] ;
 while_stmt  = "while" expr { loop_contract } block ;
-for_stmt    = "for" IDENT [ "," IDENT ] "in" expr { loop_contract } block ;
+for_stmt    = "for" IDENT [ "," IDENT ] "in" [ "&" "mut" ] expr { loop_contract } block ;
 loop_contract = ( "invariant" | "decreases" ) expr ;
 match_stmt  = "match" expr "{" { match_arm } "}" ;
 match_arm   = pattern "=>" ( expr | block ) [ "," ] ;

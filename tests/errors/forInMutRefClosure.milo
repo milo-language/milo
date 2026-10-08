@@ -1,0 +1,9 @@
+// @error: cannot use 'v' inside 'for x in &mut v'
+// a closure capturing the Vec is a second access too.
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        let n = () => v.len()
+        x = n()
+    }
+}

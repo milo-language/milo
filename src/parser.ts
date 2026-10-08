@@ -1176,7 +1176,14 @@ export class Parser {
       varName2 = this.expect(TokenKind.Ident).value;
     }
     this.expectSoftKw("in");
-    const iterableOrStart = this.parseExpr();
+    let iterableOrStart = this.parseExpr();
+    // `for x in &mut v`: the `&mut` arrives as the call-argument marker; here it means
+    // "bind each element mutably" and is lifted onto the statement.
+    let mutRef = false;
+    if (iterableOrStart.kind === "UnaryOp" && iterableOrStart.op === "&mut") {
+      mutRef = true;
+      iterableOrStart = iterableOrStart.operand;
+    }
     let iterable: Expr;
     if (this.match(TokenKind.DotDot)) {
       const end = this.parseExpr();
@@ -1189,9 +1196,10 @@ export class Parser {
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
     if (iterable.kind === "MethodCall" && iterable.method === "codePoints" && iterable.args.length === 0) {
+      if (mutRef) this.error(`'for ${varName} in &mut' iterates a Vec, array or slice; code points are computed values with nothing to write back to`, this.tokens[this.pos - 1]);
       return this.desugarCodePointsLoop(varName, varName2, iterable.object, body, s, invariants);
     }
-    return { kind: "ForInStmt", varName, varName2, iterable, invariants, body, span: s };
+    return { kind: "ForInStmt", varName, varName2, iterable, invariants, body, ...(mutRef && { mutRef }), span: s };
   }
 
   // `for cp in s.codePoints() { .. }` → a byte-cursor while loop over

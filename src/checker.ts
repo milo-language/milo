@@ -6641,6 +6641,10 @@ export class TypeChecker {
           if (stmt.varName2) {
             this.error("range for loop takes one binding, not two", sp);
           }
+          if (stmt.mutRef) {
+            this.error(`'for ${stmt.varName} in &mut' iterates a Vec, array or slice, not a range`, sp,
+              `a range yields fresh integers with nothing to write back to; drop the '&mut'`);
+          }
           // Widen to the larger int type so 0..vec.len() just works
           let varType: TypeKind;
           if (startType.tag === "int" && endType.tag === "int") {
@@ -6664,8 +6668,12 @@ export class TypeChecker {
           // cannot travel through the `next(): Option<T>` iterator protocol, because a
           // reference inside an enum payload is a rejected return (see errorIfRefReturn).
           const viewMode = this.stringViewIterMode(stmt.iterable);
+          if (viewMode && stmt.mutRef) {
+            this.error(`'for ${stmt.varName} in &mut' iterates a Vec, array or slice; '${viewMode === "lines" ? "lines()" : "splitView()"}' yields read-only views`, sp);
+          }
           if (viewMode) { this.checkStringViewForIn(stmt, viewMode, fnRetType); return; }
           let iterType = this.checkExpr(stmt.iterable);
+          if (stmt.mutRef) this.checkMutForInSource(stmt, iterType, sp);
           // iterating a slice (&[T]) or &Vec: deref — the loop borrows the view, not a copy
           if (iterType.tag === "ref" && (iterType.inner.tag === "array" || iterType.inner.tag === "vec")) {
             iterType = iterType.inner;
@@ -6688,16 +6696,17 @@ export class TypeChecker {
           // One freeze for every container shape below — see freezeIterable.
           const iterBorrowInfo = this.freezeIterable(stmt.iterable);
           if (iterType.tag === "vec") {
-            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+            const mutElem = !!stmt.mutRef;
+            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: mutElem };
             const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
               // enumerate: for i, val in vec
               const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
               this.declare(stmt.varName, { type: idxType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
-              this.declare(stmt.varName2, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
+              this.declare(stmt.varName2, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             } else {
-              this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
+              this.declare(stmt.varName, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
             this.loopDepth++;
@@ -6738,15 +6747,16 @@ export class TypeChecker {
             this.popScope();
             this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "array") {
-            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+            const mutElem = !!stmt.mutRef;
+            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: mutElem };
             const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
               const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
               this.declare(stmt.varName, { type: idxType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
-              this.declare(stmt.varName2, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
+              this.declare(stmt.varName2, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             } else {
-              this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
+              this.declare(stmt.varName, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
             this.loopDepth++;
@@ -8469,6 +8479,79 @@ export class TypeChecker {
   // which is the whole point: a new way to SPELL the iterable inherits the rule instead
   // of escaping it. The recorded path is what keeps this from over-rejecting — mutating
   // a different field of the same struct does not collide with the borrow.
+  // `for x in &mut v`: the source must be a Vec, array or slice the code may write,
+  // and the body must not name it at all. The freeze taken for every for-in already
+  // rejects push/pop/clear on `v`; a `&mut` element view additionally rules out any
+  // second access (`v[0]`, `v.len`, `f(v)`, a closure capture), since that would be a
+  // second path to the element `x` points at. The scan is syntactic, which is exact
+  // here because a binding cannot shadow an outer name.
+  private checkMutForInSource(stmt: Stmt & { kind: "ForInStmt" }, rawType: TypeKind, sp?: Span) {
+    const loopVar = stmt.varName2 ?? stmt.varName;
+    const inner = rawType.tag === "ref" ? rawType.inner : rawType;
+    if (inner.tag !== "vec" && inner.tag !== "array" && inner.tag !== "unknown") {
+      this.error(`'for ${loopVar} in &mut' iterates a Vec, array or slice, not '${this.show(rawType)}'`, sp);
+      return;
+    }
+    const target = this.syntacticPlace(stmt.iterable);
+    if (!target) {
+      this.error(`'for ${loopVar} in &mut' needs a named place to iterate`, sp,
+        `bind the value first ('var v = ...') and iterate '&mut v'`);
+      return;
+    }
+    const writable = rawType.tag === "ref" ? rawType.mutable : this.isRootMutable(stmt.iterable);
+    if (!writable) {
+      this.error(`cannot iterate '${target.text}' with '&mut': it is not mutable`, sp,
+        rawType.tag === "ref" ? `it is a '&' view; take it as '&mut' to write through it` : `declare it with 'var'`);
+    }
+    const overlaps = (a: string[], b: string[]) => {
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
+      return true;
+    };
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const n of node) visit(n); return; }
+      const n = node as Record<string, unknown> & { kind?: string; span?: Span };
+      if (n.kind === "Ident" || n.kind === "FieldAccess" || n.kind === "IndexAccess") {
+        const place = this.syntacticPlace(n as unknown as Expr, visit);
+        if (place) {
+          if (place.root === target.root && overlaps(place.fields, target.fields)) {
+            this.error(`cannot use '${place.text}' inside 'for ${loopVar} in &mut ${target.text}': the loop holds a '&mut' to its elements`, n.span ?? sp,
+              `reach the element through '${loopVar}', or loop by index if the body needs the whole collection`);
+          }
+          return;
+        }
+      }
+      for (const [k, v] of Object.entries(n)) {
+        if (k === "span") continue;
+        visit(v);
+      }
+    };
+    visit(stmt.body);
+    visit(stmt.invariants);
+  }
+
+  // Root name and field chain of a place, read off the syntax. Fields stop at the first
+  // index (`a.b[i].c` is `a.b`), which over-approximates the place: the safe direction
+  // for an overlap test. `onSub` is handed each index expression (not part of the place,
+  // but it may name one itself) and a non-name base, so a caller's walk misses neither.
+  private syntacticPlace(e: Expr, onSub?: (e: Expr) => void): { root: string; fields: string[]; text: string } | null {
+    const steps: string[] = [];
+    let cur: Expr = e;
+    for (;;) {
+      if (cur.kind === "FieldAccess") { steps.unshift(cur.field); cur = cur.object; continue; }
+      if (cur.kind === "IndexAccess") { onSub?.(cur.index); steps.unshift("[]"); cur = cur.object; continue; }
+      break;
+    }
+    if (cur.kind !== "Ident") {
+      onSub?.(cur);
+      return null;
+    }
+    const cut = steps.indexOf("[]");
+    const fields = cut >= 0 ? steps.slice(0, cut) : steps;
+    return { root: cur.name, fields, text: [cur.name, ...fields].join(".") };
+  }
+
   private freezeIterable(iterable: Expr): VarInfo | null {
     return this.freezeRootOf(iterable, "iteration");
   }

@@ -4309,7 +4309,7 @@ export class Codegen {
       const elemTy = this.llvmType(elemType);
       const varAddr = this.allocaName(elemName);
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      const savedLoopLocals = [this.bindLoopLocal(elemName, { type: elemTy, typeKind: elemTypeKind, mutable: false, isRef: true, addr: varAddr })];
+      const savedLoopLocals = [this.bindLoopLocal(elemName, { type: elemTy, typeKind: elemTypeKind, mutable: elemTypeKind.tag === "ref" && elemTypeKind.mutable, isRef: true, addr: varAddr })];
       if (stmt.varName2) {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
@@ -4450,7 +4450,7 @@ export class Codegen {
       const elemName3 = stmt.varName2 ?? stmt.varName;
       const varAddr = this.allocaName(elemName3);
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      const savedLoopLocals = [this.bindLoopLocal(elemName3, { type: elemTy, typeKind: elemTypeKind3, mutable: false, isRef: true, addr: varAddr })];
+      const savedLoopLocals = [this.bindLoopLocal(elemName3, { type: elemTy, typeKind: elemTypeKind3, mutable: elemTypeKind3.tag === "ref" && elemTypeKind3.mutable, isRef: true, addr: varAddr })];
       if (stmt.varName2) {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i32", typeKind: { tag: "int", bits: 32, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }

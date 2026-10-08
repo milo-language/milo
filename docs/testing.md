@@ -155,7 +155,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->796<!-- /stat --> fixtures, <!-- stat:error-fixtures -->514<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->33<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->797<!-- /stat --> fixtures, <!-- stat:error-fixtures -->525<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->33<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from

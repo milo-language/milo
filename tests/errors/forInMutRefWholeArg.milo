@@ -1,0 +1,12 @@
+// @error: cannot use 'v' inside 'for x in &mut v'
+// passing the whole Vec hands a callee a view that overlaps x.
+pub fn total(v: &Vec<i64>): i64 {
+    return v.len()
+}
+
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = total(v)
+    }
+}
