@@ -35,7 +35,7 @@ Optional 6th/7th lines when useful: `owner-persona:` and `depends-on:`. Keep the
 1. **New system → new doc with a meta block.** `scripts/lint.ts` warns on a tracked `docs/*.md` missing the block.
 2. **Touched a system → reconcile its doc, bump `last-verified`.** Confirm the `key-files` still exist and say what the doc claims.
 3. **First 7 lines carry the summary.** Someone grepping should learn what the doc covers without scrolling. Put the orienting paragraph right after the title.
-4. **Don't duplicate.** A fact lives in one doc; others link to it. `CLAUDE.md` owns operational rules; `AGENTS.md` owns routing; system docs own their system.
+4. **Don't duplicate.** A fact lives in one doc; others link to it. `AGENTS.md` owns operational rules and routing; system docs own their system.
 
 ## Retrofit
 Existing docs predate this convention. When you next touch one, add its meta block. No big-bang migration — it heals as it's used.

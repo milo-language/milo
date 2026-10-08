@@ -37,7 +37,7 @@ The rules reviewers check by hand. Anything mechanically checkable lives in `scr
 - No focused/skipped tests committed (`test.only`, `.skip` without a reason). The linter blocks these.
 - A test must fail if the behavior it names breaks. Assert the real thing, not a coincidence — see the false-confidence guidance in [docs/testing.md](docs/testing.md).
 
-## Safety / guards (hard rules — see CLAUDE.md)
+## Safety / guards (hard rules — see AGENTS.md)
 - Never run `.selfhost/milo-self.bin` bare. Never commit `MILO_RUN_UNGUARDED=1`.
 - Don't raise sweep/test concurrency or per-child mem caps without redoing the math in `scripts/guard.ts`.
 

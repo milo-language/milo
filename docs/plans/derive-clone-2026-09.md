@@ -89,7 +89,7 @@ diagnostics that name `.clone()` need no text change once coverage is uniform.
   fails to compile inside std (the Vec<closure> precedent).
 - `index-clone` census: the 9 std sites listed in #31 must each accept
   `.clone()` (compile a synthetic file per site shape).
-- self-host does not gate std (CLAUDE.md, 2026-09-20).
+- self-host does not gate std (AGENTS.md, 2026-09-20).
 
 ## Not in scope, stays open
 

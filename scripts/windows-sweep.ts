@@ -23,7 +23,7 @@ const JOBS = jobsFlag >= 0 ? Number(argv[jobsFlag + 1]) : 6;
 const filter = argv.filter((a, i) => !a.startsWith("--") && i !== jobsFlag + 1)[0] ?? "";
 
 if (!process.env.MILO_WINDOWS_SDK) {
-  console.error("MILO_WINDOWS_SDK is unset — see CLAUDE.md for the xwin setup");
+  console.error("MILO_WINDOWS_SDK is unset — see AGENTS.md for the xwin setup");
   process.exit(2);
 }
 

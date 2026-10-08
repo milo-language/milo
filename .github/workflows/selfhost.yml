@@ -5,7 +5,7 @@ name: Self-host
 # the fixture sweep) ran by hand, on one developer's Mac. So "milo-self works" has always
 # meant "worked on darwin-arm64, the last time someone remembered to check".
 #
-# WHY THIS IS SCOPED TO src-milo/** — CLAUDE.md's rule is that self-host parity must never
+# WHY THIS IS SCOPED TO src-milo/** — AGENTS.md's rule is that self-host parity must never
 # block a change in src/, because chasing that parity is what got src-milo parked for
 # months. This respects the rule literally rather than reinterpreting it: a commit that
 # touches only src/ never triggers this workflow and can never be blocked by it. What the
@@ -23,7 +23,7 @@ on:
   pull_request:
     paths: ['src-milo/**', 'scripts/selfhost*', 'scripts/guard.ts', '.github/workflows/selfhost.yml']
   # On demand. The path filter above deliberately excludes `src/` — self-host must never
-  # GATE a src/ change (CLAUDE.md; chasing parity is what parked src-milo for months) — but
+  # GATE a src/ change (AGENTS.md; chasing parity is what parked src-milo for months) — but
   # codegen can still break the bootstrap, and then nothing says so until an unrelated
   # src-milo/ or std/ commit happens to run this, or the nightly does.
   #

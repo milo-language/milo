@@ -77,7 +77,7 @@ const flag = (name: string) => argv.includes(`--${name}`);
 const N = num("n", 200);
 const SEED = num("seed", 1);
 const FILTER = opt("filter", "");
-// Memory-guard math (CLAUDE.md): JOBS × RUN_MEM_MB must stay under half of RAM. The
+// Memory-guard math (AGENTS.md): JOBS × RUN_MEM_MB must stay under half of RAM. The
 // generated programs allocate a few MB; 1 GB per child is headroom for a runaway, and
 // four of them are 4 GB, under half of a 16 GB machine. Builds run beside them (bun +
 // clang, a few hundred MB each) so the default job count is capped below the core count.

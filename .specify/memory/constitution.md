@@ -134,8 +134,8 @@ unexplained `.skip` MUST NOT land.
 ## Governance
 
 This constitution supersedes other practice documents on the matters it covers. Where it is silent
-on an operational detail, `CLAUDE.md` is authoritative (build commands, guards, architecture), then
-`AGENTS.md` as the router, then `CONVENTIONS.md` for style.
+on an operational detail, `AGENTS.md` §Operational rules is authoritative (build commands, guards,
+architecture), then the rest of `AGENTS.md` as the router, then `CONVENTIONS.md` for style.
 
 **Amendments** are made by editing `.specify/memory/constitution.md` with a Sync Impact Report
 prepended, in a commit that states the rationale. An amendment that removes or redefines a

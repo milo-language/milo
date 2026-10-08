@@ -28,7 +28,7 @@ const CHILD_ENV = { ...process.env, MILO_ROOT };
 // clang -O2 on examples/games/flight/main.milo alone wants more than 1.5GB. At the
 // sweep's 1536MB that example reported `guard-memory` on every run, serial retry
 // included, which reads as a milo-self failure and is only this budget. 2 workers x
-// 3GB keeps N x cap under half of a 16GB host, the rule in CLAUDE.md.
+// 3GB keeps N x cap under half of a 16GB host, the rule in AGENTS.md.
 const CONCURRENCY = Number(process.env.MILO_SWEEP_CONCURRENCY || 0) || 2;
 const COMPILE_MEM_MB = 3072;
 const RUN_MEM_MB = 512;

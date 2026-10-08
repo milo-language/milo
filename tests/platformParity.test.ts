@@ -2,7 +2,7 @@
 // `std/x.windows.milo` must export the SAME public surface.
 //
 // The resolver picks an arm by target OS and there is no `#[cfg]`, so the filename
-// suffix is the whole mechanism (CLAUDE.md §Layout). A name only one arm provides is
+// suffix is the whole mechanism (AGENTS.md §Layout). A name only one arm provides is
 // not a smaller feature set — it is a program that compiles on your laptop and fails to
 // resolve in CI, and nothing in the repo compared the arms before this.
 //

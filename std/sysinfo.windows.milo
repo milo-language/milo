@@ -75,7 +75,7 @@ pub fn ppid(): i32 {
 // so on the POSIX arms 0 means the process IS root. The standard portable guard —
 // `if uid() == 0 { … }`, whether it refuses to run as root or unlocks a privileged path —
 // therefore took the root branch unconditionally on Windows. That is precisely the
-// "plausible-looking value" the port's convention exists to forbid (CLAUDE.md); u32 MAX
+// "plausible-looking value" the port's convention exists to forbid (AGENTS.md); u32 MAX
 // is not a uid any system issues, so a caller that ignores it gets a wrong answer that
 // looks wrong rather than one that looks like root.
 pub fn uid(): u32 {

@@ -6,7 +6,7 @@
 //       bun run scripts/gen-stats.ts --list   # print the current values
 //
 // Mark a count in any tracked doc as `<!-- stat:NAME -->123<!-- /stat -->`; the text
-// between the markers is replaced. Docs drifted quietly before this — CLAUDE.md said
+// between the markers is replaced. Docs drifted quietly before this — the agent rules doc said
 // the nightly sweep covered 589 fixtures and docs/testing.md said 470, against a real
 // 597 — because a count in a sentence is invisible to every other gate.
 //
@@ -52,7 +52,7 @@ export const STATS: Record<string, () => number> = {
 // site. Its counts drifted 61 fixtures and 45 error-fixtures behind before it was tracked
 // here — the internal roadmap was gated and the public one, which is what users actually
 // read, was not.
-const TRACKED = ["CLAUDE.md", "AGENTS.md", "README.md", "docs/testing.md", "docs/roadmap.md", "docs/site/roadmap.md"];
+const TRACKED = ["AGENTS.md", "README.md", "docs/testing.md", "docs/roadmap.md", "docs/site/roadmap.md"];
 
 // The placeholder in AGENTS.md's own table documents this syntax, so it is written
 // `stat:<name>` — the angle brackets keep it out of `[a-z-]+` and stop the generator

@@ -27,7 +27,7 @@ const MANIFEST = join(import.meta.dir, "selfhost-manifest.txt");
 // use; the harness guards via guardedRun itself, so it calls .bin directly.
 const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self.bin");
 
-// Self-host is NOT a CI gate (see CLAUDE.md): src-milo may lag src/, and a std
+// Self-host is NOT a CI gate (see AGENTS.md): src-milo may lag src/, and a std
 // change the lagging milo-self parser can't yet handle would otherwise redden
 // Release/CI and freeze downstream `latest` on pure parity. Opt in with
 // MILO_SELFHOST=1 to run this suite (and pay its 240s bootstrap build); plain

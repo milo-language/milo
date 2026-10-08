@@ -12,7 +12,7 @@ Per-commit review sees one diff at a time. This sweep looks *across* recent comm
 2. **Sweep for, specifically:**
    - **Inconsistency** — same idea done differently across commits (naming, error handling, a helper reimplemented instead of reused). Grep to confirm it's a pattern, not a one-off.
    - **Silent regressions** — a later commit that partially reverted or broke an earlier fix. Check whether the earlier fix still has a test guarding it.
-   - **Guard/safety drift** — any new bare milo-self run, `MILO_RUN_UNGUARDED`, raised mem/concurrency caps (CLAUDE.md). Run `bun run scripts/lint.ts --all`.
+   - **Guard/safety drift** — any new bare milo-self run, `MILO_RUN_UNGUARDED`, raised mem/concurrency caps (AGENTS.md). Run `bun run scripts/lint.ts --all`.
    - **Doc drift** — for each touched system, does its doc's `doc-meta` `key-files` still match reality? Is `last-verified` stale? (docs/doc-standards.md)
    - **Test coverage that quietly shrank** — new behavior with no fixture; a `.skip` that slipped in; a fixture whose `@expect` would pass even if the feature were deleted (docs/testing.md false-confidence check).
    - **TODO/FIXME left behind** without an owner or issue.

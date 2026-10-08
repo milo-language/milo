@@ -25,7 +25,7 @@ Take Zig's `@Vector` / Rust's `std::simd` model, **not** `vld1q_f32`-style NEON 
 - Elementwise `+ - * /`, comparisons yielding a mask vector, `select(mask, a, b)`, shuffles,
   and horizontal reductions.
 - **No target-specific intrinsic surface in the language.** A `neon.milo` / `sse.milo` split
-  would multiply the platform-suffix problem (`CLAUDE.md` §platform split) across hundreds of
+  would multiply the platform-suffix problem (`AGENTS.md` §platform split) across hundreds of
   names, and every arm would have to export the same surface anyway — which is exactly what a
   portable vector type already is.
 

@@ -11,7 +11,7 @@
 // declarations that tools/wasm/run.mjs implements in JS.
 //
 // wasm64 was chosen over wasm32 because Milo's codegen assumes an 8-byte
-// size_t/pointer everywhere (see CLAUDE.md's target-selection note): malloc,
+// size_t/pointer everywhere (see AGENTS.md's target-selection note): malloc,
 // memcpy, memcmp, memchr, fwrite, write are all declared with i64 size
 // params, which matches wasm64 exactly and mismatches wasm32 on every one
 // of them.

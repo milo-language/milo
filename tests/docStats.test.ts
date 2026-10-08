@@ -1,6 +1,6 @@
 // Gate on the corpus counts quoted in prose (scripts/gen-stats.ts).
 //
-// CLAUDE.md claimed the nightly self-host sweep covered 589 fixtures and
+// The agent rules doc claimed the nightly self-host sweep covered 589 fixtures and
 // docs/testing.md claimed 470, against a real 597. A number inside a sentence is
 // invisible to every other gate in the repo, so it drifts silently and then gets
 // quoted back as fact.
@@ -34,7 +34,7 @@ test("the fixture count is the number the test driver actually walks", () => {
   );
   const onDisk = readdirSync(join(ROOT, "tests", "fixtures"))
     .filter(f => f.endsWith(".milo") && !untracked.has(f)).length;
-  const claimed = /<!-- stat:fixtures -->(\d+)<!-- \/stat -->/.exec(readFileSync(join(ROOT, "CLAUDE.md"), "utf-8"))?.[1];
+  const claimed = /<!-- stat:fixtures -->(\d+)<!-- \/stat -->/.exec(readFileSync(join(ROOT, "AGENTS.md"), "utf-8"))?.[1];
   expect(claimed).toBe(String(onDisk));
 });
 

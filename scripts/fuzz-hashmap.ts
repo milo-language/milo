@@ -11,7 +11,7 @@
 // The oracle is a JS Map: every insert/get/remove/contains/len the generated program
 // prints is predicted here. Iteration order is deliberately never asserted — Milo's
 // HashMap seeds its hash per run, so any test that pinned an order would be testing the
-// seed (see the note in CLAUDE.md about never deriving output order from a map).
+// seed (see the note in AGENTS.md about never deriving output order from a map).
 //
 // `--owned` makes the VALUES strings as well as the keys, and emits keys built from a
 // runtime value rather than as literals. Both matter for `--leaks` (macOS `leaks -atExit`):

@@ -42,7 +42,7 @@ Prove it end-to-end. Pick what fits:
 - Fixture/example: `bun run src/main.ts run examples/<x>.milo` — compile + execute.
 - **All examples must still build + run: `bun run scripts/run-examples.ts`.** Compiles every entrypoint (hard gate) and runs the ones annotated `// @run:`. If your change should exercise a specific example, add a `// @run: <args>` (and `// @stdin: <text>` if it reads input) so it actually runs, not just compiles. Any example that breaks fails here — that's the point.
 - Full suite before commit: `bun test`. Targeted during iteration: `bun test tests/run.test.ts -t "<name>"`.
-- Self-host changes: `sh scripts/selfhost.sh` first (the `.bin` is gitignored/stale), then the guarded selfhost tests. **Never run `.selfhost/milo-self.bin` bare** (CLAUDE.md guards).
+- Self-host changes: `sh scripts/selfhost.sh` first (the `.bin` is gitignored/stale), then the guarded selfhost tests. **Never run `.selfhost/milo-self.bin` bare** (AGENTS.md guards).
 - Use `/verify` to drive the affected flow, or `/run` to launch the app.
 
 If it failed, say so with the output. Skipped a step? Say that. No hedging when it's genuinely done.

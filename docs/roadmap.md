@@ -193,7 +193,7 @@ That freeze is why `src-milo/` has had no commits since 2026-08-09, and it is de
 
 See [self-hosting.md](self-hosting.md) for the M0–M5 milestone log and the eight oracle miscompiles the self-compile exposed and fixed.
 
-Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; `.selfhost/milo-self.bin` is gitignored), then `bun test tests/selfhost.test.ts`. CI runs the fixpoint and the soundness/HIR ratchets on any commit touching `src-milo/`, `std/`, or the selfhost scripts, and sweeps every fixture nightly. **Never run `.selfhost/milo-self.bin` bare** — see the memory guards in CLAUDE.md.
+Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; `.selfhost/milo-self.bin` is gitignored), then `bun test tests/selfhost.test.ts`. CI runs the fixpoint and the soundness/HIR ratchets on any commit touching `src-milo/`, `std/`, or the selfhost scripts, and sweeps every fixture nightly. **Never run `.selfhost/milo-self.bin` bare** — see the memory guards in AGENTS.md.
 
 ### Platforms
 

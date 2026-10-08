@@ -2,7 +2,7 @@
 // tools/wasm/run.mjs).
 //
 // This arm exports the IDENTICAL surface platform.darwin.milo does (same rule the
-// Windows arm follows — see CLAUDE.md's platform-split note): every `pub` name here
+// Windows arm follows — see AGENTS.md's platform-split note): every `pub` name here
 // also exists there, with the same signature, so any module written against
 // `from "std/platform" import {...}` resolves on every target without an `#ifdef`.
 //
@@ -14,7 +14,7 @@
 //      verbatim from platform.darwin.milo.
 //   2. A `pub extern fn` naming a real POSIX syscall (kqueue, pthread_*, mmap, open,
 //      dlopen, gettimeofday, ...) that tools/wasm/runtime.c does NOT define. These
-//      are also copied verbatim — the Windows-arm convention (CLAUDE.md) is "let the
+//      are also copied verbatim — the Windows-arm convention (AGENTS.md) is "let the
 //      rest fail loudly": a program that never calls one links and runs fine
 //      (--gc-sections drops the unreferenced declare), and one that does gets an
 //      honest `undefined symbol` at link time naming exactly what's missing, never a

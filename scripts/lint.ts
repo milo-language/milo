@@ -92,7 +92,7 @@ for (const f of fileList()) {
     lines = kept;
   }
 
-  // R3: committing code that ACTUALLY sets MILO_RUN_UNGUARDED=1 defeats the OS-crash guards (CLAUDE.md). No auto-fix.
+  // R3: committing code that ACTUALLY sets MILO_RUN_UNGUARDED=1 defeats the OS-crash guards (AGENTS.md). No auto-fix.
   // Only flag a real guard-disabling assignment in an executed context — NOT help text, error strings, comments, or
   // env *reads* (`process.env.X === "1"`) that merely name the token. main.ts implements the flag, so it must name it.
   // Skip the guard-tooling files that necessarily name the token (the guard, this linter, the review driver).

@@ -1,4 +1,4 @@
-// Gate on docs/grammar.ebnf, which CLAUDE.md calls an authoritative reference and which
+// Gate on docs/grammar.ebnf, which AGENTS.md calls an authoritative reference and which
 // nothing had ever compared to the compiler.
 //
 // It described a "Phase 1 subset": no struct, enum, match, impl, trait, import or

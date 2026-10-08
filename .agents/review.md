@@ -31,7 +31,7 @@ Each persona reads the diff for one thing and **owns the docs for its domain** (
 | Persona | Looks for | Owns |
 |---|---|---|
 | **correctness** | logic bugs, missed cases, checker-vs-codegen gaps, UB in `unsafe` | `docs/design.md`, `docs/language-reference.md` |
-| **security / safety** | memory-safety holes, guard bypasses, injection, unsafe FFI | `docs/safety-roadmap.md`, guard rules in `CLAUDE.md` |
+| **security / safety** | memory-safety holes, guard bypasses, injection, unsafe FFI | `docs/safety-roadmap.md`, guard rules in `AGENTS.md` |
 | **performance** | needless allocation/copies, algorithmic regressions, hot-path cost | `benchmarks/` |
 | **maintainability** | naming, dead code, duplication, over-abstraction, clarity | `CONVENTIONS.md`, `docs/scripts.md` |
 | **ai-smells** | hallucinated APIs, plausible-but-wrong code, copy-paste, tests that assert nothing, comments that lie | — |

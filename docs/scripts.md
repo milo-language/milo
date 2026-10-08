@@ -19,7 +19,7 @@ last-verified: 2026-08-15
 ## How to write one well
 - **Self-documenting.** `--help` prints usage; the file's top comment says what/why. First line is a one-sentence purpose.
 - **Bun for TS, POSIX `sh` for glue.** TS scripts: `bun run scripts/foo.ts`. Match the existing style in this dir.
-- **Safe by default.** Anything that runs a compiled milo binary must go through `scripts/guard.ts` (mem/timeout watchdog) — never invoke a milo-self binary bare (CLAUDE.md). Read-only by default; mutation behind an explicit flag.
+- **Safe by default.** Anything that runs a compiled milo binary must go through `scripts/guard.ts` (mem/timeout watchdog) — never invoke a milo-self binary bare (AGENTS.md). Read-only by default; mutation behind an explicit flag.
 - **Composable exit codes.** 0 = ok, non-zero = fail, so hooks/CI can chain them. Print machine-parseable output when a script feeds another.
 - **`--fix` where it makes sense.** A checker that can also repair is worth far more than one that only complains (see `lint.ts`).
 - **No secrets in the file.** Read from env; document required vars in the header.

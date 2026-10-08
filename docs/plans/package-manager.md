@@ -157,7 +157,7 @@ Keep it that way: **no glob import form, ever, for packages or std.** Naming eve
 
 Two stale artifacts to clean up while doing P0:
 
-- `CLAUDE.md` claims `from "std/<name>" import { ... }` "(or `import *`)" — false, no such syntax
+- `AGENTS.md` claims `from "std/<name>" import { ... }` "(or `import *`)" — false, no such syntax
 - `ast.ts:180` types `names` as `string[] | null` with a `// null = glob import` comment; `null` is unreachable since bare imports became an error, leaving dead branches at `resolver.ts:160` and `resolver.ts:328`
 
 ### Open

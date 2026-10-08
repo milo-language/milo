@@ -74,7 +74,7 @@ async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<vo
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-// Keep workers × guard cap below half of RAM (CLAUDE.md). Large CI/dev hosts can
+// Keep workers × guard cap below half of RAM (AGENTS.md). Large CI/dev hosts can
 // report 72+ cores; subtracting two would launch enough clang processes to trip
 // the global guard and return empty, signal-killed build results.
 const COMPILE_JOBS = Number(process.env.MILO_TEST_JOBS)
