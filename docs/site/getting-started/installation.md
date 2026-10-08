@@ -8,7 +8,23 @@ last-verified: 2026-09-22
 
 # Installation
 
-Milo changes quickly, so build from source and `git pull` to stay current.
+## Prebuilt binary
+
+The compiler ships as a single self-contained binary (macOS and Linux, arm64 and x64) with the standard library built in. The `latest` build is rebuilt from every push to `main`, so it is as current as a source checkout.
+
+```sh
+curl -fsSL https://milo-language.github.io/milo/install.sh | sh
+```
+
+This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
+
+::: warning macOS quarantines browser downloads
+A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.
+:::
+
+## From source
+
+For working on the compiler itself.
 
 You need **[Bun](https://bun.sh)** (the compiler is TypeScript) and **clang** (Milo emits LLVM IR and links with clang).
 
@@ -33,17 +49,3 @@ Hello, Milo!
 ```sh
 sudo ln -s "$PWD/milo" /usr/local/bin/milo
 ```
-
-## Prebuilt binary
-
-Releases are single self-contained binaries (macOS and Linux, arm64 and x64) with the standard library built in. They lag `main`.
-
-```sh
-curl -fsSL https://milo-language.github.io/milo/install.sh | sh
-```
-
-This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
-
-::: warning macOS quarantines browser downloads
-A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.
-:::

@@ -19,11 +19,11 @@ fn main(): i32 {
 Compiles through LLVM to a static binary.
 
 ```sh
-git clone https://github.com/milo-language/milo && cd milo
-./milo run examples/hello.milo     # needs bun and clang
+curl -fsSL https://milo-language.github.io/milo/install.sh | sh   # prebuilt compiler, needs clang to link
+milo run hello.milo
 ```
 
-Milo moves fast, so build from source ([install](https://milo-language.github.io/milo/getting-started/installation) has the details and prebuilt binaries).
+The installer fetches a standalone binary for macOS or Linux (arm64 or x64) from the [latest build](https://github.com/milo-language/milo/releases/latest). Milo moves fast, so the latest build tracks `main`. To build from source you also need [bun](https://bun.sh): clone the repo and run `./milo run examples/hello.milo`. [Installation](https://milo-language.github.io/milo/getting-started/installation) has the details.
 
 ## Second-class references
 
