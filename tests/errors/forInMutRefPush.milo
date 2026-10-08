@@ -1,5 +1,8 @@
 // @error: cannot call 'push' on 'v' while a loop iterates over it
+// @error-at: 10:9
+// @note: 8:5 the loop over 'v' (line 8) borrows it for its whole body
 // growing the Vec under a '&mut' element view would move the elements it points at.
+// One error for the one mistake: the loop's '&mut' element view does not report it again.
 pub fn main(): void {
     var v: Vec<i64> = [1, 2, 3]
     for x in &mut v {

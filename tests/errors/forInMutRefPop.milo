@@ -1,5 +1,8 @@
 // @error: cannot call 'pop' on 'v' while a loop iterates over it
+// @error-at: 10:17
+// @note: 8:5 the loop over 'v' (line 8) borrows it for its whole body
 // popping frees the slot the '&mut' element view may point at.
+// One error for the one mistake: the loop's '&mut' element view does not report it again.
 pub fn main(): void {
     var v: Vec<string> = ["a", "b"]
     for x in &mut v {

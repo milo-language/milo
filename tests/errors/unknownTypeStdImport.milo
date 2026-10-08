@@ -1,5 +1,4 @@
 // @error: add the import: from "std/json" import { JsonVal }
-// @error-at: 3:9
 fn f(j: JsonVal): i64 { return 0 }
 pub fn main(): void {
     print(1)

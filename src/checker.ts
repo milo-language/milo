@@ -10,6 +10,8 @@ import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
 import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+const spanKey = (sp: Span): string => `${sp.file ?? ""}:${sp.line}:${sp.col}`;
+
 // Type names the checker builds in rather than reading from a declaration.
 const BUILTIN_GENERIC_TYPE_NAMES = ["Vec", "HashMap", "Heap", "Option", "Result"] as const;
 import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
@@ -599,6 +601,9 @@ type ExprOf<K extends Expr["kind"]> = Extract<Expr, { kind: K }>;
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
+  // checkMutForInSource's "cannot use 'v' inside 'for x in &mut v'" errors by site, so a
+  // loop-freeze error at the same site can replace its less specific twin.
+  private mutForInUses = new Map<string, Diagnostic>();
   // Borrow errors waiting for the holder's next read, which becomes their "still used
   // here" note. Keyed by the holder binding; entries die with the checker.
   private pendingUseNotes = new Map<VarInfo, { diag: Diagnostic; name: string }[]>();
@@ -8676,8 +8681,10 @@ export class TypeChecker {
         const place = this.syntacticPlace(n as unknown as Expr, visit);
         if (place) {
           if (place.root === target.root && overlaps(place.fields, target.fields)) {
-            this.error(`cannot use '${place.text}' inside 'for ${loopVar} in &mut ${target.text}': the loop holds a '&mut' to its elements`, n.span ?? sp,
+            const at = n.span ?? sp;
+            this.error(`cannot use '${place.text}' inside 'for ${loopVar} in &mut ${target.text}': the loop holds a '&mut' to its elements`, at,
               `reach the element through '${loopVar}', or loop by index if the body needs the whole collection`);
+            if (at) this.mutForInUses.set(spanKey(at), this.diagnostics[this.diagnostics.length - 1]);
           }
           return;
         }
@@ -8965,6 +8972,11 @@ export class TypeChecker {
       return;
     }
     if (site?.via === "loop") {
+      // A `for x in &mut v` body already reported this site as a use of 'v'; this
+      // message names the operation and the loop, so it replaces that one.
+      const dup = sp && this.mutForInUses.get(spanKey(sp));
+      const dupAt = dup ? this.diagnostics.indexOf(dup) : -1;
+      if (dupAt >= 0) this.diagnostics.splice(dupAt, 1);
       const line = site.span ? ` (line ${site.span.line})` : "";
       notes.push({ message: `the loop over '${root}'${line} borrows it for its whole body`, span: site.span });
       this.errorWithNotes(`${prefix} while a loop iterates over ${it}`, sp,

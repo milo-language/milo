@@ -1822,7 +1822,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot call 'pop' on 'v' while a loop iterates over it`
 
-**Rationale.** popping frees the slot the '&mut' element view may point at.
+**Rationale.** @note: 8:5 the loop over 'v' (line 8) borrows it for its whole body popping frees the slot the '&mut' element view may point at. One error for the one mistake: the loop's '&mut' element view does not report it again.
 
 *Program:* [`tests/errors/forInMutRefPop.milo`](../tests/errors/forInMutRefPop.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -1832,7 +1832,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot call 'push' on 'v' while a loop iterates over it`
 
-**Rationale.** growing the Vec under a '&mut' element view would move the elements it points at.
+**Rationale.** @note: 8:5 the loop over 'v' (line 8) borrows it for its whole body growing the Vec under a '&mut' element view would move the elements it points at. One error for the one mistake: the loop's '&mut' element view does not report it again.
 
 *Program:* [`tests/errors/forInMutRefPush.milo`](../tests/errors/forInMutRefPush.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
