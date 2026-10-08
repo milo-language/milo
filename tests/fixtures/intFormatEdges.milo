@@ -15,6 +15,7 @@
 // @expect: 4 -128
 // @expect: 1
 // @expect: abcabc-5
+// @expect: 10005 true true
 
 // Integer to decimal (toString, interpolation, print, pushInt) at every digit-count
 // boundary and every width's extremes. The digits come from @milo.fmt.*, not snprintf,
@@ -98,5 +99,11 @@ fn main(): i32 {
     var self = "abc".clone()
     self.pushStr($"{self}{-5}")
     print(self)
+    // the same past REALLOC_MIN_BYTES, where the reserve goes through realloc
+    var wide = "x".repeat(5000)
+    wide.pushStr($"{wide.len}:{wide}")
+    let head = wide.substr(5000, 5005)
+    let tail = wide.endsWith("xxxx")
+    print($"{wide.len} {head == "5000:"} {tail}")
     return 0
 }

@@ -4,9 +4,9 @@
 // @expect: 2000 abc1999
 // @expect: 300 44850
 // @expect: 1500 1500
-// @expect: 4100
+// @expect: 10000
 // @expect: 26 hello world, hello world,
-// @expect: 256 true
+// @expect: 8192 true
 // @expect: 0 0
 
 // Every growth path (push, insert, extend, reserve, string push/pushStr) goes through
@@ -104,9 +104,10 @@ fn reserved() {
 }
 
 fn strPush() {
-    // a static literal (cap 0) grown by push is copied, never realloc'd
+    // a static literal (cap 0) grown by push is copied, never realloc'd; past 4096
+    // bytes the owned copy then regrows through realloc
     var s = "a long static literal that is over sixteen bytes"
-    for i in 0..4052 {
+    for i in 0..9952 {
         s.push(120)
     }
     print(s.len)
@@ -115,10 +116,10 @@ fn strPush() {
 fn strPushSelf() {
     var s = "hello world, "
     s.pushStr(s.clone())
-    // owned (cap > 0) so each self-append regrows through realloc while the
-    // source still points into the old block
+    // owned (cap > 0) and past REALLOC_MIN_BYTES (4096), so the last self-appends
+    // regrow through realloc while the source still points into the old block
     var t = "0123456789abcdef0123456789abcdef".clone()
-    for _ in 0..3 {
+    for _ in 0..8 {
         t.pushStr(t)
     }
     print($"{s.len} {s}")

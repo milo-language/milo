@@ -9900,6 +9900,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `4 -128`
 - `1`
 - `abcabc-5`
+- `10005 true true`
 
 **Rationale.** Integer to decimal (toString, interpolation, print, pushInt) at every digit-count boundary and every width's extremes. The digits come from @milo.fmt.*, not snprintf, so these are the cases a pair-table loop gets wrong: the odd/even digit tail, the single digit, zero, and i64::MIN, whose magnitude has no positive i64.
 
@@ -14531,9 +14532,9 @@ A conforming implementation shall accept this program, and running it shall writ
 - `2000 abc1999`
 - `300 44850`
 - `1500 1500`
-- `4100`
+- `10000`
 - `26 hello world, hello world,`
-- `256 true`
+- `8192 true`
 - `0 0`
 
 **Rationale.** Every growth path (push, insert, extend, reserve, string push/pushStr) goes through realloc: the contents survive each regrow, owned elements are neither dropped nor duplicated by it, and a string whose buffer is a static literal is copied rather than handed to realloc.

@@ -32,6 +32,13 @@ export function noaliasEnabled(): boolean {
   return process.env.MILO_NOALIAS !== "0";
 }
 
+// Below this many live bytes a grow is malloc + memcpy + free rather than realloc. A
+// small block cannot be remapped, so realloc saves no memory there, and macOS's realloc
+// first looks the pointer's zone and size up: respond's string building (buffers of a
+// few hundred bytes) ran 13% slower on realloc than on the copy. At a page and above
+// the remap is what keeps peak RSS at the new size (vec_grow: 132 MB -> 68 MB).
+const REALLOC_MIN_BYTES = 4096;
+
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FieldAccess", "FloatLit",
@@ -9509,12 +9516,13 @@ export class Codegen {
   private get hasRealloc(): boolean { return this.target.os !== "none"; }
 
   // Grow a heap buffer to `count * elemSize` bytes, keeping its first `keepBytes`, and
-  // return the new pointer (the old one is dead afterwards). realloc, so a large buffer
-  // grows in place or by page remap: peak memory stays near the new size instead of
-  // old + new, and nothing is copied when the block can extend. `owned`, when given, is
-  // an i1 that is false for a buffer this code does not own (a string's static literal,
-  // cap 0): that one is copied into a fresh block and never handed to realloc/free.
-  // A null `oldBuf` is fine on both paths (realloc(NULL, n) is malloc).
+  // return the new pointer (the old one is dead afterwards). A buffer holding at least
+  // REALLOC_MIN_BYTES goes through realloc, so it grows in place or by page remap: peak
+  // memory stays near the new size instead of old + new, and nothing is copied when the
+  // block can extend. A smaller one is malloc + memcpy + free (see REALLOC_MIN_BYTES).
+  // `owned`, when given, is an i1 that is false for a buffer this code does not own (a
+  // string's static literal, cap 0): that one is copied into a fresh block and never
+  // handed to realloc or free.
   private emitGrowBytes(lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span, owned?: string): string {
     if (!this.hasRealloc || elemSize === 0) {
       // Zero-size elements stay on malloc: realloc(p, 0) may free p and return null.
@@ -9538,19 +9546,21 @@ export class Codegen {
       return buf;
     }
     this.needsRealloc = true;
-    const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
-    if (!owned) {
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
-      this.emitAllocNullCheck(lines, buf, tag, span);
-      return buf;
-    }
     this.needsMalloc = true;
     this.needsMemcpy = true;
+    this.needsFree = true;
+    const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
+    const big = this.nextTemp();
+    lines.push(`  ${big} = icmp uge i64 ${keepBytes}, ${REALLOC_MIN_BYTES}`);
+    let useRe = big;
+    if (owned) {
+      useRe = this.nextTemp();
+      lines.push(`  ${useRe} = and i1 ${owned}, ${big}`);
+    }
     const reL = this.nextLabel(`${tag}.realloc`);
     const freshL = this.nextLabel(`${tag}.fresh`);
     const joinL = this.nextLabel(`${tag}.grown`);
-    lines.push(`  br i1 ${owned}, label %${reL}, label %${freshL}`);
+    lines.push(`  br i1 ${useRe}, label %${reL}, label %${freshL}`);
     lines.push(`${reL}:`);
     const re = this.nextTemp();
     lines.push(`  ${re} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
@@ -9558,8 +9568,8 @@ export class Codegen {
     lines.push(`${freshL}:`);
     const fresh = this.nextTemp();
     lines.push(`  ${fresh} = call ptr @malloc(i64 ${bytes})`);
-    // A null fresh block is caught after the join; the copy is skipped for it and for a
-    // null source.
+    // A null fresh block is caught after the join (the old one is left alone); the copy
+    // is skipped for it and for a null source.
     const both = this.nextTemp();
     const srcOk = this.nextTemp();
     const dstOk = this.nextTemp();
@@ -9567,10 +9577,15 @@ export class Codegen {
     lines.push(`  ${dstOk} = icmp ne ptr ${fresh}, null`);
     lines.push(`  ${both} = and i1 ${srcOk}, ${dstOk}`);
     const cpL = this.nextLabel(`${tag}.cp`);
+    const freeL = this.nextLabel(`${tag}.free`);
     const freshDoneL = this.nextLabel(`${tag}.freshdone`);
     lines.push(`  br i1 ${both}, label %${cpL}, label %${freshDoneL}`);
     lines.push(`${cpL}:`);
     lines.push(`  call ptr @memcpy(ptr ${fresh}, ptr ${oldBuf}, i64 ${keepBytes})`);
+    if (owned) lines.push(`  br i1 ${owned}, label %${freeL}, label %${freshDoneL}`);
+    else lines.push(`  br label %${freeL}`);
+    lines.push(`${freeL}:`);
+    lines.push(`  call void @free(ptr ${oldBuf})`);
     lines.push(`  br label %${freshDoneL}`);
     lines.push(`${freshDoneL}:`);
     lines.push(`  br label %${joinL}`);
@@ -12307,15 +12322,16 @@ export class Codegen {
   }
 
   // `@milo.str.reserve(s, extra)`: make the %String at `s` hold len + extra bytes plus
-  // the NUL, growing by doubling (16-byte floor). Returns the data pointer, or null when
-  // the allocation failed (the caller aborts with its own source location). A cap-0
-  // buffer is a static literal this string does not own: it is copied, never handed to
-  // realloc or free.
+  // the NUL, growing by doubling (16-byte floor), with emitGrowBytes's realloc policy.
+  // Returns the data pointer, or null when the allocation failed (the caller aborts with
+  // its own source location). A cap-0 buffer is a static literal this string does not
+  // own: it is copied, never handed to realloc or free.
   private strReserveFn(): string {
     if (!this.emittedStrReserve) {
       this.emittedStrReserve = true;
       this.needsMalloc = true;
       this.needsMemcpy = true;
+      this.needsFree = true;
       this.hasStringType = true;
       let grow: string[];
       if (this.hasRealloc) {
@@ -12354,7 +12370,9 @@ export class Codegen {
         "  %tiny = icmp ult i64 %nc0, 16",
         "  %newcap = select i1 %tiny, i64 16, i64 %nc0",
         "  %owned = icmp ugt i64 %cap, 0",
-        "  br i1 %owned, label %re, label %fresh",
+        `  %big = icmp uge i64 %len, ${REALLOC_MIN_BYTES}`,
+        "  %usere = and i1 %owned, %big",
+        "  br i1 %usere, label %re, label %fresh",
         "re:",
         ...grow,
         "fresh:",
@@ -12365,9 +12383,12 @@ export class Codegen {
         "  br i1 %both, label %cp, label %join",
         "cp:",
         "  call ptr @memcpy(ptr %m, ptr %old, i64 %len)",
+        "  br i1 %owned, label %freeold, label %join",
+        "freeold:",
+        "  call void @free(ptr %old)",
         "  br label %join",
         "join:",
-        `  %nb = phi ptr ${reIn}, [ %m, %fresh ], [ %m, %cp ]`,
+        `  %nb = phi ptr ${reIn}, [ %m, %fresh ], [ %m, %cp ], [ %m, %freeold ]`,
         "  %ok = icmp ne ptr %nb, null",
         "  br i1 %ok, label %store, label %fail",
         "fail:",
