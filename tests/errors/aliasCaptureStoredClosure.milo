@@ -1,0 +1,15 @@
+// A closure bound to a local and then passed carries its captures to the call just like
+// the literal would.
+fn f(x: &mut i64, g: () => void) {
+    x = 1
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    let c = () => { n += 1 }
+    f(&mut n, c)
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

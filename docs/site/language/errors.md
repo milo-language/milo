@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 402 distinct messages across 498 programs the compiler must reject.
+Every error message the test suite pins: 404 distinct messages across 507 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -67,6 +67,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
 - [`'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'`](#merge-in-impl-merge-for-box-i64-takes-other-box-string-the-trait-merge-declares-other-self)
 - [`'Meters' is not a generic type`](#meters-is-not-a-generic-type)
+- [`'n' is captured by a closure argument and borrowed in the same call`](#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'n' shadows an outer binding`](#n-shadows-an-outer-binding)
 - [`'nonexistent' is not exported by 'lib/math'`](#nonexistent-is-not-exported-by-lib-math)
 - [`'Ops.read' is a C function pointer and cannot be used as a value`](#ops-read-is-a-c-function-pointer-and-cannot-be-used-as-a-value)
@@ -101,6 +102,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)`](#v-goes-out-of-scope-before-p-which-would-still-point-into-its-buffer-from-v-ptr-on-line-13)
 - [`'v' is borrowed by a scoped task and written by the Task.scope body`](#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body)
 - [`'v' is borrowed mutably and shared in the same call`](#v-is-borrowed-mutably-and-shared-in-the-same-call)
+- [`'v' is moved and borrowed in the same call`](#v-is-moved-and-borrowed-in-the-same-call)
 - [`'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-reassigned-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'v' is written here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-written-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'v' may reallocate here while 'base' still points into its buffer (from 'v.ptr()' on line 10)`](#v-may-reallocate-here-while-base-still-points-into-its-buffer-from-v-ptr-on-line-10)
@@ -1456,6 +1458,175 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/aliasTakesNoTypeArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasTakesNoTypeArgs.milo)</sub>
 
+## `'n' is captured by a closure argument and borrowed in the same call` {#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call}
+
+A generic call checks closure captures like any other call. The closure writes `n`, so it stays by-reference (a move would drop the write) and conflicts with `&mut n`.
+
+```milo skip
+fn apply<T>(x: &mut T, v: T, g: () => void) {
+    x = v
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    apply(&mut n, 5, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureGenericCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureGenericCall.milo)</sub>
+
+A method's non-receiver arguments: `&mut n` beside a closure that writes `n`.
+
+```milo skip
+struct Runner { runs: i64 }
+
+impl Runner {
+    fn run(self: &mut Self, x: &mut i64, g: () => void) {
+        self.runs += 1
+        x = 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var r = Runner { runs: 0 }
+    var n: i64 = 0
+    r.run(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureMethodArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureMethodArg.milo)</sub>
+
+The receiver is a `&mut` argument too: a closure that writes the receiver's variable cannot be passed to a `&mut self` method on it.
+
+```milo skip
+struct Counter { n: i64 }
+
+impl Counter {
+    fn each(self: &mut Self, g: () => void) {
+        self.n += 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var n = Counter { n: 0 }
+    n.each(() => { n.n += 10 })
+    print(n.n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureMethodReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureMethodReceiver.milo)</sub>
+
+A closure argument that writes its capture is a `&mut` of that variable for the whole call, so passing it beside `&mut n` hands the callee two live mutable paths to `n`.
+
+```milo skip
+fn f(x: &mut i64, g: () => void) {
+    x = 1
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    f(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureMutArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureMutArg.milo)</sub>
+
+A closure that captures another closure can run it, so it carries that closure's captures too: `() => c()` writes `n` as surely as `() => { n += 1 }` does.
+
+```milo skip
+fn f(x: &mut i64, g: () => void) {
+    x = 1
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    let c = () => { n += 1 }
+    f(&mut n, () => { c() })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureNestedClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureNestedClosure.milo)</sub>
+
+A closure that only reads its capture is a `&` of it, which still conflicts with a `&mut` of the same variable in the same call: the callee writes `x` and the closure reads `n` through the other path.
+
+```milo skip
+fn f(x: &mut i64, g: () => i64): i64 {
+    x = 1
+    return g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    print(f(&mut n, () => n))
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureReadMutArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureReadMutArg.milo)</sub>
+
+A static method call checks closure captures like any other call.
+
+```milo skip
+struct S { a: i64 }
+
+impl S {
+    fn apply(x: &mut i64, g: () => void) {
+        x = 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    S.apply(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureStaticCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureStaticCall.milo)</sub>
+
+A closure bound to a local and then passed carries its captures to the call just like the literal would.
+
+```milo skip
+fn f(x: &mut i64, g: () => void) {
+    x = 1
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    let c = () => { n += 1 }
+    f(&mut n, c)
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureStoredClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureStoredClosure.milo)</sub>
+
 ## `'n' shadows an outer binding` {#n-shadows-an-outer-binding}
 
 A closure parameter shadowing an enclosing local used to be rejected with the same bare, location-less diagnostic as the match-arm case: closure params are declared without a span the same way function params were.
@@ -2422,6 +2593,26 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/ptrInlineAliasMutArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrInlineAliasMutArg.milo)</sub>
+
+## `'v' is moved and borrowed in the same call` {#v-is-moved-and-borrowed-in-the-same-call}
+
+A `move` closure moves a non-Copy capture into its environment as the argument is built, so the callee would get `&mut v` into storage the closure now owns.
+
+```milo skip
+fn f(x: &mut Vec<i64>, g: () => i64): i64 {
+    x.push(1)
+    return g()
+}
+
+fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    print(f(&mut v, move () => v.len))
+    return 0
+}
+// @error: 'v' is moved and borrowed in the same call
+```
+
+<sub>[tests/errors/aliasCaptureMoveClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasCaptureMoveClosure.milo)</sub>
 
 ## `'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 9)` {#v-is-reassigned-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9}
 

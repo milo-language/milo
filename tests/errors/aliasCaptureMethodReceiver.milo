@@ -1,0 +1,18 @@
+// The receiver is a `&mut` argument too: a closure that writes the receiver's variable
+// cannot be passed to a `&mut self` method on it.
+struct Counter { n: i64 }
+
+impl Counter {
+    fn each(self: &mut Self, g: () => void) {
+        self.n += 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var n = Counter { n: 0 }
+    n.each(() => { n.n += 10 })
+    print(n.n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

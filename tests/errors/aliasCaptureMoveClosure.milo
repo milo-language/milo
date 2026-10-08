@@ -1,0 +1,13 @@
+// A `move` closure moves a non-Copy capture into its environment as the argument is
+// built, so the callee would get `&mut v` into storage the closure now owns.
+fn f(x: &mut Vec<i64>, g: () => i64): i64 {
+    x.push(1)
+    return g()
+}
+
+fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    print(f(&mut v, move () => v.len))
+    return 0
+}
+// @error: 'v' is moved and borrowed in the same call

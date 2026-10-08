@@ -1,0 +1,54 @@
+// Shapes the call-site exclusivity check must keep accepting next to a closure
+// argument: a closure over a DIFFERENT variable than the `&mut` one, a read-only capture
+// beside a `&` borrow of the same variable, a closure called after the call returns, and
+// a move closure that copies a Copy capture.
+struct Box { v: i64 }
+
+impl Box {
+    fn peek(self: &Self, g: () => i64): i64 {
+        return self.v + g()
+    }
+}
+
+fn bump(x: &mut i64, g: () => void) {
+    x += 100
+    g()
+}
+
+fn both(x: &i64, g: () => i64): i64 {
+    return x + g()
+}
+
+fn later(x: &mut i64) {
+    x += 1
+}
+
+fn copied(x: &mut i64, g: () => i64): i64 {
+    x = 50
+    return g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    var m: i64 = 0
+    bump(&mut n, () => { m += 1 })
+    print(n)
+    print(m)
+    print(both(n, () => n * 2))
+    let b = Box { v: 3 }
+    print(b.peek(() => b.v))
+    let c = () => { n += 1 }
+    later(&mut n)
+    c()
+    print(n)
+    print(copied(&mut n, move () => n))
+    print(n)
+    return 0
+}
+// @expect: 100
+// @expect: 1
+// @expect: 300
+// @expect: 6
+// @expect: 102
+// @expect: 102
+// @expect: 50

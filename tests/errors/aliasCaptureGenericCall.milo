@@ -1,0 +1,14 @@
+// A generic call checks closure captures like any other call. The closure writes `n`, so
+// it stays by-reference (a move would drop the write) and conflicts with `&mut n`.
+fn apply<T>(x: &mut T, v: T, g: () => void) {
+    x = v
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    apply(&mut n, 5, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

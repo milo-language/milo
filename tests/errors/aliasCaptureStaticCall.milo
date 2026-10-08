@@ -1,0 +1,17 @@
+// A static method call checks closure captures like any other call.
+struct S { a: i64 }
+
+impl S {
+    fn apply(x: &mut i64, g: () => void) {
+        x = 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    S.apply(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

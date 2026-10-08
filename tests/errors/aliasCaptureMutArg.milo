@@ -1,0 +1,14 @@
+// A closure argument that writes its capture is a `&mut` of that variable for the whole
+// call, so passing it beside `&mut n` hands the callee two live mutable paths to `n`.
+fn f(x: &mut i64, g: () => void) {
+    x = 1
+    g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    f(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

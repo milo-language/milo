@@ -1,8 +1,9 @@
 // Aliasing shapes safe code may still write, which `noalias` on `&mut` params must not
 // break (tests/refParamAttrs.test.ts pins that the attribute is withheld for the first two):
-// a global passed by `&mut` and also written by the callee, a closure that writes what a
-// `&mut` argument points at, and two `&mut` pattern bindings of one payload (disjoint, so
-// the exclusivity check must keep accepting them).
+// a global passed by `&mut` and also written by the callee, a closure the callee builds
+// that writes what its `&mut` param points at (a closure ARGUMENT over that place is a
+// compile error, tests/errors/aliasCapture*.milo), and two `&mut` pattern bindings of one
+// payload (disjoint, so the exclusivity check must keep accepting them).
 var G: i64 = 1
 
 fn bumpBoth(x: &mut i64): i64 {
@@ -11,7 +12,8 @@ fn bumpBoth(x: &mut i64): i64 {
     return x
 }
 
-fn callWith(x: &mut i64, f: () => void): i64 {
+fn callWith(x: &mut i64): i64 {
+    let f = () => { x = x + 1 }
     x = 10
     f()
     return x
@@ -36,8 +38,7 @@ fn main(): i32 {
     print(bumpBoth(&mut G))
     print(G)
     var n: i64 = 1
-    let bump = () => { n = n + 1 }
-    print(callWith(&mut n, bump))
+    print(callWith(&mut n))
     print(n)
     var p = Pair.Two(1, 2)
     swapPair(&mut p)

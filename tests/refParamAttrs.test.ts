@@ -111,7 +111,8 @@ fn bumpGlobal(x: &mut i64): i64 {
     return x
 }
 fn viaHelper(x: &mut i64): i64 { return bumpGlobal(&mut x) }
-fn callWith(x: &mut i64, f: () => void): i64 {
+fn callWith(x: &mut i64): i64 {
+    let f = () => { x = x + 1 }
     x = 10
     f()
     return x
@@ -122,7 +123,7 @@ fn main(): i32 {
     axpy(&mut y, x, 2.0)
     print(bumpGlobal(&mut G) + viaHelper(&mut G))
     var n: i64 = 1
-    print(callWith(&mut n, () => { n = n + 1 }))
+    print(callWith(&mut n))
     return 0
 }
 `;
@@ -139,7 +140,9 @@ test("noalias is withheld where a global or a closure can alias the param", () =
   // G escapes (passed by &mut) and the callee writes it, directly or through a call
   expect(defineOf(ir, "bumpGlobal")).not.toContain("noalias");
   expect(defineOf(ir, "viaHelper")).not.toContain("noalias");
-  // the closure body writes `n`, which the &mut param points at
+  // the closure body writes the param through its environment, a pointer loaded from
+  // memory rather than one LLVM can see is based on %x. (A closure ARGUMENT over the
+  // place a &mut argument names is a compile error: tests/errors/aliasCapture*.milo.)
   expect(defineOf(ir, "callWith")).not.toContain("noalias");
 });
 

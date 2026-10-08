@@ -1,0 +1,19 @@
+// A method's non-receiver arguments: `&mut n` beside a closure that writes `n`.
+struct Runner { runs: i64 }
+
+impl Runner {
+    fn run(self: &mut Self, x: &mut i64, g: () => void) {
+        self.runs += 1
+        x = 1
+        g()
+    }
+}
+
+fn main(): i32 {
+    var r = Runner { runs: 0 }
+    var n: i64 = 0
+    r.run(&mut n, () => { n += 1 })
+    print(n)
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call

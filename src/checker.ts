@@ -220,6 +220,9 @@ interface VarInfo {
   copyBind?: boolean;
   // Holds a `move` closure whose body moves a capture out, so calling it consumes it.
   callsOnce?: boolean;
+  // Holds a closure: the literals it may have been bound or assigned from, so passing
+  // the binding to a call is checked for exclusivity like passing those literals.
+  closureSources?: Expr[];
   // `moved` was set by CALLING a call-once closure rather than by transferring it,
   // which needs a different explanation than "ownership was transferred earlier".
   consumedByCall?: boolean;
@@ -288,6 +291,10 @@ export interface CaptureInfo {
   // Captures live in the environment's own slots, so the move zeroes the slot — which
   // makes the closure call-once: a second call reads the emptied slot.
   consumedInClosure?: boolean;
+  // The captured binding, resolved when the closure literal closes. The call-site
+  // exclusivity check uses it (not `name`, which a later binding may shadow) to see a
+  // closure argument's captures as borrows of the places they name.
+  info?: VarInfo;
 }
 
 export interface FnSig {
@@ -6385,6 +6392,7 @@ export class TypeChecker {
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         const letInfo = this.lookup(stmt.name);
         if (letInfo) this.bindPointerViews(stmt.name, letInfo, stmt.value);
+        if (letInfo) this.noteClosureSources(letInfo, stmt.value);
         // An unannotated `let x = <const-int-value>` stays width-adaptable until
         // its first use (see VarInfo.flexInt): its default i32 can widen to an
         // i64 (etc.) context without an `as` cast, since the value is literals.
@@ -6420,6 +6428,7 @@ export class TypeChecker {
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
           const varInfo = this.lookup(stmt.name);
           if (varInfo) this.bindPointerViews(stmt.name, varInfo, stmt.value);
+          if (varInfo) this.noteClosureSources(varInfo, stmt.value);
           if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
           this.lintIndexClone(stmt.value, bindingType, sp);
         }
@@ -6448,7 +6457,7 @@ export class TypeChecker {
         // ident-ok: an Ident target replaces the WHOLE variable; the field case is the else branch, via staticFieldPath
         if (stmt.target.kind === "Ident") {
           const whole = this.lookup(stmt.target.name);
-          if (whole) this.clearMovedPlace(whole, null);
+          if (whole) { this.clearMovedPlace(whole, null); this.noteClosureSources(whole, stmt.value); }
         } else {
           const place = this.staticFieldPath(stmt.target);
           const rootInfo = place ? this.lookup(place.root) : null;
@@ -8184,31 +8193,37 @@ export class TypeChecker {
   // writing through); `movesExclusive: false` is for extern calls, where a `string`
   // argument to a `*u8` parameter is a borrow of its bytes, not a move.
   private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined, movesExclusive = true) {
-    const muts: { root: unknown; name: string; fields: string[] | null; span: Span | undefined; moved: boolean }[] = [];
-    const shared: { root: unknown; name: string; fields: string[] | null; via?: string }[] = [];
-    const mutSteps: ({ root: unknown; name: string; steps: string[]; moved: boolean } | null)[] = [];
-    for (const arg of args) {
+    // `arg` is the index of the argument a place came from, so two places off one
+    // argument (a closure's captures) are never compared with each other.
+    type Use = { arg: number; root: unknown; name: string; fields: string[] | null; steps: string[]; span: Span | undefined; moved: boolean; via?: string; captured?: boolean };
+    const muts: Use[] = [];
+    const shared: Use[] = [];
+    args.forEach((arg, i) => {
+      // A closure argument reaches what it captures for as long as the callee may run
+      // it: a capture the body writes is a `&mut` of that place, one it only reads a `&`,
+      // and a non-Copy capture of a `move` closure moves the place into the environment.
+      for (const c of this.closureArgCaptures(arg)) {
+        const use = { arg: i, ...this.capturePlace(c.cap), span: arg.span ?? sp, moved: false, captured: true };
+        if (c.isMove) { if (!this.isCopyType(c.cap.type)) muts.push({ ...use, moved: true }); }
+        else (c.cap.mutatedInClosure ? muts : shared).push(use);
+      }
       const borrow = this.borrowModeOf(arg);
       const moved = !borrow && movesExclusive && this.moveRequested.has(arg) && this.isMovedPlaceArg(arg);
       const ab = borrow ?? (moved ? { mutable: true } : null);
-      mutSteps.push(null);
       if (!ab) {
         // An inline `v.ptr()` / `s.cstr()` argument is a shared borrow of its source for
         // the duration of the call: `growRead(v.ptr(), v)` with `v: &mut Vec<u8>` pushed
         // through the reference and then read the stale pointer (h4-inline-alias).
         for (const pv of this.pointerViewsIn(arg)) {
           const p = this.exclusivityPlace(pv.source);
-          if (p) shared.push({ root: p.root, name: p.name, fields: p.fields, via: pv.call });
+          if (p) shared.push({ arg: i, ...p, span: arg.span ?? sp, moved: false, via: pv.call });
         }
-        continue;
+        return;
       }
       const p = this.exclusivityPlace(arg);
-      if (!p) continue;
-      if (ab.mutable) {
-        muts.push({ root: p.root, name: p.name, fields: p.fields, span: arg.span ?? sp, moved });
-        mutSteps[mutSteps.length - 1] = { root: p.root, name: p.name, steps: p.steps, moved };
-      } else shared.push({ root: p.root, name: p.name, fields: p.fields });
-    }
+      if (!p) return;
+      (ab.mutable ? muts : shared).push({ arg: i, ...p, span: arg.span ?? sp, moved });
+    });
     // Two accesses off the same root can alias only if their field paths overlap —
     // one a prefix of the other. Divergence at distinct field names (e.g. self.pos vs
     // self.src) is provably disjoint, so a &mut into one can't invalidate a & into the
@@ -8219,10 +8234,17 @@ export class TypeChecker {
       for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
       return true;
     };
+    const captured = (a: Use, b: Use, name: string): boolean => {
+      if (!a.captured && !b.captured) return false;
+      this.error(`'${name}' is captured by a closure argument and borrowed in the same call`, a.captured ? a.span : b.span,
+        `the callee may run the closure while it holds the other argument into '${name}', so one place has two live paths and at least one writes; pass what the closure needs as a parameter, or split the call into two statements`);
+      return true;
+    };
     for (const m of muts) {
       for (const s of shared) {
-        if (m.root === s.root && overlaps(m.fields, s.fields)) {
+        if (m.arg !== s.arg && m.root === s.root && overlaps(m.fields, s.fields)) {
           if (m.moved) { this.error(`'${m.name}' is moved and borrowed in the same call`, m.span, `the callee owns the moved value and may drop or change it while reading through the '&' argument into it; clone one of them or split the call into two statements`); continue; }
+          if (captured(m, s, m.name)) continue;
           this.error(`'${m.name}' is borrowed mutably and shared in the same call`, m.span,
             s.via
               ? `a mutation through the '&var'/'&mut' argument could reallocate '${m.name}' under '${s.via}', which points into its buffer: take the pointer after the call, or split the call into two statements`
@@ -8238,35 +8260,78 @@ export class TypeChecker {
     // pair (flagged) from two siblings like `v[i]`/`v[j]` (a legitimate two-element
     // borrow, not flagged). Identical non-indexed places (`v` twice) are two `&mut`
     // to the same object and are flagged as well.
-    for (let i = 0; i < args.length; i++) {
-      for (let j = i + 1; j < args.length; j++) {
-        const a = mutSteps[i], b = mutSteps[j];
-        if (!a || !b || a.root !== b.root) continue;
-        const ra = this.constSliceRange(args[i]), rb = this.constSliceRange(args[j]);
+    for (let i = 0; i < muts.length; i++) {
+      for (let j = i + 1; j < muts.length; j++) {
+        const a = muts[i], b = muts[j];
+        if (a.arg === b.arg || a.root !== b.root) continue;
+        const sp = a.span ?? b.span;
+        const ra = a.captured || b.captured ? null : this.constSliceRange(args[a.arg]);
+        const rb = ra ? this.constSliceRange(args[b.arg]) : null;
         if (ra && rb && a.steps.length === b.steps.length) {
           // Two `&mut` windows into one buffer with literal bounds: disjointness is
           // decidable right here, so overlap is a rejectable aliasing violation rather
           // than the "may be distinct elements" case aliasesByContainment lets pass.
           // Non-literal bounds stay permissive — that split needs the prover.
           if (ra.lo < rb.hi && rb.lo < ra.hi) {
-            this.error(`'${a.name}' is borrowed mutably twice in the same call`, args[i].span ?? args[j].span ?? undefined,
+            this.error(`'${a.name}' is borrowed mutably twice in the same call`, sp,
               `the ranges ${ra.lo}..${ra.hi} and ${rb.lo}..${rb.hi} overlap, so both arguments are '&mut' views of the same elements — make the windows disjoint or split the call into two statements`);
           }
           continue;
         }
         if (this.aliasesByContainment(a.steps, b.steps)) {
-          const sp = args[i].span ?? args[j].span ?? undefined;
           if (a.moved || b.moved) {
             this.error(`'${a.name}' is moved and borrowed in the same call`, sp,
               `the callee owns the moved value and may drop it (freeing what the other argument points into) while still writing through that argument; clone one of them or split the call into two statements`);
             continue;
           }
+          if (captured(a, b, a.name)) continue;
           this.error(`'${a.name}' is borrowed mutably twice in the same call`, sp,
             `one argument is a container and the other borrows into it (or they are the same place) — a mutation through one (e.g. a 'push' that reallocates) could invalidate the other; split the call into two statements or clone one argument`);
-          continue;
         }
       }
     }
+  }
+
+  // The captures a call argument carries into the callee: a closure literal's own, or
+  // those of every literal a closure binding was bound or assigned from
+  // (VarInfo.closureSources). A captured closure binding passes on its own captures, since
+  // running the outer closure may run it. A closure held in a field or element is not
+  // tracked: a by-reference one cannot be stored there.
+  private closureArgCaptures(arg: Expr): { cap: CaptureInfo; isMove: boolean }[] {
+    // ident-ok: a closure binding is a whole variable, not a place with steps
+    const sources = arg.kind === "Closure" ? [arg] : arg.kind === "Ident" ? this.lookup(arg.name)?.closureSources ?? [] : [];
+    const out: { cap: CaptureInfo; isMove: boolean }[] = [];
+    const seen = new Set<Expr>();
+    const walk = (src: Expr) => {
+      if (seen.has(src)) return;
+      seen.add(src);
+      for (const cap of this.closureCaptures.get(src) ?? []) {
+        if (!cap.info) continue;
+        out.push({ cap, isMove: !!(src as { isMove?: boolean }).isMove });
+        for (const inner of cap.info.closureSources ?? []) walk(inner);
+      }
+    };
+    for (const src of sources) walk(src);
+    return out;
+  }
+
+  // Record the closure literals `value` may evaluate to as sources of `info`. Assignment
+  // adds to them rather than replacing, since a branch may or may not have run.
+  private noteClosureSources(info: VarInfo, value: Expr | undefined) {
+    if (!value) return;
+    // ident-ok: copying a closure binding copies the literals it may hold
+    const from = value.kind === "Closure" ? [value] : value.kind === "Ident" ? this.lookup(value.name)?.closureSources : undefined;
+    if (from?.length) info.closureSources = [...(info.closureSources ?? []), ...from];
+  }
+
+  // A capture is of the whole binding, so its place is the binding itself, or for a ref
+  // binding the storage it points into (see exclusivityPlace).
+  private capturePlace(cap: CaptureInfo): { root: unknown; name: string; fields: string[] | null; steps: string[] } {
+    const info = cap.info!;
+    const into = info.refInto;
+    if (!into) return { root: info, name: cap.name, fields: [], steps: [] };
+    const fields = into.steps.every(s => s.tag === "field") ? into.steps.map(s => (s as { name: string }).name) : null;
+    return { root: into.root, name: into.name, fields, steps: into.steps.map(stepKey) };
   }
 
   // The literal bounds of `v[lo..hi]` (which parses as `v.slice(lo, hi)`), or null when
@@ -10900,6 +10965,7 @@ export class TypeChecker {
           // until `x + n` against an i32 narrows it. Re-read the type now so the env
           // slot matches the width every use in the body was checked against.
           cap.type = info.type;
+          cap.info = info;
           this.freeze(info, null, "capture");
           break;
         }

@@ -1,0 +1,14 @@
+// A closure that only reads its capture is a `&` of it, which still conflicts with a
+// `&mut` of the same variable in the same call: the callee writes `x` and the closure
+// reads `n` through the other path.
+fn f(x: &mut i64, g: () => i64): i64 {
+    x = 1
+    return g()
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    print(f(&mut n, () => n))
+    return 0
+}
+// @error: 'n' is captured by a closure argument and borrowed in the same call
