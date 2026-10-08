@@ -1,0 +1,88 @@
+// Enum payloads are a union of per-variant field structs: each variant's fields sit at
+// their natural size and alignment, the union takes the largest variant, and the i32 tag
+// is padded only up to the union's alignment. The `After*` structs expose the enum's
+// alignment through the padding after a leading byte.
+// @expect: 8
+// @expect: 8
+// @expect: 8
+// @expect: 8
+// @expect: 8
+// @expect: 16
+// @expect: 16
+// @expect: 32
+// @expect: 32
+// @expect: 8
+// @expect: 12
+// @expect: 4
+// @expect: 8
+// @expect: 32
+// @expect: 8
+// @expect: 16
+// @expect: 12
+// @expect: 24
+// @expect: 8
+// @expect: 8
+// @expect: 12
+// @expect: 24
+// @expect: 8
+// @expect: 12
+// @expect: 12
+// @expect: 24
+// @expect: 24
+
+pub enum TwoI32 { A(i32, i32), B }
+
+pub enum Op { Push(i32), Add, Jmp(u16, u8) }
+
+pub enum Fieldless { X, Y, Z }
+
+pub enum Ev { Click(i32, i32, u8), Key(u32, bool), Scroll(f64), Text(string) }
+
+pub enum Mixed { F(f32), H(i16, i8) }
+
+pub enum Nested { In(Option<i32>), Wide(i64) }
+
+pub enum Tree { Leaf(i32), Node(Heap<Tree>, Heap<Tree>) }
+
+pub enum G<T> { One(T), Two(T, T), Nothing }
+
+pub enum Small { S(u8, u8), T }
+
+pub struct AfterByte { b: u8, e: Option<i8> }
+
+pub struct AfterByte4 { b: u8, e: Option<i32> }
+
+pub struct AfterByte8 { b: u8, e: Option<i64> }
+
+pub struct Holder { tag: u8, op: Op, two: TwoI32 }
+
+pub fn main(): i32 {
+    print(sizeOf<Option<i8>>())
+    print(sizeOf<Option<bool>>())
+    print(sizeOf<Option<i16>>())
+    print(sizeOf<Option<i32>>())
+    print(sizeOf<Option<f32>>())
+    print(sizeOf<Option<i64>>())
+    print(sizeOf<Option<f64>>())
+    print(sizeOf<Option<string>>())
+    print(sizeOf<Result<i32, string>>())
+    print(sizeOf<Result<i32, i32>>())
+    print(sizeOf<TwoI32>())
+    print(sizeOf<Fieldless>())
+    print(sizeOf<Op>())
+    print(sizeOf<Ev>())
+    print(sizeOf<Mixed>())
+    print(sizeOf<Nested>())
+    print(sizeOf<Option<Option<i32>>>())
+    print(sizeOf<Tree>())
+    print(sizeOf<G<i8>>())
+    print(sizeOf<G<u16>>())
+    print(sizeOf<G<Fieldless>>())
+    print(sizeOf<G<i64>>())
+    print(sizeOf<Small>())
+    print(sizeOf<AfterByte>())
+    print(sizeOf<AfterByte4>())
+    print(sizeOf<AfterByte8>())
+    print(sizeOf<Holder>())
+    return 0
+}

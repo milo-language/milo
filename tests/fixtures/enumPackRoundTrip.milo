@@ -1,0 +1,267 @@
+// Construct and match every payload shape the packed enum layout has to agree on: mixed
+// widths (a u8 after an i32 lands at offset 4 of the payload, not in its own 8-byte slot),
+// f32/f64, bool, nested enums, strings, Vec, Heap, generic payloads, Drop payloads, and
+// enums held in structs, Vecs, HashMaps and closures. The output is the same as on the
+// old slot layout; only the sizes changed.
+// @expect: Click(-7,300000,255)
+// @expect: Key(4000000000,true)
+// @expect: Scroll(-2.5)
+// @expect: Text(hi there)
+// @expect: Mix(9,1.5,-300,true,9000000000)
+// @expect: Quit
+// @expect: Mix(9,1.5,-300,true,9000000000)
+// @expect: popped click -7 255
+// @expect: popped 6
+// @expect: 3 Key(17,false) -4 65535
+// @expect: 1 Mix(200,-0.25,7,false,-1) 99 2
+// @expect: Wrap(P(-12,250),8)
+// @expect: Wrap(Q(3.25),9)
+// @expect: Opt(42,200)
+// @expect: Opt(-1,5)
+// @expect: Many(2)
+// @expect: Boxed(Wrap(P(1,2),3))
+// @expect: Empty
+// @expect: Boxed(Wrap(P(1,2),3))
+// @expect: -5 127 0
+// @expect: ab
+// @expect: 0.5
+// @expect: 12
+// @expect: 2 0 0
+// @expect: 5
+// @expect: true true
+// @expect: 2000
+// @expect: 1
+// @expect: 77
+// @expect: -9 11
+// @expect: 1007 0
+// @expect: err neg
+// @expect: -128
+// @expect: -128
+// @expect: 0
+// @expect: 127
+// @expect: Mix(4,5.5,6,true,7)
+// @expect: Click(1,2,3)
+// @expect: true
+// @expect: 9 0
+// @expect: Mix(1,2,3,true,4) 250
+// @expect: has 7 1
+// @expect: str -1 s
+// @expect: no
+// @expect: has 8 2
+// @expect: after owned
+// @expect: {"a":-3,"b":1.5,"c":true,"d":null}
+// @expect: true -3 true
+// @expect: -2
+// @expect: task Mix(5,6.5,-7,false,8) 42
+// @expect: drop 1
+// @expect: drop 2
+from "std/runtime" import { Task, schedulerRunToCompletion }
+
+enum Ev { Click(i32, i32, u8), Key(u32, bool), Scroll(f64), Text(string), Mix(u8, f32, i16, bool, i64), Quit }
+
+enum Inner { P(i16, u8), Q(f64) }
+
+enum Outer { Wrap(Inner, u8), Opt(Option<i32>, Option<u8>), Many(Vec<i32>), Boxed(Heap<Outer>), Empty }
+
+enum G<T> { One(T), Two(T, T), Nothing }
+
+enum Tree { Leaf(i32), Node(Heap<Tree>, Heap<Tree>) }
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print("drop ", self.id) }
+}
+
+enum Owned { Has(u8, Res), Str(i8, string), No }
+
+struct Holder { b: u8, ev: Ev, small: Option<i8>, tail: u16 }
+
+@derive(Json)
+struct Doc { a: Option<i32>, b: Option<f32>, c: Option<bool>, d: Option<string> }
+
+fn show(e: &Ev): string {
+    match e {
+        Ev.Click(x, y, b) => { return "Click(" + x.toString() + "," + y.toString() + "," + b.toString() + ")" }
+        Ev.Key(k, down) => { return "Key(" + k.toString() + "," + down.toString() + ")" }
+        Ev.Scroll(d) => { return "Scroll(" + d.toString() + ")" }
+        Ev.Text(s) => { return "Text(" + s + ")" }
+        Ev.Mix(a, f, h, t, w) => { return "Mix(" + a.toString() + "," + f.toString() + "," + h.toString() + "," + t.toString() + "," + w.toString() + ")" }
+        Ev.Quit => { return "Quit" }
+    }
+}
+
+fn showOuter(o: &Outer): string {
+    match o {
+        Outer.Wrap(inner, t) => {
+            match inner {
+                Inner.P(h, b) => { return "Wrap(P(" + h.toString() + "," + b.toString() + ")," + t.toString() + ")" }
+                Inner.Q(d) => { return "Wrap(Q(" + d.toString() + ")," + t.toString() + ")" }
+            }
+        }
+        Outer.Opt(a, b) => { return "Opt(" + (a ?? -1).toString() + "," + (b ?? 0).toString() + ")" }
+        Outer.Many(v) => { return "Many(" + v.len().toString() + ")" }
+        Outer.Boxed(h) => { return "Boxed(" + showOuter(*h) + ")" }
+        Outer.Empty => { return "Empty" }
+    }
+}
+
+fn sumG(g: &G<i8>): i32 {
+    match g {
+        G.One(a) => { return a as i32 }
+        G.Two(a, b) => { return (a as i32) + (b as i32) }
+        G.Nothing => { return 0 }
+    }
+}
+
+fn depth(t: &Tree): i32 {
+    match t {
+        Tree.Leaf(v) => { return v }
+        Tree.Node(l, r) => { return depth(*l) + depth(*r) }
+    }
+}
+
+fn halve(x: i32): Option<i8> {
+    if x % 2 == 0 { return Some((x / 2) as i8) }
+    return None
+}
+
+fn chain(x: i32): Option<i8> {
+    let h = halve(x)?
+    let q = halve(h as i32)?
+    return Some(q)
+}
+
+fn parse(x: i32): Result<u8, string> {
+    if x < 0 { return Err("neg") }
+    return Ok(x as u8)
+}
+
+fn parsePlus(x: i32): Result<u16, string> {
+    let v = parse(x)?
+    return Ok((v as u16) + 1000)
+}
+
+fn firstSmall(v: &Vec<Option<i8>>): i8 {
+    let Some(x) = v.get(0) ?? None else { return -1 }
+    return x
+}
+
+fn main() {
+    var evs: Vec<Ev> = Vec.new()
+    evs.push(Ev.Click(-7, 300000, 255))
+    evs.push(Ev.Key(4000000000, true))
+    evs.push(Ev.Scroll(-2.5))
+    evs.push(Ev.Text("hi there"))
+    evs.push(Ev.Mix(9, 1.5, -300, true, 9000000000))
+    evs.push(Ev.Quit)
+    for e in evs { print(show(e)) }
+    let copy = evs.clone()
+    print(show(copy.get(4)!))
+    var i = 0
+    while let Some(e) = evs.pop() {
+        if let Ev.Click(x, _, b) = e { print("popped click ", x, " ", b) }
+        i = i + 1
+    }
+    print("popped ", i)
+
+    let h = Holder { b: 3, ev: Ev.Key(17, false), small: Some(-4), tail: 65535 }
+    print(h.b, " ", show(h.ev), " ", h.small ?? 0, " ", h.tail)
+    let h2 = Holder { b: 1, ev: Ev.Mix(200, -0.25, 7, false, -1), small: None, tail: 2 }
+    print(h2.b, " ", show(h2.ev), " ", h2.small ?? 99, " ", h2.tail)
+
+    var outs: Vec<Outer> = Vec.new()
+    outs.push(Outer.Wrap(Inner.P(-12, 250), 8))
+    outs.push(Outer.Wrap(Inner.Q(3.25), 9))
+    outs.push(Outer.Opt(Some(42), Some(200)))
+    outs.push(Outer.Opt(None, Some(5)))
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    outs.push(Outer.Many(nums))
+    outs.push(Outer.Boxed(Heap(Outer.Wrap(Inner.P(1, 2), 3))))
+    outs.push(Outer.Empty)
+    for o in outs { print(showOuter(o)) }
+    let outs2 = outs.clone()
+    print(showOuter(outs2.get(5)!))
+
+    let g1: G<i8> = G.One(-5)
+    let g2: G<i8> = G.Two(100, 27)
+    let g3: G<i8> = G.Nothing
+    print(sumG(g1), " ", sumG(g2), " ", sumG(g3))
+    let gs: G<string> = G.Two("a", "b")
+    match gs {
+        G.Two(a, b) => { print(a + b) }
+        _ => { print("no") }
+    }
+    let gf: G<f32> = G.One(0.5)
+    if let G.One(f) = gf { print(f) }
+
+    let t = Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Node(Heap(Tree.Leaf(4)), Heap(Tree.Leaf(5)))))
+    print(depth(t))
+
+    print(chain(8) ?? 0, " ", chain(6) ?? 0, " ", chain(3) ?? 0)
+    print(halve(10)!)
+    print(halve(10).isSome(), " ", halve(3).isNone())
+    print(halve(4).map((x: i8): i32 => (x as i32) * 1000) ?? 0)
+    print(halve(4).andThen((x: i8): Option<i8> => halve(x as i32)) ?? 0)
+    print(halve(3).orElse((): Option<i8> => Some(77)) ?? 0)
+    print(halve(3).unwrapOr(-9), " ", halve(3).unwrapOrElse((): i8 => 11))
+    print(parsePlus(7) ?? 0, " ", parsePlus(-1) ?? 0)
+    match parsePlus(-3) {
+        Ok(v) => { print("ok ", v) }
+        Err(e) => { print("err ", e) }
+    }
+
+    var smalls: Vec<Option<i8>> = Vec.new()
+    smalls.push(Some(-128))
+    smalls.push(None)
+    smalls.push(Some(127))
+    print(firstSmall(smalls))
+    for s in smalls { print(s ?? 0) }
+
+    var hm: HashMap<string, Ev> = HashMap.new()
+    hm.insert("a", Ev.Click(1, 2, 3))
+    hm.insert("b", Ev.Mix(4, 5.5, 6, true, 7))
+    print(show(hm.get("b")!))
+    print(show(hm.get("a")!))
+    print(hm.get("z").isNone())
+    var hm2: HashMap<i32, Option<u8>> = HashMap.new()
+    hm2.insert(1, Some(9))
+    hm2.insert(2, None)
+    print((hm2.get(1) ?? None) ?? 0, " ", (hm2.get(2) ?? None) ?? 0)
+
+    let cap = Ev.Mix(1, 2.0, 3, true, 4)
+    let small: Option<u8> = Some(250)
+    let f = (): string => show(cap) + " " + (small ?? 0).toString()
+    print(f())
+
+    var owned: Vec<Owned> = Vec.new()
+    owned.push(Owned.Has(7, Res { id: 1 }))
+    owned.push(Owned.Str(-1, "s"))
+    owned.push(Owned.No)
+    owned.push(Owned.Has(8, Res { id: 2 }))
+    for o in owned {
+        match o {
+            Owned.Has(b, r) => { print("has ", b, " ", r.id) }
+            Owned.Str(b, s) => { print("str ", b, " ", s) }
+            Owned.No => { print("no") }
+        }
+    }
+    print("after owned")
+
+    let d = Doc { a: Some(-3), b: Some(1.5), c: Some(true), d: None }
+    let text = d.toJson()
+    print(text)
+    match Doc.fromJson(text.clone()) {
+        Ok(back) => { print(back.toJson() == text, " ", back.a ?? 0, " ", back.c ?? false) }
+        Err(e) => { print("decode failed: " + e.message()) }
+    }
+
+    let aw: Option<i16> = -2
+    print(aw ?? 0)
+    let task = Ev.Mix(5, 6.5, -7, false, 8)
+    let tsmall: Option<u8> = Some(42)
+    Task.spawn(move(): void => { print("task ", show(task), " ", tsmall ?? 0) })
+    schedulerRunToCompletion()
+}

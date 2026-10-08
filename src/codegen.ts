@@ -79,7 +79,12 @@ interface StructLayout {
 
 interface EnumLayout {
   name: string;
-  payloadSlots: number;
+  // The payload is a union of per-variant field structs (each laid out like a struct of
+  // its fields, in declaration order), sized to the largest and aligned to the largest
+  // member alignment. Emitted as `[payloadSize/payloadAlign x i<payloadAlign*8>]`, the
+  // only LLVM type with exactly that size and alignment. 0 = fieldless enum (`{ i32 }`).
+  payloadSize: number;
+  payloadAlign: number;
   variants: Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>;
   // Set for an Option-shaped enum whose payload has a value safe code cannot produce
   // (see nicheOf). The enum is then laid out as the payload alone, `{ P }`: the fieldless
@@ -723,13 +728,13 @@ export class Codegen {
     return id;
   }
 
-  // A Milo enum is `{ i32 tag, [N x i64] payload }`. Describe it as the classic C
+  // A Milo enum is `{ i32 tag, union payload }`. Describe it as the classic C
   // tagged union — enumerated tag + union of per-variant payload structs — which every
   // debugger renders natively. DW_TAG_variant_part would be more faithful but lldb
   // shows it as `$variant$0`/`$discr$` noise without a synthetic provider.
   private diEnum(layout: EnumLayout, key: string): number {
     // fieldless enum: the whole value *is* the tag, so no phantom payload slots
-    if (layout.payloadSlots === 0) {
+    if (layout.payloadSize === 0) {
       const only = this.diEnumeration(layout.name, layout);
       this.diTypes.set(key, only);
       return only;
@@ -758,7 +763,9 @@ export class Codegen {
     }
 
     const tagId = this.diEnumeration(`${layout.name}$tag`, layout);
-    const payloadBits = layout.payloadSlots * 64;
+    const payloadBits = layout.payloadSize * 8;
+    const payloadOffBits = this.enumPayloadOffset(layout) * 8;
+    const totalBits = this.typeSize(`%${layout.name}`) * 8;
 
     // union member per payload-carrying variant; single-field variants bind the field
     // type directly (`Some = 42`), multi-field ones get a positional struct.
@@ -788,11 +795,11 @@ export class Codegen {
     const tagMember = this.metaCounter++;
     this.diNodes.push(`!${tagMember} = !DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !${tagId}, size: 32, offset: 0)`);
     const payloadMember = this.metaCounter++;
-    // payload starts at byte 8: [N x i64] has align 8, so the i32 tag is tail-padded
-    this.diNodes.push(`!${payloadMember} = !DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !${unionId}, size: ${payloadBits}, offset: 64)`);
+    // the payload starts after the i32 tag, padded up to the union's alignment
+    this.diNodes.push(`!${payloadMember} = !DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !${unionId}, size: ${payloadBits}, offset: ${payloadOffBits})`);
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{!${tagMember}, !${payloadMember}}`);
-    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(layout.name)}", size: ${64 + payloadBits}, elements: !${tuple})`);
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(layout.name)}", size: ${totalBits}, elements: !${tuple})`);
     return id;
   }
 
@@ -1075,6 +1082,16 @@ export class Codegen {
     lines.push(`  store ${niche.intTy} ${next}, ptr ${addr}`);
   }
 
+  // LLVM type of a tagged enum's payload union (see EnumLayout.payloadSize).
+  private enumUnionTy(layout: EnumLayout): string {
+    return `[${layout.payloadSize / layout.payloadAlign} x i${layout.payloadAlign * 8}]`;
+  }
+
+  // Byte offset of a tagged enum's payload: the i32 tag padded to the union's alignment.
+  private enumPayloadOffset(layout: EnumLayout): number {
+    return Math.max(4, layout.payloadAlign);
+  }
+
   // Address of the payload of the enum at `addr` (a niche enum's payload is the enum).
   private enumPayloadPtr(lines: string[], enumTy: string, addr: string): string {
     if (this.nicheOfEnumTy(enumTy)) return addr;
@@ -1095,6 +1112,41 @@ export class Codegen {
     if (m) {
       const at = ir.lastIndexOf("\n", m.index ?? 0);
       throw new Error(`internal: niche enum accessed as a tagged enum: ${ir.slice(at + 1, ir.indexOf("\n", m.index)).trim()}`);
+    }
+  }
+
+  // A tagged enum's payload union is only ever reached as a whole (`i32 0, i32 1`, from
+  // enumPayloadPtr), then through the variant's own field struct. The old layout was
+  // `[N x i64]` slots, so a site still doing slot math indexes into the union, extracts it
+  // as a value, or steps an i64 / `[N x i64]` GEP off the payload address; any of those
+  // now reads and writes the wrong bytes. Each is a compile error here, not a miscompile.
+  private assertEnumPayloadPacked(ir: string) {
+    const tagged = [...this.enumLayouts.values()].filter(l => !l.niche && l.payloadSize > 0);
+    if (tagged.length === 0) return;
+    const esc = (n: string) => n.replace(/[.*+?^${}()|[\]\\$]/g, "\\$&");
+    const names = tagged.map(l => esc(l.name)).join("|");
+    const fail = (at: number) => {
+      const start = ir.lastIndexOf("\n", at);
+      throw new Error(`internal: enum payload accessed by slot, not by its variant struct: ${ir.slice(start + 1, ir.indexOf("\n", at)).trim()}`);
+    };
+    const shape = new RegExp(
+      `getelementptr(?: inbounds)? %(?:${names}), ptr [^,]+, i32 0, i32 (?:1, i(?:32|64) |[2-9])` +
+      `|(?:extractvalue|insertvalue) %(?:${names}) [^\\n]*, [1-9]`);
+    const m = ir.match(shape);
+    if (m) fail(m.index ?? 0);
+    // Temps are function-local, so payload addresses are tracked per `define`.
+    const payloadDef = new RegExp(`(%[\\w.$]+) = getelementptr(?: inbounds)? %(?:${names}), ptr [^,]+, i32 0, i32 1(?:, !dbg !\\d+)?\\n`, "g");
+    let fnStart = 0;
+    while (fnStart >= 0) {
+      const next = ir.indexOf("\ndefine ", fnStart + 1);
+      const body = ir.slice(fnStart, next < 0 ? ir.length : next);
+      const temps = [...body.matchAll(payloadDef)].map(d => esc(d[1]));
+      if (temps.length > 0) {
+        const slot = new RegExp(`getelementptr(?: inbounds)? (?:i64|\\[\\d+ x i64\\]), ptr (?:${temps.join("|")}), `);
+        const s = body.match(slot);
+        if (s) fail(fnStart + (s.index ?? 0));
+      }
+      fnStart = next;
     }
   }
 
@@ -1128,7 +1180,7 @@ export class Codegen {
       // i64 payload array requires 8-byte alignment, so the i32 tag is padded to 8.
       // Without this, malloc undersizes by 4 bytes and store %Enum overruns the buffer.
       if (layout.niche) return this.typeSize(layout.niche.payloadTy);
-      return layout.payloadSlots > 0 ? 8 + layout.payloadSlots * 8 : 4;
+      return layout.payloadSize > 0 ? this.structPayloadSize(["i32", this.enumUnionTy(layout)]) : 4;
     }
     return 8;
   }
@@ -1440,7 +1492,7 @@ export class Codegen {
     if (enumMatch && this.enumLayouts.has(enumMatch[1])) {
       const layout = must(this.enumLayouts, enumMatch[1], "enum layouts");
       if (layout.niche) return this.typeAlign(layout.niche.payloadTy);
-      return layout.payloadSlots > 0 ? 8 : 4;
+      return Math.max(4, layout.payloadAlign);
     }
     return 8;
   }
@@ -1939,7 +1991,7 @@ export class Codegen {
       for (const v of e.variants) {
         variants.set(v.name, { tag: v.tag, fieldTypes: v.fields.map(f => this.llvmType(f)), fieldTypeKinds: v.fields });
       }
-      this.enumLayouts.set(e.name, { name: e.name, payloadSlots: 0, variants });
+      this.enumLayouts.set(e.name, { name: e.name, payloadSize: 0, payloadAlign: 1, variants });
     }
     for (const layout of this.enumLayouts.values()) {
       const niche = this.enumNiche(layout, module.dropImpls);
@@ -1950,12 +2002,17 @@ export class Codegen {
       for (const e of module.enums) {
         const layout = must(this.enumLayouts, e.name, "enum layouts");
         let maxPayload = 0;
+        let maxAlign = 1;
         for (const v of layout.variants.values()) {
+          if (v.fieldTypes.length === 0) continue;
           maxPayload = Math.max(maxPayload, this.structPayloadSize(v.fieldTypes));
+          maxAlign = Math.max(maxAlign, this.structAlign(v.fieldTypes));
         }
-        const slots = Math.ceil(maxPayload / 8);
-        if (slots > layout.payloadSlots) {
-          layout.payloadSlots = slots;
+        const size = Math.ceil(maxPayload / maxAlign) * maxAlign;
+        if (size > layout.payloadSize || maxAlign > layout.payloadAlign) {
+          layout.payloadSize = Math.max(size, layout.payloadSize);
+          layout.payloadAlign = Math.max(maxAlign, layout.payloadAlign);
+          layout.payloadSize = Math.ceil(layout.payloadSize / layout.payloadAlign) * layout.payloadAlign;
           changed = true;
         }
       }
@@ -2263,8 +2320,8 @@ export class Codegen {
     for (const [name, layout] of this.enumLayouts) {
       if (layout.niche) {
         this.output.splice(1, 0, `%${name} = type { ${layout.niche.payloadTy} }`);
-      } else if (layout.payloadSlots > 0) {
-        this.output.splice(1, 0, `%${name} = type { i32, [${layout.payloadSlots} x i64] }`);
+      } else if (layout.payloadSize > 0) {
+        this.output.splice(1, 0, `%${name} = type { i32, ${this.enumUnionTy(layout)} }`);
       } else {
         this.output.splice(1, 0, `%${name} = type { i32 }`);
       }
@@ -2352,6 +2409,7 @@ export class Codegen {
     if (noaliasEnabled()) this.output = this.applyNoalias(this.output);
     const ir = this.output.join("\n") + "\n";
     this.assertNicheAccessRouted(ir);
+    this.assertEnumPayloadPacked(ir);
     return ir;
   }
 
@@ -12840,7 +12898,6 @@ export class Codegen {
       const tempBufs: string[] = [];
       if (info.fieldTypeKinds.length > 0) {
         formatParts.push("(");
-        // Payload starts at offset 1 of the enum struct ({tag, [N x i64]}); cast to variant struct
         const payloadPtr = this.enumPayloadPtr(lines, `%${enumName}`, stagePtr);
         // Build a synthetic struct type representing this variant's payload fields.
         const payloadStructTy = `{ ${info.fieldTypes.join(", ")} }`;

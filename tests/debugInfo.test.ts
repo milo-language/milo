@@ -154,6 +154,29 @@ test("enums emit an enumerated tag and a per-variant payload union", () => {
   }
 });
 
+const PACKED_SRC = `enum Pair { Two(i32, i32), Small(u8), Nil }
+fn main() {
+    let p = Pair.Two(3, 4)
+    match p { Pair.Two(a, b) => print(a + b), _ => print(0) }
+}
+`;
+
+// A payload of 4-byte-aligned fields sits right after the i32 tag (offset 32 bits), and
+// the enum is 12 bytes; the DWARF must say so or lldb reads the payload 4 bytes late.
+test("packed enum payloads are described at their real offset and size", () => {
+  const f = join(tmpdir(), "milo_dbg_packed_ir.milo");
+  writeFileSync(f, PACKED_SRC);
+  try {
+    const ir = emitIr(f, true);
+    expect(ir).toMatch(/DW_TAG_union_type, name: "Pair\$payload", size: 64,/);
+    expect(ir).toMatch(/DW_TAG_member, name: "payload", baseType: ![0-9]+, size: 64, offset: 32\)/);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "Pair", size: 96,/);
+    expect(ir).toContain(`%Pair = type { i32, [2 x i32] }`);
+  } finally {
+    unlinkSync(f);
+  }
+});
+
 const NICHE_SRC = `type R = i32(0..2147483646)
 struct NodeId { at: R }
 fn main() {
