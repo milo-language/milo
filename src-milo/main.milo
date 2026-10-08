@@ -23,7 +23,10 @@ from "std/time" import {
     now, elapsed
 }
 from "std/pty" import {
-    fdIsTerminal
+    isTerminal
+}
+from "std/io" import {
+    Stdout, Stderr
 }
 from "src-milo/tokens.milo" import {
     Token, TriviaKind, tokKindName
@@ -95,7 +98,7 @@ pub fn reportCompiled(source: &string, out: &string, elapsedMs: i64) {
     }
     // fd 1 is stdout. Piping must stay plain so `| tail` and log capture do not
     // collect escape codes.
-    if fdIsTerminal(1) {
+    if isTerminal(Stdout {}) {
         let green = "\u{1b}[32m"
         let bold = "\u{1b}[1m"
         let dim = "\u{1b}[2m"
@@ -200,7 +203,7 @@ pub struct Compiled {
 // and once each; a file that has since become unreadable degrades to the plain form
 // rather than losing the diagnostic.
 pub fn reportParseDiagnostics(diags: &Vec<Diagnostic>) {
-    let color = fdIsTerminal(2)
+    let color = isTerminal(Stderr {})
     var seenFiles: Vec<string> = Vec.new()
     var seenSources: Vec<string> = Vec.new()
     for i in 0..diags.len {

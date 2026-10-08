@@ -12,7 +12,7 @@
 // (src-milo/lexer.milo's lexError calls exit(1)) can never take the server
 // down mid-session.
 from "std/io" import {
-    fdReaderAttach
+    FdReader, fdReaderAttach
 }
 from "src-milo/lsp/rpc.milo" import {
     RpcId, readMessage, parseMessage, sendResponse, sendNotification
@@ -139,9 +139,17 @@ fn handleNotification(documents: &mut HashMap<string, string>, method: string, p
     }
 }
 
+// fd 0 is the process stdin, open for the server's whole life. A helper rather than
+// FdReader.attach(Stdin {}), which milo-self cannot parse yet.
+fn stdinReader(): FdReader {
+    unsafe {
+        return fdReaderAttach(0)
+    }
+}
+
 pub fn startServer(): void {
     var documents: HashMap<string, string> = HashMap.new()
-    let reader = fdReaderAttach(0)
+    let reader = stdinReader()
     eprint("milod-self: language server started")
     while true {
         match readMessage(reader) {
