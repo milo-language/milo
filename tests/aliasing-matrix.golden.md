@@ -13,5 +13,5 @@ spelling — that is the signal this file exists to surface, not a failure.
 | `field` | compile error — cannot move 'b.v' out of the borrowed 'b' | runs — heap 0 / replaced 1 | runs — 300 | compile error — 'b' is borrowed mutably and shared in the same call |
 | `vec` | runs — heap 0 | runs — heap 0 / replaced 1 | runs — 300 | compile error — 'v' is borrowed mutably and shared in the same call |
 | `array` | runs — heap 0 | runs — heap 0 / replaced 1 | runs — 300 | compile error — 'a' is borrowed mutably and shared in the same call |
-| `slice` | runs — heap 0 | runs — heap 0 / replaced 1 | runs — 300 | compile error — cannot call 'push' on 'v' because it is borrowed |
+| `slice` | runs — heap 0 | runs — heap 0 / replaced 1 | runs — 300 | compile error — cannot call 'push' on 'v' while 's' borrows it |
 | `arena` | runs — heap 0 | runs — heap 0 / replaced 1 | runs — 300 | runs — heap 0 / false |
