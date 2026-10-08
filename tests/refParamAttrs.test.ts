@@ -142,6 +142,32 @@ test("noalias is withheld where a global or a closure can alias the param", () =
   expect(defineOf(ir, "callWith")).not.toContain("noalias");
 });
 
+test("loads of ranged ints carry !range and !noundef when the range holds 0", () => {
+  const ir = emitIr(`
+struct Slot { at: i32(0..1000), level: u8(1..9) }
+fn atOf(s: &Slot): i32 { return s.at }
+fn levelOf(s: &Slot): u8 { return s.level }
+fn pick(v: &Vec<i16(-5..5)>, i: i64): i16 { return v[i] }
+fn main(): i32 {
+    let s = Slot { at: 7, level: 3 }
+    var v: Vec<i16(-5..5)> = Vec.new()
+    v.push(-2)
+    print(atOf(s) + levelOf(s) as i32 + pick(v, 0) as i32)
+    return 0
+}
+`);
+  const body = (fn: string) => { const lines = ir.split("\n"); const i = lines.findIndex(l => l.startsWith("define ") && l.includes(`@${fn}(`)); return lines.slice(i, lines.indexOf("}", i)).join("\n"); };
+  const md = (id: string) => ir.split("\n").find(l => l.startsWith(`!${id} = `)) ?? "";
+  const at = body("atOf").match(/load i32, ptr %[\w.]+, !range !(\d+), !noundef !(\d+)/);
+  expect(at).not.toBeNull();
+  expect(md(at![1])).toBe(`!${at![1]} = !{i32 0, i32 1001}`);
+  expect(md(at![2])).toBe(`!${at![2]} = !{}`);
+  const el = body("pick").match(/load i16, ptr %[\w.]+, !range !(\d+)/);
+  expect(md(el![1])).toBe(`!${el![1]} = !{i16 -5, i16 6}`);
+  // 1..9 excludes 0, the value a zeroed moved-from slot holds: no promise
+  expect(body("levelOf")).not.toContain("!range");
+});
+
 test("noalias follows where a global's address goes, not just that it is touched", () => {
   const ir = emitIr(`
 struct H { a: i64, b: i64 }

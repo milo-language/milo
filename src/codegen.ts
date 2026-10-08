@@ -1348,6 +1348,29 @@ export class Codegen {
     return result;
   }
 
+  // `!range` + `!noundef` for a load of a ranged int (`i32(0..100)`) out of memory. The
+  // checker range-checks every safe flow INTO the type (tests/rangedSoundness.test.ts), so
+  // a stored value is in range, with one exception: a moved-from slot is zeroed and its
+  // Drop may still read it. So only a range that contains 0 is attached; a zeroed slot then
+  // still holds an in-range, defined value. Memory safe code reads is never uninitialized
+  // (literals write every field, a Vec is read only below its len), hence `!noundef`.
+  private rangeMetaFor(t: TypeKind, loadTy: string): string {
+    if (t.tag !== "int" || loadTy !== `i${t.bits}` || t.min === undefined || t.max === undefined) return "";
+    if (!Number.isSafeInteger(t.min) || !Number.isSafeInteger(t.max) || t.min > 0 || t.max < 0) return "";
+    const bits = BigInt(t.bits);
+    const lo = BigInt(t.min), hiExcl = BigInt(t.max) + 1n;
+    if (hiExcl - lo >= 1n << bits) return ""; // the full set is not a valid !range
+    // wrap to the width's signed spelling, which the IR parser accepts for any iN
+    const wrap = (v: bigint) => BigInt.asIntN(t.bits, v);
+    const key = `i${t.bits} ${wrap(lo)}, i${t.bits} ${wrap(hiExcl)}`;
+    let id = this.rangeMetaIds.get(key);
+    if (id === undefined) { id = this.metaCounter++; this.rangeMetaIds.set(key, id); }
+    if (this.noundefMetaId === null) this.noundefMetaId = this.metaCounter++;
+    return `, !range !${id}, !noundef !${this.noundefMetaId}`;
+  }
+  private rangeMetaIds = new Map<string, number>();
+  private noundefMetaId: number | null = null;
+
   // True when typeSize/typeAlign compute `ty` exactly rather than falling through to their
   // 8-byte default. dereferenceable/align are promises LLVM speculates loads on, so an
   // unknown leaf (i128, an opaque foreign type) must drop the attribute, not guess.
@@ -2306,6 +2329,8 @@ export class Codegen {
       for (const line of body) this.emit(line);
     }
 
+    for (const [key, id] of this.rangeMetaIds) this.emit(`!${id} = !{${key}}`);
+    if (this.noundefMetaId !== null) this.emit(`!${this.noundefMetaId} = !{}`);
     if (this.emitDebug) this.applyDebugInfo();
     // After applyDebugInfo: that pass matches `!dbg !N {` at the end of a define line,
     // and the attribute group this inserts sits before the metadata.
@@ -5584,7 +5609,7 @@ export class Codegen {
         const [ptrLines, ptr, fieldTy] = this.genFieldPtr(expr, recvTemps);
         lines.push(...ptrLines);
         const val = this.nextTemp();
-        lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}`);
+        lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}${this.rangeMetaFor(expr.type, fieldTy)}`);
         // Moving a non-Copy field out of a struct: zero the source field so the
         // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
         // Otherwise both the moved value and the struct free the same buffer.
@@ -6426,7 +6451,7 @@ export class Codegen {
         return [lines, cloned, elemTy];
       }
       const val = this.nextTemp();
-      lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
+      lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}${this.rangeMetaFor(expr.type, elemTy)}`);
       this.flushArgTempDrops(lines, tempMark);
       return [lines, val, elemTy];
     }
