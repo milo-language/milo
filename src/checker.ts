@@ -12060,6 +12060,22 @@ export class TypeChecker {
         }
         return this.setType(expr, { tag: "void" });
       }
+      if (expr.method === "setByte") {
+        if (expr.args.length !== 2) { this.error(`'setByte' expects 2 arguments (index, byte), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+        if (!this.isRootMutable(expr.object)) {
+          this.error(`cannot setByte on an immutable string`, sp, `declare with 'var' to make it mutable`);
+        }
+        const iType = this.checkExpr(expr.args[0]);
+        if (iType.tag !== "int" && iType.tag !== "unknown") {
+          this.error(`string.setByte: expected an integer byte index, got ${this.show(iType)}`, sp);
+        }
+        const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
+        const bType = this.checkExpr(expr.args[1], u8t);
+        if (!typeEq(u8t, bType) && bType.tag !== "unknown") {
+          this.error(`string.setByte: expected u8, got ${this.show(bType)}`, sp);
+        }
+        return this.setType(expr, { tag: "void" });
+      }
       if (expr.method === "pushStr") {
         if (expr.args.length !== 1) { this.error(`'pushStr' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
         if (!this.isRootMutable(expr.object)) {

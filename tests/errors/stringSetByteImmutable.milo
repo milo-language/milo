@@ -1,0 +1,6 @@
+// @error: cannot setByte on an immutable string
+pub fn main(): void {
+    let s = "abc".clone()
+    s.setByte(0, 65)
+    print(s)
+}

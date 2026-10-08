@@ -1,0 +1,43 @@
+// string.setByte(i, b) overwrites one byte in place: the write-side twin of s[i].
+// A string is the byte buffer std/binary and the codecs carry their bytes in, so
+// this is a byte op, not a character op; a literal is copied out of read-only data
+// before the first write, and the capacity of an owned buffer is kept.
+
+pub fn patch(buf: &mut string, at: i64, b: u8) {
+    buf.setByte(at, b)
+}
+
+// @expect: Hello
+// @expect: hello
+// @expect: 5 72
+// @expect: jello world
+// @expect: 1
+// @expect: 255
+// @expect: 4
+pub fn main() {
+    var s = "hello"
+    s.setByte(0, 72)
+    print(s)
+    // the literal itself is unchanged: setByte wrote a private copy
+    let again = "hello"
+    print(again)
+    print($"{s.len} {s[0]}")
+
+    var w: string = ""
+    w.pushStr("hello world")
+    patch(&mut w, 0, 'j' as u8)
+    print(w)
+
+    // binary content, as std/binary writes it
+    var bin: string = ""
+    bin.push(0)
+    bin.push(0)
+    bin.setByte(1, 1)
+    print(bin[1])
+    bin.setByte(0, 255)
+    print(bin[0])
+
+    var cap = "abcd"
+    cap.setByte(3, 'D' as u8)
+    print(cap.len)
+}

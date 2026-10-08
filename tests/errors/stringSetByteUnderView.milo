@@ -1,0 +1,9 @@
+// @error: cannot call 'setByte' on 's' because it is borrowed
+// A write while a slice view of the same string is live is rejected like any
+// other mutation: a literal's first write moves its bytes to a new buffer.
+pub fn main(): void {
+    var s = "abcdef"
+    let view = s[0..3]
+    s.setByte(0, 65)
+    print(view)
+}

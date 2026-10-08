@@ -1,0 +1,7 @@
+// @runtime-error: index out of bounds: 3/3
+// setByte(i, b) takes a byte index that must be inside the string, like s[i].
+pub fn main(): void {
+    var s = "abc".clone()
+    s.setByte(3, 0)
+    print(s)
+}

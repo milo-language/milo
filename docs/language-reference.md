@@ -974,7 +974,7 @@ a digest. The operations whose names promise characters answer in characters:
 
 | operation | unit |
 |---|---|
-| `len`, `s[i]`, `substr`, `slice`, `indexOf`, `split`, `trim`, `contains` | bytes |
+| `len`, `s[i]`, `setByte(i, b)`, `substr`, `slice`, `indexOf`, `split`, `trim`, `contains` | bytes |
 | `charAt(i)` | the whole character that starts at byte `i`; aborts on a continuation byte |
 | `codePoints()`, `reverse()` | characters |
 | `padStart(n, p)`, `padEnd(n, p)` | `n` counts characters, `p` is cycled by character |
@@ -985,6 +985,18 @@ let s = "aéb"
 print(s.charAt(1))               // é (two bytes)
 print("café".padStart(6, "*"))   // **café: four characters padded to six
 for c in s.codePoints() { print(c) }   // 97, 233, 98
+```
+
+`s.setByte(i, b)` is the write-side twin of `s[i]`: it overwrites byte `i` in place
+(`var` receiver, `i` outside `0..len` aborts) and, like every byte op above, does not
+re-validate the text, because the same buffer carries binary data. A literal is copied
+out of read-only memory on its first write. Patching a header field or a checksum in an
+encoded buffer is the use; for text, edit with `replace` or rebuild with `pushStr`.
+
+```milo
+var hdr = "L?body"
+hdr.setByte(1, 4)    // a length field, written after the body was measured
+print(hdr[1])        // 4
 ```
 
 To walk a string by character, iterate `codePoints()`; to find a character's byte

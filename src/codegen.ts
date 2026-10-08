@@ -46,7 +46,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
   "OptionOp", "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
-  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSlice", "StringTruncate",
+  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
   "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert", "VecIsEmpty",
   "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
@@ -6093,6 +6093,8 @@ export class Codegen {
         return this.genStringPushInt(expr, lines);
       case "StringTruncate":
         return this.genStringTruncate(expr, lines);
+      case "StringSetByte":
+        return this.genStringSetByte(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
       case "StringSlice":
@@ -10155,6 +10157,74 @@ export class Codegen {
     lines.push(`  store i64 ${size}, ptr ${capPtr}`);
     lines.push(`  br label %${doneL}`);
     lines.push(`${doneL}:`);
+    return [lines, "void", "void"];
+  }
+
+  // `s.setByte(i, b)`: the bounds test is unsigned and 64-bit, so a negative or huge
+  // index aborts instead of wrapping. A literal (cap 0) points into read-only data, so
+  // it is copied out to an owned buffer before the write, as truncate does.
+  private genStringSetByte(expr: HIRExpr & { kind: "StringSetByte" }, lines: string[]): Gen {
+    this.hasStringType = true;
+    this.needsBoundsCheck = true;
+    const [strPtrLines, strPtr] = this.genLValue(expr.str);
+    lines.push(...strPtrLines);
+    const idx = this.genBoundI64(expr.index, lines);
+    const [bl, bv, bt] = this.genExpr(expr.byte);
+    lines.push(...bl);
+    let byte = bv;
+    if (bt !== "i8") {
+      byte = this.nextTemp();
+      lines.push(`  ${byte} = trunc ${bt} ${bv} to i8`);
+    }
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const inRange = this.nextTemp();
+    lines.push(`  ${inRange} = icmp ult i64 ${idx}, ${len}`);
+    const okL = this.nextLabel("strsetbyte.ok");
+    const failL = this.nextLabel("strsetbyte.oob");
+    lines.push(`  br i1 ${inRange}, label %${okL}, label %${failL}`);
+    lines.push(`${failL}:`);
+    const idx32 = this.nextTemp();
+    lines.push(`  ${idx32} = trunc i64 ${idx} to i32`);
+    const len32 = this.nextTemp();
+    lines.push(`  ${len32} = trunc i64 ${len} to i32`);
+    const filePtr = this.emitCheckFilePtr(lines, expr.span);
+    lines.push(`  call void @__milo_bounds_fail(i32 ${idx32}, i32 ${len32}, ptr ${filePtr}, i32 ${expr.span?.line ?? 0})`);
+    lines.push(`  unreachable`);
+    lines.push(`${okL}:`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+    const owned = this.nextTemp();
+    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
+    const writeL = this.nextLabel("strsetbyte.write");
+    const copyL = this.nextLabel("strsetbyte.copy");
+    lines.push(`  br i1 ${owned}, label %${writeL}, label %${copyL}`);
+    lines.push(`${copyL}:`);
+    this.needsMemcpy = true;
+    const old = this.nextTemp();
+    lines.push(`  ${old} = load ptr, ptr ${dataPtr}`);
+    const size = this.nextTemp();
+    lines.push(`  ${size} = add i64 ${len}, 1`);
+    const { buf } = this.emitAllocBytes(lines, size, 1, "strsetbyte", expr.span);
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${old}, i64 ${len})`);
+    const bend = this.nextTemp();
+    lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+    lines.push(`  store i8 0, ptr ${bend}`);
+    lines.push(`  store ptr ${buf}, ptr ${dataPtr}`);
+    lines.push(`  store i64 ${size}, ptr ${capPtr}`);
+    lines.push(`  br label %${writeL}`);
+    lines.push(`${writeL}:`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    const at = this.nextTemp();
+    lines.push(`  ${at} = getelementptr i8, ptr ${data}, i64 ${idx}`);
+    lines.push(`  store i8 ${byte}, ptr ${at}`);
     return [lines, "void", "void"];
   }
 

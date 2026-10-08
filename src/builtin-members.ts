@@ -74,6 +74,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "pushInt", sig: "(n: i64)", note: "appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string", grows: true },
     { name: "clear", sig: "()", note: "empties the string, keeping its capacity" },
     { name: "truncate", sig: "(len: i64)", note: "keeps the first len BYTES and the capacity; len past the end is a no-op, a len inside a multibyte character aborts" },
+    { name: "setByte", sig: "(i: i64, b: u8)", note: "overwrites byte i in place, the write-side twin of s[i]; i outside 0..len aborts. A byte op like s[i]: it does not keep the text valid UTF-8" },
     { name: "cstr", sig: "(): *u8", note: "NUL-terminated view; the string must outlive the pointer" },
     { name: "clone", sig: "(): string" },
   ],
@@ -230,7 +231,7 @@ export const GROWING_MEMBERS: ReadonlySet<string> = namesWith("grows");
 // share one copy without importing each other.
 export const MUTATING_COLLECTION_METHODS: ReadonlySet<string> = new Set([
   "push", "pushStr", "pushInt", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
-  "clear", "truncate", "extend", "retain", "reserve", "modify", "getOrInsertWith",
+  "clear", "truncate", "setByte", "extend", "retain", "reserve", "modify", "getOrInsertWith",
 ]);
 
 // The one-line detail an editor shows next to the name.
