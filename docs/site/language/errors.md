@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 399 distinct messages across 490 programs the compiler must reject.
+Every error message the test suite pins: 399 distinct messages across 491 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -3694,6 +3694,19 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/externEnumRet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externEnumRet.milo)</sub>
+
+A niche Option is laid out as its bare payload, which C would read as a plain int. It cannot cross the C ABI by value at all, so the layout change is invisible to C.
+
+```milo skip
+type R = i32(0..2147483646)
+extern fn takesOpt(x: Option<R>): i32  // @error: cannot cross the C ABI
+fn main() {
+    let o: Option<R> = Some(3)
+    unsafe { print(takesOpt(o)) }
+}
+```
+
+<sub>[tests/errors/nicheOptionExtern.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nicheOptionExtern.milo)</sub>
 
 ## `cannot derive 'Describe'` {#cannot-derive-describe}
 

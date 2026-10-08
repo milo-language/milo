@@ -6327,32 +6327,39 @@ export class TypeChecker {
     }
   }
 
+  // The shared head of `let` and `var`: resolve the annotation, type the initializer
+  // against it, apply the coercions a declared type allows, and range-check ranged ints.
+  private checkBindingInit(stmt: Extract<Stmt, { kind: "LetDecl" | "VarDecl" }>) {
+    const sp = stmt.span;
+    const hint = stmt.type ? this.resolve(stmt.type, stmt.span) : null;
+    // refs in locals OK (second-class — can't escape function via return/struct/collection)
+    if (hint && this.nestedRef(hint)) {
+      this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
+    }
+    const frozenBeforeRhs = this.openBorrowWindow();
+    const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
+    const valType = deferred ?? this.checkExpr(stmt.value, hint);
+    if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
+      const optInner = this.optionInnerType(hint);
+      const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
+      if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
+        this.autoWrappedOption.set(stmt.value, hint.name);
+        this.enforceWrapRange(stmt.value);
+      } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
+        this.arrayToVecCoercions.add(stmt.value);
+      } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
+        this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
+      }
+    }
+    if (hint?.tag === "int") this.enforceRangeInto(stmt.value, valType, hint, sp);
+    return { hint, valType, frozenBeforeRhs };
+  }
+
   private checkStmtBody(stmt: Stmt, fnRetType: TypeKind, valueTail: { expected: TypeKind | null } | null) {
     const sp = stmt.span;
     switch (stmt.kind) {
       case "LetDecl": {
-        const hint = stmt.type ? this.resolve(stmt.type, stmt.span) : null;
-        // refs in locals OK (second-class — can't escape function via return/struct/collection)
-        if (hint && this.nestedRef(hint)) {
-          this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
-        }
-        const frozenBeforeRhs = this.openBorrowWindow();
-        const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
-        const valType = deferred ?? this.checkExpr(stmt.value, hint);
-        if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
-          const optInner = this.optionInnerType(hint);
-          const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
-          if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
-            this.autoWrappedOption.set(stmt.value, hint.name);
-            this.enforceWrapRange(stmt.value);
-          } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
-            this.arrayToVecCoercions.add(stmt.value);
-          } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
-            this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
-          }
-        }
-        // range checking for ranged integer types
-        if (hint?.tag === "int") this.enforceRangeInto(stmt.value, valType, hint, sp);
+        const { hint, valType, frozenBeforeRhs } = this.checkBindingInit(stmt);
         // Borrows the RHS created: a ref binding owns them until its scope pops;
         // any other binding consumed them within the statement (e.g. s[0..n].clone())
         // and must not leak a freeze onto later statements.
@@ -6389,26 +6396,7 @@ export class TypeChecker {
         break;
       }
       case "VarDecl": {
-        const hint = stmt.type ? this.resolve(stmt.type, stmt.span) : null;
-        if (hint && this.nestedRef(hint)) {
-          this.error(`'${stmt.name}': references cannot be stored in a collection`, sp, `references are second-class — store owned values instead`);
-        }
-        const frozenBeforeRhs = this.openBorrowWindow();
-        const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
-        const valType = deferred ?? this.checkExpr(stmt.value, hint);
-        if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
-          const optInner = this.optionInnerType(hint);
-          const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
-          if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
-            this.autoWrappedOption.set(stmt.value, hint.name);
-            this.enforceWrapRange(stmt.value);
-          } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
-            this.arrayToVecCoercions.add(stmt.value);
-          } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
-            this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
-          }
-        }
-        if (hint?.tag === "int") this.enforceRangeInto(stmt.value, valType, hint, sp);
+        const { hint, valType, frozenBeforeRhs } = this.checkBindingInit(stmt);
         {
           const newlyFrozen = this.newlyFrozenSince(frozenBeforeRhs);
           const bindingType = hint ?? valType;
