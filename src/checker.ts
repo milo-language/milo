@@ -5776,14 +5776,8 @@ export class TypeChecker {
     for (let i = 0; i < expr.args.length; i++) {
       const expected = sig.params[i + 1];
       if (!expected) break;
-      const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
-      const argType = this.checkExpr(expr.args[i]!, bare);
-      if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-        this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i]!.span);
-      }
-      this.enforceArgRange(expr.args[i]!, argType, expected.type, expr.args[i]!.span);
-      if (expected.type.tag === "ref") this.setAutoBorrowChecked(expr.args[i]!, expected.type.mutable, sp);
-      else this.tryMove(expr.args[i]!);
+      this.checkMethodArg(expr, i, expected.type, sp);
+      if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i]!, expected.type)) this.tryMove(expr.args[i]!);
     }
     this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
     this.resolvedMethods.set(expr, mangled);
@@ -9890,23 +9884,11 @@ export class TypeChecker {
         this.takeExplicitMutArgs(expr.args, expr.func, i => this.typeParamAt(fnType.params[i], i));
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
           const paramType = fnType.params[i];
-          const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-          const argType = this.checkExpr(expr.args[i], hint);
-          this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
-          if (paramType.tag === "ref") {
-            if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
-              continue;
-            }
-            this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
-            if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-              this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
-            }
-          } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-            this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
-          }
+          this.checkCallArg(expr.args[i], paramType, sp, argType =>
+            this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span));
         }
         for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
-          if (fnType.params[i].tag === "ref") continue;
+          if (fnType.params[i].tag === "ref" || this.decaysToPtr(expr.args[i], fnType.params[i])) continue;
           // Through a fn value: its parameter types cannot promise what the target does
           // with the argument (`typeEq` ignores `move`), so a literal is moved as before.
           this.autoMoveClosureArg(expr.args[i], fnType.params[i], c => c.mutable, true);
@@ -9999,68 +9981,8 @@ export class TypeChecker {
     this.takeExplicitMutArgs(expr.args, expr.func, i => this.sigParamAt(sig.params[i]));
     for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
       const paramType = sig.params[i].type;
-      const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-      const argType = this.checkExpr(expr.args[i], hint);
-      if (paramType.tag === "ref") this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
-      if (paramType.tag === "ref") {
-        if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
-          // A `&[T]` slice is a %Vec *value*, not a bare pointer. To match the `ptr`
-          // param ABI it must be passed by reference (its address materialized) —
-          // otherwise a slice rvalue (`f(v[a..b])`, `f(c.view())`) is passed by value
-          // and the callee reads a garbage length. Other refs are already pointers.
-          if (paramType.inner.tag === "array" && paramType.inner.size === null) {
-            this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
-          }
-          continue;
-        }
-        this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
-        // Vec<T> auto-coerces to &[T] / &mut [T] (same {ptr,len,cap} layout; callee
-        // ignores cap). For &mut the setAutoBorrowChecked above already rejected an
-        // immutable source and froze the Vec exclusively for the borrow's life.
-        if (paramType.inner.tag === "array" && paramType.inner.size === null
-            && argType.tag === "vec" && typeEq(paramType.inner.element, argType.element)) {
-          continue;
-        }
-        // A FIXED array satisfies a slice parameter too. Unlike a Vec this is not a
-        // pass-through: `[N x T]` is an inline layout and the callee expects the
-        // `{ptr,len,cap}` view, so the conversion is recorded here and materialised in
-        // lowering. Without it `total(v)` worked and `total(a)` did not, for the same
-        // function and the same element type.
-        if (paramType.inner.tag === "array" && paramType.inner.size === null
-            && argType.tag === "array" && argType.size !== null
-            && typeEq(paramType.inner.element, argType.element)) {
-          this.arraySliceArgs.add(expr.args[i]);
-          continue;
-        }
-        if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-          if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
-            this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
-          }
-        }
-      } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-        // String auto-coerces to *u8 for FFI/builtins
-        const isStringToPtr = argType.tag === "string" && paramType.tag === "ptr" && paramType.inner.tag === "int" && paramType.inner.bits === 8;
-        // [T; N] auto-decays to *T for FFI (array → ptr-to-element)
-        const isArrayToPtr = argType.tag === "array" && paramType.tag === "ptr" && typeEq(argType.element, paramType.inner);
-        // T auto-wraps to Option<T> (Some(value))
-        const optInner = this.optionInnerType(paramType);
-        const isOptionWrap = optInner !== null && typeEq(optInner, argType) && paramType.tag === "enum";
-        // A flexible const-int binding adopts the param's int width (first use).
-        const flexInfo = paramType.tag === "int" ? this.flexIntBinding(expr.args[i]) : null;
-        if (isOptionWrap) {
-          this.autoWrappedOption.set(expr.args[i], paramType.name);
-          this.enforceWrapRange(expr.args[i]);
-        } else if (flexInfo && this.resolveFlexInt(flexInfo, paramType, expr.args[i])) {
-          // resolved
-        } else if (!isStringToPtr && !isArrayToPtr) {
-          if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
-            this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType));
-          }
-        }
-      }
-      // A ranged-int parameter (`p: i32(0..100)`) enforces its bound on the argument —
-      // statically for a literal, else a runtime range check. Previously unchecked.
-      if (paramType.tag === "int") this.enforceRangeInto(expr.args[i], argType, paramType, expr.args[i].span);
+      this.checkCallArg(expr.args[i], paramType, sp, argType =>
+        this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType)));
     }
     for (let i = sig.params.length; i < expr.args.length; i++) {
       const vt = this.checkExpr(expr.args[i]);
@@ -10073,10 +9995,8 @@ export class TypeChecker {
     for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
       if (sig.params[i].type.tag === "ref") continue;
       // String→*u8 auto-coercion borrows the ptr, doesn't move the String
-      const argType = this.exprTypes.get(expr.args[i]);
       const paramType = sig.params[i].type;
-      if (argType?.tag === "string" && paramType.tag === "ptr") continue;
-      if (argType?.tag === "array" && paramType.tag === "ptr") continue;
+      if (this.decaysToPtr(expr.args[i], paramType)) continue;
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       this.tryMove(expr.args[i]);
     }
@@ -10438,6 +10358,93 @@ export class TypeChecker {
     return this.setType(expr, { tag: "unknown" });
   }
 
+  // Type-check one call argument against its parameter and apply the argument coercions:
+  // a ref passes through (a slice view materialized for a `&[T]` ABI), a value
+  // auto-borrows for a `&T`, Vec or fixed array to slice, T to Option<T>, string or array
+  // to `*u8`/`*T`, a flexible int literal binding, an interface. Every call form (free,
+  // static, method, generic method, interface, fn field, closure) goes through here, so a
+  // coercion one of them accepted can no longer be "expected string, got &string" in
+  // another. Moves are the caller's: call forms differ in when they happen.
+  private checkCallArg(arg: Expr, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
+    const hint = paramType.tag === "ref" ? paramType.inner : paramType;
+    const argType = this.checkExpr(arg, hint);
+    if (paramType.tag === "ref") {
+      this.enforceArgRange(arg, argType, paramType, arg.span);
+      if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
+        // A `&[T]` slice is a %Vec *value*, not a bare pointer. To match the `ptr`
+        // param ABI it must be passed by reference (its address materialized) —
+        // otherwise a slice rvalue (`f(v[a..b])`, `f(c.view())`) is passed by value
+        // and the callee reads a garbage length. Other refs are already pointers.
+        if (paramType.inner.tag === "array" && paramType.inner.size === null) {
+          this.setAutoBorrowChecked(arg, paramType.mutable, sp);
+        }
+        return argType;
+      }
+      this.setAutoBorrowChecked(arg, paramType.mutable, sp);
+      // Vec<T> auto-coerces to &[T] / &mut [T] (same {ptr,len,cap} layout; callee
+      // ignores cap). For &mut the setAutoBorrowChecked above already rejected an
+      // immutable source and froze the Vec exclusively for the borrow's life.
+      if (paramType.inner.tag === "array" && paramType.inner.size === null
+          && argType.tag === "vec" && typeEq(paramType.inner.element, argType.element)) {
+        return argType;
+      }
+      // A FIXED array satisfies a slice parameter too. Unlike a Vec this is not a
+      // pass-through: `[N x T]` is an inline layout and the callee expects the
+      // `{ptr,len,cap}` view, so the conversion is recorded here and materialised in
+      // lowering. Without it `total(v)` worked and `total(a)` did not, for the same
+      // function and the same element type.
+      if (paramType.inner.tag === "array" && paramType.inner.size === null
+          && argType.tag === "array" && argType.size !== null
+          && typeEq(paramType.inner.element, argType.element)) {
+        this.arraySliceArgs.add(arg);
+        return argType;
+      }
+      if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown" && !this.tryInterfaceCoercion(arg, argType, paramType)) {
+        mismatch(argType);
+      }
+      return argType;
+    }
+    if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
+      // T auto-wraps to Option<T> (Some(value))
+      const optInner = this.optionInnerType(paramType);
+      const isOptionWrap = optInner !== null && typeEq(optInner, argType) && paramType.tag === "enum";
+      // A flexible const-int binding adopts the param's int width (first use).
+      const flexInfo = paramType.tag === "int" ? this.flexIntBinding(arg) : null;
+      if (isOptionWrap) {
+        this.autoWrappedOption.set(arg, paramType.name);
+        this.enforceWrapRange(arg);
+      } else if (flexInfo && this.resolveFlexInt(flexInfo, paramType, arg)) {
+        // resolved
+      } else if (!this.decaysToPtr(arg, paramType)) {
+        if (!this.tryInterfaceCoercion(arg, argType, paramType)) mismatch(argType);
+      }
+    }
+    // A ranged-int parameter (`p: i32(0..100)`) enforces its bound on the argument —
+    // statically for a literal, else a runtime range check.
+    if (paramType.tag === "int") this.enforceRangeInto(arg, argType, paramType, arg.span);
+    return argType;
+  }
+
+  // A string auto-coerces to `*u8` and a `[T; N]` decays to `*T` for FFI and builtins. The
+  // argument is borrowed for the call, not moved.
+  private decaysToPtr(arg: Expr, paramType: TypeKind): boolean {
+    const argType = this.exprTypes.get(arg);
+    if (paramType.tag !== "ptr" || !argType) return false;
+    if (argType.tag === "string") return paramType.inner.tag === "int" && paramType.inner.bits === 8;
+    return argType.tag === "array" && typeEq(argType.element, paramType.inner);
+  }
+
+  // checkCallArg for a method call's argument `i`, keeping the method diagnostics' wording.
+  // `special` gets the first look at a mismatch and returns true when it handled it.
+  private checkMethodArg(expr: ExprOf<"MethodCall">, i: number, paramType: TypeKind, sp: Span | undefined, special?: (argType: TypeKind) => boolean): TypeKind {
+    const arg = expr.args[i]!;
+    return this.checkCallArg(arg, paramType, sp, argType => {
+      if (special?.(argType)) return;
+      const bare = paramType.tag === "ref" ? paramType.inner : paramType;
+      this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, arg.span);
+    });
+  }
+
   // Arity and per-argument checking for a static / enum-variant call: auto-borrow for a
   // `&T` param, the closure-capture rule that makes a non-mutating closure a move, and the
   // moves themselves. Two call sites (the inherent-impl path and the static-method path)
@@ -10457,21 +10464,10 @@ export class TypeChecker {
     this.takeExplicitMutArgs(expr.args, `${expr.enumName}.${expr.variant}`, i => this.sigParamAt(expectedParams[i]));
     for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
       const paramType = expectedParams[i].type;
-      const hint = paramType.tag === "ref" ? paramType.inner : paramType;
-      const argType = this.checkExpr(expr.args[i], hint);
-      this.enforceArgRange(expr.args[i], argType, paramType, expr.args[i].span);
-      if (paramType.tag === "ref") {
-        if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
-          this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
-          if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-            this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
-          }
-        }
-      } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-        this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span);
-      }
+      this.checkCallArg(expr.args[i], paramType, sp, argType =>
+        this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span));
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
-      if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
+      if (paramType.tag !== "ref" && !this.decaysToPtr(expr.args[i], paramType)) this.tryMove(expr.args[i]);
     }
     this.checkCallSiteExclusivity(expr.args, sp);
     return paramOffset;
@@ -12215,17 +12211,8 @@ export class TypeChecker {
           for (let i = 0; i < expr.args.length; i++) {
             const expected = ifaceMethod.params[i + 1];
             if (!expected) break;
-            const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
-            const argType = this.checkExpr(expr.args[i], bare);
-            if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-              this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
-            }
-            this.enforceArgRange(expr.args[i], argType, expected.type, expr.args[i].span);
-            if (expected.type.tag === "ref") {
-              this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
-            } else {
-              this.tryMove(expr.args[i]);
-            }
+            this.checkMethodArg(expr, i, expected.type, sp);
+            if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected.type)) this.tryMove(expr.args[i]);
           }
           this.checkCallSiteExclusivity([expr.object, ...expr.args], sp);
           // compute method index for itable slot
@@ -12281,9 +12268,8 @@ export class TypeChecker {
       for (let i = 0; i < expr.args.length; i++) {
         const expected = sig.params[i + 1];
         if (!expected) break;
-        const argType = this.checkExpr(expr.args[i], expected.type.tag === "ref" ? expected.type.inner : expected.type);
-        const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
-        if (!typeEq(bare, argType) && argType.tag !== "unknown") {
+        this.checkMethodArg(expr, i, expected.type, sp, argType => {
+          const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
           // Only a struct: codegen's stringifier has no scalar path, so the
           // bool/int/float arms this used to accept crashed the compiler.
           if (expr.method === "json" && bare.tag === "string" && argType.tag === "struct") {
@@ -12304,14 +12290,11 @@ export class TypeChecker {
               }
             }
             this.autoJsonStringify.set(expr.args[i], argType);
-          } else {
-            this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
+            return true;
           }
-        }
-        this.enforceArgRange(expr.args[i], argType, expected.type, expr.args[i].span);
-        if (expected.type.tag === "ref") {
-          this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
-        } else {
+          return false;
+        });
+        if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected.type)) {
           this.autoMoveClosureArg(expr.args[i], expected.type, c => c.mutable);
           this.tryMove(expr.args[i]);
         }
@@ -12349,17 +12332,8 @@ export class TypeChecker {
           for (let i = 0; i < expr.args.length; i++) {
             const expected = fnType.params[i];
             if (!expected) break;
-            const bare = expected.tag === "ref" ? expected.inner : expected;
-            const argType = this.checkExpr(expr.args[i], bare);
-            if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-              this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, expr.args[i].span);
-            }
-            this.enforceArgRange(expr.args[i], argType, expected, expr.args[i].span);
-            if (expected.tag === "ref") {
-              this.setAutoBorrowChecked(expr.args[i], expected.mutable, sp);
-            } else {
-              this.tryMove(expr.args[i]);
-            }
+            this.checkMethodArg(expr, i, expected, sp);
+            if (expected.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected)) this.tryMove(expr.args[i]);
           }
           this.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
           if (fnType.tag === "cfn") this.cfnFieldCalls.add(expr);

@@ -1,0 +1,72 @@
+// A method argument gets the same coercions as a free-function argument: a string
+// slice to a `&string` param (was "expected string, got &string"), a Vec or a fixed
+// array to a `&[T]` param, and T to Option<T>. Inherent, static, generic and interface
+// methods all take them.
+struct Counter { n: i64 }
+
+impl Counter {
+    fn add(self: &mut Self, w: &string) { self.n += w.len }
+    fn sum(self: &mut Self, xs: &[i64]) {
+        for x in xs { self.n += x }
+    }
+    fn maybe(self: &mut Self, o: Option<i64>) {
+        match o {
+            Some(v) => { self.n += v }
+            None => {}
+        }
+    }
+    fn lenOf(w: &string): i64 { return w.len }
+    fn pick<T>(self: &Self, w: &string, t: T): T {
+        self.n + w.len
+        return t
+    }
+}
+
+interface Sink {
+    fn put(self: &mut Self, w: &string): i64
+}
+
+struct Tally { total: i64 }
+
+impl Tally {
+    fn put(self: &mut Self, w: &string): i64 {
+        self.total += w.len
+        return self.total
+    }
+}
+
+fn take(w: &string): i64 { return w.len }
+
+fn feed(s: &mut Sink, w: &string): i64 { return s.put(w) }
+
+fn main(): i32 {
+    let text = "hello world"
+    print(take(text[0..5]))
+    var c = Counter { n: 0 }
+    c.add(text[0..5])
+    print(c.n)
+    print(Counter.lenOf(text[6..11]))
+    print(c.pick(text[0..2], 7))
+    var v: Vec<i64> = Vec.new()
+    v.push(10)
+    v.push(20)
+    c.sum(v)
+    c.sum(v[1..2])
+    let a: [i64; 2] = [1, 2]
+    c.sum(a)
+    print(c.n)
+    c.maybe(100)
+    print(c.n)
+    var t = Tally { total: 0 }
+    print(feed(&mut t, text[0..3]))
+    print(t.put(text[0..4]))
+    return 0
+}
+// @expect: 5
+// @expect: 5
+// @expect: 5
+// @expect: 7
+// @expect: 58
+// @expect: 158
+// @expect: 3
+// @expect: 7
