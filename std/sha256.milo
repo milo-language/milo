@@ -1,5 +1,9 @@
 // std/sha256 — pure-Milo SHA-256 (FIPS 180-4), no platform crypto dependency.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // Why a pure-Milo version when std/crypto already wraps CommonCrypto/OpenSSL:
 //   * constant-time by construction — every branch and memory access is on public
 //     data (message length, round index), never on a message or key byte, so the

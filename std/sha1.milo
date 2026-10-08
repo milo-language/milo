@@ -1,5 +1,9 @@
 // std/sha1 — pure-Milo SHA-1 (FIPS 180-4). No platform crypto dependency.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // SHA-1 is cryptographically broken for collision resistance — do NOT use it for
 // signatures or dedup against an adversary. It is still the content-address of git
 // objects and the digest in the WebSocket handshake and legacy TLS, so a pure-Milo

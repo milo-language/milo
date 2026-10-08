@@ -1,5 +1,9 @@
 // std/pbkdf2 — PBKDF2, the iterated password-based KDF (RFC 8018 §5.2).
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // This is the module to reach for when the input is a *password* — something a
 // human chose, with maybe 30 bits of entropy behind it. A plain hash of a password
 // is a rounding error to a GPU. PBKDF2 makes each guess cost `iterations` HMACs,

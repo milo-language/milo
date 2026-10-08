@@ -1,5 +1,9 @@
 // std/sha512 — pure-Milo SHA-512 and SHA-384 (FIPS 180-4), no platform crypto.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // Same shape as std/sha256, one size up: 64-bit lanes, a 128-byte block, 80 rounds,
 // and a 128-bit length field. SHA-384 is the identical compression function with a
 // different initial state, truncated to 48 bytes — the truncation is what makes it

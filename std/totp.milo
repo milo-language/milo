@@ -1,5 +1,9 @@
 // std/totp — HOTP (RFC 4226) and TOTP (RFC 6238) one-time passwords, pure Milo.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // HOTP(K, C) truncates HMAC-SHA1(K, C) to an N-digit code; TOTP is HOTP with the
 // counter set to floor(time / step). This is the algorithm behind Google
 // Authenticator / Authy 2FA codes. Built on std/hmac's HMAC-SHA1. Codes match

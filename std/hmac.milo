@@ -1,5 +1,9 @@
 // std/hmac — HMAC (RFC 2104 / FIPS 198-1) over the pure-Milo hashes.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // HMAC(K, m) = H((K' ^ opad) || H((K' ^ ipad) || m)), where K' is the key sized to
 // the hash's block: hashed first if longer, zero-padded otherwise. Built on the
 // `*.bytes` entry points so the inner digest stays raw for the outer hash — no hex

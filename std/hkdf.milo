@@ -1,5 +1,9 @@
 // std/hkdf — HKDF, the HMAC-based extract-and-expand KDF (RFC 5869).
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // Turns one high-entropy-but-not-uniform secret — an ECDH shared secret, a master
 // key, a token — into any number of independent, uniformly distributed subkeys.
 // Two steps, and the split matters:

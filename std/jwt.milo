@@ -1,5 +1,9 @@
 // std/jwt — JSON Web Tokens (RFC 7519 / 7515) over HMAC-SHA2, pure Milo.
 //
+// Not independently audited: checked against the published test vectors, but no outside
+// review. For production secrets prefer a vetted library; std/crypto wraps the platform
+// one for digests and AES-GCM.
+//
 // Signs and verifies `base64url(header).base64url(payload).base64url(HMAC)` on
 // std/hmac + std/base64. HS256/384/512 are deterministic, so a token produced here
 // is byte-identical to PyJWT / jsonwebtoken for the same header, payload, and
