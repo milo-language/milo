@@ -250,6 +250,7 @@ function runCheck(source: string, filePath: string, target: TargetInfo, warningC
           ...(d.hint ? { hint: d.hint } : {}),
           file,
           ...(d.span ? { line: d.span.line, col: d.span.col, len: d.len ?? 1 } : {}),
+          ...(d.notes?.length ? { notes: d.notes.map(n => ({ message: n.message, ...(n.span ? { file: n.span.file ?? filePath, line: n.span.line, col: n.span.col, len: n.len ?? 1 } : {}) })) } : {}),
           ...(fix ? { fix: { title: fix.title, edits: fix.edits.map(e => ({ ...lineCol(src!, e.offset), ...endLineCol(src!, e.offset + e.len), newText: e.newText })) } } : {}),
         };
       }),

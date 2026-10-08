@@ -14,6 +14,15 @@ export interface Diagnostic {
   message: string;
   hint?: string;
   code?: string;
+  // Secondary locations: where the conflicting borrow was taken, where it is still used.
+  // Each renders as its own `note:` with a source line, after the primary span.
+  notes?: DiagnosticNote[];
+}
+
+export interface DiagnosticNote {
+  message: string;
+  span?: Span;
+  len?: number;
 }
 
 export interface WarningConfig {
@@ -79,22 +88,15 @@ export function formatDiagnostic(
   const effSource =
     spanFile && spanFile !== filePath ? resolveSource?.(spanFile) : source;
 
-  if (d.span) {
-    const loc = `${file}:${d.span.line}:${d.span.col}`;
-    lines.push(`${BOLD}${color}${label}${RESET}${BOLD}: ${d.message}${RESET}`);
-    lines.push(`  ${DIM}──>${RESET} ${loc}`);
+  lines.push(`${BOLD}${color}${label}${RESET}${BOLD}: ${d.message}${RESET}`);
+  if (d.span) pushSnippet(lines, d.span, d.len, file, effSource, color);
 
-    const srcLines = (effSource ?? "").split("\n");
-    const lineIdx = d.span.line - 1;
-    if (lineIdx >= 0 && lineIdx < srcLines.length) {
-      const lineNum = String(d.span.line);
-      const pad = " ".repeat(lineNum.length);
-      lines.push(`${DIM}${pad} │${RESET}`);
-      lines.push(`${DIM}${lineNum} │${RESET} ${srcLines[lineIdx]}`);
-      lines.push(`${DIM}${pad} │${RESET} ${" ".repeat(d.span.col - 1)}${color}${"^".repeat(Math.max(1, d.len ?? 1))}${RESET}`);
-    }
-  } else {
-    lines.push(`${BOLD}${color}${label}${RESET}${BOLD}: ${d.message}${RESET}`);
+  for (const n of d.notes ?? []) {
+    lines.push(`  ${BOLD}note${RESET}: ${n.message}`);
+    if (!n.span) continue;
+    const nFile = n.span.file ?? filePath ?? "<input>";
+    const nSource = n.span.file && n.span.file !== filePath ? resolveSource?.(n.span.file) : source;
+    pushSnippet(lines, n.span, n.len, nFile, nSource, CYAN);
   }
 
   if (d.hint) {
@@ -102,4 +104,16 @@ export function formatDiagnostic(
   }
 
   return lines.join("\n");
+}
+
+function pushSnippet(lines: string[], span: Span, len: number | undefined, file: string, src: string | undefined, color: string) {
+  lines.push(`  ${DIM}──>${RESET} ${file}:${span.line}:${span.col}`);
+  const srcLines = (src ?? "").split("\n");
+  const lineIdx = span.line - 1;
+  if (lineIdx < 0 || lineIdx >= srcLines.length) return;
+  const lineNum = String(span.line);
+  const pad = " ".repeat(lineNum.length);
+  lines.push(`${DIM}${pad} │${RESET}`);
+  lines.push(`${DIM}${lineNum} │${RESET} ${srcLines[lineIdx]}`);
+  lines.push(`${DIM}${pad} │${RESET} ${" ".repeat(span.col - 1)}${color}${"^".repeat(Math.max(1, len ?? 1))}${RESET}`);
 }

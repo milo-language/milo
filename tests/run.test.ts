@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync 
 import { execSync, spawnSync } from "child_process";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
-import { parseExpected, parseExpectedError, parseExpectedRuntimeError, parseKnownRed } from "./annotations";
+import { parseExpected, parseExpectedError, parseExpectedErrorAt, parseExpectedNotes, parseExpectedRuntimeError, parseKnownRed } from "./annotations";
 import { guardedRun, type RunResult } from "../scripts/guard";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
@@ -290,6 +290,16 @@ describe("errors (type checker rejects)", () => {
       // as well as the rule the fixture exists to pin.
       expect(`${file}: ${expectedError ?? "NO @error: ANNOTATION"}`).toBe(`${file}: ${expectedError}`);
       expect(r.stderr).toContain(expectedError!);
+      // A note is its message line followed by its location line; so is the error.
+      const plain = r.stderr.replace(/\x1b\[[0-9;]*m/g, "");
+      const at = parseExpectedErrorAt(source);
+      if (at) {
+        const errLine = plain.split("\n").findIndex(l => l.startsWith("error") && l.includes(expectedError!));
+        expect(plain.split("\n")[errLine + 1]).toBe(`  ──> ${join(ERRORS_DIR, file)}:${at.line}:${at.col}`);
+      }
+      for (const n of parseExpectedNotes(source)) {
+        expect(plain).toContain(`note: ${n.message}\n  ──> ${join(ERRORS_DIR, file)}:${n.line}:${n.col}`);
+      }
     });
   }
 

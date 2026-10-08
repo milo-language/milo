@@ -332,6 +332,17 @@ function validateDocument(uri: string) {
       severity: d.severity === "error" ? 1 : d.severity === "warning" ? 2 : 3,
       source: "milo",
       message: d.hint ? `${d.message}\nhint: ${d.hint}` : d.message,
+      // Notes in this document become relatedInformation (the editor links each one);
+      // a note in another file would need that file's URI, which a hoisted diagnostic lost.
+      ...(d.notes?.some(n => n.span && (!n.span.file || n.span.file === docPath)) ? {
+        relatedInformation: d.notes.filter(n => n.span && (!n.span.file || n.span.file === docPath)).map(n => ({
+          location: { uri, range: {
+            start: { line: n.span!.line - 1, character: n.span!.col - 1 },
+            end: { line: n.span!.line - 1, character: n.span!.col - 1 + Math.max(1, n.len ?? 1) },
+          } },
+          message: n.message,
+        })),
+      } : {}),
       // The code is what `--allow=` takes, and the editor shows it next to the message;
       // for a warning, codeDescription makes it a link to the generated reference entry.
       ...(d.code ? { code: d.code } : {}),

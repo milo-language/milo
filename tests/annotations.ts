@@ -29,6 +29,26 @@ export function parseExpectedError(source: string): string | null {
   return null;
 }
 
+// `// @note: <line>:<col> <message>`: the error must carry a secondary note with this
+// message at this location. Any number per fixture, checked against the rendered output.
+export function parseExpectedNotes(source: string): { line: number; col: number; message: string }[] {
+  const out: { line: number; col: number; message: string }[] = [];
+  for (const raw of source.split("\n")) {
+    const m = /\/\/\s*@note:\s*(\d+):(\d+)\s+(.+)$/.exec(raw.trim());
+    if (m) out.push({ line: Number(m[1]), col: Number(m[2]), message: m[3]!.trim() });
+  }
+  return out;
+}
+
+// `// @error-at: <line>:<col>`: where the primary caret of the `@error` must point.
+export function parseExpectedErrorAt(source: string): { line: number; col: number } | null {
+  for (const raw of source.split("\n")) {
+    const m = /\/\/\s*@error-at:\s*(\d+):(\d+)\s*$/.exec(raw.trim());
+    if (m) return { line: Number(m[1]), col: Number(m[2]) };
+  }
+  return null;
+}
+
 export function parseExpectedRuntimeError(source: string): string | null {
   const line = source.split("\n").map(l => l.trim()).find(l => l.startsWith("// @runtime-error:"));
   return line ? line.replace("// @runtime-error:", "").trim() : null;

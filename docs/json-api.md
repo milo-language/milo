@@ -133,6 +133,12 @@ from this payload (`scripts/gen-lang-docs.ts`) rather than restating it.
                              "edits": [{ "line": 14, "col": 16, "endLine": 14, "endCol": 16, "newText": "&mut " }] } }] }
 ```
 
+`notes` is present when a diagnostic has secondary locations (the borrow a mutation
+conflicts with and where it is still used, the `return` behind a rejected signature):
+each is `{ "message", "file", "line", "col", "len" }`, location fields omitted when the
+note has none. Additive within schema 2; the LSP sends the same notes as
+`relatedInformation`.
+
 A parse error is reported in the same shape as a type error — a consumer should not have
 to distinguish "crashed" from "rejected". Exit code is 1 when any diagnostic is an error.
 `code` is present only where the diagnostic carries one; most do not yet, so classify on
