@@ -411,6 +411,12 @@ class LowerCtx {
           ?? (hirPat.kind === "EnumPattern" ? (hirPat.bindings[0]?.type ?? { tag: "unknown" as const }) : { tag: "unknown" as const });
         const innerName = `__letelse_${binding}`;
         if (hirPat.kind === "EnumPattern" && hirPat.bindings[0]) { hirPat.bindings[0].name = innerName; hirPat.bindings[0].type = bindingType; }
+        // Only the first binding leaves through the match's value; the rest keep their
+        // own names and are read after the match, so they must survive the arm's exit
+        // (dropping them there left a moved-out string payload empty).
+        if (hirPat.kind === "EnumPattern") {
+          for (let i = 1; i < hirPat.bindings.length; i++) hirPat.bindings[i].escapes = true;
+        }
         const matchExpr: HIRExpr = {
           kind: "MatchExpr",
           subject: this.lowerExpr(stmt.value),

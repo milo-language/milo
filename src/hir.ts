@@ -183,8 +183,11 @@ interface HIRMatchArm {
   body: HIRStmt[];
 }
 
+// `escapes` marks a binding that outlives its arm: let-else's bindings after the first
+// are read by name in the enclosing scope, so the arm must not drop them on exit; the
+// enclosing scope's drop owns them instead.
 export type HIRPattern =
-  | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind }[]; tag: number }
+  | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind; escapes?: boolean }[]; tag: number }
   | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool" }
   | { kind: "WildcardPattern" };
 

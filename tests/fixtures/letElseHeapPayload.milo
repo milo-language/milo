@@ -1,0 +1,147 @@
+// let-else must keep every binding's heap payload alive past the statement. The
+// first binding leaves through the desugared match's value; the rest are read by
+// name afterwards and used to be dropped at the arm's exit, so `let E.C(k, s) = e
+// else {...}` left `s` an empty string. Covers string, Vec, Heap, struct-with-string,
+// Result Err, multi-field variants (owned, borrowed, in a loop) and an
+// Option<Option<string>> peeled twice (patterns do not nest).
+
+pub enum Rec {
+    Num(i32),
+    Pair(i8, string),
+    Three(i64, string, Vec<i32>),
+}
+
+pub fn pairOf(r: Rec): string {
+    let Rec.Pair(k, s) = r else {
+        return "not a pair"
+    }
+    return $"{k}:{s}"
+}
+
+pub fn peek(r: &Rec): string {
+    let Rec.Three(n, s, v) = r else {
+        return "not three"
+    }
+    return $"{n}:{s}:{v.len()}"
+}
+
+pub struct Named {
+    name: string,
+    n: i32,
+}
+
+pub fn some(s: string): Option<string> {
+    return Option.Some(s)
+}
+
+pub fn fromParam(opt: Option<string>) {
+    let Option.Some(s) = opt else {
+        return
+    }
+    print(s)
+}
+
+pub fn errOf(ok: bool): Result<i32> {
+    if ok {
+        return Result.Ok(1)
+    }
+    return Result.Err("bad " + "input")
+}
+
+// @expect: hello
+// @expect: local world
+// @expect: 3 30
+// @expect: 42
+// @expect: bob 7
+// @expect: bad input
+// @expect: inner nested
+// @expect: unchanged
+// @expect: 3:cs
+// @expect: not a pair
+// @expect: 9:mid:2
+// @expect: not three
+// @expect: 9 mid 2
+// @expect: loop 0 p0
+// @expect: loop 1 p1
+// @expect: loop 2 p2
+pub fn main() {
+    fromParam(some("hel" + "lo"))
+
+    let o = some("local " + "world")
+    let Option.Some(t) = o else {
+        return
+    }
+    print(t)
+
+    var v: Vec<i32> = Vec.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    let ov = Option.Some(v)
+    let Option.Some(w) = ov else {
+        return
+    }
+    print($"{w.len()} {w[2]}")
+
+    let oh = Option.Some(Heap(42))
+    let Option.Some(h) = oh else {
+        return
+    }
+    print(*h)
+
+    let on = Option.Some(Named { name: "b" + "ob", n: 7 })
+    let Option.Some(nm) = on else {
+        return
+    }
+    print($"{nm.name} {nm.n}")
+
+    let r = errOf(false)
+    let Result.Err(e) = r else {
+        return
+    }
+    print(e)
+
+    let nested: Option<Option<string>> = Option.Some(Option.Some("inner " + "nested"))
+    let Option.Some(inner) = nested else {
+        return
+    }
+    let Option.Some(ns) = inner else {
+        return
+    }
+    print(ns)
+
+    // a borrowing let-else of a value still used afterwards must not move it
+    let keep = some("unch" + "anged")
+    printIfSome(keep)
+    let Option.Some(_) = keep else {
+        return
+    }
+
+    print(pairOf(Rec.Pair(3, "c" + "s")))
+    print(pairOf(Rec.Num(1)))
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    let three = Rec.Three(9, "m" + "id", nums)
+    print(peek(three))
+    print(peek(Rec.Num(0)))
+    let Rec.Three(a, m, z) = three else {
+        return
+    }
+    print($"{a} {m} {z.len()}")
+
+    // each iteration's binding must be freed once, at the loop body's end
+    for i in 0..3 {
+        let rec = Rec.Pair(i as i8, $"p{i}")
+        let Rec.Pair(k, s) = rec else {
+            continue
+        }
+        print($"loop {k} {s}")
+    }
+}
+
+pub fn printIfSome(o: &Option<string>) {
+    if let Option.Some(s) = o {
+        print(s)
+    }
+}

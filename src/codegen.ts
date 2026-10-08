@@ -5191,7 +5191,12 @@ export class Codegen {
       // the final binding and leak every earlier one (a match inside a loop).
       // emitGuardedDrop clears the alive flag, so the epilogue's drop is a no-op.
       if (!armTerminated) {
+        const escaping = new Set<string>();
+        if (arm.pattern.kind === "EnumPattern") {
+          for (const b of arm.pattern.bindings) if (b.escapes) escaping.add(this.localAddr(b.name));
+        }
         for (let d = armDropStart; d < this.droppableLocals.length; d++) {
+          if (escaping.has(this.droppableLocals[d].addr)) continue;
           this.emitGuardedDrop(lines, this.droppableLocals[d]);
         }
       }
