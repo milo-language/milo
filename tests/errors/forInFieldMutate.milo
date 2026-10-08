@@ -1,4 +1,4 @@
-// @error: cannot call 'push' on 'b' because it is borrowed
+// @error: cannot call 'push' on 'b' while a loop iterates over it
 //
 // `for it in b.items` holds a pointer into that Vec's buffer for the loop's life, so
 // pushing to it reallocates the memory the loop is reading. This was accepted until

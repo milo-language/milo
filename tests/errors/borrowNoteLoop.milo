@@ -1,0 +1,9 @@
+// @error: cannot call 'push' on 'xs' while a loop iterates over it
+// @error-at: 7:19
+// @note: 7:5 the loop over 'xs' (line 7) borrows it for its whole body
+// The loop is named as the borrow, at its 'for'.
+fn main(): void {
+    var xs: Vec<i64> = [1]
+    for x in xs { xs.push(x) }
+    print(xs.len)
+}

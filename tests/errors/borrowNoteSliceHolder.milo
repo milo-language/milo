@@ -1,0 +1,12 @@
+// @error: cannot call 'push' on 'xs' while 'r' borrows it
+// @error-at: 10:5
+// @note: 9:13 'r' borrows 'xs' here
+// @note: 11:11 'r' is still used here
+// A conflicting mutation names the binding that holds the borrow, where it was
+// taken, and the later read that keeps it live.
+fn main(): void {
+    var xs: Vec<i64> = [1, 2]
+    let r = xs[0..2]
+    xs.push(3)
+    print(r[0])
+}

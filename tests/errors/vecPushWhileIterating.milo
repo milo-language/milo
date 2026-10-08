@@ -1,4 +1,4 @@
-// @error: cannot call 'push' on 'items' because it is borrowed
+// @error: cannot call 'push' on 'items' while a loop iterates over it
 
 fn main(): i32 {
     var items: Vec<i64> = Vec.new()

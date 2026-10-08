@@ -14,4 +14,4 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot call 'add' on 'b' because it is borrowed
+// @error: cannot call 'add' on 'b' while 's' borrows it

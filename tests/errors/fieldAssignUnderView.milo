@@ -13,4 +13,4 @@ fn main(): i32 {
     print(w[0])
     return 0
 }
-// @error: cannot assign to 'h.data' because 'h' is borrowed
+// @error: cannot assign to 'h.data' while 'w' borrows 'h'

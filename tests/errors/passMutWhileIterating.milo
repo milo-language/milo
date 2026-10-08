@@ -1,4 +1,4 @@
-// @error: cannot pass 'items' because it is borrowed
+// @error: cannot pass 'items' while a loop iterates over it
 
 fn grow(v: &mut Vec<i64>): void {
     v.push(99)

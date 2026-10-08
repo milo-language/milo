@@ -12,4 +12,4 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot move 'b' because it is borrowed
+// @error: cannot move 'b' while 's' borrows it

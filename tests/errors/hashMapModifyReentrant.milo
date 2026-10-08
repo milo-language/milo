@@ -1,6 +1,6 @@
 // The map is borrowed for the whole of a modify callback: an insert inside it could
 // grow the table and move the very entry the callback's `&mut` view points into.
-// @error: is borrowed
+// @error: cannot call 'insert' on 'm' while 'm.modify' borrows it
 fn main(): i32 {
     var m: HashMap<string, i64> = HashMap.new()
     m.insert("a", 1)

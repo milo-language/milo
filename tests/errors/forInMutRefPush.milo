@@ -1,4 +1,4 @@
-// @error: cannot call 'push' on 'v' because it is borrowed
+// @error: cannot call 'push' on 'v' while a loop iterates over it
 // growing the Vec under a '&mut' element view would move the elements it points at.
 pub fn main(): void {
     var v: Vec<i64> = [1, 2, 3]

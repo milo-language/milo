@@ -1,4 +1,4 @@
-// @error: cannot call 'pop' on 'v' because it is borrowed
+// @error: cannot call 'pop' on 'v' while a loop iterates over it
 // popping frees the slot the '&mut' element view may point at.
 pub fn main(): void {
     var v: Vec<string> = ["a", "b"]

@@ -6,4 +6,4 @@ fn main(): i32 {
     print(view)
     return 0
 }
-// @error: cannot assign to 's' because it is borrowed
+// @error: cannot assign to 's' while 'view' borrows it

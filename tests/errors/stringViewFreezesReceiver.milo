@@ -12,4 +12,4 @@ fn main(): i32 {
     print(w)
     return 0
 }
-// @error: cannot call 'feed' on 'lx' because it is borrowed
+// @error: cannot call 'feed' on 'lx' while 'w' borrows it

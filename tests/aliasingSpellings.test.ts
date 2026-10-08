@@ -217,7 +217,7 @@ describe("mutation during iteration is rejected for every spelling", () => {
           const errs = errorsFor(program(c, r, route));
           // Either wording is the rule firing: a mutating METHOD reports the borrow,
           // an element ASSIGNMENT reports the iteration. Both are a rejection.
-          expect(errs.join("\n")).toMatch(/is borrowed|being iterated/);
+          expect(errs.join("\n")).toMatch(/is borrowed|being iterated|while a loop iterates over|while a closure captures/);
         });
       }
     }

@@ -1,4 +1,4 @@
-// @error: cannot pass 'b' because it is borrowed
+// @error: cannot pass 'b' while a loop iterates over it
 //
 // The same reallocation as forInFieldMutate, reached through a function that takes the
 // struct as `&mut` instead of by touching the field directly. Freezing the iterable's

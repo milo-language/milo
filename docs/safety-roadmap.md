@@ -50,7 +50,7 @@ While a ref into a collection is live, the collection is frozen — mutation is 
 ```
 var text: string = "hello world"
 let r = text[0..5]    // &string view — borrows are implicit, there is no `&x`
-text.push('!')        // COMPILE ERROR: cannot call 'push' on 'text' because it is borrowed
+text.push('!')        // COMPILE ERROR: cannot call 'push' on 'text' while 'r' borrows it
 print(r)
 ```
 

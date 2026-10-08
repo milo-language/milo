@@ -35,7 +35,7 @@ classes are held", never as "safe Milo has no UB left."
 | Use-after-free, owned (`Heap`/`Box`) | compile | **compile** | move checker — `Heap<T>` is single-owner |
 | Dangling return (`return &local`) | compile | **compile** | refs are second-class: `error: cannot return a reference` |
 | Stored borrow in a struct | compile (with `<'a>`) | n/a → **compile** | `error: references cannot be stored in structs` |
-| Iterator invalidation (mutate while iterating) | compile | **compile** | borrow tracker: `error: cannot call 'push' on 'v' because it is borrowed`; a callee that writes the global is `'f' writes the global 'g', which is being iterated here` |
+| Iterator invalidation (mutate while iterating) | compile | **compile** | borrow tracker: `error: cannot call 'push' on 'v' while a loop iterates over it`; a callee that writes the global is `'f' writes the global 'g', which is being iterated here` |
 | Element view of a mutable global held across a green-task park | n/a (no globals without `unsafe`/`Mutex`) | **compile** | `@parks` walk: `'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer` (finding #5) |
 | Raw pointer from `ptr()`/`cstr()` outliving a realloc of its source | compile (`as_ptr` borrow ends, but the deref is `unsafe`) | **compile** | pointer holders are element views: `'v' may reallocate here while 'p' still points into its buffer` (finding #6) |
 | Copying a `Drop` element out of a container by value | compile (`cannot move out of index`) | **compile** | `cannot take 'Res' out of a container by index: it carries Drop`, at every by-value site (finding #7) |

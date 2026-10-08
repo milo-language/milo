@@ -85,6 +85,17 @@ test("check --json reports a rejection as data, and exits nonzero", () => {
   expect(d.file).toContain("aliasMutContainerElement.milo");
 });
 
+test("check --json carries a diagnostic's secondary locations as notes", () => {
+  const bad = join(ROOT, "tests", "errors", "borrowNoteSliceHolder.milo");
+  const doc = JSON.parse(milo(["check", bad, "--json"]).out);
+  const d = doc.diagnostics.find((x: any) => x.message.includes("while 'r' borrows it"));
+  expect(d.notes.map((n: any) => [n.message, n.line, n.col])).toEqual([
+    ["'r' borrows 'xs' here", 9, 13],
+    ["'r' is still used here", 11, 11],
+  ]);
+  expect(d.notes[0].file).toContain("borrowNoteSliceHolder.milo");
+});
+
 test("check --json on a clean file says so, and exits zero", () => {
   const res = milo(["check", join(ROOT, "examples", "hello.milo"), "--json"]);
   expect(res.code).toBe(0);

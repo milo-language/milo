@@ -87,6 +87,14 @@ const SHADOW_SRC = `fn asciiIsDigit(ch: u8, extra: i64): bool {
 }
 `;
 const SHADOW_URI = "file:///tmp/milo-lsp-shadow.milo";
+const BORROW_URI = "file:///tmp/milo-lsp-borrow.milo";
+const BORROW_SRC = `fn main(): void {
+    var xs: Vec<i64> = [1, 2]
+    let r = xs[0..2]
+    xs.push(3)
+    print(r[0])
+}
+`;
 
 // Goto-definition on a local impl-method call (`s.greet()`). Methods live in
 // program.impls, not program.functions, so this used to resolve nowhere.
@@ -376,7 +384,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -467,6 +475,23 @@ test("shadowing a stdlib fn with a different signature is a squiggled diagnostic
   // An error's internal code is sent, but only a warning name gets a doc link.
   expect(shadow.code).toBe("shadows-stdlib");
   expect(shadow.codeDescription).toBeUndefined();
+});
+
+test("a borrow conflict carries the borrow and its next use as relatedInformation", async () => {
+  const deadline = Date.now() + 4000;
+  let diags: any[] | undefined;
+  while (Date.now() < deadline) {
+    diags = diagnosticsByUri.get(BORROW_URI);
+    if (diags && diags.length) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  const d = diags?.find((x: any) => /while 'r' borrows it/.test(x.message));
+  expect(d).toBeTruthy();
+  expect(d.range.start).toEqual({ line: 3, character: 4 });
+  expect(d.relatedInformation.map((ri: any) => [ri.message, ri.location.uri, ri.location.range.start])).toEqual([
+    ["'r' borrows 'xs' here", BORROW_URI, { line: 2, character: 12 }],
+    ["'r' is still used here", BORROW_URI, { line: 4, character: 10 }],
+  ]);
 });
 
 test("a lint denied in milo.json is published, squiggled on the match keyword", async () => {

@@ -1,4 +1,4 @@
-// @error: cannot call 'push' on 's' because it is borrowed
+// @error: cannot call 'push' on 's' while 'sl' borrows it
 
 fn main(): i32 {
     var s = "hello".clone()

@@ -12,4 +12,4 @@ fn main(): i32 {
     print(v[0])
     return 0
 }
-// @error: cannot call 'push' on 't' because it is borrowed
+// @error: cannot call 'push' on 't' while 'v' borrows it

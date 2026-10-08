@@ -1,4 +1,4 @@
-// @error: cannot call 'setByte' on 's' because it is borrowed
+// @error: cannot call 'setByte' on 's' while 'view' borrows it
 // A write while a slice view of the same string is live is rejected like any
 // other mutation: a literal's first write moves its bytes to a new buffer.
 pub fn main(): void {

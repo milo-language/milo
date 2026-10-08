@@ -12,4 +12,4 @@ fn main(): i32 {
     print(w)
     return 0
 }
-// @error: cannot assign to 'lb.buf' because 'lb' is borrowed
+// @error: cannot assign to 'lb.buf' while 'w' borrows 'lb'

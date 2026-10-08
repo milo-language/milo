@@ -10,7 +10,7 @@ import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span
 import { simpleType, declaredType, floatNamespaceConst } from "./ast";
 import type { TypeKind } from "./types";
 import { typeFromAst, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
-import type { Diagnostic, WarningConfig } from "./diagnostics";
+import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
@@ -138,6 +138,18 @@ type BorrowKind = "view" | "iteration" | "pointer" | "capture";
 // line N)`. `null` in `VarInfo.borrowHolders` for every non-pointer borrow.
 interface PointerHolder { name: string; info: VarInfo; root: string; call: string; line: number }
 
+// Where a view/iteration/capture borrow was taken and what holds it, so a conflicting
+// mutation can name the borrow instead of only saying one exists. `holder` is filled in
+// when the borrow is handed to a binding (`let r = xs[0..2]`, a match payload); a borrow
+// with no holder and no `via` is a temporary inside the current statement.
+interface BorrowSite {
+  span?: Span;
+  holder?: { name: string; info: VarInfo };
+  via?: "loop" | "capture" | "callback";
+  // The callback method for `via: "callback"` (`each`, `map`).
+  what?: string;
+}
+
 type PlaceStep =
   | { tag: "field"; name: string }
   | { tag: "index" }
@@ -261,6 +273,8 @@ interface VarInfo {
   borrowKinds?: BorrowKind[];
   // Who holds each borrow in `borrowedPaths`, same order; only a `pointer` borrow has one.
   borrowHolders?: (PointerHolder | null)[];
+  // Where each borrow in `borrowedPaths` came from, same order (diagnostics only).
+  borrowSites?: (BorrowSite | null)[];
   // This binding holds a `*T` whose source has since been moved to an owner the checker
   // cannot see (`take(v)`, `store.push(v)`), so the buffer may be freed at any point after.
   // Any read of the binding is an error until it is reassigned. Set by `tryMoveLeaf`.
@@ -583,6 +597,9 @@ type ExprOf<K extends Expr["kind"]> = Extract<Expr, { kind: K }>;
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
+  // Borrow errors waiting for the holder's next read, which becomes their "still used
+  // here" note. Keyed by the holder binding; entries die with the checker.
+  private pendingUseNotes = new Map<VarInfo, { diag: Diagnostic; name: string }[]>();
   // Deferred Vec element inference: `var v = Vec.new()` with no annotation gets a
   // placeholder element object, resolved in-place from the first `v.push(x)`.
   // inferVecElems holds the live placeholder objects (identity set); pendingInferVecs
@@ -958,6 +975,12 @@ export class TypeChecker {
   private error(msg: string, span?: Span, hint?: string) {
     if ((msg.includes(UNKNOWN_TYPE_NAME) || hint?.includes(UNKNOWN_TYPE_NAME)) && this.diagnostics.some(d => d.severity === "error")) return;
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
+  }
+
+  private errorWithNotes(msg: string, span: Span | undefined, hint: string | undefined, notes: DiagnosticNote[]): Diagnostic {
+    const d: Diagnostic = { severity: "error", span, message: msg, hint, ...(notes.length > 0 && { notes }) };
+    this.diagnostics.push(d);
+    return d;
   }
 
   // A value typed `unknown` came out of an expression that already failed to check, so
@@ -2862,12 +2885,29 @@ export class TypeChecker {
 
   // Freeze `info` for a borrow of `place`. The path is recorded so a later mutation of a
   // provably different field isn't rejected; pass null when the borrowed place is unknown.
-  private freeze(info: VarInfo, place: Expr | null, kind: BorrowKind = "view", holder: PointerHolder | null = null) {
+  private freeze(info: VarInfo, place: Expr | null, kind: BorrowKind = "view", holder: PointerHolder | null = null, site?: BorrowSite) {
+    this.pushBorrow(info, place ? this.borrowPrefix(place) : null, kind, holder, site ?? { span: place?.span });
+  }
+
+  // The one writer of the parallel borrow arrays, so they stay the same length.
+  private pushBorrow(info: VarInfo, path: string[] | null, kind: BorrowKind, holder: PointerHolder | null, site: BorrowSite | null) {
     this.noteBorrowChange();
     info.borrowed = true;
-    (info.borrowedPaths ??= []).push(place ? this.borrowPrefix(place) : null);
+    (info.borrowedPaths ??= []).push(path);
     (info.borrowKinds ??= []).push(kind);
     (info.borrowHolders ??= []).push(holder);
+    (info.borrowSites ??= []).push(site);
+  }
+
+  // A binding now owns the borrows its initializer or pattern took: stamp it on the
+  // unattributed view sites of each source so a later conflict can name it.
+  private attributeBorrows(srcs: VarInfo[], name: string, holderInfo: VarInfo | null) {
+    if (!holderInfo) return;
+    for (const src of srcs) {
+      src.borrowSites?.forEach((site, i) => {
+        if (site && !site.holder && !site.via && src.borrowKinds?.[i] === "view") site.holder = { name, info: holderInfo };
+      });
+    }
   }
 
   // The exact field prefix of a borrowed place, stopping at the first step that is not a
@@ -2938,11 +2978,14 @@ export class TypeChecker {
       info.borrowedPaths = undefined;
       info.borrowKinds = undefined;
       info.borrowHolders = undefined;
+      info.borrowSites = undefined;
       return;
     }
+    const sites = info.borrowSites ?? [];
     info.borrowedPaths = idx.map(i => info.borrowedPaths![i]);
     info.borrowKinds = idx.map(i => info.borrowKinds![i]);
     info.borrowHolders = idx.map(i => holders[i] ?? null);
+    info.borrowSites = idx.map(i => sites[i] ?? null);
   }
 
   // The pointer borrow of `info` that a mutation of `target` would invalidate, if any.
@@ -3144,11 +3187,7 @@ export class TypeChecker {
     // still the owner, `tryMoveLeaf` left its borrows in place, and there is nothing to carry.
     if (!to || !carried.from.moved) return;
     carried.holders.forEach((h, i) => {
-      this.noteBorrowChange();
-      to.borrowed = true;
-      (to.borrowedPaths ??= []).push(carried.paths[i]);
-      (to.borrowKinds ??= []).push("pointer");
-      (to.borrowHolders ??= []).push(h);
+      this.pushBorrow(to, carried.paths[i], "pointer", h, null);
       (h.info.freezes ??= []).push(to);
     });
   }
@@ -6076,9 +6115,7 @@ export class TypeChecker {
       // `r.items()` that returns `self.data[..]` blocks writes to `r.data` and nothing else
       const base = this.accessPath(obj);
       const path = base && base.fields && viewFields ? [...base.fields, ...viewFields] : null;
-      this.noteBorrowChange();
-      info.borrowed = true;
-      (info.borrowedPaths ??= []).push(path);
+      this.pushBorrow(info, path, "view", null, { span: obj.span });
     }
     this.borrowedExprs.add(obj);
   }
@@ -6392,6 +6429,7 @@ export class TypeChecker {
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         const letInfo = this.lookup(stmt.name);
+        if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, letInfo);
         if (letInfo) this.bindPointerViews(stmt.name, letInfo, stmt.value);
         if (letInfo) this.noteClosureSources(letInfo, stmt.value);
         // An unannotated `let x = <const-int-value>` stays width-adaptable until
@@ -6428,6 +6466,7 @@ export class TypeChecker {
           if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
           this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
           const varInfo = this.lookup(stmt.name);
+          if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, varInfo);
           if (varInfo) this.bindPointerViews(stmt.name, varInfo, stmt.value);
           if (varInfo) this.noteClosureSources(varInfo, stmt.value);
           if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
@@ -6495,8 +6534,11 @@ export class TypeChecker {
           break;
         }
         if (assignPath && indexQualified && assignInfo && this.frozenByIteration(assignInfo, stmt.target)) {
-          this.error(`cannot assign to '${this.describeExpr(stmt.target)}' because '${assignPath.root}' is being iterated`, sp,
-            `the loop hands out this element — finish the loop, or collect the writes and apply them after it`);
+          const loop = this.conflictingBorrow(assignInfo, stmt.target);
+          const loopNotes: DiagnosticNote[] = loop?.via === "loop" && loop.span
+            ? [{ message: `the loop over '${assignPath.root}' (line ${loop.span.line}) borrows it for its whole body`, span: loop.span }] : [];
+          this.errorWithNotes(`cannot assign to '${this.describeExpr(stmt.target)}' because '${assignPath.root}' is being iterated`, sp,
+            `the loop hands out this element — finish the loop, or collect the writes and apply them after it`, loopNotes);
           break;
         }
         if (assignPath && !indexQualified) {
@@ -6514,7 +6556,9 @@ export class TypeChecker {
           if (info && this.frozenAgainst(info, stmt.target, isCapturedMutation ? "capture" : undefined)) {
             const place = this.describeExpr(stmt.target);
             const why = place === assignPath.root ? "it is borrowed" : `'${assignPath.root}' is borrowed`;
-            this.error(`cannot assign to '${place}' because ${why}`, sp,
+            this.reportBorrowed(`cannot assign to '${place}'`, assignPath.root,
+              this.conflictingBorrow(info, stmt.target, isCapturedMutation ? "capture" : undefined), sp,
+              `cannot assign to '${place}' because ${why}`,
               `a reference or slice into this variable is still live — the assignment would invalidate it`);
             break;
           }
@@ -6694,7 +6738,7 @@ export class TypeChecker {
             }
           }
           // One freeze for every container shape below — see freezeIterable.
-          const iterBorrowInfo = this.freezeIterable(stmt.iterable);
+          const iterBorrowInfo = this.freezeIterable(stmt.iterable, sp);
           if (iterType.tag === "vec") {
             const mutElem = !!stmt.mutRef;
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: mutElem };
@@ -6921,6 +6965,7 @@ export class TypeChecker {
               this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
               const bound = this.lookup(stmt.pattern.bindings[i]);
+              if (i === 0) this.attributeBorrows(freezes, stmt.pattern.bindings[0], bound);
               if (bound) this.noteRefInto(bound, stmt.subject, stmt.pattern.variant, i);
             }
           }
@@ -7010,6 +7055,7 @@ export class TypeChecker {
               this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)), ...(i === 0 && freezes.length > 0 && { freezes }) });
               const bound = this.lookup(stmt.pattern.bindings[i]);
+              if (i === 0) this.attributeBorrows(freezes, stmt.pattern.bindings[0], bound);
               if (bound) this.noteRefInto(bound, stmt.value, stmt.pattern.variant, i);
             }
           }
@@ -7754,7 +7800,8 @@ export class TypeChecker {
         if (info.borrowed) {
           // `borrowed` covers closure capture *and* a live slice/view/iteration borrow —
           // naming only closures misdiagnosed `let s = b.view(); consume(b)`.
-          this.error(`cannot move '${expr.name}' because it is borrowed`, expr.span,
+          this.reportBorrowed(`cannot move '${expr.name}'`, expr.name, this.conflictingBorrow(info, null), expr.span,
+            `cannot move '${expr.name}' because it is borrowed`,
             `a closure capture, or a live view or loop over this variable, still points into it — moving it would leave that borrow dangling`);
           return;
         }
@@ -8552,8 +8599,8 @@ export class TypeChecker {
     return { root: cur.name, fields, text: [cur.name, ...fields].join(".") };
   }
 
-  private freezeIterable(iterable: Expr): VarInfo | null {
-    return this.freezeRootOf(iterable, "iteration");
+  private freezeIterable(iterable: Expr, loopSpan?: Span): VarInfo | null {
+    return this.freezeRootOf(iterable, "iteration", { span: loopSpan ?? iterable.span, via: "loop" });
   }
 
   // Freeze the root of any borrowed place, resolved through the place walker.
@@ -8579,12 +8626,12 @@ export class TypeChecker {
     return this.accessPath(e)?.root ?? null;
   }
 
-  private freezeRootOf(place: Expr, kind: BorrowKind = "view"): VarInfo | null {
+  private freezeRootOf(place: Expr, kind: BorrowKind = "view", site?: BorrowSite): VarInfo | null {
     const ap = this.accessPath(place);
     if (!ap) return null;
     const info = this.lookup(ap.root);
     if (!info) return null;
-    this.freeze(info, place, kind);
+    this.freeze(info, place, kind, null, site);
     return info;
   }
 
@@ -8773,6 +8820,68 @@ export class TypeChecker {
   // Every binding this expression could be mutating must be unfrozen — a fork like
   // `(if c { a } else { b }).push(x)` reaches two of them, and checking only the
   // first would let the other's live borrow dangle.
+  // The live non-pointer borrow of `info` that a mutation of `target` collides with,
+  // preferring one whose origin is known so the diagnostic can name it.
+  private conflictingBorrow(info: VarInfo, target: Expr | null, ignore?: BorrowKind): BorrowSite | null {
+    const paths = info.borrowedPaths ?? [];
+    const mut = target ? this.accessPath(target) : null;
+    const mutFields = mut ? mut.fields : null;
+    for (let i = 0; i < paths.length; i++) {
+      const kind = info.borrowKinds?.[i];
+      if (kind === "pointer" || (ignore !== undefined && kind === ignore)) continue;
+      const site = info.borrowSites?.[i];
+      if (site && (site.holder || site.via) && this.borrowCollides(paths[i], mutFields)) return site;
+    }
+    return null;
+  }
+
+  // `prefix` is the rejected operation with its place ("cannot call 'push' on 'xs'").
+  // With a known origin the message names it and notes where it was taken; otherwise it
+  // falls back to the generic `fallback` wording.
+  private reportBorrowed(prefix: string, root: string, site: BorrowSite | null, sp: Span | undefined, fallback: string, fallbackHint: string) {
+    const it = prefix.endsWith(`'${root}'`) ? "it" : `'${root}'`;
+    const notes: DiagnosticNote[] = [];
+    if (site?.holder) {
+      const h = site.holder.name;
+      notes.push({ message: `'${h}' borrows '${root}' here`, span: site.span });
+      const d = this.errorWithNotes(`${prefix} while '${h}' borrows ${it}`, sp,
+        `'${h}' points into '${root}', and this could move or free that memory: finish using '${h}' first, or copy what it views with '.clone()'`, notes);
+      const pending = this.pendingUseNotes.get(site.holder.info) ?? [];
+      pending.push({ diag: d, name: h });
+      this.pendingUseNotes.set(site.holder.info, pending);
+      return;
+    }
+    if (site?.via === "loop") {
+      const line = site.span ? ` (line ${site.span.line})` : "";
+      notes.push({ message: `the loop over '${root}'${line} borrows it for its whole body`, span: site.span });
+      this.errorWithNotes(`${prefix} while a loop iterates over ${it}`, sp,
+        `collect the changes inside the loop and apply them after it, or iterate over a copy ('${root}.clone()')`, notes);
+      return;
+    }
+    if (site?.via === "callback") {
+      notes.push({ message: `'${root}.${site.what}' borrows '${root}' until its callback returns`, span: site.span });
+      this.errorWithNotes(`${prefix} while '${root}.${site.what}' borrows ${it}`, sp,
+        `collect the changes inside the callback and apply them after the call`, notes);
+      return;
+    }
+    if (site?.via === "capture") {
+      notes.push({ message: `this closure captures '${root}'`, span: site.span });
+      this.errorWithNotes(`${prefix} while a closure captures ${it}`, sp,
+        `the closure may still run and read '${root}': make the change before the closure is created, or after its last call`, notes);
+      return;
+    }
+    this.error(fallback, sp, fallbackHint);
+  }
+
+  // The holder of a reported borrow conflict was read again: that read is the use that
+  // kept the borrow live, so it becomes the error's "still used here" note.
+  private noteStillUsed(info: VarInfo, sp: Span | undefined) {
+    const pending = this.pendingUseNotes.get(info);
+    if (!pending) return;
+    this.pendingUseNotes.delete(info);
+    for (const p of pending) (p.diag.notes ??= []).push({ message: `'${p.name}' is still used here`, span: sp });
+  }
+
   private errorIfFrozen(obj: Expr, action: string, sp?: Span) {
     for (const place of this.placesOf(obj)) {
       if (place.tag !== "path") continue;
@@ -8785,7 +8894,8 @@ export class TypeChecker {
         return;
       }
       if (this.frozenAgainst(info, obj)) {
-        this.error(`cannot ${action} '${place.root}' because it is borrowed`, sp,
+        this.reportBorrowed(`cannot ${action} '${place.root}'`, place.root, this.conflictingBorrow(info, obj), sp,
+          `cannot ${action} '${place.root}' because it is borrowed`,
           `a slice or loop iteration over this variable is still live — mutating it could move memory the borrow points into`);
         return;
       }
@@ -8895,12 +9005,12 @@ export class TypeChecker {
   // mutating its own iteration source (v.each(fn(x){ v.push(x) })) is the same
   // realloc hazard as for-in. Returns the VarInfo to release afterward, or null
   // if an outer borrow already owns the freeze.
-  private borrowDuringCallback(obj: Expr): VarInfo | null {
+  private borrowDuringCallback(obj: Expr, call: { method: string; span?: Span }): VarInfo | null {
     const cbRoot = this.rootNameOf(obj);
     if (cbRoot === null) return null;
     const info = this.lookup(cbRoot);
     if (!info || info.borrowed) return null;
-    this.freeze(info, obj);
+    this.freeze(info, obj, "view", null, { span: call.span, via: "callback", what: call.method });
     return info;
   }
 
@@ -9232,6 +9342,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     info.read = true;
+    if (this.pendingUseNotes.size > 0) this.noteStillUsed(info, sp);
     // `unsafe` admits the read: the new owner is then the programmer's claim to make
     // (giflib's CStore keeps every buffer alive until the C caller is done with it).
     if (info.pointerSourceMoved) {
@@ -11058,7 +11169,7 @@ export class TypeChecker {
           // slot matches the width every use in the body was checked against.
           cap.type = info.type;
           cap.info = info;
-          this.freeze(info, null, "capture");
+          this.freeze(info, null, "capture", null, { span: expr.span, via: "capture" });
           break;
         }
       }
@@ -11625,7 +11736,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11636,7 +11747,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'filter' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "filter", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11647,7 +11758,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'each' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "each", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11657,7 +11768,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'enumerate' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [{ tag: "int", bits: 64, signed: true }, elemRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "enumerate", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11667,7 +11778,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'find' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "find", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11678,7 +11789,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'any' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "any", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11688,7 +11799,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'all' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "all", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11737,7 +11848,7 @@ export class TypeChecker {
         }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [accType, elemRef], ret: accType };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[1], cbHint);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'${expr.method}' argument 2 must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -11830,7 +11941,7 @@ export class TypeChecker {
         // read by its sign, so an i64 key difference (`a.t - b.t`) needs no `as i32`,
         // the cast that truncated a difference of k * 2^32 to 0.
         const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "unknown" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortBy", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11848,7 +11959,7 @@ export class TypeChecker {
         }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         // The one position where a closure may hand back a field of its borrowed
         // parameter: the sort reads the key to compare it and never stores or drops it.
         this.keyExtractorDepth++;
@@ -11929,7 +12040,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'position' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "position", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -11961,7 +12072,7 @@ export class TypeChecker {
         }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "retain", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -12046,7 +12157,7 @@ export class TypeChecker {
         }
         const valRef: TypeKind = { tag: "ref", inner: objType.value, mutable: true };
         const cbHint: TypeKind = { tag: "fn", params: [valRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[1], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "modify", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
@@ -12059,7 +12170,7 @@ export class TypeChecker {
           this.error(`getOrInsertWith key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
         const cbHint: TypeKind = { tag: "fn", params: [], ret: objType.value };
-        const cbBorrow = this.borrowDuringCallback(expr.object);
+        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbSig = this.checkExpr(expr.args[1], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
