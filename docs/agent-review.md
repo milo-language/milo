@@ -43,4 +43,4 @@ Pick personas by what the change touches; run all for a big change. `--persona a
 ## How to act on findings
 - Fix confirmed issues before commit. For a disputed finding, have the author-context and reviewer-context argue it out in the worksheet, then decide.
 - A finding that keeps recurring across reviews belongs in `scripts/lint.ts` (mechanical) or `CONVENTIONS.md` (judgment) — stop paying for it every time.
-- Log noisy/low-value personas or false positives in [feedback/README.md](feedback/README.md) so the review set improves.
+- Prune or tighten noisy/low-value personas in this file when they produce false positives, so the review set improves.

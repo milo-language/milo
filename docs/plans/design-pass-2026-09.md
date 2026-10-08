@@ -23,7 +23,7 @@ judgment ("may this element be read by value") made at one site and not another.
 | F8 | abstraction | `lower.ts` embedFile host I/O, `checker.ts` `process.env` | host detail in lowering/checking | declined for now: works, low value | declined |
 | F9 | abstraction | the browser bundle of the JS backend | imports `src/*` | moot: removed with the JS backend 2026-09-21 | done |
 | F10 | test | `tests/apiDocsSite.test.ts` | passes on 0 compared signatures; floor only in the CLI half | assert `comparedCount >= FLOOR` | WP13 |
-| F11 | dead (API) | 55 `pub fn` in std, zero callers in-repo and across 13 sibling repos | public API, not dead | feed `docs/stdlib-audit-2026-08.md` | note |
+| F11 | dead (API) | 55 `pub fn` in std, zero callers in-repo and across 13 sibling repos | public API, not dead | feed `docs/backlog.md` | note |
 
 The WP13 follow-up (8 `noUnusedLocals` diagnostics and 9 in-file-only `export`s in
 `src/checker.ts`, plus the carve-out in `tests/typecheck.test.ts`) shipped with WP12; the

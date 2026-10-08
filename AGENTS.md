@@ -40,7 +40,6 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Add a helper script / bin tool | [docs/scripts.md](docs/scripts.md) |
 | Write or update a system doc | [docs/doc-standards.md](docs/doc-standards.md) |
 | Track / hand off in-progress work | [docs/worksheets/README.md](docs/worksheets/README.md) |
-| Leave you feedback about the workflow | [docs/feedback/README.md](docs/feedback/README.md) |
 | Sweep recent commits for regressions | skill `/commit-sweep` |
 | Debug an emulator bug (black screen, garbled gfx, freeze) | skill `/emu-debug` |
 | Write or talk about Milo externally (blog, talk, README pitch) | [docs/design-insights.md](docs/design-insights.md) (the arguments, each with its falsifier) |
@@ -48,11 +47,9 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | The language spec / grammar | [docs/language-reference.md](docs/language-reference.md) (prose), [docs/spec.md](docs/spec.md) (normative requirements, generated), [docs/grammar.ebnf](docs/grammar.ebnf) (syntax) |
 | Look up a compile error, or see what a rule rejects | [docs/site/language/errors.md](docs/site/language/errors.md) — every pinned message with the program that provokes it (generated from `tests/errors/`) |
 | What's planned / allowed to build | [docs/roadmap.md](docs/roadmap.md) — check before proposing features |
-| Ergonomics findings to walk and implement (per-language verdicts, status of each item) | [docs/ergonomics-review-2026-09-21.md](docs/ergonomics-review-2026-09-21.md) |
 | Move or rename a public stdlib name | record it in [docs/breaking-changes.md](docs/breaking-changes.md) — the flat namespace makes compat shims impossible, so the doc is the only migration path users get |
 | Find an stdlib API | `bun run src/main.ts api <terms>` |
 | Design or review a public stdlib API | [docs/stdlib-design.md](docs/stdlib-design.md) |
-| Pick up stdlib gap/inconsistency work | [docs/stdlib-audit-2026-08.md](docs/stdlib-audit-2026-08.md) — tiered checkbox tracker vs Go/Rust/Node |
 
 ## Org layout (`milo-language`)
 

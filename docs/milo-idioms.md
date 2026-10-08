@@ -285,4 +285,4 @@ unreachable. Nothing needs to be added for this; it is what ownership already bu
 
 ## When something feels harder than it should
 
-That's a signal worth reporting, not routing around. Two of the papercuts above were fixed only because the friction got written down instead of worked around. If the correct version of something is meaningfully more expensive to write than an incorrect shortcut, say so — file it in `docs/backlog.md` or `docs/feedback/`.
+That's a signal worth reporting, not routing around. Two of the papercuts above were fixed only because the friction got written down instead of worked around. If the correct version of something is meaningfully more expensive to write than an incorrect shortcut, say so — file it in `docs/backlog.md`.

@@ -42,7 +42,7 @@ on in release, #1, despite a measured runtime cost, #5):
    are the default, not a cage; when you need C's power you take it deliberately, and the
    reviewer can see exactly where.
 
-The bet (vs [Graydon Hoare's retrospective](graydon-review.md)): he would have traded
+The bet (vs [Graydon Hoare's retrospective](https://graydon2.dreamwidth.org/307291.html)): he would have traded
 performance and expressivity for simplicity, expecting less popularity. Milo bets that
 with hindsight, a fresh codebase, and AI-assisted development you need not trade at all —
 the constraints that forced Rust's complexity don't apply when you design around them from
@@ -368,11 +368,10 @@ fn getName(): &string {  // ERROR: cannot return a reference
 Milo's core decisions independently converge with the design Rust's original
 designer wanted but lost — move-default, built-in containers, interior iteration,
 green threads, second-class `&`, no lifetimes, local-only inference, simple
-grammar, first-class errors, simplicity over zero-cost abstraction. The full
-point-by-point scorecard, the deliberate divergences (traits over ML modules;
-capturing closures; nominal over structural), and the decisions taken from that
-review live in **[graydon-review.md](graydon-review.md)** — the single source, so
-this file and that one can't drift.
+grammar, first-class errors, simplicity over zero-cost abstraction
+([the essay](https://graydon2.dreamwidth.org/307291.html)). The deliberate
+divergences: traits over ML modules, capturing closures, and nominal over
+structural typing.
 
 One decision that split from his answer *and* from Rust-as-shipped: **integer
 overflow.** He wanted auto-bignum (off-ethos — unpredictable allocation in a
