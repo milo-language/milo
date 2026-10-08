@@ -4638,7 +4638,7 @@ aborts the process). The checker holds the rest (design: `docs/plans/task-scope-
 - A binding a task borrows is either only read by everyone in the scope, or touched by that
   one task alone (not by the body, a sibling, or a task spawned in a loop). Tasks interleave
   at every park, so a write beside a reader could free what the reader is looking at. Share
-  mutable state through a `Channel` or `Mutex` instead.
+  mutable state through a `Channel` or an atomic instead.
 
 Scoped tasks are green tasks on the caller's OS thread (tasks never migrate), so what they
 borrow needs no `Send` or `Sync`.

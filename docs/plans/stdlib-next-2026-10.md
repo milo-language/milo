@@ -156,7 +156,7 @@ unrecorded. Both can be closed, the way rr closes them for Linux syscalls:
 3. Holes are never silent: uncatalogued pointer-taking externs are listed at compile time
    and reported once per recorded run ("this run called unrecorded foo at x.milo:42").
 4. OS threads: safe Milo shares memory between threads only through std sync primitives
-   (Mutex, Channel, atomics), so recording their acquisition/message order per thread is
+   (Channel, atomics, Once, WaitGroup), so recording their acquisition/message order per thread is
    enough to replay multithreaded programs deterministically; rr instead serializes all
    threads onto one core. `unsafe` shared memory is reported as a hole.
 

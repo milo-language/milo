@@ -504,14 +504,14 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
       if (writers.length === 0) {
         if (writes(bodyCaps.get(name))) {
           report(`'${name}' is borrowed by a scoped task and written by the Task.scope body`, users[0]!.span,
-            `the body and the task interleave at every park, so a write could free memory the task is reading; let one side own '${name}' (a 'move' closure), or share it through a Channel or Mutex`);
+            `the body and the task interleave at every park, so a write could free memory the task is reading; let one side own '${name}' (a 'move' closure), or share it through a Channel or an atomic`);
         }
         continue;
       }
       const w = writers[0]!;
       const fail = (why: string, span: Span | undefined) =>
         report(`a scoped task writes '${name}', ${why}`, span,
-          `a task that writes a borrowed binding must be the only one touching it until the scope joins; tasks interleave at every park, so another reader could see freed memory. Share it through a Channel or Mutex, or give each task its own`);
+          `a task that writes a borrowed binding must be the only one touching it until the scope joins; tasks interleave at every park, so another reader could see freed memory. Share it through a Channel or an atomic, or give each task its own`);
       if (writers.length > 1) fail("and so does another task in the same scope", writers[1]!.span);
       else if (w.inLoop) fail("and it is spawned in a loop, so several tasks write it", w.span);
       else if (users.length > 1) fail("and another task in the same scope reads it", users.find(u => u !== w)!.span);

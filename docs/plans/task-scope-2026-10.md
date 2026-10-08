@@ -61,7 +61,7 @@ own body. Views held by the enclosing fn across the whole Task.scope call are al
 covered: the body is a closure, and a closure that writes a binding with a live
 slice/for-in view is rejected today.
 
-Types that mutate through `&self` (Channel, Mutex, atomics, WsConn's sends) are shared
+Types that mutate through `&self` (Channel, atomics, WsConn's sends) are shared
 under rule 3 as readers. That is sound because none of them hands out a reference into
 state that a `&self` call can later free; it is the same invariant every one of them
 already relies on when green tasks share a channel handle.
