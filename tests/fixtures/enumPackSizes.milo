@@ -1,6 +1,6 @@
-// Enum payloads are a union of per-variant field structs: each variant's fields sit at
-// their natural size and alignment, the union takes the largest variant, and the i32 tag
-// is padded only up to the union's alignment. The `After*` structs expose the enum's
+// Each enum variant is laid out like the C struct `{ i32 tag; <its fields> }`, its fields
+// at their natural size and alignment; the enum is the largest variant, rounded to the
+// largest alignment of the tag and any field. The `After*` structs expose the enum's
 // alignment through the padding after a leading byte.
 // @expect: 8
 // @expect: 8

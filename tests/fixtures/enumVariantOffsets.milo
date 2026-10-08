@@ -1,0 +1,250 @@
+// Each enum variant is laid out like the C struct `{ i32 tag; <its fields> }`: a variant
+// whose first field is 4-byte aligned starts right after the tag even when another variant
+// needs 8-byte alignment, so `Say(i32, string)` is 32 bytes, not 40. Every access has to
+// use the variant's own offsets; this constructs, matches, copies, clones and drops each
+// variant through every path that reads a payload (match, if let, while let, let-else,
+// `?`, `!`, `??`, Option and Result combinators, Vec, HashMap, struct fields, generics,
+// closures, spawned tasks and nested enums).
+// @expect: 32 12 16 16
+// @expect: 8 32 40 64
+// @expect: Tick
+// @expect: Move(-5,300,-2)
+// @expect: Say(123456,hello)
+// @expect: Quit(9,255)
+// @expect: Say(123456,hello)
+// @expect: popped say 123456 hello
+// @expect: popped 4
+// @expect: Lo(200,-9000000000)
+// @expect: Mid(-3,2.5)
+// @expect: Hi(0.25)
+// @expect: Wide(77)
+// @expect: A -7
+// @expect: B 1099511627776
+// @expect: E 7
+// @expect: 1 Say(42,held) 65535
+// @expect: Say(42,held)
+// @expect: 20
+// @expect: err Worse(7,negative)
+// @expect: err Bad(-1)
+// @expect: 8
+// @expect: 6
+// @expect: 5000
+// @expect: 8
+// @expect: mapped err 3000000000000
+// @expect: map ok 42
+// @expect: map err kept
+// @expect: -1
+// @expect: 200 -1 1099511627779 -1
+// @expect: has 7 1
+// @expect: pair 3 p 2
+// @expect: big -8
+// @expect: nothing
+// @expect: after owned
+// @expect: one -1 first
+// @expect: two 2 second 2199023255552
+// @expect: wide -3
+// @expect: One(-4,one) Two(two,-2) Zero
+// @expect: gi 1125899906842624 3
+// @expect: in 5 Say(6,deep)
+// @expect: opt 9 8589934592
+// @expect: opt 1 -1
+// @expect: Say(77,mapped) Move(1,2,3) true
+// @expect: Say(11,closure) Lo(1,2)
+// @expect: task Say(12,task) Mid(4,0.5)
+// @expect: drop 1
+// @expect: drop 2
+from "std/runtime" import { Task, schedulerRunToCompletion }
+
+enum Event { Tick, Move(i32, i16, i16), Say(i32, string), Quit(i32, u8) }
+
+enum E { A(i32, i32), B }
+
+enum F { A(i8), B(i64) }
+
+enum Pad { Lo(u8, i64), Mid(i16, f64), Hi(f32), Wide(i64) }
+
+struct Res { id: i32 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print("drop ", self.id) }
+}
+
+enum Owned { Has(i32, Res), Pair(u8, string, Res), Big(i64), Nothing }
+
+enum Txt { One(i32, string), Two(u8, string, i64), Wide(i64) }
+
+enum G<T> { One(i32, T), Two(T, i8), Zero }
+
+enum Nest { In(i32, Event), Opt(u8, Option<i64>) }
+
+struct Holder { b: u8, ev: Event, f: F, tail: u16 }
+
+enum ErrKind { Bad(i32), Worse(u8, string) }
+
+fn show(e: &Event): string {
+    match e {
+        Event.Tick => { return "Tick" }
+        Event.Move(a, x, y) => { return $"Move({a},{x},{y})" }
+        Event.Say(a, s) => { return $"Say({a},{s})" }
+        Event.Quit(a, c) => { return $"Quit({a},{c})" }
+    }
+}
+
+fn showPad(p: &Pad): string {
+    match p {
+        Pad.Lo(b, w) => { return $"Lo({b},{w})" }
+        Pad.Mid(h, d) => { return $"Mid({h},{d})" }
+        Pad.Hi(f) => { return $"Hi({f})" }
+        Pad.Wide(w) => { return $"Wide({w})" }
+    }
+}
+
+fn showG(g: &G<string>): string {
+    match g {
+        G.One(n, s) => { return $"One({n},{s})" }
+        G.Two(s, b) => { return $"Two({s},{b})" }
+        G.Zero => { return "Zero" }
+    }
+}
+
+fn check(x: i32): Result<i32, ErrKind> {
+    if x < 0 { return Err(ErrKind.Worse(7, "negative")) }
+    if x == 0 { return Err(ErrKind.Bad(-1)) }
+    return Ok(x * 2)
+}
+
+fn twice(x: i32): Result<i32, ErrKind> {
+    let a = check(x)?
+    let b = check(a)?
+    return Ok(b)
+}
+
+fn quitCode(e: Event): i32 {
+    let Event.Quit(_, c) = e else { return -1 }
+    return c as i32
+}
+
+fn wideOf(p: Pad): i64 {
+    let Pad.Lo(b, w) = p else { return -1 }
+    return w + (b as i64)
+}
+
+fn errText(k: &ErrKind): string {
+    match k {
+        ErrKind.Bad(n) => { return $"Bad({n})" }
+        ErrKind.Worse(c, s) => { return $"Worse({c},{s})" }
+    }
+}
+
+fn main() {
+    print(sizeOf<Event>(), " ", sizeOf<E>(), " ", sizeOf<F>(), " ", sizeOf<Pad>())
+    print(sizeOf<Option<i32>>(), " ", sizeOf<Result<i32, string>>(), " ", sizeOf<Owned>(), " ", sizeOf<Holder>())
+
+    var evs: Vec<Event> = Vec.new()
+    evs.push(Event.Tick)
+    evs.push(Event.Move(-5, 300, -2))
+    evs.push(Event.Say(123456, "hello"))
+    evs.push(Event.Quit(9, 255))
+    for e in evs { print(show(e)) }
+    let copy = evs.clone()
+    print(show(copy.get(2)!))
+    var n = 0
+    while let Some(e) = evs.pop() {
+        if let Event.Say(a, s) = e { print("popped say ", a, " ", s) }
+        n = n + 1
+    }
+    print("popped ", n)
+
+    let ps = [Pad.Lo(200, -9000000000), Pad.Mid(-3, 2.5), Pad.Hi(0.25), Pad.Wide(77)]
+    for p in ps { print(showPad(p)) }
+
+    let fa = F.A(-7)
+    let fb = F.B(1 << 40)
+    match fa { F.A(x) => { print("A ", x) } F.B(x) => { print("B ", x) } }
+    match fb { F.A(x) => { print("A ", x) } F.B(x) => { print("B ", x) } }
+    let ea = E.A(3, 4)
+    if let E.A(x, y) = ea { print("E ", x + y) }
+
+    let h = Holder { b: 1, ev: Event.Say(42, "held"), f: F.B(-1), tail: 65535 }
+    print(h.b, " ", show(h.ev), " ", h.tail)
+    let h2 = h.clone()
+    print(show(h2.ev))
+
+    print(twice(5) ?? 0)
+    match twice(-1) { Ok(v) => { print("ok ", v) } Err(k) => { print("err ", errText(k)) } }
+    match twice(0) { Ok(v) => { print("ok ", v) } Err(k) => { print("err ", errText(k)) } }
+    print(check(4)!)
+    let r: Result<i32, string> = Err("broken")
+    print(r.unwrapOrElse((s: &string): i32 => s.len() as i32))
+    let r2: Result<i32, i64> = Err(5000000000)
+    print(r2.unwrapOrElse((e: i64): i32 => (e / 1000000) as i32))
+    let r3: Result<i32, string> = Ok(8)
+    print(r3.unwrapOrElse((s: &string): i32 => s.len() as i32))
+    let r4: Result<i32, string> = Err("abc")
+    match r4.mapErr((s: &string): i64 => s.len() * 1000000000000) { Ok(v) => { print("ok ", v) } Err(e) => { print("mapped err ", e) } }
+    let r5: Result<i32, string> = Ok(21)
+    match r5.map((v: &i32): i64 => (v as i64) * 2) { Ok(v) => { print("map ok ", v) } Err(e) => { print("err ", e) } }
+    let r6: Result<i32, string> = Err("kept")
+    match r6.map((v: &i32): i64 => (v as i64) * 2) { Ok(v) => { print("map ok ", v) } Err(e) => { print("map err ", e) } }
+    print(r.unwrapOr(-1))
+
+    print(quitCode(Event.Quit(1, 200)), " ", quitCode(Event.Tick), " ", wideOf(Pad.Lo(3, 1 << 40)), " ", wideOf(Pad.Hi(1.0)))
+
+    var owned: Vec<Owned> = Vec.new()
+    owned.push(Owned.Has(7, Res { id: 1 }))
+    owned.push(Owned.Pair(3, "p", Res { id: 2 }))
+    owned.push(Owned.Big(-8))
+    owned.push(Owned.Nothing)
+    for o in owned {
+        match o {
+            Owned.Has(a, res) => { print("has ", a, " ", res.id) }
+            Owned.Pair(b, s, res) => { print("pair ", b, " ", s, " ", res.id) }
+            Owned.Big(w) => { print("big ", w) }
+            Owned.Nothing => { print("nothing") }
+        }
+    }
+    print("after owned")
+    var txts: Vec<Txt> = Vec.new()
+    txts.push(Txt.One(-1, "first"))
+    txts.push(Txt.Two(2, "second", 1 << 41))
+    txts.push(Txt.Wide(-3))
+    let txtCopy = txts.clone()
+    txts.clear()
+    for t in txtCopy {
+        match t {
+            Txt.One(a, s) => { print("one ", a, " ", s) }
+            Txt.Two(b, s, w) => { print("two ", b, " ", s, " ", w) }
+            Txt.Wide(w) => { print("wide ", w) }
+        }
+    }
+
+    let g1: G<string> = G.One(-4, "one")
+    let g2: G<string> = G.Two("two", -2)
+    let g3: G<string> = G.Zero
+    print(showG(g1), " ", showG(g2), " ", showG(g3))
+    let gi: G<i64> = G.Two(1 << 50, 3)
+    if let G.Two(w, b) = gi { print("gi ", w, " ", b) }
+
+    let nest = [Nest.In(5, Event.Say(6, "deep")), Nest.Opt(9, Some(1 << 33)), Nest.Opt(1, None)]
+    for x in nest {
+        match x {
+            Nest.In(a, e) => { print("in ", a, " ", show(e)) }
+            Nest.Opt(b, o) => { print("opt ", b, " ", o ?? -1) }
+        }
+    }
+
+    var hm: HashMap<string, Event> = HashMap.new()
+    hm.insert("s", Event.Say(77, "mapped"))
+    hm.insert("m", Event.Move(1, 2, 3))
+    print(show(hm.get("s")!), " ", show(hm.get("m")!), " ", hm.get("z").isNone())
+
+    let cap = Event.Say(11, "closure")
+    let pad = Pad.Lo(1, 2)
+    let f = (): string => show(cap) + " " + showPad(pad)
+    print(f())
+
+    let task = Event.Say(12, "task")
+    let tpad = Pad.Mid(4, 0.5)
+    Task.spawn(move(): void => { print("task ", show(task), " ", showPad(tpad)) })
+    schedulerRunToCompletion()
+}

@@ -171,9 +171,64 @@ test("packed enum payloads are described at their real offset and size", () => {
     expect(ir).toMatch(/DW_TAG_union_type, name: "Pair\$payload", size: 64,/);
     expect(ir).toMatch(/DW_TAG_member, name: "payload", baseType: ![0-9]+, size: 64, offset: 32\)/);
     expect(ir).toMatch(/DW_TAG_structure_type, name: "Pair", size: 96,/);
-    expect(ir).toContain(`%Pair = type { i32, [2 x i32] }`);
+    expect(ir).toContain(`%Pair = type { [3 x i32] }`);
   } finally {
     unlinkSync(f);
+  }
+});
+
+const OFFSETS_SRC = `enum Event { Tick, Say(i32, string), Lo(u8, i64), Wide(i64) }
+fn main(): i32 {
+    let a = Event.Say(7, "hi")
+    let b = Event.Lo(9, 123456789012)
+    let w = Event.Wide(-5)
+    match a { Event.Say(n, s) => print(n), _ => print(0) }
+    match b { Event.Lo(c, x) => print(x), _ => print(0) }
+    match w { Event.Wide(x) => print(x), _ => print(0) }
+    return 0
+}
+`;
+
+// Each variant sits at its own offsets: Say's i32 right after the tag (byte 4) and its
+// string at 8, Lo's u8 at 4 and i64 at 8, Wide's i64 at 8. The union starts at the
+// shallowest first field (byte 4), so Wide is a struct with its member 4 bytes in.
+test("enum variants are described at their own field offsets", () => {
+  const f = join(tmpdir(), "milo_dbg_offsets_ir.milo");
+  writeFileSync(f, OFFSETS_SRC);
+  try {
+    const ir = emitIr(f, true);
+    expect(ir).toContain(`%Event = type { [4 x i64] }`);
+    expect(ir).toMatch(/DW_TAG_member, name: "payload", baseType: ![0-9]+, size: 224, offset: 32\)/);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "Event", size: 256,/);
+    expect(ir).toMatch(/DW_TAG_member, name: "_0", baseType: ![0-9]+, size: 32, offset: 0\)[\s\S]*DW_TAG_member, name: "_1", baseType: ![0-9]+, size: 192, offset: 32\)/);
+    expect(ir).toMatch(/DW_TAG_member, name: "_0", baseType: ![0-9]+, size: 64, offset: 32\)/);
+  } finally {
+    unlinkSync(f);
+  }
+});
+
+test("frame variable reads each variant's fields at their own offsets", () => {
+  if (!have("lldb")) return; // toolchain-gated
+  const f = join(tmpdir(), "milo_dbg_offsets.milo");
+  const bin = join(tmpdir(), "milo_dbg_offsets");
+  writeFileSync(f, OFFSETS_SRC);
+  try {
+    execSync(`bun run ${COMPILER} build ${f} -o ${bin} -g --debug`, { stdio: ["pipe", "pipe", "pipe"] });
+    const r = spawnSync("lldb", [bin,
+      "-o", "b milo_dbg_offsets.milo:6", "-o", "run", "-o", "frame variable", "-o", "quit"],
+      { stdio: "pipe" });
+    const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
+    expect(out).toMatch(/tag = Say/);
+    expect(out).toMatch(/_0 = 7\b/);
+    expect(out).toMatch(/tag = Lo/);
+    expect(out).toMatch(/_1 = 123456789012\b/);
+    expect(out).toMatch(/tag = Wide/);
+    expect(out).toMatch(/_0 = -5\b/);
+  } finally {
+    unlinkSync(f);
+    try { rmSync(bin); } catch {}
+    try { rmSync(`${bin}.dSYM`, { recursive: true, force: true }); } catch {}
+    if (existsSync(`${bin}.dbg.o`)) unlinkSync(`${bin}.dbg.o`);
   }
 });
 

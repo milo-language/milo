@@ -7684,7 +7684,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `24`
 - `24`
 
-**Rationale.** Enum payloads are a union of per-variant field structs: each variant's fields sit at their natural size and alignment, the union takes the largest variant, and the i32 tag is padded only up to the union's alignment. The `After*` structs expose the enum's alignment through the padding after a leading byte.
+**Rationale.** Each enum variant is laid out like the C struct `{ i32 tag; <its fields> }`, its fields at their natural size and alignment; the enum is the largest variant, rounded to the largest alignment of the tag and any field. The `After*` structs expose the enum's alignment through the padding after a leading byte.
 
 *Program:* [`tests/fixtures/enumPackSizes.milo`](../tests/fixtures/enumPackSizes.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -7747,6 +7747,63 @@ A conforming implementation shall accept this program, and running it shall writ
 **Rationale.** `Kind.tryFrom(n): Option<Kind>` — the partial reverse of `k as i32`. Some(variant) when n is a discriminant, None otherwise. It is DERIVED from the same discriminant list as the cast, so the round-trip law `tryFrom(k as i32) == Some(k)` holds by construction — there is no hand-written table to drift out of sync (the classic rot in sparse enums).
 
 *Program:* [`tests/fixtures/enumTryFrom.milo`](../tests/fixtures/enumTryFrom.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
+
+### MILO-B-enumVariantOffsets
+
+A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
+
+- `32 12 16 16`
+- `8 32 40 64`
+- `Tick`
+- `Move(-5,300,-2)`
+- `Say(123456,hello)`
+- `Quit(9,255)`
+- `Say(123456,hello)`
+- `popped say 123456 hello`
+- `popped 4`
+- `Lo(200,-9000000000)`
+- `Mid(-3,2.5)`
+- `Hi(0.25)`
+- `Wide(77)`
+- `A -7`
+- `B 1099511627776`
+- `E 7`
+- `1 Say(42,held) 65535`
+- `Say(42,held)`
+- `20`
+- `err Worse(7,negative)`
+- `err Bad(-1)`
+- `8`
+- `6`
+- `5000`
+- `8`
+- `mapped err 3000000000000`
+- `map ok 42`
+- `map err kept`
+- `-1`
+- `200 -1 1099511627779 -1`
+- `has 7 1`
+- `pair 3 p 2`
+- `big -8`
+- `nothing`
+- `after owned`
+- `one -1 first`
+- `two 2 second 2199023255552`
+- `wide -3`
+- `One(-4,one) Two(two,-2) Zero`
+- `gi 1125899906842624 3`
+- `in 5 Say(6,deep)`
+- `opt 9 8589934592`
+- `opt 1 -1`
+- `Say(77,mapped) Move(1,2,3) true`
+- `Say(11,closure) Lo(1,2)`
+- `task Say(12,task) Mid(4,0.5)`
+- `drop 1`
+- `drop 2`
+
+**Rationale.** Each enum variant is laid out like the C struct `{ i32 tag; <its fields> }`: a variant whose first field is 4-byte aligned starts right after the tag even when another variant needs 8-byte alignment, so `Say(i32, string)` is 32 bytes, not 40. Every access has to use the variant's own offsets; this constructs, matches, copies, clones and drops each variant through every path that reads a payload (match, if let, while let, let-else, `?`, `!`, `??`, Option and Result combinators, Vec, HashMap, struct fields, generics, closures, spawned tasks and nested enums).
+
+*Program:* [`tests/fixtures/enumVariantOffsets.milo`](../tests/fixtures/enumVariantOffsets.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
 ### MILO-B-enumWildcard
 

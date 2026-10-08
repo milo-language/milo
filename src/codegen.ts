@@ -77,15 +77,21 @@ interface StructLayout {
   fields: { name: string; type: string; typeKind: TypeKind }[];
 }
 
+interface EnumVariant { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }
+
 interface EnumLayout {
   name: string;
-  // The payload is a union of per-variant field structs (each laid out like a struct of
-  // its fields, in declaration order), sized to the largest and aligned to the largest
-  // member alignment. Emitted as `[payloadSize/payloadAlign x i<payloadAlign*8>]`, the
-  // only LLVM type with exactly that size and alignment. 0 = fieldless enum (`{ i32 }`).
-  payloadSize: number;
-  payloadAlign: number;
-  variants: Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>;
+  // Each variant is laid out like the C struct `{ i32 tag; <its fields> }`, so its first
+  // field sits right after the tag at that field's own alignment, not after padding some
+  // other variant needs (see variantFieldOffsets). The enum is the largest such struct,
+  // rounded to the enum's alignment (max of the tag's and every field's). The LLVM type
+  // is one padding-free array of that alignment's integers, `{ [size/A x i<A*8>] }`; the
+  // tag is its first 4 bytes. It must have no padding: a variant's field can sit where
+  // `{ i32, [n x i64] }` pads, and LLVM drops padding bytes when it splits a whole-enum
+  // load or store. Nothing indexes the array (assertEnumPayloadPacked).
+  size: number;          // total bytes; 0 = fieldless enum (`{ i32 }`)
+  payloadAlign: number;  // max alignment over every variant's fields
+  variants: Map<string, EnumVariant>;
   // Set for an Option-shaped enum whose payload has a value safe code cannot produce
   // (see nicheOf). The enum is then laid out as the payload alone, `{ P }`: the fieldless
   // variant is the niche value in the payload's leading integer, the other variant is the
@@ -691,7 +697,9 @@ export class Codegen {
 
   // Composite from LLVM field types — offsets/sizes come from the same layout math the
   // struct codegen uses, so DWARF member offsets match the emitted %Struct exactly.
-  private diComposite(name: string, fieldLlvm: string[], fieldNames: string[], fieldKinds: TypeKind[], key: string): number {
+  // `placed` overrides that math with explicit byte offsets and size (an enum variant).
+  private diComposite(name: string, fieldLlvm: string[], fieldNames: string[], fieldKinds: TypeKind[], key: string,
+    placed?: { offsets: number[]; size: number }): number {
     const id = this.metaCounter++;
     this.diTypes.set(key, id); // reserve before recursing into members (breaks self-reference cycles)
     const memberIds: number[] = [];
@@ -699,14 +707,14 @@ export class Codegen {
       const ft = this.diType(fieldKinds[i]);
       if (ft === null) continue;
       const mid = this.metaCounter++;
-      const off = this.structFieldOffset(fieldLlvm, i) * 8;
+      const off = (placed ? placed.offsets[i] : this.structFieldOffset(fieldLlvm, i)) * 8;
       const sz = this.typeSize(fieldLlvm[i]) * 8;
       this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(fieldNames[i])}", baseType: !${ft}, size: ${sz}, offset: ${off})`);
       memberIds.push(mid);
     }
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{${memberIds.map(m => "!" + m).join(", ")}}`);
-    const totBits = this.structPayloadSize(fieldLlvm) * 8;
+    const totBits = (placed ? placed.size : this.structPayloadSize(fieldLlvm)) * 8;
     this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(name)}", size: ${totBits}, elements: !${tuple})`);
     return id;
   }
@@ -734,7 +742,7 @@ export class Codegen {
   // shows it as `$variant$0`/`$discr$` noise without a synthetic provider.
   private diEnum(layout: EnumLayout, key: string): number {
     // fieldless enum: the whole value *is* the tag, so no phantom payload slots
-    if (layout.payloadSize === 0) {
+    if (layout.size === 0) {
       const only = this.diEnumeration(layout.name, layout);
       this.diTypes.set(key, only);
       return only;
@@ -763,24 +771,31 @@ export class Codegen {
     }
 
     const tagId = this.diEnumeration(`${layout.name}$tag`, layout);
-    const payloadBits = layout.payloadSize * 8;
-    const payloadOffBits = this.enumPayloadOffset(layout) * 8;
-    const totalBits = this.typeSize(`%${layout.name}`) * 8;
+    // Each variant's fields sit at their own offsets (variantFieldOffsets). The union
+    // starts at the shallowest first field, so a single-field variant starting there binds
+    // the field type directly (`Some = 42`); any other variant is a positional struct
+    // whose member offsets are its real ones, relative to the union.
+    const totalBytes = this.typeSize(`%${layout.name}`);
+    const payloadVariants = [...layout.variants.values()].filter(v => v.fieldTypes.length > 0);
+    const unionStart = Math.min(...payloadVariants.map(v => this.variantFieldOffsets(v.fieldTypes)[0]));
+    const payloadBits = (totalBytes - unionStart) * 8;
+    const payloadOffBits = unionStart * 8;
+    const totalBits = totalBytes * 8;
 
-    // union member per payload-carrying variant; single-field variants bind the field
-    // type directly (`Some = 42`), multi-field ones get a positional struct.
     const unionMembers: number[] = [];
     for (const [vname, v] of layout.variants) {
       if (v.fieldTypes.length === 0) continue;
+      const rel = this.variantFieldOffsets(v.fieldTypes).map(o => o - unionStart);
       let baseId: number | null;
       let sizeBits: number;
-      if (v.fieldTypes.length === 1) {
+      if (v.fieldTypes.length === 1 && rel[0] === 0) {
         baseId = this.diType(v.fieldTypeKinds[0]);
         sizeBits = this.typeSize(v.fieldTypes[0]) * 8;
       } else {
+        const size = this.structPayloadSize(["i32", ...v.fieldTypes]) - unionStart;
         baseId = this.diComposite(`${layout.name}::${vname}`, v.fieldTypes,
-          v.fieldTypes.map((_, i) => `_${i}`), v.fieldTypeKinds, `ev:${layout.name}:${vname}`);
-        sizeBits = this.structPayloadSize(v.fieldTypes) * 8;
+          v.fieldTypes.map((_, i) => `_${i}`), v.fieldTypeKinds, `ev:${layout.name}:${vname}`, { offsets: rel, size });
+        sizeBits = size * 8;
       }
       if (baseId === null) continue; // unmodellable payload — omit rather than emit bad metadata
       const mid = this.metaCounter++;
@@ -795,7 +810,7 @@ export class Codegen {
     const tagMember = this.metaCounter++;
     this.diNodes.push(`!${tagMember} = !DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !${tagId}, size: 32, offset: 0)`);
     const payloadMember = this.metaCounter++;
-    // the payload starts after the i32 tag, padded up to the union's alignment
+    // the union starts at the shallowest variant's first field (see above)
     this.diNodes.push(`!${payloadMember} = !DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !${unionId}, size: ${payloadBits}, offset: ${payloadOffBits})`);
     const tuple = this.metaCounter++;
     this.diNodes.push(`!${tuple} = !{!${tagMember}, !${payloadMember}}`);
@@ -1059,6 +1074,22 @@ export class Codegen {
     return tag;
   }
 
+  // The tag of an enum held as an SSA value. Only a fieldless enum's value is `{ i32 }`;
+  // a tagged one is a storage array and a niche one has no tag word, so those go through
+  // memory (SROA folds the round trip).
+  private enumValueTag(lines: string[], enumTy: string, val: string): string {
+    const layout = this.enumLayouts.get(enumTy.slice(1));
+    if (layout && !layout.niche && layout.size === 0) {
+      const t = this.nextTemp();
+      lines.push(`  ${t} = extractvalue ${enumTy} ${val}, 0`);
+      return t;
+    }
+    const slot = this.nextTemp();
+    this.entryAllocas.push(`  ${slot} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} ${val}, ptr ${slot}`);
+    return this.loadEnumTag(lines, enumTy, slot);
+  }
+
   // Set the variant of the enum at `addr`. On a niche enum the payload variant has no
   // tag to write (its payload store is the whole value), so only the fieldless one writes.
   private storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string) {
@@ -1082,22 +1113,43 @@ export class Codegen {
     lines.push(`  store ${niche.intTy} ${next}, ptr ${addr}`);
   }
 
-  // LLVM type of a tagged enum's payload union (see EnumLayout.payloadSize).
-  private enumUnionTy(layout: EnumLayout): string {
-    return `[${layout.payloadSize / layout.payloadAlign} x i${layout.payloadAlign * 8}]`;
+  // The padding-free array a tagged enum is stored as (see EnumLayout.size).
+  private enumStorageTy(layout: EnumLayout): string {
+    const a = Math.max(4, layout.payloadAlign);
+    return `[${layout.size / a} x i${a * 8}]`;
   }
 
-  // Byte offset of a tagged enum's payload: the i32 tag padded to the union's alignment.
-  private enumPayloadOffset(layout: EnumLayout): number {
-    return Math.max(4, layout.payloadAlign);
+  private enumVariantOf(enumTy: string, variant: EnumVariant | string | number): EnumVariant {
+    if (typeof variant === "object") return variant;
+    const layout = must(this.enumLayouts, enumTy.slice(1), "enum layouts");
+    for (const [name, info] of layout.variants) if (name === variant || info.tag === variant) return info;
+    throw new Error(`internal: ${enumTy} has no variant ${variant}`);
   }
 
-  // Address of the payload of the enum at `addr` (a niche enum's payload is the enum).
-  private enumPayloadPtr(lines: string[], enumTy: string, addr: string): string {
+  // Byte offset of each field of a tagged enum's variant from the start of the enum: the
+  // variant is the C struct `{ i32 tag; <fields> }`.
+  private variantFieldOffsets(fieldTypes: string[]): number[] {
+    const withTag = ["i32", ...fieldTypes];
+    return fieldTypes.map((_, i) => this.structFieldOffset(withTag, i + 1));
+  }
+
+  // Address of field `k` of `variant`'s payload in the enum at `addr`. Every variant has its
+  // own offsets, so a payload address is only meaningful for the variant it was computed
+  // for; the caller must already know (or have branched on) the tag. A niche enum's single
+  // payload is the enum itself. The temp is named `%vp.<n>.<tag>.<k>.<enum>` so
+  // assertEnumPayloadPacked can check every use against that variant's field type.
+  private enumFieldPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number, k: number): string {
+    const v = this.enumVariantOf(enumTy, variant);
+    if (k >= v.fieldTypes.length) throw new Error(`internal: ${enumTy} variant ${v.tag} has no field ${k}`);
     if (this.nicheOfEnumTy(enumTy)) return addr;
-    const p = this.nextTemp();
-    lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+    const p = `%vp.${this.tempCounter++}.${v.tag}.${k}.${enumTy.slice(1)}`;
+    lines.push(`  ${p} = getelementptr inbounds i8, ptr ${addr}, i64 ${this.variantFieldOffsets(v.fieldTypes)[k]}`);
     return p;
+  }
+
+  // Address of `variant`'s first payload field (a niche enum's payload is the enum).
+  private enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string {
+    return this.enumFieldPtr(lines, enumTy, addr, variant, 0);
   }
 
   // Every niche-enum access must go through the three helpers above; a site that still
@@ -1115,38 +1167,90 @@ export class Codegen {
     }
   }
 
-  // A tagged enum's payload union is only ever reached as a whole (`i32 0, i32 1`, from
-  // enumPayloadPtr), then through the variant's own field struct. The old layout was
-  // `[N x i64]` slots, so a site still doing slot math indexes into the union, extracts it
-  // as a value, or steps an i64 / `[N x i64]` GEP off the payload address; any of those
-  // now reads and writes the wrong bytes. Each is a compile error here, not a miscompile.
+  // Each variant's payload has its own offset, so a site that ignores the variant reads
+  // and writes the wrong bytes. This makes such a site a compiler error, not a miscompile:
+  //  - the storage array holds no variant at a fixed index, so indexing into it, or
+  //    extracting from or inserting into a whole enum value, is an error;
+  //  - every payload address comes from enumFieldPtr, whose temp names its enum, variant
+  //    and field: its offset must be that field's, and every load, store or GEP through it
+  //    must use that field's type (a GEP only at index 0, no slot stepping). A payload
+  //    pointer reused for another variant, or the old `{ fields }` struct GEP off the
+  //    first field, shows up as a type mismatch here.
   private assertEnumPayloadPacked(ir: string) {
-    const tagged = [...this.enumLayouts.values()].filter(l => !l.niche && l.payloadSize > 0);
+    const tagged = [...this.enumLayouts.values()].filter(l => !l.niche && l.size > 0);
     if (tagged.length === 0) return;
     const esc = (n: string) => n.replace(/[.*+?^${}()|[\]\\$]/g, "\\$&");
     const names = tagged.map(l => esc(l.name)).join("|");
-    const fail = (at: number) => {
-      const start = ir.lastIndexOf("\n", at);
-      throw new Error(`internal: enum payload accessed by slot, not by its variant struct: ${ir.slice(start + 1, ir.indexOf("\n", at)).trim()}`);
+    const fail = (line: string, why: string) => {
+      throw new Error(`internal: enum payload accessed without its variant's offsets (${why}): ${line.trim()}`);
     };
     const shape = new RegExp(
-      `getelementptr(?: inbounds)? %(?:${names}), ptr [^,]+, i32 0, i32 (?:1, i(?:32|64) |[2-9])` +
-      `|(?:extractvalue|insertvalue) %(?:${names}) [^\\n]*, [1-9]`);
+      `getelementptr(?: inbounds)? %(?:${names}), ptr [^,]+, i32 0, i32 (?:[1-9]|0, i(?:32|64) )` +
+      `|(?:extractvalue|insertvalue) %(?:${names}) `);
     const m = ir.match(shape);
-    if (m) fail(m.index ?? 0);
-    // Temps are function-local, so payload addresses are tracked per `define`.
-    const payloadDef = new RegExp(`(%[\\w.$]+) = getelementptr(?: inbounds)? %(?:${names}), ptr [^,]+, i32 0, i32 1(?:, !dbg !\\d+)?\\n`, "g");
-    let fnStart = 0;
-    while (fnStart >= 0) {
-      const next = ir.indexOf("\ndefine ", fnStart + 1);
-      const body = ir.slice(fnStart, next < 0 ? ir.length : next);
-      const temps = [...body.matchAll(payloadDef)].map(d => esc(d[1]));
-      if (temps.length > 0) {
-        const slot = new RegExp(`getelementptr(?: inbounds)? (?:i64|\\[\\d+ x i64\\]), ptr (?:${temps.join("|")}), `);
-        const s = body.match(slot);
-        if (s) fail(fnStart + (s.index ?? 0));
+    if (m) {
+      const at = m.index ?? 0;
+      fail(ir.slice(ir.lastIndexOf("\n", at) + 1, ir.indexOf("\n", at)), "indexes the storage array");
+    }
+    const fieldTyOf = new Map<string, string>();
+    const fieldTy = (name: string, line: string): string => {
+      const hit = fieldTyOf.get(name);
+      if (hit !== undefined) return hit;
+      const pm = name.match(/^%vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
+      const layout = pm ? this.enumLayouts.get(pm[3]) : undefined;
+      const v = layout && [...layout.variants.values()].find(x => x.tag === Number(pm![1]));
+      if (!pm || !v || Number(pm[2]) >= v.fieldTypes.length) return fail(line, `unknown payload pointer ${name}`);
+      const ty = v.fieldTypes[Number(pm[2])];
+      fieldTyOf.set(name, ty);
+      return ty;
+    };
+    // The field's own type, or the leading integer of a niche enum field (loadEnumTag).
+    const typeOk = (name: string, ty: string, line: string) => {
+      const want = fieldTy(name, line);
+      if (ty === want) return;
+      if (want.startsWith("%") && this.nicheOfEnumTy(want)?.intTy === ty) return;
+      fail(line, `${name} is a ${want} field, used as ${ty}`);
+    };
+    const vp = "(%vp\\.[\\w.$-]+)";
+    const def = new RegExp(`^\\s*${vp} = getelementptr inbounds i8, ptr [^,]+, i64 (\\d+)`);
+    const load = new RegExp(`= load (.+), ptr ${vp}(?:,|$)`);
+    const store = new RegExp(`^\\s*store (.+) [^ ]+, ptr ${vp}(?:,|$)`);
+    const gep = new RegExp(`getelementptr(?: inbounds)? (.+?), ptr ${vp}, (?:i32|i64) (\\S+?)(?:,|$)`);
+    // An untyped use (a call argument, a stored pointer) cannot be type-checked, so it
+    // must sit in the block that computed the pointer: that block already knows the
+    // variant, and a pointer carried across a branch on the tag is the reuse this is for.
+    const vpAll = /%vp\.[\w.$-]+/g;
+    let block = "";
+    let defBlock = new Map<string, string>();
+    for (const line of ir.split("\n")) {
+      if (line.startsWith("define ")) { block = "entry"; defBlock = new Map(); continue; }
+      if (line.length > 0 && line[0] !== " " && line.endsWith(":")) { block = line; continue; }
+      if (!line.includes("%vp.")) continue;
+      const d = line.match(def);
+      if (d) {
+        const pm = d[1].match(/^%vp\.\d+\.(\d+)\.(\d+)\.(.+)$/);
+        const v = pm && [...(this.enumLayouts.get(pm[3])?.variants.values() ?? [])].find(x => x.tag === Number(pm[1]));
+        if (!pm || !v || this.variantFieldOffsets(v.fieldTypes)[Number(pm[2])] !== Number(d[2])) fail(line, "wrong offset");
+        defBlock.set(d[1], block);
+        continue;
       }
-      fnStart = next;
+      const typed = new Set<string>();
+      const l = line.match(load);
+      if (l) { typeOk(l[2], l[1], line); typed.add(l[2]); }
+      const st = line.match(store);
+      if (st) { typeOk(st[2], st[1], line); typed.add(st[2]); }
+      const g = line.match(gep);
+      if (g) {
+        typeOk(g[2], g[1], line);
+        if (g[3] !== "0") fail(line, "steps off a payload address");
+        typed.add(g[2]);
+      }
+      // the typed address operand is checked above; any other mention is untyped
+      const uses = line.match(vpAll) ?? [];
+      for (const name of uses) {
+        if (typed.has(name) && uses.filter(u => u === name).length === 1) continue;
+        if (defBlock.get(name) !== block) fail(line, `${name} used outside the block that computed it`);
+      }
     }
   }
 
@@ -1180,7 +1284,7 @@ export class Codegen {
       // i64 payload array requires 8-byte alignment, so the i32 tag is padded to 8.
       // Without this, malloc undersizes by 4 bytes and store %Enum overruns the buffer.
       if (layout.niche) return this.typeSize(layout.niche.payloadTy);
-      return layout.payloadSize > 0 ? this.structPayloadSize(["i32", this.enumUnionTy(layout)]) : 4;
+      return layout.size > 0 ? layout.size : 4;
     }
     return 8;
   }
@@ -1987,11 +2091,11 @@ export class Codegen {
     // sizes to a fixpoint (monotone, so it terminates; recursion goes through
     // Heap, which is a pointer).
     for (const e of module.enums) {
-      const variants = new Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>();
+      const variants = new Map<string, EnumVariant>();
       for (const v of e.variants) {
         variants.set(v.name, { tag: v.tag, fieldTypes: v.fields.map(f => this.llvmType(f)), fieldTypeKinds: v.fields });
       }
-      this.enumLayouts.set(e.name, { name: e.name, payloadSize: 0, payloadAlign: 1, variants });
+      this.enumLayouts.set(e.name, { name: e.name, size: 0, payloadAlign: 1, variants });
     }
     for (const layout of this.enumLayouts.values()) {
       const niche = this.enumNiche(layout, module.dropImpls);
@@ -2001,18 +2105,19 @@ export class Codegen {
       let changed = false;
       for (const e of module.enums) {
         const layout = must(this.enumLayouts, e.name, "enum layouts");
-        let maxPayload = 0;
+        let maxEnd = 0;
         let maxAlign = 1;
         for (const v of layout.variants.values()) {
           if (v.fieldTypes.length === 0) continue;
-          maxPayload = Math.max(maxPayload, this.structPayloadSize(v.fieldTypes));
+          maxEnd = Math.max(maxEnd, this.structPayloadSize(["i32", ...v.fieldTypes]));
           maxAlign = Math.max(maxAlign, this.structAlign(v.fieldTypes));
         }
-        const size = Math.ceil(maxPayload / maxAlign) * maxAlign;
-        if (size > layout.payloadSize || maxAlign > layout.payloadAlign) {
-          layout.payloadSize = Math.max(size, layout.payloadSize);
-          layout.payloadAlign = Math.max(maxAlign, layout.payloadAlign);
-          layout.payloadSize = Math.ceil(layout.payloadSize / layout.payloadAlign) * layout.payloadAlign;
+        if (maxEnd === 0) continue;
+        const enumAlign = Math.max(4, maxAlign);
+        const size = Math.ceil(maxEnd / enumAlign) * enumAlign;
+        if (size !== layout.size || maxAlign !== layout.payloadAlign) {
+          layout.size = size;
+          layout.payloadAlign = maxAlign;
           changed = true;
         }
       }
@@ -2320,8 +2425,8 @@ export class Codegen {
     for (const [name, layout] of this.enumLayouts) {
       if (layout.niche) {
         this.output.splice(1, 0, `%${name} = type { ${layout.niche.payloadTy} }`);
-      } else if (layout.payloadSize > 0) {
-        this.output.splice(1, 0, `%${name} = type { i32, ${this.enumUnionTy(layout)} }`);
+      } else if (layout.size > 0) {
+        this.output.splice(1, 0, `%${name} = type { ${this.enumStorageTy(layout)} }`);
       } else {
         this.output.splice(1, 0, `%${name} = type { i32 }`);
       }
@@ -4792,7 +4897,7 @@ export class Codegen {
 
     lines.push(`${bodyLabel}:`);
     // extract payload from Some variant
-    const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr);
+    const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr, "Some");
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${elemTy}, ptr ${payloadPtr}`);
     lines.push(`  store ${elemTy} ${val}, ptr ${varAddr}`);
@@ -5125,13 +5230,12 @@ export class Codegen {
 
   private extractBindings(
     lines: string[], subjAddr: string, subjTy: string,
-    variant: { tag: number; fieldTypes: string[] },
+    variant: EnumVariant,
     pattern: HIRPattern & { kind: "EnumPattern" },
     subjectIsRef: boolean,
     subjectIsMut = false,
   ) {
     if (pattern.bindings.length === 0) return;
-    const payloadPtr = this.enumPayloadPtr(lines, subjTy, subjAddr);
 
     const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
       // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
@@ -5185,15 +5289,9 @@ export class Codegen {
       }
     };
 
-    if (pattern.bindings.length === 1) {
-      bind(pattern.bindings[0].name, variant.fieldTypes[0], pattern.bindings[0].type, payloadPtr);
-    } else {
-      const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
-      for (let i = 0; i < pattern.bindings.length; i++) {
-        const fieldPtr = this.nextTemp();
-        lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
-        bind(pattern.bindings[i].name, variant.fieldTypes[i], pattern.bindings[i].type, fieldPtr);
-      }
+    for (let i = 0; i < pattern.bindings.length; i++) {
+      const fieldPtr = this.enumFieldPtr(lines, subjTy, subjAddr, variant, i);
+      bind(pattern.bindings[i].name, variant.fieldTypes[i], pattern.bindings[i].type, fieldPtr);
     }
   }
 
@@ -5797,8 +5895,7 @@ export class Codegen {
       case "IsCheck": {
         const [ol, ov, ot] = this.genExpr(expr.operand);
         lines.push(...ol);
-        const tagVal = this.nextTemp();
-        lines.push(`  ${tagVal} = extractvalue ${ot} ${ov}, 0`);
+        const tagVal = this.enumValueTag(lines, ot, ov);
         const cmp = this.nextTemp();
         lines.push(`  ${cmp} = icmp eq i32 ${tagVal}, ${expr.tag}`);
         return [lines, cmp, "i1"];
@@ -6176,11 +6273,9 @@ export class Codegen {
 
     // enum equality: compare tag field only (checker rejects payload-bearing enums)
     if ((expr.op === "==" || expr.op === "!=") && llt.startsWith("%") && this.enumLayouts.has(llt.slice(1))) {
-      const lTag = this.nextTemp();
-      const rTag = this.nextTemp();
+      const lTag = this.enumValueTag(lines, llt, lv);
+      const rTag = this.enumValueTag(lines, llt, rv);
       const cmp = this.nextTemp();
-      lines.push(`  ${lTag} = extractvalue ${llt} ${lv}, 0`);
-      lines.push(`  ${rTag} = extractvalue ${llt} ${rv}, 0`);
       lines.push(`  ${cmp} = icmp ${expr.op === "==" ? "eq" : "ne"} i32 ${lTag}, ${rTag}`);
       return [lines, cmp, "i1"];
     }
@@ -6574,22 +6669,11 @@ export class Codegen {
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${enumTy}`);
     this.storeEnumTag(lines, enumTy, alloca, variant.tag);
-    if (expr.args.length > 0) {
-      const payloadPtr = this.enumPayloadPtr(lines, enumTy, alloca);
-      if (expr.args.length === 1) {
-        const [argLines, argVal, argTy] = this.genExpr(expr.args[0]);
-        lines.push(...argLines);
-        lines.push(`  store ${argTy} ${argVal}, ptr ${payloadPtr}`);
-      } else {
-        const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
-        for (let i = 0; i < expr.args.length; i++) {
-          const [argLines, argVal, argTy] = this.genExpr(expr.args[i]);
-          lines.push(...argLines);
-          const fieldPtr = this.nextTemp();
-          lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
-          lines.push(`  store ${argTy} ${argVal}, ptr ${fieldPtr}`);
-        }
-      }
+    for (let i = 0; i < expr.args.length; i++) {
+      const [argLines, argVal, argTy] = this.genExpr(expr.args[i]);
+      lines.push(...argLines);
+      const fieldPtr = this.enumFieldPtr(lines, enumTy, alloca, variant, i);
+      lines.push(`  store ${argTy} ${argVal}, ptr ${fieldPtr}`);
     }
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
@@ -6650,8 +6734,11 @@ export class Codegen {
     // the tag equals the matched integer. Written as the payload's leading i32.
     const n32 = this.nextTemp();
     lines.push(`  ${n32} = trunc i64 ${n64} to i32`);
-    const payloadPtr = this.enumPayloadPtr(lines, optTy, res);
-    lines.push(`  store i32 ${n32}, ptr ${payloadPtr}`);
+    const someVariant = this.enumVariantOf(optTy, someTag);
+    const payloadPtr = this.enumPayloadPtr(lines, optTy, res, someVariant);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${someVariant.fieldTypes[0]}, ptr ${payloadPtr}, i32 0, i32 0`);
+    lines.push(`  store i32 ${n32}, ptr ${tagPtr}`);
     lines.push(`  br label %${doneBB}`);
     lines.push(`${noneBB}:`);
     this.storeEnumTag(lines, optTy, res, noneTag);
@@ -7481,7 +7568,7 @@ export class Codegen {
     const errPayloadEnum = errPayloadTy?.startsWith("%") ? errPayloadTy.slice(1) : null;
     if (isResult && errIsString) {
       // Err(string) — extract and print the message
-      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
+      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, "Err");
       const errStr = this.nextTemp();
       lines.push(`  ${errStr} = load %String, ptr ${errPayloadPtr}`);
       const errDataPtr = this.nextTemp();
@@ -7491,7 +7578,7 @@ export class Codegen {
     } else if (isResult && errPayloadEnum && this.enumLayouts.has(errPayloadEnum)) {
       // Err(SomeEnum) — say *which* error. "unwrap called on Err" alone tells the reader
       // nothing they can act on; `Err(IoError.PermissionDenied)` is the whole diagnosis.
-      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
+      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, "Err");
       const errVal = this.nextTemp();
       lines.push(`  ${errVal} = load ${errPayloadTy}, ptr ${errPayloadPtr}`);
       const desc = this.emitEnumDisplay(errPayloadEnum, errVal, lines);
@@ -7509,7 +7596,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -7577,9 +7664,9 @@ export class Codegen {
       }
     } else {
       // extract source Err payload
-      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
       const srcErrVariant = layout.variants.get("Err") || layout.variants.get("None");
       const srcErrFieldTy = srcErrVariant && srcErrVariant.fieldTypes.length > 0 ? srcErrVariant.fieldTypes[0] : null;
+      const errPayloadPtr = srcErrVariant && srcErrFieldTy ? this.enumPayloadPtr(lines, enumTy, enumAddr, srcErrVariant) : "";
 
       let finalErrPayload: string | null = null;
       let finalErrFieldTy: string | null = null;
@@ -7601,7 +7688,7 @@ export class Codegen {
         const convAlloca = this.nextTemp();
         lines.push(`  ${convAlloca} = alloca ${convEnumTy}`);
         this.storeEnumTag(lines, convEnumTy, convAlloca, expr.fromConversion.wrapTag);
-        const convPayloadPtr = this.enumPayloadPtr(lines, convEnumTy, convAlloca);
+        const convPayloadPtr = this.enumPayloadPtr(lines, convEnumTy, convAlloca, expr.fromConversion.wrapTag);
         lines.push(`  store ${srcErrFieldTy} ${srcPayload}, ptr ${convPayloadPtr}`);
         finalErrPayload = this.nextTemp();
         lines.push(`  ${finalErrPayload} = load ${convEnumTy}, ptr ${convAlloca}`);
@@ -7622,7 +7709,7 @@ export class Codegen {
       const retErrTag = retErrVariant ? retErrVariant.tag : 1;
       this.storeEnumTag(lines, retEnumTy, retAlloca, retErrTag);
       if (finalErrPayload && finalErrFieldTy) {
-        const retPayloadPtr = this.enumPayloadPtr(lines, retEnumTy, retAlloca);
+        const retPayloadPtr = this.enumPayloadPtr(lines, retEnumTy, retAlloca, retErrTag);
         lines.push(`  store ${finalErrFieldTy} ${finalErrPayload}, ptr ${retPayloadPtr}`);
       }
       const retVal = this.nextTemp();
@@ -7638,7 +7725,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -7679,7 +7766,7 @@ export class Codegen {
 
     // some branch — extract payload and zero the source to prevent double-free
     lines.push(`${someLabel}:`);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
     // Zero the source variable's enum so drop glue won't free the moved payload
@@ -8319,7 +8406,7 @@ export class Codegen {
     lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
 
     this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
     lines.push(`  store ${elemTy} ${val}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
 
@@ -8581,7 +8668,7 @@ export class Codegen {
     lines.push(`${foundLabel}:`);
     const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
     this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
 
@@ -9282,7 +9369,7 @@ export class Codegen {
     lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${iv}`);
     const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
     this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
-    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -9383,7 +9470,7 @@ export class Codegen {
     lines.push(`  ${winPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${winIdx}`);
     const cloned = this.emitDeepCloneFromPtr(lines, winPtr, expr.elementType);
     this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
-    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -9443,7 +9530,7 @@ export class Codegen {
     const hitIdx = this.nextTemp();
     lines.push(`  ${hitIdx} = load i64, ptr ${iAddr}`);
     this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
-    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
     lines.push(`  store i64 ${hitIdx}, ptr ${payloadPtr}`);
     lines.push(`  br label %${end}`);
     lines.push(`${step}:`);
@@ -9492,7 +9579,7 @@ export class Codegen {
     lines.push(`  br i1 ${hit}, label %${found}, label %${step}`);
     lines.push(`${found}:`);
     this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
-    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
     lines.push(`  store i64 ${i}, ptr ${payloadPtr}`);
     lines.push(`  br label %${end}`);
     lines.push(`${step}:`);
@@ -10623,7 +10710,7 @@ export class Codegen {
     lines.push(`  br label %${endLabel}`);
     lines.push(`${someLabel}:`);
     this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
     lines.push(`  store i64 ${index}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -12001,7 +12088,7 @@ export class Codegen {
     lines.push(`  ${someAlloca} = alloca ${optionTy}`);
     const someTag = must(optionLayout.variants, "Some", "variants").tag;
     this.storeEnumTag(lines, optionTy, someAlloca, someTag);
-    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca);
+    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca, someTag);
     lines.push(`  store ${valTy} ${foundVal}, ptr ${somePayloadPtr}`);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
@@ -12898,15 +12985,11 @@ export class Codegen {
       const tempBufs: string[] = [];
       if (info.fieldTypeKinds.length > 0) {
         formatParts.push("(");
-        const payloadPtr = this.enumPayloadPtr(lines, `%${enumName}`, stagePtr);
-        // Build a synthetic struct type representing this variant's payload fields.
-        const payloadStructTy = `{ ${info.fieldTypes.join(", ")} }`;
         for (let fi = 0; fi < info.fieldTypeKinds.length; fi++) {
           if (fi > 0) formatParts.push(", ");
           const fk = info.fieldTypeKinds[fi];
           const ft = info.fieldTypes[fi];
-          const fieldPtr = this.nextTemp();
-          lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${fi}`);
+          const fieldPtr = this.enumFieldPtr(lines, `%${enumName}`, stagePtr, info, fi);
           const fieldVal = this.nextTemp();
           lines.push(`  ${fieldVal} = load ${ft}, ptr ${fieldPtr}`);
           if (fk.tag === "string") {
@@ -13564,23 +13647,13 @@ export class Codegen {
 
       const vLines: string[] = [];
       vLines.push(`${label}:`);
-      const srcPayload = this.enumPayloadPtr(vLines, enumTy, "%src");
-      const dstPayload = this.enumPayloadPtr(vLines, enumTy, "%dst");
-
-      if (variant.fieldTypes.length === 1) {
-        const cloned = this.emitDeepCloneFromPtr(vLines, srcPayload, variant.fieldTypeKinds[0]);
-        vLines.push(`  store ${variant.fieldTypes[0]} ${cloned}, ptr ${dstPayload}`);
-      } else {
-        const structTy = `{ ${variant.fieldTypes.join(", ")} }`;
-        for (let i = 0; i < variant.fieldTypes.length; i++) {
-          if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
-          const srcFieldPtr = this.nextTemp();
-          vLines.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr ${srcPayload}, i32 0, i32 ${i}`);
-          const cloned = this.emitDeepCloneFromPtr(vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
-          const dstFieldPtr = this.nextTemp();
-          vLines.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr ${dstPayload}, i32 0, i32 ${i}`);
-          vLines.push(`  store ${variant.fieldTypes[i]} ${cloned}, ptr ${dstFieldPtr}`);
-        }
+      // Copy fields were carried over by the shallow whole-enum copy above.
+      for (let i = 0; i < variant.fieldTypes.length; i++) {
+        if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
+        const srcFieldPtr = this.enumFieldPtr(vLines, enumTy, "%src", variant, i);
+        const cloned = this.emitDeepCloneFromPtr(vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
+        const dstFieldPtr = this.enumFieldPtr(vLines, enumTy, "%dst", variant, i);
+        vLines.push(`  store ${variant.fieldTypes[i]} ${cloned}, ptr ${dstFieldPtr}`);
       }
       vLines.push(`  br label %${doneLabel}`);
       variantBodies.push(vLines);
@@ -13659,14 +13732,11 @@ export class Codegen {
     const errLabel = this.nextLabel("resctx.err");
     const contLabel = this.nextLabel("resctx.cont");
     lines.push(`  br i1 ${isOk}, label %${okLabel}, label %${errLabel}`);
-    const payloadPtr = () => {
-      const p = this.enumPayloadPtr(lines, enumTy, addr);
-      return p;
-    };
+    const payloadPtr = (variant: EnumVariant) => this.enumPayloadPtr(lines, enumTy, addr, variant);
     const store = (tag: number, ty: string | undefined, val: string | undefined) => {
       this.storeEnumTag(lines, resTy, resAddr, tag);
       if (!ty || !val) return;
-      const pp = this.enumPayloadPtr(lines, resTy, resAddr);
+      const pp = this.enumPayloadPtr(lines, resTy, resAddr, tag);
       lines.push(`  store ${ty} ${val}, ptr ${pp}`);
     };
 
@@ -13678,7 +13748,7 @@ export class Codegen {
     this.emitDropValue(lines, noteAddr, { tag: "string" });
     if (srcOk.fieldTypes[0]) {
       const v = this.nextTemp();
-      lines.push(`  ${v} = load ${srcOk.fieldTypes[0]}, ptr ${payloadPtr()}`);
+      lines.push(`  ${v} = load ${srcOk.fieldTypes[0]}, ptr ${payloadPtr(srcOk)}`);
       store(resOk.tag, srcOk.fieldTypes[0], v);
     } else {
       store(resOk.tag, undefined, undefined);
@@ -13688,7 +13758,7 @@ export class Codegen {
     lines.push(`${errLabel}:`);
     const errTy = srcErr.fieldTypes[0] ?? "{ ptr, ptr }";
     const errVal = this.nextTemp();
-    lines.push(`  ${errVal} = load ${errTy}, ptr ${payloadPtr()}`);
+    lines.push(`  ${errVal} = load ${errTy}, ptr ${payloadPtr(srcErr)}`);
     const cause = expr.boxConversion ? this.emitBoxAsIface(lines, errVal, errTy, expr.boxConversion) : errVal;
     const ctxType: TypeKind = { tag: "struct", name: "ErrorContext" };
     const ctxTy = this.llvmType(ctxType);
@@ -14156,20 +14226,10 @@ export class Codegen {
 
       const vLines: string[] = [];
       vLines.push(`${label}:`);
-      const payloadPtr = this.enumPayloadPtr(vLines, enumTy, "%self");
-
-      if (variant.fieldTypes.length === 1) {
-        if (this.needsDropCg(variant.fieldTypeKinds[0])) {
-          this.emitDropValue(vLines, payloadPtr, variant.fieldTypeKinds[0]);
-        }
-      } else {
-        const structTy = `{ ${variant.fieldTypes.join(", ")} }`;
-        for (let i = 0; i < variant.fieldTypes.length; i++) {
-          if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
-          const fieldPtr = this.nextTemp();
-          vLines.push(`  ${fieldPtr} = getelementptr ${structTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
-          this.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
-        }
+      for (let i = 0; i < variant.fieldTypes.length; i++) {
+        if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
+        const fieldPtr = this.enumFieldPtr(vLines, enumTy, "%self", variant, i);
+        this.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
       }
       vLines.push(`  br label %${doneLabel}`);
       variantBodies.push(vLines);
@@ -14427,7 +14487,7 @@ export class Codegen {
     const someAlloca = this.nextTemp();
     lines.push(`  ${someAlloca} = alloca ${optionTy}`);
     this.storeEnumTag(lines, optionTy, someAlloca, someTag);
-    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca);
+    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca, someTag);
     lines.push(`  store ${lt} ${val}, ptr ${somePayloadPtr}`);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
@@ -14613,7 +14673,7 @@ export class Codegen {
         // Result type == receiver type here, so forwarding Some is a whole-enum copy.
         lines.push(`  store ${resTy} ${vv}, ptr ${resAddr}`);
       } else {
-        const srcPayloadPtr = this.enumPayloadPtr(lines, enumTy, addr);
+        const srcPayloadPtr = this.enumPayloadPtr(lines, enumTy, addr, srcSome);
         // The checker types the callback param as &T, so the payload is passed by pointer —
         // that is what keeps a non-Copy inner from being moved out of the receiver.
         const cbType = expr.default!.type;
@@ -14637,7 +14697,7 @@ export class Codegen {
           const called = this.nextTemp();
           lines.push(`  ${called} = call ${resPayloadTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
           this.storeEnumTag(lines, resTy, resAddr, resSome.tag);
-          const resPayloadPtr = this.enumPayloadPtr(lines, resTy, resAddr);
+          const resPayloadPtr = this.enumPayloadPtr(lines, resTy, resAddr, resSome);
           lines.push(`  store ${resPayloadTy} ${called}, ptr ${resPayloadPtr}`);
         }
       }
@@ -14708,12 +14768,9 @@ export class Codegen {
       // what keeps a non-Copy payload from being moved out of the receiver
       const cbType = expr.default!.type;
       const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
-      const srcPayload = (): string => {
-        const p = this.enumPayloadPtr(lines, enumTy, addr);
-        return p;
-      };
-      const callArgOf = (srcFieldTy: string): [string, string] => {
-        const p = srcPayload();
+      const srcPayload = (variant: EnumVariant): string => this.enumPayloadPtr(lines, enumTy, addr, variant);
+      const callArgOf = (variant: EnumVariant, srcFieldTy: string): [string, string] => {
+        const p = srcPayload(variant);
         if (paramIsRef) return [p, "ptr"];
         const loaded = this.nextTemp();
         lines.push(`  ${loaded} = load ${srcFieldTy}, ptr ${p}`);
@@ -14722,32 +14779,33 @@ export class Codegen {
       const storeTag = (tag: number) => {
         this.storeEnumTag(lines, resTy, resAddr, tag);
       };
-      const storePayload = (ty: string, val: string) => {
-        const pp = this.enumPayloadPtr(lines, resTy, resAddr);
+      const storePayload = (tag: number, ty: string, val: string) => {
+        const pp = this.enumPayloadPtr(lines, resTy, resAddr, tag);
         lines.push(`  store ${ty} ${val}, ptr ${pp}`);
       };
       // forward the untouched side's payload verbatim; the result variant's slot is at least
       // as wide because that side's type is unchanged
-      const copyThrough = (srcFieldTy: string | undefined, tag: number) => {
+      const copyThrough = (src: EnumVariant, tag: number) => {
         storeTag(tag);
+        const srcFieldTy = src.fieldTypes[0];
         if (!srcFieldTy) return;
-        const p = srcPayload();
+        const p = srcPayload(src);
         const v = this.nextTemp();
         lines.push(`  ${v} = load ${srcFieldTy}, ptr ${p}`);
-        storePayload(srcFieldTy, v);
+        storePayload(tag, srcFieldTy, v);
       };
 
       lines.push(`${okLabel}:`);
       if (expr.op === "resultMapErr" || expr.op === "resultOrElse") {
-        copyThrough(srcOk.fieldTypes[0], resOk.tag);
+        copyThrough(srcOk, resOk.tag);
       } else if (expr.op === "resultAndThen") {
         // the callback already returns the whole Result — store it wholesale, no re-tagging
-        const [arg, argTy] = callArgOf(srcOk.fieldTypes[0] ?? "i64");
+        const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
         lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
       } else {
-        const [arg, argTy] = callArgOf(srcOk.fieldTypes[0] ?? "i64");
+        const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
         const outTy = resOk.fieldTypes[0] ?? "i64";
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
@@ -14763,26 +14821,26 @@ export class Codegen {
           if (inner && this.needsDropCg(inner)) this.emitDropValue(lines, arg, inner);
         }
         storeTag(resOk.tag);
-        storePayload(outTy, called);
+        storePayload(resOk.tag, outTy, called);
       }
       lines.push(`  br label %${contLabel}`);
 
       lines.push(`${errLabel}:`);
       if (expr.op === "resultMapErr") {
-        const [arg, argTy] = callArgOf(srcErr.fieldTypes[0] ?? "i64");
+        const [arg, argTy] = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
         const outTy = resErr.fieldTypes[0] ?? "i64";
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
         storeTag(resErr.tag);
-        storePayload(outTy, called);
+        storePayload(resErr.tag, outTy, called);
       } else if (expr.op === "resultOrElse") {
         // mirror of andThen on the other side: the callback returns the whole Result
-        const [arg, argTy] = callArgOf(srcErr.fieldTypes[0] ?? "i64");
+        const [arg, argTy] = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
         lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
       } else {
-        copyThrough(srcErr.fieldTypes[0], resErr.tag);
+        copyThrough(srcErr, resErr.tag);
       }
       lines.push(`  br label %${contLabel}`);
 
@@ -14794,7 +14852,7 @@ export class Codegen {
 
     // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, addr);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, addr, 0);
     const payload = this.nextTemp();
     lines.push(`  ${payload} = load ${payloadTy}, ptr ${payloadPtr}`);
 
@@ -14814,19 +14872,20 @@ export class Codegen {
       lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
       const envPtr = this.nextTemp();
       lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
-      // Result's version is handed the error, so it reads the Err payload out of the
-      // same slot the Ok payload came from — by pointer when the param is `&E`.
+      // Result's version is handed the error, read from the Err variant's own payload
+      // offset (not the Ok one loaded above) — by pointer when the param is `&E`.
       let errArgs = "";
       if (expr.op === "resultUnwrapOrElse") {
-        const srcErr = this.enumLayouts.get(expr.enumName)?.variants.get("Err");
+        const srcErr = must(must(this.enumLayouts, expr.enumName, "enum layouts").variants, "Err", "Result variants");
+        const errPtr = this.enumPayloadPtr(lines, enumTy, addr, srcErr);
         const cbType = expr.default!.type;
         const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
         if (paramIsRef) {
-          errArgs = `, ptr ${payloadPtr}`;
+          errArgs = `, ptr ${errPtr}`;
         } else {
-          const srcErrTy = srcErr?.fieldTypes[0] ?? "i64";
+          const srcErrTy = srcErr.fieldTypes[0];
           const loaded = this.nextTemp();
-          lines.push(`  ${loaded} = load ${srcErrTy}, ptr ${payloadPtr}`);
+          lines.push(`  ${loaded} = load ${srcErrTy}, ptr ${errPtr}`);
           errArgs = `, ${srcErrTy} ${loaded}`;
         }
       }
