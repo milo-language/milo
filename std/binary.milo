@@ -1,4 +1,4 @@
-// std/binary — fixed-width integer and float codecs over a byte buffer.
+// std/binary — fixed-width integer and float codecs, and LEB128 varints, over a byte buffer.
 //
 // Milo's `string` is an owned byte buffer, and it is what every file-format parser
 // in `std/` already carries its bytes in, so that is the buffer type here: reads
@@ -359,4 +359,109 @@ impl Bytes {
     fn writeF64Be(out: &mut string, v: f64): void {
         Bytes.writeU64Be(&mut out, Bytes.f64ToBits(v))
     }
+
+    // ── variable-length integers (LEB128) ──
+
+    // Append `v` as an unsigned LEB128 varint: 7 bits per byte, low group first,
+    // the high bit set on every byte but the last. 1 to 10 bytes; always the
+    // shortest encoding, so `readUvarint` accepts everything this writes.
+    fn writeUvarint(out: &mut string, v: u64): void {
+        var rest = v
+        while rest >= 128 {
+            out.push(((rest & 127) | 128) as u8)
+            rest = rest >> 7
+        }
+        out.push(rest as u8)
+    }
+
+    // Append `v` as a signed varint: zigzag-mapped (0, -1, 1, -2, ... to 0, 1, 2,
+    // 3, ...) so a small negative number stays short, then written as an unsigned
+    // varint. The protobuf `sint64` encoding.
+    fn writeVarint(out: &mut string, v: i64): void {
+        Bytes.writeUvarint(&mut out, Bytes.zigzagEncode(v))
+    }
+
+    // Decode the unsigned varint that starts at `off`. On success the result
+    // holds the value and `next`, the offset just past its last byte.
+    //
+    // Strict: `Truncated` when the input ends (or `off` is outside it) before a
+    // byte without the continuation bit, `Overflow` when the value needs more
+    // than 64 bits, and `Overlong` when the encoding is longer than the value
+    // needs (a final 0x00 group after the first byte, as in `80 00` for 0).
+    // Rejecting the padded forms gives each value exactly one encoding, which is
+    // what a decoder that hashes, compares or re-encodes its input relies on.
+    fn readUvarint(src: &string, off: i64): Result<Varint<u64>, VarintError> {
+        if off < 0 || off >= src.len {
+            return Result.Err(VarintError.Truncated)
+        }
+        var v: u64 = 0
+        var shift: u64 = 0
+        var i = off
+        while i < src.len {
+            let b = src[i] as u64
+            let group = b & 127
+            // the 10th byte holds bit 63 alone; anything above it is past u64
+            if shift == 63 && group > 1 {
+                return Result.Err(VarintError.Overflow)
+            }
+            v = v | (group << shift)
+            if b < 128 {
+                if group == 0 && i > off {
+                    return Result.Err(VarintError.Overlong)
+                }
+                return Result.Ok(Varint { value: v, next: i + 1 })
+            }
+            if shift == 63 {
+                return Result.Err(VarintError.Overflow)
+            }
+            shift += 7
+            i += 1
+        }
+        return Result.Err(VarintError.Truncated)
+    }
+
+    // Decode the signed (zigzag) varint that starts at `off`, with the same
+    // errors and `next` as `readUvarint`.
+    fn readVarint(src: &string, off: i64): Result<Varint<i64>, VarintError> {
+        let u = Bytes.readUvarint(src, off)?
+        return Result.Ok(Varint { value: Bytes.zigzagDecode(u.value), next: u.next })
+    }
+
+    // Zigzag: map a signed value onto an unsigned one so that magnitude, not
+    // sign, decides the length (0 -> 0, -1 -> 1, 1 -> 2, i64 min -> u64 max).
+    // Computed on u64 bits, because `v << 1` on an i64 overflows for half the range.
+    fn zigzagEncode(v: i64): u64 {
+        let bits = v as u64
+        if v < 0 {
+            return (bits << 1) ^ 18446744073709551615
+        }
+        return bits << 1
+    }
+
+    // The inverse of `zigzagEncode`.
+    fn zigzagDecode(u: u64): i64 {
+        let half = u >> 1
+        if (u & 1) == 1 {
+            return (half ^ 18446744073709551615) as i64
+        }
+        return half as i64
+    }
+}
+
+// A decoded varint and the offset just past it, so a caller can read the next
+// field from `next`.
+pub struct Varint<T> {
+    value: T,
+    next: i64,
+}
+
+// Why a varint decode failed. `Truncated` is the one a streaming reader answers by
+// waiting for more bytes; the other two mean the input is malformed.
+pub enum VarintError {
+    // the input ended before the varint's final byte, or `off` was outside it
+    Truncated,
+    // the encoding uses more bytes than the value needs (not the canonical form)
+    Overlong,
+    // the value does not fit in 64 bits
+    Overflow,
 }

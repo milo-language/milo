@@ -1,0 +1,103 @@
+// std/binary LEB128 varints: known encodings for the unsigned and zigzag forms,
+// round trips at the edges of i64/u64, decoding a run of fields through `next`,
+// and strict rejection of truncated, overlong (non-canonical) and >64-bit input.
+
+from "std/binary" import { Bytes, Varint, VarintError }
+from "std/hex" import { Hex }
+
+pub fn uhex(v: u64): string {
+    var out: string = ""
+    Bytes.writeUvarint(&mut out, v)
+    return Hex.encode(out)
+}
+
+pub fn shex(v: i64): string {
+    var out: string = ""
+    Bytes.writeVarint(&mut out, v)
+    return Hex.encode(out)
+}
+
+pub fn describe(r: Result<Varint<u64>, VarintError>): string {
+    match r {
+        Result.Ok(d) => { return $"ok {d.value} next {d.next}" }
+        Result.Err(e) => {
+            match e {
+                VarintError.Truncated => { return "truncated" }
+                VarintError.Overlong => { return "overlong" }
+                VarintError.Overflow => { return "overflow" }
+            }
+        }
+    }
+}
+
+pub fn decodeHex(h: string): string {
+    let bytes = Hex.decode(h)!
+    return describe(Bytes.readUvarint(bytes, 0))
+}
+
+// @expect: 00 01 7f 8001 ac02
+// @expect: ffffffffffffffff7f
+// @expect: ffffffffffffffffff01
+// @expect: 00 01 02 03 7f 8101
+// @expect: ffffffffffffffffff01 feffffffffffffffff01
+// @expect: ok 300 next 2
+// @expect: ok 18446744073709551615 next 10
+// @expect: ok 9223372036854775807 next 9
+// @expect: round trip ok
+// @expect: fields 7 -3 300 next 4
+// @expect: truncated
+// @expect: truncated
+// @expect: truncated
+// @expect: truncated
+// @expect: overlong
+// @expect: overlong
+// @expect: overflow
+// @expect: overflow
+// @expect: ok 0 next 1
+pub fn main() {
+    print($"{uhex(0)} {uhex(1)} {uhex(127)} {uhex(128)} {uhex(300)}")
+    print(uhex(9223372036854775807))
+    print(uhex(18446744073709551615))
+    print($"{shex(0)} {shex(-1)} {shex(1)} {shex(-2)} {shex(-64)} {shex(-65)}")
+    print($"{shex(-9223372036854775807 - 1)} {shex(9223372036854775807)}")
+
+    print(decodeHex("ac02"))
+    print(decodeHex("ffffffffffffffffff01"))
+    print(decodeHex("ffffffffffffffff7f"))
+
+    let samples: Vec<i64> = [0, 1, -1, 63, -64, 64, -65, 300, -300, 9223372036854775807, -9223372036854775807 - 1]
+    var ok = true
+    for v in samples {
+        var buf: string = ""
+        Bytes.writeVarint(&mut buf, v)
+        let d = Bytes.readVarint(buf, 0)!
+        if d.value != v || d.next != buf.len {
+            ok = false
+            print($"mismatch {v}")
+        }
+    }
+    if ok {
+        print("round trip ok")
+    }
+
+    // three fields back to back, each read from the previous one's `next`
+    var msg: string = ""
+    Bytes.writeUvarint(&mut msg, 7)
+    Bytes.writeVarint(&mut msg, -3)
+    Bytes.writeUvarint(&mut msg, 300)
+    let a = Bytes.readUvarint(msg, 0)!
+    let b = Bytes.readVarint(msg, a.next)!
+    let c = Bytes.readUvarint(msg, b.next)!
+    print($"fields {a.value} {b.value} {c.value} next {c.next}")
+
+    print(describe(Bytes.readUvarint("", 0)))
+    print(decodeHex("80"))
+    print(decodeHex("ffffffff"))
+    print(describe(Bytes.readUvarint("a", -1)))
+    print(decodeHex("8000"))
+    print(decodeHex("ff8000"))
+    print(decodeHex("ffffffffffffffffff02"))
+    print(decodeHex("ffffffffffffffffff8001"))
+    // a lone 00 is the canonical encoding of 0, not an overlong one
+    print(decodeHex("00"))
+}
