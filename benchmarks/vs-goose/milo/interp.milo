@@ -1,0 +1,67 @@
+// Expression-tree interpreter: build a random tree of the given depth into one
+// Vec pool, evaluate it eight times. Children are typed NodeId handles over a
+// ranged i32, so a node is a 4-byte tag plus two 4-byte links, like the Rust arena.
+from "./bench" import { xsNext, xsMod }
+
+type Idx = i32(0..2147483646)
+
+struct NodeId { at: Idx }
+
+// Every value is reduced mod M, so the range is the invariant that lets the
+// compiler prove the products below cannot overflow i64.
+type Val = i64(0..1000002)
+let modulus: i64 = 1000003
+
+enum Node {
+    Num(i32),
+    Add(NodeId, NodeId),
+    Mul(NodeId, NodeId),
+    Neg(NodeId),
+}
+
+fn push(pool: &mut Vec<Node>, n: Node): NodeId {
+    pool.push(n)
+    return NodeId { at: (pool.len - 1) as Idx }
+}
+
+fn build(pool: &mut Vec<Node>, depth: i64, seed: u64): NodeId {
+    let s = xsNext(seed)
+    if depth == 0 {
+        return push(&mut pool, Node.Num(xsMod(s, 1000) as i32))
+    }
+    let k = xsMod(s, 8)
+    if k < 1 {
+        let a = build(&mut pool, depth - 1, s)
+        return push(&mut pool, Node.Neg(a))
+    }
+    let a = build(&mut pool, depth - 1, s)
+    let b = build(&mut pool, depth - 1, xsNext(s))
+    if k < 5 {
+        return push(&mut pool, Node.Add(a, b))
+    }
+    return push(&mut pool, Node.Mul(a, b))
+}
+
+// The pass index enters at the leaves so the eight passes are different work.
+fn eval(pool: &Vec<Node>, id: NodeId, p: i64): Val {
+    match pool[id.at as i64] {
+        Num(v) => { return ((v as i64 + p) % modulus) as Val }
+        Add(l, r) => { return ((eval(pool, l, p) + eval(pool, r, p)) % modulus) as Val }
+        Mul(l, r) => { return ((eval(pool, l, p) * eval(pool, r, p)) % modulus) as Val }
+        Neg(o) => { return ((modulus - eval(pool, o, p)) % modulus) as Val }
+    }
+}
+
+fn main(): i32 {
+    let depth: i64 = 16 // BENCH_N
+    let passes: i64 = 8
+    var pool: Vec<Node> = Vec.new()
+    let root = build(&mut pool, depth, 12345)
+    var total: i64 = 0
+    for p in 0..passes {
+        total = (total + eval(pool, root, p)) % modulus
+    }
+    print(pool.len)
+    print(total)
+    return 0
+}

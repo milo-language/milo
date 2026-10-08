@@ -1,0 +1,16 @@
+// Shared by every Milo port: the suite's xorshift64, so every language generates
+// byte-identical input. The shifts drop high bits by design; Milo traps only on a
+// shift amount >= width, so no @wrapping is needed here.
+
+pub fn xsNext(x: u64): u64 {
+    var v = x
+    v ^= v << 13
+    v ^= v >> 7
+    v ^= v << 17
+    return v
+}
+
+// Reduction into [0, k), as C's uint64_t modulo; the result fits an i64.
+pub fn xsMod(x: u64, k: i64): i64 {
+    return (x % (k as u64)) as i64
+}

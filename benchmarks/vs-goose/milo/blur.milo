@@ -1,0 +1,42 @@
+// 16 passes of a 3x3 Gaussian blur over a WxW 8-bit image, ping-ponged between
+// two buffers. Flat indexing, the shape everyone writes first; every index is
+// bounds-checked, as in the Rust rows.
+from "./bench" import { xsNext, xsMod }
+
+fn blur(src: &[u8], dst: &mut [u8], w: i64) {
+    for y in 1..w - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x
+            let s = src[i - w - 1] as u16 + src[i - w] as u16 * 2 + src[i - w + 1] as u16
+            + src[i - 1] as u16 * 2 + src[i] as u16 * 4 + src[i + 1] as u16 * 2
+            + src[i + w - 1] as u16 + src[i + w] as u16 * 2 + src[i + w + 1] as u16
+            dst[i] = (s >> 4) as u8
+        }
+    }
+}
+
+fn main(): i32 {
+    let w: i64 = 1024 // BENCH_N
+    let passes: i64 = 16
+    // Grown by push, unreserved, as the idiomatic Goose, C++ and Rust rows do.
+    var a: Vec<u8> = Vec.new()
+    var b: Vec<u8> = Vec.new()
+    var r: u64 = 12345
+    for _ in 0..w * w {
+        r = xsNext(r)
+        a.push(xsMod(r, 256) as u8)
+        b.push(0)
+    }
+    // Border pixels are never written, so b's border stays zero throughout.
+    for _ in 0..passes / 2 {
+        blur(a, &mut b, w)
+        blur(b, &mut a, w)
+    }
+    var total: i64 = 0
+    for v in a {
+        total += v as i64
+    }
+    print(w)
+    print(total)
+    return 0
+}

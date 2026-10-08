@@ -1,0 +1,98 @@
+// The same responses rendered straight into one reused output string as they are
+// generated, with no response object in between; consumes the RNG in exactly
+// respond.milo's order, so the bytes and checksum are identical. The buffer is
+// reset with clear(), which keeps its capacity, and ints are appended in place
+// with pushInt, so a request allocates nothing once the buffer has grown.
+from "./bench" import { xsNext, xsMod }
+
+// The backslash escape is written as the character is produced.
+fn emitName(out: &mut string, seed: u64) {
+    var r = xsNext(seed)
+    let n = 3 + xsMod(r, 8)
+    let odd = xsMod(r >> 8, 8) == 0
+    out.push('"')
+    for i in 0..n {
+        r = xsNext(r)
+        if odd && i == 1 {
+            out.push('\\')
+            out.push(if xsMod(r, 2) == 0 { '"' } else { '\\' })
+        } else {
+            out.push(('a' as i64 + xsMod(r, 26)) as u8)
+        }
+    }
+    out.push('"')
+}
+
+fn emitSku(out: &mut string, seed: u64) {
+    var r = xsNext(seed)
+    out.push('"')
+    out.push(('A' as i64 + xsMod(r, 26)) as u8)
+    out.push(('A' as i64 + xsMod(r >> 8, 26)) as u8)
+    for _ in 0..4 {
+        r = xsNext(r)
+        out.push(('0' as i64 + xsMod(r, 10)) as u8)
+    }
+    out.push('"')
+}
+
+@wrapping
+fn fnv(s: &string): u64 {
+    var h: u64 = 0xcbf29ce484222325
+    for c in s {
+        h = (h ^ c as u64) * 0x100000001b3
+    }
+    return h
+}
+
+struct Handled { hash: u64, len: i64 }
+
+fn handle(out: &mut string, seed: u64): Handled {
+    let r0 = xsNext(seed)
+    let n = 1 + xsMod(r0, 8)
+    out.clear()
+    out.pushStr("{\"id\":")
+    out.pushInt(xsMod(r0 >> 4, 1000000))
+    out.pushStr(",\"user\":")
+    emitName(&mut out, r0 >> 8)
+    out.pushStr(",\"items\":[")
+    var total: i64 = 0
+    var r = r0 >> 16
+    for i in 0..n {
+        r = xsNext(r)
+        if i > 0 {
+            out.push(',')
+        }
+        let qty = 1 + xsMod(r >> 8, 5)
+        let price = 100 + xsMod(r >> 16, 99900)
+        out.pushStr("{\"sku\":")
+        emitSku(&mut out, r)
+        out.pushStr(",\"qty\":")
+        out.pushInt(qty)
+        out.pushStr(",\"price\":")
+        out.pushInt(price)
+        out.push('}')
+        total += qty * price
+    }
+    out.pushStr("],\"total\":")
+    out.pushInt(total)
+    out.push('}')
+    return Handled { hash: fnv(out), len: out.len }
+}
+
+fn main(): i32 {
+    let n: i64 = 100000 // BENCH_N
+    var out = ""
+    var seed: u64 = 12345
+    var h: u64 = 0
+    var bytes: i64 = 0
+    for i in 0..n {
+        seed = xsNext(seed)
+        let res = handle(&mut out, seed)
+        h ^= res.hash.wrappingMul(31).wrappingAdd(i as u64)
+        bytes += res.len
+    }
+    print(n)
+    print(bytes)
+    print(h)
+    return 0
+}

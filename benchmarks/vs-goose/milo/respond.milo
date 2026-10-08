@@ -1,0 +1,123 @@
+// A web handler's hot loop: per request build a typed response (id, user name,
+// a Vec of line items each with an owned sku string), render it as JSON, hash
+// it and drop both. Same DTO shape as the Rust and idiomatic C++ rows.
+from "./bench" import { xsNext, xsMod }
+
+struct Item { sku: string, qty: i64, price: i64 }
+
+struct Resp { id: i64, user: string, items: Vec<Item> }
+
+// A user name of 3..10 letters; one in eight carries a quote or a backslash so
+// the escaping path in the renderer is real.
+fn nameOf(seed: u64): string {
+    var s = ""
+    var r = xsNext(seed)
+    let n = 3 + xsMod(r, 8)
+    let odd = xsMod(r >> 8, 8) == 0
+    for i in 0..n {
+        r = xsNext(r)
+        if odd && i == 1 {
+            s.push(if xsMod(r, 2) == 0 { '"' } else { '\\' })
+        } else {
+            s.push(('a' as i64 + xsMod(r, 26)) as u8)
+        }
+    }
+    return s
+}
+
+// A stock keeping unit: two letters and four digits.
+fn skuOf(seed: u64): string {
+    var s = ""
+    var r = xsNext(seed)
+    s.push(('A' as i64 + xsMod(r, 26)) as u8)
+    s.push(('A' as i64 + xsMod(r >> 8, 26)) as u8)
+    for _ in 0..4 {
+        r = xsNext(r)
+        s.push(('0' as i64 + xsMod(r, 10)) as u8)
+    }
+    return s
+}
+
+fn makeItems(seed: u64, n: i64): Vec<Item> {
+    var t: Vec<Item> = Vec.new()
+    var r = seed
+    for _ in 0..n {
+        r = xsNext(r)
+        t.push(Item { sku: skuOf(r), qty: 1 + xsMod(r >> 8, 5), price: 100 + xsMod(r >> 16, 99900) })
+    }
+    return t
+}
+
+fn emitStr(out: &mut string, s: &string) {
+    out.push('"')
+    for c in s {
+        if c == '"' || c == '\\' {
+            out.push('\\')
+        }
+        out.push(c)
+    }
+    out.push('"')
+}
+
+fn render(r: &Resp): string {
+    var out = "{\"id\":"
+    out.pushStr(r.id.toString())
+    out.pushStr(",\"user\":")
+    emitStr(&mut out, r.user)
+    out.pushStr(",\"items\":[")
+    var total: i64 = 0
+    for i, it in r.items {
+        if i > 0 {
+            out.push(',')
+        }
+        out.pushStr("{\"sku\":")
+        emitStr(&mut out, it.sku)
+        out.pushStr(",\"qty\":")
+        out.pushStr(it.qty.toString())
+        out.pushStr(",\"price\":")
+        out.pushStr(it.price.toString())
+        out.push('}')
+        total += it.qty * it.price
+    }
+    out.pushStr("],\"total\":")
+    out.pushStr(total.toString())
+    out.push('}')
+    return out
+}
+
+@wrapping
+fn fnv(s: &string): u64 {
+    var h: u64 = 0xcbf29ce484222325
+    for c in s {
+        h = (h ^ c as u64) * 0x100000001b3
+    }
+    return h
+}
+
+struct Handled { hash: u64, len: i64 }
+
+// One request: the response object and its rendering are both locals.
+fn handle(seed: u64): Handled {
+    let r = xsNext(seed)
+    let n = 1 + xsMod(r, 8)
+    let resp = Resp { id: xsMod(r >> 4, 1000000), user: nameOf(r >> 8), items: makeItems(r >> 16, n) }
+    let out = render(resp)
+    return Handled { hash: fnv(out), len: out.len }
+}
+
+fn main(): i32 {
+    let n: i64 = 100000 // BENCH_N
+    var seed: u64 = 12345
+    var h: u64 = 0
+    var bytes: i64 = 0
+    for i in 0..n {
+        seed = xsNext(seed)
+        let res = handle(seed)
+        h ^= res.hash.wrappingMul(31).wrappingAdd(i as u64)
+        bytes += res.len
+    }
+    print(n)
+    print(bytes)
+    print(h)
+    return 0
+}

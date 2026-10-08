@@ -1,0 +1,52 @@
+// Incremental adjacency build plus BFS from four sources, as Vec<Vec<i32>>: the
+// first thing anyone writes. One allocation per vertex, inner Vecs grow alone.
+from "./bench" import { xsNext, xsMod }
+
+fn main(): i32 {
+    let nv: i64 = 100000 // BENCH_N
+    let deg: i64 = 8
+    let sources: i64 = 4
+    let ne = nv * deg
+    var r: u64 = 12345
+    var adj: Vec<Vec<i32>> = Vec.withCapacity(nv)
+    for _ in 0..nv {
+        adj.push(Vec.new())
+    }
+    for _ in 0..ne {
+        r = xsNext(r)
+        let u = xsMod(r, nv)
+        adj[u].push(xsMod(r >> 24, nv) as i32)
+    }
+
+    var dist: Vec<i32> = Vec.filled(nv, -1)
+    var q: Vec<i32> = Vec.withCapacity(nv)
+    var total: i64 = 0
+    var seed: u64 = 999
+    for _ in 0..sources {
+        seed = xsNext(seed)
+        let src = xsMod(seed, nv)
+        for i in 0..nv {
+            dist[i] = -1
+        }
+        q.clear()
+        dist[src] = 0
+        q.push(src as i32)
+        var qh: i64 = 0
+        while qh < q.len {
+            let u = q[qh] as i64
+            qh += 1
+            let d = dist[u]
+            total += d as i64
+            for e in adj[u] {
+                let w = e as i64
+                if dist[w] < 0 {
+                    dist[w] = d + 1
+                    q.push(e)
+                }
+            }
+        }
+    }
+    print(nv + ne)
+    print(total)
+    return 0
+}

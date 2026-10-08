@@ -1,0 +1,63 @@
+// The same graph built as CSR with the two-pass count-then-fill, the shape the
+// performance-conscious Goose, C++ and Rust rows use.
+from "./bench" import { xsNext, xsMod }
+
+fn main(): i32 {
+    let nv: i64 = 100000 // BENCH_N
+    let deg: i64 = 8
+    let sources: i64 = 4
+    let ne = nv * deg
+    var r: u64 = 12345
+    var esrc: Vec<i32> = Vec.filled(ne, 0)
+    var edst: Vec<i32> = Vec.filled(ne, 0)
+    for e in 0..ne {
+        r = xsNext(r)
+        esrc[e] = xsMod(r, nv) as i32
+        edst[e] = xsMod(r >> 24, nv) as i32
+    }
+    var start: Vec<i32> = Vec.filled(nv + 1, 0)
+    for s in esrc {
+        start[s as i64 + 1] += 1
+    }
+    for v in 0..nv {
+        start[v + 1] += start[v]
+    }
+    var fill = start.clone()
+    var out: Vec<i32> = Vec.filled(ne, 0)
+    for e in 0..ne {
+        let s = esrc[e] as i64
+        out[fill[s] as i64] = edst[e]
+        fill[s] += 1
+    }
+
+    var dist: Vec<i32> = Vec.filled(nv, -1)
+    var q: Vec<i32> = Vec.withCapacity(nv)
+    var total: i64 = 0
+    var seed: u64 = 999
+    for _ in 0..sources {
+        seed = xsNext(seed)
+        let src = xsMod(seed, nv)
+        for i in 0..nv {
+            dist[i] = -1
+        }
+        q.clear()
+        dist[src] = 0
+        q.push(src as i32)
+        var qh: i64 = 0
+        while qh < q.len {
+            let u = q[qh] as i64
+            qh += 1
+            let d = dist[u]
+            total += d as i64
+            for w in out[start[u] as i64..start[u + 1] as i64] {
+                if dist[w as i64] < 0 {
+                    dist[w as i64] = d + 1
+                    q.push(w)
+                }
+            }
+        }
+    }
+    print(nv + ne)
+    print(total)
+    return 0
+}

@@ -1,0 +1,59 @@
+// Variant records: build a log of N tagged events, aggregate it four times.
+// A Milo enum is a fixed-size tagged union like Rust's, and the Say text is an
+// owned string (a separate heap allocation), so this is the Rust row's shape.
+from "./bench" import { xsNext, xsMod }
+
+enum Event {
+    Tick,
+    Move(i32, i16, i16),
+    Say(i32, string),
+    Quit(i32, u8),
+}
+
+// A word of 4..15 letters from its own chain, so the caller's stream advances
+// once per event whatever the variant is.
+fn word(seed: u64): string {
+    var w = ""
+    var r = xsNext(seed)
+    let n = 4 + xsMod(r, 12)
+    for _ in 0..n {
+        r = xsNext(r)
+        w.push(('a' as i64 + xsMod(r, 26)) as u8)
+    }
+    return w
+}
+
+fn main(): i32 {
+    let n: i64 = 500000 // BENCH_N
+    let passes: i64 = 4
+    var log: Vec<Event> = Vec.new()
+    var r: u64 = 12345
+    for _ in 0..n {
+        r = xsNext(r)
+        let k = xsMod(r, 8)
+        let id = xsMod(r >> 3, 100000) as i32
+        if k < 4 {
+            log.push(Event.Move(id, (xsMod(r >> 20, 201) - 100) as i16, (xsMod(r >> 40, 201) - 100) as i16))
+        } else if k < 6 {
+            log.push(Event.Say(id, word(r)))
+        } else if k < 7 {
+            log.push(Event.Quit(id, xsMod(r >> 20, 256) as u8))
+        } else {
+            log.push(Event.Tick)
+        }
+    }
+    var total: i64 = 0
+    for _ in 0..passes {
+        for e in log {
+            total += match e {
+                Tick => 1
+                Move(id, dx, dy) => id as i64 + dx as i64 + dy as i64
+                Say(id, text) => id as i64 + text.len + text[0] as i64
+                Quit(id, code) => id as i64 + code as i64
+            }
+        }
+    }
+    print(log.len)
+    print(total)
+    return 0
+}

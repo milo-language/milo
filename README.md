@@ -72,6 +72,20 @@ Same memory-safety guarantees as Rust wherever both languages can express the pr
 
 Good fit: CLIs, services, compilers, emulators, anything you would write in careful C as a buffer plus integer ids. Awkward fit: code that wants to keep an object graph as is (widget trees with parent pointers, intrusive lists, parsers that store slices of their input). Those become arenas and handles, and won't look like the original ([what that looks like](https://milo-language.github.io/milo/language/patterns#build-a-tree-or-graph-whose-nodes-refer-to-each-other)).
 
+## Performance
+
+Five benchmarks from [Goose](https://github.com/aardappel/goose)'s own suite, run against its Goose, C++ and Rust implementations, with every row printing the same checksum. Time at the largest size, best implementation per language, Apple M-series, `--release`. Below 1.00 means Milo is faster.
+
+| Benchmark | Milo vs Rust | Milo vs Goose |
+|---|---|---|
+| respond (JSON rendering, streaming) | **0.80** | 1.10 |
+| interp (tree-walking interpreter) | **0.87** | 1.10 |
+| records (variant records) | **0.93** | 1.38 |
+| graph (CSR build and walk) | **0.97** | 1.01 |
+| blur (image kernel) | 1.07 | 1.15 |
+
+Milo keeps its overflow checks on; the Rust rows have none. Goose wins where its inline variable-size layout matters, and on memory. Sources and the runner are in [benchmarks/vs-goose](benchmarks/vs-goose), and [benchmarks](benchmarks) has Milo against C and Go.
+
 ## Status
 
 Young, but dogfooded: 250k+ lines of Milo across a port of the compiler, a JS engine, three emulator cores, a debugger, and a dozen packages. Nearly every `unsafe` block is the C boundary; none exist because the ownership model rejected the program.
