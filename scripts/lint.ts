@@ -46,7 +46,7 @@ const isTest = (f: string) => f.endsWith(".test.ts") || f.includes("/tests/");
 const isSh = (f: string) => f.endsWith(".sh");
 const isDoc = (f: string) => f.startsWith("docs/") && f.endsWith(".md");
 const isRouterMd = (f: string) =>
-  ["AGENTS.md", "AGENT_WORKFLOW.md", "CONVENTIONS.md"].includes(f);
+  ["AGENTS.md", ".agents/workflow.md", ".agents/review.md", "CONVENTIONS.md"].includes(f);
 
 for (const f of fileList()) {
   let text: string;

@@ -109,8 +109,8 @@ amendment to this constitution or new evidence stated in the proposal.
 
 ## Development Workflow and Quality Gates
 
-Work follows the loop in `AGENT_WORKFLOW.md`: research → plan → implement → run → review → wrap-up.
-Autonomous or long-running work MUST keep a worksheet under `docs/worksheets/` current enough that
+Work follows the loop in `.agents/workflow.md`: research → plan → implement → run → review → wrap-up.
+Autonomous or long-running work MUST keep a worksheet under `.agents/worksheets/` current enough that
 a fresh contributor could finish from it alone.
 
 **Ethos review is mandatory before wrap-up.** Milo is "a memory-safe systems language that guides

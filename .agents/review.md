@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: agent-review
 purpose: how cross-model / multi-persona review works, when to run it, and what each persona looks for
-key-files: scripts/agent_review.sh, CONVENTIONS.md, AGENT_WORKFLOW.md
+key-files: scripts/agent_review.sh, CONVENTIONS.md, .agents/workflow.md
 update-when: a persona is added/changed, a review CLI is wired in, or review gates move
 last-verified: 2026-07-11
 -->
@@ -10,10 +10,10 @@ last-verified: 2026-07-11
 
 The reviewer should not be the author. A model reviewing its own diff rubber-stamps its own blind spots. This system routes each review to (a) a *different model* when one is available, and (b) a set of *personas* that each read the code through one lens.
 
-Driver: `scripts/agent_review.sh <stage> [--persona <name>] [--diff <ref>]`. See [docs/scripts.md](scripts.md).
+Driver: `scripts/agent_review.sh <stage> [--persona <name>] [--diff <ref>]`. See [docs/scripts.md](../docs/scripts.md).
 
 ## Gates — when to review
-Run a review at each major point (from [AGENT_WORKFLOW.md](../AGENT_WORKFLOW.md)):
+Run a review at each major point (from [workflow.md](workflow.md)):
 
 | Stage | What's reviewed | Trigger |
 |---|---|---|

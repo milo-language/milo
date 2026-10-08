@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-model / multi-persona code review driver. See docs/agent-review.md.
+# Cross-model / multi-persona code review driver. See .agents/review.md.
 #
 # The reviewer is deliberately NOT the author: it prefers an external agent CLI
 # (codex/cursor-agent/gemini/aider) for true model diversity, and otherwise falls
@@ -50,7 +50,7 @@ done
 # --- gather the material under review --------------------------------------
 case "$stage" in
   research|plan)
-    latest_ws=$(ls -t docs/worksheets/*.md 2>/dev/null | grep -v README | grep -v TEMPLATE | head -1 || true)
+    latest_ws=$(ls -t .agents/worksheets/*.md 2>/dev/null | grep -v README | grep -v TEMPLATE | head -1 || true)
     if [ -n "$latest_ws" ]; then material=$(cat "$latest_ws"); src="worksheet $latest_ws";
     elif [ ! -t 0 ]; then material=$(cat); src="stdin";
     else echo "no worksheet found and no stdin — nothing to review" >&2; exit 1; fi

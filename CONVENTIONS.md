@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: coding-conventions
 purpose: the specific code conventions review agents enforce (beyond what the linter catches)
-key-files: scripts/lint.ts, docs/agent-review.md, .githooks/pre-commit
+key-files: scripts/lint.ts, .agents/review.md, .githooks/pre-commit
 update-when: a convention is added/changed, or a review keeps flagging the same un-documented thing
 last-verified: 2026-07-30
 -->

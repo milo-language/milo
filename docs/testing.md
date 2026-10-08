@@ -176,7 +176,7 @@ There's also `tests/runtime-errors/` for programs that compile but must fail at 
 - `// @stdin: <text>` → fed on stdin (a trailing newline is added).
 - No annotation → compile-only (right for servers, TUIs, and tools needing setup). Library modules (no `main`) are skipped automatically.
 
-When you add or change an example, add a `// @run:` if it can run deterministically, so it's exercised and not just built. This is part of the mandatory Run gate ([AGENT_WORKFLOW.md](../AGENT_WORKFLOW.md)).
+When you add or change an example, add a `// @run:` if it can run deterministically, so it's exercised and not just built. This is part of the mandatory Run gate ([.agents/workflow.md](../.agents/workflow.md)).
 
 ## How to write a good test
 - **Assert the thing the test names.** A test called `move_after_use_errors` must fail if move-checking breaks — not pass because of an unrelated compile error. Prefer `tests/errors/` with a specific `@error:` substring over a vague one.

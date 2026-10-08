@@ -1,28 +1,28 @@
 <!-- doc-meta
 system: agent-workflow
 purpose: the standard loop for working in this repo — research, plan, implement, run, review, wrap-up
-key-files: AGENTS.md, CONVENTIONS.md, docs/testing.md, docs/agent-review.md, docs/worksheets/
+key-files: AGENTS.md, CONVENTIONS.md, docs/testing.md, .agents/review.md, .agents/worksheets/
 update-when: the workflow changes, a new gate is added, or a recurring miss shows up
 last-verified: 2026-07-11
 -->
 
 # Agent Workflow
 
-Tag me with `@/AGENT_WORKFLOW.md` at the start of a task. This is the loop. It is opinionated on purpose: skipping steps is how regressions ship.
+Tag me with `@/.agents/workflow.md` at the start of a task. This is the loop. It is opinionated on purpose: skipping steps is how regressions ship.
 
 The one rule under all of it: **do not claim something works until you have run it.** Type-checks and green unit tests are necessary, not sufficient. This is a compiler — the app is the compiler; running it means compiling and executing real `.milo` programs.
 
 ## The loop
 
 ### 0. Orient (2 min)
-- Read [AGENTS.md](AGENTS.md) to find the relevant docs/skills.
-- Open a worksheet ([docs/worksheets/README.md](docs/worksheets/README.md)) — even for small tasks if autonomous. Record goal + plan there as you go so a fresh agent could take over.
+- Read [AGENTS.md](../AGENTS.md) to find the relevant docs/skills.
+- Open a worksheet ([.agents/worksheets/README.md](worksheets/README.md)) — even for small tasks if autonomous. Record goal + plan there as you go so a fresh agent could take over.
 - Skim the `doc-meta` of docs for the system you're touching. Grep: `grep -rl "system:" docs *.md`.
 
 ### 1. Research
 - Understand before changing. Read the actual code path, not just its doc — then fix the doc if it lied.
 - For stdlib work run `bun run src/main.ts api <terms>` before writing new APIs (don't reinvent).
-- Check [docs/roadmap.md](docs/roadmap.md) before proposing a language feature.
+- Check [docs/roadmap.md](../docs/roadmap.md) before proposing a language feature.
 - **Review gate (research):** for a non-trivial change, get a second-model sanity check on the approach — `scripts/agent_review.sh research`.
 
 ### 2. Plan
@@ -31,7 +31,7 @@ The one rule under all of it: **do not claim something works until you have run 
 - **Review gate (plan):** `scripts/agent_review.sh plan` for anything spanning multiple files or altering semantics.
 
 ### 3. Implement
-- Match surrounding code: naming, comment density, idioms (see [CONVENTIONS.md](CONVENTIONS.md)).
+- Match surrounding code: naming, comment density, idioms (see [CONVENTIONS.md](../CONVENTIONS.md)).
 - Milo code is **camelCase** (memory: repo-wide convention).
 - Type checker runs before codegen — semantic errors belong in `checker.ts`, never codegen.
 - Definition-of-done for a feature/bugfix includes the **formatter and LSP** — update them too.
@@ -48,7 +48,7 @@ Prove it end-to-end. Pick what fits:
 If it failed, say so with the output. Skipped a step? Say that. No hedging when it's genuinely done.
 
 ### 5. Review
-- Self-review the diff. Then **cross-model review**: `scripts/agent_review.sh implementation` runs personas (correctness, security, performance, maintainability, AI-smells, + domain) — a *different* lens than the model that wrote the code. See [docs/agent-review.md](docs/agent-review.md).
+- Self-review the diff. Then **cross-model review**: `scripts/agent_review.sh implementation` runs personas (correctness, security, performance, maintainability, AI-smells, + domain) — a *different* lens than the model that wrote the code. See [.agents/review.md](review.md).
 - `/code-review` for a fast local diff pass.
 
 #### Ethos review — argue the change is wrong

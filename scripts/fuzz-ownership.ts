@@ -22,7 +22,7 @@
 // moved by a method call. Eight separate ad-hoc walkers each recognised a different
 // subset of those spellings, and the two double-frees fixed on 2026-08-03 were both a
 // move the checker could not see because it was written as a fork (see
-// docs/worksheets/2026-08-03-fail-closed-places.md). A generator that only emitted
+// .agents/worksheets/2026-08-03-fail-closed-places.md). A generator that only emitted
 // `let b = a` would have found neither.
 //
 // Two oracles run together on every executed program.

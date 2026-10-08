@@ -173,7 +173,7 @@ backend as a lowered IntLit"*. Seams first, then kinds — the reverse of the or
 - [ ] T052 [P] Bump `last-verified` on `docs/src.md` and any doc made stale by the migration, in the same commit as the change that staled it
 - [ ] T053 Verify SC-007: `git -C /Users/csmith/git/milo status --short` matches `primary-before.txt` from T001 exactly
 - [ ] T054 Run the `quickstart.md` "Done" table end to end and record each measured value against its target
-- [ ] T055 Ethos review per the Constitution: argue the change violates "a memory-safe systems language that guides you to correct, readable programs" on each clause, answering with evidence from the diff. Write the strongest objection and its answer into `docs/worksheets/`. "No objections" means the review did not happen
+- [ ] T055 Ethos review per the Constitution: argue the change violates "a memory-safe systems language that guides you to correct, readable programs" on each clause, answering with evidence from the diff. Write the strongest objection and its answer into `.agents/worksheets/`. "No objections" means the review did not happen
 - [ ] T056 Cross-model review: `scripts/agent_review.sh implementation`
 - [ ] T057 Remove the worktree: `git worktree remove ../milo-hir && git branch -d 002-hir-self-compile`
 

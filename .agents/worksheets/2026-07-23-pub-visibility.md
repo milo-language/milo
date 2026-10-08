@@ -3,7 +3,7 @@
 - **Slug / tag:** `ws/pub-visibility`
 - **Started:** 2026-07-23
 - **Status:** DONE (landed on main 2026-07-24, CI green)
-- **Related:** [docs/plans/package-manager.md](../plans/package-manager.md) §P-1
+- **Related:** [docs/plans/package-manager.md](../../docs/plans/package-manager.md) §P-1
 
 > **Later note (2026-08-02):** the C-linkage attribute this worksheet calls `@export` was
 > renamed to `@externalLinkage`. The reasoning below is kept as written — it records the

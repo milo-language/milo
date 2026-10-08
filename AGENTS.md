@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: agent-router
 purpose: entry point that routes any agent to the right skill, doc, script, or convention
-key-files: AGENT_WORKFLOW.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, docs/worksheets/
+key-files: .agents/workflow.md, CONVENTIONS.md, CLAUDE.md, docs/, scripts/, .agents/worksheets/
 update-when: a new skill/doc/script/convention is added, or a routing entry goes stale
 last-verified: 2026-09-22 (milo explain + the generated language reference; earlier: milo fix route, the milojs clone path; earlier: memory-safety row, sweep findings #3-#9 and the fuzzer gates)
 -->
@@ -14,15 +14,15 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 
 ## Start every session here
 
-1. **What am I doing?** → open a worksheet: [docs/worksheets/README.md](docs/worksheets/README.md). Autonomous/async work: the worksheet is mandatory — another agent must be able to finish from it alone.
-2. **How do I work in this repo?** → [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) (the loop: research → plan → implement → run → review → wrap-up).
+1. **What am I doing?** → open a worksheet: [.agents/worksheets/README.md](.agents/worksheets/README.md). Autonomous/async work: the worksheet is mandatory — another agent must be able to finish from it alone.
+2. **How do I work in this repo?** → [.agents/workflow.md](.agents/workflow.md) (the loop: research → plan → implement → run → review → wrap-up).
 3. **What are the rules?** → [CLAUDE.md](CLAUDE.md) (guards, commands) + [CONVENTIONS.md](CONVENTIONS.md) (code style reviewers enforce).
 
 ## Route by intent
 
 | I want to… | Go to |
 |---|---|
-| Understand the workflow / how to approach a task | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) |
+| Understand the workflow / how to approach a task | [.agents/workflow.md](.agents/workflow.md) |
 | Know the coding conventions reviewers check | [CONVENTIONS.md](CONVENTIONS.md) |
 | Write idiomatic Milo (text handling, ownership, control flow) | [docs/milo-idioms.md](docs/milo-idioms.md) |
 | Do a lifetime-shaped thing (linked list, graph, tree, recursive type, zero-copy) | [docs/ownership-model.md](docs/ownership-model.md) §Rust→Milo — slices, `Heap<T>`, `std/arena` all exist; check here before assuming a gap |
@@ -35,11 +35,11 @@ Every doc in this repo starts with a 7-line `<!-- doc-meta ... -->` block. To fi
 | Measure what the ownership model costs real programs (non-FFI `unsafe`, clones, friction comments) | `bun scripts/corpus-census.ts` over every `.milo` in the org; `--check` is the shrink-only gate on non-FFI `unsafe`, `--comments` lists each block's reason. Findings in [docs/memory-safety-vs-rust.md](docs/memory-safety-vs-rust.md) §What the corpus says |
 | Hunt for compiler crashes / hangs on hostile input | `bun scripts/fuzz-frontend.ts` — token-mutation fuzzer over the fixture corpus, ddmin-reduced findings; `bun scripts/prove-soundness-fuzz.ts` for false proofs out of `milo prove`; `bun run fuzz:tasks` for unsafe-free programs the checker accepts that ASan then rejects (globals across parks, Shards windows past their owner, `ptr()` past a realloc) |
 | Reproduce a run exactly (record clock, entropy, env, argv, file/socket/subprocess IO and green-task order; replay them), stop a replay at a record, or add a std call that reads the OS | [docs/record-replay.md](docs/record-replay.md): `MILO_RECORD`/`MILO_REPLAY` or `milo run --record/--replay`, `MILO_REPLAY_STOP`, `milo trace`; a new OS call in std goes through `std/replay` (descriptor IO through the `sys*` calls in std/os) |
-| Run the compiler / prove a change works | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) §Run, `bun run scripts/run-examples.ts`, `/verify`, `/run` |
-| Get my work reviewed by a different model | [docs/agent-review.md](docs/agent-review.md) → `scripts/agent_review.sh` |
+| Run the compiler / prove a change works | [.agents/workflow.md](.agents/workflow.md) §Run, `bun run scripts/run-examples.ts`, `/verify`, `/run` |
+| Get my work reviewed by a different model | [.agents/review.md](.agents/review.md) → `scripts/agent_review.sh` |
 | Add a helper script / bin tool | [docs/scripts.md](docs/scripts.md) |
 | Write or update a system doc | [docs/doc-standards.md](docs/doc-standards.md) |
-| Track / hand off in-progress work | [docs/worksheets/README.md](docs/worksheets/README.md) |
+| Track / hand off in-progress work | [.agents/worksheets/README.md](.agents/worksheets/README.md) |
 | Sweep recent commits for regressions | skill `/commit-sweep` |
 | Debug an emulator bug (black screen, garbled gfx, freeze) | skill `/emu-debug` |
 | Write or talk about Milo externally (blog, talk, README pitch) | [docs/design-insights.md](docs/design-insights.md) (the arguments, each with its falsifier) |
@@ -128,7 +128,7 @@ Built-in skills worth knowing: `/verify` (drive a change end-to-end), `/run` (la
 
 ## Persona → doc ownership
 
-Review personas own the docs for their domain and keep them current (see [docs/agent-review.md](docs/agent-review.md)):
+Review personas own the docs for their domain and keep them current (see [.agents/review.md](.agents/review.md)):
 
 - **correctness / compiler** → `docs/design.md`, `docs/language-reference.md`, `CLAUDE.md`
 - **testing** → `docs/testing.md`

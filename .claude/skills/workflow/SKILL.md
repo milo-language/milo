@@ -5,18 +5,18 @@ description: Pull in the standard Milo dev loop (research → plan → implement
 
 # Workflow
 
-Load and follow `AGENT_WORKFLOW.md` (repo root) for this task. It is the canonical loop; this skill just guarantees it's pulled in and enforced.
+Load and follow `.agents/workflow.md` for this task. It is the canonical loop; this skill just guarantees it's pulled in and enforced.
 
 ## Do this now
 1. Read `AGENTS.md` to route to the docs/skills for what you're touching.
-2. Open a worksheet — copy `docs/worksheets/TEMPLATE.md` to `docs/worksheets/<date>-<slug>.md`. Record goal + plan there and keep it live (mandatory if running autonomously).
-3. Work the loop in `AGENT_WORKFLOW.md`:
+2. Open a worksheet — copy `.agents/worksheets/TEMPLATE.md` to `.agents/worksheets/<date>-<slug>.md`. Record goal + plan there and keep it live (mandatory if running autonomously).
+3. Work the loop in `.agents/workflow.md`:
    - **Research** → understand the real code path; fix any doc that lied. Review gate: `scripts/agent_review.sh research` for non-trivial approaches.
    - **Plan** → write it in the worksheet, terse, end with open questions. Gate: `scripts/agent_review.sh plan`.
    - **Implement** → match `CONVENTIONS.md`; camelCase milo; feature = checker+lower+codegen+formatter+LSP; write targeted tests as you go.
    - **Run (mandatory)** → compile+run real fixtures/examples; `bun test`; `/verify`. Never claim done unrun.
    - **Review** → `scripts/agent_review.sh implementation` (different model, personas) + `/code-review`, then the **ethos review**: argue the change is wrong against "memory-safe, second-class references, guides you, correct, readable" — what spelling slips past it, what the user sees when they get it wrong, where it fails open. Record the strongest objection and your answer. See AGENT_WORKFLOW.md §5.
-   - **Wrap-up** → full `bun test` + benchmarks; update stale docs (bump `last-verified`); commit worksheet + feedback with the code; tag `git tag ws/<slug>`.
+   - **Wrap-up** → full `bun test` + benchmarks; update stale docs (bump `last-verified`); commit the worksheet with the code; tag `git tag ws/<slug>`.
 
 ## The one rule
 Do not tell the user something works until you have run it and seen it work. Report failures with their output; name any skipped step.

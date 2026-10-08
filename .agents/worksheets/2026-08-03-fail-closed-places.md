@@ -87,7 +87,7 @@ and `freezeViewSource` already failed closed and were left alone.
 
 ## Ethos review — the case against this change
 
-Per AGENT_WORKFLOW.md §5, argued against each clause of *"a memory-safe systems
+Per .agents/workflow.md §5, argued against each clause of *"a memory-safe systems
 language that guides you to correct, readable programs."*
 
 **memory-safe — what spelling still gets through?** Probed twelve compositions:
