@@ -1,0 +1,219 @@
+// @expect: 4
+// @expect: 4
+// @expect: 4
+// @expect: 16
+// @expect: 1
+// @expect: 2
+// @expect: 4
+// @expect: 16
+// @expect: 16
+// @expect: 40
+// @expect: 16
+// @expect: 16
+// @expect: 16
+// @expect: 16
+// @expect: Some(0)
+// @expect: Some(2147483646)
+// @expect: None
+// @expect: 2147483646
+// @expect: -1
+// @expect: true
+// @expect: false
+// @expect: false
+// @expect: true
+// @expect: 2147483646
+// @expect: 3
+// @expect: 2147483646
+// @expect: 2147483647
+// @expect: 2147483646
+// @expect: no
+// @expect: Some(0)
+// @expect: None
+// @expect: Some(2147483646)
+// @expect: 2147483646
+// @expect: 0
+// @expect: none
+// @expect: 5
+// @expect: left none
+// @expect: 2147483646
+// @expect: 0
+// @expect: right none
+// @expect: 3
+// @expect: 9
+// @expect: none
+// @expect: 11
+// @expect: Some(2147483646)
+// @expect: None
+// @expect: missing
+// @expect: 42
+// @expect: 200
+// @expect: 7
+// @expect: -32768
+// @expect: 1
+// @expect: -5
+// @expect: 1
+// @expect: Some(2147483646)
+// @expect: None
+// @expect: {"a":2147483646,"b":null}
+// @expect: Some(2147483646)
+// @expect: b none
+// Integer niche: an Option-shaped enum whose payload is a ranged int (or a one-field
+// struct of one) stores None as the first value past the range, so it is the payload's
+// size. Every Option operation must agree on that encoding; the non-size lines are
+// identical to the same program with the ranges removed (tag-encoded).
+type R = i32(0..2147483646)
+type U = u8(0..200)
+type Neg = i16(-32768..32766)
+type Lo = i64(-5..9223372036854775807)
+
+@derive(Clone, Json)
+struct NodeId { at: R }
+
+struct Wrap { id: NodeId }
+
+struct Node { key: i32, count: i32, left: Option<NodeId>, right: Option<NodeId> }
+
+struct PlainId { at: i32 }
+
+struct PlainNode { key: i32, count: i32, left: Option<PlainId>, right: Option<PlainId> }
+
+enum Three { A(R), B, C }
+
+enum Pair { A(R, R), B }
+
+@derive(Json)
+struct Doc { a: Option<R>, b: Option<NodeId> }
+
+fn some(x: R): Option<R> { return Some(x) }
+
+fn none(): Option<R> { return None }
+
+fn pass(o: Option<NodeId>): Option<NodeId> { return o }
+
+fn show(o: Option<R>): string {
+    match o {
+        Some(x) => { return "Some(" + x.toString() + ")" }
+        None => { return "None" }
+    }
+}
+
+fn firstOrNeg(o: Option<R>): i64 {
+    let Some(x) = o else { return -1 }
+    return x as i64
+}
+
+fn main() {
+    // layout: a ranged payload's first excluded value encodes None, so no tag word
+    print(sizeOf<Option<NodeId>>())
+    print(sizeOf<Option<R>>())
+    print(sizeOf < Option < i32(0..2147483646) >> ())
+    print(sizeOf<Node>())
+    print(sizeOf<Option<U>>())
+    print(sizeOf<Option<Neg>>())
+    print(sizeOf<Option<Wrap>>())
+    // no niche: plain ints, a full-width range, 3 variants, 2 payload fields, nested Option
+    print(sizeOf<Option<i32>>())
+    print(sizeOf<Option<PlainId>>())
+    print(sizeOf<PlainNode>())
+    print(sizeOf<Option<Lo>>())
+    print(sizeOf<Three>())
+    print(sizeOf<Pair>())
+    print(sizeOf<Option<Option<R>>>())
+    let hi: R = 2147483646
+    let lo: R = 0
+    print(show(some(lo)))
+    print(show(some(hi)))
+    print(show(none()))
+    print(firstOrNeg(some(hi)))
+    print(firstOrNeg(none()))
+    let a: Option<R> = Some(hi)
+    let b: Option<R> = None
+    print(a.isSome())
+    print(b.isSome())
+    print(a.isNone())
+    print(b.isNone())
+    print(a!)
+    print(b ?? 3)
+    print(a ?? 3)
+    let m = a.map((x: R): i64 => x as i64 + 1)
+    print(m ?? 0)
+    if let Some(x) = a { print(x) } else { print("no") }
+    if let Some(x) = b { print(x) } else { print("no") }
+
+    // while let draining a Vec<Option<R>>
+    var v: Vec<Option<R>> = Vec.new()
+    v.push(Some(lo))
+    v.push(None)
+    v.push(Some(hi))
+    var i = 0
+    while i < v.len() {
+        print(show(v[i]))
+        i += 1
+    }
+    var stack: Vec<R> = Vec.new()
+    stack.push(lo)
+    stack.push(hi)
+    while let Some(top) = stack.pop() { print(top) }
+    var opts: Vec<Option<NodeId>> = Vec.new()
+    opts.push(Some(NodeId { at: 5 }))
+    opts.push(None)
+    while let Some(o) = opts.pop() {
+        match o { Some(n) => print(n.at), None => print("none") }
+    }
+
+    // struct fields
+    var n = Node { key: 1, count: 2, left: None, right: Some(NodeId { at: hi }) }
+    match n.left { Some(id) => print(id.at), None => print("left none") }
+    match n.right { Some(id) => print(id.at), None => print("right none") }
+    n.left = Some(NodeId { at: lo })
+    n.right = None
+    match n.left { Some(id) => print(id.at), None => print("left none") }
+    match n.right { Some(id) => print(id.at), None => print("right none") }
+    var nodes: Vec<Node> = Vec.new()
+    nodes.push(n)
+    nodes.push(Node { key: 3, count: 4, left: Some(NodeId { at: 9 }), right: None })
+    print(nodes[1].key)
+    match nodes[1].left { Some(id) => print(id.at), None => print("none") }
+    match nodes[0].right { Some(id) => print(id.at), None => print("none") }
+
+    // nested single-field structs
+    let w: Option<Wrap> = Some(Wrap { id: NodeId { at: 11 } })
+    match w { Some(x) => print(x.id.at), None => print("none") }
+
+    // HashMap values
+    var hm: HashMap<i32, Option<R>> = HashMap.new()
+    hm.insert(1, Some(hi))
+    hm.insert(2, None)
+    match hm.get(1) { Some(o) => print(show(o)), None => print("missing") }
+    match hm.get(2) { Some(o) => print(show(o)), None => print("missing") }
+    match hm.get(3) { Some(o) => print(show(o)), None => print("missing") }
+
+    // passed through functions, cloned, compared
+    let p = pass(Some(NodeId { at: 42 }))
+    let q = p.clone()
+    match q { Some(id) => print(id.at), None => print("none") }
+
+    // other widths and signedness
+    let u: Option<U> = Some(200)
+    let un: Option<U> = None
+    print(u ?? 0)
+    print(un ?? 7)
+    let ng: Option<Neg> = Some(-32768)
+    print(ng ?? 0)
+    let ngn: Option<Neg> = None
+    print(ngn ?? 1)
+    let l: Option<Lo> = Some(-5)
+    print(l ?? 0)
+    let ln: Option<Lo> = None
+    print(ln ?? 1)
+
+    // printing and Json
+    print(a)
+    print(b)
+    let d = Doc { a: Some(hi), b: None }
+    print(d.toJson())
+    match Doc.fromJson(d.toJson()) {
+        Result.Ok(e) => { print(show(e.a)) match e.b { Some(x) => print(x.at), None => print("b none") } }
+        Result.Err(e) => print(e.message())
+    }
+}

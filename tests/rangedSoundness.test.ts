@@ -21,6 +21,7 @@ struct S {}
 impl S { fn take(self: &S, x: R): R { return x } }
 struct SO { o: Option<R> }
 fn big(): i32 { return 2147483647 }
+fn one(): i32 { return 1 }
 fn setI(x: &mut i32) { x = 2147483647 }
 fn readR(x: &R): R { return x }
 fn setR(x: &mut R) { x = 5 }
@@ -50,8 +51,22 @@ const cases: [string, string, string][] = [
   ["as cast", `let r = big() as R\nprint(r)`, TRAP],
   ["as cast from i64", `let x: i64 = 2147483647\nprint(x as R)`, TRAP],
   ["?? default", `let o: Option<R> = None\nlet r: R = o ?? big()\nprint(r)`, TRAP],
+  ["wrappingAdd result", `let r: R = 2147483646\nlet w: R = r.wrappingAdd(1)\nprint(w)`, TRAP],
+  ["checkedAdd result", `let r: R = 2147483646\nlet o: Option<R> = r.checkedAdd(1)\nprint(o ?? 0)`, "type mismatch"],
+  // An operator's result keeps the width, not the range, unless propagation proves one.
+  ["unary minus", `let r: R = 5\nlet o: Option<R> = Some(-r)\nprint(o ?? 0)`, TRAP],
+  ["bitwise or", `let r: R = 2147483646\nlet o: Option<R> = Some(r | one())\nprint(o ?? 0)`, TRAP],
+  ["add of unranged", `let r: R = 2147483646\nlet s = r + one()\nlet o: Option<R> = Some(s)\nprint(o ?? 0)`, TRAP],
+  ["const operand", `let r: R = 0\nlet x: i32(-2147483646..2147483646) = r - 2147483647\nprint(x)`, TRAP],
+  ["if branches", `let r: R = 1\nlet o: Option<R> = Some(if one() > 5 { r } else { big() })\nprint(o ?? 0)`, TRAP],
+  ["if constant branch", `let r: R = 1\nlet o: Option<R> = Some(if one() > 5 { r } else { 2147483647 })\nprint(o ?? 0)`, TRAP],
+  ["match arms", `let r: R = 1\nlet o: Option<R> = Some(match one() { 2 => r, _ => big() })\nprint(o ?? 0)`, TRAP],
+  ["folded constant", `let n = NodeId { at: 2147483646 + 1 }\nprint(n.at)`, "out of range for"],
+  ["unfoldable constant", `let n = NodeId { at: 2147483647 | 0 }\nprint(n.at)`, TRAP],
   ["method argument", `let s = S {}\nprint(s.take(big()))`, TRAP],
-  ["Json decode", `match NodeId.fromJson("{\\"at\\": 2147483647}") { Result.Ok(n) => print(n.at), Result.Err(e) => print(e.message()) }`, TRAP],
+  // A decode is an error the caller handles, not a trap: the wire is untrusted input.
+  ["Json decode", `match NodeId.fromJson("{\\"at\\": 2147483647}") { Result.Ok(n) => print(n.at), Result.Err(e) => print(e.message()) }`, "out-of-range number"],
+  ["Json decode below", `match NodeId.fromJson("{\\"at\\": -1}") { Result.Ok(n) => print(n.at), Result.Err(e) => print(e.message()) }`, "out-of-range number"],
   ["&mut i32 borrowing an R", `var r: R = 1\nsetI(&mut r)\nprint(r)`, "ranges must match"],
   ["&R borrowing an i32", `let a: i32 = big()\nprint(readR(a))`, "ranges must fit"],
   ["&mut R borrowing an i32", `var a: i32 = big()\nsetR(&mut a)\nprint(a)`, "ranges must match"],

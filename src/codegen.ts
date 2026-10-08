@@ -65,6 +65,20 @@ interface EnumLayout {
   name: string;
   payloadSlots: number;
   variants: Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>;
+  // Set for an Option-shaped enum whose payload has a value safe code cannot produce
+  // (see nicheOf). The enum is then laid out as the payload alone, `{ P }`: the fieldless
+  // variant is the niche value in the payload's leading integer, the other variant is the
+  // payload itself. No tag word exists, so every tag and payload access goes through
+  // loadEnumTag / storeEnumTag / enumPayloadPtr.
+  niche?: EnumNiche;
+}
+
+interface EnumNiche {
+  payloadTy: string;     // LLVM type of the payload (and, wrapped, of the enum)
+  intTy: string;         // the integer at offset 0 that carries the niche
+  value: string;         // the niche value as an LLVM constant of intTy
+  noneTag: number;       // tag of the fieldless variant
+  someTag: number;       // tag of the payload variant
 }
 
 // Headers whose types the winsock family uses but does not define. POSIX headers are
@@ -699,6 +713,25 @@ export class Codegen {
     const id = this.metaCounter++;
     this.diTypes.set(key, id); // reserve before recursing into payloads (Heap<Self> variants)
 
+    // A niche enum has no tag word: it is the payload, and the fieldless variant is the
+    // niche value. Shown as a struct with one member named for the payload variant.
+    if (layout.niche) {
+      const niche = layout.niche;
+      const some = [...layout.variants].find(([, v]) => v.tag === niche.someTag);
+      const baseId = some ? this.diType(some[1].fieldTypeKinds[0]) : null;
+      const bits = this.typeSize(niche.payloadTy) * 8;
+      const members: number[] = [];
+      if (some && baseId !== null) {
+        const mid = this.metaCounter++;
+        this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(some[0])}", baseType: !${baseId}, size: ${bits}, offset: 0)`);
+        members.push(mid);
+      }
+      const tuple = this.metaCounter++;
+      this.diNodes.push(`!${tuple} = !{${members.map(m => "!" + m).join(", ")}}`);
+      this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diName(layout.name)}", size: ${bits}, elements: !${tuple})`);
+      return id;
+    }
+
     const tagId = this.diEnumeration(`${layout.name}$tag`, layout);
     const payloadBits = layout.payloadSlots * 64;
 
@@ -930,6 +963,116 @@ export class Codegen {
     return { label, length };
   }
 
+  // A niche: a bit pattern of `t` that no safe program produces, so an Option-shaped enum
+  // can spend it on its fieldless variant. Sources: a ranged int (the first value past the
+  // declared range that the width can hold; the checker range-checks every safe flow into
+  // the type, see tests/rangedSoundness.test.ts), and a struct whose single field has one
+  // (the field sits at offset 0). A struct with a Drop impl is left out: its glue would
+  // have to learn the encoding, and nothing measured needs it.
+  private nicheOf(t: TypeKind, dropImpls: Set<string>, depth = 0): { intTy: string; value: bigint; bits: number } | null {
+    if (depth > 16) return null;
+    if (t.tag === "int") {
+      if (t.min === undefined || t.max === undefined) return null;
+      if (!Number.isSafeInteger(t.min) || !Number.isSafeInteger(t.max)) return null;
+      const bits = BigInt(t.bits);
+      const lo = t.signed ? -(1n << (bits - 1n)) : 0n;
+      const hi = t.signed ? (1n << (bits - 1n)) - 1n : (1n << bits) - 1n;
+      const min = BigInt(t.min), max = BigInt(t.max);
+      const intTy = `i${t.bits}`;
+      if (max < hi) return { intTy, value: max + 1n, bits: t.bits };
+      if (min > lo) return { intTy, value: min - 1n, bits: t.bits };
+      return null;
+    }
+    if (t.tag === "struct") {
+      const layout = this.structLayouts.get(t.name);
+      if (!layout || layout.fields.length !== 1 || dropImpls.has(t.name)) return null;
+      return this.nicheOf(layout.fields[0].typeKind, dropImpls, depth + 1);
+    }
+    return null;
+  }
+
+  private enumNiche(layout: EnumLayout, dropImpls: Set<string>): EnumNiche | null {
+    if (layout.variants.size !== 2) return null;
+    const [a, b] = [...layout.variants.values()];
+    const none = a.fieldTypes.length === 0 ? a : b.fieldTypes.length === 0 ? b : null;
+    const some = none === a ? b : a;
+    if (!none || some.fieldTypes.length !== 1) return null;
+    const n = this.nicheOf(some.fieldTypeKinds[0], dropImpls);
+    if (!n) return null;
+    // LLVM integer constants are written signed; an unsigned niche above the signed max
+    // is the same bits as its two's-complement negative.
+    const wrapped = n.value >= (1n << BigInt(n.bits - 1)) ? n.value - (1n << BigInt(n.bits)) : n.value;
+    return { payloadTy: some.fieldTypes[0], intTy: n.intTy, value: wrapped.toString(), noneTag: none.tag, someTag: some.tag };
+  }
+
+  private nicheOfEnumTy(enumTy: string): EnumNiche | undefined {
+    return enumTy.startsWith("%") ? this.enumLayouts.get(enumTy.slice(1))?.niche : undefined;
+  }
+
+  // The tag of the enum at `addr`, as the i32 a tagged enum stores.
+  private loadEnumTag(lines: string[], enumTy: string, addr: string): string {
+    const niche = this.nicheOfEnumTy(enumTy);
+    const tag = this.nextTemp();
+    if (!niche) {
+      const tagPtr = this.nextTemp();
+      lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
+      lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+      return tag;
+    }
+    const raw = this.nextTemp();
+    const isNone = this.nextTemp();
+    lines.push(`  ${raw} = load ${niche.intTy}, ptr ${addr}`);
+    lines.push(`  ${isNone} = icmp eq ${niche.intTy} ${raw}, ${niche.value}`);
+    lines.push(`  ${tag} = select i1 ${isNone}, i32 ${niche.noneTag}, i32 ${niche.someTag}`);
+    return tag;
+  }
+
+  // Set the variant of the enum at `addr`. On a niche enum the payload variant has no
+  // tag to write (its payload store is the whole value), so only the fieldless one writes.
+  private storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string) {
+    const niche = this.nicheOfEnumTy(enumTy);
+    if (!niche) {
+      const tagPtr = this.nextTemp();
+      lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
+      lines.push(`  store i32 ${tag}, ptr ${tagPtr}`);
+      return;
+    }
+    if (typeof tag === "number") {
+      if (tag === niche.noneTag) lines.push(`  store ${niche.intTy} ${niche.value}, ptr ${addr}`);
+      return;
+    }
+    const isNone = this.nextTemp();
+    const cur = this.nextTemp();
+    const next = this.nextTemp();
+    lines.push(`  ${isNone} = icmp eq i32 ${tag}, ${niche.noneTag}`);
+    lines.push(`  ${cur} = load ${niche.intTy}, ptr ${addr}`);
+    lines.push(`  ${next} = select i1 ${isNone}, ${niche.intTy} ${niche.value}, ${niche.intTy} ${cur}`);
+    lines.push(`  store ${niche.intTy} ${next}, ptr ${addr}`);
+  }
+
+  // Address of the payload of the enum at `addr` (a niche enum's payload is the enum).
+  private enumPayloadPtr(lines: string[], enumTy: string, addr: string): string {
+    if (this.nicheOfEnumTy(enumTy)) return addr;
+    const p = this.nextTemp();
+    lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+    return p;
+  }
+
+  // Every niche-enum access must go through the three helpers above; a site that still
+  // indexes the tagged shape would read the payload as a tag. This makes such a site a
+  // compiler error rather than a miscompile.
+  private assertNicheAccessRouted(ir: string) {
+    const names = [...this.enumLayouts.values()].filter(l => l.niche).map(l => l.name);
+    if (names.length === 0) return;
+    const esc = names.map(n => n.replace(/[.*+?^${}()|[\]\\$]/g, "\\$&")).join("|");
+    const bad = new RegExp(`(getelementptr(?: inbounds)? %(?:${esc}), ptr [^,]+, i32 0, i32 \\d|(?:extractvalue|insertvalue) %(?:${esc}) )`);
+    const m = ir.match(bad);
+    if (m) {
+      const at = ir.lastIndexOf("\n", m.index ?? 0);
+      throw new Error(`internal: niche enum accessed as a tagged enum: ${ir.slice(at + 1, ir.indexOf("\n", m.index)).trim()}`);
+    }
+  }
+
   private typeSize(ty: string): number {
     if (ty === "i1" || ty === "i8") return 1;
     if (ty === "i16") return 2;
@@ -959,6 +1102,7 @@ export class Codegen {
       const layout = must(this.enumLayouts, enumMatch[1], "enum layouts");
       // i64 payload array requires 8-byte alignment, so the i32 tag is padded to 8.
       // Without this, malloc undersizes by 4 bytes and store %Enum overruns the buffer.
+      if (layout.niche) return this.typeSize(layout.niche.payloadTy);
       return layout.payloadSlots > 0 ? 8 + layout.payloadSlots * 8 : 4;
     }
     return 8;
@@ -1213,6 +1357,7 @@ export class Codegen {
     const enumMatch = ty.match(/^%(.+)$/);
     if (enumMatch && this.enumLayouts.has(enumMatch[1])) {
       const layout = must(this.enumLayouts, enumMatch[1], "enum layouts");
+      if (layout.niche) return this.typeAlign(layout.niche.payloadTy);
       return layout.payloadSlots > 0 ? 8 : 4;
     }
     return 8;
@@ -1714,6 +1859,10 @@ export class Codegen {
       }
       this.enumLayouts.set(e.name, { name: e.name, payloadSlots: 0, variants });
     }
+    for (const layout of this.enumLayouts.values()) {
+      const niche = this.enumNiche(layout, module.dropImpls);
+      if (niche) layout.niche = niche;
+    }
     for (let pass = 0; pass <= module.enums.length; pass++) {
       let changed = false;
       for (const e of module.enums) {
@@ -2023,7 +2172,9 @@ export class Codegen {
 
     // insert enum type definitions
     for (const [name, layout] of this.enumLayouts) {
-      if (layout.payloadSlots > 0) {
+      if (layout.niche) {
+        this.output.splice(1, 0, `%${name} = type { ${layout.niche.payloadTy} }`);
+      } else if (layout.payloadSlots > 0) {
         this.output.splice(1, 0, `%${name} = type { i32, [${layout.payloadSlots} x i64] }`);
       } else {
         this.output.splice(1, 0, `%${name} = type { i32 }`);
@@ -2106,7 +2257,9 @@ export class Codegen {
     if (this.sanitize) this.applySanitizeAttribute();
 
     if (this.fnSigs.has("replayHeapMalloc")) this.output = this.replayHeapCalls(this.output);
-    return this.output.join("\n") + "\n";
+    const ir = this.output.join("\n") + "\n";
+    this.assertNicheAccessRouted(ir);
+    return ir;
   }
 
   // Mark every emitted function `sanitize_address` so `-fsanitize=address` actually
@@ -4219,10 +4372,7 @@ export class Codegen {
       lines.push(`  ${result} = call ${retTy} @${stmt.nextMethod}(ptr ${iterAddr})`);
       lines.push(`  store ${retTy} ${result}, ptr ${stagePtr}`);
     }
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${retTy}, ptr ${stagePtr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, retTy, stagePtr);
 
     // branch: Some → body, None → end
     const cmp = this.nextTemp();
@@ -4231,8 +4381,7 @@ export class Codegen {
 
     lines.push(`${bodyLabel}:`);
     // extract payload from Some variant
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${retTy}, ptr ${stagePtr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr);
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${elemTy}, ptr ${payloadPtr}`);
     lines.push(`  store ${elemTy} ${val}, ptr ${varAddr}`);
@@ -4490,10 +4639,7 @@ export class Codegen {
       this.genStoreInto(lines, subjAddr, subjTy, stmt.subject);
     }
 
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, subjTy, subjAddr);
 
     const layout = must(this.enumLayouts, stmt.enumName, "enum layouts");
     const endLabel = this.nextLabel("match.end");
@@ -4574,8 +4720,7 @@ export class Codegen {
     subjectIsMut = false,
   ) {
     if (pattern.bindings.length === 0) return;
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, subjTy, subjAddr);
 
     const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
       // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
@@ -5991,12 +6136,9 @@ export class Codegen {
     const enumTy = `%${expr.enumName}`;
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${enumTy}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 0`);
-    lines.push(`  store i32 ${variant.tag}, ptr ${tagPtr}`);
+    this.storeEnumTag(lines, enumTy, alloca, variant.tag);
     if (expr.args.length > 0) {
-      const payloadPtr = this.nextTemp();
-      lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 1`);
+      const payloadPtr = this.enumPayloadPtr(lines, enumTy, alloca);
       if (expr.args.length === 1) {
         const [argLines, argVal, argTy] = this.genExpr(expr.args[0]);
         lines.push(...argLines);
@@ -6066,21 +6208,16 @@ export class Codegen {
     const doneBB = this.nextLabel("tryfrom.done");
     lines.push(`  br i1 ${valid}, label %${someBB}, label %${noneBB}`);
     lines.push(`${someBB}:`);
-    const sTagPtr = this.nextTemp();
-    lines.push(`  ${sTagPtr} = getelementptr ${optTy}, ptr ${res}, i32 0, i32 0`);
-    lines.push(`  store i32 ${someTag}, ptr ${sTagPtr}`);
+    this.storeEnumTag(lines, optTy, res, someTag);
     // Payload IS the matched variant: a fieldless enum's value is its i32 tag, and here
     // the tag equals the matched integer. Written as the payload's leading i32.
     const n32 = this.nextTemp();
     lines.push(`  ${n32} = trunc i64 ${n64} to i32`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${optTy}, ptr ${res}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, optTy, res);
     lines.push(`  store i32 ${n32}, ptr ${payloadPtr}`);
     lines.push(`  br label %${doneBB}`);
     lines.push(`${noneBB}:`);
-    const nTagPtr = this.nextTemp();
-    lines.push(`  ${nTagPtr} = getelementptr ${optTy}, ptr ${res}, i32 0, i32 0`);
-    lines.push(`  store i32 ${noneTag}, ptr ${nTagPtr}`);
+    this.storeEnumTag(lines, optTy, res, noneTag);
     lines.push(`  br label %${doneBB}`);
     lines.push(`${doneBB}:`);
     const out = this.nextTemp();
@@ -6885,10 +7022,7 @@ export class Codegen {
     const enumAddr = this.nextTemp();
     lines.push(`  ${enumAddr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, enumTy, enumAddr);
 
     // Some/Ok is always tag 0
     const okLabel = this.nextLabel("unwrap.ok");
@@ -6909,8 +7043,7 @@ export class Codegen {
     const errPayloadEnum = errPayloadTy?.startsWith("%") ? errPayloadTy.slice(1) : null;
     if (isResult && errIsString) {
       // Err(string) — extract and print the message
-      const errPayloadPtr = this.nextTemp();
-      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
       const errStr = this.nextTemp();
       lines.push(`  ${errStr} = load %String, ptr ${errPayloadPtr}`);
       const errDataPtr = this.nextTemp();
@@ -6920,8 +7053,7 @@ export class Codegen {
     } else if (isResult && errPayloadEnum && this.enumLayouts.has(errPayloadEnum)) {
       // Err(SomeEnum) — say *which* error. "unwrap called on Err" alone tells the reader
       // nothing they can act on; `Err(IoError.PermissionDenied)` is the whole diagnosis.
-      const errPayloadPtr = this.nextTemp();
-      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
       const errVal = this.nextTemp();
       lines.push(`  ${errVal} = load ${errPayloadTy}, ptr ${errPayloadPtr}`);
       const desc = this.emitEnumDisplay(errPayloadEnum, errVal, lines);
@@ -6939,8 +7071,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -6967,10 +7098,7 @@ export class Codegen {
     const enumAddr = this.nextTemp();
     lines.push(`  ${enumAddr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, enumTy, enumAddr);
 
     // Some/Ok is tag 0
     const okLabel = this.nextLabel("prop.ok");
@@ -7011,8 +7139,7 @@ export class Codegen {
       }
     } else {
       // extract source Err payload
-      const errPayloadPtr = this.nextTemp();
-      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const errPayloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
       const srcErrVariant = layout.variants.get("Err") || layout.variants.get("None");
       const srcErrFieldTy = srcErrVariant && srcErrVariant.fieldTypes.length > 0 ? srcErrVariant.fieldTypes[0] : null;
 
@@ -7035,11 +7162,8 @@ export class Codegen {
         lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
         const convAlloca = this.nextTemp();
         lines.push(`  ${convAlloca} = alloca ${convEnumTy}`);
-        const convTagPtr = this.nextTemp();
-        lines.push(`  ${convTagPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 0`);
-        lines.push(`  store i32 ${expr.fromConversion.wrapTag}, ptr ${convTagPtr}`);
-        const convPayloadPtr = this.nextTemp();
-        lines.push(`  ${convPayloadPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 1`);
+        this.storeEnumTag(lines, convEnumTy, convAlloca, expr.fromConversion.wrapTag);
+        const convPayloadPtr = this.enumPayloadPtr(lines, convEnumTy, convAlloca);
         lines.push(`  store ${srcErrFieldTy} ${srcPayload}, ptr ${convPayloadPtr}`);
         finalErrPayload = this.nextTemp();
         lines.push(`  ${finalErrPayload} = load ${convEnumTy}, ptr ${convAlloca}`);
@@ -7055,15 +7179,12 @@ export class Codegen {
       const retEnumTy = `%${retEnumName}`;
       const retAlloca = this.nextTemp();
       lines.push(`  ${retAlloca} = alloca ${retEnumTy}`);
-      const retTagPtr = this.nextTemp();
-      lines.push(`  ${retTagPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 0`);
       const retLayout = must(this.enumLayouts, retEnumName, "enum layouts");
       const retErrVariant = retLayout.variants.get("Err") || retLayout.variants.get("None");
       const retErrTag = retErrVariant ? retErrVariant.tag : 1;
-      lines.push(`  store i32 ${retErrTag}, ptr ${retTagPtr}`);
+      this.storeEnumTag(lines, retEnumTy, retAlloca, retErrTag);
       if (finalErrPayload && finalErrFieldTy) {
-        const retPayloadPtr = this.nextTemp();
-        lines.push(`  ${retPayloadPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 1`);
+        const retPayloadPtr = this.enumPayloadPtr(lines, retEnumTy, retAlloca);
         lines.push(`  store ${finalErrFieldTy} ${finalErrPayload}, ptr ${retPayloadPtr}`);
       }
       const retVal = this.nextTemp();
@@ -7079,8 +7200,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -7110,10 +7230,7 @@ export class Codegen {
     const resultAddr = this.nextTemp();
     this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
     lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, enumTy, enumAddr);
 
     const someLabel = this.nextLabel("default.some");
     const noneLabel = this.nextLabel("default.none");
@@ -7124,8 +7241,7 @@ export class Codegen {
 
     // some branch — extract payload and zero the source to prevent double-free
     lines.push(`${someLabel}:`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
     // Zero the source variable's enum so drop glue won't free the moved payload
@@ -7749,9 +7865,7 @@ export class Codegen {
     const resultAddr = `%__pop_result.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 0`);
-    lines.push(`  store i32 ${noneVariant.tag}, ptr ${tagPtr}`);
+    this.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
 
     const isEmpty = this.nextTemp();
     lines.push(`  ${isEmpty} = icmp eq i64 ${len}, 0`);
@@ -7774,9 +7888,8 @@ export class Codegen {
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
 
-    lines.push(`  store i32 ${someVariant.tag}, ptr ${tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
     lines.push(`  store ${elemTy} ${val}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
 
@@ -8007,9 +8120,7 @@ export class Codegen {
     const resultAddr = `%__find_result.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 0`);
-    lines.push(`  store i32 ${noneVariant.tag}, ptr ${tagPtr}`);
+    this.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
 
     const idxAddr = `%__find_idx.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
@@ -8039,9 +8150,8 @@ export class Codegen {
 
     lines.push(`${foundLabel}:`);
     const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
-    lines.push(`  store i32 ${someVariant.tag}, ptr ${tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
 
@@ -8709,7 +8819,7 @@ export class Codegen {
   // Set up an `alloca Option<…>` pre-filled with None; callers branch to a "some"
   // block that overwrites the tag and payload. Shared by get/min/max/indexOf/position.
   private optionResultSlot(optionEnumName: string, label: string, lines: string[]): {
-    enumTy: string; addr: string; tagPtr: string; someTag: number;
+    enumTy: string; addr: string; someTag: number;
   } {
     const enumTy = `%${optionEnumName}`;
     const layout = this.enumLayouts.get(optionEnumName);
@@ -8720,10 +8830,8 @@ export class Codegen {
     const addr = `%__${label}.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} zeroinitializer, ptr ${addr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
-    lines.push(`  store i32 ${none.tag}, ptr ${tagPtr}`);
-    return { enumTy, addr, tagPtr, someTag: some.tag };
+    this.storeEnumTag(lines, enumTy, addr, none.tag);
+    return { enumTy, addr, someTag: some.tag };
   }
 
   // v.get(i) / v.first() / v.last(): the total read. A negative index becomes a huge
@@ -8750,9 +8858,8 @@ export class Codegen {
     const elemPtr = this.nextTemp();
     lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${iv}`);
     const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
-    lines.push(`  store i32 ${slot.someTag}, ptr ${slot.tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${slot.enumTy}, ptr ${slot.addr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -8852,9 +8959,8 @@ export class Codegen {
     const winPtr = this.nextTemp();
     lines.push(`  ${winPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${winIdx}`);
     const cloned = this.emitDeepCloneFromPtr(lines, winPtr, expr.elementType);
-    lines.push(`  store i32 ${slot.someTag}, ptr ${slot.tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${slot.enumTy}, ptr ${slot.addr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
     lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -8913,9 +9019,8 @@ export class Codegen {
     lines.push(`${found}:`);
     const hitIdx = this.nextTemp();
     lines.push(`  ${hitIdx} = load i64, ptr ${iAddr}`);
-    lines.push(`  store i32 ${slot.someTag}, ptr ${slot.tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${slot.enumTy}, ptr ${slot.addr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
     lines.push(`  store i64 ${hitIdx}, ptr ${payloadPtr}`);
     lines.push(`  br label %${end}`);
     lines.push(`${step}:`);
@@ -8963,9 +9068,8 @@ export class Codegen {
     lines.push(`  ${hit} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
     lines.push(`  br i1 ${hit}, label %${found}, label %${step}`);
     lines.push(`${found}:`);
-    lines.push(`  store i32 ${slot.someTag}, ptr ${slot.tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${slot.enumTy}, ptr ${slot.addr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+    const payloadPtr = this.enumPayloadPtr(lines, slot.enumTy, slot.addr);
     lines.push(`  store i64 ${i}, ptr ${payloadPtr}`);
     lines.push(`  br label %${end}`);
     lines.push(`${step}:`);
@@ -9939,8 +10043,6 @@ export class Codegen {
     const resultAddr = `%__string_find_result.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 0`);
     const found = this.nextTemp();
     lines.push(`  ${found} = icmp sge i64 ${index}, 0`);
     const someLabel = this.nextLabel("string.find.some");
@@ -9948,12 +10050,11 @@ export class Codegen {
     const endLabel = this.nextLabel("string.find.end");
     lines.push(`  br i1 ${found}, label %${someLabel}, label %${noneLabel}`);
     lines.push(`${noneLabel}:`);
-    lines.push(`  store i32 ${noneVariant.tag}, ptr ${tagPtr}`);
+    this.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${someLabel}:`);
-    lines.push(`  store i32 ${someVariant.tag}, ptr ${tagPtr}`);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 1`);
+    this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr);
     lines.push(`  store i64 ${index}, ptr ${payloadPtr}`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
@@ -11329,12 +11430,9 @@ export class Codegen {
     // build Option::Some(val) — tag=0, payload=value
     const someAlloca = this.nextTemp();
     lines.push(`  ${someAlloca} = alloca ${optionTy}`);
-    const someTagPtr = this.nextTemp();
-    lines.push(`  ${someTagPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 0`);
     const someTag = must(optionLayout.variants, "Some", "variants").tag;
-    lines.push(`  store i32 ${someTag}, ptr ${someTagPtr}`);
-    const somePayloadPtr = this.nextTemp();
-    lines.push(`  ${somePayloadPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 1`);
+    this.storeEnumTag(lines, optionTy, someAlloca, someTag);
+    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca);
     lines.push(`  store ${valTy} ${foundVal}, ptr ${somePayloadPtr}`);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
@@ -11351,10 +11449,8 @@ export class Codegen {
     const optionSizeI = this.nextTemp();
     lines.push(`  ${optionSizeI} = ptrtoint ptr ${optionSize} to i64`);
     lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optionSizeI})`);
-    const noneTagPtr = this.nextTemp();
-    lines.push(`  ${noneTagPtr} = getelementptr ${optionTy}, ptr ${noneAlloca}, i32 0, i32 0`);
     const noneTag = must(optionLayout.variants, "None", "variants").tag;
-    lines.push(`  store i32 ${noneTag}, ptr ${noneTagPtr}`);
+    this.storeEnumTag(lines, optionTy, noneAlloca, noneTag);
     const noneVal = this.nextTemp();
     lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
     lines.push(`  br label %${doneLabel}`);
@@ -11924,10 +12020,7 @@ export class Codegen {
     const stagePtr = this.nextTemp();
     lines.push(`  ${stagePtr} = alloca %${enumName}`);
     lines.push(`  store %${enumName} ${enumVal}, ptr ${stagePtr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr %${enumName}, ptr ${stagePtr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, `%${enumName}`, stagePtr);
 
     // Allocate result ptr slot — each arm stores its own buf into it then we phi/load.
     const resPtr = this.nextTemp();
@@ -11952,8 +12045,7 @@ export class Codegen {
       if (info.fieldTypeKinds.length > 0) {
         formatParts.push("(");
         // Payload starts at offset 1 of the enum struct ({tag, [N x i64]}); cast to variant struct
-        const payloadPtr = this.nextTemp();
-        lines.push(`  ${payloadPtr} = getelementptr %${enumName}, ptr ${stagePtr}, i32 0, i32 1`);
+        const payloadPtr = this.enumPayloadPtr(lines, `%${enumName}`, stagePtr);
         // Build a synthetic struct type representing this variant's payload fields.
         const payloadStructTy = `{ ${info.fieldTypes.join(", ")} }`;
         for (let fi = 0; fi < info.fieldTypeKinds.length; fi++) {
@@ -12605,10 +12697,7 @@ export class Codegen {
     const shallow = this.nextTemp();
     body.push(`  ${shallow} = load ${enumTy}, ptr %src`);
     body.push(`  store ${enumTy} ${shallow}, ptr %dst`);
-    const tagPtr = this.nextTemp();
-    body.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr %src, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    body.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(body, enumTy, "%src");
 
     const doneLabel = this.nextLabel("clone.done");
     const cases: string[] = [];
@@ -12622,10 +12711,8 @@ export class Codegen {
 
       const vLines: string[] = [];
       vLines.push(`${label}:`);
-      const srcPayload = this.nextTemp();
-      vLines.push(`  ${srcPayload} = getelementptr ${enumTy}, ptr %src, i32 0, i32 1`);
-      const dstPayload = this.nextTemp();
-      vLines.push(`  ${dstPayload} = getelementptr ${enumTy}, ptr %dst, i32 0, i32 1`);
+      const srcPayload = this.enumPayloadPtr(vLines, enumTy, "%src");
+      const dstPayload = this.enumPayloadPtr(vLines, enumTy, "%dst");
 
       if (variant.fieldTypes.length === 1) {
         const cloned = this.emitDeepCloneFromPtr(vLines, srcPayload, variant.fieldTypeKinds[0]);
@@ -12720,17 +12807,13 @@ export class Codegen {
     const contLabel = this.nextLabel("resctx.cont");
     lines.push(`  br i1 ${isOk}, label %${okLabel}, label %${errLabel}`);
     const payloadPtr = () => {
-      const p = this.nextTemp();
-      lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+      const p = this.enumPayloadPtr(lines, enumTy, addr);
       return p;
     };
     const store = (tag: number, ty: string | undefined, val: string | undefined) => {
-      const tp = this.nextTemp();
-      lines.push(`  ${tp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
-      lines.push(`  store i32 ${tag}, ptr ${tp}`);
+      this.storeEnumTag(lines, resTy, resAddr, tag);
       if (!ty || !val) return;
-      const pp = this.nextTemp();
-      lines.push(`  ${pp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+      const pp = this.enumPayloadPtr(lines, resTy, resAddr);
       lines.push(`  store ${ty} ${val}, ptr ${pp}`);
     };
 
@@ -13205,10 +13288,7 @@ export class Codegen {
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %self) {`);
     body.push("entry.bb:");
-    const tagPtr = this.nextTemp();
-    body.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr %self, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    body.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(body, enumTy, "%self");
 
     const doneLabel = this.nextLabel("drop.done");
     const cases: string[] = [];
@@ -13223,8 +13303,7 @@ export class Codegen {
 
       const vLines: string[] = [];
       vLines.push(`${label}:`);
-      const payloadPtr = this.nextTemp();
-      vLines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr %self, i32 0, i32 1`);
+      const payloadPtr = this.enumPayloadPtr(vLines, enumTy, "%self");
 
       if (variant.fieldTypes.length === 1) {
         if (this.needsDropCg(variant.fieldTypeKinds[0])) {
@@ -13494,11 +13573,8 @@ export class Codegen {
     const val = emitVal();
     const someAlloca = this.nextTemp();
     lines.push(`  ${someAlloca} = alloca ${optionTy}`);
-    const someTagPtr = this.nextTemp();
-    lines.push(`  ${someTagPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 0`);
-    lines.push(`  store i32 ${someTag}, ptr ${someTagPtr}`);
-    const somePayloadPtr = this.nextTemp();
-    lines.push(`  ${somePayloadPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 1`);
+    this.storeEnumTag(lines, optionTy, someAlloca, someTag);
+    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca);
     lines.push(`  store ${lt} ${val}, ptr ${somePayloadPtr}`);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
@@ -13513,9 +13589,7 @@ export class Codegen {
     const optSizeI = this.nextTemp();
     lines.push(`  ${optSizeI} = ptrtoint ptr ${optSize} to i64`);
     lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optSizeI})`);
-    const noneTagPtr = this.nextTemp();
-    lines.push(`  ${noneTagPtr} = getelementptr ${optionTy}, ptr ${noneAlloca}, i32 0, i32 0`);
-    lines.push(`  store i32 ${noneTag}, ptr ${noneTagPtr}`);
+    this.storeEnumTag(lines, optionTy, noneAlloca, noneTag);
     const noneVal = this.nextTemp();
     lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
     lines.push(`  br label %${doneLabel}`);
@@ -13637,10 +13711,7 @@ export class Codegen {
     const addr = this.nextTemp();
     lines.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
-    const tagPtr = this.nextTemp();
-    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
-    const tag = this.nextTemp();
-    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const tag = this.loadEnumTag(lines, enumTy, addr);
     const isSome = this.nextTemp();
     lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
     if (expr.op === "isSome") return [lines, isSome, "i1"];
@@ -13689,8 +13760,7 @@ export class Codegen {
         // Result type == receiver type here, so forwarding Some is a whole-enum copy.
         lines.push(`  store ${resTy} ${vv}, ptr ${resAddr}`);
       } else {
-        const srcPayloadPtr = this.nextTemp();
-        lines.push(`  ${srcPayloadPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+        const srcPayloadPtr = this.enumPayloadPtr(lines, enumTy, addr);
         // The checker types the callback param as &T, so the payload is passed by pointer —
         // that is what keeps a non-Copy inner from being moved out of the receiver.
         const cbType = expr.default!.type;
@@ -13713,11 +13783,8 @@ export class Codegen {
           const resPayloadTy = resSome.fieldTypes[0] ?? "i64";
           const called = this.nextTemp();
           lines.push(`  ${called} = call ${resPayloadTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
-          const someTagPtr = this.nextTemp();
-          lines.push(`  ${someTagPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
-          lines.push(`  store i32 ${resSome.tag}, ptr ${someTagPtr}`);
-          const resPayloadPtr = this.nextTemp();
-          lines.push(`  ${resPayloadPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+          this.storeEnumTag(lines, resTy, resAddr, resSome.tag);
+          const resPayloadPtr = this.enumPayloadPtr(lines, resTy, resAddr);
           lines.push(`  store ${resPayloadTy} ${called}, ptr ${resPayloadPtr}`);
         }
       }
@@ -13729,9 +13796,7 @@ export class Codegen {
         lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr})`);
         lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
       } else {
-        const noneTagPtr = this.nextTemp();
-        lines.push(`  ${noneTagPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
-        lines.push(`  store i32 ${resNone.tag}, ptr ${noneTagPtr}`);
+        this.storeEnumTag(lines, resTy, resAddr, resNone.tag);
       }
       lines.push(`  br label %${contLabel}`);
 
@@ -13791,8 +13856,7 @@ export class Codegen {
       const cbType = expr.default!.type;
       const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
       const srcPayload = (): string => {
-        const p = this.nextTemp();
-        lines.push(`  ${p} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+        const p = this.enumPayloadPtr(lines, enumTy, addr);
         return p;
       };
       const callArgOf = (srcFieldTy: string): [string, string] => {
@@ -13803,13 +13867,10 @@ export class Codegen {
         return [loaded, srcFieldTy];
       };
       const storeTag = (tag: number) => {
-        const tp = this.nextTemp();
-        lines.push(`  ${tp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
-        lines.push(`  store i32 ${tag}, ptr ${tp}`);
+        this.storeEnumTag(lines, resTy, resAddr, tag);
       };
       const storePayload = (ty: string, val: string) => {
-        const pp = this.nextTemp();
-        lines.push(`  ${pp} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+        const pp = this.enumPayloadPtr(lines, resTy, resAddr);
         lines.push(`  store ${ty} ${val}, ptr ${pp}`);
       };
       // forward the untouched side's payload verbatim; the result variant's slot is at least
@@ -13880,8 +13941,7 @@ export class Codegen {
 
     // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
-    const payloadPtr = this.nextTemp();
-    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+    const payloadPtr = this.enumPayloadPtr(lines, enumTy, addr);
     const payload = this.nextTemp();
     lines.push(`  ${payload} = load ${payloadTy}, ptr ${payloadPtr}`);
 

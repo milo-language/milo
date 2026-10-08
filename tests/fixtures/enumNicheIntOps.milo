@@ -1,0 +1,93 @@
+// @expect: 2147483646
+// @expect: 1
+// @expect: 9
+// @expect: 1073741823
+// @expect: 4
+// @expect: 2147483646
+// @expect: 4
+// @expect: 99
+// @expect: 99
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: 2147483646
+// @expect: 1
+// @expect: 2147483646
+// @expect: 5
+// @expect: 0
+// @expect: 2147483646
+// @expect: 2147483646
+// @expect: 2
+// @expect: 1
+// @expect: 2147483646
+// @expect: 1
+// @expect: 2147483646
+// @expect: 2147483647
+// @expect: 2147483646
+// @expect: true
+// Integer niche through the builtin Option producers and combinators (Vec/HashMap lookups,
+// iterator next(), ?, andThen/orElse/unwrapOr). Output equals the same program with the
+// ranges removed. checkedAdd on a ranged receiver yields the unranged width: its Some can
+// hold the niche value, so it must not be typed as the ranged Option.
+type R = i32(0..2147483646)
+
+struct Counter { n: R }
+
+impl Counter {
+    fn next(self: &mut Counter): Option<R> {
+        if self.n >= 3 { return None }
+        let cur = self.n
+        self.n = self.n + 1
+        return Some(cur)
+    }
+}
+
+fn half(x: R): Option<R> {
+    if x % 2 == 0 { return Some(x / 2) }
+    return None
+}
+
+fn chain(o: Option<R>): Option<R> {
+    let x = o?
+    let y = half(x)?
+    return Some(y)
+}
+
+fn main() {
+    let hi: R = 2147483646
+    let a: Option<R> = Some(hi)
+    let b: Option<R> = None
+    print(a.unwrapOr(1))
+    print(b.unwrapOr(1))
+    print(b.unwrapOrElse((): R => 9))
+    print(a.andThen((x: R): Option<R> => half(x)) ?? 0)
+    print(b.orElse((): Option<R> => Some(4)) ?? 0)
+    print(a.orElse((): Option<R> => Some(4)) ?? 0)
+    print(chain(Some(8)) ?? 99)
+    print(chain(Some(3)) ?? 99)
+    print(chain(None) ?? 99)
+    var c = Counter { n: 0 }
+    for x in c { print(x) }
+    var v: Vec<R> = Vec.new()
+    v.push(hi)
+    v.push(0)
+    v.push(5)
+    print(v.get(0) ?? 1)
+    print(v.get(9) ?? 1)
+    print(v.first() ?? 1)
+    print(v.last() ?? 1)
+    print(v.min() ?? 1)
+    print(v.max() ?? 1)
+    print(v.find((x: &R): bool => x > 1) ?? 1)
+    print(v.indexOf(5) ?? -1)
+    print(v.position((x: &R): bool => x == 0) ?? -1)
+    var hm: HashMap<string, R> = HashMap.new()
+    hm.insert("k", hi)
+    print(hm.get("k") ?? 1)
+    print(hm.get("z") ?? 1)
+    let r: R = 2147483645
+    print(r.checkedAdd(1) ?? 7)
+    print(r.checkedAdd(2) ?? 7)
+    print(a!)
+    print(a.isSome() && !b.isSome())
+}

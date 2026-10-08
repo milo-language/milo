@@ -1,0 +1,8 @@
+// A niche Option is laid out as its bare payload, which C would read as a plain int.
+// It cannot cross the C ABI by value at all, so the layout change is invisible to C.
+type R = i32(0..2147483646)
+extern fn takesOpt(x: Option<R>): i32  // @error: cannot cross the C ABI
+fn main() {
+    let o: Option<R> = Some(3)
+    unsafe { print(takesOpt(o)) }
+}

@@ -394,6 +394,21 @@ interface CValue {
   header: string;
 }
 
+// The result of an operator on a ranged int keeps its width, not its range (`r | 1`,
+// `-r`, `r * k` can all leave it); only range propagation, which computes the result's
+// range from both operands', may hand a range back.
+function unranged(t: TypeKind): TypeKind {
+  return t.tag === "int" && t.min !== undefined ? { tag: "int", bits: t.bits, signed: t.signed } : t;
+}
+
+// The type of a value that is one of two branches: a range only if both have one.
+function joinRanges(a: TypeKind, b: TypeKind): TypeKind {
+  if (a.tag !== "int" || b.tag !== "int") return a;
+  if (a.min === undefined || a.max === undefined || b.min === undefined || b.max === undefined) return unranged(a);
+  if (a.min === b.min && a.max === b.max) return a;
+  return { tag: "int", bits: a.bits, signed: a.signed, min: Math.min(a.min, b.min), max: Math.max(a.max, b.max) };
+}
+
 export interface EnumInfo {
   baseName?: string;
   typeArgs?: TypeKind[];
@@ -1501,12 +1516,30 @@ export class TypeChecker {
       }
       default: return null;
     }
-    // clamp to the underlying type's representable range
+    // A result range past the width means the op can overflow. Clamping it would claim
+    // a range a @wrapping fn (or --no-overflow-checks) does not honour, since the value
+    // wraps instead of trapping; no range at all is the claim that holds in every mode.
     const typMin = lt.signed ? -(2 ** (lt.bits - 1)) : 0;
     const typMax = lt.signed ? 2 ** (lt.bits - 1) - 1 : 2 ** lt.bits - 1;
-    outMin = Math.max(outMin, typMin);
-    outMax = Math.min(outMax, typMax);
+    if (outMin < typMin || outMax > typMax || !Number.isSafeInteger(outMin) || !Number.isSafeInteger(outMax)) return null;
     return { tag: "int", bits: lt.bits, signed: lt.signed, min: outMin, max: outMax };
+  }
+
+  // The value of an all-literal integer expression (`2147483646 + 1`), or null. Only the
+  // operators whose result does not depend on the width; a fold that would need the
+  // width to be exact (a shift, a division by zero) gives up and leaves a runtime check.
+  private foldConstInt(e: Expr): bigint | null {
+    if (e.kind === "IntLit") return e.value;
+    if (e.kind === "UnaryOp" && e.op === "-") { const v = this.foldConstInt(e.operand); return v === null ? null : -v; }
+    if (e.kind !== "BinOp") return null;
+    const l = this.foldConstInt(e.left), r = this.foldConstInt(e.right);
+    if (l === null || r === null) return null;
+    switch (e.op) {
+      case "+": return l + r;
+      case "-": return l - r;
+      case "*": return l * r;
+      default: return null;
+    }
   }
 
   // extract a constant integer value from an expression (handles IntLit and -IntLit)
@@ -1523,11 +1556,15 @@ export class TypeChecker {
   // enforced at declarations only, so `f(500)` into an `i32(0..100)` param silently passed.
   private enforceRangeInto(valueExpr: Expr, valType: TypeKind, target: TypeKind, sp?: Span) {
     if (target.tag !== "int" || target.min === undefined || target.max === undefined) return;
-    const litVal = this.constIntValue(valueExpr);
+    const litVal = this.foldConstInt(valueExpr);
     if (litVal !== null) {
       if (litVal < BigInt(target.min) || litVal > BigInt(target.max)) {
         this.error(`value ${litVal} is out of range for ${this.show(target)} (${target.min}..${target.max})`, sp);
       }
+    } else if (this.isConstIntExpr(valueExpr)) {
+      // A constant this fold cannot evaluate (`0x7fffffff | 0`): callers type a retyped
+      // constant as its target, so its type proves nothing. Check it at run time.
+      this.rangeCheckedExprs.set(valueExpr, { min: target.min, max: target.max, typeName: typeName(target) });
     } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
                valType.min >= target.min && valType.max <= target.max) {
       // range propagation proved the value fits — no runtime check needed
@@ -4424,13 +4461,20 @@ export class TypeChecker {
         // Not typeName: a refinement type prints as `i32(0..10)`, which is a
         // diagnostic spelling, not one the parser accepts back.
         const ty = `${t.signed ? "i" : "u"}${t.bits}`;
-        if (!t.signed && t.bits === 64) return { k: "int", ty, unsigned64: true };
-        if (t.signed && t.bits === 64) return { k: "int", ty, unsigned64: false };
+        // A ranged type (`i32(0..9)`) narrows the interval to its declared range, so an
+        // out-of-range wire value is a decode error rather than the range trap the
+        // field's checked store would otherwise hit.
+        const ranged = t.min !== undefined && t.max !== undefined && Number.isSafeInteger(t.min) && Number.isSafeInteger(t.max);
+        const clamp = (lo: bigint, hi: bigint) => ranged
+          ? { lo: (BigInt(t.min!) > lo ? BigInt(t.min!) : lo).toString(), hi: (BigInt(t.max!) < hi ? BigInt(t.max!) : hi).toString() }
+          : { lo: lo.toString(), hi: hi.toString() };
+        if (!t.signed && t.bits === 64) return ranged ? { k: "int", ty, unsigned64: true, range: clamp(0n, (1n << 64n) - 1n) } : { k: "int", ty, unsigned64: true };
+        if (t.signed && t.bits === 64) return ranged ? { k: "int", ty, unsigned64: false, range: clamp(-(1n << 63n), (1n << 63n) - 1n) } : { k: "int", ty, unsigned64: false };
         // Narrower than the i64 the cursor hands back: the value has to be range
         // checked before the cast, or the wire silently rewrites it.
         const hi = t.signed ? (1n << BigInt(t.bits - 1)) - 1n : (1n << BigInt(t.bits)) - 1n;
         const lo = t.signed ? -(1n << BigInt(t.bits - 1)) : 0n;
-        return { k: "int", ty, unsigned64: false, range: { lo: lo.toString(), hi: hi.toString() } };
+        return { k: "int", ty, unsigned64: false, range: clamp(lo, hi) };
       }
       case "float": return { k: "float", ty: `f${t.bits}` };
       case "struct": {
@@ -6364,19 +6408,7 @@ export class TypeChecker {
             this.error(`type mismatch: '${stmt.name}' declared as ${this.show(hint)} but got ${this.show(valType)}`, sp, this.optionUnwrapHint(hint, valType));
           }
         }
-        if (hint?.tag === "int" && hint.min !== undefined && hint.max !== undefined) {
-          const litVal = this.constIntValue(stmt.value);
-          if (litVal !== null) {
-            if (litVal < hint.min || litVal > hint.max) {
-              this.error(`value ${litVal} is out of range for ${this.show(hint)} (${hint.min}..${hint.max})`, sp);
-            }
-          } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
-                     valType.min >= hint.min && valType.max <= hint.max) {
-            // range propagation proved value fits — no runtime check needed
-          } else {
-            this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
-          }
-        }
+        if (hint?.tag === "int") this.enforceRangeInto(stmt.value, valType, hint, sp);
         {
           const newlyFrozen = this.newlyFrozenSince(frozenBeforeRhs);
           const bindingType = hint ?? valType;
@@ -8104,8 +8136,11 @@ export class TypeChecker {
 
   // Retype a constant-int subtree to `t`. Leaves go through checkExpr
   // so per-literal range/overflow checks still fire against the target type.
-  private retypeConstInt(e: Expr, t: TypeKind) {
-    if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExpr(e, t); return; }
+  private retypeConstInt(e: Expr, target: TypeKind) {
+    if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExpr(e, target); return; }
+    // An operator node gets the width, never the range: its folded value is checked
+    // against a range by enforceRangeInto, which folds the whole constant.
+    const t = unranged(target);
     if (e.kind === "BinOp") {
       this.retypeConstInt(e.left, t); this.retypeConstInt(e.right, t); this.exprTypes.set(e, t);
       // Re-check overflow against the (possibly narrower) target: the folded result can exceed
@@ -8735,7 +8770,13 @@ export class TypeChecker {
         if (v < min || v > max) {
           this.error(`integer literal ${v} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, expr.span);
         }
+        // A literal outside a ranged hint gets only the width; the flow it sits in then
+        // rejects it. Typed as the ranged hint, it would pass as proven in-range.
+        if (hint.min !== undefined && hint.max !== undefined && (v < BigInt(hint.min) || v > BigInt(hint.max))) {
+          return this.setType(expr, unranged(hint));
+        }
       }
+      if (expr.kind === "CharLit" && hint.min !== undefined) return this.setType(expr, unranged(hint));
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -9074,12 +9115,19 @@ export class TypeChecker {
     // but should adopt the other operand's int width. Retype the constant
     // subtree to match, so `i64var + 1 * 2` type-checks without an `as i64`.
     if (lt.tag === "int" && rt.tag === "int" && !typeEq(lt, rt)) {
+      // A constant adopts the other side's WIDTH. Adopting its range too would claim
+      // `r - 2147483647` has an operand in `0..2147483646`, and range propagation would
+      // then prove a result range the value can leave.
+      const adopt = (e: Expr, other: TypeKind & { tag: "int" }): TypeKind => {
+        const base: TypeKind = { tag: "int", bits: other.bits, signed: other.signed };
+        this.retypeConstInt(e, base);
+        const v = other.min !== undefined ? this.constIntValue(e) : null;
+        return v !== null && Number.isSafeInteger(Number(v)) ? { ...base, min: Number(v), max: Number(v) } : base;
+      };
       if (this.isConstIntExpr(expr.right)) {
-        this.retypeConstInt(expr.right, lt);
-        rt = lt;
+        rt = adopt(expr.right, lt);
       } else if (this.isConstIntExpr(expr.left)) {
-        this.retypeConstInt(expr.left, rt);
-        lt = rt;
+        lt = adopt(expr.left, rt);
       } else {
         // A flexible const-int binding (`let m = if.. { const arms }`) used
         // against a concrete int of another width adopts that width here —
@@ -9134,12 +9182,12 @@ export class TypeChecker {
         const propagated = this.propagateRange(lt, rt, expr.op);
         if (propagated) return this.setType(expr, propagated);
       }
-      return this.setType(expr, lt);
+      return this.setType(expr, unranged(lt));
     }
     if (bitOps.includes(expr.op)) {
       if (lt.tag !== "int" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires integer type, got ${this.show(lt)}`, sp);
       if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
-      return this.setType(expr, lt);
+      return this.setType(expr, unranged(lt));
     }
     if (cmpOps.includes(expr.op)) {
       if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${this.show(lt)} vs ${this.show(rt)}`, sp);
@@ -9216,7 +9264,7 @@ export class TypeChecker {
           this.error(`negation of ${expr.operand.value} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, sp);
         }
       }
-      return this.setType(expr, ot);
+      return this.setType(expr, unranged(ot));
     }
     if (expr.op === "!") {
       if (ot.tag !== "bool" && ot.tag !== "unknown") this.error(`unary '!' requires bool, got ${this.show(ot)}`, sp);
@@ -9224,7 +9272,7 @@ export class TypeChecker {
     }
     if (expr.op === "~") {
       if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${this.show(ot)}`, sp);
-      return this.setType(expr, ot);
+      return this.setType(expr, unranged(ot));
     }
     if (expr.op === "&mut") {
       // Reached only when takeExplicitMutArgs did not strip it, i.e. the marker is not
@@ -11197,6 +11245,10 @@ export class TypeChecker {
     }
     // wrapping/saturating/checked arithmetic methods on integers
     if (objType.tag === "int") {
+      // The result is the receiver's WIDTH, not its range: `r.wrappingAdd(1)` or
+      // `r.checkedAdd(1)` can land outside `i32(0..9)`, and typing it as the ranged type
+      // would mint an out-of-range value (read as None by a niche `Option<i32(0..9)>`).
+      const intBase: TypeKind = { tag: "int", bits: objType.bits, signed: objType.signed };
       const wrappingMethods = ["wrappingAdd", "wrappingSub", "wrappingMul"];
       const saturatingMethods = ["saturatingAdd", "saturatingSub", "saturatingMul"];
       const checkedMethods = ["checkedAdd", "checkedSub", "checkedMul", "checkedDiv", "checkedRem"];
@@ -11204,29 +11256,29 @@ export class TypeChecker {
         // Must return, not fall through: `this.error` accumulates a diagnostic
         // and keeps going, so with zero args the `args[0]` below is undefined.
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const argType = this.checkExpr(expr.args[0], objType);
-        if (!typeEq(objType, argType) && argType.tag !== "unknown") {
-          this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
+        const argType = this.checkExpr(expr.args[0], intBase);
+        if (!typeEq(intBase, argType) && argType.tag !== "unknown") {
+          this.error(`'${expr.method}': expected ${this.show(intBase)}, got ${this.show(argType)}`, sp);
         }
-        return this.setType(expr, objType);
+        return this.setType(expr, intBase);
       }
       if (checkedMethods.includes(expr.method)) {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const argType = this.checkExpr(expr.args[0], objType);
-        if (!typeEq(objType, argType) && argType.tag !== "unknown") {
-          this.error(`'${expr.method}': expected ${this.show(objType)}, got ${this.show(argType)}`, sp);
+        const argType = this.checkExpr(expr.args[0], intBase);
+        if (!typeEq(intBase, argType) && argType.tag !== "unknown") {
+          this.error(`'${expr.method}': expected ${this.show(intBase)}, got ${this.show(argType)}`, sp);
         }
-        return this.setType(expr, this.resolveOptionForValue(objType, sp));
+        return this.setType(expr, this.resolveOptionForValue(intBase, sp));
       }
       // unary negation — desugars to sub(0, x) in lowering, so overflow
       // semantics (None only at signed INT_MIN / unsigned nonzero) fall out for free
       if (expr.method === "wrappingNeg") {
         if (expr.args.length !== 0) { this.error(`'wrappingNeg' takes no arguments`, sp); }
-        return this.setType(expr, objType);
+        return this.setType(expr, intBase);
       }
       if (expr.method === "checkedNeg") {
         if (expr.args.length !== 0) { this.error(`'checkedNeg' takes no arguments`, sp); }
-        return this.setType(expr, this.resolveOptionForValue(objType, sp));
+        return this.setType(expr, this.resolveOptionForValue(intBase, sp));
       }
       // bit-counting intrinsics — 0-arg, count fits any width so result is i64
       const bitCountMethods = ["countOnes", "leadingZeros", "trailingZeros"];
@@ -11238,17 +11290,17 @@ export class TypeChecker {
       if (expr.method === "rotateLeft" || expr.method === "rotateRight") {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
         else {
-          const at = this.checkExpr(expr.args[0], objType);
-          if (!typeEq(objType, at) && at.tag !== "unknown") {
-            this.error(`'${expr.method}': shift amount must be ${this.show(objType)}, got ${this.show(at)}`, sp);
+          const at = this.checkExpr(expr.args[0], intBase);
+          if (!typeEq(intBase, at) && at.tag !== "unknown") {
+            this.error(`'${expr.method}': shift amount must be ${this.show(intBase)}, got ${this.show(at)}`, sp);
           }
         }
-        return this.setType(expr, objType);
+        return this.setType(expr, intBase);
       }
       // reverseBits — 0-arg, returns same type
       if (expr.method === "reverseBits") {
         if (expr.args.length !== 0) { this.error(`'reverseBits' takes no arguments`, sp); }
-        return this.setType(expr, objType);
+        return this.setType(expr, intBase);
       }
     }
     // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
@@ -12262,18 +12314,21 @@ export class TypeChecker {
     }
     let finalThen = thenType, finalElse = elseType;
     if (target) {
+      // A constant arm takes the target's width; its range is the constant's own business.
+      const width = unranged(target);
       if (thenTail && thenType.tag === "int" && !typeEq(thenType, target) && this.isConstIntExpr(thenTail)) {
-        this.retypeConstInt(thenTail, target); finalThen = target;
+        this.retypeConstInt(thenTail, width); finalThen = width;
       }
       if (elseTail && elseType.tag === "int" && !typeEq(elseType, target) && this.isConstIntExpr(elseTail)) {
-        this.retypeConstInt(elseTail, target); finalElse = target;
+        this.retypeConstInt(elseTail, width); finalElse = width;
       }
     }
 
     if (finalThen.tag !== "unknown" && finalElse.tag !== "unknown" && !typeEq(finalThen, finalElse)) {
       this.error(`if-else branches have mismatched types: '${this.show(finalThen)}' vs '${this.show(finalElse)}'`, sp);
     }
-    return this.setType(expr, finalThen.tag !== "unknown" ? finalThen : finalElse);
+    if (finalThen.tag === "unknown") return this.setType(expr, finalElse);
+    return this.setType(expr, finalElse.tag === "unknown" ? finalThen : joinRanges(finalThen, finalElse));
   }
 
   private checkMatchExprExpr(expr: ExprOf<"MatchExpr">, expected: TypeKind | null): TypeKind {
@@ -12297,7 +12352,8 @@ export class TypeChecker {
       let t = armTypes[i];
       const tail = armTails[i];
       if (target && t.tag === "int" && !typeEq(t, target) && tail && this.isConstIntExpr(tail)) {
-        this.retypeConstInt(tail, target); t = target;
+        const width = unranged(target);
+        this.retypeConstInt(tail, width); t = width;
       }
       finalTypes.push(t);
     }
@@ -12309,6 +12365,8 @@ export class TypeChecker {
       if (result.tag === "unknown") { result = t; continue; }
       if (!typeEq(result, t)) {
         this.error(`match arms have mismatched types: '${this.show(result)}' vs '${this.show(t)}'`, sp);
+      } else {
+        result = joinRanges(result, t);
       }
     }
     if (result.tag === "unknown" && finalTypes.some(t => t.tag === "void" || t.tag === "never")) result = { tag: "void" };
