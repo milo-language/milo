@@ -1,0 +1,15 @@
+// Call-site exclusivity ran only for plain calls, so a generic call passed `&mut v` and a
+// borrow into `v` together: the callee's push freed what the shared argument points into,
+// and two parameters naming one place is what `noalias` on `&mut` params must never see.
+fn grow<T>(a: &mut Vec<T>, b: &T) {
+    a.push(b.clone())
+}
+
+fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("x")
+    grow(&mut v, v[0])
+    print(v.len())
+    return 0
+}
+// @error: 'v' is borrowed mutably and shared in the same call

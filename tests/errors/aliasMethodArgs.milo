@@ -1,0 +1,18 @@
+// Two arguments of a method call, neither of them the receiver, may not alias either.
+struct S { a: i64, b: i64 }
+struct T { n: i64 }
+
+impl T {
+    fn both(self: &Self, x: &mut S, y: &S): i64 {
+        x.a = 5
+        return y.a + self.n
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    let t = T { n: 0 }
+    print(t.both(&mut s, s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call

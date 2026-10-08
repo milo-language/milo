@@ -1,0 +1,20 @@
+// The receiver is a method's first argument: `s.setFrom(&mut s.b)` hands the callee
+// `&mut s` and `&mut s.b`, two mutable references where one contains the other. Method
+// calls skipped the exclusivity check entirely, and the runtime guard only compares equal
+// addresses, which `&s` and `&s.b` are not.
+struct S { a: i64, b: i64 }
+
+impl S {
+    fn setFrom(self: &mut Self, x: &mut i64): i64 {
+        self.b = 10
+        x = x + 1
+        return self.b
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    print(s.setFrom(&mut s.b))
+    return 0
+}
+// @error: 's' is borrowed mutably twice in the same call

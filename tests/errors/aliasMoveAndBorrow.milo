@@ -1,0 +1,16 @@
+// Moving a value into a call while also borrowing into it: the callee owns `b`, may drop
+// it (freeing the buffer `x` points into) and keep writing through `x`.
+struct Box2 { v: Vec<i64> }
+
+fn takeAndPoke(x: &mut i64, b: Box2): i64 {
+    x = 5
+    return b.v[0]
+}
+
+fn main(): i32 {
+    var bx = Box2 { v: Vec.new() }
+    bx.v.push(1)
+    print(takeAndPoke(&mut bx.v[0], bx))
+    return 0
+}
+// @error: 'bx' is moved and borrowed in the same call

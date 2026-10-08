@@ -1,0 +1,16 @@
+// A static method call (`S.copyInto(...)`) is a call like any other for exclusivity.
+struct S { a: i64, b: i64 }
+
+impl S {
+    fn copyInto(x: &mut S, y: &S): i64 {
+        x.a = y.b
+        return x.a
+    }
+}
+
+fn main(): i32 {
+    var s = S { a: 1, b: 2 }
+    print(S.copyInto(&mut s, s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call

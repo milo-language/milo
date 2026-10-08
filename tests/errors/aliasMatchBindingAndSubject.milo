@@ -1,0 +1,31 @@
+// Matching a `&mut` subject binds each payload as a `&mut` view into the subject under a
+// new name. `both(&mut inner, s)` therefore passes two parameters over one place, which
+// the root-name comparison missed because the roots are spelled `inner` and `s`.
+struct Inner { v: i64 }
+enum Slot { Full(Inner), Empty }
+
+fn peek(s: &Slot): i64 {
+    match s {
+        Slot.Full(i) => { return i.v }
+        Slot.Empty => { return 0 }
+    }
+}
+
+fn both(x: &mut Inner, s: &Slot): i64 {
+    x.v = 10
+    return peek(s)
+}
+
+fn viaMatch(s: &mut Slot): i64 {
+    match s {
+        Slot.Full(inner) => { return both(&mut inner, s) }
+        Slot.Empty => { return 0 }
+    }
+}
+
+fn main(): i32 {
+    var s = Slot.Full(Inner { v: 1 })
+    print(viaMatch(&mut s))
+    return 0
+}
+// @error: 's' is borrowed mutably and shared in the same call

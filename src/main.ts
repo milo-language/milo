@@ -1824,6 +1824,8 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--overflow-checks") { overflowChecks = true; }
     else if (args[i] === "--no-overflow-checks") { overflowChecks = false; }
     else if (args[i] === "--strip-panic-locations") { stripPanicLocations = true; }
+    else if (args[i] === "--noalias") { process.env.MILO_NOALIAS = "1"; }
+    else if (args[i] === "--no-noalias") { process.env.MILO_NOALIAS = "0"; }
     else if (args[i] === "--contract-checks") { contractChecks = true; }
     else if (args[i] === "--no-contract-checks") { contractChecks = false; }
     else if (args[i] === "--emit-header") { emitHeader = true; }

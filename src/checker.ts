@@ -261,6 +261,9 @@ interface VarInfo {
   // no spelling of the pattern makes the binding mutable. Recorded so the diagnostic can
   // say what actually works instead.
   patternBound?: boolean;
+  // A ref pattern binding: the place it points into (root binding + steps), so the
+  // call-site exclusivity check sees `inner` and the subject it came from as one place.
+  refInto?: { root: unknown; name: string; steps: PlaceStep[] };
   // An unannotated `let x = <const-int-value>` whose width is still adaptable:
   // its value is built entirely from integer literals (directly, or as the arm
   // tails of an if/match expression), so it can be re-typed to a wider int on
@@ -668,6 +671,10 @@ export class TypeChecker {
   private implicitMutSeen = new Set<string>();
   private matchSubjectRef = new Set<Expr>();
   private matchSubjectMut = new Set<Expr>();
+  // Every expression a call path handed to tryMove: the by-value arguments that path
+  // really moves, which checkCallSiteExclusivity counts as exclusive uses. Asking the
+  // path rather than re-deriving it keeps builtins (`format` reads its args) out.
+  private moveRequested = new WeakSet<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
   private replaySites = new Map<Expr, { wrapper: string; site: string; fixed?: number }>();
   private replayRawShares = new Map<Expr, string>();
@@ -5771,6 +5778,7 @@ export class TypeChecker {
       if (expected.type.tag === "ref") this.setAutoBorrowChecked(expr.args[i]!, expected.type.mutable, sp);
       else this.tryMove(expr.args[i]!);
     }
+    this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
     this.resolvedMethods.set(expr, mangled);
     this.requireUnsafeMethod(mangled, expr.method, sp);
     return this.setType(expr, sig.ret);
@@ -6892,6 +6900,8 @@ export class TypeChecker {
               const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
               this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+              const bound = this.lookup(stmt.pattern.bindings[i]);
+              if (bound) this.noteRefInto(bound, stmt.subject, stmt.pattern.variant, i);
             }
           }
           // Same arm-entry consumption as match: a destructuring then-branch
@@ -6979,6 +6989,8 @@ export class TypeChecker {
               const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
               this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+              const bound = this.lookup(stmt.pattern.bindings[i]);
+              if (bound) this.noteRefInto(bound, stmt.value, stmt.pattern.variant, i);
             }
           }
         }
@@ -7674,6 +7686,7 @@ export class TypeChecker {
   }
 
   private tryMove(expr: Expr) {
+    this.moveRequested.add(expr);
     const targets = this.moveTargets(expr);
     // A fork forwards to its tails; anything else is either itself the target or
     // owns nothing. `targets[0] === expr` is the leaf case — recursing on it would
@@ -8162,25 +8175,39 @@ export class TypeChecker {
   // `push` reallocates), leaving it dangling. Pure argument-origin check.
   // `sp` is the call's own span, used only as a fallback when an argument has
   // none; both may be undefined, and the diagnostic then carries no source context.
-  private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined) {
-    const muts: { root: string; fields: string[] | null; span: Span | undefined }[] = [];
-    const shared: { root: string; fields: string[] | null; via?: string }[] = [];
+  //
+  // Every user call form runs it (plain, generic, static, method with its receiver as the
+  // first argument, interface, closure). Codegen's `noalias` on `&mut` parameters relies
+  // on it being total: a call form that skipped it was a call where two parameters could
+  // name the same storage. A non-Copy place passed by value is a MOVE and counts as an
+  // exclusive use too (`f(&mut b.v[0], b)` hands the callee the owner of what it is also
+  // writing through); `movesExclusive: false` is for extern calls, where a `string`
+  // argument to a `*u8` parameter is a borrow of its bytes, not a move.
+  private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined, movesExclusive = true) {
+    const muts: { root: unknown; name: string; fields: string[] | null; span: Span | undefined; moved: boolean }[] = [];
+    const shared: { root: unknown; name: string; fields: string[] | null; via?: string }[] = [];
+    const mutSteps: ({ root: unknown; name: string; steps: string[]; moved: boolean } | null)[] = [];
     for (const arg of args) {
-      const ab = this.borrowModeOf(arg);
+      const borrow = this.borrowModeOf(arg);
+      const moved = !borrow && movesExclusive && this.moveRequested.has(arg) && this.isMovedPlaceArg(arg);
+      const ab = borrow ?? (moved ? { mutable: true } : null);
+      mutSteps.push(null);
       if (!ab) {
         // An inline `v.ptr()` / `s.cstr()` argument is a shared borrow of its source for
         // the duration of the call: `growRead(v.ptr(), v)` with `v: &mut Vec<u8>` pushed
         // through the reference and then read the stale pointer (h4-inline-alias).
         for (const pv of this.pointerViewsIn(arg)) {
-          const p = this.accessPath(pv.source);
-          if (p) shared.push({ root: p.root, fields: p.fields, via: pv.call });
+          const p = this.exclusivityPlace(pv.source);
+          if (p) shared.push({ root: p.root, name: p.name, fields: p.fields, via: pv.call });
         }
         continue;
       }
-      const p = this.accessPath(arg);
+      const p = this.exclusivityPlace(arg);
       if (!p) continue;
-      if (ab.mutable) muts.push({ root: p.root, fields: p.fields, span: arg.span ?? sp });
-      else shared.push({ root: p.root, fields: p.fields });
+      if (ab.mutable) {
+        muts.push({ root: p.root, name: p.name, fields: p.fields, span: arg.span ?? sp, moved });
+        mutSteps[mutSteps.length - 1] = { root: p.root, name: p.name, steps: p.steps, moved };
+      } else shared.push({ root: p.root, name: p.name, fields: p.fields });
     }
     // Two accesses off the same root can alias only if their field paths overlap —
     // one a prefix of the other. Divergence at distinct field names (e.g. self.pos vs
@@ -8195,10 +8222,11 @@ export class TypeChecker {
     for (const m of muts) {
       for (const s of shared) {
         if (m.root === s.root && overlaps(m.fields, s.fields)) {
-          this.error(`'${m.root}' is borrowed mutably and shared in the same call`, m.span,
+          if (m.moved) { this.error(`'${m.name}' is moved and borrowed in the same call`, m.span, `the callee owns the moved value and may drop or change it while reading through the '&' argument into it; clone one of them or split the call into two statements`); continue; }
+          this.error(`'${m.name}' is borrowed mutably and shared in the same call`, m.span,
             s.via
-              ? `a mutation through the '&var'/'&mut' argument could reallocate '${m.root}' under '${s.via}', which points into its buffer: take the pointer after the call, or split the call into two statements`
-              : `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — clone the shared argument inline (e.g. 'x.clone()') or split the call into two statements`);
+              ? `a mutation through the '&var'/'&mut' argument could reallocate '${m.name}' under '${s.via}', which points into its buffer: take the pointer after the call, or split the call into two statements`
+              : `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.name}' — clone the shared argument inline (e.g. 'x.clone()') or split the call into two statements`);
         }
       }
     }
@@ -8210,7 +8238,6 @@ export class TypeChecker {
     // pair (flagged) from two siblings like `v[i]`/`v[j]` (a legitimate two-element
     // borrow, not flagged). Identical non-indexed places (`v` twice) are two `&mut`
     // to the same object and are flagged as well.
-    const mutSteps = args.map(a => (this.borrowModeOf(a)?.mutable ? this.accessSteps(a) : null));
     for (let i = 0; i < args.length; i++) {
       for (let j = i + 1; j < args.length; j++) {
         const a = mutSteps[i], b = mutSteps[j];
@@ -8222,14 +8249,19 @@ export class TypeChecker {
           // than the "may be distinct elements" case aliasesByContainment lets pass.
           // Non-literal bounds stay permissive — that split needs the prover.
           if (ra.lo < rb.hi && rb.lo < ra.hi) {
-            this.error(`'${a.root}' is borrowed mutably twice in the same call`, args[i].span ?? args[j].span ?? undefined,
+            this.error(`'${a.name}' is borrowed mutably twice in the same call`, args[i].span ?? args[j].span ?? undefined,
               `the ranges ${ra.lo}..${ra.hi} and ${rb.lo}..${rb.hi} overlap, so both arguments are '&mut' views of the same elements — make the windows disjoint or split the call into two statements`);
           }
           continue;
         }
         if (this.aliasesByContainment(a.steps, b.steps)) {
           const sp = args[i].span ?? args[j].span ?? undefined;
-          this.error(`'${a.root}' is borrowed mutably twice in the same call`, sp,
+          if (a.moved || b.moved) {
+            this.error(`'${a.name}' is moved and borrowed in the same call`, sp,
+              `the callee owns the moved value and may drop it (freeing what the other argument points into) while still writing through that argument; clone one of them or split the call into two statements`);
+            continue;
+          }
+          this.error(`'${a.name}' is borrowed mutably twice in the same call`, sp,
             `one argument is a container and the other borrows into it (or they are the same place) — a mutation through one (e.g. a 'push' that reallocates) could invalidate the other; split the call into two statements or clone one argument`);
           continue;
         }
@@ -8528,6 +8560,46 @@ export class TypeChecker {
       fields.push(s.name);
     }
     return { root: p.root, fields };
+  }
+
+  // The place an argument names for the exclusivity check, with a ref binding resolved to
+  // the storage it points into. `inner` from `match s { Full(inner) => … }` over a
+  // `s: &mut Slot` is a view of `s`'s payload under another name, so `f(&mut inner, s)`
+  // passes two parameters over one place; resolved, it collides with `s` like a field.
+  // `root` is the root's VarInfo (identity survives shadowing), or its name when unbound.
+  private exclusivityPlace(e: Expr): { root: unknown; name: string; fields: string[] | null; steps: string[] } | null {
+    const p = this.soloPath(e);
+    if (!p) return null;
+    let root: unknown = p.root, name = p.root;
+    let steps = p.steps;
+    const into = this.lookup(p.root)?.refInto;
+    if (into) { root = into.root; name = into.name; steps = [...into.steps, ...steps]; }
+    else root = this.lookup(p.root) ?? p.root;
+    const fields = steps.every(s => s.tag === "field") ? steps.map(s => (s as { name: string }).name) : null;
+    return { root, name, fields, steps: steps.map(stepKey) };
+  }
+
+  // A by-value argument that moves a named place (non-Copy, so the callee becomes its
+  // owner). A Copy value or a closure is not exclusive: the callee gets its own copy, or
+  // a non-owning view checked when the closure was formed.
+  private isMovedPlaceArg(arg: Expr): boolean {
+    const t = this.exprTypes.get(arg);
+    if (!t || t.tag === "ref" || t.tag === "fn" || t.tag === "ptr" || this.isCopyType(t)) return false;
+    return this.soloPath(arg) !== null;
+  }
+
+  // Record that pattern binding `info` (binding `index` of `variant`) is a ref into the
+  // match subject, for exclusivityPlace. The binding step is a pseudo-field, so two
+  // bindings of one pattern stay disjoint while either still overlaps the subject.
+  private noteRefInto(info: VarInfo, subject: Expr, variant: string, index: number) {
+    if (info.type.tag !== "ref") return;
+    const p = this.soloPath(subject);
+    if (!p) return;
+    const base = this.lookup(p.root);
+    const step: PlaceStep = { tag: "field", name: `$${variant}.${index}` };
+    info.refInto = base?.refInto
+      ? { root: base.refInto.root, name: base.refInto.name, steps: [...base.refInto.steps, ...p.steps, step] }
+      : { root: base ?? p.root, name: p.root, steps: [...p.steps, step] };
   }
 
   private isRootMutable(expr: Expr): boolean {
@@ -9715,6 +9787,7 @@ export class TypeChecker {
         this.tryMove(expr.args[i]);
       }
       // check requires contracts at call site (generic fn)
+      this.checkCallSiteExclusivity(expr.args, sp);
       if (genericFn.decl) this.checkCallSiteContracts(genericFn.decl, expr.args, sp);
       this.requireUnsafeCall(genericFn.decl, expr.func, sp);
 
@@ -9774,6 +9847,7 @@ export class TypeChecker {
           this.autoMoveClosureArg(expr.args[i], fnType.params[i], c => c.mutable, true);
           this.tryMove(expr.args[i]);
         }
+        this.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
         // Calling a closure that moves a capture out consumes the closure: the call
         // empties the environment slots its captures live in, so a second call reads
         // zeroed captures. Before this, the second call silently returned a wrong
@@ -9941,7 +10015,7 @@ export class TypeChecker {
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       this.tryMove(expr.args[i]);
     }
-    this.checkCallSiteExclusivity(expr.args, sp);
+    this.checkCallSiteExclusivity(expr.args, sp, !sig.isExtern);
     // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void.
     // Compute safety unconditionally (not just at depth 0) so an unsafe-requiring extern call
     // marks its enclosing block used, while a safe one leaves the block flagged unused.
@@ -10334,6 +10408,7 @@ export class TypeChecker {
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
     }
+    this.checkCallSiteExclusivity(expr.args, sp);
     return paramOffset;
   }
 
@@ -12086,6 +12161,7 @@ export class TypeChecker {
               this.tryMove(expr.args[i]);
             }
           }
+          this.checkCallSiteExclusivity([expr.object, ...expr.args], sp);
           // compute method index for itable slot
           let methodIndex = 0;
           for (const [name] of iface.methods) {
@@ -12174,6 +12250,8 @@ export class TypeChecker {
           this.tryMove(expr.args[i]);
         }
       }
+      // The receiver is the first argument: `s.set(&mut s.b)` is `S$set(&mut s, &mut s.b)`.
+      this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
       this.resolvedMethods.set(expr, mangled);
       this.requireUnsafeMethod(mangled, expr.method, sp);
       if (this.isViewReturn(sig.ret)) this.freezeViewSource(expr.object, sp, this.viewReturnFields.get(mangled));
@@ -12217,6 +12295,7 @@ export class TypeChecker {
               this.tryMove(expr.args[i]);
             }
           }
+          this.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
           if (fnType.tag === "cfn") this.cfnFieldCalls.add(expr);
           else this.fnFieldCalls.add(expr);
           return this.setType(expr, fnType.ret);
@@ -12849,6 +12928,8 @@ export class TypeChecker {
               const bindSpan = arm.pattern.bindingSpans?.[i] ?? arm.pattern.span;
               this.declare(arm.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
                 copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+              const bound = this.lookup(arm.pattern.bindings[i]);
+              if (bound) this.noteRefInto(bound, subject, arm.pattern.variant, i);
             }
             this.patternBindingTypes.set(arm.pattern, bindTypes);
           }

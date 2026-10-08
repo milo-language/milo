@@ -94,3 +94,55 @@ fn main(): i32 {
   expect(decl).not.toContain("nonnull");
   expect(ir).toMatch(/call i32 @exported\(ptr %/);
 });
+
+const NOALIAS_SRC = `
+var G: i64 = 1
+fn axpy(y: &mut [f64; 64], x: &[f64; 64], k: f64) {
+    var i: i64 = 0
+    while i < 64 {
+        y[i] = y[i] + k * x[i]
+        i = i + 1
+    }
+}
+fn bumpGlobal(x: &mut i64): i64 {
+    x = 10
+    G = G + 1
+    return x
+}
+fn viaHelper(x: &mut i64): i64 { return bumpGlobal(&mut x) }
+fn callWith(x: &mut i64, f: () => void): i64 {
+    x = 10
+    f()
+    return x
+}
+fn main(): i32 {
+    var y: [f64; 64] = [0.0; 64]
+    let x: [f64; 64] = [1.0; 64]
+    axpy(&mut y, x, 2.0)
+    print(bumpGlobal(&mut G) + viaHelper(&mut G))
+    var n: i64 = 1
+    print(callWith(&mut n, () => { n = n + 1 }))
+    return 0
+}
+`;
+
+test("--noalias marks &mut params whose callee cannot reach an alias", () => {
+  const ir = emitIr(NOALIAS_SRC, "--noalias");
+  expect(defineOf(ir, "axpy")).toContain("ptr noalias nonnull dereferenceable(512) align 8 %y");
+  // `&T` gets no noalias: a `&mut` elsewhere is ruled out, interior mutability is not
+  expect(defineOf(ir, "axpy")).toContain("ptr nonnull dereferenceable(512) align 8 %x");
+});
+
+test("noalias is withheld where a global or a closure can alias the param", () => {
+  const ir = emitIr(NOALIAS_SRC, "--noalias");
+  // G escapes (passed by &mut) and the callee writes it, directly or through a call
+  expect(defineOf(ir, "bumpGlobal")).not.toContain("noalias");
+  expect(defineOf(ir, "viaHelper")).not.toContain("noalias");
+  // the closure body writes `n`, which the &mut param points at
+  expect(defineOf(ir, "callWith")).not.toContain("noalias");
+});
+
+test("noalias is off without the flag", () => {
+  const ir = emitIr(NOALIAS_SRC, "--no-noalias");
+  expect(ir.split("\n").filter(l => l.startsWith("define ") && l.includes("noalias"))).toEqual([]);
+});
