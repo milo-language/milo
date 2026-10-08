@@ -8,7 +8,9 @@ last-verified: 2026-09-22
 
 # Safety profiles
 
-Safety-critical domains have coding standards that restrict what language features are allowed. Milo can check your code against these standards at compile time.
+Safety-critical domains have coding standards that restrict what language features are allowed. Milo can check your code against the language-level rules of these standards at compile time.
+
+A profile is a coding-standard check, not certification. Certifying software under DO-178C, ISO 26262 or IEC 61508 also takes requirements traceability, structural coverage, independent review and a qualified toolchain (DO-330, ISO 26262-8 tool confidence). The Milo compiler is not qualified under any of them. A passing profile is evidence for one objective in that process.
 
 ```bash
 milo safety flight_controller.milo --safety=do178c-a

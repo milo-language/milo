@@ -1,7 +1,8 @@
 // std/pool — fixed-size block pool allocator with compiler-verified safety contracts
 //
 // Safety-critical pattern: one malloc at init, then O(1) alloc/free with no
-// syscalls. Suitable for DO-178C DAL-A (no dynamic allocation after init).
+// syscalls. Fits the "no dynamic allocation after init" rule that DO-178C DAL A
+// coding standards impose; using it does not make a program certifiable.
 // Free-list is embedded in unused blocks — zero overhead.
 
 from "std/os" import {

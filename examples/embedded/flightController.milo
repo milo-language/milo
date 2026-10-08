@@ -1,7 +1,7 @@
 // Altitude controller — single-axis PID with interactive TUI
 // Press up/down to change target altitude, watch the controller converge.
 //
-// The PID controller and physics tick are DO-178 DAL B compliant:
+// The PID controller and physics tick pass the do178c-b safety profile:
 // no recursion, no unbounded loops, no unsafe, no dynamic allocation,
 // all functions have contracts.
 //
