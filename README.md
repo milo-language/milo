@@ -74,17 +74,17 @@ Good fit: CLIs, services, compilers, emulators, anything you would write in care
 
 ## Performance
 
-Five benchmarks from [Goose](https://github.com/aardappel/goose)'s own suite, run against its Goose, C++ and Rust implementations, with every row printing the same checksum. Time at the largest size, best implementation per language, Apple M-series, `--release`. Below 1.00 means Milo is faster.
+Five benchmarks against Rust, with every row printing the same checksum. Time at the largest size, best implementation per language, Apple M-series, `--release`. Below 1.00 means Milo is faster.
 
-| Benchmark | Milo vs Rust | Milo vs Goose |
-|---|---|---|
-| respond (JSON rendering, streaming) | **0.81** | 1.10 |
-| interp (tree-walking interpreter) | **0.87** | 1.09 |
-| records (variant records) | **0.90** | 1.34 |
-| graph (CSR build and walk) | 1.02 | 1.01 |
-| blur (image kernel) | 1.07 | 1.14 |
+| Benchmark | Milo vs Rust |
+|---|---|
+| respond (JSON rendering, streaming) | **0.81** |
+| interp (tree-walking interpreter) | **0.87** |
+| records (variant records) | **0.90** |
+| graph (CSR build and walk) | 1.02 |
+| blur (image kernel) | 1.07 |
 
-Peak memory is within 12% of Rust on all five. Milo keeps its overflow checks on; the Rust rows have none. Goose wins where its inline variable-size layout matters, and uses less memory. Full tables are in [benchmarks/vs-goose/results.md](benchmarks/vs-goose/results.md), rerun with `G=<goose checkout> benchmarks/vs-goose/run.sh`; [benchmarks](benchmarks) has Milo against C and Go.
+Peak memory is within 12% of Rust on all five. Milo keeps its overflow checks on; the Rust rows have none. Full tables, including C++, are in [benchmarks/vs-goose/results.md](benchmarks/vs-goose/results.md); [benchmarks](benchmarks) has Milo against C and Go.
 
 ## Status
 
