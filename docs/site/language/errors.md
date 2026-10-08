@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 409 distinct messages across 512 programs the compiler must reject.
+Every error message the test suite pins: 420 distinct messages across 526 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -59,6 +59,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'fn Counter.get' is defined twice in this file`](#fn-counter-get-is-defined-twice-in-this-file)
 - [`'fn shade' is defined twice in this file`](#fn-shade-is-defined-twice-in-this-file)
 - [`'fold' callback parameter 2 is declared`](#fold-callback-parameter-2-is-declared)
+- [`'for b in &mut' iterates a Vec, array or slice, not 'string'`](#for-b-in-mut-iterates-a-vec-array-or-slice-not-string)
+- [`'for i in &mut' iterates a Vec, array or slice, not a range`](#for-i-in-mut-iterates-a-vec-array-or-slice-not-a-range)
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
@@ -92,6 +94,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`'shatter' is private to shard.milo`](#shatter-is-private-to-shard-milo)
 - [`'sign' returns i64 but can reach the end of its body without a 'return'`](#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
+- [`'sortBy' callback returns bool, but sortBy expects a signed integer`](#sortby-callback-returns-bool-but-sortby-expects-a-signed-integer)
 - [`'spawn' on a task scope must be called directly in the body of the Task.scope closure`](#spawn-on-a-task-scope-must-be-called-directly-in-the-body-of-the-task-scope-closure)
 - [`'square' is not imported`](#square-is-not-imported)
 - [`'step' can park this task while the loop variable is a reference into 'g's buffer`](#step-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
@@ -159,10 +162,13 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot be passed in a variadic position`](#cannot-be-passed-in-a-variadic-position)
 - [`cannot call 'add' on 'b' because it is borrowed`](#cannot-call-add-on-b-because-it-is-borrowed)
 - [`cannot call 'feed' on 'lx' because it is borrowed`](#cannot-call-feed-on-lx-because-it-is-borrowed)
+- [`cannot call 'pop' on 'v' because it is borrowed`](#cannot-call-pop-on-v-because-it-is-borrowed)
 - [`cannot call 'push' on 'b' because it is borrowed`](#cannot-call-push-on-b-because-it-is-borrowed)
 - [`cannot call 'push' on 'items' because it is borrowed`](#cannot-call-push-on-items-because-it-is-borrowed)
 - [`cannot call 'push' on 's' because it is borrowed`](#cannot-call-push-on-s-because-it-is-borrowed)
 - [`cannot call 'push' on 't' because it is borrowed`](#cannot-call-push-on-t-because-it-is-borrowed)
+- [`cannot call 'push' on 'v' because it is borrowed`](#cannot-call-push-on-v-because-it-is-borrowed)
+- [`cannot call 'setByte' on 's' because it is borrowed`](#cannot-call-setbyte-on-s-because-it-is-borrowed)
 - [`cannot capture`](#cannot-capture)
 - [`cannot capture 's' in a 'move' closure`](#cannot-capture-s-in-a-move-closure)
 - [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
@@ -185,6 +191,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot infer type parameter(s) 'T' for Option.None`](#cannot-infer-type-parameter-s-t-for-option-none)
 - [`cannot infer Vec element type`](#cannot-infer-vec-element-type)
 - [`cannot insert into immutable HashMap`](#cannot-insert-into-immutable-hashmap)
+- [`cannot iterate 'v' with '&mut': it is not mutable`](#cannot-iterate-v-with-mut-it-is-not-mutable)
 - [`cannot move '{ … }.name' out of 'R', which implements Drop`](#cannot-move-name-out-of-r-which-implements-drop)
 - [`cannot move 'b' because it is borrowed`](#cannot-move-b-because-it-is-borrowed)
 - [`cannot move 'd.a' out of the borrowed 'd'`](#cannot-move-d-a-out-of-the-borrowed-d)
@@ -200,6 +207,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
 - [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
+- [`cannot move the borrowed value out of 'w'`](#cannot-move-the-borrowed-value-out-of-w)
 - [`cannot open`](#cannot-open)
 - [`cannot open 'nonexistent.txt'`](#cannot-open-nonexistent-txt)
 - [`cannot pass 'b' because it is borrowed`](#cannot-pass-b-because-it-is-borrowed)
@@ -222,6 +230,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot send 'p' of type '*u8' across threads`](#cannot-send-p-of-type-u8-across-threads)
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
+- [`cannot setByte on an immutable string`](#cannot-setbyte-on-an-immutable-string)
 - [`cannot store a closure that captures 'n' by reference`](#cannot-store-a-closure-that-captures-n-by-reference)
 - [`cannot store a closure that captures 's' by reference`](#cannot-store-a-closure-that-captures-s-by-reference)
 - [`cannot store a closure that captures 'x' by reference`](#cannot-store-a-closure-that-captures-x-by-reference)
@@ -233,6 +242,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot take a view of a temporary`](#cannot-take-a-view-of-a-temporary)
 - [`cannot take type parameters`](#cannot-take-type-parameters)
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
+- [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
+- [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
 - [`casts only to an integer type`](#casts-only-to-an-integer-type)
 - [`closure returns string but can reach the end of its body without a 'return'`](#closure-returns-string-but-can-reach-the-end-of-its-body-without-a-return)
@@ -1282,6 +1293,35 @@ fn main() {
 
 <sub>[tests/errors/foldCallbackParamType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/foldCallbackParamType.milo)</sub>
 
+## `'for b in &mut' iterates a Vec, array or slice, not 'string'` {#for-b-in-mut-iterates-a-vec-array-or-slice-not-string}
+
+string bytes are not handed out mutably; use setByte.
+
+```milo skip
+pub fn main(): void {
+    var s = "abc"
+    for b in &mut s {
+        print(b)
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefString.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefString.milo)</sub>
+
+## `'for i in &mut' iterates a Vec, array or slice, not a range` {#for-i-in-mut-iterates-a-vec-array-or-slice-not-a-range}
+
+a range has no storage to write back to.
+
+```milo skip
+pub fn main(): void {
+    for i in &mut 0..3 {
+        print(i)
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefRange.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefRange.milo)</sub>
+
 ## `'get' argument 1: expected HandleB, got HandleA` {#get-argument-1-expected-handleb-got-handlea}
 
 Two arenas of the same payload type hand out the same Handle\<Node\>, so a handle from graph A type-checks against graph B and only the runtime id check says no. Branding each arena with its own wrapper pair makes the mixup a compile error. The `_` fields keep the brand unstrippable from any other file (private fields).
@@ -2328,6 +2368,20 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/fallOffEndFn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fallOffEndFn.milo)</sub>
+
+## `'sortBy' callback returns bool, but sortBy expects a signed integer` {#sortby-callback-returns-bool-but-sortby-expects-a-signed-integer}
+
+A comparator is read by its sign; a bool `a < b` carries no "equal" and is rejected.
+
+```milo skip
+pub fn main(): void {
+    var v: Vec<i64> = [3, 1, 2]
+    v.sortBy((a: &i64, b: &i64) => a < b)
+    print(v[0])
+}
+```
+
+<sub>[tests/errors/sortByBoolComparator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sortByBoolComparator.milo)</sub>
 
 ## `'spawn' on a task scope must be called directly in the body of the Task.scope closure` {#spawn-on-a-task-scope-must-be-called-directly-in-the-body-of-the-task-scope-closure}
 
@@ -3866,6 +3920,22 @@ fn main(): i32 {
 
 <sub>[tests/errors/stringViewFreezesReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewFreezesReceiver.milo)</sub>
 
+## `cannot call 'pop' on 'v' because it is borrowed` {#cannot-call-pop-on-v-because-it-is-borrowed}
+
+popping frees the slot the '&mut' element view may point at.
+
+```milo skip
+pub fn main(): void {
+    var v: Vec<string> = ["a", "b"]
+    for x in &mut v {
+        x = "c"
+        let _ = v.pop()
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefPop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPop.milo)</sub>
+
 ## `cannot call 'push' on 'b' because it is borrowed` {#cannot-call-push-on-b-because-it-is-borrowed}
 
 `for it in b.items` holds a pointer into that Vec's buffer for the loop's life, so pushing to it reallocates the memory the loop is reading. This was accepted until 2026-08-16 and was a heap-use-after-free in safe code (ASan, zero `unsafe`): the for-in freeze only fired when the iterable was a bare IDENT, so `for x in v` was caught and `for x in b.items` was not.
@@ -3965,6 +4035,37 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/viewSameFieldFrozen.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewSameFieldFrozen.milo)</sub>
+
+## `cannot call 'push' on 'v' because it is borrowed` {#cannot-call-push-on-v-because-it-is-borrowed}
+
+growing the Vec under a '&mut' element view would move the elements it points at.
+
+```milo skip
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x += 1
+        v.push(4)
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefPush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPush.milo)</sub>
+
+## `cannot call 'setByte' on 's' because it is borrowed` {#cannot-call-setbyte-on-s-because-it-is-borrowed}
+
+A write while a slice view of the same string is live is rejected like any other mutation: a literal's first write moves its bytes to a new buffer.
+
+```milo skip
+pub fn main(): void {
+    var s = "abcdef"
+    let view = s[0..3]
+    s.setByte(0, 65)
+    print(view)
+}
+```
+
+<sub>[tests/errors/stringSetByteUnderView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringSetByteUnderView.milo)</sub>
 
 ## `cannot capture` {#cannot-capture}
 
@@ -4381,6 +4482,38 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/hashmapImmutableInsert.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashmapImmutableInsert.milo)</sub>
+
+## `cannot iterate 'v' with '&mut': it is not mutable` {#cannot-iterate-v-with-mut-it-is-not-mutable}
+
+a 'let' Vec cannot be written through.
+
+```milo skip
+pub fn main(): void {
+    let v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = 0
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefImmutable.milo)</sub>
+
+a '&' parameter is read-only, so its elements cannot be handed out as '&mut'.
+
+```milo skip
+pub fn zero(v: &Vec<i64>) {
+    for x in &mut v {
+        x = 0
+    }
+}
+
+pub fn main(): void {
+    let v: Vec<i64> = [1]
+    zero(v)
+}
+```
+
+<sub>[tests/errors/forInMutRefSharedParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefSharedParam.milo)</sub>
 
 ## `cannot move '{ … }.name' out of 'R', which implements Drop` {#cannot-move-name-out-of-r-which-implements-drop}
 
@@ -5210,6 +5343,23 @@ pub fn main(): i32 { print(firstLine("a\nb")) return 0 }
 
 <sub>[tests/errors/stringViewIterEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewIterEscape.milo)</sub>
 
+## `cannot move the borrowed value out of 'w'` {#cannot-move-the-borrowed-value-out-of-w}
+
+the element stays in the Vec, so it can only be cloned out.
+
+```milo skip
+pub fn main(): void {
+    var ws: Vec<string> = ["a"]
+    var keep: Vec<string> = Vec.new()
+    for w in &mut ws {
+        keep.push(w)
+    }
+    print(keep.len())
+}
+```
+
+<sub>[tests/errors/forInMutRefMoveOut.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefMoveOut.milo)</sub>
+
 ## `cannot open` {#cannot-open}
 
 ```milo skip
@@ -5750,6 +5900,18 @@ fn main(): i32 {
 
 <sub>[tests/errors/sendGenericArgNotSend.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sendGenericArgNotSend.milo)</sub>
 
+## `cannot setByte on an immutable string` {#cannot-setbyte-on-an-immutable-string}
+
+```milo skip
+pub fn main(): void {
+    let s = "abc".clone()
+    s.setByte(0, 65)
+    print(s)
+}
+```
+
+<sub>[tests/errors/stringSetByteImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringSetByteImmutable.milo)</sub>
+
 ## `cannot store a closure that captures 'n' by reference` {#cannot-store-a-closure-that-captures-n-by-reference}
 
 A closure without `move` captures by reference, so it is only valid while the frame owning the capture is alive. Returning one directly is fine (the checker promotes it to `move`), but hiding it inside a struct escaped by a side door the return check never saw: the struct is what leaves, and the closure rode along pointing at the dead frame. It read garbage at -O0 and hung at -O2, with ASAN silent because the capture lives on the stack. The store is rejected instead — `move` is the way to say you want the closure to own `n` (tests/fixtures/closureStoredMove.milo).
@@ -6165,6 +6327,81 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/eqPayloadVariant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/eqPayloadVariant.milo)</sub>
+
+## `cannot use 'self' inside 'for it in &mut self.items'` {#cannot-use-self-inside-for-it-in-mut-self-items}
+
+a method call on self may reach self.items, so the root is off limits while it is iterated.
+
+```milo skip
+pub struct Bag {
+    items: Vec<i64>,
+}
+
+impl Bag {
+    fn size(self: &Bag): i64 {
+        return self.items.len()
+    }
+
+    fn fill(self: &mut Bag) {
+        for it in &mut self.items {
+            it = self.size()
+        }
+    }
+}
+
+pub fn main(): void {
+    var b = Bag { items: [1, 2] }
+    b.fill()
+}
+```
+
+<sub>[tests/errors/forInMutRefSelf.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefSelf.milo)</sub>
+
+## `cannot use 'v' inside 'for x in &mut v'` {#cannot-use-v-inside-for-x-in-mut-v}
+
+a closure capturing the Vec is a second access too.
+
+```milo skip
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        let n = () => v.len()
+        x = n()
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefClosure.milo)</sub>
+
+v\[0\] is a second path to the element x may point at.
+
+```milo skip
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = v[0]
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefIndexRead.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefIndexRead.milo)</sub>
+
+passing the whole Vec hands a callee a view that overlaps x.
+
+```milo skip
+pub fn total(v: &Vec<i64>): i64 {
+    return v.len()
+}
+
+pub fn main(): void {
+    var v: Vec<i64> = [1, 2, 3]
+    for x in &mut v {
+        x = total(v)
+    }
+}
+```
+
+<sub>[tests/errors/forInMutRefWholeArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefWholeArg.milo)</sub>
 
 ## `carries a payload in 'Num'` {#carries-a-payload-in-num}
 
