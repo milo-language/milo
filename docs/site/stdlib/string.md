@@ -58,6 +58,7 @@ match "hello".indexOf("l") {
 | `parseF64(): Option<f64>` |  |
 | `push(c: u8)` |  |
 | `pushStr(s: &string)` |  |
+| `pushInt(n: i64)` | appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string |
 | `cstr(): *u8` | NUL-terminated view; the string must outlive the pointer |
 | `clone(): string` |  |
 

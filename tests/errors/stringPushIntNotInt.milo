@@ -1,0 +1,7 @@
+// @error: string.pushInt: expected an integer, got f64
+// pushInt is the integer fast path; a float goes through pushStr($"{x}").
+fn main(): i32 {
+    var s = ""
+    s.pushInt(1.5)
+    return 0
+}

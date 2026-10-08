@@ -47,6 +47,15 @@ s.pushStr(" there")    // a whole string, appended in place
 `pushStr` grows the buffer amortized. `s = s + t` in a loop is quadratic — it
 reallocates and recopies the whole accumulator on every concat.
 
+`s.pushInt(n)` appends an integer's decimal digits with no temporary string, and
+`s.pushStr($"...")` writes the interpolation's parts straight into `s`.
+
+```milo
+var out = "id="
+out.pushInt(42)
+print(out)
+```
+
 ## Iterating
 
 A string is a UTF-8 byte buffer, and iterating one directly yields **bytes**:

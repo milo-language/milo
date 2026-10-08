@@ -1,0 +1,102 @@
+// @expect: 0 -1 1 9 10 -9 -10 99 100 -99 -100
+// @expect: 999 1000 9999 10000 99999 100000 999999 1000000
+// @expect: 9999999 10000000 99999999 100000000 999999999 1000000000
+// @expect: 9999999999 10000000000 999999999999999999 1000000000000000000
+// @expect: -9223372036854775808 9223372036854775807
+// @expect: 18446744073709551615 0
+// @expect: -128 127 0 255
+// @expect: -32768 32767 65535
+// @expect: -2147483648 2147483647 4294967295
+// @expect: -9223372036854775808|9223372036854775807|18446744073709551615|-128|255
+// @expect: n=-42 u=42 b=true f=1.5 s=str
+// @expect: id:7,qty:-3,max:18446744073709551615;
+// @expect: 20 -9223372036854775808
+// @expect: 3 255
+// @expect: 4 -128
+// @expect: 1
+// @expect: abcabc-5
+
+// Integer to decimal (toString, interpolation, print, pushInt) at every digit-count
+// boundary and every width's extremes. The digits come from @milo.fmt.*, not snprintf,
+// so these are the cases a pair-table loop gets wrong: the odd/even digit tail, the
+// single digit, zero, and i64::MIN, whose magnitude has no positive i64.
+fn main(): i32 {
+    let small: Vec<i64> = [0, -1, 1, 9, 10, -9, -10, 99, 100, -99, -100]
+    var line = ""
+    for x in small {
+        if line.len > 0 {
+            line.push(32)
+        }
+        line.pushStr(x.toString())
+    }
+    print(line)
+
+    var pow: i64 = 1000
+    var p = ""
+    while pow <= 1000000 {
+        if p.len > 0 {
+            p.push(32)
+        }
+        p.pushStr($"{pow - 1} {pow}")
+        pow = pow * 10
+    }
+    print(p)
+    print($"{9999999} {10000000} {99999999} {100000000} {999999999} {1000000000}")
+    let big: i64 = 1000000000000000000
+    print($"{9999999999 as i64} {10000000000 as i64} {big - 1} {big}")
+
+    let mn: i64 = -9223372036854775807 - 1
+    let mx: i64 = 9223372036854775807
+    print(mn.toString(), " ", mx.toString())
+    let umax: u64 = 18446744073709551615
+    let uzero: u64 = 0
+    print(umax, " ", uzero)
+    let a8: i8 = -128
+    let b8: i8 = 127
+    let c8: u8 = 0
+    let d8: u8 = 255
+    print($"{a8} {b8} {c8} {d8}")
+    let a16: i16 = -32768
+    let b16: i16 = 32767
+    let c16: u16 = 65535
+    print(a16.toString(), " ", b16.toString(), " ", c16.toString())
+    let a32: i32 = -2147483648
+    let b32: i32 = 2147483647
+    let c32: u32 = 4294967295
+    print(a32, " ", b32, " ", c32)
+    print(format(mn, "|", mx, "|", umax, "|", a8, "|", d8))
+
+    let neg: i64 = -42
+    let un: u32 = 42
+    let f: f64 = 1.5
+    let s = "str"
+    print($"n={neg} u={un} b={true} f={f} s={s}")
+
+    // pushInt appends in place, any width
+    var out = "id:"
+    out.pushInt(7)
+    out.pushStr(",qty:")
+    out.pushInt(-3)
+    out.pushStr(",max:")
+    out.pushInt(umax)
+    out.push(59)
+    print(out)
+
+    let ms = mn.toString()
+    print($"{ms.len} {ms}")
+    var w = ""
+    w.pushInt(d8)
+    print($"{w.len} {w}")
+    var w2 = ""
+    w2.pushInt(a8)
+    print($"{w2.len} {w2}")
+    var z = ""
+    z.pushInt(uzero)
+    print(z.len)
+
+    // an interpolation appended to its own receiver reads the old bytes correctly
+    var self = "abc".clone()
+    self.pushStr($"{self}{-5}")
+    print(self)
+    return 0
+}

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 404 distinct messages across 507 programs the compiler must reject.
+Every error message the test suite pins: 405 distinct messages across 508 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -361,6 +361,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`shadows a standard-library function`](#shadows-a-standard-library-function)
 - [`shadows an outer binding`](#shadows-an-outer-binding)
 - [`string.push: expected u8, got i64`](#string-push-expected-u8-got-i64)
+- [`string.pushInt: expected an integer, got f64`](#string-pushint-expected-an-integer-got-f64)
 - [`struct 'Child' has no field 'pid'`](#struct-child-has-no-field-pid)
 - [`struct 'Direct<i64>' is recursive by value and has infinite size`](#struct-direct-i64-is-recursive-by-value-and-has-infinite-size)
 - [`struct 'P' has no field 'nope'`](#struct-p-has-no-field-nope)
@@ -8652,6 +8653,20 @@ fn main() {
 ```
 
 <sub>[tests/errors/stringPushI64.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringPushI64.milo)</sub>
+
+## `string.pushInt: expected an integer, got f64` {#string-pushint-expected-an-integer-got-f64}
+
+pushInt is the integer fast path; a float goes through pushStr($"{x}").
+
+```milo skip
+fn main(): i32 {
+    var s = ""
+    s.pushInt(1.5)
+    return 0
+}
+```
+
+<sub>[tests/errors/stringPushIntNotInt.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringPushIntNotInt.milo)</sub>
 
 ## `struct 'Child' has no field 'pid'` {#struct-child-has-no-field-pid}
 

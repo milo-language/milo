@@ -39,7 +39,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
   "OptionOp", "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
-  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushStr", "StringSlice",
+  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSlice",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
   "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert", "VecIsEmpty",
   "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
@@ -200,6 +200,8 @@ export class Codegen {
   private needsFree = false;
   private needsRealloc = false;
   private emittedBufAppend = false;
+  private emittedIntFmt = false;
+  private emittedStrReserve = false;
   public needsMemcpy = false;
   private needsStrlen = false;
   public needsMemcmp = false;
@@ -5130,6 +5132,16 @@ export class Codegen {
     }
   }
 
+  private genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {
+    const out: { val: string; ty: string; expr: HIRExpr }[] = [];
+    for (const arg of args) {
+      const [al, av, at] = this.genExpr(arg.expr);
+      lines.push(...al);
+      out.push({ val: av, ty: at, expr: arg.expr });
+    }
+    return out;
+  }
+
   private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): Gen {
     if (expr.func === "print" || expr.func === "format") {
       this.needsFree = true;
@@ -5138,6 +5150,18 @@ export class Codegen {
       // format(): stringify every part into one snprintf'd buffer. (Note: snprintf's
       // %.*s still truncates a string part at an embedded NUL — format() of binary is
       // a known follow-up; print() below is the NUL-correct path.)
+      if (isFormat && expr.args.every(a => this.fastFormatPart(a.expr.type) !== null)) {
+        // Every part is text, an int, a bool or a float: build the string in place.
+        const acc = `%__fmt.${this.scopeCounter++}.addr`;
+        this.entryAllocas.push(`  ${acc} = alloca %String`);
+        lines.push(`  store %String { ptr null, i64 0, i64 0 }, ptr ${acc}`);
+        const temps = this.genFormatParts(expr.args, lines);
+        this.emitAppendFormatParts(lines, acc, temps.map(t => ({ val: t.val, ty: t.ty, tk: t.expr.type })), expr.span);
+        for (const t of temps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
+        const out = this.nextTemp();
+        lines.push(`  ${out} = load %String, ptr ${acc}`);
+        return [lines, out, "%String"];
+      }
       if (isFormat) {
         this.needsPrintf = true;
         const partFmts: string[] = [];
@@ -5897,6 +5921,8 @@ export class Codegen {
         return this.genStringPush(expr, lines);
       case "StringPushStr":
         return this.genStringPushStr(expr, lines);
+      case "StringPushInt":
+        return this.genStringPushInt(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
       case "StringSlice":
@@ -9867,6 +9893,16 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
+  // s.pushInt(n): n's digits written straight into s's buffer, no temporary.
+  private genStringPushInt(expr: HIRExpr & { kind: "StringPushInt" }, lines: string[]): Gen {
+    const [strPtrLines, strPtr] = this.genLValue(expr.str);
+    lines.push(...strPtrLines);
+    const [vLines, vVal, vTy] = this.genExpr(expr.value);
+    lines.push(...vLines);
+    this.emitAppendFormatParts(lines, strPtr, [{ val: vVal, ty: vTy, tk: expr.value.type }], expr.span);
+    return [lines, "void", "void"];
+  }
+
   // Append a whole string in place. `s = s + t` reallocates and copies the
   // accumulator on every concat (quadratic when building in a loop); this grows
   // amortized like Vec.push and copies only the addition.
@@ -9878,6 +9914,15 @@ export class Codegen {
 
     const [strPtrLines, strPtr] = this.genLValue(expr.str);
     lines.push(...strPtrLines);
+    // `s.pushStr($"...")`: write the interpolation's parts straight into s rather than
+    // building the formatted temporary and copying it.
+    const o = expr.other;
+    if (o.kind === "Call" && o.func === "format" && o.args.every(a => this.fastFormatPart(a.expr.type) !== null)) {
+      const temps = this.genFormatParts(o.args, lines);
+      this.emitAppendFormatParts(lines, strPtr, temps.map(t => ({ val: t.val, ty: t.ty, tk: t.expr.type })), expr.span);
+      for (const t of temps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
+      return [lines, "void", "void"];
+    }
     const [otherLines, otherVal] = this.genExpr(expr.other);
     lines.push(...otherLines);
 
@@ -10274,67 +10319,43 @@ export class Codegen {
     return [lines, s2, "%Vec"];
   }
 
-  // n.toString() / x.toString() — snprintf into heap buffer, return owned %String
+  // n.toString() / x.toString(): an owned %String; ints through @milo.fmt.*, floats through @milo.fmt.f64
   private genNumberToString(expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): Gen {
-    this.needsSnprintf = true;
     this.needsMalloc = true;
     this.hasStringType = true;
 
-    const [vLines, vVal] = this.genExpr(expr.value);
+    const [vLines, vVal, vTy] = this.genExpr(expr.value);
     lines.push(...vLines);
 
     const vt = expr.valueType;
-    let fmtStr: string;
-    let argType: string;
-    let argVal = vVal;
     if (vt.tag === "int") {
-      // widen narrow ints to i32 / i64 for snprintf
-      if (vt.bits < 32) {
-        const widened = this.nextTemp();
-        lines.push(`  ${widened} = ${vt.signed ? "sext" : "zext"} i${vt.bits} ${vVal} to i32`);
-        argVal = widened;
-        argType = "i32";
-        fmtStr = vt.signed ? "%d" : "%u";
-      } else if (vt.bits === 32) {
-        argType = "i32";
-        fmtStr = vt.signed ? "%d" : "%u";
-      } else {
-        argType = "i64";
-        fmtStr = vt.signed ? "%lld" : "%llu";
-      }
-    } else {
-      // Floats don't go through snprintf directly — they need the round-trip
-      // search in @milo.fmt.f64, which already writes an owned buffer we can
-      // hand straight to %String.
-      const { buf, len } = this.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines);
-      const f0 = this.nextTemp();
-      lines.push(`  ${f0} = insertvalue %String undef, ptr ${buf}, 0`);
-      const f1 = this.nextTemp();
-      lines.push(`  ${f1} = insertvalue %String ${f0}, i64 ${len}, 1`);
-      const f2 = this.nextTemp();
-      lines.push(`  ${f2} = insertvalue %String ${f1}, i64 ${F64_BUF}, 2`);
-      return [lines, f2, "%String"];
+      // 24 bytes holds any 64-bit decimal (20 digits with the sign) and the NUL.
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 24)`);
+      this.emitAllocNullCheck(lines, buf, "itos", expr.span);
+      const n = this.emitIntFmt(lines, buf, vVal, vTy, vt);
+      const nul = this.nextTemp();
+      lines.push(`  ${nul} = getelementptr i8, ptr ${buf}, i64 ${n}`);
+      lines.push(`  store i8 0, ptr ${nul}`);
+      const s0 = this.nextTemp();
+      lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+      const s1 = this.nextTemp();
+      lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${n}, 1`);
+      const s2 = this.nextTemp();
+      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 24, 2`);
+      return [lines, s2, "%String"];
     }
-
-    const fmt = this.addString(fmtStr);
-    // size = snprintf(null, 0, fmt, val)
-    const lenRes = this.nextTemp();
-    lines.push(`  ${lenRes} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmt.label}, ${argType} ${argVal})`);
-    const len64 = this.nextTemp();
-    lines.push(`  ${len64} = sext i32 ${lenRes} to i64`);
-    const bufSize = this.nextTemp();
-    lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
-    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}, ${argType} ${argVal})`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
-    return [lines, s2, "%String"];
+    // Floats don't go through snprintf directly: they need the round-trip
+    // search in @milo.fmt.f64, which already writes an owned buffer we can
+    // hand straight to %String.
+    const { buf, len } = this.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines);
+    const f0 = this.nextTemp();
+    lines.push(`  ${f0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const f1 = this.nextTemp();
+    lines.push(`  ${f1} = insertvalue %String ${f0}, i64 ${len}, 1`);
+    const f2 = this.nextTemp();
+    lines.push(`  ${f2} = insertvalue %String ${f1}, i64 ${F64_BUF}, 2`);
+    return [lines, f2, "%String"];
   }
 
   private genBoolToString(expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
@@ -12034,16 +12055,16 @@ export class Codegen {
       return;
     }
     if (tk.tag === "int") {
-      let passVal = val;
-      let passType = llvmTy;
-      if (tk.bits < 32) {
-        const widened = this.nextTemp();
-        lines.push(`  ${widened} = ${tk.signed ? "sext" : "zext"} ${llvmTy} ${val} to i32`);
-        passVal = widened;
-        passType = "i32";
-      }
-      partFmts.push(tk.bits <= 32 ? (tk.signed ? "%d" : "%u") : (tk.signed ? "%lld" : "%llu"));
-      partArgs.push({ val: passVal, type: passType });
+      // Digits into a per-site stack slot, handed to printf as text: the conversion is
+      // @milo.fmt.*, not printf's. One slot per site because a batch can carry several.
+      const slot = `%__ifmt.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${slot} = alloca [20 x i8]`);
+      const n = this.emitIntFmt(lines, slot, val, llvmTy, tk);
+      const n32 = this.nextTemp();
+      lines.push(`  ${n32} = trunc i64 ${n} to i32`);
+      partFmts.push("%.*s");
+      partArgs.push({ val: n32, type: "i32" });
+      partArgs.push({ val: slot, type: "ptr" });
       return;
     }
     if (tk.tag === "float") {
@@ -12100,6 +12121,285 @@ export class Codegen {
   // build the text at runtime into a grown-on-demand buffer instead. The result is
   // a malloc'd NUL-terminated C string, the same contract emitStructDisplay has,
   // so the caller frees it out of `tempBufs` exactly the same way.
+
+  // ── Integer formatting ─────────────────────────────────────────────────────
+  //
+  // `@milo.fmt.u64(dst, v)` / `@milo.fmt.i64(dst, v)` write v's decimal digits at dst
+  // (no NUL) and return how many: at most 20, sign included. Two digits per division
+  // through a 200-byte pair table, written backwards into a stack scratch and copied
+  // forward. snprintf did the same job at ~69 ns a call (format-string parse, locale,
+  // varargs); this is the loop every fast formatter uses. Narrower ints are widened
+  // (sext/zext) by the caller, so the two cover every width.
+  private intFmtFns(): void {
+    if (this.emittedIntFmt) return;
+    this.emittedIntFmt = true;
+    this.needsMemcpy = true;
+    let pairs = "";
+    for (let i = 0; i < 100; i++) pairs += String(i).padStart(2, "0");
+    const table = this.addString(pairs).label;
+    this.helperFnBodies.push([
+      "define internal i64 @milo.fmt.u64(ptr %dst, i64 %v) {",
+      "entry:",
+      "  %tmp = alloca [20 x i8], align 2",
+      "  br label %loop",
+      "loop:",
+      "  %val = phi i64 [ %v, %entry ], [ %q, %body ]",
+      "  %pos = phi i64 [ 20, %entry ], [ %pos2, %body ]",
+      "  %big = icmp uge i64 %val, 100",
+      "  br i1 %big, label %body, label %tail",
+      "body:",
+      "  %q = udiv i64 %val, 100",
+      "  %qm = mul i64 %q, 100",
+      "  %r = sub i64 %val, %qm",
+      "  %ri = shl i64 %r, 1",
+      `  %src = getelementptr i8, ptr ${table}, i64 %ri`,
+      "  %pair = load i16, ptr %src, align 1",
+      "  %pos2 = sub i64 %pos, 2",
+      "  %d = getelementptr i8, ptr %tmp, i64 %pos2",
+      "  store i16 %pair, ptr %d, align 1",
+      "  br label %loop",
+      "tail:",
+      "  %lt10 = icmp ult i64 %val, 10",
+      "  br i1 %lt10, label %one, label %two",
+      "one:",
+      "  %c = trunc i64 %val to i8",
+      "  %ch = add i8 %c, 48",
+      "  %posA = sub i64 %pos, 1",
+      "  %dA = getelementptr i8, ptr %tmp, i64 %posA",
+      "  store i8 %ch, ptr %dA",
+      "  br label %copy",
+      "two:",
+      "  %ti = shl i64 %val, 1",
+      `  %tsrc = getelementptr i8, ptr ${table}, i64 %ti`,
+      "  %tpair = load i16, ptr %tsrc, align 1",
+      "  %posB = sub i64 %pos, 2",
+      "  %dB = getelementptr i8, ptr %tmp, i64 %posB",
+      "  store i16 %tpair, ptr %dB, align 1",
+      "  br label %copy",
+      "copy:",
+      "  %start = phi i64 [ %posA, %one ], [ %posB, %two ]",
+      "  %n = sub i64 20, %start",
+      "  %from = getelementptr i8, ptr %tmp, i64 %start",
+      "  call ptr @memcpy(ptr %dst, ptr %from, i64 %n)",
+      "  ret i64 %n",
+      "}",
+    ]);
+    this.helperFnBodies.push([
+      "define internal i64 @milo.fmt.i64(ptr %dst, i64 %v) {",
+      "entry:",
+      "  %neg = icmp slt i64 %v, 0",
+      "  br i1 %neg, label %minus, label %plus",
+      "plus:",
+      "  %p = call i64 @milo.fmt.u64(ptr %dst, i64 %v)",
+      "  ret i64 %p",
+      "minus:",
+      "  store i8 45, ptr %dst",
+      "  %rest = getelementptr i8, ptr %dst, i64 1",
+      // 0 - MIN wraps back to MIN, whose unsigned reading is exactly |MIN| = 2^63.
+      "  %mag = sub i64 0, %v",
+      "  %m = call i64 @milo.fmt.u64(ptr %rest, i64 %mag)",
+      "  %m1 = add i64 %m, 1",
+      "  ret i64 %m1",
+      "}",
+    ]);
+  }
+
+  // Write int `val` (LLVM type `llvmTy`, Milo type `tk`) at `dst`; returns the i64 byte count.
+  private emitIntFmt(lines: string[], dst: string, val: string, llvmTy: string, tk: TypeKind & { tag: "int" }): string {
+    this.intFmtFns();
+    let wide = val;
+    if (tk.bits < 64) {
+      wide = this.nextTemp();
+      lines.push(`  ${wide} = ${tk.signed ? "sext" : "zext"} ${llvmTy} ${val} to i64`);
+    }
+    const n = this.nextTemp();
+    lines.push(`  ${n} = call i64 @milo.fmt.${tk.signed ? "i64" : "u64"}(ptr ${dst}, i64 ${wide})`);
+    return n;
+  }
+
+  // `@milo.str.reserve(s, extra)`: make the %String at `s` hold len + extra bytes plus
+  // the NUL, growing by doubling (16-byte floor). Returns the data pointer, or null when
+  // the allocation failed (the caller aborts with its own source location). A cap-0
+  // buffer is a static literal this string does not own: it is copied, never handed to
+  // realloc or free.
+  private strReserveFn(): string {
+    if (!this.emittedStrReserve) {
+      this.emittedStrReserve = true;
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      this.hasStringType = true;
+      let grow: string[];
+      if (this.hasRealloc) {
+        this.needsRealloc = true;
+        grow = ["  %r = call ptr @realloc(ptr %old, i64 %newcap)", "  br label %join"];
+      } else {
+        this.needsFree = true;
+        grow = [
+          "  %r = call ptr @malloc(i64 %newcap)",
+          "  %rok = icmp ne ptr %r, null",
+          "  br i1 %rok, label %recp, label %join",
+          "recp:",
+          "  call ptr @memcpy(ptr %r, ptr %old, i64 %len)",
+          "  call void @free(ptr %old)",
+          "  br label %join",
+        ];
+      }
+      const reIn = this.hasRealloc ? `[ %r, %re ]` : `[ %r, %re ], [ %r, %recp ]`;
+      this.helperFnBodies.push([
+        "define internal ptr @milo.str.reserve(ptr %s, i64 %extra) {",
+        "entry:",
+        "  %datap = getelementptr %String, ptr %s, i32 0, i32 0",
+        "  %lenp = getelementptr %String, ptr %s, i32 0, i32 1",
+        "  %capp = getelementptr %String, ptr %s, i32 0, i32 2",
+        "  %len = load i64, ptr %lenp",
+        "  %cap = load i64, ptr %capp",
+        "  %old = load ptr, ptr %datap",
+        "  %need0 = add i64 %len, %extra",
+        "  %need = add i64 %need0, 1",
+        "  %fits = icmp ule i64 %need, %cap",
+        "  br i1 %fits, label %done, label %grow",
+        "grow:",
+        "  %dbl = shl i64 %cap, 1",
+        "  %small = icmp ult i64 %dbl, %need",
+        "  %nc0 = select i1 %small, i64 %need, i64 %dbl",
+        "  %tiny = icmp ult i64 %nc0, 16",
+        "  %newcap = select i1 %tiny, i64 16, i64 %nc0",
+        "  %owned = icmp ugt i64 %cap, 0",
+        "  br i1 %owned, label %re, label %fresh",
+        "re:",
+        ...grow,
+        "fresh:",
+        "  %m = call ptr @malloc(i64 %newcap)",
+        "  %hasold = icmp ne ptr %old, null",
+        "  %mok = icmp ne ptr %m, null",
+        "  %both = and i1 %hasold, %mok",
+        "  br i1 %both, label %cp, label %join",
+        "cp:",
+        "  call ptr @memcpy(ptr %m, ptr %old, i64 %len)",
+        "  br label %join",
+        "join:",
+        `  %nb = phi ptr ${reIn}, [ %m, %fresh ], [ %m, %cp ]`,
+        "  %ok = icmp ne ptr %nb, null",
+        "  br i1 %ok, label %store, label %fail",
+        "fail:",
+        "  ret ptr null",
+        "store:",
+        "  store ptr %nb, ptr %datap",
+        "  store i64 %newcap, ptr %capp",
+        "  ret ptr %nb",
+        "done:",
+        "  ret ptr %old",
+        "}",
+      ]);
+    }
+    return "@milo.str.reserve";
+  }
+
+  // The parts of a `format(...)` (an interpolated string) that can be written straight
+  // into a string buffer, or null when one part needs the snprintf path (a struct,
+  // enum, container or pointer renders through emitDisplayPart).
+  private fastFormatPart(tk: TypeKind): "string" | "int" | "bool" | "float" | null {
+    while (tk.tag === "ref") tk = tk.inner;
+    if (tk.tag === "string" || tk.tag === "int" || tk.tag === "bool" || tk.tag === "float") return tk.tag;
+    return null;
+  }
+
+  // Append already-evaluated format parts to the %String at `strPtr` in one reserve:
+  // no snprintf, no temporary string. Each part's worst-case width is summed first,
+  // then every part is written in place. A string part may point into the receiver's
+  // own buffer (`s.pushStr($"{s}!")`), which the reserve can release, so it is
+  // re-based onto the new buffer the way genStringPushStr does.
+  private emitAppendFormatParts(lines: string[], strPtr: string, parts: { val: string; ty: string; tk: TypeKind }[], span?: Span): void {
+    this.hasStringType = true;
+    this.needsMemcpy = true;
+    this.needsFree = true;
+    type P = { kind: "string" | "int" | "bool" | "float"; ptr?: string; len?: string; val: string; ty: string; tk: TypeKind };
+    const ps: P[] = [];
+    const tempBufs: string[] = [];
+    let total = "0";
+    const add = (n: string) => {
+      if (total === "0") { total = n; return; }
+      const t = this.nextTemp();
+      lines.push(`  ${t} = add i64 ${total}, ${n}`);
+      total = t;
+    };
+    for (const part of parts) {
+      let tk = part.tk;
+      while (tk.tag === "ref") tk = tk.inner;
+      const kind = this.fastFormatPart(tk)!;
+      const p: P = { kind, val: part.val, ty: kind === "int" ? this.llvmType(tk) : part.ty, tk };
+      if (kind === "string") {
+        p.ptr = this.nextTemp();
+        lines.push(`  ${p.ptr} = extractvalue %String ${part.val}, 0`);
+        p.len = this.nextTemp();
+        lines.push(`  ${p.len} = extractvalue %String ${part.val}, 1`);
+        add(p.len);
+      } else if (kind === "bool") {
+        const t = this.addString("true"), f = this.addString("false");
+        p.ptr = this.nextTemp();
+        lines.push(`  ${p.ptr} = select i1 ${part.val}, ptr ${t.label}, ptr ${f.label}`);
+        p.len = this.nextTemp();
+        lines.push(`  ${p.len} = select i1 ${part.val}, i64 4, i64 5`);
+        add(p.len);
+      } else if (kind === "float") {
+        const { buf, len } = this.emitFloatToBuf(part.val, tk.tag === "float" ? tk.bits : 64, lines);
+        p.ptr = buf;
+        p.len = len;
+        tempBufs.push(buf);
+        add(len);
+      } else {
+        add("20");
+      }
+      ps.push(p);
+    }
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+    const oldLen = this.nextTemp();
+    lines.push(`  ${oldLen} = load i64, ptr ${lenPtr}`);
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const oldData = this.nextTemp();
+    lines.push(`  ${oldData} = load ptr, ptr ${dataPtr}`);
+    const oldI = this.nextTemp();
+    lines.push(`  ${oldI} = ptrtoint ptr ${oldData} to i64`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = call ptr ${this.strReserveFn()}(ptr ${strPtr}, i64 ${total})`);
+    this.emitAllocNullCheck(lines, data, "fmtapp", span);
+    let pos = oldLen;
+    for (const p of ps) {
+      const dst = this.nextTemp();
+      lines.push(`  ${dst} = getelementptr i8, ptr ${data}, i64 ${pos}`);
+      let n: string;
+      if (p.kind === "int") {
+        n = this.emitIntFmt(lines, dst, p.val, p.ty, p.tk as TypeKind & { tag: "int" });
+      } else {
+        let src = p.ptr!;
+        if (p.kind === "string") {
+          const ai = this.nextTemp();
+          lines.push(`  ${ai} = ptrtoint ptr ${src} to i64`);
+          const off = this.nextTemp();
+          lines.push(`  ${off} = sub i64 ${ai}, ${oldI}`);
+          const inside = this.nextTemp();
+          lines.push(`  ${inside} = icmp ult i64 ${off}, ${oldLen}`);
+          const moved = this.nextTemp();
+          lines.push(`  ${moved} = getelementptr i8, ptr ${data}, i64 ${off}`);
+          const sel = this.nextTemp();
+          lines.push(`  ${sel} = select i1 ${inside}, ptr ${moved}, ptr ${src}`);
+          src = sel;
+        }
+        lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${src}, i64 ${p.len})`);
+        n = p.len!;
+      }
+      const np = this.nextTemp();
+      lines.push(`  ${np} = add i64 ${pos}, ${n}`);
+      pos = np;
+    }
+    lines.push(`  store i64 ${pos}, ptr ${lenPtr}`);
+    const nul = this.nextTemp();
+    lines.push(`  ${nul} = getelementptr i8, ptr ${data}, i64 ${pos}`);
+    lines.push(`  store i8 0, ptr ${nul}`);
+    for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+  }
 
   // Append `n` bytes of `src` to a buffer held in three caller allocas
   // (ptr, len, cap), growing it geometrically. Emitted once per module.

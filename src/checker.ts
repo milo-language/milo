@@ -12073,6 +12073,18 @@ export class TypeChecker {
         this.setAutoBorrowChecked(expr.args[0], false);
         return this.setType(expr, { tag: "void" });
       }
+      if (expr.method === "pushInt") {
+        if (expr.args.length !== 1) { this.error(`'pushInt' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+        if (!this.isRootMutable(expr.object)) {
+          this.error(`cannot push to immutable string`, sp, `declare with 'var' to make it mutable`);
+        }
+        const argType = this.deref(this.checkExpr(expr.args[0]));
+        if (argType.tag !== "int" && argType.tag !== "unknown") {
+          this.error(`string.pushInt: expected an integer, got ${this.show(argType)}`, sp,
+            `pushInt appends an integer's decimal digits; append other values with pushStr($"{x}")`);
+        }
+        return this.setType(expr, { tag: "void" });
+      }
       if (expr.method === "substr") {
         if (expr.args.length !== 2) { this.error(`'substr' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
         const startType = this.checkExpr(expr.args[0]);

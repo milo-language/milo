@@ -71,6 +71,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "parseF64", sig: "(): Option<f64>" },
     { name: "push", sig: "(c: u8)", grows: true },
     { name: "pushStr", sig: "(s: &string)", grows: true },
+    { name: "pushInt", sig: "(n: i64)", note: "appends n's decimal digits in place; takes any integer width (u64, i8, ...), no temporary string", grows: true },
     { name: "cstr", sig: "(): *u8", note: "NUL-terminated view; the string must outlive the pointer" },
     { name: "clone", sig: "(): string" },
   ],
@@ -226,7 +227,7 @@ export const GROWING_MEMBERS: ReadonlySet<string> = namesWith("grows");
 // member table is consulted; it lives here so checker.ts and the whole-program passes
 // share one copy without importing each other.
 export const MUTATING_COLLECTION_METHODS: ReadonlySet<string> = new Set([
-  "push", "pushStr", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
+  "push", "pushStr", "pushInt", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
   "clear", "truncate", "extend", "retain", "reserve", "modify", "getOrInsertWith",
 ]);
 

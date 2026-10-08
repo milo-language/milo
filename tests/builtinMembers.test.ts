@@ -143,7 +143,7 @@ test("no member is listed twice for one receiver", () => {
 // list and do reallocate.
 test("the retains/grows flags derive exactly the sets the old literal lists meant", () => {
   expect([...RETAINING_MEMBERS].sort()).toEqual(["extend", "insert", "push"]);
-  expect([...GROWING_MEMBERS].sort()).toEqual(["extend", "insert", "push", "pushStr", "reserve"]);
+  expect([...GROWING_MEMBERS].sort()).toEqual(["extend", "insert", "push", "pushInt", "pushStr", "reserve"]);
   // A flagged row is a real member: a name flagged on no row would be a phantom again.
   for (const name of [...RETAINING_MEMBERS, ...GROWING_MEMBERS]) {
     expect(RECEIVERS.some(r => BUILTIN_MEMBERS[r].some(m => m.name === name))).toBe(true);
