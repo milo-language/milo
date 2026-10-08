@@ -8085,6 +8085,8 @@ export class Codegen {
     return [lines, tmp];
   }
 
+  private vecInitialCap(elemSize: number): number { return Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize)))); }
+
   private genVecPush(expr: HIRExpr & { kind: "VecPush" }, lines: string[]): Gen {
     this.hasVecType = true;
     this.needsMalloc = true;
@@ -8126,7 +8128,7 @@ export class Codegen {
     // costs 64 bytes for a Vec<i64> but 1 KB for a Vec of 128-byte structs, and
     // an object with one property paid that full kilobyte (milojs: ~1 KB per
     // property, measured). Cap the first allocation near 64 bytes instead.
-    const initialCap = Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize))));
+    const initialCap = this.vecInitialCap(elemSize);
     lines.push(`${growLabel}:`);
     const isZero = this.nextTemp();
     lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
@@ -8134,24 +8136,14 @@ export class Codegen {
     const doubled = this.nextTemp();
     lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
     lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${initialCap}, i64 ${doubled}`);
-    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow", expr.span);
-
-    // copy old data if any
     const dataPtr = this.nextTemp();
     lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
     const oldBuf = this.nextTemp();
     lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const hasData = this.nextTemp();
-    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-    const copyLabel = this.nextLabel("vec.copy");
+    const keepBytes = this.nextTemp();
+    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow", expr.span);
     const storeLabel = this.nextLabel("vec.store");
-    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
-
-    lines.push(`${copyLabel}:`);
-    const copyBytes = this.nextTemp();
-    lines.push(`  ${copyBytes} = mul i64 ${len}, ${elemSize}`);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${copyBytes})`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
     lines.push(`  br label %${storeLabel}`);
 
     // store new buf, cap
@@ -8972,22 +8964,15 @@ export class Codegen {
     const doubled = this.nextTemp();
     lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
     const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${isZero}, i64 8, i64 ${doubled}`);
-    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, elemSize, "vecgrow2", expr.span);
+    lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${this.vecInitialCap(elemSize)}, i64 ${doubled}`);
     const dataPtr = this.nextTemp();
     lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
     const oldBuf = this.nextTemp();
     lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const hasData = this.nextTemp();
-    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-    const copyLabel = this.nextLabel("vec.insert.copy");
+    const keepBytes = this.nextTemp();
+    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow2", expr.span);
     const storeLabel = this.nextLabel("vec.insert.store");
-    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
-    lines.push(`${copyLabel}:`);
-    const copyBytes = this.nextTemp();
-    lines.push(`  ${copyBytes} = mul i64 ${len}, ${elemSize}`);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${copyBytes})`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
     lines.push(`  br label %${storeLabel}`);
     lines.push(`${storeLabel}:`);
     lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
@@ -9439,37 +9424,44 @@ export class Codegen {
   // holds `call ptr @malloc` to this function.
   private emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string } {
     this.needsMalloc = true;
-    const bothConst = /^\d+$/.test(String(count)) && /^\d+$/.test(String(elemSize));
-    let bytes: string;
-    if (bothConst) {
-      // A product of two literals is folded here; it cannot overflow at runtime.
-      bytes = String(BigInt(String(count)) * BigInt(String(elemSize)));
-    } else if (String(elemSize) === "1") {
-      bytes = String(count);
-    } else {
-      this.needsOverflowCheck = true;
-      const intrinsic = "@llvm.umul.with.overflow.i64";
-      this.usedOverflowIntrinsics.add(`declare {i64, i1} ${intrinsic}(i64, i64)`);
-      const res = this.nextTemp();
-      lines.push(`  ${res} = call {i64, i1} ${intrinsic}(i64 ${count}, i64 ${elemSize})`);
-      const prod = this.nextTemp();
-      lines.push(`  ${prod} = extractvalue {i64, i1} ${res}, 0`);
-      const ovf = this.nextTemp();
-      lines.push(`  ${ovf} = extractvalue {i64, i1} ${res}, 1`);
-      const ok = this.nextLabel(`${tag}.szok`);
-      const bad = this.nextLabel(`${tag}.szovf`);
-      lines.push(`  br i1 ${ovf}, label %${bad}, label %${ok}`);
-      lines.push(`${bad}:`);
-      const fp = this.emitCheckFilePtr(lines, span);
-      lines.push(`  call void @__milo_overflow_fail(ptr ${fp}, i32 ${span?.line ?? 0})`);
-      lines.push(`  unreachable`);
-      lines.push(`${ok}:`);
-      bytes = prod;
-    }
+    const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
     const buf = this.nextTemp();
     lines.push(`  ${buf} = call ptr @malloc(i64 ${bytes})`);
-    // A failed malloc returned null and the memcpy that follows every one of these sites
-    // wrote through it. Abort at the allocation instead of faulting with no explanation.
+    this.emitAllocNullCheck(lines, buf, tag, span);
+    return { buf, bytes };
+  }
+
+  // count * elemSize, aborting on overflow rather than allocating a wrapped size.
+  private emitByteCount(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): string {
+    const bothConst = /^\d+$/.test(String(count)) && /^\d+$/.test(String(elemSize));
+    if (bothConst) {
+      // A product of two literals is folded here; it cannot overflow at runtime.
+      return String(BigInt(String(count)) * BigInt(String(elemSize)));
+    }
+    if (String(elemSize) === "1") return String(count);
+    this.needsOverflowCheck = true;
+    const intrinsic = "@llvm.umul.with.overflow.i64";
+    this.usedOverflowIntrinsics.add(`declare {i64, i1} ${intrinsic}(i64, i64)`);
+    const res = this.nextTemp();
+    lines.push(`  ${res} = call {i64, i1} ${intrinsic}(i64 ${count}, i64 ${elemSize})`);
+    const prod = this.nextTemp();
+    lines.push(`  ${prod} = extractvalue {i64, i1} ${res}, 0`);
+    const ovf = this.nextTemp();
+    lines.push(`  ${ovf} = extractvalue {i64, i1} ${res}, 1`);
+    const ok = this.nextLabel(`${tag}.szok`);
+    const bad = this.nextLabel(`${tag}.szovf`);
+    lines.push(`  br i1 ${ovf}, label %${bad}, label %${ok}`);
+    lines.push(`${bad}:`);
+    const fp = this.emitCheckFilePtr(lines, span);
+    lines.push(`  call void @__milo_overflow_fail(ptr ${fp}, i32 ${span?.line ?? 0})`);
+    lines.push(`  unreachable`);
+    lines.push(`${ok}:`);
+    return prod;
+  }
+
+  // A failed malloc returned null and the memcpy that follows every one of these sites
+  // wrote through it. Abort at the allocation instead of faulting with no explanation.
+  private emitAllocNullCheck(lines: string[], buf: string, tag: string, span?: Span) {
     this.needsOverflowCheck = true;
     const got = this.nextTemp();
     lines.push(`  ${got} = icmp ne ptr ${buf}, null`);
@@ -9481,7 +9473,84 @@ export class Codegen {
     lines.push(`  call void @__milo_overflow_fail(ptr ${fp2}, i32 ${span?.line ?? 0})`);
     lines.push(`  unreachable`);
     lines.push(`${aok}:`);
-    return { buf, bytes };
+  }
+
+  // Cortex-M's bump heap (tools/cortex-m/startup.c) has no block headers, so it cannot
+  // implement realloc; every other target's allocator has one (wasm's runtime.c, libc,
+  // std/replay's heap).
+  private get hasRealloc(): boolean { return this.target.os !== "none"; }
+
+  // Grow a heap buffer to `count * elemSize` bytes, keeping its first `keepBytes`, and
+  // return the new pointer (the old one is dead afterwards). realloc, so a large buffer
+  // grows in place or by page remap: peak memory stays near the new size instead of
+  // old + new, and nothing is copied when the block can extend. `owned`, when given, is
+  // an i1 that is false for a buffer this code does not own (a string's static literal,
+  // cap 0): that one is copied into a fresh block and never handed to realloc/free.
+  // A null `oldBuf` is fine on both paths (realloc(NULL, n) is malloc).
+  private emitGrowBytes(lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span, owned?: string): string {
+    if (!this.hasRealloc || elemSize === 0) {
+      // Zero-size elements stay on malloc: realloc(p, 0) may free p and return null.
+      this.needsFree = true;
+      this.needsMemcpy = true;
+      const { buf } = this.emitAllocBytes(lines, count, elemSize, tag, span);
+      const hasData = this.nextTemp();
+      lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
+      const copyL = this.nextLabel(`${tag}.copy`);
+      const freeL = this.nextLabel(`${tag}.free`);
+      const doneL = this.nextLabel(`${tag}.copied`);
+      lines.push(`  br i1 ${hasData}, label %${copyL}, label %${doneL}`);
+      lines.push(`${copyL}:`);
+      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${oldBuf}, i64 ${keepBytes})`);
+      if (owned) lines.push(`  br i1 ${owned}, label %${freeL}, label %${doneL}`);
+      else lines.push(`  br label %${freeL}`);
+      lines.push(`${freeL}:`);
+      lines.push(`  call void @free(ptr ${oldBuf})`);
+      lines.push(`  br label %${doneL}`);
+      lines.push(`${doneL}:`);
+      return buf;
+    }
+    this.needsRealloc = true;
+    const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
+    if (!owned) {
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
+      this.emitAllocNullCheck(lines, buf, tag, span);
+      return buf;
+    }
+    this.needsMalloc = true;
+    this.needsMemcpy = true;
+    const reL = this.nextLabel(`${tag}.realloc`);
+    const freshL = this.nextLabel(`${tag}.fresh`);
+    const joinL = this.nextLabel(`${tag}.grown`);
+    lines.push(`  br i1 ${owned}, label %${reL}, label %${freshL}`);
+    lines.push(`${reL}:`);
+    const re = this.nextTemp();
+    lines.push(`  ${re} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
+    lines.push(`  br label %${joinL}`);
+    lines.push(`${freshL}:`);
+    const fresh = this.nextTemp();
+    lines.push(`  ${fresh} = call ptr @malloc(i64 ${bytes})`);
+    // A null fresh block is caught after the join; the copy is skipped for it and for a
+    // null source.
+    const both = this.nextTemp();
+    const srcOk = this.nextTemp();
+    const dstOk = this.nextTemp();
+    lines.push(`  ${srcOk} = icmp ne ptr ${oldBuf}, null`);
+    lines.push(`  ${dstOk} = icmp ne ptr ${fresh}, null`);
+    lines.push(`  ${both} = and i1 ${srcOk}, ${dstOk}`);
+    const cpL = this.nextLabel(`${tag}.cp`);
+    const freshDoneL = this.nextLabel(`${tag}.freshdone`);
+    lines.push(`  br i1 ${both}, label %${cpL}, label %${freshDoneL}`);
+    lines.push(`${cpL}:`);
+    lines.push(`  call ptr @memcpy(ptr ${fresh}, ptr ${oldBuf}, i64 ${keepBytes})`);
+    lines.push(`  br label %${freshDoneL}`);
+    lines.push(`${freshDoneL}:`);
+    lines.push(`  br label %${joinL}`);
+    lines.push(`${joinL}:`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = phi ptr [ ${re}, %${reL} ], [ ${fresh}, %${freshDoneL} ]`);
+    this.emitAllocNullCheck(lines, buf, tag, span);
+    return buf;
   }
 
   // Grow `vecPtr`'s buffer so it holds at least `needCap` elements. Leaves the
@@ -9511,25 +9580,13 @@ export class Codegen {
     lines.push(`  ${useDbl} = icmp ugt i64 ${dbl}, ${needCap}`);
     const newCap = this.nextTemp();
     lines.push(`  ${newCap} = select i1 ${useDbl}, i64 ${dbl}, i64 ${needCap}`);
-    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, elemSize, tag, span);
     const oldBuf = this.nextTemp();
     lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
     const len = this.nextTemp();
     lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const copyBytes = this.nextTemp();
-    lines.push(`  ${copyBytes} = mul i64 ${len}, ${elemSize}`);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${copyBytes})`);
-    // A zero-cap Vec has a null buffer; free(null) is defined, but the guard keeps
-    // the "buffer or null" invariant push relies on visible at the call site.
-    const hadBuf = this.nextTemp();
-    lines.push(`  ${hadBuf} = icmp ne ptr ${oldBuf}, null`);
-    const freeLabel = this.nextLabel(`${tag}.free`);
-    const setLabel = this.nextLabel(`${tag}.set`);
-    lines.push(`  br i1 ${hadBuf}, label %${freeLabel}, label %${setLabel}`);
-    lines.push(`${freeLabel}:`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
-    lines.push(`  br label %${setLabel}`);
-    lines.push(`${setLabel}:`);
+    const keepBytes = this.nextTemp();
+    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, tag, span);
     lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
     lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
     lines.push(`  br label %${doneLabel}`);
@@ -9771,30 +9828,15 @@ export class Codegen {
     lines.push(`  ${capTooSmall} = icmp ult i64 ${baseCap}, ${wantCap}`);
     const newCap = this.nextTemp();
     lines.push(`  ${newCap} = select i1 ${capTooSmall}, i64 ${wantCap}, i64 ${baseCap}`);
-    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, 1, "strgrow", undefined);
-
     const dataPtr = this.nextTemp();
     lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
     const oldBuf = this.nextTemp();
     lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const hasData = this.nextTemp();
-    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-    const copyLabel = this.nextLabel("str.copy");
+    // cap == 0 means a static/unowned buffer: copied, never reallocated or freed.
+    const owned = this.nextTemp();
+    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
+    const newBuf = this.emitGrowBytes(lines, oldBuf, len, newCap, 1, "strgrow", undefined, owned);
     const storeLabel = this.nextLabel("str.store");
-    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
-
-    lines.push(`${copyLabel}:`);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${len})`);
-    // only free if cap > 0 (cap == 0 means static/unowned buffer)
-    const canFree = this.nextTemp();
-    lines.push(`  ${canFree} = icmp ugt i64 ${cap}, 0`);
-    const freeLabel = this.nextLabel("str.free");
-    const skipFreeLabel = this.nextLabel("str.skipfree");
-    lines.push(`  br i1 ${canFree}, label %${freeLabel}, label %${skipFreeLabel}`);
-    lines.push(`${freeLabel}:`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
-    lines.push(`  br label %${skipFreeLabel}`);
-    lines.push(`${skipFreeLabel}:`);
     lines.push(`  br label %${storeLabel}`);
 
     lines.push(`${storeLabel}:`);
@@ -9876,29 +9918,28 @@ export class Codegen {
     lines.push(`  ${doubleFits} = icmp ugt i64 ${doubled}, ${need}`);
     const newCap = this.nextTemp();
     lines.push(`  ${newCap} = select i1 ${doubleFits}, i64 ${doubled}, i64 ${need}`);
-    const { buf: newBuf } = this.emitAllocBytes(lines, newCap, 1, "strrsv", undefined);
-    const hasData = this.nextTemp();
-    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-    const copyLabel = this.nextLabel("strs.copy");
-    const appendLabel = this.nextLabel("strs.append");
-    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${appendLabel}`);
-    lines.push(`${copyLabel}:`);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${len})`);
-    lines.push(`  br label %${appendLabel}`);
-    lines.push(`${appendLabel}:`);
-    // Append BEFORE freeing the old buffer: `s.pushStr(s)` makes `addPtr` alias
-    // it, and freeing first would read released memory.
+    // cap == 0 means a static/unowned buffer: copied, never reallocated or freed.
+    const owned = this.nextTemp();
+    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
+    // `s.pushStr(s)` (or a view of s) makes `addPtr` point into the old buffer, which
+    // the grow may release; its bytes [0, len) survive at the same offset in the new one.
+    const oldI = this.nextTemp();
+    lines.push(`  ${oldI} = ptrtoint ptr ${oldBuf} to i64`);
+    const addI = this.nextTemp();
+    lines.push(`  ${addI} = ptrtoint ptr ${addPtr} to i64`);
+    const off = this.nextTemp();
+    lines.push(`  ${off} = sub i64 ${addI}, ${oldI}`);
+    const inside = this.nextTemp();
+    lines.push(`  ${inside} = icmp ult i64 ${off}, ${len}`);
+    const newBuf = this.emitGrowBytes(lines, oldBuf, len, newCap, 1, "strrsv", undefined, owned);
+    const remapped = this.nextTemp();
+    lines.push(`  ${remapped} = getelementptr i8, ptr ${newBuf}, i64 ${off}`);
+    const src = this.nextTemp();
+    lines.push(`  ${src} = select i1 ${inside}, ptr ${remapped}, ptr ${addPtr}`);
     const growDst = this.nextTemp();
     lines.push(`  ${growDst} = getelementptr i8, ptr ${newBuf}, i64 ${len}`);
-    lines.push(`  call ptr @memcpy(ptr ${growDst}, ptr ${addPtr}, i64 ${addLen})`);
-    // cap == 0 marks a static/unowned buffer — never free those
-    const canFree = this.nextTemp();
-    lines.push(`  ${canFree} = icmp ugt i64 ${cap}, 0`);
-    const freeLabel = this.nextLabel("strs.free");
+    lines.push(`  call ptr @memcpy(ptr ${growDst}, ptr ${src}, i64 ${addLen})`);
     const storeLabel = this.nextLabel("strs.store");
-    lines.push(`  br i1 ${canFree}, label %${freeLabel}, label %${storeLabel}`);
-    lines.push(`${freeLabel}:`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
     lines.push(`  br label %${storeLabel}`);
     lines.push(`${storeLabel}:`);
     lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);

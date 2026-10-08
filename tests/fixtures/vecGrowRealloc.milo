@@ -1,0 +1,140 @@
+// @expect: 100000 4999950000
+// @expect: 70000 255
+// @expect: 3000 4498500 3000
+// @expect: 2000 abc1999
+// @expect: 300 44850
+// @expect: 1500 1500
+// @expect: 4100
+// @expect: 26 hello world, hello world,
+// @expect: 256 true
+// @expect: 0 0
+
+// Every growth path (push, insert, extend, reserve, string push/pushStr) goes through
+// realloc: the contents survive each regrow, owned elements are neither dropped nor
+// duplicated by it, and a string whose buffer is a static literal is copied rather
+// than handed to realloc.
+pub struct Tracked {
+    id: i64,
+}
+
+impl Drop for Tracked {
+    fn drop(self: &mut Self): void {
+        gDrops = gDrops + 1
+    }
+}
+
+pub var gDrops: i64 = 0
+
+fn ints() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..100000 {
+        v.push(i)
+    }
+    var s: i64 = 0
+    for x in v {
+        s += x
+    }
+    print($"{v.len} {s}")
+}
+
+fn bytes() {
+    var v: Vec<u8> = Vec.new()
+    for i in 0..70000 {
+        v.push((i % 256) as u8)
+    }
+    print($"{v.len} {v[255]}")
+}
+
+fn dropped() {
+    gDrops = 0
+    var v: Vec<Tracked> = Vec.new()
+    for i in 0..1000 {
+        v.push(Tracked { id: i })
+    }
+    // insert at the front through every regrow
+    for i in 1000..2000 {
+        v.insert(0, Tracked { id: i })
+    }
+    var w: Vec<Tracked> = Vec.new()
+    for i in 2000..3000 {
+        w.push(Tracked { id: i })
+    }
+    v.extend(w)
+    var s: i64 = 0
+    for t in v {
+        s += t.id
+    }
+    let n = v.len
+    let before = gDrops
+    v.clear()
+    print($"{n} {s} {gDrops - before}")
+}
+
+fn strings() {
+    var v: Vec<string> = Vec.new()
+    for i in 0..2000 {
+        v.push($"abc{i}")
+    }
+    print($"{v.len} {v[1999]}")
+}
+
+fn nested() {
+    var v: Vec<Vec<i64>> = Vec.new()
+    for i in 0..300 {
+        var inner: Vec<i64> = Vec.new()
+        inner.push(i)
+        v.push(inner)
+    }
+    var s: i64 = 0
+    for inner in v {
+        s += inner[0]
+    }
+    print($"{v.len} {s}")
+}
+
+fn reserved() {
+    var v: Vec<i64> = Vec.new()
+    v.reserve(1500)
+    let c = v.capacity()
+    for i in 0..1500 {
+        v.push(i)
+    }
+    // no regrow happened past an exact reserve
+    print($"{v.len} {c}")
+}
+
+fn strPush() {
+    // a static literal (cap 0) grown by push is copied, never realloc'd
+    var s = "a long static literal that is over sixteen bytes"
+    for i in 0..4052 {
+        s.push(120)
+    }
+    print(s.len)
+}
+
+fn strPushSelf() {
+    var s = "hello world, "
+    s.pushStr(s.clone())
+    // owned (cap > 0) so each self-append regrows through realloc while the
+    // source still points into the old block
+    var t = "0123456789abcdef0123456789abcdef".clone()
+    for _ in 0..3 {
+        t.pushStr(t)
+    }
+    print($"{s.len} {s}")
+    let tail = t.endsWith("cdef0123456789abcdef")
+    print($"{t.len} {tail}")
+}
+
+fn main(): i32 {
+    ints()
+    bytes()
+    dropped()
+    strings()
+    nested()
+    reserved()
+    strPush()
+    strPushSelf()
+    print($"{gDrops - 3000} 0")
+    return 0
+}
