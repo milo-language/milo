@@ -1,0 +1,14 @@
+// @error: 'bad' cannot return a slice of 'tmp'
+// @error-at: 11:16
+// @note: 9:9 'tmp' is a local, freed when 'bad' returns
+// A method may return a slice, but only of its receiver: the caret is on the returned
+// slice and the note points at the local it would dangle into.
+struct Buf { data: Vec<i64> }
+impl Buf {
+    fn bad(self: &Self): &[i64] {
+        var tmp: Vec<i64> = Vec.new()
+        tmp.push(1)
+        return tmp[0..1]
+    }
+}
+fn main(): void { }

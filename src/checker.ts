@@ -5310,7 +5310,7 @@ export class TypeChecker {
     this.warn("unowned-pointer-copy",
       `'${s.name}' is @copy and holds a raw pointer ('${pointerField}'): a copy of it shares whatever the pointer addresses`,
       s.span,
-      `this is what '@copy' asks for. Confirm that '${s.name}' does not own the pointee (a C-owned record, a view into a buffer another value owns); if it does, remove '@copy' so the struct is move-tracked`);
+      `this is what '@copy' asks for. Confirm that '${s.name}' does not own the pointee (a C-owned record, a pointer into a buffer another value owns); if it does, remove '@copy' so the struct is move-tracked`);
   }
 
   // `@copyOnly` constrains type parameters, so on a declaration without any it would be
@@ -6210,8 +6210,8 @@ export class TypeChecker {
       // No binding to freeze: `makeRing().items()` views storage owned by a temporary.
       // That only survives today because temporaries are never dropped (they leak) —
       // it becomes a use-after-free the moment they get drop glue.
-      this.error(`cannot take a view of a temporary`, sp,
-        `the '&[T]' would outlive the value it points into — bind the receiver first ('let r = makeRing()') and take the view from that`);
+      this.error(`cannot take a slice of a temporary`, sp,
+        `the '&[T]' would outlive the value it points into: bind the receiver first ('let r = makeRing()') and take the slice from that`);
       return;
     }
     const info = this.lookup(rootName);
@@ -6337,40 +6337,145 @@ export class TypeChecker {
     if (fields !== null) this.viewReturnFields.set(fn.name, fields);
   }
 
-  private checkViewProvenance(value: Expr, sp?: Span) {
-    // Every place the returned view could point into must be the receiver's own
-    // storage — a fork returns one of several, and one bad arm is enough to dangle.
+  // The owned type a rejected reference return should become: what `.clone()` on the
+  // returned slice or reference produces.
+  private ownedReturnType(ret: TypeKind): string {
+    if (ret.tag !== "ref") return this.show(ret);
+    const inner = ret.inner;
+    if (inner.tag === "array" && inner.size === null) return `Vec<${this.show(inner.element)}>`;
+    return this.show(inner);
+  }
+
+  // What a returned reference is called in a diagnostic, one word per concept across the
+  // checker: "slice" for a range of a string/Vec/array, "reference" for a `&T` value
+  // passed through, "borrow" for anything else that reaches into storage.
+  private returnedRefKind(value: Expr, ret: TypeKind): string {
+    if (value.kind === "IndexAccess" && value.index.kind === "RangeExpr") return "slice";
+    if (value.kind === "MethodCall" && this.isViewReturn(ret)) return "slice";
+    if (value.kind === "Ident" || value.kind === "FieldAccess") return "reference";
+    return "borrow";
+  }
+
+  // Source spelling of a short returned expression, for a fix-it hint. Only shapes that
+  // print back unambiguously; anything else is null and the hint stays generic.
+  private shortExprText(e: Expr): string | null {
+    const atom = (x: Expr): string | null =>
+      x.kind === "Ident" ? x.name : x.kind === "IntLit" ? String(x.value) : null;
+    const go = (x: Expr): string | null => {
+      switch (x.kind) {
+        case "Ident": case "IntLit": return atom(x);
+        case "FieldAccess": { const o = go(x.object); return o && `${o}.${x.field}`; }
+        case "BinOp": { const l = atom(x.left), r = atom(x.right); return l && r && `${l} ${x.op} ${r}`; }
+        case "IndexAccess": {
+          const o = go(x.object);
+          if (!o) return null;
+          if (x.index.kind === "RangeExpr") {
+            const a = go(x.index.start), b = go(x.index.end);
+            return a && b && `${o}[${a}..${b}]`;
+          }
+          const i = go(x.index);
+          return i && `${o}[${i}]`;
+        }
+        case "MethodCall": {
+          const o = go(x.object);
+          const args = x.args.map(go);
+          if (!o || !args.every(a => a !== null)) return null;
+          // The parser desugars `v[a..b]` to `.slice(a, b)`; print it back the way it was written.
+          return x.method === "slice" && args.length === 2 ? `${o}[${args[0]}..${args[1]}]` : `${o}.${x.method}(${args.join(", ")})`;
+        }
+        default: return null;
+      }
+    };
+    const s = go(e);
+    return s && s.length <= 40 ? s : null;
+  }
+
+  // Why a reference into `root` cannot outlive the function, judged from what `root` is:
+  // a local or by-value parameter is dropped at the return; a `&` parameter or a global
+  // outlives the call, but nothing at the call site keeps it alive and unmoved while the
+  // result is in use (only a method's receiver is frozen there).
+  private danglingRoot(root: string, fn: Function): { what: "local" | "param" | "refParam" | "global"; span?: Span } {
+    const info = this.lookup(root);
+    const param = fn.params.find(p => p.name === root);
+    // Span identity, not the name: a `let` may shadow the parameter.
+    if (param && info && info.span === param.span) return { what: info.type.tag === "ref" ? "refParam" : "param", span: param.span };
+    if (info?.isGlobal) return { what: "global", span: info.span };
+    return { what: "local", span: info?.span };
+  }
+
+  private checkViewProvenance(value: Expr, sp: Span | undefined, ret: TypeKind) {
+    // Every place the returned slice could point into must be the receiver's own
+    // storage: a fork returns one of several, and one bad arm is enough to dangle.
     const places = this.placesOf(value);
     const offending = places.find(p => p.tag === "path" && p.root !== "self");
-    if (!offending || offending.tag !== "path") return; // all self, or no named place
-    // A free function returning a view already got "cannot return a reference" on its
-    // signature; this return is the same mistake, so it is a note on that error.
-    const sigError = this.currentFnDecl ? this.refReturnDiags.get(this.currentFnDecl) : undefined;
+    if (!offending || offending.tag !== "path" || !this.currentFnDecl) return; // all self, or no named place
+    const fn = this.currentFnDecl;
+    const name = this.shownFnName(fn);
+    const root = offending.root;
+    const kind = this.returnedRefKind(value, ret);
+    const isMethod = this.hasSelfReceiver(fn);
+    const { what, span: rootSpan } = this.danglingRoot(root, fn);
+    const text = this.shortExprText(value);
+    const sig = `fn ${name}(${fn.params.length > 0 ? "..." : ""}): ${this.ownedReturnType(ret)}`;
+    const owned = text ? `return an owned copy ('${sig}' with '${text}.clone()')` : `return an owned copy ('${sig}', cloning the returned value)`;
+    const inCaller = kind === "slice" ? "take the slice in the caller" : "borrow it in the caller";
+    // The receiver rule is only news to someone writing a method or reaching for a
+    // parameter; for a slice of a local the fix is just the owned copy.
+    const receiverRule = isMethod
+      ? `; a method may only return a ${kind} of its own receiver ('self...')`
+      : (what === "param" || what === "refParam") && this.isViewReturn(ret) ? `, or make '${name}' a method and return a slice of 'self'` : "";
+    const hint = `${owned}, or ${inCaller}${receiverRule}`;
+
+    // A free function's reference return already got "cannot return a reference" on its
+    // signature; this return is the same mistake, so it is a note on that error, and the
+    // first such note replaces the signature's generic hint with a fix for this expression.
+    const sigError = this.refReturnDiags.get(fn);
     if (sigError) {
-      (sigError.notes ??= []).push({ message: `this returns a view of '${offending.root}'`, span: value.span ?? sp });
+      const outlives = isMethod
+        ? `but a method may only return a slice ('&string' or '&[T]') of its own receiver`
+        : `but a free function cannot return a reference at all: only a method can, and only a slice of its own receiver`;
+      const reason =
+        what === "local" ? `the returned ${kind} points into '${root}', which is freed when '${name}' returns`
+        : what === "param" ? `the returned ${kind} points into '${root}', a parameter dropped when '${name}' returns`
+        : `the returned ${kind} borrows from ${what === "global" ? "global" : "parameter"} '${root}', ${outlives}`;
+      if (!sigError.notes?.length) sigError.hint = hint;
+      (sigError.notes ??= []).push({ message: reason, span: value.span ?? sp });
       return;
     }
-    this.error(`cannot return a view of '${offending.root}'`, value.span ?? sp,
-      `a returned view may only point into the receiver's own storage ('self...') — the call site freezes the receiver, so any other source could be moved or reallocated while the view is live`);
+    const reason =
+      what === "local" ? `'${root}' is a local, freed when '${name}' returns`
+      : what === "param" ? `'${root}' is a parameter dropped when '${name}' returns`
+      : `the call site freezes only the receiver, so ${what === "global" ? "global" : "parameter"} '${root}' could be freed or reallocated while the ${kind} is alive`;
+    // No span when the root is a method parameter: impl registration copies params
+    // without one, and pointing the note back at the return would only repeat the caret.
+    this.errorWithNotes(`'${name}' cannot return a ${kind} of '${root}'`, value.span ?? sp, hint,
+      [{ message: reason, span: rootSpan }]);
+  }
+
+  // A method's Function carries its mangled name (`Buf$items`); diagnostics show the source name.
+  private shownFnName(fn: Function): string {
+    return fn.sourceName ?? fn.name.slice(fn.name.lastIndexOf("$") + 1);
   }
 
   private errorIfRefReturn(fn: Function, ret: TypeKind) {
     if (ret.tag !== "ref" && this.nestedRef(ret) && !this.refReturnReported.has(fn)) {
-      // `Option<&[T]>` hands the view back inside storage, where it outlives the freeze
-      // the call site took for it — the second-class rule has to hold through a payload.
+      // `Option<&[T]>` hands the slice back inside storage, where it outlives the freeze
+      // the call site took for it: the second-class rule has to hold through a payload.
       this.refReturnReported.add(fn);
       const outer = ret.tag === "enum" ? (this.enums.get(ret.name)?.baseName ?? ret.name) : typeName(ret);
-      this.error(`function '${fn.name}': cannot return a reference stored inside '${outer}'`, fn.retType.span ?? fn.span,
-        `references are second-class — return an owned value, or return the view directly and let the caller match on emptiness another way`);
+      this.error(`'${this.shownFnName(fn)}' cannot return a reference stored inside '${outer}'`, fn.retType.span ?? fn.span,
+        `references are second-class: return an owned value, or return the reference directly and let the caller match on emptiness another way`);
       return;
     }
     if (ret.tag !== "ref" || this.refReturnReported.has(fn)) return;
     if (this.isViewReturn(ret) && this.hasSelfReceiver(fn)) return;
     this.refReturnReported.add(fn);
-    this.refReturnDiags.set(fn, this.errorWithNotes(`function '${fn.name}': cannot return a reference`, fn.retType.span ?? fn.span,
+    // Generic until a return statement is checked: checkViewProvenance swaps in a fix for
+    // the actual returned expression.
+    this.refReturnDiags.set(fn, this.errorWithNotes(`'${this.shownFnName(fn)}' cannot return a reference`, fn.retType.span ?? fn.span,
       this.isViewReturn(ret)
-        ? `only a method can return a '${this.show(ret)}' view, and only of its own receiver's storage — take the slice at the call site ('v[a..b]') or return an owned value`
-        : `references are second-class — return an owned value instead`, []));
+        ? `return an owned value ('${this.ownedReturnType(ret)}'), or take the slice in the caller; only a method can return a slice, and only of its own receiver`
+        : `references are second-class: return an owned value ('${this.ownedReturnType(ret)}') instead`, []));
   }
 
   private checkFunction(fn: Function) {
@@ -6745,7 +6850,12 @@ export class TypeChecker {
           // A returned closure that captures by reference is rejected, not promoted —
           // see checkEscapingClosures for why the promotion that used to live here was
           // itself unsound.
-          if (this.isViewReturn(fnRetType)) this.checkViewProvenance(stmt.value, sp);
+          // A slice return may be legal (a method's slice of self), so each one is checked;
+          // any other reference return was already rejected at the signature, and checking
+          // the return only attaches the reason to that error.
+          if (this.isViewReturn(fnRetType) || (fnRetType.tag === "ref" && this.currentFnDecl !== null && this.refReturnDiags.has(this.currentFnDecl))) {
+            this.checkViewProvenance(stmt.value, sp, fnRetType);
+          }
           this.errorIfReturnedPointerDangles(stmt.value, sp);
           // A `return v[i]` allocates exactly like `let m = v[i]` does, and was invisible
           // even with the lint on: the check only ran at a binding. `return b.v[0]` on a
@@ -7920,7 +8030,7 @@ export class TypeChecker {
           // naming only closures misdiagnosed `let s = b.view(); consume(b)`.
           this.reportBorrowed(`cannot move '${expr.name}'`, expr.name, this.conflictingBorrow(info, null), expr.span,
             `cannot move '${expr.name}' because it is borrowed`,
-            `a closure capture, or a live view or loop over this variable, still points into it — moving it would leave that borrow dangling`);
+            `a closure capture, or a live slice, reference or loop over this variable, still points into it: moving it would leave that borrow dangling`);
           return;
         }
         // Partial move: a field already left, so the struct sitting here is no longer
@@ -8450,7 +8560,7 @@ export class TypeChecker {
           // Non-literal bounds stay permissive — that split needs the prover.
           if (ra.lo < rb.hi && rb.lo < ra.hi) {
             this.error(`'${a.name}' is borrowed mutably twice in the same call`, sp,
-              `the ranges ${ra.lo}..${ra.hi} and ${rb.lo}..${rb.hi} overlap, so both arguments are '&mut' views of the same elements — make the windows disjoint or split the call into two statements`);
+              `the ranges ${ra.lo}..${ra.hi} and ${rb.lo}..${rb.hi} overlap, so both arguments are '&mut' slices of the same elements: make the windows disjoint or split the call into two statements`);
           }
           continue;
         }
@@ -8666,7 +8776,7 @@ export class TypeChecker {
     const writable = rawType.tag === "ref" ? rawType.mutable : this.isRootMutable(stmt.iterable);
     if (!writable) {
       this.error(`cannot iterate '${target.text}' with '&mut': it is not mutable`, sp,
-        rawType.tag === "ref" ? `it is a '&' view; take it as '&mut' to write through it` : `declare it with 'var'`);
+        rawType.tag === "ref" ? `it is a '&' reference; take it as '&mut' to write through it` : `declare it with 'var'`);
     }
     const overlaps = (a: string[], b: string[]) => {
       const n = Math.min(a.length, b.length);
@@ -8965,7 +9075,7 @@ export class TypeChecker {
       const h = site.holder.name;
       notes.push({ message: `'${h}' borrows '${root}' here`, span: site.span });
       const d = this.errorWithNotes(`${prefix} while '${h}' borrows ${it}`, sp,
-        `'${h}' points into '${root}', and this could move or free that memory: finish using '${h}' first, or copy what it views with '.clone()'`, notes);
+        `'${h}' points into '${root}', and this could move or free that memory: finish using '${h}' first, or copy what it points to with '.clone()'`, notes);
       const pending = this.pendingUseNotes.get(site.holder.info) ?? [];
       pending.push({ diag: d, name: h });
       this.pendingUseNotes.set(site.holder.info, pending);
@@ -11788,8 +11898,8 @@ export class TypeChecker {
       // use-after-free the moment they get drop glue. Three drop-glue paths landed this
       // session, so the gap between the two spellings is closing from the wrong side.
       if (!this.isPlaceExpr(expr.object)) {
-        this.error(`cannot take a view of a temporary`, sp,
-          `the '&[T]' would outlive the value it points into — bind the receiver first ('let r = ...' then slice 'r')`);
+        this.error(`cannot take a slice of a temporary`, sp,
+          `the '&[T]' would outlive the value it points into: bind the receiver first ('let r = ...' then slice 'r')`);
       }
       // freeze the source — mutation could realloc/free the memory this view points into
       this.freezeRootOf(expr.object);
@@ -12466,8 +12576,8 @@ export class TypeChecker {
         if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${this.show(endType)}`, sp);
         // Same temporary hazard as the slice-of-Vec case above, same reasoning.
         if (!this.isPlaceExpr(expr.object)) {
-          this.error(`cannot take a view of a temporary`, sp,
-            `the '&string' would outlive the value it points into — bind the receiver first ('let r = ...' then slice 'r')`);
+          this.error(`cannot take a slice of a temporary`, sp,
+            `the '&string' would outlive the value it points into: bind the receiver first ('let r = ...' then slice 'r')`);
         }
         // mark source as borrowed — prevents mutation/move while slice is live.
         // Walk to the root variable: `buf.data[a..b]` views storage owned by `buf`,
@@ -12524,7 +12634,7 @@ export class TypeChecker {
         const owned = expr.method === "lines" ? `split("\\n")` : `split(sep)`;
         const call = expr.method === "lines" ? `lines()` : `splitView(sep)`;
         this.error(`'${expr.method}' is only valid as the iterable of a 'for ... in' loop over a named string`, sp,
-          `it yields borrowed views, which cannot be stored — bind the string first ('let text = ...') and write 'for piece in text.${call}', or use '${owned}' for owned copies`);
+          `it yields borrowed slices, which cannot be stored: bind the string first ('let text = ...') and write 'for piece in text.${call}', or use '${owned}' for owned copies`);
         return this.setType(expr, { tag: "unknown" });
       }
       if (expr.method === "splitWords" || expr.method === "splitWhitespace") {
@@ -12996,7 +13106,7 @@ export class TypeChecker {
     this.error(
       `'${method}' takes '&mut self', but '${cbindRoot}' is a copy of the matched payload — the write would be discarded`,
       sp,
-      `a pattern binding of a Copy type is a snapshot, not a view into the enum. Match on a reference, or rebuild the enum from the method's result.`);
+      `a pattern binding of a Copy type is a snapshot, not a reference into the enum. Match on a reference, or rebuild the enum from the method's result.`);
   }
 
   // Would a write through this binding be thrown away where someone could SEE it?

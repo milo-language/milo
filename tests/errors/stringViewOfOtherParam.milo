@@ -5,4 +5,4 @@ impl Lexer {
     fn bad(self: &Self, other: &string): &string { return other[0..1] }
 }
 fn main(): i32 { return 0 }
-// @error: cannot return a view of 'other'
+// @error: 'bad' cannot return a slice of 'other'

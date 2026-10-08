@@ -1,0 +1,8 @@
+// @error: 'head' cannot return a reference
+// @error-at: 5:23
+// @note: 6:12 the returned slice points into 'v', a parameter dropped when 'head' returns
+// A by-value parameter is owned by the callee, so a slice of it dangles at the return.
+fn head(v: Vec<i64>): &[i64] {
+    return v[0..1]
+}
+fn main(): void { }

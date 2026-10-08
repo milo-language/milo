@@ -1,0 +1,9 @@
+// @error: 'first' cannot return a reference
+// @error-at: 6:23
+// @note: 7:12 the returned slice borrows from parameter 's', but a free function cannot return a reference at all: only a method can, and only a slice of its own receiver
+// A '&' parameter outlives the call, but nothing at the call site keeps it frozen while
+// the result is in use, so the rule is about free functions, not about the parameter.
+fn first(s: &string): &string {
+    return s[0..1]
+}
+fn main(): void { }

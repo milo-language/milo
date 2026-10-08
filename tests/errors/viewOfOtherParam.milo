@@ -4,4 +4,4 @@ impl Buf {
     fn bad(self: &Self, other: &Vec<i64>): &[i64] { return other[0..1] }
 }
 fn main(): i32 { return 0 }
-// @error: cannot return a view of 'other'
+// @error: 'bad' cannot return a slice of 'other'

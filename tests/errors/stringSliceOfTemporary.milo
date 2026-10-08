@@ -1,4 +1,4 @@
-// @error: cannot take a view of a temporary
+// @error: cannot take a slice of a temporary
 //
 // The string half of sliceOfTemporary: `mk()[0..5]` on a returned string views a buffer no
 // binding owns. Same hazard, same reasoning, separate code path — which is why it needed

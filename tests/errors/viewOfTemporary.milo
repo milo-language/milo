@@ -14,4 +14,4 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot take a view of a temporary
+// @error: cannot take a slice of a temporary

@@ -9,4 +9,4 @@ impl Buf {
     }
 }
 fn main(): i32 { return 0 }
-// @error: cannot return a view of 'tmp'
+// @error: 'bad' cannot return a slice of 'tmp'

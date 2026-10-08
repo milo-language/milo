@@ -1312,7 +1312,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
     };
     const describeView = (v: View) => v.via
       ? `'${v.name}' still points into '${v.global}'s buffer (from '${v.via})`
-      : `'${v.name}' is a view into '${v.global}'s buffer`;
+      : `'${v.name}' borrows from '${v.global}'s buffer`;
     const walk = (node: unknown, iterated: string[], views: View[]) => {
       if (!node || typeof node !== "object") return;
       if (Array.isArray(node)) {
