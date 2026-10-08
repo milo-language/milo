@@ -1881,7 +1881,7 @@ var users: Vec<User> = [
     User { name: "Alice", age: 30 },
     User { name: "Bob", age: 25 },
 ]
-users.sortBy((a: &User, b: &User) => a.age - b.age)  // full control
+users.sortBy((a: &User, b: &User) => a.age - b.age)  // full control: any signed int, read by sign
 
 // key extractor: just return the field to sort on
 users.sortByKey((u: &User) => u.age)                  // simpler
@@ -1899,6 +1899,13 @@ nested `Vec`s, `Drop` types) are freed rather than leaked. A length at or past t
 end is a no-op — it never grows the Vec — and a negative length empties it.
 
 `sort` works on Vec of int, float, string, or bool. `sortBy` and `sortByKey` work on any type. All require `var`.
+
+A `sortBy` comparator returns any signed integer (`i32`, `i64`, ...) and only its sign
+is read, so an `i64` difference needs no `as i32`, a cast that turns a difference of a
+multiple of 2^32 into 0. Subtraction is checked, so `a - b` on keys that can sit near the
+`i64` limits traps; there, compare (`if a < b { -1 } else if a > b { 1 } else { 0 }`)
+or use `sortByKey`, which compares keys and never subtracts. For a descending order,
+swap the comparator's arguments rather than negating.
 
 ### clone
 

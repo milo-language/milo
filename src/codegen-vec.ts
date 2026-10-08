@@ -217,6 +217,8 @@ export function genVecSortBy(
   lines: string[],
 ): [string[], string, string] {
   const p = sortPreamble(ctx, object, elementType, lines, "sortby");
+  // the checker admits any signed integer return; the sign is all that is read
+  const retTy = callback.type.tag === "fn" && callback.type.ret.tag === "int" ? ctx.llvmType(callback.type.ret) : "i32";
 
   const [cl, cv] = ctx.genExpr(callback);
   lines.push(...cl);
@@ -229,9 +231,9 @@ export function genVecSortBy(
     const a = cbElemArg(ctx, lines, callback.type, prevPtr, p.elemTy, 0);
     const b = cbElemArg(ctx, lines, callback.type, tmpAddr, p.elemTy, 1);
     const cmpResult = ctx.nextTemp();
-    lines.push(`  ${cmpResult} = call i32 ${fnPtr}(ptr ${envPtr}, ${a.argTy} ${a.arg}, ${b.argTy} ${b.arg})`);
+    lines.push(`  ${cmpResult} = call ${retTy} ${fnPtr}(ptr ${envPtr}, ${a.argTy} ${a.arg}, ${b.argTy} ${b.arg})`);
     const shouldSwap = ctx.nextTemp();
-    lines.push(`  ${shouldSwap} = icmp sgt i32 ${cmpResult}, 0`);
+    lines.push(`  ${shouldSwap} = icmp sgt ${retTy} ${cmpResult}, 0`);
     return shouldSwap;
   });
 

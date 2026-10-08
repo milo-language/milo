@@ -98,7 +98,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "retain", sig: "(pred)", note: "in-place filter" },
     { name: "reverse", sig: "()" },
     { name: "sort", sig: "()" },
-    { name: "sortBy", sig: "(cmp)" },
+    { name: "sortBy", sig: "(cmp)", note: "cmp(a, b) returns any signed integer, read by sign: negative puts a first" },
     { name: "sortByKey", sig: "(key)" },
     { name: "slice", sig: "(start: i64, end: i64): &[T]" },
     { name: "contains", sig: "(value: T): bool" },

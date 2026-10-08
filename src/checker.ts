@@ -11826,12 +11826,19 @@ export class TypeChecker {
           this.error(`cannot sort immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "int", bits: 32, signed: true } };
+        // The return is left open in the hint and checked below: any signed integer is
+        // read by its sign, so an i64 key difference (`a.t - b.t`) needs no `as i32`,
+        // the cast that truncated a difference of k * 2^32 to 0.
+        const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "unknown" } };
         const cbBorrow = this.borrowDuringCallback(expr.object);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortBy", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'sortBy' argument must be a comparator function`, sp); }
+        else if (cbType.ret.tag !== "unknown" && !(cbType.ret.tag === "int" && cbType.ret.signed)) {
+          this.error(`'sortBy' callback returns ${this.show(cbType.ret)}, but sortBy expects a signed integer (negative: a first, positive: b first, zero: keep order)`, sp,
+            `return an ordering such as 'if a.x < b.x { -1 } else if a.x > b.x { 1 } else { 0 }', or sort by a key with 'sortByKey'`);
+        }
         return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "sortByKey") {

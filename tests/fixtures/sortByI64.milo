@@ -1,0 +1,73 @@
+// sortBy over i64 data. A comparator may return i64 (any signed integer) and is
+// read by sign, so `a.t - b.t` needs no `as i32`: that cast was the bug, since
+// a difference that is a multiple of 2^32 truncates to 0 and two unequal keys
+// compared equal. Where the subtraction itself could overflow (keys near the i64
+// limits), compare instead of subtracting, or use sortByKey, which compares keys
+// directly.
+
+pub struct Ev {
+    t: i64,
+    name: string,
+}
+
+pub fn order(a: i64, b: i64): i64 {
+    if a < b {
+        return -1
+    }
+    if a > b {
+        return 1
+    }
+    return 0
+}
+
+pub fn show(v: &Vec<Ev>): string {
+    var out: string = ""
+    for e in v {
+        out.pushStr(e.name)
+    }
+    return out
+}
+
+// @expect: abc
+// @expect: abc
+// @expect: abcd
+// @expect: abcd
+// @expect: dcba
+pub fn main() {
+    // keys 2^32 apart: (a - b) as i32 is 0 for every pair, so an i32 comparator
+    // left this order untouched
+    var wide: Vec<Ev> = Vec.new()
+    wide.push(Ev { t: 8589934592, name: "c" })
+    wide.push(Ev { t: 0, name: "a" })
+    wide.push(Ev { t: 4294967296, name: "b" })
+    wide.sortBy((x: &Ev, y: &Ev) => x.t - y.t)
+    print(show(wide))
+
+    var wide2: Vec<Ev> = Vec.new()
+    wide2.push(Ev { t: 8589934592, name: "c" })
+    wide2.push(Ev { t: 0, name: "a" })
+    wide2.push(Ev { t: 4294967296, name: "b" })
+    wide2.sortBy((x: &Ev, y: &Ev): i64 => x.t - y.t)
+    print(show(wide2))
+
+    // at the limits x.t - y.t overflows (a checked-arithmetic trap), so compare
+    var edge: Vec<Ev> = Vec.new()
+    edge.push(Ev { t: 9223372036854775807, name: "d" })
+    edge.push(Ev { t: -9223372036854775807 - 1, name: "a" })
+    edge.push(Ev { t: 1, name: "c" })
+    edge.push(Ev { t: -1, name: "b" })
+    edge.sortBy((x: &Ev, y: &Ev) => order(x.t, y.t))
+    print(show(edge))
+
+    var byKey: Vec<Ev> = Vec.new()
+    byKey.push(Ev { t: 9223372036854775807, name: "d" })
+    byKey.push(Ev { t: 1, name: "c" })
+    byKey.push(Ev { t: -9223372036854775807 - 1, name: "a" })
+    byKey.push(Ev { t: -1, name: "b" })
+    byKey.sortByKey((e: &Ev) => e.t)
+    print(show(byKey))
+
+    // descending: swap the arguments rather than negating (0 - i64 min overflows)
+    byKey.sortBy((x: &Ev, y: &Ev) => order(y.t, x.t))
+    print(show(byKey))
+}

@@ -1,0 +1,7 @@
+// @error: 'sortBy' callback returns bool, but sortBy expects a signed integer
+// A comparator is read by its sign; a bool `a < b` carries no "equal" and is rejected.
+pub fn main(): void {
+    var v: Vec<i64> = [3, 1, 2]
+    v.sortBy((a: &i64, b: &i64) => a < b)
+    print(v[0])
+}
