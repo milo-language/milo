@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 432 distinct messages across 544 programs the compiler must reject.
+Every error message the test suite pins: 434 distinct messages across 547 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -47,6 +47,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'asciiIsDigit' is defined as a function in 'std/string.milo' and as a global in`](#asciiisdigit-is-defined-as-a-function-in-std-string-milo-and-as-a-global-in)
 - [`'b' is a nullable extern reference and must be unwrapped before use`](#b-is-a-nullable-extern-reference-and-must-be-unwrapped-before-use)
 - [`'b' may reallocate here while 'p' still points into its buffer (from 'b.bytes.ptr()' on line 26)`](#b-may-reallocate-here-while-p-still-points-into-its-buffer-from-b-bytes-ptr-on-line-26)
+- [`'bad' cannot return a slice of 'other'`](#bad-cannot-return-a-slice-of-other)
+- [`'bad' cannot return a slice of 'tmp'`](#bad-cannot-return-a-slice-of-tmp)
 - [`'break' outside of loop`](#break-outside-of-loop)
 - [`'bump' in 'impl Counter for Tally' takes 'self: &Tally' by shared reference; the trait 'Counter' declares 'self: &mut Self'`](#bump-in-impl-counter-for-tally-takes-self-tally-by-shared-reference-the-trait-counter-declares-self-mut-self)
 - [`'bx' is moved and borrowed in the same call`](#bx-is-moved-and-borrowed-in-the-same-call)
@@ -54,8 +56,10 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'clone' would copy 'Res' out of the Vec: it carries Drop`](#clone-would-copy-res-out-of-the-vec-it-carries-drop)
 - [`'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))`](#context-error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self)
 - [`'continue' outside of loop`](#continue-outside-of-loop)
+- [`'dangle' cannot return a reference`](#dangle-cannot-return-a-reference)
 - [`'e' shadows an outer binding`](#e-shadows-an-outer-binding)
 - [`'f' returns i64 but can reach the end of its body without a 'return'`](#f-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
+- [`'first' cannot return a reference`](#first-cannot-return-a-reference)
 - [`'fn Counter.get' is defined twice in this file`](#fn-counter-get-is-defined-twice-in-this-file)
 - [`'fn shade' is defined twice in this file`](#fn-shade-is-defined-twice-in-this-file)
 - [`'fold' callback parameter 2 is declared`](#fold-callback-parameter-2-is-declared)
@@ -64,6 +68,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
+- [`'head' cannot return a reference`](#head-cannot-return-a-reference)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
@@ -90,7 +95,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'saturatingSub' expects 1 argument`](#saturatingsub-expects-1-argument)
 - [`'scale' in 'impl Scale for Pt' takes 3 parameter(s); the trait 'Scale' declares 2`](#scale-in-impl-scale-for-pt-takes-3-parameter-s-the-trait-scale-declares-2)
 - [`'schedulerYield' can park this task while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)`](#scheduleryield-can-park-this-task-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15)
-- [`'schedulerYield' can park this task while 's' is a view into 'g's buffer`](#scheduleryield-can-park-this-task-while-s-is-a-view-into-g-s-buffer)
+- [`'schedulerYield' can park this task while 's' borrows from 'g's buffer`](#scheduleryield-can-park-this-task-while-s-borrows-from-g-s-buffer)
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`'shatter' is private to shard.milo`](#shatter-is-private-to-shard-milo)
 - [`'sign' returns i64 but can reach the end of its body without a 'return'`](#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
@@ -232,8 +237,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot return a closure that captures 's' by reference`](#cannot-return-a-closure-that-captures-s-by-reference)
 - [`cannot return a reference`](#cannot-return-a-reference)
 - [`cannot return a reference stored inside 'Option'`](#cannot-return-a-reference-stored-inside-option)
-- [`cannot return a view of 'other'`](#cannot-return-a-view-of-other)
-- [`cannot return a view of 'tmp'`](#cannot-return-a-view-of-tmp)
 - [`cannot send 'p' of type '*u8' across threads`](#cannot-send-p-of-type-u8-across-threads)
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
@@ -246,7 +249,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot take 'Handle' out of a container by index: it carries a raw pointer field ('p')`](#cannot-take-handle-out-of-a-container-by-index-it-carries-a-raw-pointer-field-p)
 - [`cannot take 'Res' out of a container by index: it carries Drop`](#cannot-take-res-out-of-a-container-by-index-it-carries-drop)
 - [`cannot take 'Texture' out of a container by index: it carries @noCopy`](#cannot-take-texture-out-of-a-container-by-index-it-carries-nocopy)
-- [`cannot take a view of a temporary`](#cannot-take-a-view-of-a-temporary)
+- [`cannot take a slice of a temporary`](#cannot-take-a-slice-of-a-temporary)
 - [`cannot take type parameters`](#cannot-take-type-parameters)
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
@@ -288,7 +291,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
 - [`from "std/json" import { Json }`](#from-std-json-import-json)
-- [`function 'dangle': cannot return a reference`](#function-dangle-cannot-return-a-reference)
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
 - [`has no static method 'knew'`](#has-no-static-method-knew)
 - [`has signature extern (*u8, i64) => i32, expected extern (*u8, i32) => i32`](#has-signature-extern-u8-i64-i32-expected-extern-u8-i32-i32)
@@ -1063,6 +1065,69 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/ptrOutlivesMutSelfMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrOutlivesMutSelfMethod.milo)</sub>
 
+## `'bad' cannot return a slice of 'other'` {#bad-cannot-return-a-slice-of-other}
+
+a returned &string slice may only point into the receiver's storage: the call site freezes the receiver and nothing else, so any other source could be freed under it
+
+```milo skip
+struct Lexer { src: string }
+impl Lexer {
+    fn bad(self: &Self, other: &string): &string { return other[0..1] }
+}
+fn main(): i32 { return 0 }
+// @error: 'bad' cannot return a slice of 'other'
+```
+
+<sub>[tests/errors/stringViewOfOtherParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewOfOtherParam.milo)</sub>
+
+the call site freezes the receiver, not the other argument
+
+```milo skip
+struct Buf { data: Vec<i64> }
+impl Buf {
+    fn bad(self: &Self, other: &Vec<i64>): &[i64] { return other[0..1] }
+}
+fn main(): i32 { return 0 }
+// @error: 'bad' cannot return a slice of 'other'
+```
+
+<sub>[tests/errors/viewOfOtherParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfOtherParam.milo)</sub>
+
+## `'bad' cannot return a slice of 'tmp'` {#bad-cannot-return-a-slice-of-tmp}
+
+a returned slice must point into the receiver's storage: a method-local's buffer is freed at the return, and the caller's freeze on the receiver would not cover it
+
+```milo skip
+struct Buf { data: Vec<i64> }
+impl Buf {
+    fn bad(self: &Self): &[i64] {
+        var tmp: Vec<i64> = Vec.new()
+        tmp.push(1)
+        return tmp[0..1]
+    }
+}
+fn main(): i32 { return 0 }
+// @error: 'bad' cannot return a slice of 'tmp'
+```
+
+<sub>[tests/errors/viewOfLocal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfLocal.milo)</sub>
+
+@note: 9:9 'tmp' is a local, freed when 'bad' returns A method may return a slice, but only of its receiver: the caret is on the returned slice and the note points at the local it would dangle into.
+
+```milo skip
+struct Buf { data: Vec<i64> }
+impl Buf {
+    fn bad(self: &Self): &[i64] {
+        var tmp: Vec<i64> = Vec.new()
+        tmp.push(1)
+        return tmp[0..1]
+    }
+}
+fn main(): void { }
+```
+
+<sub>[tests/errors/viewOfLocalNote.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfLocalNote.milo)</sub>
+
 ## `'break' outside of loop` {#break-outside-of-loop}
 
 ```milo skip
@@ -1194,6 +1259,20 @@ fn main(): i32 {
 
 <sub>[tests/errors/continueOutsideLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/continueOutsideLoop.milo)</sub>
 
+## `'dangle' cannot return a reference` {#dangle-cannot-return-a-reference}
+
+@note: 8:12 the returned slice points into 'local', which is freed when 'dangle' returns One error for one mistake: the caret is on the '&string' return type, and the return that hands out the slice is a note naming why it dangles (a local, dropped at the return).
+
+```milo skip
+fn dangle(): &string {
+    let local = "hi there".clone()
+    return local[0..2]
+}
+fn main(): void { print(dangle()) }
+```
+
+<sub>[tests/errors/refReturnNoteView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteView.milo)</sub>
+
 ## `'e' shadows an outer binding` {#e-shadows-an-outer-binding}
 
 A match-arm binding that shadows the function's own parameter must point at the ARM's binding (the offending site), not print bare with no location. This is the exact shape that once cost a downstream user several minutes of grep archaeology: a `match` arm rebinding `e` inside `fn cloneExpr(e: Expr)`, with no file/line/caret on the diagnostic at all.
@@ -1240,6 +1319,19 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/fallOffEndBreakInMatchExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fallOffEndBreakInMatchExpr.milo)</sub>
+
+## `'first' cannot return a reference` {#first-cannot-return-a-reference}
+
+@note: 7:12 the returned slice borrows from parameter 's', but a free function cannot return a reference at all: only a method can, and only a slice of its own receiver A '&' parameter outlives the call, but nothing at the call site keeps it frozen while the result is in use, so the rule is about free functions, not about the parameter.
+
+```milo skip
+fn first(s: &string): &string {
+    return s[0..1]
+}
+fn main(): void { }
+```
+
+<sub>[tests/errors/refReturnNoteRefParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteRefParam.milo)</sub>
 
 ## `'fn Counter.get' is defined twice in this file` {#fn-counter-get-is-defined-twice-in-this-file}
 
@@ -1415,6 +1507,19 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/dropElementHashMapGet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropElementHashMapGet.milo)</sub>
+
+## `'head' cannot return a reference` {#head-cannot-return-a-reference}
+
+@note: 6:12 the returned slice points into 'v', a parameter dropped when 'head' returns A by-value parameter is owned by the callee, so a slice of it dangles at the return.
+
+```milo skip
+fn head(v: Vec<i64>): &[i64] {
+    return v[0..1]
+}
+fn main(): void { }
+```
+
+<sub>[tests/errors/refReturnNoteByValueParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteByValueParam.milo)</sub>
 
 ## `'id' shadows an outer binding` {#id-shadows-an-outer-binding}
 
@@ -2261,7 +2366,7 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/ptrGlobalAcrossPark.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrGlobalAcrossPark.milo)</sub>
 
-## `'schedulerYield' can park this task while 's' is a view into 'g's buffer` {#scheduleryield-can-park-this-task-while-s-is-a-view-into-g-s-buffer}
+## `'schedulerYield' can park this task while 's' borrows from 'g's buffer` {#scheduleryield-can-park-this-task-while-s-borrows-from-g-s-buffer}
 
 A slice binding is a fat pointer into the global's buffer and stays live to the end of its block, so a park anywhere after it in that block is the same hazard as a park inside a for-in. Decided by the binding's type, not its spelling.
 
@@ -5776,7 +5881,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/refReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturn.milo)</sub>
 
-only a method may return a view; a free function has no receiver to freeze
+only a method may return a slice; a free function has no receiver to freeze
 
 ```milo skip
 fn viewOf(v: &Vec<i64>): &[i64] { return v[0..v.len] }
@@ -5788,7 +5893,7 @@ fn main(): i32 { return 0 }
 
 ## `cannot return a reference stored inside 'Option'` {#cannot-return-a-reference-stored-inside-option}
 
-A view handed back inside an enum payload outlives the freeze the call site took for it: `Vec<&T>` was already rejected for this, enum payloads were not, and the view below survived five reallocating pushes and still read the old buffer.
+A slice handed back inside an enum payload outlives the freeze the call site took for it: `Vec<&T>` was already rejected for this, enum payloads were not, and the slice below survived five reallocating pushes and still read the old buffer.
 
 ```milo skip
 struct Hay { data: Vec<i64> }
@@ -5818,53 +5923,6 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/withRawEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/withRawEscape.milo)</sub>
-
-## `cannot return a view of 'other'` {#cannot-return-a-view-of-other}
-
-a returned &string view may only point into the receiver's storage: the call site freezes the receiver and nothing else, so any other source could be freed under it
-
-```milo skip
-struct Lexer { src: string }
-impl Lexer {
-    fn bad(self: &Self, other: &string): &string { return other[0..1] }
-}
-fn main(): i32 { return 0 }
-// @error: cannot return a view of 'other'
-```
-
-<sub>[tests/errors/stringViewOfOtherParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewOfOtherParam.milo)</sub>
-
-the call site freezes the receiver, not the other argument
-
-```milo skip
-struct Buf { data: Vec<i64> }
-impl Buf {
-    fn bad(self: &Self, other: &Vec<i64>): &[i64] { return other[0..1] }
-}
-fn main(): i32 { return 0 }
-// @error: cannot return a view of 'other'
-```
-
-<sub>[tests/errors/viewOfOtherParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfOtherParam.milo)</sub>
-
-## `cannot return a view of 'tmp'` {#cannot-return-a-view-of-tmp}
-
-a returned view must point into the receiver's storage — a method-local's buffer is freed at the return, and the caller's freeze on the receiver would not cover it
-
-```milo skip
-struct Buf { data: Vec<i64> }
-impl Buf {
-    fn bad(self: &Self): &[i64] {
-        var tmp: Vec<i64> = Vec.new()
-        tmp.push(1)
-        return tmp[0..1]
-    }
-}
-fn main(): i32 { return 0 }
-// @error: cannot return a view of 'tmp'
-```
-
-<sub>[tests/errors/viewOfLocal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfLocal.milo)</sub>
 
 ## `cannot send 'p' of type '*u8' across threads` {#cannot-send-p-of-type-u8-across-threads}
 
@@ -6326,9 +6384,9 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/indexNoCopyElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/indexNoCopyElement.milo)</sub>
 
-## `cannot take a view of a temporary` {#cannot-take-a-view-of-a-temporary}
+## `cannot take a slice of a temporary` {#cannot-take-a-slice-of-a-temporary}
 
-A view of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no binding owns. `freezeViewSource` already rejected the METHOD spelling of this (`mk().view()`), and its own comment is the reason the slice spelling had to be rejected too: that storage survives only because temporaries leak, and it becomes a use-after-free the moment they get drop glue. Three drop-glue paths landed on 2026-08-16 alone, so the gap between the two spellings was closing from the wrong side. One hazard, three spellings, and only one of them errored. See tests/errors/ stringSliceOfTemporary.milo for the string half.
+A slice of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no binding owns. `freezeViewSource` already rejected the METHOD spelling of this (`mk().view()`), and its own comment is the reason the slice spelling had to be rejected too: that storage survives only because temporaries leak, and it becomes a use-after-free the moment they get drop glue. Three drop-glue paths landed on 2026-08-16 alone, so the gap between the two spellings was closing from the wrong side. One hazard, three spellings, and only one of them errored. See tests/errors/ stringSliceOfTemporary.milo for the string half.
 
 ```milo skip
 fn mk(): Vec<string> {
@@ -6361,7 +6419,7 @@ fn main() {
 
 <sub>[tests/errors/stringSliceOfTemporary.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringSliceOfTemporary.milo)</sub>
 
-a view of a temporary receiver has no binding the call site can freeze; the temporary only outlives the view today because temporaries are never dropped (they leak)
+a slice of a temporary receiver has no binding the call site can freeze; the temporary only outlives the slice today because temporaries are never dropped (they leak)
 
 ```milo skip
 struct Ring { data: Vec<i64> }
@@ -6378,7 +6436,7 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot take a view of a temporary
+// @error: cannot take a slice of a temporary
 ```
 
 <sub>[tests/errors/viewOfTemporary.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfTemporary.milo)</sub>
@@ -7186,20 +7244,6 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/unknownTypeMissingImport.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeMissingImport.milo)</sub>
-
-## `function 'dangle': cannot return a reference` {#function-dangle-cannot-return-a-reference}
-
-@note: 8:12 this returns a view of 'local' One error for one mistake: the caret is on the '&string' return type, and the return that hands out the view is a note, not a second error.
-
-```milo skip
-fn dangle(): &string {
-    let local = "hi there".clone()
-    return local[0..2]
-}
-fn main(): void { print(dangle()) }
-```
-
-<sub>[tests/errors/refReturnNoteView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteView.milo)</sub>
 
 ## `has more than one @iter field` {#has-more-than-one-iter-field}
 

@@ -122,7 +122,7 @@ is better than implying a test covers it.
 **`nestedRef` already fired, unchanged.** `Option<&[T]>` and `Vec<&T>` returned from the
 closure are both rejected, via `errorIfRefReturn` on the monomorphized `Option<R>`. The
 message names the mangled instance, which is ugly, but the user's own source gets a second,
-better-placed error ("cannot return a view of 'xs'") from the same attempt.
+better-placed error ("cannot return a slice of 'xs'") from the same attempt.
 
 **`@unsafe fn` had to be added; it did not exist.** The spec writes `@unsafe fn withRaw`, but
 the language had `unsafe` only as a block and had no way to say "calling this needs one".

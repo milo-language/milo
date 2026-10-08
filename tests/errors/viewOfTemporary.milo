@@ -1,5 +1,5 @@
-// a view of a temporary receiver has no binding the call site can freeze; the temporary
-// only outlives the view today because temporaries are never dropped (they leak)
+// a slice of a temporary receiver has no binding the call site can freeze; the temporary
+// only outlives the slice today because temporaries are never dropped (they leak)
 struct Ring { data: Vec<i64> }
 impl Ring {
     fn items(self: &Self): &[i64] { return self.data[0..self.data.len] }

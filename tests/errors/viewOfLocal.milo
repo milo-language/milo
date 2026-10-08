@@ -1,4 +1,4 @@
-// a returned view must point into the receiver's storage — a method-local's buffer is
+// a returned slice must point into the receiver's storage: a method-local's buffer is
 // freed at the return, and the caller's freeze on the receiver would not cover it
 struct Buf { data: Vec<i64> }
 impl Buf {

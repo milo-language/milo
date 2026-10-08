@@ -1979,7 +1979,7 @@ A view also cannot be captured by a closure, stored in a struct, or put in a col
 Free functions cannot return references at all.
 
 That includes a view of a parameter: `fn first(s: &string): &string` is rejected at the
-signature, `error: function 'first': cannot return a reference`, because there is no
+signature, `error: 'first' cannot return a reference`, because there is no
 receiver for the call site to freeze. Two spellings work. Put the data behind a type that
 owns it and make the accessor a method, as `Ring.items` above does. Or return an offset and
 let the caller take the slice, which keeps the function free and the view local:

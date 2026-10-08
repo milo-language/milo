@@ -1,5 +1,5 @@
-// A view handed back inside an enum payload outlives the freeze the call site took for
-// it: `Vec<&T>` was already rejected for this, enum payloads were not, and the view
+// A slice handed back inside an enum payload outlives the freeze the call site took for
+// it: `Vec<&T>` was already rejected for this, enum payloads were not, and the slice
 // below survived five reallocating pushes and still read the old buffer.
 struct Hay { data: Vec<i64> }
 impl Hay {

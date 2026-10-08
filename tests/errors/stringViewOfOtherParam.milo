@@ -1,4 +1,4 @@
-// a returned &string view may only point into the receiver's storage: the call site
+// a returned &string slice may only point into the receiver's storage: the call site
 // freezes the receiver and nothing else, so any other source could be freed under it
 struct Lexer { src: string }
 impl Lexer {

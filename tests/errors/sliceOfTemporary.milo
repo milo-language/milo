@@ -1,6 +1,6 @@
 // @error: cannot take a slice of a temporary
 //
-// A view of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no
+// A slice of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no
 // binding owns. `freezeViewSource` already rejected the METHOD spelling of this
 // (`mk().view()`), and its own comment is the reason the slice spelling had to be rejected
 // too: that storage survives only because temporaries leak, and it becomes a

@@ -3414,7 +3414,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot return a reference stored inside 'Option'`
 
-**Rationale.** A view handed back inside an enum payload outlives the freeze the call site took for it: `Vec<&T>` was already rejected for this, enum payloads were not, and the view below survived five reallocating pushes and still read the old buffer.
+**Rationale.** A slice handed back inside an enum payload outlives the freeze the call site took for it: `Vec<&T>` was already rejected for this, enum payloads were not, and the slice below survived five reallocating pushes and still read the old buffer.
 
 *Program:* [`tests/errors/optionOfViewReturn.milo`](../tests/errors/optionOfViewReturn.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4254,7 +4254,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot take a slice of a temporary`
 
-**Rationale.** A view of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no binding owns. `freezeViewSource` already rejected the METHOD spelling of this (`mk().view()`), and its own comment is the reason the slice spelling had to be rejected too: that storage survives only because temporaries leak, and it becomes a use-after-free the moment they get drop glue. Three drop-glue paths landed on 2026-08-16 alone, so the gap between the two spellings was closing from the wrong side. One hazard, three spellings, and only one of them errored. See tests/errors/ stringSliceOfTemporary.milo for the string half.
+**Rationale.** A slice of a temporary has nothing to freeze: `mk()[0..2]` points into a Vec that no binding owns. `freezeViewSource` already rejected the METHOD spelling of this (`mk().view()`), and its own comment is the reason the slice spelling had to be rejected too: that storage survives only because temporaries leak, and it becomes a use-after-free the moment they get drop glue. Three drop-glue paths landed on 2026-08-16 alone, so the gap between the two spellings was closing from the wrong side. One hazard, three spellings, and only one of them errored. See tests/errors/ stringSliceOfTemporary.milo for the string half.
 
 *Program:* [`tests/errors/sliceOfTemporary.milo`](../tests/errors/sliceOfTemporary.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4462,7 +4462,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `'bad' cannot return a slice of 'other'`
 
-**Rationale.** a returned &string view may only point into the receiver's storage: the call site freezes the receiver and nothing else, so any other source could be freed under it
+**Rationale.** a returned &string slice may only point into the receiver's storage: the call site freezes the receiver and nothing else, so any other source could be freed under it
 
 *Program:* [`tests/errors/stringViewOfOtherParam.milo`](../tests/errors/stringViewOfOtherParam.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -5164,7 +5164,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `'bad' cannot return a slice of 'tmp'`
 
-**Rationale.** a returned view must point into the receiver's storage — a method-local's buffer is freed at the return, and the caller's freeze on the receiver would not cover it
+**Rationale.** a returned slice must point into the receiver's storage: a method-local's buffer is freed at the return, and the caller's freeze on the receiver would not cover it
 
 *Program:* [`tests/errors/viewOfLocal.milo`](../tests/errors/viewOfLocal.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -5194,7 +5194,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot take a slice of a temporary`
 
-**Rationale.** a view of a temporary receiver has no binding the call site can freeze; the temporary only outlives the view today because temporaries are never dropped (they leak)
+**Rationale.** a slice of a temporary receiver has no binding the call site can freeze; the temporary only outlives the slice today because temporaries are never dropped (they leak)
 
 *Program:* [`tests/errors/viewOfTemporary.milo`](../tests/errors/viewOfTemporary.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -5204,7 +5204,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot return a reference`
 
-**Rationale.** only a method may return a view; a free function has no receiver to freeze
+**Rationale.** only a method may return a slice; a free function has no receiver to freeze
 
 *Program:* [`tests/errors/viewReturnFreeFn.milo`](../tests/errors/viewReturnFreeFn.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 

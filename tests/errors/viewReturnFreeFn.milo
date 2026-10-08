@@ -1,4 +1,4 @@
-// only a method may return a view; a free function has no receiver to freeze
+// only a method may return a slice; a free function has no receiver to freeze
 fn viewOf(v: &Vec<i64>): &[i64] { return v[0..v.len] }
 fn main(): i32 { return 0 }
 // @error: cannot return a reference
