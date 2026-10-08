@@ -1,0 +1,10 @@
+// @error: struct 'Holder' field 'r': references cannot be stored in structs
+// @error-at: 5:20
+// The rejected field type is poisoned, so building and reading the struct reports
+// nothing further (this fixture must stay at exactly one error).
+struct Holder { r: &i64, v: i64 }
+fn main(): void {
+    let n: i64 = 5
+    let h = Holder { r: n, v: 1 }
+    print(h.r)
+}

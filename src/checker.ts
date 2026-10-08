@@ -3475,13 +3475,18 @@ export class TypeChecker {
           ...cNameOf(f),
           ...(f.attributes?.some(a => a.name === "iter") ? { iterDelegate: true } : {}),
         }));
-        for (const f of fields) {
+        // A rejected field type is poisoned to `unknown`, so every construction and read
+        // of the field does not report the same mistake again as a type mismatch.
+        fields.forEach((f, i) => {
+          const fsp = s.fields[i]?.type.span;
           if (f.type.tag === "ref") {
-            this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
+            this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, fsp, `references are second-class — use an owned type instead`);
+            f.type = { tag: "unknown" };
           } else if (this.nestedRef(f.type)) {
-            this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in a collection`, undefined, `references are second-class — store owned values instead`);
+            this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in a collection`, fsp, `references are second-class — store owned values instead`);
+            f.type = { tag: "unknown" };
           }
-        }
+        });
         const copy = s.attributes?.some(a => a.name === "copy") ?? false;
         const pointerField = copy ? undefined : rawPointerField(fields);
         this.structs.set(s.name, {
@@ -7891,7 +7896,7 @@ export class TypeChecker {
     // `sortByKey`'s key extractor is the sole exemption; see the note below.
     if (expr.kind === "FieldAccess") {
       const fieldType = this.exprTypes.get(expr);
-      if (fieldType && !this.isCopyType(fieldType)) {
+      if (fieldType && !this.isCopyType(fieldType) && !this.isPoisoned(fieldType)) {
         const base = this.borrowBasePath(expr);
         if (base === null) {
           const globalRoot = this.globalRootOf(expr);
@@ -10389,6 +10394,11 @@ export class TypeChecker {
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
       if (!fieldDef) continue;
+      // A poisoned field gives no type to infer `[]` from; that is the field's error again.
+      if (this.isPoisoned(fieldDef.type) && f.value.kind === "ArrayLit" && f.value.elements.length === 0) {
+        this.setType(f.value, { tag: "unknown" });
+        continue;
+      }
       let valType = this.checkExpr(f.value, fieldDef.type);
       if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
         this.retypeConstInt(f.value, fieldDef.type);

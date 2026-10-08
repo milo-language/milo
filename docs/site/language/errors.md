@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 420 distinct messages across 526 programs the compiler must reject.
+Every error message the test suite pins: 427 distinct messages across 531 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -150,25 +150,31 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`calling a C function pointer requires 'unsafe' block`](#calling-a-c-function-pointer-requires-unsafe-block)
 - [`can only be used as a pointer`](#can-only-be-used-as-a-pointer)
 - [`can't appear inside an expression`](#can-t-appear-inside-an-expression)
-- [`cannot assign to 'h.data' because 'h' is borrowed`](#cannot-assign-to-h-data-because-h-is-borrowed)
+- [`cannot assign to 'h.data' while 'w' borrows 'h'`](#cannot-assign-to-h-data-while-w-borrows-h)
 - [`cannot assign to 'h.o' because 'h' is borrowed`](#cannot-assign-to-h-o-because-h-is-borrowed)
-- [`cannot assign to 'lb.buf' because 'lb' is borrowed`](#cannot-assign-to-lb-buf-because-lb-is-borrowed)
+- [`cannot assign to 'lb.buf' while 'w' borrows 'lb'`](#cannot-assign-to-lb-buf-while-w-borrows-lb)
 - [`cannot assign to 'n' because it is borrowed`](#cannot-assign-to-n-because-it-is-borrowed)
-- [`cannot assign to 's' because it is borrowed`](#cannot-assign-to-s-because-it-is-borrowed)
+- [`cannot assign to 's' while 'slice' borrows it`](#cannot-assign-to-s-while-slice-borrows-it)
+- [`cannot assign to 's' while 'view' borrows it`](#cannot-assign-to-s-while-view-borrows-it)
 - [`cannot assign to immutable variable 'p.x'`](#cannot-assign-to-immutable-variable-p-x)
 - [`cannot assign to immutable variable 'STORE.n'`](#cannot-assign-to-immutable-variable-store-n)
 - [`cannot assign to immutable variable 'x'`](#cannot-assign-to-immutable-variable-x)
 - [`cannot be instantiated with 'void'`](#cannot-be-instantiated-with-void)
 - [`cannot be passed in a variadic position`](#cannot-be-passed-in-a-variadic-position)
-- [`cannot call 'add' on 'b' because it is borrowed`](#cannot-call-add-on-b-because-it-is-borrowed)
-- [`cannot call 'feed' on 'lx' because it is borrowed`](#cannot-call-feed-on-lx-because-it-is-borrowed)
-- [`cannot call 'pop' on 'v' because it is borrowed`](#cannot-call-pop-on-v-because-it-is-borrowed)
-- [`cannot call 'push' on 'b' because it is borrowed`](#cannot-call-push-on-b-because-it-is-borrowed)
-- [`cannot call 'push' on 'items' because it is borrowed`](#cannot-call-push-on-items-because-it-is-borrowed)
-- [`cannot call 'push' on 's' because it is borrowed`](#cannot-call-push-on-s-because-it-is-borrowed)
+- [`cannot call 'add' on 'b' while 's' borrows it`](#cannot-call-add-on-b-while-s-borrows-it)
+- [`cannot call 'feed' on 'lx' while 'w' borrows it`](#cannot-call-feed-on-lx-while-w-borrows-it)
+- [`cannot call 'insert' on 'm' while 'm.modify' borrows it`](#cannot-call-insert-on-m-while-m-modify-borrows-it)
+- [`cannot call 'pop' on 'v' while a loop iterates over it`](#cannot-call-pop-on-v-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 'b' while a loop iterates over it`](#cannot-call-push-on-b-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 'items' while 'items.each' borrows it`](#cannot-call-push-on-items-while-items-each-borrows-it)
+- [`cannot call 'push' on 'items' while a loop iterates over it`](#cannot-call-push-on-items-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 's' while 'sl' borrows it`](#cannot-call-push-on-s-while-sl-borrows-it)
 - [`cannot call 'push' on 't' because it is borrowed`](#cannot-call-push-on-t-because-it-is-borrowed)
-- [`cannot call 'push' on 'v' because it is borrowed`](#cannot-call-push-on-v-because-it-is-borrowed)
-- [`cannot call 'setByte' on 's' because it is borrowed`](#cannot-call-setbyte-on-s-because-it-is-borrowed)
+- [`cannot call 'push' on 't' while 'v' borrows it`](#cannot-call-push-on-t-while-v-borrows-it)
+- [`cannot call 'push' on 'v' while a loop iterates over it`](#cannot-call-push-on-v-while-a-loop-iterates-over-it)
+- [`cannot call 'push' on 'xs' while 'r' borrows it`](#cannot-call-push-on-xs-while-r-borrows-it)
+- [`cannot call 'push' on 'xs' while a loop iterates over it`](#cannot-call-push-on-xs-while-a-loop-iterates-over-it)
+- [`cannot call 'setByte' on 's' while 'view' borrows it`](#cannot-call-setbyte-on-s-while-view-borrows-it)
 - [`cannot capture`](#cannot-capture)
 - [`cannot capture 's' in a 'move' closure`](#cannot-capture-s-in-a-move-closure)
 - [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
@@ -193,7 +199,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot insert into immutable HashMap`](#cannot-insert-into-immutable-hashmap)
 - [`cannot iterate 'v' with '&mut': it is not mutable`](#cannot-iterate-v-with-mut-it-is-not-mutable)
 - [`cannot move '{ … }.name' out of 'R', which implements Drop`](#cannot-move-name-out-of-r-which-implements-drop)
-- [`cannot move 'b' because it is borrowed`](#cannot-move-b-because-it-is-borrowed)
+- [`cannot move 'b' while 's' borrows it`](#cannot-move-b-while-s-borrows-it)
 - [`cannot move 'd.a' out of the borrowed 'd'`](#cannot-move-d-a-out-of-the-borrowed-d)
 - [`cannot move 'd.text' out of the borrowed 'd'`](#cannot-move-d-text-out-of-the-borrowed-d)
 - [`cannot move 'needle' out of a loop`](#cannot-move-needle-out-of-a-loop)
@@ -210,8 +216,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move the borrowed value out of 'w'`](#cannot-move-the-borrowed-value-out-of-w)
 - [`cannot open`](#cannot-open)
 - [`cannot open 'nonexistent.txt'`](#cannot-open-nonexistent-txt)
-- [`cannot pass 'b' because it is borrowed`](#cannot-pass-b-because-it-is-borrowed)
-- [`cannot pass 'items' because it is borrowed`](#cannot-pass-items-because-it-is-borrowed)
+- [`cannot pass 'b' while a loop iterates over it`](#cannot-pass-b-while-a-loop-iterates-over-it)
+- [`cannot pass 'items' while a loop iterates over it`](#cannot-pass-items-while-a-loop-iterates-over-it)
 - [`cannot pass 's', a shared '&' reference, as a '&mut' argument`](#cannot-pass-s-a-shared-reference-as-a-mut-argument)
 - [`cannot pass a closure that captures 'n' by reference to 'Promise.blocking', which keeps it`](#cannot-pass-a-closure-that-captures-n-by-reference-to-promise-blocking-which-keeps-it)
 - [`cannot pass a closure that captures 'n' by reference to 'Task.spawn', which keeps it`](#cannot-pass-a-closure-that-captures-n-by-reference-to-task-spawn-which-keeps-it)
@@ -280,6 +286,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
 - [`from "std/json" import { Json }`](#from-std-json-import-json)
+- [`function 'dangle': cannot return a reference`](#function-dangle-cannot-return-a-reference)
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
 - [`has no static method 'knew'`](#has-no-static-method-knew)
 - [`has signature extern (*u8, i64) => i32, expected extern (*u8, i32) => i32`](#has-signature-extern-u8-i64-i32-expected-extern-u8-i32-i32)
@@ -297,7 +304,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`is a directory`](#is-a-directory)
 - [`is a mutable global, and this code runs on a real OS thread`](#is-a-mutable-global-and-this-code-runs-on-a-real-os-thread)
 - [`is already unwrapped here — a second '&mut Bump' to the same object would alias the first`](#is-already-unwrapped-here-a-second-mut-bump-to-the-same-object-would-alias-the-first)
-- [`is borrowed`](#is-borrowed)
 - [`is borrowed mutably and shared in the same call`](#is-borrowed-mutably-and-shared-in-the-same-call)
 - [`is borrowed mutably twice in the same call`](#is-borrowed-mutably-twice-in-the-same-call)
 - [`is bound by a pattern of an immutable subject`](#is-bound-by-a-pattern-of-an-immutable-subject)
@@ -379,6 +385,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`string.pushInt: expected an integer, got f64`](#string-pushint-expected-an-integer-got-f64)
 - [`struct 'Child' has no field 'pid'`](#struct-child-has-no-field-pid)
 - [`struct 'Direct<i64>' is recursive by value and has infinite size`](#struct-direct-i64-is-recursive-by-value-and-has-infinite-size)
+- [`struct 'Holder' field 'r': references cannot be stored in structs`](#struct-holder-field-r-references-cannot-be-stored-in-structs)
 - [`struct 'P' has no field 'nope'`](#struct-p-has-no-field-nope)
 - [`struct 'Ping<i64>' is recursive by value and has infinite size`](#struct-ping-i64-is-recursive-by-value-and-has-infinite-size)
 - [`struct 'Plain' has no JSON codec`](#struct-plain-has-no-json-codec)
@@ -3612,7 +3619,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/semicolonSeparator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/semicolonSeparator.milo)</sub>
 
-## `cannot assign to 'h.data' because 'h' is borrowed` {#cannot-assign-to-h-data-because-h-is-borrowed}
+## `cannot assign to 'h.data' while 'w' borrows 'h'` {#cannot-assign-to-h-data-while-w-borrows-h}
 
 Assigning a whole field frees its buffer; a live view into it would dangle. The borrow check used to fire only when the assignment target was a bare identifier, so `h.data = ...` slipped through and `w[0]` read freed memory.
 
@@ -3629,7 +3636,7 @@ fn main(): i32 {
     print(w[0])
     return 0
 }
-// @error: cannot assign to 'h.data' because 'h' is borrowed
+// @error: cannot assign to 'h.data' while 'w' borrows 'h'
 ```
 
 <sub>[tests/errors/fieldAssignUnderView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldAssignUnderView.milo)</sub>
@@ -3671,7 +3678,7 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/closureWritesBorrowedCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureWritesBorrowedCapture.milo)</sub>
 
-## `cannot assign to 'lb.buf' because 'lb' is borrowed` {#cannot-assign-to-lb-buf-because-lb-is-borrowed}
+## `cannot assign to 'lb.buf' while 'w' borrows 'lb'` {#cannot-assign-to-lb-buf-while-w-borrows-lb}
 
 A string slice off a \*field\* has to freeze the root, the way the array/vec slice path already did. It only froze `expr.object` when that was an identifier, so slicing `lb.buf` recorded no borrow at all and the reassignment below freed the bytes `w` points into. This is ripgrep's LineBuffer shape: a match view held across a fill that rolls the buffer.
 
@@ -3685,7 +3692,7 @@ fn main(): i32 {
     print(w)
     return 0
 }
-// @error: cannot assign to 'lb.buf' because 'lb' is borrowed
+// @error: cannot assign to 'lb.buf' while 'w' borrows 'lb'
 ```
 
 <sub>[tests/errors/stringFieldSliceEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringFieldSliceEscape.milo)</sub>
@@ -3716,22 +3723,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/matchMutSubjectFrozen.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchMutSubjectFrozen.milo)</sub>
 
-## `cannot assign to 's' because it is borrowed` {#cannot-assign-to-s-because-it-is-borrowed}
-
-calling .slice() borrows the source — reassignment is rejected
-
-```milo skip
-fn main(): i32 {
-    var s = "hello world"
-    let view = s.slice(0, 5)
-    s = "goodbye"
-    print(view)
-    return 0
-}
-// @error: cannot assign to 's' because it is borrowed
-```
-
-<sub>[tests/errors/borrowSliceMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowSliceMethod.milo)</sub>
+## `cannot assign to 's' while 'slice' borrows it` {#cannot-assign-to-s-while-slice-borrows-it}
 
 reassigning a var while a slice borrows it is a compile error
 
@@ -3751,10 +3743,27 @@ fn main(): i32 {
     print(slice)
     return 0
 }
-// @error: cannot assign to 's' because it is borrowed
+// @error: cannot assign to 's' while 'slice' borrows it
 ```
 
 <sub>[tests/errors/borrowSliceReassign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowSliceReassign.milo)</sub>
+
+## `cannot assign to 's' while 'view' borrows it` {#cannot-assign-to-s-while-view-borrows-it}
+
+calling .slice() borrows the source — reassignment is rejected
+
+```milo skip
+fn main(): i32 {
+    var s = "hello world"
+    let view = s.slice(0, 5)
+    s = "goodbye"
+    print(view)
+    return 0
+}
+// @error: cannot assign to 's' while 'view' borrows it
+```
+
+<sub>[tests/errors/borrowSliceMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowSliceMethod.milo)</sub>
 
 ## `cannot assign to immutable variable 'p.x'` {#cannot-assign-to-immutable-variable-p-x}
 
@@ -3875,7 +3884,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/externStructVariadicArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externStructVariadicArg.milo)</sub>
 
-## `cannot call 'add' on 'b' because it is borrowed` {#cannot-call-add-on-b-because-it-is-borrowed}
+## `cannot call 'add' on 'b' while 's' borrows it` {#cannot-call-add-on-b-while-s-borrows-it}
 
 A method-returned view borrows the receiver's storage, so growing the receiver while the view is live must be rejected: push reallocs and frees the buffer the view points into. This compiled once and segfaulted on glibc (silent garbage on macOS).
 
@@ -3893,12 +3902,12 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot call 'add' on 'b' because it is borrowed
+// @error: cannot call 'add' on 'b' while 's' borrows it
 ```
 
 <sub>[tests/errors/viewMutateReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewMutateReceiver.milo)</sub>
 
-## `cannot call 'feed' on 'lx' because it is borrowed` {#cannot-call-feed-on-lx-because-it-is-borrowed}
+## `cannot call 'feed' on 'lx' while 'w' borrows it` {#cannot-call-feed-on-lx-while-w-borrows-it}
 
 holding a returned &string view freezes its receiver: growing the buffer would realloc the bytes the view points into
 
@@ -3915,12 +3924,30 @@ fn main(): i32 {
     print(w)
     return 0
 }
-// @error: cannot call 'feed' on 'lx' because it is borrowed
+// @error: cannot call 'feed' on 'lx' while 'w' borrows it
 ```
 
 <sub>[tests/errors/stringViewFreezesReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewFreezesReceiver.milo)</sub>
 
-## `cannot call 'pop' on 'v' because it is borrowed` {#cannot-call-pop-on-v-because-it-is-borrowed}
+## `cannot call 'insert' on 'm' while 'm.modify' borrows it` {#cannot-call-insert-on-m-while-m-modify-borrows-it}
+
+The map is borrowed for the whole of a modify callback: an insert inside it could grow the table and move the very entry the callback's `&mut` view points into.
+
+```milo skip
+fn main(): i32 {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("a", 1)
+    m.modify("a", (v: &mut i64): void => {
+        m.insert("b", 2)
+        v = v + 1
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/hashMapModifyReentrant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapModifyReentrant.milo)</sub>
+
+## `cannot call 'pop' on 'v' while a loop iterates over it` {#cannot-call-pop-on-v-while-a-loop-iterates-over-it}
 
 popping frees the slot the '&mut' element view may point at.
 
@@ -3936,7 +3963,7 @@ pub fn main(): void {
 
 <sub>[tests/errors/forInMutRefPop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPop.milo)</sub>
 
-## `cannot call 'push' on 'b' because it is borrowed` {#cannot-call-push-on-b-because-it-is-borrowed}
+## `cannot call 'push' on 'b' while a loop iterates over it` {#cannot-call-push-on-b-while-a-loop-iterates-over-it}
 
 `for it in b.items` holds a pointer into that Vec's buffer for the loop's life, so pushing to it reallocates the memory the loop is reading. This was accepted until 2026-08-16 and was a heap-use-after-free in safe code (ASan, zero `unsafe`): the for-in freeze only fired when the iterable was a bare IDENT, so `for x in v` was caught and `for x in b.items` was not.
 
@@ -3955,7 +3982,21 @@ fn main() {
 
 <sub>[tests/errors/forInFieldMutate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInFieldMutate.milo)</sub>
 
-## `cannot call 'push' on 'items' because it is borrowed` {#cannot-call-push-on-items-because-it-is-borrowed}
+## `cannot call 'push' on 'items' while 'items.each' borrows it` {#cannot-call-push-on-items-while-items-each-borrows-it}
+
+@note: 7:5 'items.each' borrows 'items' until its callback returns A callback over its own receiver names the call that holds the borrow.
+
+```milo skip
+fn main(): void {
+    var items: Vec<i64> = Vec.new()
+    items.push(1)
+    items.each((x: &i64) => {
+        items.push(1)
+    })
+}
+```
+
+<sub>[tests/errors/borrowNoteCallback.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowNoteCallback.milo)</sub>
 
 ```milo skip
 fn main(): i32 {
@@ -3971,6 +4012,8 @@ fn main(): i32 {
 
 <sub>[tests/errors/eachMutateReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/eachMutateReceiver.milo)</sub>
 
+## `cannot call 'push' on 'items' while a loop iterates over it` {#cannot-call-push-on-items-while-a-loop-iterates-over-it}
+
 ```milo skip
 fn main(): i32 {
     var items: Vec<i64> = Vec.new()
@@ -3984,7 +4027,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/vecPushWhileIterating.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecPushWhileIterating.milo)</sub>
 
-## `cannot call 'push' on 's' because it is borrowed` {#cannot-call-push-on-s-because-it-is-borrowed}
+## `cannot call 'push' on 's' while 'sl' borrows it` {#cannot-call-push-on-s-while-sl-borrows-it}
 
 ```milo skip
 fn main(): i32 {
@@ -4016,6 +4059,8 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/stringViewIterMutate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewIterMutate.milo)</sub>
 
+## `cannot call 'push' on 't' while 'v' borrows it` {#cannot-call-push-on-t-while-v-borrows-it}
+
 the precise freeze still catches a write to the viewed field: pushing to `a` can realloc the storage the returned view points into
 
 ```milo skip
@@ -4031,12 +4076,12 @@ fn main(): i32 {
     print(v[0])
     return 0
 }
-// @error: cannot call 'push' on 't' because it is borrowed
+// @error: cannot call 'push' on 't' while 'v' borrows it
 ```
 
 <sub>[tests/errors/viewSameFieldFrozen.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewSameFieldFrozen.milo)</sub>
 
-## `cannot call 'push' on 'v' because it is borrowed` {#cannot-call-push-on-v-because-it-is-borrowed}
+## `cannot call 'push' on 'v' while a loop iterates over it` {#cannot-call-push-on-v-while-a-loop-iterates-over-it}
 
 growing the Vec under a '&mut' element view would move the elements it points at.
 
@@ -4052,7 +4097,36 @@ pub fn main(): void {
 
 <sub>[tests/errors/forInMutRefPush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefPush.milo)</sub>
 
-## `cannot call 'setByte' on 's' because it is borrowed` {#cannot-call-setbyte-on-s-because-it-is-borrowed}
+## `cannot call 'push' on 'xs' while 'r' borrows it` {#cannot-call-push-on-xs-while-r-borrows-it}
+
+@note: 9:13 'r' borrows 'xs' here @note: 11:11 'r' is still used here A conflicting mutation names the binding that holds the borrow, where it was taken, and the later read that keeps it live.
+
+```milo skip
+fn main(): void {
+    var xs: Vec<i64> = [1, 2]
+    let r = xs[0..2]
+    xs.push(3)
+    print(r[0])
+}
+```
+
+<sub>[tests/errors/borrowNoteSliceHolder.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowNoteSliceHolder.milo)</sub>
+
+## `cannot call 'push' on 'xs' while a loop iterates over it` {#cannot-call-push-on-xs-while-a-loop-iterates-over-it}
+
+@note: 7:5 the loop over 'xs' (line 7) borrows it for its whole body The loop is named as the borrow, at its 'for'.
+
+```milo skip
+fn main(): void {
+    var xs: Vec<i64> = [1]
+    for x in xs { xs.push(x) }
+    print(xs.len)
+}
+```
+
+<sub>[tests/errors/borrowNoteLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowNoteLoop.milo)</sub>
+
+## `cannot call 'setByte' on 's' while 'view' borrows it` {#cannot-call-setbyte-on-s-while-view-borrows-it}
 
 A write while a slice view of the same string is live is rejected like any other mutation: a literal's first write moves its bytes to a new buffer.
 
@@ -4532,7 +4606,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/destructureDropStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/destructureDropStruct.milo)</sub>
 
-## `cannot move 'b' because it is borrowed` {#cannot-move-b-because-it-is-borrowed}
+## `cannot move 'b' while 's' borrows it` {#cannot-move-b-while-s-borrows-it}
 
 moving the receiver away while its view is live drops the storage the view points into
 
@@ -4550,7 +4624,7 @@ fn main(): i32 {
     print(s[0])
     return 0
 }
-// @error: cannot move 'b' because it is borrowed
+// @error: cannot move 'b' while 's' borrows it
 ```
 
 <sub>[tests/errors/viewMoveReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewMoveReceiver.milo)</sub>
@@ -5385,7 +5459,7 @@ fn main(): i32 {
 
 <sub>[tests/errors/embedFileMissing.milo](https://github.com/milo-language/milo/blob/main/tests/errors/embedFileMissing.milo)</sub>
 
-## `cannot pass 'b' because it is borrowed` {#cannot-pass-b-because-it-is-borrowed}
+## `cannot pass 'b' while a loop iterates over it` {#cannot-pass-b-while-a-loop-iterates-over-it}
 
 The same reallocation as forInFieldMutate, reached through a function that takes the struct as `&mut` instead of by touching the field directly. Freezing the iterable's ROOT is what catches both spellings; freezing only the field would leave this one.
 
@@ -5408,7 +5482,7 @@ fn main() {
 
 <sub>[tests/errors/forInFieldMutateThroughFn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInFieldMutateThroughFn.milo)</sub>
 
-## `cannot pass 'items' because it is borrowed` {#cannot-pass-items-because-it-is-borrowed}
+## `cannot pass 'items' while a loop iterates over it` {#cannot-pass-items-while-a-loop-iterates-over-it}
 
 ```milo skip
 fn grow(v: &mut Vec<i64>): void {
@@ -7085,6 +7159,20 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/unknownTypeMissingImport.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeMissingImport.milo)</sub>
 
+## `function 'dangle': cannot return a reference` {#function-dangle-cannot-return-a-reference}
+
+@note: 8:12 this returns a view of 'local' One error for one mistake: the caret is on the '&string' return type, and the return that hands out the view is a note, not a second error.
+
+```milo skip
+fn dangle(): &string {
+    let local = "hi there".clone()
+    return local[0..2]
+}
+fn main(): void { print(dangle()) }
+```
+
+<sub>[tests/errors/refReturnNoteView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteView.milo)</sub>
+
 ## `has more than one @iter field` {#has-more-than-one-iter-field}
 
 Two delegates would make `for x in pair` ambiguous with no way to say which.
@@ -7421,24 +7509,6 @@ fn main() {
 ```
 
 <sub>[tests/errors/nullableRefDoubleUnwrap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nullableRefDoubleUnwrap.milo)</sub>
-
-## `is borrowed` {#is-borrowed}
-
-The map is borrowed for the whole of a modify callback: an insert inside it could grow the table and move the very entry the callback's `&mut` view points into.
-
-```milo skip
-fn main(): i32 {
-    var m: HashMap<string, i64> = HashMap.new()
-    m.insert("a", 1)
-    m.modify("a", (v: &mut i64): void => {
-        m.insert("b", 2)
-        v = v + 1
-    })
-    return 0
-}
-```
-
-<sub>[tests/errors/hashMapModifyReentrant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapModifyReentrant.milo)</sub>
 
 ## `is borrowed mutably and shared in the same call` {#is-borrowed-mutably-and-shared-in-the-same-call}
 
@@ -9008,6 +9078,21 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/genericStructInfiniteSize.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStructInfiniteSize.milo)</sub>
+
+## `struct 'Holder' field 'r': references cannot be stored in structs` {#struct-holder-field-r-references-cannot-be-stored-in-structs}
+
+The rejected field type is poisoned, so building and reading the struct reports nothing further (this fixture must stay at exactly one error).
+
+```milo skip
+struct Holder { r: &i64, v: i64 }
+fn main(): void {
+    let n: i64 = 5
+    let h = Holder { r: n, v: 1 }
+    print(h.r)
+}
+```
+
+<sub>[tests/errors/structRefFieldPoison.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structRefFieldPoison.milo)</sub>
 
 ## `struct 'P' has no field 'nope'` {#struct-p-has-no-field-nope}
 
