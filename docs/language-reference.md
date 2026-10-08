@@ -3546,6 +3546,8 @@ extern fn sqlite3_close(db: *sqlite3): i32
 The compiler rejects using an opaque type by value — only `*sqlite3` is valid. `*sqlite3` is a distinct type from `*sqlite3_stmt` and `*u8`, preventing handle mixups at compile time.
 
 ```milo
+extern type sqlite3
+
 // null pointer to opaque type — always safe
 let db: *sqlite3 = 0 as *sqlite3
 ```

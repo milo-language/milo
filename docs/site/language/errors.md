@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 427 distinct messages across 531 programs the compiler must reject.
+Every error message the test suite pins: 432 distinct messages across 544 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -129,6 +129,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`a scoped task writes 'total', and so does another task in the same scope`](#a-scoped-task-writes-total-and-so-does-another-task-in-the-same-scope)
 - [`a scoped task writes 'v', and another task in the same scope reads it`](#a-scoped-task-writes-v-and-another-task-in-the-same-scope-reads-it)
 - [`a scoped task writes 'v', and the Task.scope body uses it too`](#a-scoped-task-writes-v-and-the-task-scope-body-uses-it-too)
+- [`add the import: from "std/json" import { JsonVal }`](#add-the-import-from-std-json-import-jsonval)
 - [`ambiguous From conversion`](#ambiguous-from-conversion)
 - [`an array of references is not expressible`](#an-array-of-references-is-not-expressible)
 - [`an interface value has no clone`](#an-interface-value-has-no-clone)
@@ -261,6 +262,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`decreases clause must be an integer measure`](#decreases-clause-must-be-an-integer-measure)
 - [`depends on itself through another global`](#depends-on-itself-through-another-global)
 - [`did you mean 'clampF64' or 'clampI64'?`](#did-you-mean-clampf64-or-clampi64)
+- [`did you mean 'Point'?`](#did-you-mean-point)
 - [`did you mean 'toUpper'?`](#did-you-mean-toupper)
 - [`discriminant 2147483648 is out of range for i32`](#discriminant-2147483648-is-out-of-range-for-i32)
 - [`does not implement trait 'HasValue'`](#does-not-implement-trait-hasvalue)
@@ -421,6 +423,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unknown attribute '@mustUse' on 'S'`](#unknown-attribute-mustuse-on-s)
 - [`unknown escape sequence '\q'`](#unknown-escape-sequence-q)
 - [`unknown module directive '@!foo'`](#unknown-module-directive-foo)
+- [`unknown type 'Foo'`](#unknown-type-foo)
+- [`unknown type 'Payload'`](#unknown-type-payload)
+- [`unknown type 'Widget'`](#unknown-type-widget)
 - [`unreachable code`](#unreachable-code)
 - [`unsafe impl is only supported for the Send and Sync marker traits`](#unsafe-impl-is-only-supported-for-the-send-and-sync-marker-traits)
 - [`unsupported representation 'u32'`](#unsupported-representation-u32)
@@ -3231,6 +3236,17 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/taskScopeWriterAndBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeWriterAndBody.milo)</sub>
 
+## `add the import: from "std/json" import { JsonVal }` {#add-the-import-from-std-json-import-jsonval}
+
+```milo skip
+fn f(j: JsonVal): i64 { return 0 }
+pub fn main(): void {
+    print(1)
+}
+```
+
+<sub>[tests/errors/unknownTypeStdImport.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeStdImport.milo)</sub>
+
 ## `ambiguous From conversion` {#ambiguous-from-conversion}
 
 ```milo skip
@@ -3949,7 +3965,7 @@ fn main(): i32 {
 
 ## `cannot call 'pop' on 'v' while a loop iterates over it` {#cannot-call-pop-on-v-while-a-loop-iterates-over-it}
 
-popping frees the slot the '&mut' element view may point at.
+@note: 8:5 the loop over 'v' (line 8) borrows it for its whole body popping frees the slot the '&mut' element view may point at. One error for the one mistake: the loop's '&mut' element view does not report it again.
 
 ```milo skip
 pub fn main(): void {
@@ -4083,7 +4099,7 @@ fn main(): i32 {
 
 ## `cannot call 'push' on 'v' while a loop iterates over it` {#cannot-call-push-on-v-while-a-loop-iterates-over-it}
 
-growing the Vec under a '&mut' element view would move the elements it points at.
+@note: 8:5 the loop over 'v' (line 8) borrows it for its whole body growing the Vec under a '&mut' element view would move the elements it points at. One error for the one mistake: the loop's '&mut' element view does not report it again.
 
 ```milo skip
 pub fn main(): void {
@@ -6666,6 +6682,18 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/staticMethodPrefixSuggestion.milo](https://github.com/milo-language/milo/blob/main/tests/errors/staticMethodPrefixSuggestion.milo)</sub>
+
+## `did you mean 'Point'?` {#did-you-mean-point}
+
+```milo skip
+struct Point { x: i64 }
+fn f(p: Piont): i64 { return p.x }
+pub fn main(): void {
+    print(f(Point { x: 1 }))
+}
+```
+
+<sub>[tests/errors/unknownTypeDidYouMean.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeDidYouMean.milo)</sub>
 
 ## `did you mean 'toUpper'?` {#did-you-mean-toupper}
 
@@ -9724,6 +9752,121 @@ pub fn main() {}
 ```
 
 <sub>[tests/errors/unknownModuleDirective.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownModuleDirective.milo)</sub>
+
+## `unknown type 'Foo'` {#unknown-type-foo}
+
+A field of an undeclared type is reported once, at the type; the construction and the read below add no 'expected Foo, got i64' behind it.
+
+```milo skip
+struct S { a: Foo }
+pub fn main(): void {
+    let s = S { a: 1 }
+    print(s.a)
+}
+```
+
+<sub>[tests/errors/unknownTypeStructField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeStructField.milo)</sub>
+
+## `unknown type 'Payload'` {#unknown-type-payload}
+
+```milo skip
+enum E { A(Payload), B }
+pub fn main(): void {
+    let e = E.A(1)
+    match e {
+        E.A(_) => print(1),
+        E.B => print(2),
+    }
+}
+```
+
+<sub>[tests/errors/unknownTypeEnumPayload.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeEnumPayload.milo)</sub>
+
+## `unknown type 'Widget'` {#unknown-type-widget}
+
+```milo skip
+type W = Widget
+pub fn main(): void {
+    let w: W = 1
+    print(w)
+}
+```
+
+<sub>[tests/errors/unknownTypeAlias.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeAlias.milo)</sub>
+
+```milo skip
+pub fn main(): void {
+    let x = 1 as Widget
+    print(x)
+}
+```
+
+<sub>[tests/errors/unknownTypeCast.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeCast.milo)</sub>
+
+```milo skip
+fn f(w: Widget): i64 { return 0 }
+pub fn main(): void {
+    print(f(1))
+}
+```
+
+<sub>[tests/errors/unknownTypeFnParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeFnParam.milo)</sub>
+
+```milo skip
+fn f(): Widget { return 1 }
+pub fn main(): void {
+    let _ = f()
+}
+```
+
+<sub>[tests/errors/unknownTypeFnReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeFnReturn.milo)</sub>
+
+```milo skip
+pub fn main(): void {
+    let v: Vec<Widget> = [1, 2]
+    print(v.len)
+}
+```
+
+<sub>[tests/errors/unknownTypeGenericArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeGenericArg.milo)</sub>
+
+```milo skip
+impl Widget {
+    fn get(self: &Self): i64 { return 1 }
+}
+pub fn main(): void {
+    print(1)
+}
+```
+
+<sub>[tests/errors/unknownTypeImplTarget.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeImplTarget.milo)</sub>
+
+```milo skip
+pub fn main(): void {
+    let a: Widget = 1
+    print(a)
+}
+```
+
+<sub>[tests/errors/unknownTypeLet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeLet.milo)</sub>
+
+```milo skip
+pub fn main(): void {
+    print(sizeOf<Widget>())
+}
+```
+
+<sub>[tests/errors/unknownTypeSizeOf.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeSizeOf.milo)</sub>
+
+```milo skip
+pub fn main(): void {
+    var b: Widget = 2
+    b = 3
+    print(b)
+}
+```
+
+<sub>[tests/errors/unknownTypeVar.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeVar.milo)</sub>
 
 ## `unreachable code` {#unreachable-code}
 
