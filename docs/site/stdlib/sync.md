@@ -357,8 +357,6 @@ Bounded FIFO channel for streaming values between green tasks and `Promise.block
 workers. `send` blocks when full, `recv` when empty; `for v in ch` drains it until
 `close`.
 
-Fields: `h: ChannelHandle`.
-
 #### `Channel.clone`
 
 ```milo

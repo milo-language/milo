@@ -1,0 +1,14 @@
+// @error: field '_h' of 'Channel' is private to 'std/sync.milo'
+// `h` was public, so safe code could move one channel's handle into another of a
+// different element type (`ints.h = strs.clone().h`): the i64 channel would then hand
+// string slots to recv as integers and free them as the wrong type on drop. The field
+// is private now, so even reading it out of a channel is rejected.
+from "std/sync" import {
+    Channel
+}
+
+fn main(): void {
+    let strs = Channel<string>.new(4)!
+    let _stolen = strs.clone()._h
+    print(strs.len())
+}

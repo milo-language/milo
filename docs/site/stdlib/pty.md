@@ -21,7 +21,7 @@ from "std/pty" import { Pty, openAndSpawn, isInteractive }
 pub struct Pty
 ```
 
-Fields: `slavePath: string`, `childPid: i32`.
+Fields: `slavePath: string`.
 
 #### `Pty.close`
 

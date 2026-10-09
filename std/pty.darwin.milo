@@ -64,7 +64,7 @@ pub struct WinSize {
 pub struct Pty {
     _masterFd: i32,
     slavePath: string,
-    childPid: i32,
+    _childPid: i32,
     _rows: u16,
     _cols: u16,
 }
@@ -91,7 +91,7 @@ impl AsFd for Pty {
 impl Pty {
     // The spawned child's pid, or -1 before spawn.
     fn pid(self: &Pty): i32 {
-        return self.childPid
+        return self._childPid
     }
 
     // Opening is one record (pty.open): the master fd and the slave's path. Under
@@ -121,7 +121,7 @@ impl Pty {
             let master = replayInts(p.substr(0, sp)) [0] as i32
             replayFdOpened(master, 't')
             return Result.Ok(Pty {
-                _masterFd: master, slavePath: p.substr(sp + 1, p.len()), childPid: -1, _rows: 24, _cols: 80
+                _masterFd: master, slavePath: p.substr(sp + 1, p.len()), _childPid: -1, _rows: 24, _cols: 80
             })
         }
     }
@@ -152,7 +152,7 @@ impl Pty {
 
             let name = _cstrToString(namePtr)
             return Result.Ok(Pty {
-                _masterFd: master, slavePath: name, childPid: -1, _rows: 24, _cols: 80
+                _masterFd: master, slavePath: name, _childPid: -1, _rows: 24, _cols: 80
             })
         }
     }
@@ -184,7 +184,7 @@ impl Pty {
         if pid < 0 {
             return Result.Err("fork failed")
         }
-        self.childPid = pid
+        self._childPid = pid
         return Result.Ok(pid)
     }
 
@@ -249,7 +249,7 @@ impl Pty {
             }
 
             freeArgv(argv, argc)
-            self.childPid = pid
+            self._childPid = pid
             return Result.Ok(pid)
         }
     }
@@ -342,10 +342,10 @@ impl Pty {
     // Wait for child to exit. Returns exit status.
     fn wait(self: &Self): i32
     requires
-    self.childPid > 0
+    self._childPid > 0
     {
         var status: [u8; 4] = [0; 4]
-        unsafe { sysWaitpid(self.childPid, status as *u8, 0) }
+        unsafe { sysWaitpid(self._childPid, status as *u8, 0) }
         return status[1] as i32
     }
 
@@ -353,9 +353,9 @@ impl Pty {
     // their own (e.g. `while true` shells) before a blocking wait().
     fn kill(self: &Self): void
     requires
-    self.childPid > 0
+    self._childPid > 0
     {
-        sysKill(self.childPid, 9)
+        sysKill(self._childPid, 9)
     }
 
     // Idempotent: closing the master also unwedges a child blocked writing to a

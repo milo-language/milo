@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 484 distinct messages across 622 programs the compiler must reject.
+Every error message the test suite pins: 485 distinct messages across 623 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -320,6 +320,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field '_base' of 'StrShard' is private to 'std/shard.milo'`](#field-base-of-strshard-is-private-to-std-shard-milo)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
 - [`field '_gens' of 'Arena' is private to 'std/arena.milo'`](#field-gens-of-arena-is-private-to-std-arena-milo)
+- [`field '_h' of 'Channel' is private to 'std/sync.milo'`](#field-h-of-channel-is-private-to-std-sync-milo)
 - [`field '_handle' of 'Lib' is private to 'std/dl.milo'`](#field-handle-of-lib-is-private-to-std-dl-milo)
 - [`field '_len' of 'Shard' is private to 'std/shard.milo'`](#field-len-of-shard-is-private-to-std-shard-milo)
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
@@ -8347,6 +8348,24 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/arenaGensPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaGensPrivate.milo)</sub>
+
+## `field '_h' of 'Channel' is private to 'std/sync.milo'` {#field-h-of-channel-is-private-to-std-sync-milo}
+
+`h` was public, so safe code could move one channel's handle into another of a different element type (`ints.h = strs.clone().h`): the i64 channel would then hand string slots to recv as integers and free them as the wrong type on drop. The field is private now, so even reading it out of a channel is rejected.
+
+```milo skip
+from "std/sync" import {
+    Channel
+}
+
+fn main(): void {
+    let strs = Channel<string>.new(4)!
+    let _stolen = strs.clone()._h
+    print(strs.len())
+}
+```
+
+<sub>[tests/errors/channelHandlePrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/channelHandlePrivate.milo)</sub>
 
 ## `field '_handle' of 'Lib' is private to 'std/dl.milo'` {#field-handle-of-lib-is-private-to-std-dl-milo}
 

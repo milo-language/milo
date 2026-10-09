@@ -343,7 +343,7 @@ pub fn channelUnarmSend(ptr: *u8, node: *u8): void {
 // workers. `send` blocks when full, `recv` when empty; `for v in ch` drains it until
 // `close`.
 pub struct Channel<T> {
-    h: ChannelHandle,
+    _h: ChannelHandle,
 }
 
 // Safety: every access to ChannelInner is serialized by its pthread mutex; values
@@ -432,7 +432,7 @@ impl Channel<T> {
             (*inner).refcount = 1
 
             return Result.Ok(Channel {
-                h: ChannelHandle { _ptr: raw }
+                _h: ChannelHandle { _ptr: raw }
             })
         }
     }
@@ -441,7 +441,7 @@ impl Channel<T> {
     fn send(self: &Self, val: T): Result<i32> {
         var v: T = val
         unsafe {
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
             let cap = (*inner).capacity
 
@@ -496,7 +496,7 @@ impl Channel<T> {
     fn recv(self: &Self): Result<T> {
         unsafe {
             var val: T = zeroed<T>()
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
             let cap = (*inner).capacity
 
@@ -542,7 +542,7 @@ impl Channel<T> {
     fn trySend(self: &Self, val: T): bool {
         var v: T = val
         unsafe {
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
 
             syncLock(mtx)
@@ -571,7 +571,7 @@ impl Channel<T> {
     fn tryRecv(self: &Self): Option<T> {
         unsafe {
             var val: T = zeroed<T>()
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
 
             syncLock(mtx)
@@ -598,7 +598,7 @@ impl Channel<T> {
     // Number of values currently queued.
     fn len(self: &Self): i64 {
         unsafe {
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
             syncLock(mtx)
             let n: i64 = (*inner).len
@@ -610,7 +610,7 @@ impl Channel<T> {
 
     // Raw ChannelInner pointer, for std/select arm hooks (channelArm*).
     fn rawPtr(self: &Self): *u8 {
-        return self.h._ptr
+        return self._h._ptr
     }
 
     // A T-erased owner of the queue, for std/select: a channel arm keeps one so the
@@ -618,7 +618,7 @@ impl Channel<T> {
     // If this handle ends up the last owner, the queue is freed but payloads still in it
     // are not destroyed (only `Channel<T>.drop` knows T): they leak, they never dangle.
     fn retainHandle(self: &Self): ChannelHandle {
-        return self.h.retain()
+        return self._h.retain()
     }
 
     // Share this channel with another owner (a spawned producer/consumer). Each clone
@@ -628,13 +628,13 @@ impl Channel<T> {
     // send/recv take &Self, so a handle only needs cloning when moved into a task while
     // the parent still uses it.
     fn clone(self: &Self): Channel<T> {
-        return Channel { h: self.h.retain() }
+        return Channel { _h: self._h.retain() }
     }
 
     // Signal no more values will be sent. Pending items are still delivered.
     fn close(self: &Self): void {
         unsafe {
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             let mtx = (*inner).mtx
             syncLock(mtx)
             syncNote("close", 0)
@@ -671,11 +671,11 @@ impl Channel<T> {
 impl Drop for Channel<T> {
     fn drop(self: &mut Self): void {
         // Zeroed == already moved out (see ChannelHandle.drop); nothing to release.
-        if self.h._ptr as i64 == 0 {
+        if self._h._ptr as i64 == 0 {
             return
         }
         unsafe {
-            let inner = self.h._ptr as *ChannelInner
+            let inner = self._h._ptr as *ChannelInner
             // The decrement has to happen here, not in the handle's Drop: only the
             // thread that observes the count reach zero may touch the buffer, and
             // only this generic impl knows T's drop glue. Zeroing the handle afterwards
@@ -699,7 +699,7 @@ impl Drop for Channel<T> {
                 (*inner).tail = 0
                 channelFreeInner(inner)
             }
-            self.h._ptr = 0 as *u8
+            self._h._ptr = 0 as *u8
         }
     }
 }

@@ -108,7 +108,7 @@ pub struct WinSize {
 pub struct Pty {
     _masterFd: i32, // CRT fd for the pseudoconsole OUTPUT pipe (child -> parent)
     slavePath: string, // always "" on Windows — no pts device path exists
-    childPid: i32,
+    _childPid: i32,
     _rows: u16,
     _cols: u16,
     _inputFd: i32, // CRT fd for the INPUT pipe (parent -> child)
@@ -139,7 +139,7 @@ impl AsFd for Pty {
 impl Pty {
     // The spawned child's pid, or -1 before spawn.
     fn pid(self: &Pty): i32 {
-        return self.childPid
+        return self._childPid
     }
 
     fn open(): Result<Pty, string> {
@@ -179,7 +179,7 @@ impl Pty {
             return Result.Ok(Pty {
                 _masterFd: masterFd,
                 slavePath: "",
-                childPid: -1,
+                _childPid: -1,
                 _rows: 24,
                 _cols: 80,
                 _inputFd: inputFd,
@@ -229,9 +229,9 @@ impl Pty {
                 return Result.Err("CreateProcess failed")
             }
             self._childHandle = (pi as *i64) [0]
-            self.childPid = (pi as *u32) [4] as i32
+            self._childPid = (pi as *u32) [4] as i32
             self._attrList = attrList
-            return Result.Ok(self.childPid)
+            return Result.Ok(self._childPid)
         }
     }
 
@@ -285,7 +285,7 @@ impl Pty {
 
     fn wait(self: &Self): i32
     requires
-    self.childPid > 0
+    self._childPid > 0
     {
         unsafe {
             WaitForSingleObject(self._childHandle, 4294967295)
@@ -297,7 +297,7 @@ impl Pty {
 
     fn kill(self: &Self): void
     requires
-    self.childPid > 0
+    self._childPid > 0
     {
         unsafe { TerminateProcess(self._childHandle, 1) }
     }
