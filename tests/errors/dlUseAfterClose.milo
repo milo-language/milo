@@ -1,0 +1,13 @@
+// @error: use of moved variable 'lib'
+// Found by the October 2026 soundness sweep. Lib.close took the library by reference,
+// so a second close, or a sym/has after the first, handed the loader a handle it had
+// already released. close consumes the Lib now.
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    print(lib.close())
+    print(lib.close())
+}

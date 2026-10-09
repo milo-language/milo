@@ -1,0 +1,14 @@
+// @skip-os: win32
+// @expect: true
+// @expect: true
+// Lib.close consumes the handle (tests/errors/dlUseAfterClose.milo is the misuse).
+// (Skipped on Windows: there dlSelf is GetModuleHandle, which FreeLibrary must not see.)
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    print(!lib.has("definitely_not_a_real_symbol_xyz"))
+    print(lib.close())
+}

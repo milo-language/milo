@@ -21,19 +21,24 @@ pub struct Lib
 ```
 
 Owns the dlopen handle, so the pointer field makes it move-tracked: two copies would
-each `close` it. No `@copy`, on purpose.
+each `close` it. No `@copy`, on purpose. The field is private: a public one let any
+file point `sym` at an arbitrary address.
 
-Fields: `handle: *u8`.
+No Drop either, also on purpose: a library stays loaded until `close`. Pointers from
+`sym` are raw and routinely outlive the Lib binding (a callback table filled at
+startup), and unloading at the end of that binding's scope would leave each of them
+pointing at unmapped code.
 
 #### `Lib.close`
 
 ```milo
-fn Lib.close(self: &Lib): bool
+fn Lib.close(self: Lib): bool
 ```
 
-Release the handle. Pointers obtained from sym() dangle afterwards, and any
-still-running thread the library started keeps running — closing does not
-stop it.
+Unload the library. Consumes the Lib: taking it by reference left a closed
+handle usable, so a second close or a `sym` after it reached the loader with a
+freed handle. Pointers obtained from sym() dangle afterwards, and any
+still-running thread the library started keeps running; closing does not stop it.
 
 #### `Lib.has`
 

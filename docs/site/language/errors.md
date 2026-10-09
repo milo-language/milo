@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 482 distinct messages across 620 programs the compiler must reject.
+Every error message the test suite pins: 484 distinct messages across 622 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -320,6 +320,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field '_base' of 'StrShard' is private to 'std/shard.milo'`](#field-base-of-strshard-is-private-to-std-shard-milo)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
 - [`field '_gens' of 'Arena' is private to 'std/arena.milo'`](#field-gens-of-arena-is-private-to-std-arena-milo)
+- [`field '_handle' of 'Lib' is private to 'std/dl.milo'`](#field-handle-of-lib-is-private-to-std-dl-milo)
 - [`field '_len' of 'Shard' is private to 'std/shard.milo'`](#field-len-of-shard-is-private-to-std-shard-milo)
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
 - [`field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'`](#field-poolid-of-poolblock-is-private-to-std-pool-milo)
@@ -486,6 +487,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'db'`](#use-of-moved-variable-db)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
 - [`use of moved variable 'h'`](#use-of-moved-variable-h)
+- [`use of moved variable 'lib'`](#use-of-moved-variable-lib)
 - [`use of moved variable 'o'`](#use-of-moved-variable-o)
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
@@ -8344,6 +8346,24 @@ fn main(): void {
 
 <sub>[tests/errors/arenaGensPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaGensPrivate.milo)</sub>
 
+## `field '_handle' of 'Lib' is private to 'std/dl.milo'` {#field-handle-of-lib-is-private-to-std-dl-milo}
+
+A public handle let any file aim dlsym at an arbitrary address.
+
+```milo skip
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    var lib = dlSelf()!
+    lib._handle = 4096 as *u8
+    print(lib.has("x"))
+}
+```
+
+<sub>[tests/errors/dlHandlePrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dlHandlePrivate.milo)</sub>
+
 ## `field '_len' of 'Shard' is private to 'std/shard.milo'` {#field-len-of-shard-is-private-to-std-shard-milo}
 
 Found by the October 2026 soundness sweep. A worker widened its own window (`len` was a public field) and then wrote past it: `set` bounds-checks against the window's length, so the write landed past the end of the shattered Vec's buffer, a heap-buffer-overflow under --sanitize. Every Shard field is private now.
@@ -11815,6 +11835,24 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapDerefMovedTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMovedTwice.milo)</sub>
+
+## `use of moved variable 'lib'` {#use-of-moved-variable-lib}
+
+Found by the October 2026 soundness sweep. Lib.close took the library by reference, so a second close, or a sym/has after the first, handed the loader a handle it had already released. close consumes the Lib now.
+
+```milo skip
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    print(lib.close())
+    print(lib.close())
+}
+```
+
+<sub>[tests/errors/dlUseAfterClose.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dlUseAfterClose.milo)</sub>
 
 ## `use of moved variable 'o'` {#use-of-moved-variable-o}
 

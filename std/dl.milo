@@ -41,9 +41,15 @@ from "std/platform" import {
 pub let RTLD_NOW: i32 = 2
 
 // Owns the dlopen handle, so the pointer field makes it move-tracked: two copies would
-// each `close` it. No `@copy`, on purpose.
+// each `close` it. No `@copy`, on purpose. The field is private: a public one let any
+// file point `sym` at an arbitrary address.
+//
+// No Drop either, also on purpose: a library stays loaded until `close`. Pointers from
+// `sym` are raw and routinely outlive the Lib binding (a callback table filled at
+// startup), and unloading at the end of that binding's scope would leave each of them
+// pointing at unmapped code.
 pub struct Lib {
-    handle: *u8,
+    _handle: *u8,
 }
 
 // The most recent loader error, or a generic message when the loader has none.
@@ -71,7 +77,7 @@ pub fn dlOpen(path: &string): Result<Lib, string> {
             return Result.Err(dlLastError())
         }
         return Result.Ok(Lib {
-            handle: h
+            _handle: h
         })
     }
 }
@@ -86,7 +92,7 @@ pub fn dlSelf(): Result<Lib, string> {
             return Result.Err(dlLastError())
         }
         return Result.Ok(Lib {
-            handle: h
+            _handle: h
         })
     }
 }
@@ -97,7 +103,7 @@ impl Lib {
     // indistinguishable from an error here, as with plain dlsym.
     fn sym(self: &Lib, name: &string): Result<*u8, string> {
         unsafe {
-            let p = dlsym(self.handle, name)
+            let p = dlsym(self._handle, name)
             if (p as i64) == 0 {
                 return Result.Err(dlLastError())
             }
@@ -108,15 +114,16 @@ impl Lib {
     // Whether a symbol is present, without treating absence as an error.
     fn has(self: &Lib, name: &string): bool {
         unsafe {
-            let p = dlsym(self.handle, name)
+            let p = dlsym(self._handle, name)
             return (p as i64) != 0
         }
     }
 
-    // Release the handle. Pointers obtained from sym() dangle afterwards, and any
-    // still-running thread the library started keeps running — closing does not
-    // stop it.
-    fn close(self: &Lib): bool {
-        unsafe { return dlclose(self.handle) == 0 }
+    // Unload the library. Consumes the Lib: taking it by reference left a closed
+    // handle usable, so a second close or a `sym` after it reached the loader with a
+    // freed handle. Pointers obtained from sym() dangle afterwards, and any
+    // still-running thread the library started keeps running; closing does not stop it.
+    fn close(self: Self): bool {
+        unsafe { return dlclose(self._handle) == 0 }
     }
 }
