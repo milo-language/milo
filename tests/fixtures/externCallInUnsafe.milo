@@ -1,6 +1,6 @@
 // Calls that satisfy the extern-call rule: an extern inside `unsafe`, a std function that
 // wraps one, and a `@pure` extern (exempt). tests/externCall.test.ts also checks this file
-// under --deny=extern-call, which is what proves none of them is reported.
+// for extern-call diagnostics directly, which is what proves none of them is reported.
 from "std/sysinfo" import { pid }
 from "std/os" import { htons }
 

@@ -7,22 +7,19 @@
 from "std/math" import {
     Math
 }
-from "sdl/audio" import {
-    SDL_ClearQueuedAudio, SDL_GetQueuedAudioSize, SDL_OpenAudioDevice,
-    SDL_PauseAudioDevice, SDL_QueueAudio, audioSpec, AUDIO_S16LSB
+from "../../shared/sdlkit" import {
+    AudioDevice
 }
 
 pub let RATE: i64 = 44100
 
 pub struct Sound {
-    dev: u32,
-    ok: bool,
+    dev: Option<AudioDevice>,
     // Music runs on its OWN device. SDL_QueueAudio appends to a single stream —
     // it does not mix — so music and effects sharing one device would serialise:
     // every chime would wait behind the rest of the queued music loop before it
     // was audible. Two devices lets the OS mixer do the mixing.
-    musicDev: u32,
-    musicOk: bool,
+    musicDev: Option<AudioDevice>,
     musicOn: bool,
     music: Vec<i16>,
     ring: Vec<i16>,
@@ -167,25 +164,24 @@ fn rush(out: &mut Vec<i16>, secs: f64, amp: f64) {
     }
 }
 
-pub fn soundNew(): Sound {
-    // Mono 16-bit at 2048 samples a buffer. This used to be a hand-packed [u8; 32]
-    // with the field offsets written out as a comment; the package's SDL_AudioSpec
-    // is @cLayout-checked against the header instead, so a field landing in the
-    // wrong place is a build error rather than a device opened at the wrong rate.
-    var spec = audioSpec(RATE as i32, AUDIO_S16LSB as u16, 1, 2048)
-
-    var dev: u32 = 0
-    var mdev: u32 = 0
-    unsafe {
-        dev = SDL_OpenAudioDevice(0 as *u8, 0, spec.addrOf() as *u8, 0 as *u8, 0)
-        if dev != 0 {
-            SDL_PauseAudioDevice(dev, 0)
+fn openDevice(): Option<AudioDevice> {
+    match AudioDevice.openMonoS16(RATE) {
+        Ok(d) => {
+            return Option.Some(d)
         }
-        mdev = SDL_OpenAudioDevice(0 as *u8, 0, spec.addrOf() as *u8, 0 as *u8, 0)
-        if mdev != 0 {
-            SDL_PauseAudioDevice(mdev, 0)
+        Err(e) => {
+            // No sound is not a reason to stop the game.
+            print(e)
+            return Option.None
         }
     }
+}
+
+pub fn soundNew(): Sound {
+    // Mono 16-bit at 2048 samples a buffer; sdlkit opens it from the sdl package's
+    // SDL_AudioSpec, which is @cLayout-checked against the header.
+    let dev = openDevice()
+    let mdev = openDevice()
 
     // ring: a clean two-note chime
     var ring: Vec<i16> = Vec.new()
@@ -214,8 +210,8 @@ pub fn soundNew(): Sound {
     toneWave(&mut miss, 262.0, 220.0, 0.40, 0.5, 0.08)
 
     return Sound {
-        dev: dev, ok: dev != 0,
-        musicDev: mdev, musicOk: mdev != 0, musicOn: true, music: buildMusic(),
+        dev: dev,
+        musicDev: mdev, musicOn: true, music: buildMusic(),
         ring: ring, ringBig: ringBig, region: region, boost: boost, miss: miss
     }
 }
@@ -223,33 +219,37 @@ pub fn soundNew(): Sound {
 // Top up the music queue. Called every frame: SDL drains the queue in real time,
 // so the loop is kept a couple of seconds ahead and re-queued as it plays out.
 pub fn musicTick(s: &Sound) {
-    if !s.musicOk || !s.musicOn {
+    if !s.musicOn {
         return
     }
-    var queued: u32 = 0
-    queued = SDL_GetQueuedAudioSize(s.musicDev)
-    // two seconds of stereo-free 16-bit mono is RATE*2 bytes per second
-    if (queued as i64) > RATE * 2 {
-        return
-    }
-    unsafe {
-        let _ = SDL_QueueAudio(s.musicDev, s.music.ptr() as *u8, (s.music.len * 2) as u32)
+    match s.musicDev {
+        Some(d) => {
+            // two seconds of stereo-free 16-bit mono is RATE*2 bytes per second
+            if d.queuedBytes() > RATE * 2 {
+                return
+            }
+            let _ = d.queue(s.music)
+        }
+        None => {}
     }
 }
 
 pub fn musicToggle(s: &mut Sound) {
     s.musicOn = !s.musicOn
     if !s.musicOn {
-        SDL_ClearQueuedAudio(s.musicDev)
+        match s.musicDev {
+            Some(d) => d.clear(),
+            None => {}
+        }
     }
 }
 
 fn play(s: &Sound, buf: &Vec<i16>) {
-    if !s.ok {
-        return
-    }
-    unsafe {
-        let _ = SDL_QueueAudio(s.dev, buf.ptr() as *u8, (buf.len * 2) as u32)
+    match s.dev {
+        Some(d) => {
+            let _ = d.queue(buf)
+        }
+        None => {}
     }
 }
 
@@ -271,10 +271,13 @@ pub fn playMiss(s: &Sound) {
 
 pub fn playBoost(s: &Sound) {
     // Don't stack rushes if the key is held through a lockout and back.
-    var queued: u32 = 0
-    queued = SDL_GetQueuedAudioSize(s.dev)
-    if queued > 40000 {
-        return
+    match s.dev {
+        Some(d) => {
+            if d.queuedBytes() > 40000 {
+                return
+            }
+        }
+        None => {}
     }
     play(s, s.boost)
 }

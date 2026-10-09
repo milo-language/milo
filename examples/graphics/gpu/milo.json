@@ -1,8 +1,9 @@
 {
   "name": "gpu-examples",
   "version": "0.1.0",
-  "description": "GPU examples — OpenGL comes from the gl package, not the stdlib",
+  "description": "GPU examples — OpenGL from the gl package, the window from the sdl package through ../../shared/sdlkit",
   "deps": {
-    "gl": "github.com/milo-language/milo-gl@v0.2.1"
+    "gl": "github.com/milo-language/milo-gl@v0.2.1",
+    "sdl": "github.com/milo-language/milo-sdl@v0.3.2"
   }
 }

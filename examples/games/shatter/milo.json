@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "description": "SHATTER — a brick breaker",
   "deps": {
-    "sdl": "github.com/milo-language/milo-sdl@v0.3.1"
+    "sdl": "github.com/milo-language/milo-sdl@v0.3.2"
   }
 }

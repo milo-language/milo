@@ -16,7 +16,7 @@ import { KEYWORDS, SOFT_KEYWORDS } from "../src/tokens";
 import { KEYWORD_DOCS, SYMBOL_DOCS } from "../src/keyword-docs";
 import { PRIMITIVE_TYPE_NAMES } from "../src/types";
 import { BUILTIN_MEMBERS } from "../src/builtin-members";
-import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, DOCUMENTED_FLOOR } from "../src/warnings";
+import { WARNINGS, WARNING_NAMES, OFF_BY_DEFAULT, DOCUMENTED_FLOOR, CODED_ERRORS, CODED_ERROR_NAMES } from "../src/warnings";
 import { ATTRIBUTES, ATTRIBUTE_NAMES } from "../src/attributes";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "../src/cli-help";
 
@@ -55,6 +55,25 @@ test("every row in src/warnings.ts is a warning the checker emits", () => {
   // `--deny=` a name the compiler will never produce.
   const mentioned = WARNING_NAMES.filter(n => CHECKER.includes(`"${n}"`));
   expect(WARNING_NAMES.filter(n => !mentioned.includes(n))).toEqual([]);
+});
+
+test("every named error is one the checker reports, and is no warning name", () => {
+  // A named error is pushed with `code: "<name>"`; a row whose name the checker never
+  // writes documents an error nobody can get.
+  expect(CODED_ERROR_NAMES.length).toBeGreaterThan(0);
+  expect(CODED_ERROR_NAMES.filter(n => !CHECKER.includes(`code: "${n}"`))).toEqual([]);
+  // In both tables it would be allowable and unallowable at once.
+  expect(CODED_ERROR_NAMES.filter(n => WARNING_NAMES.includes(n))).toEqual([]);
+});
+
+test("--allow= does not reach a named error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "milo-coded-err-"));
+  const f = join(dir, "case.milo");
+  writeFileSync(f, CODED_ERRORS[0]!.example!);
+  const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "check", f, `--allow=${CODED_ERRORS[0]!.name}`], { encoding: "utf-8" });
+  rmSync(dir, { recursive: true, force: true });
+  expect(r.status).not.toBe(0);
+  expect((r.stdout ?? "") + (r.stderr ?? "")).toContain(`unknown warning '${CODED_ERRORS[0]!.name}'`);
 });
 
 test("off-by-default matches the checker's allow-list", () => {
@@ -162,7 +181,8 @@ test("the annotations the checker enforces are documented for humans too", () =>
 // now lives on the WARNINGS row and is RENDERED to the site, the CLI and `lang --json`,
 // so there is one copy. These tests are what keep that copy honest.
 test("a documented warning carries a doc, a fix and an example", () => {
-  const documented = WARNINGS.filter(w => w.doc || w.fix || w.example);
+  // Named errors count: a warning that graduates to an error keeps its entry.
+  const documented = [...WARNINGS, ...CODED_ERRORS].filter(w => w.doc || w.fix || w.example);
   // Partial entries are the failure mode: a doc with no example is a claim nothing checks.
   expect(documented.filter(w => !(w.doc && w.fix && w.example)).map(w => w.name)).toEqual([]);
   for (const w of documented) {
@@ -177,7 +197,7 @@ test("every documented example actually provokes its own warning", () => {
   // The point of the whole exercise. A reference example that no longer trips the rule it
   // illustrates is exactly the rot the copied lists had, moved one level in.
   const documented = WARNINGS.filter(w => w.example);
-  expect(documented.length).toBeGreaterThanOrEqual(DOCUMENTED_FLOOR); // a scan that found nothing is not a pass
+  expect(documented.length + CODED_ERRORS.filter(e => e.example).length).toBeGreaterThanOrEqual(DOCUMENTED_FLOOR); // a scan that found nothing is not a pass
   const dir = mkdtempSync(join(tmpdir(), "milo-warn-doc-"));
   const wrong: string[] = [];
   for (const w of documented) {
@@ -202,6 +222,23 @@ test("every documented example actually provokes its own warning", () => {
   expect(wrong).toEqual([]);
 }, 60_000); // type-checks every warning's example in turn; 5s was the bare default and ran out on a loaded runner
 
+test("every named error's example fails check with that code, and passes inside unsafe", () => {
+  // No flag: the point of a named error is that the default build refuses the program.
+  const dir = mkdtempSync(join(tmpdir(), "milo-err-doc-"));
+  const wrong: string[] = [];
+  for (const e of CODED_ERRORS) {
+    const f = join(dir, "case.milo");
+    writeFileSync(f, e.example!);
+    const r = spawnSync("bun", [join(ROOT, "src", "main.ts"), "check", "--json", f], { encoding: "utf-8" });
+    const codes = (JSON.parse(r.stdout).diagnostics as { code?: string; severity: string }[])
+      .filter(d => d.severity === "error").map(d => d.code);
+    // Exactly the one named error: anything else means the example teaches a second mistake.
+    if (codes.join(",") !== e.name) wrong.push(`${e.name}: got errors [${codes.join(",")}]`);
+  }
+  rmSync(dir, { recursive: true, force: true });
+  expect(wrong).toEqual([]);
+}, 30_000);
+
 // ---------------------------------------------------------------------------
 // `milo explain <name>` — the terminal's view of the same reference.
 //
@@ -219,6 +256,12 @@ test("explain answers for every name the vocabulary has", () => {
     const text = explainText(w.name)!;
     expect({ name: w.name, hasFix: text.includes("fix: ") }).toEqual({ name: w.name, hasFix: true });
     expect({ name: w.name, hasFlag: text.includes(`--allow=${w.name}`) }).toEqual({ name: w.name, hasFlag: true });
+  }
+  for (const e of CODED_ERRORS) {
+    const text = explainText(e.name)!;
+    expect(text.startsWith(`error: ${e.name}`)).toBe(true);
+    expect(text).toContain("fix: ");
+    expect(text).not.toContain("--allow=");
   }
 });
 

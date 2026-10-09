@@ -17,7 +17,7 @@
 //
 // Controls:  SPACE pause/resume   R reset   ESC / close quit
 //
-// Build/run (SDL2 auto-linked via @link — no -- flags needed):
+// Build/run (SDL2 comes from the sdl package in ../milo.json; no -- flags needed):
 //   milo run examples/simulation/phasespace.milo --release   (-O3 strongly recommended)
 
 from "std/math" import {
@@ -26,49 +26,12 @@ from "std/math" import {
 from "std/strconv" import {
     formatFloat
 }
-
-@link("SDL2")
-pub extern fn SDL_Init(flags: u32): i32
-
-pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
-
-pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
-
-pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
-
-pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
-
-pub extern fn SDL_RenderClear(ren: *u8): i32
-
-pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
-
-pub extern fn SDL_RenderPresent(ren: *u8): void
-
-pub extern fn SDL_PollEvent(event: *u8): i32
-
-pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
-
-pub extern fn SDL_GetMouseState(x: *i32, y: *i32): u32 // button bitmask, fills x/y
-
-pub extern fn SDL_GetTicks(): u32 // ms since SDL_Init (for FPS)
-
-pub extern fn SDL_Delay(ms: u32): void
-
-pub extern fn SDL_DestroyWindow(win: *u8): void
-
-pub extern fn SDL_Quit(): void
-
-pub let SDL_INIT_VIDEO: u32 = 0x20
-
-pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-
-pub let SDL_WINDOW_SHOWN: u32 = 0x4
-
-pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-
-pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-
-pub let SDL_QUIT: u32 = 0x100
+from "sdl" import {
+    SDL_INIT_VIDEO, SDL_WINDOW_SHOWN
+}
+from "../shared/sdlkit" import {
+    Sdl, Window, Presenter, pollEvents, keyboard, mouse, delayMs, ticks
+}
 
 // phase-space grid: NX cells in x, NV cells in v (square so one grid cell = one pixel)
 pub let NX: i64 = 192
@@ -366,9 +329,14 @@ pub fn initF(f: &mut Vec<f64>, dv: f64) {
 }
 
 pub fn main(): i32 {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
+    // Declared in teardown's reverse: the presenter goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
 
     let dx = (XMAX - XMIN) / (NX as f64)
@@ -383,22 +351,19 @@ pub fn main(): i32 {
     }
     let substeps = 16 // sim sub-steps per rendered frame
 
-    var win: *u8 = 0 as *u8
-    var ren: *u8 = 0 as *u8
-    var tex: *u8 = 0 as *u8
-    var ok = true
-    unsafe {
-        let title = "Milo — electrostatic Vlasov (1x1v), double-well phase space"
-        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (NX * SCALE) as i32, (NV * SCALE) as i32, SDL_WINDOW_SHOWN)
-        ren = SDL_CreateRenderer(win, -1, 0)
-        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, NX as i32, NV as i32)
-        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
-            ok = false
+    let win = match Window.create("Milo — electrostatic Vlasov (1x1v), double-well phase space", NX * SCALE, NV * SCALE, SDL_WINDOW_SHOWN) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
         }
     }
-    if !ok {
-        print("SDL setup failed: win/ren/tex NULL")
-        return 2
+    let screen = match Presenter.create(win, NX, NV, 0) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
+        }
     }
 
     // framebuffer on the heap (Vec, not a fixed stack array) — no size to hard-code
@@ -409,7 +374,6 @@ pub fn main(): i32 {
         fb.push(0)
         fbz += 1
     }
-    var ev: [u8; 64] = [0; 64]
 
     // external field E(x_i) = 2*A*sin(2*x_i), precomputed once
     var evec: Vec<f64> = Vec.new()
@@ -444,7 +408,7 @@ pub fn main(): i32 {
     var paused = false
     var rHeld = false
     var quit = false
-    var lastTicks = SDL_GetTicks() // scalar extern — safe outside unsafe
+    var lastTicks = ticks()
     var fpsAvg = 0.0
     var mouseHeld = false
 
@@ -453,29 +417,24 @@ pub fn main(): i32 {
         var mx: i64 = -1
         var my: i64 = -1
         var mouseDown = false
-        unsafe {
-            while SDL_PollEvent(ev) != 0 {
-                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-                if evType == SDL_QUIT {
-                    quit = true
-                }
-            }
-            let ks = SDL_GetKeyboardState(0 as *i32)
-            if ks[41] != 0 {
-                quit = true
-            } // Esc
-            if ks[44] != 0 {
-                paused = !paused
-            } // Space (edge-ish; fine at 60fps)
-            if ks[21] != 0 {
-                wantReset = true
-            } // R
-            var mpos: [i32; 2] = [0; 2]
-            let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
-            mx = (mpos[0] as i64) / SCALE // grid x
-            my = (mpos[1] as i64) / SCALE // screen row
-            mouseDown = (btn & 1) != 0
+        if pollEvents().quit {
+            quit = true
         }
+        let ks = keyboard()
+        if ks.down(41) {
+            quit = true
+        } // Esc
+        if ks.down(44) {
+            paused = !paused
+        } // Space (edge-ish; fine at 60fps)
+        if ks.down(21) {
+            wantReset = true
+        } // R
+        let ms = mouse()
+        let btn = ms.buttons
+        mx = ms.x / SCALE // grid x
+        my = ms.y / SCALE // screen row
+        mouseDown = (btn & 1) != 0
         if wantReset {
             if !rHeld {
                 initF(&mut f, dv)
@@ -541,7 +500,7 @@ pub fn main(): i32 {
         }
 
         // FPS from real frame time (SDL ticks), smoothed
-        let now = SDL_GetTicks()
+        let now = ticks()
         var frameMs = (now - lastTicks) as i64
         lastTicks = now
         if frameMs < 1 {
@@ -564,12 +523,7 @@ pub fn main(): i32 {
         drawInt(&mut fb, NX - 34, 4, fpsAvg as i64, 1, ink)
         drawText(&mut fb, NX - 18, 4, "FPS", 1, ink)
 
-        unsafe {
-            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (NX * 4) as i32)
-            SDL_RenderClear(ren)
-            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
-            SDL_RenderPresent(ren)
-        }
+        let _ = screen.present(fb)
 
         // ---- runtime invariant check: total mass conserved, worst negative f ----
         if frame % 60 == 0 {
@@ -589,10 +543,8 @@ pub fn main(): i32 {
             print("t=" + formatFloat(t, 2) + "  massRelErr=" + formatFloat(relErr, 8) + "  min(f)=" + formatFloat(minf, 6))
         }
         frame += 1
-        SDL_Delay(4)
+        delayMs(4)
     }
 
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }

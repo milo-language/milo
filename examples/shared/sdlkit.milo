@@ -1,0 +1,457 @@
+// sdlkit: the safe layer over SDL2 that every SDL example in this tree shares.
+//
+// The `sdl` package (github.com/milo-language/milo-sdl) is declarations and constants
+// only, verified against SDL's headers. Calling any of them is an extern call, so it
+// belongs inside `unsafe`, and this file is the one place in the examples that does
+// it: every SDL function the games, the GPU demos, the simulations and the ray tracers
+// use is called here exactly once, inside a small wrapper whose `unsafe` block says
+// what makes the call sound. The programs above it call only these wrappers and hold
+// no `unsafe` of their own for SDL.
+//
+// Handles SDL must release exactly once are owning types with a private field and a
+// `Drop`: the subsystem itself (`Sdl`, which calls SDL_Quit), a `Window`, a 2D
+// `Presenter` (renderer plus its streaming texture), an `SdlGlContext`, and an
+// `AudioDevice`. Nothing outside this file can build one from a raw pointer, so a
+// double destroy or a use after destroy is a move error rather than a crash.
+//
+// Drop order is the caller's to get right, and the rule is the language's: locals are
+// destroyed last-declared first, struct fields last-field first. Declare `Sdl` first,
+// then the window, then what was made from the window, and teardown runs in the order
+// SDL wants (texture, renderer, context, window, SDL_Quit).
+//
+// Every importer pins `sdl` to the release in ./milo.json (v0.3.2). The `sdl` imports
+// below resolve against that manifest, and a program whose own milo.json named a
+// different release would bind two copies of the same C functions.
+
+from "sdl" import {
+    SDL_Init, SDL_Quit, SDL_GetError,
+    SDL_CreateWindow, SDL_DestroyWindow, SDL_SetWindowFullscreen, SDL_MaximizeWindow,
+    SDL_GetWindowSize,
+    SDL_CreateRenderer, SDL_DestroyRenderer, SDL_CreateTexture, SDL_DestroyTexture,
+    SDL_UpdateTexture, SDL_RenderClear, SDL_RenderCopy, SDL_RenderPresent,
+    SDL_PollEvent, SDL_GetKeyboardState, SDL_GetMouseState, SDL_GetRelativeMouseState,
+    SDL_ShowCursor, SDL_SetRelativeMouseMode, SDL_GetTicks, SDL_Delay,
+    SDL_QUIT, SDL_MOUSEWHEEL, SDL_WINDOWPOS_CENTERED, SDL_WINDOW_FULLSCREEN_DESKTOP,
+    SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING
+}
+from "sdl/glcontext" import {
+    SDL_GL_SetAttribute, SDL_GL_CreateContext, SDL_GL_DeleteContext, SDL_GL_SwapWindow,
+    SDL_GL_SetSwapInterval, SDL_GL_GetDrawableSize
+}
+from "sdl/audio" import {
+    SDL_OpenAudioDevice, SDL_QueueAudio, SDL_PauseAudioDevice, SDL_ClearQueuedAudio,
+    SDL_GetQueuedAudioSize, SDL_CloseAudioDevice, audioSpec, AUDIO_S16LSB
+}
+
+// Why the last failing SDL call failed, for an error message. Sound: SDL_GetError never
+// returns null and its string stays valid until the next SDL call, which is after the
+// copy `_cstrToString` makes here.
+pub fn sdlError(): string {
+    unsafe {
+        let p = SDL_GetError()
+        if (p as i64) == 0 {
+            return "unknown SDL error"
+        }
+        return _cstrToString(p)
+    }
+}
+
+// ── Subsystem ───────────────────────────────────────────────────────────────────────
+
+// Owns SDL_Init: dropping it is SDL_Quit, which also tears down anything still open,
+// so it must be declared before every window and device (it then outlives them).
+pub struct Sdl {
+    _live: bool,
+}
+
+impl Drop for Sdl {
+    fn drop(self: &mut Self) {
+        // `_live` because a moved-from value is zeroed and still dropped: the zero value
+        // must quit nothing.
+        if self._live {
+            // Sound: SDL_Quit takes no arguments and is valid once per successful init.
+            unsafe { SDL_Quit() }
+        }
+    }
+}
+
+impl Sdl {
+    // Bring up the subsystems in `flags` (SDL_INIT_VIDEO, SDL_INIT_AUDIO, ...). Ask for
+    // every one you will use: a missing SDL_INIT_AUDIO is not an error, it makes every
+    // sound a silent no-op.
+    fn init(flags: u32): Result<Sdl, string> {
+        var rc: i32 = 0
+        // Sound: SDL_Init reads one integer of flags and touches no Milo memory.
+        unsafe { rc = SDL_Init(flags) }
+        if rc != 0 {
+            return Result.Err("SDL_Init: " + sdlError())
+        }
+        return Result.Ok(Sdl { _live: true })
+    }
+}
+
+// Milliseconds since SDL_Init. Sound: no arguments, returns a scalar.
+pub fn ticks(): u32 {
+    unsafe { return SDL_GetTicks() }
+}
+
+// Sleep the calling thread. Sound: one integer argument, no memory.
+pub fn delayMs(ms: u32) {
+    unsafe { SDL_Delay(ms) }
+}
+
+// Show or hide the mouse cursor over SDL windows. Sound: one integer argument.
+pub fn setCursorVisible(on: bool) {
+    unsafe {
+        let _ = SDL_ShowCursor(if on {
+            1
+        } else {
+            0
+        })
+    }
+}
+
+// Relative mode hides the cursor, keeps it in the window and reports only motion
+// deltas (read with `relativeMouse`). Sound: one integer argument (SDL_bool).
+pub fn setRelativeMouse(on: bool) {
+    unsafe {
+        let _ = SDL_SetRelativeMouseMode(if on {
+            1
+        } else {
+            0
+        })
+    }
+}
+
+// ── Windows ─────────────────────────────────────────────────────────────────────────
+
+pub struct SdlSize {
+    w: i64,
+    h: i64,
+}
+
+// An SDL_Window, destroyed on drop. Centered on screen; `flags` are SDL_WINDOW_*.
+pub struct Window {
+    _ptr: *u8,
+}
+
+impl Drop for Window {
+    fn drop(self: &mut Self) {
+        if (self._ptr as i64) != 0 {
+            // Sound: `_ptr` came from a successful SDL_CreateWindow, only this type holds
+            // it, and drop runs once.
+            unsafe { SDL_DestroyWindow(self._ptr) }
+        }
+    }
+}
+
+impl Window {
+    fn create(title: &string, w: i64, h: i64, flags: u32): Result<Window, string> {
+        var p: *u8 = 0 as *u8
+        // Sound: `title.cstr()` is NUL-terminated and outlives the call; SDL copies it.
+        unsafe { p = SDL_CreateWindow(title.cstr(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w as i32, h as i32, flags) }
+        if (p as i64) == 0 {
+            return Result.Err("window: " + sdlError())
+        }
+        return Result.Ok(Window { _ptr: p })
+    }
+
+    // Borderless desktop fullscreen, or back to a window.
+    fn setFullscreen(self: &Window, on: bool) {
+        let mode = if on {
+            SDL_WINDOW_FULLSCREEN_DESKTOP
+        } else {
+            0 as u32
+        }
+        // Sound: `_ptr` is a live window (the type guarantees it).
+        unsafe { let _ = SDL_SetWindowFullscreen(self._ptr, mode) }
+    }
+
+    // Only does anything if the window was created SDL_WINDOW_RESIZABLE.
+    fn maximize(self: &Window) {
+        // Sound: `_ptr` is a live window.
+        unsafe { SDL_MaximizeWindow(self._ptr) }
+    }
+
+    // The window size in POINTS, the space mouse coordinates are reported in. For
+    // anything handed to GL, use `drawableSize`.
+    fn size(self: &Window): SdlSize {
+        var w: i32 = 0
+        var h: i32 = 0
+        // Sound: a live window, and two out-params that are locals of this frame.
+        unsafe { SDL_GetWindowSize(self._ptr, w.addrOf(), h.addrOf()) }
+        return SdlSize { w: w as i64, h: h as i64 }
+    }
+
+    // The GL drawable in real pixels (twice `size` on a Retina display).
+    fn drawableSize(self: &Window): SdlSize {
+        var w: i32 = 0
+        var h: i32 = 0
+        // Sound: a live window, and two out-params that are locals of this frame.
+        unsafe { SDL_GL_GetDrawableSize(self._ptr, w.addrOf(), h.addrOf()) }
+        return SdlSize { w: w as i64, h: h as i64 }
+    }
+
+    // Present the GL back buffer. Needs an SdlGlContext made for this window.
+    fn swapGl(self: &Window) {
+        // Sound: a live window; with no context SDL reports an error and draws nothing.
+        unsafe { SDL_GL_SwapWindow(self._ptr) }
+    }
+}
+
+// ── 2D: a CPU framebuffer on screen ─────────────────────────────────────────────────
+
+// An SDL_Renderer plus one streaming ABGR8888 texture of the framebuffer's size: the
+// whole of how a software-rendered program gets pixels onto the window. One type rather
+// than two because SDL frees a renderer's textures with it, so a texture that outlived
+// its renderer would be destroyed twice.
+//
+// Make it after the Window it draws into, so it is dropped first.
+pub struct Presenter {
+    _ren: *u8,
+    _tex: *u8,
+    _w: i64,
+    _h: i64,
+}
+
+impl Drop for Presenter {
+    fn drop(self: &mut Self) {
+        // Sound: both came from successful creates, only this value holds them, and the
+        // texture goes before the renderer that owns it.
+        if (self._tex as i64) != 0 {
+            unsafe { SDL_DestroyTexture(self._tex) }
+        }
+        if (self._ren as i64) != 0 {
+            unsafe { SDL_DestroyRenderer(self._ren) }
+        }
+    }
+}
+
+impl Presenter {
+    // `w` x `h` is the framebuffer size, not the window's: SDL scales the texture to
+    // fill the window. `rendererFlags` are SDL_RENDERER_* (0 lets SDL choose).
+    fn create(win: &Window, w: i64, h: i64, rendererFlags: u32): Result<Presenter, string> {
+        var ren: *u8 = 0 as *u8
+        // Sound: `win._ptr` is a live window; -1 asks SDL for the first driver that fits.
+        unsafe { ren = SDL_CreateRenderer(win._ptr, -1, rendererFlags) }
+        if (ren as i64) == 0 {
+            return Result.Err("renderer: " + sdlError())
+        }
+        var tex: *u8 = 0 as *u8
+        // Sound: `ren` was just created and is non-null.
+        unsafe { tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w as i32, h as i32) }
+        if (tex as i64) == 0 {
+            let err = "texture: " + sdlError()
+            // Sound: the renderer is ours and nothing else has seen it.
+            unsafe { SDL_DestroyRenderer(ren) }
+            return Result.Err(err)
+        }
+        return Result.Ok(Presenter { _ren: ren, _tex: tex, _w: w, _h: h })
+    }
+
+    // Upload `fb` (row-major ABGR8888, `w * h` pixels) and show it. A buffer shorter
+    // than that is refused rather than letting SDL read past its end.
+    fn present(self: &Presenter, fb: &[u32]): bool {
+        if fb.len < self._w * self._h || fb.len == 0 {
+            return false
+        }
+        // Sound: the length check above means SDL_UpdateTexture reads only `w * h`
+        // pixels at a pitch of `w * 4` bytes, all inside `fb`, which stays borrowed
+        // (and so alive and unmoved) for the whole call.
+        unsafe {
+            let _ = SDL_UpdateTexture(self._tex, 0 as *u8, fb[0].addrOf() as *u8, (self._w * 4) as i32)
+            let _ = SDL_RenderClear(self._ren)
+            let _ = SDL_RenderCopy(self._ren, self._tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(self._ren)
+        }
+        return true
+    }
+}
+
+// ── GL ──────────────────────────────────────────────────────────────────────────────
+
+// Set an SDL_GL_* attribute. Must come BEFORE the window is created: SDL reads them
+// when it picks the pixel format and silently ignores them afterwards. Sound: two
+// integers by value.
+pub fn glSetAttribute(attr: i32, value: i32): bool {
+    unsafe { return SDL_GL_SetAttribute(attr, value) == 0 }
+}
+
+// 1 for vsync, 0 for none. Needs a current context. Sound: one integer.
+pub fn glSetSwapInterval(interval: i32): bool {
+    unsafe { return SDL_GL_SetSwapInterval(interval) == 0 }
+}
+
+// An OpenGL context made current on a window, deleted on drop. Free every GL object
+// made through it (milo-gl's `GlContext.free`) before it goes.
+pub struct SdlGlContext {
+    _ptr: *u8,
+}
+
+impl Drop for SdlGlContext {
+    fn drop(self: &mut Self) {
+        if (self._ptr as i64) != 0 {
+            // Sound: `_ptr` came from a successful SDL_GL_CreateContext and drop runs once.
+            unsafe { SDL_GL_DeleteContext(self._ptr) }
+        }
+    }
+}
+
+impl SdlGlContext {
+    fn create(win: &Window): Result<SdlGlContext, string> {
+        var p: *u8 = 0 as *u8
+        // Sound: `win._ptr` is a live window; SDL fails cleanly if it lacks SDL_WINDOW_OPENGL.
+        unsafe { p = SDL_GL_CreateContext(win._ptr) }
+        if (p as i64) == 0 {
+            return Result.Err("GL context: " + sdlError())
+        }
+        return Result.Ok(SdlGlContext { _ptr: p })
+    }
+}
+
+// ── Input ───────────────────────────────────────────────────────────────────────────
+
+// What the event queue said since the last poll. The examples only care about these
+// two; everything else (keys, buttons, motion) is read as state.
+pub struct Events {
+    quit: bool,
+    wheel: f64, // summed SDL_MOUSEWHEEL y, positive away from the user
+}
+
+// Drain SDL's event queue.
+pub fn pollEvents(): Events {
+    var out = Events { quit: false, wheel: 0.0 }
+    // SDL_Event is a 56-byte union; 64 covers it with room to spare.
+    var ev: [u8; 64] = [0; 64]
+    var more = true
+    while more {
+        var got: i32 = 0
+        // Sound: `ev` is a local buffer larger than SDL_Event, live for the call.
+        unsafe { got = SDL_PollEvent(ev) }
+        more = got != 0
+        if more {
+            let kind = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
+            if kind == SDL_QUIT {
+                out.quit = true
+            }
+            if kind == SDL_MOUSEWHEEL {
+                // SDL_MouseWheelEvent's signed y sits at byte offset 20.
+                let raw = (ev[20] as u32) | ((ev[21] as u32) << 8) | ((ev[22] as u32) << 16) | ((ev[23] as u32) << 24)
+                out.wheel += raw as i32 as f64
+            }
+        }
+    }
+    return out
+}
+
+// SDL's live keyboard array, indexed by an SC_* scancode from "sdl/keys". It is
+// updated by `pollEvents`, so read it after polling.
+pub struct Keyboard {
+    _keys: *u8,
+    _len: i64,
+}
+
+pub fn keyboard(): Keyboard {
+    var n: i32 = 0
+    var p: *u8 = 0 as *u8
+    // Sound: `n` is a local out-param; the returned array is SDL's own and lives for
+    // the whole program, and `_len` records how long it is.
+    unsafe { p = SDL_GetKeyboardState(n.addrOf()) }
+    return Keyboard { _keys: p, _len: n as i64 }
+}
+
+impl Keyboard {
+    fn down(self: &Keyboard, scancode: i64): bool {
+        if scancode < 0 || scancode >= self._len {
+            return false
+        }
+        // Sound: the bounds check above keeps the read inside SDL's array of `_len` keys.
+        unsafe { return self._keys[scancode] != 0 }
+    }
+}
+
+// Mouse position (window points) and the SDL_BUTTON_*MASK bitmask.
+pub struct Mouse {
+    x: i64,
+    y: i64,
+    buttons: u32,
+}
+
+pub fn mouse(): Mouse {
+    var x: i32 = 0
+    var y: i32 = 0
+    var b: u32 = 0
+    // Sound: two out-params that are locals of this frame.
+    unsafe { b = SDL_GetMouseState(x.addrOf(), y.addrOf()) }
+    return Mouse { x: x as i64, y: y as i64, buttons: b }
+}
+
+// Motion since the last call to THIS function (it keeps its own accumulator, so call
+// it once a frame), plus the button bitmask.
+pub fn relativeMouse(): Mouse {
+    var x: i32 = 0
+    var y: i32 = 0
+    var b: u32 = 0
+    // Sound: two out-params that are locals of this frame.
+    unsafe { b = SDL_GetRelativeMouseState(x.addrOf(), y.addrOf()) }
+    return Mouse { x: x as i64, y: y as i64, buttons: b }
+}
+
+// ── Audio ───────────────────────────────────────────────────────────────────────────
+
+// A queue-API playback device for mono signed 16-bit PCM, closed on drop. SDL appends
+// queued buffers rather than mixing them, so a program that wants music under its
+// effects opens two.
+pub struct AudioDevice {
+    _id: u32,
+}
+
+impl Drop for AudioDevice {
+    fn drop(self: &mut Self) {
+        if self._id != 0 {
+            // Sound: `_id` came from a successful SDL_OpenAudioDevice and drop runs once.
+            unsafe { SDL_CloseAudioDevice(self._id) }
+        }
+    }
+}
+
+impl AudioDevice {
+    // Opens the default output at `rate` Hz and starts it playing (silence until
+    // something is queued). Needs SDL_INIT_AUDIO.
+    fn openMonoS16(rate: i64): Result<AudioDevice, string> {
+        var spec = audioSpec(rate as i32, AUDIO_S16LSB as u16, 1, 2048)
+        var id: u32 = 0
+        // Sound: `spec` is a local SDL_AudioSpec (its layout is @cLayout-checked by the
+        // sdl package) with a null callback, which selects the queue API; null device
+        // name and obtained-spec are both allowed.
+        unsafe { id = SDL_OpenAudioDevice(0 as *u8, 0, spec.addrOf() as *u8, 0 as *u8, 0) }
+        if id == 0 {
+            return Result.Err("audio: " + sdlError())
+        }
+        // Sound: `id` is the device just opened.
+        unsafe { SDL_PauseAudioDevice(id, 0) }
+        return Result.Ok(AudioDevice { _id: id })
+    }
+
+    // Append `samples` to the playback queue. SDL copies them before returning.
+    fn queue(self: &AudioDevice, samples: &[i16]): bool {
+        if samples.len == 0 {
+            return true
+        }
+        // Sound: the byte count is exactly `samples.len * 2`, so SDL reads only inside
+        // the borrowed slice, which is alive for the call.
+        unsafe { return SDL_QueueAudio(self._id, samples[0].addrOf() as *u8, (samples.len * 2) as u32) == 0 }
+    }
+
+    // Bytes still waiting to play.
+    fn queuedBytes(self: &AudioDevice): i64 {
+        // Sound: a live device id, returns a scalar.
+        unsafe { return SDL_GetQueuedAudioSize(self._id) as i64 }
+    }
+
+    // Drop everything queued and not yet played.
+    fn clear(self: &AudioDevice) {
+        // Sound: a live device id.
+        unsafe { SDL_ClearQueuedAudio(self._id) }
+    }
+}

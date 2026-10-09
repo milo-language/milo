@@ -25,12 +25,11 @@ from "std/strconv" import {
 from "./host" import {
     Input, Size, hostNew, inputNew, pollInput, drawableSize, pixelScale
 }
-from "sdl" import {
-    SDL_DestroyWindow, SDL_GetTicks, SDL_Quit, SDL_SetWindowFullscreen,
-    SDL_WINDOW_FULLSCREEN_DESKTOP
+from "../../shared/sdlkit" import {
+    ticks
 }
-from "sdl/glcontext" import {
-    SDL_GL_DeleteContext, SDL_GL_SwapWindow
+from "../../shared/ppm" import {
+    writePpm
 }
 from "./mat4" import {
     V3, v3, identity, multiply, perspective, lookAt, rotationY, rotationZ,
@@ -622,45 +621,6 @@ fn drawHint(ui: &mut Ui, app: &App, u: f64, w: f64, h: f64) {
 
 // ── capture ───────────────────────────────────────────────────────────────────
 
-pub extern fn fopen(path: *u8, mode: *u8): *u8
-
-pub extern fn fwrite(ptr: *u8, size: i64, count: i64, stream: *u8): i64
-
-pub extern fn fclose(stream: *u8): i32
-
-// A binary PPM, because it is six lines and needs no encoder. `--shot` exists so
-// the look of a world can be checked from a terminal, without a human being
-// asked to describe what the screen is doing.
-fn writePpm(path: &string, w: i64, h: i64, px: &Vec<u32>) {
-    var rgb: Vec<u8> = Vec.filled(w * h * 3, 0)
-    var y = 0
-    while y < h {
-        // glReadPixels hands back rows bottom-up; PPM wants them top-down.
-        let src = (h - 1 - y) * w
-        var x = 0
-        while x < w {
-            let p = px[src + x]
-            let o = (y * w + x) * 3
-            rgb[o] = (p & 0xFF) as u8
-            rgb[o + 1] = ((p >> 8) & 0xFF) as u8
-            rgb[o + 2] = ((p >> 16) & 0xFF) as u8
-            x += 1
-        }
-        y += 1
-    }
-    let header = "P6\n" + $"{w}" + " " + $"{h}" + "\n255\n"
-    unsafe {
-        let f = fopen(path.cstr(), "wb".cstr())
-        if (f as i64) == 0 {
-            print("cannot open " + path)
-            return
-        }
-        let _ = fwrite(header.cstr(), 1, header.len, f)
-        let _ = fwrite(rgb.ptr() as *u8, 1, w * h * 3, f)
-        let _ = fclose(f)
-    }
-}
-
 pub struct Options {
     shot: string,
     world: i64,
@@ -723,12 +683,14 @@ fn parseOptions(): Options {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 pub fn main(): i32 {
-    var host = hostNew("ATLAS - explore the solar system", WIN_W, WIN_H)
-    if !host.ok {
-        print(host.err)
-        return 1
+    let host = match hostNew("ATLAS - explore the solar system", WIN_W, WIN_H) {
+        Ok(h) => h,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
-    print("OpenGL " + host.err)
+    print("OpenGL " + Gpu.version())
 
     // Owns every GL object the app makes, so teardown is one sweep while the
     // context is still current.
@@ -856,15 +818,14 @@ pub fn main(): i32 {
     var postH = size.h
 
     var inp = inputNew()
-    var ev: [u8; 64] = [0; 64]
     var fullscreen = false
-    let start = SDL_GetTicks()
-    var prevMs = SDL_GetTicks()
+    let start = ticks()
+    var prevMs = ticks()
     var frame = 0
 
     while !inp.quit {
         frame += 1
-        let nowMs = SDL_GetTicks()
+        let nowMs = ticks()
         var dt = ((nowMs - prevMs) as f64) / 1000.0
         prevMs = nowMs
         if dt > 0.1 {
@@ -878,7 +839,7 @@ pub fn main(): i32 {
         // Everything on the HUD is in these units, so the layout is identical on
         // a Retina panel and a 1080p monitor instead of half the size on one.
         let u = h / 900.0
-        pollInput(&mut inp, &mut ev, pixelScale(host.win))
+        pollInput(&mut inp, pixelScale(host.win))
 
         if size.w != postW || size.h != postH {
             post.free(&mut gl)
@@ -900,11 +861,7 @@ pub fn main(): i32 {
         }
         if inp.fullscreen {
             fullscreen = !fullscreen
-            var flag: u32 = 0
-            if fullscreen {
-                flag = SDL_WINDOW_FULLSCREEN_DESKTOP
-            }
-            let _ = SDL_SetWindowFullscreen(host.win, flag)
+            host.win.setFullscreen(fullscreen)
         }
         if inp.toggleLevel {
             app.level = 1 - app.level
@@ -1106,12 +1063,13 @@ pub fn main(): i32 {
 
         if shooting && frame >= opt.frames {
             let px = readPixelsRgba8(size.w, size.h)
-            writePpm(opt.shot, size.w, size.h, px)
+            // glReadPixels hands back rows bottom-up; PPM wants them top-down.
+            let _ = writePpm(opt.shot, px, size.w, size.h, true)
             print("wrote " + opt.shot)
             inp.quit = true
         }
 
-        SDL_GL_SwapWindow(host.win)
+        host.win.swapGl()
     }
 
     ball.free(&mut gl)
@@ -1130,8 +1088,5 @@ pub fn main(): i32 {
         app.tex.pop()!.free(&mut gl)
     }
     gl.free()
-    SDL_GL_DeleteContext(host.ctx)
-    SDL_DestroyWindow(host.win)
-    SDL_Quit()
     return 0
 }

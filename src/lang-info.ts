@@ -14,7 +14,7 @@ import { KEYWORDS, SOFT_KEYWORDS, TokenKind } from "./tokens";
 import { KEYWORD_DOCS, SYMBOL_DOCS } from "./keyword-docs";
 import { PRIMITIVE_TYPE_NAMES, typeFromAst } from "./types";
 import { BUILTIN_MEMBERS } from "./builtin-members";
-import { WARNINGS } from "./warnings";
+import { WARNINGS, CODED_ERRORS } from "./warnings";
 import { ATTRIBUTES } from "./attributes";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS } from "./cli-help";
 import { writeStdout } from "./stdout";
@@ -88,6 +88,14 @@ export function langInfo() {
       ...(w.fix ? { fix: w.fix } : {}),
       ...(w.example ? { example: w.example } : {}),
     })),
+    // Named hard errors (additive): same shape as a warning minus `offByDefault`, since no
+    // flag reaches them. `check --json` reports them under the same `code`.
+    errors: CODED_ERRORS.map(e => ({
+      name: e.name,
+      ...(e.doc ? { doc: e.doc } : {}),
+      ...(e.fix ? { fix: e.fix } : {}),
+      ...(e.example ? { example: e.example } : {}),
+    })),
     // The attribute vocabulary. Absent until 2026-08-22, which is how `@thread` and
     // `@synchronized` — both safety-critical — shipped invisible to every tool outside
     // this repo, and to the language's own author.
@@ -133,6 +141,7 @@ export function runLangInfo(args: string[]): number {
     `symbols         ${Object.values(info.symbols).join(" ")}\n` +
     `builtin methods ${receivers.join(", ")}\n` +
     `warnings        ${info.warnings.map(w => w.name + (w.offByDefault ? "*" : "")).join(" ")}   (* off by default)\n` +
+    `named errors    ${info.errors.map(e => e.name).join(" ")}\n` +
     `commands        ${info.commands.filter(c => !c.hidden).map(c => c.name).join(" ")}\n` +
     `\nfor tooling: milo lang --json\n`,
   );
@@ -164,10 +173,18 @@ export function explainText(query: string, json = false): string | undefined {
   const info = langInfo();
   const name = query.replace(/^@/, "");
   const warning = info.warnings.find(w => w.name === name);
+  const error = info.errors.find(e => e.name === name);
   const attribute = info.attributes.find(a => a.name === name);
   const keywordDoc = info.keywordDocs[name];
-  if (!warning && !attribute && !keywordDoc) return undefined;
-  if (json) return JSON.stringify(warning ?? attribute ?? { name, doc: keywordDoc }, null, 2) + "\n";
+  if (!warning && !error && !attribute && !keywordDoc) return undefined;
+  if (json) return JSON.stringify(warning ?? error ?? attribute ?? { name, doc: keywordDoc }, null, 2) + "\n";
+  if (error) {
+    return `error: ${error.name}\n\n` +
+      (error.doc ? `${error.doc}\n\n` : "") +
+      (error.example ? `example:\n${error.example.replace(/^(?!$)/gm, "  ")}\n` : "") +
+      (error.fix ? `fix: ${error.fix}\n\n` : "") +
+      `a hard error: no --allow flag or manifest lint setting turns it off\n`;
+  }
   if (warning) {
     return `warning: ${warning.name}${warning.offByDefault ? "   (off by default)" : ""}\n\n` +
       (warning.doc ? `${warning.doc}\n\n` : "no reference entry yet\n\n") +
@@ -185,13 +202,13 @@ export function explainText(query: string, json = false): string | undefined {
 /** Names `explain` answers to, for the "did you mean" list and for tests. */
 export function explainableNames(): string[] {
   const info = langInfo();
-  return [...info.warnings.map(w => w.name), ...info.attributes.map(a => `@${a.name}`), ...Object.keys(info.keywordDocs)];
+  return [...info.warnings.map(w => w.name), ...info.errors.map(e => e.name), ...info.attributes.map(a => `@${a.name}`), ...Object.keys(info.keywordDocs)];
 }
 
 export function runExplain(args: string[]): number {
   const query = args.find(a => !a.startsWith("-"));
   if (!query) {
-    writeStdout("usage: milo explain <warning|@attribute|keyword>   (milo lang lists them all)\n");
+    writeStdout("usage: milo explain <warning|error|@attribute|keyword>   (milo lang lists them all)\n");
     return 1;
   }
   const text = explainText(query, args.includes("--json"));
@@ -210,7 +227,7 @@ export function runExplain(args: string[]): number {
     .sort((a, b) => a.d - b.d)
     .slice(0, 5)
     .map(c => c.n);
-  writeStdout(`no warning, attribute or keyword named '${query}'\n` +
+  writeStdout(`no warning, error, attribute or keyword named '${query}'\n` +
     (near.length ? `did you mean: ${near.join(", ")}?\n` : "run 'milo lang' to see every name\n"));
   return 1;
 }

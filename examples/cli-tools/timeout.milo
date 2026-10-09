@@ -1,7 +1,13 @@
 // @run: 2 echo hi
 // timeout — run a command with a time limit (GNU timeout for macOS)
-from "std/os" import {
-    fork, waitpid, kill, system
+from "std/process" import {
+    run
+}
+from "std/platform" import {
+    killRaw
+}
+from "./forkwait" import {
+    forkProcess, reap
 }
 from "std/time" import {
     Duration, sleepMs, epochMillis
@@ -228,22 +234,23 @@ pub fn main(): i32 {
     // would deliver SIGCHLD to a default handler and we'd wait for an event already gone.
     let sigPipe = installSignalPipe(sigchld())!
 
-    let pid = fork()
+    let pid = forkProcess()
     if pid < 0 {
         print("error: fork failed")
         return 125
     }
     if pid == 0 {
         // The handler AND its pipe write-end are inherited across fork. This child calls
-        // system(), which forks again — that grandchild's exit would fire this inherited
+        // run(), which forks again — that grandchild's exit would fire this inherited
         // handler and write to the pipe the PARENT is selecting on, waking it for a death
         // that isn't the one it's waiting for. Restore the default disposition first.
         resetSignal(sigchld())
-        let code = system(cmd)
-        exit((code >> 8) & 255)
+        match run(cmd) {
+            Ok(code) => exit(code),
+            Err(_) => exit(127),
+        }
     }
 
-    var status: [u8; 4] = [0; 4]
     var timedOut = false
     while true {
         let remainMs = deadlineMs - epochMillis()
@@ -264,30 +271,30 @@ pub fn main(): i32 {
         if w < 0 {
             // No arm can fire (no scheduler) — fall back rather than spin.
             sleepMs(50)
-            let rf = waitpid(pid, status, 1)
-            if rf > 0 {
-                let sigf = status[0] as i32 & 127
+            let rf = reap(pid, true)
+            if rf.pid > 0 {
+                let sigf = rf.termSignal()
                 if sigf == 0 {
-                    return status[1] as i32
+                    return rf.exitCode()
                 }
                 return 128 + sigf
             }
-            if rf < 0 {
+            if rf.pid < 0 {
                 return 125
             }
             continue
         }
 
         sigPipe.drain()
-        let r = waitpid(pid, status, 1)
-        if r > 0 {
-            let sig = status[0] as i32 & 127
+        let r = reap(pid, true)
+        if r.pid > 0 {
+            let sig = r.termSignal()
             if sig == 0 {
-                return status[1] as i32
+                return r.exitCode()
             }
             return 128 + sig
         }
-        if r < 0 {
+        if r.pid < 0 {
             return 125
         }
         // r == 0: SIGCHLD fired but our child is still alive — re-arm for the remainder.
@@ -300,21 +307,20 @@ pub fn main(): i32 {
     if opts.verbose {
         print($"timeout: sending signal {opts.signal} to pid {pid}")
     }
-    kill(pid, opts.signal)
+    let _ = killRaw(pid, opts.signal)
 
     if opts.hasKillAfter {
         sleepMs(opts.killAfterMs)
-        let r = waitpid(pid, status, 1)
-        if r == 0 {
+        if reap(pid, true).pid == 0 {
             if opts.verbose {
                 print($"timeout: sending KILL to pid {pid}")
             }
-            kill(pid, 9)
-            waitpid(pid, status, 0)
+            let _ = killRaw(pid, 9)
+            let _ = reap(pid, false)
         }
     } else {
         sleepMs(100)
-        waitpid(pid, status, 1)
+        let _ = reap(pid, true)
     }
 
     if opts.preserveStatus {

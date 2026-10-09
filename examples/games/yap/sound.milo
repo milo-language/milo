@@ -10,21 +10,18 @@
 from "std/math" import {
     Math
 }
-from "sdl/audio" import {
-    SDL_OpenAudioDevice, SDL_QueueAudio, SDL_PauseAudioDevice, SDL_ClearQueuedAudio,
-    SDL_GetQueuedAudioSize, audioSpec, AUDIO_S16LSB
+from "../../shared/sdlkit" import {
+    AudioDevice
 }
 
 pub let RATE: i64 = 44100
 
 pub struct Sound {
-    dev: u32,
-    ok: bool,
+    dev: Option<AudioDevice>,
     // Music runs on its OWN device: SDL_QueueAudio appends rather than mixes, so
     // sharing one device would make every bark wait behind the rest of the loop
     // before it was audible.
-    musicDev: u32,
-    musicOk: bool,
+    musicDev: Option<AudioDevice>,
     musicOn: bool,
     music: Vec<i16>,
     yap0: Vec<i16>,
@@ -170,16 +167,17 @@ fn buildMusic(): Vec<i16> {
     return buf
 }
 
-fn openDevice(): u32 {
-    var spec = audioSpec(RATE as i32, AUDIO_S16LSB as u16, 1, 2048)
-    var dev: u32 = 0
-    unsafe {
-        dev = SDL_OpenAudioDevice(0 as *u8, 0, spec.addrOf() as *u8, 0 as *u8, 0)
-        if dev != 0 {
-            SDL_PauseAudioDevice(dev, 0)
+fn openDevice(): Option<AudioDevice> {
+    match AudioDevice.openMonoS16(RATE) {
+        Ok(d) => {
+            return Option.Some(d)
+        }
+        Err(e) => {
+            // No sound is not a reason to stop the game.
+            print(e)
+            return Option.None
         }
     }
-    return dev
 }
 
 pub fn soundNew(): Sound {
@@ -206,8 +204,8 @@ pub fn soundNew(): Sound {
     toneWave(&mut thud, 150.0, 60.0, 0.14, 0.42, 0.55)
 
     return Sound {
-        dev: dev, ok: dev != 0,
-        musicDev: mdev, musicOk: mdev != 0, musicOn: true, music: buildMusic(),
+        dev: dev,
+        musicDev: mdev, musicOn: true, music: buildMusic(),
         yap0: barkWave(760.0, 1.85), yap1: barkWave(910.0, 1.62), yap2: barkWave(680.0, 2.10),
         which: 0,
         point: point, crunch: crunch, hurt: hurt, thud: thud,
@@ -217,39 +215,41 @@ pub fn soundNew(): Sound {
 // Top up the music queue. SDL drains it in real time, so the loop is kept a
 // couple of seconds ahead and re-queued as it plays out.
 pub fn musicTick(s: &Sound) {
-    if !s.musicOk || !s.musicOn {
+    if !s.musicOn {
         return
     }
-    var queued: u32 = 0
-    queued = SDL_GetQueuedAudioSize(s.musicDev)
-    if (queued as i64) > RATE * 2 {
-        return
-    }
-    unsafe {
-        let _ = SDL_QueueAudio(s.musicDev, s.music.ptr() as *u8, (s.music.len * 2) as u32)
+    match s.musicDev {
+        Some(d) => {
+            if d.queuedBytes() > RATE * 2 {
+                return
+            }
+            let _ = d.queue(s.music)
+        }
+        None => {}
     }
 }
 
 pub fn musicToggle(s: &mut Sound) {
     s.musicOn = !s.musicOn
     if !s.musicOn {
-        SDL_ClearQueuedAudio(s.musicDev)
+        match s.musicDev {
+            Some(d) => d.clear(),
+            None => {}
+        }
     }
 }
 
 fn play(s: &Sound, buf: &Vec<i16>) {
-    if !s.ok {
-        return
-    }
-    // Effects queue rather than mix, so a backlog would drift out of sync with
-    // what is on screen. Past a threshold, drop the sound instead.
-    var queued: u32 = 0
-    queued = SDL_GetQueuedAudioSize(s.dev)
-    if (queued as i64) > 20000 {
-        return
-    }
-    unsafe {
-        let _ = SDL_QueueAudio(s.dev, buf.ptr() as *u8, (buf.len * 2) as u32)
+    match s.dev {
+        Some(d) => {
+            // Effects queue rather than mix, so a backlog would drift out of sync with
+            // what is on screen. Past a threshold, drop the sound instead.
+            if d.queuedBytes() > 20000 {
+                return
+            }
+            let _ = d.queue(buf)
+        }
+        None => {}
     }
 }
 

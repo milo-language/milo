@@ -2,9 +2,8 @@
 // a pointer. The SDL declarations live in the `sdl` package, header-verified and
 // written once; the control scheme is what belongs to this game.
 
-from "sdl" import {
-    SDL_GetKeyboardState, SDL_PollEvent,
-    SDL_QUIT
+from "../../shared/sdlkit" import {
+    pollEvents, keyboard
 }
 from "sdl/keys" import {
     SC_A, SC_D, SC_DOWN, SC_ESCAPE, SC_F, SC_LEFT, SC_M, SC_RETURN, SC_RIGHT,
@@ -49,7 +48,7 @@ pub fn inputNew(invert: bool): Input {
 }
 
 // Poll SDL and fill `inp`.
-pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
+pub fn pollInput(inp: &mut Input) {
     inp.moveX = 0.0
     inp.moveY = 0.0
     inp.boost = false
@@ -58,78 +57,73 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
     inp.menuStep = 0
     inp.fullscreen = false
 
-    unsafe {
-        while SDL_PollEvent(ev) != 0 {
-            let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-            if evType == SDL_QUIT {
-                inp.quit = true
-            }
-        }
-        let ks = SDL_GetKeyboardState(0 as *i32)
-        if ks[SC_ESCAPE] != 0 {
-            inp.quit = true
-        }
-        // Edge-triggered, or holding M would toggle the music every frame.
-        let mDown = ks[SC_M] != 0
-        if mDown && !inp.muteHeld {
-            inp.mute = true
-        }
-        inp.muteHeld = mDown
-        if ks[SC_A] != 0 {
-            inp.moveX -= 1.0
-        }
-        if ks[SC_D] != 0 {
-            inp.moveX += 1.0
-        }
-        // `moveY` is a pitch rate, +1 climb: the sign flips once, at the end,
-        // rather than in four places.
-        if ks[SC_W] != 0 {
-            inp.moveY += 1.0
-        }
-        if ks[SC_S] != 0 {
-            inp.moveY -= 1.0
-        }
-        // Arrows do the same thing as WASD.
-        if ks[SC_LEFT] != 0 {
-            inp.moveX -= 1.0
-        }
-        if ks[SC_RIGHT] != 0 {
-            inp.moveX += 1.0
-        }
-        if ks[SC_UP] != 0 {
-            inp.moveY += 1.0
-        }
-        if ks[SC_DOWN] != 0 {
-            inp.moveY -= 1.0
-        }
-        var raw = 0
-        if ks[SC_UP] != 0 || ks[SC_W] != 0 {
-            raw = -1
-        }
-        if ks[SC_DOWN] != 0 || ks[SC_S] != 0 {
-            raw = 1
-        }
-        if raw != 0 && !inp.menuHeld {
-            inp.menuStep = raw
-        }
-        inp.menuHeld = raw != 0
-        if inp.invert {
-            inp.moveY = 0.0 - inp.moveY
-        }
-        // Edge-triggered like M: held down, this would rip through every place
-        // in the rotation in a fraction of a second.
-        let stepDown = ks[SC_RETURN] != 0
-        if stepDown && !inp.placeHeld {
-            inp.placeStep = 1
-        }
-        inp.placeHeld = stepDown
-        let fDown = ks[SC_F] != 0
-        if fDown && !inp.fullHeld {
-            inp.fullscreen = true
-        }
-        inp.fullHeld = fDown
-        if ks[SC_SPACE] != 0 {
-            inp.boost = true
-        }
+    if pollEvents().quit {
+        inp.quit = true
+    }
+    let ks = keyboard()
+    if ks.down(SC_ESCAPE) {
+        inp.quit = true
+    }
+    // Edge-triggered, or holding M would toggle the music every frame.
+    let mDown = ks.down(SC_M)
+    if mDown && !inp.muteHeld {
+        inp.mute = true
+    }
+    inp.muteHeld = mDown
+    if ks.down(SC_A) {
+        inp.moveX -= 1.0
+    }
+    if ks.down(SC_D) {
+        inp.moveX += 1.0
+    }
+    // `moveY` is a pitch rate, +1 climb: the sign flips once, at the end,
+    // rather than in four places.
+    if ks.down(SC_W) {
+        inp.moveY += 1.0
+    }
+    if ks.down(SC_S) {
+        inp.moveY -= 1.0
+    }
+    // Arrows do the same thing as WASD.
+    if ks.down(SC_LEFT) {
+        inp.moveX -= 1.0
+    }
+    if ks.down(SC_RIGHT) {
+        inp.moveX += 1.0
+    }
+    if ks.down(SC_UP) {
+        inp.moveY += 1.0
+    }
+    if ks.down(SC_DOWN) {
+        inp.moveY -= 1.0
+    }
+    var raw = 0
+    if ks.down(SC_UP) || ks.down(SC_W) {
+        raw = -1
+    }
+    if ks.down(SC_DOWN) || ks.down(SC_S) {
+        raw = 1
+    }
+    if raw != 0 && !inp.menuHeld {
+        inp.menuStep = raw
+    }
+    inp.menuHeld = raw != 0
+    if inp.invert {
+        inp.moveY = 0.0 - inp.moveY
+    }
+    // Edge-triggered like M: held down, this would rip through every place
+    // in the rotation in a fraction of a second.
+    let stepDown = ks.down(SC_RETURN)
+    if stepDown && !inp.placeHeld {
+        inp.placeStep = 1
+    }
+    inp.placeHeld = stepDown
+    let fDown = ks.down(SC_F)
+    if fDown && !inp.fullHeld {
+        inp.fullscreen = true
+    }
+    inp.fullHeld = fDown
+    if ks.down(SC_SPACE) {
+        inp.boost = true
     }
 }

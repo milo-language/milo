@@ -1,7 +1,7 @@
 // Elm-style error formatting: source context, carets and severity, shared by the CLI
 // and the LSP so a message reads the same in a terminal and an editor.
 import type { Span } from "./ast";
-import { WARNING_NAMES } from "./warnings";
+import { WARNING_NAMES, CODED_ERROR_NAMES } from "./warnings";
 
 type Severity = "error" | "warning" | "hint";
 
@@ -76,10 +76,12 @@ export function formatDiagnostic(
   // A silenceable finding prints its name: `warning[index-clone]: ...`. Without it the
   // message was the only thing a user had, so there was no way to know which `--allow=`
   // or `--deny=` reaches this finding, and no name to look up — `milo explain <name>`
-  // has the doc, the example and the fix, all of it unreachable from here. Only warning
-  // names get the bracket, so the bracket MEANS "you can allow this one away"; an error
-  // that carries an internal code stays a bare `error:`.
-  const label = d.code && WARNING_NAMES.includes(d.code) ? `${d.severity}[${d.code}]` : d.severity;
+  // has the doc, the example and the fix, all of it unreachable from here. Only names
+  // `milo explain` answers to get the bracket: warning names, which an `--allow=` reaches,
+  // and the named hard errors in CODED_ERRORS, which nothing turns off. An error that
+  // carries an internal code stays a bare `error:`.
+  const label = d.code && (WARNING_NAMES.includes(d.code) || CODED_ERROR_NAMES.includes(d.code))
+    ? `${d.severity}[${d.code}]` : d.severity;
 
   // A span may belong to a different file than the entry (imported code). Render
   // the header and snippet against that file, falling back to the entry source.

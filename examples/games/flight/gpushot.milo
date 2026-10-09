@@ -33,13 +33,14 @@ from "std/math" import {
     Math
 }
 from "sdl" import {
-    SDL_CreateWindow, SDL_GetError, SDL_Init, SDL_Quit,
-    SDL_INIT_VIDEO, SDL_WINDOWPOS_CENTERED
+    SDL_INIT_VIDEO
 }
 from "sdl/glcontext" import {
-    SDL_GL_CreateContext, SDL_GL_SetAttribute,
     SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
     SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_WINDOW_OPENGL
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, SdlGlContext, glSetAttribute
 }
 from "./gfx" import {
     Canvas, canvasClear, canvasNew
@@ -148,21 +149,29 @@ pub fn main(): i32 {
         dist = (strToI64(a[5])) as f64
     }
 
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
+    // Declared in teardown's reverse: the context goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
-    unsafe {
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        let win = SDL_CreateWindow("gpushot", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W as i32, H as i32, SDL_WINDOW_OPENGL | HIDDEN)
-        if (win as i64) == 0 {
-            print("window: " + _cstrToString(SDL_GetError()))
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    let win = match Window.create("gpushot", W, H, SDL_WINDOW_OPENGL | HIDDEN) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
             return 2
         }
-        if (SDL_GL_CreateContext(win) as i64) == 0 {
-            print("context: " + _cstrToString(SDL_GetError()))
+    }
+    let _ctx = match SdlGlContext.create(win) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
             return 3
         }
     }
@@ -297,7 +306,6 @@ pub fn main(): i32 {
     gpuWorldFree(&mut gl, gw)
     postFree(&mut gl, p)
     gl.free()
-    SDL_Quit()
     return 0
 }
 

@@ -3,9 +3,9 @@
   "packages": {
     "sdl": {
       "url": "github.com/milo-language/milo-sdl",
-      "version": "v0.3.1",
-      "commit": "b42758800563c6dde20ab55658db85145dce6211",
-      "hash": "sha256:5fbca9edb538e58663e9ac740fe960893f3fa28842eccf8d80ad01ddc923024b",
+      "version": "v0.3.2",
+      "commit": "56a9371ac5701da86295d3be9e8fb6c51e8276c0",
+      "hash": "sha256:0c029d65e6f41b3b2f21c571419f8d8ecb944319b434e4db490c3698c92b7c48",
       "deps": []
     }
   }

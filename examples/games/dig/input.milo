@@ -3,8 +3,10 @@
 // this game's control scheme, which is not something a bindings package can hold.
 
 from "sdl" import {
-    SDL_GetKeyboardState, SDL_GetMouseState, SDL_PollEvent,
-    SDL_BUTTON_LMASK, SDL_QUIT
+    SDL_BUTTON_LMASK
+}
+from "../../shared/sdlkit" import {
+    pollEvents, keyboard, mouse
 }
 from "sdl/keys" import {
     SC_1, SC_A, SC_D, SC_DOWN, SC_ESCAPE, SC_LEFT, SC_P, SC_R, SC_RETURN,
@@ -33,7 +35,7 @@ pub fn inputNew(): Input {
 }
 
 // Poll SDL and fill `inp`. `scale` converts window pixels to canvas pixels.
-pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
+pub fn pollInput(inp: &mut Input, scale: f64) {
     inp.moveX = 0.0
     inp.moveY = 0.0
     inp.fire = false
@@ -42,67 +44,62 @@ pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
     inp.pause = false
     inp.pick = 0
 
-    unsafe {
-        while SDL_PollEvent(ev) != 0 {
-            let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-            if evType == SDL_QUIT {
-                inp.quit = true
-            }
+    if pollEvents().quit {
+        inp.quit = true
+    }
+    let ks = keyboard()
+    if ks.down(SC_ESCAPE) {
+        inp.quit = true
+    }
+    if ks.down(SC_A) {
+        inp.moveX -= 1.0
+    }
+    if ks.down(SC_D) {
+        inp.moveX += 1.0
+    }
+    if ks.down(SC_W) {
+        inp.moveY -= 1.0
+    }
+    if ks.down(SC_S) {
+        inp.moveY += 1.0
+    }
+    // Arrows move too. Aiming is the mouse's job only — a second keyboard
+    // stick reads as a puzzle, not a control scheme.
+    if ks.down(SC_LEFT) {
+        inp.moveX -= 1.0
+    }
+    if ks.down(SC_RIGHT) {
+        inp.moveX += 1.0
+    }
+    if ks.down(SC_UP) {
+        inp.moveY -= 1.0
+    }
+    if ks.down(SC_DOWN) {
+        inp.moveY += 1.0
+    }
+    if ks.down(SC_SPACE) {
+        inp.bomb = true
+    }
+    if ks.down(SC_R) {
+        inp.restart = true
+    }
+    if ks.down(SC_P) {
+        inp.pause = true
+    }
+    if ks.down(SC_RETURN) {
+        inp.restart = true
+    }
+    for k in 0..3 {
+        if ks.down(SC_1 + k) {
+            inp.pick = k + 1
         }
-        let ks = SDL_GetKeyboardState(0 as *i32)
-        if ks[SC_ESCAPE] != 0 {
-            inp.quit = true
-        }
-        if ks[SC_A] != 0 {
-            inp.moveX -= 1.0
-        }
-        if ks[SC_D] != 0 {
-            inp.moveX += 1.0
-        }
-        if ks[SC_W] != 0 {
-            inp.moveY -= 1.0
-        }
-        if ks[SC_S] != 0 {
-            inp.moveY += 1.0
-        }
-        // Arrows move too. Aiming is the mouse's job only — a second keyboard
-        // stick reads as a puzzle, not a control scheme.
-        if ks[SC_LEFT] != 0 {
-            inp.moveX -= 1.0
-        }
-        if ks[SC_RIGHT] != 0 {
-            inp.moveX += 1.0
-        }
-        if ks[SC_UP] != 0 {
-            inp.moveY -= 1.0
-        }
-        if ks[SC_DOWN] != 0 {
-            inp.moveY += 1.0
-        }
-        if ks[SC_SPACE] != 0 {
-            inp.bomb = true
-        }
-        if ks[SC_R] != 0 {
-            inp.restart = true
-        }
-        if ks[SC_P] != 0 {
-            inp.pause = true
-        }
-        if ks[SC_RETURN] != 0 {
-            inp.restart = true
-        }
-        for k in 0..3 {
-            if ks[SC_1 + k] != 0 {
-                inp.pick = k + 1
-            }
-        }
+    }
 
-        var mpos: [i32; 2] = [0; 2]
-        let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
-        inp.mouseX = (mpos[0] as f64) * scale
-        inp.mouseY = (mpos[1] as f64) * scale
-        if (btn & SDL_BUTTON_LMASK) != 0 {
-            inp.fire = true
-        }
+    let ms = mouse()
+    let btn = ms.buttons
+    inp.mouseX = (ms.x as f64) * scale
+    inp.mouseY = (ms.y as f64) * scale
+    if (btn & SDL_BUTTON_LMASK) != 0 {
+        inp.fire = true
     }
 }

@@ -18,8 +18,10 @@
 // You cannot crash. The ground pushes you up if you dive into it.
 
 from "sdl" import {
-    SDL_Init, SDL_Quit, SDL_GetTicks, SDL_SetWindowFullscreen, SDL_ShowCursor,
-    SDL_INIT_AUDIO, SDL_INIT_VIDEO, SDL_WINDOW_FULLSCREEN_DESKTOP
+    SDL_INIT_AUDIO, SDL_INIT_VIDEO
+}
+from "../../shared/sdlkit" import {
+    Sdl, setCursorVisible, ticks
 }
 from "./input" import {
     Input, inputNew, pollInput
@@ -299,9 +301,14 @@ pub fn main(): i32 {
     var placeIdx = startIndex(o)
     let easy = !o.getBool("pro")
     let invert = !o.getBool("natural")
-    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0 {
-        print("SDL_Init failed")
-        return 1
+    // Declared before the Screen and the Sound so it outlives both: dropping it is
+    // SDL_Quit.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
     // The 2D overlay's own canvas, at its own fixed resolution. The 3D scene
     // renders at the window's, which is a different and much larger number — that
@@ -331,7 +338,7 @@ pub fn main(): i32 {
             return 2
         }
     }
-    let _ = SDL_ShowCursor(0)
+    setCursorVisible(false)
     // The procedural textures and the GPU renderer come up before the start
     // screen, because the start screen draws a sky and the sky is a GPU pass.
     let groundTex = groundTexture()
@@ -341,25 +348,22 @@ pub fn main(): i32 {
         Ok(g) => g
         Err(e) => {
             // No screenClose here: it consumes the Screen, and the checker then
-            // has to assume it is gone on the path that continues. SDL_Quit tears
-            // the context and the window down anyway, which is all this would do.
+            // has to assume it is gone on the path that continues. Returning drops
+            // the Screen (context, then window) and then SDL, which is all it would do.
             print("gpu: " + e)
-            SDL_Quit()
             return 2
         }
     }
     var inp = inputNew(invert)
-    var ev: [u8; 64] = [0; 64]
     // Ask before decoding anything. A place costs a beat to parse and drape, and
     // spending it on San Francisco to then be asked which place you wanted is the
     // wrong order — `--place`, `--city` and `--procedural` all say the answer
     // already, so the screen only appears when nothing has.
     if placeIdx >= 0 && (o.getString("place") ?? "") == "" {
-        let pick = chooseRegion(&mut scr, gw, &mut c, s, &mut inp, &mut ev, placeIdx)
+        let pick = chooseRegion(&mut scr, gw, &mut c, s, &mut inp, placeIdx)
         if pick < 0 {
             gpuWorldFree(&mut scr.gl, gw)
             screenClose(scr)
-            SDL_Quit()
             return 0
         }
         placeIdx = pick
@@ -394,13 +398,13 @@ pub fn main(): i32 {
     }
     var snd = soundNew()
     var full = o.getBool("fullscreen")
-    var last = SDL_GetTicks()
+    var last = ticks()
     var fpsAccum: f64 = 0.0
     var fpsFrames: i64 = 0
     var fpsShown: i64 = 0
 
     while !inp.quit {
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dt = ((now - last) as f64) / 1000.0
         last = now
         if dt > 0.05 {
@@ -409,7 +413,7 @@ pub fn main(): i32 {
         if dt < 0.0005 {
             dt = 0.0005
         }
-        pollInput(&mut inp, &mut ev)
+        pollInput(&mut inp)
 
         if inp.mute {
             musicToggle(&mut snd)
@@ -513,6 +517,5 @@ pub fn main(): i32 {
     }
     gpuWorldFree(&mut scr.gl, gw)
     screenClose(scr)
-    SDL_Quit()
     return 0
 }

@@ -11,19 +11,17 @@
 // a combo, and the combo is the score.
 //
 // Same engine as ../neon: the HDR canvas with bloom in gfx.milo and the
-// mass-spring background lattice in grid.milo. Nothing here is `unsafe` except
-// the SDL calls in sdl.milo and the texture upload below.
+// mass-spring background lattice in grid.milo. Nothing in this game is `unsafe`:
+// every SDL call goes through ../../shared/sdlkit.milo.
 
 from "std/math" import {
     Math
 }
 from "sdl" import {
-    SDL_Init, SDL_CreateWindow, SDL_CreateRenderer, SDL_CreateTexture,
-    SDL_UpdateTexture, SDL_RenderClear, SDL_RenderCopy, SDL_RenderPresent,
-    SDL_ShowCursor, SDL_GetTicks, SDL_DestroyWindow, SDL_Quit,
-    SDL_INIT_VIDEO, SDL_WINDOWPOS_CENTERED, SDL_WINDOW_SHOWN,
-    SDL_TEXTUREACCESS_STREAMING, SDL_PIXELFORMAT_ABGR8888,
-    SDL_RENDERER_ACCELERATED, SDL_RENDERER_PRESENTVSYNC,
+    SDL_INIT_VIDEO, SDL_WINDOW_SHOWN, SDL_RENDERER_ACCELERATED, SDL_RENDERER_PRESENTVSYNC
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, Presenter, setCursorVisible, ticks
 }
 from "./input" import {
     Input, inputNew, pollInput
@@ -46,35 +44,36 @@ pub let W: i64 = 1280
 pub let H: i64 = 720
 
 pub fn main(): i32 {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
-    }
-    var win: *u8 = 0 as *u8
-    var ren: *u8 = 0 as *u8
-    var tex: *u8 = 0 as *u8
-    var ok = true
-    unsafe {
-        let title = "SHATTER — written in Milo"
-        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W as i32, H as i32, SDL_WINDOW_SHOWN)
-        ren = SDL_CreateRenderer(win, 0 - 1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)
-        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W as i32, H as i32)
-        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
-            ok = false
+    // Declared in teardown's reverse: the presenter goes first, then the window, then
+    // SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
         }
-        let _ = SDL_ShowCursor(0)
     }
-    if !ok {
-        print("SDL setup failed")
-        return 2
+    let win = match Window.create("SHATTER — written in Milo", W, H, SDL_WINDOW_SHOWN) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
+        }
     }
+    let screen = match Presenter.create(win, W, H, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
+        }
+    }
+    setCursorVisible(false)
 
     var c = canvasNew(W, H)
     var g = gameNew(W as f64, H as f64)
     var inp = inputNew()
-    var ev: [u8; 64] = [0; 64]
 
-    var last = SDL_GetTicks()
+    var last = ticks()
     var keyX = (W as f64) * 0.5
     var lastMouseX: f64 = 0.0
     var mouseIdle: f64 = 99.0
@@ -84,7 +83,7 @@ pub fn main(): i32 {
     var fpsShown: i64 = 0
 
     while !inp.quit {
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dt = ((now - last) as f64) / 1000.0
         last = now
         if dt > 0.05 {
@@ -94,7 +93,7 @@ pub fn main(): i32 {
             dt = 0.0005
         }
 
-        pollInput(&mut inp, &mut ev, 1.0)
+        pollInput(&mut inp, 1.0)
 
         // Keyboard and mouse both drive the same target: whichever moved last wins,
         // so there is nothing to configure and nothing to discover.
@@ -149,15 +148,8 @@ pub fn main(): i32 {
         }
         present(&mut c, 0.6, exposure)
 
-        unsafe {
-            SDL_UpdateTexture(tex, 0 as *u8, c.fb[0].addrOf() as *u8, (W * 4) as i32)
-            SDL_RenderClear(ren)
-            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
-            SDL_RenderPresent(ren)
-        }
+        screen.present(c.fb)
     }
 
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }

@@ -601,7 +601,8 @@ impl Drop for Device {
     fn drop(self: &mut Self) {
         unsafe {
             // Releasing a resource a submitted command buffer still reads is undefined.
-            SDL_WaitForGPUIdle(self.raw)
+            // Sound: a live device, no other arguments.
+        unsafe { SDL_WaitForGPUIdle(self.raw) }
             for p in self.pipelines {
                 SDL_ReleaseGPUGraphicsPipeline(self.raw, p)
             }
@@ -718,7 +719,11 @@ impl Device {
     // Take the window for presenting. The device owns it from here on.
     fn claim(self: &mut Self, win: Window): Result<Unit, string> {
         let wr = win.handle()
-        if !SDL_ClaimWindowForGPUDevice(self.raw, wr) {
+        var ok = false
+        // Sound: a live device and the live window `win`, which the device keeps alive
+        // from here on by owning it.
+        unsafe { ok = SDL_ClaimWindowForGPUDevice(self.raw, wr) }
+        if !ok {
             return Result.Err("SDL_ClaimWindowForGPUDevice: " + sdlError())
         }
         self.windowRaw = wr
@@ -727,19 +732,23 @@ impl Device {
     }
 
     fn swapchainFormat(self: &Self): u32 {
-        return SDL_GetGPUSwapchainTextureFormat(self.raw, self.windowRaw)
+        // Sound: the device and the window it owns; scalars back.
+        unsafe { return SDL_GetGPUSwapchainTextureFormat(self.raw, self.windowRaw) }
     }
 
     fn supportsPresentMode(self: &Self, mode: u32): bool {
-        return SDL_WindowSupportsGPUPresentMode(self.raw, self.windowRaw, mode)
+        // Sound: the device and the window it owns; scalars back.
+        unsafe { return SDL_WindowSupportsGPUPresentMode(self.raw, self.windowRaw, mode) }
     }
 
     fn setPresentMode(self: &mut Self, mode: u32): bool {
-        return SDL_SetGPUSwapchainParameters(self.raw, self.windowRaw, SWAPCHAINCOMPOSITION_SDR, mode)
+        // Sound: the device and the window it owns; scalars in and out.
+        unsafe { return SDL_SetGPUSwapchainParameters(self.raw, self.windowRaw, SWAPCHAINCOMPOSITION_SDR, mode) }
     }
 
     fn setFramesInFlight(self: &mut Self, n: u32): bool {
-        return SDL_SetGPUAllowedFramesInFlight(self.raw, n)
+        // Sound: a live device and one integer.
+        unsafe { return SDL_SetGPUAllowedFramesInFlight(self.raw, n) }
     }
 
     fn createPipeline(self: &mut Self, d: &PipelineDesc): Result<Pipeline, string> {
@@ -1055,7 +1064,8 @@ impl Device {
             if !SDL_SubmitGPUCommandBuffer(c) {
                 return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
             }
-            SDL_WaitForGPUIdle(self.raw)
+            // Sound: a live device, no other arguments.
+        unsafe { SDL_WaitForGPUIdle(self.raw) }
             let p = SDL_MapGPUTransferBuffer(self.raw, self.transfers[xfer.id], false)
             memcpy(out.ptr() as *u8, p, bytes)
             SDL_UnmapGPUTransferBuffer(self.raw, self.transfers[xfer.id])
@@ -1214,7 +1224,10 @@ impl Commands {
     }
 
     fn submit(self: Self): Result<Unit, string> {
-        if !SDL_SubmitGPUCommandBuffer(self.raw) {
+        var ok = false
+        // Sound: `self` is consumed, so this command buffer is submitted exactly once.
+        unsafe { ok = SDL_SubmitGPUCommandBuffer(self.raw) }
+        if !ok {
             return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
         }
         return Result.Ok(Unit {})
@@ -1243,7 +1256,8 @@ pub struct Fence {
 
 impl Device {
     fn waitIdle(self: &Self) {
-        SDL_WaitForGPUIdle(self.raw)
+        // Sound: a live device, no other arguments.
+        unsafe { SDL_WaitForGPUIdle(self.raw) }
     }
 
     fn waitFor(self: &Self, f: &Fence) {
@@ -1263,7 +1277,8 @@ impl Device {
     // 100k particles. Measured: release right after the wait grew to 1.1 GB in 300
     // frames; release one submit later stays flat at 85 MB over 2000.
     fn releaseFence(self: &Self, f: Fence) {
-        SDL_ReleaseGPUFence(self.raw, f.raw)
+        // Sound: `f` is consumed, so a fence is released once; see above for when.
+        unsafe { SDL_ReleaseGPUFence(self.raw, f.raw) }
     }
 }
 
@@ -1274,7 +1289,8 @@ pub struct Pass {
 
 impl Pass {
     fn bindPipeline(self: &mut Self, dev: &Device, p: Pipeline) {
-        SDL_BindGPUGraphicsPipeline(self.raw, dev.pipelines[p.id])
+        // Sound: an open pass and a pipeline the device made (indexing is bounds-checked).
+        unsafe { SDL_BindGPUGraphicsPipeline(self.raw, dev.pipelines[p.id]) }
     }
 
     fn bindVertexStorage(self: &mut Self, dev: &Device, slot: u32, b: Buffer) {
@@ -1296,10 +1312,12 @@ impl Pass {
     }
 
     fn draw(self: &mut Self, vertices: i64, instances: i64) {
-        SDL_DrawGPUPrimitives(self.raw, vertices as u32, instances as u32, 0, 0)
+        // Sound: an open pass and scalars; the shader bounds-checks its storage reads.
+        unsafe { SDL_DrawGPUPrimitives(self.raw, vertices as u32, instances as u32, 0, 0) }
     }
     fn end(self: Self) {
-        SDL_EndGPURenderPass(self.raw)
+        // Sound: `self` is consumed, so the pass is ended once.
+        unsafe { SDL_EndGPURenderPass(self.raw) }
     }
 }
 
@@ -1311,7 +1329,8 @@ pub struct ComputePass {
 
 impl ComputePass {
     fn bindPipeline(self: &mut Self, dev: &Device, p: ComputePipeline) {
-        SDL_BindGPUComputePipeline(self.raw, dev.computes[p.id])
+        // Sound: an open pass and a pipeline the device made (indexing is bounds-checked).
+        unsafe { SDL_BindGPUComputePipeline(self.raw, dev.computes[p.id]) }
     }
 
     // A read-only storage buffer, at read-only slot `slot`.
@@ -1328,10 +1347,12 @@ impl ComputePass {
             return
         }
         let groups = (threads + p.group - 1) / p.group
-        SDL_DispatchGPUCompute(self.raw, groups as u32, 1, 1)
+        // Sound: an open pass and scalars; the kernel bounds-checks each thread.
+        unsafe { SDL_DispatchGPUCompute(self.raw, groups as u32, 1, 1) }
     }
 
     fn end(self: Self) {
-        SDL_EndGPUComputePass(self.raw)
+        // Sound: `self` is consumed, so the pass is ended once.
+        unsafe { SDL_EndGPUComputePass(self.raw) }
     }
 }

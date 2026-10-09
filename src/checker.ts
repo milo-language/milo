@@ -1632,9 +1632,9 @@ export class TypeChecker {
   // extern-call: an extern the signature rule above lets through (scalars,
   // auto-coerced strings) still runs C code that can break invariants the checker is
   // relying on elsewhere: `close(fd)` on an fd a TcpStream still owns compiles clean and
-  // leaves the stream writing to a closed or reused descriptor. Every extern call is meant
-  // to sit inside `unsafe` (std wraps the harmless ones in safe pub fns), staged as a
-  // warning so existing programs get a cycle to migrate.
+  // leaves the stream writing to a closed or reused descriptor. So every extern call sits
+  // inside `unsafe`, and the idiom is a small safe wrapper per extern whose block says what
+  // it guarantees. A hard error since 2026-10 (a warning for one cycle before that).
   //
   // A `@pure` extern whose params and return are all scalars is exempt: purity (reads
   // only its arguments, no effects) is a stronger claim than this rule asks for, the
@@ -1643,17 +1643,22 @@ export class TypeChecker {
   // exemption where nothing can go wrong if it is false: a `@pure` extern handed a
   // pointer (a string or array coerced to `*T`) can write through it like any other.
   //
-  // Not reported inside a manifest dependency: the reader cannot edit it. std IS
-  // reported, because std is where the wrappers live and it is held to zero.
+  // Reported inside a manifest dependency too, unlike the lints: a package's soundness is
+  // the package's own job, and a dependency that calls C bare is unsound for every
+  // program that links it whether or not that program's author can edit it.
   private noteSafeExternCall(name: string, attrs: { name: string }[] | undefined, allScalar: boolean, span?: Span) {
     if (allScalar && attrs?.some(a => a.name === "pure")) return;
     if (this.unsafeDepth > 0) {
       if (this.unsafeUsedStack.length > 0) this.unsafeUsedStack[this.unsafeUsedStack.length - 1] = true;
       return;
     }
-    if (this.currentFnIsDep) return;
-    this.warn("extern-call", `calling extern function '${name}' outside an 'unsafe' block`, span,
-      `wrap the call in 'unsafe { ... }', or call the std function that wraps it`);
+    // A hard error with a code (CODED_ERRORS in src/warnings.ts), not a warning-table
+    // entry: no --allow reaches it, and `milo explain extern-call` still answers.
+    this.diagnostics.push({
+      severity: "error", span, code: "extern-call",
+      message: `calling extern function '${name}' outside an 'unsafe' block`,
+      hint: `call the std function that wraps it, or write a small safe wrapper whose body is 'unsafe { ... }' with a comment saying why the call is sound`,
+    });
   }
 
   // Record/replay: send this extern call through its generated wrapper, which records it
@@ -11680,7 +11685,7 @@ export class TypeChecker {
     const neg = expr.operand.kind === "UnaryOp" && expr.operand.op === "-";
     const lit = neg && expr.operand.kind === "UnaryOp" ? expr.operand.operand : expr.operand;
     if (lit.kind !== "IntLit" && lit.kind !== "FloatLit") return;
-    if (this.currentFnIsDep) return; // as extern-call: a dependency is not the reader's to edit; std is held to zero
+    if (this.currentFnIsDep) return; // a dependency is not the reader's to edit; std is held to zero
     if (!expected) { this.castsCheckedBare.add(expr); return; }
     if (this.castsCheckedBare.has(expr) || this.instanceCasts.has(expr) || !typeEq(expected, toType)) return;
     if (expected.tag === "int" && expected.min !== undefined) return; // a range type checks the literal; the cast skips that

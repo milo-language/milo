@@ -5,8 +5,8 @@
 // per-project copy — see milo.json. This file is only the part that is actually
 // game-specific: which keys mean what, and which of them are edge-triggered.
 
-from "sdl" import {
-    SDL_PollEvent, SDL_GetKeyboardState, SDL_QUIT
+from "../../shared/sdlkit" import {
+    pollEvents, keyboard
 }
 from "sdl/keys" import {
     SC_A, SC_B, SC_C, SC_D, SC_E, SC_W, SC_S, SC_J, SC_K, SC_M, SC_R, SC_X, SC_Z,
@@ -43,54 +43,49 @@ pub fn inputNew(): Input {
     }
 }
 
-pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
+pub fn pollInput(inp: &mut Input) {
     inp.moveX = 0.0
     inp.up = false
     inp.down = false
 
-    unsafe {
-        while SDL_PollEvent(ev) != 0 {
-            let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-            if evType == SDL_QUIT {
-                inp.quit = true
-            }
-        }
-        let ks = SDL_GetKeyboardState(0 as *i32)
-        if ks[SC_ESCAPE] != 0 {
-            inp.quit = true
-        }
-        if ks[SC_A] != 0 || ks[SC_LEFT] != 0 {
-            inp.moveX -= 1.0
-        }
-        if ks[SC_D] != 0 || ks[SC_RIGHT] != 0 {
-            inp.moveX += 1.0
-        }
-        if ks[SC_W] != 0 || ks[SC_UP] != 0 {
-            inp.up = true
-        }
-        if ks[SC_S] != 0 || ks[SC_DOWN] != 0 {
-            inp.down = true
-        }
-        // Three keys for jump, four for dash, three for bark: whichever a
-        // player reaches for first is the right one, and nothing has to be
-        // configured.
-        let jumpNow = ks[SC_SPACE] != 0 || ks[SC_Z] != 0 || ks[SC_K] != 0
-        let dashNow = ks[SC_LSHIFT] != 0 || ks[SC_RSHIFT] != 0 || ks[SC_X] != 0 || ks[SC_J] != 0
-        let barkNow = ks[SC_B] != 0 || ks[SC_C] != 0 || ks[SC_E] != 0
-        let restartNow = ks[SC_R] != 0
-        let muteNow = ks[SC_M] != 0
-
-        inp.jump = jumpNow && !inp.prevJump
-        inp.jumpHeld = jumpNow
-        inp.dash = dashNow && !inp.prevDash
-        inp.bark = barkNow && !inp.prevBark
-        inp.restart = restartNow && !inp.prevRestart
-        inp.mute = muteNow && !inp.prevMute
-
-        inp.prevJump = jumpNow
-        inp.prevDash = dashNow
-        inp.prevBark = barkNow
-        inp.prevRestart = restartNow
-        inp.prevMute = muteNow
+    if pollEvents().quit {
+        inp.quit = true
     }
+    let ks = keyboard()
+    if ks.down(SC_ESCAPE) {
+        inp.quit = true
+    }
+    if ks.down(SC_A) || ks.down(SC_LEFT) {
+        inp.moveX -= 1.0
+    }
+    if ks.down(SC_D) || ks.down(SC_RIGHT) {
+        inp.moveX += 1.0
+    }
+    if ks.down(SC_W) || ks.down(SC_UP) {
+        inp.up = true
+    }
+    if ks.down(SC_S) || ks.down(SC_DOWN) {
+        inp.down = true
+    }
+    // Three keys for jump, four for dash, three for bark: whichever a
+    // player reaches for first is the right one, and nothing has to be
+    // configured.
+    let jumpNow = ks.down(SC_SPACE) || ks.down(SC_Z) || ks.down(SC_K)
+    let dashNow = ks.down(SC_LSHIFT) || ks.down(SC_RSHIFT) || ks.down(SC_X) || ks.down(SC_J)
+    let barkNow = ks.down(SC_B) || ks.down(SC_C) || ks.down(SC_E)
+    let restartNow = ks.down(SC_R)
+    let muteNow = ks.down(SC_M)
+
+    inp.jump = jumpNow && !inp.prevJump
+    inp.jumpHeld = jumpNow
+    inp.dash = dashNow && !inp.prevDash
+    inp.bark = barkNow && !inp.prevBark
+    inp.restart = restartNow && !inp.prevRestart
+    inp.mute = muteNow && !inp.prevMute
+
+    inp.prevJump = jumpNow
+    inp.prevDash = dashNow
+    inp.prevBark = barkNow
+    inp.prevRestart = restartNow
+    inp.prevMute = muteNow
 }

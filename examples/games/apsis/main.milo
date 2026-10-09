@@ -40,12 +40,8 @@ from "std/fs" import {
 from "./host" import {
     Input, inputNew, pollInput, hostNew, drawableSize, pixelScale
 }
-from "sdl" import {
-    SDL_DestroyWindow, SDL_GetTicks, SDL_Quit, SDL_SetWindowFullscreen,
-    SDL_WINDOW_FULLSCREEN_DESKTOP
-}
-from "sdl/glcontext" import {
-    SDL_GL_DeleteContext, SDL_GL_SwapWindow
+from "../../shared/sdlkit" import {
+    ticks
 }
 from "./post" import {
     Post, postNew
@@ -296,10 +292,12 @@ fn stage(g: &mut Game, o: &Options) {
 pub fn main(): i32 {
     let opt = parseOptions()
     let shooting = opt.shot.len > 0
-    var host = hostNew("APSIS - you can be a rocket scientist too", WIN_W, WIN_H, !shooting)
-    if !host.ok {
-        print(host.err)
-        return 1
+    let host = match hostNew("APSIS - you can be a rocket scientist too", WIN_W, WIN_H, !shooting) {
+        Ok(h) => h,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
 
     // Owns every GL object the game makes, so teardown is one sweep while the
@@ -343,16 +341,15 @@ pub fn main(): i32 {
     var postH = size.h
 
     var inp = inputNew()
-    var ev: [u8; 64] = [0; 64]
     var fullscreen = false
-    let start = SDL_GetTicks()
-    var prevMs = SDL_GetTicks()
+    let start = ticks()
+    var prevMs = ticks()
     var frame = 0
     var loadedFor = -1
 
     while !inp.quit {
         frame += 1
-        let nowMs = SDL_GetTicks()
+        let nowMs = ticks()
         var dt = ((nowMs - prevMs) as f64) / 1000.0
         prevMs = nowMs
         // A long stall — the first frame after decoding a map, or a window drag —
@@ -366,7 +363,7 @@ pub fn main(): i32 {
         size = drawableSize(host.win)
         let w = size.w as f64
         let h = size.h as f64
-        pollInput(&mut inp, &mut ev, pixelScale(host.win))
+        pollInput(&mut inp, pixelScale(host.win))
 
         if size.w != postW || size.h != postH {
             post.free(&mut gl)
@@ -382,11 +379,7 @@ pub fn main(): i32 {
 
         if inp.fullscreen {
             fullscreen = !fullscreen
-            var flag: u32 = 0
-            if fullscreen {
-                flag = SDL_WINDOW_FULLSCREEN_DESKTOP
-            }
-            let _ = SDL_SetWindowFullscreen(host.win, flag)
+            host.win.setFullscreen(fullscreen)
         }
 
         handleInput(&mut g, inp, dt)
@@ -419,7 +412,7 @@ pub fn main(): i32 {
                 inp.quit = true
             }
         } else {
-            SDL_GL_SwapWindow(host.win)
+            host.win.swapGl()
         }
     }
 
@@ -427,8 +420,5 @@ pub fn main(): i32 {
     ui.free(&mut gl)
     post.free(&mut gl)
     gl.free()
-    SDL_GL_DeleteContext(host.ctx)
-    SDL_DestroyWindow(host.win)
-    SDL_Quit()
     return 0
 }

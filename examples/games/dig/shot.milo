@@ -20,36 +20,12 @@ from "./render" import {
     drawMine, drawHud
 }
 
-pub extern fn fopen(path: *u8, mode: *u8): *u8
-
-pub extern fn fwrite(ptr: *u8, size: i64, count: i64, stream: *u8): i64
-
-pub extern fn fclose(stream: *u8): i32
-
+from "../../shared/ppm" import {
+    writePpm
+}
 pub let W: i64 = 1280
 
 pub let H: i64 = 720
-
-fn writePpm(path: &string, c: &Canvas) {
-    var rgb: Vec<u8> = Vec.filled(W * H * 3, 0)
-    for i in 0..W * H {
-        let px = c.fb[i]
-        rgb[i * 3] = (px & 0xFF) as u8
-        rgb[i * 3 + 1] = ((px >> 8) & 0xFF) as u8
-        rgb[i * 3 + 2] = ((px >> 16) & 0xFF) as u8
-    }
-    let header = "P6\n" + W.toString() + " " + H.toString() + "\n255\n"
-    unsafe {
-        let f = fopen(path.cstr(), "wb".cstr())
-        if (f as i64) == 0 {
-            print("cannot open " + path)
-            return
-        }
-        let _ = fwrite(header.cstr(), 1, header.len, f)
-        let _ = fwrite(rgb.ptr() as *u8, 1, W * H * 3, f)
-        let _ = fclose(f)
-    }
-}
 
 pub fn main(): i32 {
     let argv = args()
@@ -160,7 +136,7 @@ pub fn main(): i32 {
             drawMine(&mut c, m, 0.0, 0.0)
             drawHud(&mut c, m)
             present(&mut c, 0.18, 1.0)
-            writePpm(prefix + "-" + frame.toString() + ".ppm", c)
+            writePpm(prefix + "-" + frame.toString() + ".ppm", c.fb, W, H, false)
             print("wrote " + prefix + "-" + frame.toString() + ".ppm")
         }
     }

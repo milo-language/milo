@@ -1,0 +1,12 @@
+// @error: calling extern function 'close' outside an 'unsafe' block
+// Every extern call sits inside `unsafe`, even one whose signature is all scalars. The
+// signature says nothing about what the C code does: `close(fd)` takes one `i32` and can
+// close a descriptor a TcpStream still owns, after which the stream writes to a closed or
+// reused fd. Wrap the call in a small safe function whose `unsafe` block says why it is
+// sound, or use the std wrapper (`OwnedFd`).
+extern fn close(fd: i32): i32
+
+fn main() {
+    let r = close(-1)
+    print(r)
+}

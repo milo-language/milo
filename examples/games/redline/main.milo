@@ -31,18 +31,13 @@ from "gl" import {
     GlContext, Texture2D, Wrap, readPixelsRgba8
 }
 from "sdl" import {
-    SDL_CreateWindow, SDL_DestroyWindow, SDL_GetError, SDL_GetKeyboardState,
-    SDL_GetTicks, SDL_Init, SDL_PollEvent, SDL_Quit, SDL_SetWindowFullscreen,
-    SDL_ShowCursor, SDL_INIT_VIDEO, SDL_QUIT, SDL_WINDOWPOS_CENTERED,
-    SDL_WINDOW_ALLOW_HIGHDPI, SDL_WINDOW_FULLSCREEN_DESKTOP, SDL_WINDOW_HIDDEN,
-    SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
+    SDL_INIT_VIDEO, SDL_WINDOW_ALLOW_HIGHDPI, SDL_WINDOW_HIDDEN, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
 }
 from "sdl/glcontext" import {
-    SDL_GL_CreateContext, SDL_GL_DeleteContext, SDL_GL_GetDrawableSize,
-    SDL_GL_SetAttribute, SDL_GL_SetSwapInterval, SDL_GL_SwapWindow,
-    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
-    SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_DEPTH_SIZE,
-    SDL_WINDOW_OPENGL
+    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION, SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_DEPTH_SIZE, SDL_WINDOW_OPENGL
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, SdlGlContext, glSetAttribute, glSetSwapInterval, pollEvents, keyboard, setCursorVisible, ticks
 }
 from "sdl/keys" import {
     SC_A, SC_D, SC_DOWN, SC_ESCAPE, SC_F, SC_LEFT, SC_LSHIFT, SC_RIGHT, SC_S,
@@ -151,48 +146,51 @@ pub fn main(): i32 {
     let scalePct = argValue("--scale", "100").parseF64() ?? 100.0
     let skipBucket = argValue("--skip", "-1").parseInt() ?? -1
 
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
-    }
-    var win: *u8 = 0 as *u8
-    var ctx: *u8 = 0 as *u8
-    unsafe {
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        let _ = SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24)
-        var flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
-        if headless {
-            flags |= SDL_WINDOW_HIDDEN
-        } else {
-            flags = flags | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    // Declared in teardown's reverse: the context goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
         }
-        win = SDL_CreateWindow("REDLINE", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW as i32, winH as i32, flags)
-        if (win as i64) == 0 {
-            print("window: " + _cstrToString(SDL_GetError()))
+    }
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    let _ = glSetAttribute(SDL_GL_DEPTH_SIZE, 24)
+    var flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
+    if headless {
+        flags |= SDL_WINDOW_HIDDEN
+    } else {
+        flags = flags | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    }
+    let win = match Window.create("REDLINE", winW, winH, flags) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
             return 2
         }
-        ctx = SDL_GL_CreateContext(win)
-        if (ctx as i64) == 0 {
-            print("no GL 3.3 core context: " + _cstrToString(SDL_GetError()))
+    }
+    let _ctx = match SdlGlContext.create(win) {
+        Ok(v) => v,
+        Err(e) => {
+            print("no GL 3.3 core context: " + e)
             return 3
         }
-        let _ = SDL_GL_SetSwapInterval(if headless {
-            0
-        } else {
-            1
-        })
-        if !headless {
-            let _ = SDL_ShowCursor(0)
-        }
+    }
+    let _ = glSetSwapInterval(if headless {
+        0
+    } else {
+        1
+    })
+    if !headless {
+        setCursorVisible(false)
     }
 
-    var dw: i32 = 0
-    var dh: i32 = 0
-    unsafe {
-        SDL_GL_GetDrawableSize(win, dw.addrOf(), dh.addrOf())
-    }
+    var drawable = win.drawableSize()
+    var dw = drawable.w as i32
+    var dh = drawable.h as i32
     if headless {
         dw = winW as i32
         dh = winH as i32
@@ -274,8 +272,7 @@ pub fn main(): i32 {
     var hud = newHud()
 
     var quit = false
-    var ev: [u8; 64] = [0; 64]
-    var last = SDL_GetTicks()
+    var last = ticks()
     var prevF = false
     var fullscreen = false
     var raceTime = 0.0
@@ -295,7 +292,7 @@ pub fn main(): i32 {
     let parts = argValue("--parts", "31").parseInt() ?? 31
 
     while !quit {
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dt = ((now - last) as f64) / 1000.0
         last = now
         if dt > 0.05 {
@@ -312,44 +309,35 @@ pub fn main(): i32 {
         var nitro = false
         var handbrake = false
         if !headless {
-            unsafe {
-                while SDL_PollEvent(ev) != 0 {
-                    let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-                    if evType == SDL_QUIT {
-                        quit = true
-                    }
-                }
-                let keys = SDL_GetKeyboardState(0 as *i32)
-                if keys[SC_ESCAPE] != 0 {
-                    quit = true
-                }
-                let fDown = keys[SC_F] != 0
-                if fDown && !prevF {
-                    fullscreen = !fullscreen
-                    let _ = SDL_SetWindowFullscreen(win, if fullscreen {
-                        SDL_WINDOW_FULLSCREEN_DESKTOP
-                    } else {
-                        0
-                    })
-                }
-                prevF = fDown
-                if keys[SC_UP] != 0 || keys[SC_W] != 0 {
-                    throttle = 1.0
-                }
-                if keys[SC_DOWN] != 0 || keys[SC_S] != 0 {
-                    brake = 1.0
-                }
-                if keys[SC_LEFT] != 0 || keys[SC_A] != 0 {
-                    steer -= 1.0
-                }
-                if keys[SC_RIGHT] != 0 || keys[SC_D] != 0 {
-                    steer += 1.0
-                }
-                // Space is the turbo, because it is the button a player's thumb
-                // is already on, and the one they will hit in a panic.
-                nitro = keys[SC_SPACE] != 0
-                handbrake = keys[SC_LSHIFT] != 0
+            if pollEvents().quit {
+                quit = true
             }
+            let keys = keyboard()
+            if keys.down(SC_ESCAPE) {
+                quit = true
+            }
+            let fDown = keys.down(SC_F)
+            if fDown && !prevF {
+                fullscreen = !fullscreen
+                win.setFullscreen(fullscreen)
+            }
+            prevF = fDown
+            if keys.down(SC_UP) || keys.down(SC_W) {
+                throttle = 1.0
+            }
+            if keys.down(SC_DOWN) || keys.down(SC_S) {
+                brake = 1.0
+            }
+            if keys.down(SC_LEFT) || keys.down(SC_A) {
+                steer -= 1.0
+            }
+            if keys.down(SC_RIGHT) || keys.down(SC_D) {
+                steer += 1.0
+            }
+            // Space is the turbo, because it is the button a player's thumb
+            // is already on, and the one they will hit in a panic.
+            nitro = keys.down(SC_SPACE)
+            handbrake = keys.down(SC_LSHIFT)
         } else {
             // A capture of a parked car on an empty grid is a capture of a car
             // park, so the headless path drives. `--steer` holds a steering
@@ -437,9 +425,9 @@ pub fn main(): i32 {
         }
 
         // ── draw ──────────────────────────────────────────────────────────────
-        unsafe {
-            SDL_GL_GetDrawableSize(win, dw.addrOf(), dh.addrOf())
-        }
+        drawable = win.drawableSize()
+        dw = drawable.w as i32
+        dh = drawable.h as i32
         if headless {
             dw = winW as i32
             dh = winH as i32
@@ -590,7 +578,7 @@ pub fn main(): i32 {
                 writeShot(shot + "-" + zeroPad(clipFrames - warmup, 4) + ".png", dw as i64, dh as i64)
             }
             warmup -= 1
-            SDL_GL_SwapWindow(win)
+            win.swapGl()
             continue
         }
         if headless {
@@ -598,16 +586,13 @@ pub fn main(): i32 {
             quit = true
         }
 
-        SDL_GL_SwapWindow(win)
+        win.swapGl()
     }
 
     carModel.free(&mut gl)
     world.free(&mut gl)
     gfx.free(&mut gl)
     gl.free()
-    SDL_GL_DeleteContext(ctx)
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }
 

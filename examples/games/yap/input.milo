@@ -5,8 +5,8 @@
 // wired to the same flag — plus the mouse, because a one-button game should
 // never make you find the button.
 
-from "sdl" import {
-    SDL_PollEvent, SDL_GetKeyboardState, SDL_GetMouseState, SDL_QUIT
+from "../../shared/sdlkit" import {
+    pollEvents, keyboard, mouse
 }
 from "sdl/keys" import {
     SC_W, SC_K, SC_M, SC_R, SC_Z, SC_ESCAPE, SC_SPACE, SC_UP, SC_RETURN
@@ -31,33 +31,28 @@ pub fn inputNew(): Input {
     }
 }
 
-pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64]) {
-    unsafe {
-        while SDL_PollEvent(ev) != 0 {
-            let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-            if evType == SDL_QUIT {
-                inp.quit = true
-            }
-        }
-        let ks = SDL_GetKeyboardState(0 as *i32)
-        if ks[SC_ESCAPE] != 0 {
-            inp.quit = true
-        }
-        var mpos: [i32; 2] = [0; 2]
-        let btn = SDL_GetMouseState(mpos[0].addrOf() as *i32, mpos[1].addrOf() as *i32)
-
-        let keyFlap = ks[SC_SPACE] != 0 || ks[SC_UP] != 0 || ks[SC_W] != 0
-        let altFlap = ks[SC_K] != 0 || ks[SC_Z] != 0 || ks[SC_RETURN] != 0
-        let flapNow = keyFlap || altFlap || (btn & 1) != 0
-        let restartNow = ks[SC_R] != 0
-        let muteNow = ks[SC_M] != 0
-
-        inp.flap = flapNow && !inp.prevFlap
-        inp.restart = restartNow && !inp.prevRestart
-        inp.mute = muteNow && !inp.prevMute
-
-        inp.prevFlap = flapNow
-        inp.prevRestart = restartNow
-        inp.prevMute = muteNow
+pub fn pollInput(inp: &mut Input) {
+    if pollEvents().quit {
+        inp.quit = true
     }
+    let ks = keyboard()
+    if ks.down(SC_ESCAPE) {
+        inp.quit = true
+    }
+    let ms = mouse()
+    let btn = ms.buttons
+
+    let keyFlap = ks.down(SC_SPACE) || ks.down(SC_UP) || ks.down(SC_W)
+    let altFlap = ks.down(SC_K) || ks.down(SC_Z) || ks.down(SC_RETURN)
+    let flapNow = keyFlap || altFlap || (btn & 1) != 0
+    let restartNow = ks.down(SC_R)
+    let muteNow = ks.down(SC_M)
+
+    inp.flap = flapNow && !inp.prevFlap
+    inp.restart = restartNow && !inp.prevRestart
+    inp.mute = muteNow && !inp.prevMute
+
+    inp.prevFlap = flapNow
+    inp.prevRestart = restartNow
+    inp.prevMute = muteNow
 }

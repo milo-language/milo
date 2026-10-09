@@ -1,0 +1,8 @@
+{
+  "name": "sdlkit",
+  "version": "0.1.0",
+  "description": "the safe SDL2 layer the example games, GPU demos, simulations and ray tracers share",
+  "deps": {
+    "sdl": "github.com/milo-language/milo-sdl@v0.3.2"
+  }
+}

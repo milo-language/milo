@@ -13,7 +13,7 @@
 //   V            cycle view: vorticity / speed / pressure
 //   SPACE        pause      R  reset flow      ESC  quit
 //
-// Build/run (SDL2 auto-linked via @link — no -- flags needed):
+// Build/run (SDL2 comes from the sdl package in ../milo.json; no -- flags needed):
 //   milo run examples/simulation/windtunnel/windtunnel.milo --release
 //
 // -O3 matters: the debug build will not hold 60fps.
@@ -27,47 +27,12 @@ from "std/strconv" import {
 from "./lbm" import {
     lbmInit, lbmStep, lbmMacro, lbmInlet, lbmOutlet, lbmVorticity, lbmTau, lbmBuildInterior
 }
-
-@link("SDL2")
-pub extern fn SDL_Init(flags: u32): i32
-
-pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
-
-pub extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
-
-pub extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
-
-pub extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
-
-pub extern fn SDL_RenderClear(ren: *u8): i32
-
-pub extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
-
-pub extern fn SDL_RenderPresent(ren: *u8): void
-
-pub extern fn SDL_PollEvent(event: *u8): i32
-
-pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
-
-pub extern fn SDL_GetTicks(): u32
-
-pub extern fn SDL_Delay(ms: u32): void
-
-pub extern fn SDL_DestroyWindow(win: *u8): void
-
-pub extern fn SDL_Quit(): void
-
-pub let SDL_INIT_VIDEO: u32 = 0x20
-
-pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-
-pub let SDL_WINDOW_SHOWN: u32 = 0x4
-
-pub let SDL_TEXTUREACCESS_STREAMING: i32 = 1
-
-pub let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
-
-pub let SDL_QUIT: u32 = 0x100
+from "sdl" import {
+    SDL_INIT_VIDEO, SDL_WINDOW_SHOWN
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, Presenter, pollEvents, keyboard, delayMs, ticks
+}
 
 // Tunnel geometry in lattice units. The obstacle sits one quarter along so there is
 // a long wake to watch. NY is chosen so the obstacle blocks ~12% of the channel:
@@ -317,27 +282,29 @@ pub fn drawText(fb: &mut Vec<u32>, x0: i64, y0: i64, s: string, scale: i64, col:
 }
 
 pub fn main(): i32 {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
-    }
-
-    var win: *u8 = 0 as *u8
-    var ren: *u8 = 0 as *u8
-    var tex: *u8 = 0 as *u8
-    var ok = true
-    unsafe {
-        let title = "Milo — lattice-Boltzmann wind tunnel"
-        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (NX * SCALE) as i32, (NY * SCALE) as i32, SDL_WINDOW_SHOWN)
-        ren = SDL_CreateRenderer(win, -1, 0)
-        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, NX as i32, NY as i32)
-        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
-            ok = false
+    // Declared in teardown's reverse: the presenter goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
         }
     }
-    if !ok {
-        print("SDL setup failed: win/ren/tex NULL")
-        return 2
+
+    let win = match Window.create("Milo — lattice-Boltzmann wind tunnel", NX * SCALE, NY * SCALE, SDL_WINDOW_SHOWN) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
+        }
+    }
+    let screen = match Presenter.create(win, NX, NY, 0) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 2
+        }
     }
 
     var f: Vec<f64> = Vec.new()
@@ -375,8 +342,7 @@ pub fn main(): i32 {
 
     var paused = false
     var quit = false
-    var ev: [u8; 64] = [0; 64]
-    var lastTicks = SDL_GetTicks()
+    var lastTicks = ticks()
     var fpsAvg = 0.0
 
     // Edge-detect latches: SDL_GetKeyboardState reports level, not transition, so
@@ -399,91 +365,86 @@ pub fn main(): i32 {
 
     while !quit {
         var wantReset = false
-        unsafe {
-            while SDL_PollEvent(ev) != 0 {
-                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-                if evType == SDL_QUIT {
-                    quit = true
-                }
-            }
-            let ks = SDL_GetKeyboardState(0 as *i32)
-            if ks[41] != 0 {
-                quit = true
-            }
-            // SPACE 44, R 21, V 25, 1 30, 2 31, RIGHT 79, LEFT 80, DOWN 81, UP 82
-            let kSpace = ks[44] != 0
-            if kSpace && !prevKeys[0] {
-                paused = !paused
-            }
-            prevKeys[0] = kSpace
+        if pollEvents().quit {
+            quit = true
+        }
+        let ks = keyboard()
+        if ks.down(41) {
+            quit = true
+        }
+        // SPACE 44, R 21, V 25, 1 30, 2 31, RIGHT 79, LEFT 80, DOWN 81, UP 82
+        let kSpace = ks.down(44)
+        if kSpace && !prevKeys[0] {
+            paused = !paused
+        }
+        prevKeys[0] = kSpace
 
-            let kR = ks[21] != 0
-            if kR && !prevKeys[1] {
-                wantReset = true
-            }
-            prevKeys[1] = kR
+        let kR = ks.down(21)
+        if kR && !prevKeys[1] {
+            wantReset = true
+        }
+        prevKeys[1] = kR
 
-            let kV = ks[25] != 0
-            if kV && !prevKeys[2] {
-                view = (view + 1) % 3
-            }
-            prevKeys[2] = kV
+        let kV = ks.down(25)
+        if kV && !prevKeys[2] {
+            view = (view + 1) % 3
+        }
+        prevKeys[2] = kV
 
-            let k1 = ks[30] != 0
-            if k1 && !prevKeys[3] && shape != SHAPE_CYLINDER {
-                shape = SHAPE_CYLINDER
-                buildSolid(&mut solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, &mut interior)
-                wantReset = true
-            }
-            prevKeys[3] = k1
+        let k1 = ks.down(30)
+        if k1 && !prevKeys[3] && shape != SHAPE_CYLINDER {
+            shape = SHAPE_CYLINDER
+            buildSolid(&mut solid, shape, aoa)
+            lbmBuildInterior(solid, NX, NY, &mut interior)
+            wantReset = true
+        }
+        prevKeys[3] = k1
 
-            let k2 = ks[31] != 0
-            if k2 && !prevKeys[4] && shape != SHAPE_AIRFOIL {
-                shape = SHAPE_AIRFOIL
-                buildSolid(&mut solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, &mut interior)
-                wantReset = true
-            }
-            prevKeys[4] = k2
+        let k2 = ks.down(31)
+        if k2 && !prevKeys[4] && shape != SHAPE_AIRFOIL {
+            shape = SHAPE_AIRFOIL
+            buildSolid(&mut solid, shape, aoa)
+            lbmBuildInterior(solid, NX, NY, &mut interior)
+            wantReset = true
+        }
+        prevKeys[4] = k2
 
-            let k3 = ks[32] != 0
-            if k3 && !prevKeys[5] && shape != SHAPE_CAR {
-                shape = SHAPE_CAR
-                buildSolid(&mut solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, &mut interior)
-                wantReset = true
-            }
-            prevKeys[5] = k3
+        let k3 = ks.down(32)
+        if k3 && !prevKeys[5] && shape != SHAPE_CAR {
+            shape = SHAPE_CAR
+            buildSolid(&mut solid, shape, aoa)
+            lbmBuildInterior(solid, NX, NY, &mut interior)
+            wantReset = true
+        }
+        prevKeys[5] = k3
 
-            // Angle of attack and Reynolds are held, not tapped — they ramp.
-            if ks[82] != 0 && shape != SHAPE_CYLINDER {
-                aoa += 0.4
-                if aoa > 30.0 {
-                    aoa = 30.0
-                }
-                buildSolid(&mut solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, &mut interior)
+        // Angle of attack and Reynolds are held, not tapped — they ramp.
+        if ks.down(82) && shape != SHAPE_CYLINDER {
+            aoa += 0.4
+            if aoa > 30.0 {
+                aoa = 30.0
             }
-            if ks[81] != 0 && shape != SHAPE_CYLINDER {
-                aoa -= 0.4
-                if aoa < -30.0 {
-                    aoa = -30.0
-                }
-                buildSolid(&mut solid, shape, aoa)
-                lbmBuildInterior(solid, NX, NY, &mut interior)
+            buildSolid(&mut solid, shape, aoa)
+            lbmBuildInterior(solid, NX, NY, &mut interior)
+        }
+        if ks.down(81) && shape != SHAPE_CYLINDER {
+            aoa -= 0.4
+            if aoa < -30.0 {
+                aoa = -30.0
             }
-            if ks[79] != 0 {
-                re *= 1.02
-                if re > 3000.0 {
-                    re = 3000.0
-                }
+            buildSolid(&mut solid, shape, aoa)
+            lbmBuildInterior(solid, NX, NY, &mut interior)
+        }
+        if ks.down(79) {
+            re *= 1.02
+            if re > 3000.0 {
+                re = 3000.0
             }
-            if ks[80] != 0 {
-                re /= 1.02
-                if re < 20.0 {
-                    re = 20.0
-                }
+        }
+        if ks.down(80) {
+            re /= 1.02
+            if re < 20.0 {
+                re = 20.0
             }
         }
 
@@ -578,7 +539,7 @@ pub fn main(): i32 {
             y += 1
         }
 
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dtMs = (now - lastTicks) as f64
         lastTicks = now
         if dtMs < 1.0 {
@@ -617,16 +578,9 @@ pub fn main(): i32 {
             drawText(&mut fb, NX - 60, 4, "paused", 2, rgb(1.0, 0.5, 0.4))
         }
 
-        unsafe {
-            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, (NX * 4) as i32)
-            SDL_RenderClear(ren)
-            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
-            SDL_RenderPresent(ren)
-        }
-        SDL_Delay(1)
+        let _ = screen.present(fb)
+        delayMs(1)
     }
 
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }

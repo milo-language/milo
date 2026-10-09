@@ -7,24 +7,14 @@
 // The SDL declarations themselves live in the `sdl` package, header-verified and
 // written once; what is left here is this game's window setup and control scheme.
 
-from "gl" import {
-    GlContext,
-    Gpu
-}
 from "sdl" import {
-    SDL_CreateWindow, SDL_DestroyWindow, SDL_GetError, SDL_GetKeyboardState,
-    SDL_GetMouseState, SDL_GetTicks, SDL_GetWindowSize, SDL_Init, SDL_PollEvent,
-    SDL_Quit, SDL_SetWindowFullscreen,
-    SDL_BUTTON_LMASK, SDL_INIT_VIDEO, SDL_MOUSEWHEEL, SDL_QUIT,
-    SDL_WINDOWPOS_CENTERED, SDL_WINDOW_ALLOW_HIGHDPI,
-    SDL_WINDOW_FULLSCREEN_DESKTOP, SDL_WINDOW_HIDDEN, SDL_WINDOW_RESIZABLE,
-    SDL_WINDOW_SHOWN
+    SDL_BUTTON_LMASK, SDL_INIT_VIDEO, SDL_WINDOW_ALLOW_HIGHDPI, SDL_WINDOW_HIDDEN, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
 }
 from "sdl/glcontext" import {
-    SDL_GL_CreateContext, SDL_GL_DeleteContext, SDL_GL_GetDrawableSize,
-    SDL_GL_SetAttribute, SDL_GL_SetSwapInterval, SDL_GL_SwapWindow,
-    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
-    SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_WINDOW_OPENGL
+    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION, SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_WINDOW_OPENGL
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, SdlGlContext, glSetAttribute, glSetSwapInterval, pollEvents, keyboard, mouse
 }
 from "sdl/keys" import {
     SC_1, SC_A, SC_D, SC_DOWN, SC_EQUALS, SC_ESCAPE, SC_F, SC_H, SC_LEFT,
@@ -96,149 +86,126 @@ pub let DRAG_SLOP: f64 = 5.0
 // `scale` converts SDL's window-space mouse position into drawable pixels; it is
 // 2.0 on a Retina display and 1.0 everywhere else. Getting it wrong puts every
 // click at half the distance from the top-left that the player aimed at.
-pub fn pollInput(inp: &mut Input, ev: &mut [u8; 64], scale: f64) {
+pub fn pollInput(inp: &mut Input, scale: f64) {
     inp.wheel = 0.0
     inp.clicked = false
     inp.dragX = 0.0
     inp.dragY = 0.0
-    unsafe {
-        while SDL_PollEvent(ev) != 0 {
-            let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-            if evType == SDL_QUIT {
-                inp.quit = true
-            }
-            if evType == SDL_MOUSEWHEEL {
-                // SDL_MouseWheelEvent's signed y delta sits at byte offset 20;
-                // the event union arrives here as raw little-endian storage.
-                let raw: u32 = (ev[20] as u32) | ((ev[21] as u32) << 8) | ((ev[22] as u32) << 16) | ((ev[23] as u32) << 24)
-                inp.wheel += (raw as i32 as f64)
-            }
+    let evs = pollEvents()
+    if evs.quit {
+        inp.quit = true
+    }
+    inp.wheel += evs.wheel
+    let ms = mouse()
+    let buttons = ms.buttons
+    let nx = (ms.x as f64) * scale
+    let ny = (ms.y as f64) * scale
+    let downNow = (buttons & SDL_BUTTON_LMASK) != 0
+    if downNow && !inp.down {
+        inp.pressX = nx
+        inp.pressY = ny
+        inp.dragged = false
+    }
+    if downNow && inp.down {
+        inp.dragX = nx - inp.mx
+        inp.dragY = ny - inp.my
+        let tx = nx - inp.pressX
+        let ty = ny - inp.pressY
+        if tx * tx + ty * ty > DRAG_SLOP * DRAG_SLOP {
+            inp.dragged = true
         }
-        var wx: i32 = 0
-        var wy: i32 = 0
-        let buttons = SDL_GetMouseState(wx.addrOf(), wy.addrOf())
-        let nx = (wx as f64) * scale
-        let ny = (wy as f64) * scale
-        let downNow = (buttons & SDL_BUTTON_LMASK) != 0
-        if downNow && !inp.down {
-            inp.pressX = nx
-            inp.pressY = ny
-            inp.dragged = false
-        }
-        if downNow && inp.down {
-            inp.dragX = nx - inp.mx
-            inp.dragY = ny - inp.my
-            let tx = nx - inp.pressX
-            let ty = ny - inp.pressY
-            if tx * tx + ty * ty > DRAG_SLOP * DRAG_SLOP {
-                inp.dragged = true
-            }
-        }
-        if !downNow && inp.down && !inp.dragged {
-            inp.clicked = true
-        }
-        inp.down = downNow
-        inp.mx = nx
-        inp.my = ny
+    }
+    if !downNow && inp.down && !inp.dragged {
+        inp.clicked = true
+    }
+    inp.down = downNow
+    inp.mx = nx
+    inp.my = ny
 
-        let ks = SDL_GetKeyboardState(0 as *i32)
-        if ks[SC_Q] != 0 || ks[SC_ESCAPE] != 0 {
-            inp.quit = true
-        }
-        inp.advance = edge(ks[SC_SPACE] != 0, &mut inp.spaceHeld)
-        inp.commit = edge(ks[SC_RETURN] != 0, &mut inp.returnHeld)
-        inp.snap = edge(ks[SC_S] != 0, &mut inp.snapHeld)
-        inp.reset = edge(ks[SC_R] != 0, &mut inp.resetHeld)
-        inp.help = edge(ks[SC_H] != 0, &mut inp.helpHeld)
-        inp.fullscreen = edge(ks[SC_F] != 0, &mut inp.fullHeld)
-        inp.warpDown = edge(ks[SC_LEFTBRACKET] != 0, &mut inp.warpDownHeld)
-        inp.warpUp = edge(ks[SC_RIGHTBRACKET] != 0, &mut inp.warpUpHeld)
+    let ks = keyboard()
+    if ks.down(SC_Q) || ks.down(SC_ESCAPE) {
+        inp.quit = true
+    }
+    inp.advance = edge(ks.down(SC_SPACE), &mut inp.spaceHeld)
+    inp.commit = edge(ks.down(SC_RETURN), &mut inp.returnHeld)
+    inp.snap = edge(ks.down(SC_S), &mut inp.snapHeld)
+    inp.reset = edge(ks.down(SC_R), &mut inp.resetHeld)
+    inp.help = edge(ks.down(SC_H), &mut inp.helpHeld)
+    inp.fullscreen = edge(ks.down(SC_F), &mut inp.fullHeld)
+    inp.warpDown = edge(ks.down(SC_LEFTBRACKET), &mut inp.warpDownHeld)
+    inp.warpUp = edge(ks.down(SC_RIGHTBRACKET), &mut inp.warpUpHeld)
 
-        // The dials are held, not tapped: the whole feel of the plan screen is
-        // watching a number fall while a key is down.
-        inp.scrubX = 0.0
-        inp.scrubY = 0.0
-        if ks[SC_LEFT] != 0 || ks[SC_A] != 0 {
-            inp.scrubX -= 1.0
-        }
-        if ks[SC_RIGHT] != 0 || ks[SC_D] != 0 {
-            inp.scrubX += 1.0
-        }
-        if ks[SC_UP] != 0 {
-            inp.scrubY += 1.0
-        }
-        if ks[SC_DOWN] != 0 {
-            inp.scrubY -= 1.0
-        }
+    // The dials are held, not tapped: the whole feel of the plan screen is
+    // watching a number fall while a key is down.
+    inp.scrubX = 0.0
+    inp.scrubY = 0.0
+    if ks.down(SC_LEFT) || ks.down(SC_A) {
+        inp.scrubX -= 1.0
+    }
+    if ks.down(SC_RIGHT) || ks.down(SC_D) {
+        inp.scrubX += 1.0
+    }
+    if ks.down(SC_UP) {
+        inp.scrubY += 1.0
+    }
+    if ks.down(SC_DOWN) {
+        inp.scrubY -= 1.0
+    }
 
-        inp.zoom = 0.0
-        if ks[SC_MINUS] != 0 {
-            inp.zoom += 1.0
-        }
-        if ks[SC_EQUALS] != 0 {
-            inp.zoom -= 1.0
-        }
+    inp.zoom = 0.0
+    if ks.down(SC_MINUS) {
+        inp.zoom += 1.0
+    }
+    if ks.down(SC_EQUALS) {
+        inp.zoom -= 1.0
+    }
 
-        // The number row jumps to a mission. One `digitHeld` for all six keys is
-        // deliberate: pressing two at once should pick one mission, not race.
-        var pressed = 0
-        var i = 0
-        while i < 6 {
-            if ks[SC_1 + i] != 0 {
-                pressed = i + 1
-            }
-            i += 1
+    // The number row jumps to a mission. One `digitHeld` for all six keys is
+    // deliberate: pressing two at once should pick one mission, not race.
+    var pressed = 0
+    var i = 0
+    while i < 6 {
+        if ks.down(SC_1 + i) {
+            pressed = i + 1
         }
-        inp.digit = 0
-        if edge(pressed != 0, &mut inp.digitHeld) {
-            inp.digit = pressed
-        }
+        i += 1
+    }
+    inp.digit = 0
+    if edge(pressed != 0, &mut inp.digitHeld) {
+        inp.digit = pressed
     }
 }
 
+// The window and its GL 3.3 core context. An Err means this machine cannot run the
+// game and the caller should say so and stop.
 pub struct Host {
-    win: *u8,
-    ctx: *u8,
-    ok: bool,
-    err: string,
+    // Field order is teardown order reversed: the context goes first, then the
+    // window, then SDL itself.
+    _sdl: Sdl,
+    win: Window,
+    _ctx: SdlGlContext,
 }
 
-// `visible` is false for a screenshot run: those never present a frame, so an
-// on-screen window is a black rectangle that opens over whatever the person is
-// actually doing and then vanishes.
-pub fn hostNew(title: &string, w: i64, h: i64, visible: bool): Host {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        return Host {
-            win: 0 as *u8, ctx: 0 as *u8, ok: false, err: "SDL_Init failed"
+pub fn hostNew(title: &string, w: i64, h: i64, visible: bool): Result<Host, string> {
+    let sdl = Sdl.init(SDL_INIT_VIDEO)?
+    // Set before the window exists: SDL reads these when it picks the pixel format
+    // and ignores them afterwards.
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    var shown = SDL_WINDOW_SHOWN
+    if !visible {
+        shown = SDL_WINDOW_HIDDEN
+    }
+    let win = Window.create(title, w, h, shown | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI)?
+    let ctx = match SdlGlContext.create(win) {
+        Ok(c) => c,
+        Err(e) => {
+            return Result.Err("no GL 3.3 core context: " + e)
         }
     }
-    unsafe {
-        // Set before the window exists — SDL reads these when it picks the pixel
-        // format and ignores them afterwards.
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        var shown = SDL_WINDOW_SHOWN
-        if !visible {
-            shown = SDL_WINDOW_HIDDEN
-        }
-        let win = SDL_CreateWindow(title.cstr(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w as i32, h as i32, shown | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI)
-        if (win as i64) == 0 {
-            return Host {
-                win: 0 as *u8, ctx: 0 as *u8, ok: false, err: "window: " + _cstrToString(SDL_GetError())
-            }
-        }
-        let ctx = SDL_GL_CreateContext(win)
-        if (ctx as i64) == 0 {
-            return Host {
-                win: win, ctx: 0 as *u8, ok: false, err: "no GL 3.3 core context: " + _cstrToString(SDL_GetError())
-            }
-        }
-        let _ = SDL_GL_SetSwapInterval(1)
-        return Host {
-            win: win, ctx: ctx, ok: true, err: Gpu.version()
-        }
-    }
+    let _ = glSetSwapInterval(1)
+    return Result.Ok(Host { _sdl: sdl, win: win, _ctx: ctx })
 }
 
 pub struct Size {
@@ -250,26 +217,18 @@ pub struct Size {
 // size the user dragged. Every layout in the game is expressed in these pixels,
 // so the overlay is crisp instead of upscaled — which is also why `pollInput` has
 // to be told the window-to-drawable ratio.
-pub fn drawableSize(win: *u8): Size {
-    var dw: i32 = 0
-    var dh: i32 = 0
-    unsafe {
-        SDL_GL_GetDrawableSize(win, dw.addrOf(), dh.addrOf())
-    }
+pub fn drawableSize(win: &Window): Size {
+    let d = win.drawableSize()
     return Size {
-        w: dw as i64, h: dh as i64
+        w: d.w, h: d.h
     }
 }
 
-pub fn pixelScale(win: *u8): f64 {
-    var ww: i32 = 0
-    var wh: i32 = 0
-    unsafe {
-        SDL_GetWindowSize(win, ww.addrOf(), wh.addrOf())
-    }
-    if ww <= 0 {
+pub fn pixelScale(win: &Window): f64 {
+    let points = win.size()
+    if points.w <= 0 {
         return 1.0
     }
-    let d = drawableSize(win)
-    return (d.w as f64) / (ww as f64)
+    let d = win.drawableSize()
+    return (d.w as f64) / (points.w as f64)
 }

@@ -1,0 +1,51 @@
+// fork and waitpid for the cli tools that manage their own children (timeout, parallel).
+//
+// std's Child covers "spawn one program and wait for it". These two tools need "fork,
+// then run a shell command in the child" and "reap whichever child finishes first",
+// which std has no safe form of, so the two raw calls live here, once, each behind a
+// wrapper that says why the call is sound. The tools themselves hold no `unsafe`.
+
+from "std/os" import {
+    fork, waitpid
+}
+
+// fork(2): 0 in the child, the child's pid in the parent, negative on failure. The
+// caller's child must only run a command and exit: it shares nothing with the parent
+// after this returns, and touching the parent's runtime state from it is not supported.
+pub fn forkProcess(): i32 {
+    // Sound: no arguments and no Milo memory involved; the contract above is about what
+    // the child does next, which is the caller's to keep.
+    unsafe { return fork() }
+}
+
+// One waitpid(2) result.
+pub struct Reaped {
+    pid: i32, // the child reaped; 0 if `noHang` and none had exited; negative on error
+    status: i32, // the raw wait status, meaningful when `pid` > 0
+}
+
+impl Reaped {
+    // The signal that killed the child, or 0 if it exited normally.
+    fn termSignal(self: &Reaped): i32 {
+        return self.status & 127
+    }
+
+    // The child's exit code, when `termSignal` is 0.
+    fn exitCode(self: &Reaped): i32 {
+        return (self.status >> 8) & 255
+    }
+}
+
+// Reap `pid` (-1 for any child). With `noHang`, return at once if none has exited.
+pub fn reap(pid: i32, noHang: bool): Reaped {
+    var status: i32 = 0
+    var r: i32 = 0
+    let options = if noHang {
+        1 // WNOHANG
+    } else {
+        0
+    }
+    // Sound: `status` is a local i32, exactly the int waitpid writes through its pointer.
+    unsafe { r = waitpid(pid, status.addrOf() as *u8, options) }
+    return Reaped { pid: r, status: status }
+}

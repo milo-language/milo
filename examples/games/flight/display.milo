@@ -32,17 +32,15 @@ from "./gpupost" import {
     CoverGrid, Post, postBeginWorld, postFinish, postFree, postNew, postResize, postBindWorld, postSetClouds
 }
 from "sdl" import {
-    SDL_CreateWindow, SDL_DestroyWindow, SDL_GetError, SDL_MaximizeWindow,
-    SDL_SetWindowFullscreen,
-    SDL_WINDOWPOS_CENTERED, SDL_WINDOW_ALLOW_HIGHDPI,
-    SDL_WINDOW_FULLSCREEN_DESKTOP, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
+    SDL_WINDOW_ALLOW_HIGHDPI, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
 }
 from "sdl/glcontext" import {
-    SDL_GL_CreateContext, SDL_GL_DeleteContext, SDL_GL_GetDrawableSize,
-    SDL_GL_SetAttribute, SDL_GL_SetSwapInterval, SDL_GL_SwapWindow,
     SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
     SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK,
     SDL_GL_DEPTH_SIZE, SDL_GL_DOUBLEBUFFER, SDL_WINDOW_OPENGL
+}
+from "../../shared/sdlkit" import {
+    Window, SdlGlContext, glSetAttribute, glSetSwapInterval
 }
 
 // A cap on the render target, not on the window.
@@ -53,9 +51,11 @@ from "sdl/glcontext" import {
 // over, which is how a graphics setting becomes a driver crash.
 pub let MAX_RENDER_PX: i64 = 3840
 
+// Field order is teardown order reversed: fields drop last-first, so the context
+// goes before the window it was made for.
 pub struct Screen {
-    win: *u8,
-    ctx: *u8,
+    win: Window,
+    ctx: SdlGlContext,
     // Every GL object the renderer makes is registered here, so teardown is one
     // sweep at a point this file chooses — while the GL context is still current,
     // which is the whole reason the gl package has no destructors.
@@ -74,53 +74,41 @@ pub struct Screen {
 // resolution — the HUD is laid out in its own space and stays the same size
 // whatever the window does.
 pub fn screenOpen(title: &string, w: i64, h: i64, ow: i64, oh: i64, renderPct: i64, fullscreen: bool, maximized: bool): Result<Screen, string> {
-    unsafe {
-        // Before the window, not after: SDL reads these when it builds the pixel
-        // format, and setting them afterwards is accepted and ignored.
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        let _ = SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
-        // The scene has its own depth buffer on its own framebuffer, so the
-        // window does not strictly need one — but a driver that hands back a
-        // context with no depth bits at all is one worth finding out about here
-        // rather than in a shader.
-        let _ = SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24)
-        let flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
-        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w as i32, h as i32, flags)
-        if (win as i64) == 0 {
-            return Err("window: " + sdlError())
-        }
-        let ctx = SDL_GL_CreateContext(win)
-        if (ctx as i64) == 0 {
-            let e = sdlError()
-            SDL_DestroyWindow(win)
+    // Before the window, not after: SDL reads these when it builds the pixel
+    // format, and setting them afterwards is accepted and ignored.
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    let _ = glSetAttribute(SDL_GL_DOUBLEBUFFER, 1)
+    // The scene has its own depth buffer on its own framebuffer, so the
+    // window does not strictly need one — but a driver that hands back a
+    // context with no depth bits at all is one worth finding out about here
+    // rather than in a shader.
+    let _ = glSetAttribute(SDL_GL_DEPTH_SIZE, 24)
+    let flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI
+    let win = Window.create(title, w, h, flags)?
+    // On an Err below, returning drops `win` (and `ctx`), which destroys them.
+    let ctx = match SdlGlContext.create(win) {
+        Ok(c) => c,
+        Err(e) => {
             return Err("no GL 3.3 core context: " + e)
         }
-        let _ = SDL_GL_SetSwapInterval(1)
-        if fullscreen {
-            let _ = SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP)
-        } else if maximized {
-            SDL_MaximizeWindow(win)
-        }
-
-        let d = drawableOf(win)
-        let r = renderSize(d.w, d.h, renderPct)
-        var glc = GlContext.new()
-        match postNew(&mut glc, r.w, r.h, ow, oh) {
-            Ok(p) => {
-                print("gpu: OpenGL " + Gpu.version())
-                return Ok(Screen {
-                    win: win, ctx: ctx, gl: glc, post: p, rw: r.w, rh: r.h, renderPct: renderPct
-                })
-            }
-            Err(e) => {
-                SDL_GL_DeleteContext(ctx)
-                SDL_DestroyWindow(win)
-                return Err(e)
-            }
-        }
     }
+    let _ = glSetSwapInterval(1)
+    if fullscreen {
+        win.setFullscreen(true)
+    } else if maximized {
+        win.maximize()
+    }
+
+    let d = drawableOf(win)
+    let r = renderSize(d.w, d.h, renderPct)
+    var glc = GlContext.new()
+    let p = postNew(&mut glc, r.w, r.h, ow, oh)?
+    print("gpu: OpenGL " + Gpu.version())
+    return Ok(Screen {
+        win: win, ctx: ctx, gl: glc, post: p, rw: r.w, rh: r.h, renderPct: renderPct
+    })
 }
 
 pub struct Size {
@@ -131,14 +119,10 @@ pub struct Size {
 // The drawable in PIXELS, which on a Retina display is twice the window's size in
 // points. Setting a viewport from the window size instead renders the frame into
 // a quarter of it.
-pub fn drawableOf(win: *u8): Size {
-    var dw: i32 = 0
-    var dh: i32 = 0
-    unsafe {
-        SDL_GL_GetDrawableSize(win, dw.addrOf(), dh.addrOf())
-    }
+pub fn drawableOf(win: &Window): Size {
+    let d = win.drawableSize()
     return Size {
-        w: Math.maxI64(1, dw as i64), h: Math.maxI64(1, dh as i64)
+        w: Math.maxI64(1, d.w), h: Math.maxI64(1, d.h)
     }
 }
 
@@ -231,7 +215,7 @@ pub fn screenSetClouds(s: &Screen, f: &CloudField) {
 pub fn screenPresent(s: &mut Screen, c: &mut Canvas, v: &View, sc: &Scene, cov: &CoverGrid, cover: &Vec<f32>, coverDirty: bool, hasSea: bool, time: f64, bloomGain: f64, exposure: f64) {
     let d = drawableOf(s.win)
     postFinish(s.post, c, v, sc, cov, cover, coverDirty, hasSea, time, bloomGain, exposure, d.w, d.h)
-    SDL_GL_SwapWindow(s.win)
+    s.win.swapGl()
     canvasClear(&mut c)
 }
 
@@ -240,21 +224,7 @@ pub fn screenPresent(s: &mut Screen, c: &mut Canvas, v: &View, sc: &Scene, cov: 
 // GlContext`. Call sites pass `scr.gl` directly, which is the same borrow without
 // the function in the middle.
 pub fn screenFullscreen(s: &Screen, on: bool) {
-    if on {
-        let _ = SDL_SetWindowFullscreen(s.win, SDL_WINDOW_FULLSCREEN_DESKTOP)
-    } else {
-        let _ = SDL_SetWindowFullscreen(s.win, 0)
-    }
-}
-
-fn sdlError(): string {
-    unsafe {
-        let p = SDL_GetError()
-        if (p as i64) == 0 {
-            return "unknown SDL error"
-        }
-        return _cstrToString(p)
-    }
+    s.win.setFullscreen(on)
 }
 
 // Tear down in creation order's reverse. SDL_Quit would reclaim all of it anyway,
@@ -268,6 +238,5 @@ pub fn screenClose(s: Screen) {
     // Anything the game forgot goes here, before the context it belongs to is
     // destroyed two lines down.
     own.gl.free()
-    SDL_GL_DeleteContext(own.ctx)
-    SDL_DestroyWindow(own.win)
+    // `own` drops here: the context, then the window.
 }

@@ -28,67 +28,19 @@ from "gl" import {
     GlContext,
     Gpu, Mesh, Shader, Target, bindScreen, QUAD_VERT
 }
-
-@link("SDL2")
-pub extern fn SDL_Init(flags: u32): i32
-
-pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
-
-pub extern fn SDL_GL_SetAttribute(attr: i32, value: i32): i32
-
-pub extern fn SDL_GL_CreateContext(win: *u8): *u8
-
-pub extern fn SDL_GL_DeleteContext(ctx: *u8)
-
-pub extern fn SDL_GL_SwapWindow(win: *u8)
-
-pub extern fn SDL_GL_SetSwapInterval(interval: i32): i32
-
-pub extern fn SDL_GL_GetDrawableSize(win: *u8, w: *u8, h: *u8)
-
-pub extern fn SDL_PollEvent(event: *u8): i32
-
-pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
-
-pub extern fn SDL_GetTicks(): u32
-
-pub extern fn SDL_GetError(): *u8
-
-pub extern fn SDL_DestroyWindow(win: *u8)
-
-pub extern fn SDL_Quit()
-
-pub let SDL_INIT_VIDEO: u32 = 0x20
-
-pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-
-pub let SDL_WINDOW_SHOWN: u32 = 0x4
-
-pub let SDL_WINDOW_OPENGL: u32 = 0x2
-
-pub let SDL_WINDOW_RESIZABLE: u32 = 0x20
-
-pub let SDL_QUIT: u32 = 0x100
-
-pub let SDL_GL_CONTEXT_MAJOR_VERSION: i32 = 17
-
-pub let SDL_GL_CONTEXT_MINOR_VERSION: i32 = 18
-
-pub let SDL_GL_CONTEXT_PROFILE_MASK: i32 = 21
-
-pub let SDL_GL_CONTEXT_PROFILE_CORE: i32 = 1
-
-pub let SC_ESC: i64 = 41
-
-pub let SC_SPACE: i64 = 44
-
-pub let SC_RIGHT: i64 = 79
-
-pub let SC_LEFT: i64 = 80
-
-pub let SC_DOWN: i64 = 81
-
-pub let SC_UP: i64 = 82
+from "sdl" import {
+    SDL_INIT_VIDEO, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
+}
+from "sdl/glcontext" import {
+    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
+    SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_WINDOW_OPENGL
+}
+from "sdl/keys" import {
+    SC_DOWN, SC_ESCAPE, SC_LEFT, SC_RIGHT, SC_SPACE, SC_UP
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, SdlGlContext, glSetAttribute, glSetSwapInterval, pollEvents, keyboard, ticks
+}
 
 pub let WIN_W: i64 = 1280
 
@@ -378,28 +330,34 @@ void main() {
 "
 
 pub fn main(): i32 {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
+    // Declared in teardown's reverse: the context goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
-    var win: *u8 = 0 as *u8
-    var ctx: *u8 = 0 as *u8
-    unsafe {
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        win = SDL_CreateWindow("gpuocean — the gl package", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W as i32, WIN_H as i32, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL)
-        if (win as i64) == 0 {
-            print("window: " + _cstrToString(SDL_GetError()))
+    // Before the window: SDL reads these when it picks the pixel format.
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    let win = match Window.create("gpuocean — the gl package", WIN_W as i64, WIN_H as i64, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
             return 2
         }
-        ctx = SDL_GL_CreateContext(win)
-        if (ctx as i64) == 0 {
-            print("no GL 3.3 core context: " + _cstrToString(SDL_GetError()))
+    }
+    let _ctx = match SdlGlContext.create(win) {
+        Ok(v) => v,
+        Err(e) => {
+            print("no GL 3.3 core context: " + e)
             return 3
         }
-        let _ = SDL_GL_SetSwapInterval(1)
     }
+    let _ = glSetSwapInterval(1)
     print("OpenGL " + Gpu.version())
 
     // Owns every GL object made through it; one call at the end sweeps whatever
@@ -421,11 +379,9 @@ pub fn main(): i32 {
     }
     var quad = Mesh.fullscreenQuad(&mut gl)
 
-    var dw: i32 = 0
-    var dh: i32 = 0
-    unsafe {
-        SDL_GL_GetDrawableSize(win, (dw.addrOf()) as *u8, (dh.addrOf()) as *u8)
-    }
+    var drawable = win.drawableSize()
+    var dw = drawable.w as i32
+    var dh = drawable.h as i32
     var rw = renderWidth(dw as i64)
     var rh = (dh as i64) * rw / (dw as i64)
     var target = match Target.new(&mut gl, rw, rh, false, true) {
@@ -439,7 +395,6 @@ pub fn main(): i32 {
     Gpu.depthTest(false)
     Gpu.blendOff()
 
-    var ev: [u8; 64] = [0; 64]
     var quit = false
     var paused = false
     var spaceHeld = false
@@ -448,45 +403,40 @@ pub fn main(): i32 {
     // opening on a black screen is a poor first frame.
     var sunT: f64 = 0.62
     var pitch: f64 = 0.0 - 0.10
-    var last = SDL_GetTicks()
+    var last = ticks()
 
     while !quit {
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dt = ((now - last) as f64) / 1000.0
         last = now
         if dt > 0.05 {
             dt = 0.05
         }
 
-        unsafe {
-            while SDL_PollEvent(ev) != 0 {
-                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-                if evType == SDL_QUIT {
-                    quit = true
-                }
-            }
-            let keys = SDL_GetKeyboardState(0 as *i32)
-            if keys[SC_ESC] != 0 {
-                quit = true
-            }
-            // Edge-triggered, or holding SPACE toggles sixty times a second.
-            let sp = keys[SC_SPACE] != 0
-            if sp && !spaceHeld {
-                paused = !paused
-            }
-            spaceHeld = sp
-            if keys[SC_LEFT] != 0 {
-                sunT = sunT - dt * 0.55
-            }
-            if keys[SC_RIGHT] != 0 {
-                sunT = sunT + dt * 0.55
-            }
-            if keys[SC_UP] != 0 {
-                pitch = pitch + dt * 0.35
-            }
-            if keys[SC_DOWN] != 0 {
-                pitch = pitch - dt * 0.35
-            }
+        if pollEvents().quit {
+            quit = true
+        }
+        let keys = keyboard()
+        if keys.down(SC_ESCAPE) {
+            quit = true
+        }
+        // Edge-triggered, or holding SPACE toggles sixty times a second.
+        let sp = keys.down(SC_SPACE)
+        if sp && !spaceHeld {
+            paused = !paused
+        }
+        spaceHeld = sp
+        if keys.down(SC_LEFT) {
+            sunT = sunT - dt * 0.55
+        }
+        if keys.down(SC_RIGHT) {
+            sunT = sunT + dt * 0.55
+        }
+        if keys.down(SC_UP) {
+            pitch = pitch + dt * 0.35
+        }
+        if keys.down(SC_DOWN) {
+            pitch = pitch - dt * 0.35
         }
         if pitch > 0.55 {
             pitch = 0.55
@@ -503,9 +453,9 @@ pub fn main(): i32 {
 
         // The window can be resized under us, and the offscreen target has to
         // follow or the blit stretches. Rebuilt only on an actual change.
-        unsafe {
-            SDL_GL_GetDrawableSize(win, (dw.addrOf()) as *u8, (dh.addrOf()) as *u8)
-        }
+        drawable = win.drawableSize()
+        dw = drawable.w as i32
+        dh = drawable.h as i32
         let wantW = renderWidth(dw as i64)
         let wantH = (dh as i64) * wantW / (dw as i64)
         if wantW != rw || wantH != rh {
@@ -539,7 +489,7 @@ pub fn main(): i32 {
         blit.uniformI("uSrc", 0)
         quad.draw()
 
-        SDL_GL_SwapWindow(win)
+        win.swapGl()
     }
 
     target.free(&mut gl)
@@ -547,9 +497,6 @@ pub fn main(): i32 {
     blit.free(&mut gl)
     ocean.free(&mut gl)
     gl.free()
-    SDL_GL_DeleteContext(ctx)
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }
 

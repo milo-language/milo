@@ -23,8 +23,11 @@ from "std/runtime" import {
 from "std/string" import {
     strContainsIgnoreCase, strIndexOfFromIgnoreCase
 }
-from "std/os" import {
-    isatty
+from "std/pty" import {
+    isTerminal
+}
+from "std/io" import {
+    Stdout
 }
 from "std/env" import {
     Env
@@ -921,7 +924,7 @@ pub fn main(): i32 {
     // on a big search they are also bytes we spend the whole run building. All three
     // default to off when stdout is not a tty, which is what real rg does; -k/-n force
     // them back on, -p/-g/-N pin them off.
-    let interactive = isatty(1) != 0
+    let interactive = isTerminal(Stdout {})
     let forceColor = args.getBool("color")
 
     // -w narrows a literal to whole words, which the buffer-walk print path cannot

@@ -27,8 +27,9 @@ interface Command {
   name: string; group: "compiler" | "package"; usage: string; summary: string; details?: string;
   flags?: { flag: string; help: string }[]; forms?: { usage: string; summary: string }[]; hidden?: string;
 }
+interface CodedError { name: string; doc?: string; fix?: string; example?: string }
 interface Payload {
-  warnings: Warning[]; attributes: Attribute[]; keywords: string[]; softKeywords: string[];
+  errors: CodedError[]; warnings: Warning[]; attributes: Attribute[]; keywords: string[]; softKeywords: string[];
   keywordDocs: Record<string, string>; commands: Command[]; cliOptions: { flag: string; help: string }[];
   symbols: Record<string, string>; symbolDocs: Record<string, string>;
   primitiveTypeInfo: { name: string; kind: string; bits?: number; signed?: boolean; aliasOf?: string }[];
@@ -73,6 +74,19 @@ function renderWarnings(warnings: Warning[]): string {
     lines.push("");
     lines.push(`_${undocumented.length} warning${undocumented.length === 1 ? " has" : "s have"} no reference entry yet: ` +
       undocumented.map(w => `\`${w.name}\``).join(", ") + "._");
+  }
+  return lines.join("\n");
+}
+
+// A named error has no default and no flag, so its entry is the warning entry minus the
+// "on by default" line. `#### <name>` sits under the page's Named errors heading; VitePress
+// anchors it as `#<name>` like a warning, which is what `warningDocUrl` links to.
+function renderErrors(errors: CodedError[]): string {
+  const lines: string[] = [];
+  for (const e of errors) {
+    if (!(e.doc && e.fix && e.example)) throw new Error(`named error '${e.name}' needs a doc, a fix and an example`);
+    if (lines.length) lines.push("");
+    lines.push(`#### ${e.name}`, "", e.doc.trim(), "", "```milo", e.example.trimEnd(), "```", "", `**Fix:** ${e.fix.trim()}`);
   }
   return lines.join("\n");
 }
@@ -183,6 +197,7 @@ function renderPrimitiveTypes(p: Payload): string {
 }
 
 const REGIONS: { file: string; region: string; render: (p: Payload) => string }[] = [
+  { file: "docs/site/language/warnings-and-errors.md", region: "errors", render: p => renderErrors(p.errors) },
   { file: "docs/site/language/warnings-and-errors.md", region: "warnings", render: p => renderWarnings(p.warnings) },
   { file: "docs/site/features/annotations.md", region: "attributes", render: p => renderAttributes(p.attributes) },
   { file: "docs/site/language/keywords.md", region: "keywords", render: p => renderKeywords(p) },

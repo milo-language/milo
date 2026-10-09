@@ -3372,31 +3372,45 @@ extern fn printf(fmt: *u8, ...): i32
 extern fn malloc(size: u64): *u8
 ```
 
-### Safe vs Unsafe Extern Calls
+### Extern Calls Need `unsafe`
 
-The compiler determines whether an extern call needs `unsafe` based on the argument types and return type.
+Every call to an `extern fn` sits inside `unsafe`. Outside one it is the error `extern-call`,
+in a manifest dependency as much as in your own program: a package's soundness is the
+package's own job. The signature says nothing about what the C code does: `close(fd)` takes
+one `i32` and can close a descriptor a `TcpStream` still owns.
 
-**Safe** (no `unsafe` needed) when:
-- All pointer params receive auto-coerced args: `string`→`*u8`, `[T;N]`→`*T`, matching `*T`→`*T`
-- Function-typed params receive a matching Milo function
-- By-value `extern struct` args (exact type match) — a POD bit-copy with no provenance
-- Return type is scalar, `void`, or a by-value `extern struct`
+The idiom is a **binding layer**: each extern is called in exactly one place, a small safe
+wrapper whose body is `unsafe { ... }` with a comment saying what the wrapper guarantees
+(a valid handle, a length that matches the buffer, a NUL-terminated string). Code above the
+layer calls only the wrappers and holds no `unsafe` of its own. A C handle that must be freed
+exactly once becomes a `@noCopy` struct with a private field and a `Drop` impl. std is built
+this way: it wraps the harmless externs in safe functions (`pid()`, `isTerminal`,
+`processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`),
+so application code never needs a raw extern. A std API that still takes or returns a bare
+descriptor number is itself `@unsafe` (`tests/rawFdApi.test.ts` holds that line); borrowing a
+handle goes through `AsFd`.
 
-**Unsafe** when:
-- Return type is a pointer (`*T`) — unknown provenance
-- A param takes a raw `*T` that isn't from auto-coercion
-
-A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `isTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A std API that still takes or returns a bare descriptor number is itself `@unsafe` (`tests/rawFdApi.test.ts` holds that line); borrowing a handle goes through `AsFd`. A `@pure` extern (libm) is exempt.
+Inside `unsafe`, arguments auto-coerce: `string`→`*u8`, `[T;N]`→`*T`, a matching `*T`, a Milo
+`fn` for a function-typed param, and a by-value `extern struct` (a POD bit-copy). A `@pure`
+extern whose parameters and return are all scalars (libm) is exempt and needs no `unsafe`.
 
 ```milo
 extern fn puts(s: *u8): i32
-extern fn write(fd: i32, buf: *u8, len: i64): i64
 extern fn malloc(size: u64): *u8
+extern fn free(p: *u8)
+
+// The only call to puts in the program. Sound: a Milo string literal coerces to a
+// NUL-terminated buffer that lives for the whole call.
+fn say(s: string): i32 {
+    unsafe { return puts(s) }
+}
 
 fn main(): i32 {
-    puts("Hello from C!")             // safe — string auto-coerces, returns i32
-    write(1, "output", 6)             // safe — string auto-coerces, returns i64
-    unsafe { let p = malloc(64) }     // unsafe — returns *u8
+    say("Hello from C!")
+    unsafe {
+        let p = malloc(64)   // returns *u8: provenance the compiler cannot see
+        free(p)
+    }
     return 0
 }
 ```

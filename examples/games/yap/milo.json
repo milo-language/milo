@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "description": "YAP — a chihuahua flaps his ears through the neighbourhood",
   "deps": {
-    "sdl": "github.com/milo-language/milo-sdl@v0.1.0"
+    "sdl": "github.com/milo-language/milo-sdl@v0.3.2"
   }
 }

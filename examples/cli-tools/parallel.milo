@@ -7,7 +7,13 @@ from "std/io" import {
     readStdin
 }
 from "std/os" import {
-    exit, fork, system, waitpid
+    exit
+}
+from "std/process" import {
+    run
+}
+from "./forkwait" import {
+    forkProcess, reap
 }
 
 pub fn substitute(template: &string, line: &string): string {
@@ -75,7 +81,7 @@ pub fn main(): i32 {
         while si < jobs && nextLine < lines.len {
             if pids[si] == -1 as i64 {
                 let cmd = substitute(template, lines[nextLine])
-                let pid = fork()
+                let pid = forkProcess()
                 if pid < 0 {
                     print("parallel: fork() failed")
                     return 125
@@ -84,8 +90,10 @@ pub fn main(): i32 {
                     if verbose {
                         print($"parallel: {cmd}")
                     }
-                    let code = system(cmd)
-                    exit((code >> 8) & 255)
+                    match run(cmd) {
+                        Ok(code) => exit(code),
+                        Err(_) => exit(127),
+                    }
                 }
                 pids[si] = pid as i64
                 nextLine += 1
@@ -95,11 +103,10 @@ pub fn main(): i32 {
         }
 
         // wait for any child to finish
-        var status: [u8; 4] = [0; 4]
-        let pid = waitpid(-1, status, 0)
+        let reaped = reap(-1, false)
+        let pid = reaped.pid
         if pid > 0 {
-            let exitCode = status[1] as i32
-            if exitCode != 0 {
+            if reaped.exitCode() != 0 {
                 failures += 1
                 if haltOnError {
                     // don't launch more, but wait for in-flight

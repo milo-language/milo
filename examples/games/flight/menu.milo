@@ -77,7 +77,7 @@ pub fn placeBlurb(i: i64): string {
 // flight loop's job is to step a simulation sixty times a second and there is no
 // simulation yet — the place has not been decoded, which is the whole point of
 // asking first.
-pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, inp: &mut Input, ev: &mut [u8; 64], start: i64): i64 {
+pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, inp: &mut Input, start: i64): i64 {
     var sel = start
     if sel < 0 {
         sel = 0
@@ -96,7 +96,7 @@ pub fn chooseRegion(s: &mut Screen, gw: &GpuWorld, c: &mut Canvas, sc: &Scene, i
     // Francisco before the screen was ever drawn.
     var armed = false
     while true {
-        pollInput(&mut inp, &mut ev)
+        pollInput(&mut inp)
         if inp.quit {
             return -1
         }

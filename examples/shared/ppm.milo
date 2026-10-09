@@ -1,0 +1,44 @@
+// Binary PPM output for the games' headless capture modes: six lines and no encoder,
+// so a frame can be checked from a terminal. Five games carried their own copy of this,
+// each writing through libc's fopen/fwrite; std/fs does the same job with no `unsafe`.
+
+from "std/fs" import {
+    writeFile
+}
+
+// Write `w * h` ABGR8888 pixels (red in the low byte) as a P6 file. `bottomUp` flips
+// the rows, for pixels read back from GL, which hands them over bottom row first.
+// Prints why and returns false if `px` is too short or the file cannot be written.
+pub fn writePpm(path: &string, px: &[u32], w: i64, h: i64, bottomUp: bool): bool {
+    if px.len < w * h {
+        print("writePpm: " + $"{px.len}" + " pixels for a " + $"{w}x{h}" + " image")
+        return false
+    }
+    var out = "P6\n" + $"{w}" + " " + $"{h}" + "\n255\n"
+    var y = 0
+    while y < h {
+        let row = if bottomUp {
+            h - 1 - y
+        } else {
+            y
+        }
+        var x = 0
+        while x < w {
+            let p = px[row * w + x]
+            out.push((p & 0xFF) as u8)
+            out.push(((p >> 8) & 0xFF) as u8)
+            out.push(((p >> 16) & 0xFF) as u8)
+            x += 1
+        }
+        y += 1
+    }
+    match writeFile(path, out) {
+        Ok(_) => {
+            return true
+        }
+        Err(_) => {
+            print("cannot write " + path)
+            return false
+        }
+    }
+}

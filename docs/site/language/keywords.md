@@ -112,9 +112,9 @@ extern fn printf(fmt: *u8, ...): i32
 ```
 Declares a function implemented **outside** Milo. There is no body: the C linker resolves the symbol, and nothing on the far side is checked for memory safety. A trailing `...` declares it variadic — get the fixed arity wrong and the call is miscompiled on AArch64, silently.
 
-A call needs **no** `unsafe` when every argument auto-coerces (scalar, `&T`, a Milo `fn`, `string` / `[T; N]` → `*T`, a matching `*T`, or a by-value `extern struct`) **and** the return is scalar, `void`, or an `extern struct`. A pointer return has provenance the compiler cannot see, so it forces an `unsafe` block at every call.
+Every call sits inside `unsafe`; outside one it is the error `extern-call`, in a package as much as in a program. The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. The idiom is one small safe wrapper per extern, whose `unsafe` block carries a comment saying what the wrapper guarantees, and code above it that calls only the wrappers. std does exactly this: it wraps the harmless externs in safe functions (`pid()`, `isTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern.
 
-A call that satisfies this rule still warns `extern-call` outside `unsafe` (staged as a warning; `--deny=extern-call` makes it an error). The signature says nothing about what the C code does: `close(fd)` takes one `i32` and can close a descriptor a `TcpStream` still owns. std wraps the harmless externs in safe functions (`pid()`, `isTerminal`, `processAlive`) and gives the dangerous ones owning types (`OwnedFd`, `Child`, `TcpStream`), so application code never needs a raw extern. A std API that still takes or returns a bare descriptor number is itself `@unsafe` (`tests/rawFdApi.test.ts` holds that line); borrowing a handle goes through `AsFd`. A `@pure` extern (libm) is exempt.
+Inside `unsafe`, arguments auto-coerce (scalar, `&T`, a Milo `fn`, `string` / `[T; N]` → `*T`, a matching `*T`, or a by-value `extern struct`). A std API that still takes or returns a bare descriptor number is itself `@unsafe` (`tests/rawFdApi.test.ts` holds that line); borrowing a handle goes through `AsFd`. A `@pure` extern (libm) is exempt.
 
 `@cSig` / `@cLayout` on the declaration make the C compiler check this signature (and a struct's layout) against the real header, rather than trusting that the hand-written declaration matches.
 
@@ -362,7 +362,7 @@ unsafe {
     let v = *p
 }
 ```
-Opens a block for the operations the compiler cannot verify: dereferencing or indexing a raw pointer, `x.addrOf()`, and extern calls (one that breaks the safe-coercion rule is an error outside `unsafe`; any other warns `extern-call`).
+Opens a block for the operations the compiler cannot verify: dereferencing or indexing a raw pointer, `x.addrOf()`, and extern calls (outside `unsafe` a call is the error `extern-call`).
 
 It does not turn checking off — everything else inside the block is checked exactly as usual; it marks the seam where **you** own the invariant. `0 as *T` (a null pointer literal) needs no `unsafe`, and `string.cstr()` hands out a `*u8` without one because the string stays alive in the caller's scope.
 

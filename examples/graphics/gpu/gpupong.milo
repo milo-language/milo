@@ -21,76 +21,25 @@ from "gl" import {
     GlContext,
     Gpu, Mesh, Shader, bindScreen
 }
+from "sdl" import {
+    SDL_INIT_VIDEO, SDL_WINDOW_RESIZABLE, SDL_WINDOW_SHOWN
+}
+from "sdl/glcontext" import {
+    SDL_GL_CONTEXT_MAJOR_VERSION, SDL_GL_CONTEXT_MINOR_VERSION,
+    SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_PROFILE_MASK, SDL_WINDOW_OPENGL
+}
+from "sdl/keys" import {
+    SC_DOWN, SC_ESCAPE, SC_R, SC_S, SC_SPACE, SC_UP, SC_W
+}
+from "../../shared/sdlkit" import {
+    Sdl, Window, SdlGlContext, glSetAttribute, glSetSwapInterval, pollEvents, keyboard, ticks
+}
 from "std/math" import {
     Math
 }
 from "std/rng" import {
     Rng
 }
-
-@link("SDL2")
-pub extern fn SDL_Init(flags: u32): i32
-
-pub extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
-
-pub extern fn SDL_GL_SetAttribute(attr: i32, value: i32): i32
-
-pub extern fn SDL_GL_CreateContext(win: *u8): *u8
-
-pub extern fn SDL_GL_DeleteContext(ctx: *u8)
-
-pub extern fn SDL_GL_SwapWindow(win: *u8)
-
-pub extern fn SDL_GL_SetSwapInterval(interval: i32): i32
-
-pub extern fn SDL_GL_GetDrawableSize(win: *u8, w: *u8, h: *u8)
-
-pub extern fn SDL_PollEvent(event: *u8): i32
-
-pub extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
-
-pub extern fn SDL_GetTicks(): u32
-
-pub extern fn SDL_GetError(): *u8
-
-pub extern fn SDL_DestroyWindow(win: *u8)
-
-pub extern fn SDL_Quit()
-
-pub let SDL_INIT_VIDEO: u32 = 0x20
-
-pub let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
-
-pub let SDL_WINDOW_SHOWN: u32 = 0x4
-
-pub let SDL_WINDOW_OPENGL: u32 = 0x2
-
-pub let SDL_WINDOW_RESIZABLE: u32 = 0x20
-
-pub let SDL_QUIT: u32 = 0x100
-
-pub let SDL_GL_CONTEXT_MAJOR_VERSION: i32 = 17
-
-pub let SDL_GL_CONTEXT_MINOR_VERSION: i32 = 18
-
-pub let SDL_GL_CONTEXT_PROFILE_MASK: i32 = 21
-
-pub let SDL_GL_CONTEXT_PROFILE_CORE: i32 = 1
-
-// USB HID scancodes, which is what SDL_GetKeyboardState is indexed by.
-pub let SC_W: i64 = 26
-
-pub let SC_S: i64 = 22
-
-pub let SC_R: i64 = 21
-
-pub let SC_ESC: i64 = 41
-
-pub let SC_SPACE: i64 = 44
-
-pub let SC_UP: i64 = 82
-
-pub let SC_DOWN: i64 = 81
 
 // The world is always this size; the window can be anything and gets letterboxed.
 pub let W: f64 = 960.0
@@ -412,29 +361,34 @@ fn build(g: &Game, v: &mut Vec<f32>) {
 }
 
 pub fn main(): i32 {
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed")
-        return 1
+    // Declared in teardown's reverse: the context goes first, then the window,
+    // then SDL itself.
+    let _sdl = match Sdl.init(SDL_INIT_VIDEO) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
+            return 1
+        }
     }
-    var win: *u8 = 0 as *u8
-    var ctx: *u8 = 0 as *u8
-    unsafe {
-        // Before the window: SDL reads these when it picks the pixel format.
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
-        let _ = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-        win = SDL_CreateWindow("gpupong — the gl package", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W as i32, H as i32, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL)
-        if (win as i64) == 0 {
-            print("window: " + _cstrToString(SDL_GetError()))
+    // Before the window: SDL reads these when it picks the pixel format.
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
+    let _ = glSetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    let win = match Window.create("gpupong — the gl package", W as i64, H as i64, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL) {
+        Ok(v) => v,
+        Err(e) => {
+            print(e)
             return 2
         }
-        ctx = SDL_GL_CreateContext(win)
-        if (ctx as i64) == 0 {
-            print("no GL 3.3 core context: " + _cstrToString(SDL_GetError()))
+    }
+    let _ctx = match SdlGlContext.create(win) {
+        Ok(v) => v,
+        Err(e) => {
+            print("no GL 3.3 core context: " + e)
             return 3
         }
-        let _ = SDL_GL_SetSwapInterval(1)
     }
+    let _ = glSetSwapInterval(1)
     print("OpenGL " + Gpu.version())
 
     // Owns every GL object made through it; one call at the end sweeps whatever
@@ -458,12 +412,11 @@ pub fn main(): i32 {
     var g = gameNew()
     serve(&mut g, true)
     var verts: Vec<f32> = Vec.new()
-    var ev: [u8; 64] = [0; 64]
     var quit = false
-    var last = SDL_GetTicks()
+    var last = ticks()
 
     while !quit {
-        let now = SDL_GetTicks()
+        let now = ticks()
         var dt = ((now - last) as f64) / 1000.0
         last = now
         // Clamp both ends: a hitch must not teleport the ball through a paddle,
@@ -478,24 +431,19 @@ pub fn main(): i32 {
         var up = false
         var down = false
         var wantServe = false
-        unsafe {
-            while SDL_PollEvent(ev) != 0 {
-                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
-                if evType == SDL_QUIT {
-                    quit = true
-                }
-            }
-            let keys = SDL_GetKeyboardState(0 as *i32)
-            if keys[SC_ESC] != 0 {
-                quit = true
-            }
-            up = keys[SC_W] != 0 || keys[SC_UP] != 0
-            down = keys[SC_S] != 0 || keys[SC_DOWN] != 0
-            wantServe = keys[SC_SPACE] != 0
-            if keys[SC_R] != 0 {
-                g = gameNew()
-                serve(&mut g, true)
-            }
+        if pollEvents().quit {
+            quit = true
+        }
+        let keys = keyboard()
+        if keys.down(SC_ESCAPE) {
+            quit = true
+        }
+        up = keys.down(SC_W) || keys.down(SC_UP)
+        down = keys.down(SC_S) || keys.down(SC_DOWN)
+        wantServe = keys.down(SC_SPACE)
+        if keys.down(SC_R) {
+            g = gameNew()
+            serve(&mut g, true)
         }
 
         // Match point ends the rally and freezes the score; R starts again.
@@ -508,11 +456,9 @@ pub fn main(): i32 {
         build(g, &mut verts)
         batch.upload(verts)
 
-        var dw: i32 = 0
-        var dh: i32 = 0
-        unsafe {
-            SDL_GL_GetDrawableSize(win, (dw.addrOf()) as *u8, (dh.addrOf()) as *u8)
-        }
+        var drawable = win.drawableSize()
+        var dw = drawable.w as i32
+        var dh = drawable.h as i32
         bindScreen(dw as i64, dh as i64)
         Gpu.clear(0.02, 0.03, 0.05, 1.0, false)
         // Letterbox to the world's aspect, so a resized window never stretches
@@ -528,14 +474,11 @@ pub fn main(): i32 {
         sh.bind()
         sh.uniform2F("uWorld", W, H)
         batch.draw()
-        SDL_GL_SwapWindow(win)
+        win.swapGl()
     }
 
     batch.free(&mut gl)
     sh.free(&mut gl)
     gl.free()
-    SDL_GL_DeleteContext(ctx)
-    SDL_DestroyWindow(win)
-    SDL_Quit()
     return 0
 }

@@ -197,7 +197,10 @@ pub fn sdlError(): string {
 
 // Brings up the video subsystem (which implies events). Pair with `quit`.
 pub fn initVideo(): Result<Unit, string> {
-    if !SDL_Init(SDL_INIT_VIDEO) {
+    var ok = false
+    // Sound: SDL_Init reads one integer of flags and touches no Milo memory.
+    unsafe { ok = SDL_Init(SDL_INIT_VIDEO) }
+    if !ok {
         return Result.Err("SDL_Init: " + sdlError())
     }
     return Result.Ok(Unit {})
@@ -206,19 +209,24 @@ pub fn initVideo(): Result<Unit, string> {
 // Video plus gamepads. Pads already plugged in arrive as GamepadAdded events on the
 // first polls, so opening them is the event loop's job, not this function's.
 pub fn initVideoAndGamepad(): Result<Unit, string> {
-    if !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) {
+    var ok = false
+    // Sound: SDL_Init reads one integer of flags and touches no Milo memory.
+    unsafe { ok = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) }
+    if !ok {
         return Result.Err("SDL_Init: " + sdlError())
     }
     return Result.Ok(Unit {})
 }
 
 pub fn quit() {
-    SDL_Quit()
+    // Sound: no arguments; every Window and Gamepad is dropped before the caller quits.
+    unsafe { SDL_Quit() }
 }
 
 // Nanoseconds since SDL_Init. Monotonic.
 pub fn ticksNs(): i64 {
-    return SDL_GetTicksNS() as i64
+    // Sound: no arguments, returns a scalar.
+    unsafe { return SDL_GetTicksNS() as i64 }
 }
 
 pub struct PixelSize {
@@ -250,14 +258,14 @@ pub fn mouseState(): Mouse {
 // One SDL window, destroyed when dropped. The pointer field makes it move-only, so a
 // second owner (and a double destroy) cannot be written.
 pub struct Window {
-    raw: *SDL_Window,
+    _raw: *SDL_Window,
 }
 
 impl Drop for Window {
     fn drop(self: &mut Self) {
         unsafe {
-            if self.raw as i64 != 0 {
-                SDL_DestroyWindow(self.raw)
+            if self._raw as i64 != 0 {
+                SDL_DestroyWindow(self._raw)
             }
         }
     }
@@ -276,7 +284,7 @@ pub fn openWindow(title: string, w: i64, h: i64, hidden: bool): Result<Window, s
             return Result.Err("SDL_CreateWindow: " + sdlError())
         }
         return Result.Ok(Window {
-            raw: raw,
+            _raw: raw,
         })
     }
 }
@@ -286,7 +294,7 @@ impl Window {
         var w: i32 = 0
         var h: i32 = 0
         unsafe {
-            SDL_GetWindowSizeInPixels(self.raw, w.addrOf(), h.addrOf())
+            SDL_GetWindowSizeInPixels(self._raw, w.addrOf(), h.addrOf())
         }
         return PixelSize {
             w: w as i64,
@@ -296,7 +304,7 @@ impl Window {
 
     // For gpu.milo only: the device claims the window by its C handle.
     fn handle(self: &Self): *SDL_Window {
-        return self.raw
+        return self._raw
     }
 }
 
@@ -354,14 +362,14 @@ pub fn keyDown(sc: u32): bool {
 
 // One open gamepad, closed when dropped.
 pub struct Gamepad {
-    raw: *SDL_Gamepad,
+    _raw: *SDL_Gamepad,
 }
 
 impl Drop for Gamepad {
     fn drop(self: &mut Self) {
         unsafe {
-            if self.raw as i64 != 0 {
-                SDL_CloseGamepad(self.raw)
+            if self._raw as i64 != 0 {
+                SDL_CloseGamepad(self._raw)
             }
         }
     }
@@ -374,23 +382,27 @@ pub fn openGamepad(id: u32): Option<Gamepad> {
             return Option.None
         }
         return Option.Some(Gamepad {
-            raw: raw,
+            _raw: raw,
         })
     }
 }
 
 impl Gamepad {
     fn id(self: &Self): u32 {
-        return SDL_GetGamepadID(self.raw)
+        // Sound: `_raw` is the open pad this value owns (closed only by its Drop).
+        unsafe { return SDL_GetGamepadID(self._raw) }
     }
 
     // An axis in [-1, 1] (triggers in [0, 1]). SDL's y axes are positive DOWN.
     fn axis(self: &Self, a: i32): f64 {
-        let v = SDL_GetGamepadAxis(self.raw, a) as f64
+        var v: f64 = 0.0
+        // Sound: an open pad; an out-of-range axis makes SDL return 0, not read past anything.
+        unsafe { v = SDL_GetGamepadAxis(self._raw, a) as f64 }
         return v / 32767.0
     }
 
     fn button(self: &Self, b: i32): bool {
-        return SDL_GetGamepadButton(self.raw, b)
+        // Sound: an open pad; an out-of-range button makes SDL return false.
+        unsafe { return SDL_GetGamepadButton(self._raw, b) }
     }
 }

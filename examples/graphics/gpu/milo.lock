@@ -7,6 +7,13 @@
       "commit": "4e524f0a32243f59cf58cd1bda2123eda7186868",
       "hash": "sha256:8872946f1ab7f94334111060bb07c509958226fd80d5e59cf0d1132997696cd2",
       "deps": []
+    },
+    "sdl": {
+      "url": "github.com/milo-language/milo-sdl",
+      "version": "v0.3.2",
+      "commit": "56a9371ac5701da86295d3be9e8fb6c51e8276c0",
+      "hash": "sha256:0c029d65e6f41b3b2f21c571419f8d8ecb944319b434e4db490c3698c92b7c48",
+      "deps": []
     }
   }
 }

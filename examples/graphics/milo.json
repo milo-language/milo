@@ -1,0 +1,8 @@
+{
+  "name": "graphics-examples",
+  "version": "0.1.0",
+  "description": "CPU renderers; the window comes from the sdl package through ../shared/sdlkit",
+  "deps": {
+    "sdl": "github.com/milo-language/milo-sdl@v0.3.2"
+  }
+}

@@ -22,8 +22,10 @@ from "std/term" import {
     enableRawMode, restoreTerminal, readKey
 }
 from "std/os" import {
-    ioctl,
-    isatty
+    ioctl
+}
+from "std/pty" import {
+    isInteractive
 }
 from "std/io" import {
     writeStdout, readStdin, readLine
@@ -87,7 +89,7 @@ pub fn termSize(): TermSize {
 }
 
 pub fn stdinIsTty(): bool {
-    return isatty(0) != 0
+    return isInteractive()
 }
 
 // ── Simple ISO timestamp ──

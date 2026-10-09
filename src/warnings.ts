@@ -72,18 +72,6 @@ fn main() {
 `,
   },
   {
-    name: "extern-call",
-    doc: "An `extern fn` runs C code the checker cannot see into. Even one with only scalar arguments can break an invariant safe code relies on: `close(fd)` on a descriptor a `TcpStream` still owns compiles clean and leaves the stream writing to a closed or reused fd. Every extern call belongs inside `unsafe`; std wraps the harmless ones (`getpid`, `isatty`, ...) in safe functions and gives the dangerous ones owning types. Staged as a warning; `--deny=extern-call` holds a project to it. Not reported inside a manifest dependency.",
-    fix: "Call the std wrapper or owning type instead, or wrap the call in `unsafe { ... }` and say why it is sound.",
-    example: `extern fn getpid(): i32
-
-fn main() {
-  let pid = getpid()
-  print(pid > 0)
-}
-`,
-  },
-  {
     name: "external-linkage-not-pub",
     doc: "`@externalLinkage` keeps a symbol visible to the C linker, which is a different question from whether Milo code in another file may call it. A function that carries the attribute but is not `pub` is usually one whose author wanted the second thing and reached for the first.",
     fix: "Add `pub` if the function should be importable from Milo, and keep both if a `dlopen`'d library resolves the symbol.",
@@ -473,6 +461,29 @@ fn main() {
   },
 ];
 
+// Hard errors that carry a name. They share the warning row's shape so `milo explain`,
+// `milo lang --json` and the published reference render them from one place, but they live
+// in their own table because they are NOT warning names: `--allow=` / `--deny=` reject
+// them, and no flag or manifest lint setting turns one off. A rule graduates here from
+// WARNINGS when it stops being staged; its `example` must fail `milo check` with no flags
+// (tests/langInfo.test.ts).
+export const CODED_ERRORS: WarningInfo[] = [
+  {
+    name: "extern-call",
+    doc: "An `extern fn` runs C code the checker cannot see into. Even one with only scalar arguments can break an invariant safe code relies on: `close(fd)` on a descriptor a `TcpStream` still owns would compile clean and leave the stream writing to a closed or reused fd. So every extern call sits inside `unsafe`, including inside a package: a package's soundness is its own job. The pattern is one small safe wrapper per extern, whose `unsafe` block says what the wrapper guarantees, and application code that calls only the wrappers. std already does this (`pid()`, `isTerminal`, `OwnedFd`). A `@pure` extern whose parameters and return are all scalars is exempt.",
+    fix: "Call the std wrapper or owning type instead, or write a small safe wrapper whose body is `unsafe { ... }` with a comment saying why the call is sound.",
+    example: `extern fn getpid(): i32
+
+fn main() {
+  let pid = getpid()
+  print(pid > 0)
+}
+`,
+  },
+];
+
+export const CODED_ERROR_NAMES: string[] = CODED_ERRORS.map(e => e.name);
+
 export const WARNING_NAMES: string[] = WARNINGS.map(w => w.name);
 
 // Where a warning's published entry lives. The heading scripts/gen-lang-docs.ts writes is
@@ -482,6 +493,6 @@ export const WARNING_NAMES: string[] = WARNINGS.map(w => w.name);
 export const WARNING_DOCS_URL = "https://milo-language.github.io/milo/language/warnings-and-errors";
 
 export function warningDocUrl(name: string): string | undefined {
-  return WARNING_NAMES.includes(name) ? `${WARNING_DOCS_URL}#${name}` : undefined;
+  return WARNING_NAMES.includes(name) || CODED_ERROR_NAMES.includes(name) ? `${WARNING_DOCS_URL}#${name}` : undefined;
 }
 export const OFF_BY_DEFAULT: string[] = WARNINGS.filter(w => w.offByDefault).map(w => w.name);

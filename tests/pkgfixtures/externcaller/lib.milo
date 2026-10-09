@@ -1,5 +1,6 @@
 // Fixture package for tests/externCall.test.ts: a bare extern call inside a dependency
-// must not reach the consumer as an extern-call warning (or error under --deny).
+// is the extern-call error like anywhere else. The test also checks a copy with the
+// call wrapped in `unsafe`, which must be clean.
 
 extern fn getppid(): i32
 

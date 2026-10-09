@@ -10,7 +10,7 @@ import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { generate } from "../scripts/gen-lang-docs";
-import { WARNING_NAMES, WARNING_DOCS_URL } from "../src/warnings";
+import { WARNING_NAMES, WARNING_DOCS_URL, CODED_ERROR_NAMES } from "../src/warnings";
 import { ATTRIBUTE_NAMES } from "../src/attributes";
 import { langInfo } from "../src/lang-info";
 
@@ -42,6 +42,11 @@ test("every warning and attribute reaches the published page", () => {
   }
   for (const n of ATTRIBUTE_NAMES) {
     expect({ attribute: n, published: attributeRegion.includes(`@${n}`) }).toEqual({ attribute: n, published: true });
+  }
+  const errorRegion = region(warnings, "errors");
+  expect(CODED_ERROR_NAMES.length).toBeGreaterThan(0);
+  for (const n of CODED_ERROR_NAMES) {
+    expect({ error: n, published: errorRegion.includes(`#### ${n}\n`) }).toEqual({ error: n, published: true });
   }
 });
 
