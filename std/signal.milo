@@ -59,6 +59,7 @@ pub fn sigchld(): i32 {
 // called it with the signal number in the env slot and the handler read garbage as its
 // `sig` (observed: 1794499728 instead of 20). Nothing caught it because the only in-tree
 // handler, _sigPipeHandler, ignores its argument.
+@unsafe
 pub fn onSignal(sig: i32, handler: *u8): void {
     unsafe {
         signal(sig, handler)

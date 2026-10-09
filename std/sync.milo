@@ -194,10 +194,14 @@ fn wakeOne(head: *u8): *u8 {
         return 0 as *u8
     }
     let next = nodeLoadPtr(head, nodeNext())
-    if nodeLoadI64(head, nodeKind()) == kindPlain() {
-        schedulerUnpark(nodeLoadPtr(head, nodeA()))
-    } else {
-        selectTryClaim(nodeLoadPtr(head, nodeA()), nodeLoadI64(head, nodeArm()))
+    // A wait-list node's A slot is the parked task (plain) or the live SelectState (arm)
+    // that queued it, and it stays live until this wake.
+    unsafe {
+        if nodeLoadI64(head, nodeKind()) == kindPlain() {
+            schedulerUnpark(nodeLoadPtr(head, nodeA()))
+        } else {
+            selectTryClaim(nodeLoadPtr(head, nodeA()), nodeLoadI64(head, nodeArm()))
+        }
     }
     return next
 }
@@ -274,6 +278,7 @@ fn chWakeOneSend(inner: *ChannelInner): void {
 // now (buffer non-empty or closed) — the caller claims immediately and does not
 // link. Otherwise links `node` (kind sel-recv) and returns false.
 // @internal
+@unsafe
 pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
@@ -294,6 +299,7 @@ pub fn channelArmRecv(ptr: *u8, node: *u8): bool {
 // Arm a Select send. Ready if the buffer has room or the channel is closed
 // (a send on a closed channel returns Err rather than blocking).
 // @internal
+@unsafe
 pub fn channelArmSend(ptr: *u8, node: *u8): bool {
     unsafe {
         let inner = ptr as *ChannelInner
@@ -312,6 +318,7 @@ pub fn channelArmSend(ptr: *u8, node: *u8): bool {
 }
 
 // @internal
+@unsafe
 pub fn channelUnarmRecv(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner
@@ -322,6 +329,7 @@ pub fn channelUnarmRecv(ptr: *u8, node: *u8): void {
 }
 
 // @internal
+@unsafe
 pub fn channelUnarmSend(ptr: *u8, node: *u8): void {
     unsafe {
         let inner = ptr as *ChannelInner

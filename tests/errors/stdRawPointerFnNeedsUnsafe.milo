@@ -1,0 +1,13 @@
+// @error: calling 'rtWriteI64' requires an unsafe block
+// Safe code can make a raw pointer, so a std fn that writes through one it is handed
+// is `@unsafe`: as a safe fn this was a write to address 4096 with no unsafe anywhere.
+// tests/stdRawPointerApi.test.ts holds every pub std fn to the same rule.
+from "std/runtime" import {
+    rtWriteI64
+}
+
+fn main(): void {
+    let p = 0 as *u8
+    rtWriteI64(p, 4096, 7)
+    print(1)
+}

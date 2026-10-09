@@ -38,7 +38,9 @@ unsafe {
 }
 
 var ready: [i32; 8] = [0; 8]
-let n = eventPoll(el, ready, 8, 1000)
+// @unsafe: eventPoll writes up to maxEvents fds into `ready`, so it must hold that many.
+var n: i32 = 0
+unsafe { n = eventPoll(el, ready, 8, 1000) }
 eventLoopClose(el)
 ```
 
@@ -292,26 +294,10 @@ pub fn wlCap(): i64
 
 Only on windows.
 
-#### `wlGet`
-
-```milo
-pub fn wlGet(b: *u8, idx: i64): i64
-```
-
-Only on windows.
-
 #### `wlMaskIdx`
 
 ```milo
 pub fn wlMaskIdx(i: i64): i64
-```
-
-Only on windows.
-
-#### `wlSet`
-
-```milo
-pub fn wlSet(b: *u8, idx: i64, v: i64): void
 ```
 
 Only on windows.

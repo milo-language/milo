@@ -1376,6 +1376,13 @@ export class TypeChecker {
   // Whether a value of `ty` holds a raw pointer anywhere inside it. `@copy` is not an
   // exemption here (unlike `resourceKind`): this asks "can it dangle", not "does copying
   // it duplicate an owner".
+  // Whether the code at `sp` (or the fn being checked) is a std module.
+  private inStdFile(sp: Span | undefined): boolean {
+    const file = sp?.file ?? this.currentFnFile;
+    if (!file) return false;
+    return resolvePath(file).startsWith(resolvePath(STDLIB_DIR, "std") + sep);
+  }
+
   // Whether a struct/enum type's every declaration is in std (a std type that carries a
   // raw pointer, like a Channel, is std's own audited sharing).
   private typeDeclaredInStd(ty: TypeKind): boolean {
@@ -3568,6 +3575,15 @@ export class TypeChecker {
     // `Heap` is a builtin type, so the prelude naming Heap<Error> is not an import of a
     // user struct that happens to share the name (tests/fixtures/genericStruct.milo).
     this.builtinFnNames = new Set([...this.functions.keys(), "Option", "Result", "Heap"]);
+    // Safe code can hold a raw pointer (`0 as *u8`, `Channel.rawPtr()`), so a pointer
+    // consumer callable without `unsafe` is an unchecked dereference. Every way to USE a
+    // pointer has to need unsafe for a safe fn that only returns one to be sound. std is
+    // exempt: it calls these on its own fields (AtomicI64._ptr) in ~70 places, and what
+    // keeps a caller from steering one is tests/stdRawPointerApi.test.ts, which holds
+    // every safe pub std fn to taking no raw pointer.
+    for (const sig of this.functions.values()) {
+      if (sig.params.some(p => p.type.tag === "ptr")) this.rawPtrBuiltinSigs.add(sig);
+    }
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
     this.registerBuiltinResult();
@@ -7713,6 +7729,10 @@ export class TypeChecker {
   private nonExhaustiveMatches = new WeakSet<MatchArm[]>();
 
   private builtinFnNames = new Set<string>();
+  // Builtins that read, write or call through a raw pointer argument (`_cstrToString`,
+  // `_loadU8`, the atomics). Keyed by signature object, so a user fn that reuses one of
+  // the names is not caught by it.
+  private rawPtrBuiltinSigs = new WeakSet<object>();
   // Read by tests/stdBuiltinNames.test.ts: a std pub fn with one of these names would
   // replace the builtin for the whole program.
   get builtinNames(): ReadonlySet<string> { return this.builtinFnNames; }
@@ -10851,6 +10871,10 @@ export class TypeChecker {
     const fnDecl = this.fnDecls.get(expr.func);
     if (fnDecl) this.checkCallSiteContracts(fnDecl, expr.args, sp);
     this.requireUnsafeCall(fnDecl, expr.func, sp);
+    if (sig && this.rawPtrBuiltinSigs.has(sig) && !this.inStdFile(sp)) {
+      this.requireUnsafe(`calling '${expr.func}' requires an unsafe block`, sp,
+        `'${expr.func}' reads or writes through the raw pointer it is given, which nothing checks`);
+    }
 
     return this.setType(expr, sig.ret);
   }

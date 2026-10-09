@@ -154,6 +154,7 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
 // timeoutMs < 0 means block indefinitely.
 //
 // A fixed `[i32; N]` array passes bare: it coerces to `*i32`.
+@unsafe
 pub fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
     unsafe {
         let bufSize = maxEvents as i64 * epollEventSize()

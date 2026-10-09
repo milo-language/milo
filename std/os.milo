@@ -264,9 +264,11 @@ pub fn sysDup(fd: i32): i32 {
 // waitpid(2) through the trace: the return value and the status word the kernel wrote.
 // Under replay no child exists; the recorded exit comes back.
 @replayHooked
+@unsafe
 pub fn sysWaitpid(pid: i32, status: *u8, options: i32): i32 {
     if replayOff() {
-        return waitpidRaw(pid, status, options)
+        // `status` is this fn's caller's to vouch for (it is @unsafe).
+        unsafe { return waitpidRaw(pid, status, options) }
     }
     let p = replayBlob("proc.wait", pid.toString() + " " + options.toString(), (): string => {
         var r: i32 = 0

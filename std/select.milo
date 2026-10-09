@@ -87,10 +87,31 @@ fn armFd(sel: &mut Select, kind: i64, fd: i32): void {
         return
     }
     let node = sel._node(sel._count)
-    rtWriteI64(node, nodeKind(), kind)
-    rtWritePtr(node, nodeA(), sel._state)
-    rtWriteI64(node, nodeArm(), sel._count)
-    rtWriteI64(node, nodeFd(), fd as i64)
+    // `node` is slot _count of this Select's own node array, checked against maxArms above.
+    unsafe {
+        rtWriteI64(node, nodeKind(), kind)
+        rtWritePtr(node, nodeA(), sel._state)
+        rtWriteI64(node, nodeArm(), sel._count)
+        rtWriteI64(node, nodeFd(), fd as i64)
+    }
+    sel._count += 1
+}
+
+// Free, not a method, for the reason armFd is: it stores `ptr` where wait() reads it back as
+// a ChannelInner, so only onRecv/onSend (which pass a live channel's rawPtr) may reach it.
+fn armChan(sel: &mut Select, kind: i64, ptr: *u8, owner: ChannelHandle): void {
+    if sel._count >= maxArms() {
+        return
+    }
+    let node = sel._node(sel._count)
+    // `node` is slot _count of this Select's own node array, checked against maxArms above.
+    unsafe {
+        rtWriteI64(node, nodeKind(), kind)
+        rtWritePtr(node, nodeA(), sel._state)
+        rtWriteI64(node, nodeArm(), sel._count)
+        rtWritePtr(node, nodeChan(), ptr)
+    }
+    sel._chans.push(owner)
     sel._count += 1
 }
 
@@ -112,28 +133,15 @@ impl Select {
         }
     }
 
-    fn armChan(self: &mut Self, kind: i64, ptr: *u8, owner: ChannelHandle): void {
-        if self._count >= maxArms() {
-            return
-        }
-        let node = self._node(self._count)
-        rtWriteI64(node, nodeKind(), kind)
-        rtWritePtr(node, nodeA(), self._state)
-        rtWriteI64(node, nodeArm(), self._count)
-        rtWritePtr(node, nodeChan(), ptr)
-        self._chans.push(owner)
-        self._count += 1
-    }
-
     // Arm on a value becoming receivable from `ch`. The arm keeps its own reference to
     // the channel, so dropping `ch` before wait() is safe.
     fn onRecv<T>(self: &mut Self, ch: &Channel<T>): void {
-        self.armChan(kindSelRecv(), ch.rawPtr(), ch.retainHandle())
+        armChan(&mut self, kindSelRecv(), ch.rawPtr(), ch.retainHandle())
     }
 
     // Arm on `ch` having room for a send.
     fn onSend<T>(self: &mut Self, ch: &Channel<T>): void {
-        self.armChan(kindSelSend(), ch.rawPtr(), ch.retainHandle())
+        armChan(&mut self, kindSelSend(), ch.rawPtr(), ch.retainHandle())
     }
 
     // Arm on `h` becoming readable. The arm holds only the descriptor NUMBER until wait()
@@ -154,10 +162,13 @@ impl Select {
             return
         }
         let node = self._node(self._count)
-        rtWriteI64(node, nodeKind(), kindSelTimer())
-        rtWritePtr(node, nodeA(), self._state)
-        rtWriteI64(node, nodeArm(), self._count)
-        rtWriteI64(node, nodeDeadline(), unrecordedEpochMillis() + ms)
+        // `node` is slot _count of this Select's own node array, checked against maxArms above.
+        unsafe {
+            rtWriteI64(node, nodeKind(), kindSelTimer())
+            rtWritePtr(node, nodeA(), self._state)
+            rtWriteI64(node, nodeArm(), self._count)
+            rtWriteI64(node, nodeDeadline(), unrecordedEpochMillis() + ms)
+        }
         self._count += 1
     }
 
@@ -167,18 +178,24 @@ impl Select {
         var i: i64 = 0
         while i < self._count {
             let node = self._node(i)
-            let kind = rtReadI64(node, nodeKind())
             var ready = false
-            if kind == kindSelRecv() {
-                ready = channelArmRecv(readPtr(node, nodeChan()), node)
-            } else if kind == kindSelSend() {
-                ready = channelArmSend(readPtr(node, nodeChan()), node)
-            } else {
-                // fd/timer readiness is observed by the scheduler poll loop
-                selectRegisterFd(node)
+            // Every node below _count was filled by an arm fn, and a channel node's pointer
+            // stays live because _chans holds an owner of that channel.
+            unsafe {
+                let kind = rtReadI64(node, nodeKind())
+                if kind == kindSelRecv() {
+                    ready = channelArmRecv(readPtr(node, nodeChan()), node)
+                } else if kind == kindSelSend() {
+                    ready = channelArmSend(readPtr(node, nodeChan()), node)
+                } else {
+                    // fd/timer readiness is observed by the scheduler poll loop
+                    selectRegisterFd(node)
+                }
+                if ready {
+                    selectTryClaim(self._state, i)
+                }
             }
             if ready {
-                selectTryClaim(self._state, i)
                 i += 1
                 break
             }
@@ -195,7 +212,9 @@ impl Select {
             return -1
         }
 
-        let winner = selectWaitState(self._state)
+        // _state is this Select's own, freed only by Drop.
+        var winner: i64 = -1
+        unsafe { winner = selectWaitState(self._state) }
         self._teardown()
         return winner
     }
@@ -205,7 +224,9 @@ impl Select {
     fn _hasChannelArm(self: &Self): bool {
         var i: i64 = 0
         while i < self._count {
-            let kind = rtReadI64(self._node(i), nodeKind())
+            var kind: i64 = 0
+            // Every node below _count was filled by an arm fn.
+            unsafe { kind = rtReadI64(self._node(i), nodeKind()) }
             if kind == kindSelRecv() || kind == kindSelSend() {
                 return true
             }
@@ -220,13 +241,16 @@ impl Select {
         var i: i64 = 0
         while i < self._count {
             let node = self._node(i)
-            let kind = rtReadI64(node, nodeKind())
-            if kind == kindSelRecv() {
-                channelUnarmRecv(readPtr(node, nodeChan()), node)
-            } else if kind == kindSelSend() {
-                channelUnarmSend(readPtr(node, nodeChan()), node)
-            } else {
-                selectUnregisterFd(node)
+            // As in wait(): a filled node, and a channel _chans still owns.
+            unsafe {
+                let kind = rtReadI64(node, nodeKind())
+                if kind == kindSelRecv() {
+                    channelUnarmRecv(readPtr(node, nodeChan()), node)
+                } else if kind == kindSelSend() {
+                    channelUnarmSend(readPtr(node, nodeChan()), node)
+                } else {
+                    selectUnregisterFd(node)
+                }
             }
             i += 1
         }
@@ -240,8 +264,8 @@ impl Drop for Select {
         if self._state as i64 == 0 {
             return
         }
-        selectStateFree(self._state)
         unsafe {
+            selectStateFree(self._state)
             free(self._nodes)
             self._state = 0 as *u8
             self._nodes = 0 as *u8

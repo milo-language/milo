@@ -239,6 +239,7 @@ impl Child {
 
     // Only valid while stdin is a pipe: Stdio.Inherit/Null/Read leave nothing for the
     // parent to write, and closeStdin() has already sent EOF.
+    @unsafe
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stdinFd >= 0
@@ -257,6 +258,7 @@ impl Child {
 
     // Low-level single read into a raw buffer. Prefer `stdout()` for streaming.
     // Only valid when stdout is a pipe (the default) rather than redirected elsewhere.
+    @unsafe
     fn readStdout(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stdoutFd >= 0
@@ -265,6 +267,7 @@ impl Child {
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
+    @unsafe
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stderrFd >= 0
@@ -928,7 +931,7 @@ fn buildArgv(program: &string, args: &Vec<string>): *u8 {
     return buildCArray(items)
 }
 
-pub fn freeArgv(argv: *u8, argc: i64): void {
+fn freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8

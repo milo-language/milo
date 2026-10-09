@@ -14,6 +14,7 @@ pub struct CStr {
 }
 
 impl CStr {
+    @unsafe
     fn wrap(ptr: *u8): Option<CStr> {
         if ptr as i64 == 0 as i64 {
             return Option.None

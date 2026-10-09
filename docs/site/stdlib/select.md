@@ -28,12 +28,6 @@ Owns its runtime state, so the pointer fields make it move-tracked (no `@copy`),
 frees it in Drop, so no Select value outlives its state (an explicit `destroy(&self)`
 could be called twice, or followed by another wait()).
 
-#### `Select.armChan`
-
-```milo
-fn Select.armChan(self: &mut Select, kind: i64, ptr: *u8, owner: ChannelHandle): void
-```
-
 #### `Select.new`
 
 ```milo

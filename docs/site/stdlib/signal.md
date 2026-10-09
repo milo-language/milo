@@ -39,8 +39,11 @@ fn onTerminate(_sig: i32): void {
 }
 
 fn main(): i32 {
-    onSignal(SIGINT, onInterrupt as *u8)
-    onSignal(SIGTERM, onTerminate as *u8)
+    // @unsafe: C calls whatever address it is handed, so it must be a top-level fn.
+    unsafe {
+        onSignal(SIGINT, onInterrupt as *u8)
+        onSignal(SIGTERM, onTerminate as *u8)
+    }
 
     // main loop...
     return 0

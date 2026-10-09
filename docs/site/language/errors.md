@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 471 distinct messages across 608 programs the compiler must reject.
+Every error message the test suite pins: 473 distinct messages across 610 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -161,9 +161,11 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`borrowed mutably twice`](#borrowed-mutably-twice)
 - [`C header disagrees`](#c-header-disagrees)
 - [`callback parameter 1 is declared`](#callback-parameter-1-is-declared)
+- [`calling '_loadU8' requires an unsafe block`](#calling-loadu8-requires-an-unsafe-block)
 - [`calling 'adopt' requires an unsafe block`](#calling-adopt-requires-an-unsafe-block)
 - [`calling 'ptr' requires an unsafe block`](#calling-ptr-requires-an-unsafe-block)
 - [`calling 'rawFd' requires an unsafe block`](#calling-rawfd-requires-an-unsafe-block)
+- [`calling 'rtWriteI64' requires an unsafe block`](#calling-rtwritei64-requires-an-unsafe-block)
 - [`calling 'withRaw' requires an unsafe block`](#calling-withraw-requires-an-unsafe-block)
 - [`calling a C function pointer requires 'unsafe' block`](#calling-a-c-function-pointer-requires-unsafe-block)
 - [`can only be used as a pointer`](#can-only-be-used-as-a-pointer)
@@ -4223,6 +4225,19 @@ fn main() {
 
 <sub>[tests/errors/callbackParamType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callbackParamType.milo)</sub>
 
+## `calling '_loadU8' requires an unsafe block` {#calling-loadu8-requires-an-unsafe-block}
+
+The `_loadU8` / `_cstrToString` / atomic builtins read or write through whatever pointer they are given, and safe code can hold a null one. Outside std they need `unsafe`, like a deref does.
+
+```milo skip
+fn main(): void {
+    let p = 0 as *u8
+    print(_loadU8(p))
+}
+```
+
+<sub>[tests/errors/rawPtrBuiltinNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rawPtrBuiltinNeedsUnsafe.milo)</sub>
+
 ## `calling 'adopt' requires an unsafe block` {#calling-adopt-requires-an-unsafe-block}
 
 `@unsafe` puts the proof obligation on the caller, and here the obligation is the sharpest one in the module: that this pointer came from a Milo allocation of this type and has not been adopted before. Every operation in the body is individually checkable and `adopt(p)` on a stack address, a C string or a pointer already adopted is still a lie the compiler cannot see.
@@ -4279,6 +4294,24 @@ fn main() {
 ```
 
 <sub>[tests/errors/rawFdNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rawFdNeedsUnsafe.milo)</sub>
+
+## `calling 'rtWriteI64' requires an unsafe block` {#calling-rtwritei64-requires-an-unsafe-block}
+
+Safe code can make a raw pointer, so a std fn that writes through one it is handed is `@unsafe`: as a safe fn this was a write to address 4096 with no unsafe anywhere. tests/stdRawPointerApi.test.ts holds every pub std fn to the same rule.
+
+```milo skip
+from "std/runtime" import {
+    rtWriteI64
+}
+
+fn main(): void {
+    let p = 0 as *u8
+    rtWriteI64(p, 4096, 7)
+    print(1)
+}
+```
+
+<sub>[tests/errors/stdRawPointerFnNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stdRawPointerFnNeedsUnsafe.milo)</sub>
 
 ## `calling 'withRaw' requires an unsafe block` {#calling-withraw-requires-an-unsafe-block}
 

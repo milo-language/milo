@@ -22,6 +22,8 @@ interface Entry {
   name: string;      // "strPadStart" or "String.split"
   fields?: Field[];  // struct fields, for kind === "type"
   variants?: Variant[];  // enum variants, for kind === "type"
+  attributes?: string[]; // `@name` attributes on a function ("unsafe", "pure"), without the `@`
+  internal?: boolean;    // `// @internal`: pub for other std modules, hidden from the listing
 }
 
 export interface Field { name: string; type: string; doc?: string }
@@ -74,13 +76,17 @@ function fnName(sig: string): string {
 
 // Collect the contiguous `//` doc-comment lines immediately above `idx`.
 // A section-divider comment (── … ──) is a boundary, not doc — stop there.
-function leadingDoc(lines: string[], idx: number): { first: string; full: string; internal: boolean } {
+function leadingDoc(lines: string[], idx: number): { first: string; full: string; internal: boolean; attributes: string[] } {
   let i = idx - 1;
   const buf: string[] = [];
+  const attributes: string[] = [];
   // Attributes sit BETWEEN the doc comment and the declaration (`@unsafe`, `@pure`,
   // `@wrapping` on their own lines), so walking straight up stops at the first one and
   // reports a documented function as undocumented.
-  while (i >= 0 && lines[i].trim().startsWith("@")) i--;
+  while (i >= 0 && lines[i].trim().startsWith("@")) {
+    attributes.unshift(...[...lines[i].trim().matchAll(/@([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]!));
+    i--;
+  }
   while (i >= 0) {
     const t = lines[i].trim();
     if (t.startsWith("//") && !t.includes("──")) { buf.unshift(t.replace(/^\/\/\s?/, "")); i--; }
@@ -88,7 +94,7 @@ function leadingDoc(lines: string[], idx: number): { first: string; full: string
   }
   const internal = buf.some(line => line.trim() === "@internal");
   const visible = buf.filter(line => line.trim() !== "@internal");
-  return { first: visible.length ? visible[0] : "", full: visible.join("\n"), internal };
+  return { first: visible.length ? visible[0] : "", full: visible.join("\n"), internal, attributes };
 }
 
 // Field list of a struct declaration starting at `idx`, read to the closing brace.
@@ -174,7 +180,7 @@ export function signatureParts(signature: string): { params: Param[]; returns: s
 // to that root, and the source comes off disk. Without it this is the std path, where
 // modules are "std/"-prefixed and readStd also serves the bundle embedded in a shipped
 // binary (no std/ on disk to walk).
-function parseModule(file: string, root?: string): Entry[] {
+function parseModule(file: string, root?: string, includeInternal = false): Entry[] {
   const module = root !== undefined
     ? relative(root, file).replace(/\.milo$/, "").replace(/\\/g, "/")
     : "std/" + relative(resolve(STDLIB_DIR, "std"), file).replace(/\.milo$/, "").replace(/\\/g, "/");
@@ -233,8 +239,12 @@ function parseModule(file: string, root?: string): Entry[] {
         : sig;
       const ld = leadingDoc(lines, i);
       const supported = inImpl ? publicTypes.has(inImpl) : /^pub\s+fn\s/.test(sig);
-      if (supported && !ld.internal) {
-        entries.push({ kind: "function", module, signature: shown, doc: ld.first, docFull: ld.full, name });
+      if (supported && (!ld.internal || includeInternal)) {
+        entries.push({
+          kind: "function", module, signature: shown, doc: ld.first, docFull: ld.full, name,
+          ...(ld.attributes.length ? { attributes: ld.attributes } : {}),
+          ...(ld.internal ? { internal: true } : {}),
+        });
       }
       i = end;
     } else if (trimmed.length > 0 && !trimmed.startsWith("//")) {
@@ -264,7 +274,7 @@ function docsByModuleForPath(target: string): Map<string, string> {
   return out;
 }
 
-function loadAll(allPlatforms = false): Entry[] {
+function loadAll(allPlatforms = false, includeInternal = false): Entry[] {
   const stdDir = resolve(STDLIB_DIR, "std");
   // Disk when present; otherwise enumerate the embedded bundle (shipped binary).
   const files: string[] = existsSync(stdDir) ? [] : bundledStdPaths();
@@ -273,7 +283,7 @@ function loadAll(allPlatforms = false): Entry[] {
   for (const f of files) {
     const split = platformStem(f);
     if (!allPlatforms && split && split.platform !== HOST_STD_SUFFIX) continue;
-    const entries = parseModule(f);
+    const entries = parseModule(f, undefined, includeInternal);
     if (!allPlatforms && split) {
       for (const entry of entries) entry.module = entry.module.replace(/\.(darwin|linux|windows)$/, "");
     }
@@ -396,6 +406,8 @@ function apiJson(entries: Entry[]): string {
           ...(e.kind === "function" ? { params, returns } : {}),
           ...(e.fields ? { fields: e.fields } : {}),
           ...(e.variants ? { variants: e.variants } : {}),
+          ...(e.attributes ? { attributes: e.attributes } : {}),
+          ...(e.internal ? { internal: true } : {}),
           doc: e.doc,
           docFull: e.docFull,
         };
@@ -431,7 +443,9 @@ export function runApiSearch(args: string[]): number {
 
   // `--markdown` / `--json` with no module or query → the whole std surface. That is the
   // form a doc generator or an out-of-repo tool wants; the query form is for humans.
-  if (json && !query) { writeStdout(apiJson(loadAll(true))); return 0; }
+  // `--internal` adds the `// @internal` entries (flagged): they are pub, so callable from
+  // any program, and a gate over what safe code can reach must see them.
+  if (json && !query) { writeStdout(apiJson(loadAll(true, args.includes("--internal")))); return 0; }
   if (markdown && !query) { writeStdout(renderMarkdown(all)); return 0; }
 
   if (!query) {

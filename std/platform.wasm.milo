@@ -245,6 +245,7 @@ extern fn _exit(code: i32): void
 
 // Run `f` (a plain `fn(): void`) when the process exits normally: std/replay checks for
 // unconsumed records there.
+@unsafe
 pub fn atExit(f: *u8): void {
     unsafe { atexit(f) }
 }
@@ -385,11 +386,13 @@ pub fn closeSocket(fd: i32): i32 {
 // "undefined symbol: swapcontext" — same pattern platform.windows.milo uses for
 // execvpWithEnv.
 
+@unsafe
 pub fn getcontext(ucp: *u8): i32 {
     assert(false, "getcontext: wasm64 has no stackful coroutines (no wasm instruction swaps a raw machine stack) — std/runtime's green-thread scheduler cannot run on this target")
     return -1
 }
 
+@unsafe
 pub fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void {
     assert(false, "makecontext: wasm64 has no stackful coroutines — see getcontext")
 }
@@ -397,6 +400,7 @@ pub fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void {
 // @parks: same surface as the POSIX extern, so the checker's park summary roots
 // here on every target.
 @parks
+@unsafe
 pub fn swapcontext(oucp: *u8, ucp: *u8): i32 {
     assert(false, "swapcontext: wasm64 has no stackful coroutines — see getcontext")
     return -1
@@ -448,6 +452,7 @@ pub fn mapAnon(): i32 {
 
 pub extern fn proc_pidpath(pid: i32, buf: *u8, bufsize: u32): i32
 
+@unsafe
 pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     let n = proc_pidpath(getpid(), buf, bufsize as u32)
     if n <= 0 {
@@ -467,10 +472,12 @@ pub extern fn unsetenv(name: *u8): i32
 @cSig("crt_externs.h", "char ***_NSGetEnviron(void)")
 pub extern fn _NSGetEnviron(): ***u8
 
+@unsafe
 pub fn envSet(name: *u8, value: *u8): i32 {
     return setenv(name, value, 1)
 }
 
+@unsafe
 pub fn envUnset(name: *u8): i32 {
     return unsetenv(name)
 }
@@ -481,6 +488,7 @@ pub fn environBlock(): **u8 {
     }
 }
 
+@unsafe
 pub fn execvpWithEnv(file: *u8, argv: *u8, envp: *u8): i32 {
     unsafe {
         var slot: *u8 = envp
@@ -610,6 +618,7 @@ pub extern fn dlerror(): *u8
 // ── record/replay: addresses ──
 // Not done on this target (docs/record-replay.md §Addresses): returns false so the
 // replay says addresses may differ.
+@unsafe
 pub fn aslrReexec(_argv: *u8): bool {
     return false
 }
@@ -621,6 +630,7 @@ pub fn aslrReexec(_argv: *u8): bool {
 
 // waitpid(2): the reaped pid, 0 with WNOHANG and nothing to reap, or <0 with errno set.
 @replayHooked
+@unsafe
 pub fn waitpidRaw(pid: i32, status: *u8, options: i32): i32 {
     unsafe { return waitpid(pid, status, options) }
 }
@@ -635,6 +645,7 @@ pub fn killRaw(pid: i32, sig: i32): i32 {
 
 // Whether [p, p+len) goes into a core dump. Only Linux can exclude a range (see
 // platform.linux.milo); here every mapping is dumped as the OS decides.
+@unsafe
 pub fn memSetDumpable(_p: *u8, _len: i64, _yes: bool): void {
     return
 }

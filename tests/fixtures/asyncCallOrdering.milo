@@ -24,14 +24,16 @@ pub fn callAsyncLike(): void {
     let caller = schedulerCurrent()
     let child = Task.spawnWithStack(move(): void => {
         note("body-start")
-        // the first `await`: hand control back, then suspend
-        schedulerUnpark(caller)
+        // the first `await`: hand control back, then suspend. `caller` is parked on
+        // the same scheduler until this unpark, so its handle is live.
+        unsafe { schedulerUnpark(caller) }
         schedulerPark()
         note("body-resumed")
     }, 1048576)
     schedulerPark()
     note("caller-continues")
-    schedulerUnpark(child.raw())
+    // `child` parked itself above and has not finished, so its handle is live.
+    unsafe { schedulerUnpark(child.raw()) }
     child.join()
 }
 

@@ -235,6 +235,7 @@ impl Pty {
         }
     }
 
+    @unsafe
     fn read(self: &Self, buf: *u8, len: i64): i64
     requires
     len > 0
@@ -242,6 +243,7 @@ impl Pty {
         unsafe { return read(self._masterFd, buf, len) }
     }
 
+    @unsafe
     fn write(self: &Self, buf: *u8, len: i64): i64
     requires
     len > 0

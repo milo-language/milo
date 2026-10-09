@@ -386,7 +386,10 @@ fn openPath(path: &string): Result<*GifFileType, i32> {
 @externalLinkage
 pub fn DGifOpenFileName(fileName: *u8, errorOut: ?&mut i32): *GifFileType {
     var code = dGifErrOpenFailed
-    match CStr.wrap(fileName) {
+    // C hands this entry point a NUL-terminated path (or NULL), as giflib's API promises.
+    var wrapped: Option<CStr> = None
+    unsafe { wrapped = CStr.wrap(fileName) }
+    match wrapped {
         None => {
         }
         Some(name) => {

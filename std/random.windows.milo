@@ -108,11 +108,12 @@ fn randBytes(buf: *u8, n: i64): void {
         return
     }
     if replayActive() {
-        replayTakeInto("random.bytes", buf, n)
+        // randBytes' callers hand it a buffer of at least n bytes.
+        unsafe { replayTakeInto("random.bytes", buf, n) }
         return
     }
     osRandBytes(buf, n)
-    replayPutFrom("random.bytes", buf, n)
+    unsafe { replayPutFrom("random.bytes", buf, n) }
 }
 
 // Random namespace — Random.int/range/float/bool/bytes/... (platform RNG).
@@ -150,6 +151,7 @@ impl Random {
         shuffleI64(&mut v, n)
     }
     // Fill `buf` with `n` random bytes.
+    @unsafe
     fn bytes(buf: *u8, n: i64): void {
         randBytes(buf, n)
     }

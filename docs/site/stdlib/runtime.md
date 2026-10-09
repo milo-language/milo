@@ -345,17 +345,23 @@ pub fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T>
 pub fn rtReadI64(base: *u8, off: i64): i64
 ```
 
+The i64 at `base + off`. `base` must point at a live block that covers it.
+
 #### `rtWriteI64`
 
 ```milo
 pub fn rtWriteI64(base: *u8, off: i64, val: i64): void
 ```
 
+Store an i64 at `base + off`. `base` must point at a live, writable block that covers it.
+
 #### `rtWritePtr`
 
 ```milo
 pub fn rtWritePtr(base: *u8, off: i64, val: *u8): void
 ```
+
+Store a pointer at `base + off`. `base` must point at a live, writable block that covers it.
 
 #### `schedStructSize`
 
@@ -477,10 +483,9 @@ pub fn schedulerTick(): void
 pub fn schedulerUnpark(task: *u8): void
 ```
 
-Make a parked task runnable. Safe from any thread: on the task's own
-scheduler thread it goes straight to the run queue; from a foreign thread
-it is pushed onto the mutex-guarded transfer list and the scheduler's
-wakeup event is signaled so a blocked poll returns promptly.
+Make a parked task runnable (see unparkTask). `@unsafe`: `task` must be a pointer
+schedulerCurrent() or Task.raw() returned for a task that has not finished; anything
+else is written through.
 
 #### `schedulerWaitRead`
 
@@ -568,9 +573,8 @@ pub fn selectStateSize(): i64
 pub fn selectTryClaim(st: *u8, arm: i64): void
 ```
 
-Claim the select for `arm` if nothing has won yet, and wake the owning task
-only if it has already committed to parking. Safe from any thread (a foreign
-pthread firing a channel takes this path); unpark itself is thread-safe.
+Claim a select for `arm` (see claimSelect). `@unsafe`: `st` must be a live
+selectStateNew() block.
 
 #### `selectUnregisterFd`
 

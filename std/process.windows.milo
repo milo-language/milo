@@ -268,6 +268,7 @@ impl Child {
 
     // Only valid while stdin is a pipe: Stdio.Inherit/Null/Read leave nothing for the
     // parent to write, and closeStdin() has already sent EOF.
+    @unsafe
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stdinFd >= 0
@@ -285,6 +286,7 @@ impl Child {
     }
 
     // Only valid when stdout is a pipe (the default) rather than redirected elsewhere.
+    @unsafe
     fn readStdout(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stdoutFd >= 0
@@ -292,6 +294,7 @@ impl Child {
         unsafe { return read(self._stdoutFd, buf, len) }
     }
 
+    @unsafe
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
     requires
     self._stderrFd >= 0

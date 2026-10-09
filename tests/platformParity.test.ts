@@ -71,12 +71,10 @@ for (const [names, arms, why] of [
   [["wakeupIdentBase"], ["darwin", "windows"],
    "an identifier base for user-triggered wakeups; linux wakes through an eventfd, which needs no identifier space"],
   [["fionbio", "maskRead", "maskWrite", "maskToNet", "winLoopTableCap",
-    "wlCap", "wlGet", "wlSet", "wlSize", "wlMaskIdx", "wlSockIdx", "wlWevtIdx"],
+    "wlCap", "wlSize", "wlMaskIdx", "wlSockIdx", "wlWevtIdx"],
    ["windows"], "WSAEventSelect wait-list table and its ioctl/mask constants — the IOCP readiness path has no posix analogue"],
   [["tiocgwinsz", "tiocswinsz", "tiocsctty"], ["darwin", "linux"],
    "termios window-size and controlling-terminal ioctls; the Windows console sizes through GetConsoleScreenBufferInfo"],
-  [["freeArgv"], ["darwin", "linux"],
-   "frees the C argv built for execvp; the Windows pty passes one command line string to CreateProcess and never builds an argv"],
   [["REG_STARTEND"], ["darwin", "linux"],
    "a POSIX regexec flag; the Windows arm does not go through <regex.h>"],
   [["getConsoleModeOf", "rawModeFrom", "stdinHandle"], ["windows"],
@@ -85,14 +83,10 @@ for (const [names, arms, why] of [
   for (const n of names) ARM_ONLY[n] = { arms: [...arms] as Arm[], why };
 }
 
+// Every shim left here takes no pointer: the ones that did were aligned along with the
+// raw-pointer API gate (tests/stdRawPointerApi.test.ts).
 const SAFE_WINDOWS_SHIMS = new Set<string>([
-  "access", "dlclose", "dlerror", "dlopen", "dlsym", "getcontext", "getpid", "gettimeofday",
-  "makecontext", "mprotect", "munmap", "swapcontext", "usleep",
-  "pthread_cond_broadcast", "pthread_cond_destroy", "pthread_cond_init", "pthread_cond_signal",
-  "pthread_cond_wait", "pthread_create", "pthread_detach", "pthread_join", "pthread_mutex_destroy",
-  "pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_rwlock_destroy",
-  "pthread_rwlock_init", "pthread_rwlock_rdlock", "pthread_rwlock_unlock", "pthread_rwlock_wrlock",
-  "pthread_self",
+  "getpid", "usleep", "pthread_detach", "pthread_self",
 ]);
 
 describe("platform arm parity", () => {

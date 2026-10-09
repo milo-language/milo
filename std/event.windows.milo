@@ -61,13 +61,13 @@ pub fn wlSize(): i64 {
     return (2 + 3 * wlCap()) * 8
 }
 
-pub fn wlGet(b: *u8, idx: i64): i64 {
+fn wlGet(b: *u8, idx: i64): i64 {
     unsafe {
         return (b as *i64) [idx]
     }
 }
 
-pub fn wlSet(b: *u8, idx: i64, v: i64): void {
+fn wlSet(b: *u8, idx: i64, v: i64): void {
     unsafe {
         (b as *i64) [idx] = v
     }
@@ -391,6 +391,7 @@ pub fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
 // poll the loop once. Waits up to timeoutMs (negative = block indefinitely) on the wakeup
 // Event and every registered socket's WSAEVENT together. On wake, reports the wakeup (if it
 // fired) plus every socket with a pending network event, as a flat fd list.
+@unsafe
 pub fn eventPoll(el: &EventLoop, readyFds: *i32, _maxEvents: i32, timeoutMs: i32): i32 {
     let st = winLoopAt(el._slot)
     unsafe {

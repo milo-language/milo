@@ -12,9 +12,12 @@ from "std/cstr" import { CStr }
 
 ```milo
 let s = "hello"
-match CStr.wrap(s.cstr()) {
-    Option.Some(c) => print(c.len()),   // 5
-    Option.None => print("null"),
+// CStr.wrap is @unsafe: the pointer must be NUL-terminated and outlive the CStr.
+unsafe {
+    match CStr.wrap(s.cstr()) {
+        Option.Some(c) => print(c.len()),   // 5
+        Option.None => print("null"),
+    }
 }
 ```
 

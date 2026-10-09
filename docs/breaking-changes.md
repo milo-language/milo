@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: src/checker-program-passes.ts, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
+key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
 last-verified: 2026-10-09
 -->
@@ -15,6 +15,41 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 **v0.2.0**, and a package that wants to stay on the previous surface pins
 `"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
+
+## std fns that dereference a raw pointer argument are `@unsafe` (2026-10-09)
+
+Safe code can make a raw pointer (`0 as *u8`), and std hands some out (`Channel.rawPtr()`,
+`schedulerCurrent()`), so a SAFE std fn that reads, writes, frees or passes its pointer
+argument to C was an unchecked dereference: `rtWriteI64(0 as *u8, 4096, 7)` wrote to
+address 4096 and `replayHeapFree(p)` twice was a double free, with no `unsafe` anywhere.
+These are now `@unsafe`, so a call needs an `unsafe { }` block whose comment says why the
+pointer is good. A fn that only RETURNS a pointer stays safe (every use of it needs
+unsafe); `tests/stdRawPointerApi.test.ts` lists those and keeps the rule.
+
+| module | now `@unsafe` |
+|---|---|
+| std/cstr | `CStr.wrap` |
+| std/runtime | `rtReadI64`, `rtWriteI64`, `rtWritePtr`, `schedulerRunMainRaw`, `schedulerUnpark`, `selectStateFree`, `selectTryClaim`, `selectWaitState`, `selectRegisterFd`, `selectUnregisterFd`, `Task.spawnRaw` |
+| std/sync | `channelArmRecv`, `channelArmSend`, `channelUnarmRecv`, `channelUnarmSend` |
+| std/replay | `miloReplayStart`, `replayHeapFree`, `replayHeapRealloc`, `replayHeapUnmap`, `replayTakeInto`, `replayPutFrom`, `replayHex`, `replayHole`, `replayHoleAt`, `ReplayCall.argCstr`/`argBytes`/`outInto`/`outFrom`/`outCstr` |
+| std/os | `sysWaitpid` |
+| std/signal | `onSignal` |
+| std/process | `Child.readStdout`, `Child.readStderr`, `Child.writeStdin` |
+| std/pty | `Pty.read`, `Pty.write` |
+| std/random | `Random.bytes` |
+| std/event | `eventPoll` |
+| std/platform | `atExit`, `exePathInto`, `envSet`, `envUnset`, `execvpWithEnv`, `aslrReexec`, `waitpidRaw`, `memSetDumpable`, and the Windows and wasm Milo shims of posix externs (`pthread_*`, `dlopen`/`dlsym`/`dlclose`/`dlerror`, `getcontext`/`makecontext`/`swapcontext`, `mprotect`, `munmap`, `access`, `gettimeofday`) |
+
+| was | now |
+|---|---|
+| `CStr.wrap(p)` | `unsafe { CStr.wrap(p) }`, with a comment saying where `p` came from |
+| `child.readStdout(buf as *u8, n)` | already inside the `unsafe` the cast needs; or read with `child.stdout()` |
+| `Random.bytes(buf as *u8, n)` | already inside the `unsafe` the cast needs |
+| `select.armChan(...)` | gone: a private free fn now; arm with `onRecv`/`onSend` |
+| `freeArgv` (std/process, std/pty), `wlGet`/`wlSet` (std/event, Windows) | private: they were helpers of their own module |
+
+The `_cstrToString`, `_bytesToString`, `_loadU8`, `_loadI32`, `_callClosureVoid`,
+`_schedulerSet` and `_atomic*` builtins likewise need `unsafe` outside std.
 
 ## `Select.destroy` is gone: a Select frees itself (2026-10-09)
 

@@ -466,14 +466,6 @@ Absolute path of the running executable, so a shipped binary can locate assets
 next to itself instead of relative to whatever cwd the caller happened to be in.
 Prefer @embedFile() for assets small enough to inline; this is for the rest.
 
-#### `freeArgv`
-
-```milo
-pub fn freeArgv(argv: *u8, argc: i64): void
-```
-
-Only on .
-
 #### `processAlive`
 
 ```milo

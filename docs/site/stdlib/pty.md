@@ -142,14 +142,6 @@ Fields: `rows: u16`, `cols: u16`, `xpixel: u16`, `ypixel: u16`.
 
 ### Functions
 
-#### `freeArgv`
-
-```milo
-pub fn freeArgv(argv: *u8, argc: i64): void
-```
-
-Only on darwin, linux.
-
 #### `isInteractive`
 
 ```milo

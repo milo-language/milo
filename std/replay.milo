@@ -278,6 +278,7 @@ fn aslrOff(): void {
 // std/replay's own initializer, because its state (the trace window, the fd tables) is
 // set up by the global initializers that run after this.
 @externalLinkage
+@unsafe
 pub fn miloReplayStart(argv: *u8): void {
     if envPath("MILO_RECORD").len() == 0 && envPath("MILO_REPLAY").len() == 0 {
         return
@@ -459,6 +460,7 @@ pub fn replayHeapMalloc(n: i64): *u8 {
 
 // free() for Milo allocations: blocks from the fixed-address heap go back to it, any
 // other pointer (libc's, the engine's own) goes to libc.
+@unsafe
 pub fn replayHeapFree(p: *u8): void {
     unsafe {
         if p as i64 == 0 {
@@ -474,6 +476,7 @@ pub fn replayHeapFree(p: *u8): void {
 
 // realloc() for Milo allocations: a block from the fixed-address heap grows within it,
 // so its new address replays too; any other pointer goes to libc.
+@unsafe
 pub fn replayHeapRealloc(p: *u8, n: i64): *u8 {
     unsafe {
         if p as i64 == 0 {
@@ -550,6 +553,7 @@ pub fn replayHeapMap(len: i64): *u8 {
 
 // Give back a block replayHeapMap handed out. False when `p` is not one (the caller
 // unmaps it itself).
+@unsafe
 pub fn replayHeapUnmap(p: *u8, len: i64): bool {
     if !heapInArena(p) {
         return false
@@ -1088,6 +1092,7 @@ pub fn replaySplitNul(payload: &string): Vec<string> {
 
 // Replay: copy the recorded `n` bytes into `buf`. The byte count is the call's arg,
 // so a request for a different count diverges instead of reading past the record.
+@unsafe
 pub fn replayTakeInto(kind: &string, buf: *u8, n: i64): void {
     let p = replayTake(kind, n.toString())
     unsafe {
@@ -1098,6 +1103,7 @@ pub fn replayTakeInto(kind: &string, buf: *u8, n: i64): void {
 }
 
 // Record: the `n` bytes the OS just wrote into `buf`.
+@unsafe
 pub fn replayPutFrom(kind: &string, buf: *u8, n: i64): void {
     var p = String.withCapacity(n)
     unsafe {
@@ -1436,6 +1442,7 @@ pub fn replayLseek(fd: i32, off: i64, whence: i32): i64 {
 }
 
 // Lowercase hex of `n` raw bytes (socket addresses in a record's arg).
+@unsafe
 pub fn replayHex(p: *u8, n: i64): string {
     let digits = "0123456789abcdef"
     var out = String.withCapacity(n * 2)
@@ -1653,6 +1660,7 @@ pub fn replaySyncAtomic(op: &string, f: () => i64): i64 {
 // note it in the trace (`trace.hole`: arg the name, payload where), so `milo trace`
 // shows a recording with gaps. Under replay the note is consumed silently; the call
 // itself runs for real in both.
+@unsafe
 pub fn replayHole(name: &string, site: *u8): void {
     let mode = replayModeNow()
     if mode < 2 {
@@ -1687,6 +1695,7 @@ pub fn replayHole(name: &string, site: *u8): void {
 
 // replayHole with C strings, for a report the compiler inserts (a thread closure that
 // shares unsafe memory, see src/checker-program-passes.ts: checkThreadBoundary).
+@unsafe
 pub fn replayHoleAt(name: *u8, site: *u8): void {
     if replayOff() {
         return
@@ -1765,6 +1774,7 @@ impl ReplayCall {
     }
 
     // A C string argument (a path, a variable name); `-` for null.
+    @unsafe
     fn argCstr(self: &mut Self, p: *u8): void {
         self.sep()
         unsafe {
@@ -1777,13 +1787,15 @@ impl ReplayCall {
     }
 
     // `n` bytes an argument points at, in hex.
+    @unsafe
     fn argBytes(self: &mut Self, p: *u8, n: i64): void {
         self.sep()
         if p as i64 == 0 || n <= 0 {
             self.arg.push('-')
             return
         }
-        self.arg.pushStr(replayHex(p, n))
+        // `p` covering `n` bytes is the caller's word (this method is @unsafe).
+        unsafe { self.arg.pushStr(replayHex(p, n)) }
     }
 
     // True when the call is to be answered from the trace.
@@ -1839,6 +1851,7 @@ impl ReplayCall {
 
     // Replay: copy the next recorded output into `p` (skipped when the recording had
     // none, or `p` is null).
+    @unsafe
     fn outInto(self: &mut Self, p: *u8): void {
         let n = self.nextLen()
         if n < 0 {
@@ -1893,6 +1906,7 @@ impl ReplayCall {
     }
 
     // Record: `n` bytes at `p` as the next output (absent when `p` is null or `n` < 0).
+    @unsafe
     fn outFrom(self: &mut Self, p: *u8, n: i64): void {
         if p as i64 == 0 || n < 0 {
             self.lens.push(-1)
@@ -1904,6 +1918,7 @@ impl ReplayCall {
 
     // Record: the NUL-terminated string at `p` (within `cap` bytes when `cap` >= 0),
     // terminator included.
+    @unsafe
     fn outCstr(self: &mut Self, p: *u8, cap: i64): void {
         if p as i64 == 0 {
             self.lens.push(-1)
@@ -1918,7 +1933,8 @@ impl ReplayCall {
         if cap < 0 || n < cap {
             n += 1
         }
-        self.outFrom(p, n)
+        // The n bytes were just scanned through `p`, which the caller vouched for.
+        unsafe { self.outFrom(p, n) }
     }
 
     // Record: write the record, then put errno back (the write is a syscall too).

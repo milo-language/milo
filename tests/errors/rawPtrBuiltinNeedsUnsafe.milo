@@ -1,0 +1,8 @@
+// @error: calling '_loadU8' requires an unsafe block
+// The `_loadU8` / `_cstrToString` / atomic builtins read or write through whatever
+// pointer they are given, and safe code can hold a null one. Outside std they need
+// `unsafe`, like a deref does.
+fn main(): void {
+    let p = 0 as *u8
+    print(_loadU8(p))
+}

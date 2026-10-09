@@ -217,6 +217,7 @@ extern fn raise(sig: i32): i32
 
 // Run `f` (a plain `fn(): void`) when the process exits normally: std/replay checks for
 // unconsumed records there.
+@unsafe
 pub fn atExit(f: *u8): void {
     unsafe { atexit(f) }
 }
@@ -410,6 +411,7 @@ pub fn mapAnon(): i32 {
 
 // Linux keeps the running binary's path in /proc/self/exe. readlink does not
 // NUL-terminate, so the caller's buffer must be zeroed or terminated at n.
+@unsafe
 pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     unsafe {
         let n = readlink("/proc/self/exe", buf, bufsize)
@@ -437,6 +439,7 @@ pub extern fn unsetenv(name: *u8): i32
 pub extern fn execvpe(file: *u8, argv: *u8, envp: *u8): i32
 
 // Set `name` to `value`, replacing any existing value. 0 on success.
+@unsafe
 pub fn envSet(name: *u8, value: *u8): i32 {
     unsafe {
         return setenv(name, value, 1)
@@ -444,6 +447,7 @@ pub fn envSet(name: *u8, value: *u8): i32 {
 }
 
 // Remove `name` from the environment. 0 on success; removing an unset name succeeds.
+@unsafe
 pub fn envUnset(name: *u8): i32 {
     unsafe {
         return unsetenv(name)
@@ -473,6 +477,7 @@ pub fn environBlock(): **u8 {
 
 // execvp — PATH search included — with an explicit environment.
 @replayHooked
+@unsafe
 pub fn execvpWithEnv(file: *u8, argv: *u8, envp: *u8): i32 {
     unsafe {
         return execvpe(file, argv, envp)
@@ -625,6 +630,7 @@ pub extern fn execve(path: *u8, argv: *u8, envp: *u8): i32
 // Re-execute this program once with ADDR_NO_RANDOMIZE so recorded and replayed runs get
 // the same addresses. False when no re-exec was needed or it failed (the caller warns).
 @replayHooked
+@unsafe
 pub fn aslrReexec(argv: *u8): bool {
     unsafe {
         let cur = personality(4294967295)
@@ -649,6 +655,7 @@ pub fn aslrReexec(argv: *u8): bool {
 
 // waitpid(2): the reaped pid, 0 with WNOHANG and nothing to reap, or <0 with errno set.
 @replayHooked
+@unsafe
 pub fn waitpidRaw(pid: i32, status: *u8, options: i32): i32 {
     unsafe { return waitpid(pid, status, options) }
 }
@@ -669,6 +676,7 @@ pub extern fn madvise(addr: *u8, len: i64, advice: i32): i32
 // the whole reservation is 8 GB of zeros written down systemd-coredump's or apport's
 // pipe, which is how a replay stopped by SIGTRAP took 30 s to die on a CI runner.
 @replayHooked
+@unsafe
 pub fn memSetDumpable(p: *u8, len: i64, yes: bool): void {
     var advice: i32 = 16
     if yes {

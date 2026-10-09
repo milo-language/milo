@@ -288,8 +288,9 @@ class Gen {
     const call = this.callArgs(fn, extra);
     return [
       this.sig(fn, name, extra),
+      // `_site` is the C string the compiler passes for this call site.
       `    if !replayOff() {`,
-      `        replayHole("${fn.name}", _site)`,
+      `        unsafe { replayHole("${fn.name}", _site) }`,
       `    }`,
       isVoid(fn.retType) ? `    unsafe { ${call} }` : `    unsafe { return ${call} }`,
       `}`,

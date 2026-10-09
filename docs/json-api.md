@@ -3,7 +3,7 @@ system: tooling-api
 purpose: the compiler's machine-readable surfaces — what tooling reads instead of importing TypeScript
 key-files: src/api-search.ts, src/lang-info.ts, src/warnings.ts, src/main.ts (runCheck), tests/apiJson.test.ts, tests/langInfo.test.ts
 update-when: a JSON payload gains or loses a field, or a new machine-readable command lands
-last-verified: 2026-09-22 (api --json: additive enum `variants` and field `doc`; lang --json schema 2 plus additive `commands`/`cliOptions`/`symbolDocs`/`primitiveTypeInfo`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
+last-verified: 2026-10-09 (api --json: additive fn `attributes` and `--internal`; earlier: additive enum `variants` and field `doc`; lang --json schema 2 plus additive `commands`/`cliOptions`/`symbolDocs`/`primitiveTypeInfo`; schema 2: warning doc/fix/example; earlier: check --json schema 2 adds `fix`; earlier: warnings lose the error-by-default field)
 -->
 
 # Machine-readable compiler API
@@ -80,6 +80,13 @@ published.
 `HashMap<string, i64>` or `(&Request, i64) => Response` itself. `returns` is `"void"` when
 the signature has no return type. Struct `fields` mean a consumer never re-reads
 `std/*.milo` to answer "does this type have that field".
+
+A function carries `attributes` (additive) when `@name` lines sit above it: the names
+without the `@`, in source order (`["replayHooked", "unsafe"]`). `--internal` adds the
+`// @internal` functions, which the listing otherwise hides, each flagged `"internal": true`;
+they are `pub`, so any program can call them, and a gate over what safe code can reach
+needs them ([tests/stdRawPointerApi.test.ts](../tests/stdRawPointerApi.test.ts) reads
+both fields).
 
 A struct field carries `doc` (additive) when a comment block sits directly above it, or a
 `// note` trails it on the same line. An enum type carries `variants` (additive, still

@@ -19,11 +19,12 @@ fn main() {
     // @expect: same buffer: true
     print($"same buffer: {fromLocal == fromParam}")
     // @expect: h 104
-    print($"h {_loadU8(fromLocal)}")
+    // `local` is alive and non-empty, so its first byte is readable.
+    unsafe { print($"h {_loadU8(fromLocal)}") }
     let h = Holder {
         s: "world"
     }
     let fromField = _strDataPtr(h.s)
     // @expect: w 119
-    print($"w {_loadU8(fromField)}")
+    unsafe { print($"w {_loadU8(fromField)}") }
 }

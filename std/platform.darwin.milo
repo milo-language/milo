@@ -231,6 +231,7 @@ extern fn raise(sig: i32): i32
 
 // Run `f` (a plain `fn(): void`) when the process exits normally: std/replay checks for
 // unconsumed records there.
+@unsafe
 pub fn atExit(f: *u8): void {
     unsafe { atexit(f) }
 }
@@ -427,6 +428,7 @@ pub fn mapAnon(): i32 {
 pub extern fn proc_pidpath(pid: i32, buf: *u8, bufsize: u32): i32
 
 // Absolute path of the running executable into `buf`. Returns bytes written, or -1.
+@unsafe
 pub fn exePathInto(buf: *u8, bufsize: i64): i64 {
     var n: i32 = 0
     unsafe { n = proc_pidpath(getpid(), buf, bufsize as u32) }
@@ -453,11 +455,13 @@ pub extern fn unsetenv(name: *u8): i32
 pub extern fn _NSGetEnviron(): ***u8
 
 // Set `name` to `value`, replacing any existing value. 0 on success.
+@unsafe
 pub fn envSet(name: *u8, value: *u8): i32 {
     unsafe { return setenv(name, value, 1) }
 }
 
 // Remove `name` from the environment. 0 on success; removing an unset name succeeds.
+@unsafe
 pub fn envUnset(name: *u8): i32 {
     unsafe { return unsetenv(name) }
 }
@@ -475,6 +479,7 @@ pub fn environBlock(): **u8 {
 // execvp picks it up. Correct only between fork and exec, where no other code can
 // observe the clobbered environ.
 @replayHooked
+@unsafe
 pub fn execvpWithEnv(file: *u8, argv: *u8, envp: *u8): i32 {
     unsafe {
         var slot: *u8 = envp
@@ -653,6 +658,7 @@ fn processTraced(): bool {
 // Re-execute this program in place with ASLR off. Returns only when it did not: when
 // a debugger traces the process (it chose), or the spawn failed (false).
 @replayHooked
+@unsafe
 pub fn aslrReexec(argv: *u8): bool {
     if argv as i64 == 0 || processTraced() {
         return true
@@ -683,6 +689,7 @@ pub fn aslrReexec(argv: *u8): bool {
 
 // waitpid(2): the reaped pid, 0 with WNOHANG and nothing to reap, or <0 with errno set.
 @replayHooked
+@unsafe
 pub fn waitpidRaw(pid: i32, status: *u8, options: i32): i32 {
     unsafe { return waitpid(pid, status, options) }
 }
@@ -697,6 +704,7 @@ pub fn killRaw(pid: i32, sig: i32): i32 {
 
 // Whether [p, p+len) goes into a core dump. Only Linux can exclude a range (see
 // platform.linux.milo); here every mapping is dumped as the OS decides.
+@unsafe
 pub fn memSetDumpable(_p: *u8, _len: i64, _yes: bool): void {
     return
 }
