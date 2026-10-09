@@ -6,9 +6,9 @@
 //
 // AGENTS.md carries a hand-written table of the pipeline's core files; it had 14 rows
 // against 39 files in src/, so two thirds of the compiler — abi, cgu, pkg,
-// safety, suggest, verify, wcet — was undocumented at the level an agent reads first.
-// Growing that table is the wrong fix: AGENTS.md is loaded into every session, so its
-// cost is per-conversation. The full index lives here and is projected, exactly like
+// safety, suggest, verify, wcet — was undocumented at the level a reader sees first.
+// Growing that table is the wrong fix: AGENTS.md is meant to stay short enough to read
+// in one sitting. The full index lives here and is projected, exactly like
 // docs/scripts.md; improve an entry by improving the file's own first line.
 import { readFileSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";

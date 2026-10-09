@@ -346,7 +346,7 @@ Not memory safety; listed because it is the row where the prover claimed more th
   milojs 0 sites, the package suites 0, this repo's examples 1 (`apsis/tools/sweepdials`,
   rewritten to calibrate by index), the emulators 2 (both functions whose `&` parameter really
   was written through; fixed by taking `&mut`).
-- **Found by:** a milojs agent that wrote `nativeValue(&mut st, ...)` inside a function taking
+- **Found by:** code in milojs that wrote `nativeValue(&mut st, ...)` inside a function taking
   `st: &Interp`, and noticed it compiled.
 
 ## What the compiler does not check, and what happens instead

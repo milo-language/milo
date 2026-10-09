@@ -7,7 +7,7 @@
 # system memory (macOS enforces no rlimits — the guard is the only real cap).
 #
 # The REAL binary is .selfhost/milo-self.bin. .selfhost/milo-self is a
-# self-guarding wrapper: any bare invocation — human or agent — gets the RSS
+# self-guarding wrapper: any bare invocation gets the RSS
 # watchdog automatically, so forgetting the guard can no longer crash the OS.
 # Test harnesses call milo-self.bin directly via guardedRun (single guard).
 set -e

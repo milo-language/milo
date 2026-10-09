@@ -168,8 +168,8 @@ otherwise**, and verify with the self-check above rather than with fixtures.
 # Self-Hosting Plan (v2 — 2026-07-08)
 
 Goal: `milo-self` (the Milo compiler written in Milo, in `src-milo/`) compiles
-itself, and the bootstrap converges. This doc is written to be executable by an
-implementing agent with no other context: every milestone has a command-line
+itself, and the bootstrap converges. This doc is written to be executable by a
+contributor with no other context: every milestone has a command-line
 acceptance test, and the rules in "Working Agreement" are mandatory.
 
 > **Why self-host at all — decided 2026-08-04.** For *proof*, not correctness. A rewrite of
@@ -295,7 +295,7 @@ conclusion). M6 (fixture parity) is the only open track.
    `tests/errors/`). Full language. Comes after bootstrap; tracked by
    ratchet, may ship incomplete with an explicit exclusion list.
 
-## Working Agreement (mandatory for the implementing agent)
+## Working Agreement (mandatory for contributors)
 
 - **Oracle**: the TS compiler (`src/*.ts`) is ground truth. Never change TS
   compiler behavior and milo0 behavior in the same commit. If the oracle

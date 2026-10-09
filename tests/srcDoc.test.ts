@@ -3,7 +3,7 @@
 //
 // The only map of the compiler was the 14-row table in AGENTS.md, against 39 files:
 // abi, cgu, pkg, safety, suggest, verify and wcet were invisible to anyone
-// (agent or human) reading the docs to find where a change belongs.
+// reading the docs to find where a change belongs.
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -25,8 +25,8 @@ test("every compiler source is listed", () => {
 });
 
 test("every file AGENTS.md's pipeline table names still exists", () => {
-  // The curated table stays small on purpose (it costs context every session), but a row
-  // naming a file that has been renamed sends every agent to the wrong place.
+  // The curated table stays small on purpose, but a row naming a file that has been
+  // renamed sends every reader to the wrong place.
   const agents = readFileSync(join(ROOT, "AGENTS.md"), "utf-8");
   const listed = [...agents.matchAll(/`(src\/[a-z\-]+\.ts)`/g)].map(m => m[1]!);
   expect(listed.length).toBeGreaterThan(5);

@@ -1,6 +1,6 @@
 // Gate on the corpus counts quoted in prose (scripts/gen-stats.ts).
 //
-// The agent rules doc claimed the nightly self-host sweep covered 589 fixtures and
+// AGENTS.md claimed the nightly self-host sweep covered 589 fixtures and
 // docs/testing.md claimed 470, against a real 597. A number inside a sentence is
 // invisible to every other gate in the repo, so it drifts silently and then gets
 // quoted back as fact.
@@ -26,8 +26,8 @@ test("the stat functions count something", () => {
 
 test("the fixture count is the number the test driver actually walks", () => {
   // Independent of gen-stats.ts: if both used the same helper, a bug in it would agree
-  // with itself. Untracked files are excluded to match — a shared checkout regularly
-  // holds another agent's scratch fixture, and CI would never see it.
+  // with itself. Untracked files are excluded to match — a checkout regularly
+  // holds an untracked scratch fixture, and CI would never see it.
   const untracked = new Set(
     execFileSync("git", ["ls-files", "--others", "--exclude-standard", "--", "tests/fixtures/*.milo"],
       { cwd: ROOT, encoding: "utf-8" }).split("\n").filter(Boolean).map(p => p.replace("tests/fixtures/", "")),

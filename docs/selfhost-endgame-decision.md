@@ -138,7 +138,7 @@ accepted); only the cause is not. It cannot move the verdict: 3 fixtures against
 a 36-fixture gap.
 
 The classification column is code reading, NOT empirically verified — the
-classifying agent could not build `milo-self` at all, because of the guard bug
+classification could not build `milo-self` at all, because of the guard bug
 fixed in `91479476`. Re-running it now that guarded builds work would firm up
 the column, but the verdict is not sensitive at this margin: `misscoped` would
 have to be under-counted by 3.5x to reach 50.

@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: milo-idioms
-purpose: canonical Milo patterns for text handling and ownership, and the papercuts that push agents toward non-idiomatic code
+purpose: canonical Milo patterns for text handling and ownership, and the papercuts that push code toward non-idiomatic patterns
 key-files: std/string.milo, std/unicode.milo, docs/language-reference.md, CONVENTIONS.md
 update-when: a listed workaround stops being necessary, or a new papercut keeps producing the same non-idiomatic shape
 last-verified: 2026-09-01

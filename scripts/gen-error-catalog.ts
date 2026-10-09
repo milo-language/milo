@@ -2,7 +2,7 @@
 // that provokes it.
 //
 // One copy, on the docs site. It used to be docs/errors.md, outside the site, where the only
-// readers were agents grepping the repo; a user hitting the error never saw it.
+// readers were people grepping the repo; a user hitting the error never saw it.
 //
 // Run:  bun run scripts/gen-error-catalog.ts          # rewrite the catalog
 //       bun run scripts/gen-error-catalog.ts --check  # fail if it is stale (CI/test)

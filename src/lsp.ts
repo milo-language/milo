@@ -2027,7 +2027,7 @@ function walkMiloFiles(dir: string, acc: string[]): void {
   let entries: import("fs").Dirent[];
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
-    // Skip dotdirs (.git, .worktrees, .claude) and vendored deps.
+    // Skip dotdirs (.git, .worktrees, ...) and vendored deps.
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = resolve(dir, e.name);
     if (e.isDirectory()) walkMiloFiles(full, acc);

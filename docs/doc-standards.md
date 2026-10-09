@@ -20,7 +20,7 @@ system: <kebab-name>        # unique handle, grep by this
 purpose: <one line>         # what this doc is for
 key-files: <comma paths>    # the code this doc describes
 update-when: <trigger>      # the event that makes this doc go stale
-last-verified: <YYYY-MM-DD> # date a human/agent confirmed it matches reality
+last-verified: <YYYY-MM-DD> # date someone confirmed it matches reality
 -->
 ```
 
@@ -28,7 +28,7 @@ Optional 6th/7th lines when useful: `owner-persona:` and `depends-on:`. Keep the
 
 ### Why this shape
 - **Greppable routing.** Find the doc for a system without reading any of them: `grep -rl "system: codegen" docs *.md`. `AGENTS.md` routes on this.
-- **Staleness is explicit.** `update-when` tells the next agent exactly when to distrust the doc; `last-verified` says how old the trust is.
+- **Staleness is explicit.** `update-when` tells the next reader exactly when to distrust the doc; `last-verified` says how old the trust is.
 - HTML comment → invisible in rendered Markdown, so it costs the reader nothing.
 
 ## Rules

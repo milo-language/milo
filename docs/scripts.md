@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: dev-scripts
-purpose: index of agent-facing scripts and how to write new ones well; agents should keep building these out
+purpose: index of dev scripts and how to write new ones well
 key-files: scripts/, bin/, .githooks/, scripts/lint.ts
 update-when: a script is added/removed/changed, or the scripting conventions change
 last-verified: 2026-08-15
@@ -8,7 +8,7 @@ last-verified: 2026-08-15
 
 # Dev Scripts & Tools
 
-`scripts/` holds the tools that make agent work faster: things you'd otherwise re-derive the incantation for every time. **Build these out constantly** — the moment you find yourself running the same 3-command dance twice, or memorizing a tool's flags, write a script and add it here. A good script turns tribal knowledge into a one-liner.
+`scripts/` holds the tools that make repo work faster: things you'd otherwise re-derive the incantation for every time. **Build these out constantly** — the moment you find yourself running the same 3-command dance twice, or memorizing a tool's flags, write a script and add it here. A good script turns tribal knowledge into a one-liner.
 
 ## When to write one
 - A multi-step operation you've now done twice (bundle, sweep, regenerate).
@@ -104,4 +104,4 @@ To change an entry, change that line — this table is a projection of it.
 | `.githooks/pre-commit` | Format staged .milo files with bin/milo-fmt (built on demand by `milo fmt`). |
 <!-- END GENERATED INDEX -->
 
-This table is regenerated, not maintained — it is how agents discover what already exists before writing a duplicate.
+This table is regenerated, not maintained — it is how contributors discover what already exists before writing a duplicate.

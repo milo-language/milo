@@ -3,7 +3,7 @@
 // Nothing checked this, and four links had rotted the same way: a doc under docs/
 // linking to `docs/scripts.md` (correct from the repo root, dead from where it lives)
 // and language-reference.md still pointing at `examples/json_parser.milo`, moved to
-// examples/basics/json.milo. A dead link in an agent-facing router is worse than a
+// examples/basics/json.milo. A dead link in a doc index is worse than a
 // missing one — it reads as "this was checked".
 import { test, expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";

@@ -6,7 +6,7 @@
 //       bun run scripts/gen-stats.ts --list   # print the current values
 //
 // Mark a count in any tracked doc as `<!-- stat:NAME -->123<!-- /stat -->`; the text
-// between the markers is replaced. Docs drifted quietly before this — the agent rules doc said
+// between the markers is replaced. Docs drifted quietly before this — AGENTS.md said
 // the nightly sweep covered 589 fixtures and docs/testing.md said 470, against a real
 // 597 — because a count in a sentence is invisible to every other gate.
 //
@@ -19,8 +19,8 @@ import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
 
-// Counts come from git, not the working tree. This repo is often a shared checkout with
-// another agent's untracked scratch fixtures in it; counting those made the docs claim a
+// Counts come from git, not the working tree. A checkout often has
+// untracked scratch fixtures in it; counting those made the docs claim a
 // number CI could never reproduce, and the gate then failed for everyone.
 function tracked(dir: string): string[] {
   const out = execFileSync("git", ["ls-files", "--", `${dir}/*.milo`], { cwd: ROOT, encoding: "utf-8" });

@@ -17,7 +17,7 @@ last-verified: 2026-10-08 (integer niche Option layout, ranged-int flow rules; e
 A memory-safe systems language with simple syntax — Rust's semantics with a lighter, more TypeScript-like surface. Compiles to native code via LLVM.
 
 > **This file is the authoritative reference.** It is the exhaustive spec, kept in step with
-> `src/parser.ts` and `src/checker.ts`, and it is what agents and contributors should read.
+> `src/parser.ts` and `src/checker.ts`, and it is what contributors should read.
 > The published [Learn Milo pages](https://milo-language.github.io/milo/language/) are the
 > teaching version of the same material: shorter, example-led, and aimed at newcomers. When
 > the two disagree, this file is right and the site page needs updating.
