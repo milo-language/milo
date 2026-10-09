@@ -1,0 +1,74 @@
+// The platform digest and GCM calls take 32-bit (CommonCrypto, CNG) or int (EVP)
+// lengths, so std/cryptosys feeds them in pieces: a one-shot call on an input past
+// 4 GiB used to digest only part of it. A 4 GiB test input is not practical, so this
+// forces the piece size down to a few bytes and checks the multi-piece path gives the
+// same bytes as the whole-input path, including inputs that end mid-piece and inputs
+// shorter than one piece. On Linux the digests are size_t one-shots (the chunk is
+// ignored) and only GCM goes through pieces; on macOS GCM is the size_t one-shot.
+// @skip-os: win32
+// @expect: sha256 ok
+// @expect: md5 ok
+// @expect: sha1 ok
+// @expect: known ok
+// @expect: gcm ok
+from "std/cryptosys" import {
+    sha256Raw, md5Raw, sha1Raw, gcmEncryptRaw, gcmDecryptRaw
+}
+from "std/hex" import {
+    Hex
+}
+
+fn inputs(): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    v.push("")
+    v.push("a")
+    v.push("abc")
+    var long = ""
+    for i in 0..1000 {
+        long.push((65 + i % 26) as u8)
+    }
+    v.push(long)
+    return v
+}
+
+fn main() {
+    let ins = inputs()
+    let chunks = [1, 3, 7, 64, 1000, 4096]
+    var sha = true
+    var md = true
+    var sh1 = true
+    for s in ins {
+        let a = sha256Raw(s, 0)
+        let b = md5Raw(s, 0)
+        let c = sha1Raw(s, 0)
+        for k in chunks {
+            sha = sha && sha256Raw(s, k) == a
+            md = md && md5Raw(s, k) == b
+            sh1 = sh1 && sha1Raw(s, k) == c
+        }
+    }
+    if sha { print("sha256 ok") }
+    if md { print("md5 ok") }
+    if sh1 { print("sha1 ok") }
+    // The chunked path against a published vector, so a bug shared by both paths shows.
+    if Hex.encode(sha256Raw("abc", 1)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+        print("known ok")
+    }
+
+    let key = "01234567890123456789012345678901"
+    let iv = "123456789012"
+    var gcm = true
+    for s in ins {
+        let aad = s.clone()
+        let whole = gcmEncryptRaw(256, key, iv, s, aad, 0)!
+        for k in chunks {
+            let piece = gcmEncryptRaw(256, key, iv, s, aad, k)!
+            gcm = gcm && piece == whole
+            let ct = whole.substr(0, whole.len - 16)
+            let tag = whole.substr(whole.len - 16, whole.len)
+            let back = gcmDecryptRaw(256, key, iv, ct, tag, aad, k)!
+            gcm = gcm && back == s
+        }
+    }
+    if gcm { print("gcm ok") }
+}

@@ -44,8 +44,12 @@ fn cryptosysBytes(buf: &[u8; 32], n: i64): string {
     return result
 }
 
+// The OpenSSL one-shot digests take a size_t length, so `chunk` is unused on this arm;
+// it is in the signature because the macOS arm feeds CommonCrypto's 32-bit lengths in
+// pieces of at most `chunk` bytes.
+
 // Raw 32-byte SHA-256 digest.
-pub fn sha256Raw(input: &string): string {
+pub fn sha256Raw(input: &string, _chunk: i64): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
         SHA256(input, input.len as u64, hash)
@@ -54,7 +58,7 @@ pub fn sha256Raw(input: &string): string {
 }
 
 // Raw 16-byte MD5 digest.
-pub fn md5Raw(input: &string): string {
+pub fn md5Raw(input: &string, _chunk: i64): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
         MD5(input, input.len as u64, hash)
@@ -63,7 +67,7 @@ pub fn md5Raw(input: &string): string {
 }
 
 // Raw 20-byte SHA-1 digest.
-pub fn sha1Raw(input: &string): string {
+pub fn sha1Raw(input: &string, _chunk: i64): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
         SHA1(input, input.len as u64, hash)
@@ -80,6 +84,49 @@ fn evpCtrlGcmSetTag(): i32 {
     return 17
 }
 
+// Largest single EVP update. EVP_{En,De}cryptUpdate take the input length as int, so an
+// input past 2 GiB cast to i32 wrapped (negative, or a short count that silently dropped
+// the tail). GCM is a stream mode: feeding it in pieces gives the same bytes and tag.
+let EVP_MAX_CHUNK: i64 = 1073741824
+
+// Feed `len` bytes at `src` through EVP_{En,De}cryptUpdate in pieces of at most `chunk`
+// (clamped to EVP_MAX_CHUNK). `dst` null means AAD. Returns the bytes written to `dst`,
+// or -1 if an update failed.
+fn evpFeed(ctx: *u8, encrypt: bool, dst: *u8, src: *u8, len: i64, chunk: i64): i64 {
+    var step = chunk
+    if step > EVP_MAX_CHUNK || step < 1 {
+        step = EVP_MAX_CHUNK
+    }
+    var off: i64 = 0
+    var written: i64 = 0
+    while off < len {
+        var n = len - off
+        if n > step {
+            n = step
+        }
+        var outl: i32 = 0
+        unsafe {
+            let inp = (src as i64 + off) as *u8
+            let outp = if dst as i64 == 0 {
+                0 as *u8
+            } else {
+                (dst as i64 + written) as *u8
+            }
+            let ok = if encrypt {
+                EVP_EncryptUpdate(ctx, outp, (outl.addrOf()) as *i32, inp, n as i32)
+            } else {
+                EVP_DecryptUpdate(ctx, outp, (outl.addrOf()) as *i32, inp, n as i32)
+            }
+            if ok != 1 {
+                return -1
+            }
+        }
+        off = off + n
+        written = written + outl as i64
+    }
+    return written
+}
+
 // ── One GCM implementation per direction ──
 //
 // AES-128-GCM and AES-256-GCM differ by exactly two things: the EVP cipher and the key
@@ -89,8 +136,9 @@ fn evpCtrlGcmSetTag(): i32 {
 // and the self-naming length errors; only the EVP dance lives here.
 
 // AES-GCM encrypt; returns ciphertext with the 16-byte tag appended. Lengths are the
-// caller's to guarantee: std/crypto checks them before calling.
-pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string): Result<string, string> {
+// caller's to guarantee: std/crypto checks them before calling. AAD and plaintext go to
+// EVP in pieces of at most `chunk` bytes.
+pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string, chunk: i64): Result<string, string> {
     unsafe {
         let ctx = EVP_CIPHER_CTX_new()
         if ctx as i64 == 0 {
@@ -107,9 +155,8 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
             return Result.Err("EVP_EncryptInit_ex failed")
         }
 
-        var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_EncryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
+            if evpFeed(ctx, true, 0 as *u8, aad as *u8, aad.len, chunk) < 0 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate (AAD) failed")
             }
@@ -119,10 +166,11 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
         if plaintext.len > 0 {
             ctBuf = malloc(plaintext.len + 16)
         }
-        var outLen: i32 = 0
+        var outLen: i64 = 0
 
         if plaintext.len > 0 {
-            if EVP_EncryptUpdate(ctx, ctBuf, (outLen.addrOf()) as *i32, plaintext, plaintext.len as i32) != 1 {
+            outLen = evpFeed(ctx, true, ctBuf, plaintext as *u8, plaintext.len, chunk)
+            if outLen < 0 {
                 free(ctBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate failed")
@@ -131,7 +179,7 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
 
         var finalLen: i32 = 0
         let finalPtr = if plaintext.len > 0 {
-            (ctBuf as i64 + outLen as i64) as *u8
+            (ctBuf as i64 + outLen) as *u8
         } else {
             0 as *u8
         }
@@ -155,8 +203,8 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
         EVP_CIPHER_CTX_free(ctx)
 
         var ciphertext: string = ""
-        let totalLen = outLen + finalLen
-        for i in 0..totalLen as i64 {
+        let totalLen = outLen + finalLen as i64
+        for i in 0..totalLen {
             ciphertext.push(*((ctBuf as i64 + i) as *u8))
         }
         if plaintext.len > 0 {
@@ -170,8 +218,9 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
     }
 }
 
-// AES-GCM decrypt; Err on authentication failure.
-pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string> {
+// AES-GCM decrypt; Err on authentication failure. Pieces of at most `chunk` bytes, as in
+// gcmEncryptRaw.
+pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string, chunk: i64): Result<string, string> {
     unsafe {
         let ctx = EVP_CIPHER_CTX_new()
         if ctx as i64 == 0 {
@@ -188,9 +237,8 @@ pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &strin
             return Result.Err("EVP_DecryptInit_ex failed")
         }
 
-        var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_DecryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
+            if evpFeed(ctx, false, 0 as *u8, aad as *u8, aad.len, chunk) < 0 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate (AAD) failed")
             }
@@ -200,10 +248,11 @@ pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &strin
         if ciphertext.len > 0 {
             ptBuf = malloc(ciphertext.len + 16)
         }
-        var outLen: i32 = 0
+        var outLen: i64 = 0
 
         if ciphertext.len > 0 {
-            if EVP_DecryptUpdate(ctx, ptBuf, (outLen.addrOf()) as *i32, ciphertext, ciphertext.len as i32) != 1 {
+            outLen = evpFeed(ctx, false, ptBuf, ciphertext as *u8, ciphertext.len, chunk)
+            if outLen < 0 {
                 free(ptBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate failed")
@@ -221,7 +270,7 @@ pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &strin
 
         var finalLen: i32 = 0
         let finalPtr = if ciphertext.len > 0 {
-            (ptBuf as i64 + outLen as i64) as *u8
+            (ptBuf as i64 + outLen) as *u8
         } else {
             0 as *u8
         }
@@ -236,8 +285,8 @@ pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &strin
         EVP_CIPHER_CTX_free(ctx)
 
         var plaintext: string = ""
-        let totalLen = outLen + finalLen
-        for i in 0..totalLen as i64 {
+        let totalLen = outLen + finalLen as i64
+        for i in 0..totalLen {
             plaintext.push(*((ptBuf as i64 + i) as *u8))
         }
         if ciphertext.len > 0 {

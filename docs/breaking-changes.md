@@ -40,6 +40,7 @@ shim is impossible: the point is that the old spellings stop compiling.
 | `lib.handle` (`Lib`, std/dl) | private |
 | `lib.close()` on a borrowed `&Lib` | `close(self: Lib)` consumes it; a Lib that is never closed stays loaded, as before |
 | `stream.incoming()` borrowed the `TlsStream`, whose drop then freed the SSL state under the background pump | `incoming(self: TlsStream)` consumes it and the pump owns it; send any request before calling `incoming()` |
+| `sha256Raw(s)`, `md5Raw(s)`, `sha1Raw(s)`, `gcmEncryptRaw(...)`, `gcmDecryptRaw(...)` (std/cryptosys; macOS and Windows digested only the low 32 bits' worth of an input past 4 GiB, Linux GCM wrapped past 2 GiB) | each takes a trailing `chunk: i64`, the largest piece handed to the C API in one call; pass `0` for the platform maximum. `Crypto.sha256`/`md5`/`sha1`/`aesGcm*` are unchanged and now correct past 4 GiB |
 | `mmapFile(f, size)` with `size` past the end of the file (reading the tail raised SIGBUS) | `Err`; pass at most `f.size()` |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)

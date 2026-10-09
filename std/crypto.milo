@@ -12,27 +12,33 @@ from "std/hex" import {
     Hex
 }
 
+// The `chunk` argument every cryptosys call takes: 0 asks the arm for its largest safe
+// piece. Each arm clamps to a size its C API's length type can hold (CommonCrypto and
+// CNG lengths are 32-bit, EVP updates take int), which is what keeps an input past
+// 4 GiB from being digested or encrypted only in part. Tests pass a tiny chunk instead.
+let CRYPTO_WHOLE_CHUNK: i64 = 0
+
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
 fn sha256(input: &string): string {
-    let raw = sha256Raw(input)
+    let raw = sha256Raw(input, CRYPTO_WHOLE_CHUNK)
     return Hex.encode(raw)
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
 fn md5(input: &string): string {
-    let raw = md5Raw(input)
+    let raw = md5Raw(input, CRYPTO_WHOLE_CHUNK)
     return Hex.encode(raw)
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
 fn sha1(input: &string): string {
-    let raw = sha1Raw(input)
+    let raw = sha1Raw(input, CRYPTO_WHOLE_CHUNK)
     return Hex.encode(raw)
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
 fn sha1Bytes(input: &string): string {
-    return sha1Raw(input)
+    return sha1Raw(input, CRYPTO_WHOLE_CHUNK)
 }
 
 // ── AES-GCM ──
@@ -68,7 +74,7 @@ requires iv.len == 12
     if iv.len != 12 {
         return Result.Err("aesGcmEncrypt: iv must be 12 bytes, got " + iv.len.toString())
     }
-    let raw = gcmEncryptRaw(256, key, iv, plaintext, aad)?
+    let raw = gcmEncryptRaw(256, key, iv, plaintext, aad, CRYPTO_WHOLE_CHUNK)?
     return Result.Ok(aesGcmSplit(raw))
 }
 
@@ -92,7 +98,7 @@ requires tag.len == 16
     if tag.len != 16 {
         return Result.Err("aesGcmDecrypt: tag must be 16 bytes, got " + tag.len.toString())
     }
-    return gcmDecryptRaw(256, key, iv, ciphertext, tag, aad)
+    return gcmDecryptRaw(256, key, iv, ciphertext, tag, aad, CRYPTO_WHOLE_CHUNK)
 }
 
 // Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
@@ -111,7 +117,7 @@ requires iv.len == 12
     if iv.len != 12 {
         return Result.Err("aesGcm128Encrypt: iv must be 12 bytes, got " + iv.len.toString())
     }
-    let raw = gcmEncryptRaw(128, key, iv, plaintext, aad)?
+    let raw = gcmEncryptRaw(128, key, iv, plaintext, aad, CRYPTO_WHOLE_CHUNK)?
     return Result.Ok(aesGcmSplit(raw))
 }
 
@@ -135,7 +141,7 @@ requires tag.len == 16
     if tag.len != 16 {
         return Result.Err("aesGcm128Decrypt: tag must be 16 bytes, got " + tag.len.toString())
     }
-    return gcmDecryptRaw(128, key, iv, ciphertext, tag, aad)
+    return gcmDecryptRaw(128, key, iv, ciphertext, tag, aad, CRYPTO_WHOLE_CHUNK)
 }
 
 // Crypto namespace — Crypto.sha256/sha1/sha1Bytes/md5 (platform crypto lib) + AES-GCM.

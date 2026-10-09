@@ -7,11 +7,27 @@ from "std/os" import {
     malloc, free
 }
 
-pub extern fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
+// The incremental digest API. The one-shot CC_SHA256/CC_MD5/CC_SHA1 take the length as
+// CC_LONG (uint32_t), so a call on an input past 4 GiB digested only the low 32 bits'
+// worth of it and returned a digest of the wrong message. Update takes a CC_LONG too,
+// hence the chunking in ccDigest.
+pub extern fn CC_SHA256_Init(_c: *u8): i32
 
-pub extern fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
+pub extern fn CC_SHA256_Update(_c: *u8, _data: *u8, _len: u32): i32
 
-pub extern fn CC_SHA1(_data: *u8, _len: u32, _md: *u8): *u8
+pub extern fn CC_SHA256_Final(_md: *u8, _c: *u8): i32
+
+pub extern fn CC_MD5_Init(_c: *u8): i32
+
+pub extern fn CC_MD5_Update(_c: *u8, _data: *u8, _len: u32): i32
+
+pub extern fn CC_MD5_Final(_md: *u8, _c: *u8): i32
+
+pub extern fn CC_SHA1_Init(_c: *u8): i32
+
+pub extern fn CC_SHA1_Update(_c: *u8, _data: *u8, _len: u32): i32
+
+pub extern fn CC_SHA1_Final(_md: *u8, _c: *u8): i32
 
 // kCCAlgorithmAES=0, encrypt=0, decrypt=1
 pub extern fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _dataIn: *u8, _dataInLen: i64, _cipherOut: *u8, _tagOut: *u8, _tagLen: i64): i32
@@ -27,31 +43,73 @@ fn cryptosysBytes(buf: &[u8; 32], n: i64): string {
     return result
 }
 
-// Raw 32-byte SHA-256 digest.
-pub fn sha256Raw(input: &string): string {
+// Largest single Update. Any value under 2^32 would do; 2^30 keeps the cast obviously
+// in range and the per-call overhead negligible.
+let CC_MAX_CHUNK: i64 = 1073741824
+
+// Digest `input` through Init/Update/Final in pieces of at most `chunk` bytes (clamped
+// to CC_MAX_CHUNK, so no caller can reintroduce the 32-bit wrap). alg: 0 SHA-256,
+// 1 MD5, 2 SHA-1.
+fn ccDigest(alg: i64, input: &string, chunk: i64, n: i64): string {
     var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_SHA256(input, input.len as u32, hash)
+    // 256 bytes covers every context (CC_SHA256_CTX 104, CC_SHA1_CTX 96, CC_MD5_CTX 92);
+    // u64 elements give the 8-byte alignment the u32/u64 fields inside them need.
+    var ctx: [u64; 32] = [0; 32]
+    var step = chunk
+    if step > CC_MAX_CHUNK || step < 1 {
+        step = CC_MAX_CHUNK
     }
-    return cryptosysBytes(hash, 32)
+    unsafe {
+        let c = ctx as *u8
+        if alg == 0 {
+            CC_SHA256_Init(c)
+        } else if alg == 1 {
+            CC_MD5_Init(c)
+        } else {
+            CC_SHA1_Init(c)
+        }
+        var off: i64 = 0
+        while off < input.len {
+            var len = input.len - off
+            if len > step {
+                len = step
+            }
+            let p = ((input as *u8) as i64 + off) as *u8
+            if alg == 0 {
+                CC_SHA256_Update(c, p, len as u32)
+            } else if alg == 1 {
+                CC_MD5_Update(c, p, len as u32)
+            } else {
+                CC_SHA1_Update(c, p, len as u32)
+            }
+            off = off + len
+        }
+        if alg == 0 {
+            CC_SHA256_Final(hash, c)
+        } else if alg == 1 {
+            CC_MD5_Final(hash, c)
+        } else {
+            CC_SHA1_Final(hash, c)
+        }
+    }
+    return cryptosysBytes(hash, n)
 }
 
-// Raw 16-byte MD5 digest.
-pub fn md5Raw(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_MD5(input, input.len as u32, hash)
-    }
-    return cryptosysBytes(hash, 16)
+// Raw 32-byte SHA-256 digest, fed to the platform in pieces of at most `chunk` bytes.
+// std/crypto passes the real chunk size; a test passes a tiny one to drive the multi-
+// piece path without a 4 GiB input.
+pub fn sha256Raw(input: &string, chunk: i64): string {
+    return ccDigest(0, input, chunk, 32)
 }
 
-// Raw 20-byte SHA-1 digest.
-pub fn sha1Raw(input: &string): string {
-    var hash: [u8; 32] = [0; 32]
-    unsafe {
-        CC_SHA1(input, input.len as u32, hash)
-    }
-    return cryptosysBytes(hash, 20)
+// Raw 16-byte MD5 digest; `chunk` as in sha256Raw.
+pub fn md5Raw(input: &string, chunk: i64): string {
+    return ccDigest(1, input, chunk, 16)
+}
+
+// Raw 20-byte SHA-1 digest; `chunk` as in sha256Raw.
+pub fn sha1Raw(input: &string, chunk: i64): string {
+    return ccDigest(2, input, chunk, 20)
 }
 
 // ── One GCM implementation per direction ──
@@ -61,10 +119,13 @@ pub fn sha1Raw(input: &string): string {
 // the 256 arm reported "AES-GCM encrypt failed" where the 128 arm said "AES-128-GCM".
 // std/crypto keeps the `requires` contracts and the self-naming length errors; only the
 // CommonCrypto call lives here.
+//
+// `chunk` is unused here: the GCM one-shots take size_t lengths, so nothing wraps. It
+// exists because the Linux arm feeds EVP's int-length updates in pieces.
 
 // AES-GCM encrypt; returns ciphertext with the 16-byte tag appended. Lengths are the
 // caller's to guarantee: std/crypto checks them before calling.
-pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string): Result<string, string> {
+pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string, aad: &string, _chunk: i64): Result<string, string> {
     var tag: [u8; 16] = [0; 16]
 
     unsafe {
@@ -108,7 +169,7 @@ pub fn gcmEncryptRaw(keyBits: i64, key: &string, iv: &string, plaintext: &string
 }
 
 // AES-GCM decrypt; Err on authentication failure.
-pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string> {
+pub fn gcmDecryptRaw(keyBits: i64, key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string, _chunk: i64): Result<string, string> {
     unsafe {
         let aadPtr = if aad.len > 0 {
             aad as *u8

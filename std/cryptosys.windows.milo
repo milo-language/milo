@@ -5,24 +5,55 @@
 //
 // The POSIX arms bind CommonCrypto (macOS) / OpenSSL (Linux). Windows needs neither an
 // external OpenSSL build nor the pure-Milo hashers: CNG (bcrypt.dll, in the SDK and
-// auto-linked) provides the digests directly. BCryptHash with a versioned pseudo-handle
-// (Windows 10+) is a one-shot hash needing no provider open/close — 0x21 MD5, 0x31 SHA1,
-// 0x41 SHA256, matching bcrypt.h's BCRYPT_*_ALG_HANDLE.
+// auto-linked) provides the digests directly. A versioned pseudo-handle (Windows 10+)
+// names the algorithm with no provider open/close: 0x21 MD5, 0x31 SHA1, 0x41 SHA256,
+// matching bcrypt.h's BCRYPT_*_ALG_HANDLE.
 //
 // AES-GCM is the exception: CNG can do it, but only through BCryptEncrypt with a
 // GCM-chained key and a BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO struct (no one-shot pseudo-
 // handle). That is a larger, separately-verifiable piece of work, so the AES functions
 // here fail loudly with a named error rather than return a plausible-looking result.
 
-// NTSTATUS BCryptHash(BCRYPT_ALG_HANDLE, PUCHAR pbSecret, ULONG cbSecret, PUCHAR pbInput,
-//                     ULONG cbInput, PUCHAR pbOutput, ULONG cbOutput). Secret is the HMAC
-// key; NULL/0 for a plain hash. Returns 0 (STATUS_SUCCESS) on success.
-pub extern fn BCryptHash(alg: i64, secret: *u8, secretLen: u32, input: *u8, inputLen: u32, output: *u8, outputLen: u32): i32
+// The incremental hash API, not the one-shot BCryptHash: BCryptHash takes cbInput as a
+// ULONG (32 bits), so an input past 4 GiB hashed only part of it. BCryptHashData's
+// length is a ULONG too, hence the pieces. A NULL hash object asks CNG to allocate it
+// (Windows 7+). Each returns 0 (STATUS_SUCCESS) on success.
+// NTSTATUS BCryptCreateHash(ALG, BCRYPT_HASH_HANDLE *phHash, PUCHAR pbHashObject,
+//                           ULONG cbHashObject, PUCHAR pbSecret, ULONG cbSecret, ULONG dwFlags)
+pub extern fn BCryptCreateHash(alg: i64, hash: *i64, hashObject: *u8, hashObjectLen: u32, secret: *u8, secretLen: u32, flags: u32): i32
 
-fn bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
+pub extern fn BCryptHashData(hash: i64, input: *u8, inputLen: u32, flags: u32): i32
+
+pub extern fn BCryptFinishHash(hash: i64, output: *u8, outputLen: u32, flags: u32): i32
+
+pub extern fn BCryptDestroyHash(hash: i64): i32
+
+// Largest single BCryptHashData. Any value under 2^32 would do.
+let BCRYPT_MAX_CHUNK: i64 = 1073741824
+
+// Digest `input` in pieces of at most `chunk` bytes (clamped to BCRYPT_MAX_CHUNK, so no
+// caller can reintroduce the 32-bit wrap).
+fn bcryptHash(algHandle: i64, input: &string, outLen: i64, chunk: i64): string {
     var digest: [u8; 32] = [0; 32]
+    var step = chunk
+    if step > BCRYPT_MAX_CHUNK || step < 1 {
+        step = BCRYPT_MAX_CHUNK
+    }
     unsafe {
-        BCryptHash(algHandle, 0 as *u8, 0, input as *u8, input.len as u32, digest as *u8, outLen as u32)
+        var h: i64 = 0
+        if BCryptCreateHash(algHandle, h.addrOf() as *i64, 0 as *u8, 0, 0 as *u8, 0, 0) == 0 {
+            var off: i64 = 0
+            while off < input.len {
+                var n = input.len - off
+                if n > step {
+                    n = step
+                }
+                BCryptHashData(h, ((input as *u8) as i64 + off) as *u8, n as u32, 0)
+                off = off + n
+            }
+            BCryptFinishHash(h, digest as *u8, outLen as u32, 0)
+            BCryptDestroyHash(h)
+        }
     }
     var raw: string = ""
     for i in 0..outLen {
@@ -31,19 +62,19 @@ fn bcryptHash(algHandle: i64, input: &string, outLen: i64): string {
     return raw
 }
 
-// Raw 32-byte SHA-256 digest.
-pub fn sha256Raw(input: &string): string {
-    return bcryptHash(65, input, 32)
+// Raw 32-byte SHA-256 digest, fed to CNG in pieces of at most `chunk` bytes.
+pub fn sha256Raw(input: &string, chunk: i64): string {
+    return bcryptHash(65, input, 32, chunk)
 }
 
-// Raw 16-byte MD5 digest.
-pub fn md5Raw(input: &string): string {
-    return bcryptHash(33, input, 16)
+// Raw 16-byte MD5 digest; `chunk` as in sha256Raw.
+pub fn md5Raw(input: &string, chunk: i64): string {
+    return bcryptHash(33, input, 16, chunk)
 }
 
-// Raw 20-byte SHA-1 digest.
-pub fn sha1Raw(input: &string): string {
-    return bcryptHash(49, input, 20)
+// Raw 20-byte SHA-1 digest; `chunk` as in sha256Raw.
+pub fn sha1Raw(input: &string, chunk: i64): string {
+    return bcryptHash(49, input, 20, chunk)
 }
 
 // ── AES-GCM ──
@@ -55,11 +86,11 @@ fn aesUnsupported(): Result<string, string> {
 }
 
 // AES-GCM encrypt; would return ciphertext with the 16-byte tag appended.
-pub fn gcmEncryptRaw(_keyBits: i64, _key: &string, _iv: &string, _plaintext: &string, _aad: &string): Result<string, string> {
+pub fn gcmEncryptRaw(_keyBits: i64, _key: &string, _iv: &string, _plaintext: &string, _aad: &string, _chunk: i64): Result<string, string> {
     return aesUnsupported()
 }
 
 // AES-GCM decrypt.
-pub fn gcmDecryptRaw(_keyBits: i64, _key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string): Result<string, string> {
+pub fn gcmDecryptRaw(_keyBits: i64, _key: &string, _iv: &string, _ciphertext: &string, _tag: &string, _aad: &string, _chunk: i64): Result<string, string> {
     return aesUnsupported()
 }

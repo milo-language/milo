@@ -1210,7 +1210,7 @@ function detectLibs(ir: string, target: TargetInfo, staticDeps = false): string 
     // toolchain, so unlike openssl there is nothing to install and nothing to detect
     // wrongly — either the symbol is referenced or it isn't.
     // BCryptGenRandom is emitted by the compiler itself (hashmap seed init); std/crypto's
-    // Windows arm reaches other CNG entry points (BCryptHash, BCryptEncrypt, …). Any
+    // Windows arm reaches other CNG entry points (BCryptCreateHash, BCryptHashData, …). Any
     // BCrypt* symbol lives in bcrypt.lib, so match the whole family.
     if (/@BCrypt[A-Za-z]+\b/.test(ir)) libs += " -lbcrypt";
     // Winsock. ioctlsocket reaches this via std/event's setNonblocking, which std/io
