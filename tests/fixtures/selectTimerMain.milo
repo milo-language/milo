@@ -31,7 +31,6 @@ pub fn main(): i32 {
     var sel = Select.new()
     sel.onTimeout(50) // the only arm; nothing else can claim it
     let w = sel.wait()
-    sel.destroy()
 
     // @expect: timer arm 0
     print("timer arm ", w)

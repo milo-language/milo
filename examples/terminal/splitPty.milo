@@ -266,7 +266,6 @@ pub fn main(): void {
                                         sel.onRead(pty2)
                                         sel.onRead(winch)
                                         sel.wait()
-                                        sel.destroy()
                                         winch.drain()
 
                                         // check for terminal resize, propagate to child PTYs

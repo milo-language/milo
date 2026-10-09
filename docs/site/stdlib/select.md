@@ -24,18 +24,14 @@ from "std/select" import { Select }
 pub struct Select
 ```
 
-Owns its runtime state, so the pointer fields make it move-tracked (no `@copy`).
+Owns its runtime state, so the pointer fields make it move-tracked (no `@copy`), and
+frees it in Drop, so no Select value outlives its state (an explicit `destroy(&self)`
+could be called twice, or followed by another wait()).
 
 #### `Select.armChan`
 
 ```milo
-fn Select.armChan(self: &mut Select, kind: i64, ptr: *u8): void
-```
-
-#### `Select.destroy`
-
-```milo
-fn Select.destroy(self: &Select): void
+fn Select.armChan(self: &mut Select, kind: i64, ptr: *u8, owner: ChannelHandle): void
 ```
 
 #### `Select.new`
@@ -50,9 +46,10 @@ fn Select.new(): Select
 fn Select.onRead<T: AsFd>(self: &mut Select, h: &T): void
 ```
 
-Arm on `h` becoming readable. The arm holds the descriptor number until wait()
-returns, so `h` must stay alive across the wait; borrowing it here is what keeps
-a caller from arming a number nothing owns.
+Arm on `h` becoming readable. The arm holds only the descriptor NUMBER until wait()
+returns (a borrow cannot keep `h` alive past this call), so the caller must keep
+`h` open across the wait: closing it first arms whatever descriptor reuses the
+number. That is a wrong wakeup, not a memory error; channel arms keep an owner.
 
 #### `Select.onRecv`
 
@@ -60,7 +57,8 @@ a caller from arming a number nothing owns.
 fn Select.onRecv<T>(self: &mut Select, ch: &Channel<T>): void
 ```
 
-Arm on a value becoming receivable from `ch`.
+Arm on a value becoming receivable from `ch`. The arm keeps its own reference to
+the channel, so dropping `ch` before wait() is safe.
 
 #### `Select.onSend`
 

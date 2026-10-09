@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 467 distinct messages across 602 programs the compiler must reject.
+Every error message the test suite pins: 471 distinct messages across 608 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -230,6 +230,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move out of global`](#cannot-move-out-of-global)
 - [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
+- [`cannot move the borrowed value out of 'h'`](#cannot-move-the-borrowed-value-out-of-h)
 - [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
 - [`cannot move the borrowed value out of 'w'`](#cannot-move-the-borrowed-value-out-of-w)
 - [`cannot open`](#cannot-open)
@@ -393,6 +394,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`only valid as the iterable of a 'for ... in' loop`](#only-valid-as-the-iterable-of-a-for-in-loop)
 - [`Option`](#option)
 - [`Option<Option<T>> has no distinct JSON encoding`](#option-option-t-has-no-distinct-json-encoding)
+- [`out of a box that stays in its container`](#out-of-a-box-that-stays-in-its-container)
 - [`out of range`](#out-of-range)
 - [`overflows u8`](#overflows-u8)
 - [`passes struct 'Pt' by value`](#passes-struct-pt-by-value)
@@ -465,6 +467,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unwrap it with 'match'`](#unwrap-it-with-match)
 - [`use of moved value 'p.a'`](#use-of-moved-value-p-a)
 - [`use of moved value 'p.name'`](#use-of-moved-value-p-name)
+- [`use of moved value 's.box'`](#use-of-moved-value-s-box)
 - [`use of moved variable`](#use-of-moved-variable)
 - [`use of moved variable 'a'`](#use-of-moved-variable-a)
 - [`use of moved variable 'box'`](#use-of-moved-variable-box)
@@ -472,6 +475,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'd'`](#use-of-moved-variable-d)
 - [`use of moved variable 'data'`](#use-of-moved-variable-data)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
+- [`use of moved variable 'h'`](#use-of-moved-variable-h)
 - [`use of moved variable 'o'`](#use-of-moved-variable-o)
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
@@ -3066,6 +3070,33 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/scopeBodyCallsWritingClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/scopeBodyCallsWritingClosure.milo)</sub>
 
+The scope body itself moves 'v' into a `move` closure (reaching it only through a by-reference closure inside that move closure) while a scoped task iterates it.
+
+```milo skip
+from "std/runtime" import { Task, schedulerYield }
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        schedulerYield()
+        let t = Task.spawn(move () => {
+            let h = () => { print(v.len) }
+            h()
+        })
+        t.join()
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeBodyNestedMoveClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBodyNestedMoveClosure.milo)</sub>
+
 A task reads `v` across a park while the body pushes to it.
 
 ```milo skip
@@ -3092,6 +3123,31 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/taskScopeBodyWritesBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBodyWritesBorrowed.milo)</sub>
+
+A scoped task hands 'v' to a nested `move` closure, which frees it when that task ends, while a sibling task is still iterating 'v' across a park. The nested move used to be invisible to the task-scope rules, so this compiled to a use-after-free.
+
+```milo skip
+from "std/runtime" import { Task, schedulerYield }
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        s.spawn(() => {
+            let t = Task.spawn(move () => { print(v.len) })
+            t.join()
+        })
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/taskScopeNestedMoveClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeNestedMoveClosure.milo)</sub>
 
 ## `'v' is borrowed by one argument and changed by a mutation of 'v' in a later one` {#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one}
 
@@ -6076,6 +6132,28 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/moveBorrowOut.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveBorrowOut.milo)</sub>
+
+## `cannot move the borrowed value out of 'h'` {#cannot-move-the-borrowed-value-out-of-h}
+
+Moving out of `*h` through a `&Heap<T>` would empty the caller's box behind its back.
+
+```milo skip
+struct Node { name: string }
+
+fn steal(h: &Heap<Node>): Node {
+    return *h
+}
+
+pub fn main(): i32 {
+    let h = Heap(Node { name: "original name long string here".clone() })
+    let a = steal(h)
+    print(a.name)
+    print((*h).name.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/heapDerefMoveThroughBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMoveThroughBorrow.milo)</sub>
 
 ## `cannot move the borrowed value out of 'line'` {#cannot-move-the-borrowed-value-out-of-line}
 
@@ -9690,6 +9768,24 @@ fn main() {
 
 <sub>[tests/errors/deriveJsonNestedOption.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonNestedOption.milo)</sub>
 
+## `out of a box that stays in its container` {#out-of-a-box-that-stays-in-its-container}
+
+The element keeps its (now emptied) box, so the next `*v[0]` would read zeroed data.
+
+```milo skip
+struct Node { name: string }
+
+pub fn main(): i32 {
+    var v: Vec<Heap<Node>> = Vec.new()
+    v.push(Heap(Node { name: "in a vec".clone() }))
+    let a = *v[0]
+    print(a.name)
+    return 0
+}
+```
+
+<sub>[tests/errors/heapDerefMoveFromElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMoveFromElement.milo)</sub>
+
 ## `out of range` {#out-of-range}
 
 A ranged-int parameter enforces its bound on the argument (was unchecked).
@@ -10510,7 +10606,6 @@ from "std/select" import { Select }
 fn main() {
     var sel = Select.new()
     sel.onRead(0)
-    sel.destroy()
 }
 ```
 
@@ -11117,6 +11212,26 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/closureReadsMovedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureReadsMovedField.milo)</sub>
 
+## `use of moved value 's.box'` {#use-of-moved-value-s-box}
+
+The box is a field: the first `*s.box` empties it, and the second read a zeroed N whose inner Heap was a null pointer the next deref crashed on.
+
+```milo skip
+struct N { child: Heap<i64> }
+struct Holder { box: Heap<N> }
+
+pub fn main(): i32 {
+    let s = Holder { box: Heap(N { child: Heap(41) }) }
+    let a = *s.box
+    print(*a.child)
+    let b = *s.box
+    print(*b.child)
+    return 0
+}
+```
+
+<sub>[tests/errors/heapDerefFieldMovedTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefFieldMovedTwice.milo)</sub>
+
 ## `use of moved variable` {#use-of-moved-variable}
 
 ```milo skip
@@ -11454,6 +11569,25 @@ fn main() {
 ```
 
 <sub>[tests/errors/spawnMovesTheClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/spawnMovesTheClosure.milo)</sub>
+
+## `use of moved variable 'h'` {#use-of-moved-variable-h}
+
+`*h` by value moves the Node out of the box and leaves it zeroed, so a second `*h` used to read an empty string back with no diagnostic.
+
+```milo skip
+struct Node { name: string }
+
+pub fn main(): i32 {
+    let h = Heap(Node { name: "original name long string here".clone() })
+    let a = *h
+    let b = *h
+    print(a.name)
+    print(b.name)
+    return 0
+}
+```
+
+<sub>[tests/errors/heapDerefMovedTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMovedTwice.milo)</sub>
 
 ## `use of moved variable 'o'` {#use-of-moved-variable-o}
 

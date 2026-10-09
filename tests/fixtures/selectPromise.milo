@@ -34,7 +34,6 @@ pub fn main(): i32 {
     sel.onTimeout(5000)
     // @expect: blocking arm 0
     print("blocking arm ", sel.wait())
-    sel.destroy()
     // await still owns the fetch: it does the recv and the destroy.
     // @expect: blocking value 42
     print("blocking value ", p.await()!)
@@ -48,7 +47,6 @@ pub fn main(): i32 {
     sel2.onTimeout(5000) // live here — Promise.run means a scheduler exists
     // @expect: green arm 0
     print("green arm ", sel2.wait())
-    sel2.destroy()
     // @expect: green value 7
     print("green value ", g.await()!)
     return 0

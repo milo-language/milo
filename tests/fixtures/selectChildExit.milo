@@ -52,7 +52,6 @@ pub fn main(): i32 {
     sel.onRead(fd) // arm 0 — child exit
     sel.onTimeout(5000) // arm 1 — must not win
     let w = sel.wait()
-    sel.destroy()
     // @expect: arm 0
     print("arm ", w)
 

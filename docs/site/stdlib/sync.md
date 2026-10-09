@@ -422,6 +422,17 @@ fn Channel.recv(self: &Channel): Result<T>
 
 Receive a value, blocking while the channel is empty.
 
+#### `Channel.retainHandle`
+
+```milo
+fn Channel.retainHandle(self: &Channel): ChannelHandle
+```
+
+A T-erased owner of the queue, for std/select: a channel arm keeps one so the
+channel outlives the arm even when every `Channel<T>` is dropped before `wait()`.
+If this handle ends up the last owner, the queue is freed but payloads still in it
+are not destroyed (only `Channel<T>.drop` knows T): they leak, they never dangle.
+
 #### `Channel.send`
 
 ```milo

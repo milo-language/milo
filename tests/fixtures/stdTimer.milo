@@ -101,7 +101,6 @@ pub fn main(): i32 {
     sel.onRecv(tickChannel)
     sel.onTimeout(5000)
     print("select arm ", sel.wait())
-    sel.destroy()
     tk2.stop()
 
     dropWithoutStop()

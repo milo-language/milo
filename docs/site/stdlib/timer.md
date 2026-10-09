@@ -44,7 +44,6 @@ match sel.wait() {
     0 => { print("tick") }
     1 => { /* work arrived */ }
 }
-sel.destroy()
 tk.stop()
 ```
 

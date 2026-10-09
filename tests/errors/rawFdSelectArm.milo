@@ -7,5 +7,4 @@ from "std/select" import { Select }
 fn main() {
     var sel = Select.new()
     sel.onRead(0)
-    sel.destroy()
 }

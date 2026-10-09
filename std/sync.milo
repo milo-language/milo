@@ -585,6 +585,14 @@ impl Channel<T> {
         return self.h._ptr
     }
 
+    // A T-erased owner of the queue, for std/select: a channel arm keeps one so the
+    // channel outlives the arm even when every `Channel<T>` is dropped before `wait()`.
+    // If this handle ends up the last owner, the queue is freed but payloads still in it
+    // are not destroyed (only `Channel<T>.drop` knows T): they leak, they never dangle.
+    fn retainHandle(self: &Self): ChannelHandle {
+        return self.h.retain()
+    }
+
     // Share this channel with another owner (a spawned producer/consumer). Each clone
     // must be dropped exactly once; the queue is torn down when the last owner drops,
     // and any payload still queued at that point is destroyed (its `Drop` runs once).

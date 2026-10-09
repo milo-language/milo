@@ -31,7 +31,6 @@ pub fn raceOnce(withSend: bool): void {
                 print("other")
             }
         }
-        sel.destroy()
     })
     if withSend {
         Task.spawn(move(): void => {

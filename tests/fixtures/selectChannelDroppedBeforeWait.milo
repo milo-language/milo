@@ -1,0 +1,51 @@
+// A channel arm keeps its own reference to the channel. The arm used to hold only the raw
+// queue pointer, so dropping the last `Channel<T>` between onRecv and wait() left wait()
+// linking into freed memory (a heap-use-after-free under ASan).
+//
+// Here main's handle is gone before wait(): the arm's reference is what keeps the queue
+// alive while the green task sends into its own clone. A Select is freed by Drop, so the
+// second one, built in a helper and moved out, is freed exactly once by its new owner.
+from "std/runtime" import {
+    Task
+}
+from "std/sync" import {
+    Channel
+}
+from "std/select" import {
+    Select
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn release(c: Channel<i64>): void {
+    print("dropped main's handle")
+}
+
+fn timeoutOnly(ms: i64): Select {
+    var sel = Select.new()
+    sel.onTimeout(ms)
+    return sel
+}
+
+pub fn main(): i32 {
+    let ch = Channel<i64>.new(1)!
+    let chSend = ch.clone()
+    Task.spawn(move(): void => {
+        sleepMs(30)
+        let _ = chSend.send(7)
+    })
+
+    var sel = Select.new()
+    sel.onRecv(ch) // arm 0
+    sel.onTimeout(5000) // arm 1, must not win
+    release(ch)
+    print("winner ", sel.wait())
+
+    var t = timeoutOnly(10)
+    print("timeout winner ", t.wait())
+    return 0
+}
+// @expect: dropped main's handle
+// @expect: winner 0
+// @expect: timeout winner 0

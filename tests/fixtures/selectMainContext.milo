@@ -37,7 +37,6 @@ pub fn main(): i32 {
     sel.onRecv(ch) // arm 0 — the green task fires this
     sel.onTimeout(5000) // arm 1 — safety net; must not win
     let w = sel.wait()
-    sel.destroy()
 
     // @expect: winner 0
     print("winner ", w)

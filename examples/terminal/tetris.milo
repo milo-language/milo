@@ -390,7 +390,6 @@ pub fn waitForQuit(): void {
         var sel = Select.new()
         sel.onRead(Stdin {})
         sel.wait()
-        sel.destroy()
         var k = readKey()
         while k != KEY_NONE {
             if k == KEY_QUIT {
@@ -427,7 +426,6 @@ pub fn runGame(): void {
         sel.onRead(Stdin {})
         sel.onTimeout(waitMs)
         let winner = sel.wait()
-        sel.destroy()
 
         var doLock = false
 

@@ -256,7 +256,6 @@ pub fn main(): i32 {
         sel.onRead(sigPipe) // arm 0 — some child exited
         sel.onTimeout(remainMs) // arm 1 — deadline
         let w = sel.wait()
-        sel.destroy()
 
         if w == 1 {
             timedOut = true

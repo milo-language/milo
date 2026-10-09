@@ -585,7 +585,6 @@ pub fn sleepMs(ms: i64): void {
         var sel = Select.new()
         sel.onTimeout(ms)
         sel.wait()
-        sel.destroy()
         return
     }
     usleepLong(ms * 1000)

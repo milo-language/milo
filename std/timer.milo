@@ -187,7 +187,6 @@ pub fn recvTimeout<T>(ch: &Channel<T>, d: &Duration): Option<T> {
     sel.onRecv(ch)
     sel.onTimeout(timeoutMs(d))
     let winner = sel.wait()
-    sel.destroy()
     if winner == 0 {
         // The recv arm was claimed for this waiter, so the value is ours; single
         // consumer is Select's standing contract.
@@ -219,7 +218,6 @@ fn waitFd<T: AsFd>(h: &T, d: &Duration, forRead: bool): bool {
     }
     sel.onTimeout(timeoutMs(d))
     let winner = sel.wait()
-    sel.destroy()
     return winner == 0
 }
 

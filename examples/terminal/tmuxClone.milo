@@ -618,7 +618,6 @@ pub fn main(): void {
                             sel.onRead(pty1)
                             sel.onRead(winch)
                             sel.wait()
-                            sel.destroy()
 
                             // terminal resized? recompute geometry, resize the
                             // shells (they repaint), rebuild the grids at the new

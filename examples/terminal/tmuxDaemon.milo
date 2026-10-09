@@ -303,7 +303,6 @@ pub fn serveMulti(listener: &TcpListener, shell: &string, rows: i64, cols0: i64)
             sel.onRead(HeldFd { n: clientFd })
         }
         sel.wait()
-        sel.destroy()
 
         var dirty = false
         var anyDied = false
@@ -637,7 +636,6 @@ pub fn attachLoop(sockFd: i32, winch: &SignalPipe): void {
         sel.onRead(HeldFd { n: sockFd })
         sel.onRead(winch)
         sel.wait()
-        sel.destroy()
 
         // terminal resized → tell the daemon the new size
         if winch.drain() {

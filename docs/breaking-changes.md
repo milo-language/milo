@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: src/checker-program-passes.ts, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-08
+last-verified: 2026-10-09
 -->
 
 # Breaking changes
@@ -15,6 +15,22 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 **v0.2.0**, and a package that wants to stay on the previous surface pins
 `"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
+
+## `Select.destroy` is gone: a Select frees itself (2026-10-09)
+
+`Select.destroy(self: &Self)` freed the select's runtime state but left the value usable,
+so a call after it, or a second `destroy`, was a use-after-free in safe code. `Select` now
+implements `Drop` and frees its state when it goes out of scope. A method that consumed
+`self` would have been the smaller change, but forgetting to call it leaked, and there is
+no point at which a Select should outlive its scope with its state already gone.
+
+| was | now |
+|---|---|
+| `sel.destroy()` | delete the call; the Select is freed at the end of its scope (or when its owner drops it) |
+
+In the same change a channel arm (`onRecv`/`onSend`) keeps its own reference to the
+channel (`Channel.retainHandle`), so dropping every `Channel<T>` between arming and
+`wait()` no longer leaves the arm pointing at freed memory. Nothing to migrate.
 
 ## Package-manager verbs move under `milo pkg` (2026-10-08)
 
