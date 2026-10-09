@@ -13,13 +13,20 @@
 //   while dbStep(stmt) {
 //       print($"{dbColumnInt(stmt, 0)} {dbColumnText(stmt, 1)}")
 //   }
-//   dbFinalize(stmt)
-//   dbClose(db)
+//
+// Both handles close themselves when they go out of scope. `dbFinalize(stmt)` and
+// `dbClose(db)` do it early and consume the handle, so it cannot be used afterwards.
 
 @link("sqlite3")
 pub extern fn sqlite3_open(filename: *u8, db: *u8): i32
 
 pub extern fn sqlite3_close(db: *u8): i32
+
+// The Drop below uses this one, not sqlite3_close: with a Statement still alive,
+// sqlite3_close fails with SQLITE_BUSY and the connection leaks, while close_v2 defers
+// the free until the last statement is finalized. That is what makes a Statement that
+// outlives its Database (they are dropped in either order) sound.
+pub extern fn sqlite3_close_v2(db: *u8): i32
 
 pub extern fn sqlite3_exec(db: *u8, sql: *u8, callback: *u8, arg: *u8, errmsg: *u8): i32
 
@@ -59,7 +66,7 @@ pub extern fn sqlite3_changes(db: *u8): i32
 
 pub extern fn sqlite3_last_insert_rowid(db: *u8): i64
 
-// An open SQLite3 connection. Close it with `dbClose`; nothing closes it on drop.
+// An open SQLite3 connection, closed when it goes out of scope (or by `dbClose`).
 //
 // Both handles own what sqlite handed back, so the pointer fields make them
 // move-tracked: a second copy would `close`/`finalize` the same object again.
@@ -67,11 +74,27 @@ pub struct Database {
     _handle: *u8,
 }
 
-// A prepared SQL statement. Free it with `dbFinalize` when done; nothing finalizes it
-// on drop.
+impl Drop for Database {
+    fn drop(self: &mut Self): void {
+        if self._handle != 0 as *u8 {
+            unsafe { sqlite3_close_v2(self._handle) }
+            self._handle = 0 as *u8
+        }
+    }
+}
+
+// A prepared SQL statement, finalized when it goes out of scope (or by `dbFinalize`).
 pub struct Statement {
     _handle: *u8,
-    _db: *u8,
+}
+
+impl Drop for Statement {
+    fn drop(self: &mut Self): void {
+        if self._handle != 0 as *u8 {
+            unsafe { sqlite3_finalize(self._handle) }
+            self._handle = 0 as *u8
+        }
+    }
 }
 
 impl Database {
@@ -105,9 +128,13 @@ pub fn dbOpen(path: string): Result<Database> {
     }
 }
 
-// Close the connection. Nothing closes it on drop.
-pub fn dbClose(db: &Database): void {
-    unsafe { sqlite3_close(db._handle) }
+// Close the connection now rather than at the end of its scope. It consumes `db`:
+// taking it by reference left a closed handle usable, and the next call on it was a
+// use-after-free. Statements still alive keep working; see `sqlite3_close_v2`.
+pub fn dbClose(db: Database): void {
+    var d = db
+    // Drop runs at the end of this fn; spelled out so the close is visible here.
+    d.drop()
 }
 
 // Execute SQL that returns no rows (CREATE, INSERT, UPDATE, DELETE). Errs with sqlite's
@@ -132,7 +159,7 @@ pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
             let msg = _cstrToString(sqlite3_errmsg(db._handle))
             return Result.Err(msg)
         }
-        return Result.Ok(Statement { _handle: handle, _db: db._handle })
+        return Result.Ok(Statement { _handle: handle })
     }
 }
 
@@ -177,9 +204,11 @@ pub fn dbColumnIsNull(stmt: &Statement, col: i32): bool {
     unsafe { return sqlite3_column_type(stmt._handle, col) == 5 }
 }
 
-// Free the prepared statement.
-pub fn dbFinalize(stmt: &Statement): void {
-    unsafe { sqlite3_finalize(stmt._handle) }
+// Free the prepared statement now rather than at the end of its scope. Consumes
+// `stmt` for the reason `dbClose` consumes its handle.
+pub fn dbFinalize(stmt: Statement): void {
+    var s = stmt
+    s.drop()
 }
 
 // Bind an i32 to parameter `idx`. Parameter indices are 1-based.

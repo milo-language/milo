@@ -1,0 +1,13 @@
+// @error: use of moved variable 'db'
+// Found by the October 2026 soundness sweep. dbClose took the connection by
+// reference, closed it and left it usable, so the dbExec after it ran on a freed
+// sqlite3*. dbClose consumes the Database now.
+from "std/sqlite" import {
+    dbOpen, dbClose, dbExec
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    dbClose(db)
+    print(dbExec(db, "create table t(x)").isOk())
+}

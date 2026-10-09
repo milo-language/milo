@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 478 distinct messages across 616 programs the compiler must reject.
+Every error message the test suite pins: 480 distinct messages across 618 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -481,11 +481,13 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'c'`](#use-of-moved-variable-c)
 - [`use of moved variable 'd'`](#use-of-moved-variable-d)
 - [`use of moved variable 'data'`](#use-of-moved-variable-data)
+- [`use of moved variable 'db'`](#use-of-moved-variable-db)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
 - [`use of moved variable 'h'`](#use-of-moved-variable-h)
 - [`use of moved variable 'o'`](#use-of-moved-variable-o)
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
+- [`use of moved variable 'st'`](#use-of-moved-variable-st)
 - [`use of moved variable 'value'`](#use-of-moved-variable-value)
 - [`use of moved variable 'x'`](#use-of-moved-variable-x)
 - [`value -1 is out of range`](#value-1-is-out-of-range)
@@ -11683,6 +11685,24 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/shardUseAfterMap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardUseAfterMap.milo)</sub>
 
+## `use of moved variable 'db'` {#use-of-moved-variable-db}
+
+Found by the October 2026 soundness sweep. dbClose took the connection by reference, closed it and left it usable, so the dbExec after it ran on a freed sqlite3\*. dbClose consumes the Database now.
+
+```milo skip
+from "std/sqlite" import {
+    dbOpen, dbClose, dbExec
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    dbClose(db)
+    print(dbExec(db, "create table t(x)").isOk())
+}
+```
+
+<sub>[tests/errors/sqliteExecAfterClose.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteExecAfterClose.milo)</sub>
+
 ## `use of moved variable 'f'` {#use-of-moved-variable-f}
 
 An owning closure holds a heap environment, so there is exactly one of it. Duplicating the value would give two owners of that environment — the reason a destructor could not exist for a closure at all before `move` became part of the type.
@@ -12112,6 +12132,25 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/whileLetBreakMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/whileLetBreakMove.milo)</sub>
+
+## `use of moved variable 'st'` {#use-of-moved-variable-st}
+
+Found by the October 2026 soundness sweep. dbFinalize took the statement by reference, freed it and left it usable, so the dbStep after it stepped a freed sqlite3\_stmt. dbFinalize consumes the Statement now.
+
+```milo skip
+from "std/sqlite" import {
+    dbOpen, dbQuery, dbStep, dbFinalize
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let st = dbQuery(db, "select 42")!
+    dbFinalize(st)
+    print(dbStep(st))
+}
+```
+
+<sub>[tests/errors/sqliteStepAfterFinalize.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteStepAfterFinalize.milo)</sub>
 
 ## `use of moved variable 'value'` {#use-of-moved-variable-value}
 

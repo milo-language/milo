@@ -1,0 +1,58 @@
+// @skip-os: win32
+// Database and Statement close themselves on drop; dbFinalize/dbClose consume the
+// handle to do it early. sqlite3_memory_used() is the oracle: it returns to its
+// baseline only if every statement was finalized and every connection closed.
+from "std/sqlite" import {
+    dbOpen, dbClose, dbExec, dbQuery, dbStep, dbColumnInt, dbColumnText, dbFinalize, dbBindInt, dbReset
+}
+
+@link("sqlite3")
+extern fn sqlite3_memory_used(): i64
+
+fn work(): void {
+    let db = dbOpen(":memory:")!
+    print(dbExec(db, "create table t(x integer, s text)")!)
+    let ins = dbQuery(db, "insert into t values (?, 'row')")!
+    for i in 0..3 {
+        dbBindInt(ins, 1, i as i32)!
+        print(dbStep(ins))
+        dbReset(ins)
+    }
+    dbFinalize(ins)
+    let st = dbQuery(db, "select x, s from t order by x")!
+    // The statement outlives the explicit close: the connection stays alive
+    // until its last statement is finalized.
+    dbClose(db)
+    while dbStep(st) {
+        print($"{dbColumnInt(st, 0)} {dbColumnText(st, 1)}")
+    }
+    // Neither of these is closed by hand; leaving the scope drops both.
+    let db2 = dbOpen(":memory:")!
+    let st2 = dbQuery(db2, "select 7")!
+    print(dbStep(st2))
+    print(dbColumnInt(st2, 0))
+}
+
+fn main(): void {
+    var before: i64 = 0
+    unsafe {
+        before = sqlite3_memory_used()
+    }
+    work()
+    var after: i64 = 0
+    unsafe {
+        after = sqlite3_memory_used()
+    }
+    print(after == before)
+}
+
+// @expect: 0
+// @expect: false
+// @expect: false
+// @expect: false
+// @expect: 0 row
+// @expect: 1 row
+// @expect: 2 row
+// @expect: true
+// @expect: 7
+// @expect: true

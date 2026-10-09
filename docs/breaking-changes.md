@@ -29,6 +29,8 @@ spellings stop compiling.
 |---|---|
 | `w.base`, `w.len`, `w.start`, `w.shatterId`, `w.index` (`Shard` fields), `StrShard`'s same plus `w.own` | private; `w.len()`, `w.start()`, `w.index()`, `w.ownLen()` |
 | `Shard { ... }` / `StrShard { ... }` literals | gone outside std/shard: windows come from `parallelMap`, `parallelMapWith`, `parallelScanStr` |
+| `dbFinalize(stmt: &Statement)`, `dbClose(db: &Database)` (freed the handle and left it usable) | `dbFinalize(stmt: Statement)`, `dbClose(db: Database)` consume it; both handles also close themselves on drop, so the calls are optional |
+| `dbFinalize(v[i])` / `dbClose(v[i])` on a handle kept in a Vec | keep `Vec<Option<Statement>>` and assign `v[i] = Option.None`: the old handle drops, which finalizes or closes it |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
 

@@ -1,8 +1,9 @@
 # std/sqlite
 
-SQLite3 database bindings. Needs libsqlite3 at link time. Connections and statements are
-not closed on drop: pair every `dbOpen` with `dbClose` and every `dbQuery` with
-`dbFinalize`.
+SQLite3 database bindings. Needs libsqlite3 at link time. A `Database` closes itself and a
+`Statement` finalizes itself when it goes out of scope. `dbClose` and `dbFinalize` do it
+early and consume the handle. A statement may outlive its connection: the connection is
+freed when the last of them goes.
 
 ```milo
 from "std/sqlite" import { Database, Statement, dbOpen, dbClose, dbExec, dbQuery, dbStep, dbColumnText, dbColumnInt, dbColumnInt64, dbColumnFloat, dbColumnCount, dbColumnIsNull, dbFinalize, dbBindInt, dbBindInt64, dbBindText, dbBindNull, dbReset, dbLastInsertId }
@@ -30,6 +31,7 @@ fn main(): i32 {
         print(name + " is " + age.toString())
     }
 
+    // Optional: both would also happen when `stmt` and `db` go out of scope.
     dbFinalize(stmt)
     dbClose(db)
 
@@ -48,7 +50,7 @@ fn main(): i32 {
 pub struct Database
 ```
 
-An open SQLite3 connection. Close it with `dbClose`; nothing closes it on drop.
+An open SQLite3 connection, closed when it goes out of scope (or by `dbClose`).
 
 Both handles own what sqlite handed back, so the pointer fields make them
 move-tracked: a second copy would `close`/`finalize` the same object again.
@@ -68,8 +70,7 @@ wrap. Borrowed: the Database still owns and closes it.
 pub struct Statement
 ```
 
-A prepared SQL statement. Free it with `dbFinalize` when done; nothing finalizes it
-on drop.
+A prepared SQL statement, finalized when it goes out of scope (or by `dbFinalize`).
 
 #### `Statement.handle`
 
@@ -117,10 +118,12 @@ Bind a string to parameter `idx` (1-based).
 #### `dbClose`
 
 ```milo
-pub fn dbClose(db: &Database): void
+pub fn dbClose(db: Database): void
 ```
 
-Close the connection. Nothing closes it on drop.
+Close the connection now rather than at the end of its scope. It consumes `db`:
+taking it by reference left a closed handle usable, and the next call on it was a
+use-after-free. Statements still alive keep working; see `sqlite3_close_v2`.
 
 #### `dbColumnCount`
 
@@ -182,10 +185,11 @@ message.
 #### `dbFinalize`
 
 ```milo
-pub fn dbFinalize(stmt: &Statement): void
+pub fn dbFinalize(stmt: Statement): void
 ```
 
-Free the prepared statement.
+Free the prepared statement now rather than at the end of its scope. Consumes
+`stmt` for the reason `dbClose` consumes its handle.
 
 #### `dbLastInsertId`
 

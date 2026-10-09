@@ -1,0 +1,14 @@
+// @error: use of moved variable 'st'
+// Found by the October 2026 soundness sweep. dbFinalize took the statement by
+// reference, freed it and left it usable, so the dbStep after it stepped a freed
+// sqlite3_stmt. dbFinalize consumes the Statement now.
+from "std/sqlite" import {
+    dbOpen, dbQuery, dbStep, dbFinalize
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let st = dbQuery(db, "select 42")!
+    dbFinalize(st)
+    print(dbStep(st))
+}
