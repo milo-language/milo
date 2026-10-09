@@ -6424,8 +6424,12 @@ export class Codegen {
         // upstream and goes via genLValueForArg — so materialise it and pass that.
         const wantsAddr = at === "%String" && !!sig?.wantsStringAddr?.[i];
         if (at === "%String" && sig && !wantsAddr && (i >= sig.paramTypes.length || sig.paramTypes[i] === "ptr")) {
-          const dataPtr = this.nextTemp();
-          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
+          // A literal is NUL-terminated in place, and so is every owned string. A view
+          // (`splitView`, `lines()`, `slice`) is not: its bytes run on into the parent, so
+          // C read "a.txt,zz" for the piece "a.txt". A literal is not a view.
+          const dataPtr = arg.expr.kind === "StringLit"
+            ? (() => { const t = this.nextTemp(); lines.push(`  ${t} = extractvalue %String ${av}, 0`); return t; })()
+            : this.emitCStringArg(lines, av, Codegen.RETAINING_LIBC.has(expr.func));
           argVals.push({ val: dataPtr, type: "ptr" });
         } else if (wantsAddr) {
           const slot = this.nextTemp();
@@ -9590,6 +9594,53 @@ export class Codegen {
   // Both checks live here rather than at the call sites for the reason placesOf exists: a
   // rule restated per site is a rule the next site forgets. tests/allocChokePoint.test.ts
   // holds `call ptr @malloc` to this function.
+  // A %String's bytes as a C string for one call. An owned string (cap > 0) keeps its NUL
+  // at [len] and is passed as is. A cap-0 one is a literal held in a variable or a view,
+  // and a view has no NUL of its own, so it is copied into a NUL-terminated block. The
+  // copy is recorded as an owned %String in a temp slot (zeroed, so dropping it is a no-op,
+  // when nothing was copied) and dropped after the call like any argument temporary.
+  // `keep` (a callee that holds the pointer past the call, such as setvbuf) leaks it
+  // instead, since freeing it would leave the callee a dangling pointer.
+  private emitCStringArg(lines: string[], str: string, keep: boolean): string {
+    this.needsMemcpy = true;
+    const ptrSlot = `%__cstrarg.${this.scopeCounter++}.addr`;
+    const ownSlot = `%__cstrarg.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${ptrSlot} = alloca ptr`, `  ${ownSlot} = alloca %String`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = extractvalue %String ${str}, 0`);
+    lines.push(`  store ptr ${data}, ptr ${ptrSlot}`);
+    lines.push(`  store %String zeroinitializer, ptr ${ownSlot}`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = extractvalue %String ${str}, 2`);
+    const isView = this.nextTemp();
+    lines.push(`  ${isView} = icmp eq i64 ${cap}, 0`);
+    const copyL = this.nextLabel("cstrarg.copy");
+    const doneL = this.nextLabel("cstrarg.done");
+    lines.push(`  br i1 ${isView}, label %${copyL}, label %${doneL}`);
+    lines.push(`${copyL}:`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = extractvalue %String ${str}, 1`);
+    const size = this.nextTemp();
+    lines.push(`  ${size} = add i64 ${len}, 1`);
+    const { buf } = this.emitAllocBytes(lines, size, 1, "cstrarg");
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
+    const end = this.nextTemp();
+    lines.push(`  ${end} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+    lines.push(`  store i8 0, ptr ${end}`);
+    lines.push(`  store ptr ${buf}, ptr ${ptrSlot}`);
+    const o0 = this.nextTemp(), o1 = this.nextTemp(), o2 = this.nextTemp();
+    lines.push(`  ${o0} = insertvalue %String undef, ptr ${buf}, 0`);
+    lines.push(`  ${o1} = insertvalue %String ${o0}, i64 ${len}, 1`);
+    lines.push(`  ${o2} = insertvalue %String ${o1}, i64 ${size}, 2`);
+    lines.push(`  store %String ${o2}, ptr ${ownSlot}`);
+    lines.push(`  br label %${doneL}`);
+    lines.push(`${doneL}:`);
+    const ptr = this.nextTemp();
+    lines.push(`  ${ptr} = load ptr, ptr ${ptrSlot}`);
+    if (!keep) this.argTempDrops.push({ addr: ownSlot, type: { tag: "string" } });
+    return ptr;
+  }
+
   private emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string } {
     this.needsMalloc = true;
     const bytes = this.emitByteCount(lines, count, elemSize, tag, span);

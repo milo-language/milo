@@ -66,7 +66,7 @@ pub fn dlLastError(): string {
 // path, or an explicit path.
 pub fn dlOpen(path: &string): Result<Lib, string> {
     unsafe {
-        let h = dlopen(path as *u8, RTLD_NOW)
+        let h = dlopen(path, RTLD_NOW)
         if (h as i64) == 0 {
             return Result.Err(dlLastError())
         }
@@ -97,7 +97,7 @@ impl Lib {
     // indistinguishable from an error here, as with plain dlsym.
     fn sym(self: &Lib, name: &string): Result<*u8, string> {
         unsafe {
-            let p = dlsym(self.handle, name as *u8)
+            let p = dlsym(self.handle, name)
             if (p as i64) == 0 {
                 return Result.Err(dlLastError())
             }
@@ -108,7 +108,7 @@ impl Lib {
     // Whether a symbol is present, without treating absence as an error.
     fn has(self: &Lib, name: &string): bool {
         unsafe {
-            let p = dlsym(self.handle, name as *u8)
+            let p = dlsym(self.handle, name)
             return (p as i64) != 0
         }
     }

@@ -1,0 +1,57 @@
+// @skip-os: win32
+// std/fs reaches files through POSIX calls the MSVC CRT arm does not mirror here.
+// @expect: has malloc true
+// @expect: has xyz false
+// @expect: read hello
+// @expect: second piece err
+// @expect: loop ok
+// A splitView piece is a view into its parent's bytes with no NUL of its own, so handing
+// its data pointer to C read on past the piece: open() got "<path>,zz" and dlsym got
+// "malloc,xyz". A view reaching a C string parameter is now copied into a NUL-terminated
+// temporary for the call (an owned string still goes zero-copy).
+from "std/dl" import {
+    dlSelf
+}
+from "std/fs" import {
+    makeTempDir, readFile, removeAll, writeFile
+}
+
+pub fn main(): i32 {
+    let lib = dlSelf()!
+    for piece in "malloc,xyz".splitView(",") {
+        print($"has {piece} {lib.has(piece)}")
+    }
+    let dir = makeTempDir("viewcstr")!
+    let path = dir + "/a.txt"
+    let _ = writeFile(path, "hello")!
+    let joined = path + ",zz"
+    var first = true
+    for piece in joined.splitView(",") {
+        match readFile(piece) {
+            Result.Ok(s) => print($"read {s}"),
+            Result.Err(_e) => {
+                if first {
+                    print("first piece err")
+                } else {
+                    print("second piece err")
+                }
+            },
+        }
+        first = false
+    }
+    // Each call frees its temporary: many calls must not grow the heap without bound
+    // (the fixture runner's memory guard would kill a leak of this size).
+    var hits = 0
+    for _i in 0..200000 {
+        for piece in "malloc,xyz".splitView(",") {
+            if lib.has(piece) {
+                hits += 1
+            }
+        }
+    }
+    if hits == 200000 {
+        print("loop ok")
+    }
+    let _ = removeAll(dir)
+    return 0
+}
