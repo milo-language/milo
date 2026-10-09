@@ -14,7 +14,7 @@ import { MILO_VERSION, MILO_BUILD } from "./version";
 
 const REPO = "milo-language/milo";
 
-const USAGE = `usage: milo upgrade [--check] [--nightly | --tag <vX.Y.Z>]
+const USAGE = `usage: milo upgrade|update [--check] [--nightly | --tag <vX.Y.Z>]
   --check     report the newest release, change nothing
   --nightly   install the rolling build of main (tag 'latest')
   --tag <t>   install a specific release, e.g. v0.2.0`;

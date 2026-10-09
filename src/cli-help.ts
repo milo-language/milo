@@ -35,6 +35,8 @@ interface CliCommand {
   hidden?: string;
   /** Extra banner rows for sub-verbs and alternate forms that deserve their own left column. */
   extraRows?: { usage: string; help: string }[];
+  /** A package verb typed as `milo <verb>` rather than `milo pkg <verb>` (pkgcli's PKG_TOP_LEVEL). */
+  topLevel?: true;
 }
 
 export const COMPILER_COMMANDS: CliCommand[] = [
@@ -143,41 +145,43 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     name: "doc", usage: "doc <file|dir>", summary: "reference markdown from doc-comments",
     flags: [{ flag: "-o <dir>", help: "write one .md per module" }],
   },
+  { name: "pkg", usage: "pkg <verb>", summary: "", hidden: "its verbs are listed one per row in the package section" },
   {
-    name: "upgrade", usage: "upgrade", summary: "replace this milo binary with the newest release (not your deps: see `update`)",
+    name: "upgrade", usage: "upgrade | update", summary: "replace this milo binary with the newest release (deps: `pkg update`)",
     flags: [
       { flag: "--check", help: "report the newest release, change nothing" },
       { flag: "--nightly", help: "install the rolling build of main" },
       { flag: "--tag <vX.Y.Z>", help: "install a specific release" },
     ],
   },
+  { name: "update", usage: "", summary: "", hidden: "synonym for `upgrade`, shares its banner row" },
   { name: "lex", usage: "lex <file>", summary: "dump the token stream as JSON", hidden: "compiler-debug output, not a user-facing command" },
 ];
 
 export const PACKAGE_COMMANDS: CliCommand[] = [
-  { name: "init", usage: "init | new <name>", summary: "create milo.json here / scaffold a new project" },
-  { name: "new", usage: "", summary: "", hidden: "shares the `init | new <name>` banner row" },
+  { name: "init", usage: "init | new <name>", summary: "create milo.json here / scaffold a new project", topLevel: true },
+  { name: "new", usage: "", summary: "", hidden: "shares the `init | new <name>` banner row", topLevel: true },
   {
-    name: "add", usage: "add <pkg>", summary: "add a library dependency (milo.json + milo.lock)",
+    name: "add", usage: "pkg add <pkg>", summary: "add a library dependency (milo.json + milo.lock)",
     flags: [{ flag: "--dev", help: "record it under devDeps" }],
   },
-  { name: "remove", usage: "remove <pkg>", summary: "drop a dependency and prune the lock" },
+  { name: "remove", usage: "pkg remove <pkg>", summary: "drop a dependency and prune the lock" },
   {
-    name: "install", usage: "install", summary: "sync this project from milo.lock",
+    name: "install", usage: "pkg install", summary: "sync this project from milo.lock",
     flags: [{ flag: "--frozen", help: "fail if the lock is stale" }],
   },
-  { name: "update", usage: "update [pkg]", summary: "re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`)" },
-  { name: "tree", usage: "tree | why <pkg>", summary: "dependency graph / who pulls a package in" },
-  { name: "why", usage: "", summary: "", hidden: "shares the `tree | why <pkg>` banner row" },
-  { name: "vendor", usage: "vendor", summary: "copy deps into ./vendor and rewrite to local paths" },
-  { name: "publish", usage: "publish", summary: "validate, tag, push" },
+  { name: "update", usage: "pkg update [pkg]", summary: "re-resolve dependency tags and rewrite the lock" },
+  { name: "tree", usage: "pkg tree | pkg why <pkg>", summary: "dependency graph / who pulls a package in" },
+  { name: "why", usage: "", summary: "", hidden: "shares the `pkg tree | pkg why <pkg>` banner row" },
+  { name: "vendor", usage: "pkg vendor", summary: "copy deps into ./vendor and rewrite to local paths" },
+  { name: "publish", usage: "pkg publish", summary: "validate, tag, push" },
   {
-    name: "tool", usage: "tool install <pkg>",
+    name: "tool", usage: "pkg tool install <pkg>",
     summary: "build and install a global executable (~/.local/bin)",
     extraRows: [
-      { usage: "tool uninstall <name>", help: "remove an installed executable" },
-      { usage: "tool list [--repair]", help: "list installed executables (--repair: rebuild the index)" },
-      { usage: "tool run <pkg> [args]", help: "build and run a package's binary without installing" },
+      { usage: "pkg tool uninstall <name>", help: "remove an installed executable" },
+      { usage: "pkg tool list [--repair]", help: "list installed executables (--repair: rebuild the index)" },
+      { usage: "pkg tool run <pkg> [args]", help: "build and run a package's binary without installing" },
     ],
   },
 ];
@@ -236,16 +240,17 @@ export const OPTIONS: CliOption[] = [
 ];
 
 /** Every command the CLI accepts, hidden ones included — a typo must still be rejected. */
+// Top-level tokens only: package verbs other than init/new are reached through `pkg`.
 export function knownCommandNames(): string[] {
-  return [...COMPILER_COMMANDS, ...PACKAGE_COMMANDS].map(c => c.name);
+  return [...COMPILER_COMMANDS.map(c => c.name), ...PACKAGE_COMMANDS.filter(c => c.topLevel).map(c => c.name)];
 }
 
-const USAGE_COL = 25;
+const USAGE_COL = 29;
 
 // A left column longer than the description column still gets two spaces after it,
 // rather than running into the text — `--strip-panic-locations` is wider on its own.
 function row(usage: string, help: string): string {
-  return `  ${usage.length >= USAGE_COL - 2 ? usage + "  " : usage.padEnd(USAGE_COL - 2)}${help}`.trimEnd();
+  return `  ${usage.padEnd(Math.max(USAGE_COL - 2, usage.length + 2))}${help}`.trimEnd();
 }
 
 function renderRows(cmds: CliCommand[]): string[] {

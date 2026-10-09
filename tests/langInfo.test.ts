@@ -265,10 +265,10 @@ test("lang --json carries every dispatched command and every option", () => {
   const names = info.commands.map(c => c.name);
   expect([...dispatched].filter(c => !names.includes(c)).sort()).toEqual([]);
   expect(names).toEqual([...COMPILER_COMMANDS, ...PACKAGE_COMMANDS].map(c => c.name));
-  for (const c of info.commands) {
-    expect({ name: c.name, group: c.group }).toEqual({
-      name: c.name, group: PACKAGE_COMMANDS.some(p => p.name === c.name) ? "package" : "compiler",
-    });
+  // By position, not name: `update` is both a compiler verb and a `pkg` verb.
+  const groups = [...COMPILER_COMMANDS.map(() => "compiler"), ...PACKAGE_COMMANDS.map(() => "package")];
+  for (const [i, c] of info.commands.entries()) {
+    expect({ name: c.name, group: c.group }).toEqual({ name: c.name, group: groups[i] });
     // A shown command needs a usage and a summary, or its generated entry is blank.
     if (!c.hidden) expect({ name: c.name, usage: !!c.usage, summary: !!c.summary }).toEqual({ name: c.name, usage: true, summary: true });
   }

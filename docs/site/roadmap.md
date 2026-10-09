@@ -81,7 +81,7 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **LSP server**: diagnostics, hover, go-to-definition, completions, code lens, document and workspace symbols, code actions, signature help, inlay hints, references, rename, formatting
 - **VS Code extension**: syntax highlighting plus the LSP client
 - **Formatter**: `milo fmt`, written in Milo
-- **Package manager**: `milo add`/`install`/`publish` plus `milo tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
+- **Package manager**: `milo pkg add`/`install`/`publish` plus `milo pkg tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
 - **Docs from source**: `milo doc` generates reference markdown from doc-comments; `milo api` searches the standard library
 - **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->800<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->547<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level

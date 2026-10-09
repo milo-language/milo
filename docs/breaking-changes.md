@@ -16,6 +16,21 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
 
+## Package-manager verbs move under `milo pkg` (2026-10-08)
+
+Dependency verbs sat at the top level next to compiler verbs, so `milo update` (re-resolve
+deps) and `milo upgrade` (replace the compiler) were one letter apart and meant different
+things. Dependency management is now namespaced; `update` and `upgrade` are synonyms that
+replace the compiler. Typing an old spelling prints the new one.
+
+| was | now |
+|---|---|
+| `milo add` / `remove` / `install` / `tree` / `why` / `vendor` / `publish` | `milo pkg add` / `pkg remove` / `pkg install` / ... |
+| `milo update [pkg]` (re-resolve dependency tags) | `milo pkg update [pkg]` |
+| `milo tool install` / `uninstall` / `list` / `run` | `milo pkg tool install` / ... |
+| `milo init`, `milo new <name>` | unchanged |
+| (none) | `milo update` / `milo upgrade`: replace the compiler with the newest release |
+
 ## Raw addresses leave std/pool and std/mem (2026-10-08)
 
 `Pool.alloc` and `Bump.alloc` returned a block's address as an `i64`, `Pool.free` took one

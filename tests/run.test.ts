@@ -155,7 +155,7 @@ function requiredPackage(dir: string, file: string): string | null {
 
 // Can this fixture's package actually be resolved? ASK THE COMPILER rather than guess
 // at the cache layout, which is what the previous version did and got wrong: it scanned
-// the cache for a directory named exactly `gl`, while `milo install` lays a package down
+// the cache for a directory named exactly `gl`, while `milo pkg install` lays a package down
 // under its REPO name (github.com/milo-language/milo-gl/v0.2.0). So the fixture skipped
 // on every machine that had installed the package normally, and ran only where a legacy
 // `gl` directory happened to survive -- a skip that fired precisely when it should not.

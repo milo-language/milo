@@ -2698,7 +2698,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `is not a library name`
 
-**Rationale.** The @link name is pasted into the link command the compiler shells out to. `milo add` fetches third-party source, so a package that could smuggle a shell command through this would run it on every machine that built the package.
+**Rationale.** The @link name is pasted into the link command the compiler shells out to. `milo pkg add` fetches third-party source, so a package that could smuggle a shell command through this would run it on every machine that built the package.
 
 *Program:* [`tests/errors/linkInjection.milo`](../tests/errors/linkInjection.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 

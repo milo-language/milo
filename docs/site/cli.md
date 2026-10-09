@@ -44,7 +44,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`trace <file>`](#trace) | List a record/replay trace's records: seq, kind, call argument, payload size. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
-| [`upgrade`](#upgrade) | Replace this milo binary with the newest release (not your deps: see `update`). |
+| [`upgrade \| update`](#upgrade) | Replace this milo binary with the newest release (deps: `pkg update`). |
 
 ### run
 
@@ -306,9 +306,10 @@ Reference markdown from doc-comments.
 
 ```sh
 milo upgrade
+milo update
 ```
 
-Replace this milo binary with the newest release (not your deps: see `update`).
+Replace this milo binary with the newest release (deps: `pkg update`).
 
 | Flag | Effect |
 |---|---|
@@ -321,14 +322,14 @@ Replace this milo binary with the newest release (not your deps: see `update`).
 | Command | What it does |
 |---|---|
 | [`init \| new <name>`](#init) | Create milo.json here / scaffold a new project. |
-| [`add <pkg>`](#add) | Add a library dependency (milo.json + milo.lock). |
-| [`remove <pkg>`](#remove) | Drop a dependency and prune the lock. |
-| [`install`](#install) | Sync this project from milo.lock. |
-| [`update [pkg]`](#update) | Re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`). |
-| [`tree \| why <pkg>`](#tree) | Dependency graph / who pulls a package in. |
-| [`vendor`](#vendor) | Copy deps into ./vendor and rewrite to local paths. |
-| [`publish`](#publish) | Validate, tag, push. |
-| [`tool install <pkg>`](#tool) | Build and install a global executable (~/.local/bin). |
+| [`pkg add <pkg>`](#add) | Add a library dependency (milo.json + milo.lock). |
+| [`pkg remove <pkg>`](#remove) | Drop a dependency and prune the lock. |
+| [`pkg install`](#install) | Sync this project from milo.lock. |
+| [`pkg update [pkg]`](#update) | Re-resolve dependency tags and rewrite the lock. |
+| [`pkg tree \| pkg why <pkg>`](#tree) | Dependency graph / who pulls a package in. |
+| [`pkg vendor`](#vendor) | Copy deps into ./vendor and rewrite to local paths. |
+| [`pkg publish`](#publish) | Validate, tag, push. |
+| [`pkg tool install <pkg>`](#tool) | Build and install a global executable (~/.local/bin). |
 
 ### init
 
@@ -342,7 +343,7 @@ Create milo.json here / scaffold a new project.
 ### add
 
 ```sh
-milo add <pkg>
+milo pkg add <pkg>
 ```
 
 Add a library dependency (milo.json + milo.lock).
@@ -354,7 +355,7 @@ Add a library dependency (milo.json + milo.lock).
 ### remove
 
 ```sh
-milo remove <pkg>
+milo pkg remove <pkg>
 ```
 
 Drop a dependency and prune the lock.
@@ -362,7 +363,7 @@ Drop a dependency and prune the lock.
 ### install
 
 ```sh
-milo install
+milo pkg install
 ```
 
 Sync this project from milo.lock.
@@ -374,16 +375,16 @@ Sync this project from milo.lock.
 ### update
 
 ```sh
-milo update [pkg]
+milo pkg update [pkg]
 ```
 
-Re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`).
+Re-resolve dependency tags and rewrite the lock.
 
 ### tree
 
 ```sh
-milo tree
-milo why <pkg>
+milo pkg tree
+milo pkg why <pkg>
 ```
 
 Dependency graph / who pulls a package in.
@@ -391,7 +392,7 @@ Dependency graph / who pulls a package in.
 ### vendor
 
 ```sh
-milo vendor
+milo pkg vendor
 ```
 
 Copy deps into ./vendor and rewrite to local paths.
@@ -399,7 +400,7 @@ Copy deps into ./vendor and rewrite to local paths.
 ### publish
 
 ```sh
-milo publish
+milo pkg publish
 ```
 
 Validate, tag, push.
@@ -407,17 +408,17 @@ Validate, tag, push.
 ### tool
 
 ```sh
-milo tool install <pkg>
-milo tool uninstall <name>
-milo tool list [--repair]
-milo tool run <pkg> [args]
+milo pkg tool install <pkg>
+milo pkg tool uninstall <name>
+milo pkg tool list [--repair]
+milo pkg tool run <pkg> [args]
 ```
 
 Build and install a global executable (~/.local/bin).
 
-- `milo tool uninstall <name>`: Remove an installed executable.
-- `milo tool list [--repair]`: List installed executables (--repair: rebuild the index).
-- `milo tool run <pkg> [args]`: Build and run a package's binary without installing.
+- `milo pkg tool uninstall <name>`: Remove an installed executable.
+- `milo pkg tool list [--repair]`: List installed executables (--repair: rebuild the index).
+- `milo pkg tool run <pkg> [args]`: Build and run a package's binary without installing.
 
 ## Options
 
@@ -456,6 +457,6 @@ Parsed by every command that takes a source file. Each acts on the ones that app
 | `--version` | Print the compiler version and exit. |
 | `--help` | Print this help and exit (also -h). |
 
-Also accepted, but left out of `milo --help`: `milo lex <file>` (compiler-debug output, not a user-facing command).
+Also accepted, but left out of `milo --help`: `milo pkg <verb>` (its verbs are listed one per row in the package section), `milo lex <file>` (compiler-debug output, not a user-facing command).
 
 <!-- /generated:commands -->

@@ -7752,7 +7752,7 @@ fn main() {
 
 <sub>[tests/errors/linkBadPrefix.milo](https://github.com/milo-language/milo/blob/main/tests/errors/linkBadPrefix.milo)</sub>
 
-The @link name is pasted into the link command the compiler shells out to. `milo add` fetches third-party source, so a package that could smuggle a shell command through this would run it on every machine that built the package.
+The @link name is pasted into the link command the compiler shells out to. `milo pkg add` fetches third-party source, so a package that could smuggle a shell command through this would run it on every machine that built the package.
 
 ```milo skip
 @link("m; touch /tmp/milo-link-pwned")

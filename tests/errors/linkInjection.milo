@@ -1,5 +1,5 @@
 // @error: is not a library name
-// The @link name is pasted into the link command the compiler shells out to. `milo add`
+// The @link name is pasted into the link command the compiler shells out to. `milo pkg add`
 // fetches third-party source, so a package that could smuggle a shell command through
 // this would run it on every machine that built the package.
 @link("m; touch /tmp/milo-link-pwned")

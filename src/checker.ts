@@ -3833,7 +3833,7 @@ export class TypeChecker {
               }
               // The name is pasted into the link command the compiler shells out to, so it
               // is held to a charset that cannot close the argument and inject a command —
-              // the same reason @cLayout/@cSig constrain their arguments. `milo add` fetches
+              // the same reason @cLayout/@cSig constrain their arguments. `milo pkg add` fetches
               // third-party source, and building a package must not be able to run one.
               const name = attr.args[i]!;
               if (!TypeChecker.LINK_NAME_RE.test(name)) {

@@ -619,7 +619,7 @@ test("a package import resolves against the importing file's manifest, not the e
     'from "../lib/helper" import { helper }\n\nfn main() { print(helper()) }\n');
 
   const env = { XDG_CACHE_HOME: cache, XDG_DATA_HOME: join(root, "data") };
-  const inst = milo("install", { env, cwd: lib });
+  const inst = milo("pkg install", { env, cwd: lib });
   // If install cannot run at all the assertion below would "pass" for the wrong reason.
   expect(`install: ${inst.code} ${inst.err}`).toContain("install: 0");
 

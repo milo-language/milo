@@ -30,7 +30,7 @@ import { parseSafetyLevel, checkSafetyCompliance, requiresUsedResults, formatSaf
 import { versionString } from "./version";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
-import { PKG_COMMANDS, ensureDepsInstalled } from "./pkgcli";
+import { PKG_COMMANDS, PKG_TOP_LEVEL, ensureDepsInstalled } from "./pkgcli";
 import { renderHelp, knownCommandNames } from "./cli-help";
 import { ensureFmtBinary } from "./fmtbin";
 import { splitModule, type SplitStats } from "./cgu";
@@ -1927,6 +1927,13 @@ async function main() {
     process.exit(0);
   }
 
+  // The dependency verbs used to be top-level; name the new spelling rather than
+  // printing a bare "unknown command" at someone following an older README.
+  if (PKG_COMMANDS.has(cmd) && !knownCommandNames().includes(cmd)) {
+    console.error(`error: '${cmd}' moved under 'pkg': run 'milo pkg ${args.join(" ")}'`);
+    process.exit(1);
+  }
+
   // Reject an unknown subcommand up front. Otherwise a bare file path (forgot `run`)
   // falls through every dispatch branch to the generic "no source file" below.
   const KNOWN_COMMANDS = new Set(knownCommandNames());
@@ -1938,17 +1945,24 @@ async function main() {
 
   // Package-manager verbs. Dispatched before parseArgs because they take package
   // specs, not source files, and share none of the compiler flag surface.
-  if (PKG_COMMANDS.has(cmd)) {
+  if (cmd === "pkg" || PKG_TOP_LEVEL.has(cmd)) {
+    const verb = cmd === "pkg" ? args[1] : cmd;
+    if (!verb || !PKG_COMMANDS.has(verb) || (cmd === "pkg" && PKG_TOP_LEVEL.has(verb))) {
+      console.error(`usage: milo pkg <${[...PKG_COMMANDS].filter(v => !PKG_TOP_LEVEL.has(v)).join("|")}> ...`);
+      process.exit(1);
+    }
     const pkgTarget = getHostTarget();
     const { runPkgCommand } = await import("./pkgcli");
-    process.exit(await runPkgCommand(cmd, args.slice(1), {
+    process.exit(await runPkgCommand(verb, args.slice(cmd === "pkg" ? 2 : 1), {
       build: (src, out, extraLinkFlags) => compileToBinary(src, out, pkgTarget, "-O2", undefined, extraLinkFlags),
       check: (src) => { parseCheckProgram(readFileSync(src, "utf-8"), pkgTarget, src); },
       os: pkgTarget.os,
     }));
   }
 
-  if (cmd === "upgrade") {
+  // `update` is a synonym: both words mean "newer compiler" to anyone not thinking
+  // about dependencies, and those live under `pkg update`.
+  if (cmd === "upgrade" || cmd === "update") {
     const { runUpgrade } = await import("./upgrade");
     process.exit(await runUpgrade(args.slice(1)));
   }

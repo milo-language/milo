@@ -67,7 +67,7 @@ export function parseManifest(text: string): Manifest {
 
   // A publishable package must expose a lib and/or bins; a root application
   // manifest legitimately has neither, so this is not enforced at parse time.
-  // Use isPublishable(m) to gate `milo publish`.
+  // Use isPublishable(m) to gate `milo pkg publish`.
   return m;
 }
 
@@ -350,7 +350,7 @@ export function dataRoot(): string {
   return xdg && xdg.length > 0 ? join(xdg, "milo") : join(homedir(), ".milo");
 }
 
-// Where `milo tool install` puts executables: $XDG_BIN_HOME else ~/.local/bin —
+// Where `milo pkg tool install` puts executables: $XDG_BIN_HOME else ~/.local/bin —
 // the directory pipx targets, never requiring sudo.
 export function binRoot(): string {
   const xdg = process.env.XDG_BIN_HOME;
@@ -389,7 +389,7 @@ function sanitizeSegment(s: string): string {
 // A local path resolves against baseDir, the directory of the milo.json that
 // declares it, and is used in place. It used to be snapshotted into the cache
 // keyed by its literal spelling, so every project naming "../" shared one entry
-// (the last `milo install` won, and every other project lost its imports), and
+// (the last `milo pkg install` won, and every other project lost its imports), and
 // an edit to the dependency compiled stale code until the next install.
 export function depDirForSpec(spec: string, baseDir: string): string {
   const source = parseSource(spec);
@@ -546,7 +546,7 @@ async function fetchTarball(source: { url: string; sha256: string }, destDir: st
   }
 }
 
-// Tags on the remote, newest-version first. `milo update` uses this instead of a
+// Tags on the remote, newest-version first. `milo pkg update` uses this instead of a
 // registry index: with git-as-registry, listing tags IS the version list.
 export function listRemoteTags(source: Source): string[] {
   const url =

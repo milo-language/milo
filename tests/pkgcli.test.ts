@@ -3,7 +3,7 @@
 // NO NETWORK. Every package here is a local-path dependency in a temp dir, and the
 // XDG_* variables are redirected so the suite never touches the real ~/.milo cache,
 // ~/.local/bin, or the user's installed.json. Anything that would need a git remote
-// (add from github.com, `milo update` tag re-resolution, `milo publish`'s push) is
+// (add from github.com, `milo pkg update` tag re-resolution, `milo pkg publish`'s push) is
 // deliberately not covered here — see the notes at the bottom.
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "child_process";
@@ -97,7 +97,7 @@ describe("add / install / lock", () => {
   test("add writes the manifest and the lock, and the dep resolves at compile time", () => {
     const dir = project("app");
     expect(milo(dir, "init").code).toBe(0);
-    const add = milo(dir, "add", GREET());
+    const add = milo(dir, "pkg", "add", GREET());
     expect(add.code).toBe(0);
 
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
@@ -122,7 +122,7 @@ describe("add / install / lock", () => {
   test("add --dev records under devDeps", () => {
     const dir = project("devapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", "--dev", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "add", "--dev", GREET()).code).toBe(0);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     expect(m.devDeps.greet).toBe(GREET());
     expect(m.deps?.greet).toBeUndefined();
@@ -131,26 +131,26 @@ describe("add / install / lock", () => {
   test("remove drops it from the manifest and prunes the lock", () => {
     const dir = project("removeapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
-    expect(milo(dir, "remove", "greet").code).toBe(0);
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "remove", "greet").code).toBe(0);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     expect(m.deps.greet).toBeUndefined();
     const lock = JSON.parse(readFileSync(join(dir, "milo.lock"), "utf-8"));
     expect(lock.packages.greet).toBeUndefined();
-    expect(milo(dir, "remove", "nosuch").code).toBe(1);
+    expect(milo(dir, "pkg", "remove", "nosuch").code).toBe(1);
   });
 
   test("install --frozen fails on a stale lock and passes on a fresh one", () => {
     const dir = project("frozenapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
-    expect(milo(dir, "install", "--frozen").code).toBe(0);
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "install", "--frozen").code).toBe(0);
 
     // Add a dependency by hand without re-locking — exactly the CI case.
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     m.deps.other = GREET();
     writeFileSync(join(dir, "milo.json"), JSON.stringify(m, null, 2));
-    const stale = milo(dir, "install", "--frozen");
+    const stale = milo(dir, "pkg", "install", "--frozen");
     expect(stale.code).toBe(1);
     expect(stale.err).toContain("milo.lock is out of date");
   });
@@ -158,9 +158,9 @@ describe("add / install / lock", () => {
   test("install --frozen fails when the lock is missing entirely", () => {
     const dir = project("nolock");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
     rmSync(join(dir, "milo.lock"));
-    const r = milo(dir, "install", "--frozen");
+    const r = milo(dir, "pkg", "install", "--frozen");
     expect(r.code).toBe(1);
     expect(r.err).toContain("milo.lock is missing");
   });
@@ -168,23 +168,23 @@ describe("add / install / lock", () => {
   test("tree and why report the graph", () => {
     const dir = project("treeapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
-    const tree = milo(dir, "tree");
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
+    const tree = milo(dir, "pkg", "tree");
     expect(tree.code).toBe(0);
     expect(tree.out).toContain("treeapp 0.1.0");
     expect(tree.out).toContain("greet");
-    const why = milo(dir, "why", "greet");
+    const why = milo(dir, "pkg", "why", "greet");
     expect(why.code).toBe(0);
     expect(why.out).toContain("treeapp -> greet");
-    expect(milo(dir, "why", "nosuch").code).toBe(1);
+    expect(milo(dir, "pkg", "why", "nosuch").code).toBe(1);
   });
 
   test("vendor copies deps in-tree, rewrites deps to local paths, and still builds", () => {
     const dir = project("vendorapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
     writeFileSync(join(dir, "main.milo"), `from "greet" import { greeting }\n\nfn main() {\n  print(greeting())\n}\n`);
-    const v = milo(dir, "vendor");
+    const v = milo(dir, "pkg", "vendor");
     expect(v.code).toBe(0);
     expect(existsSync(join(dir, "vendor", "greet", "lib.milo"))).toBe(true);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
@@ -214,7 +214,7 @@ describe("add / install / lock", () => {
         `pub fn limit(): string {\n  return LIMIT.toString()\n}\n` +
         `pub fn shade(): i32 {\n  return Shade.Light as i32\n}\n`,
     });
-    expect(milo(dir, "add", join(ROOT, "pkgs", "gconst")).code).toBe(0);
+    expect(milo(dir, "pkg", "add", join(ROOT, "pkgs", "gconst")).code).toBe(0);
     writeFileSync(join(dir, "main.milo"),
       `from "gconst" import { pick, size, limit, shade }\n\n` +
       `fn main() {\n  print(pick(2).toString())\n  print(size().toString())\n` +
@@ -230,7 +230,7 @@ describe("add / install / lock", () => {
   test("a locked path dep needs no cache entry at all", () => {
     const dir = project("autoapp");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", GREET()).code).toBe(0);
+    expect(milo(dir, "pkg", "add", GREET()).code).toBe(0);
     writeFileSync(join(dir, "main.milo"), `from "greet" import { greeting }\n\nfn main() {\n  print(greeting())\n}\n`);
     rmSync(join(ROOT, "cache"), { recursive: true, force: true });
     const run = milo(dir, "run", "main.milo");
@@ -243,7 +243,7 @@ describe("add / install / lock", () => {
 // that declares it. It used to be snapshotted into the cache keyed by the literal
 // spec, so every package whose tests/milo.json says "../" shared one entry
 // (milo-json-rpc and milo-sdl clobbered each other), and an edit to the dependency
-// compiled the stale snapshot until someone re-ran `milo install`.
+// compiled the stale snapshot until someone re-ran `milo pkg install`.
 describe("local path deps", () => {
   function selfTested(name: string, files: Record<string, string>): string {
     const dir = writePkg(`self-${name}`, `{ "name": "${name}", "version": "0.1.0", "lib": "lib.milo" }`, {
@@ -260,8 +260,8 @@ describe("local path deps", () => {
     const a = selfTested("la", { "frame.milo": `pub fn two(): i32 {\n  return 2\n}\n` });
     const b = selfTested("lb", {});
     writeFileSync(join(a, "tests", "t.milo"), `from "la/frame" import { two }\n\nfn main() {\n  print(two().toString())\n}\n`);
-    expect(milo(join(a, "tests"), "install").code).toBe(0);
-    expect(milo(join(b, "tests"), "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "pkg", "install").code).toBe(0);
+    expect(milo(join(b, "tests"), "pkg", "install").code).toBe(0);
     const run = milo(join(a, "tests"), "run", "t.milo");
     expect(run.err).not.toContain("cannot open module");
     expect(run.code).toBe(0);
@@ -271,7 +271,7 @@ describe("local path deps", () => {
   test("an edit to the dependency is live without re-installing", () => {
     const a = selfTested("lc", { "frame.milo": `pub fn two(): i32 {\n  return 2\n}\n` });
     writeFileSync(join(a, "tests", "t.milo"), `from "lc/frame" import { two }\n\nfn main() {\n  print(two().toString())\n}\n`);
-    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "pkg", "install").code).toBe(0);
     expect(milo(join(a, "tests"), "run", "t.milo").out.trim()).toBe("2");
     writeFileSync(join(a, "frame.milo"), `pub fn two(): i32 {\n  return 5\n}\n`);
     expect(milo(join(a, "tests"), "run", "t.milo").out.trim()).toBe("5");
@@ -279,14 +279,14 @@ describe("local path deps", () => {
 
   test("the lock records the spelled path and a 'local' commit, and stays put across edits", () => {
     const a = selfTested("ld", {});
-    expect(milo(join(a, "tests"), "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "pkg", "install").code).toBe(0);
     const lockPath = join(a, "tests", "milo.lock");
     const lock = JSON.parse(readFileSync(lockPath, "utf-8"));
     expect(lock.packages.ld.url).toBe("../");
     expect(lock.packages.ld.commit).toBe("local");
     writeFileSync(join(a, "lib.milo"), `pub fn id(): i32 {\n  return 7\n}\n`);
-    expect(milo(join(a, "tests"), "install").code).toBe(0);
-    expect(milo(join(a, "tests"), "install", "--frozen").code).toBe(0);
+    expect(milo(join(a, "tests"), "pkg", "install").code).toBe(0);
+    expect(milo(join(a, "tests"), "pkg", "install", "--frozen").code).toBe(0);
     expect(readFileSync(lockPath, "utf-8")).toBe(JSON.stringify(lock, null, 2) + "\n");
   });
 
@@ -303,7 +303,7 @@ describe("local path deps", () => {
     writeFileSync(join(dir, "milo.json"),
       `{ "name": "nestapp", "version": "0.1.0", "deps": { "outer": "../../pkgs/nest/outer" } }`);
     writeFileSync(join(dir, "main.milo"), `from "outer" import { wrap }\n\nfn main() {\n  print(wrap().toString())\n}\n`);
-    expect(milo(dir, "install").code).toBe(0);
+    expect(milo(dir, "pkg", "install").code).toBe(0);
     const run = milo(dir, "run", "main.milo");
     expect(run.err).toBe("");
     expect(run.out.trim()).toBe("9");
@@ -313,7 +313,7 @@ describe("local path deps", () => {
   // vendor/outer/), which only works because the path is relative to that manifest.
   test("vendor flattens a transitive path dep and still builds", () => {
     const dir = project("nestapp");
-    expect(milo(dir, "vendor").code).toBe(0);
+    expect(milo(dir, "pkg", "vendor").code).toBe(0);
     expect(JSON.parse(readFileSync(join(dir, "vendor", "outer", "milo.json"), "utf-8")).deps.inner).toBe("../inner");
     const run = milo(dir, "run", "main.milo");
     expect(run.err).toBe("");
@@ -322,44 +322,44 @@ describe("local path deps", () => {
 });
 
 describe("lib/bin split", () => {
-  test("add on a bin-only package points at milo tool install", () => {
+  test("add on a bin-only package points at milo pkg tool install", () => {
     const dir = project("binonly");
     expect(milo(dir, "init").code).toBe(0);
-    const r = milo(dir, "add", MTOOL());
+    const r = milo(dir, "pkg", "add", MTOOL());
     expect(r.code).toBe(1);
     expect(r.err).toContain("ships no library");
-    expect(r.err).toContain(`milo tool install ${MTOOL()}`);
+    expect(r.err).toContain(`milo pkg tool install ${MTOOL()}`);
     // and nothing was written to the manifest
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     expect(m.deps.mtool).toBeUndefined();
   });
 
-  test("tool install on a lib-only package points at milo add", () => {
+  test("tool install on a lib-only package points at milo pkg add", () => {
     const dir = project("libonly");
-    const r = milo(dir, "tool", "install", GREET());
+    const r = milo(dir, "pkg", "tool", "install", GREET());
     expect(r.code).toBe(1);
     expect(r.err).toContain("ships no executables");
-    expect(r.err).toContain(`milo add ${GREET()}`);
+    expect(r.err).toContain(`milo pkg add ${GREET()}`);
   });
 
   test("install <pkg> refuses instead of guessing", () => {
     const dir = project("npmhabit");
     expect(milo(dir, "init").code).toBe(0);
-    const r = milo(dir, "install", "greet");
+    const r = milo(dir, "pkg", "install", "greet");
     expect(r.code).toBe(1);
     expect(r.err).toContain("takes no package");
-    expect(r.err).toContain("milo add greet");
-    expect(r.err).toContain("milo tool install greet");
+    expect(r.err).toContain("milo pkg add greet");
+    expect(r.err).toContain("milo pkg tool install greet");
   });
 });
 
-describe("milo tool", () => {
+describe("milo pkg tool", () => {
   const BIN = () => join(ROOT, "bin", "mtool");
   const RECEIPTS = () => join(ROOT, "data", "milo", "installed.json");
 
   test("tool install builds a working binary carrying a greppable MILO_PKG section", () => {
     const dir = project("toolapp");
-    const r = milo(dir, "tool", "install", MTOOL());
+    const r = milo(dir, "pkg", "tool", "install", MTOOL());
     expect(r.code).toBe(0);
     expect(existsSync(BIN())).toBe(true);
 
@@ -381,7 +381,7 @@ describe("milo tool", () => {
   }, 120000);
 
   test("tool list shows the installed binary", () => {
-    const r = milo(ROOT, "tool", "list");
+    const r = milo(ROOT, "pkg", "tool", "list");
     expect(r.code).toBe(0);
     expect(r.out).toContain("mtool");
     expect(r.out).toContain("0.2.0");
@@ -390,9 +390,9 @@ describe("milo tool", () => {
   test("tool list --repair rebuilds a deleted installed.json from the binaries", () => {
     expect(existsSync(RECEIPTS())).toBe(true);
     rmSync(RECEIPTS());
-    const bare = milo(ROOT, "tool", "list");
+    const bare = milo(ROOT, "pkg", "tool", "list");
     expect(bare.out).toContain("no tools installed");
-    const repaired = milo(ROOT, "tool", "list", "--repair");
+    const repaired = milo(ROOT, "pkg", "tool", "list", "--repair");
     expect(repaired.code).toBe(0);
     expect(repaired.out).toContain("mtool");
     const cache = JSON.parse(readFileSync(RECEIPTS(), "utf-8"));
@@ -404,7 +404,7 @@ describe("milo tool", () => {
     writePkg("impostor", `{ "name": "impostor", "version": "9.9.9", "bin": { "mtool": "src/cli.milo" } }`, {
       "src/cli.milo": `fn main() {\n  print("impostor")\n}\n`,
     });
-    const r = milo(ROOT, "tool", "install", join(ROOT, "pkgs", "impostor"));
+    const r = milo(ROOT, "pkg", "tool", "install", join(ROOT, "pkgs", "impostor"));
     expect(r.code).toBe(1);
     expect(r.err).toContain("refusing to overwrite");
     expect(r.err).toContain("it is mtool 0.2.0");
@@ -415,25 +415,25 @@ describe("milo tool", () => {
   test("uninstall refuses a foreign binary that carries no section", () => {
     const foreign = join(ROOT, "bin", "foreign");
     copyFileSync("/bin/echo", foreign);
-    const r = milo(ROOT, "tool", "uninstall", "foreign");
+    const r = milo(ROOT, "pkg", "tool", "uninstall", "foreign");
     expect(r.code).toBe(1);
     expect(r.err).toContain("no MILO_PKG section");
     expect(existsSync(foreign)).toBe(true); // still there
   });
 
   test("uninstall removes the binary and drops the receipt", () => {
-    const r = milo(ROOT, "tool", "uninstall", "mtool");
+    const r = milo(ROOT, "pkg", "tool", "uninstall", "mtool");
     expect(r.code).toBe(0);
     expect(existsSync(BIN())).toBe(false);
     const cache = JSON.parse(readFileSync(RECEIPTS(), "utf-8"));
     expect(cache.tools.mtool).toBeUndefined();
     // uninstalling something that was never installed is an error, not a no-op
-    expect(milo(ROOT, "tool", "uninstall", "mtool").code).toBe(1);
+    expect(milo(ROOT, "pkg", "tool", "uninstall", "mtool").code).toBe(1);
   });
 
   test("tool run builds and runs without installing anything", () => {
     const before = readdirSync(join(ROOT, "bin"));
-    const r = milo(ROOT, "tool", "run", MTOOL());
+    const r = milo(ROOT, "pkg", "tool", "run", MTOOL());
     expect(r.code).toBe(0);
     expect(r.out).toContain("mtool ran");
     expect(readdirSync(join(ROOT, "bin")).sort()).toEqual(before.sort());
@@ -465,7 +465,7 @@ describe("git sources (local file:// remote, still no network)", () => {
   test("add at a tag pins the exact commit, not the tag", () => {
     const dir = project("gitapp");
     expect(milo(dir, "init").code).toBe(0);
-    const r = milo(dir, "add", `git+file://${repo}@v1.0.0`);
+    const r = milo(dir, "pkg", "add", `git+file://${repo}@v1.0.0`);
     expect(r.code).toBe(0);
     const lock = JSON.parse(readFileSync(join(dir, "milo.lock"), "utf-8"));
     expect(lock.packages.gpkg.version).toBe("v1.0.0");
@@ -479,8 +479,8 @@ describe("git sources (local file:// remote, still no network)", () => {
   test("a modified cache entry fails the hash check on install --frozen", () => {
     const dir = project("gitapp2");
     expect(milo(dir, "init").code).toBe(0);
-    expect(milo(dir, "add", `git+file://${repo}@v1.0.0`).code).toBe(0);
-    expect(milo(dir, "install", "--frozen").code).toBe(0);
+    expect(milo(dir, "pkg", "add", `git+file://${repo}@v1.0.0`).code).toBe(0);
+    expect(milo(dir, "pkg", "install", "--frozen").code).toBe(0);
 
     const lock = JSON.parse(readFileSync(join(dir, "milo.lock"), "utf-8"));
     const cacheDir = spawnSync("bash", ["-c", `find '${join(ROOT, "cache", "milo", "giturl")}' -maxdepth 2 -name v1.0.0`], { encoding: "utf-8" });
@@ -488,7 +488,7 @@ describe("git sources (local file:// remote, still no network)", () => {
     expect(existsSync(target)).toBe(true);
     writeFileSync(join(target, "lib.milo"), `pub fn fromGit(): string {\n  return "poisoned"\n}\n`);
 
-    const r = milo(dir, "install", "--frozen");
+    const r = milo(dir, "pkg", "install", "--frozen");
     expect(r.code).toBe(1);
     expect(r.err).toContain("hash mismatch");
     expect(r.err).toContain(lock.packages.gpkg.hash);
@@ -506,13 +506,13 @@ describe("git sources (local file:// remote, still no network)", () => {
     g("add", "-A");
     g("commit", "-qm", "init");
 
-    const clean = milo(pub, "publish", "--dry-run");
+    const clean = milo(pub, "pkg", "publish", "--dry-run");
     expect(clean.code).toBe(0);
     expect(clean.out).toContain("would tag v0.3.0");
     expect((g("tag", "--list").stdout ?? "").trim()).toBe("");
 
     writeFileSync(join(pub, "lib.milo"), `pub fn ok(): i64 {\n  return 2\n}\n`);
-    const dirty = milo(pub, "publish", "--dry-run");
+    const dirty = milo(pub, "pkg", "publish", "--dry-run");
     expect(dirty.code).toBe(1);
     expect(dirty.err).toContain("working tree is dirty");
   }, 60000);
@@ -520,7 +520,7 @@ describe("git sources (local file:// remote, still no network)", () => {
   test("add with no ref pins the highest release tag", () => {
     const dir = project("gitapp4");
     expect(milo(dir, "init").code).toBe(0);
-    const r = milo(dir, "add", `git+file://${repo}`);
+    const r = milo(dir, "pkg", "add", `git+file://${repo}`);
     expect(r.code).toBe(0);
     expect(r.out).toContain(`git+file://${repo}@v1.0.0`);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
@@ -547,7 +547,7 @@ describe("git sources (local file:// remote, still no network)", () => {
 
     const dir = project("gitapp5");
     expect(milo(dir, "init").code).toBe(0);
-    const r = milo(dir, "add", `git+file://${untagged}`);
+    const r = milo(dir, "pkg", "add", `git+file://${untagged}`);
     expect(r.code).toBe(0);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     expect(m.deps.untagged).toBe(`git+file://${untagged}`);
@@ -561,7 +561,7 @@ describe("git sources (local file:// remote, still no network)", () => {
       join(dir, "milo.json"),
       JSON.stringify({ name: "gitapp3", version: "0.1.0", deps: { gpkg: `git+file://${repo}` } }, null, 2),
     );
-    const r = milo(dir, "update");
+    const r = milo(dir, "pkg", "update");
     expect(r.code).toBe(0);
     const m = JSON.parse(readFileSync(join(dir, "milo.json"), "utf-8"));
     expect(m.deps.gpkg).toBe(`git+file://${repo}@v1.0.0`);
@@ -570,8 +570,8 @@ describe("git sources (local file:// remote, still no network)", () => {
   });
 });
 
-// SKIPPED — needs a real remote. `milo add github.com/...` over HTTPS, tarball
-// download + #sha256= verification, and `milo publish`'s tag push are the only
+// SKIPPED — needs a real remote. `milo pkg add github.com/...` over HTTPS, tarball
+// download + #sha256= verification, and `milo pkg publish`'s tag push are the only
 // paths not covered above; the git transport is the only difference from the
 // file:// tests, and it belongs to git.
 test.skip("network: github/tarball fetch and publish --push", () => {});

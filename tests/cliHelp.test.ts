@@ -11,7 +11,7 @@ import { readFileSync } from "fs";
 import { execFileSync, spawnSync } from "child_process";
 import { join } from "path";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS, knownCommandNames, renderHelp } from "../src/cli-help";
-import { PKG_COMMANDS } from "../src/pkgcli";
+import { PKG_COMMANDS, PKG_TOP_LEVEL } from "../src/pkgcli";
 
 const ROOT = join(import.meta.dir, "..");
 const MAIN = readFileSync(join(ROOT, "src", "main.ts"), "utf-8");
@@ -34,11 +34,17 @@ test("the package verbs in the table are exactly PKG_COMMANDS", () => {
   expect(PACKAGE_COMMANDS.map(c => c.name).sort()).toEqual([...PKG_COMMANDS].sort());
 });
 
+test("the top-level package verbs in the table are exactly PKG_TOP_LEVEL", () => {
+  expect(PACKAGE_COMMANDS.filter(c => c.topLevel).map(c => c.name).sort()).toEqual([...PKG_TOP_LEVEL].sort());
+});
+
 test("knownCommandNames covers both groups, hidden commands included", () => {
   // `lex` is hidden from the banner but must still be accepted, or the
   // unknown-command guard would reject a command the dispatch chain handles.
   const known = knownCommandNames();
-  for (const name of ["lex", "lsp", "run", "install", "tool"]) expect(known).toContain(name);
+  for (const name of ["lex", "lsp", "run", "pkg", "init", "new"]) expect(known).toContain(name);
+  // Dependency verbs are reached through `pkg`, never typed bare.
+  for (const name of ["install", "tool", "add"]) expect(known).not.toContain(name);
 });
 
 test("every flag main.ts parses is documented, and no documented flag is unparsed", () => {
