@@ -36,6 +36,7 @@ spellings stop compiling.
 | `arena.id`, `arena.data`, `arena.gens`, `arena.freeList`, `arena.live` (`Arena`), `id`/`data` on `GrowOnlyArena` and `FrozenArena` | private; `arena.id()`, `arena.len()`, `arena.handles()`. `Handle`'s fields stay public: a forged handle is checked like a stale one |
 | `lib.handle` (`Lib`, std/dl) | private |
 | `lib.close()` on a borrowed `&Lib` | `close(self: Lib)` consumes it; a Lib that is never closed stays loaded, as before |
+| `mmapFile(f, size)` with `size` past the end of the file (reading the tail raised SIGBUS) | `Err`; pass at most `f.size()` |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
 

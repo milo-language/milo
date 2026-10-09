@@ -67,9 +67,23 @@ pub fn mmapAnon(size: i64): Result<MappedMemory> {
 // Memory-map `size` bytes of an open file for reading. The mapping keeps the pages,
 // not the descriptor: `f` may close once this returns. The mapping is read-only, so
 // `withMut` on it returns None.
+//
+// `size` may not exceed the file's length. The pages past the end of a file are not
+// backed by anything, so a mapping that covers them used to hand `with` a view whose
+// tail raised SIGBUS when read. What this cannot rule out is the file shrinking after
+// the map (another process truncating it): that still faults, as in every language.
 pub fn mmapFile(f: &File, size: i64): Result<MappedMemory> {
     if size <= 0 {
         return Result.Err("mmap: size must be positive, got " + size.toString())
+    }
+    // -1 when lseek cannot measure the fd (a pipe, a char device): nothing to check
+    // the size against, so refuse rather than map pages that may not exist.
+    let fileLen = f.size()
+    if fileLen < 0 {
+        return Result.Err("mmap: cannot measure the file's length")
+    }
+    if size > fileLen {
+        return Result.Err("mmap: size " + size.toString() + " exceeds the file's " + fileLen.toString() + " bytes")
     }
     let PROT_READ: i32 = 1
     let MAP_PRIVATE: i32 = 2

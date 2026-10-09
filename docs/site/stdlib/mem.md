@@ -229,4 +229,9 @@ Memory-map `size` bytes of an open file for reading. The mapping keeps the pages
 not the descriptor: `f` may close once this returns. The mapping is read-only, so
 `withMut` on it returns None.
 
+`size` may not exceed the file's length. The pages past the end of a file are not
+backed by anything, so a mapping that covers them used to hand `with` a view whose
+tail raised SIGBUS when read. What this cannot rule out is the file shrinking after
+the map (another process truncating it): that still faults, as in every language.
+
 <!-- /generated:api -->

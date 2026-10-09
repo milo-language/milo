@@ -1,0 +1,31 @@
+// @skip-os: win32
+// (makeTempFile is POSIX mkstemp; see memViewsFile.)
+// @expect: mmap: size 65536 exceeds the file's 5 bytes
+// @expect: 5
+// @expect: 111
+// mmapFile used to map whatever size it was given. Pages wholly past the end of the
+// file are backed by nothing, so reading byte 40000 of a 5-byte file through `with`
+// raised SIGBUS from safe code. A size past the end is refused now.
+from "std/mem" import {
+    mmapFile
+}
+from "std/fs" import {
+    makeTempFile, writeFile, removeFile
+}
+from "std/io" import {
+    File
+}
+
+fn main(): void {
+    let path = makeTempFile("milo_mmapPastEnd")!
+    writeFile(path, "hello")!
+    let f = File.openRead(path)!
+    match mmapFile(f, 65536) {
+        Result.Ok(m) => print(m.with((b: &[u8]): u8 => b[40000])),
+        Result.Err(e) => print(e),
+    }
+    let m = mmapFile(f, 5)!
+    print(m.len())
+    print(m.with((b: &[u8]): u8 => b[4]))
+    removeFile(path)!
+}
