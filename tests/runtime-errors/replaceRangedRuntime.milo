@@ -1,0 +1,14 @@
+// @runtime-error: value out of range
+// A non-literal value replaced into a ranged place is range-checked at run time, as an
+// assignment is. Unchecked, `a[r]` trusted the range and read far past the array.
+type Idx = i64(0..3)
+
+pub fn main(): i32 {
+    let a: [i64; 4] = [10, 20, 30, 40]
+    var r: Idx = 1
+    var big: i64 = 100000
+    let old = replace(r, big)
+    print(old)
+    print(a[r])
+    return 0
+}

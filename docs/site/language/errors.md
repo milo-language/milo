@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 460 distinct messages across 593 programs the compiler must reject.
+Every error message the test suite pins: 467 distinct messages across 602 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -96,6 +96,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
 - [`'s' is captured by a closure argument and borrowed in the same call`](#s-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
+- [`'s' is moved by one argument and changed by a mutation of 's' in a later one`](#s-is-moved-by-one-argument-and-changed-by-a-mutation-of-s-in-a-later-one)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
 - [`'saturatingSub' expects 1 argument`](#saturatingsub-expects-1-argument)
@@ -242,6 +243,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot pass immutable`](#cannot-pass-immutable)
 - [`cannot pass immutable 'x' as a '&mut' argument`](#cannot-pass-immutable-x-as-a-mut-argument)
 - [`cannot push to immutable Vec`](#cannot-push-to-immutable-vec)
+- [`cannot replace 'v' while a loop iterates over it`](#cannot-replace-v-while-a-loop-iterates-over-it)
 - [`cannot replace through an immutable place`](#cannot-replace-through-an-immutable-place)
 - [`cannot return 'v.ptr()': 'v' is freed when this function returns, so the pointer would dangle`](#cannot-return-v-ptr-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle)
 - [`cannot return a closure that captures 'n' by reference`](#cannot-return-a-closure-that-captures-n-by-reference)
@@ -256,6 +258,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot store a closure that captures 's' by reference`](#cannot-store-a-closure-that-captures-s-by-reference)
 - [`cannot store a closure that captures 'x' by reference`](#cannot-store-a-closure-that-captures-x-by-reference)
 - [`cannot store a reference in a Vec`](#cannot-store-a-reference-in-a-vec)
+- [`cannot swap 's' while 'w' borrows it`](#cannot-swap-s-while-w-borrows-it)
+- [`cannot swap 'v' while a loop iterates over it`](#cannot-swap-v-while-a-loop-iterates-over-it)
 - [`cannot take 'Fd' out of a container by index: it carries Drop`](#cannot-take-fd-out-of-a-container-by-index-it-carries-drop)
 - [`cannot take 'Handle' out of a container by index: it carries a raw pointer field ('p')`](#cannot-take-handle-out-of-a-container-by-index-it-carries-a-raw-pointer-field-p)
 - [`cannot take 'Res' out of a container by index: it carries Drop`](#cannot-take-res-out-of-a-container-by-index-it-carries-drop)
@@ -275,6 +279,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot write to 'v' by calling 'clr' while 'w' borrows 'v'`](#cannot-write-to-v-by-calling-clr-while-w-borrows-v)
 - [`cannot write to 'v' by calling 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-clr-while-a-loop-iterates-over-v)
 - [`cannot write to 'v' by calling 'g' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v)
+- [`cannot write to 'v' by calling 'sw' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-sw-while-a-loop-iterates-over-v)
 - [`cannot write to 'v' by passing 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-clr-while-a-loop-iterates-over-v)
 - [`cannot write to 'v' by passing 'push' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-push-while-a-loop-iterates-over-v)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
@@ -416,6 +421,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`struct 'P' has no field 'nope'`](#struct-p-has-no-field-nope)
 - [`struct 'Ping<i64>' is recursive by value and has infinite size`](#struct-ping-i64-is-recursive-by-value-and-has-infinite-size)
 - [`struct 'Plain' has no JSON codec`](#struct-plain-has-no-json-codec)
+- [`swap: operands have different ranges i32(1..9) and i32`](#swap-operands-have-different-ranges-i32-1-9-and-i32)
 - [`swap: operands have different types`](#swap-operands-have-different-types)
 - [`takes 2 parameters, the Milo declaration takes 3`](#takes-2-parameters-the-milo-declaration-takes-3)
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
@@ -472,6 +478,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'value'`](#use-of-moved-variable-value)
 - [`use of moved variable 'x'`](#use-of-moved-variable-x)
 - [`value -1 is out of range`](#value-1-is-out-of-range)
+- [`value 100000 is out of range for i64(0..3)`](#value-100000-is-out-of-range-for-i64-0-3)
 - [`value 60000 is out of range`](#value-60000-is-out-of-range)
 - [`variable 'a' already declared in this scope`](#variable-a-already-declared-in-this-scope)
 - [`variable 'args' already declared in this scope`](#variable-args-already-declared-in-this-scope)
@@ -2551,6 +2558,22 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/callbackMutSelfMethodOnReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callbackMutSelfMethodOnReceiver.milo)</sub>
 
+## `'s' is moved by one argument and changed by a mutation of 's' in a later one` {#s-is-moved-by-one-argument-and-changed-by-a-mutation-of-s-in-a-later-one}
+
+The outer `replace` takes the old string out of `s` before evaluating its value, and the inner one takes the same string again: two owners, a double free.
+
+```milo skip
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap".clone()
+    let t = replace(s, replace(s, "q".clone()))
+    print(t)
+    print(s)
+    return 0
+}
+```
+
+<sub>[tests/errors/replaceNestedSamePlace.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceNestedSamePlace.milo)</sub>
+
 ## `'S' is not imported` {#s-is-not-imported}
 
 Types too: a struct named in a signature or literal has to be in the list, even when a function that returns it is.
@@ -3001,6 +3024,28 @@ pub fn main(): i32 {
 <sub>[tests/errors/ptrAssignedFromInnerScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrAssignedFromInnerScope.milo)</sub>
 
 ## `'v' is borrowed by a scoped task and written by the Task.scope body` {#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body}
+
+The spawned task iterates `v` across its yields while the scope body replaced it, freeing the element the task then printed.
+
+```milo skip
+from "std/runtime" import { Task, schedulerYield }
+fn work(): void {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    Task.scope((s) => {
+        s.spawn(() => { for x in v { schedulerYield(); print(x) } })
+        schedulerYield()
+        let old = replace(v, [])
+        print(old.len)
+    })
+}
+pub fn main(): i32 {
+    let t = Task.spawn(move () => work())
+    t.join()
+    return 0
+}
+```
+
+<sub>[tests/errors/replaceInTaskScope.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceInTaskScope.milo)</sub>
 
 The body runs `clr`, which writes `v`, while a scoped task iterates `v`. The body and the task interleave at every park of the body (a sleep in place of the yield frees the element under the task); the direct `v = Vec.new()` in the body is rejected too.
 
@@ -6288,6 +6333,24 @@ fn main(): i32 {
 
 <sub>[tests/errors/vecPushImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecPushImmutable.milo)</sub>
 
+## `cannot replace 'v' while a loop iterates over it` {#cannot-replace-v-while-a-loop-iterates-over-it}
+
+`replace` writes its place like a `&mut` argument does. Dropping the old Vec freed the string `x` was still reading.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    for x in v {
+        let old = replace(v, [])
+        print(old.len)
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/replaceWhileIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceWhileIterated.milo)</sub>
+
 ## `cannot replace through an immutable place` {#cannot-replace-through-an-immutable-place}
 
 replace's first argument must be an assignable, mutable place (a `var`, field, or element).
@@ -6719,6 +6782,44 @@ fn main() {
 ```
 
 <sub>[tests/errors/vecPushRef.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecPushRef.milo)</sub>
+
+## `cannot swap 's' while 'w' borrows it` {#cannot-swap-s-while-w-borrows-it}
+
+The view `w` points into the buffer `s` owned; after the swap `t` owns it and can free it while `w` is still live.
+
+```milo skip
+pub fn main(): i32 {
+    var s = "hello world, a fairly long string".clone()
+    var t = "x".clone()
+    let w = s[0..5]
+    swap(s, t)
+    let old = replace(t, "".clone())
+    print(old.len)
+    print(w)
+    return 0
+}
+```
+
+<sub>[tests/errors/swapWhileViewed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapWhileViewed.milo)</sub>
+
+## `cannot swap 'v' while a loop iterates over it` {#cannot-swap-v-while-a-loop-iterates-over-it}
+
+After the swap `w` owns the buffer the loop walks, and clearing it freed `x`.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    var w: Vec<string> = []
+    for x in v {
+        swap(v, w)
+        w.clear()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/swapWhileIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapWhileIterated.milo)</sub>
 
 ## `cannot take 'Fd' out of a container by index: it carries Drop` {#cannot-take-fd-out-of-a-container-by-index-it-carries-drop}
 
@@ -7312,6 +7413,25 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/closureMutArgWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMutArgWritesIteratedVec.milo)</sub>
 
+A `replace` on a capture inside a by-reference closure is a write of that capture, so calling the closure inside a loop over it is the same write as doing it inline.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    let clr = () => {
+        let old = replace(v, [])
+        print(old.len)
+    }
+    for x in v {
+        clr()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/replaceInClosureWhileIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceInClosureWhileIterated.milo)</sub>
+
 ## `cannot write to 'v' by calling 'g' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v}
 
 `g` writes `v` only by running `clr`, a closure it captured; the write still happens.
@@ -7331,6 +7451,26 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureCallWritesIteratedVecIndirect.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesIteratedVecIndirect.milo)</sub>
+
+## `cannot write to 'v' by calling 'sw' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-sw-while-a-loop-iterates-over-v}
+
+`swap` on a capture inside a by-reference closure writes the capture.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    var w: Vec<string> = []
+    let sw = () => { swap(v, w) }
+    for x in v {
+        sw()
+        w.clear()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/swapInClosureWhileIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapInClosureWhileIterated.milo)</sub>
 
 ## `cannot write to 'v' by passing 'clr' while a loop iterates over 'v'` {#cannot-write-to-v-by-passing-clr-while-a-loop-iterates-over-v}
 
@@ -10087,6 +10227,24 @@ fn main() {
 
 <sub>[tests/errors/deriveJsonUnsupportedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonUnsupportedField.milo)</sub>
 
+## `swap: operands have different ranges i32(1..9) and i32` {#swap-operands-have-different-ranges-i32-1-9-and-i32}
+
+Each operand receives the other's value with no check between, so a ranged place swapped with a plain one held 10, and the `Option<Lvl>` niche then read it as None.
+
+```milo skip
+type Lvl = i32(1..9)
+pub fn main(): i32 {
+    var big: i32 = 10
+    var r: Lvl = 5
+    swap(r, big)
+    let o: Option<Lvl> = Option.Some(r)
+    match o { Option.Some(x) => print(x), Option.None => print("none") }
+    return 0
+}
+```
+
+<sub>[tests/errors/swapRangeMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapRangeMismatch.milo)</sub>
+
 ## `swap: operands have different types` {#swap-operands-have-different-types}
 
 swap exchanges two places of the SAME type.
@@ -11760,6 +11918,24 @@ fn main() {
 ```
 
 <sub>[tests/errors/rangeUnderflowLiteral.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rangeUnderflowLiteral.milo)</sub>
+
+## `value 100000 is out of range for i64(0..3)` {#value-100000-is-out-of-range-for-i64-0-3}
+
+`replace` into a ranged place is a flow into it, checked like an assignment. Unchecked, `a[r]` then trusted the range and indexed far past the array.
+
+```milo skip
+type Idx = i64(0..3)
+pub fn main(): i32 {
+    let a: [i64; 4] = [10, 20, 30, 40]
+    var r: Idx = 1
+    let old = replace(r, 100000)
+    print(old)
+    print(a[r])
+    return 0
+}
+```
+
+<sub>[tests/errors/replaceRangedOutOfRange.milo](https://github.com/milo-language/milo/blob/main/tests/errors/replaceRangedOutOfRange.milo)</sub>
 
 ## `value 60000 is out of range` {#value-60000-is-out-of-range}
 

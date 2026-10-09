@@ -1,0 +1,10 @@
+// @error: 's' is moved by one argument and changed by a mutation of 's' in a later one
+// The outer `replace` takes the old string out of `s` before evaluating its value, and
+// the inner one takes the same string again: two owners, a double free.
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap".clone()
+    let t = replace(s, replace(s, "q".clone()))
+    print(t)
+    print(s)
+    return 0
+}

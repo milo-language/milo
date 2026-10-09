@@ -9425,6 +9425,15 @@ export class TypeChecker {
     }
   }
 
+  // The place argument of `replace`/`swap`, written as a `&mut` argument writes it: a
+  // live loop, view, scope borrow or pointer into it forbids the write (errorIfFrozen),
+  // and inside a by-reference closure it is a write of the capture, which a caller
+  // looping over that capture must see.
+  private checkPlaceArgWrite(place: Expr, action: string, sp?: Span) {
+    this.markCaptureMutated(place);
+    this.errorIfFrozen(place, action, sp);
+  }
+
   // Explicit `&mut` on call arguments.
   // Runs on the raw argument list before any argument is type-checked. Where the
   // parameter is `&mut T` the `&mut` wrapper is stripped in place, so every later pass
@@ -10329,10 +10338,12 @@ export class TypeChecker {
       return this.setType(expr, wantsLen ? { tag: "vec", element: inner } : { tag: "heap", inner });
     }
     // `replace(place, value)` and `swap(a, b)`: memory intrinsics whose bodies cannot be
-    // written in safe Milo (they move a value out of a place and refill it). From the
-    // caller's view the move rules are ordinary — a `&mut` borrow of the place(s) plus a
-    // by-value move of `value` — so they need no exclusivity machinery, only load/store
-    // codegen. Gated on the name being otherwise unbound, so a user fn of the same name wins.
+    // written in safe Milo (they move a value out of a place and refill it). Each place
+    // is written as a `&mut` argument writes it, and the old occupant `replace` hands
+    // back may be dropped at once, so the place takes every check a `&mut` argument or
+    // an assignment takes (checkPlaceArgWrite). These once skipped all of them, which let
+    // `replace(v, [])` inside `for x in v` free the element the loop was reading.
+    // Gated on the name being otherwise unbound, so a user fn of the same name wins.
     if (expr.func === "replace" && !this.shadowedByUserFn("replace")) {
       if (expr.args.length !== 2) { this.error(`replace(place, value) takes exactly two arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
       const place = this.resolveAssignTarget(expr.args[0]);
@@ -10340,12 +10351,20 @@ export class TypeChecker {
       // when it is an owned local rather than a borrow.
       this.markPlaceRead(expr.args[0]);
       if (!place.mutable) this.error(`cannot replace through an immutable place`, expr.args[0].span, `declare it with 'var'`);
+      else this.checkPlaceArgWrite(expr.args[0], "replace", sp);
       // value moves in, old occupant moves out to the caller — the place stays valid,
       // so it is NOT invalidated here (only the by-value argument is consumed).
       const vt = this.checkExpr(expr.args[1], place.type);
       if (vt.tag !== "unknown" && place.type.tag !== "unknown" && !typeEq(vt, place.type)) {
         this.error(`replace: value type ${this.show(vt)} does not match place type ${this.show(place.type)}`, expr.args[1].span);
       }
+      if (place.type.tag === "int") this.enforceRangeInto(expr.args[1], vt, place.type, expr.args[1].span);
+      // Codegen loads the old occupant BEFORE it evaluates `value`, so the place counts as
+      // moved out by the first argument: a write of it while `value` is evaluated
+      // (`replace(s, replace(s, x))`) leaves the call holding bits the place has already
+      // handed to someone else, and both are dropped.
+      const pp = this.exclusivityPlace(expr.args[0]);
+      if (pp) this.reportLaterArgWrites([{ arg: 0, ...pp, moved: true }], expr.args, sp);
       this.tryMove(expr.args[1]);
       return this.setType(expr, place.type);
     }
@@ -10354,10 +10373,21 @@ export class TypeChecker {
       const a = this.resolveAssignTarget(expr.args[0]);
       const b = this.resolveAssignTarget(expr.args[1]);
       if (!a.mutable) this.error(`cannot swap through an immutable place`, expr.args[0].span, `declare it with 'var'`);
+      else this.checkPlaceArgWrite(expr.args[0], "swap", sp);
       if (!b.mutable) this.error(`cannot swap through an immutable place`, expr.args[1].span, `declare it with 'var'`);
+      else this.checkPlaceArgWrite(expr.args[1], "swap", sp);
       if (a.type.tag !== "unknown" && b.type.tag !== "unknown" && !typeEq(a.type, b.type)) {
         this.error(`swap: operands have different types ${this.show(a.type)} and ${this.show(b.type)}`, sp);
+      } else if (a.type.tag === "int" && b.type.tag === "int" && (a.type.min !== b.type.min || a.type.max !== b.type.max)) {
+        // typeEq ignores ranges. Each side receives the other's value with no check in
+        // between, so the ranges must match exactly, as two `&mut` borrows' must.
+        this.error(`swap: operands have different ranges ${this.show(a.type)} and ${this.show(b.type)}`, sp,
+          `swap is not range-checked: move the value through a binding of the ranged type instead (that copy is checked)`);
       }
+      // Both addresses are taken before either is read, so a later operand whose
+      // evaluation writes the first one's buffer (`swap(v[0], w[grow()])`) leaves it dangling.
+      const ap = this.exclusivityPlace(expr.args[0]);
+      if (ap) this.reportLaterArgWrites([{ arg: 0, ...ap, moved: false }], expr.args, sp);
       return this.setType(expr, { tag: "void" });
     }
     if (expr.func === "Heap") {

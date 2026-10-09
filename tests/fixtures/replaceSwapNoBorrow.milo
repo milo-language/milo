@@ -1,0 +1,66 @@
+// @expect: one
+// @expect: three
+// @expect: 2
+// @expect: seen y
+// @expect: x
+// @expect: 3
+// @expect: 1
+// @expect: zero
+// @expect: 2
+// @expect: 7
+// @expect: 1
+// @expect: 2
+//
+// The safe uses `replace` and `swap` keep after they took the `&mut` argument checks: on
+// locals, fields and elements with no loop, view, scope or closure borrow live, after a
+// loop has ended, and on a closure's own capture when nothing iterates it.
+
+struct Doc { title: string, tags: Vec<string> }
+
+type Idx = i64(0..3)
+
+pub fn main(): i32 {
+    var s = "one".clone()
+    let old = replace(s, "two".clone())
+    print(old)
+
+    var d = Doc { title: "three".clone(), tags: ["a".clone(), "b".clone()] }
+    let t = replace(d.title, "".clone())
+    print(t)
+    let tags = replace(d.tags, [])
+    print(tags.len)
+
+    var v: Vec<string> = ["x".clone(), "y".clone()]
+    for e in v {
+        if e == "y" { print("seen y") }
+    }
+    // the loop is over, so the Vec is free to write
+    let first = replace(v[0], "z".clone())
+    print(first)
+
+    var a: Vec<i64> = [1, 2, 3]
+    var b: Vec<i64> = [4]
+    swap(a, b)
+    print(b.len)
+    print(a.len)
+
+    var w: Vec<string> = ["zero".clone(), "one".clone()]
+    swap(w[0], w[1])
+    print(w[1])
+
+    // a by-reference closure replacing its own capture, with no loop over it
+    var n: Vec<i64> = [5, 6]
+    let reset = () => {
+        let prev = replace(n, [7])
+        print(prev.len)
+    }
+    reset()
+    print(n[0])
+
+    var r: Idx = 2
+    var q: Idx = 1
+    swap(r, q)
+    print(r)
+    print(q)
+    return 0
+}

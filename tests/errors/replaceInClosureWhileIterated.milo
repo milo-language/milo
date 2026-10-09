@@ -1,0 +1,15 @@
+// @error: cannot write to 'v' by calling 'clr' while a loop iterates over 'v'
+// A `replace` on a capture inside a by-reference closure is a write of that capture, so
+// calling the closure inside a loop over it is the same write as doing it inline.
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    let clr = () => {
+        let old = replace(v, [])
+        print(old.len)
+    }
+    for x in v {
+        clr()
+        print(x)
+    }
+    return 0
+}

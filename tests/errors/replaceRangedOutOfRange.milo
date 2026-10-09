@@ -1,0 +1,12 @@
+// @error: value 100000 is out of range for i64(0..3)
+// `replace` into a ranged place is a flow into it, checked like an assignment. Unchecked,
+// `a[r]` then trusted the range and indexed far past the array.
+type Idx = i64(0..3)
+pub fn main(): i32 {
+    let a: [i64; 4] = [10, 20, 30, 40]
+    var r: Idx = 1
+    let old = replace(r, 100000)
+    print(old)
+    print(a[r])
+    return 0
+}

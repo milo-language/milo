@@ -1,0 +1,12 @@
+// @error: swap: operands have different ranges i32(1..9) and i32
+// Each operand receives the other's value with no check between, so a ranged place
+// swapped with a plain one held 10, and the `Option<Lvl>` niche then read it as None.
+type Lvl = i32(1..9)
+pub fn main(): i32 {
+    var big: i32 = 10
+    var r: Lvl = 5
+    swap(r, big)
+    let o: Option<Lvl> = Option.Some(r)
+    match o { Option.Some(x) => print(x), Option.None => print("none") }
+    return 0
+}

@@ -1,0 +1,18 @@
+// @error: 'v' is borrowed by a scoped task and written by the Task.scope body
+// The spawned task iterates `v` across its yields while the scope body replaced it,
+// freeing the element the task then printed.
+from "std/runtime" import { Task, schedulerYield }
+fn work(): void {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    Task.scope((s) => {
+        s.spawn(() => { for x in v { schedulerYield(); print(x) } })
+        schedulerYield()
+        let old = replace(v, [])
+        print(old.len)
+    })
+}
+pub fn main(): i32 {
+    let t = Task.spawn(move () => work())
+    t.join()
+    return 0
+}

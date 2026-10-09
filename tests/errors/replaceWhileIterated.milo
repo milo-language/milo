@@ -1,0 +1,12 @@
+// @error: cannot replace 'v' while a loop iterates over it
+// `replace` writes its place like a `&mut` argument does. Dropping the old Vec freed the
+// string `x` was still reading.
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    for x in v {
+        let old = replace(v, [])
+        print(old.len)
+        print(x)
+    }
+    return 0
+}

@@ -1,0 +1,12 @@
+// @error: cannot swap 'v' while a loop iterates over it
+// After the swap `w` owns the buffer the loop walks, and clearing it freed `x`.
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    var w: Vec<string> = []
+    for x in v {
+        swap(v, w)
+        w.clear()
+        print(x)
+    }
+    return 0
+}

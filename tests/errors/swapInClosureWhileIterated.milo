@@ -1,0 +1,13 @@
+// @error: cannot write to 'v' by calling 'sw' while a loop iterates over 'v'
+// `swap` on a capture inside a by-reference closure writes the capture.
+pub fn main(): i32 {
+    var v: Vec<string> = ["a heap string long enough to be on the heap".clone(), "b".clone()]
+    var w: Vec<string> = []
+    let sw = () => { swap(v, w) }
+    for x in v {
+        sw()
+        w.clear()
+        print(x)
+    }
+    return 0
+}

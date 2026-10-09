@@ -1,0 +1,13 @@
+// @error: cannot swap 's' while 'w' borrows it
+// The view `w` points into the buffer `s` owned; after the swap `t` owns it and can
+// free it while `w` is still live.
+pub fn main(): i32 {
+    var s = "hello world, a fairly long string".clone()
+    var t = "x".clone()
+    let w = s[0..5]
+    swap(s, t)
+    let old = replace(t, "".clone())
+    print(old.len)
+    print(w)
+    return 0
+}
