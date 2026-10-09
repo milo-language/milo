@@ -3,8 +3,8 @@
 # Usage: rgdiff.sh [path-to-milo-rg-binary] [corpus-dir]
 set -uo pipefail
 
-SCRATCH="/private/tmp/claude-501/-Users-csmith-git-milo/1de0a49a-9173-4640-a43e-8915fe416a26/scratchpad/rgdiff"
-mkdir -p "$SCRATCH"
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/rgdiff.XXXXXX")
 
 MILO_RG="${1:-}"
 CORPUS="${2:-$HOME/git/llvm-project/clang/lib}"
@@ -12,7 +12,7 @@ CORPUS="${2:-$HOME/git/llvm-project/clang/lib}"
 if [[ -z "$MILO_RG" ]]; then
     MILO_RG="$SCRATCH/miloRg"
     echo "Building milo rg -> $MILO_RG"
-    (cd /Users/csmith/git/milo && ./milo build examples/cli-tools/rg.milo -o "$MILO_RG" --release)
+    (cd "$ROOT" && ./milo build examples/cli-tools/rg.milo -o "$MILO_RG" --release)
     build_status=$?
     if [[ $build_status -ne 0 ]]; then
         echo "FATAL: build of milo rg failed (exit $build_status)"
