@@ -212,6 +212,7 @@ export class Codegen {
   private needsPutchar = false;
   private needsFwrite = false;
   private needsIob = false;
+  private needsStderrSym = false;
   private needsSetvbuf = false;
   private needsExit = false;
   private needsMalloc = false;
@@ -436,6 +437,25 @@ export class Codegen {
 
   // Apple's libc exposes stdout as `__stdoutp`; glibc/musl as `stdout`.
   private get stdoutSymbol(): string { return this.target.os === "darwin" ? "__stdoutp" : "stdout"; }
+  private get stderrSymbol(): string { return this.target.os === "darwin" ? "__stderrp" : "stderr"; }
+
+  // eprint's counterpart of emitStdoutWrite: a string part goes to stderr by length.
+  // It used to go through dprintf's `%.*s`, whose precision is a C int, so a string over
+  // 2 GiB printed nothing (the precision wrapped negative and dprintf failed) and one
+  // over 4 GiB printed only the low 32 bits' worth. stderr is unbuffered, so this write
+  // and the dprintf calls around it reach fd 2 in program order.
+  private emitStderrWrite(lines: string[], dataPtr: string, lenVal: string): void {
+    this.needsFwrite = true;
+    const handle = this.nextTemp();
+    if (this.isWindows) {
+      this.needsIob = true;
+      lines.push(`  ${handle} = call ptr @__acrt_iob_func(i32 2)`);
+    } else {
+      this.needsStderrSym = true;
+      lines.push(`  ${handle} = load ptr, ptr @${this.stderrSymbol}`);
+    }
+    lines.push(`  call i64 @fwrite(ptr ${dataPtr}, i64 1, i64 ${lenVal}, ptr ${handle})`);
+  }
 
   // A SIGKILL cannot flush stdio, so a program killed by a watchdog (scripts/guard.ts,
   // a CI timeout) with a piped stdout loses every line it printed — precisely the case
@@ -2329,6 +2349,8 @@ export class Codegen {
     if (this.needsSetvbuf && this.isWindows) this.needsIob = true;
     if ((this.needsFwrite || this.needsSetvbuf) && !this.isWindows && !declaredExterns.has(this.stdoutSymbol))
       this.output.splice(1, 0, `@${this.stdoutSymbol} = external global ptr`);
+    if (this.needsStderrSym && !declaredExterns.has(this.stderrSymbol))
+      this.output.splice(1, 0, `@${this.stderrSymbol} = external global ptr`);
     if (this.needsSetvbuf) {
       if (!declaredExterns.has("setvbuf")) this.output.splice(1, 0, `declare i32 @setvbuf(ptr, ptr, i32, i64)`);
       if (!declaredExterns.has("getenv")) this.output.splice(1, 0, `declare ptr @getenv(ptr)`);
@@ -5352,6 +5374,7 @@ export class Codegen {
         this.hasStringType = true;
         const lenResult = this.nextTemp();
         lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
+        this.emitFormatLenCheck(lines, lenResult);
         const len64 = this.nextTemp();
         lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
         const bufSize = this.nextTemp();
@@ -5426,20 +5449,40 @@ export class Codegen {
     if (expr.func === "eprint") {
       this.needsDprintf = true;
       this.needsFree = true;
-      const partFmts: string[] = [];
-      const partArgs: { val: string; type: string }[] = [];
+      let partFmts: string[] = [];
+      let partArgs: { val: string; type: string }[] = [];
       const tempBufs: string[] = [];
       const eprintTemps: { val: string; ty: string; expr: HIRExpr }[] = [];
+      const flushBatch = () => {
+        if (partFmts.length === 0) return;
+        const fmtStr = this.addString(partFmts.join(""));
+        const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
+        this.emitFdPrintf(lines, 2, fmtStr.label, argsStr);
+        partFmts = [];
+        partArgs = [];
+      };
       for (const arg of expr.args) {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         eprintTemps.push({ val: av, ty: at, expr: arg.expr });
-        this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+        let dt: TypeKind = arg.expr.type;
+        while (dt.tag === "ref") dt = dt.inner;
+        // Freestanding has no stderr stream; its single printf sink keeps the
+        // (clamped) `%.*s` path.
+        if (dt.tag === "string" && this.target.os !== "none") {
+          this.hasStringType = true;
+          flushBatch();
+          const dataPtr = this.nextTemp();
+          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
+          const lenVal = this.nextTemp();
+          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
+          this.emitStderrWrite(lines, dataPtr, lenVal);
+        } else {
+          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+        }
       }
-      const fullFmt = partFmts.join("") + "\n";
-      const fmtStr = this.addString(fullFmt);
-      const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
-      this.emitFdPrintf(lines, 2, fmtStr.label, argsStr);
+      partFmts.push("\n");
+      flushBatch();
       for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
       for (const t of eprintTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
       return [lines, "void", "void"];
@@ -12385,8 +12428,16 @@ export class Codegen {
       lines.push(`  ${dataPtr} = extractvalue %String ${val}, 0`);
       const lenVal = this.nextTemp();
       lines.push(`  ${lenVal} = extractvalue %String ${val}, 1`);
+      // printf's precision is a C int. A plain trunc wrapped a length over 2 GiB
+      // negative, which printf reads as "no precision" and then scans for a NUL past
+      // the string's end. Clamped, the part is cut at 2 GiB instead; print and eprint
+      // write their top-level strings by length and never come through here.
+      const big = this.nextTemp();
+      lines.push(`  ${big} = icmp sgt i64 ${lenVal}, 2147483647`);
+      const clamped = this.nextTemp();
+      lines.push(`  ${clamped} = select i1 ${big}, i64 2147483647, i64 ${lenVal}`);
       const lenI32 = this.nextTemp();
-      lines.push(`  ${lenI32} = trunc i64 ${lenVal} to i32`);
+      lines.push(`  ${lenI32} = trunc i64 ${clamped} to i32`);
       partFmts.push("%.*s");
       partArgs.push({ val: lenI32, type: "i32" });
       partArgs.push({ val: dataPtr, type: "ptr" });
@@ -13127,6 +13178,24 @@ export class Codegen {
 
   // snprintf into a freshly malloc'd buffer; return ptr to it. Frees any temp bufs
   // produced by nested struct/enum field renderings after the snprintf completes.
+  // snprintf returns an int: a rendering over 2 GiB comes back as -1 (EOVERFLOW). The
+  // callers size a buffer from that length, so -1 became a zero-byte buffer that
+  // snprintf never NUL-terminated, then a strlen over the heap, or a String of length
+  // -1. Abort instead; the only way to get here is a value whose text exceeds 2 GiB.
+  private emitFormatLenCheck(lines: string[], len32: string): void {
+    const neg = this.nextTemp();
+    const failLabel = this.nextLabel("fmtlen.fail");
+    const okLabel = this.nextLabel("fmtlen.ok");
+    lines.push(`  ${neg} = icmp slt i32 ${len32}, 0`);
+    lines.push(`  br i1 ${neg}, label %${failLabel}, label %${okLabel}`);
+    lines.push(`${failLabel}:`);
+    const msg = this.addString("runtime error: formatted text exceeds 2 GiB\n");
+    this.emitFdPrintf(lines, 2, msg.label, "");
+    this.panicAbort(lines);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
   private emitSnprintfToBuf(
     fmt: string,
     args: { val: string; type: string }[],
@@ -13140,6 +13209,7 @@ export class Codegen {
     const argsStr = args.map(a => `, ${a.type} ${a.val}`).join("");
     const len = this.nextTemp();
     lines.push(`  ${len} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
+    this.emitFormatLenCheck(lines, len);
     const len64 = this.nextTemp();
     lines.push(`  ${len64} = sext i32 ${len} to i64`);
     const sz = this.nextTemp();
