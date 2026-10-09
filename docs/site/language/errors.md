@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 440 distinct messages across 557 programs the compiler must reject.
+Every error message the test suite pins: 444 distinct messages across 563 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -113,6 +113,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'unwrapOrElse' on a non-Copy Result<string>`](#unwraporelse-on-a-non-copy-result-string)
 - [`'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)`](#v-goes-out-of-scope-before-p-which-would-still-point-into-its-buffer-from-v-ptr-on-line-13)
 - [`'v' is borrowed by a scoped task and written by the Task.scope body`](#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body)
+- [`'v' is borrowed by one argument and changed by a mutation of 'v' in a later one`](#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one)
+- [`'v' is borrowed by one argument and changed by calling 'clr' in a later one`](#v-is-borrowed-by-one-argument-and-changed-by-calling-clr-in-a-later-one)
 - [`'v' is borrowed mutably and shared in the same call`](#v-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'v' is moved and borrowed in the same call`](#v-is-moved-and-borrowed-in-the-same-call)
 - [`'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-reassigned-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
@@ -258,6 +260,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
 - [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
+- [`cannot write to 'v' by calling 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-clr-while-a-loop-iterates-over-v)
+- [`cannot write to 'v' by calling 'g' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
 - [`casts only to an integer type`](#casts-only-to-an-integer-type)
 - [`closure returns string but can reach the end of its body without a 'return'`](#closure-returns-string-but-can-reach-the-end-of-its-body-without-a-return)
@@ -2913,6 +2917,46 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/taskScopeBodyWritesBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeBodyWritesBorrowed.milo)</sub>
+
+## `'v' is borrowed by one argument and changed by a mutation of 'v' in a later one` {#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one}
+
+The direct spelling of closureCallWritesBorrowedArg: the nested call's `&mut v` clears the buffer the earlier `&` argument points into.
+
+```milo skip
+fn show(r: &string, n: i64): void { print(r + n.toString()) }
+fn clr(v: &mut Vec<string>): i64 {
+    v.clear()
+    return 1
+}
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show(v[0], clr(&mut v))
+    return 0
+}
+```
+
+<sub>[tests/errors/nestedMutArgWritesBorrowedArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMutArgWritesBorrowedArg.milo)</sub>
+
+## `'v' is borrowed by one argument and changed by calling 'clr' in a later one` {#v-is-borrowed-by-one-argument-and-changed-by-calling-clr-in-a-later-one}
+
+`v[0]` is evaluated to a pointer into `v`'s buffer, then `clr()` reassigns `v` and frees that buffer before `show` runs and reads through the pointer.
+
+```milo skip
+fn show(r: &string, n: i64): void { print(r + n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): i64 => {
+        v = Vec.new()
+        return 1
+    }
+    show(v[0], clr())
+    return 0
+}
+```
+
+<sub>[tests/errors/closureCallWritesBorrowedArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesBorrowedArg.milo)</sub>
 
 ## `'v' is borrowed mutably and shared in the same call` {#v-is-borrowed-mutably-and-shared-in-the-same-call}
 
@@ -6739,6 +6783,45 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/forInMutRefWholeArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefWholeArg.milo)</sub>
+
+## `cannot write to 'v' by calling 'clr' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-clr-while-a-loop-iterates-over-v}
+
+Calling a closure that reassigns its capture is a write of that binding at the call, so it conflicts with the loop's borrow exactly as `v = Vec.new()` there would. The loop otherwise keeps reading `s` out of the freed buffer.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        clr()
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureCallWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesIteratedVec.milo)</sub>
+
+## `cannot write to 'v' by calling 'g' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v}
+
+`g` writes `v` only by running `clr`, a closure it captured; the write still happens.
+
+```milo skip
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    let g = (): void => { clr() }
+    for s in v {
+        g()
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureCallWritesIteratedVecIndirect.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesIteratedVecIndirect.milo)</sub>
 
 ## `carries a payload in 'Num'` {#carries-a-payload-in-num}
 
@@ -10754,6 +10837,37 @@ fn main() {
 <sub>[tests/errors/unwrapUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unwrapUseAfterMove.milo)</sub>
 
 ## `use of moved variable 's'` {#use-of-moved-variable-s}
+
+Passing the closure on is a use of what it captures by reference: `run` calls it.
+
+```milo skip
+fn run(f: () => void): void { f() }
+fn consume(s: string): void { print(s) }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let f = (): void => { print(s) }
+    consume(s)
+    run(f)
+    return 0
+}
+```
+
+<sub>[tests/errors/closureArgUsedAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureArgUsedAfterMove.milo)</sub>
+
+`f` reads `s` through its by-reference capture, which is the caller's own slot. Moving `s` zeroes that slot, so the call would read an empty string: calling the closure is a use of `s` like any direct read.
+
+```milo skip
+fn consume(s: string): void { print(s.len.toString()) }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let f = (): i64 => s.len
+    consume(s)
+    print(f().toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/closureCaptureUsedAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCaptureUsedAfterMove.milo)</sub>
 
 An enum whose variant carries a raw pointer is move-tracked, as a struct with a pointer field is: an owning handle wrapped in an enum was Copy by the all-variants-Copy rule, so `take(s); take(s)` duplicated it.
 

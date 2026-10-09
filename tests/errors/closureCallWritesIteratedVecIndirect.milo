@@ -1,0 +1,13 @@
+// @error: cannot write to 'v' by calling 'g' while a loop iterates over 'v'
+// `g` writes `v` only by running `clr`, a closure it captured; the write still happens.
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    let g = (): void => { clr() }
+    for s in v {
+        g()
+        print(s)
+    }
+    return 0
+}

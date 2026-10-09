@@ -1,0 +1,14 @@
+// @error: cannot write to 'v' by calling 'clr' while a loop iterates over 'v'
+// Calling a closure that reassigns its capture is a write of that binding at the call,
+// so it conflicts with the loop's borrow exactly as `v = Vec.new()` there would. The
+// loop otherwise keeps reading `s` out of the freed buffer.
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        clr()
+        print(s)
+    }
+    return 0
+}

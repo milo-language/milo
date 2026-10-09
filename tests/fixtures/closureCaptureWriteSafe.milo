@@ -1,0 +1,66 @@
+// Closures that write their by-reference captures, called where no borrow of the
+// captured binding is live, and a closure called after its capture was moved and then
+// reassigned. Pins that the call-site capture checks do not over-reject.
+struct Counter {
+    items: Vec<i64>,
+    count: i64,
+}
+
+fn show(r: &string, n: i64): void { print(r + " " + n.toString()) }
+
+fn showAfter(n: i64, r: &string): void { print(n.toString() + " " + r) }
+
+fn consume(s: string): void { print("consumed " + s.len.toString()) }
+
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("first".clone())
+    let clr = (): void => { v = Vec.new() }
+    let add = (): i64 => {
+        v.push("added".clone())
+        return v.len
+    }
+    for s in v.clone() {
+        clr()
+        print(s)
+    }
+    print(add().toString())
+    // The write finishes before the later borrow is taken.
+    showAfter(add(), v[0])
+    var name = "a".clone()
+    let rename = (): i64 => {
+        name = "renamed".clone()
+        return 1
+    }
+    // A borrow of the binding's own slot survives a reassignment of it; the callee
+    // reads the slot when it runs, after the later argument rewrote it.
+    show(name, rename())
+
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let f = (): i64 => s.len
+    print(f().toString())
+    consume(s)
+    s = "short".clone()
+    print(f().toString())
+
+    // A loop over one field and a closure that writes another field are disjoint.
+    var c = Counter { items: [1, 2, 3], count: 0 }
+    let bump = (): void => { c.count = c.count + 1 }
+    for x in c.items {
+        bump()
+        print(x.toString())
+    }
+    print(c.count.toString())
+    return 0
+}
+// @expect: first
+// @expect: 1
+// @expect: 2 added
+// @expect: renamed 1
+// @expect: 52
+// @expect: consumed 52
+// @expect: 5
+// @expect: 1
+// @expect: 2
+// @expect: 3
+// @expect: 3

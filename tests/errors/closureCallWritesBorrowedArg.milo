@@ -1,0 +1,14 @@
+// @error: 'v' is borrowed by one argument and changed by calling 'clr' in a later one
+// `v[0]` is evaluated to a pointer into `v`'s buffer, then `clr()` reassigns `v` and frees
+// that buffer before `show` runs and reads through the pointer.
+fn show(r: &string, n: i64): void { print(r + n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): i64 => {
+        v = Vec.new()
+        return 1
+    }
+    show(v[0], clr())
+    return 0
+}

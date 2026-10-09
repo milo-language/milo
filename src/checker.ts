@@ -312,6 +312,11 @@ export interface CaptureInfo {
   // (cannot be move-captured) from a capture that is merely read or moved out
   // (safe to move-capture). Drives the auto-move decision for generic-fn calls.
   mutatedInClosure?: boolean;
+  // The field chains under the capture that the body writes, one per write site (`null`
+  // when a step is an index or deref). A call of the closure is checked as a write of
+  // each of these, so a loop over `self.items` does not reject a closure that only
+  // bumps `self.count`.
+  mutatedFields?: (string[] | null)[];
   // Set when the closure body MOVES this capture out (hands it to a callee by value).
   // Captures live in the environment's own slots, so the move zeroes the slot — which
   // makes the closure call-once: a second call reads the emptied slot.
@@ -742,6 +747,11 @@ export class TypeChecker {
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
+  // Expressions whose evaluation writes the place they name (a mutating receiver, a
+  // `&mut` argument), and calls of local closures with the captures their bodies write.
+  // `nestedWrites` reads both to see a write buried inside a call argument.
+  private writtenExprs = new WeakSet<Expr>();
+  private closureCallWrites = new Map<Expr, CaptureInfo[]>();
   // Closure literals whose body moves a capture out — call-once (see CaptureInfo).
   private onceClosures = new Set<Expr>();
   private closureCalls = new Map<Expr, TypeKind>();
@@ -3121,12 +3131,20 @@ export class TypeChecker {
   // Same collision test as `frozenAgainst`, restricted to the `pointer` kind, so a
   // mutation site can say WHICH binding still points into the buffer.
   private pointerBorrowAgainst(info: VarInfo, target: Expr | null): PointerHolder | null {
+    return this.pointerBorrowAgainstFields(info, this.targetFields(target));
+  }
+
+  // The field chain a mutation of `target` writes under its root; null (the whole
+  // variable, conservatively) when there is no target or a step is not a field.
+  private targetFields(target: Expr | null): string[] | null {
+    return target ? this.accessPath(target)?.fields ?? null : null;
+  }
+
+  private pointerBorrowAgainstFields(info: VarInfo, mutFields: string[] | null): PointerHolder | null {
     if (!info.borrowed) return null;
     const holders = info.borrowHolders;
     if (!holders) return null;
     const paths = info.borrowedPaths;
-    const mut = target ? this.accessPath(target) : null;
-    const mutFields = mut ? mut.fields : null;
     for (let i = 0; i < holders.length; i++) {
       const h = holders[i];
       if (h && this.borrowCollides(paths?.[i], mutFields)) return h;
@@ -3338,11 +3356,13 @@ export class TypeChecker {
   }
 
   private frozenAgainst(info: VarInfo, target: Expr | null, ignore?: BorrowKind): boolean {
+    return this.frozenAgainstFields(info, this.targetFields(target), ignore);
+  }
+
+  private frozenAgainstFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): boolean {
     if (!info.borrowed) return false;
     const paths = info.borrowedPaths;
     if (!paths || paths.length === 0) return true;
-    const mut = target ? this.accessPath(target) : null;
-    const mutFields = mut ? mut.fields : null;
     return paths.some((p, i) => (ignore === undefined || info.borrowKinds?.[i] !== ignore) && this.borrowCollides(p, mutFields));
   }
 
@@ -8339,7 +8359,7 @@ export class TypeChecker {
         if (!field) this.fatal(`struct '${objType.name}' has no field '${expr.field}'`, sp, memberHint(expr.field, this.fieldCandidates(objType)));
         this.checkFieldPrivacy(objType.name, expr.field, sp);
         this.setType(expr, field.type);
-        const mutable = throughPtr ? true : this.isRootMutable(expr.object);
+        const mutable = throughPtr ? true : this.writtenPlaceMutable(expr);
         return { type: field.type, mutable };
       }
       this.fatal(`cannot access field on non-struct type ${this.show(objType)}`, sp);
@@ -8349,12 +8369,12 @@ export class TypeChecker {
       this.checkExpr(expr.index);
       if (objType.tag === "array") {
         this.setType(expr, objType.element);
-        const rootMut = this.isRootMutable(expr.object);
+        const rootMut = this.writtenPlaceMutable(expr);
         return { type: objType.element, mutable: rootMut };
       }
       if (objType.tag === "vec") {
         this.setType(expr, objType.element);
-        const rootMut = this.isRootMutable(expr.object);
+        const rootMut = this.writtenPlaceMutable(expr);
         return { type: objType.element, mutable: rootMut };
       }
       if (objType.tag === "ptr") {
@@ -8390,8 +8410,8 @@ export class TypeChecker {
   // mutated in place, record that so the value isn't move-captured out from
   // under the caller (which still needs to see the mutation / drop it).
   private markCaptureMutated(expr: Expr) {
-    const capRoot = this.rootNameOf(expr);
-    if (capRoot !== null) this.eachCaptureOf(capRoot, cap => { cap.mutatedInClosure = true; });
+    const ap = this.accessPath(expr);
+    if (ap) this.eachCaptureOf(ap.root, cap => { cap.mutatedInClosure = true; (cap.mutatedFields ??= []).push(ap.fields); });
   }
 
   // Apply fn to `name`'s capture in every open closure that holds one. A nested closure
@@ -8533,6 +8553,8 @@ export class TypeChecker {
       // it: a capture the body writes is a `&mut` of that place, one it only reads a `&`,
       // and a non-Copy capture of a `move` closure moves the place into the environment.
       for (const c of this.closureArgCaptures(arg)) {
+        // ident-ok: a literal's moved capture is already reported at the read in its body
+        if (arg.kind === "Ident" && !c.isMove) this.errorIfCaptureMoved(c.cap, arg.name, arg.span ?? sp);
         const use = { arg: i, ...this.capturePlace(c.cap), span: arg.span ?? sp, moved: false, captured: true };
         if (c.isMove) { if (!this.isCopyType(c.cap.type)) muts.push({ ...use, moved: true }); }
         else (c.cap.mutatedInClosure ? muts : shared).push(use);
@@ -8582,6 +8604,25 @@ export class TypeChecker {
         }
       }
     }
+    // A write made while a later argument is evaluated (a closure call, a nested call's
+    // `&mut` argument or mutating receiver, an assignment in an if/match arm) runs after
+    // every earlier argument was taken. An earlier argument that points into a buffer
+    // (through an index, a deref or an enum payload) or was moved out of the place is
+    // left dangling by it: `show(v[0], clr())` with `clr` reassigning `v` freed the string
+    // `show` then read. A borrow of a binding's own slot survives, since writing the
+    // binding cannot move the slot, which is what keeps `ctx.emit(ctx.fresh())` legal.
+    // A write in an EARLIER argument is finished before the later borrow is taken.
+    const intoBuffer = (u: Use) => u.moved || u.via !== undefined || u.steps.some(s => !s.startsWith(".") || s.startsWith(".$"));
+    for (let j = 1; j < args.length; j++) {
+      const ws = this.nestedWrites(args[j]);
+      if (ws.length === 0) continue;
+      const hit = [...muts, ...shared].find(b => b.arg < j && !b.captured && intoBuffer(b)
+        && ws.some(w => w.root === b.root && overlaps(w.fields, b.fields)));
+      if (!hit) continue;
+      const w = ws.find(w => w.root === hit.root && overlaps(w.fields, hit.fields))!;
+      this.error(`'${hit.name}' is ${hit.moved ? "moved" : "borrowed"} by one argument and changed by ${w.what} in a later one`, args[j].span ?? sp,
+        `the later argument runs after the earlier one is taken and before the call, so the change can free what the call is handed: compute it into a local before the call`);
+    }
     // Two `&mut` arguments where one place is an ancestor of the other (a container
     // and something derived from it, e.g. `v` and `v[0]`) are UB: mutating through
     // the container arg (a `push` that reallocs) frees the storage the descendant
@@ -8630,6 +8671,10 @@ export class TypeChecker {
   private closureArgCaptures(arg: Expr): { cap: CaptureInfo; isMove: boolean }[] {
     // ident-ok: a closure binding is a whole variable, not a place with steps
     const sources = arg.kind === "Closure" ? [arg] : arg.kind === "Ident" ? this.lookup(arg.name)?.closureSources ?? [] : [];
+    return this.capturesOfClosures(sources);
+  }
+
+  private capturesOfClosures(sources: Expr[]): { cap: CaptureInfo; isMove: boolean }[] {
     const out: { cap: CaptureInfo; isMove: boolean }[] = [];
     const seen = new Set<Expr>();
     const walk = (src: Expr) => {
@@ -8643,6 +8688,96 @@ export class TypeChecker {
     };
     for (const src of sources) walk(src);
     return out;
+  }
+
+  // The writes evaluating `arg` makes, see the nested-write check in
+  // checkCallSiteExclusivity. The walk is reflective over the node's fields rather than a
+  // list of Expr kinds, so a kind added later is walked rather than silently skipped. A
+  // closure value found inside the argument counts as running: a nested call may run it
+  // while the argument is evaluated. The argument node itself is not a nested write (a
+  // `&mut` argument is the exclusivity check's own `muts`), except a closure call.
+  private nestedWrites(arg: Expr): { root: unknown; fields: string[] | null; what: string }[] {
+    const out: { root: unknown; fields: string[] | null; what: string }[] = [];
+    const seen = new Set<object>();
+    const atPlace = (e: Expr, what: string) => {
+      const p = this.exclusivityPlace(e);
+      if (p) out.push({ root: p.root, fields: p.fields, what });
+    };
+    const capWrites = (cap: CaptureInfo, what: string) => {
+      const base = this.capturePlace(cap);
+      for (const f of cap.mutatedFields ?? [null]) {
+        out.push({ root: base.root, fields: base.fields && f ? [...base.fields, ...f] : null, what });
+      }
+    };
+    const visit = (n: unknown, top: boolean): void => {
+      if (!n || typeof n !== "object" || seen.has(n)) return;
+      seen.add(n);
+      if (Array.isArray(n)) { for (const x of n) visit(x, false); return; }
+      const kind = (n as { kind?: unknown }).kind;
+      if (typeof kind !== "string") return;
+      const e = n as Expr;
+      // ident-ok: a closure binding is a whole variable; its literals carry the captures
+      if (!top && (e.kind === "Closure" || (e.kind === "Ident" && this.exprTypes.get(e)?.tag === "fn"))) {
+        const name = e.kind === "Ident" ? `'${e.name}'` : "a closure";
+        for (const c of this.closureArgCaptures(e)) if (!c.isMove && c.cap.mutatedInClosure) capWrites(c.cap, `running ${name}`);
+        return;
+      }
+      // A literal's body runs later, not while the argument is evaluated.
+      if (e.kind === "Closure") return;
+      for (const cap of this.closureCallWrites.get(e) ?? []) capWrites(cap, `calling '${(e as { func?: string }).func ?? "a closure"}'`);
+      if (!top && (this.writtenExprs.has(e) || this.autoBorrowed.get(e)?.mutable)) atPlace(e, `a mutation of '${this.describeExpr(e)}'`);
+      if (kind === "Assign") {
+        const t = (n as { target: Expr }).target;
+        atPlace(t, `an assignment to '${this.describeExpr(t)}'`);
+      }
+      for (const [k, v] of Object.entries(n)) if (k !== "span") visit(v, false);
+    };
+    visit(arg, true);
+    return out;
+  }
+
+  // Calling a by-reference closure reads and writes its captures through the caller's own
+  // slots, so the call is a use of each captured binding at this point in the caller. A
+  // capture moved since the closure was built would be read zeroed, and a capture the
+  // body writes is written here, which a live loop, view or pointer over that binding
+  // forbids exactly as a direct write would. Closures reached through its own captures
+  // run too, so their captures count (capturesOfClosures walks them). A `move` closure
+  // owns copies taken when it was built, so none of this applies to it.
+  private checkClosureCallCaptures(call: Expr, fname: string, info: VarInfo, sp: Span | undefined) {
+    const writes: CaptureInfo[] = [];
+    for (const { cap, isMove } of this.capturesOfClosures(info.closureSources ?? [])) {
+      if (isMove || !cap.info) continue;
+      this.errorIfCaptureMoved(cap, fname, sp);
+      if (!cap.mutatedInClosure) continue;
+      writes.push(cap);
+      for (const fields of cap.mutatedFields ?? [null]) {
+        if (this.reportClosureWrite(cap.info, cap.name, fields, fname, sp)) break;
+      }
+    }
+    if (writes.length > 0) this.closureCallWrites.set(call, writes);
+  }
+
+  private errorIfCaptureMoved(cap: CaptureInfo, fname: string, sp: Span | undefined) {
+    if (!cap.info?.moved) return;
+    this.error(`use of moved variable '${cap.name}'`, sp,
+      `'${fname}' captures '${cap.name}' by reference and uses it when it runs, but ownership of '${cap.name}' was transferred earlier, so the closure would see an emptied value. Reassign '${cap.name}' first, or clone it at the point of transfer.`);
+  }
+
+  // A closure call's write of `fields` under capture `name`, checked like a direct write.
+  // Capture borrows are skipped: one still open in this statement belongs to a closure
+  // literal passed as a call argument, and checkCallSiteExclusivity judges those.
+  private reportClosureWrite(info: VarInfo, name: string, fields: string[] | null, fname: string, sp: Span | undefined): boolean {
+    const ph = this.pointerBorrowAgainstFields(info, fields);
+    if (ph) {
+      this.requireUnsafe(`'${name}' is written by calling '${fname}' while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+        this.pointerHint(ph));
+      return true;
+    }
+    if (!this.frozenAgainstFields(info, fields, "capture")) return false;
+    this.reportBorrowed(`cannot write to '${name}' by calling '${fname}'`, name, this.conflictingBorrowFields(info, fields, "capture"), sp,
+      `cannot write to '${name}' by calling '${fname}' because '${name}' is borrowed`,
+      `a slice or loop iteration over '${name}' is still live, and the closure's write could move memory it points into`);
+    return true;
   }
 
   // Record the closure literals `value` may evaluate to as sources of `info`. Assignment
@@ -9072,15 +9207,28 @@ export class TypeChecker {
       : { root: base ?? p.root, name: p.root, steps: [...p.steps, step] };
   }
 
+  // Marks the written place once, at its full path: the recursion below walks to the
+  // root, and marking there too would record every write as a write of the whole capture.
   private isRootMutable(expr: Expr): boolean {
     this.markCaptureMutated(expr);
+    return this.rootMutable(expr);
+  }
+
+  // An assignment target `x.f` / `x[i]`: whether its root is writable, marking the
+  // capture written at the target's own path rather than at its object's.
+  private writtenPlaceMutable(target: Expr & { object: Expr }): boolean {
+    this.markCaptureMutated(target);
+    return this.rootMutable(target.object);
+  }
+
+  private rootMutable(expr: Expr): boolean {
     // ident-ok: the Ident base case of isRootMutable, which IS the mutability walk over places
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
       return info?.mutable ?? false;
     }
-    if (expr.kind === "FieldAccess") return this.isRootMutable(expr.object);
-    if (expr.kind === "IndexAccess") return this.isRootMutable(expr.object);
+    if (expr.kind === "FieldAccess") return this.rootMutable(expr.object);
+    if (expr.kind === "IndexAccess") return this.rootMutable(expr.object);
     // raw pointer and box derefs are always mutable (unsafe required separately)
     if (expr.kind === "UnaryOp" && (expr.op === "*")) return true;
     return false;
@@ -9097,9 +9245,11 @@ export class TypeChecker {
   // The live non-pointer borrow of `info` that a mutation of `target` collides with,
   // preferring one whose origin is known so the diagnostic can name it.
   private conflictingBorrow(info: VarInfo, target: Expr | null, ignore?: BorrowKind): BorrowSite | null {
+    return this.conflictingBorrowFields(info, this.targetFields(target), ignore);
+  }
+
+  private conflictingBorrowFields(info: VarInfo, mutFields: string[] | null, ignore?: BorrowKind): BorrowSite | null {
     const paths = info.borrowedPaths ?? [];
-    const mut = target ? this.accessPath(target) : null;
-    const mutFields = mut ? mut.fields : null;
     for (let i = 0; i < paths.length; i++) {
       const kind = info.borrowKinds?.[i];
       if (kind === "pointer" || (ignore !== undefined && kind === ignore)) continue;
@@ -9162,6 +9312,7 @@ export class TypeChecker {
   }
 
   private errorIfFrozen(obj: Expr, action: string, sp?: Span) {
+    this.writtenExprs.add(obj);
     for (const place of this.placesOf(obj)) {
       if (place.tag !== "path") continue;
       const info = this.lookup(place.root);
@@ -10381,6 +10532,7 @@ export class TypeChecker {
           this.tryMove(expr.args[i]);
         }
         this.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
+        if (fnType.tag === "fn") this.checkClosureCallCaptures(expr, expr.func, varInfo, sp);
         // Calling a closure that moves a capture out consumes the closure: the call
         // empties the environment slots its captures live in, so a second call reads
         // zeroed captures. Before this, the second call silently returned a wrong

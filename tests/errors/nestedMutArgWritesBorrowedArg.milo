@@ -1,0 +1,14 @@
+// @error: 'v' is borrowed by one argument and changed by a mutation of 'v' in a later one
+// The direct spelling of closureCallWritesBorrowedArg: the nested call's `&mut v` clears
+// the buffer the earlier `&` argument points into.
+fn show(r: &string, n: i64): void { print(r + n.toString()) }
+fn clr(v: &mut Vec<string>): i64 {
+    v.clear()
+    return 1
+}
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show(v[0], clr(&mut v))
+    return 0
+}
