@@ -49,5 +49,5 @@ The rules reviewers check by hand. Anything mechanically checkable lives in `scr
   defect, not the documentation gap it fills.
 
 ## Commits
-- One line, all lowercase.
+- Subject: one line, lowercase, imperative verb first, at most 72 chars ("fix whitespace", "do not wrap int16"). Detail goes in the body. `.githooks/commit-msg` enforces it.
 - Commit directly to `main` (Milo convention). Never force-push shared history.

@@ -33,6 +33,7 @@ To change an entry, change that line — this table is a projection of it.
 | Script | Purpose |
 |---|---|
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
+| `scripts/agent_review.sh` | Cross-model / multi-persona code review driver. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |
@@ -101,6 +102,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |
 | `scripts/verify-contracts.ts` | Static contract gate: run `milo prove` over every contract-bearing .milo in std/ and examples/ and FAIL if any contract is *refuted* (the solver found a counterexample proving it false). |
 | `scripts/windows-sweep.ts` | Cross-compiles every tests/fixtures/*.milo to windows-x64 and runs the PE under Wine, comparing stdout to the fixture's `// @expect:` lines. |
+| `.githooks/commit-msg` | Reject commit subjects that read like changelog paragraphs. |
 | `.githooks/pre-commit` | Format staged .milo files with bin/milo-fmt (built on demand by `milo fmt`). |
 <!-- END GENERATED INDEX -->
 

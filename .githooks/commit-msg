@@ -1,0 +1,37 @@
+#!/bin/sh
+# Reject commit subjects that read like changelog paragraphs.
+# Enable with: git config core.hooksPath .githooks
+#
+# Style: a short imperative phrase, lowercase, verb first ("fix whitespace",
+# "do not wrap int16"). Detail goes in the body, after a blank line.
+set -e
+
+msg_file="$1"
+subject=$(grep -v '^#' "$msg_file" | head -n 1)
+
+# git writes these itself; rewriting them would break autosquash and reverts.
+case "$subject" in
+    "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+fail() {
+    echo "commit-msg: $1" >&2
+    echo "  subject: $subject" >&2
+    echo "  want a short imperative phrase, e.g. \"fix whitespace\" or \"do not wrap int16\"" >&2
+    exit 1
+}
+
+[ -n "$subject" ] || fail "empty subject"
+len=$(printf '%s' "$subject" | wc -m | tr -d ' ')
+[ "$len" -le 72 ] || fail "subject is $len chars (max 72); move the detail into the body"
+case "$subject" in
+    [ABCDEFGHIJKLMNOPQRSTUVWXYZ]*) fail "subject starts with a capital letter" ;;
+    *.) fail "subject ends with a period" ;;
+esac
+
+second=$(grep -v '^#' "$msg_file" | sed -n 2p)
+[ -z "$second" ] || fail "second line must be blank (subject, blank line, body)"
+
+if grep -qiE '^(co-authored-by: .*(claude|anthropic|copilot|cursor)|generated with )' "$msg_file"; then
+    fail "drop the tool attribution trailer"
+fi
