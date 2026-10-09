@@ -50,7 +50,7 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     name: "hot", usage: "hot <file> [-- args]", summary: "run and patch function bodies on every save",
     details: [
       "a body-only edit is swapped into the running program; a layout, signature",
-      "or global change restarts it (docs/plans/fast-iteration-2026-10.md)",
+      "or global change restarts it",
     ],
   },
   {

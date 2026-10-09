@@ -1,7 +1,6 @@
 // Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every
 // function patchable through a data slot, the patch emitter that diffs a new build against
-// the host's manifest, and the watch/apply driver. Design: docs/plans/fast-iteration-2026-10.md
-// "Hot reload design (step 5)". MVP: body-only edits; anything that changes a layout, a
+// the host's manifest, and the watch/apply driver. MVP: body-only edits; anything that changes a layout, a
 // signature, the function set or the mutable-global set is refused and the driver restarts.
 //
 // IR scanning is cgu.ts's (parseModule / mapSymbols); this file adds no IR parser of its own

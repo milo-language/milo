@@ -1,4 +1,4 @@
-// Explicit `&mut` on call arguments (docs/plans/local-reasoning-2026-09.md, track A):
+// Explicit `&mut` on call arguments:
 // the `implicit-mut-borrow` hard error (no --allow reaches it; it is not a warning-table
 // entry), the misplacement errors, and the fixer that rewrites a file from the checker's
 // resolved signatures. tests/errors pins the error texts on whole programs; this file

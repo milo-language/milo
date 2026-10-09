@@ -1,6 +1,6 @@
 // milo package-manager data layer: manifest (milo.json), lockfile (milo.lock),
 // dependency source specs, cache-path resolution, and content-addressed tree
-// hashing. Parse / serialize / hash only — see docs/plans/package-manager.md §P1.
+// hashing. Parse / serialize / hash only.
 //
 // resolvePath in src/resolver.ts finds a package's files through depDirForSpec
 // below, the same function the installer writes through, so the two cannot drift.
@@ -335,8 +335,8 @@ function collectFiles(root: string, dir: string, out: string[]): void {
 
 // ── Cache layout ──────────────────────────────────────────────────────────────
 
-// Root of the extracted-package cache. Honors XDG_CACHE_HOME ($XDG_CACHE_HOME/milo,
-// per docs/plans/package-manager.md §Global CLI install); otherwise ~/.milo/cache.
+// Root of the extracted-package cache. Honors XDG_CACHE_HOME ($XDG_CACHE_HOME/milo);
+// otherwise ~/.milo/cache.
 // resolver.ts imports THIS function rather than recomputing the path: a divergence
 // between the writer and the reader would leave installed packages unresolvable.
 export function cacheRoot(): string {

@@ -372,7 +372,7 @@ test("every std module imports together in one program", () => {
   expect(`${r.code} ${r.err.split("\n").filter(l => l.includes("error")).join(" | ")}`).toBe("0 ");
 });
 
-// Per-module namespaces, stage 1 (docs/plans/module-namespaces.md). A private helper is
+// Per-module namespaces. A private helper is
 // invisible outside its own file, so two modules each defining one is not an ambiguity —
 // it was only ever a failure of the flat merge. Renaming the contested names deletes the
 // error class without changing what any working program means.
@@ -457,7 +457,7 @@ fn main(): void {
   expect(r.out.trim().split("\n")).toEqual(["3", "b"]);
 });
 
-// ── display names (docs/plans/module-namespaces.md, stage 3) ──
+// ── display names ──
 //
 // The rename is a SYMBOL change. Every surface a person reads has to keep showing the
 // name they wrote, or the pass trades one bad error message for another, which is

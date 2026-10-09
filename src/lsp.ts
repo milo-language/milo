@@ -1829,7 +1829,7 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
 
 // ── Inlay hints: the elided &mut on a method receiver ──
 // A non-receiver argument to a `&mut T` parameter is written `&mut x` in the source
-// (the explicit-`&mut` rule, docs/plans/local-reasoning-2026-09.md track A), so the
+// (the explicit-`&mut` rule), so the
 // reader already sees it and a bare one is a diagnostic, not a hint. Receivers stay
 // implicit (`v.push(1)`), so a `&mut self` method still gets a `&mut` hint at the
 // receiver's start position: that is the one mutation the syntax does not show.

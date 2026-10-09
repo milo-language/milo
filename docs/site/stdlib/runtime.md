@@ -145,7 +145,7 @@ can outlive this call: the join below runs however `body` exits, and a panic abo
       reader(&conn)
   })
 
-The checker holds the rest (checkTaskScopes, docs/plans/task-scope-2026-10.md): `s`
+The checker holds the rest (checkTaskScopes): `s`
 is used only as `s.spawn(<closure literal>)` directly in `body`, a borrowing task
 captures only bindings declared outside `body`, and a binding a task borrows is
 either read by everyone in the scope or touched by that one task alone.

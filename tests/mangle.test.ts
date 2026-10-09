@@ -1,4 +1,4 @@
-// Per-package name mangling (docs/plans/package-manager.md §P0).
+// Per-package name mangling.
 //
 // The property under test: a dependency and the consumer may define the same
 // top-level names, and every call still reaches the body it was written against.

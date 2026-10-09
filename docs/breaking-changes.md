@@ -13,8 +13,7 @@ compatibility, but every break belongs here with the migration spelled out.
 
 Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 **v0.2.0**, and a package that wants to stay on the previous surface pins
-`"milo": "^0.1.0"` in its `milo.json` (see
-[the package manager plan](plans/package-manager.md#the-milo-constraint)). A release
+`"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
 
 ## Raw addresses leave std/pool and std/mem (2026-10-08)
@@ -46,8 +45,7 @@ A descriptor is an `i32`, and an `i32` is Copy: nothing stopped one outliving th
 that owned it, after which it named whatever the kernel reused the number for (the
 dapweb ws writer wrote to a socket its owner had closed). Every pub std fn or method that
 takes or returns a bare descriptor is now `@unsafe`, takes a handle, or is gone; the gate
-is `tests/rawFdApi.test.ts`. `@unsafe` now applies to methods too. The plan and the full
-inventory are in [plans/raw-fd-2026-10.md](plans/raw-fd-2026-10.md).
+is `tests/rawFdApi.test.ts`. `@unsafe` now applies to methods too.
 
 Borrowing goes through the new `AsFd` trait (std/io). `File`, `OwnedFd`, `FdStream`,
 `TcpStream`, `TcpListener`, `UnixStream`, `UnixListener`, `WsConn`, `Pty`, `SignalPipe`
@@ -206,7 +204,7 @@ on a signature the reader was not looking at; the 2026-09-20 census of 290k line
 that the one place local reasoning broke. Now the call names the values it can change.
 No compatibility flag: the corpus was rewritten in one pass with the fixer (19,764 sites
 across std, examples, the self-hosted compiler and nine packages), and the fixer is the
-migration. Rationale and rollout: `plans/local-reasoning-2026-09.md`, track A.
+migration.
 
 ## A struct with a raw pointer field is move-tracked unless it is `@copy` (2026-09-19)
 
@@ -219,8 +217,8 @@ at; the diagnostic's hint names it. `@cLayout` does not imply `@copy`.
 Why: a raw pointer is a scalar, so the all-fields-Copy rule made every owning handle
 Copy unless its author remembered `@noCopy`. At the census that shipped this, five
 std types and three example handles were duplicable owning handles, each a
-double `close` waiting for the first program to copy one (WP4 of
-[the soundness sweep](plans/soundness-sweep-2026-09.md)). The default is now the safe
+double `close` waiting for the first program to copy one (found by the September 2026
+soundness sweep). The default is now the safe
 one and the unsafe direction is the one that has to be spelled.
 
 What changed copy-ability, and the fix at a call site that copied it:
@@ -292,9 +290,8 @@ awaits every worker before the owner can go away:
 Why it is a removal and not a rule: a window is a raw pointer into the owner's
 buffer. Handing windows to a worker by hand and returning from the function
 before the worker finished dropped the `Shards` owner under a live window, and the
-worker then wrote into freed memory (H2 in
-[the soundness sweep](plans/soundness-sweep-2026-09.md); heap-use-after-free under
-`--sanitize`). The move checker cannot see it because nothing is moved twice; the
+worker then wrote into freed memory (found by the September 2026 soundness sweep;
+heap-use-after-free under `--sanitize`). The move checker cannot see it because nothing is moved twice; the
 `weld` check could only notice the miss after the fact, and a program that never
 welds never reaches it. No caller in-tree needed the pieces apart, so the pieces
 are no longer offered. The "keep the owner alive until weld" obligation that

@@ -16,8 +16,7 @@
 // written down at the site.
 //
 // To add an exemption, put `ident-ok:` and a reason on the line or just above it. To
-// remove one, route the rule through `accessPath`/`placesOf` instead. See
-// docs/plans/aliasing-coverage.md.
+// remove one, route the rule through `accessPath`/`placesOf` instead.
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";

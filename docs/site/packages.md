@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: packages-index
 purpose: the published Milo packages, what each is graded against, and how to publish one
-key-files: docs/site/.vitepress/config.mts, src/pkgcli.ts, docs/plans/package-manager.md
+key-files: docs/site/.vitepress/config.mts, src/pkgcli.ts
 update-when: a package is published, renamed, or retired
 last-verified: 2026-08-15
 -->

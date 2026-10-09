@@ -99,7 +99,7 @@ pub struct ImplInfo {
 
 // Which loop shape a `for x in e` compiles to. The checker already decides this to
 // declare the binding's type; recording the answer is what stops the backend deciding
-// it a second time from the syntax (see docs/plans/hir-migration.md).
+// it a second time from the syntax.
 pub enum ForInKind {
     FRange,
     FVec,
@@ -250,7 +250,7 @@ pub struct Checker {
     jsonCapableStructs: HashMap<string, bool>,
     // The type checkExpr computed for each expression, keyed by ExprNode.id. The backend
     // otherwise re-derives this from syntax as a string, through a partial function whose
-    // failure value is read as "skip" — see docs/plans/hir-migration.md. Recorded here so
+    // failure value is read as "skip". Recorded here so
     // lowering can hand it to codegen instead. Last write wins: a node the checker walks
     // more than once (speculative re-walks) ends up with the type from its final walk,
     // which is the one the rest of the pass acted on.

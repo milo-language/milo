@@ -1,4 +1,4 @@
-// Per-package name mangling — see docs/plans/package-manager.md §P0.
+// Per-package name mangling.
 //
 // The resolver merges every module into ONE flat namespace, so two packages that
 // both define `fn parse` collide in code the consumer did not write and cannot
@@ -41,7 +41,7 @@ function isManglableFn(f: Function): boolean {
   return true;
 }
 
-// Stage 1 of per-module namespaces (docs/plans/module-namespaces.md): the extra
+// Stage 1 of per-module namespaces: the extra
 // carve-outs that apply when the unit being renamed is a plain user MODULE rather than
 // a package. `main` is looked up by the linker under that exact name, and a `@cName` or
 // `@cLayout` decl exists precisely to pin a symbol or a layout a C peer names.
@@ -444,7 +444,7 @@ export function manglePackage(
   }
 }
 
-// ── display names (docs/plans/module-namespaces.md, stage 3) ──
+// ── display names ──
 //
 // A mangled name is a SYMBOL. It reaches the linker and nothing else: a reader who wrote
 // `fn tone` is never shown `gfx$tone`, in a diagnostic, in `print` output, in a debugger

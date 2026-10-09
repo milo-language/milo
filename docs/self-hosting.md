@@ -175,16 +175,14 @@ acceptance test, and the rules in "Working Agreement" are mandatory.
 > **Why self-host at all — decided 2026-08-04.** For *proof*, not correctness. A rewrite of
 > `src/` into Milo would NOT produce a more correct compiler: the dominant defect class in
 > the TS compiler is incomplete traversal reporting success, which no language prevents.
-> See [plans/compiler-host-language.md](plans/compiler-host-language.md) for the evidence,
-> the one place Milo genuinely wins (index access), the costs (second-class refs vs.
-> graph-shaped IR, bootstrap paradox, compile time), and the port order if this restarts —
+> The one place Milo genuinely wins is index access; the costs are second-class refs vs.
+> graph-shaped IR, the bootstrap paradox, and compile time. The port order if this restarts:
 > **codegen first, checker last, differential harness green at every step.**
 >
 > **Can the inner loop survive it — decided 2026-08-04.** Yes, conditionally. A 40k-LOC
 > Milo compiler costs ~0.8s frontend + ~15s clang `-O2` per edit, and clang is 95% of that.
 > Parallel codegen units (measured 3.4x on this box) plus `--fast` bring it to ~1–2s; the
-> test cycle is host-independent and mildly favours native. Prerequisites, evidence and the
-> named pitfalls: [plans/milo-first-inner-loop.md](plans/milo-first-inner-loop.md).
+> test cycle is host-independent and mildly favours native.
 
 ## STATUS 2026-08-05: SELF-HOSTING RECONVERGED — byte-identical fixed point
 

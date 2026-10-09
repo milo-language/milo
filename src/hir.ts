@@ -215,7 +215,7 @@ export interface HIRFunction {
   isExtern: boolean;
   isVariadic: boolean;
   // @wrapping: the routine's + - * -x, div INT_MIN/-1 and over-shifts use defined modular
-  // arithmetic instead of trapping (see docs/plans/overflow-semantics.md). Correctness dial
+  // arithmetic instead of trapping. Correctness dial
   // only — bounds/div-by-zero/ranged still trap, `as` conversions unchanged.
   isWrapping?: boolean;
   // Drives what the generated C header declares: the header is the library's published

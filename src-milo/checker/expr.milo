@@ -1378,7 +1378,7 @@ pub fn isLocalCallableFn(ck: &Checker, name: &string): bool {
     }
 }
 
-// The explicit-`&mut` rule (docs/plans/local-reasoning-2026-09.md, track A): an argument
+// The explicit-`&mut` rule: an argument
 // bound to a `&mut T` parameter is written `&mut x`, and `&mut` is written nowhere else.
 // The parser dropped the marker from the tree and recorded the node (ast.milo
 // isExplicitMut), so this is the one place the spelling is judged. Receivers never reach
@@ -3730,7 +3730,7 @@ fn isSliceCombinator(m: &string): bool {
 }
 
 pub fn checkMethodCall(ck: &mut Checker, obj: &ExprNode, method: &string, args: &Vec<Heap<ExprNode>>, span: &Option<Span>): TypeKind {
-    // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md):
+    // Receivers borrow implicitly:
     // `(&mut v).push(1)` reports once and is then checked as `v.push(1)`, as src/checker.ts
     // does by stripping the marker in place.
     match obj.kind {

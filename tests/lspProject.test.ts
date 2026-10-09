@@ -32,7 +32,7 @@ writeFileSync(DMAIN, DMAIN_SRC);
 const DMAIN_URI = pathToFileURL(DMAIN).href;
 
 // A third workspace where the OPEN file's own private `tone` collides with an imported
-// module's, so the per-module pass renames it (docs/plans/module-namespaces.md). The LSP
+// module's, so the per-module pass renames it. The LSP
 // looks a decl up by the identifier under the cursor, so a mangled `coll_main$tone` would
 // not merely print wrong: hover and go-to-definition would find nothing at all.
 const CROOT = mkdtempSync(join(tmpdir(), "milo-lsp-coll-"));

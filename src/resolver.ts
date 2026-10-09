@@ -526,7 +526,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     }
   }
 
-  // ── per-package mangling (docs/plans/package-manager.md §P0) ──
+  // ── per-package mangling ──
   // Index every package's top-level names first: an intra-package reference is
   // rewritten only when the name is declared *somewhere* in that package, and a
   // cross-package import binds only names the target package actually mangled
@@ -572,7 +572,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     }
   }
 
-  // ── stage 1 of per-module namespaces (docs/plans/module-namespaces.md) ──
+  // ── stage 1: per-module namespaces ──
   // Two user modules that each define a private `fn tone` used to collide, in code
   // neither of them can see: name RESOLUTION is already per-module (a name from another
   // file is invisible without an import), and only the final flat merge failed. Renaming
@@ -612,7 +612,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // Test-only widening: rename EVERY private name in every user module, not only the
   // contested ones. A program compiled this way must behave and report identically to
   // one compiled without it; the fixture suite run under this switch is the gate that
-  // proves no mangled name reaches a human-facing surface (docs/plans/module-namespaces.md).
+  // proves no mangled name reaches a human-facing surface.
   const mangleAll = process.env.MILO_MANGLE_ALL === "1";
   // A private name that also names a std/prelude declaration stays flat even under the
   // widening: user-vs-std shadowing keeps today's behaviour (the `shadows-stdlib` and
@@ -651,7 +651,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   // Type names std keeps flat: what a non-prelude std module declares minus the private
   // ones stage 4 just renamed. A private user type with one of these names is renamed
-  // (owner decision 2026-10-06, docs/plans/friction-2026-10-analysis.md item 1): a std
+  // (decided 2026-10-06): a std
   // release adding `pub struct Process` must not break a program whose own private
   // `Process` never met it. Types only: a type has no override semantics, any body
   // difference was already a hard error. Fns keep the flat `shadows-stdlib` behaviour,

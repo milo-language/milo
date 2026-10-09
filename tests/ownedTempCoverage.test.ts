@@ -14,8 +14,7 @@
 // so drop it) or in `NOT_OWNED_TEMP` (a scalar, a void, a view, or a place someone else
 // owns). Adding a node to `hir.ts` without deciding fails here.
 //
-// Same medicine as tests/placeRuleCoverage.test.ts, applied outside the checker. See
-// docs/plans/aliasing-coverage.md.
+// Same medicine as tests/placeRuleCoverage.test.ts, applied outside the checker.
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";

@@ -13,7 +13,7 @@
 //
 // The payload shapes matter as much as the routes. `Res { id: i64 }` is all-Copy, which
 // is what exposed the double drop — every other shape hid it behind a harmless second
-// free of a null pointer. See docs/plans/aliasing-coverage.md.
+// free of a null pointer.
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { writeFileSync, mkdtempSync, rmSync, existsSync } from "fs";
 import { execSync } from "child_process";

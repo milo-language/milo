@@ -92,7 +92,7 @@ jobs:
       - name: AddressSanitizer sweep
         run: bun run test:asan
 
-      # The two soundness fuzzers (docs/plans/soundness-sweep-2026-09.md, WP5b/WP5c).
+      # The two soundness fuzzers.
       # Small counts here so the job stays under a few minutes; the generator shapes are
       # the language's threat model, so a new rule gets a shape and this step is what
       # keeps asking. Reduction is off: a red here is triaged locally with --keep.

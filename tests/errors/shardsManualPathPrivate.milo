@@ -1,5 +1,5 @@
 // @error: 'shatter' is private to shard.milo
-// H2 from docs/plans/soundness-sweep-2026-09.md. This program divided a Vec by hand,
+// Found by the September 2026 soundness sweep. This program divided a Vec by hand,
 // handed a window to a worker and returned, dropping the `Shards` owner while the
 // worker still wrote through the window: a heap-use-after-free under --sanitize that
 // no checker rule could see. The fix is that the manual cycle no longer exists

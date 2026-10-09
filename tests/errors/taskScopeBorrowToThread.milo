@@ -2,7 +2,7 @@
 // A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and
 // a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking
 // takes a `move` closure, which may not capture a reference), so no Send/Sync bound is
-// needed on what a scoped task borrows (docs/plans/task-scope-2026-10.md).
+// needed on what a scoped task borrows.
 from "std/runtime" import {
     Task, Promise
 }

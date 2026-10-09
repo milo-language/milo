@@ -3,7 +3,7 @@
 // @expect: 8
 // A closure passed to a plain (non-escaping) parameter stays by-reference, so it may
 // capture `self` and `&T` parameters: the callee cannot keep it past the call. This was
-// `error: cannot capture 'self' in a closure` (docs/plans/friction-2026-10.md item 2).
+// `error: cannot capture 'self' in a closure`.
 struct Conn {
     fd: i32,
 }

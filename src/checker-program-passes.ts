@@ -423,7 +423,7 @@ export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
 // `Task.scope(body)` joins every task spawned on its handle before returning, so a
 // scoped task may borrow the enclosing fn's locals. std/runtime's `TaskScope.spawn` keeps
 // its plain closure param past the call to do that, which is sound only if every call
-// site obeys the three rules below (docs/plans/task-scope-2026-10.md). Mangled names:
+// site obeys the three rules below. Mangled names:
 // a private user type named `TaskScope` is renamed by the resolver, so these are std's.
 export const TASK_SCOPE_FN = "Task$scope";
 export const SCOPED_SPAWN_FN = "TaskScope$spawn";

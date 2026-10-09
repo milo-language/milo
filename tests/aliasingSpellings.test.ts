@@ -16,7 +16,7 @@
 // fails this file immediately rather than years later under ASan.
 //
 // Adding a container or a new root spelling means adding a row, not remembering to go
-// re-audit the checker. See docs/plans/aliasing-coverage.md.
+// re-audit the checker.
 import { test, expect, describe } from "bun:test";
 import { mkdtempSync } from "fs";
 import { writeFileSync } from "fs";

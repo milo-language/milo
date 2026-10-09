@@ -158,8 +158,8 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->800<!-- /stat --> fixtures, <!-- stat:error-fixtures -->547<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->33<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
-soundness hole (today: the `hole*` reproducers from
-[plans/soundness-sweep-2026-09.md](plans/soundness-sweep-2026-09.md)). The driver skips
+soundness hole (today: the `hole*` reproducers from the September 2026 soundness
+sweep). The driver skips
 their `@expect` comparison, registers each as a skip that names the reason, and prints
 `known-red: N fixtures skipped (tests/known-red.txt)`. Nothing else honours the list:
 `bun run test:asan` (`scripts/asan-sweep.ts --all`, also the CI step) still builds and runs

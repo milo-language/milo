@@ -55,7 +55,7 @@ export function parseExpectedRuntimeError(source: string): string | null {
 }
 
 // tests/known-red.txt: fixtures that reproduce an OPEN soundness hole and are expected to
-// fail today (docs/plans/soundness-sweep-2026-09.md). One filename per line, text after
+// fail today. One filename per line, text after
 // `#` is the reason. Keys are filenames with the `.milo` extension. Three readers share
 // this parser so they cannot disagree about what is listed: tests/run.test.ts skips the
 // @expect comparison, scripts/gen-spec.ts leaves the program out of the spec (a listed

@@ -4629,7 +4629,7 @@ print(total.toString())                          // 42: the scope joined both ta
 ```
 
 The join runs however the body exits (falling off the end or an early `return`; a panic
-aborts the process). The checker holds the rest (design: `docs/plans/task-scope-2026-10.md`):
+aborts the process). The checker holds the rest:
 
 - `s` is used only as `s.spawn(<closure literal>)`, directly in the body: not stored, passed
   to a function, or used inside a nested closure.

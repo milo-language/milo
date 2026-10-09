@@ -1,6 +1,6 @@
 // @error: a scoped task writes 'total', and so does another task in the same scope
 // Two tasks writing one borrowed binding interleave at every park: rejected, as Rust
-// rejects two `&mut` (docs/plans/task-scope-2026-10.md, rule 3).
+// rejects two `&mut`.
 from "std/runtime" import {
     Task
 }

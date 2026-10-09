@@ -1424,7 +1424,7 @@ export class TypeChecker {
   // Lives in tryMoveLeaf, the one place every by-value consumption reaches, because the
   // rule used to fire only from the `let` initializer: `Option.Some(v[0])`, `peek(v[0])`,
   // `return v[0]`, `s.f = v[0]` and a struct-literal field were all accepted and each
-  // ran the element's Drop once more (docs/plans/soundness-sweep-2026-09.md H5). An
+  // ran the element's Drop once more. An
   // element of a container is a place; reading it by value is a move-out, and for a
   // resource type that is an error wherever it appears.
   private errorIfResourceIndexRead(expr: Extract<Expr, { kind: "IndexAccess" }>, ty: TypeKind): boolean {
@@ -9137,7 +9137,7 @@ export class TypeChecker {
     }
   }
 
-  // Explicit `&mut` on call arguments (docs/plans/local-reasoning-2026-09.md, track A).
+  // Explicit `&mut` on call arguments.
   // Runs on the raw argument list before any argument is type-checked. Where the
   // parameter is `&mut T` the `&mut` wrapper is stripped in place, so every later pass
   // (freeze and exclusivity checks, lowering, codegen) sees the argument it always did
@@ -11428,7 +11428,7 @@ export class TypeChecker {
   private checkMethodCallExpr(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
-      // Receivers borrow implicitly (decision 1 in docs/plans/local-reasoning-2026-09.md).
+      // Receivers borrow implicitly.
       // Stripped so the call is still checked as written and one error is reported.
       const inner = this.describeExpr(expr.object.operand);
       this.error(`'&mut' is implicit on a method receiver; write '${inner}.${expr.method}(${expr.args.map(a => this.describeExpr(a)).join(", ")})'`, expr.object.span);

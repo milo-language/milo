@@ -243,8 +243,8 @@ export class Codegen {
   // This is deliberately not a range analysis. It fires on the exact shape above
   // and nothing else — an index of `i + 1`, a bound that merely happens to equal
   // the length, or a container reached through anything but a name or one field
-  // hop all keep their check. Widening it to affine indices is docs/plans/
-  // bounds-check-elision.md, and wants a range lattice rather than a pattern.
+  // hop all keep their check. Widening it to affine indices wants a range lattice
+  // rather than a pattern.
   // A name is not an identity: a function can declare the same name twice in
   // sibling scopes, and a `let` is not a mutation, so `loopBodyMutates` does not
   // reject one. Each entry therefore carries the LocalInfo record the name
@@ -14395,8 +14395,7 @@ export class Codegen {
     //
     // Residual, and it is a real hole rather than a rounding error: a struct whose only
     // droppable field is an empty container still cannot be told apart from a moved-from
-    // one by value. Deciding that needs a liveness FLAG rather than a value probe — see
-    // docs/plans/aliasing-coverage.md.
+    // one by value. Deciding that needs a liveness FLAG rather than a value probe.
     // A heap field proves liveness by a non-null data pointer; an integer or bool field
     // proves it by being non-zero. Both are read from the same evidence — a moved-from
     // struct has every byte cleared — and together they cover far more shapes than the

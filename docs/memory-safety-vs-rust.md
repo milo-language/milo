@@ -14,8 +14,8 @@ Result of the retained sweep (2026-07-22): **zero silent-UB misses in the tested
 
 **That claim is scoped to the probes listed here, and it has been broken eight more times.**
 Finding #2 was a use-after-free in safe code that none of the probes covered, found by chasing
-an unrelated red test. Findings #3 to #9 came from the September 2026 soundness sweep
-([plans/soundness-sweep-2026-09.md](plans/soundness-sweep-2026-09.md)): three from one
+an unrelated red test. Findings #3 to #9 came from the September 2026 soundness sweep:
+three from one
 afternoon of adversarial programs, one from an independent review, two from the first run of a
 fuzzer that sweep built, and one from the fix for another. Finding #10 is the prover's, not
 memory. Every one of them sat at a seam between two
@@ -518,6 +518,5 @@ Add a runnable Rust↔Milo receipt to `rust-comparison/` or a focused fixture un
 
 - [ownership-model.md](ownership-model.md) — why no lifetimes; the Rust→Milo pattern table
 - [ownership-patterns.md](ownership-patterns.md): the five patterns that make the dangerous thing unrepresentable
-- [plans/soundness-sweep-2026-09.md](plans/soundness-sweep-2026-09.md): the sweep's work packages, gates and closing commits
 - [verification-roadmap](verification-roadmap.md): the contracts profile that narrows gap 1
 - [design.md](design.md) — §Overflow (shipped status), §Ethos (principle ordering)

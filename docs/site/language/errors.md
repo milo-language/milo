@@ -2436,7 +2436,7 @@ pub fn main(): i32 {
 
 ## `'shatter' is private to shard.milo` {#shatter-is-private-to-shard-milo}
 
-H2 from docs/plans/soundness-sweep-2026-09.md. This program divided a Vec by hand, handed a window to a worker and returned, dropping the `Shards` owner while the worker still wrote through the window: a heap-use-after-free under --sanitize that no checker rule could see. The fix is that the manual cycle no longer exists outside std/shard: `shatter`, `windows` and `weld` are module-private, and the only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`, `parallelScanStr`) that awaits every worker before the owner can go away.
+Found by the September 2026 soundness sweep. This program divided a Vec by hand, handed a window to a worker and returned, dropping the `Shards` owner while the worker still wrote through the window: a heap-use-after-free under --sanitize that no checker rule could see. The fix is that the manual cycle no longer exists outside std/shard: `shatter`, `windows` and `weld` are module-private, and the only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`, `parallelScanStr`) that awaits every worker before the owner can go away.
 
 ```milo skip
 from "std/shard" import {
@@ -3266,7 +3266,7 @@ pub fn main(): i32 {
 
 ## `a scoped task writes 'total', and so does another task in the same scope` {#a-scoped-task-writes-total-and-so-does-another-task-in-the-same-scope}
 
-Two tasks writing one borrowed binding interleave at every park: rejected, as Rust rejects two `&mut` (docs/plans/task-scope-2026-10.md, rule 3).
+Two tasks writing one borrowed binding interleave at every park: rejected, as Rust rejects two `&mut`.
 
 ```milo skip
 from "std/runtime" import {
@@ -4264,7 +4264,7 @@ pub fn main(): void {
 
 ## `cannot capture` {#cannot-capture}
 
-A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking takes a `move` closure, which may not capture a reference), so no Send/Sync bound is needed on what a scoped task borrows (docs/plans/task-scope-2026-10.md).
+A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking takes a `move` closure, which may not capture a reference), so no Send/Sync bound is needed on what a scoped task borrows.
 
 ```milo skip
 from "std/runtime" import {

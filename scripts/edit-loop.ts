@@ -1,7 +1,6 @@
 // Edit-loop benchmark: build time for cold, unchanged-rebuild, one-line-edit and repeat-edit scenarios
 // over a fixed set of real programs, with the MILO_TIMING phase breakdown per build.
-// This is the number every fast-iteration step (docs/plans/fast-iteration-2026-10.md)
-// must move.
+// This is the number every edit-loop speedup must move.
 //
 //   bun scripts/edit-loop.ts [--runs N] [-t <program substr>] [--json]
 //

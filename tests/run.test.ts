@@ -175,7 +175,7 @@ function packageUnresolvable(dir: string, file: string): boolean {
   } catch { return true; }
 }
 // tests/known-red.txt lists fixtures that reproduce an OPEN soundness hole (the
-// tests/holes-2026-09 reproducers promoted by docs/plans/soundness-sweep-2026-09.md).
+// tests/holes-2026-09 reproducers promoted by the September 2026 soundness sweep).
 // Each is registered as a skip that names its reason, so the count stays visible in
 // every run, and a summary line says how many were skipped. The list is what keeps
 // `bun test` green while the fix is in flight; scripts/asan-sweep.ts skips nothing on its

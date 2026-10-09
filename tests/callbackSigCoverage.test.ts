@@ -18,8 +18,7 @@
 // combinator whose callback is `args[1]` rather than `args[0]`, which is exactly how a
 // mechanical fix misses a sibling.
 //
-// Same shape as tests/placeRuleCoverage.test.ts and tests/ownedTempCoverage.test.ts. See
-// docs/plans/aliasing-coverage.md.
+// Same shape as tests/placeRuleCoverage.test.ts and tests/ownedTempCoverage.test.ts.
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";

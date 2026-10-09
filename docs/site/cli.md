@@ -73,7 +73,7 @@ Compile to executable.
 milo hot <file> [-- args]
 ```
 
-Run and patch function bodies on every save. A body-only edit is swapped into the running program; a layout, signature or global change restarts it (docs/plans/fast-iteration-2026-10.md).
+Run and patch function bodies on every save. A body-only edit is swapped into the running program; a layout, signature or global change restarts it.
 
 ### test
 

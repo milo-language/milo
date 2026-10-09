@@ -4224,7 +4224,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `'shatter' is private to shard.milo`
 
-**Rationale.** H2 from docs/plans/soundness-sweep-2026-09.md. This program divided a Vec by hand, handed a window to a worker and returned, dropping the `Shards` owner while the worker still wrote through the window: a heap-use-after-free under --sanitize that no checker rule could see. The fix is that the manual cycle no longer exists outside std/shard: `shatter`, `windows` and `weld` are module-private, and the only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`, `parallelScanStr`) that awaits every worker before the owner can go away.
+**Rationale.** Found by the September 2026 soundness sweep. This program divided a Vec by hand, handed a window to a worker and returned, dropping the `Shards` owner while the worker still wrote through the window: a heap-use-after-free under --sanitize that no checker rule could see. The fix is that the manual cycle no longer exists outside std/shard: `shatter`, `windows` and `weld` are module-private, and the only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`, `parallelScanStr`) that awaits every worker before the owner can go away.
 
 *Program:* [`tests/errors/shardsManualPathPrivate.milo`](../tests/errors/shardsManualPathPrivate.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4560,7 +4560,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot capture`
 
-**Rationale.** A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking takes a `move` closure, which may not capture a reference), so no Send/Sync bound is needed on what a scoped task borrows (docs/plans/task-scope-2026-10.md).
+**Rationale.** A scoped task's borrows stay on the caller's OS thread: green tasks never migrate, and a reference a scoped task holds cannot ride a closure onto an OS thread (Promise.blocking takes a `move` closure, which may not capture a reference), so no Send/Sync bound is needed on what a scoped task borrows.
 
 *Program:* [`tests/errors/taskScopeBorrowToThread.milo`](../tests/errors/taskScopeBorrowToThread.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4610,7 +4610,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `a scoped task writes 'total', and so does another task in the same scope`
 
-**Rationale.** Two tasks writing one borrowed binding interleave at every park: rejected, as Rust rejects two `&mut` (docs/plans/task-scope-2026-10.md, rule 3).
+**Rationale.** Two tasks writing one borrowed binding interleave at every park: rejected, as Rust rejects two `&mut`.
 
 *Program:* [`tests/errors/taskScopeTwoWriters.milo`](../tests/errors/taskScopeTwoWriters.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -6965,7 +6965,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `4`
 - `8`
 
-**Rationale.** A closure passed to a plain (non-escaping) parameter stays by-reference, so it may capture `self` and `&T` parameters: the callee cannot keep it past the call. This was `error: cannot capture 'self' in a closure` (docs/plans/friction-2026-10.md item 2).
+**Rationale.** A closure passed to a plain (non-escaping) parameter stays by-reference, so it may capture `self` and `&T` parameters: the callee cannot keep it past the call. This was `error: cannot capture 'self' in a closure`.
 
 *Program:* [`tests/fixtures/closureCaptureSelf.milo`](../tests/fixtures/closureCaptureSelf.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

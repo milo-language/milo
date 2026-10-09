@@ -3,7 +3,7 @@
 // hazards: a mutable global read while another task pushes, a Shards window that
 // outlives its owner, and a raw pointer from `ptr()`/`cstr()` that outlives a realloc.
 //
-// Would have caught H2, H3 and H4 of docs/plans/soundness-sweep-2026-09.md. Each of
+// Would have caught three holes from the September 2026 soundness sweep. Each of
 // those was a program the checker accepted that then read or wrote a freed buffer, and
 // none of them needed `unsafe`: the hazard was spelled as a for-in binding held across
 // a `schedulerYield`, a `Shard` window still on a worker thread when its `Shards` owner

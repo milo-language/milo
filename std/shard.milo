@@ -31,7 +31,7 @@
 // caller code exists between those steps to get wrong. The pieces of that cycle
 // (`shatter`, `windows`, `weld`) are module-private on purpose. They used to be an
 // escape hatch, and the hatch was a use-after-free the move checker could not see
-// (H2 in docs/plans/soundness-sweep-2026-09.md); the completeness check `weld` runs
+// (found by the September 2026 soundness sweep); the completeness check `weld` runs
 // is now an internal assertion, not a contract a caller can miss.
 //
 // Element types are Copy only (`@copyOnly` on Shard, Shards, parallelMap and

@@ -18,8 +18,7 @@ the timing now say. No recompile is needed; the variables are read when the proc
 starts. `milo run --record <file>` and `milo run --replay <file>` are the same thing from
 the CLI, and `milo trace <file>` lists what a trace holds.
 
-Design and the phase plan: [plans/stdlib-next-2026-10.md](plans/stdlib-next-2026-10.md)
-§Deterministic record/replay. Phases 1-4 are built. Phase 4 closed the gaps: every extern
+Phases 1-4 are built. Phase 4 closed the gaps: every extern
 call is recorded by the compiler from a catalog or an `@records` attribute, OS threads
 are recorded and replayed in their recorded interleaving, addresses replay as well as
 values, and whatever still cannot be recorded is a reported hole, never a silent one.

@@ -4,7 +4,7 @@
 // struct, drives its documented happy path under AddressSanitizer, and requires that
 // every value constructed is destroyed exactly once.
 //
-// Why this exists: H1 in docs/plans/soundness-sweep-2026-09.md. `Shard.get` did
+// Why this exists: `Shard.get` did
 // `unsafe { self.base[i] }`, a bitwise copy of a Drop `T`, and `Shard<string>` therefore
 // double-freed at scope exit. Every existing shard fixture used f64 or i64, where a
 // bitwise copy is the right thing, so nothing red was ever seen. A generic std body is
