@@ -70,6 +70,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/tokens.ts` | Token types and the keyword lists the lexer, parser and generated editor grammar all read from. |
 | `src/trace.ts` | `milo trace <file>`: list the records of a record/replay trace (std/replay, docs/record-replay.md) so a person or a UI can see a recorded run as a timeline of calls. |
 | `src/types.ts` | Internal type representations: the TypeKind tagged union every later stage speaks. |
+| `src/upgrade.ts` | `milo upgrade`: replace the running compiler binary with a newer release. |
 | `src/verify.ts` | Verification condition generator — produces SMT-LIB2 from contract annotations and symbolically executes function bodies to prove postconditions. |
 | `src/version.ts` | Compiler version, reported by `milo --version`. |
 | `src/visibility.ts` | File-level visibility enforcement for `pub`. |

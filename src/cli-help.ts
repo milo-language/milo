@@ -143,6 +143,14 @@ export const COMPILER_COMMANDS: CliCommand[] = [
     name: "doc", usage: "doc <file|dir>", summary: "reference markdown from doc-comments",
     flags: [{ flag: "-o <dir>", help: "write one .md per module" }],
   },
+  {
+    name: "upgrade", usage: "upgrade", summary: "replace this milo binary with the newest release (not your deps: see `update`)",
+    flags: [
+      { flag: "--check", help: "report the newest release, change nothing" },
+      { flag: "--nightly", help: "install the rolling build of main" },
+      { flag: "--tag <vX.Y.Z>", help: "install a specific release" },
+    ],
+  },
   { name: "lex", usage: "lex <file>", summary: "dump the token stream as JSON", hidden: "compiler-debug output, not a user-facing command" },
 ];
 
@@ -158,7 +166,7 @@ export const PACKAGE_COMMANDS: CliCommand[] = [
     name: "install", usage: "install", summary: "sync this project from milo.lock",
     flags: [{ flag: "--frozen", help: "fail if the lock is stale" }],
   },
-  { name: "update", usage: "update [pkg]", summary: "re-resolve tags and rewrite the lock" },
+  { name: "update", usage: "update [pkg]", summary: "re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`)" },
   { name: "tree", usage: "tree | why <pkg>", summary: "dependency graph / who pulls a package in" },
   { name: "why", usage: "", summary: "", hidden: "shares the `tree | why <pkg>` banner row" },
   { name: "vendor", usage: "vendor", summary: "copy deps into ./vendor and rewrite to local paths" },

@@ -16,7 +16,7 @@ The compiler ships as a single self-contained binary (macOS and Linux, arm64 and
 curl -fsSL https://milo-language.github.io/milo/install.sh | sh
 ```
 
-This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG=vX.Y.Z` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
+This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG=vX.Y.Z` to pin a release). You still need clang. Later, `milo upgrade` replaces the binary with the newest release (`--check` to only look, `--nightly` for the rolling build); a Homebrew or .deb install upgrades through its package manager instead. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
 
 ::: warning macOS quarantines browser downloads
 A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.

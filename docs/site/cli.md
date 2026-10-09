@@ -44,6 +44,7 @@ This page is **generated** by `scripts/gen-lang-docs.ts` from the `commands` and
 | [`trace <file>`](#trace) | List a record/replay trace's records: seq, kind, call argument, payload size. |
 | [`api <terms>`](#api) | Search std signatures by name/doc. |
 | [`doc <file\|dir>`](#doc) | Reference markdown from doc-comments. |
+| [`upgrade`](#upgrade) | Replace this milo binary with the newest release (not your deps: see `update`). |
 
 ### run
 
@@ -301,6 +302,20 @@ Reference markdown from doc-comments.
 |---|---|
 | `-o <dir>` | Write one .md per module. |
 
+### upgrade
+
+```sh
+milo upgrade
+```
+
+Replace this milo binary with the newest release (not your deps: see `update`).
+
+| Flag | Effect |
+|---|---|
+| `--check` | Report the newest release, change nothing. |
+| `--nightly` | Install the rolling build of main. |
+| `--tag <vX.Y.Z>` | Install a specific release. |
+
 ## Package commands
 
 | Command | What it does |
@@ -309,7 +324,7 @@ Reference markdown from doc-comments.
 | [`add <pkg>`](#add) | Add a library dependency (milo.json + milo.lock). |
 | [`remove <pkg>`](#remove) | Drop a dependency and prune the lock. |
 | [`install`](#install) | Sync this project from milo.lock. |
-| [`update [pkg]`](#update) | Re-resolve tags and rewrite the lock. |
+| [`update [pkg]`](#update) | Re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`). |
 | [`tree \| why <pkg>`](#tree) | Dependency graph / who pulls a package in. |
 | [`vendor`](#vendor) | Copy deps into ./vendor and rewrite to local paths. |
 | [`publish`](#publish) | Validate, tag, push. |
@@ -362,7 +377,7 @@ Sync this project from milo.lock.
 milo update [pkg]
 ```
 
-Re-resolve tags and rewrite the lock.
+Re-resolve dependency tags and rewrite the lock (the compiler itself: `upgrade`).
 
 ### tree
 

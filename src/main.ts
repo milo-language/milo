@@ -1948,6 +1948,11 @@ async function main() {
     }));
   }
 
+  if (cmd === "upgrade") {
+    const { runUpgrade } = await import("./upgrade");
+    process.exit(await runUpgrade(args.slice(1)));
+  }
+
   if (cmd === "skill") {
     const { renderSkill } = await import("./skill");
     process.stdout.write(renderSkill());
