@@ -1,0 +1,24 @@
+// @expect: channel capacity too large
+// @expect: channel capacity must be positive
+// @expect: 7
+// Channel.new allocates its ring buffer up front. A capacity whose byte size overflows
+// is refused before the malloc; one the allocator cannot satisfy is refused after it
+// ("channel allocation failed", seen under ASAN_OPTIONS=allocator_may_return_null=1).
+// Both used to leave the buffer null for the first send to write through.
+from "std/sync" import {
+    Channel
+}
+
+fn main(): void {
+    match Channel<i64>.new(4611686018427387904) {
+        Result.Ok(_ch) => print("accepted"),
+        Result.Err(e) => print(e),
+    }
+    match Channel<i64>.new(0) {
+        Result.Ok(_ch) => print("accepted"),
+        Result.Err(e) => print(e),
+    }
+    let ch = Channel<i64>.new(1)!
+    ch.send(7)!
+    print(ch.recv()!)
+}

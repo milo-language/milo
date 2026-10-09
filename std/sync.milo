@@ -369,14 +369,32 @@ impl Channel<T> {
         if capacity <= 0 {
             return Result.Err("channel capacity must be positive")
         }
+        // The ring buffer is allocated up front, so a huge capacity is a huge malloc. It
+        // used to be unchecked: a failed one left `buf` null and the first `send` wrote
+        // through null plus a slot offset, an address the capacity chose.
+        let elem = sizeOf<T>()
+        if elem > 0 && capacity > 9223372036854775807 / elem {
+            return Result.Err("channel capacity too large")
+        }
+        let bytes = capacity * elem
         unsafe {
+            let buf = malloc(bytes)
+            // malloc(0) may legitimately return null for a zero-sized T.
+            if buf == 0 as *u8 && bytes > 0 {
+                return Result.Err("channel allocation failed")
+            }
             let raw = malloc(96)
+            if raw == 0 as *u8 {
+                free(buf)
+                return Result.Err("channel allocation failed")
+            }
             let inner = raw as *ChannelInner
 
             let mtx = malloc(64)
             let r1 = pthread_mutex_init(mtx, 0 as *u8)
             if r1 != 0 {
                 free(mtx)
+                free(buf)
                 free(raw)
                 return Result.Err("channel mutex init failed")
             }
@@ -385,6 +403,7 @@ impl Channel<T> {
             if r2 != 0 {
                 free(mtx)
                 free(cne)
+                free(buf)
                 free(raw)
                 return Result.Err("channel cond init failed")
             }
@@ -394,6 +413,7 @@ impl Channel<T> {
                 free(mtx)
                 free(cne)
                 free(cnf)
+                free(buf)
                 free(raw)
                 return Result.Err("channel cond init failed")
             }
@@ -401,7 +421,7 @@ impl Channel<T> {
             (*inner).mtx = mtx
             (*inner).condNotEmpty = cne
             (*inner).condNotFull = cnf
-            (*inner).buf = malloc(capacity * sizeOf<T>())
+            (*inner).buf = buf
             (*inner).capacity = capacity
             (*inner).len = 0
             (*inner).head = 0
