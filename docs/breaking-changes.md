@@ -19,11 +19,13 @@ marker is added here each time a version is cut.
 ## Handle and window fields are private; closing a handle consumes it (2026-10-09)
 
 The October soundness sweep found std types whose safe methods trusted fields any file
-could write. A `parallelMap` worker could widen its `Shard` (`m.len = 100000`) and `set`
-then wrote past the buffer; a `Shard` or `StrShard` literal pointed `set`/`byteAt` at any
-address. Every field of these types is now `_`-private, so only the declaring module can
-read, write or build one. A compat shim is impossible: the point is that the old
-spellings stop compiling.
+could write, and handles whose close left them usable. A `parallelMap` worker could widen
+its `Shard` (`m.len = 100000`) and `set` then wrote past the buffer; a `Shard` or
+`StrShard` literal pointed `set`/`byteAt` at any address; `ws.ssl = 0x41414141` sent the
+next frame through that address; `dbStep` after `dbFinalize` stepped a freed statement.
+Every field of these types is now `_`-private, so only the declaring module can read,
+write or build one, and each close either consumes the handle or resets it. A compat
+shim is impossible: the point is that the old spellings stop compiling.
 
 | was | now |
 |---|---|
@@ -34,6 +36,7 @@ spellings stop compiling.
 | `ws.ssl` (`WsConn`), `conn.ssl` (`TlsConn`), `listener.ctx` (`TlsListener`), `stream.ssl`, `stream.ctx` (`TlsStream`) | private; `ws.tlsHandle()` still reads a WsConn's handle for `WsConn.view` |
 | `ws.close()` left the fd number and TLS state in place | it frees them and resets the handles, so a later send or recv fails instead of reaching a reused descriptor |
 | `arena.id`, `arena.data`, `arena.gens`, `arena.freeList`, `arena.live` (`Arena`), `id`/`data` on `GrowOnlyArena` and `FrozenArena` | private; `arena.id()`, `arena.len()`, `arena.handles()`. `Handle`'s fields stay public: a forged handle is checked like a stale one |
+| `Arena { id: 0, data: Vec.new(), ... }` as a placeholder | `Arena<T>.new()` |
 | `lib.handle` (`Lib`, std/dl) | private |
 | `lib.close()` on a borrowed `&Lib` | `close(self: Lib)` consumes it; a Lib that is never closed stays loaded, as before |
 | `mmapFile(f, size)` with `size` past the end of the file (reading the tail raised SIGBUS) | `Err`; pass at most `f.size()` |
