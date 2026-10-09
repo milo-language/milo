@@ -9,7 +9,8 @@
 // one-sentence purpose, and every script honoured it — the doc was the only thing that
 // had drifted, so the fix is to project it rather than restate it. Improve an entry by
 // improving the script's own first line; there is nowhere else to edit it.
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { execFileSync } from "child_process";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -51,6 +52,13 @@ export function purposeOf(file: string): string | null {
   return out.length > MAX_PURPOSE ? out.slice(0, MAX_PURPOSE - 1).trimEnd() + "…" : out;
 }
 
+// git, not readdir: a script kept local (untracked, listed in .git/info/exclude) exists on
+// one machine only, and indexing it made the doc fail on every other checkout, CI included.
+export function trackedFiles(dir: string): string[] {
+  return execFileSync("git", ["ls-files", "--", dir], { cwd: ROOT, encoding: "utf-8" })
+    .split("\n").filter(Boolean).map(p => p.slice(dir.length + 1)).filter(f => !f.includes("/")).sort();
+}
+
 function collect(): Entry[] {
   const out: Entry[] = [];
   const dirs: [string, (f: string) => boolean][] = [
@@ -60,7 +68,7 @@ function collect(): Entry[] {
   for (const [dir, keep] of dirs) {
     const abs = join(ROOT, dir);
     if (!existsSync(abs)) continue;
-    for (const f of readdirSync(abs).sort()) {
+    for (const f of trackedFiles(dir)) {
       if (!keep(f)) continue;
       const purpose = purposeOf(join(abs, f));
       if (purpose === null) {

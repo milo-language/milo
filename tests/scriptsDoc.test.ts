@@ -5,7 +5,8 @@
 // (`scripts/foo.ts`) that never existed, so the doc that exists to stop contributors writing
 // a duplicate was hiding two thirds of what already existed.
 import { test, expect } from "bun:test";
-import { readFileSync, readdirSync } from "fs";
+import { readFileSync } from "fs";
+import { trackedFiles } from "../scripts/gen-scripts-doc";
 import { join } from "path";
 import { execFileSync } from "child_process";
 
@@ -18,7 +19,7 @@ test("the checked-in index matches the generator", () => {
 
 test("every script is listed", () => {
   const doc = readFileSync(join(ROOT, "docs", "scripts.md"), "utf-8");
-  const files = readdirSync(join(ROOT, "scripts")).filter(f => f.endsWith(".ts") || f.endsWith(".sh"));
+  const files = trackedFiles("scripts").filter(f => f.endsWith(".ts") || f.endsWith(".sh"));
   expect(files.length).toBeGreaterThan(30); // the scan must actually find the directory
   expect(files.filter(f => !doc.includes(`\`scripts/${f}\``))).toEqual([]);
 });
@@ -27,7 +28,7 @@ test("no listed script is missing from disk", () => {
   const doc = readFileSync(join(ROOT, "docs", "scripts.md"), "utf-8");
   const listed = [...doc.matchAll(/\| `((?:scripts|\.githooks)\/[^`]+)` \|/g)].map(m => m[1]!);
   expect(listed.length).toBeGreaterThan(30);
-  expect(listed.filter(p => !readdirSync(join(ROOT, p.split("/")[0]!)).includes(p.split("/")[1]!))).toEqual([]);
+  expect(listed.filter(p => !trackedFiles(p.split("/")[0]!).includes(p.split("/")[1]!))).toEqual([]);
 });
 
 test("no purpose line was truncated by the length cap", () => {
