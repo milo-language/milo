@@ -1,0 +1,14 @@
+// @error: a scoped task writes 'v', and another task in the same scope reads it
+// The second task captures only `clr`, but running it writes `v`, which the first task
+// iterates across a park.
+from "std/runtime" import { Task, TaskScope, schedulerYield }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    Task.scope((s: &mut TaskScope): void => {
+        s.spawn((): void => { for x in v { schedulerYield(); print(x) } })
+        s.spawn((): void => { clr() })
+    })
+    return 0
+}

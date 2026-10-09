@@ -1,0 +1,88 @@
+// Closures that write a capture through a `&mut` argument or a `&mut self` method, and
+// closures handed on as values, where no borrow of what they write is live. Pins that
+// counting those as writes (and passing a closure as running it) does not over-reject.
+from "std/arena" import { Arena }
+from "std/runtime" import { Task, TaskScope }
+
+struct Counter {
+    items: Vec<i64>,
+    count: i64,
+}
+
+impl Counter {
+    fn reset(self: &mut Counter): void { self.items = Vec.new(); self.count = 0 }
+}
+
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+
+fn bump(n: &mut i64): void { n += 1 }
+
+fn run(f: () => void): void { f() }
+
+fn runGeneric<F>(f: F): void { f() }
+
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("first".clone())
+    v.push("second".clone())
+    // A closure passed by value that only reads the iterated binding.
+    let count = (): void => { print(v.len.toString()) }
+    for s in v {
+        run(count)
+        runGeneric(count)
+        print(s)
+    }
+    // A `&mut` write through a user fn, run and passed where nothing borrows `v`.
+    let clr = (): void => { wipe(&mut v) }
+    clr()
+    print(v.len.toString())
+    v.push("again".clone())
+    run(clr)
+    print(v.len.toString())
+
+    // A `&mut self` method on a capture with no live borrow, and a `&mut` write of one
+    // field while a loop iterates a different one.
+    var c = Counter { items: [1, 2, 3], count: 0 }
+    let tick = (): void => { bump(&mut c.count) }
+    for x in c.items {
+        tick()
+        run(tick)
+        print(x.toString())
+    }
+    print(c.count.toString())
+    let reset = (): void => { c.reset() }
+    reset()
+    run(reset)
+    print(c.items.len.toString())
+
+    // An arena read whose callback only reads the arena.
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("slot".clone())
+    let _ = a.read(h, (x: &string): void => { print(x) })
+
+    // Two scoped tasks that both only read `v`, one through a closure.
+    var w: Vec<string> = Vec.new()
+    w.push("shared".clone())
+    let peek = (): void => { print(w.len.toString()) }
+    Task.scope((s: &mut TaskScope): void => {
+        s.spawn((): void => { for x in w { print(x) } })
+        s.spawn((): void => { peek() })
+    })
+    return 0
+}
+// @expect: 2
+// @expect: 2
+// @expect: first
+// @expect: 2
+// @expect: 2
+// @expect: second
+// @expect: 0
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: 3
+// @expect: 6
+// @expect: 0
+// @expect: slot
+// @expect: shared
+// @expect: 1

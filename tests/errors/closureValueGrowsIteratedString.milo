@@ -1,0 +1,13 @@
+// @error: cannot write to 's' by passing 'grow' while a loop iterates over 's'
+// Growing the string reallocates the bytes the loop walks; a second iteration read freed
+// memory.
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let grow = (): void => { var i = 0; while i < 200 { s.pushStr("xxxxxxxxxx"); i += 1 } }
+    for b in s {
+        run(grow)
+        print(b.toString())
+    }
+    return 0
+}

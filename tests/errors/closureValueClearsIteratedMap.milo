@@ -1,0 +1,13 @@
+// @error: cannot write to 'm' by passing 'clr' while a loop iterates over 'm'
+// Clearing the map mid-iteration read a wrong value rather than crashing; same rule.
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("k".clone(), "a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { m.clear() }
+    for k, val in m {
+        run(clr)
+        print(val)
+    }
+    return 0
+}

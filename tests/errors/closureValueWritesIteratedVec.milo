@@ -1,0 +1,14 @@
+// @error: cannot write to 'v' by passing 'clr' while a loop iterates over 'v'
+// A by-reference closure handed on as a value may be run by the callee, so passing it is
+// checked as running it: `run(clr)` freed the element the loop was reading.
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        run(clr)
+        print(s)
+    }
+    return 0
+}

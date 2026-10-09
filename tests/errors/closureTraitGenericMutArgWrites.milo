@@ -1,0 +1,17 @@
+// @error: cannot write to 'st' by calling 'clr' while a loop iterates over 'st'
+// The `&mut` argument to a trait-bounded generic fn is a write of the capture like any
+// other `&mut` argument, whatever the instantiated body does with it.
+trait Wipe { fn wipe(self: &mut Self): void }
+struct S { v: Vec<string> }
+impl Wipe for S { fn wipe(self: &mut Self): void { self.v = Vec.new() } }
+fn doWipe<T: Wipe>(t: &mut T): void { t.wipe() }
+pub fn main(): i32 {
+    var st = S { v: Vec.new() }
+    st.v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { doWipe(&mut st) }
+    for x in st.v {
+        clr()
+        print(x)
+    }
+    return 0
+}

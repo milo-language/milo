@@ -1,0 +1,12 @@
+// @error: 'v' is borrowed by one argument and changed by calling 'clr' in a later one
+// `clr` writes `v` through a `&mut` argument while evaluating the second argument,
+// after `v[0]` was taken for the first: the call read the freed string.
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+fn show(r: &string, n: i64): void { print(r); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): i64 => { wipe(&mut v); return 1 }
+    show(v[0], clr())
+    return 0
+}

@@ -1,0 +1,13 @@
+// @error: cannot write to 'v' by calling 'clr' while 'w' borrows 'v'
+// Rejected like the direct `wipe(&mut v)` with `w` live. (Today `v[0]` is materialized as
+// a copy, so `w` happens to view the copy; the rule does not depend on that.)
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { wipe(&mut v) }
+    let w = v[0].slice(0, 20)
+    clr()
+    print(w)
+    return 0
+}

@@ -1,0 +1,17 @@
+// @error: 's' is captured by a closure argument and borrowed in the same call
+// The callback writes `s` through a `&mut self` method while `each` iterates `s.v`
+// for it, so the closure argument's capture is a `&mut` of the receiver.
+struct S { v: Vec<string> }
+impl S {
+    fn each(self: &S, f: (&string) => void): void { for x in self.v { f(x) } }
+    fn wipe(self: &mut S): void { self.v = Vec.new() }
+}
+pub fn main(): i32 {
+    var s = S { v: Vec.new() }
+    s.v.push("a heap string long enough to be on the heap for sure".clone())
+    s.each((x: &string): void => {
+        s.wipe()
+        print(x)
+    })
+    return 0
+}

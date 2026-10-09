@@ -1,0 +1,16 @@
+// @error: 'v' is borrowed by a scoped task and written by the Task.scope body
+// The body runs `clr`, which writes `v`, while a scoped task iterates `v`. The body and
+// the task interleave at every park of the body (a sleep in place of the yield frees
+// the element under the task); the direct `v = Vec.new()` in the body is rejected too.
+from "std/runtime" import { Task, TaskScope, schedulerYield }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    Task.scope((s: &mut TaskScope): void => {
+        s.spawn((): void => { for x in v { schedulerYield(); print(x) } })
+        schedulerYield()
+        clr()
+    })
+    return 0
+}

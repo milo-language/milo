@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 448 distinct messages across 572 programs the compiler must reject.
+Every error message the test suite pins: 458 distinct messages across 590 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -38,6 +38,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'&mut' marks an argument to a '&mut' parameter; it is not a value`](#mut-marks-an-argument-to-a-mut-parameter-it-is-not-a-value)
 - [`'&mut' on an argument to a '&P' parameter of 'show'; only a '&mut' parameter takes '&mut'`](#mut-on-an-argument-to-a-p-parameter-of-show-only-a-mut-parameter-takes-mut)
 - [`'&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'`](#x-is-not-an-expression-shared-borrows-are-implicit-pass-x-bare-only-a-mut-argument-is-spelled-out-f-mut-x)
+- [`'a' is captured by a closure argument and borrowed in the same call`](#a-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'`](#add-in-impl-add-for-res-takes-self-res-by-value-the-trait-add-declares-self-self)
 - [`'addr' declared as i64 but got PoolBlock`](#addr-declared-as-i64-but-got-poolblock)
 - [`'andThen': callback must return an Option, got i64`](#andthen-callback-must-return-an-option-got-i64)
@@ -94,6 +95,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
+- [`'s' is captured by a closure argument and borrowed in the same call`](#s-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'S' is not imported`](#s-is-not-imported)
 - [`'s' may reallocate here while 'p' still points into its buffer (from 's.cstr()' on line 9)`](#s-may-reallocate-here-while-p-still-points-into-its-buffer-from-s-cstr-on-line-9)
 - [`'saturatingSub' expects 1 argument`](#saturatingsub-expects-1-argument)
@@ -263,8 +265,16 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
 - [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
+- [`cannot write to 'm' by passing 'clr' while a loop iterates over 'm'`](#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m)
+- [`cannot write to 's' by calling 'clr' while a loop iterates over 's'`](#cannot-write-to-s-by-calling-clr-while-a-loop-iterates-over-s)
+- [`cannot write to 's' by passing 'clr' while 'w' borrows 's'`](#cannot-write-to-s-by-passing-clr-while-w-borrows-s)
+- [`cannot write to 's' by passing 'grow' while a loop iterates over 's'`](#cannot-write-to-s-by-passing-grow-while-a-loop-iterates-over-s)
+- [`cannot write to 'st' by calling 'clr' while a loop iterates over 'st'`](#cannot-write-to-st-by-calling-clr-while-a-loop-iterates-over-st)
+- [`cannot write to 'v' by calling 'clr' while 'w' borrows 'v'`](#cannot-write-to-v-by-calling-clr-while-w-borrows-v)
 - [`cannot write to 'v' by calling 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-clr-while-a-loop-iterates-over-v)
 - [`cannot write to 'v' by calling 'g' while a loop iterates over 'v'`](#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v)
+- [`cannot write to 'v' by passing 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-clr-while-a-loop-iterates-over-v)
+- [`cannot write to 'v' by passing 'push' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-push-while-a-loop-iterates-over-v)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
 - [`casts only to an integer type`](#casts-only-to-an-integer-type)
 - [`closure returns string but can reach the end of its body without a 'return'`](#closure-returns-string-but-can-reach-the-end-of-its-body-without-a-return)
@@ -807,6 +817,61 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/borrowExprRejected.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowExprRejected.milo)</sub>
+
+## `'a' is captured by a closure argument and borrowed in the same call` {#a-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call}
+
+The free-function spelling: `arenaClear(&mut a)` writes the capture.
+
+```milo skip
+from "std/arena" import { Arena, arenaRead, arenaClear }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    arenaRead(a, h, (x: &string): void => {
+        arenaClear(&mut a)
+        print(x)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/arenaClearFnInReadClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaClearFnInReadClosure.milo)</sub>
+
+`a.clear()` in the closure `read` runs frees the slot the closure was handed.
+
+```milo skip
+from "std/arena" import { Arena }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    a.read(h, (x: &string): void => {
+        a.clear()
+        print(x)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/arenaClearInReadClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaClearInReadClosure.milo)</sub>
+
+The read callback reaches the arena only through `clr`, which it hands to `run`; the write is found through the closure it captures.
+
+```milo skip
+from "std/arena" import { Arena }
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { a.clear() }
+    a.read(h, (x: &string): void => {
+        run(clr)
+        print(x)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/arenaClearViaCapturedClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaClearViaCapturedClosure.milo)</sub>
 
 ## `'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'` {#add-in-impl-add-for-res-takes-self-res-by-value-the-trait-add-declares-self-self}
 
@@ -2461,6 +2526,29 @@ fn main(): i32 {
 
 <sub>[tests/errors/aliasMethodReceiverArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasMethodReceiverArg.milo)</sub>
 
+## `'s' is captured by a closure argument and borrowed in the same call` {#s-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call}
+
+The callback writes `s` through a `&mut self` method while `each` iterates `s.v` for it, so the closure argument's capture is a `&mut` of the receiver.
+
+```milo skip
+struct S { v: Vec<string> }
+impl S {
+    fn each(self: &S, f: (&string) => void): void { for x in self.v { f(x) } }
+    fn wipe(self: &mut S): void { self.v = Vec.new() }
+}
+pub fn main(): i32 {
+    var s = S { v: Vec.new() }
+    s.v.push("a heap string long enough to be on the heap for sure".clone())
+    s.each((x: &string): void => {
+        s.wipe()
+        print(x)
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/callbackMutSelfMethodOnReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callbackMutSelfMethodOnReceiver.milo)</sub>
+
 ## `'S' is not imported` {#s-is-not-imported}
 
 Types too: a struct named in a signature or literal has to be in the list, even when a function that returns it is.
@@ -2912,6 +3000,25 @@ pub fn main(): i32 {
 
 ## `'v' is borrowed by a scoped task and written by the Task.scope body` {#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body}
 
+The body runs `clr`, which writes `v`, while a scoped task iterates `v`. The body and the task interleave at every park of the body (a sleep in place of the yield frees the element under the task); the direct `v = Vec.new()` in the body is rejected too.
+
+```milo skip
+from "std/runtime" import { Task, TaskScope, schedulerYield }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    Task.scope((s: &mut TaskScope): void => {
+        s.spawn((): void => { for x in v { schedulerYield(); print(x) } })
+        schedulerYield()
+        clr()
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/scopeBodyCallsWritingClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/scopeBodyCallsWritingClosure.milo)</sub>
+
 A task reads `v` across a park while the body pushes to it.
 
 ```milo skip
@@ -2997,6 +3104,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureCallWritesBorrowedArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesBorrowedArg.milo)</sub>
+
+`clr` writes `v` through a `&mut` argument while evaluating the second argument, after `v[0]` was taken for the first: the call read the freed string.
+
+```milo skip
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+fn show(r: &string, n: i64): void { print(r); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): i64 => { wipe(&mut v); return 1 }
+    show(v[0], clr())
+    return 0
+}
+```
+
+<sub>[tests/errors/closureMutArgInLaterArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMutArgInLaterArg.milo)</sub>
 
 ## `'v' is borrowed by one argument and moved out by a later one (a move of 'v')` {#v-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-v}
 
@@ -3659,6 +3782,24 @@ pub fn main(): i32 {
 <sub>[tests/errors/taskScopeTwoWriters.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeTwoWriters.milo)</sub>
 
 ## `a scoped task writes 'v', and another task in the same scope reads it` {#a-scoped-task-writes-v-and-another-task-in-the-same-scope-reads-it}
+
+The second task captures only `clr`, but running it writes `v`, which the first task iterates across a park.
+
+```milo skip
+from "std/runtime" import { Task, TaskScope, schedulerYield }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    Task.scope((s: &mut TaskScope): void => {
+        s.spawn((): void => { for x in v { schedulerYield(); print(x) } })
+        s.spawn((): void => { clr() })
+    })
+    return 0
+}
+```
+
+<sub>[tests/errors/scopedTaskCallsWritingClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/scopedTaskCallsWritingClosure.milo)</sub>
 
 One task pushes while another iterates across a park: the push could reallocate the buffer under the reader's loop variable (soundness finding #5, with a local).
 
@@ -6919,6 +7060,126 @@ pub fn main(): void {
 
 <sub>[tests/errors/forInMutRefWholeArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefWholeArg.milo)</sub>
 
+## `cannot write to 'm' by passing 'clr' while a loop iterates over 'm'` {#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m}
+
+Clearing the map mid-iteration read a wrong value rather than crashing; same rule.
+
+```milo skip
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("k".clone(), "a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { m.clear() }
+    for k, val in m {
+        run(clr)
+        print(val)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueClearsIteratedMap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueClearsIteratedMap.milo)</sub>
+
+## `cannot write to 's' by calling 'clr' while a loop iterates over 's'` {#cannot-write-to-s-by-calling-clr-while-a-loop-iterates-over-s}
+
+A `&mut self` method called on a capture is a write of that capture: `s.wipe()` replaced `s.v` under the loop over it.
+
+```milo skip
+struct S { v: Vec<string> }
+impl S { fn wipe(self: &mut S): void { self.v = Vec.new() } }
+pub fn main(): i32 {
+    var s = S { v: Vec.new() }
+    s.v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { s.wipe() }
+    for x in s.v {
+        clr()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureMutSelfMethodWritesIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMutSelfMethodWritesIterated.milo)</sub>
+
+## `cannot write to 's' by passing 'clr' while 'w' borrows 's'` {#cannot-write-to-s-by-passing-clr-while-w-borrows-s}
+
+A string view stays live across `run(clr)`, which reassigns the string it views.
+
+```milo skip
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let clr = (): void => { s = "x".clone() }
+    let w = s.slice(0, 20)
+    run(clr)
+    print(w)
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueWritesViewedString.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueWritesViewedString.milo)</sub>
+
+## `cannot write to 's' by passing 'grow' while a loop iterates over 's'` {#cannot-write-to-s-by-passing-grow-while-a-loop-iterates-over-s}
+
+Growing the string reallocates the bytes the loop walks; a second iteration read freed memory.
+
+```milo skip
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let grow = (): void => { var i = 0; while i < 200 { s.pushStr("xxxxxxxxxx"); i += 1 } }
+    for b in s {
+        run(grow)
+        print(b.toString())
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueGrowsIteratedString.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueGrowsIteratedString.milo)</sub>
+
+## `cannot write to 'st' by calling 'clr' while a loop iterates over 'st'` {#cannot-write-to-st-by-calling-clr-while-a-loop-iterates-over-st}
+
+The `&mut` argument to a trait-bounded generic fn is a write of the capture like any other `&mut` argument, whatever the instantiated body does with it.
+
+```milo skip
+trait Wipe { fn wipe(self: &mut Self): void }
+struct S { v: Vec<string> }
+impl Wipe for S { fn wipe(self: &mut Self): void { self.v = Vec.new() } }
+fn doWipe<T: Wipe>(t: &mut T): void { t.wipe() }
+pub fn main(): i32 {
+    var st = S { v: Vec.new() }
+    st.v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { doWipe(&mut st) }
+    for x in st.v {
+        clr()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureTraitGenericMutArgWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureTraitGenericMutArgWrites.milo)</sub>
+
+## `cannot write to 'v' by calling 'clr' while 'w' borrows 'v'` {#cannot-write-to-v-by-calling-clr-while-w-borrows-v}
+
+Rejected like the direct `wipe(&mut v)` with `w` live. (Today `v[0]` is materialized as a copy, so `w` happens to view the copy; the rule does not depend on that.)
+
+```milo skip
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { wipe(&mut v) }
+    let w = v[0].slice(0, 20)
+    clr()
+    print(w)
+    return 0
+}
+```
+
+<sub>[tests/errors/closureMutArgWritesViewedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMutArgWritesViewedVec.milo)</sub>
+
 ## `cannot write to 'v' by calling 'clr' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-clr-while-a-loop-iterates-over-v}
 
 Calling a closure that reassigns its capture is a write of that binding at the call, so it conflicts with the loop's borrow exactly as `v = Vec.new()` there would. The loop otherwise keeps reading `s` out of the freed buffer.
@@ -6937,6 +7198,24 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureCallWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesIteratedVec.milo)</sub>
+
+A closure that passes its capture to a user fn's `&mut` parameter writes it, as an assignment would. Unrecorded, `clr()` inside the loop cleared `v` and the loop then printed a freed string.
+
+```milo skip
+fn wipe(v: &mut Vec<string>): void { v.clear() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { wipe(&mut v) }
+    for s in v {
+        clr()
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureMutArgWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMutArgWritesIteratedVec.milo)</sub>
 
 ## `cannot write to 'v' by calling 'g' while a loop iterates over 'v'` {#cannot-write-to-v-by-calling-g-while-a-loop-iterates-over-v}
 
@@ -6957,6 +7236,81 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureCallWritesIteratedVecIndirect.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesIteratedVecIndirect.milo)</sub>
+
+## `cannot write to 'v' by passing 'clr' while a loop iterates over 'v'` {#cannot-write-to-v-by-passing-clr-while-a-loop-iterates-over-v}
+
+`show` runs `f` (through `run`) while it holds `r`, a loop element of `v`.
+
+```milo skip
+fn run(f: () => void): void { f() }
+fn show(r: &string, f: () => void): void { run(f); print(r) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        show(s, clr)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueBesideBorrowedArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueBesideBorrowedArg.milo)</sub>
+
+The same through a generic `F` parameter, which says nothing about calling `f`.
+
+```milo skip
+fn run<F>(f: F): void { f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        run(clr)
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueGenericWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueGenericWritesIteratedVec.milo)</sub>
+
+A by-reference closure handed on as a value may be run by the callee, so passing it is checked as running it: `run(clr)` freed the element the loop was reading.
+
+```milo skip
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        run(clr)
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValueWritesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValueWritesIteratedVec.milo)</sub>
+
+## `cannot write to 'v' by passing 'push' while a loop iterates over 'v'` {#cannot-write-to-v-by-passing-push-while-a-loop-iterates-over-v}
+
+A push that reallocates the buffer the loop walks.
+
+```milo skip
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    let push = (): void => { var i = 0; while i < 1000 { v.push(i); i += 1 } }
+    for x in v {
+        run(push)
+        print(x.toString())
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/closureValuePushesIteratedVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureValuePushesIteratedVec.milo)</sub>
 
 ## `carries a payload in 'Num'` {#carries-a-payload-in-num}
 

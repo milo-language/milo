@@ -20,7 +20,7 @@
 // stdout comparison only notices when the bytes happen to have been reused.
 //
 // Generation is by SHAPE. Each shape is a self-contained fragment (globals, helper
-// functions, statements in main, spawned tasks) drawn from one of four families:
+// functions, statements in main, spawned tasks) drawn from one of five families:
 //
 //     h3   an element view of a mutable global (for-in binding, slice, `&[T]` arg,
 //          `&string` arg, `ptr()` result) held across a call that can park, with a
@@ -32,6 +32,10 @@
 //     h2   `shatter`/`windows`/`weld`/`parallelMap` with a window dropped, escaped past
 //          its owner's scope, still on a `Promise.blocking` worker when the owner dies,
 //          or read out of a `Shard<string>` (H1's copy-of-a-Drop-type)
+//     c    a by-reference closure that writes a capture (assignment, `&mut` argument,
+//          `&mut self` method, push), run directly, passed as a value or through
+//          another closure while a for-in over the capture is live, or inside a
+//          Task.scope while a sibling task iterates it across a park
 //     bg   safe noise: index loops across yields, channel ping-pong, blocking workers,
 //          writer tasks, so the hazardous shapes run next to real contention
 //
@@ -45,7 +49,7 @@
 //        [--jobs=4] [--keep] [--reduce-all] [--reduce-probes=80] [--no-seeds] [--verbose]
 //
 // `--filter` restricts generation to shapes whose name contains the substring (the
-// family prefixes h2/h3/h4/bg work) and drops the seed programs. Reduced reds land in
+// family prefixes h2/h3/h4/c/bg work) and drops the seed programs. Reduced reds land in
 // .fuzz-findings/tasks/. Exit 1 when any accepted program is ASan red, 2 when the run
 // was vacuous (nothing accepted reached execution), 0 otherwise.
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, mkdirSync, existsSync } from "fs";
@@ -572,7 +576,7 @@ const SHAPES: Shape[] = [
     return s
 }`);
       p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([10, 16])}, 1)`,
-        `let ${out} = parallelMap(${d}, ${pick([1, 3, 4])}, ${dbl})!`, `print("mapped " + ${out}[0].toString())`);
+        `let ${out} = parallelMap(${d}, ${pick([1, 3, 4])}, ${dbl})`, `print("mapped " + ${out}[0].toString())`);
     },
   },
   {
@@ -585,6 +589,16 @@ const SHAPES: Shape[] = [
         `var ${o} = shatter(${d}, 1)`, `var ${ws} = ${o}.windows()`,
         `let s${ws} = ${ws}[0].get(0)`, `print(s${ws})`);
     },
+  },
+
+  // ── c: a by-reference closure that writes a capture, run while that capture is borrowed ──
+  {
+    name: "c-closure-write",
+    apply(p) { closureWrite(p, false); },
+  },
+  {
+    name: "c-scope-closure-write",
+    apply(p) { closureWrite(p, true); },
   },
 
   // ── bg: safe contention ──
@@ -618,6 +632,66 @@ const SHAPES: Shape[] = [
   },
 ];
 
+// The c family. The write is spelled four ways (an assignment, a user fn's `&mut`
+// parameter, a `&mut self` method, a realloc loop) and reached five (a direct call, the
+// closure passed by value to a plain and to a generic callee, passed beside a borrowed
+// element, called through another closure), because each spelling once took a separate
+// path through the checker and two of them never recorded the write at all. In a task
+// scope the borrow is a sibling task's for-in held across a park, and the write runs in
+// another task or in the scope body after a sleep.
+function closureWrite(p: Program, scoped: boolean) {
+  const v = p.fresh("cv"), w = p.fresh("clr"), x = p.fresh("x");
+  const long = `"${pick(WORDS)} a heap string long enough to be on the heap".clone()`;
+  let target = v, decl = `var ${v}: Vec<string> = Vec.new()`, write: string;
+  switch (pick(["assign", "mutArg", "mutSelf", "push"])) {
+    case "assign": write = `${v} = Vec.new()`; break;
+    case "mutArg": {
+      const f = p.fresh("wipe");
+      p.fn(`fn ${f}(xs: &mut Vec<string>): void { xs.clear() }`);
+      write = `${f}(&mut ${v})`;
+      break;
+    }
+    case "mutSelf": {
+      const S = p.fresh("Bag");
+      p.fn(`struct ${S} { v: Vec<string> }\nimpl ${S} { fn wipe(self: &mut ${S}): void { self.v = Vec.new() } }`);
+      decl = `var ${v} = ${S} { v: Vec.new() }`;
+      target = `${v}.v`;
+      write = `${v}.wipe()`;
+      break;
+    }
+    default: write = `var k: i64 = 0; while k < 1000 { ${v}.push("x".clone()); k = k + 1 }`;
+  }
+  p.body.push(decl, `${target}.push(${long})`, `let ${w} = (): void => { ${write} }`);
+  // How the write is reached from where the borrow is live.
+  const reach = (): string => {
+    switch (pick(["direct", "run", "runGeneric", "nested"])) {
+      case "run": { const r = p.fresh("run"); p.fn(`fn ${r}(f: () => void): void { f() }`); return `${r}(${w})`; }
+      case "runGeneric": { const r = p.fresh("runG"); p.fn(`fn ${r}<F>(f: F): void { f() }`); return `${r}(${w})`; }
+      case "nested": { const o = p.fresh("outer"); p.body.push(`let ${o} = (): void => { ${w}() }`); return `${o}()`; }
+      default: return `${w}()`;
+    }
+  };
+  if (!scoped) {
+    // Sometimes the loop walks a clone, which nothing writes: that program must be
+    // accepted and run clean, so a false reject of the safe spelling shows up too.
+    const src = chance(0.3) ? `${target}.clone()` : target;
+    if (chance(0.25)) {
+      const sh = p.fresh("show");
+      p.fn(`fn ${sh}(r: &string, f: () => void): void { f(); print(r) }`);
+      p.body.push(`for ${x} in ${src} {`, `    ${sh}(${x}, ${w})`, `}`);
+    } else {
+      p.body.push(`for ${x} in ${src} {`, `    ${reach()}`, `    print(${x})`, `}`);
+    }
+    return;
+  }
+  p.use("std/runtime", "Task", "TaskScope", "schedulerYield");
+  p.use("std/time", "sleepMs");
+  const call = reach();
+  const reader = `s.spawn((): void => { for ${x} in ${target} { schedulerYield(); sleepMs(2); print(${x}) } })`;
+  p.body.push(`Task.scope((s: &mut TaskScope): void => {`, `    ${reader}`,
+    ...(chance(0.5) ? [`    s.spawn((): void => { ${call} })`] : [`    sleepMs(1)`, `    ${call}`]), `})`);
+}
+
 // ── generation ────────────────────────────────────────────────────────────────
 
 interface Case { name: string; src: string; shapes: string[] }
@@ -642,6 +716,9 @@ const SEEDS = [
   "tests/errors/shardsManualPathPrivate.milo",
   "tests/errors/globalForInAcrossYield.milo",
   "tests/errors/vecPtrOutlivesRealloc.milo",
+  "tests/errors/closureMutArgWritesIteratedVec.milo",
+  "tests/errors/closureValueWritesIteratedVec.milo",
+  "tests/errors/scopeBodyCallsWritingClosure.milo",
 ];
 
 // ── the oracles ───────────────────────────────────────────────────────────────

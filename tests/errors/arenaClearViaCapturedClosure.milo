@@ -1,0 +1,15 @@
+// @error: 'a' is captured by a closure argument and borrowed in the same call
+// The read callback reaches the arena only through `clr`, which it hands to `run`; the
+// write is found through the closure it captures.
+from "std/arena" import { Arena }
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { a.clear() }
+    a.read(h, (x: &string): void => {
+        run(clr)
+        print(x)
+    })
+    return 0
+}

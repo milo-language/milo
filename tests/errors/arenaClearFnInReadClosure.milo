@@ -1,0 +1,12 @@
+// @error: 'a' is captured by a closure argument and borrowed in the same call
+// The free-function spelling: `arenaClear(&mut a)` writes the capture.
+from "std/arena" import { Arena, arenaRead, arenaClear }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    arenaRead(a, h, (x: &string): void => {
+        arenaClear(&mut a)
+        print(x)
+    })
+    return 0
+}

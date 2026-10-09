@@ -1,0 +1,15 @@
+// @error: cannot write to 's' by calling 'clr' while a loop iterates over 's'
+// A `&mut self` method called on a capture is a write of that capture: `s.wipe()`
+// replaced `s.v` under the loop over it.
+struct S { v: Vec<string> }
+impl S { fn wipe(self: &mut S): void { self.v = Vec.new() } }
+pub fn main(): i32 {
+    var s = S { v: Vec.new() }
+    s.v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { s.wipe() }
+    for x in s.v {
+        clr()
+        print(x)
+    }
+    return 0
+}

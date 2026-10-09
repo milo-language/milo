@@ -8429,9 +8429,21 @@ export class TypeChecker {
   // Walk to the root identifier of an lvalue; if it is a closure capture being
   // mutated in place, record that so the value isn't move-captured out from
   // under the caller (which still needs to see the mutation / drop it).
+  //
+  // Reached from assignments and builtin mutators (isRootMutable), and from every
+  // mutable borrow a call takes: a `&mut` argument, a `&mut self` receiver. Those are
+  // writes too, and a capture written only through a user fn (`wipe(&mut v)`,
+  // `s.wipe()`, `arenaClear(&mut a)`) once went unrecorded, so calling the closure
+  // inside a loop over `v` freed the element the loop was reading.
   private markCaptureMutated(expr: Expr) {
     const ap = this.accessPath(expr);
-    if (ap) this.eachCaptureOf(ap.root, cap => { cap.mutatedInClosure = true; (cap.mutatedFields ??= []).push(ap.fields); });
+    if (!ap) return;
+    const key = ap.fields?.join(".");
+    this.eachCaptureOf(ap.root, cap => {
+      cap.mutatedInClosure = true;
+      const fs = (cap.mutatedFields ??= []);
+      if (!fs.some(f => f?.join(".") === key)) fs.push(ap.fields);
+    });
   }
 
   // Apply fn to `name`'s capture in every open closure that holds one. A nested closure
@@ -8593,6 +8605,10 @@ export class TypeChecker {
         }
         return;
       }
+      // A `&mut` argument or receiver writes its place; inside a closure body that is a
+      // write of the capture (the type of an already-`&mut` binding is not consulted, so
+      // forwarding one to a `&` parameter is no write).
+      if (!moved && (this.autoBorrowed.get(arg)?.mutable || this.explicitMutArgs.has(arg))) this.markCaptureMutated(arg);
       const p = this.exclusivityPlace(arg);
       if (!p) return;
       (ab.mutable ? muts : shared).push({ arg: i, ...p, span: arg.span ?? sp, moved });
@@ -8807,6 +8823,21 @@ export class TypeChecker {
     if (writes.length > 0) this.closureCallWrites.set(call, writes);
   }
 
+  // A by-reference closure named as a value (`run(clr)`, `show(s, clr)`, `v.each(clr)`,
+  // `let g = clr`) may be run by whatever receives it, before this statement ends or
+  // through the alias later. So naming it counts as running it here: each capture it
+  // writes, through the closures it captures as well, is checked against the borrows
+  // open at this point like a direct call. Fail-closed by design: whether the callee
+  // really calls it is not known here. A call of the alias is checked again at the call.
+  private checkClosureValueWrites(name: string, info: VarInfo, sp: Span | undefined) {
+    for (const { cap, isMove } of this.capturesOfClosures(info.closureSources ?? [])) {
+      if (isMove || !cap.info || !cap.mutatedInClosure) continue;
+      for (const fields of cap.mutatedFields ?? [null]) {
+        if (this.reportClosureWrite(cap.info, cap.name, fields, name, sp, "passing")) break;
+      }
+    }
+  }
+
   private errorIfCaptureMoved(cap: CaptureInfo, fname: string, sp: Span | undefined) {
     const info = cap.info;
     if (info && !info.moved && info.movedPlaces && info.movedPlaces.size > 0) {
@@ -8828,16 +8859,16 @@ export class TypeChecker {
   // A closure call's write of `fields` under capture `name`, checked like a direct write.
   // Capture borrows are skipped: one still open in this statement belongs to a closure
   // literal passed as a call argument, and checkCallSiteExclusivity judges those.
-  private reportClosureWrite(info: VarInfo, name: string, fields: string[] | null, fname: string, sp: Span | undefined): boolean {
+  private reportClosureWrite(info: VarInfo, name: string, fields: string[] | null, fname: string, sp: Span | undefined, how = "calling"): boolean {
     const ph = this.pointerBorrowAgainstFields(info, fields);
     if (ph) {
-      this.requireUnsafe(`'${name}' is written by calling '${fname}' while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
+      this.requireUnsafe(`'${name}' is written by ${how} '${fname}' while '${ph.name}' still points into its buffer (from '${ph.call}' on line ${ph.line})`, sp,
         this.pointerHint(ph));
       return true;
     }
     if (!this.frozenAgainstFields(info, fields, "capture")) return false;
-    this.reportBorrowed(`cannot write to '${name}' by calling '${fname}'`, name, this.conflictingBorrowFields(info, fields, "capture"), sp,
-      `cannot write to '${name}' by calling '${fname}' because '${name}' is borrowed`,
+    this.reportBorrowed(`cannot write to '${name}' by ${how} '${fname}'`, name, this.conflictingBorrowFields(info, fields, "capture"), sp,
+      `cannot write to '${name}' by ${how} '${fname}' because '${name}' is borrowed`,
       `a slice or loop iteration over '${name}' is still live, and the closure's write could move memory it points into`);
     return true;
   }
@@ -9457,6 +9488,8 @@ export class TypeChecker {
     // it (a builtin, say) still gets counted, under a callee the count marks unknown.
     if (mutable && !this.explicitMutArgs.has(arg)) this.noteImplicitMut(arg, "?", "?");
     if (mutable) {
+      // Builtin calls never reach checkCallSiteExclusivity, which marks the rest.
+      this.markCaptureMutated(arg);
       // Only for a value being *turned into* a borrow. An argument that is already
       // a reference — a slice like `v[0..2]` — is not competing with the freeze, it
       // IS one, and whether two of them may coexist is checkCallSiteExclusivity's
@@ -9834,6 +9867,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     info.read = true;
+    if (info.closureSources && info.type.tag === "fn") this.checkClosureValueWrites(expr.name, info, sp);
     if (this.pendingUseNotes.size > 0) this.noteStillUsed(info, sp);
     // `unsafe` admits the read: the new owner is then the programmer's claim to make
     // (giflib's CStore keeps every buffer alive until the C caller is done with it).

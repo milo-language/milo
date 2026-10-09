@@ -1,0 +1,12 @@
+// @error: cannot write to 'v' by passing 'push' while a loop iterates over 'v'
+// A push that reallocates the buffer the loop walks.
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    let push = (): void => { var i = 0; while i < 1000 { v.push(i); i += 1 } }
+    for x in v {
+        run(push)
+        print(x.toString())
+    }
+    return 0
+}

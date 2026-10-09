@@ -1,0 +1,11 @@
+// @error: cannot write to 's' by passing 'clr' while 'w' borrows 's'
+// A string view stays live across `run(clr)`, which reassigns the string it views.
+fn run(f: () => void): void { f() }
+pub fn main(): i32 {
+    var s = "a heap string long enough to be on the heap for sure".clone()
+    let clr = (): void => { s = "x".clone() }
+    let w = s.slice(0, 20)
+    run(clr)
+    print(w)
+    return 0
+}

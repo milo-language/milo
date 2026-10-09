@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-08 (integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-09 (passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -3127,6 +3127,24 @@ fn each(g: (i64) => i64) { print(g(1)) }
 let n = 5
 let f = (x: i64) => x + n
 each(f)                         // fine: `each` can only call `g`
+```
+
+A by-reference closure runs against its captures in place, so calling it is a use, and a
+write in its body (an assignment, a `&mut` argument, a `&mut self` method) is a write of
+the captured binding at the call. Handing the closure to a callee counts as calling it,
+since the callee may. Either one is rejected while a loop, view or element borrow over a
+written capture is live:
+
+```milo error
+fn run(g: () => void) { g() }
+fn wipe(xs: &mut Vec<string>) { xs.clear() }
+
+var v: Vec<string> = ["a".clone()]
+let clr = () => { wipe(&mut v) }
+for s in v {
+    run(clr)                    // cannot write to 'v' by passing 'clr' while a loop iterates over 'v'
+    print(s)
+}
 ```
 
 `move` is the escape hatch in every case, including a `var` capture. It is deliberately not applied for you outside a `move` parameter: the allocation is real, and a `move` you wrote is a move the checker can see at the point it happens, so a read of the capture afterwards is a proper `use of moved variable` rather than a silently empty value.

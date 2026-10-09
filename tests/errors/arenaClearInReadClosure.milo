@@ -1,0 +1,12 @@
+// @error: 'a' is captured by a closure argument and borrowed in the same call
+// `a.clear()` in the closure `read` runs frees the slot the closure was handed.
+from "std/arena" import { Arena }
+pub fn main(): i32 {
+    var a: Arena<string> = Arena.new()
+    let h = a.alloc("a heap string long enough to be on the heap for sure".clone())
+    a.read(h, (x: &string): void => {
+        a.clear()
+        print(x)
+    })
+    return 0
+}

@@ -1,0 +1,13 @@
+// @error: cannot write to 'v' by passing 'clr' while a loop iterates over 'v'
+// `show` runs `f` (through `run`) while it holds `r`, a loop element of `v`.
+fn run(f: () => void): void { f() }
+fn show(r: &string, f: () => void): void { run(f); print(r) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        show(s, clr)
+    }
+    return 0
+}

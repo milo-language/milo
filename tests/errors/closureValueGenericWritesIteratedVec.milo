@@ -1,0 +1,13 @@
+// @error: cannot write to 'v' by passing 'clr' while a loop iterates over 'v'
+// The same through a generic `F` parameter, which says nothing about calling `f`.
+fn run<F>(f: F): void { f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let clr = (): void => { v = Vec.new() }
+    for s in v {
+        run(clr)
+        print(s)
+    }
+    return 0
+}

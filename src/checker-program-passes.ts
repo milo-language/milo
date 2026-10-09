@@ -474,6 +474,21 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
     return out;
   };
   const writes = (c: CaptureInfo | undefined) => !!c && (!!c.mutatedInClosure || !!c.consumedInClosure);
+  // What a closure reaches by calling the closures it captures: their by-reference
+  // captures, transitively (a `move` closure owns copies, so its captures stop the walk).
+  // A task that only captures `clr` still writes `v` when it runs `clr()`, and a body that
+  // calls `clr()` writes `v` too, so the rules below see these alongside direct captures.
+  const reached = (caps: CaptureInfo[]): CaptureInfo[] => {
+    const out: CaptureInfo[] = [];
+    const seen = new Set<Expr>();
+    const walk = (src: Expr) => {
+      if (seen.has(src) || (src as { isMove?: boolean }).isMove) return;
+      seen.add(src);
+      for (const c of host.closureCaptures.get(src) ?? []) { out.push(c); for (const s of c.info?.closureSources ?? []) walk(s); }
+    };
+    for (const c of caps) for (const s of c.info?.closureSources ?? []) walk(s);
+    return out;
+  };
   const isLoop = (n: Record<string, unknown>) => n.kind === "WhileStmt" || n.kind === "ForInStmt";
 
   const finish = (f: Frame) => {
@@ -487,9 +502,15 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
       if (Array.isArray(node)) { for (const x of node) scanBody(x); return; }
       const n = node as Record<string, unknown>;
       if (n.kind === "Ident") bodyNames.add(n.name as string);
+      // A call names its callee as a string, not an Ident: `clr()` uses the binding `clr`.
+      if (n.kind === "Call" && typeof n.func === "string") bodyNames.add(n.func);
       for (const k of Object.keys(n)) if (k !== "span" && k !== "type") scanBody(n[k]);
     };
     scanBody(f.body.body);
+    // The body's writes and uses through closures it runs itself (not only via a task).
+    const bodyReached = reached([...bodyCaps.values()].filter(c => bodyNames.has(c.name)));
+    const bodyWrites = (name: string) => writes(bodyCaps.get(name)) || bodyReached.some(c => c.name === name && writes(c));
+    const bodyUses = (name: string) => bodyNames.has(name) || bodyReached.some(c => c.name === name);
 
     // Rule 2: a borrowing task captures only what outlives the scope.
     const borrowed = new Map<string, Spawn[]>();
@@ -503,14 +524,22 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
         }
         borrowed.set(c.name, [...(borrowed.get(c.name) ?? []), sp]);
       }
+      // Rule 2 already judged the closure these come through; they join rule 3 only.
+      for (const c of reached(host.closureCaptures.get(sp.lit) ?? [])) {
+        const users = borrowed.get(c.name) ?? [];
+        if (!users.includes(sp)) borrowed.set(c.name, [...users, sp]);
+      }
     }
 
     // Rule 3: read by everyone, or touched by exactly one task.
     for (const [name, users] of borrowed) {
-      const capOf = (sp: Spawn) => (host.closureCaptures.get(sp.lit) ?? []).find(c => c.name === name);
-      const writers = users.filter(sp => writes(capOf(sp)));
+      const taskWrites = (sp: Spawn) => {
+        const direct = host.closureCaptures.get(sp.lit) ?? [];
+        return [...direct, ...reached(direct)].some(c => c.name === name && writes(c));
+      };
+      const writers = users.filter(taskWrites);
       if (writers.length === 0) {
-        if (writes(bodyCaps.get(name))) {
+        if (bodyWrites(name)) {
           report(`'${name}' is borrowed by a scoped task and written by the Task.scope body`, users[0]!.span,
             `the body and the task interleave at every park, so a write could free memory the task is reading; let one side own '${name}' (a 'move' closure), or share it through a Channel or an atomic`);
         }
@@ -523,7 +552,7 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
       if (writers.length > 1) fail("and so does another task in the same scope", writers[1]!.span);
       else if (w.inLoop) fail("and it is spawned in a loop, so several tasks write it", w.span);
       else if (users.length > 1) fail("and another task in the same scope reads it", users.find(u => u !== w)!.span);
-      else if (bodyNames.has(name)) fail("and the Task.scope body uses it too", w.span);
+      else if (bodyUses(name)) fail("and the Task.scope body uses it too", w.span);
     }
   };
 
