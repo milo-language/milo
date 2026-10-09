@@ -1,0 +1,41 @@
+// @skip-os: win32
+// WsConn.close used to close the socket but keep its number, so a send after it went
+// to whichever socket the kernel handed that number to next. Here the next socket is
+// a fresh connection opened right after the close; the send must fail, not reach it.
+from "std/net" import {
+    TcpListener, TcpStream, ip4
+}
+from "std/ws" import {
+    wsAccept
+}
+
+fn main(): void {
+    let l = TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!
+    let port = l.port() as u16
+    let c = TcpStream.connect(ip4(127, 0, 0, 1), port)!
+    let s = l.accept()!
+    let req = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    var ws = wsAccept(s, req)!
+    let hs = c.recvOnce()
+    print(hs.startsWith("HTTP/1.1 101"))
+    print(ws.sendText("before").isOk())
+    ws.close()
+    // Likely reuses the number ws held.
+    let c2 = TcpStream.connect(ip4(127, 0, 0, 1), port)!
+    let s2 = l.accept()!
+    print(ws.sendText("after").isErr())
+    print(ws.recv().isErr())
+    // Nothing the closed conn sent reached the new socket.
+    c2.close()
+    print(s2.recvOnce().len)
+    // A second close is a no-op.
+    ws.close()
+    print("done")
+}
+
+// @expect: true
+// @expect: true
+// @expect: true
+// @expect: true
+// @expect: 0
+// @expect: done

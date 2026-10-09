@@ -1,0 +1,21 @@
+// @error: field '_ssl' of 'WsConn' is private to 'std/ws.milo'
+// Found by the October 2026 soundness sweep. `ssl` was a public i64, so safe code
+// could point it anywhere (`ws.ssl = 0x41414141`) and the next send handed that
+// address to SSL_write. The TLS handles of WsConn, TlsConn, TlsListener and TlsStream
+// are private now.
+from "std/net" import {
+    TcpListener, TcpStream, ip4
+}
+from "std/ws" import {
+    wsAccept
+}
+
+fn main(): void {
+    let l = TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!
+    let c = TcpStream.connect(ip4(127, 0, 0, 1), l.port() as u16)!
+    let s = l.accept()!
+    var ws = wsAccept(s, "GET / HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")!
+    ws._ssl = 1094795585
+    print(ws.sendText("hello").isOk())
+    print(c.recvOnce().len)
+}

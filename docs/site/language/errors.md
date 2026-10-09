@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 480 distinct messages across 618 programs the compiler must reject.
+Every error message the test suite pins: 481 distinct messages across 619 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -323,6 +323,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
 - [`field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'`](#field-poolid-of-poolblock-is-private-to-std-pool-milo)
 - [`field '_ptr' of 'MappedMemory' is private to 'std/mem.milo'`](#field-ptr-of-mappedmemory-is-private-to-std-mem-milo)
+- [`field '_ssl' of 'WsConn' is private to 'std/ws.milo'`](#field-ssl-of-wsconn-is-private-to-std-ws-milo)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
@@ -8389,6 +8390,31 @@ fn main() {
 ```
 
 <sub>[tests/errors/mappedMemoryPtrField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mappedMemoryPtrField.milo)</sub>
+
+## `field '_ssl' of 'WsConn' is private to 'std/ws.milo'` {#field-ssl-of-wsconn-is-private-to-std-ws-milo}
+
+Found by the October 2026 soundness sweep. `ssl` was a public i64, so safe code could point it anywhere (`ws.ssl = 0x41414141`) and the next send handed that address to SSL\_write. The TLS handles of WsConn, TlsConn, TlsListener and TlsStream are private now.
+
+```milo skip
+from "std/net" import {
+    TcpListener, TcpStream, ip4
+}
+from "std/ws" import {
+    wsAccept
+}
+
+fn main(): void {
+    let l = TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!
+    let c = TcpStream.connect(ip4(127, 0, 0, 1), l.port() as u16)!
+    let s = l.accept()!
+    var ws = wsAccept(s, "GET / HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")!
+    ws._ssl = 1094795585
+    print(ws.sendText("hello").isOk())
+    print(c.recvOnce().len)
+}
+```
+
+<sub>[tests/errors/wsTlsHandlePrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/wsTlsHandlePrivate.milo)</sub>
 
 ## `field '_x' of 'S' is private to` {#field-x-of-s-is-private-to}
 

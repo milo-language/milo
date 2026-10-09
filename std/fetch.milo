@@ -49,22 +49,22 @@ let X509_V_OK: i64 = 0
 // TLS/SSL connection handle. Frees SSL context and closes fd on drop.
 pub struct TlsStream {
     _fd: i32,
-    ssl: i64,
-    ctx: i64,
+    _ssl: i64,
+    _ctx: i64,
 }
 
 impl Drop for TlsStream {
     fn drop(self: &mut Self): void {
         unsafe {
-            if self.ssl != 0 {
+            if self._ssl != 0 {
                 // close_notify before the fd goes away: an abrupt TCP close is an
                 // "unexpected eof" to an OpenSSL peer, which curl reports as a transfer
                 // error even when the body arrived complete.
-                SSL_shutdown(self.ssl as *u8)
-                SSL_free(self.ssl as *u8)
+                SSL_shutdown(self._ssl as *u8)
+                SSL_free(self._ssl as *u8)
             }
-            if self.ctx != 0 {
-                SSL_CTX_free(self.ctx as *u8)
+            if self._ctx != 0 {
+                SSL_CTX_free(self._ctx as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self._fd > 0 {
@@ -189,7 +189,7 @@ impl TlsStream {
             }
 
             return Result.Ok(TlsStream {
-                _fd: fd, ssl: sslAddr, ctx: ctxAddr
+                _fd: fd, _ssl: sslAddr, _ctx: ctxAddr
             })
         }
     }
@@ -197,7 +197,7 @@ impl TlsStream {
     // Send `data` over the TLS connection. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self.ssl as *u8, self._fd, data, data.len as i32)
+            let n = sslWriteFd(self._ssl as *u8, self._fd, data, data.len as i32)
             if n < 0 {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
@@ -212,7 +212,7 @@ impl TlsStream {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
-                let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 4096)
+                let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 4096)
                 if n <= 0 {
                     break
                 }
@@ -231,7 +231,7 @@ impl TlsStream {
         var result: string = ""
         var buf: [u8; 8192] = [0; 8192]
         unsafe {
-            let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 8192)
+            let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
                 for i in 0..n as i64 {
                     result.push(buf[i])
@@ -251,7 +251,7 @@ impl TlsStream {
         unsafe {
             let ch = Channel<string>.new(256)!
             let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
-            let ssl = self.ssl
+            let ssl = self._ssl
             let fd = self._fd
             // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
             // WANT_READ park path is dead code — one read would freeze the whole

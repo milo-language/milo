@@ -31,6 +31,8 @@ spellings stop compiling.
 | `Shard { ... }` / `StrShard { ... }` literals | gone outside std/shard: windows come from `parallelMap`, `parallelMapWith`, `parallelScanStr` |
 | `dbFinalize(stmt: &Statement)`, `dbClose(db: &Database)` (freed the handle and left it usable) | `dbFinalize(stmt: Statement)`, `dbClose(db: Database)` consume it; both handles also close themselves on drop, so the calls are optional |
 | `dbFinalize(v[i])` / `dbClose(v[i])` on a handle kept in a Vec | keep `Vec<Option<Statement>>` and assign `v[i] = Option.None`: the old handle drops, which finalizes or closes it |
+| `ws.ssl` (`WsConn`), `conn.ssl` (`TlsConn`), `listener.ctx` (`TlsListener`), `stream.ssl`, `stream.ctx` (`TlsStream`) | private; `ws.tlsHandle()` still reads a WsConn's handle for `WsConn.view` |
+| `ws.close()` left the fd number and TLS state in place | it frees them and resets the handles, so a later send or recv fails instead of reaching a reused descriptor |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
 

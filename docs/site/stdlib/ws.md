@@ -19,17 +19,16 @@ from "std/ws" import { WsConn, WsMessage, wsAccept, wsConnect, wsConnectTls }
 pub struct WsConn
 ```
 
-Fields:
-
-- `ssl: i64`: TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
-
 #### `WsConn.close`
 
 ```milo
 fn WsConn.close(self: &mut WsConn): void
 ```
 
-Send close frame and mark connection closed.
+Send a close frame and release the socket and TLS state now rather than at drop.
+Afterwards every send and recv fails. The handles are reset, not just flagged:
+this used to close the fd and keep the number, so a later send wrote to whatever
+the kernel reused it for, and the TLS state leaked because drop skips a closed conn.
 
 #### `WsConn.ping`
 

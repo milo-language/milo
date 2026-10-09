@@ -46,18 +46,18 @@ from "std/platform" import {
 // the next accept(). The listener must outlive the connections it hands out.
 pub struct TlsConn {
     _fd: i32,
-    ssl: i64,
+    _ssl: i64,
 }
 
 impl Drop for TlsConn {
     fn drop(self: &mut Self): void {
         unsafe {
-            if self.ssl != 0 {
+            if self._ssl != 0 {
                 // close_notify before the fd goes away: an abrupt TCP close is an
                 // "unexpected eof" to an OpenSSL peer, which curl reports as a transfer
                 // error even when the body arrived complete.
-                SSL_shutdown(self.ssl as *u8)
-                SSL_free(self.ssl as *u8)
+                SSL_shutdown(self._ssl as *u8)
+                SSL_free(self._ssl as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self._fd > 0 {
@@ -71,7 +71,7 @@ impl TlsConn {
     // Write `data` through the TLS record layer. Returns the byte count OpenSSL accepted.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self.ssl as *u8, self._fd, data, data.len as i32)
+            let n = sslWriteFd(self._ssl as *u8, self._fd, data, data.len as i32)
             if n < 0 {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
@@ -86,7 +86,7 @@ impl TlsConn {
         var result: string = ""
         var buf: [u8; 8192] = [0; 8192]
         unsafe {
-            let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 8192)
+            let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 8192)
             if n > 0 {
                 for i in 0..n as i64 {
                     result.push(buf[i])
@@ -103,7 +103,7 @@ impl TlsConn {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
-                let n = sslReadFd(self.ssl as *u8, self._fd, buf as *u8, 4096)
+                let n = sslReadFd(self._ssl as *u8, self._fd, buf as *u8, 4096)
                 if n <= 0 {
                     break
                 }
@@ -122,14 +122,14 @@ impl TlsConn {
 // chain and private key. Frees the ctx and closes the fd on drop.
 pub struct TlsListener {
     _fd: i32,
-    ctx: i64,
+    _ctx: i64,
 }
 
 impl Drop for TlsListener {
     fn drop(self: &mut Self): void {
         unsafe {
-            if self.ctx != 0 {
-                SSL_CTX_free(self.ctx as *u8)
+            if self._ctx != 0 {
+                SSL_CTX_free(self._ctx as *u8)
             }
             // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
             if self._fd > 0 {
@@ -196,7 +196,7 @@ impl TlsListener {
                     sysClose(fd)
                     return Result.Err(NetError.TlsError("private key does not match certificate"))
                 }
-                return Result.Ok(TlsListener { _fd: fd, ctx: ctxAddr })
+                return Result.Ok(TlsListener { _fd: fd, _ctx: ctxAddr })
             }
         }
     }
@@ -213,7 +213,7 @@ impl TlsListener {
                 return Result.Err(NetError.ConnectionFailed("accept() failed"))
             }
             unsafe {
-                let ssl = SSL_new(self.ctx as *u8)
+                let ssl = SSL_new(self._ctx as *u8)
                 let sslAddr = ssl as i64
                 if sslAddr == 0 {
                     sysClose(clientFd)
@@ -225,7 +225,7 @@ impl TlsListener {
                     sysClose(clientFd)
                     return Result.Err(NetError.TlsError("SSL_accept failed"))
                 }
-                return Result.Ok(TlsConn { _fd: clientFd, ssl: sslAddr })
+                return Result.Ok(TlsConn { _fd: clientFd, _ssl: sslAddr })
             }
         }
     }

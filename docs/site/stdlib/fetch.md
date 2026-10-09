@@ -109,8 +109,6 @@ pub struct TlsStream
 
 TLS/SSL connection handle. Frees SSL context and closes fd on drop.
 
-Fields: `ssl: i64`, `ctx: i64`.
-
 #### `TlsStream.connect`
 
 ```milo

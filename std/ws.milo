@@ -63,7 +63,7 @@ pub struct WsMessage {
 pub struct WsConn {
     _fd: i32,
     // TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
-    ssl: i64,
+    _ssl: i64,
     // SSL_CTX owned by this conn (0 = none/borrowed). Only the owner frees ssl+ctx on drop.
     _ctx: i64,
     _closed: bool,
@@ -76,8 +76,8 @@ impl Drop for WsConn {
         // _closed also marks borrowed copies (shared fd/ssl across green threads) — skip teardown.
         if !self._closed {
             unsafe {
-                if self.ssl != 0 {
-                    SSL_free(self.ssl as *u8)
+                if self._ssl != 0 {
+                    SSL_free(self._ssl as *u8)
                 }
                 if self._ctx != 0 {
                     SSL_CTX_free(self._ctx as *u8)
@@ -145,7 +145,7 @@ pub fn wsAccept(conn: TcpStream, rawRequest: &string): Result<WsConn, string> {
         return Result.Err("failed to send handshake response")
     }
 
-    return Result.Ok(WsConn { _fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
+    return Result.Ok(WsConn { _fd: fd, _ssl: 0, _ctx: 0, _closed: false, _isClient: false })
 }
 
 // The socket fd, for `WsConn.view` (see AsFd in std/io). `sel.onRead(conn)` and
@@ -196,13 +196,13 @@ impl WsConn {
     // and a writer on one connection use `Task.scope`, whose tasks borrow the owner.
     @unsafe
     fn view(fd: i32, ssl: i64, isClient: bool): WsConn {
-        return WsConn { _fd: fd, ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
+        return WsConn { _fd: fd, _ssl: ssl, _ctx: 0, _closed: true, _isClient: isClient }
     }
 
     // The TLS handle, 0 for plain TCP. Opaque to callers: pass it back to std, never
     // construct one.
     fn tlsHandle(self: &WsConn): i64 {
-        return self.ssl
+        return self._ssl
     }
 
     // Read next WebSocket message. Handles fragmentation, responds to ping automatically.
@@ -214,7 +214,7 @@ impl WsConn {
 
         while true {
             var header: [u8; 2] = [0; 2]
-            if !readExact(self._fd, self.ssl, header, 2) {
+            if !readExact(self._fd, self._ssl, header, 2) {
                 return Result.Err("connection closed")
             }
 
@@ -230,7 +230,7 @@ impl WsConn {
 
             if payloadLen == 126 {
                 var extLen: [u8; 2] = [0; 2]
-                if !readExact(self._fd, self.ssl, extLen, 2) {
+                if !readExact(self._fd, self._ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
                 let hi = extLen[0] as i64
@@ -238,7 +238,7 @@ impl WsConn {
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
                 var extLen: [u8; 8] = [0; 8]
-                if !readExact(self._fd, self.ssl, extLen, 8) {
+                if !readExact(self._fd, self._ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
                 payloadLen = 0
@@ -249,7 +249,7 @@ impl WsConn {
 
             var maskKey: [u8; 4] = [0; 4]
             if masked {
-                if !readExact(self._fd, self.ssl, maskKey, 4) {
+                if !readExact(self._fd, self._ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
                 }
             }
@@ -259,7 +259,7 @@ impl WsConn {
             if payloadLen > 0 {
                 unsafe {
                     let buf = malloc(payloadLen)
-                    if !readExact(self._fd, self.ssl, buf, payloadLen) {
+                    if !readExact(self._fd, self._ssl, buf, payloadLen) {
                         free(buf)
                         return Result.Err("connection closed reading payload")
                     }
@@ -334,21 +334,36 @@ impl WsConn {
         return self._sendFrame(WsOpcode.Ping, "", true)
     }
 
-    // Send close frame and mark connection closed.
+    // Send a close frame and release the socket and TLS state now rather than at drop.
+    // Afterwards every send and recv fails. The handles are reset, not just flagged:
+    // this used to close the fd and keep the number, so a later send wrote to whatever
+    // the kernel reused it for, and the TLS state leaked because drop skips a closed conn.
     fn close(self: &mut Self): void {
         unsafe {
             if !self._closed {
                 let _ = self._sendFrame(WsOpcode.Close, "", true)
-                self._closed = true
-                sysClose(self._fd)
+                if self._ssl != 0 {
+                    SSL_free(self._ssl as *u8)
+                }
+                if self._ctx != 0 {
+                    SSL_CTX_free(self._ctx as *u8)
+                }
+                if self._fd > 0 {
+                    sysClose(self._fd)
+                }
             }
         }
+        // A view (`_closed` from the start) is reset too, so it stops using the owner's handles.
+        self._closed = true
+        self._ssl = 0
+        self._ctx = 0
+        self._fd = -1
     }
 
     // The frame writer behind every send.
     fn _sendFrame(self: &Self, opcode: WsOpcode, payload: &string, fin: bool): Result<i32, string> {
         let fd = self._fd
-        let ssl = self.ssl
+        let ssl = self._ssl
         let isClient = self._isClient
         // header: 1 (fin+op) + 1..9 (len) + 4 (mask key, client only)
         var headerLen: i64 = 2
@@ -518,7 +533,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
-        return Result.Ok(WsConn { _fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
+        return Result.Ok(WsConn { _fd: fd, _ssl: 0, _ctx: 0, _closed: false, _isClient: true })
     }
 }
 
@@ -627,7 +642,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         }
 
         return Result.Ok(WsConn {
-            _fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
+            _fd: fd, _ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
         })
     }
 }
