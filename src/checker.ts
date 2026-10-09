@@ -8040,10 +8040,14 @@ export class TypeChecker {
       case "CastExpr":
         return [];
 
+      // `*h` names the storage inside a box (tryMoveOutOfHeap); `-x`, `!b`, `~n` are fresh.
+      case "UnaryOp":
+        return expr.op === "*" ? [expr] : [];
+
       // Fresh values. Their own operands are moved where those are checked — a
       // struct literal's fields, a call's arguments — not through the result.
       case "IntLit": case "FloatLit": case "BoolLit": case "StringLit": case "CharLit":
-      case "BinOp": case "UnaryOp": case "Call": case "MethodCall": case "StructLit":
+      case "BinOp": case "Call": case "MethodCall": case "StructLit":
       case "ArrayLit": case "ArrayRepeat": case "EnumLit": case "RangeExpr": case "IsExpr":
         return [];
     }
@@ -8074,6 +8078,7 @@ export class TypeChecker {
   }
 
   private tryMoveLeaf(expr: Expr) {
+    if (expr.kind === "UnaryOp" && expr.op === "*") { this.tryMoveOutOfHeap(expr); return; }
     // ident-ok: asks whether the BINDING was declared `&T`, which is a property of the declaration, not of storage
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
@@ -8238,6 +8243,34 @@ export class TypeChecker {
         // users' buffers and double-freed on drop (a live abort, exit 133).
       }
     }
+  }
+
+  // `*h` by value moves the T out of the box: codegen loads it and zeroes the box's
+  // contents, so the box's own drop frees only the allocation. Nothing recorded that, so
+  // a second `*h` read the zeroed T (an empty string, or a null inner Heap that the next
+  // deref crashed on), and `*h` through a `&Heap<T>` emptied the caller's box behind its
+  // back. The move is checked and recorded as a move of the box (the operand place), so
+  // a later use of `h` is the ordinary use-after-move error and a borrowed, global or
+  // in-container box gets the same refusal moving the box itself would. The operand is
+  // then taken back out of movedExprs: `h` still owns the allocation and must free it.
+  private tryMoveOutOfHeap(expr: ExprOf<"UnaryOp">) {
+    const operandTy = this.exprTypes.get(expr.operand);
+    if (operandTy?.tag !== "heap") return;
+    const t = this.exprTypes.get(expr);
+    if (!t || this.isCopyType(t) || this.isPoisoned(t)) return;
+    // A box inside a container element: the element stays put, so there is no binding
+    // or field to mark, and the next `*v[i]` would read the zeroed contents.
+    const inElement = this.placesOf(expr.operand).some(p =>
+      p.tag === "path" && p.steps.some(s => s.tag === "index") && this.lookup(p.root) !== null);
+    if (inElement) {
+      const what = this.describeExpr(expr);
+      this.error(`cannot move '${what}' out of a box that stays in its container`, expr.span,
+        `clone it ('(${what}).clone()'), or take the element out first ('remove(i)', 'pop()' or 'replace')`);
+      return;
+    }
+    const wasMoved = this.movedExprs.has(expr.operand);
+    this.tryMoveLeaf(expr.operand);
+    if (!wasMoved) this.movedExprs.delete(expr.operand);
   }
 
   // Moving out of a global used to compile and zero the global's slot, so the next

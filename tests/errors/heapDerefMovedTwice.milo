@@ -1,0 +1,13 @@
+// @error: use of moved variable 'h'
+// `*h` by value moves the Node out of the box and leaves it zeroed, so a second `*h`
+// used to read an empty string back with no diagnostic.
+struct Node { name: string }
+
+pub fn main(): i32 {
+    let h = Heap(Node { name: "original name long string here".clone() })
+    let a = *h
+    let b = *h
+    print(a.name)
+    print(b.name)
+    return 0
+}

@@ -1,0 +1,37 @@
+// `*h` of a Copy T reads it and leaves the box usable; of a non-Copy T it moves the value
+// out (the box is then used up, but still freed); a borrow reads through `(*h).field`.
+struct Node { name: string }
+
+enum Tree { Node(Heap<Tree>, Heap<Tree>), Leaf(i64) }
+
+fn sum(t: Tree): i64 {
+    match t {
+        Tree.Leaf(n) => { return n }
+        Tree.Node(l, r) => { return sum(*l) + sum(*r) }
+    }
+}
+
+fn nameLen(h: &Heap<Node>): i64 { return (*h).name.len }
+
+fn plusOne(h: &Heap<i64>): i64 { return *h + 1 }
+
+pub fn main(): i32 {
+    let n = Heap(41)
+    let a = *n
+    let b = *n
+    print(a + b)
+    print(plusOne(n))
+    let h = Heap(Node { name: "boxed".clone() })
+    print(nameLen(h))
+    print((*h).name)
+    let moved = *h
+    print(moved.name)
+    print(sum(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))))
+    return 0
+}
+// @expect: 82
+// @expect: 42
+// @expect: 5
+// @expect: boxed
+// @expect: boxed
+// @expect: 3

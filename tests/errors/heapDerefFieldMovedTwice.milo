@@ -1,0 +1,14 @@
+// @error: use of moved value 's.box'
+// The box is a field: the first `*s.box` empties it, and the second read a zeroed N
+// whose inner Heap was a null pointer the next deref crashed on.
+struct N { child: Heap<i64> }
+struct Holder { box: Heap<N> }
+
+pub fn main(): i32 {
+    let s = Holder { box: Heap(N { child: Heap(41) }) }
+    let a = *s.box
+    print(*a.child)
+    let b = *s.box
+    print(*b.child)
+    return 0
+}

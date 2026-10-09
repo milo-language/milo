@@ -1,0 +1,11 @@
+// @error: out of a box that stays in its container
+// The element keeps its (now emptied) box, so the next `*v[0]` would read zeroed data.
+struct Node { name: string }
+
+pub fn main(): i32 {
+    var v: Vec<Heap<Node>> = Vec.new()
+    v.push(Heap(Node { name: "in a vec".clone() }))
+    let a = *v[0]
+    print(a.name)
+    return 0
+}

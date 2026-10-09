@@ -1,0 +1,15 @@
+// @error: cannot move the borrowed value out of 'h'
+// Moving out of `*h` through a `&Heap<T>` would empty the caller's box behind its back.
+struct Node { name: string }
+
+fn steal(h: &Heap<Node>): Node {
+    return *h
+}
+
+pub fn main(): i32 {
+    let h = Heap(Node { name: "original name long string here".clone() })
+    let a = steal(h)
+    print(a.name)
+    print((*h).name.len)
+    return 0
+}
