@@ -11,10 +11,12 @@ last-verified: 2026-10-09
 Source-level breaks, newest first. Milo is pre-1.0 and does not promise
 compatibility, but every break belongs here with the migration spelled out.
 
-Below 1.0 the MINOR is the breaking position: everything in this file shipped in
-**v0.2.0**, and a package that wants to stay on the previous surface pins
-`"milo": "^0.1.0"` in its `milo.json`. A release
-marker is added here each time a version is cut.
+Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker opens the
+group of entries that release shipped; a package that wants to stay on the previous
+surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
+added here each time a version is cut.
+
+# Released in v0.3.0 (2026-10-09)
 
 ## Handle and window fields are private; closing a handle consumes it (2026-10-09)
 
@@ -458,6 +460,8 @@ and `connect` is reachable from a `Promise.blocking` worker, so this was reachab
 concurrently in practice (milojs gets there through `fetch`). It is now a
 compare-and-swap, and a mutable global that must only be touched atomically has no
 business being public.
+
+# Released in v0.2.0 (2026-08-17)
 
 ## `std/sysinfo`'s identity calls return u32 MAX on Windows, not 0 (2026-08-16)
 

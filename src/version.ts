@@ -7,7 +7,7 @@
 
 import { execSync } from "child_process";
 
-export const MILO_VERSION = "0.2.0";
+export const MILO_VERSION = "0.3.0";
 export const MILO_BUILD = "dev";
 
 let cached: string | null = null;
