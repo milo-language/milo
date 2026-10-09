@@ -1,0 +1,23 @@
+// Foreign code reached through a C fn pointer may call back into any @externalLinkage
+// fn before it returns, and this one replaces the global the caller holds a
+// reference into. Check-only: the pointer is never real.
+// @error: 'f' writes the global 'G', and is passed a reference into 'G' here
+var G: Vec<string> = Vec.new()
+@externalLinkage
+pub fn miloHook(): void {
+    G = Vec.new()
+}
+fn f(r: &string, cb: i64): void {
+    if cb != 0 {
+        unsafe {
+            let p = (cb as *u8) as extern () => void
+            p()
+        }
+    }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0], 0)
+    return 0
+}

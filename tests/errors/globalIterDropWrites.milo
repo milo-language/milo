@@ -1,0 +1,21 @@
+// A value dying at the end of an inner block runs its Drop, and that Drop replaces the
+// global being iterated. No call is spelled anywhere in the loop.
+// @error: the implicit 'D.drop' writes the global 'G', which is being iterated here
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void {
+        G = Vec.new()
+    }
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    G.push("another heap string long enough to be on the heap".clone())
+    for s in G {
+        if true {
+            let d = D { x: 1 }
+        }
+        print(s)
+    }
+    return 0
+}

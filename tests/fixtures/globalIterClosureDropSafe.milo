@@ -1,0 +1,50 @@
+// Calls through fn values and implicit Drops are modelled as writing whatever the
+// value may hold, or any Drop runs. That must not reject a loop over a global whose
+// callbacks and Drops only touch OTHER globals, and a closure that does replace the
+// global but is never passed to the looping fn must not count against it.
+var G: Vec<string> = Vec.new()
+var COUNT: i64 = 0
+var DROPS: i64 = 0
+
+struct D { x: i64 }
+
+impl Drop for D {
+    fn drop(self: &mut D): void { DROPS = DROPS + 1 }
+}
+
+fn bump(): void { COUNT = COUNT + 10 }
+
+struct Ops { cb: () => void }
+
+fn each(cb: () => void): void {
+    for s in G {
+        cb()
+        let d = D { x: s.len() }
+        print(s)
+    }
+}
+
+pub fn main(): i32 {
+    G.push("alpha".clone())
+    G.push("beta".clone())
+    each((): void => { COUNT = COUNT + 1 })
+    let o = Ops { cb: bump }
+    for s in G {
+        print(s.len().toString())
+    }
+    o.cb()
+    o.cb()
+    let reset = (): void => { G = Vec.new() }
+    reset()
+    print(COUNT.toString())
+    print(DROPS.toString())
+    print(G.len().toString())
+    return 0
+}
+// @expect: alpha
+// @expect: beta
+// @expect: 5
+// @expect: 4
+// @expect: 22
+// @expect: 2
+// @expect: 0

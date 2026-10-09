@@ -1,0 +1,18 @@
+// Reassigning a Drop variable drops the old value, and its Drop replaces the global the
+// parameter borrows from.
+// @error: 'f' writes the global 'G', and is passed a reference into 'G' here
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void { G = Vec.new() }
+}
+fn f(r: &string): void {
+    var d = D { x: 1 }
+    d = D { x: 2 }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0])
+    return 0
+}

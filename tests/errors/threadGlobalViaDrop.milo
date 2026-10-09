@@ -1,0 +1,22 @@
+// Two OS threads each drop values whose Drop writes the same unsynchronized global.
+// @error: 'G' is a mutable global, and this code runs on a real OS thread (via 'work' → the implicit 'D.drop')
+from "std/runtime" import { Promise }
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void { G.push("a heap string long enough to be on the heap".clone()); G = Vec.new() }
+}
+fn work(): i64 {
+    var i: i64 = 0
+    while i < 20000 {
+        let d = D { x: i }
+        i = i + 1
+    }
+    return 1
+}
+pub fn main(): i32 {
+    let a = Promise.blocking(move (): i64 => work())
+    let b = Promise.blocking(move (): i64 => work())
+    print((a.await()! + b.await()!).toString())
+    return 0
+}

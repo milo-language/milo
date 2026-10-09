@@ -1,0 +1,14 @@
+// A closure held in a local is called while a global is iterated, and replaces it. A
+// local's value is not tracked, so the call may run any closure or fn value in the
+// program; this one replaces the global and leaves the loop variable dangling.
+// @error: a call through a function value writes the global 'G', which is being iterated here
+var G: Vec<string> = Vec.new()
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    let reset = (): void => { G = Vec.new() }
+    for s in G {
+        reset()
+        print(s)
+    }
+    return 0
+}

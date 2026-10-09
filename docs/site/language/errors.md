@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 434 distinct messages across 547 programs the compiler must reject.
+Every error message the test suite pins: 440 distinct messages across 557 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -59,12 +59,15 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'dangle' cannot return a reference`](#dangle-cannot-return-a-reference)
 - [`'e' shadows an outer binding`](#e-shadows-an-outer-binding)
 - [`'f' returns i64 but can reach the end of its body without a 'return'`](#f-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
+- [`'f' writes the global 'G', and is passed a reference into 'G' here`](#f-writes-the-global-g-and-is-passed-a-reference-into-g-here)
 - [`'first' cannot return a reference`](#first-cannot-return-a-reference)
 - [`'fn Counter.get' is defined twice in this file`](#fn-counter-get-is-defined-twice-in-this-file)
 - [`'fn shade' is defined twice in this file`](#fn-shade-is-defined-twice-in-this-file)
 - [`'fold' callback parameter 2 is declared`](#fold-callback-parameter-2-is-declared)
 - [`'for b in &mut' iterates a Vec, array or slice, not 'string'`](#for-b-in-mut-iterates-a-vec-array-or-slice-not-string)
 - [`'for i in &mut' iterates a Vec, array or slice, not a range`](#for-i-in-mut-iterates-a-vec-array-or-slice-not-a-range)
+- [`'G' is a mutable global, and this code runs on a real OS thread (via 'work' → 'clobber')`](#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-clobber)
+- [`'G' is a mutable global, and this code runs on a real OS thread (via 'work' → the implicit 'D.drop')`](#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-the-implicit-d-drop)
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
@@ -125,6 +128,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'yieldNow' can park this task while the loop variable is a reference into 'g's buffer`](#yieldnow-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`(via 'work' → 'record')`](#via-work-record)
 - [`@cName on 'Point.kind': only an 'extern struct' field has a C name`](#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name)
+- [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
 - [`a nested fixed array`](#a-nested-fixed-array)
@@ -397,6 +401,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`takes 2 parameters, the Milo declaration takes 3`](#takes-2-parameters-the-milo-declaration-takes-3)
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
+- [`the closure on line 14 writes the global 'G', which is being iterated here`](#the-closure-on-line-14-writes-the-global-g-which-is-being-iterated-here)
+- [`the implicit 'D.drop' writes the global 'G', which is being iterated here`](#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here)
 - [`the ranges 0..2 and 1..3 overlap`](#the-ranges-0-2-and-1-3-overlap)
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
 - [`the task scope 's' can only be used as 's.spawn(...)'`](#the-task-scope-s-can-only-be-used-as-s-spawn)
@@ -1320,6 +1326,118 @@ fn main(): i32 {
 
 <sub>[tests/errors/fallOffEndBreakInMatchExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fallOffEndBreakInMatchExpr.milo)</sub>
 
+## `'f' writes the global 'G', and is passed a reference into 'G' here` {#f-writes-the-global-g-and-is-passed-a-reference-into-g-here}
+
+Reassigning a Drop variable drops the old value, and its Drop replaces the global the parameter borrows from.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void { G = Vec.new() }
+}
+fn f(r: &string): void {
+    var d = D { x: 1 }
+    d = D { x: 2 }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0])
+    return 0
+}
+```
+
+<sub>[tests/errors/globalBorrowArgDropOnReassign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalBorrowArgDropOnReassign.milo)</sub>
+
+The callee lets a Drop value die while it still holds a reference into the global that Drop replaces.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void {
+        G = Vec.new()
+    }
+}
+fn f(r: &string): void {
+    if true {
+        let d = D { x: 1 }
+    }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0])
+    return 0
+}
+```
+
+<sub>[tests/errors/globalBorrowArgDropWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalBorrowArgDropWrites.milo)</sub>
+
+A closure passed as an argument and called through its parameter writes the global the caller is borrowing from. The write summary only followed named callees, so this was a heap-use-after-free with no `unsafe`.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+fn f(r: &string, cb: () => void): void {
+    cb()
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0], (): void => { G = Vec.new() })
+    return 0
+}
+```
+
+<sub>[tests/errors/globalWriteViaClosureArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalWriteViaClosureArg.milo)</sub>
+
+A named fn stored in a struct field and called through it writes the global the caller is borrowing from: a call through a value may run any fn used as a value.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+fn clobber(): void { G = Vec.new() }
+struct Ops { cb: () => void }
+fn f(r: &string, o: &Ops): void {
+    o.cb()
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    let o = Ops { cb: clobber }
+    f(G[0], o)
+    return 0
+}
+```
+
+<sub>[tests/errors/globalWriteViaFnField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalWriteViaFnField.milo)</sub>
+
+Foreign code reached through a C fn pointer may call back into any @externalLinkage fn before it returns, and this one replaces the global the caller holds a reference into. Check-only: the pointer is never real.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+@externalLinkage
+pub fn miloHook(): void {
+    G = Vec.new()
+}
+fn f(r: &string, cb: i64): void {
+    if cb != 0 {
+        unsafe {
+            let p = (cb as *u8) as extern () => void
+            p()
+        }
+    }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0], 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/globalWriteViaForeignReentry.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalWriteViaForeignReentry.milo)</sub>
+
 ## `'first' cannot return a reference` {#first-cannot-return-a-reference}
 
 @note: 7:12 the returned slice borrows from parameter 's', but a free function cannot return a reference at all: only a method can, and only a slice of its own receiver A '&' parameter outlives the call, but nothing at the call site keeps it frozen while the result is in use, so the rule is about free functions, not about the parameter.
@@ -1425,6 +1543,58 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/forInMutRefRange.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefRange.milo)</sub>
+
+## `'G' is a mutable global, and this code runs on a real OS thread (via 'work' → 'clobber')` {#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-clobber}
+
+Two OS threads each call, through a fn parameter, a named fn that writes the same unsynchronized global.
+
+```milo skip
+from "std/runtime" import { Promise }
+var G: Vec<string> = Vec.new()
+fn clobber(): void { G.push("a heap string long enough to be on the heap".clone()); G = Vec.new() }
+fn work(cb: () => void): i64 {
+    var i: i64 = 0
+    while i < 20000 { cb(); i = i + 1 }
+    return 1
+}
+pub fn main(): i32 {
+    let a = Promise.blocking(move (): i64 => work(clobber))
+    let b = Promise.blocking(move (): i64 => work(clobber))
+    print((a.await()! + b.await()!).toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/threadGlobalViaFnValue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/threadGlobalViaFnValue.milo)</sub>
+
+## `'G' is a mutable global, and this code runs on a real OS thread (via 'work' → the implicit 'D.drop')` {#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-the-implicit-d-drop}
+
+Two OS threads each drop values whose Drop writes the same unsynchronized global.
+
+```milo skip
+from "std/runtime" import { Promise }
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void { G.push("a heap string long enough to be on the heap".clone()); G = Vec.new() }
+}
+fn work(): i64 {
+    var i: i64 = 0
+    while i < 20000 {
+        let d = D { x: i }
+        i = i + 1
+    }
+    return 1
+}
+pub fn main(): i32 {
+    let a = Promise.blocking(move (): i64 => work())
+    let b = Promise.blocking(move (): i64 => work())
+    print((a.await()! + b.await()!).toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/threadGlobalViaDrop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/threadGlobalViaDrop.milo)</sub>
 
 ## `'get' argument 1: expected HandleB, got HandleA` {#get-argument-1-expected-handleb-got-handlea}
 
@@ -3135,6 +3305,25 @@ fn main() {
 ```
 
 <sub>[tests/errors/cNameNotExtern.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameNotExtern.milo)</sub>
+
+## `a call through a function value writes the global 'G', which is being iterated here` {#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here}
+
+A closure held in a local is called while a global is iterated, and replaces it. A local's value is not tracked, so the call may run any closure or fn value in the program; this one replaces the global and leaves the loop variable dangling.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    let reset = (): void => { G = Vec.new() }
+    for s in G {
+        reset()
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/globalIterLocalClosureWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalIterLocalClosureWrites.milo)</sub>
 
 ## `a declaration does not match the C header it claims to describe` {#a-declaration-does-not-match-the-c-header-it-claims-to-describe}
 
@@ -9291,6 +9480,54 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/targetOsArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/targetOsArgs.milo)</sub>
+
+## `the closure on line 14 writes the global 'G', which is being iterated here` {#the-closure-on-line-14-writes-the-global-g-which-is-being-iterated-here}
+
+Iterating a global while calling a closure parameter that replaces it: the loop variable dangles. The call has no named target, so it is modelled as running each closure literal its call sites pass.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+fn walk(cb: () => void): void {
+    for s in G {
+        cb()
+        print(s)
+    }
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    walk((): void => { G = Vec.new() })
+    return 0
+}
+```
+
+<sub>[tests/errors/globalIterClosureParamWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalIterClosureParamWrites.milo)</sub>
+
+## `the implicit 'D.drop' writes the global 'G', which is being iterated here` {#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here}
+
+A value dying at the end of an inner block runs its Drop, and that Drop replaces the global being iterated. No call is spelled anywhere in the loop.
+
+```milo skip
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void {
+        G = Vec.new()
+    }
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    G.push("another heap string long enough to be on the heap".clone())
+    for s in G {
+        if true {
+            let d = D { x: 1 }
+        }
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/globalIterDropWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalIterDropWrites.milo)</sub>
 
 ## `the ranges 0..2 and 1..3 overlap` {#the-ranges-0-2-and-1-3-overlap}
 

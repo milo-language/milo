@@ -1,0 +1,16 @@
+// Iterating a global while calling a closure parameter that replaces it: the loop
+// variable dangles. The call has no named target, so it is modelled as running each
+// closure literal its call sites pass.
+// @error: the closure on line 14 writes the global 'G', which is being iterated here
+var G: Vec<string> = Vec.new()
+fn walk(cb: () => void): void {
+    for s in G {
+        cb()
+        print(s)
+    }
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    walk((): void => { G = Vec.new() })
+    return 0
+}

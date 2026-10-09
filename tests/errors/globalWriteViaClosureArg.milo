@@ -1,0 +1,14 @@
+// A closure passed as an argument and called through its parameter writes the global
+// the caller is borrowing from. The write summary only followed named callees, so this
+// was a heap-use-after-free with no `unsafe`.
+// @error: 'f' writes the global 'G', and is passed a reference into 'G' here
+var G: Vec<string> = Vec.new()
+fn f(r: &string, cb: () => void): void {
+    cb()
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0], (): void => { G = Vec.new() })
+    return 0
+}

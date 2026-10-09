@@ -656,6 +656,9 @@ export class TypeChecker {
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
+  // Instances of a method with its own type parameters (`fn map<U>` on a struct); a
+  // generic fn's instance says so through `sourceName` instead.
+  private methodGenericInstances = new Set<string>();
   private voidGenericReported = new Set<string>();
   // Guard against an unbounded recursive generic (e.g. `fn grow<T>() { grow<Wrap<T>>() }`)
   // whose every instantiation is a fresh type, so the memo never hits and checkFunction
@@ -1412,6 +1415,33 @@ export class TypeChecker {
       case "heap": return this.resourceKind(ty.inner, seen);
       case "hashmap": return this.resourceKind(ty.key, seen) ?? this.resourceKind(ty.value, seen);
       default: return null;
+    }
+  }
+
+  // Every type with a user Drop impl that destroying a value of `ty` may run, for the
+  // global-write summary. A struct runs its own Drop then its fields' drop glue, so this
+  // keeps descending past a Drop type where resourceKind stops. A reference or raw
+  // pointer owns nothing. Two holders hide what they own from the type: a
+  // closure value (its captures) and an interface value (its concrete type); those come back
+  // as the markers "<closure-env>" and "<interface>" for the pass to widen.
+  private dropTypesIn(ty: TypeKind, out: Set<string> = new Set(), seen: Set<string> = new Set()): Set<string> {
+    switch (ty.tag) {
+      case "struct": case "enum": {
+        if (seen.has(ty.name)) return out;
+        seen.add(ty.name);
+        if (this.dropImpls.has(ty.name)) out.add(ty.name);
+        if (ty.tag === "struct") for (const f of this.structs.get(ty.name)?.fields ?? []) this.dropTypesIn(f.type, out, seen);
+        else for (const v of this.enums.get(ty.name)?.variants.values() ?? []) for (const f of v.fields) this.dropTypesIn(f, out, seen);
+        return out;
+      }
+      case "vec": case "array": return this.dropTypesIn(ty.element, out, seen);
+      case "heap": return this.dropTypesIn(ty.inner, out, seen);
+      case "hashmap": this.dropTypesIn(ty.key, out, seen); return this.dropTypesIn(ty.value, out, seen);
+      // Any closure, not just `owning` ones: auto-move can move-capture into a literal
+      // whose recorded type never says so.
+      case "fn": out.add("<closure-env>"); return out;
+      case "interface": out.add("<interface>"); return out;
+      default: return out;
     }
   }
 
@@ -2740,6 +2770,7 @@ export class TypeChecker {
       // As in monomorphizeFn: the bound error at the call is the whole story.
       if (boundFailed) return mangled;
       this.monomorphizedFns.push(concrete);
+      this.methodGenericInstances.add(mangled);
       this.checkFunction(concrete);
       return mangled;
     } finally { this.monoDepth--; }
@@ -5209,6 +5240,19 @@ export class TypeChecker {
       whyNotSend: (ty) => this.whyNotSend(ty),
       pointerViewsIn: (e) => this.pointerViewsIn(e),
       carriesRawPointer: (t) => this.carriesRawPointer(t),
+      dropTypesIn: (t) => this.dropTypesIn(t),
+      // Any declaration counts: a program that redeclares `extern fn usleep` still
+      // names the libc symbol std declares (the merge keeps only the last copy).
+      fnDeclaredInStd: (f) => {
+        const stdRoot = resolvePath(STDLIB_DIR, "std") + sep;
+        const files = [...(this.declOrigins?.values.get(f.name)?.files ?? []), f.sourceFile ?? f.span?.file ?? ""];
+        return files.some(file => file.startsWith(stdRoot));
+      },
+      isGenericInstance: (f) => {
+        if (f.sourceName !== undefined || this.methodGenericInstances.has(f.name)) return true;
+        const owner = f.name.split("$")[0];
+        return f.name.includes("$") && (this.monomorphizedStructDecls.some(d => d.name === owner) || this.monomorphizedDecls.some(d => d.name === owner));
+      },
       userRawPointerType: (t) => this.carriesRawPointer(t) && !this.typeDeclaredInStd(t),
       replayRawShares: this.replayRawShares,
       replaySiteOf: (sp) => replaySite(sp, STDLIB_DIR, process.cwd()),

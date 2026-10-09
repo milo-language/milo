@@ -1,0 +1,16 @@
+// A named fn stored in a struct field and called through it writes the global the
+// caller is borrowing from: a call through a value may run any fn used as a value.
+// @error: 'f' writes the global 'G', and is passed a reference into 'G' here
+var G: Vec<string> = Vec.new()
+fn clobber(): void { G = Vec.new() }
+struct Ops { cb: () => void }
+fn f(r: &string, o: &Ops): void {
+    o.cb()
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    let o = Ops { cb: clobber }
+    f(G[0], o)
+    return 0
+}

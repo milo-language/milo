@@ -1,0 +1,21 @@
+// The callee lets a Drop value die while it still holds a reference into the global
+// that Drop replaces.
+// @error: 'f' writes the global 'G', and is passed a reference into 'G' here
+var G: Vec<string> = Vec.new()
+struct D { x: i64 }
+impl Drop for D {
+    fn drop(self: &mut D): void {
+        G = Vec.new()
+    }
+}
+fn f(r: &string): void {
+    if true {
+        let d = D { x: 1 }
+    }
+    print(r)
+}
+pub fn main(): i32 {
+    G.push("a heap string long enough to be on the heap for sure".clone())
+    f(G[0])
+    return 0
+}
