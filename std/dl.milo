@@ -15,11 +15,14 @@
 //
 //     let lib = dlOpen("libfoo.dylib")!
 //     let p = lib.sym("add")!
-//     let add = p as extern (i32, i32) => i32
-//     let sum = add(2, 3)
+//     unsafe {
+//         let add = p as extern (i32, i32) => i32
+//         let sum = add(2, 3)
+//     }
 //
 // Nothing here can be checked by the compiler: a wrong signature on that cast is
-// undefined behavior exactly as it is in C.
+// undefined behavior exactly as it is in C, which is why both the cast and the call
+// need `unsafe`.
 
 from "std/cstr" import {
     CStr

@@ -10727,8 +10727,12 @@ export class TypeChecker {
           this.touchMoveState(varInfo); varInfo.moved = true;
           varInfo.consumedByCall = true;
         }
-        if (fnType.tag === "cfn") this.cfnCalls.set(expr, fnType);
-        else this.closureCalls.set(expr, fnType);
+        if (fnType.tag === "cfn") {
+          // Same rule as a C fn-pointer struct field: the pointer may be null, a dlsym
+          // result cast to the wrong signature, or a freed function's address.
+          this.requireUnsafe(`calling a C function pointer requires 'unsafe' block`, sp);
+          this.cfnCalls.set(expr, fnType);
+        } else this.closureCalls.set(expr, fnType);
         return this.setType(expr, fnType.ret);
       }
       // Promise(fn) → Promise<T>.run(fn) with T inferred from closure return type
@@ -11636,6 +11640,20 @@ export class TypeChecker {
     if ((fromType.tag === "array" || fromType.tag === "string" || fromType.tag === "fn" || fromType.tag === "cfn") && toType.tag !== "ptr" && toType.tag !== "cfn") {
       this.error(`cannot cast ${this.show(fromType)} to ${this.show(toType)}: only to a pointer`, sp,
         `cast to '*u8' first, then to an integer: '(x as *u8) as i64'`);
+    }
+    // To an `extern` fn type only from a pointer (a dlsym result) or another C fn
+    // pointer. An integer or a Milo fn passed the checker and then failed in clang:
+    // a Milo fn's calling convention is not C's, and an integer has to be a pointer first.
+    if (toType.tag === "cfn" && fromType.tag !== "ptr" && fromType.tag !== "cfn" && fromType.tag !== "unknown") {
+      this.error(`cannot cast ${this.show(fromType)} to ${this.show(toType)}: only a pointer casts to an extern fn type`, sp,
+        fromType.tag === "fn"
+          ? `hand a top-level fn to C as 'f as *u8', and declare the C side's signature there`
+          : `cast to a pointer first: '(x as *u8) as ${this.show(toType)}'`);
+    }
+    // Calling the result jumps to whatever address it holds, so making one is unsafe,
+    // as a cast to a pointer type is.
+    else if (toType.tag === "cfn" && fromType.tag !== "unknown") {
+      this.requireUnsafe(`cast to an extern fn type requires 'unsafe' block`, sp);
     }
     const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0n;
     if (toType.tag === "ptr" && !isNullPtrConst) {

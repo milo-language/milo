@@ -63,12 +63,15 @@ pub fn hostValue(): i32 {
 fn main() {
     let lib = dlOpen(${JSON.stringify(dylib)})!
     let addPtr = lib.sym("addTwo")!
-    let add = addPtr as extern (i32, i32) => i32
-    writeStdout("add=" + add(2, 3).toString() + "\\n")
+    // the library is built above with exactly these signatures
+    unsafe {
+        let add = addPtr as extern (i32, i32) => i32
+        writeStdout("add=" + add(2, 3).toString() + "\\n")
 
-    let probePtr = lib.sym("probe")!
-    let probe = probePtr as extern () => i32
-    writeStdout("probe=" + probe().toString() + "\\n")
+        let probePtr = lib.sym("probe")!
+        let probe = probePtr as extern () => i32
+        writeStdout("probe=" + probe().toString() + "\\n")
+    }
 
     if lib.has("no_such_symbol_here") {
         writeStdout("bad-has\\n")

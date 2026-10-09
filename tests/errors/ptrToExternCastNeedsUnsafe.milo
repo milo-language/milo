@@ -1,0 +1,13 @@
+// @error: cast to an extern fn type requires 'unsafe' block
+// Making a callable C fn pointer from an address is the step that trusts the address
+// and the signature, so it needs unsafe like a cast to a pointer type does.
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    let p = lib.sym("free")!
+    let f = p as extern (i64) => void
+    print(1)
+}

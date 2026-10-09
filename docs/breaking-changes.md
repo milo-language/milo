@@ -16,6 +16,20 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
 
+## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
+
+A C fn pointer in a struct field already needed `unsafe` to call, but one in a local did
+not, and neither did the cast that makes one: `let f = p as extern (i64) => void; f(1)`
+called whatever `p` held from safe code. Both the cast and the call now need `unsafe`.
+Casting an integer or a Milo fn to an `extern` fn type is an error (it used to pass the
+checker and fail in clang).
+
+| was | now |
+|---|---|
+| `let f = p as extern (i32) => i32` then `f(1)` | both inside `unsafe { }` |
+| `n as extern () => void` (n an integer) | `(n as *u8) as extern () => void`, inside `unsafe` |
+| `f as extern (...) => T` (f a Milo fn) | pass a top-level fn to C as `f as *u8` |
+
 ## std fns that dereference a raw pointer argument are `@unsafe` (2026-10-09)
 
 Safe code can make a raw pointer (`0 as *u8`), and std hands some out (`Channel.rawPtr()`,

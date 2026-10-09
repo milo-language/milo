@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 473 distinct messages across 610 programs the compiler must reject.
+Every error message the test suite pins: 475 distinct messages across 613 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -200,6 +200,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
 - [`cannot carry a payload`](#cannot-carry-a-payload)
 - [`cannot cast [u8; 4] to i64: only to a pointer`](#cannot-cast-u8-4-to-i64-only-to-a-pointer)
+- [`cannot cast i64 to extern () => void: only a pointer casts to an extern fn type`](#cannot-cast-i64-to-extern-void-only-a-pointer-casts-to-an-extern-fn-type)
 - [`cannot clear an immutable Vec`](#cannot-clear-an-immutable-vec)
 - [`cannot cross the C ABI`](#cannot-cross-the-c-abi)
 - [`cannot derive 'Describe'`](#cannot-derive-describe)
@@ -286,6 +287,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot write to 'v' by passing 'clr' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-clr-while-a-loop-iterates-over-v)
 - [`cannot write to 'v' by passing 'push' while a loop iterates over 'v'`](#cannot-write-to-v-by-passing-push-while-a-loop-iterates-over-v)
 - [`carries a payload in 'Num'`](#carries-a-payload-in-num)
+- [`cast to an extern fn type requires 'unsafe' block`](#cast-to-an-extern-fn-type-requires-unsafe-block)
 - [`casts only to an integer type`](#casts-only-to-an-integer-type)
 - [`closure returns string but can reach the end of its body without a 'return'`](#closure-returns-string-but-can-reach-the-end-of-its-body-without-a-return)
 - [`collides with the built-in @derive(Eq)`](#collides-with-the-built-in-derive-eq)
@@ -4357,6 +4359,28 @@ fn main() {
 
 <sub>[tests/errors/externFnPtrCallNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externFnPtrCallNeedsUnsafe.milo)</sub>
 
+A C fn pointer in a local is the same hazard as one in a struct field: `free` cast to `extern (i64) => void` and called with any integer crashed inside free. The cast alone being unsafe is not enough, since the value outlives the block that made it.
+
+```milo skip
+from "std/dl" import {
+    dlSelf
+}
+
+fn resolve(p: *u8): extern (i64) => void {
+    unsafe {
+        return p as extern (i64) => void
+    }
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    let f = resolve(lib.sym("free")!)
+    f(12345678)
+}
+```
+
+<sub>[tests/errors/localExternFnPtrCallNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/localExternFnPtrCallNeedsUnsafe.milo)</sub>
+
 ## `can only be used as a pointer` {#can-only-be-used-as-a-pointer}
 
 ```milo skip
@@ -5005,6 +5029,22 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/castArrayToInt.milo](https://github.com/milo-language/milo/blob/main/tests/errors/castArrayToInt.milo)</sub>
+
+## `cannot cast i64 to extern () => void: only a pointer casts to an extern fn type` {#cannot-cast-i64-to-extern-void-only-a-pointer-casts-to-an-extern-fn-type}
+
+This used to pass the checker and then fail inside clang on the emitted IR.
+
+```milo skip
+fn main(): void {
+    let n: i64 = 4660
+    unsafe {
+        let f = n as extern () => void
+        f()
+    }
+}
+```
+
+<sub>[tests/errors/intToExternCast.milo](https://github.com/milo-language/milo/blob/main/tests/errors/intToExternCast.milo)</sub>
 
 ## `cannot clear an immutable Vec` {#cannot-clear-an-immutable-vec}
 
@@ -7682,6 +7722,25 @@ fn main() {
 ```
 
 <sub>[tests/errors/deriveJsonPayloadEnum.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonPayloadEnum.milo)</sub>
+
+## `cast to an extern fn type requires 'unsafe' block` {#cast-to-an-extern-fn-type-requires-unsafe-block}
+
+Making a callable C fn pointer from an address is the step that trusts the address and the signature, so it needs unsafe like a cast to a pointer type does.
+
+```milo skip
+from "std/dl" import {
+    dlSelf
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    let p = lib.sym("free")!
+    let f = p as extern (i64) => void
+    print(1)
+}
+```
+
+<sub>[tests/errors/ptrToExternCastNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrToExternCastNeedsUnsafe.milo)</sub>
 
 ## `casts only to an integer type` {#casts-only-to-an-integer-type}
 

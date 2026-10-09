@@ -1,0 +1,19 @@
+// @error: calling a C function pointer requires 'unsafe' block
+// A C fn pointer in a local is the same hazard as one in a struct field: `free` cast to
+// `extern (i64) => void` and called with any integer crashed inside free. The cast
+// alone being unsafe is not enough, since the value outlives the block that made it.
+from "std/dl" import {
+    dlSelf
+}
+
+fn resolve(p: *u8): extern (i64) => void {
+    unsafe {
+        return p as extern (i64) => void
+    }
+}
+
+fn main(): void {
+    let lib = dlSelf()!
+    let f = resolve(lib.sym("free")!)
+    f(12345678)
+}

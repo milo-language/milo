@@ -1,0 +1,9 @@
+// @error: cannot cast i64 to extern () => void: only a pointer casts to an extern fn type
+// This used to pass the checker and then fail inside clang on the emitted IR.
+fn main(): void {
+    let n: i64 = 4660
+    unsafe {
+        let f = n as extern () => void
+        f()
+    }
+}
