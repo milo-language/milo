@@ -3,20 +3,20 @@ system: install
 purpose: how end users get a working milo (source build first, since main moves faster than releases; prebuilt binary second)
 key-files: install.sh, .github/workflows/release.yml, milo, README.md
 update-when: the install script, release asset naming, or the source-build path changes
-last-verified: 2026-09-22
+last-verified: 2026-10-08 (installer defaults to the newest vX.Y.Z; MILO_TAG=latest for main)
 -->
 
 # Installation
 
 ## Prebuilt binary
 
-The compiler ships as a single self-contained binary (macOS and Linux, arm64 and x64) with the standard library built in. The `latest` build is rebuilt from every push to `main`, so it is as current as a source checkout.
+The compiler ships as a single self-contained binary (macOS and Linux, arm64 and x64) with the standard library built in. The installer pulls the newest versioned release. The rolling `latest` build is rebuilt from every push to `main` (`MILO_TAG=latest` to install it), so it is as current as a source checkout and breaks as often.
 
 ```sh
 curl -fsSL https://milo-language.github.io/milo/install.sh | sh
 ```
 
-This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
+This installs to `~/.local/bin` (`MILO_INSTALL_DIR` to change, `MILO_TAG=vX.Y.Z` to pin a release). You still need clang. Tarballs are on the [releases page](https://github.com/milo-language/milo/releases/latest).
 
 ::: warning macOS quarantines browser downloads
 A binary downloaded through a browser is quarantined and macOS refuses to run it. Use `curl`, or run `xattr -d com.apple.quarantine milo`.

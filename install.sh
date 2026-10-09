@@ -5,14 +5,15 @@
 #
 # Env overrides:
 #   MILO_INSTALL_DIR   where the binary lands (default: $HOME/.local/bin)
-#   MILO_TAG           release tag to pull (default: latest)
+#   MILO_TAG           release tag to pull (default: the newest vX.Y.Z release;
+#                      MILO_TAG=latest for the rolling build of main)
 #
 # Deliberately POSIX sh, not bash: it runs under dash on Debian/Ubuntu images.
 
 set -eu
 
 REPO="milo-language/milo"
-TAG="${MILO_TAG:-latest}"
+TAG="${MILO_TAG:-}"
 INSTALL_DIR="${MILO_INSTALL_DIR:-$HOME/.local/bin}"
 
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -59,17 +60,30 @@ check_clang() {
     esac
 }
 
+# The newest v* tag, read from the release list rather than GitHub's "latest release"
+# pointer: that pointer follows whichever release was published last unless told
+# otherwise, and the rolling `latest` build is republished on every push to main.
+newest_version_tag() {
+    fetch "https://api.github.com/repos/$REPO/releases?per_page=30" "$1" \
+        || die "could not list releases (set MILO_TAG=vX.Y.Z to skip the lookup)"
+    sed -n 's/.*"tag_name": *"\(v[0-9][^"]*\)".*/\1/p' "$1" | head -n 1
+}
+
 main() {
     target=$(detect_target)
-    url="https://github.com/$REPO/releases/download/$TAG/milo-$target.tar.gz"
-
-    info "installing milo ($target)"
 
     tmp=$(mktemp -d)
     # The trap must survive the early exits in die(); mktemp dirs in /tmp are not
     # cleaned by every system.
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
+    if [ -z "$TAG" ]; then
+        TAG=$(newest_version_tag "$tmp/releases.json")
+        [ -n "$TAG" ] || die "no versioned release found (MILO_TAG=latest installs the rolling build)"
+    fi
+    url="https://github.com/$REPO/releases/download/$TAG/milo-$target.tar.gz"
+
+    info "installing milo $TAG ($target)"
     fetch "$url" "$tmp/milo.tar.gz" || die "download failed: $url"
     tar xzf "$tmp/milo.tar.gz" -C "$tmp" || die "could not extract archive"
 

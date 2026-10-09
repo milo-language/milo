@@ -23,7 +23,7 @@ curl -fsSL https://milo-language.github.io/milo/install.sh | sh   # prebuilt com
 milo run hello.milo
 ```
 
-The installer fetches a standalone binary for macOS or Linux (arm64 or x64) from the [latest build](https://github.com/milo-language/milo/releases/latest). Milo moves fast, so the latest build tracks `main`. To build from source you also need [bun](https://bun.sh): clone the repo and run `./milo run examples/hello.milo`. [Installation](https://milo-language.github.io/milo/getting-started/installation) has the details.
+The installer fetches a standalone binary for macOS or Linux (arm64 or x64) from the [newest versioned release](https://github.com/milo-language/milo/releases/latest). Breaking changes land in versioned releases, listed in [breaking-changes.md](docs/breaking-changes.md); `MILO_TAG=latest` installs the rolling build of `main` instead. To build from source you also need [bun](https://bun.sh): clone the repo and run `./milo run examples/hello.milo`. [Installation](https://milo-language.github.io/milo/getting-started/installation) has the details.
 
 ## Second-class references
 

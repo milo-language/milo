@@ -196,8 +196,10 @@ jobs:
             tarball directly, or clear it with `xattr -d com.apple.quarantine milo`.
           # NOT a prerelease: GitHub hides prereleases from the repo landing page, so
           # marking this one cost us the only visible "download Milo" affordance.
+          # Not "Latest" either: that badge and /releases/latest belong to the newest
+          # versioned release, which is what install.sh hands out by default.
           prerelease: false
-          make_latest: true
+          make_latest: false
           files: |
             milo-*.tar.gz
             SHA256SUMS
