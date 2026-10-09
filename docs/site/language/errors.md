@@ -8291,7 +8291,7 @@ fn main() {
 
 ## `field '_base' of 'StrShard' is private to 'std/shard.milo'` {#field-base-of-strshard-is-private-to-std-shard-milo}
 
-A StrShard built from a literal would read any address through `byteAt`. Only std/shard may build a window.
+A StrShard built from a literal would read any address through `byteAt`. Only std/shard may build a window, and `unsafe` does not change that.
 
 ```milo skip
 from "std/shard" import {
@@ -8299,8 +8299,10 @@ from "std/shard" import {
 }
 
 fn main() {
-    let w = StrShard { _base: 4096 as *u8, _len: 100, _own: 100, _start: 0, _shatterId: 0, _index: 0 }
-    print(w.byteAt(5))
+    unsafe {
+        let w = StrShard { _base: 4096 as *u8, _len: 100, _own: 100, _start: 0, _shatterId: 0, _index: 0 }
+        print(w.byteAt(5))
+    }
 }
 ```
 
@@ -8348,7 +8350,7 @@ fn main(): void {
 
 ## `field '_handle' of 'Lib' is private to 'std/dl.milo'` {#field-handle-of-lib-is-private-to-std-dl-milo}
 
-A public handle let any file aim dlsym at an arbitrary address.
+A public handle let any file aim dlsym at an arbitrary address. Privacy holds inside `unsafe` too.
 
 ```milo skip
 from "std/dl" import {
@@ -8357,7 +8359,9 @@ from "std/dl" import {
 
 fn main(): void {
     var lib = dlSelf()!
-    lib._handle = 4096 as *u8
+    unsafe {
+        lib._handle = 4096 as *u8
+    }
     print(lib.has("x"))
 }
 ```

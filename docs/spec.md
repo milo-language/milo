@@ -1450,7 +1450,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `field '_handle' of 'Lib' is private to 'std/dl.milo'`
 
-**Rationale.** A public handle let any file aim dlsym at an arbitrary address.
+**Rationale.** A public handle let any file aim dlsym at an arbitrary address. Privacy holds inside `unsafe` too.
 
 *Program:* [`tests/errors/dlHandlePrivate.milo`](../tests/errors/dlHandlePrivate.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
@@ -4986,7 +4986,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `field '_base' of 'StrShard' is private to 'std/shard.milo'`
 
-**Rationale.** A StrShard built from a literal would read any address through `byteAt`. Only std/shard may build a window.
+**Rationale.** A StrShard built from a literal would read any address through `byteAt`. Only std/shard may build a window, and `unsafe` does not change that.
 
 *Program:* [`tests/errors/strShardForgedWindow.milo`](../tests/errors/strShardForgedWindow.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 

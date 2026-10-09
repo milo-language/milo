@@ -1,11 +1,14 @@
 // @error: field '_handle' of 'Lib' is private to 'std/dl.milo'
-// A public handle let any file aim dlsym at an arbitrary address.
+// A public handle let any file aim dlsym at an arbitrary address. Privacy holds inside
+// `unsafe` too.
 from "std/dl" import {
     dlSelf
 }
 
 fn main(): void {
     var lib = dlSelf()!
-    lib._handle = 4096 as *u8
+    unsafe {
+        lib._handle = 4096 as *u8
+    }
     print(lib.has("x"))
 }

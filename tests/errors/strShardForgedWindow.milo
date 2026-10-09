@@ -1,11 +1,13 @@
 // @error: field '_base' of 'StrShard' is private to 'std/shard.milo'
 // A StrShard built from a literal would read any address through `byteAt`. Only
-// std/shard may build a window.
+// std/shard may build a window, and `unsafe` does not change that.
 from "std/shard" import {
     StrShard
 }
 
 fn main() {
-    let w = StrShard { _base: 4096 as *u8, _len: 100, _own: 100, _start: 0, _shatterId: 0, _index: 0 }
-    print(w.byteAt(5))
+    unsafe {
+        let w = StrShard { _base: 4096 as *u8, _len: 100, _own: 100, _start: 0, _shatterId: 0, _index: 0 }
+        print(w.byteAt(5))
+    }
 }
