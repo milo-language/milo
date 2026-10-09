@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: dev-scripts
 purpose: index of agent-facing scripts and how to write new ones well; agents should keep building these out
-key-files: scripts/, bin/, .githooks/, scripts/lint.ts, scripts/agent_review.sh
+key-files: scripts/, bin/, .githooks/, scripts/lint.ts
 update-when: a script is added/removed/changed, or the scripting conventions change
 last-verified: 2026-08-15
 -->
@@ -13,8 +13,8 @@ last-verified: 2026-08-15
 ## When to write one
 - A multi-step operation you've now done twice (bundle, sweep, regenerate).
 - A tool with an obscure/verbose invocation you keep looking up.
-- Anything a review persona or the sweep skill needs to run consistently.
-- Wrapping *other* tools so the agent doesn't need to know their particular flags (that's exactly what `agent_review.sh` does for review CLIs).
+- Anything a reviewer or CI needs to run consistently.
+- Wrapping *other* tools so callers don't need to know their particular flags.
 
 ## How to write one well
 - **Self-documenting.** `--help` prints usage; the file's top comment says what/why. First line is a one-sentence purpose.
@@ -33,7 +33,6 @@ To change an entry, change that line — this table is a projection of it.
 | Script | Purpose |
 |---|---|
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
-| `scripts/agent_review.sh` | Cross-model / multi-persona code review driver. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |

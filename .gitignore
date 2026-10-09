@@ -100,8 +100,7 @@ benchmarks/*/*_hylo
 benchmarks/*/*.o
 benchmarks/*/*.dSYM/
 docs/site/.vitepress/cache/
-.claude/*
-!.claude/skills/
+.claude/
 lib.a
 tmp/
 .worktrees/

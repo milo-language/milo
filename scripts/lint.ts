@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Repo linter: deterministic smell checks with auto-fix. Run by the pre-commit
 // hook (`--staged --fix`) and manually (`--all`). Mechanical rules only —
-// judgment-call conventions live in CONVENTIONS.md, reviewed by agent_review.sh.
+// judgment-call conventions live in CONVENTIONS.md, applied in code review.
 //
 // Usage:
 //   bun run scripts/lint.ts --all            # lint all tracked files
@@ -46,7 +46,7 @@ const isTest = (f: string) => f.endsWith(".test.ts") || f.includes("/tests/");
 const isSh = (f: string) => f.endsWith(".sh");
 const isDoc = (f: string) => f.startsWith("docs/") && f.endsWith(".md");
 const isRouterMd = (f: string) =>
-  ["AGENTS.md", ".agents/workflow.md", ".agents/review.md", "CONVENTIONS.md"].includes(f);
+  ["AGENTS.md", "CONVENTIONS.md"].includes(f);
 
 for (const f of fileList()) {
   let text: string;
@@ -95,8 +95,8 @@ for (const f of fileList()) {
   // R3: committing code that ACTUALLY sets MILO_RUN_UNGUARDED=1 defeats the OS-crash guards (AGENTS.md). No auto-fix.
   // Only flag a real guard-disabling assignment in an executed context — NOT help text, error strings, comments, or
   // env *reads* (`process.env.X === "1"`) that merely name the token. main.ts implements the flag, so it must name it.
-  // Skip the guard-tooling files that necessarily name the token (the guard, this linter, the review driver).
-  const namesGuardTokenByDesign = /(^|\/)(guard\.ts|lint\.ts|agent_review\.sh)$/.test(f);
+  // Skip the guard-tooling files that necessarily name the token (the guard, this linter).
+  const namesGuardTokenByDesign = /(^|\/)(guard\.ts|lint\.ts)$/.test(f);
   if ((isTs(f) || isSh(f)) && !namesGuardTokenByDesign) {
     const shSet = /(^|[;&|(]|\bexport\b|\benv\b)[ \t]*MILO_RUN_UNGUARDED=1\b/; // export/inline shell assignment
     const tsSet = /process\.env\.MILO_RUN_UNGUARDED\s*=\s*["']?1["']?/;         // process.env.X = "1"

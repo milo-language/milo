@@ -21,9 +21,8 @@
 // tail of an `if`, of a `match`, of `??`, a field moved out of a struct, an argument
 // moved by a method call. Eight separate ad-hoc walkers each recognised a different
 // subset of those spellings, and the two double-frees fixed on 2026-08-03 were both a
-// move the checker could not see because it was written as a fork (see
-// .agents/worksheets/2026-08-03-fail-closed-places.md). A generator that only emitted
-// `let b = a` would have found neither.
+// move the checker could not see because it was written as a fork. A generator that
+// only emitted `let b = a` would have found neither.
 //
 // Two oracles run together on every executed program.
 //

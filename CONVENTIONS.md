@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: coding-conventions
-purpose: the specific code conventions review agents enforce (beyond what the linter catches)
-key-files: scripts/lint.ts, .agents/review.md, .githooks/pre-commit
+purpose: the specific code conventions reviewers enforce (beyond what the linter catches)
+key-files: scripts/lint.ts, .githooks/pre-commit
 update-when: a convention is added/changed, or a review keeps flagging the same un-documented thing
 last-verified: 2026-07-30
 -->
@@ -49,5 +49,5 @@ The rules reviewers check by hand. Anything mechanically checkable lives in `scr
   defect, not the documentation gap it fills.
 
 ## Commits
-- One line, all lowercase. No "coded with Claude". Commit worksheets + feedback with the work. Tag with `ws/<slug>`.
+- One line, all lowercase.
 - Commit directly to `main` (Milo convention). Never force-push shared history.

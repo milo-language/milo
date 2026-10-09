@@ -6,7 +6,7 @@
 //   bun scripts/hir-cover.ts --check --for Ident        # build+run them under milo-self
 //   bun scripts/hir-cover.ts --unexercised              # kinds no fixture reaches
 //
-// The migration in specs/002-hir-self-compile lowers ~100 expression kinds one at a time.
+// The HIR self-compile migration lowers ~100 expression kinds one at a time.
 // The only gate that sees "this kind is now miscompiled" is the 48-minute corpus sweep,
 // which is too slow to run per kind — so it gets skipped, which is exactly how six
 // regressions shipped under green gates in one session. This is the fast substitute: run

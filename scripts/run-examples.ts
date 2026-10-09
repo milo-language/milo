@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Compiles every example entrypoint and runs the ones marked runnable. This is
-// the "always run the app" gate (.agents/workflow.md §Run): a change that breaks
+// the "always run the app" gate: a change that breaks
 // any example must fail here, not in the user's hands.
 //
 // Contract:
