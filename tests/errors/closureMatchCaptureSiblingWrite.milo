@@ -1,0 +1,24 @@
+// @error: cannot write to 'bag' by calling 'wipe' because 'bag' is borrowed
+// Inside `f`, `bag` is a capture, and the match binds `x` as a reference into it. The
+// sibling closure `wipe` captures the same `bag` and assigns its field, which would free
+// the string `x` points at before `print(x)`. The binding's borrow has to be traced
+// through the capture to the enclosing local for the two closures to collide.
+struct Bag {
+    opt: Option<string>,
+}
+
+pub fn main(): i32 {
+    var bag = Bag { opt: Option.Some("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { bag.opt = Option.None }
+    let f = (): void => {
+        match bag.opt {
+            Option.Some(x) => {
+                wipe()
+                print(x)
+            }
+            Option.None => { print("none") }
+        }
+    }
+    f()
+    return 0
+}

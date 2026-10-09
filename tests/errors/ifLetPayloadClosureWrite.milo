@@ -1,0 +1,29 @@
+// @error: cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'
+// `x` is a reference into the payload of `b.s`, and `wipe` replaces `b.s` through a
+// `&mut self` method. Calling it while `x` is live would free the string `print(x)` then
+// reads. The pattern binding and the subject are one place to the checker (`refInto`),
+// so the closure's write is a write of the borrowed place.
+enum Slot {
+    Full(string),
+    Empty,
+}
+
+struct Box1 {
+    s: Slot,
+}
+
+impl Box1 {
+    fn clearIt(self: &mut Box1): void {
+        self.s = Slot.Empty
+    }
+}
+
+pub fn main(): i32 {
+    var b = Box1 { s: Slot.Full("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { b.clearIt() }
+    if let Slot.Full(x) = b.s {
+        wipe()
+        print(x)
+    }
+    return 0
+}

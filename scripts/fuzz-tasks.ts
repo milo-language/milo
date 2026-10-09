@@ -29,9 +29,10 @@
 //          scalar-returning extern read (`strlen`) of `p`, in the spellings WP8 rules
 //          on and the ones it might not (alias through `let`, inline arg beside `&mut`,
 //          a `Vec<*u8>` that keeps the pointer, a global mutated by a callee)
-//     h2   `shatter`/`windows`/`weld`/`parallelMap` with a window dropped, escaped past
-//          its owner's scope, still on a `Promise.blocking` worker when the owner dies,
-//          or read out of a `Shard<string>` (H1's copy-of-a-Drop-type)
+//     h2   `parallelMap`/`parallelMapWith` with a window handed to a nested worker,
+//          stashed in a worker's state or a global to outlive the call, recovered
+//          from a `NoWorkers` refusal, or read out of a `Shard<string>` (H1's
+//          copy-of-a-Drop-type). The manual `shatter`/`weld` path is private now.
 //     c    a by-reference closure that writes a capture (assignment, `&mut` argument,
 //          `&mut self` method, push), run directly, passed as a value or through
 //          another closure while a for-in over the capture is live, or inside a
@@ -45,13 +46,18 @@
 // out; by default one representative per (shape set, ASan kind) signature is reduced,
 // `--reduce-all` reduces every red.
 //
+// Every shape is also generated alone `--liveness` times (default 4) and type-checked;
+// a solo program rejected for anything but a soundness diagnostic marks its shape
+// BROKEN (see SOUNDNESS_DIAGNOSTICS). `--liveness-only` runs just that pass, no ASan.
+//
 // Usage: bun scripts/fuzz-tasks.ts [--n=200] [--seed=1] [--filter=<shape substring>]
 //        [--jobs=4] [--keep] [--reduce-all] [--reduce-probes=80] [--no-seeds] [--verbose]
+//        [--liveness=4] [--liveness-only]
 //
 // `--filter` restricts generation to shapes whose name contains the substring (the
 // family prefixes h2/h3/h4/c/bg work) and drops the seed programs. Reduced reds land in
 // .fuzz-findings/tasks/. Exit 1 when any accepted program is ASan red, 2 when the run
-// was vacuous (nothing accepted reached execution), 0 otherwise.
+// was vacuous (nothing accepted reached execution), 3 when a shape is broken, 0 otherwise.
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { execFile } from "child_process";
 import { tmpdir, cpus } from "os";
@@ -98,6 +104,7 @@ const VERBOSE = flag("verbose");
 const REDUCE_ALL = flag("reduce-all");
 const REDUCE_PROBES = num("reduce-probes", 80);
 const NO_SEEDS = flag("no-seeds");
+const LIVENESS_ONLY = flag("liveness-only");
 
 // ── PRNG ──────────────────────────────────────────────────────────────────────
 
@@ -412,11 +419,15 @@ const SHAPES: Shape[] = [
     apply(p) {
       p.use("std/os", "strlen");
       const v = p.fresh("v"), pp = p.fresh("p"), q = p.fresh("q");
-      const viaInt = chance(0.5);
+      // The `as i64` round trip this shape used to draw needs `unsafe` for the cast back,
+      // so it could never compile in a zero-unsafe program; the struct field is the
+      // other way to carry a pointer under a second name without one.
+      const viaBox = chance(0.5);
+      if (viaBox) p.fn(`struct PtrBox${q} {\n    p: *u8,\n}`);
       p.body.push(`var ${v}: Vec<u8> = []`, `${v}.push(65)`, `${v}.push(0)`, `let ${pp} = ${v}.ptr()`,
-        viaInt ? `let ${q} = ${pp} as i64` : `let ${q} = ${pp}`);
+        viaBox ? `let ${q} = PtrBox${q} { p: ${pp} }` : `let ${q} = ${pp}`);
       p.body.push(...p.grow(v, "u8", ""));
-      p.body.push(`print("len " + strlen(${viaInt ? `${q} as *u8` : q}).toString())`);
+      p.body.push(`print("len " + strlen(${viaBox ? `${q}.p` : q}).toString())`);
     },
   },
   {
@@ -455,110 +466,151 @@ const SHAPES: Shape[] = [
   },
 
   // ── h2: shards ──
+  //
+  // The manual divide/weld path (`shatter`, `Shards`, `windows`, `weld`, `reclaim`) went
+  // private on 2026-09-19 (finding #4), so these shapes reach a window only through the
+  // closed forms and try to get one past the point where the closed form reassembles.
   {
-    // H2 as pinned by the seed fixture: the owner dies at the end of a function while a
-    // blocking worker still writes through its window.
+    // Finding #4 as it can still be spelled: a worker hands its window to a nested
+    // blocking worker, which writes through it after a spin. The closed form must not
+    // reassemble (and the helper must not return the buffer) before that write lands;
+    // the junk Vec reuses the block if it did.
     name: "h2-owner-dropped-under-worker",
     apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
+      p.use("std/shard", "Shard", "parallelMap", "parallelMapWith");
       p.use("std/runtime", "Promise");
-      p.use("std/time", "sleepMs");
-      const leak = p.fresh("leak"), junk = p.fresh("junk"), n = pick([1000, 100000]);
-      p.fn(`fn ${leak}(): Promise<Shard<i64>> {
-    var data: Vec<i64> = Vec.filled(${n}, 1)
-    var owner = shatter(data, ${pick([1, 2, 4])})
-    var ws = owner.windows()
-    let w = ws.pop()!
-    let pr = Promise<Shard<i64>>.blocking(move(): Shard<i64> => {
+      const slow = p.fresh("slowFill"), leak = p.fresh("leak"), junk = p.fresh("junk"), n = pick([1000, 100000]);
+      const spin = pick([1000, 100000]);
+      const withState = chance(0.5);
+      const Env = p.fresh("Env");
+      if (withState) p.fn(`struct ${Env} {\n    seen: i64,\n}`);
+      p.fn(`fn ${slow}(w: Shard<i64>${withState ? `, e: &mut ${Env}` : ""}): Shard<i64> {
+    let inner = Promise<Shard<i64>>.blocking(move(): Shard<i64> => {
         var s = w
-        sleepMs(${pick([10, 50])})
+        var spin: i64 = 0
+        while spin < ${spin} {
+            spin = spin + 1
+        }
         var j: i64 = 0
         while j < s.len() {
             s.set(j, 2)
             j = j + 1
         }
         return s
-    })
-    return pr
+    })${withState ? `\n    e.seen = e.seen + 1` : ""}
+    return inner.await()!
 }`);
-      p.body.push(`let ${junk}Pr = ${leak}()`, `var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
-        `let ${junk}S = ${junk}Pr.await()!`, `print(${junk}S.get(0))`, `print(${junk}[0])`);
+      const call = withState
+        ? `var envs: Vec<${Env}> = []\n    envs.push(${Env} { seen: 0 })\n    return parallelMapWith(data, ${pick([2, 4, 8])}, envs, ${slow})!.data`
+        : `return parallelMap(data, ${pick([1, 2, 4])}, ${slow})`;
+      p.fn(`fn ${leak}(): Vec<i64> {
+    var data: Vec<i64> = Vec.filled(${n}, 1)
+    ${call}
+}`);
+      p.body.push(`let ${junk}Out = ${leak}()`, `var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
+        `print(${junk}Out[0])`, `print(${junk}[0])`);
     },
   },
   {
-    // No threads: a window is moved out to a container that outlives the owner.
+    // A worker tries to keep its window after it returns. Through the state of
+    // parallelMapWith (accepted: every call takes one window and must return one, so the
+    // stash is empty again by the weld, and the read below never runs), or through a
+    // global (rejected: a pointer stored in a global, or a global touched from an OS
+    // thread). If either guarantee breaks, the stashed window is read after the buffer
+    // it points into was dropped and its block reused by the junk Vec.
     name: "h2-window-escapes-owner",
     apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
-      const out = p.fresh("out"), junk = p.fresh("junk"), n = pick([1000, 100000]);
-      if (chance(0.5)) {
-        const mk = p.fresh("mk");
-        p.fn(`fn ${mk}(out: &mut Vec<Shard<i64>>): void {
-    var data: Vec<i64> = Vec.filled(${n}, 3)
-    var owner = shatter(data, 2)
-    var ws = owner.windows()
-    out.push(ws.pop()!)
+      p.use("std/shard", "Shard", "parallelMapWith");
+      const Stash = p.fresh("Stash"), keep = p.fresh("keep"), sink = p.fresh("sink");
+      const r = p.fresh("r"), junk = p.fresh("junk"), n = pick([1000, 100000]);
+      p.fn(`fn ${sink}(v: Vec<i64>): void {\n    print("sunk " + v.len.toString())\n}`);
+      p.fn(`struct ${Stash} {\n    held: Vec<Shard<i64>>,\n}`);
+      switch (pick(["state", "state", "global", "globalArg"])) {
+        case "global": {
+          const g = p.fresh("gstash");
+          p.channels.push(`var ${g}: Vec<Shard<i64>> = []`);
+          p.fn(`fn ${keep}(w: Shard<i64>, st: &mut ${Stash}): Shard<i64> {\n    ${g}.push(w)\n    return ${g}.pop()!\n}`);
+          break;
+        }
+        case "globalArg": {
+          const g = p.fresh("gstash"), put = p.fresh("put");
+          p.channels.push(`var ${g}: Vec<Shard<i64>> = []`);
+          p.fn(`fn ${put}(out: &mut Vec<Shard<i64>>, w: Shard<i64>): Shard<i64> {\n    out.push(w)\n    return out.remove(0)\n}`);
+          p.fn(`fn ${keep}(w: Shard<i64>, st: &mut ${Stash}): Shard<i64> {\n    return ${put}(&mut ${g}, w)\n}`);
+          break;
+        }
+        default:
+          p.fn(`fn ${keep}(w: Shard<i64>, st: &mut ${Stash}): Shard<i64> {
+    st.held.push(w)
+    return st.held.${pick(["remove(0)", "pop()!"])}
 }`);
-        p.body.push(`var ${out}: Vec<Shard<i64>> = []`, `${mk}(&mut ${out})`);
-      } else {
-        p.body.push(`var ${out}: Vec<Shard<i64>> = []`, `if true {`,
-          `    var data: Vec<i64> = Vec.filled(${n}, 3)`, `    var owner = shatter(data, 2)`,
-          `    var ws = owner.windows()`, `    ${out}.push(ws.pop()!)`, `}`);
       }
-      p.body.push(`var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`, `print(${out}[0].get(0))`, `print(${junk}[0])`);
+      const states = p.fresh("states");
+      p.body.push(`var ${states}: Vec<${Stash}> = []`);
+      for (let k = 0; k < pick([1, 2]); k++) p.body.push(`${states}.push(${Stash} { held: [] })`);
+      p.body.push(`var ${r}Data: Vec<i64> = Vec.filled(${n}, 3)`,
+        `let ${r} = parallelMapWith(${r}Data, ${pick([1, 4, 16])}, ${states}, ${keep})!`,
+        `${sink}(${r}.data)`, `var ${junk}: Vec<i64> = Vec.filled(${n}, 9)`,
+        `for st in ${r}.states {`, `    if st.held.len > 0 {`, `        print("ESCAPED " + st.held[0].get(0).toString())`, `    }`, `}`,
+        `print(${junk}[0])`);
     },
   },
   {
-    name: "h2-window-dropped-weld",
+    // What `Shards.reclaim()` was for: a refusal hands the caller's buffer back. It must
+    // come back whole and undivided, so pushing to it (a realloc) and mapping it again
+    // is safe. Some of the time the states are present and the Ok side runs instead.
+    name: "h2-noworkers-data",
     apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
-      const o = p.fresh("owner"), ws = p.fresh("ws"), d = p.fresh("data");
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(8, 1)`, `var ${o} = shatter(${d}, 4)`, `var ${ws} = ${o}.windows()`,
-        `let _dropped${ws} = ${ws}.pop()!`,
-        `match ${o}.weld(${ws}) {`,
-        `    Result.Ok(v) => { print("WRONG welded " + v.len.toString()) }`,
-        `    Result.Err(e) => { print("short: " + e.message()) }`,
+      p.use("std/shard", "Shard", "parallelMapWith");
+      const Env = p.fresh("Env"), dbl = p.fresh("double"), d = p.fresh("data"), sts = p.fresh("states");
+      p.fn(`struct ${Env} {\n    seen: i64,\n}`);
+      p.fn(`fn ${dbl}(w: Shard<i64>, e: &mut ${Env}): Shard<i64> {
+    var s = w
+    for i in 0..s.len() {
+        s.set(i, s.get(i) * 2)
+    }
+    e.seen = e.seen + 1
+    return s
+}`);
+      p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([5, 64])}, 1)`, `var ${sts}: Vec<${Env}> = []`);
+      if (chance(0.3)) p.body.push(`${sts}.push(${Env} { seen: 0 })`);
+      p.body.push(`match parallelMapWith(${d}, ${pick([1, 4])}, ${sts}, ${dbl}) {`,
+        `    Result.Ok(m) => { print("mapped " + m.data.len.toString()) }`,
+        `    Result.Err(rej) => {`,
+        `        var v = rej.data`,
+        ...p.grow("v", "i64", "        ", pick([100, 10000])),
+        `        var envs: Vec<${Env}> = []`,
+        `        envs.push(${Env} { seen: 0 })`,
+        `        let again = parallelMapWith(v, 4, envs, ${dbl})!`,
+        `        print("recovered " + again.data.len.toString() + " " + again.data[0].toString())`,
+        `    }`,
         `}`);
     },
   },
   {
-    name: "h2-reclaim-outstanding",
+    // The happy path of the pooled form, with more windows than workers, more windows
+    // than elements (the clamp), and per-worker state coming home.
+    name: "h2-mapwith-ok",
     apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
-      const o = p.fresh("owner"), ws = p.fresh("ws"), d = p.fresh("data");
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(8, 1)`, `var ${o} = shatter(${d}, 4)`, `var ${ws} = ${o}.windows()`,
-        `match ${o}.reclaim() {`,
-        `    Result.Ok(v) => { print("WRONG reclaimed " + v.len.toString()) }`,
-        `    Result.Err(_back) => { print("reclaim refused") }`,
-        `}`);
-    },
-  },
-  {
-    name: "h2-weld-ok",
-    apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
-      p.use("std/runtime", "Promise");
-      const o = p.fresh("owner"), ws = p.fresh("ws"), d = p.fresh("data"), ps = p.fresh("ps"), dbl = p.fresh("double");
-      p.fn(`fn ${dbl}(w: Shard<i64>): Shard<i64> {
+      p.use("std/shard", "Shard", "parallelMapWith");
+      const Env = p.fresh("Env"), f = p.fresh("tally"), d = p.fresh("data"), sts = p.fresh("envs"), r = p.fresh("r");
+      p.fn(`struct ${Env} {\n    sum: i64,\n    windows: i64,\n}`);
+      p.fn(`fn ${f}(w: Shard<i64>, e: &mut ${Env}): Shard<i64> {
     var s = w
     var j: i64 = 0
     while j < s.len() {
-        s.set(j, s.get(j) * 2)
+        s.set(j, s.get(j) * 3)
+        e.sum = e.sum + s.get(j)
         j = j + 1
     }
+    e.windows = e.windows + 1
     return s
 }`);
-      p.body.push(`var ${d}: Vec<i64> = Vec.filled(16, 1)`, `var ${o} = shatter(${d}, 4)`, `var ${ws} = ${o}.windows()`,
-        `var ${ps}: Vec<Promise<Shard<i64>>> = []`,
-        `while ${ws}.len > 0 {`,
-        `    let w = ${ws}.pop()!`,
-        `    ${ps}.push(Promise<Shard<i64>>.blocking(move(): Shard<i64> => { return ${dbl}(w) }))`,
-        `}`,
-        `let back${ps} = Promise.all(${ps}).await()!`,
-        `match ${o}.weld(back${ps}) {`,
-        `    Result.Ok(v) => { print("welded " + v[0].toString()) }`,
-        `    Result.Err(e) => { print("WRONG " + e.message()) }`,
-        `}`);
+      p.body.push(`var ${d}: Vec<i64> = Vec.filled(${pick([3, 16, 1000])}, 1)`, `var ${sts}: Vec<${Env}> = []`);
+      for (let k = 0; k < pick([1, 2, 4]); k++) p.body.push(`${sts}.push(${Env} { sum: 0, windows: 0 })`);
+      p.body.push(`let ${r} = parallelMapWith(${d}, ${pick([1, 4, 16, 100])}, ${sts}, ${f})!`,
+        `var ${r}Sum: i64 = 0`, `for e in ${r}.states {`, `    ${r}Sum = ${r}Sum + e.sum`, `}`,
+        `print("mapWith " + ${r}.data[0].toString() + " " + ${r}Sum.toString())`);
     },
   },
   {
@@ -580,14 +632,53 @@ const SHAPES: Shape[] = [
     },
   },
   {
-    // H1: Shard.get on a Drop element type hands out a bitwise copy of the string.
+    // Finding #3: a window's `get` is a bitwise read, so over a Drop element it is a
+    // second owner. The element type is chosen where the closed form is called, so a
+    // string (or a struct holding one) must be refused there; a struct of scalars is
+    // the accepted control.
     name: "h1-shard-string-get",
     apply(p) {
-      p.use("std/shard", "Shard", "Shards", "shatter");
-      const o = p.fresh("owner"), ws = p.fresh("ws"), d = p.fresh("data");
-      p.body.push(`var ${d}: Vec<string> = []`, `${d}.push("${pick(WORDS)} ${pick(WORDS)} ${pick(WORDS)}")`, `${d}.push("${pick(WORDS)}")`,
-        `var ${o} = shatter(${d}, 1)`, `var ${ws} = ${o}.windows()`,
-        `let s${ws} = ${ws}[0].get(0)`, `print(s${ws})`);
+      const withState = chance(0.4);
+      p.use("std/shard", "Shard", withState ? "parallelMapWith" : "parallelMap");
+      const f = p.fresh("touch"), d = p.fresh("data"), out = p.fresh("out"), Env = p.fresh("Env");
+      let elem: string, make: (i: number) => string, show: string;
+      switch (pick(["string", "string", "dropStruct", "copyStruct"])) {
+        case "dropStruct": {
+          const S = p.fresh("Named");
+          p.fn(`struct ${S} {\n    name: string,\n    n: i64,\n}`);
+          elem = S;
+          make = i => `${S} { name: "${pick(WORDS)} ${WORDS[i]} long enough to live on the heap".clone(), n: ${i} }`;
+          show = `${out}[0].name`;
+          break;
+        }
+        case "copyStruct": {
+          const S = p.fresh("Pt");
+          p.fn(`struct ${S} {\n    x: i64,\n    y: i64,\n}`);
+          elem = S;
+          make = i => `${S} { x: ${i}, y: ${i + 1} }`;
+          show = `${out}[0].x.toString()`;
+          break;
+        }
+        default:
+          elem = "string";
+          make = i => `"${pick(WORDS)} ${WORDS[i]} long enough to live on the heap".clone()`;
+          show = `${out}[0]`;
+      }
+      if (withState) p.fn(`struct ${Env} {\n    n: i64,\n}`);
+      p.fn(`fn ${f}(w: Shard<${elem}>${withState ? `, e: &mut ${Env}` : ""}): Shard<${elem}> {
+    let first = w.get(0)
+    w.set(0, first)
+    return w
+}`);
+      p.body.push(`var ${d}: Vec<${elem}> = []`);
+      for (let i = 0; i < 3; i++) p.body.push(`${d}.push(${make(i)})`);
+      if (withState) {
+        p.body.push(`var ${Env}s: Vec<${Env}> = []`, `${Env}s.push(${Env} { n: 0 })`,
+          `let ${out}R = parallelMapWith(${d}, ${pick([1, 3])}, ${Env}s, ${f})!`, `let ${out} = ${out}R.data`);
+      } else {
+        p.body.push(`let ${out} = parallelMap(${d}, ${pick([1, 3])}, ${f})`);
+      }
+      p.body.push(`print(${show})`);
     },
   },
 
@@ -599,6 +690,13 @@ const SHAPES: Shape[] = [
   {
     name: "c-scope-closure-write",
     apply(p) { closureWrite(p, true); },
+  },
+  {
+    // The borrow is a match/if-let payload binding (a ref into the subject, `refInto` in
+    // the checker) rather than a for-in, optionally formed inside another closure so the
+    // subject is itself a capture there.
+    name: "c-pattern-ref-write",
+    apply(p) { patternRefWrite(p); },
   },
 
   // ── bg: safe contention ──
@@ -639,6 +737,47 @@ const SHAPES: Shape[] = [
 // path through the checker and two of them never recorded the write at all. In a task
 // scope the borrow is a sibling task's for-in held across a park, and the write runs in
 // another task or in the scope body after a sleep.
+function patternRefWrite(p: Program) {
+  const H = p.fresh("Holder"), h = p.fresh("h"), w = p.fresh("wipe"), x = p.fresh("x");
+  const long = `"${pick(WORDS)} a heap string long enough to be on the heap".clone()`;
+  p.fn(`struct ${H} {\n    o: Option<string>,\n}\nimpl ${H} {\n    fn clearIt(self: &mut ${H}): void {\n        self.o = Option.None\n    }\n}`);
+  let write: string;
+  switch (pick(["assign", "mutArg", "mutSelf"])) {
+    case "assign": write = `${h}.o = Option.None`; break;
+    case "mutArg": {
+      const f = p.fresh("clearArg");
+      p.fn(`fn ${f}(hh: &mut ${H}): void {\n    hh.o = Option.None\n}`);
+      write = `${f}(&mut ${h})`;
+      break;
+    }
+    default: write = `${h}.clearIt()`;
+  }
+  p.body.push(`var ${h} = ${H} { o: Option.Some(${long}) }`, `let ${w} = (): void => { ${write} }`);
+  // A clone of the payload is the safe twin: nothing the closure writes is borrowed.
+  const subject = chance(0.2) ? `${h}.o.clone()` : `${h}.o`;
+  let call: string;
+  switch (pick(["direct", "run", "runGeneric", "show"])) {
+    case "run": { const r = p.fresh("run"); p.fn(`fn ${r}(f: () => void): void { f() }`); call = `${r}(${w})`; break; }
+    case "runGeneric": { const r = p.fresh("runG"); p.fn(`fn ${r}<F>(f: F): void { f() }`); call = `${r}(${w})`; break; }
+    case "show": {
+      const sh = p.fresh("show");
+      p.fn(`fn ${sh}(r: &string, f: () => void): void { f(); print(r) }`);
+      call = `${sh}(${x}, ${w})`;
+      break;
+    }
+    default: call = `${w}()`;
+  }
+  const arm = chance(0.5)
+    ? [`if let Option.Some(${x}) = ${subject} {`, `    ${call}`, `    print(${x})`, `}`]
+    : [`match ${subject} {`, `    Option.Some(${x}) => {`, `        ${call}`, `        print(${x})`, `    }`, `    Option.None => { print("none") }`, `}`];
+  if (chance(0.4)) {
+    const outer = p.fresh("outer");
+    p.body.push(`let ${outer} = (): void => {`, ...arm.map(l => "    " + l), `}`, `${outer}()`);
+  } else {
+    p.body.push(...arm);
+  }
+}
+
 function closureWrite(p: Program, scoped: boolean) {
   const v = p.fresh("cv"), w = p.fresh("clr"), x = p.fresh("x");
   const long = `"${pick(WORDS)} a heap string long enough to be on the heap".clone()`;
@@ -732,10 +871,10 @@ interface Verdict {
 const ANSI = /\x1b\[[0-9;]*m/g;
 const ASAN_REPORT = /ERROR: AddressSanitizer: ([a-zA-Z-]+)/;
 
-function exec(cmd: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; out: string }> {
+function exec(cmd: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; out: string; stdout: string }> {
   return new Promise(resolve => {
     execFile(cmd, args, { cwd: ROOT, encoding: "utf-8", timeout: timeoutMs, maxBuffer: 64 << 20 },
-      (err, stdout, stderr) => resolve({ ok: !err, out: (stdout + "\n" + stderr).replace(ANSI, "") }));
+      (err, stdout, stderr) => resolve({ ok: !err, out: (stdout + "\n" + stderr).replace(ANSI, ""), stdout }));
   });
 }
 
@@ -785,6 +924,117 @@ fn main() {
     console.error("Refusing to run: results would read as clean for the class ASan is here to catch.");
     process.exit(2);
   }
+}
+
+// ── template liveness ─────────────────────────────────────────────────────────
+
+// A shape whose programs never compile for a reason that has nothing to do with
+// soundness (a method std removed, a private fn, a type error in the template) never
+// reaches ASan and never reaches the rule it targets, and the run above still reports
+// green: its rejections land in a bucket nobody reads. Six h2 shapes sat like that
+// after std/shard's manual path went private (2026-09-19) while the gate passed.
+//
+// So every shape is also generated ALONE, LIVENESS times, and type-checked. A solo
+// program is live when the checker accepts it, or when every error it reports is one
+// of the soundness diagnostics below: then a regression in that rule turns the
+// rejection into an accepted program and the ASan pass judges it. Any other error in
+// a solo program is a broken template, and fails the run naming the shape.
+//
+// Classification is by message substring. A rule whose message is reworded stops
+// matching and its shapes read as dead, which fails the run: the mismatch errs toward
+// red, never toward a silent pass. Keep each entry specific enough that no type or
+// name-resolution error can contain it.
+const SOUNDNESS_DIAGNOSTICS = [
+  // finding #5 and its relatives: element views of a global across a park
+  "can park this task while",
+  // finding #6: pointer views
+  "may reallocate here while",
+  "still points into",
+  "is written here while",
+  "used after its source",
+  "which outlives the buffer it points into",
+  // call-site exclusivity
+  "is borrowed mutably and shared in the same call",
+  "is borrowed mutably twice in the same call",
+  "is moved and borrowed in the same call",
+  "is captured by a closure argument and borrowed in the same call",
+  // for-in freeze, live borrows (pattern bindings, slices) and closure capture writes
+  "while a loop iterates over",
+  "cannot write to '",
+  "because it is borrowed",
+  "' is borrowed",
+  "' borrows '",
+  "' borrows it",
+  "a scoped task writes",
+  "is borrowed by a scoped task",
+  // globals on OS threads
+  "is a mutable global, and this code runs on a real OS thread",
+  // finding #3: Copy-only generics
+  "is @copyOnly and",
+  // moves
+  "use of moved variable",
+  "use of moved value",
+  // finding #7
+  "out of a container by index: it carries Drop",
+];
+const isSoundnessDiagnostic = (msg: string) => SOUNDNESS_DIAGNOSTICS.some(s => msg.includes(s));
+
+const LIVENESS = num("liveness", 4);
+
+type LiveKind = "accepted" | "sound-reject" | "dead";
+interface LiveRow { shape: string; accepted: number; sound: number; dead: number; example: string }
+
+// Every error `check --json` reports, not just the first: a program with a soundness
+// error AND an unrelated one can never be accepted, however the rule regresses.
+//
+// An error pinned outside the program's own file is never the template's hazard, whatever
+// it says: a parallelMap nested in a worker draws "'rrHeapOn' is a mutable global, and this
+// code runs on a real OS thread" from std/replay.milo, which matches a soundness substring
+// but rejects every program of that shape for a reason inside std.
+async function checkErrors(file: string): Promise<{ msg: string; own: boolean }[] | null> {
+  const r = await exec("bun", [MILO, "check", file, "--json"], BUILD_TIMEOUT_MS);
+  try {
+    const j = JSON.parse(r.stdout) as { diagnostics: { severity: string; message: string; file?: string }[] };
+    return j.diagnostics.filter(d => d.severity === "error").map(d => {
+      const own = !d.file || d.file === file;
+      return { msg: own ? d.message : `${d.message} [in ${d.file!.replace(ROOT + "/", "")}]`, own };
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function liveness(dir: string): Promise<LiveRow[]> {
+  const shapes = SHAPES.filter(s => s.name.includes(FILTER));
+  const jobs: { shape: string; file: string }[] = [];
+  for (const s of shapes) {
+    for (let k = 0; k < LIVENESS; k++) {
+      const p = new Program();
+      p.shapes.push(s.name);
+      s.apply(p);
+      const file = join(dir, `live_${s.name}_${k}.milo`);
+      writeFileSync(file, p.source());
+      jobs.push({ shape: s.name, file });
+    }
+  }
+  const verdicts = await pool(jobs, JOBS, async j => {
+    const errs = await checkErrors(j.file);
+    if (errs === null) return { kind: "dead" as LiveKind, msg: "check --json printed no JSON" };
+    const bad = errs.find(e => !e.own || !isSoundnessDiagnostic(e.msg));
+    if (bad !== undefined) return { kind: "dead" as LiveKind, msg: bad.msg };
+    return { kind: (errs.length === 0 ? "accepted" : "sound-reject") as LiveKind, msg: "" };
+  });
+  return shapes.map(s => {
+    const row: LiveRow = { shape: s.name, accepted: 0, sound: 0, dead: 0, example: "" };
+    jobs.forEach((j, i) => {
+      if (j.shape !== s.name) return;
+      const v = verdicts[i]!;
+      if (v.kind === "accepted") row.accepted++;
+      else if (v.kind === "sound-reject") row.sound++;
+      else { row.dead++; if (!row.example) row.example = KEEP ? `${v.msg}  (${j.file})` : v.msg; }
+    });
+    return row;
+  });
 }
 
 // ── ddmin ─────────────────────────────────────────────────────────────────────
@@ -888,7 +1138,7 @@ interface Result { c: Case; v: Verdict; file: string }
 async function main() {
   const t0 = Date.now();
   const dir = mkdtempSync(join(tmpdir(), "milo-taskfuzz-"));
-  await assertAsanWorks(dir);
+  if (!LIVENESS_ONLY) await assertAsanWorks(dir);
 
   const cases: Case[] = [];
   if (!NO_SEEDS && FILTER === "") {
@@ -902,6 +1152,23 @@ async function main() {
     }
   }
   for (let i = 0; i < N; i++) cases.push(generate(i));
+
+  // Generated after the main cases so a seed reproduces the same main programs with
+  // or without the liveness pass.
+  const live = LIVENESS > 0 ? await liveness(dir) : [];
+  const deadShapes = live.filter(r => r.dead > 0);
+  const reportLiveness = () => {
+    if (live.length === 0) return;
+    console.log(`template liveness (${LIVENESS} solo programs per shape; accepted / soundness-rejected / broken):`);
+    for (const r of live) {
+      console.log(`    ${r.shape.padEnd(32)} ${String(r.accepted).padStart(3)} ${String(r.sound).padStart(3)} ${String(r.dead).padStart(3)}${r.dead > 0 ? "  BROKEN: " + r.example : ""}`);
+    }
+  };
+  if (LIVENESS_ONLY) {
+    reportLiveness();
+    if (!KEEP) rmSync(dir, { recursive: true, force: true });
+    process.exit(deadShapes.length > 0 ? 3 : 0);
+  }
 
   const results = await pool(cases, JOBS, async (c, i): Promise<Result> => {
     const file = join(dir, `${c.name}.milo`);
@@ -987,7 +1254,13 @@ async function main() {
   // A run where nothing accepted reached execution proves nothing about a checker
   // that accepts too much.
   if (count("clean") + reds.length === 0) { console.log("VACUOUS RUN: no accepted program reached execution."); process.exit(2); }
-  process.exit(reds.length > 0 ? 1 : 0);
+  reportLiveness();
+  if (reds.length > 0) process.exit(1);
+  if (deadShapes.length > 0) {
+    console.log(`BROKEN TEMPLATES: ${deadShapes.map(r => r.shape).join(", ")} generated programs rejected for a reason that is not a soundness rule, so they never test the hazard they encode.`);
+    process.exit(3);
+  }
+  process.exit(0);
 }
 
 main();

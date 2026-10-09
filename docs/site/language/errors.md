@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 458 distinct messages across 590 programs the compiler must reject.
+Every error message the test suite pins: 460 distinct messages across 593 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -265,6 +265,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
 - [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
+- [`cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'`](#cannot-write-to-b-by-calling-wipe-while-x-borrows-b)
+- [`cannot write to 'bag' by calling 'wipe' because 'bag' is borrowed`](#cannot-write-to-bag-by-calling-wipe-because-bag-is-borrowed)
 - [`cannot write to 'm' by passing 'clr' while a loop iterates over 'm'`](#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m)
 - [`cannot write to 's' by calling 'clr' while a loop iterates over 's'`](#cannot-write-to-s-by-calling-clr-while-a-loop-iterates-over-s)
 - [`cannot write to 's' by passing 'clr' while 'w' borrows 's'`](#cannot-write-to-s-by-passing-clr-while-w-borrows-s)
@@ -7059,6 +7061,99 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/forInMutRefWholeArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefWholeArg.milo)</sub>
+
+## `cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'` {#cannot-write-to-b-by-calling-wipe-while-x-borrows-b}
+
+The if-let runs inside a closure, so its subject `b.s` is reached through a capture, and the writer is a sibling closure that hands `b` to a `&mut` parameter. Both the ref binding into a capture and the `&mut` argument inside the writer have to be seen for the call to be refused; otherwise `print(x)` reads the freed payload.
+
+```milo skip
+enum Slot {
+    Full(string),
+    Empty,
+}
+
+struct Box1 {
+    s: Slot,
+}
+
+fn clear(b: &mut Box1): void {
+    b.s = Slot.Empty
+}
+
+pub fn main(): i32 {
+    var b = Box1 { s: Slot.Full("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { clear(&mut b) }
+    let f = (): void => {
+        if let Slot.Full(x) = b.s {
+            wipe()
+            print(x)
+        }
+    }
+    f()
+    return 0
+}
+```
+
+<sub>[tests/errors/closureIfLetCaptureMutArgWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureIfLetCaptureMutArgWrite.milo)</sub>
+
+`x` is a reference into the payload of `b.s`, and `wipe` replaces `b.s` through a `&mut self` method. Calling it while `x` is live would free the string `print(x)` then reads. The pattern binding and the subject are one place to the checker (`refInto`), so the closure's write is a write of the borrowed place.
+
+```milo skip
+enum Slot {
+    Full(string),
+    Empty,
+}
+
+struct Box1 {
+    s: Slot,
+}
+
+impl Box1 {
+    fn clearIt(self: &mut Box1): void {
+        self.s = Slot.Empty
+    }
+}
+
+pub fn main(): i32 {
+    var b = Box1 { s: Slot.Full("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { b.clearIt() }
+    if let Slot.Full(x) = b.s {
+        wipe()
+        print(x)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/ifLetPayloadClosureWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifLetPayloadClosureWrite.milo)</sub>
+
+## `cannot write to 'bag' by calling 'wipe' because 'bag' is borrowed` {#cannot-write-to-bag-by-calling-wipe-because-bag-is-borrowed}
+
+Inside `f`, `bag` is a capture, and the match binds `x` as a reference into it. The sibling closure `wipe` captures the same `bag` and assigns its field, which would free the string `x` points at before `print(x)`. The binding's borrow has to be traced through the capture to the enclosing local for the two closures to collide.
+
+```milo skip
+struct Bag {
+    opt: Option<string>,
+}
+
+pub fn main(): i32 {
+    var bag = Bag { opt: Option.Some("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { bag.opt = Option.None }
+    let f = (): void => {
+        match bag.opt {
+            Option.Some(x) => {
+                wipe()
+                print(x)
+            }
+            Option.None => { print("none") }
+        }
+    }
+    f()
+    return 0
+}
+```
+
+<sub>[tests/errors/closureMatchCaptureSiblingWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMatchCaptureSiblingWrite.milo)</sub>
 
 ## `cannot write to 'm' by passing 'clr' while a loop iterates over 'm'` {#cannot-write-to-m-by-passing-clr-while-a-loop-iterates-over-m}
 

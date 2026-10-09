@@ -1,0 +1,30 @@
+// @error: cannot write to 'b' by calling 'wipe' while 'x' borrows 'b'
+// The if-let runs inside a closure, so its subject `b.s` is reached through a capture,
+// and the writer is a sibling closure that hands `b` to a `&mut` parameter. Both the
+// ref binding into a capture and the `&mut` argument inside the writer have to be seen
+// for the call to be refused; otherwise `print(x)` reads the freed payload.
+enum Slot {
+    Full(string),
+    Empty,
+}
+
+struct Box1 {
+    s: Slot,
+}
+
+fn clear(b: &mut Box1): void {
+    b.s = Slot.Empty
+}
+
+pub fn main(): i32 {
+    var b = Box1 { s: Slot.Full("a heap string long enough to be on the heap".clone()) }
+    let wipe = (): void => { clear(&mut b) }
+    let f = (): void => {
+        if let Slot.Full(x) = b.s {
+            wipe()
+            print(x)
+        }
+    }
+    f()
+    return 0
+}

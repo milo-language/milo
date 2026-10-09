@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-10-06 (closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
+last-verified: 2026-10-09 (fuzz:tasks template liveness gate; pattern-binding refs into closure captures probed and pinned; earlier: closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -80,6 +80,10 @@ of them. Three later steps in the same job are what the sweep added:
   `string` and with a `Drop`-counting struct; ASan plus a made/gone balance as the oracle, and
   a `covered N / M` line so an unreachable symbol is reported rather than skipped). Both accept
   a checker rejection as a pass: the fuzzers hunt programs the checker accepts and ASan rejects.
+  That acceptance is why `fuzz:tasks` also checks every shape alone and fails, naming it, when
+  a solo program is rejected for anything but a soundness diagnostic: six shard shapes went on
+  calling the private `shatter` (and a `reclaim` that no longer exists) after finding #4,
+  so the hazards they encode went untested while the step stayed green.
 
 A finding is closed when its reproducer is an error test, the fuzzer that would have found it
 runs the shape clean, and the ASan sweep is green with the known-red list empty. All three held
