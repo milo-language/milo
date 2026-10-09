@@ -1,0 +1,14 @@
+// @error: 'v' is borrowed by one argument and changed by a mutation of 'v' in a later one
+// `refill` reallocates the buffer the receiver `v[0]` points into before `startsWith` reads it.
+fn refill(v: &mut Vec<string>): string {
+    v.clear()
+    for i in 0..100 { v.push("another heap string long enough to be on the heap".clone()) }
+    return "x".clone()
+}
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let b = v[0].startsWith(refill(&mut v))
+    print(b.toString())
+    return 0
+}

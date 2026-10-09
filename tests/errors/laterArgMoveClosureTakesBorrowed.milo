@@ -1,0 +1,11 @@
+// @error: 'v' is borrowed by one argument and moved out by a later one (moving 'v' into a closure)
+// A `move` literal takes `v` into its environment as it is built, and that environment
+// is dropped before `show` runs.
+fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
+fn callIt(f: () => i64): i64 { return f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show(v[0], callIt(move () => { return v.len }))
+    return 0
+}

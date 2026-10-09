@@ -1,0 +1,12 @@
+// @error: use of moved value 'p.name'
+// The closure reads `p.name` through its by-reference capture, and the field was moved
+// out between building the closure and calling it.
+struct P { name: string, age: i64 }
+fn eat(s: string): void { print(s) }
+pub fn main(): i32 {
+    var p = P { name: "a heap string long enough to be on the heap for sure".clone(), age: 3 }
+    let f = () => { print(p.name) }
+    eat(p.name)
+    f()
+    return 0
+}

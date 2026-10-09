@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 444 distinct messages across 563 programs the compiler must reject.
+Every error message the test suite pins: 448 distinct messages across 572 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -71,6 +71,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
+- [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
 - [`'head' cannot return a reference`](#head-cannot-return-a-reference)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
@@ -115,6 +116,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'v' is borrowed by a scoped task and written by the Task.scope body`](#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body)
 - [`'v' is borrowed by one argument and changed by a mutation of 'v' in a later one`](#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one)
 - [`'v' is borrowed by one argument and changed by calling 'clr' in a later one`](#v-is-borrowed-by-one-argument-and-changed-by-calling-clr-in-a-later-one)
+- [`'v' is borrowed by one argument and moved out by a later one (a move of 'v')`](#v-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-v)
+- [`'v' is borrowed by one argument and moved out by a later one (moving 'v' into a closure)`](#v-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-moving-v-into-a-closure)
 - [`'v' is borrowed mutably and shared in the same call`](#v-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'v' is moved and borrowed in the same call`](#v-is-moved-and-borrowed-in-the-same-call)
 - [`'v' is reassigned here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#v-is-reassigned-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
@@ -443,6 +446,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unsupported representation 'u32'`](#unsupported-representation-u32)
 - [`unwrap it with 'match'`](#unwrap-it-with-match)
 - [`use of moved value 'p.a'`](#use-of-moved-value-p-a)
+- [`use of moved value 'p.name'`](#use-of-moved-value-p-name)
 - [`use of moved variable`](#use-of-moved-variable)
 - [`use of moved variable 'a'`](#use-of-moved-variable-a)
 - [`use of moved variable 'box'`](#use-of-moved-variable-box)
@@ -1682,6 +1686,23 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/dropElementHashMapGet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropElementHashMapGet.milo)</sub>
 
+## `'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')` {#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items}
+
+```milo skip
+struct H { items: Vec<string>, k: i64 }
+fn consume(v: Vec<string>): i64 { return v.len }
+fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    var h = H { items: v, k: 1 }
+    show(h.items[0], consume(h.items))
+    return 0
+}
+```
+
+<sub>[tests/errors/laterArgMovesBorrowedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/laterArgMovesBorrowedField.milo)</sub>
+
 ## `'head' cannot return a reference` {#head-cannot-return-a-reference}
 
 @note: 6:12 the returned slice points into 'v', a parameter dropped when 'head' returns A by-value parameter is owned by the callee, so a slice of it dangles at the return.
@@ -2920,6 +2941,25 @@ pub fn main(): i32 {
 
 ## `'v' is borrowed by one argument and changed by a mutation of 'v' in a later one` {#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one}
 
+`refill` reallocates the buffer the receiver `v[0]` points into before `startsWith` reads it.
+
+```milo skip
+fn refill(v: &mut Vec<string>): string {
+    v.clear()
+    for i in 0..100 { v.push("another heap string long enough to be on the heap".clone()) }
+    return "x".clone()
+}
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let b = v[0].startsWith(refill(&mut v))
+    print(b.toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/builtinReceiverLaterArgWrite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/builtinReceiverLaterArgWrite.milo)</sub>
+
 The direct spelling of closureCallWritesBorrowedArg: the nested call's `&mut v` clears the buffer the earlier `&` argument points into.
 
 ```milo skip
@@ -2957,6 +2997,101 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/closureCallWritesBorrowedArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallWritesBorrowedArg.milo)</sub>
+
+## `'v' is borrowed by one argument and moved out by a later one (a move of 'v')` {#v-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-v}
+
+A builtin string method takes its receiver before its arguments run, like a user method.
+
+```milo skip
+fn consume(v: Vec<string>): i64 { return v.len }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let b = v[0].startsWith(consume(v).toString())
+    print(b.toString())
+    return 0
+}
+```
+
+<sub>[tests/errors/builtinReceiverLaterArgMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/builtinReceiverLaterArgMove.milo)</sub>
+
+The nested call takes `v` by value and drops it before `show` runs, so the earlier `&` argument into `v[0]` reads a freed string.
+
+```milo skip
+fn consume(v: Vec<string>): i64 { return v.len }
+fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show(v[0], consume(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/laterArgMovesBorrowedElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/laterArgMovesBorrowedElement.milo)</sub>
+
+A borrow of the binding's own slot survives a later write, but not a later move: the slot is emptied, so `show2` would be handed a zeroed Vec.
+
+```milo skip
+fn consume(v: Vec<string>): i64 { return v.len }
+fn show2(a: &Vec<string>, n: i64): void { print(a[0]); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show2(v, consume(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/laterArgMovesBorrowedSlot.milo](https://github.com/milo-language/milo/blob/main/tests/errors/laterArgMovesBorrowedSlot.milo)</sub>
+
+```milo skip
+struct O { k: i64 }
+impl O { fn m(self: &O, s: &string, n: i64): void { print(s); print(n.toString()) } }
+fn consume(v: Vec<string>): i64 { return v.len }
+pub fn main(): i32 {
+    let o = O { k: 1 }
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    o.m(v[0], consume(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/methodArgLaterArgMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/methodArgLaterArgMove.milo)</sub>
+
+The receiver is taken before the arguments run.
+
+```milo skip
+struct S { s: string }
+impl S { fn show(self: &S, n: i64): void { print(self.s); print(n.toString()) } }
+fn consume(v: Vec<S>): i64 { return v.len }
+pub fn main(): i32 {
+    var v: Vec<S> = Vec.new()
+    v.push(S { s: "a heap string long enough to be on the heap for sure".clone() })
+    v[0].show(consume(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/methodReceiverLaterArgMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/methodReceiverLaterArgMove.milo)</sub>
+
+## `'v' is borrowed by one argument and moved out by a later one (moving 'v' into a closure)` {#v-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-moving-v-into-a-closure}
+
+A `move` literal takes `v` into its environment as it is built, and that environment is dropped before `show` runs.
+
+```milo skip
+fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
+fn callIt(f: () => i64): i64 { return f() }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show(v[0], callIt(move () => { return v.len }))
+    return 0
+}
+```
+
+<sub>[tests/errors/laterArgMoveClosureTakesBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/laterArgMoveClosureTakesBorrowed.milo)</sub>
 
 ## `'v' is borrowed mutably and shared in the same call` {#v-is-borrowed-mutably-and-shared-in-the-same-call}
 
@@ -10356,6 +10491,24 @@ fn main() {
 ```
 
 <sub>[tests/errors/moveFieldTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldTwice.milo)</sub>
+
+## `use of moved value 'p.name'` {#use-of-moved-value-p-name}
+
+The closure reads `p.name` through its by-reference capture, and the field was moved out between building the closure and calling it.
+
+```milo skip
+struct P { name: string, age: i64 }
+fn eat(s: string): void { print(s) }
+pub fn main(): i32 {
+    var p = P { name: "a heap string long enough to be on the heap for sure".clone(), age: 3 }
+    let f = () => { print(p.name) }
+    eat(p.name)
+    f()
+    return 0
+}
+```
+
+<sub>[tests/errors/closureReadsMovedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureReadsMovedField.milo)</sub>
 
 ## `use of moved variable` {#use-of-moved-variable}
 

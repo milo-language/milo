@@ -1,0 +1,11 @@
+// @error: 'v' is borrowed by one argument and moved out by a later one (a move of 'v')
+struct O { k: i64 }
+impl O { fn m(self: &O, s: &string, n: i64): void { print(s); print(n.toString()) } }
+fn consume(v: Vec<string>): i64 { return v.len }
+pub fn main(): i32 {
+    let o = O { k: 1 }
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    o.m(v[0], consume(v))
+    return 0
+}

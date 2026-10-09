@@ -1,0 +1,11 @@
+// @error: 'v' is borrowed by one argument and moved out by a later one (a move of 'v')
+// The receiver is taken before the arguments run.
+struct S { s: string }
+impl S { fn show(self: &S, n: i64): void { print(self.s); print(n.toString()) } }
+fn consume(v: Vec<S>): i64 { return v.len }
+pub fn main(): i32 {
+    var v: Vec<S> = Vec.new()
+    v.push(S { s: "a heap string long enough to be on the heap for sure".clone() })
+    v[0].show(consume(v))
+    return 0
+}

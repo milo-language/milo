@@ -1,0 +1,11 @@
+// @error: 'v' is borrowed by one argument and moved out by a later one (a move of 'v')
+// A borrow of the binding's own slot survives a later write, but not a later move: the
+// slot is emptied, so `show2` would be handed a zeroed Vec.
+fn consume(v: Vec<string>): i64 { return v.len }
+fn show2(a: &Vec<string>, n: i64): void { print(a[0]); print(n.toString()) }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    show2(v, consume(v))
+    return 0
+}

@@ -1,0 +1,10 @@
+// @error: 'v' is borrowed by one argument and moved out by a later one (a move of 'v')
+// A builtin string method takes its receiver before its arguments run, like a user method.
+fn consume(v: Vec<string>): i64 { return v.len }
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("a heap string long enough to be on the heap for sure".clone())
+    let b = v[0].startsWith(consume(v).toString())
+    print(b.toString())
+    return 0
+}

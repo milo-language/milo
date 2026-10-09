@@ -1,0 +1,51 @@
+// Shapes the later-argument move check must accept: the move is of a different variable
+// or a disjoint field, the earlier argument is a by-value copy taken before the move, or
+// the closure reads only a field that was not moved.
+struct P { name: string, age: i64 }
+
+struct H { items: Vec<string>, other: Vec<string> }
+
+fn consume(v: Vec<string>): i64 { return v.len }
+
+fn eat(s: string): i64 { return s.len() }
+
+fn show(s: &string, n: i64): void { print(s); print(n.toString()) }
+
+fn show2(a: &Vec<string>, n: i64): void { print(a.len.toString()); print(n.toString()) }
+
+fn pair(a: i64, b: i64): void { print((a + b).toString()) }
+
+pub fn main(): i32 {
+    var v: Vec<string> = Vec.new()
+    v.push("alpha".clone())
+    var w: Vec<string> = Vec.new()
+    w.push("beta".clone())
+    show(v[0], consume(w))
+    var w2: Vec<string> = Vec.new()
+    show2(v, consume(w2))
+    pair(v.len, consume(v))
+    var p = P { name: "carol".clone(), age: 41 }
+    let f = () => { print(p.age.toString()) }
+    print(eat(p.name).toString())
+    f()
+    var a: Vec<string> = Vec.new()
+    a.push("dave".clone())
+    var b: Vec<string> = Vec.new()
+    b.push("erin".clone())
+    var h = H { items: a, other: b }
+    show(h.items[0], consume(h.other))
+    let s = "frank".clone()
+    let t = "fr".clone()
+    print(s.startsWith(t).toString())
+    return 0
+}
+// @expect: alpha
+// @expect: 1
+// @expect: 1
+// @expect: 0
+// @expect: 2
+// @expect: 5
+// @expect: 41
+// @expect: dave
+// @expect: 1
+// @expect: true

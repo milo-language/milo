@@ -321,10 +321,27 @@ export interface CaptureInfo {
   // Captures live in the environment's own slots, so the move zeroes the slot — which
   // makes the closure call-once: a second call reads the emptied slot.
   consumedInClosure?: boolean;
+  // The field paths under the capture the body reads (`.a.b`), "" for a read of the whole
+  // value. A call of the closure is a read of each, so one whose field was moved out
+  // since the closure was built is caught like a direct read of that field.
+  readPaths?: Set<string>;
   // The captured binding, resolved when the closure literal closes. The call-site
   // exclusivity check uses it (not `name`, which a later binding may shadow) to see a
   // closure argument's captures as borrows of the places they name.
   info?: VarInfo;
+}
+
+// A write that evaluating a call argument makes (see TypeChecker.nestedWrites). A move
+// carries its index-aware `steps` too: it conflicts with a borrow of the moved place's own
+// slot, where a plain write does not, so it needs the precise path to stay off siblings.
+interface NestedWrite { root: unknown; fields: string[] | null; what: string; moved?: boolean; steps?: string[] }
+// A place a call argument borrows or moves, `arg` being the argument's index.
+interface ArgUse { arg: number; root: unknown; name: string; fields: string[] | null; steps: string[]; moved: boolean; via?: string }
+
+// One path a prefix of the other: the places overlap.
+function pathsOverlap(a: string[], b: string[]): boolean {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 export interface FnSig {
@@ -752,6 +769,9 @@ export class TypeChecker {
   // `nestedWrites` reads both to see a write buried inside a call argument.
   private writtenExprs = new WeakSet<Expr>();
   private closureCallWrites = new Map<Expr, CaptureInfo[]>();
+  // First arguments checkCallSiteExclusivity has seen: a method receiver found here was
+  // checked with its call's arguments, so checkMethodCallExpr need not check it again.
+  private siteCheckedFirstArgs = new WeakSet<Expr>();
   // Closure literals whose body moves a capture out — call-once (see CaptureInfo).
   private onceClosures = new Set<Expr>();
   private closureCalls = new Map<Expr, TypeKind>();
@@ -8543,6 +8563,7 @@ export class TypeChecker {
   // writing through); `movesExclusive: false` is for extern calls, where a `string`
   // argument to a `*u8` parameter is a borrow of its bytes, not a move.
   private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined, movesExclusive = true) {
+    if (args.length > 0) this.siteCheckedFirstArgs.add(args[0]);
     // `arg` is the index of the argument a place came from, so two places off one
     // argument (a closure's captures) are never compared with each other.
     type Use = { arg: number; root: unknown; name: string; fields: string[] | null; steps: string[]; span: Span | undefined; moved: boolean; via?: string; captured?: boolean };
@@ -8612,17 +8633,7 @@ export class TypeChecker {
     // `show` then read. A borrow of a binding's own slot survives, since writing the
     // binding cannot move the slot, which is what keeps `ctx.emit(ctx.fresh())` legal.
     // A write in an EARLIER argument is finished before the later borrow is taken.
-    const intoBuffer = (u: Use) => u.moved || u.via !== undefined || u.steps.some(s => !s.startsWith(".") || s.startsWith(".$"));
-    for (let j = 1; j < args.length; j++) {
-      const ws = this.nestedWrites(args[j]);
-      if (ws.length === 0) continue;
-      const hit = [...muts, ...shared].find(b => b.arg < j && !b.captured && intoBuffer(b)
-        && ws.some(w => w.root === b.root && overlaps(w.fields, b.fields)));
-      if (!hit) continue;
-      const w = ws.find(w => w.root === hit.root && overlaps(w.fields, hit.fields))!;
-      this.error(`'${hit.name}' is ${hit.moved ? "moved" : "borrowed"} by one argument and changed by ${w.what} in a later one`, args[j].span ?? sp,
-        `the later argument runs after the earlier one is taken and before the call, so the change can free what the call is handed: compute it into a local before the call`);
-    }
+    this.reportLaterArgWrites([...muts, ...shared].filter(b => !b.captured), args, sp);
     // Two `&mut` arguments where one place is an ancestor of the other (a container
     // and something derived from it, e.g. `v` and `v[0]`) are UB: mutating through
     // the container arg (a `push` that reallocs) frees the storage the descendant
@@ -8663,6 +8674,33 @@ export class TypeChecker {
     }
   }
 
+  // The nested-write half of checkCallSiteExclusivity: `uses` are the places the
+  // arguments borrow or move, `arg` indexing into `args`.
+  //
+  // A MOVE in a later argument (a nested call's by-value argument, a `move` closure
+  // literal) is a write that also hands the place to a new owner, who may free it before
+  // the call: `show(v[0], consume(v))` read the freed string. So against a move even a
+  // borrow of the binding's own slot conflicts, since the slot is emptied and what it
+  // owned is gone: `show2(v, consume(v))` passed a zeroed Vec off as the real one.
+  // A move path is pure fields, so comparing index-aware steps keeps `h.a[0]` clear of a
+  // move of `h.b`, which `fields` (null past an index) could not.
+  private reportLaterArgWrites(uses: ArgUse[], args: Expr[], sp: Span | undefined) {
+    const intoBuffer = (u: ArgUse) => u.moved || u.via !== undefined || u.steps.some(s => !s.startsWith(".") || s.startsWith(".$"));
+    const conflicts = (w: NestedWrite, b: ArgUse) => w.root === b.root
+      && (w.moved ? pathsOverlap(w.steps!, b.steps) : intoBuffer(b) && (w.fields === null || b.fields === null || pathsOverlap(w.fields, b.fields)));
+    for (let j = 1; j < args.length; j++) {
+      const ws = this.nestedWrites(args[j]);
+      if (ws.length === 0) continue;
+      const hit = uses.find(b => b.arg < j && ws.some(w => conflicts(w, b)));
+      if (!hit) continue;
+      const w = ws.find(w => conflicts(w, hit))!;
+      this.error(w.moved
+        ? `'${hit.name}' is ${hit.moved ? "moved" : "borrowed"} by one argument and moved out by a later one (${w.what})`
+        : `'${hit.name}' is ${hit.moved ? "moved" : "borrowed"} by one argument and changed by ${w.what} in a later one`, args[j].span ?? sp,
+        `the later argument runs after the earlier one is taken and before the call, so the change can free what the call is handed: compute it into a local before the call`);
+    }
+  }
+
   // The captures a call argument carries into the callee: a closure literal's own, or
   // those of every literal a closure binding was bound or assigned from
   // (VarInfo.closureSources). A captured closure binding passes on its own captures, since
@@ -8696,12 +8734,12 @@ export class TypeChecker {
   // closure value found inside the argument counts as running: a nested call may run it
   // while the argument is evaluated. The argument node itself is not a nested write (a
   // `&mut` argument is the exclusivity check's own `muts`), except a closure call.
-  private nestedWrites(arg: Expr): { root: unknown; fields: string[] | null; what: string }[] {
-    const out: { root: unknown; fields: string[] | null; what: string }[] = [];
+  private nestedWrites(arg: Expr): NestedWrite[] {
+    const out: NestedWrite[] = [];
     const seen = new Set<object>();
-    const atPlace = (e: Expr, what: string) => {
+    const atPlace = (e: Expr, what: string, moved = false) => {
       const p = this.exclusivityPlace(e);
-      if (p) out.push({ root: p.root, fields: p.fields, what });
+      if (p) out.push({ root: p.root, fields: p.fields, what, ...(moved ? { moved, steps: p.steps } : {}) });
     };
     const capWrites = (cap: CaptureInfo, what: string) => {
       const base = this.capturePlace(cap);
@@ -8720,12 +8758,24 @@ export class TypeChecker {
       if (!top && (e.kind === "Closure" || (e.kind === "Ident" && this.exprTypes.get(e)?.tag === "fn"))) {
         const name = e.kind === "Ident" ? `'${e.name}'` : "a closure";
         for (const c of this.closureArgCaptures(e)) if (!c.isMove && c.cap.mutatedInClosure) capWrites(c.cap, `running ${name}`);
+        // A `move` literal takes its non-Copy captures into the environment right here,
+        // as it is built, whether or not anything runs it.
+        if (e.kind === "Closure" && (e as { isMove?: boolean }).isMove) {
+          for (const cap of this.closureCaptures.get(e) ?? []) {
+            if (!cap.info || this.isCopyType(cap.type)) continue;
+            const p = this.capturePlace(cap);
+            out.push({ root: p.root, fields: p.fields, steps: p.steps, moved: true, what: `moving '${cap.name}' into a closure` });
+          }
+        }
         return;
       }
       // A literal's body runs later, not while the argument is evaluated.
       if (e.kind === "Closure") return;
       for (const cap of this.closureCallWrites.get(e) ?? []) capWrites(cap, `calling '${(e as { func?: string }).func ?? "a closure"}'`);
       if (!top && (this.writtenExprs.has(e) || this.autoBorrowed.get(e)?.mutable)) atPlace(e, `a mutation of '${this.describeExpr(e)}'`);
+      // A move out of a binding or a field. Moving an element is a clone, so it is no write.
+      // ident-ok: movedExprs holds the moved place nodes; the kind only filters out elements
+      if (!top && (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e)) atPlace(e, `a move of '${this.describeExpr(e)}'`, true);
       if (kind === "Assign") {
         const t = (n as { target: Expr }).target;
         atPlace(t, `an assignment to '${this.describeExpr(t)}'`);
@@ -8758,7 +8808,19 @@ export class TypeChecker {
   }
 
   private errorIfCaptureMoved(cap: CaptureInfo, fname: string, sp: Span | undefined) {
-    if (!cap.info?.moved) return;
+    const info = cap.info;
+    if (info && !info.moved && info.movedPlaces && info.movedPlaces.size > 0) {
+      // A field moved out since the closure was built: the body reads the emptied slot.
+      // A whole-value read ("") sees every moved field; a field read sees the one under it.
+      for (const path of cap.readPaths ?? []) {
+        const gone = path === "" ? [...info.movedPlaces][0]! : this.movedPlaceCovering(info, path);
+        if (!gone) continue;
+        this.error(`use of moved value '${cap.name}${gone}'`, sp,
+          `'${fname}' captures '${cap.name}' by reference and reads '${cap.name}${path}' when it runs, but '${cap.name}${gone}' was moved out earlier, so the closure would see an emptied field. Clone it at the point of transfer: '${cap.name}${gone}.clone()'.`);
+        return;
+      }
+    }
+    if (!info?.moved) return;
     this.error(`use of moved variable '${cap.name}'`, sp,
       `'${fname}' captures '${cap.name}' by reference and uses it when it runs, but ownership of '${cap.name}' was transferred earlier, so the closure would see an emptied value. Reassign '${cap.name}' first, or clone it at the point of transfer.`);
   }
@@ -9786,6 +9848,7 @@ export class TypeChecker {
     // with placeBaseDepth raised, because `p` is only the base of a narrower place.
     // Anything else names the value itself: an argument, a receiver, a return, a
     // print. Handing that on shows the zeroed field as if it were data.
+    if (this.placeBaseDepth === 0) this.eachCaptureOf(expr.name, cap => { (cap.readPaths ??= new Set()).add(""); });
     if (this.placeBaseDepth === 0 && info.movedPlaces && info.movedPlaces.size > 0) {
       const gone = [...info.movedPlaces][0]!;
       this.error(`'${expr.name}' is incomplete: '${expr.name}${gone}' was moved out of it`, sp,
@@ -10923,6 +10986,7 @@ export class TypeChecker {
       const place = this.staticFieldPath(expr);
       const rootInfo = place ? this.lookup(place.root) : null;
       if (place && rootInfo) {
+        this.eachCaptureOf(place.root, cap => { (cap.readPaths ??= new Set()).add(place.path); });
         const gone = this.movedPlaceCovering(rootInfo, place.path);
         if (gone) {
           this.error(`use of moved value '${place.root}${place.path}'`, sp,
@@ -11621,7 +11685,22 @@ export class TypeChecker {
       : { tag: "fn", params: paramTypes, ret: inferredRet });
   }
 
+  // Builtin methods (on string, Vec, HashMap, ...) are checked case by case and never reach
+  // checkCallSiteExclusivity, yet their receiver is taken before the arguments run just
+  // like a user method's: `v[0].startsWith(consume(v).toString())` read the string after
+  // `consume` freed it. So the receiver is checked against the arguments' nested writes
+  // here, unless a user-method path already checked it as its first argument.
   private checkMethodCallExpr(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
+    const t = this.checkMethodCallExprInner(expr, expected);
+    if (expr.args.length > 0 && !this.siteCheckedFirstArgs.has(expr.object)) {
+      const p = this.exclusivityPlace(expr.object);
+      // A string root is a name that is not a binding (a static call's type name).
+      if (p && typeof p.root === "object") this.reportLaterArgWrites([{ arg: 0, ...p, moved: false }], [expr.object, ...expr.args], expr.span);
+    }
+    return t;
+  }
+
+  private checkMethodCallExprInner(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
       // Receivers borrow implicitly.
