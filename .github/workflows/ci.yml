@@ -73,6 +73,10 @@ jobs:
       # macOS gets `leaks -atExit`; LeakSanitizer does not exist on darwin/arm64.
       - name: Leak ratchet
         run: bun run scripts/leak-check.ts --check
+      # Non-FFI unsafe may shrink, never grow. It sat outside CI and drifted 19 -> 186 in std
+      # unnoticed; sibling roots are absent here, which can only lower the counts.
+      - name: Unsafe census ratchet
+        run: bun scripts/corpus-census.ts --check
       # `milo build --sanitize` existed for a long time and nothing ran it over the corpus.
       # scripts/selfhost-asan.ts asks whether milo-self's OUTPUT is memory-safe; nobody asked
       # it of the reference compiler's output, so use-after-free, out-of-bounds and
