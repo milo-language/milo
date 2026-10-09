@@ -259,7 +259,7 @@ from `./milo check` on the named error test), the closing commit, and who found 
   container is a holder); and `let p = g.ptr(); schedulerYield()` in a task (the park walk reads
   the same list). `tests/errors/ptrGlobalCalleePush.milo`, `ptrInlineAliasMutArg`,
   `ptrUsedAfterSourceMoved`, `ptrEscapesIntoVec`, `ptrGlobalAcrossPark`. The callee-side
-  gap closed 2026-09-20 (backlog #43): a pointer parameter stored in a global is an error at
+  gap closed: a pointer parameter stored in a global is an error at
   the store (`ptrParamStoredInGlobal`, `ptrParamStoredInGlobalStruct`, `ptrParamPushedIntoGlobal`)
   and a pointer-returning call inherits its arguments' views (`ptrReturnedParamIsView`). Left,
   documented in [ownership-model.md](ownership-model.md): a pointer laundered through `as i64`.

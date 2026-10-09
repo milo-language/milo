@@ -198,7 +198,7 @@ A callee cannot launder the provenance either: storing a pointer parameter (or a
 struct or Vec carrying one) in a mutable global is an error at the store (`pointer
 parameter 'p' is stored in the global 'G', which outlives the buffer it points into`),
 and a call whose result carries a pointer inherits the views of its pointer arguments,
-so `let q = keep(v.ptr())` makes `q` a holder of `v` (closed 2026-09-20, backlog #43).
+so `let q = keep(v.ptr())` makes `q` a holder of `v`.
 `@externalLinkage` entry points are exempt from the store rule: their pointer
 parameters come from C, which owns them by contract. Remaining gaps, documented rather
 than checked: a pointer laundered through an integer (`G = p as i64`), and a copy of the
