@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-10-09 (fuzz:tasks template liveness gate; pattern-binding refs into closure captures probed and pinned; earlier: closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
+last-verified: 2026-10-09 (October sweep findings #12-#20 recorded; fuzz:tasks template liveness gate; pattern-binding refs into closure captures probed and pinned; earlier: closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -352,6 +352,31 @@ Not memory safety; listed because it is the row where the prover claimed more th
   was written through; fixed by taking `&mut`).
 - **Found by:** code in milojs that wrote `nativeValue(&mut st, ...)` inside a function taking
   `st: &Interp`, and noticed it compiled.
+
+## The October 2026 sweep: findings #12 to #20
+
+An audit, two hand-hunting rounds and the repaired `fuzz:tasks` found these on 2026-10-08/09.
+Every one was an unsafe-free program the checker accepted and ASan rejected (or one that read a
+wrong value from a moved or zeroed slot). Each is pinned by `tests/errors/` files named in its
+commit, with a safe-shape fixture beside them so the rule cannot over-reach silently.
+
+| # | Hole | Closed by |
+|---|---|---|
+| 12 | A global written through an indirect call (closure value, fn pointer), an implicit `Drop`, or C re-entry, while a borrow into it was live; the same gap let two OS threads race on a global | `b09af7a5` |
+| 13 | Calling a by-ref closure that writes a capture was not a write at the call site (a for-in over the capture, a sibling argument); a capture read after its variable moved | `6d0becfc` |
+| 14 | A later argument moved or wrote what an earlier argument borrowed (`show(v[0], consume(v))`), including builtin-method receivers and moved fields read by a closure | `8c521b1b` |
+| 15 | `&mut` arguments and `&mut self` calls inside a closure did not mark the capture written, and a writing closure passed as a value (`run(clr)`) was never checked against open borrows; this also broke the arena `read` freeze and task-scope sharing | `bfff4e55` |
+| 16 | Bounds checks compared the index and length truncated to 32 bits while the access used all 64: `v[-4294967295]` passed the check and wrote outside the buffer | `0e1717d6` |
+| 17 | `replace` and `swap` skipped the borrow, invalidation and range checks (`replace(s, replace(s, x))` double-freed a plain local) | `228fabad` |
+| 18 | A scoped task moved a borrowed binding through a nested `move` closure | `d172e519` |
+| 19 | `*h` on a `Heap` moved its contents out without marking `h` moved | `13825085` |
+| 20 | `Select` arms kept a raw channel pointer past the borrow, and `destroy` left the select usable; channel arms now retain the channel and `Select` frees itself in `Drop` | `5c88cf00` |
+
+The lesson repeats September's: each hole was a write or a move the aliasing model did not SEE
+(an indirect call, an implicit drop, a builtin outside the normal argument path), not a wrong
+rule. `fuzz:tasks` now has a `c-` family for the closure shapes and fails when any template stops
+producing programs that reach the rules (`c526e8f0`); four of its templates had been dead since
+the shard API went private, which is how #3/#4-shaped regressions could have gone ungated.
 
 ## What the compiler does not check, and what happens instead
 
