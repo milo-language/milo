@@ -26,7 +26,7 @@ from "std/os" import {
 from "std/openssl" import {
     SSL_CTX_check_private_key, SSL_CTX_free, SSL_CTX_new, SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_free,
     SSL_new, SSL_set_fd, SSL_shutdown, TLS_server_method, sslAcceptFd, sslReadFd,
-    sslWriteFd
+    sslWriteAllFd
 }
 from "std/platform" import {
     makeSockaddr,
@@ -71,8 +71,8 @@ impl TlsConn {
     // Write `data` through the TLS record layer. Returns the byte count OpenSSL accepted.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self._ssl as *u8, self._fd, data, data.len as i32)
-            if n < 0 {
+            let n = sslWriteAllFd(self._ssl as *u8, self._fd, data, data.len)
+            if n < 0 || (n == 0 && data.len > 0) {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
             return Result.Ok(n as i64)

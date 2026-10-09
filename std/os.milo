@@ -186,47 +186,63 @@ pub fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
 // Application code goes through the owning types (File, TcpStream, OwnedFd, Pty, Child);
 // std's own handles call these inside `unsafe`, vouching that they still own the fd.
 
-// One read(2): bytes read, 0 at EOF, <0 with errno set.
+// The most one read/write/recv/send call below asks for. macOS fails read(2) and
+// write(2) with EINVAL when the count exceeds INT_MAX, so writeFd's loop used to fail a
+// 2 GB write outright; Linux silently caps every call at this same value
+// (MAX_RW_COUNT). Clamping makes every host return a short count, which every caller
+// already loops on. Applied before the replay hook so a recording and a live run agree.
+fn ioChunk(len: i64): i64 {
+    if len > 2147479552 {
+        return 2147479552
+    }
+    return len
+}
+
+// One read(2): bytes read, 0 at EOF, <0 with errno set. At most 2147479552 bytes.
 @replayHooked
 @unsafe
 pub fn sysRead(fd: i32, buf: *u8, len: i64): i64 {
+    let n = ioChunk(len)
     unsafe {
         if replayOff() {
-            unsafe { return read(fd, buf, len) }
+            unsafe { return read(fd, buf, n) }
         }
-        return replayRead(fd, buf, len, false)
+        return replayRead(fd, buf, n, false)
     }
 }
 
-// One write(2): bytes written, <0 with errno set.
+// One write(2): bytes written, <0 with errno set. At most 2147479552 bytes.
 @replayHooked
 @unsafe
 pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64 {
+    let n = ioChunk(len)
     unsafe {
         if replayOff() {
-            unsafe { return write(fd, buf, len) }
+            unsafe { return write(fd, buf, n) }
         }
-        return replayWrite(fd, buf, len, false)
+        return replayWrite(fd, buf, n, false)
     }
 }
 
 // One socket read (recv on Windows, where a SOCKET is not a CRT fd).
 fn sysRecv(fd: i32, buf: *u8, len: i64): i64 {
+    let n = ioChunk(len)
     unsafe {
         if replayOff() {
-            return sockRead(fd, buf, len)
+            return sockRead(fd, buf, n)
         }
-        return replayRead(fd, buf, len, true)
+        return replayRead(fd, buf, n, true)
     }
 }
 
 // One socket write (send on Windows).
 fn sysSend(fd: i32, buf: *u8, len: i64): i64 {
+    let n = ioChunk(len)
     unsafe {
         if replayOff() {
-            return sockWrite(fd, buf, len)
+            return sockWrite(fd, buf, n)
         }
-        return replayWrite(fd, buf, len, true)
+        return replayWrite(fd, buf, n, true)
     }
 }
 

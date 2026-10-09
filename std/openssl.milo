@@ -267,3 +267,34 @@ pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     }
     return -1
 }
+
+// The largest count one SSL_read or SSL_write takes: their length is a C int, and
+// a 64-bit length cast to i32 wraps (2^32 + 5 bytes became a 5-byte write that
+// reported success). Every std caller with an i64 length clamps through this.
+pub fn sslChunk(len: i64): i32 {
+    if len > 2147483647 {
+        return 2147483647
+    }
+    if len < 0 {
+        return 0
+    }
+    return len as i32
+}
+
+// Write all `len` bytes, in chunks SSL_write can take. Returns `len`, or the failing
+// SSL_write's result (<= 0).
+@unsafe
+pub fn sslWriteAllFd(ssl: *u8, fd: i32, buf: *u8, len: i64): i64 {
+    var sent: i64 = 0
+    while sent < len {
+        var n: i32 = 0
+        unsafe {
+            n = sslWriteFd(ssl, fd, (buf as i64 + sent) as *u8, sslChunk(len - sent))
+        }
+        if n <= 0 {
+            return n as i64
+        }
+        sent += n as i64
+    }
+    return sent
+}

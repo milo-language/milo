@@ -1,0 +1,20 @@
+// @skip-os: win32
+// @expect: 5
+// @expect: 2147483647
+// @expect: 2147483647
+// @expect: 2147483647
+// @expect: 0
+// SSL_read/SSL_write take a C int length. std used to cast its i64 lengths with
+// `as i32`, which wraps: a 2^32 + 5 byte send became a 5-byte SSL_write that reported
+// success. sslChunk clamps instead, and the callers loop over the rest.
+from "std/openssl" import {
+    sslChunk
+}
+
+fn main(): void {
+    print(sslChunk(5))
+    print(sslChunk(2147483647))
+    print(sslChunk(2147483648))
+    print(sslChunk(4294967301))
+    print(sslChunk(-1))
+}

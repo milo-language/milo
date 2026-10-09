@@ -14,7 +14,7 @@ from "std/os" import {
 from "std/openssl" import {
     SSL_CTX_free, SSL_CTX_load_verify_locations, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl,
     SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, SSL_shutdown,
-    TLS_client_method, sslConnectFd, sslReadFd, sslWriteFd
+    TLS_client_method, sslConnectFd, sslReadFd, sslWriteAllFd
 }
 from "std/platform" import {
     makeSockaddr,
@@ -197,8 +197,8 @@ impl TlsStream {
     // Send `data` over the TLS connection. Returns the number of bytes sent.
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = sslWriteFd(self._ssl as *u8, self._fd, data, data.len as i32)
-            if n < 0 {
+            let n = sslWriteAllFd(self._ssl as *u8, self._fd, data, data.len)
+            if n < 0 || (n == 0 && data.len > 0) {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
             return Result.Ok(n as i64)

@@ -180,7 +180,7 @@ open(2) with a creation mode (ignored unless `flags` creates). The fd, or &lt;0.
 pub fn sysRead(fd: i32, buf: *u8, len: i64): i64
 ```
 
-One read(2): bytes read, 0 at EOF, &lt;0 with errno set.
+One read(2): bytes read, 0 at EOF, &lt;0 with errno set. At most 2147479552 bytes.
 
 ### `sysSocket`
 
@@ -205,7 +205,7 @@ Under replay no child exists; the recorded exit comes back.
 pub fn sysWrite(fd: i32, buf: *u8, len: i64): i64
 ```
 
-One write(2): bytes written, &lt;0 with errno set.
+One write(2): bytes written, &lt;0 with errno set. At most 2147479552 bytes.
 
 ### `writeFd`
 

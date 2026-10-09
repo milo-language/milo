@@ -13,7 +13,7 @@ from "std/os" import {
 }
 from "std/openssl" import {
     TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_new,
-    SSL_set1_host, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free,
+    SSL_set1_host, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, sslWriteAllFd, sslChunk, SSL_free,
     SSL_ctrl
 }
 from "std/crypto" import {
@@ -164,7 +164,7 @@ impl AsFd for WsConn {
 fn readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     unsafe {
         if ssl != 0 {
-            let n = sslReadFd(ssl as *u8, fd, buf, len as i32)
+            let n = sslReadFd(ssl as *u8, fd, buf, sslChunk(len))
             if n > 0 {
                 return n as i64
             }
@@ -258,7 +258,12 @@ impl WsConn {
             var payload: string = ""
             if payloadLen > 0 {
                 unsafe {
+                    // The length is the peer's to choose (up to 2^63), so a failed
+                    // allocation is an error to report, not a buffer to read into.
                     let buf = malloc(payloadLen)
+                    if buf == 0 as *u8 {
+                        return Result.Err("frame too large")
+                    }
                     if !readExact(self._fd, self._ssl, buf, payloadLen) {
                         free(buf)
                         return Result.Err("connection closed reading payload")
@@ -389,6 +394,9 @@ impl WsConn {
         let total = headerLen + maskBytes + payload.len
         unsafe {
             let frame = malloc(total)
+            if frame == 0 as *u8 {
+                return Result.Err("frame allocation failed")
+            }
             var pos: i64 = 0
 
             // byte 0: FIN + opcode
@@ -448,7 +456,7 @@ impl WsConn {
             while sent < total {
                 var n: i64 = 0
                 if ssl != 0 {
-                    let r = sslWriteFd(ssl as *u8, fd, (frame as i64 + sent) as *u8, (total - sent) as i32)
+                    let r = sslWriteFd(ssl as *u8, fd, (frame as i64 + sent) as *u8, sslChunk(total - sent))
                     if r <= 0 {
                         free(frame)
                         return Result.Err("SSL_write failed")
@@ -603,7 +611,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
         req += "Sec-WebSocket-Version: 13\r\n"
         req += "\r\n"
 
-        if sslWriteFd(ssl, fd, req, req.len as i32) <= 0 {
+        if sslWriteAllFd(ssl, fd, req, req.len) <= 0 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
             sysClose(fd)
