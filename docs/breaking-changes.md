@@ -39,6 +39,7 @@ shim is impossible: the point is that the old spellings stop compiling.
 | `Arena { id: 0, data: Vec.new(), ... }` as a placeholder | `Arena<T>.new()` |
 | `lib.handle` (`Lib`, std/dl) | private |
 | `lib.close()` on a borrowed `&Lib` | `close(self: Lib)` consumes it; a Lib that is never closed stays loaded, as before |
+| `stream.incoming()` borrowed the `TlsStream`, whose drop then freed the SSL state under the background pump | `incoming(self: TlsStream)` consumes it and the pump owns it; send any request before calling `incoming()` |
 | `mmapFile(f, size)` with `size` past the end of the file (reading the tail raised SIGBUS) | `Err`; pass at most `f.size()` |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)

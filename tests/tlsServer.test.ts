@@ -162,3 +162,32 @@ test.skipIf(!haveOpenssl)("serveRouterTls routes a parameterised path", () => {
   expect(curl(["--cacert", "ca.pem", `https://localhost:${PORT_ROUTER}/greet/milo`]))
     .toBe("hi milo");
 }, 120000);
+
+// incoming() consumes the stream and its pump owns the SSL state. Opening the channel in
+// a helper is the shape that used to free the SSL under the pump (the stream dropped
+// when the helper returned): it printed an empty body, or crashed under Guard Malloc.
+const INCOMING_SRC = `from "std/net" import { ip4 }
+from "std/fetch" import { TlsStream }
+from "std/sync" import { Channel }
+
+fn open(): Channel<string> {
+    let s = TlsStream.connectWithCA(ip4(127, 0, 0, 1), ${PORT_SERVE}, "localhost", "ca.pem")!
+    let _n = s.send("GET /hello HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n")!
+    return s.incoming()
+}
+
+fn main() {
+    var ch = open()
+    var body = ""
+    for chunk in ch {
+        body = body + chunk
+    }
+    print("BODY " + body)
+}
+`;
+
+test.skipIf(!haveOpenssl)("incoming() keeps the TLS state alive after the stream's scope ends", () => {
+  const bin = build("client_incoming", INCOMING_SRC);
+  const out = execFileSync(bin, [], { cwd: dir, encoding: "utf-8" });
+  expect(out).toContain("hello from milo tls");
+}, 120000);

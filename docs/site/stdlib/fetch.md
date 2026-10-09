@@ -154,15 +154,18 @@ closes it, so nothing is left behind to use after the handshake.
 #### `TlsStream.incoming`
 
 ```milo
-fn TlsStream.incoming(self: &TlsStream): Channel<string>
+fn TlsStream.incoming(self: TlsStream): Channel<string>
 ```
 
 Stream decrypted inbound bytes as an iterable channel, pumped on a green
 task — the uniform async-read API, TLS variant. Uses the SSL-aware read
 (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
 tls.incoming()`; the channel closes at EOF / on SSL error.
-LIFETIME: keep this TlsStream alive while consuming — the detached pump
-reads through its SSL handle; dropping it frees that state under the pump.
+Consumes the stream, so send any request first. The detached pump reads
+through the SSL state, so the pump has to own it: when incoming() only
+borrowed, dropping the stream ran SSL_read on a freed SSL. The connection
+closes when the pump ends (EOF, an SSL error, or the first chunk that
+arrives after every receiver is gone).
 
 #### `TlsStream.recv`
 

@@ -245,25 +245,27 @@ impl TlsStream {
     // task — the uniform async-read API, TLS variant. Uses the SSL-aware read
     // (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
     // tls.incoming()`; the channel closes at EOF / on SSL error.
-    // LIFETIME: keep this TlsStream alive while consuming — the detached pump
-    // reads through its SSL handle; dropping it frees that state under the pump.
-    fn incoming(self: &Self): Channel<string> {
+    // Consumes the stream, so send any request first. The detached pump reads
+    // through the SSL state, so the pump has to own it: when incoming() only
+    // borrowed, dropping the stream ran SSL_read on a freed SSL. The connection
+    // closes when the pump ends (EOF, an SSL error, or the first chunk that
+    // arrives after every receiver is gone).
+    fn incoming(self: TlsStream): Channel<string> {
         unsafe {
             let ch = Channel<string>.new(256)!
             let chPump = ch.clone() // pump task's owning handle; caller keeps `ch`
-            let ssl = self._ssl
-            let fd = self._fd
+            let stream = self
             // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
             // WANT_READ park path is dead code — one read would freeze the whole
             // scheduler. connect() sets this when called from a green task, but not
             // if it ran outside one, so enforce it here.
-            setNonblocking(fd)
+            setNonblocking(stream._fd)
             Task.spawn(move(): void => {
                 var buf: [u8; 4096] = [0; 4096]
                 while true {
                     var n: i32 = 0
                     unsafe {
-                        n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096)
+                        n = sslReadFd(stream._ssl as *u8, stream._fd, buf as *u8, 4096)
                     }
                     if n <= 0 {
                         break
