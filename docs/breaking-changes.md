@@ -16,6 +16,20 @@ Below 1.0 the MINOR is the breaking position: everything in this file shipped in
 `"milo": "^0.1.0"` in its `milo.json`. A release
 marker is added here each time a version is cut.
 
+## Handle and window fields are private; closing a handle consumes it (2026-10-09)
+
+The October soundness sweep found std types whose safe methods trusted fields any file
+could write. A `parallelMap` worker could widen its `Shard` (`m.len = 100000`) and `set`
+then wrote past the buffer; a `Shard` or `StrShard` literal pointed `set`/`byteAt` at any
+address. Every field of these types is now `_`-private, so only the declaring module can
+read, write or build one. A compat shim is impossible: the point is that the old
+spellings stop compiling.
+
+| was | now |
+|---|---|
+| `w.base`, `w.len`, `w.start`, `w.shatterId`, `w.index` (`Shard` fields), `StrShard`'s same plus `w.own` | private; `w.len()`, `w.start()`, `w.index()`, `w.ownLen()` |
+| `Shard { ... }` / `StrShard { ... }` literals | gone outside std/shard: windows come from `parallelMap`, `parallelMapWith`, `parallelScanStr` |
+
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
 
 A C fn pointer in a struct field already needed `unsafe` to call, but one in a local did

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 475 distinct messages across 613 programs the compiler must reject.
+Every error message the test suite pins: 478 distinct messages across 616 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -316,7 +316,10 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`expected two string arguments`](#expected-two-string-arguments)
 - [`expects 1 args, got 2`](#expects-1-args-got-2)
 - [`extern 'fcntl' declares 3 fixed parameters but C fixes only 2`](#extern-fcntl-declares-3-fixed-parameters-but-c-fixes-only-2)
+- [`field '_base' of 'Shard' is private to 'std/shard.milo'`](#field-base-of-shard-is-private-to-std-shard-milo)
+- [`field '_base' of 'StrShard' is private to 'std/shard.milo'`](#field-base-of-strshard-is-private-to-std-shard-milo)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
+- [`field '_len' of 'Shard' is private to 'std/shard.milo'`](#field-len-of-shard-is-private-to-std-shard-milo)
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
 - [`field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'`](#field-poolid-of-poolblock-is-private-to-std-pool-milo)
 - [`field '_ptr' of 'MappedMemory' is private to 'std/mem.milo'`](#field-ptr-of-mappedmemory-is-private-to-std-mem-milo)
@@ -8262,6 +8265,41 @@ fn main() {
 
 <sub>[tests/errors/variadicExternFixedArity.milo](https://github.com/milo-language/milo/blob/main/tests/errors/variadicExternFixedArity.milo)</sub>
 
+## `field '_base' of 'Shard' is private to 'std/shard.milo'` {#field-base-of-shard-is-private-to-std-shard-milo}
+
+Found by the October 2026 soundness sweep. With public fields a Shard could be built around any address and length, and its bounds-checked `set` then wrote wherever the literal pointed. Only std/shard may build a window.
+
+```milo skip
+from "std/shard" import {
+    Shard
+}
+
+fn main() {
+    var w: Shard<i64> = Shard { _base: 0 as *i64, _len: 1152921504606846976, _start: 0, _shatterId: 0, _index: 0 }
+    w.set(305419896, 7)
+    print(w.len())
+}
+```
+
+<sub>[tests/errors/shardForgedWindow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardForgedWindow.milo)</sub>
+
+## `field '_base' of 'StrShard' is private to 'std/shard.milo'` {#field-base-of-strshard-is-private-to-std-shard-milo}
+
+A StrShard built from a literal would read any address through `byteAt`. Only std/shard may build a window.
+
+```milo skip
+from "std/shard" import {
+    StrShard
+}
+
+fn main() {
+    let w = StrShard { _base: 4096 as *u8, _len: 100, _own: 100, _start: 0, _shatterId: 0, _index: 0 }
+    print(w.byteAt(5))
+}
+```
+
+<sub>[tests/errors/strShardForgedWindow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/strShardForgedWindow.milo)</sub>
+
 ## `field '_data' of 'Sealed' is private to 'std/seal.milo'` {#field-data-of-sealed-is-private-to-std-seal-milo}
 
 The seal forge path: swapping `_data` under a live Span would leave the span resolving against different bytes with the brand still matching. `_data` is file-private to std/seal.milo, so user code cannot reach it.
@@ -8277,6 +8315,32 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/sealedDataForged.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sealedDataForged.milo)</sub>
+
+## `field '_len' of 'Shard' is private to 'std/shard.milo'` {#field-len-of-shard-is-private-to-std-shard-milo}
+
+Found by the October 2026 soundness sweep. A worker widened its own window (`len` was a public field) and then wrote past it: `set` bounds-checks against the window's length, so the write landed past the end of the shattered Vec's buffer, a heap-buffer-overflow under --sanitize. Every Shard field is private now.
+
+```milo skip
+from "std/shard" import {
+    parallelMap, Shard
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..8 {
+        v.push(i)
+    }
+    let out = parallelMap(v, 2, move (w: Shard<i64>): Shard<i64> => {
+        var m = w
+        m._len = 100000
+        m.set(5000, 77)
+        return m
+    })
+    print(out.len)
+}
+```
+
+<sub>[tests/errors/shardWindowLenPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardWindowLenPrivate.milo)</sub>
 
 ## `field '_pid' of 'Child' is private to 'std/process` {#field-pid-of-child-is-private-to-std-process}
 

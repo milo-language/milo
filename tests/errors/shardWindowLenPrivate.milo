@@ -1,0 +1,22 @@
+// @error: field '_len' of 'Shard' is private to 'std/shard.milo'
+// Found by the October 2026 soundness sweep. A worker widened its own window
+// (`len` was a public field) and then wrote past it: `set` bounds-checks against the
+// window's length, so the write landed past the end of the shattered Vec's buffer, a
+// heap-buffer-overflow under --sanitize. Every Shard field is private now.
+from "std/shard" import {
+    parallelMap, Shard
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..8 {
+        v.push(i)
+    }
+    let out = parallelMap(v, 2, move (w: Shard<i64>): Shard<i64> => {
+        var m = w
+        m._len = 100000
+        m.set(5000, 77)
+        return m
+    })
+    print(out.len)
+}

@@ -82,11 +82,11 @@ from "std/sync" import {
 // is therefore rejected at the instantiation, where the element type is written.
 @copyOnly
 pub struct Shard<T> {
-    base: *T,
-    len: i64,
-    start: i64,
-    shatterId: i64,
-    index: i64,
+    _base: *T,
+    _len: i64,
+    _start: i64,
+    _shatterId: i64,
+    _index: i64,
 }
 
 // Fixed-size window: no push, no pop, no resize. The buffer's identity has to
@@ -94,12 +94,12 @@ pub struct Shard<T> {
 impl Shard<T> {
     // Elements in this window.
     fn len(self: &Self): i64 {
-        return self.len
+        return self._len
     }
 
     // Which window of the division this is, counting from 0.
     fn index(self: &Self): i64 {
-        return self.index
+        return self._index
     }
 
     // Where this window begins in the ORIGINAL buffer. Without it a worker can only
@@ -107,23 +107,23 @@ impl Shard<T> {
     // sample it is looking at has no way to find out, because a window's own indices
     // all start at 0. Global position of element `i` is `start() + i`.
     fn start(self: &Self): i64 {
-        return self.start
+        return self._start
     }
 
     // The element at `i` within THIS window. Bounds-checked against the window's own
     // length, so a stray index cannot reach a sibling window's elements.
     fn get(self: &Self, i: i64): T {
-        assert(i >= 0 && i < self.len, "shard: index out of range")
+        assert(i >= 0 && i < self._len, "shard: index out of range")
         unsafe {
-            return self.base[i]
+            return self._base[i]
         }
     }
 
     // Overwrite the element at `i` within this window. Bounds-checked the same way.
     fn set(self: &mut Self, i: i64, val: T): void {
-        assert(i >= 0 && i < self.len, "shard: index out of range")
+        assert(i >= 0 && i < self._len, "shard: index out of range")
         unsafe {
-            self.base[i] = val
+            self._base[i] = val
         }
     }
 
@@ -250,11 +250,11 @@ impl Shards<T> {
                     hi = total
                 }
                 var sh: Shard<T> = Shard {
-                    base: ((p as i64) + lo * sizeOf<T>()) as *T,
-                    len: hi - lo,
-                    start: lo,
-                    shatterId: self.shatterId,
-                    index: i,
+                    _base: ((p as i64) + lo * sizeOf<T>()) as *T,
+                    _len: hi - lo,
+                    _start: lo,
+                    _shatterId: self.shatterId,
+                    _index: i,
                 }
                 out.push(sh)
                 i += 1
@@ -277,8 +277,8 @@ impl Shards<T> {
         var ids: Vec<i64> = Vec.new()
         var indices: Vec<i64> = Vec.new()
         for w in returned {
-            ids.push(w.shatterId)
-            indices.push(w.index)
+            ids.push(w._shatterId)
+            indices.push(w._index)
         }
         let bad = weldVerdict(self.count, self.shatterId, ids, indices)
         assert(bad.len == 0, "shard: internal weld check failed: " + bad)
@@ -465,18 +465,18 @@ pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: move (S
 //     window that never came home is the same dangling pointer the Vec side refuses.
 
 pub struct StrShard {
-    base: *u8,
-    len: i64,
-    own: i64,
-    start: i64,
-    shatterId: i64,
-    index: i64,
+    _base: *u8,
+    _len: i64,
+    _own: i64,
+    _start: i64,
+    _shatterId: i64,
+    _index: i64,
 }
 
 impl StrShard {
     // Bytes in this window, including any overlap it was given.
     fn len(self: &Self): i64 {
-        return self.len
+        return self._len
     }
 
     // Bytes in this window BEFORE the overlap was added: the range no other window
@@ -488,24 +488,24 @@ impl StrShard {
     // `total / count` is wrong for exactly one window and a caller that re-derives
     // it silently miscounts there instead of failing.
     fn ownLen(self: &Self): i64 {
-        return self.own
+        return self._own
     }
 
     // Where this window begins in the original string.
     fn start(self: &Self): i64 {
-        return self.start
+        return self._start
     }
 
     // Which window of the division this is, counting from 0.
     fn index(self: &Self): i64 {
-        return self.index
+        return self._index
     }
 
     // The byte at `i` within this window, bounds-checked against its length.
     fn byteAt(self: &Self, i: i64): u8 {
-        assert(i >= 0 && i < self.len, "str shard: index out of range")
+        assert(i >= 0 && i < self._len, "str shard: index out of range")
         unsafe {
-            return self.base[i]
+            return self._base[i]
         }
     }
 
@@ -513,13 +513,13 @@ impl StrShard {
     // needle running past the end is simply not a match here; give the window an
     // overlap if you need to catch one that straddles the boundary.
     fn matchesAt(self: &Self, i: i64, needle: &string): bool {
-        if i < 0 || i + needle.len > self.len {
+        if i < 0 || i + needle.len > self._len {
             return false
         }
         var k: i64 = 0
         unsafe {
             while k < needle.len {
-                if self.base[i + k] != needle[k] {
+                if self._base[i + k] != needle[k] {
                     return false
                 }
                 k += 1
@@ -595,12 +595,12 @@ impl StrShards {
                     end = total
                 }
                 var sh: StrShard = StrShard {
-                    base: ((p as i64) + lo) as *u8,
-                    len: end - lo,
-                    own: hi - lo,
-                    start: lo,
-                    shatterId: self.shatterId,
-                    index: i,
+                    _base: ((p as i64) + lo) as *u8,
+                    _len: end - lo,
+                    _own: hi - lo,
+                    _start: lo,
+                    _shatterId: self.shatterId,
+                    _index: i,
                 }
                 out.push(sh)
                 i += 1
@@ -627,8 +627,8 @@ impl StrShards {
         var ids: Vec<i64> = Vec.new()
         var indices: Vec<i64> = Vec.new()
         for w in returned {
-            ids.push(w.shatterId)
-            indices.push(w.index)
+            ids.push(w._shatterId)
+            indices.push(w._index)
         }
         let bad = weldVerdict(self.count, self.shatterId, ids, indices)
         assert(bad.len == 0, "shard: internal weld check failed: " + bad)

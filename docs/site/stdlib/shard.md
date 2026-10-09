@@ -350,8 +350,6 @@ value; for a `string` it is a second owner of the same heap block, freed once by
 caller and once more when the buffer is welded back and dropped. A `Shard<string>`
 is therefore rejected at the instantiation, where the element type is written.
 
-Fields: `base: *T`, `len: i64`, `start: i64`, `shatterId: i64`, `index: i64`.
-
 #### `Shard.get`
 
 ```milo
@@ -401,8 +399,6 @@ all start at 0. Global position of element `i` is `start() + i`.
 ```milo
 pub struct StrShard
 ```
-
-Fields: `base: *u8`, `len: i64`, `own: i64`, `start: i64`, `shatterId: i64`, `index: i64`.
 
 #### `StrShard.byteAt`
 
