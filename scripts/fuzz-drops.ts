@@ -42,8 +42,10 @@ function rng(seed: number) {
   };
 }
 
-const PRELUDE = `from "std/runtime" import {\n    Task, Promise\n}\n\nvar sink2: i64 = 0\nvar made: i64 = 0
-var gone: i64 = 0
+// The counters are atomics because a Res moved into Promise.blocking drops on a worker
+// thread; plain globals there are a data race the checker rejects.
+const PRELUDE = `from "std/runtime" import {\n    Task, Promise\n}\nfrom "std/sync" import { AtomicI64 }\n\nvar sink2: i64 = 0\nlet made: AtomicI64 = AtomicI64.new(0)
+let gone: AtomicI64 = AtomicI64.new(0)
 
 struct Res {
     id: i64,
@@ -51,7 +53,7 @@ struct Res {
 
 impl Drop for Res {
     fn drop(self: &mut Self): void {
-        gone = gone + 1
+        gone.add(1)
     }
 }
 
@@ -66,7 +68,7 @@ struct Wrap {
 }
 
 fn newRes(n: i64): Res {
-    made = made + 1
+    made.add(1)
     return Res { id: n }
 }
 
@@ -138,8 +140,8 @@ fn main(): void {
     var sink: i64 = 0
 ${body.join("\n")}
     print(sink)
-    print(made)
-    print(gone)
+    print(made.load())
+    print(gone.load())
 }
 `;
 }

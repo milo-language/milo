@@ -200,7 +200,7 @@ test("every documented example actually provokes its own warning", () => {
   }
   rmSync(dir, { recursive: true, force: true });
   expect(wrong).toEqual([]);
-});
+}, 60_000); // type-checks every warning's example in turn; 5s was the bare default and ran out on a loaded runner
 
 // ---------------------------------------------------------------------------
 // `milo explain <name>` — the terminal's view of the same reference.

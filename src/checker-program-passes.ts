@@ -1339,6 +1339,9 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
       case "Closure": for (const p of n.params as { name: string }[]) s.add(p.name); break;
       // A parameter reassigned in the body no longer holds only what callers passed.
       case "Assign": if ((n.target as Expr).kind === "Ident") s.add((n.target as { name: string }).name); break;
+      // Every other node binds nothing. A binder missing above would let a local pass
+      // as the parameter it shadows, so a new binding form in ast.ts must be added here.
+      default: break;
     }
   };
 

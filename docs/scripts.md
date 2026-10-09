@@ -33,6 +33,7 @@ To change an entry, change that line — this table is a projection of it.
 | Script | Purpose |
 |---|---|
 | `scripts/abstraction-scan.ts` | Abstraction scanner: finds indirection that is not paying for itself — helpers with exactly one caller, and forwarders whose whole body is a call to something else. |
+| `scripts/agent_review.sh` | Cross-model / multi-persona code review driver. |
 | `scripts/asan-sweep.ts` | Is the code the MAIN compiler generates memory-safe? |
 | `scripts/audit-extern-returns.ts` | Audit every `extern fn` in std/ against the real C headers — no annotations needed. |
 | `scripts/build.sh` | Build a standalone, self-contained milo binary. |

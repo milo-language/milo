@@ -288,7 +288,9 @@ test.skipIf(!lldb)("under lldb, a breakpoint on miloReplayStop stops at the reco
   expect(r.stdout).toContain("stop reason = breakpoint 1.1");
   expect(r.stdout).toMatch(/frame #0: .*miloReplayStop/);
   expect(r.stdout).toMatch(/frame #1: .*noteConsumed/);
-});
+  // lldb's launch alone can take several seconds on a cold CI runner; the default 5s test
+  // timeout killed it mid-`run` while the spawn itself was still allowed 60s.
+}, 90_000);
 
 test("with neither variable set the IO hooks are inert: live reads, no trace", () => {
   writeFileSync(join(dir, "a.txt"), "live one\n");

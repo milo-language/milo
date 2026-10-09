@@ -93,7 +93,7 @@ const NOT_MEMBERS = new Set(["json"]);
 // `expr.method === "x"` comparisons and the `[...].includes(expr.method)` lists.
 function dispatchedNames(): string[] {
   const src = readFileSync(join(import.meta.dir, "..", "src", "checker.ts"), "utf-8").split("\n");
-  const start = src.findIndex(l => l.includes("private checkMethodCallExpr("));
+  const start = src.findIndex(l => l.includes("private checkMethodCallExprInner("));
   expect(start).toBeGreaterThan(-1);
   let end = src.length;
   for (let i = start + 1; i < src.length; i++) {
