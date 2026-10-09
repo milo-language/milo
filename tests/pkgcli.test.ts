@@ -570,8 +570,6 @@ describe("git sources (local file:// remote, still no network)", () => {
   });
 });
 
-// SKIPPED — needs a real remote. `milo pkg add github.com/...` over HTTPS, tarball
-// download + #sha256= verification, and `milo pkg publish`'s tag push are the only
-// paths not covered above; the git transport is the only difference from the
-// file:// tests, and it belongs to git.
-test.skip("network: github/tarball fetch and publish --push", () => {});
+// Not covered here (needs a real remote): `milo pkg add github.com/...` over HTTPS,
+// tarball download + #sha256= verification, and `milo pkg publish`'s tag push. The git
+// transport is the only difference from the file:// tests above, and it belongs to git.
