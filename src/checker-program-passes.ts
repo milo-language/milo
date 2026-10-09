@@ -1185,7 +1185,7 @@ function globalWriteSummary(host: ProgramPassHost, program: Program, view: Progr
   };
   for (const [name, f] of fns) {
     // Parameters are dropped by the callee when it does not move them on.
-    const paramDrops = (host.functions.get(name)?.params ?? []).flatMap(p => implicit.dropFnsOf(p.type));
+    const paramDrops = implicit.paramDropsOf(name);
     const reentry = implicit.reentersMilo(f) ? [FOREIGN] : [];
     summarize(name, f.body, new Set<string>(f.params.map(p => p.name)), { fn: name, shadow: new Set() }, [...paramDrops, ...reentry]);
   }
@@ -1242,7 +1242,8 @@ function globalWriteSummary(host: ProgramPassHost, program: Program, view: Progr
 //     value, the container a method empties), and each of those expressions carries the
 //     value's type. Over-approximate in the other direction: merely naming such a value
 //     counts as dropping it. A closure value or interface value hides what it owns, so
-//     it counts as dropping whatever any closure captures, or any Drop type at all.
+//     it counts as dropping whatever any `move` closure captures (narrowed to the literals it can
+//     be, where those are known), or any Drop type at all.
 export const INDIRECT = "<indirect>";
 // Foreign code may call back into any `@externalLinkage` fn while it runs.
 export const FOREIGN = "<foreign>";
@@ -1278,6 +1279,8 @@ interface ImplicitCalls {
   // Records the names a binder node introduces; every walk calls it on every node.
   enter(n: object, scope: Scope): void;
   dropFnsOf(ty: TypeKind): string[];
+  // What a fn's by-value parameters may drop, narrowed for fn-typed ones.
+  paramDropsOf(name: string): string[];
   // The parameter env a direct call passes its callee, or undefined when the arguments
   // do not line up with the parameters (the callee's own sets then apply).
   envFor(callee: string, call: object, scope: Scope): Map<string, Values> | undefined;
@@ -1306,10 +1309,14 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
     (instances.get(key) ?? instances.set(key, []).get(key)!).push(name);
   }
 
+  // Only a `move` closure owns its captures: a by-reference closure's environment holds
+  // pointers into the building frame, so dropping it runs no capture's Drop.
+  const ownedDropTypes = (clo: Expr): string[] => {
+    if (!(clo as { isMove?: boolean }).isMove) return [];
+    return (host.closureCaptures.get(clo) ?? []).flatMap(c => [...host.dropTypesIn(c.type)].filter(t => !t.startsWith("<")));
+  };
   const captured = new Set<string>();
-  for (const caps of host.closureCaptures.values()) for (const c of caps) {
-    for (const t of host.dropTypesIn(c.type)) if (!t.startsWith("<")) captured.add(t);
-  }
+  for (const clo of host.closureCaptures.keys()) for (const t of ownedDropTypes(clo)) captured.add(t);
   const memo = new WeakMap<TypeKind, string[]>();
   const dropFnsOf = (ty: TypeKind): string[] => {
     const hit = memo.get(ty);
@@ -1327,6 +1334,16 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
   const isFnType = (t: TypeKind | undefined): boolean =>
     !!t && (t.tag === "fn" || t.tag === "cfn" || ((t.tag === "ref" || t.tag === "ptr") && isFnType(t.inner)));
   const isFnTyped = (e: Expr) => isFnType(host.exprTypes.get(e));
+
+  // The Drop fns a closure VALUE may run when it dies, when we know which literals it can
+  // be: only what those literals own. Named fns own nothing. Without this, every closure
+  // in a program "dropped" whatever any move closure anywhere captured, which rejected
+  // `readFile` on a worker thread in dapweb because std's signal pump captures a SignalPipe.
+  const closureDrops = (ids: Iterable<string>): string[] => {
+    const types = new Set<string>();
+    for (const id of ids) { const c = closureById.get(id); if (c) for (const t of ownedDropTypes(c)) types.add(t); }
+    return [...types].flatMap(t => byType.has(t) ? [byType.get(t)!] : []);
+  };
 
   const enter = (node: object, scope: Scope) => {
     const n = node as Record<string, unknown> & { kind?: string };
@@ -1406,8 +1423,20 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
     // list is needed to stay closed.
     if (iface) for (const name of fns.keys()) if (name.endsWith(`$${iface.methodName}`)) out.push(name);
     const ty = host.exprTypes.get(n);
-    if (ty) out.push(...dropFnsOf(ty));
+    if (n.kind === "Closure") { const id = closureIds.get(n); out.push(...(id ? closureDrops([id]) : ty ? dropFnsOf(ty) : [])); }
+    else if (n.kind === "Ident" && ty && isFnType(ty)) { const v = valuesOf(n, scope); out.push(...(v === null ? dropFnsOf(ty) : closureDrops(v))); }
+    else if (ty) out.push(...dropFnsOf(ty));
     return out;
+  };
+  // What a fn's by-value parameters may drop when they die in its body. A fn-typed
+  // parameter holds only what its call sites pass, when that set is known.
+  const paramDropsOf = (name: string): string[] => {
+    const params = host.functions.get(name)?.params ?? [];
+    const vals = paramValues.get(name);
+    return params.flatMap((p, j) => {
+      const v = vals?.[j];
+      return isFnType(p.type) && v ? closureDrops(v) : dropFnsOf(p.type);
+    });
   };
   // Argument i of a direct call lines up with parameter i, or i+1 for a method call
   // whose receiver is params[0]; anything else is -1 and stays fail closed.
@@ -1531,7 +1560,7 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
   // while no entry could park; once a napi entry could, `pthread_mutex_destroy` parked.
   const reentersMilo = (f: Function) =>
     !!f.isExtern && (!host.fnDeclaredInStd(f) || f.name === "dlopen" || f.name === "dlclose");
-  const model = { implicitTargets, isIndirect, enter, dropFnsOf, envFor, fnValues, closureIds, closureById, closureScope, reachable, reentersMilo };
+  const model = { implicitTargets, isIndirect, enter, dropFnsOf, paramDropsOf, envFor, fnValues, closureIds, closureById, closureScope, reachable, reentersMilo };
   implicitCache.set(view, model);
   return model;
 }

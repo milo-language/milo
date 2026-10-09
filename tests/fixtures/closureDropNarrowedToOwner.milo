@@ -1,0 +1,39 @@
+// A closure value drops only what it owns. `pump` is a move closure that owns a `Pipe`,
+// whose drop writes the global `opened`; `runIt` takes an unrelated by-ref closure by
+// value and runs on a worker thread. The thread check used to assume any closure value
+// could drop anything any move closure captured, so it saw `opened` raced through
+// `runIt` and rejected this (dapweb's readFile on a worker thread, via std's SignalPipe).
+from "std/runtime" import { Promise }
+
+var opened: i64 = 0
+
+struct Pipe {
+    id: i64,
+}
+
+impl Drop for Pipe {
+    fn drop(self: &mut Self): void {
+        opened = opened - 1
+    }
+}
+
+fn runIt(f: () => i64): i64 {
+    return f()
+}
+
+fn work(): i64 {
+    let base = 40
+    return runIt((): i64 => base + 2)
+}
+
+pub fn main(): i32 {
+    opened = 1
+    let p = Pipe { id: 7 }
+    let pump = move(): i64 => p.id
+    print(pump())
+    let r = Promise.blocking(move(): i64 => work())
+    print(r.await()!)
+    return 0
+}
+// @expect: 7
+// @expect: 42
