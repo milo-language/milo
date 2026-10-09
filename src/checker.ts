@@ -8146,6 +8146,12 @@ export class TypeChecker {
             this.touchMoveState(info); info.moved = true;
             this.unfreeze(info);
           }
+          // The move reaches the binding through every enclosing closure that captured it,
+          // exactly as a `consume(x)` written in the nested body would. Without this an
+          // outer by-reference closure (a scoped task, a Task.scope body) looked like a
+          // mere reader of `x` while it handed `x` to a `move` closure that frees it, and
+          // checkTaskScopes let a sibling task keep borrowing it.
+          this.eachCaptureOf(cap.name, c => { c.consumedInClosure = true; });
         }
       }
     }

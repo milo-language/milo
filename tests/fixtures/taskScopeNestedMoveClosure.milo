@@ -1,0 +1,24 @@
+// A scoped task may move a binding into a nested `move` closure when no sibling task
+// touches it: the move then belongs to that one task, like a direct `consume(w)`.
+from "std/runtime" import { Task, schedulerYield }
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["aaa".clone(), "bbb".clone()]
+    var w: Vec<string> = ["ccc".clone()]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        s.spawn(() => {
+            let t = Task.spawn(move() => { print(w.len) })
+            t.join()
+        })
+    })
+    return 0
+}
+// @expect: aaa
+// @expect: 1
+// @expect: bbb

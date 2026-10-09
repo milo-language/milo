@@ -1,0 +1,23 @@
+// @error: 'v' is borrowed by a scoped task and written by the Task.scope body
+// The scope body itself moves 'v' into a `move` closure (reaching it only through a
+// by-reference closure inside that move closure) while a scoped task iterates it.
+from "std/runtime" import { Task, schedulerYield }
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        schedulerYield()
+        let t = Task.spawn(move () => {
+            let h = () => { print(v.len) }
+            h()
+        })
+        t.join()
+    })
+    return 0
+}

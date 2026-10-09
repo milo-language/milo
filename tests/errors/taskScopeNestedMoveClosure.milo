@@ -1,0 +1,22 @@
+// @error: 'v' is borrowed by a scoped task and written by the Task.scope body
+// A scoped task hands 'v' to a nested `move` closure, which frees it when that task ends,
+// while a sibling task is still iterating 'v' across a park. The nested move used to be
+// invisible to the task-scope rules, so this compiled to a use-after-free.
+from "std/runtime" import { Task, schedulerYield }
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaa".clone(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".clone()]
+    Task.scope((s) => {
+        s.spawn(() => {
+            for x in v {
+                schedulerYield()
+                print(x)
+            }
+        })
+        s.spawn(() => {
+            let t = Task.spawn(move () => { print(v.len) })
+            t.join()
+        })
+    })
+    return 0
+}
