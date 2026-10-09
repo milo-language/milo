@@ -75,7 +75,7 @@ impl Value {
     // different arena.
     fn handle(self: &Self, strings: &Arena<string>): Handle<string> {
         return Handle {
-            arenaId: strings.id, index: self.index(), generation: self.generation()
+            arenaId: strings.id(), index: self.index(), generation: self.generation()
         }
     }
 
@@ -113,8 +113,7 @@ fn totalStringBytes(strings: &Arena<string>, arr: &Vec<Value>): i64 {
         }
         total = total + (arenaWith(strings, v.handle(strings), (s: &string): i64 => {
             return s.len
-        }
-        ) ?? 0)
+        }) ?? 0)
     }
     return total
 }

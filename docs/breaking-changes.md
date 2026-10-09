@@ -33,6 +33,7 @@ spellings stop compiling.
 | `dbFinalize(v[i])` / `dbClose(v[i])` on a handle kept in a Vec | keep `Vec<Option<Statement>>` and assign `v[i] = Option.None`: the old handle drops, which finalizes or closes it |
 | `ws.ssl` (`WsConn`), `conn.ssl` (`TlsConn`), `listener.ctx` (`TlsListener`), `stream.ssl`, `stream.ctx` (`TlsStream`) | private; `ws.tlsHandle()` still reads a WsConn's handle for `WsConn.view` |
 | `ws.close()` left the fd number and TLS state in place | it frees them and resets the handles, so a later send or recv fails instead of reaching a reused descriptor |
+| `arena.id`, `arena.data`, `arena.gens`, `arena.freeList`, `arena.live` (`Arena`), `id`/`data` on `GrowOnlyArena` and `FrozenArena` | private; `arena.id()`, `arena.len()`, `arena.handles()`. `Handle`'s fields stay public: a forged handle is checked like a stale one |
 
 ## Making and calling a C fn pointer needs `unsafe` (2026-10-09)
 

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 481 distinct messages across 619 programs the compiler must reject.
+Every error message the test suite pins: 482 distinct messages across 620 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -319,6 +319,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field '_base' of 'Shard' is private to 'std/shard.milo'`](#field-base-of-shard-is-private-to-std-shard-milo)
 - [`field '_base' of 'StrShard' is private to 'std/shard.milo'`](#field-base-of-strshard-is-private-to-std-shard-milo)
 - [`field '_data' of 'Sealed' is private to 'std/seal.milo'`](#field-data-of-sealed-is-private-to-std-seal-milo)
+- [`field '_gens' of 'Arena' is private to 'std/arena.milo'`](#field-gens-of-arena-is-private-to-std-arena-milo)
 - [`field '_len' of 'Shard' is private to 'std/shard.milo'`](#field-len-of-shard-is-private-to-std-shard-milo)
 - [`field '_pid' of 'Child' is private to 'std/process`](#field-pid-of-child-is-private-to-std-process)
 - [`field '_poolId' of 'PoolBlock' is private to 'std/pool.milo'`](#field-poolid-of-poolblock-is-private-to-std-pool-milo)
@@ -8318,6 +8319,30 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/sealedDataForged.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sealedDataForged.milo)</sub>
+
+## `field '_gens' of 'Arena' is private to 'std/arena.milo'` {#field-gens-of-arena-is-private-to-std-arena-milo}
+
+With a public generation table a caller could reset a freed slot to generation 1, which got a recycled arena past the freeze refusal: the frozen `get` then answered a stale handle with whatever value now sat in the reused slot. Every Arena field is private now.
+
+```milo skip
+from "std/arena" import {
+    Arena
+}
+
+fn main(): void {
+    var a = Arena<i64>.new()
+    let old = a.alloc(1)
+    let _ = a.free(old)
+    let _reuse = a.alloc(2)
+    a._gens[0] = 1
+    match a.freeze() {
+        Result.Ok(f) => print(f.get(old)),
+        Result.Err(_) => print("refused"),
+    }
+}
+```
+
+<sub>[tests/errors/arenaGensPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arenaGensPrivate.milo)</sub>
 
 ## `field '_len' of 'Shard' is private to 'std/shard.milo'` {#field-len-of-shard-is-private-to-std-shard-milo}
 

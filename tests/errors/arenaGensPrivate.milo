@@ -1,0 +1,20 @@
+// @error: field '_gens' of 'Arena' is private to 'std/arena.milo'
+// With a public generation table a caller could reset a freed slot to generation 1,
+// which got a recycled arena past the freeze refusal: the frozen `get` then answered a
+// stale handle with whatever value now sat in the reused slot. Every Arena field is
+// private now.
+from "std/arena" import {
+    Arena
+}
+
+fn main(): void {
+    var a = Arena<i64>.new()
+    let old = a.alloc(1)
+    let _ = a.free(old)
+    let _reuse = a.alloc(2)
+    a._gens[0] = 1
+    match a.freeze() {
+        Result.Ok(f) => print(f.get(old)),
+        Result.Err(_) => print("refused"),
+    }
+}

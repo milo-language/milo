@@ -13,12 +13,6 @@
 // @expect: 70
 // @expect: 0
 // @expect: 0
-// @expect: true
-// @expect: 0
-// @expect: 0
-// @expect: true
-// @expect: 1
-// @expect: 0
 // @expect: false
 // @expect: 0
 // @expect: false
@@ -101,31 +95,8 @@ pub fn main(): i32 {
     let _ = arenaFree(&mut arena, later)
     print(arena.len())
 
-    // Force the otherwise impractical generation-exhaustion boundary. Public
-    // struct fields make this a fixture-only way to verify retirement behavior.
-    var retirement = Arena<i64>.new()
-    let initial = arenaAlloc(&mut retirement, 1)
-    retirement.gens[initial.index as i64] = 2147483647
-    let exhausted: Handle<i64> = Handle {
-        arenaId: retirement.id,
-        index: initial.index,
-        generation: 2147483647,
-    }
-    print(arenaFree(&mut retirement, exhausted))
-    match arenaGet(retirement, exhausted) {
-        Option.Some(_value) => {
-            print(-1)
-        }
-        Option.None => {
-            print(0)
-        }
-    }
-    print(retirement.handles().len)
-    let fresh = arenaAlloc(&mut retirement, 2)
-    print(fresh.index != exhausted.index)
-    print(retirement.len())
-    let _ = arenaFree(&mut retirement, fresh)
-    print(retirement.len())
+    // The generation-exhaustion boundary needs the private generation table, so it is
+    // tested from inside std/arena by tests/arenaRetirement.test.ts.
 
     // A forged handle carrying the free slot's internal negative generation is
     // still rejected by every accessor, and none of its callbacks may execute.
@@ -133,9 +104,10 @@ pub fn main(): i32 {
     let onceLive = freed.alloc(7)
     let _ = freed.free(onceLive)
     let forged: Handle<i64> = Handle {
-        arenaId: freed.id,
+        arenaId: onceLive.arenaId,
         index: onceLive.index,
-        generation: freed.gens[onceLive.index as i64],
+        // Freeing generation 1 stores -(1 + 1): a free slot's generation is negative.
+        generation: -2,
     }
     print(freed.valid(forged))
     match freed.get(forged) {

@@ -76,41 +76,42 @@ pub struct Handle<T> {
 }
 
 // A pool of T values addressed by generational Handle<T> rather than by
-// reference. Allocation appends to `data` or reuses a slot from `freeList`;
+// reference. Allocation appends to `_data` or reuses a slot from `_freeList`;
 // every operation is O(1) and none of them can dangle.
 //
-// The safety of a handle rests on two checks, one per field pair:
+// The safety of a handle rests on two checks, one per field pair. Every field is
+// private, so only this file can break them:
 //
-//   `id`    — a per-process identity stamped into every handle this arena
+//   `_id`   — a per-process identity stamped into every handle this arena
 //             hands out, so a handle from a DIFFERENT arena (or from this one
 //             before a clear) is rejected outright instead of indexing into
 //             unrelated memory.
-//   `gens`  — one counter per slot, parallel to `data`, bumped on every free.
+//   `_gens` — one counter per slot, parallel to `_data`, bumped on every free.
 //             A handle carries the generation current when it was made, so a
 //             read through a freed-and-reused slot mismatches and yields None.
 //             A slot that reaches i32 max is retired, never wrapped, so the
 //             counter cannot alias an old handle by rolling over.
 //
 // Memory model worth knowing before you build on it: freeing recycles a slot
-// but never shrinks `data`, so a long-lived arena holds its PEAK footprint for
+// but never shrinks `_data`, so a long-lived arena holds its PEAK footprint for
 // as long as it lives. `clear` is the only thing that gives storage back.
 //
 // Nothing here is a garbage collector. `free` is logical deletion — it marks a
 // slot dead so the generation check can catch stale handles. The arena's actual
-// memory is owned by `data` and released when the arena drops, like any other
+// memory is owned by `_data` and released when the arena drops, like any other
 // Milo value. If your object graph has cycles, reclaiming them is a sweep you
 // write yourself over `handles()`.
 pub struct Arena<T> {
-    id: i64,
-    data: Vec<T>,
-    gens: Vec<i32>,
-    freeList: Vec<i32>,
-    live: i64,
+    _id: i64,
+    _data: Vec<T>,
+    _gens: Vec<i32>,
+    _freeList: Vec<i32>,
+    _live: i64,
 }
 // free() generation-checks the handle and returns before the decrement, so no valid
 // double-free ever reaches `live = live - 1`. Stating it on the type is what lets
 // arenaLen's `ensures result >= 0` be discharged instead of assumed.
-invariant live >= 0
+invariant _live >= 0
 
 // Arena creation may happen on Promise.blocking workers, so identity allocation
 // uses the compiler's seq-cst atomic primitive rather than a racy global increment.
@@ -123,43 +124,43 @@ pub fn arenaNew<T>(): Arena<T> {
         id = _atomicAddI64((nextArenaId.addrOf()) as *u8, 1)
     }
     var a: Arena<T> = Arena {
-        id: id,
-        data: Vec.new(),
-        gens: Vec.new(),
-        freeList: Vec.new(),
-        live: 0,
+        _id: id,
+        _data: Vec.new(),
+        _gens: Vec.new(),
+        _freeList: Vec.new(),
+        _live: 0,
     }
     return a
 }
 
 // Insert a value and return a handle to it.
 pub fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T>
-ensures a.live == old(a.live) + 1
+ensures a._live == old(a._live) + 1
 {
-    if a.freeList.len > 0 {
-        let fi = a.freeList[a.freeList.len - 1]
-        a.freeList.pop()!
+    if a._freeList.len > 0 {
+        let fi = a._freeList[a._freeList.len - 1]
+        a._freeList.pop()!
         let idx = fi as i64
-        a.data[idx] = val
+        a._data[idx] = val
         // A negative generation denotes a reusable free slot. Restore its
         // positive generation before publishing the new handle.
-        a.gens[idx] = -a.gens[idx]
-        let gen = a.gens[idx]
-        a.live += 1
+        a._gens[idx] = -a._gens[idx]
+        let gen = a._gens[idx]
+        a._live += 1
         var h: Handle<T> = Handle {
-            arenaId: a.id, index: fi, generation: gen
+            arenaId: a._id, index: fi, generation: gen
         }
         return h
     }
-    let idx = a.data.len
+    let idx = a._data.len
     // Handle indices stay compact without allowing a narrowing conversion to
     // silently manufacture a negative or aliased slot number.
     assert(idx <= 2147483647, "arena slot capacity exceeded")
-    a.data.push(val)
-    a.gens.push(1)
-    a.live += 1
+    a._data.push(val)
+    a._gens.push(1)
+    a._live += 1
     var h: Handle<T> = Handle {
-        arenaId: a.id, index: idx as i32, generation: 1
+        arenaId: a._id, index: idx as i32, generation: 1
     }
     return h
 }
@@ -167,48 +168,48 @@ ensures a.live == old(a.live) + 1
 // Check whether a handle is still valid.
 @mustUse
 pub fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    return a.gens[idx] > 0 && a.gens[idx] == h.generation
+    return a._gens[idx] > 0 && a._gens[idx] == h.generation
 }
 
 // Free a slot, bumping its generation so stale handles are detected. A slot at
 // maximum generation is retired rather than wrapped back onto an old handle.
 @mustUse
 pub fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool
-ensures a.live <= old(a.live)
+ensures a._live <= old(a._live)
 {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return false
     }
     // Never wrap a generation back onto a stale handle. An exhausted slot is
     // represented by zero and retired permanently. Reusable free generations
     // are negative so every accessor rejects them without another side table.
-    if a.gens[idx] < 2147483647 {
-        a.gens[idx] = -(a.gens[idx] + 1)
-        a.freeList.push(h.index)
+    if a._gens[idx] < 2147483647 {
+        a._gens[idx] = -(a._gens[idx] + 1)
+        a._freeList.push(h.index)
     } else {
-        a.gens[idx] = 0
+        a._gens[idx] = 0
     }
-    a.live -= 1
+    a._live -= 1
     return true
 }
 
@@ -218,39 +219,39 @@ ensures a.live <= old(a.live)
 // carries Drop or @noCopy has no sound copy: this is rejected for it, use arenaRead.
 @copyOut
 pub fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return Option.None
     }
     let idx = h.index as i64
     if idx < 0 {
         return Option.None
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return Option.None
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return Option.None
     }
-    return Option.Some(a.data[idx])
+    return Option.Some(a._data[idx])
 }
 
 // Overwrite the value at a handle. Returns false if the handle is stale.
 @mustUse
 pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return false
     }
-    a.data[idx] = val
+    a._data[idx] = val
     return true
 }
 
@@ -261,20 +262,20 @@ pub fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
 @mustUse
 @copyOut
 pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return false
     }
-    a.data[idx] = f(a.data[idx])
+    a._data[idx] = f(a._data[idx])
     return true
 }
 
@@ -283,20 +284,20 @@ pub fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
 // does not call f) if the handle is stale. This is the zero-copy alternative
 // to arenaGet for large T — read just the field(s) you need inside f.
 pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return Option.None
     }
     let idx = h.index as i64
     if idx < 0 {
         return Option.None
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return Option.None
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return Option.None
     }
-    return Option.Some(f(a.data[idx]))
+    return Option.Some(f(a._data[idx]))
 }
 
 // Read via borrow with a VOID callback — the same zero-copy read as arenaWith
@@ -314,20 +315,20 @@ pub fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
 // whether generational safety gets used at all.
 @mustUse
 pub fn arenaRead<T>(a: &Arena<T>, h: Handle<T>, f: (&T) => void): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return false
     }
-    f(a.data[idx])
+    f(a._data[idx])
     return true
 }
 
@@ -337,20 +338,20 @@ pub fn arenaRead<T>(a: &Arena<T>, h: Handle<T>, f: (&T) => void): bool {
 // large or you only touch a field or two.
 @mustUse
 pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
     if idx < 0 {
         return false
     }
-    if idx >= a.data.len {
+    if idx >= a._data.len {
         return false
     }
-    if a.gens[idx] <= 0 || a.gens[idx] != h.generation {
+    if a._gens[idx] <= 0 || a._gens[idx] != h.generation {
         return false
     }
-    f(&mut a.data[idx])
+    f(&mut a._data[idx])
     return true
 }
 
@@ -358,7 +359,7 @@ pub fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): b
 pub fn arenaLen<T>(a: &Arena<T>): i64
 ensures result >= 0
 {
-    return a.live
+    return a._live
 }
 
 // Drop every value and release the backing storage in one go. Per-slot free()
@@ -369,17 +370,17 @@ ensures result >= 0
 // a pre-clear handle fails the arenaId check outright. Restarting generations at
 // 1 on a recycled Vec would otherwise let an old handle alias a new value.
 pub fn arenaClear<T>(a: &mut Arena<T>)
-ensures a.live == 0
+ensures a._live == 0
 {
     var id: i64 = 0
     unsafe {
         id = _atomicAddI64((nextArenaId.addrOf()) as *u8, 1)
     }
-    a.id = id
-    a.data = Vec.new()
-    a.gens = Vec.new()
-    a.freeList = Vec.new()
-    a.live = 0
+    a._id = id
+    a._data = Vec.new()
+    a._gens = Vec.new()
+    a._freeList = Vec.new()
+    a._live = 0
 }
 
 // Snapshot every currently live handle. The returned handles remain ordinary
@@ -387,13 +388,13 @@ ensures a.live == 0
 // not appear in this already-produced Vec. This is the safe enumeration shape
 // for collectors because no element reference survives into caller code.
 pub fn arenaHandles<T>(arena: &Arena<T>): Vec<Handle<T>> {
-    var result: Vec<Handle<T>> = Vec.withCapacity(arena.live)
-    for i in 0..arena.data.len {
-        if arena.gens[i] > 0 {
+    var result: Vec<Handle<T>> = Vec.withCapacity(arena._live)
+    for i in 0..arena._data.len {
+        if arena._gens[i] > 0 {
             result.push(Handle {
-                arenaId: arena.id,
+                arenaId: arena._id,
                 index: i as i32,
-                generation: arena.gens[i],
+                generation: arena._gens[i],
             })
         }
     }
@@ -418,8 +419,8 @@ pub fn arenaHandles<T>(arena: &Arena<T>): Vec<Handle<T>> {
 //
 // `freeze()` is the terminal state when the building really is done.
 pub struct GrowOnlyArena<T> {
-    id: i64,
-    data: Vec<T>,
+    _id: i64,
+    _data: Vec<T>,
 }
 
 // Consume an arena into the grow-only tier. Refused, like `freeze`, for an arena that
@@ -429,10 +430,10 @@ pub struct GrowOnlyArena<T> {
 pub fn arenaSealGrowth<T>(a: Arena<T>): Result<GrowOnlyArena<T>, FreezeRejected<T>> {
     var bad: i64 = -1
     var i: i64 = 0
-    while i < a.gens.len {
-        if a.gens[i] != 1 {
+    while i < a._gens.len {
+        if a._gens[i] != 1 {
             bad = i
-            i = a.gens.len
+            i = a._gens.len
         } else {
             i += 1
         }
@@ -444,7 +445,7 @@ pub fn arenaSealGrowth<T>(a: Arena<T>): Result<GrowOnlyArena<T>, FreezeRejected<
         return Result.Err(r)
     }
     var g: GrowOnlyArena<T> = GrowOnlyArena {
-        id: a.id, data: a.data
+        _id: a._id, _data: a._data
     }
     return Result.Ok(g)
 }
@@ -453,11 +454,11 @@ impl GrowOnlyArena<T> {
     // Append a value and return a handle to it. The only mutating operation this
     // tier has: nothing here frees, clears or recycles.
     fn alloc(self: &mut Self, val: T): Handle<T> {
-        let idx = self.data.len
+        let idx = self._data.len
         assert(idx <= 2147483647, "arena slot capacity exceeded")
-        self.data.push(val)
+        self._data.push(val)
         var h: Handle<T> = Handle {
-            arenaId: self.id, index: idx as i32, generation: 1
+            arenaId: self._id, index: idx as i32, generation: 1
         }
         return h
     }
@@ -468,11 +469,11 @@ impl GrowOnlyArena<T> {
     // carries Drop or @noCopy (see the module comment); `read` is the borrowing form.
     @copyOut
     fn get(self: &Self, h: Handle<T>): T {
-        assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
+        assert(h.arenaId == self._id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
         assert(idx >= 0, "grow-only arena: handle index is negative")
-        assert(idx < self.data.len, "grow-only arena: handle index is past the end of this arena")
-        let copied: Option<T> = Option.Some(self.data[idx])
+        assert(idx < self._data.len, "grow-only arena: handle index is past the end of this arena")
+        let copied: Option<T> = Option.Some(self._data[idx])
         return copied!
     }
 
@@ -483,48 +484,48 @@ impl GrowOnlyArena<T> {
     // exactly the shape that belongs here, and locking it out would have left the tier
     // usable only by data that never moves.
     fn set(self: &mut Self, h: Handle<T>, val: T): void {
-        assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
+        assert(h.arenaId == self._id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
-        assert(idx >= 0 && idx < self.data.len, "grow-only arena: handle index out of range")
-        self.data[idx] = val
+        assert(idx >= 0 && idx < self._data.len, "grow-only arena: handle index out of range")
+        self._data[idx] = val
     }
 
     // Mutate the value at `h` in place, without copying it out and back.
     fn modifyMut(self: &mut Self, h: Handle<T>, f: (&mut T) => void): void {
-        assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
+        assert(h.arenaId == self._id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
-        assert(idx >= 0 && idx < self.data.len, "grow-only arena: handle index out of range")
-        f(&mut self.data[idx])
+        assert(idx >= 0 && idx < self._data.len, "grow-only arena: handle index out of range")
+        f(&mut self._data[idx])
     }
 
     // Borrow rather than copy. Prefer this when T owns heap storage.
     fn read(self: &Self, h: Handle<T>, f: (&T) => void): void {
-        assert(h.arenaId == self.id, "grow-only arena: handle was minted by a different arena")
+        assert(h.arenaId == self._id, "grow-only arena: handle was minted by a different arena")
         let idx = h.index as i64
-        assert(idx >= 0 && idx < self.data.len, "grow-only arena: handle index out of range")
-        f(self.data[idx])
+        assert(idx >= 0 && idx < self._data.len, "grow-only arena: handle index out of range")
+        f(self._data[idx])
     }
 
     // Whether `h` names a slot here. Branch on this for a handle that might be foreign.
     @mustUse
     fn holds(self: &Self, h: Handle<T>): bool {
-        if h.arenaId != self.id {
+        if h.arenaId != self._id {
             return false
         }
         let idx = h.index as i64
-        return idx >= 0 && idx < self.data.len
+        return idx >= 0 && idx < self._data.len
     }
 
     // Slots held; every one is live.
     fn len(self: &Self): i64 {
-        return self.data.len
+        return self._data.len
     }
 
     // Building is over: give up `alloc` too. Cannot fail, because this tier never
     // freed anything.
     fn freeze(self: Self): FrozenArena<T> {
         var f: FrozenArena<T> = FrozenArena {
-            id: self.id, data: self.data
+            _id: self._id, _data: self._data
         }
         return f
     }
@@ -546,8 +547,8 @@ impl GrowOnlyArena<T> {
 //
 // The generation counters are not carried over because nothing can bump them.
 pub struct FrozenArena<T> {
-    id: i64,
-    data: Vec<T>,
+    _id: i64,
+    _data: Vec<T>,
 }
 
 // Why a refused freeze does not eat the arena: `freeze` consumes its input, so
@@ -578,10 +579,10 @@ pub struct FreezeRejected<T> {
 pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
     var bad: i64 = -1
     var i: i64 = 0
-    while i < a.gens.len {
-        if a.gens[i] != 1 {
+    while i < a._gens.len {
+        if a._gens[i] != 1 {
             bad = i
-            i = a.gens.len
+            i = a._gens.len
         } else {
             i += 1
         }
@@ -593,7 +594,7 @@ pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
         return Result.Err(r)
     }
     var f: FrozenArena<T> = FrozenArena {
-        id: a.id, data: a.data
+        _id: a._id, _data: a._data
     }
     return Result.Ok(f)
 }
@@ -603,11 +604,11 @@ pub fn arenaFreeze<T>(a: Arena<T>): Result<FrozenArena<T>, FreezeRejected<T>> {
 // branch on rather than abort over.
 @mustUse
 pub fn frozenHolds<T>(a: &FrozenArena<T>, h: Handle<T>): bool {
-    if h.arenaId != a.id {
+    if h.arenaId != a._id {
         return false
     }
     let idx = h.index as i64
-    return idx >= 0 && idx < a.data.len
+    return idx >= 0 && idx < a._data.len
 }
 
 // The value at `h`. Infallible for any handle this arena's source minted.
@@ -621,33 +622,33 @@ pub fn frozenHolds<T>(a: &FrozenArena<T>, h: Handle<T>): bool {
 // A copy, so rejected for a T that carries Drop or @noCopy; `frozenRead` borrows.
 @copyOut
 pub fn frozenGet<T>(a: &FrozenArena<T>, h: Handle<T>): T {
-    assert(h.arenaId == a.id, "frozen arena: handle was minted by a different arena")
+    assert(h.arenaId == a._id, "frozen arena: handle was minted by a different arena")
     let idx = h.index as i64
     assert(idx >= 0, "frozen arena: handle index is negative")
-    assert(idx < a.data.len, "frozen arena: handle index is past the end of this arena")
+    assert(idx < a._data.len, "frozen arena: handle index is past the end of this arena")
     // Routed through Option for the same reason arenaGet is: returning the
     // element directly trips the `index-clone` lint AT THIS DEFINITION, where a
     // reader of a user program can do nothing about it. The copy is this
     // accessor's whole contract (see `read` for the borrowing form), so the
     // warning has no actionable target here. Cost is identical to arenaGet's.
-    let copied: Option<T> = Option.Some(a.data[idx])
+    let copied: Option<T> = Option.Some(a._data[idx])
     return copied!
 }
 
 // Borrow the value at `h` instead of copying it. Prefer this to `get` when T
 // owns heap storage, since `get` hands back a copy.
 pub fn frozenRead<T>(a: &FrozenArena<T>, h: Handle<T>, f: (&T) => void): void {
-    assert(h.arenaId == a.id, "frozen arena: handle was minted by a different arena")
+    assert(h.arenaId == a._id, "frozen arena: handle was minted by a different arena")
     let idx = h.index as i64
     assert(idx >= 0, "frozen arena: handle index is negative")
-    assert(idx < a.data.len, "frozen arena: handle index is past the end of this arena")
-    f(a.data[idx])
+    assert(idx < a._data.len, "frozen arena: handle index is past the end of this arena")
+    f(a._data[idx])
 }
 
 // Slots held. Every one is live, so unlike Arena.len this is also the storage
 // count.
 pub fn frozenLen<T>(a: &FrozenArena<T>): i64 {
-    return a.data.len
+    return a._data.len
 }
 
 // Method API — same functionality, nicer syntax.
@@ -659,6 +660,13 @@ impl Arena<T> {
     // (`Arena<Node>.new()`); a bare `Arena.new()` cannot infer T.
     fn new(): Arena<T> {
         return arenaNew<T>()
+    }
+
+    // The identity stamped into every handle this arena mints (`h.arenaId`). For a
+    // caller that packs a handle into fewer bits and rebuilds it against this arena;
+    // reading it grants nothing, since every accessor still checks the handle.
+    fn id(self: &Self): i64 {
+        return self._id
     }
 
     // Move `val` into a free slot and return a Handle<T> naming it. Reuses a

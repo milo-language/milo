@@ -123,32 +123,31 @@ pub struct Arena<T>
 ```
 
 A pool of T values addressed by generational Handle&lt;T> rather than by
-reference. Allocation appends to `data` or reuses a slot from `freeList`;
+reference. Allocation appends to `_data` or reuses a slot from `_freeList`;
 every operation is O(1) and none of them can dangle.
 
-The safety of a handle rests on two checks, one per field pair:
+The safety of a handle rests on two checks, one per field pair. Every field is
+private, so only this file can break them:
 
-  `id`    — a per-process identity stamped into every handle this arena
+  `_id`   — a per-process identity stamped into every handle this arena
             hands out, so a handle from a DIFFERENT arena (or from this one
             before a clear) is rejected outright instead of indexing into
             unrelated memory.
-  `gens`  — one counter per slot, parallel to `data`, bumped on every free.
+  `_gens` — one counter per slot, parallel to `_data`, bumped on every free.
             A handle carries the generation current when it was made, so a
             read through a freed-and-reused slot mismatches and yields None.
             A slot that reaches i32 max is retired, never wrapped, so the
             counter cannot alias an old handle by rolling over.
 
 Memory model worth knowing before you build on it: freeing recycles a slot
-but never shrinks `data`, so a long-lived arena holds its PEAK footprint for
+but never shrinks `_data`, so a long-lived arena holds its PEAK footprint for
 as long as it lives. `clear` is the only thing that gives storage back.
 
 Nothing here is a garbage collector. `free` is logical deletion — it marks a
 slot dead so the generation check can catch stale handles. The arena's actual
-memory is owned by `data` and released when the arena drops, like any other
+memory is owned by `_data` and released when the arena drops, like any other
 Milo value. If your object graph has cycles, reclaiming them is a sweep you
 write yourself over `handles()`.
-
-Fields: `id: i64`, `data: Vec<T>`, `gens: Vec<i32>`, `freeList: Vec<i32>`, `live: i64`.
 
 #### `Arena.alloc`
 
@@ -226,6 +225,16 @@ fn Arena.handles(self: &Arena): Vec<Handle<T>>
 A snapshot Vec of every currently live handle — the enumeration shape a
 collector sweeps. Frees after this call invalidate entries in the Vec;
 allocs after it do not appear in it.
+
+#### `Arena.id`
+
+```milo
+fn Arena.id(self: &Arena): i64
+```
+
+The identity stamped into every handle this arena mints (`h.arenaId`). For a
+caller that packs a handle into fewer bits and rebuilds it against this arena;
+reading it grants nothing, since every accessor still checks the handle.
 
 #### `Arena.len`
 
@@ -354,8 +363,6 @@ and no path survives through which a slot could be freed after the freeze.
 
 The generation counters are not carried over because nothing can bump them.
 
-Fields: `id: i64`, `data: Vec<T>`.
-
 #### `FrozenArena.get`
 
 ```milo
@@ -411,8 +418,6 @@ INDICES, and a handle names an index, so every handle minted before a growth sti
 resolves to the same value after it.
 
 `freeze()` is the terminal state when the building really is done.
-
-Fields: `id: i64`, `data: Vec<T>`.
 
 #### `GrowOnlyArena.alloc`
 
