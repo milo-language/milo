@@ -1,0 +1,15 @@
+// @runtime-error: array index out of bounds: -4294967295/3
+// -4294967295 truncates to 1 as an i32. The bounds check used to compare the truncated
+// value, pass, and then write through the full 64-bit offset (a heap write 32 GiB
+// below the buffer). The message must show the real index, not the truncated one.
+
+pub fn far(): i64 {
+    return -4294967295
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    v[far()] = 12345
+    print(v[1])
+    return 0
+}

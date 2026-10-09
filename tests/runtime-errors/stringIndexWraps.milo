@@ -1,0 +1,13 @@
+// @runtime-error: array index out of bounds: -4294967295/3
+// String byte indexing shares the bounds check; a negative index that truncates into
+// range must still abort.
+
+pub fn far(): i64 {
+    return -4294967295
+}
+
+pub fn main(): i32 {
+    let s = "abc".clone()
+    print(s[far()])
+    return 0
+}

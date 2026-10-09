@@ -1,0 +1,13 @@
+// @runtime-error: array index out of bounds: 4294967297/4
+// On a fixed array the truncated index was also the one the GEP used, so `a[2^32 + 1]`
+// silently read `a[1]` instead of aborting.
+
+pub fn far(): i64 {
+    return 4294967297
+}
+
+pub fn main(): i32 {
+    let a: [i64; 4] = [10, 20, 30, 40]
+    print(a[far()])
+    return 0
+}

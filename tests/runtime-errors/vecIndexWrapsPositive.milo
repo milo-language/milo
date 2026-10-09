@@ -1,0 +1,13 @@
+// @runtime-error: array index out of bounds: 4294967297/3
+// 2^32 + 1 truncates to 1 as an i32; the read must abort, not read 32 GiB past the
+// buffer.
+
+pub fn far(): i64 {
+    return 4294967297
+}
+
+pub fn main(): i32 {
+    let v: Vec<i64> = [1, 2, 3]
+    print(v[far()])
+    return 0
+}

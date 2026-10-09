@@ -63,7 +63,7 @@ const F64_BUF = 32;
 
 // The bounds-check message is one module-wide global, so the literal and the array length
 // in its declaration have to stay in lockstep — a mismatch is an LLVM verifier error.
-const BOUNDS_ERR_MSG = "milo: array index out of bounds: %d/%d at %s:%d\n";
+const BOUNDS_ERR_MSG = "milo: array index out of bounds: %lld/%lld at %s:%d\n";
 const BOUNDS_ERR_IR = BOUNDS_ERR_MSG.replace(/\n/g, "\\0A") + "\\00";
 const BOUNDS_ERR_LEN = BOUNDS_ERR_MSG.length + 1;
 
@@ -3447,15 +3447,12 @@ export class Codegen {
     if (match) {
       const size = parseInt(match[1]);
       const elemTy = match[2];
-      // truncate i64 index to i32 for bounds check and GEP
-      let idx32 = idxVal;
-      if (idxTy === "i64") {
-        idx32 = this.nextTemp();
-        lines.push(`  ${idx32} = trunc i64 ${idxVal} to i32`);
-      }
-      this.emitBoundsCheck(lines, idx32, String(size), expr.span);
+      // The check and the GEP both use the full i64 index. This used to truncate to
+      // i32 first, so `a[2^32 + 1]` passed the check AND addressed `a[1]`.
+      const idx64 = this.indexToI64(lines, idxVal, idxTy, expr.index.type);
+      this.emitBoundsCheck(lines, idx64, String(size), expr.span);
       const ptr = this.nextTemp();
-      lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i32 0, i32 ${idx32}`);
+      lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i64 0, i64 ${idx64}`);
       return [lines, ptr, elemTy];
     }
     return [lines, "null", "i32"];
@@ -3468,20 +3465,24 @@ export class Codegen {
   // look past ("call instruction cannot be vectorized"), quite apart from what it
   // does to inlining budgets and I-cache. `cold` also tells LLVM which way the
   // branch goes, so the check falls through in the common case.
+  //
+  // `idx` and `size` are i64. The compare must see the same index the access uses: a
+  // compare on truncated i32 values let `v[-4294967295]` pass (it truncates to 1) and
+  // then write through the full 64-bit offset.
   private emitBoundsCheck(lines: string[], idx: string, size: string, span?: Span) {
     this.needsBoundsCheck = true;
     const cmpTmp = this.nextTemp();
     const okLabel = this.nextLabel("bounds.ok");
     const failLabel = this.nextLabel("bounds.fail");
 
-    lines.push(`  ${cmpTmp} = icmp ult i32 ${idx}, ${size}`);
+    lines.push(`  ${cmpTmp} = icmp ult i64 ${idx}, ${size}`);
     lines.push(`  br i1 ${cmpTmp}, label %${okLabel}, label %${failLabel}`);
     lines.push(`${failLabel}:`);
     // The location rides into the out-of-line handler as arguments, the way the overflow
     // check already does — keeping it out of the hot block, which is the whole point of
     // the handler being out of line.
     const filePtr = this.emitCheckFilePtr(lines, span);
-    lines.push(`  call void @__milo_bounds_fail(i32 ${idx}, i32 ${size}, ptr ${filePtr}, i32 ${span?.line ?? 0})`);
+    lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${size}, ptr ${filePtr}, i32 ${span?.line ?? 0})`);
     lines.push(`  unreachable`);
     lines.push(`${okLabel}:`);
   }
@@ -3543,12 +3544,10 @@ export class Codegen {
         const [ptrLines, vecPtr] = this.genLValue(objExpr);
         const lenPtr = this.nextTemp();
         const len = this.nextTemp();
-        const len32 = this.nextTemp();
         lines.push(...ptrLines);
         lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
         lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-        lines.push(`  ${len32} = trunc i64 ${len} to i32`);
-        scope.set(key, { len: len32, decl: this.locals.get(root) });
+        scope.set(key, { len, decl: this.locals.get(root) });
       } catch {
         // an object shape genLValue cannot address: skip it, keep the per-access load
       }
@@ -3736,10 +3735,10 @@ export class Codegen {
   // Body of the out-of-line handler above. Emitted once per module.
   private boundsFailHelper(): string[] {
     const lines: string[] = [];
-    lines.push(`define internal void @__milo_bounds_fail(i32 %idx, i32 %len, ptr %file, i32 %line) noreturn cold noinline {`);
+    lines.push(`define internal void @__milo_bounds_fail(i64 %idx, i64 %len, ptr %file, i32 %line) noreturn cold noinline {`);
     lines.push(`entry.bb:`);
     lines.push(`  %fmt = getelementptr [${BOUNDS_ERR_LEN} x i8], ptr @.bounds_err, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, "%fmt", `, i32 %idx, i32 %len, ptr %file, i32 %line`);
+    this.emitFdPrintf(lines, 2, "%fmt", `, i64 %idx, i64 %len, ptr %file, i32 %line`);
     this.panicAbort(lines);
     lines.push(`  unreachable`);
     lines.push(`}`);
@@ -8163,24 +8162,10 @@ export class Codegen {
     lines.push(...il);
     const len = this.nextTemp();
     lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
-    const len32 = this.nextTemp();
-    lines.push(`  ${len32} = trunc i64 ${len} to i32`);
-    if (idxTy === "i64") {
-      const idx32 = this.nextTemp();
-      lines.push(`  ${idx32} = trunc i64 ${iv} to i32`);
-      this.emitBoundsCheck(lines, idx32, len32, expr.span);
-    } else {
-      this.emitBoundsCheck(lines, iv, len32, expr.span);
-    }
+    const idx64 = this.indexToI64(lines, iv, idxTy, expr.index.type);
+    this.emitBoundsCheck(lines, idx64, len, expr.span);
     const data = this.nextTemp();
     lines.push(`  ${data} = extractvalue %String ${ov}, 0`);
-    let idx64: string;
-    if (idxTy === "i64") {
-      idx64 = iv;
-    } else {
-      idx64 = this.nextTemp();
-      lines.push(`  ${idx64} = sext ${idxTy} ${iv} to i64`);
-    }
     const bytePtr = this.nextTemp();
     lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idx64}`);
     const byte = this.nextTemp();
@@ -9058,10 +9043,8 @@ export class Codegen {
     const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
     lines.push(...vecPtrLines);
 
-    const [aLines, aVal] = this.genExpr(expr.indexA);
-    lines.push(...aLines);
-    const [bLines, bVal] = this.genExpr(expr.indexB);
-    lines.push(...bLines);
+    const aVal = this.genBoundI64(expr.indexA, lines);
+    const bVal = this.genBoundI64(expr.indexB, lines);
 
     // Both indices are bounds-checked. This GEP'd straight into the buffer and memcpy'd
     // three times with no length load at all, so `v.swap(0, 999999)` was an out-of-bounds
@@ -9071,13 +9054,7 @@ export class Codegen {
     lines.push(`  ${lenPtrB} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
     const lenB = this.nextTemp();
     lines.push(`  ${lenB} = load i64, ptr ${lenPtrB}`);
-    const len32B = this.nextTemp();
-    lines.push(`  ${len32B} = trunc i64 ${lenB} to i32`);
-    for (const idx of [aVal, bVal]) {
-      const i32 = this.nextTemp();
-      lines.push(`  ${i32} = trunc i64 ${idx} to i32`);
-      this.emitBoundsCheck(lines, i32, len32B, expr.span);
-    }
+    for (const idx of [aVal, bVal]) this.emitBoundsCheck(lines, idx, lenB, expr.span);
 
     const dataPtr = this.nextTemp();
     lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
@@ -10193,12 +10170,8 @@ export class Codegen {
     const failL = this.nextLabel("strsetbyte.oob");
     lines.push(`  br i1 ${inRange}, label %${okL}, label %${failL}`);
     lines.push(`${failL}:`);
-    const idx32 = this.nextTemp();
-    lines.push(`  ${idx32} = trunc i64 ${idx} to i32`);
-    const len32 = this.nextTemp();
-    lines.push(`  ${len32} = trunc i64 ${len} to i32`);
     const filePtr = this.emitCheckFilePtr(lines, expr.span);
-    lines.push(`  call void @__milo_bounds_fail(i32 ${idx32}, i32 ${len32}, ptr ${filePtr}, i32 ${expr.span?.line ?? 0})`);
+    lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${len}, ptr ${filePtr}, i32 ${expr.span?.line ?? 0})`);
     lines.push(`  unreachable`);
     lines.push(`${okL}:`);
     const cap = this.nextTemp();
@@ -10385,6 +10358,17 @@ export class Codegen {
   // that is a narrower int (e.g. an `i32` local) would otherwise emit `icmp ... i64
   // %i32val` — invalid IR that clang rejects. Widen to i64 (sext signed, zext
   // unsigned) so the bound matches the i64 arithmetic around it.
+  // Widen an already-generated index to i64 by its own signedness, so a negative i32
+  // stays negative (and fails the unsigned bounds compare) and a u32 above 2^31 stays
+  // positive.
+  private indexToI64(lines: string[], val: string, llTy: string, ty: TypeKind): string {
+    if (llTy === "i64") return val;
+    const signed = ty.tag === "int" ? ty.signed : true;
+    const ext = this.nextTemp();
+    lines.push(`  ${ext} = ${signed ? "sext" : "zext"} ${llTy} ${val} to i64`);
+    return ext;
+  }
+
   private genBoundI64(bound: HIRExpr, lines: string[]): string {
     const [bl, bv, bty] = this.genExpr(bound);
     lines.push(...bl);
@@ -10859,29 +10843,20 @@ export class Codegen {
     const vecPtr = this.genIndexObjectPtr(expr.object, lines);
     const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
     lines.push(...idxLines);
+    const idx64 = this.indexToI64(lines, idxVal, idxTy, expr.index.type);
 
     // The check, unless an enclosing loop already proved this index in range —
     // in which case the length load goes too, which is most of the cost.
     if (!this.indexIsProven(expr)) {
       this.needsBoundsCheck = true;
-      let len32 = this.hoistedLenFor(expr.object);
-      if (len32 === null) {
+      let len = this.hoistedLenFor(expr.object);
+      if (len === null) {
         const lenPtr = this.nextTemp();
         lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-        const len = this.nextTemp();
+        len = this.nextTemp();
         lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-        const t32 = this.nextTemp();
-        lines.push(`  ${t32} = trunc i64 ${len} to i32`);
-        len32 = t32;
       }
-      let idx32: string;
-      if (idxTy === "i64") {
-        idx32 = this.nextTemp();
-        lines.push(`  ${idx32} = trunc i64 ${idxVal} to i32`);
-      } else {
-        idx32 = idxVal;
-      }
-      this.emitBoundsCheck(lines, idx32, len32, expr.span);
+      this.emitBoundsCheck(lines, idx64, len, expr.span);
     }
 
     // load data pointer and GEP to element
@@ -10889,13 +10864,6 @@ export class Codegen {
     lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
     const data = this.nextTemp();
     lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    let idx64: string;
-    if (idxTy === "i64") {
-      idx64 = idxVal;
-    } else {
-      idx64 = this.nextTemp();
-      lines.push(`  ${idx64} = sext ${idxTy} ${idxVal} to i64`);
-    }
     const ptr = this.nextTemp();
     lines.push(`  ${ptr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx64}`);
 

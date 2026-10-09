@@ -1,0 +1,13 @@
+// @runtime-error: array index out of bounds: 4294967296/3
+// `v.swap(i, j)` checks both indexes; 2^32 truncates to 0 as an i32.
+
+pub fn far(): i64 {
+    return 4294967296
+}
+
+pub fn main(): i32 {
+    var v: Vec<i64> = [1, 2, 3]
+    v.swap(0, far())
+    print(v[0])
+    return 0
+}
