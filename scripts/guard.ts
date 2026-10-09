@@ -94,9 +94,16 @@ let footprintInFlight = false;
 // sample is enforced so a tree can't hide behind the sampling gap.
 const footprintByPgid = new Map<number, number>();
 
+// Every probe is bounded. footprint(1) can wedge machine-wide (dozens were seen stuck for
+// hours), and an execFile child still pending keeps this process's event loop alive: the
+// guard then never exits after its child does, so `milo run` hung after the program had
+// printed its result. A probe that times out reads as "no sample" (null); for footprint
+// the rss layer keeps guarding, and the next tick tries again.
+const PROBE_TIMEOUT_MS = 5000;
 function exec(cmd: string, args: string[]): Promise<string | null> {
   return new Promise(res =>
-    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024 }, (err, out) => res(err ? null : String(out)))
+    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, timeout: PROBE_TIMEOUT_MS, killSignal: "SIGKILL" },
+      (err, out) => res(err ? null : String(out)))
   );
 }
 
@@ -462,7 +469,7 @@ export function monitorPidTree(
   let warnTicksLocal = 0;
   const tick = () => {
     if (stopped) return;
-    execFile("ps", ["-axo", "pid=,ppid=,rss="], { maxBuffer: 16 * 1024 * 1024 }, async (err, out) => {
+    execFile("ps", ["-axo", "pid=,ppid=,rss="], { maxBuffer: 16 * 1024 * 1024, timeout: PROBE_TIMEOUT_MS, killSignal: "SIGKILL" }, async (err, out) => {
       if (stopped) return;
       ticks++;
       if (!err) {
