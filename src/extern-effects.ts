@@ -426,6 +426,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   // needs no database at all; handles are synthetic under replay, like descriptors ──
   sqlite3_open: input(sqlite("open"), { in: ["filename"], out: ["db[8]"] }),
   sqlite3_close: effect(sqlite("close")),
+  sqlite3_close_v2: effect(sqlite("close")),
   sqlite3_exec: effect(sqlite("exec"), { in: ["sql"], out: ["errmsg[deep]"] }),
   sqlite3_prepare_v2: input(sqlite("prepare"), { in: ["sql"], out: ["stmt[8]", "tail[deep]"] }),
   sqlite3_step: input(sqlite("step")),
