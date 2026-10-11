@@ -1,0 +1,28 @@
+// @expect: 0
+// `v[i][j]` on a Vec<string> cloned the whole element (a Vec index hands out an
+// independent value) to read one byte, and never freed the clone: one leaked string per
+// evaluation. The byte is now read through the element in place; a string temporary
+// (`mk()[j]`) and an element of a temporary container (`mkv()[0][j]`) are freed after
+// the read.
+//
+// The strings are ~8 KB: `leaks` misses small abandoned blocks.
+fn mk(i: i64): string {
+    return "a".repeat(8000 + i)
+}
+
+fn mkv(): Vec<string> {
+    return ["a".repeat(8000), "b".repeat(8000)]
+}
+
+fn main(): i32 {
+    let parts = ["a".repeat(8000), "b".repeat(8000), "a".repeat(8000)]
+    let arr: [string; 2] = ["a".repeat(8000), "a".repeat(8000)]
+    var acc: u8 = 0
+    for i in 0..40 {
+        acc = acc ^ parts[2][i] ^ parts[0][i + 1]
+        acc = acc ^ mk(i) [i] ^ mkv() [0][i]
+        acc = acc ^ arr[1][i] ^ arr[0][i]
+    }
+    print(acc as i64)
+    return 0
+}

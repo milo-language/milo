@@ -1,0 +1,108 @@
+// @expect: emptyvec 80000
+// @expect: emptymap 80000
+// @expect: full 80010
+// @expect: moved 80000
+// @expect: userdrop 10
+// A struct's drop glue used to decide whether the struct was still alive by probing its
+// heap fields for non-null, and skip every field when none was. An empty Vec (or
+// HashMap) has a null buffer, so `{ response: Resp.Text(body), headers: [] }` read as
+// moved-from and leaked `body`: std/http's HandledResponse leaked every response body
+// whose handler set no header. Fields are now dropped one by one, each by its own drop,
+// which already treats a zeroed value as empty.
+//
+// `moved` takes a struct field out of a named local, which zeroes it in place; the
+// parent's glue then visits the zeroed field, which has to stay a no-op (ASan sweep).
+// `userdrop` checks a user `impl Drop` still runs exactly once per live value.
+//
+// The bodies are ~8 KB: `leaks` misses small abandoned blocks.
+enum Resp {
+    Text(string),
+    NotFound,
+}
+
+struct Handled {
+    response: Resp,
+    headers: Vec<i64>,
+}
+
+struct Tagged {
+    label: Option<string>,
+    index: HashMap<string, i64>,
+}
+
+struct Inner {
+    body: string,
+    extra: Vec<string>,
+}
+
+struct Outer {
+    inner: Inner,
+    note: string,
+}
+
+var dropped: i64 = 0
+
+struct Guard {
+    name: string,
+}
+
+impl Drop for Guard {
+    fn drop(self: &mut Self): void {
+        dropped += 1
+    }
+}
+
+fn build(i: i64, withHeader: bool): Handled {
+    var hs: Vec<i64> = []
+    if withHeader {
+        hs.push(i)
+    }
+    return Handled { response: Resp.Text("y".repeat(8000)), headers: hs }
+}
+
+fn bodyLen(h: &Handled): i64 {
+    match h.response {
+        Resp.Text(s) => { return s.len }
+        Resp.NotFound => { return 0 }
+    }
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    for i in 0..10 {
+        let h = build(i, false)
+        n += bodyLen(h) + h.headers.len
+    }
+    print("emptyvec " + n.toString())
+
+    n = 0
+    for _i in 0..10 {
+        let t = Tagged { label: Option.Some("t".repeat(8000)), index: HashMap.new() }
+        if let Option.Some(s) = t.label {
+            n += s.len
+        }
+    }
+    print("emptymap " + n.toString())
+
+    n = 0
+    for i in 0..10 {
+        let h = build(i, true)
+        n += bodyLen(h) + h.headers.len
+    }
+    print("full " + n.toString())
+
+    n = 0
+    for _i in 0..10 {
+        let o = Outer { inner: Inner { body: "b".repeat(8000), extra: [] }, note: "n".repeat(8000) }
+        let inner = o.inner
+        n += inner.body.len
+    }
+    print("moved " + n.toString())
+
+    for _i in 0..10 {
+        let g = Guard { name: "g".repeat(8000) }
+        n += g.name.len
+    }
+    print("userdrop " + dropped.toString())
+    return 0
+}

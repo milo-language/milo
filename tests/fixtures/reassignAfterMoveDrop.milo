@@ -1,0 +1,53 @@
+// @expect: string 160090
+// @expect: vec 100
+// @expect: closure 80000
+// Moving out of a droppable local clears its alive flag; assigning the variable a new
+// value never set it again, so the scope-exit drop skipped the new value:
+// `take(s); s = mk()` leaked the second string on every pass. std/http's middleware
+// chain (`let next = final; final = move ...`) leaked a closure environment per request
+// through the same hole.
+//
+// The strings are ~8 KB: `leaks` misses small abandoned blocks.
+fn take(s: string): i64 {
+    return s.len
+}
+
+fn takeVec(v: Vec<string>): i64 {
+    return v.len
+}
+
+fn callIt(f: move (i64) => i64): i64 {
+    return f(0)
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    for i in 0..10 {
+        var s = "a".repeat(8000 + i)
+        n += take(s)
+        s = "b".repeat(8000 + i)
+        n += s.len
+    }
+    print("string " + n.toString())
+
+    n = 0
+    for _i in 0..10 {
+        var v: Vec<string> = ["x".repeat(8000)]
+        n += takeVec(v) * 5
+        v = ["y".repeat(8000), "z".repeat(8000)]
+        n += v.len * 2 + 1
+    }
+    print("vec " + n.toString())
+
+    n = 0
+    for _i in 0..10 {
+        let big = "c".repeat(8000)
+        var f: move (i64) => i64 = move(x: i64) => x + big.len
+        n += callIt(f)
+        let big2 = "d".repeat(8000)
+        f = move(x: i64) => x + big2.len
+        n += f(0) - 8000
+    }
+    print("closure " + n.toString())
+    return 0
+}

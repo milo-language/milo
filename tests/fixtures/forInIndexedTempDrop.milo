@@ -1,0 +1,39 @@
+// @expect: rows 160300
+// @expect: chars 80000
+// `for x in mk()[0]` indexes a temporary container, which was materialized into a slot
+// queued for dropping by whoever reads the element; the for loop never flushed it, so
+// the whole container leaked on every pass. It now lives until the loop's enclosing
+// block exits, like any other temporary a for loop iterates.
+//
+// The strings are ~8 KB: `leaks` misses small abandoned blocks.
+fn grid(i: i64): Vec<Vec<string>> {
+    return [["a".repeat(8000 + i), "b".repeat(8000)], ["c".repeat(8000)]]
+}
+
+fn words(): Vec<string> {
+    return ["w".repeat(8000), "v".repeat(8000)]
+}
+
+fn main(): i32 {
+    var n: i64 = 0
+    for i in 0..10 {
+        for row in grid(i) [0] {
+            n += row.len
+        }
+        if i == 5 {
+            continue
+        }
+        n += 0
+    }
+    print("rows " + (n - 45 + 300).toString())
+    n = 0
+    for _i in 0..10 {
+        for ch in words() [1] {
+            if ch == 'v' {
+                n += 1
+            }
+        }
+    }
+    print("chars " + n.toString())
+    return 0
+}

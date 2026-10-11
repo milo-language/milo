@@ -993,7 +993,21 @@ impl Router {
             respHeaders: [],
         }
         let handler = self.routes[matchIdx].handler
-        var final: (&mut Context) => Response = handler
+        if self.middleware.len == 0 {
+            let resp = handler(&mut ctx)
+            return HandledResponse {
+                response: resp, headers: ctx.respHeaders
+            }
+        }
+        // `final` owns the chain: each link owns the next one (captured as `next`) and
+        // gives it to its middleware, which runs it; the caller frees it once that call
+        // returns. A plain `(&mut Context) => Response` slot owns nothing, so the links
+        // assigned into one were freed by nobody, one environment per request. The
+        // innermost link wraps `handler` rather than being it: the route table owns the
+        // handler, and an owning slot would free any environment it carries.
+        var final: move (&mut Context) => Response = move(c: &mut Context) => {
+            return handler(&mut c)
+        }
         var m: i64 = self.middleware.len - 1
         while m >= 0 {
             let mw = self.middleware[m]

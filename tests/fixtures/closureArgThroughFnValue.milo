@@ -1,0 +1,71 @@
+// @expect: chain 3 80030
+// @expect: kept 2
+// An owning (`move`) closure handed to a call through a fn VALUE was freed by nobody:
+// the caller gave it up, and the callee's parameter is declared non-owning, so its body
+// never drops it. std/http's Router built its middleware chain exactly this way and
+// leaked one link per request. The caller now frees it after the call when no function
+// or closure that could be the target (same arity, a closure at that position) keeps
+// the parameter; one that might keep it leaves it alone (`kept`: stored, and freed once
+// by the Keeper that holds it, not again by the caller).
+//
+// The captured strings are ~8 KB: `leaks` misses small abandoned blocks.
+struct Ctx {
+    hits: i64,
+}
+
+struct Chain {
+    mws: Vec<(&mut Ctx, (&mut Ctx) => i64) => i64>,
+}
+
+fn countMw(c: &mut Ctx, next: (&mut Ctx) => i64): i64 {
+    c.hits += 1
+    return next(&mut c)
+}
+
+fn run(chain: &Chain, payload: string): i64 {
+    var c = Ctx { hits: 0 }
+    var final: move (&mut Ctx) => i64 = move(x: &mut Ctx) => {
+        return payload.len
+    }
+    var m: i64 = chain.mws.len - 1
+    while m >= 0 {
+        let mw = chain.mws[m]
+        let next = final
+        final = move(x: &mut Ctx) => {
+            return mw(&mut x, next)
+        }
+        m -= 1
+    }
+    let r = final(&mut c)
+    return r + c.hits
+}
+
+struct Keeper {
+    held: Vec<move (i64) => i64>,
+}
+
+fn keep(k: &mut Keeper, f: move (i64) => i64): i64 {
+    k.held.push(f)
+    return k.held.len
+}
+
+fn main(): i32 {
+    var chain = Chain { mws: [] }
+    chain.mws.push(countMw)
+    chain.mws.push(countMw)
+    chain.mws.push(countMw)
+    var total: i64 = 0
+    for _i in 0..10 {
+        total += run(chain, "p".repeat(8000))
+    }
+    print("chain " + chain.mws.len.toString() + " " + total.toString())
+
+    var k = Keeper { held: [] }
+    let keepFn: (&mut Keeper, move (i64) => i64) => i64 = keep
+    let s1 = "k".repeat(8000)
+    let s2 = "q".repeat(8000)
+    keepFn(&mut k, move(x: i64) => x + s1.len)
+    keepFn(&mut k, move(x: i64) => x + s2.len)
+    print("kept " + k.held.len.toString())
+    return 0
+}

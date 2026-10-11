@@ -1,0 +1,40 @@
+// @expect: empty 0
+// @expect: pushed 10
+// @expect: sized 0
+// `String.withCapacity(0)` malloc'd a block (malloc(0) still returns one) but recorded
+// cap 0, which marks a borrowed literal that drop skips: the block leaked when the
+// string dropped empty, and the first push (seeing cap 0) allocated afresh and orphaned
+// it. std/json reads every string through withCapacity(len), so each empty JSON string
+// leaked. The capacity is now at least 1.
+from "std/args" import { args }
+
+fn withCap(n: i64): string {
+    let s: string = String.withCapacity(n)
+    return s
+}
+
+fn main(): i32 {
+    let v = args().len as i64
+    var n: i64 = 0
+    for _i in 0..1000 {
+        if v == 1 {
+            let s = withCap(0)
+            n += s.len
+        }
+    }
+    print("empty " + n.toString())
+    n = 0
+    for _i in 0..10 {
+        var s = withCap(0)
+        s.push('x')
+        n += s.len
+    }
+    print("pushed " + n.toString())
+    n = 0
+    for _i in 0..10 {
+        let s = withCap(8000)
+        n += s.len
+    }
+    print("sized " + n.toString())
+    return 0
+}

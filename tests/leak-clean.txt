@@ -667,3 +667,15 @@ nullableExternRefMut
 nullableExternRefNull
 nullableExternRefShared
 cSigNullableRef
+closureArgThroughFnValue
+csvStrict
+deriveJsonRoundTrip
+forInIndexedTempDrop
+forInRvalueIterator
+httpRouterHandleDrop
+httpRouterMiddlewareChain
+httpServerRequestBody
+nestedStringIndexDrop
+reassignAfterMoveDrop
+stringWithCapacityZero
+structFieldsDropUnconditional

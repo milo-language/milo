@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct } from "./hir";
-import { type TypeKind, needsDrop, typeName } from "./types";
+import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
@@ -1474,6 +1474,14 @@ export class Codegen {
     // case where somebody else is doing the job, and dropping again in the caller is a
     // double free (`fn call(f: move () => i64)`, tests/fixtures/closureCapturesDropped).
     if (param.type.tag === "fn" && param.type.owning === true) return true;
+    const escapes = this.paramEscapesBody(fn.body, param.name, seen);
+    this.closureParamEscapeCache.set(key, escapes);
+    return escapes;
+  }
+
+  // Whether `body` lets its parameter `paramName` (a closure) outlive the call: stores it,
+  // returns it, captures it, or forwards it anywhere that does.
+  private paramEscapesBody(body: HIRStmt[], paramName: string, seen: Set<string>): boolean {
     let escapes = false;
     const walk = (node: unknown): void => {
       if (escapes || !node || typeof node !== "object") return;
@@ -1483,11 +1491,11 @@ export class Codegen {
       // can outlive this frame (`return move () => f(1)`). The capture is recorded by name,
       // so walking the nested body alone would miss it when that body only calls it.
       if (n.kind === "Closure" && Array.isArray(n.captures)
-          && (n.captures as { name: string }[]).some(c => c.name === param.name)) { escapes = true; return; }
+          && (n.captures as { name: string }[]).some(c => c.name === paramName)) { escapes = true; return; }
       // `f(…)` hands the closure to nobody: it is called and forgotten.
       if (n.kind === "ClosureCall") {
         const callee = n.callee as { kind?: string; name?: string } | undefined;
-        if (!(callee?.kind === "Ident" && callee.name === param.name)) walk(n.callee);
+        if (!(callee?.kind === "Ident" && callee.name === paramName)) walk(n.callee);
         walk(n.args);
         return;
       }
@@ -1497,16 +1505,73 @@ export class Codegen {
         const args = n.args as HIRArg[];
         for (let i = 0; i < args.length; i++) {
           const e = args[i]?.expr;
-          if (e?.kind === "Ident" && e.name === param.name) {
+          if (e?.kind === "Ident" && e.name === paramName) {
             if (this.closureParamEscapes(n.func as string, i, seen)) { escapes = true; return; }
           } else walk(args[i]);
         }
         return;
       }
-      if (n.kind === "Ident" && n.name === param.name) { escapes = true; return; }
+      if (n.kind === "Ident" && n.name === paramName) { escapes = true; return; }
       for (const k of Object.keys(n)) { if (k !== "span" && k !== "type") walk(n[k]); }
     };
-    walk(fn.body);
+    walk(body);
+    return escapes;
+  }
+
+  // Every closure value the program can call through a fn VALUE comes from one of two
+  // places: a named function used as a value, or a closure literal. Collected once.
+  private hirGlobals: unknown = [];
+  private fnValueTargets: { fns: HIRFunction[]; closures: (HIRExpr & { kind: "Closure" })[] } | null = null;
+  private collectFnValueTargets() {
+    if (this.fnValueTargets) return this.fnValueTargets;
+    const fnNames = new Set<string>();
+    const closures: (HIRExpr & { kind: "Closure" })[] = [];
+    const walk = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const x of node) walk(x); return; }
+      const n = node as Record<string, unknown> & { kind?: string; name?: string };
+      // A local that shares a function's name over-approximates the target set, which
+      // only ever makes the answer below more conservative.
+      if (n.kind === "Ident" && typeof n.name === "string" && this.hirFns.has(n.name)) fnNames.add(n.name);
+      if (n.kind === "Closure") closures.push(n as unknown as HIRExpr & { kind: "Closure" });
+      for (const k of Object.keys(n)) { if (k !== "span" && k !== "type") walk(n[k]); }
+    };
+    for (const fn of this.hirFns.values()) walk(fn.body);
+    walk(this.hirGlobals);
+    this.fnValueTargets = { fns: [...fnNames].map(n => this.hirFns.get(n)!), closures };
+    return this.fnValueTargets;
+  }
+
+  // closureParamEscapes for a call through a fn value (`mw(&mut c, next)`): the callee is
+  // any function used as a value, or closure literal, whose parameter types match the fn
+  // value's, and the caller may free the argument only if NONE of them keeps it. Without this an owning
+  // closure handed to a fn value was freed by nobody: std/http's middleware chain leaked
+  // one link per request. A candidate that declares the parameter `move` frees it itself,
+  // which counts as keeping it here, the same as for a direct call.
+  private indirectParamEscapes(calleeType: TypeKind, idx: number): boolean {
+    if (calleeType.tag !== "fn") return true;
+    const want = calleeType.params;
+    const key = `<indirect>/${typeName(calleeType)}#${idx}`;
+    const memo = this.closureParamEscapeCache.get(key);
+    if (memo !== undefined) return memo;
+    // Only a target whose parameters match the fn value's type can be called through it.
+    // `typeEq` ignores `move`, exactly as the checker does when a fn is stored into a slot.
+    const fits = (params: TypeKind[]) =>
+      params.length === want.length && params.every((t, i) => typeEq(t, want[i]));
+    const { fns, closures } = this.collectFnValueTargets();
+    let escapes = false;
+    for (const fn of fns) {
+      const params = fn.params.map(p => p.isRef || p.isRefMut ? { tag: "ref", inner: p.type, mutable: p.isRefMut } as TypeKind : p.type);
+      if (!fits(params)) continue;
+      if (this.closureParamEscapes(fn.name, idx)) { escapes = true; break; }
+    }
+    if (!escapes) {
+      for (const c of closures) {
+        if (!fits(c.params.map(p => p.type))) continue;
+        const p = c.params[idx];
+        if ((p.type.tag === "fn" && p.type.owning === true) || this.paramEscapesBody(c.body, p.name, new Set())) { escapes = true; break; }
+      }
+    }
     this.closureParamEscapeCache.set(key, escapes);
     return escapes;
   }
@@ -2233,6 +2298,7 @@ export class Codegen {
     }
 
     // register globals before function generation so they're visible during codegen
+    this.hirGlobals = module.globals;
     for (const g of module.globals) {
       const ty = this.llvmType(g.type);
       this.globalVars.set(g.name, { type: ty, typeKind: g.type });
@@ -3263,6 +3329,7 @@ export class Codegen {
             this.emitDropValue(lines, tPtr, stmt.target.type);
           }
           this.emitMemcpy(lines, tPtr, tmp, assignLlTy);
+          this.rearmAssignedLocal(lines, stmt.target);
           return [lines, false];
         }
         const [valLines, val, valTy] = this.genExpr(stmt.value);
@@ -3280,6 +3347,7 @@ export class Codegen {
           this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
         lines.push(this.valStore(valTy, val, targetPtr));
+        this.rearmAssignedLocal(lines, stmt.target);
         return [lines, false];
       }
       case "Return": {
@@ -4287,7 +4355,13 @@ export class Codegen {
     // times. It is materialized like any other rvalue.
     const rvalueField = iterable.kind === "FieldAccess" && this.receiverIsRvalueTemp(iterable);
     if (lvalueKinds.includes(iterable.kind) && !rvalueField) {
-      return this.genLValue(iterable);
+      // Indexing into a temporary container (`for x in mk()[0]`) materializes it into a
+      // slot queued on argTempDrops, which no one flushed here: the whole container
+      // leaked. It has to live as long as the loop, so it becomes a scoped droppable.
+      const mark = this.argTempDrops.length;
+      const [lvLines, lvPtr, lvTy] = this.genLValue(iterable);
+      for (const t of this.argTempDrops.splice(mark)) this.registerScopedTemp(lvLines, t.addr, t.type);
+      return [lvLines, lvPtr, lvTy];
     }
     const lines: string[] = [];
     const [valLines, val] = this.genExpr(iterable);
@@ -4296,18 +4370,20 @@ export class Codegen {
     const addr = this.nextTemp();
     this.entryAllocas.push(`  ${addr} = alloca ${iterTy}`);
     lines.push(`  store ${iterTy} ${val}, ptr ${addr}`);
-    if (this.needsDropCg(iterable.type)) {
-      // Register before the caller sets loopDropStart so this temp is function-
-      // scoped (dropped once at fn exit / early return), not loop-body-scoped.
-      const name = `__forin_tmp.${this.scopeCounter++}`;
-      this.locals.set(name, { type: iterTy, typeKind: iterable.type, mutable: false, isRef: false, addr });
-      const aliveFlag = `${addr}.alive`;
-      this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-      this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-      lines.push(`  store i1 1, ptr ${aliveFlag}`);
-      this.droppableLocals.push({ name, typeKind: iterable.type, aliveFlag, addr });
-    }
+    if (this.needsDropCg(iterable.type)) this.registerScopedTemp(lines, addr, iterable.type);
     return [lines, addr, iterTy];
+  }
+
+  // Register before the caller sets loopDropStart so this temp is scoped to the block
+  // enclosing the loop (dropped at its exit / early return), not to the loop body.
+  private registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind) {
+    const name = `__forin_tmp.${this.scopeCounter++}`;
+    this.locals.set(name, { type: this.llvmType(typeKind), typeKind, mutable: false, isRef: false, addr });
+    const aliveFlag = `${addr}.alive`;
+    this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+    this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    this.droppableLocals.push({ name, typeKind, aliveFlag, addr });
   }
 
   private genForEach(stmt: HIRStmt & { kind: "ForEach" }): [string[], boolean] {
@@ -4867,20 +4943,10 @@ export class Codegen {
     // real address. An lvalue already has one; an rvalue (e.g. `for x in mk()`)
     // does not — genLValue would hand back `null` and next() would deref it
     // (SIGTRAP). Materialize the rvalue into a temp alloca first.
-    const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
-    let iterAddr: string;
-    if (lvalueKinds.includes(stmt.iterable.kind)) {
-      const [iterLines, addr] = this.genLValue(stmt.iterable);
-      lines.push(...iterLines);
-      iterAddr = addr;
-    } else {
-      const [valLines, val] = this.genExpr(stmt.iterable);
-      lines.push(...valLines);
-      const iterTy = this.llvmType(stmt.iterable.type);
-      iterAddr = this.nextTemp();
-      this.entryAllocas.push(`  ${iterAddr} = alloca ${iterTy}`);
-      lines.push(`  store ${iterTy} ${val}, ptr ${iterAddr}`);
-    }
+    // The temporary is dropped when the loop's enclosing block exits, exactly as for a
+    // Vec: `for x in makeChannel()` used to leak the whole channel.
+    const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
+    lines.push(...iterLines);
 
     const sig = this.fnSigs.get(stmt.nextMethod);
     const retTy = sig?.retType ?? `%${stmt.optionEnumName}`;
@@ -6258,14 +6324,22 @@ export class Codegen {
     const [capLines, capVal] = this.genExpr(expr.capacity);
     lines.push(...capLines);
     this.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
+    // At least one byte. A String owns its buffer exactly when cap > 0 (cap 0 marks a
+    // borrowed literal, which drop skips), and malloc(0) still hands back a live block:
+    // `String.withCapacity(0)` was an owned buffer recorded as borrowed, leaked on drop,
+    // and orphaned by the first push (which saw cap 0 and allocated afresh).
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq i64 ${capVal}, 0`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = select i1 ${isZero}, i64 1, i64 ${capVal}`);
     const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${capVal})`);
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
     const s0 = this.nextTemp();
     lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
     const s1 = this.nextTemp();
     lines.push(`  ${s1} = insertvalue %String ${s0}, i64 0, 1`);
     const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${capVal}, 2`);
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${cap}, 2`);
     return [lines, s2, "%String"];
   }
 
@@ -7420,6 +7494,14 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
+        // Same ownership hand-off as a direct call's closure argument (see genCall).
+        if (this.ownsClosureEnv(arg.expr) && at === "{ ptr, ptr }"
+            && !this.indirectParamEscapes(expr.callee.type, i)) {
+          const slot = `%__clarg.${this.scopeCounter++}.addr`;
+          this.entryAllocas.push(`  ${slot} = alloca { ptr, ptr }`);
+          lines.push(`  store { ptr, ptr } ${av}, ptr ${slot}`);
+          this.argTempDrops.push({ addr: slot, type: { ...arg.expr.type, owning: true } as TypeKind });
+        }
       }
     }
     this.emitAliasGuards(lines, refPtrs, expr.span);
@@ -8263,8 +8345,25 @@ export class Codegen {
   private genStringIndex(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): Gen {
     this.hasStringType = true;
     this.needsBoundsCheck = true;
-    const [ol, ov] = this.genExpr(expr.object);
-    lines.push(...ol);
+    // `v[i][j]` reads the string header in place. Going through genExpr would clone the
+    // element (a Vec index hands out an independent value) only to read one byte out of
+    // it, and that clone was never freed: one leaked allocation per evaluation.
+    const tempMark = this.argTempDrops.length;
+    let ov: string;
+    const inPlace = this.indexAccessClones(expr.object) && expr.object.kind === "IndexAccess";
+    if (inPlace) {
+      const inner = expr.object as HIRExpr & { kind: "IndexAccess" };
+      const innerObj = inner.object.type.tag === "ref" ? inner.object.type.inner : inner.object.type;
+      const [, elemPtr] = innerObj.tag === "vec" || (innerObj.tag === "array" && innerObj.size === null)
+        ? this.genVecBoundsCheckedPtr(inner, lines)
+        : this.genBoundsCheckedPtr(inner, lines);
+      ov = this.nextTemp();
+      lines.push(`  ${ov} = load %String, ptr ${elemPtr}`);
+    } else {
+      const [ol, objVal] = this.genExpr(expr.object);
+      lines.push(...ol);
+      ov = objVal;
+    }
     const [il, iv, idxTy] = this.genExpr(expr.index);
     lines.push(...il);
     const len = this.nextTemp();
@@ -8277,6 +8376,9 @@ export class Codegen {
     lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idx64}`);
     const byte = this.nextTemp();
     lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
+    if (inPlace) this.flushArgTempDrops(lines, tempMark);
+    // `mk()[i]` reads a byte out of a string nobody owns.
+    else this.dropOwnedTemp(lines, ov, "%String", expr.object);
     return [lines, byte, "i8"];
   }
 
@@ -14582,68 +14684,59 @@ export class Codegen {
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %self) {`);
     body.push("entry.bb:");
-    const skipLabel = this.nextLabel("struct.drop.skip");
-    const dropLabel = this.nextLabel("struct.drop");
-    // Sentinel test for "this struct was moved out of and zeroed". Heap types carry a
-    // data pointer that is non-null while alive, so a null one suggests the bytes were
-    // cleared.
+    // Every field is dropped unconditionally: each field's own drop already treats its
+    // zeroed (moved-from) form as empty, so a struct that was moved out of and zeroed
+    // drops to nothing field by field. Deciding liveness for the WHOLE struct by probing
+    // its heap fields for non-null was wrong for every struct whose heap fields happened
+    // to be empty: `{ response: Resp.Text(body), headers: [] }` read as moved-from and
+    // leaked `body` (std/http leaked every response body whose handler set no header).
     //
-    // It must consult EVERY such field, not the first one. An empty container is
-    // indistinguishable from a zeroed one by this test — `Vec.new()` that never grew has
-    // a null data pointer and is perfectly alive — so keying on the first field alone
-    // meant a struct whose first field happened to be an empty Vec skipped its whole
-    // destructor, user `Drop` impl included, and silently never cleaned up. A moved-from
-    // struct has ALL of its bytes zeroed, so "every candidate is null" is the honest
-    // reading of the same evidence and costs one compare per field.
-    //
-    // Residual, and it is a real hole rather than a rounding error: a struct whose only
-    // droppable field is an empty container still cannot be told apart from a moved-from
-    // one by value. Deciding that needs a liveness FLAG rather than a value probe.
-    // A heap field proves liveness by a non-null data pointer; an integer or bool field
-    // proves it by being non-zero. Both are read from the same evidence — a moved-from
-    // struct has every byte cleared — and together they cover far more shapes than the
-    // pointer probe alone: `Res { id: 1, v: Vec.new() }` is alive on the strength of
-    // `id`, which the pointer-only test could not see.
-    const heapCandidates = layout.fields.flatMap((f, i) => {
-      const t = f.typeKind.tag;
-      return t === "string" || t === "vec" || t === "hashmap" || t === "heap" ? [{ i, ll: "ptr", zero: "null" }] : [];
-    });
-    // Scalars only AUGMENT a pointer probe; they never create one. A struct with no heap
-    // field had no probe at all and was dropped unconditionally, which is correct — the
-    // zeroed-ness of an integer says nothing about liveness on its own, and gating on it
-    // silently skipped the destructor of every `Tracked { id: 0 }`
-    // (tests/fixtures/dropAccounting.milo caught exactly that).
-    const scalarCandidates = heapCandidates.length > 0
-      ? layout.fields.flatMap((f, i) =>
-          f.typeKind.tag === "int" || f.typeKind.tag === "bool" ? [{ i, ll: f.type, zero: "0" }] : [])
-      : [];
-    const candidates = [...heapCandidates, ...scalarCandidates];
-    if (candidates.length > 0) {
-      // alive = OR over the candidates; skip only when every one of them reads as zeroed.
-      let alive: string | null = null;
-      for (const c of candidates) {
-        const fieldPtr = this.nextTemp();
-        body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${c.i}`);
-        const probe = this.nextTemp();
-        body.push(`  ${probe} = load ${c.ll}, ptr ${fieldPtr}`);
-        const nonZero = this.nextTemp();
-        body.push(`  ${nonZero} = icmp ne ${c.ll} ${probe}, ${c.zero}`);
-        if (alive === null) {
-          alive = nonZero;
-        } else {
-          const merged = this.nextTemp();
-          body.push(`  ${merged} = or i1 ${alive}, ${nonZero}`);
-          alive = merged;
-        }
-      }
-      body.push(`  br i1 ${alive}, label %${dropLabel}, label %${skipLabel}`);
-    } else {
-      body.push(`  br label %${dropLabel}`);
-    }
-    body.push(`${dropLabel}:`);
+    // The probe survives only to gate a user `Drop` impl, which is the one thing that
+    // must not run on a zeroed struct (a moved field of a parent, or an element moved
+    // out of a container, leaves zeroed bytes behind that the parent's glue still
+    // visits). Its residual hole is unchanged: such a struct whose heap fields are all
+    // empty is indistinguishable from a moved-from one, and its Drop is skipped.
     if (this.dropImpls.has(structName)) {
+      const skipLabel = this.nextLabel("struct.userdrop.skip");
+      const dropLabel = this.nextLabel("struct.userdrop");
+      const heapCandidates = layout.fields.flatMap((f, i) => {
+        const t = f.typeKind.tag;
+        return t === "string" || t === "vec" || t === "hashmap" || t === "heap" ? [{ i, ll: "ptr", zero: "null" }] : [];
+      });
+      // Scalars only AUGMENT a pointer probe; they never create one. The zeroed-ness of
+      // an integer says nothing about liveness on its own, and gating on it skipped the
+      // destructor of every `Tracked { id: 0 }` (tests/fixtures/dropAccounting.milo).
+      const scalarCandidates = heapCandidates.length > 0
+        ? layout.fields.flatMap((f, i) =>
+            f.typeKind.tag === "int" || f.typeKind.tag === "bool" ? [{ i, ll: f.type, zero: "0" }] : [])
+        : [];
+      const candidates = [...heapCandidates, ...scalarCandidates];
       const mangledDrop = `${structName}$Drop$drop`;
-      body.push(`  call void @${mangledDrop}(ptr %self)`);
+      if (candidates.length > 0) {
+        let alive: string | null = null;
+        for (const c of candidates) {
+          const fieldPtr = this.nextTemp();
+          body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${c.i}`);
+          const probe = this.nextTemp();
+          body.push(`  ${probe} = load ${c.ll}, ptr ${fieldPtr}`);
+          const nonZero = this.nextTemp();
+          body.push(`  ${nonZero} = icmp ne ${c.ll} ${probe}, ${c.zero}`);
+          if (alive === null) {
+            alive = nonZero;
+          } else {
+            const merged = this.nextTemp();
+            body.push(`  ${merged} = or i1 ${alive}, ${nonZero}`);
+            alive = merged;
+          }
+        }
+        body.push(`  br i1 ${alive}, label %${dropLabel}, label %${skipLabel}`);
+        body.push(`${dropLabel}:`);
+        body.push(`  call void @${mangledDrop}(ptr %self)`);
+        body.push(`  br label %${skipLabel}`);
+        body.push(`${skipLabel}:`);
+      } else {
+        body.push(`  call void @${mangledDrop}(ptr %self)`);
+      }
     }
     for (let i = layout.fields.length - 1; i >= 0; i--) {
       const field = layout.fields[i];
@@ -14653,8 +14746,6 @@ export class Codegen {
         this.emitDropValue(body, fieldPtr, field.typeKind);
       }
     }
-    body.push(`  br label %${skipLabel}`);
-    body.push(`${skipLabel}:`);
     body.push("  ret void");
     body.push("}");
 
@@ -15426,6 +15517,21 @@ export class Codegen {
     for (let i = this.droppableLocals.length - 1; i >= this.loopDropStart; i--) {
       this.emitGuardedDrop(lines, this.droppableLocals[i]);
     }
+  }
+
+  // A whole-variable assignment gives the slot a live value again. Moving out of a
+  // droppable local cleared its alive flag (and a capture's env flag), and nothing set it
+  // back, so `let t = s; s = mk()` (or a closure chain rebuilt in a loop) leaked the new
+  // value: the scope-exit drop still read the flag the move left behind.
+  private rearmAssignedLocal(lines: string[], target: HIRExpr) {
+    if (target.kind !== "Ident" || !this.needsDropCg(target.type)) return;
+    const local = this.locals.get(target.name);
+    if (!local || local.isRef) return;
+    const addr = this.localAddr(target.name);
+    const dl = this.droppableLocals.find(d => d.addr === addr);
+    if (dl) lines.push(`  store i1 1, ptr ${dl.aliveFlag}`);
+    const capFlag = this.captureFlagByAddr.get(addr);
+    if (capFlag) lines.push(`  store i1 1, ptr ${capFlag}`);
   }
 
   private emitGuardedDrop(lines: string[], local: { name: string; typeKind: TypeKind; aliveFlag: string; addr: string }) {

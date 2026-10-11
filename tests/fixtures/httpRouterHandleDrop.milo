@@ -1,0 +1,68 @@
+// @expect: plain 80000 0
+// @expect: middleware 20 20
+// Router.handle leaked per request in two ways. A handler that set no header returned
+// HandledResponse { response, headers: [] }, whose drop glue read the empty Vec as a
+// moved-from struct and skipped the response body. And any `Router.use` middleware
+// leaked the chain: links were assigned into a non-owning closure slot, and an owning
+// link handed to the middleware's `next` parameter was freed by nobody.
+//
+// The bodies are ~8 KB: `leaks` misses small abandoned blocks.
+from "std/http" import { Context, Response, Router, Request }
+
+fn bigBody(): string {
+    return "x".repeat(8000)
+}
+
+fn handler(_ctx: &mut Context): Response {
+    return Response.Text(bigBody())
+}
+
+fn mwA(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    ctx.setHeader("X-A", "a")
+    return next(&mut ctx)
+}
+
+fn mwB(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    ctx.setHeader("X-B", "b")
+    return next(&mut ctx)
+}
+
+fn bodyLen(r: &Response): i64 {
+    match r {
+        Response.Text(s) => { return s.len }
+        _ => { return 0 }
+    }
+}
+
+fn get(path: string): Request {
+    return Request { method: "GET", path: path, queryParams: [], headers: [], body: "" }
+}
+
+fn main(): i32 {
+    var plain: Router = Router.new()
+    plain.get("/", handler)
+    var n: i64 = 0
+    var h: i64 = 0
+    for _i in 0..10 {
+        let handled = plain.handle(get("/"))
+        n += bodyLen(handled.response)
+        h += handled.headers.len
+    }
+    print("plain " + n.toString() + " " + h.toString())
+
+    var r: Router = Router.new()
+    r.use(mwA)
+    r.use(mwB)
+    r.get("/", handler)
+    n = 0
+    h = 0
+    for _i in 0..10 {
+        let handled = r.handle(get("/"))
+        if bodyLen(handled.response) == 8000 {
+            n += 2
+        }
+        h += handled.headers.len
+    }
+    print("middleware " + n.toString() + " " + h.toString())
+    return 0
+}
