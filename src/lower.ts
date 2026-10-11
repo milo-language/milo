@@ -1320,13 +1320,13 @@ class LowerCtx {
           }
           if (expr.method === "join") {
             const args: HIRArg[] = [
-              { expr: this.lowerExpr(expr.object), passByRef: true, refMut: false },
+              { expr: recv(), passByRef: true, refMut: false },
               { expr: this.lowerExpr(expr.args[0]), passByRef: true, refMut: false },
             ];
             return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
           }
           if (expr.method === "isEmpty") {
-            return { kind: "VecIsEmpty", object: this.lowerExpr(expr.object), type, span: expr.span };
+            return { kind: "VecIsEmpty", object: recv(), type, span: expr.span };
           }
           if (expr.method === "contains") {
             return { kind: "VecContains", vec: recv(), value: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };

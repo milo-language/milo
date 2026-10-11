@@ -1,0 +1,18 @@
+// @expect: local a, b, c
+// @expect: global x-y
+// @expect: empty false
+// @expect: contains true
+// `join` on a fixed `[string; N]` passed the inline `[N x string]` to vecJoin, which
+// reads a `{ptr,len,cap}` Vec header, and the program trapped; `isEmpty` failed to
+// link the same way. Like every other combinator both now go through a full-range
+// slice of the array.
+let NAMES = ["x", "y"]
+
+pub fn main(): i32 {
+    let local = ["a", "b", "c"]
+    print("local " + local.join(", "))
+    print("global " + NAMES.join("-"))
+    print("empty " + NAMES.isEmpty().toString())
+    print("contains " + NAMES.contains("y").toString())
+    return 0
+}
