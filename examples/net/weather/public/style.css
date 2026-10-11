@@ -766,6 +766,27 @@ body.sheet-open {
   height: 22px;
 }
 
+.top-btn.search-pill {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+
+.top-btn.search-pill .ico {
+  width: 18px;
+  height: 18px;
+}
+
+.sug-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* filled = saved; the star-filled symbol paints itself with currentColor, so
    the accent token is the only thing this rule has to say */
 .fav-btn.on {

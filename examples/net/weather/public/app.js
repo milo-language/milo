@@ -2039,9 +2039,11 @@ function render(city, forecast, hourlyData, grid, timeZone) {
     '<div class="top-city">' + esc(city) + "</div>" +
     '<div class="top-updated">Updated ' + esc(fmtTimeInTz(new Date(), timeZone)) + "</div>" +
     "</div>" +
-    '<button class="top-btn" id="placeBtn" type="button" ' +
+    // labelled, not icon-only: a bare magnifier beside the star read as
+    // decoration and people did not find search at all
+    '<button class="top-btn search-pill" id="placeBtn" type="button" ' +
     'title="Search or choose a place" aria-label="Search or choose a place">' +
-    iconSvg("search") + "</button>" +
+    iconSvg("search") + "<span>Search</span></button>" +
     '<button class="top-btn fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
     'type="button" data-city="' + esc(city) + '" ' +
     'title="' + (isFavorite(city) ? "Remove from favorites" : "Save to favorites") + '" ' +
@@ -3012,8 +3014,11 @@ function renderSuggestions(items, query) {
     div.innerHTML =
       '<span class="sug-city">' +
       icon +
+      // one span: markMatch splits the name into a bold run and plain text, and
+      // as bare children of the flex .sug-city each piece got the icon gap
+      '<span class="sug-name">' +
       (item.kind === "locate" ? esc(item.label) : markMatch(item.label, query)) +
-      '</span><span class="sug-region">' +
+      '</span></span><span class="sug-region">' +
       esc(item.sub || "") +
       "</span>";
     // mousedown would blur the input and close the list before click lands
