@@ -1,0 +1,41 @@
+// dbNext reports a failed step, which dbStep cannot tell from "no more rows": a table
+// dropped after prepare (prepare succeeds against the cached schema), and a constraint
+// violation on insert.
+// @expect: row: true
+// @expect: done: false
+// @expect: dropped: no such table: t
+// @expect: dbStep on dropped: false
+// @expect: duplicate: UNIQUE constraint failed: t.k
+from "std/sqlite" import { dbOpen, dbExec, dbQuery, dbStep, dbNext }
+
+fn show(label: string, r: Result<bool>): void {
+    match r {
+        Result.Ok(b) => {
+            print($"{label}: {b}")
+        }
+        Result.Err(e) => {
+            print($"{label}: {e}")
+        }
+    }
+}
+
+pub fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "CREATE TABLE t (k INTEGER PRIMARY KEY)")!
+    dbExec(db, "INSERT INTO t VALUES (1)")!
+    let q = dbQuery(db, "SELECT k FROM t")!
+    show("row", dbNext(q))
+    show("done", dbNext(q))
+
+    let stale = dbQuery(db, "SELECT k FROM t")!
+    let stale2 = dbQuery(db, "SELECT k FROM t")!
+    dbExec(db, "DROP TABLE t")!
+    show("dropped", dbNext(stale))
+    print($"dbStep on dropped: {dbStep(stale2)}")
+
+    dbExec(db, "CREATE TABLE t (k INTEGER UNIQUE)")!
+    dbExec(db, "INSERT INTO t VALUES (1)")!
+    let dup = dbQuery(db, "INSERT INTO t VALUES (1)")!
+    show("duplicate", dbNext(dup))
+    return 0
+}

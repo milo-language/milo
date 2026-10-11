@@ -64,6 +64,8 @@ pub extern fn sqlite3_reset(stmt: *u8): i32
 
 pub extern fn sqlite3_errmsg(db: *u8): *u8
 
+pub extern fn sqlite3_db_handle(stmt: *u8): *u8
+
 pub extern fn sqlite3_changes(db: *u8): i32
 
 pub extern fn sqlite3_last_insert_rowid(db: *u8): i64
@@ -165,9 +167,26 @@ pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
     }
 }
 
-// Advance to the next row: true if a row is available, false when done.
+// Advance to the next row: true if a row is available, false when done. An error also
+// reads as false; use dbNext where a failed step must not pass for an empty result.
 pub fn dbStep(stmt: &Statement): bool {
     unsafe { return sqlite3_step(stmt._handle) == 100 }
+}
+
+// Advance to the next row: Ok(true) for a row, Ok(false) when done, and Err with
+// sqlite's message when the step fails (a constraint violation, a busy database, or a
+// table dropped since the statement was prepared, which prepare cannot see).
+pub fn dbNext(stmt: &Statement): Result<bool> {
+    unsafe {
+        let rc = sqlite3_step(stmt._handle)
+        if rc == 100 {
+            return Result.Ok(true)
+        }
+        if rc == 101 {
+            return Result.Ok(false)
+        }
+        return Result.Err(_cstrToString(sqlite3_errmsg(sqlite3_db_handle(stmt._handle))))
+    }
 }
 
 // The column `col` (0-based) of the current row as an i32.
