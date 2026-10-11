@@ -1,0 +1,100 @@
+// @skip-os: win32
+// Router.stream: a GET route that keeps its connection (server-sent events). The
+// handler writes its own headers, registers the fd, and parks in waitPeerClosed while
+// an ordinary route pushes frames to it with sendAll. The server must keep answering
+// other requests meanwhile, and the stream task must end once the client hangs up.
+// @expect: listening on http://127.0.0.1:47393
+// @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n
+// @expect: poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 1
+// @expect: frame: data: room-7\n\n
+// @expect: stream for room-7 ended
+// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 0
+// @expect: post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
+from "std/http" import {
+    Context, Response, Router, serveRouterConcurrentOn, sendAll, waitPeerClosed
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47393
+
+var subscribers: Vec<i32> = []
+var subscriberRoom: Vec<string> = []
+
+fn show(label: string, s: &string): void {
+    var out: string = label + ": "
+    for i in 0..s.len {
+        if s[i] == '\r' {
+            out.pushStr("\\r")
+        } else if s[i] == '\n' {
+            out.pushStr("\\n")
+        } else {
+            out.push(s[i])
+        }
+    }
+    print(out)
+}
+
+fn exchange(req: string): string {
+    let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    conn.send(req)!
+    return conn.recv()!
+}
+
+fn clients(): void {
+    var stream = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    stream.send("GET /events/room-7 HTTP/1.1\r\nHost: x\r\n\r\n")!
+    show("open", stream.recvOnce())
+    show("poke", exchange("POST /poke HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    show("frame", stream.recvOnce())
+    stream.close()
+    sleepMs(50)
+    show("after", exchange("POST /poke HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    show("post to stream path", exchange("POST /events/room-7 HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.stream("/events/:room", (ctx: &mut Context, fd: i32): void => {
+        var room: string = ""
+        if let Option.Some(v) = ctx.param("room") {
+            room = v
+        }
+        if !sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n") {
+            return
+        }
+        subscribers.push(fd)
+        subscriberRoom.push(room.clone())
+        waitPeerClosed(fd)
+        for i in 0..subscribers.len {
+            if subscribers[i] == fd {
+                subscribers.remove(i)
+                subscriberRoom.remove(i)
+                break
+            }
+        }
+        print($"stream for {room} ended")
+    })
+    r.post("/poke", (ctx: &mut Context): Response => {
+        var sent: i64 = 0
+        for i in 0..subscribers.len {
+            if sendAll(subscribers[i], $"data: {subscriberRoom[i]}\n\n") {
+                sent += 1
+            }
+        }
+        return ctx.text($"sent {sent}")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

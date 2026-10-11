@@ -844,6 +844,13 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
 
 // ── Router ──
 
+// A GET route that takes over the connection (see Router.stream).
+pub struct StreamRoute {
+    pattern: string,
+    paramNames: Vec<string>,
+    handler: (&mut Context, i32) => void,
+}
+
 pub struct Route {
     method: string,
     pattern: string,
@@ -855,6 +862,7 @@ pub struct Route {
 // middleware run around every handler.
 pub struct Router {
     routes: Vec<Route>,
+    streams: Vec<StreamRoute>,
     middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
     maxBodyBytes: i64,
 }
@@ -864,6 +872,7 @@ impl Router {
     fn new(): Router {
         return Router {
             routes: [],
+            streams: [],
             middleware: [],
             maxBodyBytes: defaultMaxBodyBytes,
         }
@@ -899,6 +908,44 @@ impl Router {
     // Register a route that matches any method.
     fn all(self: &mut Self, pattern: string, h: move (&mut Context) => Response): void {
         self.addRoute("*", pattern, h)
+    }
+
+    // Register a GET route that owns the connection once the request is read: the
+    // handler gets the socket fd, writes its own status line and headers with
+    // `sendAll`, and may keep writing for as long as it likes (server-sent events,
+    // long poll). The server closes the fd when the handler returns. Middleware does
+    // not run, and only serveRouterConcurrent honours these routes, since one
+    // long-lived stream would stall a server that answers one connection at a time.
+    fn stream(self: &mut Self, pattern: string, h: move (&mut Context, i32) => void): void {
+        let paramNames = extractParamNames(pattern)
+        self.streams.push(StreamRoute {
+            pattern: pattern,
+            paramNames: paramNames,
+            handler: h,
+        })
+    }
+
+    // Run the stream route matching `req`, if any. False means no stream route
+    // matched and `req` is untouched for the normal path.
+    fn runStream(self: &Self, req: &Request, fd: i32): bool {
+        if req.method != "GET" {
+            return false
+        }
+        for i in 0..self.streams.len {
+            let route = self.streams[i]
+            if let Option.Some(matched) = matchRoute(route.pattern, route.paramNames, req.path) {
+                var ctx = Context {
+                    req: req.clone(),
+                    params: matched,
+                    statusCode: 200,
+                    respHeaders: [],
+                }
+                let handler = self.streams[i].handler
+                handler(&mut ctx, fd)
+                return true
+            }
+        }
+        return false
     }
 
     // Add middleware. It receives the context and `next`, the rest of the chain, and
@@ -1003,6 +1050,24 @@ fn writeAll(fd: i32, buf: string): void {
     unsafe { sendFd(fd, buf, buf.len) }
 }
 
+// Write all of `buf` to a stream route's socket. False once the peer is gone.
+pub fn sendAll(fd: i32, buf: &string): bool {
+    unsafe { return sendFd(fd, buf, buf.len) == buf.len }
+}
+
+// Park until the peer of a stream route closes its side (or the connection errors),
+// discarding anything it sends. This is how a stream handler learns its client left.
+pub fn waitPeerClosed(fd: i32): void {
+    var chunk: [u8; 512] = [0; 512]
+    while true {
+        var n: i64 = 0
+        unsafe { n = recvFd(fd, chunk, 512) }
+        if n <= 0 {
+            return
+        }
+    }
+}
+
 // One connection in its own green task. Every read parks on EAGAIN (recvFd), so a
 // client trickling its request in stalls only this task; one that closes mid-request
 // ends it with the fd closed.
@@ -1012,6 +1077,10 @@ fn handleConn(clientFd: i32): void {
         return
     }
     serveConn(clientFd, activeRouter[0].maxBodyBytes, (req: Request): string => {
+        // A stream route has already written everything it will; nothing more to send.
+        if activeRouter[0].runStream(req, clientFd) {
+            return ""
+        }
         let handled = activeRouter[0].handle(req)
         return renderResponse(handled.response, handled.headers)
     })
