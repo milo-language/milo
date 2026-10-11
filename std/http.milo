@@ -12,7 +12,8 @@ from "std/os" import {
     sysListen,
     sysRead,
     sysWrite,
-    sysAccept
+    sysAccept,
+    sendFd
 }
 from "std/runtime" import {
     Task, schedulerRunToCompletion, schedulerWaitRead, schedulerWaitWrite
@@ -804,36 +805,11 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
 // empty and holds exactly one element from the first serve call onward.
 var activeRouter: Vec<Router> = []
 
-// A response can be a few hundred KB (a gridpoint feed, a radar frame), and a
-// green task's socket is non-blocking: one write() is not a promise to have
-// written all of it. serveRouter's single write is safe only because its socket
-// blocks; here a short write would truncate the body with no error anywhere.
+// A green task's socket is non-blocking, so one write() may be short. sendFd loops,
+// parks only on EAGAIN, and gives up on any other error: a peer that hung up
+// (EPIPE/ECONNRESET) must end the task, or it retries forever on EPOLLHUP.
 fn writeAll(fd: i32, buf: string): void {
-    unsafe {
-        var sent: i64 = 0
-        while sent < buf.len {
-            // The whole buffer on the first pass, so the common case is one write
-            // and no copy; only a short write pays for the remainder.
-            var chunk = buf.clone()
-            if sent > 0 {
-                chunk = buf.slice(sent, buf.len).clone()
-            }
-            var n: i64 = 0
-            unsafe { n = sysWrite(fd, chunk, chunk.len) }
-            if n > 0 {
-                sent += n
-                continue
-            }
-            // Non-blocking socket: EAGAIN is "not yet", not an error. Park until the
-            // kernel says there is room, or a 240KB body would be silently truncated
-            // at whatever the socket buffer happened to hold.
-            if n < 0 {
-                schedulerWaitWrite(fd)
-                continue
-            }
-            return
-        }
-    }
+    unsafe { sendFd(fd, buf, buf.len) }
 }
 
 fn handleConn(clientFd: i32): void {
