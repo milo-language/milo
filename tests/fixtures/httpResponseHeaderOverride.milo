@@ -1,0 +1,85 @@
+// Response header semantics, through the real path Router -> Context -> wire bytes.
+// A handler's Content-Type used to go out next to the default one (two Content-Type
+// headers, which clients resolve differently), its Content-Length or Connection
+// contradicted the framing the renderer writes, and 204/304 carried a body and a
+// Content-Length. Now: Content-Type and Server are defaults a handler header of the
+// same name (any case) replaces; framing headers are the renderer's; 1xx/204/304 are
+// bodyless.
+// @expect: override: HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-type: application/vnd.api+json\r\nConnection: close\r\nServer: milo\r\n\r\n{}
+// @expect: framing: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nX-Keep: yes\r\nServer: edge\r\nConnection: close\r\n\r\nok
+// @expect: 204: HTTP/1.1 204 No Content\r\nX-Id: 7\r\nConnection: close\r\nServer: milo\r\n\r\n
+// @expect: 304: HTTP/1.1 304 Not Modified\r\nETag: "v1"\r\nConnection: close\r\nServer: milo\r\n\r\n
+// @expect: 101: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\nServer: milo\r\n\r\n
+// @expect: 413 Content Too Large|415 Unsupported Media Type|417 Expectation Failed|429 Too Many Requests|431 Request Header Fields Too Large|451 Unavailable For Legal Reasons|501 Not Implemented|503 Service Unavailable|422 Unprocessable Content|599 Server Error
+from "std/http" import {
+    Context, Request, Response, Router, Param, renderResponse, statusText
+}
+
+fn show(label: string, s: &string): void {
+    var out: string = label + ": "
+    for i in 0..s.len {
+        if s[i] == '\r' {
+            out.pushStr("\\r")
+        } else if s[i] == '\n' {
+            out.pushStr("\\n")
+        } else {
+            out.push(s[i])
+        }
+    }
+    print(out)
+}
+
+fn get(path: string): Request {
+    return Request {
+        method: "GET",
+        path: path,
+        queryParams: [],
+        headers: [],
+        body: "",
+    }
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.get("/override", (ctx: &mut Context): Response => {
+        ctx.setHeader("content-type", "application/vnd.api+json")
+        return ctx.json("{}")
+    })
+    r.get("/framing", (ctx: &mut Context): Response => {
+        ctx.setHeader("Content-Length", "999")
+        ctx.setHeader("Connection", "keep-alive")
+        ctx.setHeader("Transfer-Encoding", "chunked")
+        ctx.setHeader("X-Keep", "yes")
+        ctx.setHeader("Server", "edge")
+        return ctx.text("ok")
+    })
+    r.get("/empty", (ctx: &mut Context): Response => {
+        ctx.setStatus(204)
+        ctx.setHeader("X-Id", "7")
+        return ctx.text("dropped")
+    })
+    r.get("/cached", (ctx: &mut Context): Response => {
+        ctx.setStatus(304)
+        ctx.setHeader("ETag", "\"v1\"")
+        ctx.setHeader("Content-Type", "text/html")
+        return ctx.html("dropped too")
+    })
+    let names = ["override", "framing", "empty", "cached"]
+    let labels = ["override", "framing", "204", "304"]
+    for i in 0..names.len {
+        let h = r.handle(get("/" + names[i]))
+        show(labels[i], renderResponse(h.response, h.headers))
+    }
+    let none: Vec<Param> = []
+    show("101", renderResponse(Response.Status(101, "text/plain", "x"), none))
+    var line: string = ""
+    let codes = [413, 415, 417, 429, 431, 451, 501, 503, 422, 599]
+    for i in 0..codes.len {
+        if i > 0 {
+            line.push('|')
+        }
+        line.pushStr(statusText(codes[i] as i32))
+    }
+    print(line)
+    return 0
+}

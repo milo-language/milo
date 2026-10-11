@@ -44,6 +44,8 @@ pub extern fn sqlite3_column_double(stmt: *u8, col: i32): f64
 
 pub extern fn sqlite3_column_text(stmt: *u8, col: i32): *u8
 
+pub extern fn sqlite3_column_bytes(stmt: *u8, col: i32): i32
+
 pub extern fn sqlite3_column_count(stmt: *u8): i32
 
 pub extern fn sqlite3_column_type(stmt: *u8, col: i32): i32
@@ -183,14 +185,19 @@ pub fn dbColumnFloat(stmt: &Statement, col: i32): f64 {
     unsafe { return sqlite3_column_double(stmt._handle, col) }
 }
 
-// The column `col` (0-based) of the current row as a string.
+// The column `col` (0-based) of the current row as a string, every byte of it:
+// embedded NULs are kept.
 pub fn dbColumnText(stmt: &Statement, col: i32): string {
     unsafe {
         let ptr = sqlite3_column_text(stmt._handle, col)
         if ptr == 0 as *u8 {
             return ""
         }
-        return _cstrToString(ptr)
+        // The byte count, not the NUL: TEXT may hold embedded NULs, and reading it as
+        // a C string cut the value at the first one. column_bytes must come after
+        // column_text, which is what fixes the encoding it counts.
+        let n = sqlite3_column_bytes(stmt._handle, col)
+        return _bytesToString(ptr, n as i64)
     }
 }
 
@@ -231,10 +238,16 @@ pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     return Result.Ok(0)
 }
 
-// Bind a string to parameter `idx` (1-based).
+// Bind a string to parameter `idx` (1-based). Every byte is bound, embedded NULs too.
 pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
+    if val.len > 2147483647 {
+        return Result.Err("bind_text failed: string longer than 2 GiB")
+    }
     unsafe {
-        let rc = sqlite3_bind_text(stmt._handle, idx, val, 0 - 1, (0 - 1) as *u8)
+        // An explicit length, not -1: -1 makes SQLite stop at the first NUL, which
+        // silently truncated any value containing one. (-1 as the destructor is
+        // SQLITE_TRANSIENT: SQLite copies, since `val` is freed when this returns.)
+        let rc = sqlite3_bind_text(stmt._handle, idx, val, val.len as i32, (0 - 1) as *u8)
         if rc != 0 {
             return Result.Err("bind_text failed")
         }

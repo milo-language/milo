@@ -4252,6 +4252,11 @@ unconditionally. `@targetOs()` is for application code that has no such split.
 
 Milo includes a Hono-inspired HTTP server in `std/http` with a router, context object, middleware, path params, query strings, cookies, and request body access.
 
+The server reads the whole request (headers, then `Content-Length` body bytes) before a
+handler runs; request limits, binding one address (`serveRouterOn`,
+`serveRouterConcurrentOn`) and the response-header rules are on the
+[std/http page](site/stdlib/http.md).
+
 ### Basic Server
 
 For simple cases, `serve` takes a port and a handler:

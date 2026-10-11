@@ -15,6 +15,39 @@ it does.
 `serveRouter` answers one connection at a time; `serveRouterConcurrent` gives each
 connection its own green task, which handlers that call the network need.
 
+Both bind every interface (0.0.0.0). `serveRouterOn(host, port, router)` and
+`serveRouterConcurrentOn(host, port, router)` bind one IPv4 address instead: pass
+`"127.0.0.1"` (or `"localhost"`) for an app that only a local reverse proxy should
+reach. The host must be a dotted quad or `"localhost"`; anything else fails at startup.
+
+### Request limits
+
+The server reads a whole request before calling the handler: the headers up to the
+blank line, then exactly `Content-Length` body bytes, however many reads that takes.
+A client that sends `Expect: 100-continue` gets `HTTP/1.1 100 Continue` before the body
+is read. Requests the server refuses without running a handler:
+
+| Request | Answer |
+|---|---|
+| request line plus headers over 16 KiB | 431 |
+| `Content-Length` over the router's limit (`router.setMaxBodySize(bytes)`, default 1 MiB; `serve` uses the default) | 413 |
+| a `Transfer-Encoding` body (chunked request bodies are not decoded) | 411 |
+
+There is no read timeout yet: a client that stops sending mid-request holds its
+connection (and, under `serveRouter`, the whole server) until it closes.
+
+### Response headers
+
+`ctx.setHeader` adds a header, and these rules apply when the response is written:
+
+- `Content-Type` and `Server` are defaults: a handler header of the same name (any
+  case) replaces the default rather than adding a second one.
+- `Content-Length`, `Connection` and `Transfer-Encoding` are written by the server to
+  match the bytes it sends, so a handler's copy is dropped. Every response is
+  `Connection: close`.
+- 1xx, 204 and 304 responses have no body, no `Content-Length` and no `Content-Type`,
+  whatever the handler returned.
+
 ## Examples
 
 ### Router with path params
@@ -269,7 +302,7 @@ pub struct Router
 Routes requests to handlers by method and path pattern (`/users/:id`), with
 middleware run around every handler.
 
-Fields: `routes: Vec<Route>`, `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`.
+Fields: `routes: Vec<Route>`, `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`, `maxBodyBytes: i64`.
 
 #### `Router.addRoute`
 
@@ -332,6 +365,15 @@ fn Router.put(self: &mut Router, pattern: string, h: move (&mut Context) => Resp
 
 Register a PUT route.
 
+#### `Router.setMaxBodySize`
+
+```milo
+fn Router.setMaxBodySize(self: &mut Router, bytes: i64): void
+```
+
+The largest request body this router's server accepts, in bytes (default 1 MiB).
+A request declaring more is answered 413 before its body is read.
+
 #### `Router.use`
 
 ```milo
@@ -363,6 +405,12 @@ is not a bare fd — std/https writes through SSL_write — reuses the exact wir
 instead of reimplementing it. std/http itself stays OpenSSL-free; that separation is
 why TLS lives in another module.
 
+Header rules: Content-Type and Server are defaults a handler header of the same
+name (case-insensitive) replaces. Content-Length, Connection and Transfer-Encoding
+describe the framing this function writes, so a handler's copy would contradict
+the bytes on the wire and is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
+6.4.1): those go out with no body, no Content-Length and no Content-Type.
+
 #### `renderResponse`
 
 ```milo
@@ -378,7 +426,7 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit>
 ```
 
 The simplest server: every request goes to `handler`. Good for a static file server
-or a single-handler app. Answers one connection at a time.
+or a single-handler app. Answers one connection at a time, on every interface.
 
 #### `serveRouter`
 
@@ -386,7 +434,8 @@ or a single-handler app. Answers one connection at a time.
 pub fn serveRouter(port: u16?, router: &Router): Result<Unit>
 ```
 
-Start an HTTP server using a Router (headers from Context are sent on the wire).
+Start an HTTP server using a Router (headers from Context are sent on the wire),
+on every interface. Answers one connection at a time.
 
 #### `serveRouterConcurrent`
 
@@ -404,10 +453,29 @@ other client for the whole round trip. Handlers that fetch need this loop.
 Never returns: the scheduler drives the accept task and the handlers it
 spawns, exactly as a green-threaded server's main is supposed to.
 
+#### `serveRouterConcurrentOn`
+
+```milo
+pub fn serveRouterConcurrentOn(host: &string, port: u16?, router: Router): Result<Unit>
+```
+
+serveRouterConcurrent bound to one IPv4 address (see serveRouterOn).
+
+#### `serveRouterOn`
+
+```milo
+pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit>
+```
+
+serveRouter bound to one IPv4 address: "127.0.0.1" (or "localhost") for a server
+that only a local reverse proxy should reach, "0.0.0.0" for every interface.
+
 #### `statusText`
 
 ```milo
 pub fn statusText(status: i32): string
 ```
+
+The status line's code and reason phrase, e.g. "404 Not Found".
 
 <!-- /generated:api -->

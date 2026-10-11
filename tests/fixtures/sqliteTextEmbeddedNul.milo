@@ -1,0 +1,38 @@
+// @skip-os: win32
+// TEXT with an embedded NUL round-trips through bind and column read. dbBindText used
+// to pass length -1 (SQLite stops at the first NUL) and dbColumnText read the result
+// as a C string, so "a\0b" came back as "a" from either side.
+// @expect: stored 3 bytes
+// @expect: read 3 bytes: 97 0 98
+// @expect: empty: 0 bytes, null=false
+from "std/sqlite" import {
+    dbOpen, dbExec, dbQuery, dbStep, dbColumnInt, dbColumnText, dbColumnIsNull, dbBindText
+}
+
+pub fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "create table t(id integer, s text)")!
+    let ins = dbQuery(db, "insert into t values (1, ?)")!
+    dbBindText(ins, 1, "a\0b")!
+    dbStep(ins)
+    // length(s) on TEXT counts characters up to the first NUL, so measure the blob.
+    let q = dbQuery(db, "select length(cast(s as blob)), s from t where id = 1")!
+    if dbStep(q) {
+        print($"stored {dbColumnInt(q, 0)} bytes")
+        let s = dbColumnText(q, 1)
+        var line: string = $"read {s.len} bytes:"
+        for i in 0..s.len {
+            line.pushStr(" " + (s[i] as i64).toString())
+        }
+        print(line)
+    }
+    // An empty string is still '' (not NULL) with an explicit zero length.
+    let ins2 = dbQuery(db, "insert into t values (2, ?)")!
+    dbBindText(ins2, 1, "")!
+    dbStep(ins2)
+    let q2 = dbQuery(db, "select s from t where id = 2")!
+    if dbStep(q2) {
+        print($"empty: {dbColumnText(q2, 0).len} bytes, null={dbColumnIsNull(q2, 0)}")
+    }
+    return 0
+}

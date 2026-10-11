@@ -1,0 +1,99 @@
+// @skip-os: win32
+// The concurrent server reads a whole request, not one read's worth. It used to read
+// once into an 8 KB buffer, so a body that arrived in a later segment reached the
+// handler empty or cut short, Expect: 100-continue clients got no 100, and nothing
+// capped a body. Each case is a raw client on a green task next to the server; the
+// client's sleeps are parks, so the server task reading a half-sent request has to
+// park too (a blocking read there would hang the whole scheduler).
+// Also pins serveRouterConcurrentOn: bound to 127.0.0.1 and reached through it.
+// @expect: listening on http://127.0.0.1:47391
+// @expect: split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello world
+// @expect: continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nServer: milo\r\n\r\n5 bytes: abcde
+// @expect: too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n413 Content Too Large
+// @expect: chunked: HTTP/1.1 411 Length Required\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 19\r\nConnection: close\r\nServer: milo\r\n\r\n411 Length Required
+// @expect: huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nServer: milo\r\n\r\n431 Request Header Fields Too Large
+// @expect: hung up mid-request: (no response)
+// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nServer: milo\r\n\r\n2 bytes: ok
+from "std/http" import {
+    Context, Response, Router, serveRouterConcurrentOn
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47391
+
+fn show(label: string, s: &string): void {
+    var out: string = label + ": "
+    if s.len == 0 {
+        out.pushStr("(no response)")
+    }
+    for i in 0..s.len {
+        if s[i] == '\r' {
+            out.pushStr("\\r")
+        } else if s[i] == '\n' {
+            out.pushStr("\\n")
+        } else {
+            out.push(s[i])
+        }
+    }
+    print(out)
+}
+
+// Send each part with a pause before the next, then read the reply until the server
+// closes.
+fn exchange(parts: Vec<string>): string {
+    let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    for i in 0..parts.len {
+        if i > 0 {
+            sleepMs(50)
+        }
+        conn.send(parts[i])!
+    }
+    return conn.recv()!
+}
+
+fn clients(): void {
+    show("split", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhel", "lo world"]))
+    show("continue", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n", "abcde"]))
+    // Headers only: the server refuses before reading a body, and unread bytes in
+    // its receive buffer at close would turn the reply into a reset.
+    show("too big", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 2000000\r\n\r\n"]))
+    show("chunked", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"]))
+    var big: string = "GET /echo HTTP/1.1\r\nX-Pad: "
+    while big.len < 16400 {
+        big.push('a')
+    }
+    show("huge headers", exchange([big]))
+    // Closes after half a request line: the server's task must end, not spin, and
+    // the server must keep answering.
+    var gone = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    gone.send("GET /ec")!
+    gone.close()
+    sleepMs(50)
+    show("hung up mid-request", "")
+    show("after", exchange(["POST /echo HTTP/1.1\r\nContent-Length: 2\r\n\r\nok"]))
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.setMaxBodySize(1000000)
+    r.post("/echo", (ctx: &mut Context): Response => {
+        return ctx.text($"{ctx.req.body.len} bytes: {ctx.req.body}")
+    })
+    r.get("/echo", (ctx: &mut Context): Response => {
+        return ctx.text("get")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

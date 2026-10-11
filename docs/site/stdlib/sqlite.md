@@ -113,7 +113,7 @@ Bind NULL to parameter `idx` (1-based).
 pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32>
 ```
 
-Bind a string to parameter `idx` (1-based).
+Bind a string to parameter `idx` (1-based). Every byte is bound, embedded NULs too.
 
 #### `dbClose`
 
@@ -171,7 +171,8 @@ Whether column `col` (0-based) of the current row is NULL.
 pub fn dbColumnText(stmt: &Statement, col: i32): string
 ```
 
-The column `col` (0-based) of the current row as a string.
+The column `col` (0-based) of the current row as a string, every byte of it:
+embedded NULs are kept.
 
 #### `dbExec`
 
