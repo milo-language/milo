@@ -209,6 +209,18 @@ impl WsConn {
     // `&Self`, like the sends: a read changes nothing in the handle, so one task can read
     // while scoped tasks borrowing the same connection write (`Task.scope`).
     fn recv(self: &Self): Result<WsMessage, string> {
+        return self.readMessage(9223372036854775807, false)
+    }
+
+    // recv for a server facing untrusted peers. A message longer than `maxBytes` is
+    // refused before its payload is allocated (close 1009, Err "message too big"): the
+    // length is the peer's to claim. Pongs come back as messages, so a heartbeat can tell
+    // a live peer from a half-open socket; one arriving mid-fragment is dropped.
+    fn recvWithin(self: &Self, maxBytes: i64): Result<WsMessage, string> {
+        return self.readMessage(maxBytes, true)
+    }
+
+    fn readMessage(self: &Self, maxBytes: i64, returnPongs: bool): Result<WsMessage, string> {
         var resultPayload: string = ""
         var resultOpcode: WsOpcode = WsOpcode.Continuation
 
@@ -245,6 +257,14 @@ impl WsConn {
                 for i in 0..8 {
                     payloadLen = (payloadLen << 8) | extLen[i] as i64
                 }
+            }
+
+            if payloadLen < 0 || payloadLen > maxBytes - resultPayload.len {
+                var code: string = ""
+                code.push(3)
+                code.push(241)
+                let _ = self._sendFrame(WsOpcode.Close, code, true)
+                return Result.Err("message too big")
             }
 
             var maskKey: [u8; 4] = [0; 4]
@@ -287,6 +307,9 @@ impl WsConn {
                 continue
             }
             if opcode == WsOpcode.Pong {
+                if returnPongs && resultPayload.len == 0 && resultOpcode == WsOpcode.Continuation {
+                    return Result.Ok(WsMessage { opcode: WsOpcode.Pong, payload: payload })
+                }
                 continue
             }
             // Not marked `_closed`: that flag skips teardown in drop, so setting it here

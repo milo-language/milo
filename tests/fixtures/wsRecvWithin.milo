@@ -1,0 +1,62 @@
+// @skip-os: win32
+// WsConn.recvWithin: the reader a server facing untrusted peers uses. It refuses a
+// message whose claimed length exceeds the cap before allocating it (recv would malloc
+// whatever the peer claims), and it returns pongs so a heartbeat can see them; recv
+// keeps swallowing them.
+
+// @expect: under cap: hello
+// @expect: pong: Pong
+// @expect: recv skips pong: after
+// @expect: over cap: message too big
+
+from "std/ws" import {
+    WsConn, WsOpcode
+}
+from "std/platform" import {
+    pipe
+}
+from "std/os" import {
+    writeFd
+}
+
+fn pongFrame(): string {
+    var raw: string = ""
+    raw.push(138)
+    raw.push(0)
+    return raw
+}
+
+pub fn main(): i32 {
+    var fds: [i32; 2] = [0; 2]
+    unsafe {
+        if pipe(fds as *i32) != 0 {
+            return 1
+        }
+    }
+    unsafe {
+        let sender = WsConn.view(fds[1], 0, true)
+        let receiver = WsConn.view(fds[0], 0, false)
+
+        let _ = sender.sendText("hello")
+        print($"under cap: {receiver.recvWithin(5)!.payload}")
+
+        let p = pongFrame()
+        writeFd(fds[1], p, p.len)
+        print($"pong: {receiver.recvWithin(5)!.opcode}")
+
+        writeFd(fds[1], p, p.len)
+        let _ = sender.sendText("after")
+        print($"recv skips pong: {receiver.recv()!.payload}")
+
+        let _ = sender.sendText("sixsix")
+        match receiver.recvWithin(5) {
+            Result.Ok(m) => {
+                print($"over cap: accepted {m.payload}")
+            }
+            Result.Err(e) => {
+                print($"over cap: {e}")
+            }
+        }
+    }
+    return 0
+}
