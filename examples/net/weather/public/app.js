@@ -932,6 +932,11 @@ function showError(msg) {
 }
 
 function fetchWeather(lat, lon, city, saveLoc, exact) {
+  // weather.gov 301s any /points finer than 4 decimals (~11m), and a saved
+  // place from the geocoder carries 7. Rounding here also keeps one cache key
+  // per point in the proxy instead of one per spelling of it.
+  lat = (+lat).toFixed(4);
+  lon = (+lon).toFixed(4);
   lastWxFetchMs = Date.now();
   currentLat = lat;
   currentLon = lon;

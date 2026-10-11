@@ -489,7 +489,41 @@ pub fn statusText(status: i32): string {
     if status == 500 {
         return "500 Internal Server Error"
     }
-    return "200 OK"
+    if status == 304 {
+        return "304 Not Modified"
+    }
+    if status == 307 {
+        return "307 Temporary Redirect"
+    }
+    if status == 308 {
+        return "308 Permanent Redirect"
+    }
+    if status == 429 {
+        return "429 Too Many Requests"
+    }
+    if status == 502 {
+        return "502 Bad Gateway"
+    }
+    if status == 503 {
+        return "503 Service Unavailable"
+    }
+    if status == 504 {
+        return "504 Gateway Timeout"
+    }
+    // A code without a phrase above still goes out as itself. This used to fall
+    // back to "200 OK", so a proxy's setStatus(502) reached the client as a
+    // success with an error body, and the client's res.ok check never fired.
+    let code = (status as i64).toString()
+    if status >= 500 {
+        return code + " Server Error"
+    }
+    if status >= 400 {
+        return code + " Client Error"
+    }
+    if status >= 300 {
+        return code + " Redirection"
+    }
+    return code + " OK"
 }
 
 // A header name or value with CR or LF in it would end the header early and let the

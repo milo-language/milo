@@ -661,7 +661,51 @@ fn httpsDo(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts:
     return Result.Ok(parseResponse(raw))
 }
 
+// The URL a redirect's Location points at, resolved against the request URL.
+// A server may answer with a path alone (weather.gov sends
+// `Location: /points/38.3396,-122.7011`), and fetching that bare string parsed
+// an empty host, so the redirect failed as an unreachable upstream.
+pub fn resolveLocation(base: &string, loc: &string): string {
+    if loc.startsWith("http://") || loc.startsWith("https://") {
+        return loc.clone()
+    }
+    let start = schemeOffset(base)
+    if loc.startsWith("//") {
+        // scheme-relative: keep the request's scheme, drop the "//" it already has
+        return base.substr(0, start - 2) + loc.clone()
+    }
+    var end: i64 = start
+    while end < base.len && base[end] != '/' && base[end] != '?' && base[end] != '#' {
+        end += 1
+    }
+    let origin = base.substr(0, end)
+    if loc.startsWith("/") {
+        return origin + loc.clone()
+    }
+    // relative to the directory of the request path, query and fragment excluded
+    var pathEnd: i64 = end
+    while pathEnd < base.len && base[pathEnd] != '?' && base[pathEnd] != '#' {
+        pathEnd += 1
+    }
+    var slash: i64 = pathEnd - 1
+    while slash >= end && base[slash] != '/' {
+        slash -= 1
+    }
+    if slash < end {
+        return origin + "/" + loc.clone()
+    }
+    return base.substr(0, slash + 1) + loc.clone()
+}
+
+// Redirects followed before giving up, as curl and Go's net/http do: a server
+// that redirects to itself used to recurse until the stack ran out.
+let MAX_REDIRECTS: i64 = 10
+
 fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
+    return doFetchHops(url, opts, 0)
+}
+
+fn doFetchHops(url: string, opts: FetchOptions, hops: i64): Result<FetchResponse, NetError> {
     let useTls = isHttps(url)
     let host = parseHost(url)
     let port = parsePort(url)
@@ -682,7 +726,7 @@ fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
     if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
         // An empty Location is as unfollowable as a missing one, so both collapse here.
         let loc = r.header("Location") ?? ""
-        if loc.len > 0 {
+        if loc.len > 0 && hops < MAX_REDIRECTS {
             var redirOpts = FetchOptions {
                 method: opts.method.clone(),
                 headers: opts.headers.clone(),
@@ -692,7 +736,7 @@ fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
                 redirOpts.method = "GET"
                 redirOpts.body = ""
             }
-            return doFetch(loc, redirOpts)
+            return doFetchHops(resolveLocation(url, loc), redirOpts, hops + 1)
         }
     }
     return Result.Ok(r)

@@ -328,6 +328,17 @@ pub fn parsePort(url: &string): u16
 pub fn parseResponse(raw: string): FetchResponse
 ```
 
+#### `resolveLocation`
+
+```milo
+pub fn resolveLocation(base: &string, loc: &string): string
+```
+
+The URL a redirect's Location points at, resolved against the request URL.
+A server may answer with a path alone (weather.gov sends
+`Location: /points/38.3396,-122.7011`), and fetching that bare string parsed
+an empty host, so the redirect failed as an unreachable upstream.
+
 #### `urlEncode`
 
 ```milo

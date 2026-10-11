@@ -1,0 +1,39 @@
+// A redirect's Location resolves against the request URL, and a status code
+// without a reason phrase goes on the wire as itself.
+//
+// weather.gov answers an over-precise /points request with a 301 whose Location
+// is a bare path. doFetch fetched that string as a URL, parsed an empty host and
+// failed, and the weather proxy then answered setStatus(502), which statusText
+// turned into "200 OK" because 502 was missing from its table.
+from "std/fetch" import {
+    resolveLocation
+}
+from "std/http" import {
+    statusText
+}
+
+pub fn main(): void {
+    let base = "https://api.weather.gov/points/38.3396367,-122.7010980"
+    print(resolveLocation(base, "/points/38.3396,-122.7011"))
+    print(resolveLocation(base, "https://other.example/x"))
+    print(resolveLocation(base, "//cdn.example/y"))
+    print(resolveLocation("http://h:8080/a/b/c?q=1/2", "d"))
+    print(resolveLocation("http://h:8080/a/b/c?q=1/2", "/root"))
+    print(resolveLocation("http://h", "d"))
+    print(statusText(502))
+    print(statusText(503))
+    print(statusText(418))
+    print(statusText(599))
+    print(statusText(200))
+}
+// @expect: https://api.weather.gov/points/38.3396,-122.7011
+// @expect: https://other.example/x
+// @expect: https://cdn.example/y
+// @expect: http://h:8080/a/b/d
+// @expect: http://h:8080/root
+// @expect: http://h/d
+// @expect: 502 Bad Gateway
+// @expect: 503 Service Unavailable
+// @expect: 418 Client Error
+// @expect: 599 Server Error
+// @expect: 200 OK
