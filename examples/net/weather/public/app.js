@@ -2567,7 +2567,9 @@ function closeSheet() {
 
 // ── Search / typeahead ──
 var sugEl = document.getElementById("suggestions");
-var locateBtn = document.getElementById("locate");
+// not "locate": that id is the icon sprite's <symbol>, which comes first, so the
+// lookup returned the symbol and the button never got its click handler
+var locateBtn = document.getElementById("locateBtn");
 var searchTimer = null;
 var sugItems = [];
 var sugIndex = -1;
