@@ -99,6 +99,7 @@ checkedDivRem
 checkedNeg
 cLayout
 cLayoutOpaque
+cloneOfTempDrop
 closureArgEnvOwnership
 closureBasic
 closureBlock
@@ -199,9 +200,11 @@ externStructTwoRegs
 externType
 f32Literal
 f64Literal
+fetchRequestBuild
 fetchResponseParse
 fieldAccessOnCall
 fieldCloneOutOfContainer
+fieldOfTempDrop
 flexIntWidening
 floatConstants
 floatExponent
@@ -304,6 +307,7 @@ hmacSha2Vectors
 html
 httpAbsentVsEmpty
 httpFetchCoexist
+httpMiddleware
 httpRenderResponse
 if_expr
 ifElse
@@ -391,6 +395,7 @@ moveClosureType
 moveFieldThenReassign
 moveIfElse
 moveVarIntoEnumReturn
+multipart
 multiWidthTypes
 mutParamWriteIsUse
 mutSlice
@@ -575,7 +580,9 @@ tcpIpv6
 tcpListenerPort
 temp_name_collision
 tempFieldReadDrop
+tempMatchSubjectDrop
 tempReceiverLookup
+tempTagTestDrop
 termSize
 testingAsserts
 totpRfc
@@ -611,8 +618,10 @@ vecAnyAll
 vecAssign
 vecBasic
 vecCallbackByValue
+vecChain
 vecClearTruncate
 vecClone
+vecCombinatorTempDrop
 vecConstructors
 vecEach
 vecFilter
@@ -631,6 +640,7 @@ vecSlice
 vecString
 vecStringLiveGrow
 vecStructElemStride
+vecSum
 viewFieldPrecision
 viewFreezeRelease
 voidMainExit

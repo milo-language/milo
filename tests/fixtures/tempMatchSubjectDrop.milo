@@ -1,0 +1,91 @@
+// @expect: wild 200
+// @expect: iflet 200
+// @expect: field 1960200
+// @expect: early 1960200
+// @expect: literal 0
+// A temporary match subject (`match find(k)`, `if let E.V(x) = mk().field`) has no
+// owner but the match. An arm that binds the payload by value took it and freed it, but
+// every other arm leaked the subject: `_`, a fieldless variant, `if let Option.None = ..`,
+// a literal match on a string, and a borrowing match on a field of a temporary, whose
+// bindings point into the subject. The `early` loop leaves its arm by `return`-free
+// `break`/`continue` paths, which must drop it too.
+//
+// The payloads are ~16 KB: `leaks` misses small abandoned blocks (see
+// closureParamOwnership.milo).
+struct Holder {
+    opt: Option<string>,
+    tags: Vec<string>,
+}
+
+fn big(i: i64): string {
+    var s = "m"
+    s.pushStr(i.toString().repeat(4000))
+    return s
+}
+
+fn found(i: i64): Option<string> {
+    return Option.Some(big(i))
+}
+
+fn holder(i: i64): Holder {
+    var t: Vec<string> = []
+    t.push(big(i))
+    return Holder { opt: found(i), tags: t }
+}
+
+fn main(): i32 {
+    var wild: i64 = 0
+    var iflet: i64 = 0
+    var field: i64 = 0
+    var early: i64 = 0
+    var literal: i64 = 0
+    for i in 0..200 {
+        match found(i) {
+            Option.None => {
+            }
+            _ => {
+                wild += 1
+            }
+        }
+        if let Option.None = found(i) {
+            iflet += 100
+        } else {
+            iflet += 1
+        }
+        match holder(i).opt {
+            Option.Some(s) => {
+                field += s.len
+            }
+            Option.None => {
+            }
+        }
+        for k in 0..3 {
+            match holder(i + k).opt {
+                Option.Some(s) => {
+                    if k == 1 {
+                        continue
+                    }
+                    if k == 2 {
+                        break
+                    }
+                    early += s.len
+                }
+                Option.None => {
+                }
+            }
+        }
+        match big(i) {
+            "m" => {
+                literal += 1
+            }
+            _ => {
+            }
+        }
+    }
+    print("wild " + wild.toString())
+    print("iflet " + iflet.toString())
+    print("field " + field.toString())
+    print("early " + early.toString())
+    print("literal " + literal.toString())
+    return 0
+}

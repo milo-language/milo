@@ -1,0 +1,63 @@
+// @expect: scan 2360800
+// @expect: pick 1960200
+// @expect: build 1960400
+// A Vec combinator called on a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`)
+// used to leave the receiver with no owner: contains/indexOf/len freed theirs, and
+// any/all/sum/each/find/position/map/filter/fold/min/max/get did not. Each of them reads
+// elements in place or deep-clones them out, so the receiver can go once the loop ends.
+//
+// The buffers are big on purpose: `leaks` misses small abandoned blocks (see
+// closureParamOwnership.milo).
+fn big(i: i64): string {
+    var s = "v"
+    s.pushStr(i.toString().repeat(4000))
+    return s
+}
+
+fn words(i: i64): Vec<string> {
+    var v: Vec<string> = []
+    v.push(big(i))
+    return v
+}
+
+fn nums(i: i64): Vec<i64> {
+    var v: Vec<i64> = []
+    for k in 0..2000 {
+        v.push(k % 2 + i * 0)
+    }
+    return v
+}
+
+fn main(): i32 {
+    var scan: i64 = 0
+    var pick: i64 = 0
+    var build: i64 = 0
+    for i in 0..200 {
+        if words(i).any((w: &string): bool => w.len > 0) {
+            scan += 1
+        }
+        if words(i).all((w: &string): bool => w.len > 0) {
+            scan += 1
+        }
+        scan += nums(i).sum()
+        scan += nums(i).fold(0, (a: i64, x: &i64): i64 => a + x)
+        words(i).each((w: &string) => {
+            scan += w.len
+        })
+        scan += nums(i).position((x: &i64): bool => x == 1) ?? 0
+        pick += (words(i).find((w: &string): bool => w.len > 0) ?? "").len
+        if words(i).first()
+        is
+        Option.Some(_) {
+            pick += 0
+        }
+        let m = words(i).max() ?? ""
+        pick += m.len * 0
+        build += words(i).map((w: &string): i64 => w.len).len
+        build += words(i).filter((w: &string): bool => w.len > 0).map((w: &string): i64 => w.len) [0]
+    }
+    print("scan " + scan.toString())
+    print("pick " + pick.toString())
+    print("build " + build.toString())
+    return 0
+}

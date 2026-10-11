@@ -1,0 +1,121 @@
+// @expect: len 1960200
+// @expect: arg 1960200
+// @expect: nested 1960200
+// @expect: method 200
+// @expect: eq 0
+// @expect: concat 1960400
+// @expect: drop 1960200 1960200
+// @expect: moved 1960200
+// @expect: iter 3920400
+// Reading an owning field of a temporary (`mk().name.len`, `f(mk().name)`) used to free
+// nothing: the receiver was only dropped when the field was Copy, so the whole struct
+// leaked whenever the field owned heap. Now the field is moved out (a temporary of its
+// own, dropped by whoever reads it) and the rest of the receiver dies at once. A receiver
+// with its own `impl Drop` gets a clone instead, so its destructor still sees every field:
+// the `drop` line checks that it ran once per temporary with the name intact.
+//
+// `moved` takes a field by value out of a temporary whose other fields own heap. That
+// used to zero the moved field and run the struct's glue, which decides liveness by
+// probing heap fields for non-null, saw nothing alive, and leaked the siblings. `iter`
+// loops over a field of a temporary, which read its length through a null base and ran
+// zero times.
+//
+// The strings are ~16 KB: `leaks` misses small abandoned blocks (see
+// closureParamOwnership.milo).
+struct Rec {
+    name: string,
+    id: i64,
+}
+
+struct Outer {
+    rec: Rec,
+    tag: string,
+}
+
+struct Bag {
+    note: Option<string>,
+    items: Vec<string>,
+}
+
+struct Guard {
+    name: string,
+}
+
+var dropped: i64 = 0
+
+impl Drop for Guard {
+    fn drop(self: &mut Guard) {
+        dropped += self.name.len
+    }
+}
+
+fn big(i: i64): string {
+    var s = "f"
+    s.pushStr(i.toString().repeat(4000))
+    return s
+}
+
+fn rec(i: i64): Rec {
+    return Rec { name: big(i), id: i }
+}
+
+fn outer(i: i64): Outer {
+    return Outer { rec: rec(i), tag: big(i) }
+}
+
+fn guard(i: i64): Guard {
+    return Guard { name: big(i) }
+}
+
+fn bag(i: i64): Bag {
+    var v: Vec<string> = []
+    v.push(big(i))
+    v.push(big(i))
+    return Bag { note: Option.Some(big(i)), items: v }
+}
+
+fn width(s: &string): i64 {
+    return s.len
+}
+
+fn main(): i32 {
+    var a: i64 = 0
+    var b: i64 = 0
+    var c: i64 = 0
+    var d: i64 = 0
+    var e: i64 = 0
+    var f: i64 = 0
+    var g: i64 = 0
+    var h: i64 = 0
+    var k: i64 = 0
+    var kept: Vec<Vec<string>> = []
+    for i in 0..200 {
+        a += rec(i).name.len
+        b += width(rec(i).name)
+        c += outer(i).rec.name.len
+        if rec(i).name.startsWith("f") {
+            d += 1
+        }
+        if rec(i).name == "x" {
+            e += 1
+        }
+        f += (rec(i).name + "!").len
+        g += guard(i).name.len
+        kept.push(bag(i).items)
+        h += kept[0][0].len
+        kept.clear()
+        for s in bag(i).items {
+            k += s.len
+        }
+    }
+    print("len " + a.toString())
+    print("arg " + b.toString())
+    print("nested " + c.toString())
+    print("method " + d.toString())
+    print("eq " + e.toString())
+    print("concat " + f.toString())
+    print("drop " + g.toString() + " " + dropped.toString())
+    print("moved " + h.toString())
+    print("iter " + k.toString())
+    return 0
+}

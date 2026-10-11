@@ -1,0 +1,52 @@
+// @expect: arr 1968600
+// @expect: rows 600
+// @expect: call 1960200
+// `.clone()` of a value nobody owns used to copy it and abandon the original. Indexing a
+// sized array or a Vec of non-Copy elements already produces an independent copy, so
+// `days[i].clone()` and `grid[0].clone()` allocated twice and leaked the first, as did
+// `mk().clone()`. Now the temporary itself is the clone.
+//
+// The values are big on purpose: `leaks` misses small abandoned blocks that a stale stack
+// slot still points at (see closureParamOwnership.milo).
+fn big(i: i64): string {
+    var s = "c"
+    s.pushStr(i.toString().repeat(4000))
+    return s
+}
+
+fn grid(i: i64): Vec<Vec<i64>> {
+    var g: Vec<Vec<i64>> = []
+    var row: Vec<i64> = []
+    for k in 0..2000 {
+        row.push(k + i)
+    }
+    g.push(row)
+    g.push([1, 2])
+    return g
+}
+
+fn main(): i32 {
+    var arr: i64 = 0
+    for i in 0..200 {
+        let pair = [big(i), big(i + 1)]
+        let s = pair[i % 2].clone() + ", "
+        arr += s.len
+    }
+    print("arr " + arr.toString())
+
+    var rows: i64 = 0
+    for i in 0..200 {
+        let g = grid(i)
+        var r = g[1].clone()
+        r.push(3)
+        rows += r.len
+    }
+    print("rows " + rows.toString())
+
+    var call: i64 = 0
+    for i in 0..200 {
+        call += big(i).clone().len
+    }
+    print("call " + call.toString())
+    return 0
+}

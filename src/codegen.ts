@@ -41,7 +41,7 @@ const REALLOC_MIN_BYTES = 4096;
 
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
-  "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FieldAccess", "FloatLit",
+  "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapClear", "HashMapContains", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
@@ -4282,7 +4282,11 @@ export class Codegen {
   // one whole-container drop is sound and the alive-flag makes it double-free safe.
   private genForEachIterableAddr(iterable: HIRExpr): Gen {
     const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
-    if (lvalueKinds.includes(iterable.kind)) {
+    // A field of an rvalue (`for x in mk().items`) is no place either: genLValue answered
+    // "null" for it too, so the loop read len through a null base and silently ran zero
+    // times. It is materialized like any other rvalue.
+    const rvalueField = iterable.kind === "FieldAccess" && this.receiverIsRvalueTemp(iterable);
+    if (lvalueKinds.includes(iterable.kind) && !rvalueField) {
       return this.genLValue(iterable);
     }
     const lines: string[] = [];
@@ -4950,8 +4954,42 @@ export class Codegen {
     // scalar matched with only a wildcard (`match x { _ => ... }`) has no literal
     // pattern, but it is NOT an enum — sending it to genEnumMatch emitted an invalid
     // `getelementptr i64` on the scalar. Only an enum subject uses the enum path.
+    // `v[i]` counts as an owned temp because a READ of it clones, but a match subject is
+    // stored from its place without the clone (genStoreInto), so it owns nothing here.
+    if (stmt.subject.kind !== "IndexAccess" && this.isOwnedTempExpr(stmt.subject) && this.needsDropCg(stmt.subject.type)) {
+      return this.genTempSubjectMatch(stmt, resultSlot);
+    }
     if (stmt.subject.type.tag === "enum") return this.genEnumMatch(stmt, resultSlot);
     return this.genLiteralMatch(stmt, resultSlot);
+  }
+
+  // A temporary subject (`match find(k)`, `if let E.V(x) = mk().field`, `match mk().name`)
+  // has no other owner. It is bound to a hidden droppable local and matched as that
+  // local: an arm that binds the payload by value takes it and clears the alive flag
+  // (extractBindings), and every other arm (`_`, a fieldless variant, a literal, a
+  // borrowing match whose bindings point into the slot) leaves it to be dropped after
+  // the match, or by the return/break/continue drop glue when the arm leaves early.
+  // Before this, those arms leaked the subject.
+  private genTempSubjectMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
+    const lines: string[] = [];
+    const ty = this.llvmType(stmt.subject.type);
+    const name = `__matchsubj.${this.scopeCounter++}`;
+    const addr = `%${name}.addr`;
+    this.entryAllocas.push(`  ${addr} = alloca ${ty}`);
+    // genStoreInto: a big-aggregate subject comes back from genExpr as a pointer.
+    this.genStoreInto(lines, addr, ty, stmt.subject);
+    const aliveFlag = `${addr}.alive`;
+    this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+    this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    this.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
+    const local = { name, typeKind: stmt.subject.type, aliveFlag, addr };
+    this.droppableLocals.push(local);
+    const subject: HIRExpr = { kind: "Ident", name, type: stmt.subject.type, isMove: false, span: stmt.subject.span };
+    const [ml, terminated] = this.genMatch({ ...stmt, subject }, resultSlot);
+    lines.push(...ml);
+    if (!terminated) this.emitGuardedDrop(lines, local);
+    return [lines, terminated];
   }
 
   // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs
@@ -5850,22 +5888,39 @@ export class Codegen {
         lines.push(...ptrLines);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}${this.rangeMetaFor(expr.type, fieldTy)}`);
-        // Moving a non-Copy field out of a struct: zero the source field so the
-        // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
-        // Otherwise both the moved value and the struct free the same buffer.
-        const fieldMoved = expr.isMove && this.needsDropCg(expr.type);
-        if (fieldMoved) {
-          lines.push(this.zeroStore(fieldTy, ptr));
-        }
-        // Release a receiver nobody owns, now that its field has been read. Only when
-        // the value just loaded cannot alias what the drop frees: either the field is
-        // Copy, or it was moved out and its slot zeroed just above. A borrowed owning
-        // field would still point into the struct, so leave that case alone.
-        if (recvTemps.length > 0 && (fieldMoved || !this.needsDropCg(expr.type))) {
-          for (const t of recvTemps) this.emitDropValue(lines, t.addr, t.type);
+        const owning = this.needsDropCg(expr.type);
+        const recvStruct = this.getStructName(this.llvmType(expr.object.type)) ?? "";
+        let result = val;
+        if (recvTemps.length > 0 && owning && (expr.isMove || this.fieldOfOwnedTemp(expr))) {
+          // An owning field of a temporary receiver (`mk().name.len`, `f(mk().name)`,
+          // `v.push(mk().name)`) leaves with the value: whoever consumes the FieldAccess
+          // drops it (see fieldOfOwnedTemp), and the rest of the receiver dies here.
+          if (this.dropImpls.has(recvStruct)) {
+            // A user `impl Drop` must see every field intact when it runs, so the
+            // consumer gets a clone and the receiver is destroyed whole.
+            result = this.emitDeepCloneFromPtr(lines, ptr, expr.type);
+            for (const t of recvTemps) this.emitDropValue(lines, t.addr, t.type);
+          } else {
+            // Drop the other fields one by one rather than zeroing this one and running
+            // the struct's glue: the glue decides liveness by probing heap fields for
+            // non-null, so with the moved field zeroed a `{ opt: Option, items: Vec }`
+            // read as already moved-from and leaked `opt` with it.
+            this.dropStructFieldsExcept(lines, recvTemps[0].addr, recvStruct, expr.field);
+          }
+        } else {
+          if (expr.isMove && owning) {
+            // Moving a non-Copy field out of a named struct: zero the source field so the
+            // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
+            lines.push(this.zeroStore(fieldTy, ptr));
+          }
+          // Release a receiver nobody owns once a Copy field has been read out of it; an
+          // owning field read in place would still point into it.
+          if (recvTemps.length > 0 && !owning) {
+            for (const t of recvTemps) this.emitDropValue(lines, t.addr, t.type);
+          }
         }
         this.flushArgTempDrops(lines, fieldTempMark);
-        return [lines, val, fieldTy];
+        return [lines, result, fieldTy];
       }
       case "ArrayLen":
         return this.genArrayLen(expr, lines);
@@ -5949,6 +6004,9 @@ export class Codegen {
         const tagVal = this.enumValueTag(lines, ot, ov);
         const cmp = this.nextTemp();
         lines.push(`  ${cmp} = icmp eq i32 ${tagVal}, ${expr.tag}`);
+        // A tag test keeps nothing of its operand, so a temporary one dies here:
+        // `if mk() is Option.Some(_)` and `mk() == Option.None` leaked the payload.
+        this.dropOwnedTemp(lines, ov, ot, expr.operand);
         return [lines, cmp, "i1"];
       }
       case "HeapCreate": {
@@ -6007,6 +6065,8 @@ export class Codegen {
       }
       case "VecClone": {
         this.hasVecType = true;
+        const passed = this.cloneOfOwnedTemp(expr.object, lines);
+        if (passed) return passed;
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
         // emitDeepCloneFromPtr reads through a pointer, so spill the loaded %Vec
@@ -8278,7 +8338,9 @@ export class Codegen {
       }
       return [[], this.localAddr(expr.name)];
     }
-    if (expr.kind === "FieldAccess") {
+    // A field of a temporary has no place to point at once the receiver is gone: it takes
+    // the generic path below, which owns the value and drops it after the call.
+    if (expr.kind === "FieldAccess" && !this.receiverIsRvalueTemp(expr)) {
       const [lines, ptr] = this.genFieldPtr(expr);
       return [lines, ptr];
     }
@@ -8460,8 +8522,11 @@ export class Codegen {
   }
 
   // shared helper: extract closure fn/env and vec data/len for functional methods
+  // `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
+  // after the loop: every combinator reads elements in place or deep-clones them out, so
+  // once it has finished nothing points into the receiver and nothing else will free it.
   private genVecMethodPreamble(vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
-    fnPtr: string; envPtr: string; data: string; len: string; elemTy: string;
+    fnPtr: string; envPtr: string; data: string; len: string; elemTy: string; release: () => void;
   } {
     this.hasVecType = true;
     const [vl, vv] = this.genExpr(vecExpr);
@@ -8476,7 +8541,8 @@ export class Codegen {
     lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
     const envPtr = this.nextTemp();
     lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
-    return { fnPtr, envPtr, data, len, elemTy: this.llvmType(elemType) };
+    const release = () => this.dropOwnedTemp(lines, vv, "%Vec", vecExpr);
+    return { fnPtr, envPtr, data, len, elemTy: this.llvmType(elemType), release };
   }
 
   // What to hand a Vec combinator's callback for one element.
@@ -8508,7 +8574,7 @@ export class Codegen {
   }
 
   private genVecMap(expr: HIRExpr & { kind: "VecMap" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
     const resultElemTy = this.llvmType(expr.resultElementType);
     const resultElemSize = this.typeSizeOf(expr.resultElementType);
     this.needsMalloc = true;
@@ -8566,11 +8632,12 @@ export class Codegen {
     lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${len}, 1`);
     const v2 = this.nextTemp();
     lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+    release();
     return [lines, v2, "%Vec"];
   }
 
   private genVecFilter(expr: HIRExpr & { kind: "VecFilter" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
     const elemSize = this.typeSizeOf(expr.elementType);
     this.needsMalloc = true;
 
@@ -8633,11 +8700,12 @@ export class Codegen {
     lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${finalLen}, 1`);
     const v2 = this.nextTemp();
     lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+    release();
     return [lines, v2, "%Vec"];
   }
 
   private genVecEach(expr: HIRExpr & { kind: "VecEach" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
 
     const idxAddr = `%__each_idx.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
@@ -8664,11 +8732,12 @@ export class Codegen {
     lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
     lines.push(`  br label %${condLabel}`);
     lines.push(`${endLabel}:`);
+    release();
     return [lines, "void", "void"];
   }
 
   private genVecFind(expr: HIRExpr & { kind: "VecFind" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
     const enumTy = `%${expr.optionEnumName}`;
     const enumLayout = this.enumLayouts.get(expr.optionEnumName);
     if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
@@ -8724,11 +8793,12 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+    release();
     return [lines, result, enumTy];
   }
 
   private genVecAny(expr: HIRExpr & { kind: "VecAny" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
 
     const resultAddr = `%__any_result.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
@@ -8769,6 +8839,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+    release();
     return [lines, result, "i1"];
   }
 
@@ -8823,11 +8894,13 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${elemTy}, ptr ${accAddr}`);
+    // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+    this.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
     return [lines, result, elemTy];
   }
 
   private genVecAll(expr: HIRExpr & { kind: "VecAll" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
 
     const resultAddr = `%__all_result.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
@@ -8868,6 +8941,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+    release();
     return [lines, result, "i1"];
   }
 
@@ -8877,7 +8951,7 @@ export class Codegen {
   private genVecFold(expr: HIRExpr & { kind: "VecFold" }, lines: string[]): Gen {
     const [initLines, initVal, accTy] = this.genExpr(expr.init);
     lines.push(...initLines);
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
 
     const accAddr = `%__fold_acc.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${accAddr} = alloca ${accTy}`);
@@ -8939,6 +9013,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${accTy}, ptr ${accAddr}`);
+    release();
     return [lines, result, accTy];
   }
 
@@ -9410,6 +9485,8 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+    // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+    this.dropOwnedTemp(lines, vv, "%Vec", expr.object);
     return [lines, result, slot.enumTy];
   }
 
@@ -9511,6 +9588,8 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+    // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+    this.dropOwnedTemp(lines, vv, "%Vec", expr.object);
     return [lines, result, slot.enumTy];
   }
 
@@ -9588,7 +9667,7 @@ export class Codegen {
   }
 
   private genVecPosition(expr: HIRExpr & { kind: "VecPosition" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
     const slot = this.optionResultSlot(expr.optionEnumName, "vecpos", lines);
     const iAddr = this.nextTemp();
     lines.push(`  ${iAddr} = alloca i64`);
@@ -9625,6 +9704,7 @@ export class Codegen {
     lines.push(`${end}:`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+    release();
     return [lines, result, slot.enumTy];
   }
 
@@ -10019,7 +10099,7 @@ export class Codegen {
   }
 
   private genVecEnumerate(expr: HIRExpr & { kind: "VecEnumerate" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const { fnPtr, envPtr, data, len, elemTy, release } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
 
     const idxAddr = `%__enum_idx.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
@@ -10046,6 +10126,7 @@ export class Codegen {
     lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
     lines.push(`  br label %${condLabel}`);
     lines.push(`${endLabel}:`);
+    release();
     return [lines, "void", "void"];
   }
 
@@ -10788,20 +10869,8 @@ export class Codegen {
     this.hasStringType = true;
     this.needsMalloc = true;
     this.needsMemcpy = true;
-    // `v[i].clone()` clones straight from the element rather than from a copy of
-    // it. Indexing a collection of non-Copy elements materialises an independent
-    // value (see IndexAccess), so going through genExpr here allocated twice and
-    // nothing owned the intermediate — one leaked buffer per evaluation, which
-    // is unbounded inside a loop.
-    const src = expr.str;
-    if (src.kind === "IndexAccess") {
-      const eff = src.object.type.tag === "ref" ? src.object.type.inner : src.object.type;
-      if ((eff.tag === "vec" || (eff.tag === "array" && eff.size === null)) && this.needsDropCg(eff.element)) {
-        const [, elemPtr] = this.genVecBoundsCheckedPtr(src, lines);
-        const clonedFromPtr = this.emitDeepCloneFromPtr(lines, elemPtr, eff.element);
-        return [lines, clonedFromPtr, "%String"];
-      }
-    }
+    const passed = this.cloneOfOwnedTemp(expr.str, lines);
+    if (passed) return passed;
     const [sLines, sVal] = this.genExpr(expr.str);
     lines.push(...sLines);
     const data = this.nextTemp();
@@ -11972,6 +12041,8 @@ export class Codegen {
 
   private genHashMapClone(expr: HIRExpr & { kind: "HashMapClone" }, lines: string[]): Gen {
     this.hasHashMapType = true;
+    const passed = this.cloneOfOwnedTemp(expr.object, lines);
+    if (passed) return passed;
     const [ol, ov] = this.genExpr(expr.object);
     lines.push(...ol);
     // emitDeepCloneFromPtr reads through a pointer; the spill is a shallow copy
@@ -13980,6 +14051,24 @@ export class Codegen {
     return true;
   }
 
+  // Whether a field chain bottoms out in an rvalue nobody owns (`mk().a.b`), as opposed to
+  // a place genLValue can address in situ (a local, `v[i]`, `*p`). Only the rvalue is
+  // materialized by genFieldPtr, so only it can die with the expression.
+  private receiverIsRvalueTemp(expr: HIRExpr & { kind: "FieldAccess" }): boolean {
+    const obj = expr.object;
+    if (obj.type.tag === "ptr") return false;
+    if (obj.kind === "FieldAccess") return this.receiverIsRvalueTemp(obj);
+    if (obj.kind === "Ident" || obj.kind === "IndexAccess" || obj.kind === "PtrDeref" || obj.kind === "HeapDeref") return false;
+    return this.isOwnedTempExpr(obj) && this.needsDropCg(obj.type);
+  }
+
+  // An owning field read out of a temporary receiver. The receiver is dropped as soon as
+  // the field is read, so the FieldAccess hands the field on moved (or, under a user Drop,
+  // cloned) and is an owned temporary in its own right.
+  private fieldOfOwnedTemp(expr: HIRExpr & { kind: "FieldAccess" }): boolean {
+    return this.needsDropCg(expr.type) && this.receiverIsRvalueTemp(expr);
+  }
+
   private isOwnedTempExpr(expr: HIRExpr): boolean {
     // A discarded small-type `replace(...)` result is dropped here (SSA path). A big-agg
     // replace drops its own moved-out value inside genExpr, so it must NOT double-drop here.
@@ -14066,6 +14155,8 @@ export class Codegen {
         // (see the IndexAccess case), which makes the result a fresh allocation
         // with no owner unless it is bound. `print(v[0])` leaked one copy per call.
         return this.indexAccessClones(expr);
+      case "FieldAccess":
+        return this.fieldOfOwnedTemp(expr);
       case "Unwrap":
       case "Propagate":
         return this.unwrapMovesPayload(expr);
@@ -14124,6 +14215,29 @@ export class Codegen {
       const t = this.argTempDrops.pop()!;
       this.emitDropValue(lines, t.addr, t.type);
     }
+  }
+
+  // Drop every owning field of the struct at `addr` except `skip`, which has been moved out.
+  private dropStructFieldsExcept(lines: string[], addr: string, structName: string, skip: string) {
+    const layout = must(this.structLayouts, structName, "struct layouts");
+    layout.fields.forEach((f, i) => {
+      if (f.name === skip || !this.needsDropCg(f.typeKind)) return;
+      const fp = this.nextTemp();
+      lines.push(`  ${fp} = getelementptr %${structName}, ptr ${addr}, i32 0, i32 ${i}`);
+      this.emitDropValue(lines, fp, f.typeKind);
+    });
+  }
+
+  // `.clone()` of a value nobody else owns IS that value: hand the temporary through
+  // instead of copying it. Copying left the temporary with no owner, so every spelling
+  // leaked it: `mk().clone()`, and `v[i].clone()` on any collection whose indexing
+  // already clones (a sized array `["a", "b"][i]`, a `Vec<Vec<i32>>` row), once per
+  // evaluation. Null when `src` is a place, which really does need the copy.
+  private cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null {
+    if (!this.isOwnedTempExpr(src) || !this.needsDropCg(src.type)) return null;
+    const [sl, sv, st] = this.genExpr(src);
+    lines.push(...sl);
+    return [lines, sv, st];
   }
 
   // Free a value that was produced by a call and then consumed in-place by an
@@ -14794,10 +14908,23 @@ export class Codegen {
     const tag = this.loadEnumTag(lines, enumTy, addr);
     const isSome = this.nextTemp();
     lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
-    if (expr.op === "isSome") return [lines, isSome, "i1"];
+    // isSome/isNone/isOk/isErr and unwrapOr(Else) keep only a tag or a Copy payload (the
+    // checker rejects them on a non-Copy one), so a temporary receiver is dead once they
+    // have read it: `if find(k).isNone()` leaked the Some payload on every call. A named
+    // receiver still owns its value and is not an owned temp, so this skips it.
+    const releaseTempReceiver = () => {
+      if (this.isOwnedTempExpr(expr.value) && this.needsDropCg(expr.value.type)) {
+        this.emitDropValue(lines, addr, expr.value.type);
+      }
+    };
+    if (expr.op === "isSome") {
+      releaseTempReceiver();
+      return [lines, isSome, "i1"];
+    }
     if (expr.op === "isNone") {
       const r = this.nextTemp();
       lines.push(`  ${r} = xor i1 ${isSome}, true`);
+      releaseTempReceiver();
       return [lines, r, "i1"];
     }
     // map/andThen/orElse: Option in, Option out. Handled before the payload load below,
@@ -15042,6 +15169,9 @@ export class Codegen {
       // Result's version is handed the error, read from the Err variant's own payload
       // offset (not the Ok one loaded above) — by pointer when the param is `&E`.
       let errArgs = "";
+      // A by-value error param is handed the Err payload itself, so the receiver no longer
+      // owns it and must not be dropped after the call.
+      let errMoved = false;
       if (expr.op === "resultUnwrapOrElse") {
         const srcErr = must(must(this.enumLayouts, expr.enumName, "enum layouts").variants, "Err", "Result variants");
         const errPtr = this.enumPayloadPtr(lines, enumTy, addr, srcErr);
@@ -15054,6 +15184,7 @@ export class Codegen {
           const loaded = this.nextTemp();
           lines.push(`  ${loaded} = load ${srcErrTy}, ptr ${errPtr}`);
           errArgs = `, ${srcErrTy} ${loaded}`;
+          errMoved = true;
         }
       }
       const called = this.nextTemp();
@@ -15067,6 +15198,7 @@ export class Codegen {
       lines.push(`${contLabel}:`);
       const r = this.nextTemp();
       lines.push(`  ${r} = phi ${payloadTy} [ ${payload}, %${someLabel} ], [ ${called}, %${noneEnd} ]`);
+      if (!errMoved) releaseTempReceiver();
       return [lines, r, payloadTy];
     }
 
@@ -15074,6 +15206,7 @@ export class Codegen {
     lines.push(...dl);
     const r = this.nextTemp();
     lines.push(`  ${r} = select i1 ${isSome}, ${payloadTy} ${payload}, ${payloadTy} ${dv}`);
+    releaseTempReceiver();
     return [lines, r, payloadTy];
   }
 

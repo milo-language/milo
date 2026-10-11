@@ -1,0 +1,63 @@
+// @expect: tags 1000
+// @expect: unwrapOr 200
+// A test that reads only a temporary's tag keeps nothing of it, so the temporary dies
+// with the test. `if find(k).isNone()` used to free nothing: isSome/isNone/isOk/isErr,
+// `unwrapOr`, `x is E.V(_)` and `x == Option.None` all read the tag of a call result and
+// abandoned its payload, one per evaluation. A web server checking a header per request
+// grew 16 MB per million requests.
+//
+// The payloads are ~16 KB on purpose: `leaks` finds a small abandoned block reachable from
+// a stale stack slot and reports nothing (see closureParamOwnership.milo).
+fn big(i: i64): string {
+    var s = "p"
+    s.pushStr(i.toString().repeat(4000))
+    return s
+}
+
+fn found(i: i64): Option<string> {
+    return Option.Some(big(i))
+}
+
+fn tried(i: i64): Result<string, string> {
+    if i % 2 == 0 {
+        return Result.Err(big(i))
+    }
+    return Result.Ok(big(i))
+}
+
+fn count(i: i64): Result<i64, string> {
+    if i % 2 == 0 {
+        return Result.Err(big(i))
+    }
+    return Result.Ok(1)
+}
+
+fn main(): i32 {
+    var tags: i64 = 0
+    var uo: i64 = 0
+    for i in 0..200 {
+        if found(i).isSome() {
+            tags += 1
+        }
+        if !found(i).isNone() {
+            tags += 1
+        }
+        if tried(i).isOk() || tried(i).isErr() {
+            tags += 1
+        }
+        if found(i)
+        is
+        Option.Some(_) {
+            tags += 1
+        }
+        if found(i) == Option.None {
+            tags += 100
+        } else {
+            tags += 1
+        }
+        uo += count(i).unwrapOr(1)
+    }
+    print("tags " + tags.toString())
+    print("unwrapOr " + uo.toString())
+    return 0
+}

@@ -25,11 +25,7 @@ fn main(): i32 {
     print(upstream.body)
 
     let noHeaders: Vec<Param> = []
-    // Bound, not passed as an rvalue: `renderResponse(Response.Text(x), …)` leaks the
-    // temp's payload today (16 bytes, tracked in docs/backlog.md). Unrelated to what
-    // this fixture pins, and the leak ratchet runs over every fixture.
-    let reply = Response.Text(upstream.body.clone())
-    let wire = renderResponse(reply, noHeaders)
+    let wire = renderResponse(Response.Text(upstream.body.clone()), noHeaders)
     var firstLine: string = ""
     for i in 0..wire.len {
         if wire[i] == '\r' {
