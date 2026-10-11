@@ -1,0 +1,28 @@
+// @expect: 0.3 0.3
+// @expect: -0.3 -0.3
+// @expect: 38.9605 38.9605
+// @expect: 2.5e-3 0.0025
+// @expect: 12.2 12.2
+// @expect: 123456789012345678 1.2345678901234568e+17
+// @expect: 42 42
+// A number reads back as the double nearest its literal, as JSON.parse and strtod
+// give it. Accumulating digit by digit rounded at every step: 0.3 read as
+// 0.30000000000000004 and a worker storing it wrote a different REAL than Node.
+from "std/json" import {
+    Json
+}
+
+pub fn main(): i32 {
+    for lit in ["0.3", "-0.3", "38.9605", "2.5e-3", "12.2", "123456789012345678", "42"] {
+        match Json.parse("[" + lit + "]") {
+            Result.Ok(d) => {
+                let v = d.curFloat(d.curChild(d.curRoot(), 0)) ?? -1.0
+                print(lit + " " + v.toString())
+            }
+            Result.Err(_e) => {
+                print(lit + " parse failed")
+            }
+        }
+    }
+    return 0
+}

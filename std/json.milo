@@ -1308,6 +1308,18 @@ impl JsonParser {
         }
     }
 
+    fn sawFracOrExp(self: &Self, start: i64): bool {
+        var i = start
+        while i < self.pos {
+            let c = self.s[i]
+            if c == '.' || c == 'e' || c == 'E' {
+                return true
+            }
+            i += 1
+        }
+        return false
+    }
+
     fn parseNumber(self: &mut Self): i64 {
         // Record the source span so rawStr can round-trip the literal verbatim;
         // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
@@ -1376,6 +1388,14 @@ impl JsonParser {
         }
         if negative {
             result = 0.0 - result
+        }
+        // The digit-by-digit sum above rounds at every step, so `0.3` came out as
+        // 0.30000000000000004 and `1e23` drifted too. Only an integer of at most 15
+        // digits is exact that way; everything else goes through strtod, which rounds
+        // once, correctly, as every other JSON parser does.
+        let intDigits = self.pos - numStart
+        if !self.err && (self.sawFracOrExp(numStart) || intDigits > 15) {
+            result = self.s.substr(numStart, self.pos).parseF64() ?? result
         }
         let idx = self.nodes.len()
         let numIdx = self.nums.len()
