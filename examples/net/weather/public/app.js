@@ -3273,12 +3273,28 @@ locateBtn.addEventListener("click", function () {
   locateBtn.disabled = true;
   locateBtn.classList.add("locating");
   heroEl.innerHTML = '<div class="loading">Getting location...</div>';
+  // The API's own timeout does not count time spent waiting on the OS, and with
+  // macOS Location Services off for the browser neither callback ever fires:
+  // the page sat on "Getting location..." forever. This bounds the whole wait.
+  var settled = false;
+  var watchdog = setTimeout(function () {
+    if (settled) return;
+    settled = true;
+    done();
+    showError(
+      "Could not get your location. Check that location access is on for this browser, or search instead.",
+    );
+  }, 15000);
   function done() {
+    clearTimeout(watchdog);
     locateBtn.disabled = false;
     locateBtn.classList.remove("locating");
   }
   navigator.geolocation.getCurrentPosition(
     function (pos) {
+      // a fix after the watchdog gave up must not yank the page somewhere else
+      if (settled) return;
+      settled = true;
       done();
       var lat = pos.coords.latitude.toFixed(4);
       var lon = pos.coords.longitude.toFixed(4);
@@ -3287,6 +3303,8 @@ locateBtn.addEventListener("click", function () {
       fetchWeather(lat, lon, null, true, true);
     },
     function (err) {
+      if (settled) return;
+      settled = true;
       done();
       if (err.code === 1) {
         showError(
