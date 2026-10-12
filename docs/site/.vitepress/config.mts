@@ -152,6 +152,7 @@ const stdlibSidebar = [
       { text: 'std/tls', link: '/stdlib/tls' },
       { text: 'std/https', link: '/stdlib/https' },
       { text: 'std/ws', link: '/stdlib/ws' },
+      { text: 'std/wsframe', link: '/stdlib/wsframe' },
       { text: 'std/httpmw', link: '/stdlib/httpmw' },
       { text: 'std/unix', link: '/stdlib/unix' },
     ]
