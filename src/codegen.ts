@@ -15443,6 +15443,13 @@ export class Codegen {
     lines.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
     this.ownValToSlot(vv, addr);
+    // The Result combinators consume a named receiver too (the move ended the local's
+    // ID at the read), so the copy at `addr` is a value this op now owns and must end on
+    // every branch. Without an ID here a branch that disposed of nothing went unreported.
+    if (this.ownOn && expr.op.startsWith("result") && expr.op !== "resultUnwrapOrElse"
+        && this.needsDropCg(expr.value.type) && !this.ownSlot.has(addr)) {
+      this.ownSlot.set(addr, this.ownMake(lines, "combinator-receiver"));
+    }
     const tag = this.loadEnumTag(lines, enumTy, addr);
     const isSome = this.nextTemp();
     lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
@@ -15609,6 +15616,16 @@ export class Codegen {
         lines.push(`  ${loaded} = load ${srcFieldTy}, ptr ${p}`);
         return [loaded, srcFieldTy];
       };
+      // The callback only BORROWED the payload it was handed (`&T`/`&E`), the combinator
+      // consumed the receiver, and nothing forwards that payload into the result, so after
+      // the call nothing refers to it and nothing else would free it. Every combinator's
+      // callback side needs this, not just `map`: `mk().andThen((s: &string) => ...)` leaked
+      // the Ok payload and `mapErr`/`orElse` the Err payload, named receiver or temporary.
+      const dropLentPayload = (arg: string) => {
+        if (!paramIsRef || cbType.tag !== "fn") return;
+        const first = cbType.params[0];
+        if (first.tag === "ref" && this.needsDropCg(first.inner)) this.emitDropValue(lines, arg, first.inner);
+      };
       const storeTag = (tag: number) => {
         this.storeEnumTag(lines, resTy, resAddr, tag);
       };
@@ -15636,27 +15653,21 @@ export class Codegen {
         const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        dropLentPayload(arg);
         lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
       } else {
         const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
         const outTy = resOk.fieldTypes[0] ?? "i64";
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
-        // The callback only BORROWED the Ok payload (`&T`), `map` consumed the receiver, and
-        // the result carries a different payload type — so after this call nothing in the
-        // program still refers to the old payload and nothing would ever free it.
         // `Result<string,_>.map(v => v.len)` leaked its string every time. It stayed
         // invisible because the leak gate measures at -O2, where LLVM deletes an allocation
         // nothing observes; at -O0 it was always there.
-        if (paramIsRef) {
-          const first = cbType.tag === "fn" ? cbType.params[0] : undefined;
-          const inner = first && first.tag === "ref" ? first.inner : undefined;
-          if (inner && this.needsDropCg(inner)) this.emitDropValue(lines, arg, inner);
-        }
+        dropLentPayload(arg);
         storeTag(resOk.tag);
         storePayload(resOk.tag, outTy, called);
       }
-      this.ownEndResultRecv(lines, addr, expr.op === "resultMap" || expr.op === "resultAndThen", srcOk, paramIsRef, expr.op === "resultMap");
+      this.ownEndResultRecv(lines, addr, expr.op === "resultMap" || expr.op === "resultAndThen", srcOk, paramIsRef);
       lines.push(`  br label %${contLabel}`);
 
       lines.push(`${errLabel}:`);
@@ -15665,6 +15676,7 @@ export class Codegen {
         const outTy = resErr.fieldTypes[0] ?? "i64";
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        dropLentPayload(arg);
         storeTag(resErr.tag);
         storePayload(resErr.tag, outTy, called);
       } else if (expr.op === "resultOrElse") {
@@ -15672,11 +15684,12 @@ export class Codegen {
         const [arg, argTy] = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
         const called = this.nextTemp();
         lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        dropLentPayload(arg);
         lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
       } else {
         copyThrough(srcErr, resErr.tag);
       }
-      this.ownEndResultRecv(lines, addr, expr.op === "resultMapErr" || expr.op === "resultOrElse", srcErr, paramIsRef, false);
+      this.ownEndResultRecv(lines, addr, expr.op === "resultMapErr" || expr.op === "resultOrElse", srcErr, paramIsRef);
       lines.push(`  br label %${contLabel}`);
 
       lines.push(`${contLabel}:`);
@@ -16053,19 +16066,18 @@ export class Codegen {
     else this.ownEnd(lines, id, "STORE");
   }
 
-  // One branch of a Result combinator consumed the temporary receiver at `addr`: the side
-  // without a callback forwards its payload (a move); the callback side passes the payload
-  // by value (an argument) or lends it (`&T`), and a lent owning payload ends only if
-  // codegen dropped it (`dropped`, today only `map`). Otherwise it stays live, so a
-  // payload no branch disposes of is reported.
-  private ownEndResultRecv(lines: string[], addr: string, callbackSide: boolean, variant: EnumVariant, paramIsRef: boolean, dropped: boolean) {
+  // One branch of a Result combinator consumed the receiver at `addr`: the side without a
+  // callback forwards its payload (a move); the callback side passes the payload by value
+  // (an argument) or lends it (`&T`), and codegen drops a lent owning payload after the
+  // call (dropLentPayload in genOptionOp).
+  private ownEndResultRecv(lines: string[], addr: string, callbackSide: boolean, variant: EnumVariant, paramIsRef: boolean) {
     if (!this.ownOn) return;
     const id = this.ownSlot.get(addr);
     if (!id) return;
     const payload = variant.fieldTypeKinds[0];
     if (!callbackSide || !payload || !this.needsDropCg(payload)) this.ownEnd(lines, id, "MOVE");
     else if (!paramIsRef) this.ownEnd(lines, id, "ARG");
-    else if (dropped) this.ownEnd(lines, id, "DROP");
+    else this.ownEnd(lines, id, "DROP");
   }
 
   private ownIntoResult(lines: string[], slot: string, val: string) {

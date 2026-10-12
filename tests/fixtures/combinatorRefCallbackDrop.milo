@@ -1,0 +1,144 @@
+// Every Option/Result combinator on an owning payload disposes of it exactly once, for a
+// temporary receiver and a named one, on both sides. The callback side of a Result
+// combinator only borrows its payload (`&T`/`&E`) and the combinator consumes the
+// receiver, so codegen drops the payload after the call. Only `map` did: `andThen` leaked
+// the Ok payload and `mapErr`/`orElse` the Err payload (500 leaks each over 1000 mixed
+// calls under `leaks -atExit`). Each "drop" line below is the payload's Drop running.
+struct Tr {
+    name: string,
+}
+
+impl Drop for Tr {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.name)
+    }
+}
+
+fn tr(n: string): Tr {
+    return Tr { name: n }
+}
+
+fn someT(n: string): Option<Tr> {
+    return Option.Some(tr(n))
+}
+
+fn noneT(): Option<Tr> {
+    return Option.None
+}
+
+fn okT(n: string): Result<Tr, Tr> {
+    return Result.Ok(tr(n))
+}
+
+fn errT(n: string): Result<Tr, Tr> {
+    return Result.Err(tr(n))
+}
+
+fn errI(n: string): Result<i64, Tr> {
+    return Result.Err(tr(n))
+}
+
+fn main() {
+    print("opt.map temp")
+    let _a = someT("a").map((t: &Tr) => t.name.len())
+    print("opt.andThen temp")
+    let _b = someT("b").andThen((t: &Tr) => Option.Some(t.name.len()))
+    print("opt.orElse temp some")
+    let _c = someT("c").orElse(() => Option.Some(tr("c2")))
+    print("opt.orElse temp none")
+    let _d = noneT().orElse(() => Option.Some(tr("d2")))
+    print("res.map temp ok")
+    let _e = okT("e").map((t: &Tr) => t.name.len())
+    print("res.map temp err")
+    let _f = errT("f").map((t: &Tr) => t.name.len())
+    print("res.andThen temp ok")
+    let _g = okT("g").andThen((t: &Tr): Result<i64, Tr> => Result.Ok(t.name.len()))
+    print("res.andThen temp err")
+    let _h = errT("h").andThen((t: &Tr): Result<i64, Tr> => Result.Ok(t.name.len()))
+    print("res.mapErr temp err")
+    let _i = errT("i").mapErr((t: &Tr) => t.name.len())
+    print("res.mapErr temp ok")
+    let _j = okT("j").mapErr((t: &Tr) => t.name.len())
+    print("res.orElse temp err")
+    let _k = errT("k").orElse((t: &Tr): Result<Tr, i64> => Result.Err(t.name.len()))
+    print("res.orElse temp ok")
+    let _l = okT("l").orElse((t: &Tr): Result<Tr, i64> => Result.Err(t.name.len()))
+    print("named res.andThen ok")
+    let ng = okT("ng")
+    let _ng2 = ng.andThen((t: &Tr): Result<i64, Tr> => Result.Ok(t.name.len()))
+    print("named res.mapErr err")
+    let ni = errT("ni")
+    let _ni2 = ni.mapErr((t: &Tr) => t.name.len())
+    print("named res.map ok")
+    let ne = okT("ne")
+    let _ne2 = ne.map((t: &Tr) => t.name.len())
+    print("named res.map err")
+    let nf = errT("nf")
+    let _nf2 = nf.map((t: &Tr) => t.name.len())
+    print("named res.orElse err")
+    let nk = errT("nk")
+    let _nk2 = nk.orElse((t: &Tr): Result<Tr, i64> => Result.Err(t.name.len()))
+    print("named opt.andThen")
+    let nb = someT("nb")
+    let _nb2 = nb.andThen((t: &Tr) => Option.Some(t.name.len()))
+    print("named opt.orElse some")
+    let nc = someT("nc")
+    let _nc2 = nc.orElse(() => Option.Some(tr("nc2")))
+    print("named opt.map")
+    let na = someT("na")
+    let _na2 = na.map((t: &Tr) => t.name.len())
+    print("res.unwrapOrElse temp err")
+    let _m = errI("m").unwrapOrElse((t: &Tr) => t.name.len())
+    print("res.unwrapOr temp err")
+    let _n = errI("n").unwrapOr(0)
+    print("res.isErr temp err")
+    let _o = errI("o").isErr()
+    print("end")
+}
+// @expect: opt.map temp
+// @expect: drop a
+// @expect: opt.andThen temp
+// @expect: drop b
+// @expect: opt.orElse temp some
+// @expect: opt.orElse temp none
+// @expect: res.map temp ok
+// @expect: drop e
+// @expect: res.map temp err
+// @expect: res.andThen temp ok
+// @expect: drop g
+// @expect: res.andThen temp err
+// @expect: res.mapErr temp err
+// @expect: drop i
+// @expect: res.mapErr temp ok
+// @expect: res.orElse temp err
+// @expect: drop k
+// @expect: res.orElse temp ok
+// @expect: named res.andThen ok
+// @expect: drop ng
+// @expect: named res.mapErr err
+// @expect: drop ni
+// @expect: named res.map ok
+// @expect: drop ne
+// @expect: named res.map err
+// @expect: named res.orElse err
+// @expect: drop nk
+// @expect: named opt.andThen
+// @expect: named opt.orElse some
+// @expect: named opt.map
+// @expect: res.unwrapOrElse temp err
+// @expect: drop m
+// @expect: res.unwrapOr temp err
+// @expect: drop n
+// @expect: res.isErr temp err
+// @expect: drop o
+// @expect: end
+// @expect: drop na
+// @expect: drop nc
+// @expect: drop nb
+// @expect: drop nf
+// @expect: drop l
+// @expect: drop j
+// @expect: drop h
+// @expect: drop f
+// @expect: drop d2
+// @expect: drop c
