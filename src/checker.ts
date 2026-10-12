@@ -3687,9 +3687,13 @@ export class TypeChecker {
       }
     }
 
-    // pre-register generic impls so struct fields like Channel<string> trigger full monomorphization
+    // pre-register generic impls so struct fields like Channel<string> trigger full monomorphization.
+    // `impl Drop for S<T>` belongs here too: a signature naming `S<X>` (`fn f(c: &Channel<Res>)`)
+    // monomorphizes S<X> before registerImpl stores the Drop template, and that instance then
+    // never ran its Drop at all (Channel<Res> leaked every queued payload). A missing Drop is
+    // silent; any other missing trait method is a loud "no method" error, so only Drop is listed.
     for (const impl of program.impls) {
-      if (impl.typeParams && impl.typeParams.length > 0 && !impl.traitName) {
+      if (impl.typeParams && impl.typeParams.length > 0 && (!impl.traitName || impl.traitName === "Drop")) {
         const existing = this.genericImpls.get(impl.typeName) || [];
         existing.push({ impl, program });
         this.genericImpls.set(impl.typeName, existing);

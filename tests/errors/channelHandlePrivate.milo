@@ -7,8 +7,13 @@ from "std/sync" import {
     Channel
 }
 
+// Only borrowed here, so the privacy error is the only one (moving the handle out of a
+// Drop type is a second, separate error).
+fn look<T>(_x: &T): void {
+}
+
 fn main(): void {
     let strs = Channel<string>.new(4)!
-    let _stolen = strs.clone()._h
+    look(strs._h)
     print(strs.len())
 }

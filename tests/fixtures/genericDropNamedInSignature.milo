@@ -1,0 +1,60 @@
+// A generic struct's `impl Drop` runs even when a function signature names the
+// instantiation before any body builds one. The signature monomorphized `Bx<i64>` (and
+// std's `Channel<Res>`) before the Drop template was registered, so that instance had
+// no Drop: `Bx` printed nothing and a dropped Channel<Res> leaked every queued payload.
+// Found by scripts/fuzz-drops.ts (a `for r in chanOf(k)` loop that broke early).
+from "std/sync" import { Channel }
+
+struct Bx<T> {
+    v: T,
+    n: i64,
+}
+
+impl Drop for Bx<T> {
+    fn drop(self: &mut Self): void {
+        print("drop bx ", self.n)
+    }
+}
+
+// The string field matters: Channel.send zeroes the moved-from local and still drops
+// it, which only a type whose glue probes a heap field skips (a heapless Drop type runs
+// its Drop on that zero, a separate open bug).
+struct Res {
+    id: i64,
+    tag: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop res ", self.id)
+    }
+}
+
+fn peek(b: &Bx<i64>): i64 {
+    return b.n
+}
+
+fn fill(c: &Channel<Res>): void {
+    c.send(Res { id: 1, tag: "a".clone() })!
+    c.send(Res { id: 2, tag: "b".clone() })!
+}
+
+fn main(): void {
+    if true {
+        let b = Bx { v: 1, n: 7 }
+        print(peek(b))
+    }
+    if true {
+        let c = Channel<Res>.new(4)!
+        fill(c)
+        let first = c.recv()!
+        print("got ", first.id)
+    }
+    print("end")
+}
+// @expect: 7
+// @expect: drop bx 7
+// @expect: got 1
+// @expect: drop res 1
+// @expect: drop res 2
+// @expect: end
