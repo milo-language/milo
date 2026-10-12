@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 508 distinct messages across 652 programs the compiler must reject.
+Every error message the test suite pins: 511 distinct messages across 657 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -39,6 +39,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'&mut' marks an argument to a '&mut' parameter; it is not a value`](#mut-marks-an-argument-to-a-mut-parameter-it-is-not-a-value)
 - [`'&mut' on an argument to a '&P' parameter of 'show'; only a '&mut' parameter takes '&mut'`](#mut-on-an-argument-to-a-p-parameter-of-show-only-a-mut-parameter-takes-mut)
 - [`'&x' is not an expression: shared borrows are implicit (pass 'x' bare). Only a '&mut' argument is spelled out: 'f(&mut x)'`](#x-is-not-an-expression-shared-borrows-are-implicit-pass-x-bare-only-a-mut-argument-is-spelled-out-f-mut-x)
+- [`'||' cannot join a condition that has a 'let' clause`](#cannot-join-a-condition-that-has-a-let-clause)
 - [`'a' is captured by a closure argument and borrowed in the same call`](#a-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'add' in 'impl Add for Res' takes 'self: Res' by value; the trait 'Add' declares 'self: &Self'`](#add-in-impl-add-for-res-takes-self-res-by-value-the-trait-add-declares-self-self)
 - [`'addr' declared as i64 but got PoolBlock`](#addr-declared-as-i64-but-got-poolblock)
@@ -349,6 +350,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
 - [`has no static method 'knew'`](#has-no-static-method-knew)
 - [`has signature extern (*u8, i64) => i32, expected extern (*u8, i32) => i32`](#has-signature-extern-u8-i64-i32-expected-extern-u8-i32-i32)
+- [`if condition must be bool, got i64`](#if-condition-must-be-bool-got-i64)
 - [`if condition must be bool, got Result<JwtClaims, JwtError>`](#if-condition-must-be-bool-got-result-jwtclaims-jwterror)
 - [`infinite size`](#infinite-size)
 - [`instantiation exceeded depth`](#instantiation-exceeded-depth)
@@ -481,6 +483,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`undefined function 'adoptVec'`](#undefined-function-adoptvec)
 - [`undefined function 'foo'`](#undefined-function-foo)
 - [`undefined function 'rawSlice'`](#undefined-function-rawslice)
+- [`undefined variable 'a'`](#undefined-variable-a)
 - [`undefined variable 'y'`](#undefined-variable-y)
 - [`unknown attribute '@drive'`](#unknown-attribute-drive)
 - [`unknown attribute '@mustUse' on 'S'`](#unknown-attribute-mustuse-on-s)
@@ -883,6 +886,30 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/borrowExprRejected.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowExprRejected.milo)</sub>
+
+## `'||' cannot join a condition that has a 'let' clause` {#cannot-join-a-condition-that-has-a-let-clause}
+
+As in Rust: on the path where only the right side held, the pattern bound nothing.
+
+```milo skip
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x || a > 0 { print(a) }
+}
+```
+
+<sub>[tests/errors/ifLetChainOr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifLetChainOr.milo)</sub>
+
+```milo skip
+fn next(i: i64): Option<i64> { if i < 3 { return Some(i) } return None }
+
+fn main() {
+    var i = 0
+    while i < 10 || let Some(v) = next(i) { i += 1 }
+}
+```
+
+<sub>[tests/errors/whileLetChainOr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/whileLetChainOr.milo)</sub>
 
 ## `'a' is captured by a closure argument and borrowed in the same call` {#a-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call}
 
@@ -9009,6 +9036,17 @@ fn main() {
 
 <sub>[tests/errors/externFnPtrWrongSig.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externFnPtrWrongSig.milo)</sub>
 
+## `if condition must be bool, got i64` {#if-condition-must-be-bool-got-i64}
+
+```milo skip
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x && a { print(a) }
+}
+```
+
+<sub>[tests/errors/ifLetChainNonBool.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifLetChainNonBool.milo)</sub>
+
 ## `if condition must be bool, got Result<JwtClaims, JwtError>` {#if-condition-must-be-bool-got-result-jwtclaims-jwterror}
 
 ```milo skip
@@ -11548,6 +11586,19 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/rawSliceOutsideForeign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/rawSliceOutsideForeign.milo)</sub>
 
+## `undefined variable 'a'` {#undefined-variable-a}
+
+A let-chain's bindings are in scope in the later clauses and the then-body only.
+
+```milo skip
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x && a > 3 { print(a) } else { print(a) }
+}
+```
+
+<sub>[tests/errors/ifLetChainElseBinding.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifLetChainElseBinding.milo)</sub>
+
 ## `undefined variable 'y'` {#undefined-variable-y}
 
 ```milo skip
@@ -12886,6 +12937,19 @@ fn main() {
 ```
 
 <sub>[tests/errors/arrayNonCopyMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayNonCopyMove.milo)</sub>
+
+When a later clause fails, an owned subject an earlier clause destructured has already lost its payload to the binding, so the else cannot use it.
+
+```milo skip
+fn take(o: Option<string>) { print(o.isSome()) }
+
+fn main() {
+    let x: Option<string> = Some("hi")
+    if let Some(s) = x && s.len > 5 { print(s) } else { take(x) }
+}
+```
+
+<sub>[tests/errors/ifLetChainElseMoved.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ifLetChainElseMoved.milo)</sub>
 
 Same arm-entry consumption as `match` (see matchSubjectReadInArm.milo), via the if-let path: the then-branch destructures a non-Copy payload, so the subject is zeroed before the branch body runs. The else-branch never destructures and must stay free to read the subject.
 

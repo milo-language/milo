@@ -15,6 +15,7 @@ import type {
   Program, Function, Expr, Stmt, MiloType, Pattern, Span,
   DeclOrigins, DeclOrigin,
 } from "./ast";
+import { patternLeafNames, enumPatternsIn } from "./ast";
 import { RR_WRAPPER_FILE } from "./replay-externs";
 
 interface VisibilityViolation {
@@ -197,10 +198,10 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
 
   // Enum patterns name a type (the enum); their bindings introduce locals.
   const bindPattern = (p: Pattern, sc: Scopes) => {
-    if (p.kind === "EnumPattern") for (const b of p.bindings) sc.bindValue(b);
+    for (const b of patternLeafNames(p)) sc.bindValue(b);
   };
   const walkPatternRefs = (p: Pattern, sc: Scopes, refFile: string | undefined) => {
-    if (p.kind === "EnumPattern") refType(p.enumName, sc, refFile, p.span);
+    for (const ep of enumPatternsIn(p)) refType(ep.enumName, sc, refFile, ep.span);
   };
 
   const walkStmts = (body: Stmt[], sc: Scopes, refFile: string | undefined) => {
@@ -240,6 +241,18 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
         walkExpr(s.subject, sc, refFile);
         walkPatternRefs(s.pattern, sc, refFile);
         sc.pushValue(); bindPattern(s.pattern, sc); walkStmts(s.thenBody, sc, refFile); sc.popValue();
+        if (s.elseBody) { sc.pushValue(); walkStmts(s.elseBody, sc, refFile); sc.popValue(); }
+        break;
+      case "IfChainStmt":
+        sc.pushValue();
+        for (const c of s.clauses) {
+          if (c.kind === "CondClause") { walkExpr(c.cond, sc, refFile); continue; }
+          walkExpr(c.subject, sc, refFile);
+          walkPatternRefs(c.pattern, sc, refFile);
+          bindPattern(c.pattern, sc);
+        }
+        walkStmts(s.thenBody, sc, refFile);
+        sc.popValue();
         if (s.elseBody) { sc.pushValue(); walkStmts(s.elseBody, sc, refFile); sc.popValue(); }
         break;
       case "LetElseStmt":

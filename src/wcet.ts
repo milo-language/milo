@@ -90,6 +90,10 @@ function collectFromStmt(fn: string, s: Stmt, out: LoopBound[]) {
       collectFromStmts(fn, s.thenBody, out);
       if (s.elseBody) collectFromStmts(fn, s.elseBody, out);
       break;
+    case "IfChainStmt":
+      collectFromStmts(fn, s.thenBody, out);
+      if (s.elseBody) collectFromStmts(fn, s.elseBody, out);
+      break;
     case "MatchStmt":
       for (const arm of s.arms) collectFromStmts(fn, arm.body, out);
       break;

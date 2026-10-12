@@ -1,0 +1,9 @@
+// @error: use of moved variable 'x'
+// When a later clause fails, an owned subject an earlier clause destructured has
+// already lost its payload to the binding, so the else cannot use it.
+fn take(o: Option<string>) { print(o.isSome()) }
+
+fn main() {
+    let x: Option<string> = Some("hi")
+    if let Some(s) = x && s.len > 5 { print(s) } else { take(x) }
+}

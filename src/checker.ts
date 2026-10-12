@@ -7359,55 +7359,11 @@ export class TypeChecker {
         // followed by `insert(value)` used to be "use of moved variable".
         const preMoves = this.snapshotMoveState();
         const preReachable = this.reachable;
-        if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
-          const enumInfo = must(this.enums, subjType.name, "enums");
-          const ps = stmt.pattern.span;
-          if (stmt.pattern.enumName !== subjType.name && enumInfo.baseName !== stmt.pattern.enumName) {
-            this.error(`pattern enum '${stmt.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
-          }
-          const variant = enumInfo.variants.get(stmt.pattern.variant);
-          if (!variant) {
-            this.error(`enum '${subjType.name}' has no variant '${stmt.pattern.variant}'`, ps);
-          } else if (stmt.pattern.bindings.length !== variant.fields.length) {
-            this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
-          }
-          this.pushScope();
-          if (variant) {
-            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
-            this.patternBindingTypes.set(stmt.pattern, bindTypes);
-            const freezes = this.freezeSubjectFor(stmt.subject, bindTypes);
-            for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              const bindSpan = stmt.pattern.bindingSpans?.[i] ?? stmt.pattern.span;
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
-                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
-              const bound = this.lookup(stmt.pattern.bindings[i]);
-              if (i === 0) this.attributeBorrows(freezes, stmt.pattern.bindings[0], bound);
-              if (bound) this.noteRefInto(bound, stmt.subject, stmt.pattern.variant, i);
-            }
-          }
-          // Same arm-entry consumption as match: a destructuring then-branch
-          // zeroes the payload before its body runs, so the subject is dead
-          // there. The else-branch never destructures, so it stays readable.
-          let patternMovedInfo: VarInfo | null = null;
-          if (!subjBorrows && this.armConsumesSubject(stmt.pattern, enumInfo)) {
-            this.tryMove(stmt.subject);
-            // ident-ok: tracks a NAMED binding so the then-body can read it again; a field subject has no binding to un-mark
-            if (stmt.subject.kind === "Ident") {
-              const info = this.lookup(stmt.subject.name);
-              if (info) { patternMovedInfo = info; this.movedByPattern.add(info); }
-            }
-          }
-          for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
-          if (patternMovedInfo) {
-            this.movedByPattern.delete(patternMovedInfo);
-            this.touchMoveState(patternMovedInfo); patternMovedInfo.moved = false; // re-marked by the tryMove below, after the else-branch
-          }
-          this.popScope();
-        } else {
-          this.pushScope();
-          for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
-          this.popScope();
-        }
+        this.pushScope();
+        const patternMovedInfo = this.bindLetClause(stmt.pattern, stmt.subject, subjType, subjBorrows, subjIsMut);
+        for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
+        this.releasePatternMove(patternMovedInfo);
+        this.popScope();
         const thenPath = { state: this.snapshotMoveState(), reachable: this.reachable };
         const elseBody = stmt.elseBody;
         const elsePath = elseBody
@@ -7420,6 +7376,58 @@ export class TypeChecker {
         this.joinPaths(preMoves, [thenPath, elsePath]);
         // A borrowed subject is only read, not consumed.
         if (!subjBorrows) this.tryMove(stmt.subject);
+        break;
+      }
+      case "IfChainStmt": {
+        // Clauses open nested scopes left to right, so a `let` clause's bindings reach the
+        // later clauses and the then-body. The else is checked once, outside all of them,
+        // starting from every state a failing clause can leave: a clause that fails after
+        // an earlier `let` destructured an owned subject leaves that subject moved (its
+        // payload went to a binding, which is dropped), exactly as in Rust.
+        const preMoves = this.snapshotMoveState();
+        const failPaths: { state: Map<VarInfo, MoveSnapshot>; reachable: boolean }[] = [];
+        const consumed: Expr[] = [];
+        const released: (VarInfo | null)[] = [];
+        let opened = 0;
+        for (const c of stmt.clauses) {
+          if (c.kind === "CondClause") {
+            const ct = this.checkExpr(c.cond);
+            if (ct.tag !== "bool" && ct.tag !== "unknown") this.error(`if condition must be bool, got ${this.show(ct)}`, c.span ?? sp);
+            failPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
+            continue;
+          }
+          const rawSubjType = this.checkExpr(c.subject);
+          const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(c.subject, rawSubjType, [c.pattern]);
+          this.bindElidedPattern(c.pattern, subjType);
+          failPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
+          this.pushScope();
+          opened++;
+          if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
+            this.error(`if let subject must be an enum, got ${this.show(subjType)}`, c.span ?? sp);
+            continue;
+          }
+          released.push(this.bindLetClause(c.pattern, c.subject, subjType, subjBorrows, subjIsMut));
+          if (!subjBorrows) consumed.push(c.subject);
+        }
+        this.pushScope();
+        for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
+        this.popScope();
+        for (const info of released.reverse()) this.releasePatternMove(info);
+        for (let i = 0; i < opened; i++) this.popScope();
+        const thenPath = { state: this.snapshotMoveState(), reachable: this.reachable };
+        this.joinPaths(preMoves, failPaths);
+        const elseStart = this.snapshotMoveState();
+        const elseReachable = this.reachable;
+        const elseBody = stmt.elseBody;
+        const elsePath = elseBody
+          ? this.checkPath(elseStart, elseReachable, () => {
+            this.pushScope();
+            for (const s of elseBody) this.checkStmt(s, fnRetType);
+            this.popScope();
+          })
+          : { state: elseStart, reachable: elseReachable };
+        this.joinPaths(preMoves, [thenPath, elsePath]);
+        for (const subj of consumed) this.tryMove(subj);
         break;
       }
       case "LetElseStmt": {
@@ -7761,7 +7769,7 @@ export class TypeChecker {
           // `todo()` aborts, so a body that is only a todo returns on every path.
           if (s.expr.kind === "Call" && s.expr.func === "todo") return true;
           break;
-        case "IfStmt": case "IfLetStmt":
+        case "IfStmt": case "IfLetStmt": case "IfChainStmt":
           if (s.elseBody && this.bodyNeverFallsOff(s.thenBody) && this.bodyNeverFallsOff(s.elseBody)) return true;
           break;
         case "MatchStmt":
@@ -7828,7 +7836,7 @@ export class TypeChecker {
   // Every Stmt kind, so the scan below can recognize a statement list by shape.
   private static readonly STMT_KINDS: ReadonlySet<string> = new Set([
     "LetDecl", "VarDecl", "Assign", "Return", "IfStmt", "WhileStmt", "ExprStmt",
-    "MatchStmt", "BreakStmt", "ContinueStmt", "IfLetStmt", "LetElseStmt",
+    "MatchStmt", "BreakStmt", "ContinueStmt", "IfLetStmt", "IfChainStmt", "LetElseStmt",
     "UnsafeBlock", "ForInStmt",
   ]);
 
@@ -13789,6 +13797,57 @@ export class TypeChecker {
   // so its non-Copy payload must bind as a borrow, not a move. Resolves the enum
   // type behind the ref and registers the subject in matchSubjectRef when it
   // borrows (lower reads that to emit subjectIsRef).
+  // One `if let` clause, in the scope the caller has just opened: validate the pattern
+  // against the subject's enum, declare its bindings (by borrow or by value, the match-arm
+  // rule) and consume an owned subject the pattern destructures. While the then-body runs,
+  // that subject reads as moved; the returned info is handed to releasePatternMove after
+  // the body, so the move is applied once, by the caller's tryMove after the whole if.
+  private bindLetClause(pattern: Pattern, subject: Expr, subjType: TypeKind, subjBorrows: boolean, subjIsMut: boolean): VarInfo | null {
+    if (subjType.tag !== "enum" || pattern.kind !== "EnumPattern") return null;
+    const enumInfo = must(this.enums, subjType.name, "enums");
+    const ps = pattern.span;
+    if (pattern.enumName !== subjType.name && enumInfo.baseName !== pattern.enumName) {
+      this.error(`pattern enum '${pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
+    }
+    const variant = enumInfo.variants.get(pattern.variant);
+    if (!variant) {
+      this.error(`enum '${subjType.name}' has no variant '${pattern.variant}'`, ps);
+    } else if (pattern.bindings.length !== variant.fields.length) {
+      this.error(`variant '${pattern.variant}' has ${variant.fields.length} fields, but pattern has ${pattern.bindings.length} bindings`, ps);
+    }
+    if (variant) {
+      const bindTypes = variant.fields.slice(0, pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
+      this.patternBindingTypes.set(pattern, bindTypes);
+      const freezes = this.freezeSubjectFor(subject, bindTypes);
+      for (let i = 0; i < Math.min(pattern.bindings.length, variant.fields.length); i++) {
+        const bindSpan = pattern.bindingSpans?.[i] ?? pattern.span;
+        this.declare(pattern.bindings[i], { type: bindTypes[i], mutable: subjIsMut, moved: false, borrowed: false, read: false, span: bindSpan, patternBound: true,
+          copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+        const bound = this.lookup(pattern.bindings[i]);
+        if (i === 0) this.attributeBorrows(freezes, pattern.bindings[0], bound);
+        if (bound) this.noteRefInto(bound, subject, pattern.variant, i);
+      }
+    }
+    // Same arm-entry consumption as match: a destructuring then-branch
+    // zeroes the payload before its body runs, so the subject is dead
+    // there. The else-branch never destructures, so it stays readable.
+    if (!subjBorrows && this.armConsumesSubject(pattern, enumInfo)) {
+      this.tryMove(subject);
+      // ident-ok: tracks a NAMED binding so the then-body can read it again; a field subject has no binding to un-mark
+      if (subject.kind === "Ident") {
+        const info = this.lookup(subject.name);
+        if (info) { this.movedByPattern.add(info); return info; }
+      }
+    }
+    return null;
+  }
+
+  private releasePatternMove(info: VarInfo | null): void {
+    if (!info) return;
+    this.movedByPattern.delete(info);
+    this.touchMoveState(info); info.moved = false; // re-marked by the caller's tryMove after the whole if
+  }
+
   private enumSubjectBorrow(subject: Expr, rawSubjType: TypeKind, patterns: (Pattern | undefined)[] = []): { subjType: TypeKind; subjBorrows: boolean; subjIsMut: boolean } {
     let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
     let subjType: TypeKind = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;

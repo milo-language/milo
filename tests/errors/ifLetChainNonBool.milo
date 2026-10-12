@@ -1,0 +1,5 @@
+// @error: if condition must be bool, got i64
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x && a { print(a) }
+}

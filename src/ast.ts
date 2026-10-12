@@ -147,9 +147,55 @@ export type Pattern =
   // `bindingSpans` is parallel to `bindings` — the identifier token's own position,
   // not the whole pattern's — so a shadowing/redeclaration diagnostic on binding i
   // can point at that name instead of the enclosing `Enum.Variant(...)`.
-  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; bindingSpans?: Span[]; span?: Span }
+  //
+  // `args` makes a pattern nested: `Ok(Some(v))`, `Some(0)`. Where `args[i]` is set, payload
+  // i is matched against that sub-pattern (an enum or literal pattern) instead of being
+  // bound, and `bindings[i]` holds the placeholder `_`. A pattern with no `args` is the flat
+  // form every pass has always handled; `patternLeafNames` lists the bindings of either.
+  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; bindingSpans?: Span[]; args?: (Pattern | null)[]; span?: Span }
   | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; span?: Span }
   | { kind: "WildcardPattern"; span?: Span };
+
+export function isNestedPattern(p: Pattern): boolean {
+  return p.kind === "EnumPattern" && !!p.args && p.args.some(a => a !== null);
+}
+
+// Every binding a pattern introduces, depth first and left to right, `_` included: the
+// order the checker records binding types in (`patternBindingTypes`), so index i of this
+// list and index i of that one describe the same binding. For a flat pattern it is just
+// `bindings`.
+export function patternLeafNames(p: Pattern): string[] {
+  if (p.kind !== "EnumPattern") return [];
+  if (!isNestedPattern(p)) return p.bindings;
+  const out: string[] = [];
+  p.bindings.forEach((b, i) => {
+    const sub = p.args?.[i];
+    if (sub) out.push(...patternLeafNames(sub));
+    else out.push(b);
+  });
+  return out;
+}
+
+// Spans parallel to `patternLeafNames`.
+export function patternLeafSpans(p: Pattern): (Span | undefined)[] {
+  if (p.kind !== "EnumPattern") return [];
+  const out: (Span | undefined)[] = [];
+  p.bindings.forEach((_b, i) => {
+    const sub = p.args?.[i];
+    if (sub) out.push(...patternLeafSpans(sub));
+    else out.push(p.bindingSpans?.[i] ?? p.span);
+  });
+  return out;
+}
+
+// Every enum pattern inside `p`, `p` included: what a walker that resolves or renames
+// enum names has to visit.
+export function enumPatternsIn(p: Pattern): (Pattern & { kind: "EnumPattern" })[] {
+  if (p.kind !== "EnumPattern") return [];
+  const out: (Pattern & { kind: "EnumPattern" })[] = [p];
+  for (const a of p.args ?? []) if (a) out.push(...enumPatternsIn(a));
+  return out;
+}
 
 export interface MatchArm { pattern: Pattern; body: Stmt[] }
 export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
@@ -161,12 +207,21 @@ export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr;
 // The second form has no enum and no variant to name, so `pattern` is a placeholder
 // wildcard and `bindName` carries the binding instead. Its presence is what distinguishes
 // the two forms; every walker that only visits `value` and `elseBody` needs no change.
+// `if let P = a && cond && let Q = b { … } else { … }`: a let-chain. Clauses run left to
+// right, each only when every clause before it held; a `let` clause's bindings are in
+// scope in the later clauses and the then-body, never in the else, which runs when any
+// clause fails. A lone `if let` stays an IfLetStmt, and a chain with no `let` clause is
+// an ordinary IfStmt with `&&`.
+export type ChainClause =
+  | { kind: "LetClause"; pattern: Pattern; subject: Expr; span?: Span }
+  | { kind: "CondClause"; cond: Expr; span?: Span };
+export interface IfChainStmt { kind: "IfChainStmt"; clauses: ChainClause[]; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 export interface LetElseStmt { kind: "LetElseStmt"; pattern: Pattern; value: Expr; elseBody: Stmt[]; bindName?: string; span?: Span }
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
 // `mutRef`: the `for x in &mut v` form, which binds each element as a `&mut T`.
 export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; invariants: Contract[]; body: Stmt[]; mutRef?: boolean; span?: Span }
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | LetElseStmt | UnsafeBlock | ForInStmt;
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | IfChainStmt | LetElseStmt | UnsafeBlock | ForInStmt;
 
 // ── Top-level ──
 

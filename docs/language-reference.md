@@ -1691,6 +1691,57 @@ while let Option.Some(line) = readLine(i) {
 }
 ```
 
+### if-let chains
+
+`let` clauses and boolean conditions can be joined with `&&` in one `if` (or `while`), in
+any order. Each clause runs only when every clause before it held, so a later clause can
+use an earlier one's bindings; the then-body sees all of them. The else runs when any
+clause fails, and sees none of them: it is outside their scope, so it can reuse their
+names, and it may assign a subject that a borrowing clause had frozen.
+
+```milo
+struct Node { name: string, next: Option<string> }
+
+fn describe(o: &Option<Node>, verbose: bool) {
+    if verbose && let Some(n) = o && let Some(c) = n.next && c.len > 0 {
+        print(n.name, " -> ", c)
+    } else {
+        print("nothing to describe")
+    }
+}
+
+fn next(i: i64): Option<i64> {
+    if i < 10 { return Some(i) }
+    return None
+}
+
+var i: i64 = 0
+while let Some(v) = next(i) && v < 3 {
+    print(v)
+    i += 1
+}
+```
+
+Each clause binds the way a lone `if let` does: by borrow through a reference or a place,
+by value from an owned subject. That has one consequence for the else. When a clause fails
+after an earlier `let` clause took the payload out of an owned subject, that payload went
+to the binding (which is dropped), so the subject is moved in the else, as in Rust:
+
+```milo error
+fn take(o: Option<string>) { print(o.isSome()) }
+
+fn main() {
+    let x: Option<string> = Some("hi")
+    if let Some(s) = x && s.len > 5 { print(s) } else { take(x) }  // error: use of moved variable 'x'
+}
+```
+
+`||` cannot sit beside a `let` clause (on the path where only its other side held, the
+pattern bound nothing); parenthesize the boolean part, `let P = x && (a || b)`. A clause's
+operand stops at `&&`, so a subject that itself needs `&&` or `||` goes in parentheses;
+`??` is allowed (`let Some(v) = a ?? b && v > 0`). The chain lowers to nested tests plus one
+flag for the else, so the else is emitted once however many clauses there are.
+
 ### match as an expression
 
 `match` can appear in expression position — each arm yields a value. Arms may be

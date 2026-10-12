@@ -1,0 +1,6 @@
+// @error: undefined variable 'a'
+// A let-chain's bindings are in scope in the later clauses and the then-body only.
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x && a > 3 { print(a) } else { print(a) }
+}

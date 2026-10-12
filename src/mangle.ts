@@ -25,6 +25,7 @@ import type {
   Program, Function, Expr, Stmt, MiloType, Pattern, Contract,
   TraitMethod, TypeParam,
 } from "./ast";
+import { patternLeafNames, enumPatternsIn } from "./ast";
 
 // Top-level names of one package, split by namespace exactly like DeclOrigins.
 export interface PkgDeclNames { values: Set<string>; types: Set<string> }
@@ -262,10 +263,10 @@ export function manglePackage(
   };
 
   const bindPattern = (p: Pattern, sc: Scopes) => {
-    if (p.kind === "EnumPattern") for (const b of p.bindings) sc.bindValue(b);
+    for (const b of patternLeafNames(p)) sc.bindValue(b);
   };
   const walkPattern = (p: Pattern, sc: Scopes) => {
-    if (p.kind === "EnumPattern") p.enumName = resolveType(p.enumName, sc);
+    for (const ep of enumPatternsIn(p)) ep.enumName = resolveType(ep.enumName, sc);
   };
 
   const walkContracts = (cs: Contract[] | undefined, sc: Scopes) => {
@@ -307,6 +308,20 @@ export function manglePackage(
         walkExpr(s.subject, sc);
         walkPattern(s.pattern, sc);
         sc.pushValue(); bindPattern(s.pattern, sc); walkStmts(s.thenBody, sc); sc.popValue();
+        if (s.elseBody) { sc.pushValue(); walkStmts(s.elseBody, sc); sc.popValue(); }
+        break;
+      case "IfChainStmt":
+        // One scope for the whole chain: a `let` clause's bindings are seen by the later
+        // clauses and the then-body. The else is outside it.
+        sc.pushValue();
+        for (const c of s.clauses) {
+          if (c.kind === "CondClause") { walkExpr(c.cond, sc); continue; }
+          walkExpr(c.subject, sc);
+          walkPattern(c.pattern, sc);
+          bindPattern(c.pattern, sc);
+        }
+        walkStmts(s.thenBody, sc);
+        sc.popValue();
         if (s.elseBody) { sc.pushValue(); walkStmts(s.elseBody, sc); sc.popValue(); }
         break;
       case "LetElseStmt":

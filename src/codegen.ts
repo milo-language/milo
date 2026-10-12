@@ -3556,7 +3556,7 @@ export class Codegen {
         return this.genMatch(stmt);
       case "NullRefUnwrap":
         return this.genNullRefUnwrap(stmt);
-      case "UnsafeBlock": {
+      case "UnsafeBlock": case "Block": {
         let terminated = false;
         for (const s of stmt.body) {
           const [sl, st] = this.genStmt(s);
@@ -3741,7 +3741,7 @@ export class Codegen {
           case "If": visitExpr(st.cond); walk(st.thenBody); if (st.elseBody) walk(st.elseBody); break;
           case "While": visitExpr(st.cond); walk(st.body); break;
           case "ForRange": visitExpr(st.start); visitExpr(st.end); walk(st.body); break;
-          case "UnsafeBlock": walk(st.body); break;
+          case "UnsafeBlock": case "Block": walk(st.body); break;
           case "Match": visitExpr(st.subject); for (const arm of st.arms) walk(arm.body); break;
           default: break;
         }
@@ -3906,7 +3906,7 @@ export class Codegen {
             checkExpr(s.end);
             walkStmts(s.body);
             break;
-          case "UnsafeBlock":
+          case "UnsafeBlock": case "Block":
             walkStmts(s.body);
             break;
           case "Match":

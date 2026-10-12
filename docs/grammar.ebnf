@@ -111,8 +111,14 @@ let_decl    = "let" ( IDENT [ ":" type ] | pattern | field_bindings ) "=" expr [
 field_bindings = "{" IDENT [ ":" IDENT ] { "," IDENT [ ":" IDENT ] } "}" ;
 var_decl    = "var" ( IDENT [ ":" type ] | field_bindings ) "=" expr ;
 return_stmt = "return" [ expr ] ;
-if_stmt     = "if" ( expr | "let" pattern "=" expr ) block [ "else" ( if_stmt | block ) ] ;
-while_stmt  = "while" expr { loop_contract } block ;
+if_stmt     = "if" ( expr | let_chain ) block [ "else" ( if_stmt | block ) ] ;
+while_stmt  = "while" ( expr | let_chain ) { loop_contract } block ;
+(* A let-chain has at least one `let` clause. Each operand is parsed above `&&` (with an
+   optional `??`), so `&&` always separates clauses; `||` beside a `let` clause is an error.
+   A lone `let` clause is the plain if-let / while-let. *)
+let_chain   = chain_clause { "&&" chain_clause } ;
+chain_clause = "let" pattern "=" chain_operand | chain_operand ;
+chain_operand = bitor_expr [ "??" bitor_expr ] ;
 for_stmt    = "for" IDENT [ "," IDENT ] "in" [ "&" "mut" ] expr { loop_contract } block ;
 loop_contract = ( "invariant" | "decreases" ) expr ;
 match_stmt  = "match" expr "{" { match_arm } "}" ;

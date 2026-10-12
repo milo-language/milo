@@ -195,6 +195,8 @@ fn main(): i32 {
 \`\`\`
 
 Keep code flat: \`let ... else\` exits early instead of nesting \`if let\` / \`match\`.
+When the function goes on either way, a let-chain joins \`let\` clauses and conditions with
+\`&&\` instead of nesting \`if let\`: each clause sees the bindings before it, the else sees none.
 \`\`\`milo
 struct Session { userId: i64? }
 
@@ -202,6 +204,14 @@ fn describe(s: Session?): string {
     let Some(sess) = s else { return "anonymous" }
     let Some(id) = sess.userId else { return "anonymous" }
     return $"user {id}"
+}
+
+fn greet(s: Session?, verbose: bool) {
+    if verbose && let Some(sess) = s && let Some(id) = sess.userId && id > 0 {
+        print($"hello, user {id}")
+    } else {
+        print("hello")
+    }
 }
 \`\`\`
 
@@ -448,7 +458,7 @@ fn main(): i32 {
 - No exceptions or try/catch: use \`Result<T, E>\` and \`?\` propagation.
 - No null: use \`Option<T>\` (\`T?\`) and pattern match or \`??\` for defaults.
 - Don't build JSON by string concatenation: \`@derive(Json)\` for fixed shapes, \`Json.obj()\` / \`Json.arr()\` otherwise.
-- Don't nest \`if let\` / \`match\` to unwrap: \`let ... else\`, \`?\` and \`??\` keep it flat.
+- Don't nest \`if let\` / \`match\` to unwrap: \`let ... else\`, let-chains (\`if let A = x && let B = a.f\`), \`?\` and \`??\` keep it flat.
 - No class inheritance: use traits and composition.
 - Don't invent std names: \`milo api <terms>\` first.
 `;

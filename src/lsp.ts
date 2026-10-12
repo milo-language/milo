@@ -15,7 +15,7 @@ import { ParseError, type Diagnostic } from "./diagnostics";
 import { warningDocUrl } from "./warnings";
 import { projectLints } from "./pkg";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
-import { declaredType } from "./ast";
+import { declaredType, patternLeafNames } from "./ast";
 import { typeName as rawTypeName } from "./types";
 import { display, restoreDisplayNames } from "./mangle";
 
@@ -543,7 +543,7 @@ function findVarHover(
   // A payload binding from an enum pattern (`Option.Some(n)` binds `n`).
   const patternBindHover = (pattern: import("./ast").Pattern): string | null => {
     if (pattern.kind !== "EnumPattern") return null;
-    const i = pattern.bindings.indexOf(word);
+    const i = patternLeafNames(pattern).indexOf(word);
     if (i < 0) return null;
     const tk = bindTypes.get(pattern)?.[i];
     return `let ${word}: ${tk ? formatTypeName(tk) : "?"}`;
@@ -563,6 +563,11 @@ function findVarHover(
     }
     if (stmt.kind === "IfLetStmt") {
       const b = patternBindHover(stmt.pattern); if (b) return b;
+      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes, forInTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes, forInTypes); if (r2) return r2; }
+    }
+    if (stmt.kind === "IfChainStmt") {
+      for (const c of stmt.clauses) if (c.kind === "LetClause") { const b = patternBindHover(c.pattern); if (b) return b; }
       const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes, forInTypes); if (r) return r;
       if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes, forInTypes); if (r2) return r2; }
     }
@@ -1217,7 +1222,7 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
   }
   if (stmt.kind === "MatchStmt") {
     for (const arm of stmt.arms) {
-      if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.includes(name) && arm.pattern.span) {
+      if (patternLeafNames(arm.pattern).includes(name) && arm.pattern.span) {
         return arm.pattern.span;
       }
       for (const s of arm.body) { const r = findVarDecl(s, name); if (r) return r; }
@@ -1228,8 +1233,15 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
     for (const s of stmt.body) { const r = findVarDecl(s, name); if (r) return r; }
   }
   if (stmt.kind === "IfLetStmt") {
-    if (stmt.pattern.kind === "EnumPattern" && stmt.pattern.bindings.includes(name) && stmt.pattern.span) {
+    if (patternLeafNames(stmt.pattern).includes(name) && stmt.pattern.span) {
       return stmt.pattern.span;
+    }
+    for (const s of stmt.thenBody) { const r = findVarDecl(s, name); if (r) return r; }
+    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
+  }
+  if (stmt.kind === "IfChainStmt") {
+    for (const c of stmt.clauses) {
+      if (c.kind === "LetClause" && patternLeafNames(c.pattern).includes(name) && c.pattern.span) return c.pattern.span;
     }
     for (const s of stmt.thenBody) { const r = findVarDecl(s, name); if (r) return r; }
     if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
@@ -1237,7 +1249,7 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
   if (stmt.kind === "LetElseStmt") {
     // The pattern binding escapes into the enclosing scope — its decl site.
     if (stmt.bindName === name && stmt.span) return stmt.span;
-    if (stmt.pattern.kind === "EnumPattern" && stmt.pattern.bindings.includes(name) && stmt.pattern.span) {
+    if (patternLeafNames(stmt.pattern).includes(name) && stmt.pattern.span) {
       return stmt.pattern.span;
     }
     for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
@@ -1943,6 +1955,11 @@ function visitStmtExprs(s: Stmt, cb: (e: Expr) => void) {
       break;
     case "IfLetStmt":
       visitExpr(s.subject, cb);
+      for (const st of s.thenBody) visitStmtExprs(st, cb);
+      if (s.elseBody) for (const st of s.elseBody) visitStmtExprs(st, cb);
+      break;
+    case "IfChainStmt":
+      for (const c of s.clauses) visitExpr(c.kind === "LetClause" ? c.subject : c.cond, cb);
       for (const st of s.thenBody) visitStmtExprs(st, cb);
       if (s.elseBody) for (const st of s.elseBody) visitStmtExprs(st, cb);
       break;

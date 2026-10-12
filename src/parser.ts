@@ -5,7 +5,7 @@ import { Lexer, FSTRING_LBRACE, FSTRING_RBRACE } from "./lexer";
 import { ParseError } from "./diagnostics";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
-  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl,
+  EnumDecl, EnumVariant, Pattern, MatchArm, ChainClause, Span, ImportDecl,
   TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl, GlobalDecl,
   DeriveTemplate,
 } from "./ast";
@@ -1068,7 +1068,19 @@ export class Parser {
     if (this.at(TokenKind.Let)) {
       return this.parseIfLet(s);
     }
-    const cond = this.parseExpr();
+    // `if ready && let Some(x) = y`: a chain whose `let` is not the first clause. The
+    // ordinary condition parse stops at that `let` (it is not an expression), so retry
+    // as a chain from the same token. Any other parse error is the real one.
+    const saved = this.pos;
+    let cond: Expr;
+    try {
+      cond = this.parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
+      this.pos = saved;
+      const clauses = this.parseChainClauses();
+      return this.finishIfChain(s, clauses);
+    }
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
@@ -1129,49 +1141,97 @@ export class Parser {
     }
   }
 
-  private parseIfLet(s: Span): Stmt {
-    this.expect(TokenKind.Let);
-    const pattern = this.parsePattern();
-    this.expect(TokenKind.Eq);
-    const subject = this.parseExpr();
+  // The clauses of a let-chain, up to (not including) the body's `{`. Each operand is
+  // parsed above `&&` so the `&&` that joins clauses is never swallowed into a subject.
+  // `??` still binds inside an operand (`let Some(x) = a ?? b && …`), as it does in a
+  // lone `if let`. `||` is refused, as in Rust: `let P = a || c` has no binding on the
+  // path where `c` alone held.
+  private parseChainClauses(): ChainClause[] {
+    const clauses: ChainClause[] = [];
+    for (;;) {
+      const tok = this.peek();
+      if (this.match(TokenKind.Let)) {
+        const pattern = this.parsePattern();
+        this.expect(TokenKind.Eq);
+        const subject = this.parseChainOperand();
+        clauses.push({ kind: "LetClause", pattern, subject, span: this.span(tok) });
+      } else {
+        clauses.push({ kind: "CondClause", cond: this.parseChainOperand(), span: this.span(tok) });
+      }
+      if (this.match(TokenKind.AmpAmp)) continue;
+      if (this.at(TokenKind.PipePipe)) {
+        this.error(`'||' cannot join a condition that has a 'let' clause`, this.peek(), undefined,
+          `a 'let' clause binds only on the path where it matched; use two 'if' statements, or parenthesize the boolean part: 'let P = x && (a || b)'`);
+      }
+      return clauses;
+    }
+  }
+
+  private parseChainOperand(): Expr {
+    let left = this.parseBitOr();
+    if (this.at(TokenKind.QuestionQuestion)) {
+      this.advance();
+      const defaultExpr = this.parseBitOr();
+      left = { kind: "DefaultValue", operand: left, default: defaultExpr, span: left.span };
+    }
+    return left;
+  }
+
+  private parseIfElse(): Stmt[] | null {
+    if (!this.match(TokenKind.Else)) return null;
+    if (this.at(TokenKind.If)) return [this.parseIf()];
+    this.expect(TokenKind.LBrace);
+    const elseBody = this.parseStmts();
+    this.expect(TokenKind.RBrace);
+    return elseBody;
+  }
+
+  // A chain with a single `let` clause and nothing else is the plain if-let.
+  private finishIfChain(s: Span, clauses: ChainClause[]): Stmt {
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    let elseBody: Stmt[] | null = null;
-    if (this.match(TokenKind.Else)) {
-      if (this.at(TokenKind.If)) {
-        elseBody = [this.parseIf()];
-      } else {
-        this.expect(TokenKind.LBrace);
-        elseBody = this.parseStmts();
-        this.expect(TokenKind.RBrace);
-      }
+    const elseBody = this.parseIfElse();
+    const only = clauses[0];
+    if (clauses.length === 1 && only?.kind === "LetClause") {
+      return { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody, elseBody, span: s };
     }
-    return { kind: "IfLetStmt", pattern, subject, thenBody, elseBody, span: s };
+    return { kind: "IfChainStmt", clauses, thenBody, elseBody, span: s };
+  }
+
+  private parseIfLet(s: Span): Stmt {
+    return this.finishIfChain(s, this.parseChainClauses());
   }
 
   private parseWhile(): Stmt {
     const s = this.span(this.peek());
     this.expect(TokenKind.While);
-    // `while let P = subj { body }` desugars to
-    //   `while true { if let P = subj { body } else { break } }`
-    // so the existing if-let + while machinery handles binding and exhaustion.
-    if (this.at(TokenKind.Let)) {
-      this.expect(TokenKind.Let);
-      const pattern = this.parsePattern();
-      this.expect(TokenKind.Eq);
-      const subject = this.parseExpr();
+    // `while let P = subj && c { body }` desugars to
+    //   `while true { if let P = subj && c { body } else { break } }`
+    // so the existing if-let (or let-chain) + while machinery handles binding and exit.
+    const desugar = (clauses: ChainClause[]): Stmt => {
       const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
       this.expect(TokenKind.LBrace);
       const body = this.parseStmts();
       this.expect(TokenKind.RBrace);
-      const ifLet: Stmt = {
-        kind: "IfLetStmt", pattern, subject, thenBody: body,
-        elseBody: [{ kind: "BreakStmt", span: s }], span: s,
-      };
-      return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [ifLet], span: s };
+      const elseBody: Stmt[] = [{ kind: "BreakStmt", span: s }];
+      const only = clauses[0];
+      const inner: Stmt = clauses.length === 1 && only?.kind === "LetClause"
+        ? { kind: "IfLetStmt", pattern: only.pattern, subject: only.subject, thenBody: body, elseBody, span: s }
+        : { kind: "IfChainStmt", clauses, thenBody: body, elseBody, span: s };
+      return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [inner], span: s };
+    };
+    if (this.at(TokenKind.Let)) return desugar(this.parseChainClauses());
+    // `while more && let Some(x) = next()`: same retry as parseIf.
+    const saved = this.pos;
+    let cond: Expr;
+    try {
+      cond = this.parseExpr();
+    } catch (e) {
+      if (!(e instanceof ParseError) || !this.at(TokenKind.Let)) throw e;
+      this.pos = saved;
+      return desugar(this.parseChainClauses());
     }
-    const cond = this.parseExpr();
     const invariants = this.parseContracts().filter(c => c.kind === "invariant" || c.kind === "decreases");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();

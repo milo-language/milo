@@ -5,7 +5,8 @@
 // monomorphized instances, which is why they cannot run per function, and they reach
 // the checker only through `ProgramPassHost` (its recorded maps and diagnostics) plus
 // the `ProgramView` it builds once for all of them (design pass 2026-09, F5).
-import type { Program, Function, Stmt, Expr, Span, Pattern } from "./ast";
+import type { Program, Function, Stmt, Expr, Span, Pattern, ChainClause } from "./ast";
+import { patternLeafNames } from "./ast";
 import type { TypeKind } from "./types";
 import type { CaptureInfo, FnSig } from "./checker";
 import { RETAINING_MEMBERS, MUTATING_COLLECTION_METHODS } from "./builtin-members";
@@ -274,10 +275,11 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
   // The bindings a block introduces before its first statement: loop variables, closure
   // params, the names a match arm or `if let` pattern binds.
   const blockBindings = (n: Record<string, unknown> & { kind?: string }, key: string): string[] => {
-    const patternNames = (p: unknown) => (p as Pattern | undefined)?.kind === "EnumPattern" ? (p as Extract<Pattern, { kind: "EnumPattern" }>).bindings : [];
+    const patternNames = (p: unknown) => p ? patternLeafNames(p as Pattern) : [];
     if (n.kind === "ForInStmt" && key === "body") return [n.varName as string, ...(n.varName2 ? [n.varName2 as string] : [])];
     if (n.kind === "Closure" && key === "body") return (n.params as { name: string }[]).map(p => p.name);
     if (n.kind === "IfLetStmt" && key === "thenBody") return patternNames(n.pattern);
+    if (n.kind === "IfChainStmt" && key === "thenBody") return (n.clauses as ChainClause[]).flatMap(c => c.kind === "LetClause" ? patternNames(c.pattern) : []);
     if (n.kind === undefined && key === "body" && "pattern" in n) return patternNames(n.pattern);
     return [];
   };
@@ -314,7 +316,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
         break;
       case "LetElseStmt":
         // Its bindings land in the enclosing block, after the else.
-        for (const b of (n.pattern as Pattern).kind === "EnumPattern" ? (n.pattern as Extract<Pattern, { kind: "EnumPattern" }>).bindings : []) declareLocal(b);
+        for (const b of patternLeafNames(n.pattern as Pattern)) declareLocal(b);
         break;
       case "Assign": {
         // A field, an element, or a global is a place that outlives the frame. A bare
@@ -831,7 +833,7 @@ export function checkPurity(host: ProgramPassHost, program: Program, view: Progr
 
     const bindPattern = (p: import("./ast").Pattern, bound: Set<string>): Set<string> => {
       const inner = new Set(bound);
-      if (p.kind === "EnumPattern") for (const b of p.bindings) inner.add(b);
+      for (const b of patternLeafNames(p)) inner.add(b);
       return inner;
     };
 
@@ -861,11 +863,22 @@ export function checkPurity(host: ProgramPassHost, program: Program, view: Progr
             st(s.thenBody, bindPattern(s.pattern, bound));
             if (s.elseBody) st(s.elseBody, bound);
             break;
+          case "IfChainStmt": {
+            let inner = bound;
+            for (const c of s.clauses) {
+              if (c.kind === "CondClause") { ex(c.cond, inner); continue; }
+              ex(c.subject, inner);
+              inner = bindPattern(c.pattern, inner);
+            }
+            st(s.thenBody, inner);
+            if (s.elseBody) st(s.elseBody, bound);
+            break;
+          }
           case "LetElseStmt":
             ex(s.value, bound);
             st(s.elseBody, bound);
             // The bind escapes into the enclosing scope — that is the point of let-else.
-            if (s.pattern.kind === "EnumPattern") for (const b of s.pattern.bindings) bound.add(b);
+            for (const b of patternLeafNames(s.pattern)) bound.add(b);
             break;
           case "UnsafeBlock":
             fail(`'${who}' is @pure but contains an 'unsafe' block`, s.span,

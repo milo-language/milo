@@ -164,6 +164,8 @@ Branches on a `bool` — no truthiness, so an integer or an `Option` will not do
 
 `if let Pattern = expr { … }` matches a single pattern and binds its payload for the body, which is how you take an `Option`/`Result` apart without a full `match`.
 
+`if let Some(a) = x && let Some(b) = a.next && b > 0 { … }` is a let-chain: `let` clauses and conditions joined by `&&`, in any order. Each clause runs only when the ones before it held and sees their bindings; the else sees none of them. `||` beside a `let` clause is an error.
+
 ### `impl`
 
 ```milo skip
@@ -382,7 +384,7 @@ At file scope, `var name: T = …` declares a global; `thread_local var` gives i
 while i < n { … }
 while let Some(line) = readLine(i) { … }
 ```
-Loops while the condition is true. `while let` loops as long as the pattern keeps matching, binding the payload each iteration — the idiomatic way to drain a source that reports exhaustion with `Option.None`.
+Loops while the condition is true. `while let` loops as long as the pattern keeps matching, binding the payload each iteration — the idiomatic way to drain a source that reports exhaustion with `Option.None`. It takes a let-chain too: `while let Some(x) = next() && x > 0 { … }`.
 
 A loop may carry `invariant` clauses (proved by induction and then available after the loop) and a `decreases` measure that proves it terminates.
 

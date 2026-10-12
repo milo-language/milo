@@ -432,6 +432,13 @@ function computeCyclomaticComplexity(stmts: Stmt[]): number {
         complexity += computeCyclomaticComplexity(stmt.thenBody) - 1;
         if (stmt.elseBody) complexity += computeCyclomaticComplexity(stmt.elseBody) - 1;
         break;
+      case "IfChainStmt":
+        // Each clause is a decision, the same count a `&&` chain of conditions gets.
+        complexity += stmt.clauses.length;
+        for (const c of stmt.clauses) complexity += countShortCircuit(c.kind === "LetClause" ? c.subject : c.cond);
+        complexity += computeCyclomaticComplexity(stmt.thenBody) - 1;
+        if (stmt.elseBody) complexity += computeCyclomaticComplexity(stmt.elseBody) - 1;
+        break;
       case "WhileStmt":
         complexity += 1 + countShortCircuit(stmt.cond);
         complexity += computeCyclomaticComplexity(stmt.body) - 1;
@@ -775,6 +782,9 @@ export function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s:
         case "ForInStmt": ex(s.iterable); st(s.body); break;
         case "MatchStmt": ex(s.subject); s.arms.forEach(a => st(a.body)); break;
         case "IfLetStmt": ex(s.subject); st(s.thenBody); if (s.elseBody) st(s.elseBody); break;
+        case "IfChainStmt":
+          for (const c of s.clauses) ex(c.kind === "LetClause" ? c.subject : c.cond);
+          st(s.thenBody); if (s.elseBody) st(s.elseBody); break;
         case "LetElseStmt": ex(s.value); st(s.elseBody); break;
         case "UnsafeBlock": st(s.body); break;
         // No sub-nodes. Listed rather than left to fall through so the guard below can be

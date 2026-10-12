@@ -1,0 +1,7 @@
+// @error: '||' cannot join a condition that has a 'let' clause
+fn next(i: i64): Option<i64> { if i < 3 { return Some(i) } return None }
+
+fn main() {
+    var i = 0
+    while i < 10 || let Some(v) = next(i) { i += 1 }
+}

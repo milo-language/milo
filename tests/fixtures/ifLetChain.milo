@@ -1,0 +1,73 @@
+// @expect: got 3
+// @expect: no
+// @expect: n2 child
+// @expect: none found
+// @expect: borrowed: n1 -> child
+// @expect: borrowed: none
+// @expect: loop n3
+// @expect: loop n2
+// @expect: owned abc
+// @expect: 7
+// @expect: replaced
+// @expect: second clause failed, moved payload dropped
+
+// Let-chains: `let` clauses and boolean conditions joined by `&&`, in any order. A
+// clause runs only when every clause before it held, a `let` clause's bindings reach
+// the later clauses and the then-body, and the else runs once, when any clause fails,
+// with none of those bindings in scope (so it may reuse their names, and write a
+// subject a borrowing clause had frozen). Works in `while` too.
+struct Node { name: string, next: Option<string> }
+
+fn find(k: i64): Option<Node> {
+    if k > 0 { return Some(Node { name: "n" + k.toString(), next: Some("child") }) }
+    return None
+}
+
+// A borrowed subject: `n` and `c` are views into `o`, as in a lone `if let`.
+fn show(o: &Option<Node>) {
+    if let Some(n) = o && let Some(c) = n.next && c.len > 2 {
+        print("borrowed: ", n.name, " -> ", c)
+    } else {
+        print("borrowed: none")
+    }
+}
+
+struct S { field: Option<string>, n: i64 }
+
+fn main() {
+    let x: Option<Option<i64>> = Some(Some(3))
+    if let Some(a) = x && let Some(b) = a && b > 2 { print("got ", b) } else { print("no") }
+    if let Some(a) = x && let Some(b) = a && b > 5 { print("got ", b) } else { print("no") }
+
+    // A condition first, then two lets, the second reading the first's binding.
+    let ready = true
+    if ready && let Some(n) = find(2) && let Some(c) = n.next {
+        print(n.name, " ", c)
+    }
+    if let Some(n) = find(0) && n.name.len > 0 { print("bad") } else { print("none found") }
+    show(find(1))
+    show(None)
+
+    var i = 0
+    while let Some(n) = find(3 - i) && i < 2 {
+        print("loop ", n.name)
+        i += 1
+    }
+
+    let name: Option<string> = Some("abc")
+    if let Some(s) = name && s.len == 3 { print("owned ", s) } else { print("else") }
+
+    // The else is outside the clauses' scope: `a` is free to name a new local there.
+    let y: Option<i64> = Some(1)
+    if let Some(a) = y && a > 3 { print(a) } else { let a = 7 print(a) }
+
+    // A place subject binds by borrow and freezes `st` while `s` lives; the else runs
+    // after `s` is gone, so it may assign the field.
+    var st = S { field: Some("hello"), n: 1 }
+    if let Some(s) = st.field && s.len > 9 { print(s) } else { st.field = Some("replaced") }
+    if let Some(s) = st.field && st.n == 1 { print(s) }
+
+    // The first clause moves the payload out of a temporary; the second fails, so the
+    // payload is dropped on the way to the else (the ASan sweep checks the drop).
+    if let Some(n) = find(5) && n.name == "nope" { print(n.name) } else { print("second clause failed, moved payload dropped") }
+}

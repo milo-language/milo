@@ -1,0 +1,6 @@
+// @error: '||' cannot join a condition that has a 'let' clause
+// As in Rust: on the path where only the right side held, the pattern bound nothing.
+fn main() {
+    let x: Option<i64> = Some(1)
+    if let Some(a) = x || a > 0 { print(a) }
+}

@@ -1,7 +1,7 @@
 // AST + CheckResult → HIRModule lowering pass.
 // Attaches resolved types from checker to every HIR node.
 
-import type { Program, Function as AstFn, Stmt, Expr, Pattern } from "./ast";
+import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
 import { declaredType, floatNamespaceConst } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
 import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsBuiltin } from "./checker";
@@ -32,6 +32,8 @@ class LowerCtx {
   // Non-null only while lowering one function's contracts: collects the `old(e)` snapshots
   // that clause references. Outside that window an `old(...)` call is an ordinary call.
   private oldSlots: { name: string; value: HIRExpr }[] | null = null;
+  // Names the flag local of each let-chain with an else (see the IfChainStmt lowering).
+  private chainCount = 0;
   constructor(private c: CheckResult, private sourceDir: string, private targetOs: string, private targetArch: string) {}
 
   // Evaluate a lowered condition to a compile-time boolean when it rests entirely on
@@ -344,31 +346,45 @@ class LowerCtx {
         return { kind: "Continue", span: stmt.span };
       case "ExprStmt":
         return { kind: "ExprStmt", expr: this.lowerExpr(stmt.expr), span: stmt.span };
-      case "IfLetStmt": {
-        let subjType = this.typeOf(stmt.subject);
-        const subjectIsRef = this.c.matchSubjectRef.has(stmt.subject);
-        const subjectIsMut = this.c.matchSubjectMut.has(stmt.subject);
-        if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
-        const enumName = subjType?.tag === "enum" ? subjType.name : "";
-        const enumInfo = this.c.enums.get(enumName);
-        const arms = [
-          {
-            pattern: this.lowerPattern(stmt.pattern, enumInfo),
-            body: stmt.thenBody.map(s => this.lowerStmt(s, fnRetType)),
-          },
-        ];
-        if (stmt.elseBody) {
-          arms.push({
-            pattern: { kind: "WildcardPattern" as const },
-            body: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)),
-          });
-        } else {
-          arms.push({
-            pattern: { kind: "WildcardPattern" as const },
-            body: [],
-          });
-        }
-        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, subjectIsRef, subjectIsMut, span: stmt.span };
+      case "IfLetStmt":
+        return this.lowerIfLet(stmt.pattern, stmt.subject,
+          stmt.thenBody.map(s => this.lowerStmt(s, fnRetType)),
+          stmt.elseBody ? stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) : [], stmt.span);
+      case "IfChainStmt": {
+        // Clauses nest left to right (`if let` is a two-arm Match, a condition an If), with
+        // the then-body innermost. Each clause has its own failure exit, but the else must
+        // run once and outside every clause's scope (their bindings are not in it, and a
+        // borrowed binding must be gone before the else may write the subject). So the
+        // innermost level sets a flag and the else runs after the nest, when it is clear.
+        // Copying the else into each exit instead would put it inside those scopes.
+        const flag = stmt.elseBody ? `__chain${this.chainCount++}` : null;
+        const boolTy: TypeKind = { tag: "bool" };
+        const nest = (i: number): HIRStmt[] => {
+          if (i === stmt.clauses.length) {
+            const body = stmt.thenBody.map(s => this.lowerStmt(s, fnRetType));
+            if (!flag) return body;
+            return [{ kind: "Assign", target: { kind: "Ident", name: flag, type: boolTy }, value: { kind: "BoolLit", value: true, type: boolTy } }, ...body];
+          }
+          const c = stmt.clauses[i]!;
+          if (c.kind === "CondClause") return [{ kind: "If", cond: this.lowerExpr(c.cond), thenBody: nest(i + 1), elseBody: null, span: c.span }];
+          return [this.lowerIfLet(c.pattern, c.subject, nest(i + 1), [], c.span)];
+        };
+        if (!flag || !stmt.elseBody) return { kind: "Block", body: nest(0), span: stmt.span };
+        return {
+          kind: "Block",
+          body: [
+            { kind: "Let", name: flag, type: boolTy, value: { kind: "BoolLit", value: false, type: boolTy }, mutable: true, span: stmt.span },
+            ...nest(0),
+            {
+              kind: "If",
+              cond: { kind: "UnaryOp", op: "!", operand: { kind: "Ident", name: flag, type: boolTy }, type: boolTy },
+              thenBody: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)),
+              elseBody: null,
+              span: stmt.span,
+            },
+          ],
+          span: stmt.span,
+        };
       }
       case "LetElseStmt": {
         // `let g = p else { E }` over a `?&mut T` parameter: no enum, no match, just the
@@ -605,6 +621,22 @@ class LowerCtx {
         throw new Error(`lowerStmt: unhandled statement kind '${(_exhaustive as { kind: string }).kind}'`);
       }
     }
+  }
+
+  // `if let P = subject { then } else { else }` as a two-arm Match. The checker decided
+  // whether the subject is borrowed (and mutably), and lowering only reads that back.
+  private lowerIfLet(pattern: Pattern, subject: Expr, thenBody: HIRStmt[], elseBody: HIRStmt[], span?: Span): HIRStmt {
+    let subjType = this.typeOf(subject);
+    const subjectIsRef = this.c.matchSubjectRef.has(subject);
+    const subjectIsMut = this.c.matchSubjectMut.has(subject);
+    if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
+    const enumName = subjType?.tag === "enum" ? subjType.name : "";
+    const enumInfo = this.c.enums.get(enumName);
+    const arms = [
+      { pattern: this.lowerPattern(pattern, enumInfo), body: thenBody },
+      { pattern: { kind: "WildcardPattern" as const }, body: elseBody },
+    ];
+    return { kind: "Match", subject: this.lowerExpr(subject), arms, enumName, subjectIsRef, subjectIsMut, span };
   }
 
   private lowerPattern(pattern: Pattern, enumInfo?: EnumInfo): HIRPattern {
