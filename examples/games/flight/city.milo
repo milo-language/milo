@@ -693,7 +693,7 @@ fn orthoPathFor(path: &string): string {
 // True when `n` bytes are actually there. Every length in the file is read FROM
 // the file, so each one has to be checked against what is left before it is used
 // to index: `--city` is the one untrusted input this program has, and a
-// truncated asset must come back as Result.Err, not as an out-of-bounds abort.
+// truncated asset must come back as Err, not as an out-of-bounds abort.
 // The bounds check would catch it either way — that is the language doing its
 // job — but a Result-returning parser that kills the process is a lie.
 fn have(src: &string, off: i64, n: i64): bool {

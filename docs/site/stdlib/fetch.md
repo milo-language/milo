@@ -16,8 +16,8 @@ if resp.ok() {
     print(resp.text())
 }
 match resp.header("Content-Type") {
-    Option.Some(ct) => print(ct),
-    Option.None => {},
+    Some(ct) => print(ct),
+    None => {},
 }
 
 let opts = FetchOptions { method: "POST", headers: "Content-Type: text/plain", body: "hi" }

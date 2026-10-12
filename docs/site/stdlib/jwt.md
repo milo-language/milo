@@ -25,13 +25,13 @@ algorithm, the signature, and `exp`/`nbf`/`iat` against the system clock with
 
 ```milo
 match Jwt.verifyHS256(token, secret) {
-    Result.Ok(claims) => {
+    Ok(claims) => {
         match claims.subject() {
-            Option.Some(sub) => { print("hello " + sub) }
-            Option.None => { print("anonymous token") }
+            Some(sub) => { print("hello " + sub) }
+            None => { print("anonymous token") }
         }
     }
-    Result.Err(e) => { print(jwtErrorMessage(e)) }
+    Err(e) => { print(jwtErrorMessage(e)) }
 }
 ```
 

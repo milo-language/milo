@@ -12,7 +12,7 @@
 // `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`), not
 // from the name the uploader chose.
 //
-// Unknown extensions are `Option.None` rather than a default. A caller serving
+// Unknown extensions are `None` rather than a default. A caller serving
 // files should reach for `application/octet-stream` explicitly, because the
 // safe default depends on what it is serving — a static-site server and an
 // upload bucket want different answers, and only the caller knows which it is.

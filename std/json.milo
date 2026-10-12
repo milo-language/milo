@@ -148,7 +148,7 @@ fn jsonCurIdx(cur: i64): i64 {
 // The check every cursor accessor funnels through. A negative cursor is the
 // total-navigation "nothing here" and passes through as -1. A cursor branded
 // for a DIFFERENT document is not "nothing here": it is a program that mixed
-// two documents, and answering Option.None would launder that bug into the
+// two documents, and answering None would launder that bug into the
 // missing-key path, where `?? fallback` swallows it silently. seal resolved
 // the same tension for eq() the same way (assert, with holds() as the
 // tolerant probe): the accessors abort, and curHolds is the branch point for
@@ -529,7 +529,7 @@ impl Json {
     // zero allocation, and only leaf-string reads materialize (just that one
     // string). Start at `curRoot()` and chain:
     //   let user = doc.curField(doc.curChild(doc.curRoot(), 0), "name")
-    //   match doc.curStr(user) { Option.Some(s) => ..., Option.None => ... }
+    //   match doc.curStr(user) { Some(s) => ..., None => ... }
     //
     // A cursor is not a bare node index: the document's brand rides in its
     // high bits (see jsonCurResolve above). Resolving a cursor against a

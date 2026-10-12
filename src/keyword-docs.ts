@@ -52,7 +52,7 @@ export const KEYWORD_DOCS: Record<string, string> = {
 
   else: "```milo\nif cond { … } else { … }\n```\nThe branch taken when the `if` condition is false; `else if` chains another test.\n\nAlso pairs with `let … else { … }`: a `let-else` binds a pattern into the enclosing scope, and runs the `else` block when the pattern does not match. That block must diverge (`return` / `break` / `continue`) — the compiler rejects one that could fall through to code where the binding does not exist.",
 
-  while: "```milo\nwhile i < n { … }\nwhile let Option.Some(line) = readLine(i) { … }\n```\nLoops while the condition is true. `while let` loops as long as the pattern keeps matching, binding the payload each iteration — the idiomatic way to drain a source that reports exhaustion with `Option.None`.\n\nA loop may carry `invariant` clauses (proved by induction and then available after the loop) and a `decreases` measure that proves it terminates.",
+  while: "```milo\nwhile i < n { … }\nwhile let Some(line) = readLine(i) { … }\n```\nLoops while the condition is true. `while let` loops as long as the pattern keeps matching, binding the payload each iteration — the idiomatic way to drain a source that reports exhaustion with `Option.None`.\n\nA loop may carry `invariant` clauses (proved by induction and then available after the loop) and a `decreases` measure that proves it terminates.",
 
   for: "```milo\nfor x in items { … }\nfor i in 0..n { … }\n```\nIterates a container, a range, or anything with an iterator. Over a named container the loop variable **binds by reference**: it does not copy the element and does not consume the container, so `items` is still usable after the loop. Over an owned temporary Vec or array (`for x in makeItems()`) the loop consumes it and binds each element by value, so the body can move it.\n\nThe binding is **immutable**: to change elements in place, assign through the index (`v[i] = …`) or hand the container to a function taking a `&mut [T]` slice.",
 
@@ -75,7 +75,7 @@ export const KEYWORD_DOCS: Record<string, string> = {
 
   is: "```milo\nif shape is Shape.Circle { … }\n```\nTests which variant an enum value currently holds, as a `bool`. It only inspects — it binds no payload, so reaching a payload still needs `match` or `if let`.",
 
-  null: "```milo\nlet x: Option<i64> = null\n```\nThe empty `Option` — `null` is sugar for `Option.None`, not a null pointer. Safe Milo has no null pointers at all: absence is an `Option`, which the type checker forces you to open before use.\n\nA null **raw** pointer, at an FFI boundary, is written `0 as *T`.",
+  null: "```milo\nlet x: Option<i64> = null\n```\nThe empty `Option` — `null` is sugar for `None`, not a null pointer. Safe Milo has no null pointers at all: absence is an `Option`, which the type checker forces you to open before use.\n\nA null **raw** pointer, at an FFI boundary, is written `0 as *T`.",
 
   true: "```milo\nlet ok: bool = true\n```\nThe true `bool` literal. Conditions must be `bool` — no other type is truthy.",
 

@@ -270,7 +270,7 @@ fn main() {
 }
 
 fn main() {
-  print(port(Option.None).toString())
+  print(port(None).toString())
 }
 `,
   },

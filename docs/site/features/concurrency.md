@@ -380,7 +380,7 @@ fn main(): i32 {
 
 Here the producer is a `Promise.blocking` worker so it runs while `main` consumes. Between two green tasks the same channel works with no thread — and `main` may be one end of it: because `main` runs as a green task in any program that spawns, blocking it on a channel only a green producer fills parks it and runs the producer, rather than deadlocking as it once did.
 
-Call `close()` to signal no more values will be sent. Remaining items are delivered before iteration ends. `send()` on a closed channel returns `Result.Err`.
+Call `close()` to signal no more values will be sent. Remaining items are delivered before iteration ends. `send()` on a closed channel returns `Err`.
 
 Non-blocking variants for polling:
 
@@ -392,8 +392,8 @@ fn main(): i32 {
     ch.trySend(42)                // returns true if sent, false if full
     let val = ch.tryRecv()        // returns Option<i64> — None if empty
     match val {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("empty") }
+        Some(v) => { print(v) }
+        None => { print("empty") }
     }
     print(ch.len())               // current number of items
     return 0
@@ -533,5 +533,5 @@ value, turning a cache into a per-access allocation.
 4. **The green scheduler is single-threaded and cooperative.** A task that spins on CPU or calls blocking FFI starves every other task — nothing preempts it. Move that work to `Promise.blocking`; long compute loops that must stay on a task should `schedulerYield()` periodically.
 5. **OS threads start only in `Promise.blocking`** (which `parallelMap` uses per worker) and the low-level `spawnOsThreadDetached`. Those closures run in parallel and their captures must be `Send`; a plain `Promise`/`Task` closure stays on the scheduler and has no such requirement. Use `blocking` only for CPU-bound work or blocking FFI, since ordinary I/O already yields on a green task.
 6. **Channels, `WaitGroup`, atomics, and `Once` are reference-counted handles.** `.clone()` to give another task or worker its own owner; the shared object frees itself when the last owner drops. There is no `.destroy()`.
-7. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Result.Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
+7. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
 8. **Move closures capture copies.** Mutating a captured `var` inside a task or worker is invisible outside. Communicate results through a `Channel`/`Promise`, or share through an atomic — never through captured locals.

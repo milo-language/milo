@@ -89,7 +89,7 @@ fn decodePng(src: &string): Result<PngImage, string> {
         // comes off the wire, so the chunk body it claims has to be checked
         // against what is actually here — a file truncated mid-IDAT otherwise
         // ran the copy below straight off the end of `src`, which is a bounds
-        // abort, not the Result.Err this function's type promises.
+        // abort, not the Err this function's type promises.
         if dataStart + clen > src.len {
             return Result.Err("png: truncated chunk")
         }

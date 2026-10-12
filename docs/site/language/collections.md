@@ -66,7 +66,7 @@ if m.contains("hello") {
 }
 
 let val = m.get("hello")       // returns Option<i32>
-if let Option.Some(v) = val {
+if let Some(v) = val {
     print("value: ", v)
 }
 

@@ -345,7 +345,7 @@ from "std/foreign" import { withRaw, withRawMut, adopt, adoptSlice }
 
 - **`withRaw(p, len, f)` / `withRawMut`** call `f` with a real `&[T]` / `&mut [T]` over
   `(ptr, len)`. The view is a second-class reference in parameter position, so it provably dies
-  with the call and cannot be stored or returned. `Option.None` without calling `f` when `p` is
+  with the call and cannot be stored or returned. `None` without calling `f` when `p` is
   null, so the null path is in the type rather than in a convention.
 - **`?&mut T`** is a nullable extern reference: legal only in an `extern` / `@externalLinkage`
   signature, ABI exactly `T*`, unwrapped with `let`-else. It is what lets an exported entry point
@@ -374,10 +374,10 @@ pub fn main(): i32 {
         let raw = h.ptr()      // *Point, the allocation itself
         forget(h)              // Milo's ownership ends here
         match adopt(raw) {     // ...and comes back
-            Option.Some(box) => {
+            Some(box) => {
                 print((*box).x)
             }
-            Option.None => {
+            None => {
                 print("null")
             }
         }

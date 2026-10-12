@@ -26,12 +26,12 @@ turns escaped output back into markup.
 
 ```milo
 let ct = match Mime.contentType(path) {
-    Option.Some(t) => t,
-    Option.None => "application/octet-stream",
+    Some(t) => t,
+    None => "application/octet-stream",
 }
 ```
 
-Unknown extensions are `Option.None` rather than a built-in default, because the
+Unknown extensions are `None` rather than a built-in default, because the
 safe default depends on what you are serving — a static-site server and an upload
 bucket want different answers, and only the caller knows which it is.
 

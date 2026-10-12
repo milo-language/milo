@@ -10,8 +10,8 @@ from "std/env" import { Env }
 
 ```milo
 match Env.get("HOME") {
-    Option.Some(home) => print(home),
-    Option.None => print("HOME not set"),
+    Some(home) => print(home),
+    None => print("HOME not set"),
 }
 let port = Env.getOr("PORT", "8080")
 let _ = Env.set("RUST_LOG", "debug")

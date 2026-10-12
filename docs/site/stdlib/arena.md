@@ -27,8 +27,8 @@ fn main(): i32 {
     names.free(alice)
 
     match names.get(alice) {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("gone") } // prints "gone" — handle is stale
+        Some(n) => { print(n) }
+        None => { print("gone") } // prints "gone" — handle is stale
     }
 
     return 0

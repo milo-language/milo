@@ -9,6 +9,7 @@
 // pass --read-only to disable it. Mirrors termpair-rs: control is allowed only
 // for private (encrypted) sessions, never public ones.
 
+from "std/json" import { Json }
 from "std/pty" import {
     Pty, WinSize, openAndSpawn
 }
@@ -144,7 +145,7 @@ pub fn isoTimestamp(): string {
 
 // Build the plaintext new_output JSON: {"pty_output":"<base64 raw bytes>"}.
 pub fn ptyOutputJson(raw: &string): string {
-    return "{\"pty_output\":\"" + Base64.encode(raw) + "\"}"
+    return Json.obj().str("pty_output", Base64.encode(raw)).build()
 }
 
 // ── Main ──

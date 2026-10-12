@@ -229,10 +229,10 @@ fn simulate(ps: Vec<Particle>, st: &Step, threads: i64): Vec<Particle> {
         states.push(st)
     }
     match parallelMapWith(v, threads, states, stepWindow) {
-        Result.Ok(m) => {
+        Ok(m) => {
             return m.data
         }
-        Result.Err(e) => {
+        Err(e) => {
             return e.data
         }
     }
@@ -273,7 +273,7 @@ fn parseOpts(): Result<Opts, string> {
             continue
         }
         if i + 1 >= argv.len {
-            return Result.Err("missing value after " + a)
+            return Err("missing value after " + a)
         }
         let v = argv[i + 1].clone()
         if a == "--count" {
@@ -289,17 +289,17 @@ fn parseOpts(): Result<Opts, string> {
         } else if a == "--shot" {
             o.shot = v
         } else {
-            return Result.Err("unknown flag " + a + " (flags: --count N, --frames N, --offscreen, --shot out.png, --threads N, --size S, --gain G, --vsync)")
+            return Err("unknown flag " + a + " (flags: --count N, --frames N, --offscreen, --shot out.png, --threads N, --size S, --gain G, --vsync)")
         }
         i += 2
     }
     if o.offscreen && o.frames <= 0 {
-        return Result.Err("--offscreen is a benchmark: give it --frames N")
+        return Err("--offscreen is a benchmark: give it --frames N")
     }
     if o.count <= 0 {
-        return Result.Err("--count must be a positive integer")
+        return Err("--count must be a positive integer")
     }
-    return Result.Ok(o)
+    return Ok(o)
 }
 
 fn ms(ns: i64): string {
@@ -332,7 +332,7 @@ fn makeScene(dev: &mut Device, format: u32, count: i64): Result<Scene, string> {
     let bytes = count * 16
     let buf = dev.createBuffer(BUFFERUSAGE_GRAPHICS_STORAGE_READ, bytes)?
     let xfer = dev.createTransferBuffer(false, bytes)?
-    return Result.Ok(Scene {
+    return Ok(Scene {
         pipe: pipe,
         buf: buf,
         xfer: xfer,
@@ -412,9 +412,9 @@ fn runOffscreen(o: &Opts): Result<Unit, string> {
     // Fence ring: `newer` and `older` are the two frames in flight; `waited` has
     // signalled but is held for one more submit before release (see
     // Device.releaseFence for the leak that releasing it sooner causes).
-    var waited: Option<Fence> = Option.None
-    var older: Option<Fence> = Option.None
-    var newer: Option<Fence> = Option.None
+    var waited: Option<Fence> = None
+    var older: Option<Fence> = None
+    var newer: Option<Fence> = None
     var last = ticksNs()
     for f in 0..frames {
         let t0 = ticksNs()
@@ -439,36 +439,36 @@ fn runOffscreen(o: &Opts): Result<Unit, string> {
         pass.end()
         let fence = cmd.submitFenced()?
         match waited {
-            Option.Some(x) => dev.releaseFence(x),
-            Option.None => {}
+            Some(x) => dev.releaseFence(x),
+            None => {}
         }
-        waited = Option.None
+        waited = None
         match older {
-            Option.Some(x) => {
+            Some(x) => {
                 dev.waitFor(x)
-                waited = Option.Some(x)
+                waited = Some(x)
             }
-            Option.None => {}
+            None => {}
         }
         older = newer
-        newer = Option.Some(fence)
+        newer = Some(fence)
     }
     dev.waitIdle()
     match waited {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
     match older {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
     match newer {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
     if !shot {
         report(&mut frameNs, simTotal, writeTotal, frames, o, "offscreen")
-        return Result.Ok(Unit {})
+        return Ok(Unit {})
     }
     let down = dev.createTransferBuffer(true, w * h * 4)?
     var px: Vec<u32> = Vec.new()
@@ -483,13 +483,13 @@ fn runOffscreen(o: &Opts): Result<Unit, string> {
     }
     let png = encodePng(raw, w, h, 4)?
     match writeFile(o.shot, png) {
-        Result.Ok(_) => {}
-        Result.Err(_) => {
-            return Result.Err("could not write " + o.shot)
+        Ok(_) => {}
+        Err(_) => {
+            return Err("could not write " + o.shot)
         }
     }
     print($"{o.count} particles, {w}x{h} -> {o.shot}")
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 fn pickPresentMode(dev: &mut Device, vsync: bool): string {
@@ -578,14 +578,14 @@ fn runWindow(o: &Opts): Result<Unit, string> {
         cmd.upload(dev, scene.xfer, scene.buf, scene.bytes, true)
         cmd.pushVertexUniforms(0, uniforms(o, t))
         match cmd.acquireSwapchain(dev) {
-            Option.Some(target) => {
+            Some(target) => {
                 var pass = cmd.beginPass(target, clearColor())?
                 pass.bindPipeline(dev, scene.pipe)
                 pass.bindVertexStorage(dev, 0, scene.buf)
                 pass.draw(6, o.count)
                 pass.end()
             }
-            Option.None => {}
+            None => {}
         }
         cmd.submit()?
 
@@ -608,25 +608,25 @@ fn runWindow(o: &Opts): Result<Unit, string> {
     if bench {
         report(&mut frameNs, simTotal, writeTotal, frames, o, "window")
     }
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 pub fn main(): i32 {
     let o = match parseOpts() {
-        Result.Ok(v) => v,
-        Result.Err(e) => {
+        Ok(v) => v,
+        Err(e) => {
             print("swarm: " + e)
             return 2
         }
     }
     match initVideo() {
-        Result.Ok(_) => {}
-        Result.Err(e) => {
+        Ok(_) => {}
+        Err(e) => {
             print("swarm: " + e)
             return 1
         }
     }
-    var r: Result<Unit, string> = Result.Ok(Unit {})
+    var r: Result<Unit, string> = Ok(Unit {})
     if o.shot.len > 0 || o.offscreen {
         r = runOffscreen(o)
     } else {
@@ -634,10 +634,10 @@ pub fn main(): i32 {
     }
     quit()
     match r {
-        Result.Ok(_) => {
+        Ok(_) => {
             return 0
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("swarm: " + e)
             return 1
         }

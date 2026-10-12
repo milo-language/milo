@@ -15,12 +15,12 @@ parser is written on that assumption.
 
 ```milo
 match Multipart.parse(ctx.req.body, contentType) {
-    Result.Ok(parts) => {
+    Ok(parts) => {
         for i in 0..parts.len {
             print(parts[i].name)
         }
     }
-    Result.Err(e) => {
+    Err(e) => {
         print("bad upload: " + e.message())
     }
 }
@@ -54,8 +54,8 @@ only thing here you may join onto a path:
 
 ```milo
 let name = match parts[i].safeFilename() {
-    Option.Some(n) => n,
-    Option.None => generateOwnName(),
+    Some(n) => n,
+    None => generateOwnName(),
 }
 ```
 

@@ -361,7 +361,7 @@ pub fn serveMulti(listener: &TcpListener, shell: &string, rows: i64, cols0: i64)
             dirty = true
         }
 
-        if let Result.Ok(conn) = listener.acceptNb() {
+        if let Ok(conn) = listener.acceptNb() {
             if clientFd >= 0 {
                 close(clientFd)
             }

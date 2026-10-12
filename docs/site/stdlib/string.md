@@ -16,8 +16,8 @@ import. Indices are byte offsets unless the note says otherwise.
 ```milo
 let parts = "a,b,c".split(",")   // ["a", "b", "c"]
 match "hello".indexOf("l") {
-    Option.Some(i) => print(i),   // 2
-    Option.None => print("absent"),
+    Some(i) => print(i),   // 2
+    None => print("absent"),
 }
 ```
 

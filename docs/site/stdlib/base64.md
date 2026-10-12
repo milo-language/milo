@@ -14,8 +14,8 @@ let decoded = Base64.decode(encoded)!
 print(decoded)  // hello world
 
 match Base64.decode("not base64!") {
-    Result.Ok(bytes) => { print(bytes) }
-    Result.Err(e) => { print(e) }  // base64: length 11 is not a multiple of 4
+    Ok(bytes) => { print(bytes) }
+    Err(e) => { print(e) }  // base64: length 11 is not a multiple of 4
 }
 ```
 

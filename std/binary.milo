@@ -8,7 +8,7 @@
 // the programmer that the position is valid, and a bad claim is a bug worth a trap.
 // A decode at an offset that came out of the data being decoded is the opposite
 // situation: the input is untrusted, and truncation is an ordinary thing for a file
-// or a network frame to be. `Option.None` lets a parser answer a truncated input
+// or a network frame to be. `None` lets a parser answer a truncated input
 // with a parse error instead of killing the process, and — unlike a zero-filled
 // read — it cannot be mistaken for a value that was really there.
 //
@@ -20,7 +20,7 @@
 
 // Bytes — fixed-width codecs over a byte buffer.
 //
-// Reads take a byte offset from the start of `src` and yield `Option.None` when
+// Reads take a byte offset from the start of `src` and yield `None` when
 // fewer than the needed bytes remain there, or when the offset is negative — a
 // negative offset is out of bounds, not an index from the end. The signed forms
 // are the two's-complement reinterpretation of the same bytes, so `readI16Be` over

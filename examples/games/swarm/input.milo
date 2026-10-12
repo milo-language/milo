@@ -33,7 +33,7 @@ pub struct Controls {
 
 pub fn newControls(): Controls {
     return Controls {
-        pad: Option.None,
+        pad: None,
         padAim: false,
         lastMouseX: -1.0,
         lastMouseY: -1.0,
@@ -58,8 +58,8 @@ fn dead(x: f64, y: f64, dz: f64): [f64; 2] {
 impl Controls {
     fn padAdded(self: &mut Self, id: u32) {
         match self.pad {
-            Option.Some(_p) => {}
-            Option.None => {
+            Some(_p) => {}
+            None => {
                 self.pad = openGamepad(id)
             }
         }
@@ -68,13 +68,13 @@ impl Controls {
     fn padRemoved(self: &mut Self, id: u32) {
         var gone = false
         match self.pad {
-            Option.Some(p) => {
+            Some(p) => {
                 gone = p.id() == id
             }
-            Option.None => {}
+            None => {}
         }
         if gone {
-            self.pad = Option.None
+            self.pad = None
             self.padAim = false
         }
     }
@@ -117,7 +117,7 @@ impl Controls {
         var ay = (SCREEN_HH - (m.y as f64)) * k + w.camY - w.py
 
         match self.pad {
-            Option.Some(p) => {
+            Some(p) => {
                 let l = dead(p.axis(PAD_LEFTX), -p.axis(PAD_LEFTY), STICK_DEAD)
                 if l[0] != 0.0 || l[1] != 0.0 {
                     mx = l[0]
@@ -137,7 +137,7 @@ impl Controls {
                 }
                 self.padBombWas = b
             }
-            Option.None => {}
+            None => {}
         }
         let bomb = self.bombQueued
         self.bombQueued = false
@@ -153,10 +153,10 @@ impl Controls {
 
     fn padRestart(self: &Self): bool {
         match self.pad {
-            Option.Some(p) => {
+            Some(p) => {
                 return p.button(PAD_SOUTH) || p.button(PAD_START)
             }
-            Option.None => {
+            None => {
                 return false
             }
         }

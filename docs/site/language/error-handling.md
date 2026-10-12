@@ -4,7 +4,7 @@ Milo has no exceptions and no null. If a function can fail, its return type says
 
 ## Result basics
 
-Fallible functions return `Result<T, E>`: either `Result.Ok(value)` or `Result.Err(error)`.
+Fallible functions return `Result<T, E>`: either `Ok(value)` or `Err(error)`.
 
 ```milo
 from "std/fs" import { readFile }
@@ -14,8 +14,8 @@ from "std/strconv" import { parseInt }
 fn readNumber(path: &string): Result<i64, IoError> {
     let text = readFile(path)?
     match parseInt(text.trim()) {
-        Option.Some(n) => { return Result.Ok(n) }
-        Option.None => { return Result.Err(IoError.Other("not a number")) }
+        Some(n) => { return Ok(n) }
+        None => { return Err(IoError.Other("not a number")) }
     }
 }
 ```
@@ -34,7 +34,7 @@ from "std/io" import { IoError }
 
 fn loadConfig(path: &string): Result<string, IoError> {
     let text = readFile(path)?     // on error, returns it
-    return Result.Ok(text)
+    return Ok(text)
 }
 ```
 
@@ -78,15 +78,15 @@ from "std/strconv" import { parseInt }
 fn readNumber(path: &string): Result<i64, IoError> {
     let text = readFile(path)?
     match parseInt(text.trim()) {
-        Option.Some(n) => { return Result.Ok(n) }
-        Option.None => { return Result.Err(IoError.Other("not a number")) }
+        Some(n) => { return Ok(n) }
+        None => { return Err(IoError.Other("not a number")) }
     }
 }
 
 fn main(): i32 {
     match readNumber("count.txt") {
-        Result.Ok(n)  => { return n as i32 }
-        Result.Err(e) => {
+        Ok(n)  => { return n as i32 }
+        Err(e) => {
             print("error: ", e)
             return 1
         }
@@ -124,8 +124,8 @@ fn useDefaults() {
 }
 
 match readFile("config.toml") {
-    Result.Ok(data) => { parse(data) }
-    Result.Err(e) => {
+    Ok(data) => { parse(data) }
+    Err(e) => {
         match e {
             IoError.NotFound(_)         => { useDefaults() }
             IoError.PermissionDenied(p) => { print("denied: ", p) }
@@ -153,13 +153,13 @@ enum AppError {
 }
 
 fn parseNum(text: string): Result<i32, ParseError> {
-    return Result.Ok(text.len as i32)
+    return Ok(text.len as i32)
 }
 
 fn process(path: string): Result<i32, AppError> {
     let text = readFile(path)?        // IoError -> AppError.Io, automatic
     let n = parseNum(text)?           // ParseError -> AppError.Parse, automatic
-    return Result.Ok(n)
+    return Ok(n)
 }
 ```
 
@@ -180,23 +180,23 @@ impl NotFound {
 }
 
 fn readConfig(path: string): Result<string, NotFound> {
-    return Result.Err(NotFound { path: path })
+    return Err(NotFound { path: path })
 }
 
 fn parse(text: string): Result<i64, string> {
-    return Result.Ok(text.len)
+    return Ok(text.len)
 }
 
 fn load(path: string): Result<i64, Heap<Error>> {
     let text = readConfig(path).context("loading config")?   // NotFound, boxed
     let n = parse(text).context("parsing")?                   // string, boxed as ErrorMessage
-    return Result.Ok(n)
+    return Ok(n)
 }
 
 fn main() {
     match load("x.toml") {
-        Result.Ok(n) => { print(n) }
-        Result.Err(e) => { print(e.message()) }   // loading config: not found: x.toml
+        Ok(n) => { print(n) }
+        Err(e) => { print(e.message()) }   // loading config: not found: x.toml
     }
 }
 ```

@@ -178,10 +178,10 @@ fn area(s: &Shape): f64 {
 fn find(items: &Vec<string>, target: &string): string? {
     for item in items {
         if item == target {
-            return Option.Some(item.clone())
+            return Some(item.clone())
         }
     }
-    return null   // sugar for Option.None
+    return null   // sugar for None
 }
 
 fn main(): i32 {
@@ -191,6 +191,17 @@ fn main(): i32 {
     let val = find(items, "key") ?? "default"
     print(val)
     return 0
+}
+\`\`\`
+
+Keep code flat: \`let ... else\` exits early instead of nesting \`if let\` / \`match\`.
+\`\`\`milo
+struct Session { userId: i64? }
+
+fn describe(s: Session?): string {
+    let Some(sess) = s else { return "anonymous" }
+    let Some(id) = sess.userId else { return "anonymous" }
+    return $"user {id}"
 }
 \`\`\`
 
@@ -236,7 +247,7 @@ bare \`import "file"\`. A local file is imported by relative path the same way.
 - Move semantics: values have a single owner. After \`let y = x\`, using \`x\` is a compile error. Use \`.clone()\` for an explicit copy.
 - References (\`&T\`, \`&mut T\`) are second-class: they appear as function parameters, are never stored in structs or collections, and free functions never return them. The one exception: a method may return a slice \`&[T]\` of its own receiver's storage.
 - Shared borrows are implicit: pass the value bare (\`greet(name)\`); there is no \`&x\` expression. A \`&mut\` argument is written \`foo(&mut x)\` (method receivers stay implicit: \`v.push(1)\`).
-- No null: use \`Option<T>\` (\`T?\`). \`null\` is sugar for \`Option.None\`.
+- No null: use \`Option<T>\` (\`T?\`). \`null\` is sugar for \`None\`.
 - No exceptions: use \`Result<T, E>\` for fallible operations.
 - No implicit conversions: use \`expr as Type\` for casts.
 - Strings are owned UTF-8 byte buffers; a \`&string\` parameter borrows one.
@@ -289,18 +300,18 @@ fn main(): i32 {
     let count = args.getI64("count")
     print($"format={format} count={count}")
 
-    if let Option.Some(out) = args.getString("output") {
+    if let Some(out) = args.getString("output") {
         print(out)
     }
 
     match readFile(file) {
-        Result.Ok(content) => {
+        Ok(content) => {
             if verbose {
                 print($"processing {file} ({content.len} bytes)")
             }
             print(content)
         }
-        Result.Err(e) => {
+        Err(e) => {
             print($"error: {e}")
             return 1
         }
@@ -332,13 +343,13 @@ from "std/io" import { IoError }
 fn firstLine(path: &string): Result<string, IoError> {
     let content = readFile(path)?   // ? returns the Err to the caller
     let end = content.indexOf("\\n") ?? content.len
-    return Result.Ok(content[0..end].clone())
+    return Ok(content[0..end].clone())
 }
 
 fn main(): i32 {
     match firstLine("data.txt") {
-        Result.Ok(line) => print(line)
-        Result.Err(e) => {
+        Ok(line) => print(line)
+        Err(e) => {
             print($"error: {e}")
             return 1
         }
@@ -365,7 +376,7 @@ for item in items {            // for-in borrows each element
 var counts: HashMap<string, i64> = HashMap.new()
 counts.insert("apples", 5)
 counts.insert("oranges", 3)
-if let Option.Some(n) = counts.get("apples") {
+if let Some(n) = counts.get("apples") {
     print($"apples: {n}")
 }
 // iteration order is unspecified: never derive output order from a map
@@ -402,23 +413,28 @@ struct Config {
     name: string,
     port: i64,
     debug: bool,
+    owner: string?,           // None encodes as null
+    @json("log_level")        // wire name differs from the field
+    logLevel: i64,
 }
 
 fn main(): i32 {
-    let config = Config { name: "app", port: 8080, debug: false }
+    let config = Config { name: "app", port: 8080, debug: false, owner: None, logLevel: 2 }
     let text = config.toJson()
-    print(text)   // {"name":"app","port":8080,"debug":false}
+    print(text)   // {"name":"app","port":8080,"debug":false,"owner":null,"log_level":2}
 
     match Config.fromJson(text) {
-        Result.Ok(back) => print(back.port)
-        Result.Err(e) => print($"bad config: {e.message()}")
+        Ok(back) => print(back.port)
+        Err(e) => print($"bad config: {e.message()}")
     }
 
-    // untyped access
-    let doc = Json.parse("{\\"port\\": 8080}")!
-    if let Option.Some(port) = doc.get("port") {
-        print(port.asI64() ?? 0)
-    }
+    // a shape with no struct: the builder escapes every value
+    let body = Json.obj().str("name", config.name).int("port", config.port).nil("owner").build()
+    print(body)   // {"name":"app","port":8080,"owner":null}
+
+    // untyped reads: index, then a typed read; a missing step reads as None
+    let doc = Json.parse("{\\"server\\": {\\"port\\": 8080}}")!
+    print(doc["server"]["port"].i64() ?? 0)
     return 0
 }
 \`\`\`
@@ -431,6 +447,8 @@ fn main(): i32 {
 - No implicit type conversions: cast with \`as\`.
 - No exceptions or try/catch: use \`Result<T, E>\` and \`?\` propagation.
 - No null: use \`Option<T>\` (\`T?\`) and pattern match or \`??\` for defaults.
+- Don't build JSON by string concatenation: \`@derive(Json)\` for fixed shapes, \`Json.obj()\` / \`Json.arr()\` otherwise.
+- Don't nest \`if let\` / \`match\` to unwrap: \`let ... else\`, \`?\` and \`??\` keep it flat.
 - No class inheritance: use traits and composition.
 - Don't invent std names: \`milo api <terms>\` first.
 `;

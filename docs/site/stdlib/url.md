@@ -15,8 +15,8 @@ print(url.host)    // example.com
 print(url.port)    // 8080
 
 match url.queryGet("name") {
-    Option.Some(val) => print(val),  // milo
-    Option.None => {},
+    Some(val) => print(val),  // milo
+    None => {},
 }
 ```
 

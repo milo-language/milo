@@ -202,10 +202,10 @@ pub fn main(): i32 {
     let a = seal("hello".clone()).share()
     let other = a.clone()                        // a second holder
     match thaw(a) {
-        Result.Ok(s) => {
+        Ok(s) => {
             print(unseal(s))
         }
-        Result.Err(rej) => {
+        Err(rej) => {
             print("still shared by " + rej.holders.toString())   // 2
             let back = rej.shared                // refusal hands the buffer back
         }

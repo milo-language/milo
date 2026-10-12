@@ -13,7 +13,7 @@ Count the lines on stdin, then write to a file:
 
 ```milo
 var n = 0
-while let Option.Some(_) = readLine() {
+while let Some(_) = readLine() {
     n += 1
 }
 var f = File.openWrite("count.txt")!

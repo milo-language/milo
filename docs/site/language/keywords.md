@@ -270,7 +270,7 @@ Marks a reference parameter as mutable: `&mut T` may write through the borrow, `
 ```milo skip
 let x: Option<i64> = null
 ```
-The empty `Option` — `null` is sugar for `Option.None`, not a null pointer. Safe Milo has no null pointers at all: absence is an `Option`, which the type checker forces you to open before use.
+The empty `Option` — `null` is sugar for `None`, not a null pointer. Safe Milo has no null pointers at all: absence is an `Option`, which the type checker forces you to open before use.
 
 A null **raw** pointer, at an FFI boundary, is written `0 as *T`.
 
@@ -380,7 +380,7 @@ At file scope, `var name: T = …` declares a global; `thread_local var` gives i
 
 ```milo skip
 while i < n { … }
-while let Option.Some(line) = readLine(i) { … }
+while let Some(line) = readLine(i) { … }
 ```
 Loops while the condition is true. `while let` loops as long as the pattern keeps matching, binding the payload each iteration — the idiomatic way to drain a source that reports exhaustion with `Option.None`.
 

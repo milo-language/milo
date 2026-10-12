@@ -35,7 +35,7 @@ pub struct Bot {
 
 pub fn newBot(): Bot {
     var b = Bot {
-        target: Option.None,
+        target: None,
         dirX: [0.0; 12],
         dirY: [0.0; 12],
         lastX: 0.0,
@@ -153,9 +153,9 @@ impl Bot {
         var aimY: f64 = 0.0
         var have = false
         match self.target {
-            Option.Some(h) => {
+            Some(h) => {
                 match w.enemies.get(h) {
-                    Option.Some(t) => {
+                    Some(t) => {
                         let rx = t.x - w.px
                         let ry = t.y - w.py
                         let r2 = rx * rx + ry * ry
@@ -169,15 +169,15 @@ impl Bot {
                             aimY += t.dirY * t.spd * lead
                         }
                     }
-                    Option.None => {}
+                    None => {}
                 }
             }
-            Option.None => {}
+            None => {}
         }
         if !have {
-            self.target = Option.None
+            self.target = None
             if nearest >= 0 {
-                self.target = Option.Some(w.live[nearest])
+                self.target = Some(w.live[nearest])
                 let t = w.cache[nearest]
                 let lead = Math.sqrt(nearestD) / BULLET_SPEED
                 aimX = t.x - w.px + t.dirX * t.spd * lead

@@ -15,7 +15,7 @@ The name follows Go's `crypto/subtle` and Rust's `subtle` crate. It is a module 
 ```milo
 let expected = Hmac.sha256Bytes(secret, body)
 if !constantTimeEq(receivedMac, expected) {
-    return Result.Err("bad webhook signature")
+    return Err("bad webhook signature")
 }
 ```
 

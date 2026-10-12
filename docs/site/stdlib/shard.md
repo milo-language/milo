@@ -98,10 +98,10 @@ pub fn main(): i32 {
     var pixels: Vec<f64> = Vec.filled(64, 0.5)
     var noStates: Vec<Tally> = Vec.new()
     match parallelMapWith(pixels, 16, noStates, shade) {
-        Result.Ok(m) => {
+        Ok(m) => {
             print(m.data.len.toString())
         }
-        Result.Err(rej) => {
+        Err(rej) => {
             let recovered = rej.data
             print("no workers, and the buffer came home: " + recovered.len.toString())
         }

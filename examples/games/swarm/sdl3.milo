@@ -198,18 +198,18 @@ pub fn sdlError(): string {
 // Brings up the video subsystem (which implies events). Pair with `quit`.
 pub fn initVideo(): Result<Unit, string> {
     if !SDL_Init(SDL_INIT_VIDEO) {
-        return Result.Err("SDL_Init: " + sdlError())
+        return Err("SDL_Init: " + sdlError())
     }
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 // Video plus gamepads. Pads already plugged in arrive as GamepadAdded events on the
 // first polls, so opening them is the event loop's job, not this function's.
 pub fn initVideoAndGamepad(): Result<Unit, string> {
     if !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) {
-        return Result.Err("SDL_Init: " + sdlError())
+        return Err("SDL_Init: " + sdlError())
     }
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 pub fn quit() {
@@ -273,9 +273,9 @@ pub fn openWindow(title: string, w: i64, h: i64, hidden: bool): Result<Window, s
     unsafe {
         let raw = SDL_CreateWindow(title.cstr(), w as i32, h as i32, flags)
         if raw as i64 == 0 {
-            return Result.Err("SDL_CreateWindow: " + sdlError())
+            return Err("SDL_CreateWindow: " + sdlError())
         }
-        return Result.Ok(Window {
+        return Ok(Window {
             raw: raw,
         })
     }
@@ -371,9 +371,9 @@ pub fn openGamepad(id: u32): Option<Gamepad> {
     unsafe {
         let raw = SDL_OpenGamepad(id)
         if raw as i64 == 0 {
-            return Option.None
+            return None
         }
-        return Option.Some(Gamepad {
+        return Some(Gamepad {
             raw: raw,
         })
     }

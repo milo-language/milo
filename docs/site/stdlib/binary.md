@@ -13,14 +13,14 @@ bytes in, so reads take `&string` plus a byte offset and writes append to a
 
 ## Reads return `Option`
 
-A read yields `Option.None` when fewer than the needed bytes remain at the offset,
+A read yields `None` when fewer than the needed bytes remain at the offset,
 or when the offset is negative. Nothing aborts, and nothing comes back as a
 plausible zero.
 
 That is deliberate. `src[i]` is an *index* — a claim by you that the position is
 valid, and a bad claim is a bug worth trapping on. A decode at an offset that came
 out of the data being decoded is the opposite situation: the input is untrusted, and
-truncation is an ordinary thing for a file or a network frame to be. `Option.None`
+truncation is an ordinary thing for a file or a network frame to be. `None`
 is what lets a parser answer a truncated input with a parse error instead of dying,
 and — unlike a zero-filled read — it can't be mistaken for a value that was really
 there.
@@ -28,10 +28,10 @@ there.
 ```milo
 // a parser turns the None into its own error, once, in a helper
 fn le32(src: &string, p: i64): Result<i64, string> {
-    let Option.Some(v) = Bytes.readU32Le(src, p) else {
-        return Result.Err("truncated archive")
+    let Some(v) = Bytes.readU32Le(src, p) else {
+        return Err("truncated archive")
     }
-    return Result.Ok(v as i64)
+    return Ok(v as i64)
 }
 ```
 
@@ -110,7 +110,7 @@ pub struct Bytes
 
 Bytes — fixed-width codecs over a byte buffer.
 
-Reads take a byte offset from the start of `src` and yield `Option.None` when
+Reads take a byte offset from the start of `src` and yield `None` when
 fewer than the needed bytes remain there, or when the offset is negative — a
 negative offset is out of bounds, not an index from the end. The signed forms
 are the two's-complement reinterpretation of the same bytes, so `readI16Be` over

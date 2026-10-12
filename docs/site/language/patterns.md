@@ -34,7 +34,7 @@ Each pattern below shows the working form and, where it has a failure mode, the 
 |---|---|
 | ✓ **The way to write it** (green) | the form to reach for |
 | 🛡 **The compiler stops you** | rejected before it runs, at no runtime cost. The guardrail working |
-| ⚠ **Caught, but only when it runs** (yellow) | still safe, and it fails with a named cause (an abort, or an `Option.None`), but later |
+| ⚠ **Caught, but only when it runs** (yellow) | still safe, and it fails with a named cause (an abort, or an `None`), but later |
 | 🐛 **Buggy code, don't do this** (red) | compiles, runs, and hands back the wrong answer. Nothing warns you, so this is the one to actually avoid |
 
 Not every pattern has a failure box: the ones that copy or own outright have no failure
@@ -158,8 +158,8 @@ pub struct Config {
 impl Config {
     fn key(self: &Self): &string {
         match self.line.indexOf("=") {
-            Option.Some(sep) => { return self.line[0..sep] }
-            Option.None => { return self.line[0..self.line.len] }
+            Some(sep) => { return self.line[0..sep] }
+            None => { return self.line[0..self.line.len] }
         }
     }
 }
@@ -223,13 +223,13 @@ pub struct Setting {
 
 fn parseLine(line: &string): Setting {
     match line.indexOf("=") {
-        Option.Some(sep) => {
+        Some(sep) => {
             return Setting {
                 key: line.substr(0, sep),
                 value: line.substr(sep + 1, line.len),
             }
         }
-        Option.None => {
+        None => {
             return Setting { key: line.clone(), value: "" }
         }
     }
@@ -722,8 +722,8 @@ pub fn main(): i32 {
     arena.free(h)
     let _carol = arena.alloc(Session { user: "carol" })  // reuses the slot
     match arena.get(h) {
-        Option.Some(s) => { print(s.user) }
-        Option.None => { print("None") }
+        Some(s) => { print(s.user) }
+        None => { print("None") }
     }
     return 0
 }

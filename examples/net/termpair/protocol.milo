@@ -7,15 +7,15 @@ from "std/json" import {
 // ── JSON message builder ──
 
 pub fn jsonMsg(event: &string, payload: &string): string {
-    return "{\"event\":\"" + event + "\",\"payload\":" + payload + "}"
+    return Json.obj().str("event", event).raw("payload", payload).build()
 }
 
 pub fn jsonMsgStr(event: &string, payload: &string): string {
-    return "{\"event\":\"" + event + "\",\"payload\":\"" + payload + "\"}"
+    return Json.obj().str("event", event).str("payload", payload).build()
 }
 
 pub fn jsonMsgI64(event: &string, payload: i64): string {
-    return "{\"event\":\"" + event + "\",\"payload\":" + payload.toString() + "}"
+    return Json.obj().str("event", event).int("payload", payload).build()
 }
 
 // ── init message from terminal → server ──
@@ -85,13 +85,13 @@ pub fn makePublicSession(terminalId: &string, displayName: &string, command: &st
 // ── resize payload ──
 
 pub fn makeResizeMsg(rows: i64, cols: i64): string {
-    return jsonMsg("resize", "{\"rows\":" + rows.toString() + ",\"cols\":" + cols.toString() + "}")
+    return jsonMsg("resize", Json.obj().int("rows", rows).int("cols", cols).build())
 }
 
 // ── start_broadcast response ──
 
 pub fn makeStartBroadcast(terminalId: &string): string {
-    return jsonMsg("start_broadcast", "{\"terminal_id\":\"" + terminalId + "\"}")
+    return jsonMsg("start_broadcast", Json.obj().str("terminal_id", terminalId).build())
 }
 
 // ── new_output — wraps base64-encoded pty output ──

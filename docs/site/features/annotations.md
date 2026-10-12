@@ -51,7 +51,7 @@ A generic whose type parameters may only be instantiated with Copy types. The du
 
 _Goes on: `fn`, `method`._
 
-This generic hands a `T` out of a container by copy (`Option.Some(self.data[i])`). The copy is structural and never runs a Drop, so it exists only for a `T` that carries no Drop or @noCopy anywhere inside it: on a generic struct the method is absent from an instantiation with such a `T` (calling it names this reason), and a generic fn is rejected at the call. The rest of the type stays usable, which is what @copyOnly on the whole struct could not give a container whose other methods borrow.
+This generic hands a `T` out of a container by copy (`Some(self.data[i])`). The copy is structural and never runs a Drop, so it exists only for a `T` that carries no Drop or @noCopy anywhere inside it: on a generic struct the method is absent from an instantiation with such a `T` (calling it names this reason), and a generic fn is rejected at the call. The rest of the type stays usable, which is what @copyOnly on the whole struct could not give a container whose other methods borrow.
 
 ### `@cLayout(…)`
 

@@ -62,7 +62,7 @@ fn userHandler(ctx: &mut Context): Response {
 
 fn searchHandler(ctx: &mut Context): Response {
     // None only when there is no ?q= at all; `?q=` is Some("").
-    let Option.Some(q) = ctx.query("q") else {
+    let Some(q) = ctx.query("q") else {
         ctx.setStatus(400)
         return ctx.text("missing ?q=")
     }
@@ -108,7 +108,7 @@ fn loginHandler(ctx: &mut Context): Response {
 }
 
 fn profileHandler(ctx: &mut Context): Response {
-    let Option.Some(session) = ctx.cookie("session") else {
+    let Some(session) = ctx.cookie("session") else {
         ctx.setStatus(401)
         return ctx.json("{\"error\": \"not authenticated\"}")
     }

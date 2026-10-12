@@ -670,8 +670,8 @@ impl World {
         for i in 0..self.live.len {
             let h = self.live[i]
             match self.enemies.get(h) {
-                Option.Some(e) => self.cache.push(e),
-                Option.None => {
+                Some(e) => self.cache.push(e),
+                None => {
                     // Unreachable while `live` holds only live handles; a dead
                     // placeholder keeps cache and live aligned and is dropped at store.
                     var dead = self.makeEnemy(WANDERER, 0.0, 0.0, 0.0)

@@ -13,8 +13,8 @@ if hasFlag("verbose") {
     print("verbose on")
 }
 match getFlag("output") {
-    Option.Some(path) => print($"Writing to {path}"),
-    Option.None => print("Writing to stdout"),
+    Some(path) => print($"Writing to {path}"),
+    None => print("Writing to stdout"),
 }
 ```
 

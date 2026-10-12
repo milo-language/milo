@@ -358,7 +358,7 @@ fn port(arg: Option<i64>): i64 {
 }
 
 fn main() {
-  print(port(Option.None).toString())
+  print(port(None).toString())
 }
 ```
 

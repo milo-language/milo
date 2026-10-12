@@ -64,7 +64,7 @@ export const ATTRIBUTES: AttrInfo[] = [
     name: "copyOut",
     targets: ["fn", "method"],
     doc:
-      "This generic hands a `T` out of a container by copy (`Option.Some(self.data[i])`). " +
+      "This generic hands a `T` out of a container by copy (`Some(self.data[i])`). " +
       "The copy is structural and never runs a Drop, so it exists only for a `T` that " +
       "carries no Drop or @noCopy anywhere inside it: on a generic struct the method is " +
       "absent from an instantiation with such a `T` (calling it names this reason), and a " +

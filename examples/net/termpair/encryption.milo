@@ -13,6 +13,7 @@
 // lets the two relay green threads each own their counter and a clone of the
 // keys they need, with no shared mutable state (no rotation in read-only mode).
 
+from "std/json" import { Json }
 from "std/crypto" import {
     Crypto
 }
@@ -110,11 +111,10 @@ pub fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64)
     let ivCount = (n - 1) * rotationThreshold()
     let maxIv = ivCount + rotationThreshold() - rotationBuffer()
 
-    var p: string = "{"
-    p = p + "\"b64_bootstrap_unix_aes_key\":\"" + encUnix + "\""
-    p = p + ",\"b64_bootstrap_browser_aes_key\":\"" + encBrowser + "\""
-    p = p + ",\"iv_count\":" + ivCount.toString()
-    p = p + ",\"max_iv_count\":" + maxIv.toString()
-    p += "}"
-    return "{\"event\":\"aes_keys\",\"payload\":" + p + "}"
+    let payload = Json.obj()
+        .str("b64_bootstrap_unix_aes_key", encUnix)
+        .str("b64_bootstrap_browser_aes_key", encBrowser)
+        .int("iv_count", ivCount)
+        .int("max_iv_count", maxIv)
+    return Json.obj().str("event", "aes_keys").obj("payload", payload).build()
 }

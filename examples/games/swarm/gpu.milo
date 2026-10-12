@@ -633,11 +633,11 @@ pub fn createDevice(debug: bool): Result<Device, string> {
     unsafe {
         let raw = SDL_CreateGPUDevice(SHADERFORMAT_MSL, debug, 0 as *u8)
         if raw as i64 == 0 {
-            return Result.Err("SDL_CreateGPUDevice: " + sdlError())
+            return Err("SDL_CreateGPUDevice: " + sdlError())
         }
-        return Result.Ok(Device {
+        return Ok(Device {
             raw: raw,
-            window: Option.None,
+            window: None,
             windowRaw: 0 as *SDL_Window,
             pipelines: Vec.new(),
             computes: Vec.new(),
@@ -719,11 +719,11 @@ impl Device {
     fn claim(self: &mut Self, win: Window): Result<Unit, string> {
         let wr = win.handle()
         if !SDL_ClaimWindowForGPUDevice(self.raw, wr) {
-            return Result.Err("SDL_ClaimWindowForGPUDevice: " + sdlError())
+            return Err("SDL_ClaimWindowForGPUDevice: " + sdlError())
         }
         self.windowRaw = wr
-        self.window = Option.Some(win)
-        return Result.Ok(Unit {})
+        self.window = Some(win)
+        return Ok(Unit {})
     }
 
     fn swapchainFormat(self: &Self): u32 {
@@ -745,14 +745,14 @@ impl Device {
     fn createPipeline(self: &mut Self, d: &PipelineDesc): Result<Pipeline, string> {
         let vs = makeShader(self.raw, d.vsSource, d.vsEntry, SHADERSTAGE_VERTEX, d.vsUniformBuffers, d.vsStorageBuffers, 0)
         if vs as i64 == 0 {
-            return Result.Err("vertex shader " + d.vsEntry + ": " + sdlError())
+            return Err("vertex shader " + d.vsEntry + ": " + sdlError())
         }
         let fs = makeShader(self.raw, d.fsSource, d.fsEntry, SHADERSTAGE_FRAGMENT, d.fsUniformBuffers, 0, d.fsSamplers)
         if fs as i64 == 0 {
             unsafe {
                 SDL_ReleaseGPUShader(self.raw, vs)
             }
-            return Result.Err("fragment shader " + d.fsEntry + ": " + sdlError())
+            return Err("fragment shader " + d.fsEntry + ": " + sdlError())
         }
         let over = d.blend == BLEND_OVER
         let dst = if over { BLENDFACTOR_ONE_MINUS_SRC_ALPHA } else { BLENDFACTOR_ONE }
@@ -842,11 +842,11 @@ impl Device {
             SDL_ReleaseGPUShader(self.raw, vs)
             SDL_ReleaseGPUShader(self.raw, fs)
             if p as i64 == 0 {
-                return Result.Err("SDL_CreateGPUGraphicsPipeline: " + sdlError())
+                return Err("SDL_CreateGPUGraphicsPipeline: " + sdlError())
             }
             self.pipelines.push(p)
         }
-        return Result.Ok(Pipeline {
+        return Ok(Pipeline {
             id: self.pipelines.len - 1,
         })
     }
@@ -860,11 +860,11 @@ impl Device {
         unsafe {
             let b = SDL_CreateGPUBuffer(self.raw, info.addrOf())
             if b as i64 == 0 {
-                return Result.Err("SDL_CreateGPUBuffer: " + sdlError())
+                return Err("SDL_CreateGPUBuffer: " + sdlError())
             }
             self.buffers.push(b)
         }
-        return Result.Ok(Buffer {
+        return Ok(Buffer {
             id: self.buffers.len - 1,
             size: size,
         })
@@ -883,11 +883,11 @@ impl Device {
         unsafe {
             let t = SDL_CreateGPUTransferBuffer(self.raw, info.addrOf())
             if t as i64 == 0 {
-                return Result.Err("SDL_CreateGPUTransferBuffer: " + sdlError())
+                return Err("SDL_CreateGPUTransferBuffer: " + sdlError())
             }
             self.transfers.push(t)
         }
-        return Result.Ok(TransferBuffer {
+        return Ok(TransferBuffer {
             id: self.transfers.len - 1,
             size: size,
         })
@@ -909,11 +909,11 @@ impl Device {
         unsafe {
             let t = SDL_CreateGPUTexture(self.raw, info.addrOf())
             if t as i64 == 0 {
-                return Result.Err("SDL_CreateGPUTexture: " + sdlError())
+                return Err("SDL_CreateGPUTexture: " + sdlError())
             }
             self.textures.push(t)
         }
-        return Result.Ok(Texture {
+        return Ok(Texture {
             id: self.textures.len - 1,
             w: w,
             h: h,
@@ -943,11 +943,11 @@ impl Device {
         unsafe {
             let s = SDL_CreateGPUSampler(self.raw, info.addrOf())
             if s as i64 == 0 {
-                return Result.Err("SDL_CreateGPUSampler: " + sdlError())
+                return Err("SDL_CreateGPUSampler: " + sdlError())
             }
             self.samplers.push(s)
         }
-        return Result.Ok(Sampler {
+        return Ok(Sampler {
             id: self.samplers.len - 1,
         })
     }
@@ -972,11 +972,11 @@ impl Device {
         unsafe {
             let p = SDL_CreateGPUComputePipeline(self.raw, info.addrOf())
             if p as i64 == 0 {
-                return Result.Err("compute " + d.entry + ": " + sdlError())
+                return Err("compute " + d.entry + ": " + sdlError())
             }
             self.computes.push(p)
         }
-        return Result.Ok(ComputePipeline {
+        return Ok(ComputePipeline {
             id: self.computes.len - 1,
             group: d.group,
         })
@@ -986,9 +986,9 @@ impl Device {
         unsafe {
             let c = SDL_AcquireGPUCommandBuffer(self.raw)
             if c as i64 == 0 {
-                return Result.Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
+                return Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
             }
-            return Result.Ok(Commands {
+            return Ok(Commands {
                 raw: c,
             })
         }
@@ -1030,7 +1030,7 @@ impl Device {
         unsafe {
             let c = SDL_AcquireGPUCommandBuffer(self.raw)
             if c as i64 == 0 {
-                return Result.Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
+                return Err("SDL_AcquireGPUCommandBuffer: " + sdlError())
             }
             let cp = SDL_BeginGPUCopyPass(c)
             var src = TextureRegion {
@@ -1053,14 +1053,14 @@ impl Device {
             SDL_DownloadFromGPUTexture(cp, src.addrOf(), dst.addrOf())
             SDL_EndGPUCopyPass(cp)
             if !SDL_SubmitGPUCommandBuffer(c) {
-                return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
+                return Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
             }
             SDL_WaitForGPUIdle(self.raw)
             let p = SDL_MapGPUTransferBuffer(self.raw, self.transfers[xfer.id], false)
             memcpy(out.ptr() as *u8, p, bytes)
             SDL_UnmapGPUTransferBuffer(self.raw, self.transfers[xfer.id])
         }
-        return Result.Ok(Unit {})
+        return Ok(Unit {})
     }
 }
 
@@ -1109,13 +1109,13 @@ impl Commands {
         var h: u32 = 0
         unsafe {
             if !SDL_WaitAndAcquireGPUSwapchainTexture(self.raw, dev.windowRaw, tex.addrOf(), w.addrOf(), h.addrOf()) {
-                return Option.None
+                return None
             }
         }
         if tex as i64 == 0 {
-            return Option.None
+            return None
         }
-        return Option.Some(Target {
+        return Some(Target {
             raw: tex,
             w: w as i64,
             h: h as i64,
@@ -1162,9 +1162,9 @@ impl Commands {
         unsafe {
             let p = SDL_BeginGPUComputePass(self.raw, 0 as *u8, 0, binding.addrOf(), 1)
             if p as i64 == 0 {
-                return Result.Err("SDL_BeginGPUComputePass: " + sdlError())
+                return Err("SDL_BeginGPUComputePass: " + sdlError())
             }
-            return Result.Ok(ComputePass {
+            return Ok(ComputePass {
                 raw: p,
             })
         }
@@ -1205,9 +1205,9 @@ impl Commands {
         unsafe {
             let p = SDL_BeginGPURenderPass(self.raw, info.addrOf(), 1, 0 as *u8)
             if p as i64 == 0 {
-                return Result.Err("SDL_BeginGPURenderPass: " + sdlError())
+                return Err("SDL_BeginGPURenderPass: " + sdlError())
             }
-            return Result.Ok(Pass {
+            return Ok(Pass {
                 raw: p,
             })
         }
@@ -1215,9 +1215,9 @@ impl Commands {
 
     fn submit(self: Self): Result<Unit, string> {
         if !SDL_SubmitGPUCommandBuffer(self.raw) {
-            return Result.Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
+            return Err("SDL_SubmitGPUCommandBuffer: " + sdlError())
         }
-        return Result.Ok(Unit {})
+        return Ok(Unit {})
     }
 
     // Submit, and get a fence that signals when the GPU has finished this buffer. Pacing
@@ -1227,9 +1227,9 @@ impl Commands {
         unsafe {
             let f = SDL_SubmitGPUCommandBufferAndAcquireFence(self.raw)
             if f as i64 == 0 {
-                return Result.Err("SDL_SubmitGPUCommandBufferAndAcquireFence: " + sdlError())
+                return Err("SDL_SubmitGPUCommandBufferAndAcquireFence: " + sdlError())
             }
-            return Result.Ok(Fence {
+            return Ok(Fence {
                 raw: f,
             })
         }

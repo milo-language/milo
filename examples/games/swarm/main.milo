@@ -123,7 +123,7 @@ fn parseOpts(): Result<Opts, string> {
             continue
         }
         if i + 1 >= argv.len {
-            return Result.Err("missing value after " + a)
+            return Err("missing value after " + a)
         }
         let v = argv[i + 1].clone()
         if a == "--seed" {
@@ -147,20 +147,20 @@ fn parseOpts(): Result<Opts, string> {
         } else if a == "--seconds" {
             o.seconds = parseFloat(v) ?? 0.0
         } else {
-            return Result.Err("unknown flag " + a + " (flags: --bot, --seed N, --novsync, --shot out.png --ticks N, --clip prefix --from A --to B, --bench --enemies N --particles N, --scale S, --seconds S)")
+            return Err("unknown flag " + a + " (flags: --bot, --seed N, --novsync, --shot out.png --ticks N, --clip prefix --from A --to B, --bench --enemies N --particles N, --scale S, --seconds S)")
         }
         i += 2
     }
     if o.clip.len > 0 && (o.to <= o.from || o.from < 0) {
-        return Result.Err("--clip needs --from A --to B with 0 <= A < B")
+        return Err("--clip needs --from A --to B with 0 <= A < B")
     }
     if o.ticks <= 0 || o.enemies <= 0 || o.scale <= 0.0 {
-        return Result.Err("--ticks, --enemies and --scale must be positive")
+        return Err("--ticks, --enemies and --scale must be positive")
     }
     if o.particles < 0 || o.particles > PARTICLE_CAP {
-        return Result.Err($"--particles must be in [0, {PARTICLE_CAP}]")
+        return Err($"--particles must be in [0, {PARTICLE_CAP}]")
     }
-    return Result.Ok(o)
+    return Ok(o)
 }
 
 fn ms(ns: i64): string {
@@ -220,11 +220,11 @@ fn writePng(path: &string, px: &Vec<u32>, w: i64, h: i64): Result<Unit, string> 
     }
     let png = encodePng(raw, w, h, 3)?
     match writeFile(path, png) {
-        Result.Ok(_) => {
-            return Result.Ok(Unit {})
+        Ok(_) => {
+            return Ok(Unit {})
         }
-        Result.Err(_) => {
-            return Result.Err("could not write " + path)
+        Err(_) => {
+            return Err("could not write " + path)
         }
     }
 }
@@ -307,9 +307,9 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
     var rendered: i64 = 0
     var lastRender: i64 = 0
     var fed: i64 = 0
-    var waited: Option<Fence> = Option.None
-    var older: Option<Fence> = Option.None
-    var newer: Option<Fence> = Option.None
+    var waited: Option<Fence> = None
+    var older: Option<Fence> = None
+    var newer: Option<Fence> = None
     let wall0 = ticksNs()
     for tick in 1..total + 1 {
         let inp = bot.think(world)
@@ -358,19 +358,19 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
         world.bursts.clear()
         let fence = cmd.submitFenced()?
         match waited {
-            Option.Some(x) => dev.releaseFence(x),
-            Option.None => {}
+            Some(x) => dev.releaseFence(x),
+            None => {}
         }
-        waited = Option.None
+        waited = None
         match older {
-            Option.Some(x) => {
+            Some(x) => {
                 dev.waitFor(x)
-                waited = Option.Some(x)
+                waited = Some(x)
             }
-            Option.None => {}
+            None => {}
         }
         older = newer
-        newer = Option.Some(fence)
+        newer = Some(fence)
         renderNs.push(ticksNs() - r0)
         rendered += 1
         if save {
@@ -386,16 +386,16 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
     dev.waitIdle()
     let wallNs = ticksNs() - wall0
     match waited {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
     match older {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
     match newer {
-        Option.Some(x) => dev.releaseFence(x),
-        Option.None => {}
+        Some(x) => dev.releaseFence(x),
+        None => {}
     }
 
     let summary = $"t={formatFloat(world.time, 1)} s  score {world.score}  x{world.multiplier()}  lives {world.lives}  enemies {world.enemyCount()}  particles {ren.window}  kills {world.kills}"
@@ -418,7 +418,7 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
     } else {
         print($"{o.shot}: {summary}")
     }
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 fn runWindow(o: &Opts): Result<Unit, string> {
@@ -536,11 +536,11 @@ fn runWindow(o: &Opts): Result<Unit, string> {
         }
         var cmd = dev.begin()?
         match cmd.acquireSwapchain(dev) {
-            Option.Some(target) => {
+            Some(target) => {
                 ren.frame(&mut cmd, dev, inst, top, world, fin, target)?
                 world.bursts.clear()
             }
-            Option.None => {}
+            None => {}
         }
         cmd.submit()?
         frames += 1
@@ -553,13 +553,13 @@ fn runWindow(o: &Opts): Result<Unit, string> {
     }
     let secs = ((ticksNs() - start) as f64) / 1.0e9
     print($"SWARM: best score {best} over {games} game(s), {formatFloat((frames as f64) / secs, 1)} fps average")
-    return Result.Ok(Unit {})
+    return Ok(Unit {})
 }
 
 pub fn main(): i32 {
     let o = match parseOpts() {
-        Result.Ok(v) => v,
-        Result.Err(e) => {
+        Ok(v) => v,
+        Err(e) => {
             print("swarm: " + e)
             return 2
         }
@@ -567,13 +567,13 @@ pub fn main(): i32 {
     let headless = o.shot.len > 0 || o.clip.len > 0 || o.bench
     let init = if headless { initVideo() } else { initVideoAndGamepad() }
     match init {
-        Result.Ok(_) => {}
-        Result.Err(e) => {
+        Ok(_) => {}
+        Err(e) => {
             print("swarm: " + e)
             return 1
         }
     }
-    var r: Result<Unit, string> = Result.Ok(Unit {})
+    var r: Result<Unit, string> = Ok(Unit {})
     if headless {
         r = runHeadless(o)
     } else {
@@ -581,10 +581,10 @@ pub fn main(): i32 {
     }
     quit()
     match r {
-        Result.Ok(_) => {
+        Ok(_) => {
             return 0
         }
-        Result.Err(e) => {
+        Err(e) => {
             print("swarm: " + e)
             return 1
         }

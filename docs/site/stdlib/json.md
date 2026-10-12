@@ -260,7 +260,7 @@ cursor into THIS document: navigation returns cursors (-1 = missing) with
 zero allocation, and only leaf-string reads materialize (just that one
 string). Start at `curRoot()` and chain:
   let user = doc.curField(doc.curChild(doc.curRoot(), 0), "name")
-  match doc.curStr(user) { Option.Some(s) => ..., Option.None => ... }
+  match doc.curStr(user) { Some(s) => ..., None => ... }
 
 A cursor is not a bare node index: the document's brand rides in its
 high bits (see jsonCurResolve above). Resolving a cursor against a

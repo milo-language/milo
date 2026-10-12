@@ -11,7 +11,7 @@ from "std/string" import {
     strSplit, strStartsWith, strToLower, strTrim, strContains
 }
 from "std/json" import {
-    Json, jsonEscapeStr
+    Json
 }
 from "std/fetch" import {
     FetchOptions, fetchWith, findHeader
@@ -75,17 +75,11 @@ pub fn loadCities(): void {
     }
 }
 
-// Concatenated rather than built with jsonStringify({...}) because lat/lon must
-// survive verbatim: jsonStringify formats floats with %g (6 significant digits),
-// which silently truncates -122.2364 to -122.236. Passing the TSV's own text
-// through keeps the coordinates exact.
+// lat/lon go in as raw JSON rather than through f64: they must survive verbatim, and
+// formatting a parsed float can drop digits (-122.2364 to -122.236). Passing the TSV's
+// own text through keeps the coordinates exact.
 pub fn cityJson(c: &City): string {
-    let q = "\""
-    var s = "{" + q + "name" + q + ":" + q + jsonEscapeStr(c.name) + q
-    s = s + "," + q + "state" + q + ":" + q + c.state.clone() + q
-    s = s + "," + q + "lat" + q + ":" + c.lat.clone()
-    s = s + "," + q + "lon" + q + ":" + c.lon.clone() + "}"
-    return s
+    return Json.obj().str("name", c.name).str("state", c.state).raw("lat", c.lat).raw("lon", c.lon).build()
 }
 
 // An empty state filter matches everything; otherwise the two-letter code must
@@ -569,7 +563,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     }
     ctx.setStatus(502)
     if upstreamStatus > 0 {
-        return ctx.json("{\"error\":\"upstream " + upstreamStatus.toString() + "\"}")
+        return ctx.json(Json.obj().str("error", $"upstream {upstreamStatus}").build())
     }
     return ctx.json("{\"error\":\"upstream unreachable\"}")
 }

@@ -42,16 +42,16 @@ The view cannot be smuggled out through the closure's return type either. `Optio
 
 ```milo skip
 // does not compile: cannot return a reference stored inside 'Option'
-withRaw(p, 1, (xs: &[i64]): Option<&[i64]> => Option.Some(xs))
+withRaw(p, 1, (xs: &[i64]): Option<&[i64]> => Some(xs))
 ```
 
 ## The three answers
 
 | Input | Result | `f` called? |
 |---|---|---|
-| null `p` | `Option.None` | no |
-| negative `len` | `Option.None` | no |
-| non-null `p`, `len == 0` | `Option.Some(f(<empty slice>))` | yes |
+| null `p` | `None` | no |
+| negative `len` | `None` | no |
+| non-null `p`, `len == 0` | `Some(f(<empty slice>))` | yes |
 
 The null path is in the *return type* so it cannot be forgotten. A variant returning a bare `R` would push the test back to convention, which is the thing being fixed. A negative length takes the same path deliberately: the alternative is a view whose length field is nonsense, and every later bounds check would read as satisfied.
 
@@ -114,11 +114,11 @@ struct Thing {
 pub fn closeThing(p: *Thing): i32 {
     unsafe {
         match adopt(p) {
-            Option.Some(thing) => {
+            Some(thing) => {
                 print((*thing).n)
                 return 0            // thing drops here, freeing the allocation
             }
-            Option.None => {
+            None => {
                 return -1           // p was null; there is nothing to free
             }
         }
@@ -126,7 +126,7 @@ pub fn closeThing(p: *Thing): i32 {
 }
 ```
 
-The answers match `withRaw`'s: `Option.None` iff `p` is null, and for `adoptSlice` also when `len` is negative. `len == 0` over a non-null pointer is an owned, empty `Vec` that still frees `p` when it drops.
+The answers match `withRaw`'s: `None` iff `p` is null, and for `adoptSlice` also when `len` is negative. `len == 0` over a non-null pointer is an owned, empty `Vec` that still frees `p` when it drops.
 
 The allocator underneath is plain libc `malloc`/`free` (`Heap(v)` is one `malloc` and a store, every `Vec` buffer goes through one `malloc`, and the drop glue calls `free`), so the round trip is symmetric. A pointer Milo allocated can go to C's `free`, and a pointer C `malloc`'d can be adopted, provided it really is a `T`.
 
@@ -196,7 +196,7 @@ had no way to free it, which is the shape of every C-ABI close/destroy entry poi
 the end of its scope, that drop frees the allocation, and the move checker treats it
 exactly as it treats a `Heap<T>` from `Heap(value)`.
 
-Returns `Option.None` iff `p` is null, the same answer and for the same reason as
+Returns `None` iff `p` is null, the same answer and for the same reason as
 `withRaw`: the null path is in the return type so it cannot be forgotten.
 
 What the caller asserts by writing `unsafe`, and it is the whole content of the word
@@ -226,7 +226,7 @@ pub fn adoptSlice<T>(p: *T, len: i64): Option<Vec<T>>
 
 `adopt` for a contiguous run of `len` elements: hands back an owned `Vec<T>`.
 
-Same contract, plus the extent. A negative `len` answers `Option.None` rather than
+Same contract, plus the extent. A negative `len` answers `None` rather than
 building a Vec whose length field is nonsense, the same decision `withRaw` makes; the
 difference here is that the nonsense would also be freed. `len == 0` with a non-null
 `p` is an owned, empty Vec that still frees `p` when it drops, which is what a
@@ -244,7 +244,7 @@ pub fn withRaw<T, R>(p: *T, len: i64, f: (&[T]) => R): Option<R>
 
 Call `f` with a read-only view of `len` elements at `p`, and return what it returns.
 
-Returns `Option.None` WITHOUT calling `f` when `p` is null, or when `len` is negative.
+Returns `None` WITHOUT calling `f` when `p` is null, or when `len` is negative.
 The null path is in the return type so it cannot be forgotten; a variant returning a
 bare `R` would push the test back to convention, which is the thing being fixed. A
 negative length is folded into the same answer deliberately: the alternative is a view

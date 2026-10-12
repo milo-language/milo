@@ -40,7 +40,7 @@
 
 // Call `f` with a read-only view of `len` elements at `p`, and return what it returns.
 //
-// Returns `Option.None` WITHOUT calling `f` when `p` is null, or when `len` is negative.
+// Returns `None` WITHOUT calling `f` when `p` is null, or when `len` is negative.
 // The null path is in the return type so it cannot be forgotten; a variant returning a
 // bare `R` would push the test back to convention, which is the thing being fixed. A
 // negative length is folded into the same answer deliberately: the alternative is a view
@@ -90,7 +90,7 @@ pub fn withRawMut<T, R>(p: *T, len: i64, f: (&mut [T]) => R): Option<R> {
 // the end of its scope, that drop frees the allocation, and the move checker treats it
 // exactly as it treats a `Heap<T>` from `Heap(value)`.
 //
-// Returns `Option.None` iff `p` is null, the same answer and for the same reason as
+// Returns `None` iff `p` is null, the same answer and for the same reason as
 // `withRaw`: the null path is in the return type so it cannot be forgotten.
 //
 // What the caller asserts by writing `unsafe`, and it is the whole content of the word
@@ -123,7 +123,7 @@ pub fn adopt<T>(p: *T): Option<Heap<T>> {
 
 // `adopt` for a contiguous run of `len` elements: hands back an owned `Vec<T>`.
 //
-// Same contract, plus the extent. A negative `len` answers `Option.None` rather than
+// Same contract, plus the extent. A negative `len` answers `None` rather than
 // building a Vec whose length field is nonsense, the same decision `withRaw` makes; the
 // difference here is that the nonsense would also be freed. `len == 0` with a non-null
 // `p` is an owned, empty Vec that still frees `p` when it drops, which is what a
