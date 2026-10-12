@@ -8,6 +8,8 @@
 //  72: joiner (*u8) — a green task parked in Task.join, unparked on completion
 //  88: panicFd (i32, fd + 1; 0 = none)   96: panicMsg (*u8)   104: panicMsgLen (i64)
 //       — what to send on which fd if this task panics (see taskOnPanicReply)
+// 112: panicNote (*u8)  120: panicNoteLen (i64) — what the task was doing, logged with
+//       a panic (see taskOnPanicNote)
 //  80: joinCell (*u8) — the shared done-signal cell (see taskCellNew), allocated
 //       at spawn and set to done=1 on completion. It lives OUTSIDE this struct so
 //       a late join can read "done" after the struct is reaped/freed — the Task
@@ -89,7 +91,15 @@ pub fn mainTaskStackSize(): i64 {
 }
 
 pub fn taskStructSize(): i64 {
+    return 128
+}
+
+pub fn tPanicNote(): i64 {
     return 112
+}
+
+pub fn tPanicNoteLen(): i64 {
+    return 120
 }
 
 pub fn tPanicFd(): i64 {
@@ -469,6 +479,14 @@ fn onRuntimePanic(): void {
         if task as i64 == 0 {
             return
         }
+        // the panic message is already on stderr; say what the task was doing
+        let note = rtReadPtr(task, tPanicNote())
+        if note as i64 != 0 {
+            let lead = "panic while serving: "
+            write(2, lead, lead.len)
+            write(2, note, rtLoadI64(task, tPanicNoteLen()))
+            write(2, "\n", 1)
+        }
         let fdPlus = rtReadI32(task, tPanicFd())
         rtWriteI32(task, tPanicFd(), 0)
         if fdPlus > 0 {
@@ -493,6 +511,39 @@ fn freePanicReply(task: *u8): void {
             free(msg)
             rtStorePtr(task, tPanicMsg(), 0 as *u8)
         }
+        let note = rtReadPtr(task, tPanicNote())
+        if note as i64 != 0 {
+            free(note)
+            rtStorePtr(task, tPanicNote(), 0 as *u8)
+        }
+    }
+}
+
+// A line logged after the panic message if the current green task panics: what it
+// was doing (std/http notes the request), so a panic in the journal names its input.
+// At most 512 bytes are kept. No effect off a green task.
+pub fn taskOnPanicNote(note: &string): void {
+    unsafe {
+        let sched = getSched()
+        if sched as i64 == 0 {
+            return
+        }
+        let task = rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 {
+            return
+        }
+        let old = rtReadPtr(task, tPanicNote())
+        if old as i64 != 0 {
+            free(old)
+        }
+        var n = note.len
+        if n > 512 {
+            n = 512
+        }
+        let copy = malloc(n + 1)
+        memcpy(copy, note, n)
+        rtStorePtr(task, tPanicNote(), copy)
+        rtStoreI64(task, tPanicNoteLen(), n)
     }
 }
 
