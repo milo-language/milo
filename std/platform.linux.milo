@@ -173,12 +173,12 @@ pub fn statSizeOffset(): i64 {
     return 48
 }
 
-// st_mtime: whole seconds at statMtimeOffset, nanoseconds at statMtimeNsecOffset
-// (-1 where the struct carries none). st_mtim: the same offset on x86_64 and arm64.
+// Byte offset of st_mtime's whole seconds in struct stat. st_mtim: the same offset on x86_64 and arm64.
 pub fn statMtimeOffset(): i64 {
     return 88
 }
 
+// Byte offset of st_mtime's nanoseconds in struct stat, or -1 where there are none.
 pub fn statMtimeNsecOffset(): i64 {
     return 96
 }
