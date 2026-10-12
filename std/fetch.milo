@@ -29,6 +29,9 @@ from "std/replay" import {
 from "std/select" import {
     Select
 }
+from "std/url" import {
+    resolveUrl
+}
 from "std/time" import {
     ensureTimersLive, unrecordedEpochMillis
 }
@@ -279,11 +282,18 @@ impl TlsStream {
     // recv() that gives up at `by` (epoch ms; 0 for none): Err(Timeout) rather than the
     // part of the body that arrived in time.
     fn recvBy(self: &Self, by: i64): Result<string, NetError> {
+        return self.recvUpTo(by, 0)
+    }
+
+    // recvBy that stops once `maxBytes` bytes have arrived (0 reads to EOF), for a
+    // caller that must not buffer whatever a hostile server chooses to send. The
+    // result may run up to one TLS record past the cap.
+    fn recvUpTo(self: &Self, by: i64, maxBytes: i64): Result<string, NetError> {
         let fd = self._fd
         var result: string = ""
         var buf: [u8; 4096] = [0; 4096]
         var last: i32 = 0
-        while true {
+        while maxBytes <= 0 || result.len < maxBytes {
             unsafe {
                 last = sslReadFdWait(self._ssl as *u8, fd, buf as *u8, 4096, (forRead: bool): bool => waitIo(fd, forRead, by))
                 if last <= 0 {
@@ -802,7 +812,7 @@ fn httpDo(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions
 }
 
 // httpDo bounded by `connectBy` and `overallBy` (epoch ms; 0 for none).
-fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64): Result<FetchResponse, NetError> {
+fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
     let cby = sooner(connectBy, overallBy)
     let stream = TcpStream.connectWait(ip, port, (fd: i32, forRead: bool): bool => waitIo(fd, forRead, cby))?
     var fd: i32 = 0
@@ -820,7 +830,7 @@ fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptio
     }
     var raw: string = ""
     var buf: [u8; 4096] = [0; 4096]
-    while true {
+    while maxBytes <= 0 || raw.len < maxBytes {
         var n: i64 = 0
         unsafe { n = recvFdWait(fd, buf as *u8, 4096, wait) }
         if n == IO_GAVE_UP {
@@ -836,10 +846,10 @@ fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptio
     return Result.Ok(parseResponse(raw))
 }
 
-fn httpsDoBy(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64): Result<FetchResponse, NetError> {
+fn httpsDoBy(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
     let stream = TlsStream.connectBy(ip, port, sni, connectBy, overallBy)?
     stream.sendBy(buildRequest(hostHdr, path, opts), overallBy)?
-    let raw = stream.recvBy(overallBy)?
+    let raw = stream.recvUpTo(overallBy, maxBytes)?
     return Result.Ok(parseResponse(raw))
 }
 
@@ -859,35 +869,7 @@ fn httpsDo(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts:
 // `Location: /points/38.3396,-122.7011`), and fetching that bare string parsed
 // an empty host, so the redirect failed as an unreachable upstream.
 pub fn resolveLocation(base: &string, loc: &string): string {
-    if loc.startsWith("http://") || loc.startsWith("https://") {
-        return loc.clone()
-    }
-    let start = schemeOffset(base)
-    if loc.startsWith("//") {
-        // scheme-relative: keep the request's scheme, drop the "//" it already has
-        return base.substr(0, start - 2) + loc.clone()
-    }
-    var end: i64 = start
-    while end < base.len && base[end] != '/' && base[end] != '?' && base[end] != '#' {
-        end += 1
-    }
-    let origin = base.substr(0, end)
-    if loc.startsWith("/") {
-        return origin + loc.clone()
-    }
-    // relative to the directory of the request path, query and fragment excluded
-    var pathEnd: i64 = end
-    while pathEnd < base.len && base[pathEnd] != '?' && base[pathEnd] != '#' {
-        pathEnd += 1
-    }
-    var slash: i64 = pathEnd - 1
-    while slash >= end && base[slash] != '/' {
-        slash -= 1
-    }
-    if slash < end {
-        return origin + "/" + loc.clone()
-    }
-    return base.substr(0, slash + 1) + loc.clone()
+    return resolveUrl(base, loc)
 }
 
 // Redirects followed before giving up, as curl and Go's net/http do: a server
@@ -914,10 +896,8 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
 
     var resp: Result<FetchResponse, NetError> = Result.Err(NetError.Other(""))
     let timed = t.connectMs > 0 || t.totalMs > 0
-    if timed && useTls {
-        resp = httpsDoBy(ip, port, host.clone(), hdr, path, opts, deadlineIn(t.connectMs), overallBy)
-    } else if timed {
-        resp = httpDoBy(ip, port, hdr, path, opts, deadlineIn(t.connectMs), overallBy)
+    if timed {
+        resp = fetchOnceAt(ip, url, opts, deadlineIn(t.connectMs), overallBy, 0)
     } else if useTls {
         resp = httpsDo(ip, port, host.clone(), hdr, path, opts)
     } else {
@@ -946,7 +926,35 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
     return Result.Ok(r)
 }
 
+// One request to `ip`, with the Host header and TLS name taken from `url`.
+fn fetchOnceAt(ip: u32, url: &string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+    let port = parsePort(url)
+    let path = parsePath(url)
+    let hdr = hostHeader(url)
+    if isHttps(url) {
+        return httpsDoBy(ip, port, parseHost(url), hdr, path, opts, connectBy, overallBy, maxBytes)
+    }
+    return httpDoBy(ip, port, hdr, path, opts, connectBy, overallBy, maxBytes)
+}
+
 // ── Public API ──
+
+// One request for `url`, sent to the IPv4 address `ip` the caller already resolved
+// (std/net `resolve`), with no redirect followed: a 3xx comes back as is, Location
+// and all. The Host header and the TLS certificate name still come from `url`.
+//
+// This is the primitive for fetching a URL someone else chose. Checking the host's
+// address and then calling `fetch` resolves the name twice, and a DNS answer that
+// changes in between (rebinding) sends the request somewhere the check never saw;
+// here the address checked is the address connected to. Each redirect hop is the
+// caller's to vet and resolve the same way.
+//
+// At most `maxBytes` bytes of the response are read, headers included (0 for no
+// limit), and the response is parsed from what arrived, so a cut-off body comes back
+// short rather than as an error. `t` bounds the request as in fetchWithTimeout.
+pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxBytes: i64): Result<FetchResponse, NetError> {
+    return fetchOnceAt(ip, url, opts, deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
+}
 
 // HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308
 // redirects.

@@ -291,3 +291,179 @@ pub fn decodeUriComponent(s: &string): Result<string> {
     }
     return Result.Ok(out)
 }
+
+// ── Reference resolution (RFC 3986 §5.2) ──
+
+// A URI reference split per RFC 3986 §3 without validation. The `has*` flags keep
+// "absent" apart from "present but empty", which §5.2.2 treats differently
+// ("?" alone replaces the base query with an empty one).
+struct UrlRefParts {
+    scheme: string,
+    hasAuthority: bool,
+    authority: string,
+    path: string,
+    hasQuery: bool,
+    query: string,
+    hasFragment: bool,
+    fragment: string,
+}
+
+fn isSchemeByte(c: u8, first: bool): bool {
+    let alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    if first {
+        return alpha
+    }
+    return alpha || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
+}
+
+fn splitUrlRef(s: &string): UrlRefParts {
+    var p = UrlRefParts {
+        scheme: "", hasAuthority: false, authority: "", path: "",
+        hasQuery: false, query: "", hasFragment: false, fragment: "",
+    }
+    var i: i64 = 0
+    // A scheme is letters then scheme bytes up to ':'; anything else first means the
+    // reference is relative and a later ':' belongs to its path ("a:b" vs "./a:b").
+    var j: i64 = 0
+    while j < s.len && isSchemeByte(s[j], j == 0) {
+        j += 1
+    }
+    if j > 0 && j < s.len && s[j] == ':' {
+        p.scheme = s.substr(0, j)
+        i = j + 1
+    }
+    if i + 1 < s.len && s[i] == '/' && s[i + 1] == '/' {
+        p.hasAuthority = true
+        i += 2
+        let start = i
+        while i < s.len && s[i] != '/' && s[i] != '?' && s[i] != '#' {
+            i += 1
+        }
+        p.authority = s.substr(start, i)
+    }
+    let pathStart = i
+    while i < s.len && s[i] != '?' && s[i] != '#' {
+        i += 1
+    }
+    p.path = s.substr(pathStart, i)
+    if i < s.len && s[i] == '?' {
+        p.hasQuery = true
+        i += 1
+        let qs = i
+        while i < s.len && s[i] != '#' {
+            i += 1
+        }
+        p.query = s.substr(qs, i)
+    }
+    if i < s.len && s[i] == '#' {
+        p.hasFragment = true
+        p.fragment = s.substr(i + 1, s.len)
+    }
+    return p
+}
+
+// RFC 3986 §5.2.4: drop "." segments and let ".." eat the segment before it. A ".."
+// above the root stays at the root, so "/../../etc" is "/etc", as browsers do.
+fn removeDotSegments(path: &string): string {
+    var segs: Vec<string> = Vec.new()
+    var i: i64 = 0
+    let absolute = path.len > 0 && path[0] == '/'
+    if absolute {
+        i = 1
+    }
+    var last = ""
+    while i <= path.len {
+        var end = i
+        while end < path.len && path[end] != '/' {
+            end += 1
+        }
+        last = path.substr(i, end)
+        if last == ".." {
+            if segs.len > 0 {
+                let _ = segs.pop()
+            }
+        } else if last != "." {
+            segs.push(last.clone())
+        }
+        i = end + 1
+    }
+    // a trailing "." or ".." names a directory, so the result keeps its slash
+    if (last == "." || last == "..") {
+        segs.push("")
+    }
+    var out = if absolute { "/" } else { "" }
+    for k in 0..segs.len {
+        if k > 0 {
+            out += "/"
+        }
+        out += segs[k]
+    }
+    return out
+}
+
+// The absolute URL `ref` names when it appears in a document at `base`, per RFC 3986
+// §5.2: "../img.png", "//cdn.example/x", "?page=2" and "#top" all resolve as a browser
+// resolves an href. An absolute `ref` comes back with its dot segments removed. No
+// percent-decoding, case folding or validation: a malformed input resolves to
+// whatever the algorithm makes of it, so check the result before using it.
+pub fn resolveUrl(base: &string, ref: &string): string {
+    let b = splitUrlRef(base)
+    let r = splitUrlRef(ref)
+    var t = UrlRefParts {
+        scheme: "", hasAuthority: false, authority: "", path: "",
+        hasQuery: r.hasQuery, query: r.query.clone(), hasFragment: r.hasFragment, fragment: r.fragment.clone(),
+    }
+    if r.scheme.len > 0 {
+        t.scheme = r.scheme.clone()
+        t.hasAuthority = r.hasAuthority
+        t.authority = r.authority.clone()
+        t.path = removeDotSegments(r.path)
+    } else {
+        t.scheme = b.scheme.clone()
+        if r.hasAuthority {
+            t.hasAuthority = true
+            t.authority = r.authority.clone()
+            t.path = removeDotSegments(r.path)
+        } else {
+            t.hasAuthority = b.hasAuthority
+            t.authority = b.authority.clone()
+            if r.path.len == 0 {
+                t.path = b.path.clone()
+                if !r.hasQuery {
+                    t.hasQuery = b.hasQuery
+                    t.query = b.query.clone()
+                }
+            } else if r.path[0] == '/' {
+                t.path = removeDotSegments(r.path)
+            } else {
+                // §5.2.3 merge: an authority with an empty path merges under "/"
+                var merged = ""
+                if b.hasAuthority && b.path.len == 0 {
+                    merged = "/" + r.path.clone()
+                } else {
+                    var slash: i64 = b.path.len - 1
+                    while slash >= 0 && b.path[slash] != '/' {
+                        slash -= 1
+                    }
+                    merged = b.path.substr(0, slash + 1) + r.path.clone()
+                }
+                t.path = removeDotSegments(merged)
+            }
+        }
+    }
+    var out = ""
+    if t.scheme.len > 0 {
+        out = t.scheme.clone() + ":"
+    }
+    if t.hasAuthority {
+        out = out + "//" + t.authority
+    }
+    out += t.path
+    if t.hasQuery {
+        out = out + "?" + t.query
+    }
+    if t.hasFragment {
+        out = out + "#" + t.fragment
+    }
+    return out
+}

@@ -73,4 +73,16 @@ not spell valid UTF-8 (a stray continuation byte, an overlong form, a surrogate,
 code point past U+10FFFF). A request path decoded with a lenient decoder instead
 would let malformed input through as if it were text.
 
+#### `resolveUrl`
+
+```milo
+pub fn resolveUrl(base: &string, ref: &string): string
+```
+
+The absolute URL `ref` names when it appears in a document at `base`, per RFC 3986
+§5.2: "../img.png", "//cdn.example/x", "?page=2" and "#top" all resolve as a browser
+resolves an href. An absolute `ref` comes back with its dot segments removed. No
+percent-decoding, case folding or validation: a malformed input resolves to
+whatever the algorithm makes of it, so check the result before using it.
+
 <!-- /generated:api -->

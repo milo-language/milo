@@ -1,0 +1,73 @@
+// @skip-os: win32
+// Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch
+// links OpenSSL, which the xwin sysroot does not ship.
+//
+// fetchAt connects to the address it is given, never to what the URL's host
+// resolves to: the URL names a host that does not resolve at all, yet the request
+// lands on the local listener with that name in its Host header. A redirect comes
+// back to the caller unfollowed, and maxBytes stops reading a body that never ends.
+from "std/fetch" import { fetchAt, FetchOptions, FetchTimeouts }
+from "std/net" import { TcpListener, ip4 }
+from "std/runtime" import { Task }
+
+fn get(): FetchOptions {
+    return FetchOptions { method: "GET", headers: "", body: "" }
+}
+
+fn limits(): FetchTimeouts {
+    return FetchTimeouts { connectMs: 2000, totalMs: 5000 }
+}
+
+fn hostLine(req: &string): string {
+    let at = req.indexOf("Host: ") ?? -1
+    if at < 0 {
+        return "no host"
+    }
+    let end = req.indexOfFrom("\r\n", at) ?? req.len
+    return req.substr(at, end)
+}
+
+pub fn main(): void {
+    let echo = TcpListener.bind(0)!
+    let port = echo.port()
+    Task.spawn(move(): void => {
+        for _i in 0..2 {
+            let conn = echo.accept()!
+            let req = conn.recvOnce()
+            let line = hostLine(req)
+            if req.startsWith("GET /hop") {
+                let _ = conn.send($"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/\r\nContent-Length: 0\r\n\r\n")
+            } else {
+                let _ = conn.send($"HTTP/1.1 200 OK\r\nContent-Length: {line.len}\r\nConnection: close\r\n\r\n{line}")
+            }
+        }
+    })
+    let lo = ip4(127, 0, 0, 1)
+    let r = fetchAt(lo, $"http://never-resolves.invalid:{port}/x", get(), limits(), 0)!
+    print($"{r.status} host sent: {r.body == $"Host: never-resolves.invalid:{port}"}")
+    let hop = fetchAt(lo, $"http://never-resolves.invalid:{port}/hop", get(), limits(), 0)!
+    print($"{hop.status} {hop.header("Location") ?? "-"}")
+
+    let flood = TcpListener.bind(0)!
+    let floodPort = flood.port()
+    Task.spawn(move(): void => {
+        let conn = flood.accept()!
+        let _ = conn.recvOnce()
+        let _ = conn.send("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n")
+        var chunk = ""
+        for _i in 0..1024 {
+            chunk.push('x')
+        }
+        // far more than the cap; the client hangs up long before this ends
+        for _i in 0..100000 {
+            if let Result.Err(_) = conn.send(chunk) {
+                break
+            }
+        }
+    })
+    let capped = fetchAt(lo, $"http://127.0.0.1:{floodPort}/", get(), limits(), 20000)!
+    print($"{capped.status} capped: {capped.body.len > 10000 && capped.body.len < 30000}")
+}
+// @expect: 200 host sent: true
+// @expect: 302 http://169.254.169.254/
+// @expect: 200 capped: true
