@@ -1030,7 +1030,16 @@ struct JsonParser {
     // containers' pending children, so a small fixed reserve covers most documents.
     scratch: Vec<i64>,
     scratchLen: i64,
+    // Open containers right now, and where the cap was hit (-1 = never).
+    depth: i64,
+    tooDeepAt: i64,
 }
+
+// Deepest nesting jsonParse accepts. The parser recurses once per container, on whatever
+// stack the caller has (a green task's is small), so an input of a hundred thousand '['
+// overflowed it and killed the process. serde_json stops at 128; no real document comes
+// near 512, and 512 frames fit every task stack std hands out.
+pub let JSON_MAX_DEPTH: i64 = 512
 
 pub fn jsonParse(s: string): Result<Json> {
     if s.len == 0 {
@@ -1061,13 +1070,17 @@ pub fn jsonParse(s: string): Result<Json> {
     var nums: Vec<f64> = Vec.new()
     nums.reserve(s.len / 16)
     var p = JsonParser {
-        s: s, pos: 0, err: false, nodes: nodes, nums: nums, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, scratch: scratch, scratchLen: 0
+        s: s, pos: 0, err: false, nodes: nodes, nums: nums, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, scratch: scratch, scratchLen: 0,
+        depth: 0, tooDeepAt: -1,
     }
     p.skipWs()
     if p.pos >= p.s.len {
         return Result.Err("empty json input at byte " + p.pos.toString())
     }
     let rootIdx = p.parseValue()
+    if p.tooDeepAt >= 0 {
+        return Result.Err($"json nesting deeper than {JSON_MAX_DEPTH} levels at byte {p.tooDeepAt}")
+    }
     if p.err {
         return Result.Err("malformed json at byte " + p.pos.toString())
     }
@@ -1263,11 +1276,25 @@ impl JsonParser {
         if c == '"' {
             return self.parseString()
         }
-        if c == '{' {
-            return self.parseObject()
-        }
-        if c == '[' {
-            return self.parseArray()
+        if c == '{' || c == '[' {
+            if self.depth >= JSON_MAX_DEPTH {
+                // Fail and stop: jumping to the end ends every enclosing container's loop.
+                self.err = true
+                self.tooDeepAt = self.pos
+                self.pos = self.s.len
+                let idx = self.nodes.len()
+                self.nodes.push(jsonNewNull())
+                return idx
+            }
+            self.depth += 1
+            var r: i64 = 0
+            if c == '{' {
+                r = self.parseObject()
+            } else {
+                r = self.parseArray()
+            }
+            self.depth -= 1
+            return r
         }
         if c == 't' {
             if !self.litAt("true") {

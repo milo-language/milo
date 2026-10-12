@@ -1,0 +1,48 @@
+// jsonParse caps nesting at JSON_MAX_DEPTH (512): deeper input is a parse error, not a
+// stack overflow. The parser recursed once per container on the caller's stack, and a
+// request body of 5000 nested '{' killed a green-threaded server outright.
+// @expect: 512 deep: ok
+// @expect: 513 deep: json nesting deeper than 512 levels at byte 512
+// @expect: 100000 deep: json nesting deeper than 512 levels at byte 512
+// @expect: objects 100000 deep: error
+// @expect: after: ok 3
+from "std/json" import { Json }
+
+fn nested(open: string, close: string, n: i64): string {
+    var s: string = ""
+    for _i in 0..n {
+        s.pushStr(open)
+    }
+    for _i in 0..n {
+        s.pushStr(close)
+    }
+    return s
+}
+
+fn show(label: string, text: string): void {
+    match Json.parse(text) {
+        Result.Ok(_d) => {
+            print(label + ": ok")
+        }
+        Result.Err(e) => {
+            print(label + ": " + e)
+        }
+    }
+}
+
+pub fn main(): i32 {
+    show("512 deep", nested("[", "]", 512))
+    show("513 deep", nested("[", "]", 513))
+    show("100000 deep", nested("[", "]", 100000))
+    match Json.parse(nested("{\"a\":", "}", 100000)) {
+        Result.Ok(_d) => {
+            print("objects 100000 deep: ok")
+        }
+        Result.Err(_e) => {
+            print("objects 100000 deep: error")
+        }
+    }
+    let after = Json.parse("[1,[2,[3]]]")!
+    print($"after: ok {after.len() + 1}")
+    return 0
+}
