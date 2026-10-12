@@ -10094,6 +10094,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `join a, b`
 - `brace <}> end`
 - `esc <q"`
+- `single <{> end`
 
 **Rationale.** String literals inside an f-string interpolation may hold quotes, escapes and braces
 
@@ -16579,17 +16580,17 @@ A conforming implementation shall accept this program, and running it shall writ
 - `caf%C3%A9 -> café`
 - `%F0%9F%98%80 -> 😀`
 - `raw é -> raw é`
-- `%zz -> URIError`
-- `%4 -> URIError`
-- `% -> URIError`
-- `%E0 -> URIError`
-- `%80 -> URIError`
-- `%C0%AF -> URIError`
-- `%ED%A0%80 -> URIError`
-- `%F4%90%80%80 -> URIError`
-- `%C3x -> URIError`
+- `%zz -> malformed escape at byte 0`
+- `%4 -> malformed escape at byte 0`
+- `% -> malformed escape at byte 0`
+- `%E0 -> invalid utf-8 escape at byte 0`
+- `%80 -> invalid utf-8 escape at byte 0`
+- `%C0%AF -> invalid utf-8 escape at byte 0`
+- `%ED%A0%80 -> invalid utf-8 escape at byte 0`
+- `%F4%90%80%80 -> invalid utf-8 escape at byte 0`
+- `%C3x -> invalid utf-8 escape at byte 0`
 
-**Rationale.** std/url decodeUriComponent answers None exactly where JavaScript's decodeURIComponent throws URIError, and decodes everything else byte for byte.
+**Rationale.** std/url decodeUriComponent returns an error exactly where JavaScript's decodeURIComponent throws URIError, and decodes everything else byte for byte.
 
 *Program:* [`tests/fixtures/urlDecodeUriComponent.milo`](../tests/fixtures/urlDecodeUriComponent.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

@@ -1,15 +1,15 @@
-// std/url decodeUriComponent answers None exactly where JavaScript's
+// std/url decodeUriComponent returns an error exactly where JavaScript's
 // decodeURIComponent throws URIError, and decodes everything else byte for byte.
 
 from "std/url" import { decodeUriComponent }
 
 fn show(s: string): void {
     match decodeUriComponent(s) {
-        Option.Some(v) => {
+        Result.Ok(v) => {
             print(s + " -> " + v)
         }
-        Option.None => {
-            print(s + " -> URIError")
+        Result.Err(e) => {
+            print(s + " -> " + e)
         }
     }
 }
@@ -25,24 +25,24 @@ pub fn main(): void {
     show("%F0%9F%98%80")
     // @expect: raw é -> raw é
     show("raw é")
-    // @expect: %zz -> URIError
+    // @expect: %zz -> malformed escape at byte 0
     show("%zz")
-    // @expect: %4 -> URIError
+    // @expect: %4 -> malformed escape at byte 0
     show("%4")
-    // @expect: % -> URIError
+    // @expect: % -> malformed escape at byte 0
     show("%")
-    // @expect: %E0 -> URIError
+    // @expect: %E0 -> invalid utf-8 escape at byte 0
     show("%E0")
-    // @expect: %80 -> URIError
+    // @expect: %80 -> invalid utf-8 escape at byte 0
     show("%80")
     // overlong '/' and a UTF-16 surrogate are not UTF-8
-    // @expect: %C0%AF -> URIError
+    // @expect: %C0%AF -> invalid utf-8 escape at byte 0
     show("%C0%AF")
-    // @expect: %ED%A0%80 -> URIError
+    // @expect: %ED%A0%80 -> invalid utf-8 escape at byte 0
     show("%ED%A0%80")
-    // @expect: %F4%90%80%80 -> URIError
+    // @expect: %F4%90%80%80 -> invalid utf-8 escape at byte 0
     show("%F4%90%80%80")
     // a lead byte whose continuation arrives raw is still malformed
-    // @expect: %C3x -> URIError
+    // @expect: %C3x -> invalid utf-8 escape at byte 0
     show("%C3x")
 }

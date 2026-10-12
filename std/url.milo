@@ -233,12 +233,12 @@ fn escapedByte(s: &string, i: i64): i64 {
     return hi * 16 + lo
 }
 
-// JavaScript's decodeURIComponent: each %XX back to its byte, '+' left alone. None
-// where JS throws URIError: a '%' without two hex digits after it, or escapes that do
+// JavaScript's decodeURIComponent: each %XX back to its byte, '+' left alone. An error
+// (naming the byte offset) where JS throws URIError: a '%' without two hex digits after it, or escapes that do
 // not spell valid UTF-8 (a stray continuation byte, an overlong form, a surrogate, a
 // code point past U+10FFFF). A request path decoded with a lenient decoder instead
 // would let malformed input through as if it were text.
-pub fn decodeUriComponent(s: &string): Option<string> {
+pub fn decodeUriComponent(s: &string): Result<string> {
     var out: string = ""
     var i: i64 = 0
     while i < s.len {
@@ -247,9 +247,10 @@ pub fn decodeUriComponent(s: &string): Option<string> {
             i += 1
             continue
         }
+        let at = i
         let b = escapedByte(s, i)
         if b < 0 {
-            return Option.None
+            return Result.Err($"malformed escape at byte {at}")
         }
         i += 3
         if b < 128 {
@@ -272,21 +273,21 @@ pub fn decodeUriComponent(s: &string): Option<string> {
             cp = b & 0x07
             min = 0x10000
         } else {
-            return Option.None
+            return Result.Err($"invalid utf-8 escape at byte {at}")
         }
         out.push(b as u8)
         for _k in 0..need {
             let c = escapedByte(s, i)
             if c < 0x80 || c > 0xBF {
-                return Option.None
+                return Result.Err($"invalid utf-8 escape at byte {at}")
             }
             cp = cp * 64 + (c & 0x3F)
             out.push(c as u8)
             i += 3
         }
         if cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
-            return Option.None
+            return Result.Err($"invalid utf-8 escape at byte {at}")
         }
     }
-    return Option.Some(out)
+    return Result.Ok(out)
 }

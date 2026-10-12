@@ -11,6 +11,9 @@ end ")
     print($"
 
 esc { tag("q\"q") } end ")
+    print($"
+
+single { tag("{") } end ")
 }
 // @expect: one <x> two
 // @expect: join a, b
@@ -18,3 +21,4 @@ esc { tag("q\"q") } end ")
 // @expect: esc <q"
 
 q > end
+// @expect: single <{> end
