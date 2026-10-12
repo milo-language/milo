@@ -53,7 +53,7 @@ One model — green tasks — with a single OS-thread escape hatch. No async/awa
 ### Standard Library (<!-- stat:std-modules -->89<!-- /stat --> modules)
 
 I/O & system: io, fs, path, env, environ, args, process, signal, dl, sysinfo, mem, os, platform, term, pty, keys, ansi
-Networking: net, unix, fetch, tls, https, http, httpmw, ws, url
+Networking: net, unix, fetch, tls, https, http, httpmw, ws, wsframe, chunked, url
 Data: json, csv, base64, base32, hex, sqlite, arena, set, pool, png
 Compression: deflate, inflate, zip, zstd
 Crypto & auth: crypto, sha256, sha1, hmac, jwt, totp, checksum, xxhash

@@ -153,6 +153,7 @@ const stdlibSidebar = [
       { text: 'std/https', link: '/stdlib/https' },
       { text: 'std/ws', link: '/stdlib/ws' },
       { text: 'std/wsframe', link: '/stdlib/wsframe' },
+      { text: 'std/chunked', link: '/stdlib/chunked' },
       { text: 'std/httpmw', link: '/stdlib/httpmw' },
       { text: 'std/unix', link: '/stdlib/unix' },
     ]

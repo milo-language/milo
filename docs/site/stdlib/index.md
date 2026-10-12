@@ -24,6 +24,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/https`](https) | HTTPS server: `serveTls`, `serveRouterTls` |
 | [`std/ws`](ws) | WebSocket client and server: `wsAccept`, `wsConnect`, `WsConn` |
 | [`std/wsframe`](wsframe) | WebSocket wire format, no IO: `computeAcceptKey`, `encodeWsFrame`, `parseWsFrame` |
+| [`std/chunked`](chunked) | HTTP/1.1 chunked transfer coding, no IO: `ChunkScan`, `decodeChunked` |
 | [`std/unix`](unix) | Unix-domain sockets: `UnixListener`, `UnixStream` |
 | [`std/http`](http) | HTTP server with Hono-style router, context, middleware |
 | [`std/httpmw`](httpmw) | Optional HTTP middleware: `gzip`, `verifyBearer` |

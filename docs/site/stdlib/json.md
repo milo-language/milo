@@ -1039,6 +1039,24 @@ pub fn jsoncParse(s: string): Result<Json>
 pub fn jsonEscapeStr(s: &string): string
 ```
 
+#### `jsonF32Str`
+
+```milo
+pub fn jsonF32Str(f: f32): string
+```
+
+jsonFloatStr for an f32, printed at f32 precision (0.1 stays "0.1").
+
+#### `jsonFloatStr`
+
+```milo
+pub fn jsonFloatStr(f: f64): string
+```
+
+A float as JSON text. JSON has no NaN or Infinity (RFC 8259 6), so a non-finite
+value encodes as null, as JSON.stringify and serde_json do; printing it would emit
+`nan`/`inf`, which no parser (this one included) reads back.
+
 #### `jsonKindName`
 
 ```milo
