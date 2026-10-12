@@ -212,7 +212,9 @@ impl Lexer {
     }
 
     // `$"..."` is a single token. A quote inside a `{...}` interpolation does
-    // not terminate it (nested f-strings are legal), so track brace depth.
+    // not terminate it (nested f-strings are legal), so track brace depth. A literal
+    // inside an interpolation is copied whole: braces in `tag("}")` are not braces,
+    // and counting them reflowed the rest of the f-string into code.
     fn lexFString(self: &mut Self): string {
         self.advance()
         self.advance()
@@ -221,6 +223,18 @@ impl Lexer {
         while self.pos < self.src.len {
             if depth == 0 && self.peek() == '"' {
                 break
+            }
+            if depth > 0 && self.peek() == '$' && self.peekAt(1) == '"' {
+                s.pushStr(self.lexFString())
+                continue
+            }
+            if depth > 0 && self.peek() == '"' {
+                s.pushStr(self.lexString())
+                continue
+            }
+            if depth > 0 && self.peek() == '\'' {
+                s.pushStr(self.lexChar())
+                continue
             }
             let ch = self.advance()
             if ch == '\\' {

@@ -10282,8 +10282,9 @@ A conforming implementation shall accept this program, and running it shall writ
 - `one <x> two`
 - `join a, b`
 - `brace <}> end`
-- `esc <q"`
+- `esc <q"q> end`
 - `single <{> end`
+- `char 125 end`
 
 **Rationale.** String literals inside an f-string interpolation may hold quotes, escapes and braces
 

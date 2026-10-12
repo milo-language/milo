@@ -5,20 +5,14 @@ fn main() {
     let xs: Vec<string> = ["a", "b"]
     print($"one {tag("x")} two")
     print($"join {xs.join(", ")}")
-    print($"brace {tag("}")
-}
-end ")
-    print($"
-
-esc { tag("q\"q") } end ")
-    print($"
-
-single { tag("{") } end ")
+    print($"brace {tag("}")} end")
+    print($"esc {tag("q\"q")} end")
+    print($"single {tag("{")} end")
+    print($"char {'}'} end")
 }
 // @expect: one <x> two
 // @expect: join a, b
 // @expect: brace <}> end
-// @expect: esc <q"
-
-q > end
+// @expect: esc <q"q> end
 // @expect: single <{> end
+// @expect: char 125 end
