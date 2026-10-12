@@ -9597,7 +9597,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `599 Server Error`
 - `200 OK`
 
-**Rationale.** A redirect's Location resolves against the request URL, and a status code without a reason phrase goes on the wire as itself. weather.gov answers an over-precise /points request with a 301 whose Location is a bare path. doFetch fetched that string as a URL, parsed an empty host and failed, and the weather proxy then answered setStatus(502), which statusText turned into "200 OK" because 502 was missing from its table.
+**Rationale.** Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch links OpenSSL, which the xwin sysroot does not ship. A redirect's Location resolves against the request URL, and a status code without a reason phrase goes on the wire as itself. weather.gov answers an over-precise /points request with a 301 whose Location is a bare path. doFetch fetched that string as a URL, parsed an empty host and failed, and the weather proxy then answered setStatus(502), which statusText turned into "200 OK" because 502 was missing from its table.
 
 *Program:* [`tests/fixtures/fetchRedirectStatus.milo`](../tests/fixtures/fetchRedirectStatus.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -13376,7 +13376,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 - `connect: connect() failed`
 
-**Rationale.** NetError has message(), so `?` from a fetch into a string-error fn keeps the cause
+**Rationale.** Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch links OpenSSL, which the xwin sysroot does not ship. NetError has message(), so `?` from a fetch into a string-error fn keeps the cause
 
 *Program:* [`tests/fixtures/netErrorMessage.milo`](../tests/fixtures/netErrorMessage.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -15213,7 +15213,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `dbStep on dropped: false`
 - `duplicate: UNIQUE constraint failed: t.k`
 
-**Rationale.** dbNext reports a failed step, which dbStep cannot tell from "no more rows": a table dropped after prepare (prepare succeeds against the cached schema), and a constraint violation on insert.
+**Rationale.** Windows is skipped like the other sqlite fixtures: std/sqlite links sqlite3.lib, which neither the xwin sysroot nor the CI image ships. dbNext reports a failed step, which dbStep cannot tell from "no more rows": a table dropped after prepare (prepare succeeds against the cached schema), and a constraint violation on insert.
 
 *Program:* [`tests/fixtures/sqliteNextError.milo`](../tests/fixtures/sqliteNextError.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

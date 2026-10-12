@@ -1,3 +1,7 @@
+// @skip-os: win32
+// Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch
+// links OpenSSL, which the xwin sysroot does not ship.
+//
 // NetError has message(), so `?` from a fetch into a string-error fn keeps the cause
 from "std/fetch" import { fetchWith, FetchOptions }
 

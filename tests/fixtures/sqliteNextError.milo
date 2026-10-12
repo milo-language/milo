@@ -1,3 +1,7 @@
+// @skip-os: win32
+// Windows is skipped like the other sqlite fixtures: std/sqlite links sqlite3.lib,
+// which neither the xwin sysroot nor the CI image ships.
+//
 // dbNext reports a failed step, which dbStep cannot tell from "no more rows": a table
 // dropped after prepare (prepare succeeds against the cached schema), and a constraint
 // violation on insert.

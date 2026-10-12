@@ -1,3 +1,7 @@
+// @skip-os: win32
+// Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch
+// links OpenSSL, which the xwin sysroot does not ship.
+//
 // A redirect's Location resolves against the request URL, and a status code
 // without a reason phrase goes on the wire as itself.
 //
