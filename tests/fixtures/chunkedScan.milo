@@ -1,0 +1,44 @@
+// std/chunked: the one chunked-transfer framing and decoder std/fetch (responses) and
+// std/http (request bodies) share. A scan resumes across segments, reports what the
+// body declares before its bytes arrive (a server's body limit is checked against
+// that), refuses bad framing, and a 16-digit size line is malformed rather than an
+// integer overflow trap.
+// @expect: whole: end 30 of 30, declared 11, body hello world
+// @expect: split: -1 -1 26, declared 11
+// @expect: pending: -1, declared 4096
+// @expect: ext+trailer: end 34 of 34, body abc
+// @expect: bad size: -2
+// @expect: no crlf after data: -2
+// @expect: 16 digits: -2
+// @expect: lenient decode of 16 digits: ''
+from "std/chunked" import { ChunkScan, decodeChunked }
+
+fn main(): i32 {
+    let body = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+    let raw = "HEAD" + body
+    var s = ChunkScan.new(4)
+    let end = s.step(raw)
+    print($"whole: end {end} of {raw.len}, declared {s.declared()}, body {decodeChunked(raw, 4)}")
+
+    var t = ChunkScan.new(0)
+    let a = t.step(body.substr(0, 9))
+    let b = t.step(body.substr(0, 20))
+    let c = t.step(body)
+    print($"split: {a} {b} {c}, declared {t.declared()}")
+
+    var p = ChunkScan.new(0)
+    print($"pending: {p.step("1000\r\nab")}, declared {p.declared()}")
+
+    let ext = "3;name=v\r\nabc\r\n0\r\nX-Trailer: 1\r\n\r\n"
+    var e = ChunkScan.new(0)
+    print($"ext+trailer: end {e.step(ext)} of {ext.len}, body {decodeChunked(ext, 0)}")
+
+    var bad = ChunkScan.new(0)
+    print($"bad size: {bad.step("zz\r\nab\r\n0\r\n\r\n")}")
+    var nocrlf = ChunkScan.new(0)
+    print($"no crlf after data: {nocrlf.step("2\r\nabXX0\r\n\r\n")}")
+    var big = ChunkScan.new(0)
+    print($"16 digits: {big.step("ffffffffffffffff\r\nab\r\n0\r\n\r\n")}")
+    print($"lenient decode of 16 digits: '{decodeChunked("ffffffffffffffff\r\nab\r\n0\r\n\r\n", 0)}'")
+    return 0
+}

@@ -41,6 +41,9 @@ from "std/time" import {
 from "std/io" import {
     AsFd
 }
+from "std/chunked" import {
+    ChunkScan, chunkMalformed, decodeChunked
+}
 from "std/json" import {
     Json
 }
@@ -465,22 +468,6 @@ pub fn findHeader(headers: &string, name: &string): Option<string> {
     return Option.None
 }
 
-// Hex value of an ASCII hex digit, or -1. The -1 is deliberate: decodeChunked
-// uses it to find the end of a chunk-size field. std/hex's equivalent is private
-// to that module, so this is a local copy rather than an import.
-fn hexDigit(c: u8): i64 {
-    if c >= '0' && c <= '9' {
-        return (c - '0') as i64
-    }
-    if c >= 'a' && c <= 'f' {
-        return (c - 'a') as i64 + 10
-    }
-    if c >= 'A' && c <= 'F' {
-        return (c - 'A') as i64 + 10
-    }
-    return -1
-}
-
 // ── HTTP parsing ──
 
 fn parseStatus(raw: &string): i32 {
@@ -524,45 +511,6 @@ fn parseBody(raw: &string): string {
     return raw.clone()
 }
 
-fn decodeChunked(rawBody: &string): string {
-    var result: string = ""
-    var i: i64 = 0
-    while i < rawBody.len {
-        // parse hex chunk size
-        var chunkSize: i64 = 0
-        while i < rawBody.len {
-            let d = hexDigit(rawBody[i])
-            if d < 0 {
-                break
-            }
-            chunkSize = chunkSize * 16 + d
-            i += 1
-        }
-        // skip any `;name=value` extension, then the \r\n that ends the size line
-        while i < rawBody.len && rawBody[i] != '\r' {
-            i += 1
-        }
-        if i + 1 < rawBody.len && rawBody[i] == '\r' {
-            i += 2
-        }
-        if chunkSize == 0 {
-            break
-        }
-        // copy chunk data
-        var j: i64 = 0
-        while j < chunkSize && i < rawBody.len {
-            result.push(rawBody[i])
-            i += 1
-            j += 1
-        }
-        // skip trailing \r\n
-        if i + 1 < rawBody.len && rawBody[i] == '\r' {
-            i += 2
-        }
-    }
-    return result
-}
-
 pub fn parseResponse(raw: string): FetchResponse {
     let status = parseStatus(raw)
     let headers = parseRawHeaders(raw)
@@ -570,7 +518,7 @@ pub fn parseResponse(raw: string): FetchResponse {
     // handle chunked transfer encoding
     let te = findHeader(headers, "Transfer-Encoding") ?? ""
     if te.startsWith("chunked") {
-        body = decodeChunked(body)
+        body = decodeChunked(body, 0)
     }
     return FetchResponse {
         status: status, headers: headers, body: body
@@ -921,68 +869,6 @@ fn headEndFrom(raw: &string, from: i64): i64 {
     return -1
 }
 
-// Index of the first CRLF at or after `from`, or -1.
-fn crlfFrom(raw: &string, from: i64): i64 {
-    var i = from
-    while i + 1 < raw.len {
-        if raw[i] == '\r' && raw[i + 1] == '\n' {
-            return i
-        }
-        i += 1
-    }
-    return -1
-}
-
-// Walk a chunked body from `*at` (the start of a chunk-size line), advancing `at` past
-// every complete chunk so the next call resumes there instead of rescanning. Returns
-// the index just past the body (last chunk and trailers included), -1 while it is
-// incomplete, -2 if the framing is malformed.
-fn chunkedEnd(raw: &string, at: &mut i64): i64 {
-    var i = at
-    while true {
-        let lineEnd = crlfFrom(raw, i)
-        if lineEnd < 0 {
-            return -1
-        }
-        var size: i64 = 0
-        var digits: i64 = 0
-        var j = i
-        while j < lineEnd && hexDigit(raw[j]) >= 0 {
-            size = size * 16 + hexDigit(raw[j])
-            digits += 1
-            j += 1
-        }
-        // a size line may carry `;ext`, nothing else; 15 hex digits is past any real body
-        if digits == 0 || digits > 15 || (j < lineEnd && raw[j] != ';' && raw[j] != ' ') {
-            return -2
-        }
-        if size == 0 {
-            // trailer fields, then the empty line that ends the message
-            var t = lineEnd + 2
-            while true {
-                let e = crlfFrom(raw, t)
-                if e < 0 {
-                    return -1
-                }
-                if e == t {
-                    return e + 2
-                }
-                t = e + 2
-            }
-        }
-        let next = lineEnd + 2 + size + 2
-        if next > raw.len {
-            return -1
-        }
-        if raw[next - 2] != '\r' || raw[next - 1] != '\n' {
-            return -2
-        }
-        i = next
-        at = next
-    }
-    return -1
-}
-
 // Does a comma-separated header value list `token` (case-insensitive)?
 fn hasToken(value: &string, token: &string): bool {
     var i: i64 = 0
@@ -1013,9 +899,9 @@ fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, g
     // SSL object, where a byte past the response would hide from the leftover check.
     var buf: [u8; 16384] = [0; 16384]
     var headEnd: i64 = -1
-    // frame end once known; -1 unknown yet, -2 chunked (see chunkAt), -3 read to EOF
+    // frame end once known; -1 unknown yet, -2 chunked (see chunks), -3 read to EOF
     var need: i64 = -1
-    var chunkAt: i64 = 0
+    var chunks = ChunkScan.new(0)
     var keepHdr = true
     var frameEnd: i64 = -1
     var capped = false
@@ -1069,7 +955,7 @@ fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, g
                 need = headEnd
             } else if hasToken(te, "chunked") {
                 need = -2
-                chunkAt = headEnd
+                chunks = ChunkScan.new(headEnd)
             } else if let Option.Some(v) = cl {
                 need = headEnd + parseLength(v)
                 if need < headEnd {
@@ -1080,12 +966,12 @@ fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, g
             }
         }
         if need == -2 {
-            let end = chunkedEnd(raw, &mut chunkAt)
+            let end = chunks.step(raw)
             if end >= 0 {
                 frameEnd = end
                 break
             }
-            if end == -2 {
+            if end == chunkMalformed {
                 need = -3
             }
         } else if need >= 0 && raw.len >= need {

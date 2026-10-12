@@ -1,0 +1,162 @@
+// std/chunked — HTTP/1.1 chunked transfer coding (RFC 9112 7.1): framing and decoding, no IO.
+//
+// One implementation for both directions: std/fetch reads chunked responses with it and
+// std/http reads chunked request bodies. It lives in its own module because std/http
+// must not import std/fetch (that would link OpenSSL into every plain server).
+
+// Hex value of an ASCII hex digit, or -1 (which ends a chunk-size field).
+fn hexDigit(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return -1
+}
+
+// Index of the first CRLF at or after `from`, or -1.
+fn crlfFrom(raw: &string, from: i64): i64 {
+    var i = from
+    while i + 1 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// What `ChunkScan.step` found.
+pub let chunkIncomplete: i64 = -1
+
+pub let chunkMalformed: i64 = -2
+
+// An incremental walk over a chunked body that is still arriving. Each `step` resumes
+// after the last complete chunk instead of rescanning from the start, so reading a body
+// in many segments stays linear.
+pub struct ChunkScan {
+    // start of the next chunk-size line not yet consumed
+    _at: i64,
+    // data bytes in the chunks wholly consumed so far
+    _done: i64,
+    // declared size of the chunk whose size line was read but whose data has not all arrived
+    _pending: i64,
+}
+
+impl ChunkScan {
+    // A scan of a chunked body that starts at offset `start` (just past the headers).
+    fn new(start: i64): ChunkScan {
+        return ChunkScan {
+            _at: start, _done: 0, _pending: 0
+        }
+    }
+
+    // Data bytes the body declares so far: every complete chunk plus the size the chunk
+    // still arriving announced. A server compares this with its body limit before the
+    // bytes arrive, so a chunk declaring a gigabyte is refused at its size line.
+    fn declared(self: &Self): i64 {
+        return self._done + self._pending
+    }
+
+    // Index just past the body (last chunk and trailers included), `chunkIncomplete`
+    // while more bytes are needed, or `chunkMalformed`.
+    fn step(self: &mut Self, raw: &string): i64 {
+        while true {
+            let lineEnd = crlfFrom(raw, self._at)
+            if lineEnd < 0 {
+                return chunkIncomplete
+            }
+            var size: i64 = 0
+            var digits: i64 = 0
+            var j = self._at
+            // stop at 15 digits, past any real body: a 16th multiply can overflow (and trap); a
+            // 16th digit then fails the check below
+            while j < lineEnd && hexDigit(raw[j]) >= 0 && digits < 15 {
+                size = size * 16 + hexDigit(raw[j])
+                digits += 1
+                j += 1
+            }
+            // a size line may carry `;ext`, nothing else; 15 hex digits is past any real body
+            if digits == 0 || digits > 15 || (j < lineEnd && raw[j] != ';' && raw[j] != ' ' && raw[j] != '\t') {
+                return chunkMalformed
+            }
+            self._pending = size
+            if size == 0 {
+                // trailer fields, then the empty line that ends the message
+                var t = lineEnd + 2
+                while true {
+                    let e = crlfFrom(raw, t)
+                    if e < 0 {
+                        return chunkIncomplete
+                    }
+                    if e == t {
+                        return e + 2
+                    }
+                    t = e + 2
+                }
+            }
+            let next = lineEnd + 2 + size + 2
+            if next > raw.len {
+                return chunkIncomplete
+            }
+            if raw[next - 2] != '\r' || raw[next - 1] != '\n' {
+                return chunkMalformed
+            }
+            self._at = next
+            self._done += size
+            self._pending = 0
+        }
+        return chunkIncomplete
+    }
+}
+
+// The data of the chunked body in `raw` from offset `from`, chunk extensions and
+// trailers dropped. Lenient: it decodes as far as the framing goes and stops at the last
+// chunk or the end of input, so a caller that must refuse bad framing checks it with
+// ChunkScan first.
+pub fn decodeChunked(raw: &string, from: i64): string {
+    var result: string = ""
+    var i: i64 = from
+    while i < raw.len {
+        var chunkSize: i64 = 0
+        var digits: i64 = 0
+        while i < raw.len {
+            let d = hexDigit(raw[i])
+            if d < 0 {
+                break
+            }
+            digits += 1
+            if digits > 15 {
+                // past any real body, and the next multiply could overflow
+                return result
+            }
+            chunkSize = chunkSize * 16 + d
+            i += 1
+        }
+        // skip any `;name=value` extension, then the \r\n that ends the size line
+        while i < raw.len && raw[i] != '\r' {
+            i += 1
+        }
+        if i + 1 < raw.len && raw[i] == '\r' {
+            i += 2
+        }
+        if chunkSize == 0 {
+            break
+        }
+        var end = i + chunkSize
+        if end > raw.len {
+            end = raw.len
+        }
+        result.pushStr(raw.substr(i, end))
+        i = end
+        // skip the \r\n after the data
+        if i + 1 < raw.len && raw[i] == '\r' {
+            i += 2
+        }
+    }
+    return result
+}
