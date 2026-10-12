@@ -1,0 +1,109 @@
+// let-else over a borrowed Option/Result binds borrows into the payload, which leave the
+// pattern by name. A struct or enum payload used to be loaded whole and stored where the
+// desugared match expected its address, and clang rejected the IR.
+enum E { A(string), B, }
+
+struct P { x: i64, s: string }
+
+enum Q { Two(i64, P), N }
+
+fn optInt(o: &Option<i64>): string {
+    let Some(v) = o else { return "none" }
+    return $"{v}"
+}
+
+fn optStr(o: &Option<string>): string {
+    let Some(v) = o else { return "none" }
+    return v.clone()
+}
+
+fn optEnum(o: &Option<E>): string {
+    let Some(v) = o else { return "none" }
+    return match v {
+        E.A(s) => s.clone()
+        _ => "B"
+    }
+}
+
+fn optStruct(o: &Option<P>): string {
+    let Some(v) = o else { return "none" }
+    return $"{v.x} {v.s}"
+}
+
+fn resInt(r: &Result<i64, string>): string {
+    let Ok(v) = r else { return "err" }
+    return $"{v}"
+}
+
+fn errStr(r: &Result<i64, string>): string {
+    let Err(e) = r else { return "ok" }
+    return e.clone()
+}
+
+fn isA(r: &Result<i64, E>): bool {
+    let Err(e) = r else { return false }
+    return match e {
+        E.A(_) => true
+        _ => false
+    }
+}
+
+fn resStruct(r: &Result<P, E>): string {
+    let Ok(v) = r else { return "err" }
+    return $"{v.x} {v.s}"
+}
+
+fn two(q: &Q): string {
+    let Q.Two(a, p) = q else { return "none" }
+    return $"{a} {p.x} {p.s}"
+}
+
+fn bump(o: &mut Option<P>) {
+    let Some(p) = o else { return }
+    p.x = p.x + 10
+}
+
+fn main(): i32 {
+    let oi: Option<i64> = Some(5)
+    print(optInt(oi))
+    let os: Option<string> = Some("hi".clone())
+    print(optStr(os))
+    let oe: Option<E> = Some(E.A("ea".clone()))
+    print(optEnum(oe))
+    let none: Option<E> = None
+    print(optEnum(none))
+    var op: Option<P> = Some(P { x: 1, s: "ps".clone() })
+    print(optStruct(op))
+    bump(&mut op)
+    print(optStruct(op))
+    let ri: Result<i64, string> = Ok(7)
+    print(resInt(ri))
+    let rs: Result<i64, string> = Err("bad".clone())
+    print(errStr(rs))
+    let r: Result<i64, E> = Err(E.A("x".clone()))
+    print(isA(r))
+    let rb: Result<i64, E> = Err(E.B)
+    print(isA(rb))
+    let rp: Result<P, E> = Ok(P { x: 3, s: "rp".clone() })
+    print(resStruct(rp))
+    let q = Q.Two(4, P { x: 5, s: "q".clone() })
+    print(two(q))
+    // the subjects are still whole after being borrowed
+    print(optStruct(op))
+    print(two(q))
+    return 0
+}
+// @expect: 5
+// @expect: hi
+// @expect: ea
+// @expect: none
+// @expect: 1 ps
+// @expect: 11 ps
+// @expect: 7
+// @expect: bad
+// @expect: true
+// @expect: false
+// @expect: 3 rp
+// @expect: 4 5 q
+// @expect: 11 ps
+// @expect: 4 5 q

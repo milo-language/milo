@@ -401,6 +401,25 @@ class LowerCtx {
         // borrowed enum, whereas lowerPattern gives the owned field type.
         const bindingType = this.c.patternBindingTypes.get(stmt.pattern)?.[0]
           ?? (hirPat.kind === "EnumPattern" ? (hirPat.bindings[0]?.type ?? { tag: "unknown" as const }) : { tag: "unknown" as const });
+        // A borrowed subject binds borrows into its payload, which cannot leave the arm
+        // as a match value: a `&T` result of a struct or enum payload was stored as a
+        // `ptr` from a loaded `T` (invalid IR). So every binding escapes the arm by name
+        // instead, the way the second and later bindings always have.
+        if (subjectIsRef && hirPat.kind === "EnumPattern") {
+          for (const b of hirPat.bindings) b.escapes = true;
+          return {
+            kind: "Match",
+            subject: this.lowerExpr(stmt.value),
+            arms: [
+              { pattern: hirPat, body: [] },
+              { pattern: { kind: "WildcardPattern" }, body: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) },
+            ],
+            enumName,
+            subjectIsRef,
+            subjectIsMut: this.c.matchSubjectMut.has(stmt.value),
+            span: stmt.span,
+          };
+        }
         const innerName = `__letelse_${binding}`;
         if (hirPat.kind === "EnumPattern" && hirPat.bindings[0]) { hirPat.bindings[0].name = innerName; hirPat.bindings[0].type = bindingType; }
         // Only the first binding leaves through the match's value; the rest keep their
