@@ -8930,13 +8930,14 @@ export class Codegen {
   // a live box whose drop ran the payload's Drop on the zeroed leftover (`drop 0`); a
   // zero is not "nothing" for a user Drop. Only a place operand has a slot to null; the
   // checker has recorded the move of that place, so nothing reads it before a reassign.
-  // A box returned by a call (`*mk()`) is owned by nobody else, so it is freed here too;
+  // A box returned by a call (`*mk()`) or built in place (`*Heap(x)`) is owned by nobody
+  // else, so it is freed here too;
   // it used to leak. Returns null for any other operand, which keeps the zeroing path.
   private genHeapMoveOut(expr: HIRExpr & { kind: "HeapDeref" }, lines: string[]): Gen | null {
     const op = expr.operand;
     if (op.type.tag !== "heap" || op.type.inner.tag === "interface") return null;
     const innerTy = this.llvmType(expr.type);
-    if (op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "InterfaceMethodCall") {
+    if (op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "InterfaceMethodCall" || op.kind === "HeapCreate") {
       const [opLines, box] = this.genExpr(op);
       lines.push(...opLines);
       const val = this.nextTemp();
