@@ -11306,6 +11306,13 @@ export class Codegen {
       const slot = `%__arrtmp.${this.scopeCounter++}.addr`;
       this.entryAllocas.push(`  ${slot} = alloca ${valTy}`);
       aLines = [...vLines, this.valStore(valTy, val, slot, this.ownValIntent(val, expr.vec.type))];
+      // An array of owned elements (`f([$"a{i}", "b"])`) leaked every element: nothing
+      // dropped the slot. The view may outlive the statement (a slice binding), so the
+      // slot is dropped at the enclosing block's exit, not after the call.
+      if (this.needsDropCg(expr.vec.type)) {
+        this.ownValToSlot(val, slot);
+        this.registerScopedTemp(aLines, slot, expr.vec.type);
+      }
       arrPtr = slot;
       arrTy = valTy;
     }

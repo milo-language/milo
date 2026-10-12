@@ -1,0 +1,36 @@
+// An array literal passed to a `&[T]` param is materialised into a frame slot and the
+// callee gets a view of it. Nothing dropped that slot, so every owned element leaked
+// (std/url's tests leaked one string array per call). The slot drops at the end of the
+// enclosing block: once per loop iteration, and after the call that borrowed it.
+pub struct Tok {
+    id: i64,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn total(a: &[Tok]): i64 {
+    var t = 0
+    for x in a {
+        t = t + x.id
+    }
+    return t
+}
+
+fn main() {
+    for i in 0..2 {
+        print("sum ", total([Tok { id: i * 10 + 1 }, Tok { id: i * 10 + 2 }]))
+    }
+    print("end")
+}
+
+// @expect: sum 3
+// @expect: drop 1
+// @expect: drop 2
+// @expect: sum 23
+// @expect: drop 11
+// @expect: drop 12
+// @expect: end
