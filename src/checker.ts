@@ -8367,6 +8367,9 @@ export class TypeChecker {
     const wasMoved = this.movedExprs.has(expr.operand);
     this.tryMoveLeaf(expr.operand);
     if (!wasMoved) this.movedExprs.delete(expr.operand);
+    // The deref itself is what moves: codegen zeroes the box only for a recorded move, so
+    // a read (`print(*h)`, a `&T` argument) leaves the payload in place.
+    this.movedExprs.add(expr);
   }
 
   // Moving out of a global used to compile and zero the global's slot, so the next

@@ -1,0 +1,63 @@
+// `*h` read in place (print, a `&T` argument, a comparison) is a view: the box keeps its
+// payload. It used to load the payload AND zero the box as if it were a move, so a second
+// `print(*h)` printed an empty line and the loaded copy was never dropped (a leak per
+// read). A real move (`let x = *h`, a by-value argument) still empties the box.
+pub struct Tok {
+    id: i32,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn show(t: &Tok) {
+    print("show ", t.id)
+}
+
+fn take(t: Tok): i32 {
+    return t.id
+}
+
+fn reads() {
+    let s = Heap("hel" + "lo")
+    print(*s)
+    print(*s)
+    let n = (*s).len()
+    print(n)
+    let t = Heap(Tok { id: 1 })
+    show(*t)
+    show(*t)
+    print("reads done")
+}
+
+fn takeStr(s: string): i64 {
+    return s.len()
+}
+
+fn moves() {
+    let a = Heap("mov" + "ed")
+    let x = *a
+    print(x)
+    let b = Heap("tak" + "en")
+    let n = takeStr(*b)
+    print(n)
+    print("moves done")
+}
+
+fn main() {
+    reads()
+    moves()
+}
+
+// @expect: hello
+// @expect: hello
+// @expect: 5
+// @expect: show 1
+// @expect: show 1
+// @expect: reads done
+// @expect: drop 1
+// @expect: moved
+// @expect: 5
+// @expect: moves done

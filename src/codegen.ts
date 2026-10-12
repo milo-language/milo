@@ -6414,9 +6414,9 @@ export class Codegen {
         const innerTy = this.llvmType(expr.type);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${innerTy}, ptr ${ptrVal}`);
-        // Zero the heap slot after loading to prevent double-free: the loaded
-        // value now owns any inner heap pointers, so the source must not drop them.
-        if (expr.kind === "HeapDeref" && this.needsDropCg(expr.type)) {
+        // A moving deref zeroes the heap slot after loading to prevent a double free: the
+        // loaded value now owns any inner heap pointers. A read leaves the box intact.
+        if (expr.kind === "HeapDeref" && expr.isMove && this.needsDropCg(expr.type)) {
           lines.push(this.zeroStore(innerTy, ptrVal));
         }
         return [lines, val, innerTy];
@@ -16164,7 +16164,7 @@ export class Codegen {
   // source (alive flag cleared) or zeroed it. Any other read is a view.
   private ownDeclareRead(lines: string[], val: string, expr: HIRExpr) {
     if (this.ownVal.has(val) || this.ownView.has(val)) return;
-    const moving = expr.kind === "HeapDeref" ||
+    const moving = (expr.kind === "HeapDeref" && !!expr.isMove) ||
       ((expr.kind === "Ident" || expr.kind === "FieldAccess" || expr.kind === "IndexAccess") && !!expr.isMove);
     if (expr.kind === "Ident") {
       const local = this.locals.get(expr.name);

@@ -51,7 +51,9 @@ export type HIRExpr =
   | { kind: "EnumTryFrom"; enumName: string; optionEnumName: string; value: HIRExpr; discriminants: number[]; type: TypeKind; span?: Span }
   | { kind: "IsCheck"; operand: HIRExpr; tag: number; type: TypeKind; span?: Span }
   | { kind: "HeapCreate"; value: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HeapDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
+  // isMove: the checker moved the payload out (`let x = *h`), so codegen zeroes the box.
+  // Otherwise the deref is a read (`print(*h)`) and the box keeps its payload.
+  | { kind: "HeapDeref"; operand: HIRExpr; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "MatchExpr"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; subjectIsMut?: boolean; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }

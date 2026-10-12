@@ -3,10 +3,6 @@
 # finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
 # line. Each group names its repro and how it was confirmed.
 
-# `print(*h)` on a Heap<string> moves the payload out of the box (zeroing it: a second
-# `print(*h)` prints an empty line) and never drops it. `leaks`: one leak per call.
-heapBasic.milo main leak-ret move:HeapDeref L9
-
 # A Result/Option combinator result (map, mapErr, orElse, ...) is not an owned temporary
 # (isOwnedTempExpr), so a consumer that does not take its payload (`.unwrapOr`, a match arm
 # that binds nothing) leaks the payload it forwarded. `e.map(f).unwrapOr(0)` with a heap Err:

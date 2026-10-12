@@ -749,7 +749,7 @@ class LowerCtx {
         if (expr.op === "*") {
           const operandType = this.c.exprTypes.get(expr.operand);
           if (operandType?.tag === "ptr") return { kind: "PtrDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
-          return { kind: "HeapDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
+          return { kind: "HeapDeref", operand: this.lowerExpr(expr.operand), type, isMove: this.c.movedExprs.has(expr), span: expr.span };
         }
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
@@ -1575,7 +1575,7 @@ class LowerCtx {
               const inner = ht && ht.tag === "heap" ? ht.inner
                 : ht && ht.tag === "ref" && ht.inner.tag === "heap" ? ht.inner.inner
                 : lowered.type;
-              lowered = { kind: "HeapDeref", operand: lowered, type: inner, span: a.span };
+              lowered = { kind: "HeapDeref", operand: lowered, type: inner, isMove: !borrowed, span: a.span };
             }
             return {
               expr: lowered,
