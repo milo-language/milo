@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync 
 import { execSync, spawnSync } from "child_process";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
-import { parseExpected, parseExpectedError, parseExpectedErrorAt, parseExpectedNotes, parseExpectedRuntimeError, parseKnownRed } from "./annotations";
+import { parseExpected, parseExpectedError, parseExpectedErrorAt, parseExpectedNotes, parseExpectedRuntimeError, parseKnownRed, skipsOs } from "./annotations";
 import { guardedRun, type RunResult } from "../scripts/guard";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
@@ -101,9 +101,7 @@ afterAll(() => {
 // why in a comment beside it: the Windows set is a map of the remaining port
 // work (docs/roadmap.md), and a bare skip would hide it.
 function skippedHere(dir: string, file: string): boolean {
-  const m = readFileSync(join(dir, file), "utf-8").match(/\/\/\s*@skip-os:\s*(.+)/);
-  if (!m) return false;
-  return m[1].split(",").map(s => s.trim()).includes(process.platform);
+  return skipsOs(readFileSync(join(dir, file), "utf-8"));
 }
 
 // `bun test -t <pat>` is consumed by the runner and scrubbed from `process.argv` before a

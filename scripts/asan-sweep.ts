@@ -20,7 +20,7 @@ import { readdirSync, readFileSync, mkdtempSync, rmSync, existsSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseKnownRed } from "../tests/annotations";
+import { parseKnownRed, skipsOs } from "../tests/annotations";
 
 const ROOT = join(import.meta.dir, "..");
 const FIXTURES = join(ROOT, "tests", "fixtures");
@@ -39,7 +39,7 @@ function fixtureEntries(): Entry[] {
     .filter(f => f.endsWith(".milo"))
     // Same contract as the fixture lane: a fixture that does not run on this OS is not a
     // memory-safety signal here either.
-    .filter(f => !readFileSync(join(FIXTURES, f), "utf8").includes("@skip-os"))
+    .filter(f => !skipsOs(readFileSync(join(FIXTURES, f), "utf8")))
     .map(f => ({ name: f.replace(/\.milo$/, ""), src: join(FIXTURES, f), args: [] }));
 }
 

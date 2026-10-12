@@ -71,3 +71,13 @@ export function parseKnownRed(text: string): Map<string, string> {
   }
   return out;
 }
+
+// `// @skip-os: <platform>[, <platform>...]` (process.platform values: darwin, linux,
+// win32): true when the fixture neither builds nor runs on `platform`. Shared with
+// scripts/asan-sweep.ts, which once skipped every fixture carrying the annotation for ANY
+// OS (all the socket servers, because of win32) and so sanitized them nowhere.
+export function skipsOs(source: string, platform: string = process.platform): boolean {
+  const m = source.match(/\/\/\s*@skip-os:\s*(.+)/);
+  if (!m) return false;
+  return m[1]!.split(",").map(s => s.trim()).includes(platform);
+}
