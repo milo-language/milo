@@ -12,6 +12,7 @@ import { resolve, dirname, basename, relative, isAbsolute } from "path";
 import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
 import { display } from "./mangle";
+import { OWN_END_KINDS, type OwnEndKind, verifyOwnLedger, stripOwnLedger, formatOwnFinding, type OwnFinding } from "./own-ledger";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
@@ -287,6 +288,21 @@ export class Codegen {
   // elements before the cursor were moved into the loop binding, so dropping it destroys
   // only [cursor, len) and then frees the buffer.
   private droppableLocals: DroppableLocal[] = [];
+  // Ownership ledger (src/own-ledger.ts), off unless MILO_OWN_LEDGER=1. Every marker
+  // helper below is a no-op when it is off, which is what keeps a normal build's IR
+  // byte-identical. IDs are module-unique; the three maps are per function (SSA names and
+  // slot names repeat across functions) and are swapped out around nested closure bodies.
+  // `ownVal`: SSA value -> the ID of the owned value it holds. `ownSlot`: slot address ->
+  // the ID of the owned value stored there. `ownFlag`: a droppable local's alive flag ->
+  // its slot's ID (one ID per slot, re-made each time the slot is re-armed).
+  private ownOn = process.env.MILO_OWN_LEDGER === "1";
+  private ownNextId = 1;
+  private ownVal = new Map<string, number>();
+  private ownSlot = new Map<string, number>();
+  private ownFlag = new Map<string, number>();
+  private ownSrcLine = 0;
+  private ownInGuard = false;
+  public ownFindings: OwnFinding[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
@@ -1368,27 +1384,42 @@ export class Codegen {
   // (with the same move-out bookkeeping as the SSA paths in genExpr), and
   // struct literals build field-by-field in place. Any shape not handled falls
   // back to the plain genExpr+store path — correct, just slower to compile.
-  private genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr): void {
+  // `into` says what `destPtr` is, for the ownership ledger: "slot" a frame-owned slot
+  // (whoever owns the slot now holds the value's ID), "store" a field/element of some
+  // aggregate (the value leaves this frame's books), "return" the sret out-pointer.
+  private genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr, into: "slot" | "store" | "return" = "slot"): void {
+    if (!this.ownOn) { this.genStoreIntoRaw(lines, destPtr, ty, expr); return; }
+    const before = this.ownSlot.get(destPtr);
+    const v = this.genStoreIntoRaw(lines, destPtr, ty, expr);
+    let id = v ? this.ownVal.get(v) : undefined;
+    if (!id) { const after = this.ownSlot.get(destPtr); if (after !== before) id = after; }
+    if (!id) return;
+    if (into === "slot") this.ownSlot.set(destPtr, id);
+    else { if (this.ownSlot.get(destPtr) === id) this.ownSlot.delete(destPtr); this.ownEnd(lines, id, into === "store" ? "STORE" : "RETURN"); }
+  }
+
+  // Returns the SSA value it stored, or null when the value was built or copied in place.
+  private genStoreIntoRaw(lines: string[], destPtr: string, ty: string, expr: HIRExpr): string | null {
     // A C function-pointer field is one word, and a bare Milo function name is that
     // word: emit `@name` rather than genExpr's { code, env } pair, the same coercion
     // genCall already does for an extern fn's fn-typed parameter. The checker has
     // already refused every value that would need the env half.
     if (ty === "ptr" && expr.kind === "Ident" && expr.type.tag === "fn" && this.fnSigs.has(expr.name)) {
       lines.push(`  store ptr @${expr.name}, ptr ${destPtr}`);
-      return;
+      return null;
     }
     if (this.isBigAgg(ty)) {
       if (expr.kind === "Call" && this.sretFns.has(expr.func)) {
         const [cl] = this.genExpr(expr, destPtr);
         lines.push(...cl);
-        return;
+        return null;
       }
       // A big-agg replace writes its moved-out old value straight into destPtr, same as
       // an sret call — routed here so the old value never becomes an SSA aggregate.
       if (expr.kind === "MemReplace") {
         const [cl] = this.genExpr(expr, destPtr);
         lines.push(...cl);
-        return;
+        return null;
       }
       if (expr.kind === "StructLit" && this.structLayouts.has(expr.name)) {
         const layout = must(this.structLayouts, expr.name, "struct layouts");
@@ -1397,10 +1428,11 @@ export class Codegen {
           const fieldTy = layout.fields[idx].type;
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = getelementptr %${expr.name}, ptr ${destPtr}, i32 0, i32 ${idx}`);
-          this.genStoreInto(lines, ptr, fieldTy, f.value);
+          this.genStoreInto(lines, ptr, fieldTy, f.value, "store");
         }
         this.genStructUpdateBase(lines, destPtr, expr);
-        return;
+        if (this.ownOn && this.needsDropCg(expr.type)) this.ownSlot.set(destPtr, this.ownMake(lines, "StructLit"));
+        return null;
       }
       if (expr.kind === "Ident" || expr.kind === "FieldAccess" ||
           (expr.kind === "IndexAccess" && !(expr.isMove && this.needsDropCg(expr.type)))) {
@@ -1417,10 +1449,10 @@ export class Codegen {
               lines.push(this.zeroStore(ty, srcPtr));
               if (expr.kind === "Ident") {
                 const dl = this.droppableLocals.find(d => d.addr === srcPtr);
-                if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
+                if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
               }
             }
-            return;
+            return null;
           }
         }
       }
@@ -1428,6 +1460,7 @@ export class Codegen {
     const [el, v] = this.genExpr(expr);
     lines.push(...el);
     lines.push(this.valStore(ty, v, destPtr));
+    return v;
   }
 
   // Structural equality of two lvalue expressions, restricted to Ident and
@@ -2602,6 +2635,9 @@ export class Codegen {
       for (const line of body) this.emit(line);
     }
 
+    // Before any pass that rewrites call lines (debug info, sanitize, noalias): the markers
+    // are verified, then stripped, so none of those passes ever sees one.
+    this.ownFinish();
     for (const [key, id] of this.rangeMetaIds) this.emit(`!${id} = !{${key}}`);
     if (this.noundefMetaId !== null) this.emit(`!${this.noundefMetaId} = !{}`);
     if (this.emitDebug) this.applyDebugInfo();
@@ -3045,6 +3081,8 @@ export class Codegen {
     this.labelCounter = 0;
     this.locals.clear();
     this.droppableLocals = [];
+    this.ownVal.clear(); this.ownSlot.clear(); this.ownFlag.clear();
+    this.ownSrcLine = fn.line ?? 0;
     this.entryAllocas = [];
     this.emittedAddrs.clear();
     this.currentFnName = fn.name;
@@ -3122,7 +3160,7 @@ export class Codegen {
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
           lines.push(`  ${aliveFlag} = alloca i1`);
-          lines.push(`  store i1 1, ptr ${aliveFlag}`);
+          this.ownSetAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
       }
@@ -3234,6 +3272,7 @@ export class Codegen {
   }
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
+    if (this.ownOn && stmt.span) this.ownSrcLine = stmt.span.line;
     const [lines, terminated] = this.genStmtRaw(stmt);
     // Precise per-stmt line tagging. Nested stmts (via recursive genStmt) mark first;
     // skip-if-marked leaves only this stmt's own lines for its span.
@@ -3306,13 +3345,13 @@ export class Codegen {
             }
           }
         }
-        if (bigTmp) this.emitMemcpy(lines, addrName, bigTmp, declTy);
-        else if (!bigAgg) lines.push(this.valStore(declTy, val, addrName));
+        if (bigTmp) { this.emitMemcpy(lines, addrName, bigTmp, declTy); this.ownMoveSlot(bigTmp, addrName); }
+        else if (!bigAgg) { lines.push(this.valStore(declTy, val, addrName)); this.ownValToSlot(val, addrName); }
         // Describe the value actually stored: for `&T` locals that's the inner value.
         this.dbgDeclare(lines, stmt.name, addrName, storedTypeKind, stmt.span?.line ?? 0, 0);
         // Locals that borrow from a ref are a shallow copy — data owned elsewhere.
         if (declDroppable) {
-          lines.push(`  store i1 1, ptr ${declAliveFlag}`);
+          this.ownSetAlive(lines, declAliveFlag, addrName, `let:${stmt.name}`);
           this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag, addr: addrName });
         }
         return [lines, false];
@@ -3359,6 +3398,7 @@ export class Codegen {
             this.emitDropValue(lines, tPtr, stmt.target.type);
           }
           this.emitMemcpy(lines, tPtr, tmp, assignLlTy);
+          this.ownAssigned(lines, tPtr, this.ownOn ? this.ownSlot.get(tmp) : undefined);
           this.rearmAssignedLocal(lines, stmt.target);
           return [lines, false];
         }
@@ -3377,6 +3417,7 @@ export class Codegen {
           this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
         lines.push(this.valStore(valTy, val, targetPtr));
+        this.ownAssigned(lines, targetPtr, this.ownOn ? this.ownVal.get(val) : undefined);
         this.rearmAssignedLocal(lines, stmt.target);
         return [lines, false];
       }
@@ -3394,7 +3435,7 @@ export class Codegen {
         }
         if (this.currentFnSret) {
           const retLl = this.llvmType(stmt.retType);
-          this.genStoreInto(lines, "%__sret.out", retLl, stmt.value);
+          this.genStoreInto(lines, "%__sret.out", retLl, stmt.value, "return");
           if (this.currentEnsures.length > 0) {
             this.emitMemcpy(lines, "%__contract_result.addr", "%__sret.out", retLl);
             const savedResult = this.locals.get("result");
@@ -3423,6 +3464,7 @@ export class Codegen {
           this.emitEnsuresChecks(lines);
         }
         this.emitDropGlue(lines);
+        this.ownEndVal(lines, val, "RETURN");
         if (valTy === "void") lines.push("  ret void");
         else lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
@@ -4430,7 +4472,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    this.ownSetAlive(lines, aliveFlag, addr, "forin-tmp");
     this.droppableLocals.push({ name, typeKind, aliveFlag, addr });
     return name;
   }
@@ -4456,7 +4498,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    this.ownSetAlive(lines, aliveFlag, addr, "consumed-iterable");
     const entry: DroppableLocal = { name: `__forin_consumed.${this.scopeCounter++}`, typeKind: iterable.type, aliveFlag, addr, consumeCursor: cursor };
     this.droppableLocals.push(entry);
     return { lines, addr, iterTy, entry };
@@ -4473,7 +4515,8 @@ export class Codegen {
       lines.push(`  ${v} = load ${binding.ty}, ptr ${elemPtr}`);
       lines.push(`  store ${binding.ty} ${v}, ptr ${binding.addr}`);
     }
-    if (binding.alive) lines.push(`  store i1 1, ptr ${binding.alive}`);
+    this.ownMoveSlot(elemPtr, binding.addr);
+    if (binding.alive) this.ownSetAlive(lines, binding.alive, binding.addr, "loop-binding");
     if (entry?.consumeCursor) {
       const next = this.nextTemp();
       lines.push(`  ${next} = add i64 ${idx64}, 1`);
@@ -4610,6 +4653,7 @@ export class Codegen {
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
       lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+      if (consumed && this.ownOn && this.needsDropCg(elemType)) this.ownSlot.set(elemPtr, this.ownMake(lines, "element-moved-out"));
       if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, alive: bindAlive }, consumed.entry);
       else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
@@ -4757,6 +4801,7 @@ export class Codegen {
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
       lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i64 ${idx}`);
+      if (consumed && this.ownOn && this.needsDropCg(elemTypeKind3)) this.ownSlot.set(elemPtr, this.ownMake(lines, "element-moved-out"));
       if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, alive: bindAlive }, consumed.entry);
       else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
@@ -5175,6 +5220,8 @@ export class Codegen {
     lines.push(`${bodyLabel}:`);
     // extract payload from Some variant
     const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr, "Some");
+    // next()'s Some payload is a fresh owned value in this frame; the binding takes it.
+    if (this.ownOn && this.needsDropCg(stmt.varType)) this.ownSlot.set(payloadPtr, this.ownMake(lines, "next-payload"));
     this.emitConsumeElement(lines, payloadPtr, "", { addr: varAddr, ty: elemTy, alive: bindAlive }, null);
 
     this.emitLoopInvariants(lines, stmt.invariants);
@@ -5227,7 +5274,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    this.ownSetAlive(lines, aliveFlag, addr, "match-subject");
     this.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
     const local = { name, typeKind: stmt.subject.type, aliveFlag, addr };
     this.droppableLocals.push(local);
@@ -5271,7 +5318,7 @@ export class Codegen {
         if (vv !== "void" && last.expr.kind === "Ident") {
           const yieldedAddr = this.localAddr((last.expr as { name: string }).name);
           const yielded = this.droppableLocals.find(d => d.addr === yieldedAddr);
-          if (yielded) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
+          if (yielded) this.ownClearAlive(lines, yielded.aliveFlag, "MOVE");
         }
       } else {
         const [sl, t] = this.genStmt(last);
@@ -5551,6 +5598,7 @@ export class Codegen {
   ) {
     if (pattern.bindings.length === 0) return;
 
+    let subjectEnded = false;
     const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
       // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
       // shares one disambiguation namespace with `let`/for-loop allocas. Two
@@ -5583,8 +5631,12 @@ export class Codegen {
         // i32 }` in std/http that is `close(0)` — closing stdin — on a socket that was
         // already moved out. Cleared HERE, inside the consuming arm, because an arm
         // that binds nothing leaves the subject intact and must still drop it.
+        // For the ledger the subject ends once, at its first moved-out field: the later
+        // fields' clears re-store the same 0 and are not further moves of the subject.
         const subjLocal = this.droppableLocals.find(d => d.addr === subjAddr);
-        if (subjLocal) lines.push(`  store i1 0, ptr ${subjLocal.aliveFlag}`);
+        if (subjLocal && !subjectEnded) this.ownClearAlive(lines, subjLocal.aliveFlag, "MOVE");
+        else if (subjLocal) lines.push(`  store i1 0, ptr ${subjLocal.aliveFlag}`);
+        subjectEnded = true;
       }
       const addr = `%${name}.${uid}.addr`;
       lines.push(`  ${addr} = alloca ${ty}`);
@@ -5598,7 +5650,7 @@ export class Codegen {
         const aliveFlag = `${addr}.alive`;
         this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
         this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-        lines.push(`  store i1 1, ptr ${aliveFlag}`);
+        this.ownSetAlive(lines, aliveFlag, addr, `match-bind:${name}`);
         this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
       }
     };
@@ -6081,6 +6133,20 @@ export class Codegen {
   // sret-lowered fn (set by genStoreInto); the callee then writes straight
   // into that pointer and no aggregate SSA value is materialized.
   public genExpr(expr: HIRExpr, sretDest?: string): Gen {
+    const r = this.genExprRaw(expr, sretDest);
+    if (this.ownOn && this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
+      // The producers are exactly isOwnedTempExpr's list: the expressions whose value
+      // nobody else owns. An sret result lives at its destination instead of a register.
+      if (sretDest && r[1] === "undef") {
+        this.ownSlot.set(sretDest, this.ownMake(r[0], expr.kind));
+      } else {
+        this.ownMakeVal(r[0], r[1], expr.kind);
+      }
+    }
+    return r;
+  }
+
+  private genExprRaw(expr: HIRExpr, sretDest?: string): Gen {
     const lines: string[] = [];
     const lt = this.llvmType(expr.type);
 
@@ -6270,6 +6336,7 @@ export class Codegen {
         const ptr = this.nextTemp();
         lines.push(`  ${ptr} = call ptr @malloc(i64 ${size})`);
         lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
+        this.ownEndVal(lines, valVal, "STORE");
         return [lines, ptr, "ptr"];
       }
       case "HeapDeref":
@@ -6603,7 +6670,7 @@ export class Codegen {
     if (expr.isMove && this.needsDropCg(local.typeKind)) {
       lines.push(this.zeroStore(local.type, addr));
       const dl = this.droppableLocals.find(d => d.addr === addr);
-      if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
+      if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
       // Moving a capture out of a `move` closure: the environment still owns the other
       // captures, so clear this one's flag rather than the whole env's.
       const capFlag = this.captureFlagByAddr.get(addr);
@@ -6807,6 +6874,7 @@ export class Codegen {
           argVals.push({ val: fnPtr, type: "ptr" });
         } else {
           argVals.push({ val: av, type: at });
+          this.ownEndVal(lines, av, "ARG");
           // The caller owns a `move` closure's heap environment right up to the call and
           // then stops dropping it (an owning fn type is not Copy, so passing it is a
           // move), while the callee's parameter is declared non-owning and never picks the
@@ -6870,7 +6938,7 @@ export class Codegen {
       const fieldTy = layout.fields[idx].type;
       const ptr = this.nextTemp();
       lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
-      this.genStoreInto(lines, ptr, fieldTy, f.value);
+      this.genStoreInto(lines, ptr, fieldTy, f.value, "store");
     }
     this.genStructUpdateBase(lines, alloca, expr);
     const val = this.nextTemp();
@@ -6899,9 +6967,16 @@ export class Codegen {
     } else {
       this.genStoreInto(lines, tmp, structTy, base);
     }
+    // Ledger: the scratch copy of the base owns a value (a temporary's ID, or a fresh one
+    // for a moved local), which this splits into one ID per owning field. Each field then
+    // has to end exactly once: dropped when listed, stored into the literal when not.
+    const splitBase = this.ownOn && base.type.tag !== "ref" && this.needsDropCg(base.type);
+    if (splitBase) this.ownEnd(lines, this.ownSlot.get(tmp) ?? this.ownMake(lines, "update-base"), "MOVE");
     layout.fields.forEach((lf, idx) => {
       const src = this.nextTemp();
       lines.push(`  ${src} = getelementptr ${structTy}, ptr ${tmp}, i32 0, i32 ${idx}`);
+      const fieldId = splitBase && this.needsDropCg(lf.typeKind) ? this.ownMake(lines, `update-base-field:${lf.name}`) : 0;
+      if (fieldId) this.ownSlot.set(src, fieldId);
       if (expr.fields.some(f => f.name === lf.name)) {
         if (this.needsDropCg(lf.typeKind)) this.emitDropValue(lines, src, lf.typeKind);
         return;
@@ -6915,6 +6990,7 @@ export class Codegen {
         lines.push(`  ${v} = load ${lf.type}, ptr ${src}`);
         lines.push(this.valStore(lf.type, v, dst));
       }
+      this.ownEnd(lines, fieldId, "STORE");
     });
   }
 
@@ -6960,6 +7036,7 @@ export class Codegen {
         const pi = this.nextTemp();
         lines.push(`  ${pi} = getelementptr ${vecElemTy}, ptr ${buf}, i64 ${i}`);
         lines.push(`  store ${vecElemTy} ${ev}, ptr ${pi}`);
+        this.ownEndVal(lines, ev, "STORE");
       }
       const v0 = this.nextTemp();
       lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
@@ -6979,12 +7056,14 @@ export class Codegen {
     const ptr0 = this.nextTemp();
     lines.push(`  ${ptr0} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 0`);
     lines.push(`  store ${elemTy} ${firstVal}, ptr ${ptr0}`);
+    this.ownEndVal(lines, firstVal, "STORE");
     for (let i = 1; i < expr.elements.length; i++) {
       const [el, ev] = this.genExpr(expr.elements[i]);
       lines.push(...el);
       const pi = this.nextTemp();
       lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
       lines.push(`  store ${elemTy} ${ev}, ptr ${pi}`);
+      this.ownEndVal(lines, ev, "STORE");
     }
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
@@ -7093,6 +7172,7 @@ export class Codegen {
       lines.push(...argLines);
       const fieldPtr = this.enumFieldPtr(lines, enumTy, alloca, variant, i);
       lines.push(`  store ${argTy} ${argVal}, ptr ${fieldPtr}`);
+      this.ownEndVal(lines, argVal, "STORE");
     }
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
@@ -7109,13 +7189,13 @@ export class Codegen {
       let dest = sretDest;
       if (!dest) { dest = this.nextTemp(); this.entryAllocas.push(`  ${dest} = alloca ${placeTy}`); }
       this.emitMemcpy(lines, dest, placePtr, placeTy);
-      this.genStoreInto(lines, placePtr, placeTy, expr.value);   // store new; does NOT drop old
+      this.genStoreInto(lines, placePtr, placeTy, expr.value, "store");   // store new; does NOT drop old
       if (!sretDest && this.needsDropCg(expr.type)) this.emitDropValue(lines, dest, expr.type);
       return [lines, dest, placeTy];
     }
     const old = this.nextTemp();
     lines.push(`  ${old} = load ${placeTy}, ptr ${placePtr}`);   // move old out
-    this.genStoreInto(lines, placePtr, placeTy, expr.value);     // store new; old is not dropped
+    this.genStoreInto(lines, placePtr, placeTy, expr.value, "store");     // store new; old is not dropped
     return [lines, old, placeTy];
   }
 
@@ -7184,7 +7264,7 @@ export class Codegen {
       if (ptr !== "null") {
         lines.push(this.zeroStore(this.llvmType(v.type), ptr));
         const dl = this.droppableLocals.find(d => d.addr === ptr);
-        if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
+        if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
         return [lines, "", "void"];
       }
     }
@@ -7373,6 +7453,7 @@ export class Codegen {
     const savedCapFlags = this.captureFlagByAddr;
     this.captureFlagByAddr = new Map();
     const savedDroppable = this.droppableLocals;
+    const ownRestore = this.ownEnterFn();
     const savedLoopHeader = this.loopHeader;
     const savedLoopExit = this.loopExit;
     const savedFnSret = this.currentFnSret;
@@ -7517,7 +7598,7 @@ export class Codegen {
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
           closureBody.push(`  ${aliveFlag} = alloca i1`);
-          closureBody.push(`  store i1 1, ptr ${aliveFlag}`);
+          this.ownSetAlive(closureBody, aliveFlag, `%${p.name}.addr`, "closure-param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
       }
@@ -7552,6 +7633,7 @@ export class Codegen {
     this.locals = savedLocals;
     this.captureFlagByAddr = savedCapFlags;
     this.droppableLocals = savedDroppable;
+    ownRestore();
     this.entryAllocas = savedEntryAllocas;
     this.emittedAddrs = savedEmittedAddrs;
     this.loopHeader = savedLoopHeader;
@@ -7627,7 +7709,7 @@ export class Codegen {
             if (this.needsDropCg(cap.type)) {
               lines.push(this.zeroStore(capTy, capAddr));
               const dl = this.droppableLocals.find(d => d.addr === capAddr);
-              if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
+              if (dl) this.ownClearAlive(lines, dl.aliveFlag, "CAPTURE");
               // The source may itself be a capture of the closure we are emitting inside
               // (a nested `move` closure re-capturing the outer one's value). The outer
               // environment has just handed the value over, so clear its flag too, or
@@ -7676,6 +7758,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
+        this.ownEndVal(lines, av, "ARG");
       }
     }
     const cArgsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -7722,6 +7805,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
+        this.ownEndVal(lines, av, "ARG");
         // Same ownership hand-off as a direct call's closure argument (see genCall).
         if (this.ownsClosureEnv(arg.expr) && at === "{ ptr, ptr }"
             && !this.indirectParamEscapes(expr.callee.type, i)) {
@@ -7943,6 +8027,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
+        this.ownEndVal(lines, av, "ARG");
       }
     }
     this.emitAliasGuards(lines, refPtrs, expr.span);
@@ -8023,6 +8108,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
+    this.ownEndVal(lines, ov, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -8076,6 +8162,7 @@ export class Codegen {
     // operand was already zeroed and marked dead by the move machinery, so returning its
     // payload here cannot double-free.
     lines.push(`${errLabel}:`);
+    this.ownEndVal(lines, ov, "RETURN");
     this.emitDropGlue(lines);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
     if (retEnumName === expr.enumName && !expr.fromConversion && !expr.boxConversion) {
@@ -8160,6 +8247,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
+    this.ownEndVal(lines, ov, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -8201,6 +8289,7 @@ export class Codegen {
 
     // some branch — extract payload and zero the source to prevent double-free
     lines.push(`${someLabel}:`);
+    this.ownEndVal(lines, ov, "MOVE");
     const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
@@ -8218,6 +8307,7 @@ export class Codegen {
     // this branch runs when the default is taken, so the Some path leaves the
     // default untouched and its normal drop still fires there.
     lines.push(`${noneLabel}:`);
+    this.ownEndVal(lines, ov, "MOVE");
     const [dl, dv] = this.genExpr(expr.default);
     lines.push(...dl);
     if (this.needsDropCg(expr.type) && expr.default.kind === "Ident") {
@@ -8225,6 +8315,7 @@ export class Codegen {
       if (dstAddr) lines.push(`  store ${resultTy} zeroinitializer, ptr ${dstAddr}`);
     }
     lines.push(`  store ${resultTy} ${dv}, ptr ${resultAddr}`);
+    this.ownEndVal(lines, dv, "MOVE");
     lines.push(`  br label %${doneLabel}`);
 
     lines.push(`${doneLabel}:`);
@@ -8703,6 +8794,7 @@ export class Codegen {
     lines.push(`  ${tmp} = alloca ${et}`);
     lines.push(`  store ${et} ${ev}, ptr ${tmp}`);
     if (this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
+      this.ownValToSlot(ev, tmp);
       this.argTempDrops.push({ addr: tmp, type: expr.type });
     }
     return [lines, tmp];
@@ -8788,6 +8880,7 @@ export class Codegen {
     const elemPtr = this.nextTemp();
     lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${curLen}`);
     lines.push(`  store ${valTy} ${valVal}, ptr ${elemPtr}`);
+    this.ownEndVal(lines, valVal, "STORE");
     const newLen = this.nextTemp();
     lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
@@ -14227,6 +14320,7 @@ export class Codegen {
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
+    const ownRestore = this.ownEnterFn();
     this.labelCounter = 0;
 
     const body: string[] = [];
@@ -14279,6 +14373,7 @@ export class Codegen {
     this.hoistAllocas(body, 2);
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
+    ownRestore();
     this.labelCounter = savedLabel;
   }
 
@@ -14610,10 +14705,18 @@ export class Codegen {
     const tmpAddr = `%__tmpdrop.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${tmpAddr} = alloca ${llTy}`);
     lines.push(this.valStore(llTy, val, tmpAddr));
+    this.ownValToSlot(val, tmpAddr);
     this.emitDropValue(lines, tmpAddr, expr.type);
   }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
+    // A guarded drop ends its slot's ID itself. Any other drop of a droppable local's slot
+    // (an assignment's overwrite) is unguarded and relies on a moved-out slot having been
+    // zeroed, so it ends tolerantly (DROPZ): it may legitimately meet an ended ID.
+    if (this.ownOn && !this.ownInGuard) {
+      const id = this.ownSlot.get(allocaPtr);
+      if (id) this.ownEnd(lines, id, this.ownFlagIds.has(id) ? "DROPZ" : "DROP");
+    }
     // An owning closure is `{ ptr fn, ptr env }`, and the drop glue lives in the FIRST
     // word of the environment rather than in a third word of the pair. That choice is
     // what keeps a closure two words wide, so nothing that passes one around — call
@@ -14851,6 +14954,7 @@ export class Codegen {
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
+    const ownRestore = this.ownEnterFn();
     this.labelCounter = 0;
 
     const body: string[] = [];
@@ -14893,6 +14997,7 @@ export class Codegen {
 
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
+    ownRestore();
     this.labelCounter = savedLabel;
   }
 
@@ -14908,6 +15013,7 @@ export class Codegen {
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
+    const ownRestore = this.ownEnterFn();
     this.labelCounter = 0;
 
     const body: string[] = [];
@@ -14928,6 +15034,7 @@ export class Codegen {
     this.hoistAllocas(body, 2); // see ensureEnumCloneHelper
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
+    ownRestore();
     this.labelCounter = savedLabel;
   }
 
@@ -14940,6 +15047,7 @@ export class Codegen {
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
+    const ownRestore = this.ownEnterFn();
     this.labelCounter = 0;
 
     const body: string[] = [];
@@ -15012,6 +15120,7 @@ export class Codegen {
 
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
+    ownRestore();
     this.labelCounter = savedLabel;
   }
 
@@ -15257,6 +15366,7 @@ export class Codegen {
     const addr = this.nextTemp();
     lines.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
+    this.ownValToSlot(vv, addr);
     const tag = this.loadEnumTag(lines, enumTy, addr);
     const isSome = this.nextTemp();
     lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
@@ -15791,7 +15901,7 @@ export class Codegen {
     if (!local || local.isRef) return;
     const addr = this.localAddr(target.name);
     const dl = this.droppableLocals.find(d => d.addr === addr);
-    if (dl) lines.push(`  store i1 1, ptr ${dl.aliveFlag}`);
+    if (dl) this.ownSetAlive(lines, dl.aliveFlag, dl.addr, "reassign");
     const capFlag = this.captureFlagByAddr.get(addr);
     if (capFlag) lines.push(`  store i1 1, ptr ${capFlag}`);
   }
@@ -15801,10 +15911,16 @@ export class Codegen {
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
     const dropLabel = this.nextLabel("drop.alive");
     const skipLabel = this.nextLabel("drop.skip");
+    const ownId = this.ownOn ? this.ownFlagId(local.aliveFlag) : 0;
+    if (ownId) lines.push(`  call void @__milo_own_guard(i64 ${ownId}, i1 ${check})`);
     lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
     lines.push(`${dropLabel}:`);
+    const savedInGuard = this.ownInGuard;
+    this.ownInGuard = true;
     if (local.consumeCursor) this.emitConsumedTailDrop(lines, local.addr, local.typeKind, local.consumeCursor);
     else this.emitDropValue(lines, local.addr, local.typeKind);
+    this.ownInGuard = savedInGuard;
+    if (ownId) this.ownEnd(lines, ownId, "DROP");
     // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
     // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
     // without this, the function epilogue (after break) or the next iteration's
@@ -15814,5 +15930,105 @@ export class Codegen {
     lines.push(this.zeroStore(slotTy, local.addr));
     lines.push(`  br label %${skipLabel}`);
     lines.push(`${skipLabel}:`);
+  }
+
+  // ---- Ownership ledger markers (src/own-ledger.ts). All no-ops unless MILO_OWN_LEDGER=1.
+
+  private ownMake(lines: string[], origin: string): number {
+    if (!this.ownOn) return 0;
+    const id = this.ownNextId++;
+    lines.push(`  call void @__milo_own_make(i64 ${id}) ; own ${origin.replace(/\s/g, "_")} L${this.ownSrcLine}`);
+    return id;
+  }
+
+  private ownEnd(lines: string[], id: number | undefined, kind: OwnEndKind) {
+    if (!this.ownOn || !id) return;
+    lines.push(`  call void @__milo_own_end(i64 ${id}, i32 ${OWN_END_KINDS.indexOf(kind)})`);
+  }
+
+  // A fresh owned value now held in SSA register `val`.
+  private ownMakeVal(lines: string[], val: string, origin: string) {
+    if (!this.ownOn || !val.startsWith("%") || this.ownVal.has(val)) return;
+    this.ownVal.set(val, this.ownMake(lines, origin));
+  }
+
+  private ownEndVal(lines: string[], val: string, kind: OwnEndKind) {
+    if (!this.ownOn) return;
+    this.ownEnd(lines, this.ownVal.get(val), kind);
+  }
+
+  // The owned value in register `val` was stored whole into the frame slot `addr`: same
+  // runtime value, same ID, now found by address (emitDropValue(addr) ends it).
+  private ownValToSlot(val: string, addr: string) {
+    if (!this.ownOn) return;
+    const id = this.ownVal.get(val);
+    if (id) this.ownSlot.set(addr, id);
+  }
+
+  // An assignment stored the owned value `id` at `target`. A droppable local's slot takes
+  // it over (rearmAssignedLocal re-makes the slot right after); any other place (a field,
+  // an element, a global) takes it off this frame's books.
+  private ownAssigned(lines: string[], target: string, id: number | undefined) {
+    if (!this.ownOn || !id) return;
+    if (this.droppableLocals.some(d => d.addr === target)) this.ownSlot.set(target, id);
+    else this.ownEnd(lines, id, "STORE");
+  }
+
+  // A value copied whole from one frame slot to another (a spill through a scratch slot).
+  private ownMoveSlot(from: string, to: string) {
+    if (!this.ownOn) return;
+    const id = this.ownSlot.get(from);
+    if (id) { this.ownSlot.delete(from); this.ownSlot.set(to, id); }
+  }
+
+  private ownFlagIds = new Set<number>();
+  private ownFlagId(flag: string): number {
+    let id = this.ownFlag.get(flag);
+    if (!id) { id = this.ownNextId++; this.ownFlag.set(flag, id); this.ownFlagIds.add(id); }
+    return id;
+  }
+
+  // `store i1 1` into a droppable local's alive flag: the slot owns a value again. A value
+  // that reached `addr` with its own ID (a call result, a moved element) hands over to the
+  // slot's ID here, so the slot's guarded drop is what must end it.
+  private ownSetAlive(lines: string[], flag: string, addr: string, origin: string) {
+    lines.push(`  store i1 1, ptr ${flag}`);
+    if (!this.ownOn) return;
+    const id = this.ownFlagId(flag);
+    const prev = this.ownSlot.get(addr);
+    if (prev && prev !== id) this.ownEnd(lines, prev, "MOVE");
+    this.ownSlot.set(addr, id);
+    lines.push(`  call void @__milo_own_make(i64 ${id}) ; own ${origin.replace(/\s/g, "_")} L${this.ownSrcLine}`);
+  }
+
+  // `store i1 0` into an alive flag outside a drop: the value left the slot.
+  private ownClearAlive(lines: string[], flag: string, kind: OwnEndKind) {
+    lines.push(`  store i1 0, ptr ${flag}`);
+    if (!this.ownOn) return;
+    this.ownEnd(lines, this.ownFlagId(flag), kind);
+  }
+
+  // Swap in fresh per-function ledger maps (a nested closure body, a synthesized helper);
+  // the returned thunk restores the enclosing function's.
+  private ownEnterFn(): () => void {
+    const saved = [this.ownVal, this.ownSlot, this.ownFlag, this.ownSrcLine] as const;
+    this.ownVal = new Map(); this.ownSlot = new Map(); this.ownFlag = new Map();
+    return () => { [this.ownVal, this.ownSlot, this.ownFlag, this.ownSrcLine] = saved; };
+  }
+
+  // Verify the finished module's markers, keep the findings, and strip them so clang sees
+  // the same IR a normal build would. MILO_OWN_LEDGER_KEEP=1 keeps them (declared) for
+  // reading the IR the findings' line numbers point into.
+  private ownFinish() {
+    if (!this.ownOn) return;
+    const flat = this.output.join("\n").split("\n");
+    this.ownFindings = verifyOwnLedger(flat);
+    for (const f of this.ownFindings) console.error(`own-ledger: ${formatOwnFinding(f)}`);
+    if (process.env.MILO_OWN_LEDGER_KEEP === "1") {
+      flat.push("declare void @__milo_own_make(i64)", "declare void @__milo_own_end(i64, i32)", "declare void @__milo_own_guard(i64, i1)");
+      this.output = flat;
+    } else {
+      this.output = stripOwnLedger(flat);
+    }
   }
 }
