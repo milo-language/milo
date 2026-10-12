@@ -3567,6 +3567,7 @@ export class TypeChecker {
     // Scheduler global access — green thread runtime
     this.functions.set("_schedulerGet", { params: [], ret: ptrU8, variadic: false });
     this.functions.set("_schedulerSet", { params: [{ type: ptrU8, name: "ptr" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("_panicHookSet", { params: [{ type: ptrU8, name: "fnPtr" }], ret: { tag: "void" }, variadic: false });
 
     // A user fn with a builtin's name (std/testing's `assert`) wins everywhere in the
     // flat namespace, so an unrelated file's builtin call binds to it without ever

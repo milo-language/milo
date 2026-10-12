@@ -11,7 +11,7 @@ from "std/net" import {
     TcpListener, ip4
 }
 from "std/runtime" import {
-    Task, schedulerRunToCompletion, schedulerWaitRead
+    Task, schedulerRunToCompletion, schedulerWaitRead, taskOnPanicReply
 }
 from "std/event" import {
     setNonblocking
@@ -1085,7 +1085,12 @@ pub fn waitPeerClosed(fd: i32): void {
 // One connection in its own green task. Every read parks on EAGAIN (recvFd), so a
 // client trickling its request in stalls only this task; one that closes mid-request
 // ends it with the fd closed.
+// What a client gets if its request's handler panics (index out of bounds, overflow,
+// a failed assert): an answer instead of a reset, while the server keeps running.
+let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\n500 Internal Server Error"
+
 fn handleConn(clientFd: i32): void {
+    taskOnPanicReply(clientFd, PANIC_REPLY)
     if activeRouter.len == 0 {
         unsafe { sysClose(clientFd) }
         return

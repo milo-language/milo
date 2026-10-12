@@ -1,0 +1,71 @@
+// @skip-os: win32
+// A runtime panic on a green task retires that task, not the process. The HTTP server
+// registers a reply per connection (taskOnPanicReply), so a handler that indexes out of
+// bounds answers its client 500 while the server goes on serving; a spawned task that
+// overflows ends, and join returns. A panic off any green task still aborts (every
+// other panic fixture covers that).
+// @expect: listening on http://127.0.0.1:47395
+// @expect: boom: HTTP/1.1 500 Internal Server Error
+// @expect: ok after boom: HTTP/1.1 200 OK
+// @expect: overflow task joined
+// @expect: boom again: HTTP/1.1 500 Internal Server Error
+// @expect: still serving: HTTP/1.1 200 OK
+from "std/http" import {
+    Context, Response, Router, serveRouterConcurrentOn
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+
+let PORT: u16 = 47395
+
+fn statusLine(req: string): string {
+    let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    conn.send(req)!
+    let resp = conn.recv()!
+    let Option.Some(end) = resp.indexOf("\r\n") else {
+        return "(no response)"
+    }
+    return resp.substr(0, end)
+}
+
+fn overflow(n: i64): i64 {
+    var x: i64 = 9223372036854775800
+    for _i in 0..n {
+        x = x + 1
+    }
+    return x
+}
+
+fn clients(): void {
+    print("boom: " + statusLine("GET /boom HTTP/1.1\r\nHost: x\r\n\r\n"))
+    print("ok after boom: " + statusLine("GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"))
+    let t = Task.spawn(move(): void => {
+        print($"unreachable {overflow(100)}")
+    })
+    t.join()
+    print("overflow task joined")
+    print("boom again: " + statusLine("GET /boom HTTP/1.1\r\nHost: x\r\n\r\n"))
+    print("still serving: " + statusLine("GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"))
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.get("/boom", (ctx: &mut Context): Response => {
+        let v: Vec<i64> = [1, 2, 3]
+        let i = ctx.req.path.len
+        return ctx.text($"{v[i]}")
+    })
+    r.get("/ok", (ctx: &mut Context): Response => {
+        return ctx.text("fine")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

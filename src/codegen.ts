@@ -333,8 +333,11 @@ export class Codegen {
     _atomicSwapBool: { kind: "rmw", rmwOp: "xchg", ty: "i8", align: 1, isBool: true },
     _atomicCasBool: { kind: "cas", ty: "i8", align: 1, isBool: true },
   };
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(Codegen.ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "todo", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_bytesToString", "_strDataPtr", "_putByte", "_loadU8", "_loadI32", "_callClosureVoid", ...Object.keys(Codegen.ATOMIC_INTRINSICS), "_schedulerGet", "_schedulerSet", "_panicHookSet"]);
   private usesSchedulerGlobal = false;
+  // Set once any panic site is emitted: every panic first calls through
+  // @_milo_panic_hook (see panicAbort), so the global has to exist.
+  private usesPanicHook = false;
   private currentFnName = "";
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
   // use defined modular arithmetic instead of trapping. Div-by-zero, bounds, ranged still trap.
@@ -2462,6 +2465,9 @@ export class Codegen {
       // thread_local: each OS thread gets its own scheduler slot, so a pthread
       // never observes the main thread's scheduler and misreads green context
       this.output.splice(1, 0, "@_milo_scheduler = internal thread_local global ptr null");
+    }
+    if (this.usesPanicHook) {
+      this.output.splice(1, 0, "@_milo_panic_hook = internal thread_local global ptr null");
     }
 
     // emit module-level globals
@@ -5692,6 +5698,13 @@ export class Codegen {
       const val = this.nextTemp();
       lines.push(`  ${val} = load ptr, ptr @_milo_scheduler`);
       return [lines, val, "ptr"];
+    }
+    if (expr.func === "_panicHookSet") {
+      this.usesPanicHook = true;
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      lines.push(`  store ptr ${pv}, ptr @_milo_panic_hook`);
+      return [lines, "0", "void"];
     }
     if (expr.func === "_schedulerSet") {
       this.usesSchedulerGlobal = true;
@@ -12574,6 +12587,21 @@ export class Codegen {
     // every open stream.
     this.needsFflush = true;
     lines.push(`  call i32 @fflush(ptr null)`);
+    // The panic hook (std/runtime sets it when a scheduler starts) retires the panicking
+    // green task and never returns, so one task's panic costs that task, not the process.
+    // It returns when there is no task to retire, and the panic aborts as before.
+    this.usesPanicHook = true;
+    const hook = this.nextTemp();
+    const noHook = this.nextTemp();
+    const callL = this.nextLabel("panic.hook");
+    const abortL = this.nextLabel("panic.abort");
+    lines.push(`  ${hook} = load ptr, ptr @_milo_panic_hook`);
+    lines.push(`  ${noHook} = icmp eq ptr ${hook}, null`);
+    lines.push(`  br i1 ${noHook}, label %${abortL}, label %${callL}`);
+    lines.push(`${callL}:`);
+    lines.push(`  call void ${hook}()`);
+    lines.push(`  br label %${abortL}`);
+    lines.push(`${abortL}:`);
     lines.push(`  call void @abort()`);
   }
 
