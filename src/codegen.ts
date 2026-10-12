@@ -7105,15 +7105,29 @@ export class Codegen {
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${arrTy}`);
     if (this.needsDropCg(elemKind)) {
-      // Non-Copy types: deep-clone each element so they own independent heap data
+      // Non-Copy types: deep-clone each element so they own independent heap data. A
+      // place (`[s; 3]`) is only read, so every slot gets a clone. An owned temporary
+      // (`[mk(); 3]`) has no other owner: the last slot takes it by move, and with a
+      // count of 0 it is dropped. Cloning it into every slot leaked the original.
+      const ownsValue = this.isOwnedTempExpr(expr.value);
       const srcPtr = this.nextTemp();
       lines.push(`  ${srcPtr} = alloca ${elemTy}`);
       lines.push(`  store ${elemTy} ${vv}, ptr ${srcPtr}`);
-      for (let i = 0; i < expr.count; i++) {
+      const clones = ownsValue ? expr.count - 1 : expr.count;
+      for (let i = 0; i < clones; i++) {
         const pi = this.nextTemp();
         lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
         const cloned = this.emitDeepCloneFromPtr(lines, srcPtr, elemKind);
         lines.push(`  store ${elemTy} ${cloned}, ptr ${pi}`);
+      }
+      if (ownsValue && expr.count > 0) {
+        const last = this.nextTemp();
+        lines.push(`  ${last} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${expr.count - 1}`);
+        lines.push(`  store ${elemTy} ${vv}, ptr ${last}`);
+        this.ownEndVal(lines, vv, "MOVE");
+      } else if (ownsValue) {
+        this.ownValToSlot(vv, srcPtr);
+        this.emitDropValue(lines, srcPtr, elemKind);
       }
     } else {
       for (let i = 0; i < expr.count; i++) {
