@@ -1,0 +1,20 @@
+// @error: 'parallelMap' runs this closure on several threads at once, and it writes its capture 'log'
+// parallelMap runs `f` on every worker thread at once, and every run shares the one
+// environment, so four threads push to one `log` with no lock: a double free under ASan
+// before `@concurrent`. Per-worker state goes through parallelMapWith's states.
+from "std/shard" import { parallelMap, Shard }
+
+fn main(): void {
+    var v: Vec<i64> = []
+    for i in 0..4000 {
+        v.push(i)
+    }
+    var log: Vec<i64> = []
+    let out = parallelMap(v, 4, move (s: Shard<i64>): Shard<i64> => {
+        for k in 0..2000 {
+            log.push(k)
+        }
+        return s
+    })
+    print(out.len.toString())
+}

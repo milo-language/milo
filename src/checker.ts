@@ -18,7 +18,7 @@ import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -4029,6 +4029,13 @@ export class TypeChecker {
               this.error(`'@thread' takes no arguments`, undefined, `write '@thread fn ${fn.name}(...)'`);
             }
           }
+          // @concurrent marks a fn that runs its closure argument on several threads at
+          // once; checkConcurrentClosureArgs holds the closure to not writing its captures.
+          else if (attr.name === "concurrent") {
+            if (attr.args.length > 0) {
+              this.error(`'@concurrent' takes no arguments`, undefined, `write '@concurrent fn ${fn.name}(...)'`);
+            }
+          }
           // @parks marks a fn that can switch the current green task out. It sits on the
           // primitives that call swapcontext (the checker cannot see through that extern);
           // everything reaching them inherits it in checkGlobalBorrowInvalidation.
@@ -4265,6 +4272,7 @@ export class TypeChecker {
     // Same reason: the `@thread` entry points, their call sites, and the closure captures
     // are all resolved by now.
     checkThreadBoundary(host, program, view);
+    checkConcurrentClosureArgs(host, program, view);
 
     // Needs the finished call-resolution maps too: the global-write summary is a fixpoint
     // over the call graph, so every callee has to be resolvable before it runs.

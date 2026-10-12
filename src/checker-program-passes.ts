@@ -1116,6 +1116,44 @@ export function checkThreadBoundary(host: ProgramPassHost, program: Program, vie
   for (const g of program.globals) findCalls(g.value);
 }
 
+// A `@concurrent` fn runs its closure argument on several threads at once, all sharing
+// one environment, so a capture written (or moved out) in the body is a data race with no
+// park involved; checkGlobalBorrowInvalidation's park rule cannot see it. Rust spells
+// this `Fn + Sync`; here the closure must visibly not write: a named fn, or a literal
+// whose captures are only read. A closure value is rejected, since its body is not
+// at the call.
+export function checkConcurrentClosureArgs(host: ProgramPassHost, program: Program, view: ProgramView): void {
+  const { fns, calleeOf } = view;
+  const isConcurrent = (t: string | undefined) => !!t && !!fns.get(t)?.attributes?.some(a => a.name === "concurrent");
+  if (![...fns.values()].some(f => f.attributes?.some(a => a.name === "concurrent"))) return;
+  const named = new Set<string>([...program.functions.map(f => f.name), ...fns.keys()]);
+  const visit = (node: unknown, bound: Set<string>) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const n of node) visit(n, bound); return; }
+    const n = node as Record<string, unknown> & { kind?: string; span?: Span };
+    if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") bound.add(n.name);
+    if ((n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") && isConcurrent(calleeOf(n as unknown as Expr))) {
+      const who = view.pretty(calleeOf(n as unknown as Expr)!);
+      for (const a of (n.args as Expr[] | undefined) ?? []) {
+        if (host.exprTypes.get(a)?.tag !== "fn") continue;
+        if (a.kind === "Closure") {
+          const bad = (host.closureCaptures.get(a) ?? []).find(c => c.mutatedInClosure || c.consumedInClosure);
+          if (bad) {
+            host.error(`'${who}' runs this closure on several threads at once, and it ${bad.consumedInClosure && !bad.mutatedInClosure ? "moves" : "writes"} its capture '${bad.name}'`, a.span ?? n.span,
+              `every worker shares one environment, so the writes race: give each worker its own state through parallelMapWith's states, or a std/sync atomic`);
+          }
+          continue;
+        }
+        if (a.kind === "Ident" && named.has(a.name) && !bound.has(a.name)) continue;
+        host.error(`'${who}' runs its closure argument on several threads at once, and the checker cannot see whether this one writes its captures`, a.span ?? n.span,
+          `pass a named fn or write the closure literal at the call`);
+      }
+    }
+    for (const k of Object.keys(n)) if (k !== "span") visit(n[k], bound);
+  };
+  for (const f of fns.values()) if (f.body) visit(f.body, new Set(f.params.map(p => p.name)));
+}
+
 // Which globals does each function transitively write? The aliasing model is keyed to
 // locals, params and self, so a `var` global mutated inside a callee is invisible to it
 // and three heap-use-after-frees fell straight through: `for x in G { grow() }` where
@@ -1135,7 +1173,9 @@ function mutatesReceiver(host: ProgramPassHost, call: Expr): boolean {
 // `parks` rides the same call graph: a fn may park the current green task if it carries
 // `@parks` or calls one that may. Stops at the declared boundary, so the scheduler's
 // internals are never modelled here.
-function globalWriteSummary(host: ProgramPassHost, program: Program, view: ProgramView, mutableGlobals: Set<string>): { writes: Map<string, Set<string>>; parks: Set<string> } {
+// `seed` gives a closure node writes it makes on every call whatever its body says: the
+// closure's own written captures, which checkGlobalBorrowInvalidation models as globals.
+function globalWriteSummary(host: ProgramPassHost, program: Program, view: ProgramView, mutableGlobals: Set<string>, seed?: Map<string, Set<string>>): { writes: Map<string, Set<string>>; parks: Set<string> } {
   const { fns, rootOf, calleeOf: target } = view;
   const implicit = implicitCalls(host, program, view);
 
@@ -1173,7 +1213,7 @@ function globalWriteSummary(host: ProgramPassHost, program: Program, view: Progr
       if (id) {
         // Its by-value parameters die inside the body, whoever passed them.
         const ty = host.exprTypes.get(n as unknown as Expr);
-        const own = { w: new Set<string>(), c: new Set<string>(ty?.tag === "fn" ? ty.params.flatMap(p => implicit.dropFnsOf(p)) : []) };
+        const own = { w: new Set<string>(seed?.get(id) ?? []), c: new Set<string>(ty?.tag === "fn" ? ty.params.flatMap(p => implicit.dropFnsOf(p)) : []) };
         writes.set(id, own.w);
         callees.set(id, own.c);
         sinks.push(own);
@@ -1724,13 +1764,128 @@ export function checkMutParamBundle(host: ProgramPassHost, program: Program, vie
   }
 }
 
+// Which reference parameters may a fn still be looking into when it parks? A `&Vec<T>`
+// parameter is only a header pointer, which no realloc moves, but a callee that loops
+// over it (or binds a view into it) and parks dangles if the argument was shared and
+// another task pushed meanwhile. The caller cannot see that, so this summary answers it:
+// fn name -> indices into `params` (receiver included) held across a park, directly or by
+// handing the parameter on to a callee that does. Calls through a value that may park
+// count as holding every reference argument, since their params are unknowable here.
+function paramViewsAcrossPark(host: ProgramPassHost, view: ProgramView, parks: Set<string>): Map<string, Set<number>> {
+  const { fns, rootOf, calleeOf } = view;
+  const isRefParam = (t: { isRef: boolean; isRefMut: boolean } | null | undefined) => !!t && (t.isRef || t.isRefMut);
+  const held = new Map<string, Set<number>>();
+  const edges: { from: string; idx: number; to: string; toIdx: number }[] = [];
+  const mayPark = (n: Record<string, unknown> & { kind?: string }): boolean => {
+    if (n.kind !== "Call" && n.kind !== "MethodCall" && n.kind !== "EnumLit") return false;
+    const t = calleeOf(n as unknown as Expr);
+    if (t) return parks.has(t);
+    return parks.has(INDIRECT);
+  };
+  const containsPark = (node: unknown): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some(containsPark);
+    const n = node as Record<string, unknown> & { kind?: string };
+    if (mayPark(n)) return true;
+    for (const k of Object.keys(n)) if (k !== "span" && containsPark(n[k])) return true;
+    return false;
+  };
+  for (const [name, f] of fns) {
+    if (!f.body) continue;
+    const idxOf = new Map<string, number>();
+    f.params.forEach((p, i) => { if (isRefParam(p.type)) idxOf.set(p.name, i); });
+    if (idxOf.size === 0) continue;
+    const mark = new Set<number>();
+    held.set(name, mark);
+    const pIdx = (e: unknown) => { const r = rootOf(e); return r !== undefined ? idxOf.get(r) : undefined; };
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        // A view binding rooted at a parameter stays live to the end of its block.
+        node.forEach((s, i) => {
+          walk(s);
+          const d = s as Record<string, unknown> & { kind?: string };
+          if ((d?.kind === "LetDecl" || d?.kind === "VarDecl") && d.value && host.exprTypes.get(d.value as Expr)?.tag === "ref") {
+            const v = d.value as Expr;
+            const p = pIdx(v.kind === "MethodCall" ? v.object : v);
+            if (p !== undefined && containsPark(node.slice(i + 1))) mark.add(p);
+          }
+        });
+        return;
+      }
+      const n = node as Record<string, unknown> & { kind?: string };
+      if (n.kind === "ForInStmt") {
+        const p = pIdx(n.iterable);
+        if (p !== undefined && containsPark(n.body)) mark.add(p);
+      }
+      if (n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") {
+        const args = (n.args as Expr[] | undefined) ?? [];
+        const t = calleeOf(n as unknown as Expr);
+        const callee = t ? fns.get(t) : undefined;
+        const off = !callee ? -1 : callee.params.length === args.length ? 0 : callee.params.length === args.length + 1 ? 1 : -1;
+        const pairs: [number, unknown][] = args.map((a, i) => [i + off, a]);
+        if (n.kind === "MethodCall" && off === 1) pairs.unshift([0, n.object]);
+        for (const [j, a] of pairs) {
+          const p = pIdx(a);
+          if (p === undefined) continue;
+          if (callee && off >= 0) {
+            if (isRefParam(callee.params[j]?.type)) edges.push({ from: name, idx: p, to: t!, toIdx: j });
+          } else if (mayPark(n)) mark.add(p);
+        }
+      }
+      for (const k of Object.keys(n)) if (k !== "span") walk(n[k]);
+    };
+    walk(f.body);
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const e of edges) {
+      if (!held.get(e.to)?.has(e.toIdx)) continue;
+      const m = held.get(e.from)!;
+      if (!m.has(e.idx)) { m.add(e.idx); changed = true; }
+    }
+  }
+  return held;
+}
+
 export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const mutableGlobals = new Set<string>();
   for (const g of program.globals) if (g.mutable) mutableGlobals.add(g.name);
-  if (mutableGlobals.size === 0) return;
   const { fns, rootOf, calleeOf: target } = view;
-  const { writes, parks } = globalWriteSummary(host, program, view, mutableGlobals);
   const implicit = implicitCalls(host, program, view);
+  // A closure's environment is shared by every run of that closure value: two tasks can
+  // call one closure (a route handler in a Router behind `&`, a closure parameter handed
+  // to two scoped tasks) and a body can re-enter itself through a call by value. So a
+  // capture the body writes in place is, inside that body, a global scoped to the
+  // closure: no loop or view over it may live across a park or a call that may run the
+  // closure again. Captures only read stay ordinary; nobody can change them.
+  const sharedCaps = new Map<ClosureLit, Map<string, string>>();
+  const seed = new Map<string, Set<string>>();
+  const captureName = new Map<string, string>();
+  for (const [lit, id] of implicit.closureIds) {
+    // Only captures written in place. One moved out is not tracked: the second run of
+    // such a closure aborts at the move-out (see "runs once" in the language reference),
+    // and Promise.blocking/Task.spawn bodies, which run once, move captures out routinely.
+    const caps = (host.closureCaptures.get(lit as unknown as Expr) ?? []).filter(c => c.mutatedInClosure);
+    if (caps.length === 0) continue;
+    const m = new Map(caps.map(c => [c.name, `${id}::${c.name}`]));
+    sharedCaps.set(lit, m);
+    seed.set(id, new Set(m.values()));
+    for (const [nm, key] of m) captureName.set(key, nm);
+  }
+  if (mutableGlobals.size === 0 && sharedCaps.size === 0) return;
+  // Literals handed straight to a std entry point that runs them exactly once. Nothing
+  // can run them a second time, and scoped tasks sharing a binding are checkTaskScopes'
+  // business, so their written captures are plain locals here.
+  const RUNS_ONCE = /^(Task\$scope|TaskScope\$spawn|Task\$spawn|Task\$spawnWithStack|spawnOsThreadDetached|Promise\b.*\$(run|blocking))$/;
+  const runsOnce = new Set<unknown>();
+  const { writes, parks } = globalWriteSummary(host, program, view, mutableGlobals, seed);
+  const heldAcrossPark = paramViewsAcrossPark(host, view, parks);
+  // Diagnostics name a capture by its source name, and the other party is another run of
+  // the closure rather than some other task.
+  const nm = (g: string) => captureName.get(g) ?? g;
+  const theG = (g: string) => captureName.has(g) ? `the capture '${nm(g)}'` : `the global '${g}'`;
+  const rival = (g: string) => captureName.has(g) ? "another run of this closure" : "another task";
   const say = (t: string) => sayCallee(view, t, implicit);
   const reported = new Set<string>();
   const report = (msg: string, span: Span | undefined, hint: string) => {
@@ -1744,13 +1899,28 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
   // global is an element view there; only `&Vec<T>`/`&mut Vec<T>` name the header.
   const isSliceParam = (t: { isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null } | undefined) =>
     !!t && (t.isRef || t.isRefMut) && t.isArray && t.arraySize === null;
-  const parkHint = (g: string) =>
-    `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or take it with 'replace(${g}, ...)' so the task owns it`;
+  const parkHint = (g: string) => captureName.has(g)
+    ? `iterate by index ('while i < ${nm(g)}.len'), or snapshot first ('${nm(g)}.clone()'); state that every run of the closure shares is safest in a Channel or a std/sync atomic`
+    : `iterate by index ('while i < ${g}.len'), snapshot first ('${g}.clone()'), or take it with 'replace(${g}, ...)' so the task owns it`;
 
   for (const f of fns.values()) {
     if (!f.body) continue;
     const bound = new Set<string>(f.params.map(p => p.name));
     const scope: Scope = { fn: f.name, shadow: new Set() };
+    // Closure bodies being walked, innermost last: each one's shared captures and the
+    // names its own params and locals rebind.
+    const frames: { caps: Map<string, string>; shadow: Set<string> }[] = [];
+    // The summary key a root name refers to here: a shared capture of an enclosing
+    // closure body, an unshadowed mutable global, or nothing the walk models.
+    const keyOf = (name: string | undefined): string | undefined => {
+      if (!name) return undefined;
+      for (let i = frames.length - 1; i >= 0; i--) {
+        if (frames[i].shadow.has(name)) return undefined;
+        const k = frames[i].caps.get(name);
+        if (k) return k;
+      }
+      return mutableGlobals.has(name) && !bound.has(name) ? name : undefined;
+    };
     // Globals whose storage is borrowed by an enclosing for-in. A loop iterand is a
     // reference into the container's buffer, so anything that reallocs or replaces the
     // container leaves it dangling for the rest of the iteration.
@@ -1770,21 +1940,20 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
       const v = n.value as Expr | undefined;
       if (!v) return [];
       const name = n.name;
-      const isGlobal = (g: string | undefined): g is string => !!g && mutableGlobals.has(g) && !bound.has(g);
       if (host.exprTypes.get(v)?.tag === "ref") {
-        const g = rootOf(v.kind === "MethodCall" ? v.object : v);
-        return isGlobal(g) ? [{ name, global: g }] : [];
+        const g = keyOf(rootOf(v.kind === "MethodCall" ? v.object : v));
+        return g ? [{ name, global: g }] : [];
       }
       const out: View[] = [];
       for (const pv of host.pointerViewsIn(v)) {
-        const g = rootOf(pv.source);
-        if (isGlobal(g)) out.push({ name, global: g, via: `${pv.call}' on line ${pv.line}` });
+        const g = keyOf(rootOf(pv.source));
+        if (g) out.push({ name, global: g, via: `${pv.call}' on line ${pv.line}` });
       }
       return out;
     };
     const describeView = (v: View) => v.via
-      ? `'${v.name}' still points into '${v.global}'s buffer (from '${v.via})`
-      : `'${v.name}' borrows from '${v.global}'s buffer`;
+      ? `'${v.name}' still points into '${nm(v.global)}'s buffer (from '${v.via})`
+      : `'${v.name}' borrows from '${nm(v.global)}'s buffer`;
     const walk = (node: unknown, iterated: string[], views: View[]) => {
       if (!node || typeof node !== "object") return;
       if (Array.isArray(node)) {
@@ -1798,12 +1967,26 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
       }
       const n = node as Record<string, unknown> & { kind?: string; name?: unknown; span?: unknown };
       const span = n.span as Span | undefined;
-      if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") bound.add(n.name);
+      if ((n.kind === "LetDecl" || n.kind === "VarDecl") && typeof n.name === "string") {
+        bound.add(n.name);
+        frames[frames.length - 1]?.shadow.add(n.name);
+      }
       implicit.enter(n, scope);
 
+      if ((n.kind === "Call" || n.kind === "MethodCall" || n.kind === "EnumLit") && RUNS_ONCE.test(target(n as unknown as Expr) ?? "")) {
+        for (const a of (n.args as Expr[] | undefined) ?? []) if (a.kind === "Closure") runsOnce.add(a);
+      }
+      if (n.kind === "Closure") {
+        const caps = runsOnce.has(n) ? new Map<string, string>() : sharedCaps.get(n as unknown as ClosureLit) ?? new Map<string, string>();
+        frames.push({ caps, shadow: new Set((n.params as { name: string }[]).map(p => p.name)) });
+        for (const k of Object.keys(n)) if (k !== "span") walk(n[k], iterated, views);
+        frames.pop();
+        return;
+      }
+
       if (n.kind === "ForInStmt") {
-        const g = rootOf(n.iterable);
-        const next = g && mutableGlobals.has(g) && !bound.has(g) ? [...iterated, g] : iterated;
+        const g = keyOf(rootOf(n.iterable));
+        const next = g ? [...iterated, g] : iterated;
         walk(n.iterable, iterated, views);
         walk(n.body, next, views);
         return;
@@ -1830,7 +2013,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
         if (t && parks.has(t)) {
           for (const g of iterated) {
             report(
-              `${say(t)} can park this task while the loop variable is a reference into '${g}'s buffer; another task may push to '${g}' before it resumes`,
+              `${say(t)} can park this task while the loop variable is a reference into '${nm(g)}'s buffer; ${rival(g)} may push to '${nm(g)}' before it resumes`,
               span,
               parkHint(g),
             );
@@ -1838,7 +2021,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
           for (const v of views) {
             if (iterated.includes(v.global)) continue;
             report(
-              `${say(t)} can park this task while ${describeView(v)}; another task may push to '${v.global}' before it resumes`,
+              `${say(t)} can park this task while ${describeView(v)}; ${rival(v.global)} may push to '${nm(v.global)}' before it resumes`,
               span,
               parkHint(v.global),
             );
@@ -1855,8 +2038,8 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             // `g.ptr()` is a view for the duration of the call in the same way.
             const ptrView = host.pointerViewsIn(a)[0];
             const isViewArg = host.exprTypes.get(a)?.tag === "ref" || ptrView !== undefined;
-            const g = ptrView ? rootOf(ptrView.source) : rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a);
-            if (!g || !mutableGlobals.has(g) || bound.has(g)) continue;
+            const g = keyOf(ptrView ? rootOf(ptrView.source) : rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a));
+            if (!g) continue;
             if (iterated.includes(g) || views.some(v => v.global === g)) continue;
             const prm = paramOffset >= 0 ? callee!.params[prmIdx] : undefined;
             const isElement = ((): boolean => {
@@ -1868,13 +2051,22 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
               }
               return false;
             })();
+            // A reference to a written capture itself is as bad as one into its buffer
+            // when the callee loops over it (or keeps a view into it) across its park: it
+            // cannot tell its `&Vec<T>` is shared (`show(log)` where show iterates and
+            // yields). The same holds for a global, but that is not rejected yet: milojs
+            // hands its global interpreter by `&mut` to every parking entry point, so the
+            // global half waits on a decision about that design (memory-safety doc, #22).
             if (!isViewArg) {
+              const shared = captureName.has(g);
               if (prm?.type) {
-                if (!isSliceParam(prm.type) && !(isElement && (prm.type.isRef || prm.type.isRefMut))) continue;
-              } else if (byValue(argIdx) || !isElement) continue;
+                const intoBuffer = isSliceParam(prm.type) || (isElement && (prm.type.isRef || prm.type.isRefMut));
+                if (!intoBuffer && !(shared && heldAcrossPark.get(t)?.has(prmIdx))) continue;
+              } else if (byValue(argIdx) || (!isElement && (!!callee || !shared))) continue;
             }
+            const into = isViewArg || isElement || (prm?.type && isSliceParam(prm.type)) ? `a reference into '${nm(g)}'s buffer` : `a reference to '${nm(g)}'`;
             report(
-              `${say(t)} can park this task while it holds a reference into '${g}'s buffer; another task may push to '${g}' before it resumes`,
+              `${say(t)} can park this task while it holds ${into}; ${rival(g)} may push to '${nm(g)}' before it resumes`,
               (a.span as Span | undefined) ?? span,
               parkHint(g),
             );
@@ -1885,11 +2077,11 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
           for (const g of iterated) {
             if (!w.has(g)) continue;
             report(
-              `${say(t)} writes the global '${g}', which is being iterated here`,
+              `${say(t)} ${captureName.has(g) ? "may run this closure again, which writes" : "writes"} ${theG(g)}, which is being iterated here`,
               span,
-              `the loop variable is a reference into '${g}'s buffer — pushing to it, clearing it, or ` +
+              `the loop variable is a reference into '${nm(g)}'s buffer — pushing to it, clearing it, or ` +
               `reassigning it from inside the loop frees that buffer and leaves the reference dangling. ` +
-              `Iterate a copy ('for x in ${g}.clone()'), or collect the changes and apply them after the loop`,
+              `Iterate a copy ('for x in ${nm(g)}.clone()'), or collect the changes and apply them after the loop`,
             );
           }
           // `let p = g.ptr(); writer()` (or a slice binding) where `writer` pushes to g:
@@ -1899,21 +2091,21 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
           for (const v of views) {
             if (!w.has(v.global) || iterated.includes(v.global)) continue;
             report(
-              `${say(t)} writes the global '${v.global}' while ${describeView(v)}`,
+              `${say(t)} ${captureName.has(v.global) ? "may run this closure again, which writes" : "writes"} ${theG(v.global)} while ${describeView(v)}`,
               span,
-              `pushing to, clearing or reassigning '${v.global}' frees the buffer '${v.name}' points into: ` +
+              `pushing to, clearing or reassigning '${nm(v.global)}' frees the buffer '${v.name}' points into: ` +
               `take '${v.name}' after the call, or end its block before it`,
             );
           }
           for (const a of callArgs) {
             for (const pv of host.pointerViewsIn(a)) {
-              const g = rootOf(pv.source);
-              if (!g || !mutableGlobals.has(g) || bound.has(g) || !w.has(g)) continue;
+              const g = keyOf(rootOf(pv.source));
+              if (!g || !w.has(g)) continue;
               if (iterated.includes(g) || views.some(v => v.global === g)) continue;
               report(
-                `${say(t)} writes the global '${g}', and is passed '${pv.call}' here`,
+                `${say(t)} writes ${theG(g)}, and is passed '${pv.call}' here`,
                 (a.span as Span | undefined) ?? span,
-                `the pointer is into '${g}'s buffer, and ${say(t)} can realloc or replace '${g}' while it holds it: take the pointer inside ${say(t)}, or have it not write '${g}'`,
+                `the pointer is into '${nm(g)}'s buffer, and ${say(t)} can realloc or replace '${nm(g)}' while it holds it: take the pointer inside ${say(t)}, or have it not write '${nm(g)}'`,
               );
             }
           }
@@ -1941,8 +2133,8 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             return false;
           };
           for (const [argIdx, a] of callArgs.entries()) {
-            const g = rootOf(a);
-            if (!g || !mutableGlobals.has(g) || bound.has(g) || !w.has(g)) continue;
+            const g = keyOf(rootOf(a));
+            if (!g || !w.has(g)) continue;
             if (iterated.includes(g)) continue;
             if (!reachesHeapInterior(a)) continue;
             if (paramOffset >= 0) {
@@ -1950,10 +2142,10 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
               if (prm && prm.type && !prm.type.isRef && !prm.type.isRefMut) continue;
             } else if (byValue(argIdx)) continue;
             report(
-              `${say(t)} writes the global '${g}', and is passed a reference into '${g}' here`,
+              `${say(t)} writes ${theG(g)}, and is passed a reference into '${nm(g)}' here`,
               (a.span as Span | undefined) ?? span,
-              `the argument borrows '${g}'s storage, and ${say(t)} can realloc or replace '${g}' ` +
-              `while that borrow is live — pass a copy, or have ${say(t)} take '${g}' by value`,
+              `the argument borrows '${nm(g)}'s storage, and ${say(t)} can realloc or replace '${nm(g)}' ` +
+              `while that borrow is live — pass a copy, or have ${say(t)} take '${nm(g)}' by value`,
             );
           }
         }

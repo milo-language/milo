@@ -477,9 +477,9 @@ than workers, are `parallelMapWith`.
 `f` runs on every worker at once, so it should be a plain function: everything the
 work depends on travels in the window itself, which is what keeps the workers from
 sharing anything. A capturing closure literal is accepted (it arrives `move`, owning
-its captures, and every worker reads the one environment). One that writes a
-capture is rejected, since it would stay by-reference; an explicit `move` closure
-that writes its own captures races, which is what `parallelMapWith`'s states avoid.
+its captures, and every worker reads the one environment). One that writes or moves
+out a capture is rejected (`@concurrent`), `move` or not: every worker would write the
+one environment at once. Per-worker state is what `parallelMapWith`'s states are for.
 
 #### `parallelMapWith`
 

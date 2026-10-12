@@ -1,0 +1,60 @@
+// @expect: hits=5 seen=320 total=320
+// Per-route mutable state in a handler that several connection tasks run at once. The
+// handler owns its captures and writes them freely; what it may not do is keep a loop
+// or view into a written capture across a park, since another request can push to it
+// meanwhile. Reading by index (each step re-reads the header) or looping over a
+// snapshot (`log.clone()`, owned by this run) is the sanctioned shape; a scalar like
+// `hits` has no buffer to dangle. Run under ASan by the asan sweep.
+from "std/http" import { Context, Response, Router, Request }
+from "std/runtime" import { Task, schedulerYield }
+
+fn get(path: string): Request {
+    return Request { method: "GET", path: path, queryParams: [], rawQuery: "", headers: [], body: "" }
+}
+
+fn body(r: &Response): string {
+    match r {
+        Response.Text(s) => { return s.clone() }
+        _ => { return "" }
+    }
+}
+
+fn main(): void {
+    var hits: i64 = 0
+    var log: Vec<string> = []
+    var r = Router.new()
+    r.get("/", move(ctx: &mut Context) => {
+        hits += 1
+        // 64 per request, so a push from another task does reallocate the buffer
+        for _k in 0..64 {
+            log.push(ctx.req.path.clone())
+        }
+        var seen: i64 = 0
+        var i: i64 = 0
+        while i < log.len {
+            schedulerYield()
+            if i < log.len {
+                seen += 1
+            }
+            i += 1
+        }
+        var total: i64 = 0
+        for _l in log.clone() {
+            schedulerYield()
+            total += 1
+        }
+        return Response.Text("hits=" + hits.toString() + " seen=" + seen.toString() + " total=" + total.toString())
+    })
+    Task.scope((s) => {
+        s.spawn(() => {
+            let _a = r.handle(get("/"))
+            let _b = r.handle(get("/"))
+        })
+        s.spawn(() => {
+            let _c = r.handle(get("/"))
+            let _d = r.handle(get("/"))
+        })
+    })
+    let last = r.handle(get("/"))
+    print(body(last.response))
+}

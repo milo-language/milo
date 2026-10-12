@@ -113,6 +113,12 @@ _Goes on: `fn`, `method`._
 
 This function hands a closure to a REAL OS thread. It is the single source of truth for where a data race can enter a program: the checker holds such a closure's captures to Send and rejects unsynchronized mutable globals reached from its body. Declaring it here rather than hardcoding entry points is what stops the list drifting — it already had, and a spawn with no arm shipped a pointer into a dead frame to another thread.
 
+### `@concurrent`
+
+_Goes on: `fn`, `method`._
+
+This function may run its closure argument on several threads at once (std/shard's `parallelMap` runs it on every worker). Every run shares the one environment, so the closure may not write or move out of its captures: a literal that does is rejected at the call, and so is a closure value whose body the call cannot see. A named fn always passes. Per-worker state belongs in `parallelMapWith`'s states.
+
 ### `@parks`
 
 _Goes on: `fn`, `method`, `extern`._

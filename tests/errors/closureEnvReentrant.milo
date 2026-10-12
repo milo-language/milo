@@ -1,0 +1,27 @@
+// @error: a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here
+// One task, no park: the closure reaches itself through the struct it is stored in and
+// re-enters while its loop over `log` is live. The inner run's push reallocates `log`,
+// and the outer loop variable dangles (heap-use-after-free under ASan before the rule).
+struct Node {
+    f: (&Node) => void,
+}
+
+fn main(): void {
+    var log: Vec<string> = ["a".clone()]
+    var depth: i64 = 0
+    let h = Node {
+        f: move (self2: &Node) => {
+            depth += 1
+            log.push("x".clone())
+            for l in log {
+                if depth < 2 {
+                    let g = self2.f
+                    g(self2)
+                }
+                print(l)
+            }
+        },
+    }
+    let g = h.f
+    g(h)
+}

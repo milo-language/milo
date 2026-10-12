@@ -1,0 +1,35 @@
+// @error: 'schedulerYield' can park this task while the loop variable is a reference into 'log's buffer; another run of this closure may push to 'log' before it resumes
+// A route handler is one closure value that every connection task runs. Its body
+// pushes to its own capture and then loops over it across a park (a fetch, here a
+// yield): a second request's push reallocates `log` under the first one's loop
+// variable. Heap-use-after-free under ASan before the rule; no `unsafe` anywhere.
+from "std/http" import { Context, Response, Router, Request }
+from "std/runtime" import { Task, schedulerYield }
+
+fn get(path: string): Request {
+    return Request { method: "GET", path: path, queryParams: [], rawQuery: "", headers: [], body: "" }
+}
+
+fn main(): void {
+    var log: Vec<string> = []
+    var r = Router.new()
+    r.get("/", move (ctx: &mut Context) => {
+        for _k in 0..64 {
+            log.push(ctx.req.path.clone())
+        }
+        var n: i64 = 0
+        for l in log {
+            schedulerYield()
+            n += l.len
+        }
+        return Response.Text(n.toString())
+    })
+    Task.scope((s) => {
+        s.spawn(() => {
+            let _a = r.handle(get("/"))
+        })
+        s.spawn(() => {
+            let _b = r.handle(get("/"))
+        })
+    })
+}

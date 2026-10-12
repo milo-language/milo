@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 504 distinct messages across 648 programs the compiler must reject.
+Every error message the test suite pins: 508 distinct messages across 652 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -93,6 +93,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Option' is a builtin enum and cannot be redeclared`](#option-is-a-builtin-enum-and-cannot-be-redeclared)
 - [`'orElse': callback's ok type must be i64, got string`](#orelse-callback-s-ok-type-must-be-i64-got-string)
 - [`'p' used after its source 'v' was moved (from 'v.ptr()' on line 15)`](#p-used-after-its-source-v-was-moved-from-v-ptr-on-line-15)
+- [`'parallelMap' runs this closure on several threads at once, and it writes its capture 'log'`](#parallelmap-runs-this-closure-on-several-threads-at-once-and-it-writes-its-capture-log)
 - [`'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)`](#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop)
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
@@ -109,7 +110,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'schedulerYield' can park this task while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)`](#scheduleryield-can-park-this-task-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15)
 - [`'schedulerYield' can park this task while 's' borrows from 'g's buffer`](#scheduleryield-can-park-this-task-while-s-borrows-from-g-s-buffer)
 - [`'schedulerYield' can park this task while the loop variable is a reference into 'g's buffer`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
+- [`'schedulerYield' can park this task while the loop variable is a reference into 'log's buffer; another run of this closure may push to 'log' before it resumes`](#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-log-s-buffer-another-run-of-this-closure-may-push-to-log-before-it-resumes)
 - [`'shatter' is private to shard.milo`](#shatter-is-private-to-shard-milo)
+- [`'show' can park this task while it holds a reference to 'log'; another run of this closure may push to 'log' before it resumes`](#show-can-park-this-task-while-it-holds-a-reference-to-log-another-run-of-this-closure-may-push-to-log-before-it-resumes)
 - [`'sign' returns i64 but can reach the end of its body without a 'return'`](#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
 - [`'sortBy' callback returns bool, but sortBy expects a signed integer`](#sortby-callback-returns-bool-but-sortby-expects-a-signed-integer)
 - [`'spawn' on a task scope must be called directly in the body of the Task.scope closure`](#spawn-on-a-task-scope-must-be-called-directly-in-the-body-of-the-task-scope-closure)
@@ -142,6 +145,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'yieldNow' can park this task while the loop variable is a reference into 'g's buffer`](#yieldnow-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`(via 'work' → 'record')`](#via-work-record)
 - [`@cName on 'Point.kind': only an 'extern struct' field has a C name`](#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name)
+- [`a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here`](#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here)
 - [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
@@ -2403,6 +2407,31 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/ptrUsedAfterSourceMoved.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrUsedAfterSourceMoved.milo)</sub>
 
+## `'parallelMap' runs this closure on several threads at once, and it writes its capture 'log'` {#parallelmap-runs-this-closure-on-several-threads-at-once-and-it-writes-its-capture-log}
+
+parallelMap runs `f` on every worker thread at once, and every run shares the one environment, so four threads push to one `log` with no lock: a double free under ASan before `@concurrent`. Per-worker state goes through parallelMapWith's states.
+
+```milo skip
+from "std/shard" import { parallelMap, Shard }
+
+fn main(): void {
+    var v: Vec<i64> = []
+    for i in 0..4000 {
+        v.push(i)
+    }
+    var log: Vec<i64> = []
+    let out = parallelMap(v, 4, move (s: Shard<i64>): Shard<i64> => {
+        for k in 0..2000 {
+            log.push(k)
+        }
+        return s
+    })
+    print(out.len.toString())
+}
+```
+
+<sub>[tests/errors/concurrentClosureWritesCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/concurrentClosureWritesCapture.milo)</sub>
+
 ## `'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)` {#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop}
 
 `@copyOnly` on a generic FN is checked at the call, with the type argument the call inferred. A struct with a Drop impl is move-tracked however plain its fields are, so a window over a Vec\<Conn\> would hand `get`'s caller a second owner of every descriptor.
@@ -2864,6 +2893,45 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/globalForInAcrossYield.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalForInAcrossYield.milo)</sub>
 
+## `'schedulerYield' can park this task while the loop variable is a reference into 'log's buffer; another run of this closure may push to 'log' before it resumes` {#scheduleryield-can-park-this-task-while-the-loop-variable-is-a-reference-into-log-s-buffer-another-run-of-this-closure-may-push-to-log-before-it-resumes}
+
+A route handler is one closure value that every connection task runs. Its body pushes to its own capture and then loops over it across a park (a fetch, here a yield): a second request's push reallocates `log` under the first one's loop variable. Heap-use-after-free under ASan before the rule; no `unsafe` anywhere.
+
+```milo skip
+from "std/http" import { Context, Response, Router, Request }
+from "std/runtime" import { Task, schedulerYield }
+
+fn get(path: string): Request {
+    return Request { method: "GET", path: path, queryParams: [], rawQuery: "", headers: [], body: "" }
+}
+
+fn main(): void {
+    var log: Vec<string> = []
+    var r = Router.new()
+    r.get("/", move (ctx: &mut Context) => {
+        for _k in 0..64 {
+            log.push(ctx.req.path.clone())
+        }
+        var n: i64 = 0
+        for l in log {
+            schedulerYield()
+            n += l.len
+        }
+        return Response.Text(n.toString())
+    })
+    Task.scope((s) => {
+        s.spawn(() => {
+            let _a = r.handle(get("/"))
+        })
+        s.spawn(() => {
+            let _b = r.handle(get("/"))
+        })
+    })
+}
+```
+
+<sub>[tests/errors/closureEnvSharedRouteHandler.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureEnvSharedRouteHandler.milo)</sub>
+
 ## `'shatter' is private to shard.milo` {#shatter-is-private-to-shard-milo}
 
 Found by the September 2026 soundness sweep. This program divided a Vec by hand, handed a window to a worker and returned, dropping the `Shards` owner while the worker still wrote through the window: a heap-use-after-free under --sanitize that no checker rule could see. The fix is that the manual cycle no longer exists outside std/shard: `shatter`, `windows` and `weld` are module-private, and the only way to divide a buffer is a closed form (`parallelMap`, `parallelMapWith`, `parallelScanStr`) that awaits every worker before the owner can go away.
@@ -2898,6 +2966,39 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/shardsManualPathPrivate.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shardsManualPathPrivate.milo)</sub>
+
+## `'show' can park this task while it holds a reference to 'log'; another run of this closure may push to 'log' before it resumes` {#show-can-park-this-task-while-it-holds-a-reference-to-log-another-run-of-this-closure-may-push-to-log-before-it-resumes}
+
+show() loops over its &Vec across a yield. The closure handing it `log` also writes `log`, and both scoped tasks run that one closure, so one run's push reallocates `log` under the other run's loop inside show. The caller is the only place that can see it.
+
+```milo skip
+from "std/runtime" import { Task, schedulerYield }
+
+fn show(v: &Vec<string>): void {
+    for l in v {
+        schedulerYield()
+        print(l)
+    }
+}
+
+fn both(g: () => void): void {
+    Task.scope((s) => {
+        s.spawn(() => g())
+        s.spawn(() => g())
+    })
+}
+
+fn main(): void {
+    var log: Vec<string> = ["a".clone()]
+    let f = move () => {
+        log.push("x".clone())
+        show(log)
+    }
+    both(f)
+}
+```
+
+<sub>[tests/errors/closureEnvRefArgAcrossPark.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureEnvRefArgAcrossPark.milo)</sub>
 
 ## `'sign' returns i64 but can reach the end of its body without a 'return'` {#sign-returns-i64-but-can-reach-the-end-of-its-body-without-a-return}
 
@@ -3844,6 +3945,38 @@ fn main() {
 ```
 
 <sub>[tests/errors/cNameNotExtern.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameNotExtern.milo)</sub>
+
+## `a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here` {#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here}
+
+One task, no park: the closure reaches itself through the struct it is stored in and re-enters while its loop over `log` is live. The inner run's push reallocates `log`, and the outer loop variable dangles (heap-use-after-free under ASan before the rule).
+
+```milo skip
+struct Node {
+    f: (&Node) => void,
+}
+
+fn main(): void {
+    var log: Vec<string> = ["a".clone()]
+    var depth: i64 = 0
+    let h = Node {
+        f: move (self2: &Node) => {
+            depth += 1
+            log.push("x".clone())
+            for l in log {
+                if depth < 2 {
+                    let g = self2.f
+                    g(self2)
+                }
+                print(l)
+            }
+        },
+    }
+    let g = h.f
+    g(h)
+}
+```
+
+<sub>[tests/errors/closureEnvReentrant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureEnvReentrant.milo)</sub>
 
 ## `a call through a function value writes the global 'G', which is being iterated here` {#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here}
 

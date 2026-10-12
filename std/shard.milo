@@ -298,10 +298,11 @@ impl Shards<T> {
 // `f` runs on every worker at once, so it should be a plain function: everything the
 // work depends on travels in the window itself, which is what keeps the workers from
 // sharing anything. A capturing closure literal is accepted (it arrives `move`, owning
-// its captures, and every worker reads the one environment). One that writes a
-// capture is rejected, since it would stay by-reference; an explicit `move` closure
-// that writes its own captures races, which is what `parallelMapWith`'s states avoid.
+// its captures, and every worker reads the one environment). One that writes or moves
+// out a capture is rejected (`@concurrent`), `move` or not: every worker would write the
+// one environment at once. Per-worker state is what `parallelMapWith`'s states are for.
 @copyOnly
+@concurrent
 pub fn parallelMap<T>(v: Vec<T>, workers: i64, f: move (Shard<T>) => Shard<T>): Vec<T> {
     // `f` is `move` because it crosses to the worker threads, so a capturing closure
     // literal arrives owning its captures (a by-reference one would point into the
@@ -370,6 +371,7 @@ impl NoWorkers<T> {
 // must not encode the assignment: per-worker tallies merge into totals that are
 // deterministic even though each worker's share is not.
 @copyOnly(T)
+@concurrent
 pub fn parallelMapWith<T, S>(v: Vec<T>, windows: i64, states: Vec<S>, f: move (Shard<T>, &mut S) => Shard<T>): Result<Mapped<T, S>, NoWorkers<T>> {
     // `move` and the non-owning alias: see parallelMap.
     let work: (Shard<T>, &mut S) => Shard<T> = f
@@ -666,6 +668,7 @@ struct ScanPart<R> {
 //
 // A match that begins inside a window's overlap is also visible to the next window,
 // so a counting `f` must stop at `w.ownLen()`, not `w.len()`.
+@concurrent
 pub fn parallelScanStr<R>(s: string, windows: i64, overlap: i64, f: move (&StrShard) => R): Scanned<R> {
     // `move` and the non-owning alias: see parallelMap.
     let work: (&StrShard) => R = f

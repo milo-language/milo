@@ -158,6 +158,16 @@ export const ATTRIBUTES: AttrInfo[] = [
       "frame to another thread.",
   },
   {
+    name: "concurrent",
+    targets: ["fn", "method"],
+    doc:
+      "This function may run its closure argument on several threads at once (std/shard's " +
+      "`parallelMap` runs it on every worker). Every run shares the one environment, so the " +
+      "closure may not write or move out of its captures: a literal that does is rejected " +
+      "at the call, and so is a closure value whose body the call cannot see. A named fn " +
+      "always passes. Per-worker state belongs in `parallelMapWith`'s states.",
+  },
+  {
     name: "parks",
     targets: ["fn", "method", "extern"],
     doc:

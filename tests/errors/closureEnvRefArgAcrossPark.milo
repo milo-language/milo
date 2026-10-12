@@ -1,0 +1,28 @@
+// @error: 'show' can park this task while it holds a reference to 'log'; another run of this closure may push to 'log' before it resumes
+// show() loops over its &Vec across a yield. The closure handing it `log` also writes
+// `log`, and both scoped tasks run that one closure, so one run's push reallocates `log`
+// under the other run's loop inside show. The caller is the only place that can see it.
+from "std/runtime" import { Task, schedulerYield }
+
+fn show(v: &Vec<string>): void {
+    for l in v {
+        schedulerYield()
+        print(l)
+    }
+}
+
+fn both(g: () => void): void {
+    Task.scope((s) => {
+        s.spawn(() => g())
+        s.spawn(() => g())
+    })
+}
+
+fn main(): void {
+    var log: Vec<string> = ["a".clone()]
+    let f = move () => {
+        log.push("x".clone())
+        show(log)
+    }
+    both(f)
+}

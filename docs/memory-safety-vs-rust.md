@@ -3,7 +3,7 @@ system: memory-safety-vs-rust
 purpose: adversarial retained probes of Milo's safe-language behavior compared with Rust, the findings that broke the claim, and what the compiler does not check
 key-files: src/checker.ts, src/codegen.ts, std/arena.milo, std/shard.milo, std/seal.milo, scripts/fuzz-generic-drop.ts, scripts/fuzz-tasks.ts, docs/ownership-model.md
 update-when: a safety check is added/moved between compile-time and runtime, a new threat class is probed, a fuzzer finds a hole, or one of the three unchecked gaps closes
-last-verified: 2026-10-09 (October sweep findings #12-#20 recorded; fuzz:tasks template liveness gate; pattern-binding refs into closure captures probed and pinned; earlier: closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
+last-verified: 2026-10-12 (findings #21-#23: a closure's written captures shared by its concurrent or re-entrant runs, a capture passed by reference into a parking iterator (the global form open), @concurrent on std/shard; earlier: October sweep findings #12-#20 recorded; fuzz:tasks template liveness gate; pattern-binding refs into closure captures probed and pinned; earlier: closure-borrow row: by-reference closures capture borrows, non-escaping closure params; earlier: finding #11: a shared & binding forwarded as &mut; earlier: corpus census section and its gate; findings #3-#10 from the September soundness sweep; the former standalone where-Rust-wins doc folded in as the "what the compiler does not check" section; matrix rows for closure borrows, arena reads, wrong-arena handles, `@mustUse` and private fields)
 -->
 
 # Memory safety: Milo vs Rust, battle-tested
@@ -377,6 +377,48 @@ The lesson repeats September's: each hole was a write or a move the aliasing mod
 rule. `fuzz:tasks` now has a `c-` family for the closure shapes and fails when any template stops
 producing programs that reach the rules (`c526e8f0`); four of its templates had been dead since
 the shard API went private, which is how #3/#4-shaped regressions could have gone ungated.
+
+## Findings #21 to #23: one closure, several runs
+
+Found 2026-10-12 from std/http's concurrent server, where every connection task runs the
+same route handler. Each was an unsafe-free program the checker accepted and ASan rejected.
+
+| # | Hole | Closed by |
+|---|---|---|
+| 21 | A closure writing its own captures was run twice at once: two tasks calling one Router handler (or one closure handed to two scoped tasks), or a body re-entering itself through a struct it was stored in. One run looped over `log` across a park or the re-entering call while the other pushed to it | the closure's written captures are globals scoped to that closure |
+| 22 | A written capture passed by reference to a callee that loops over it across a park (`show(log)`): only element views and slices were checked, not the container. **The same shape with a mutable global (`show(G)`) is still open**, see below | `paramViewsAcrossPark` summary (captures only) |
+| 23 | `parallelMap` ran a `move` closure that writes its captures on every worker thread at once (the doc comment admitted the race) | `@concurrent` |
+
+Milo has no `Fn`/`FnMut` split, and a closure value whose environment is shared is what
+`FnMut` exists to forbid. Rather than add the split, #21 reuses the model that already made
+globals safe across tasks (finding #5): inside a closure body, a capture the body writes in
+place is treated as a mutable global, because every run of the closure value reaches the
+same slot. So no loop, slice or element view into it may be live across a call that may
+park, or across a call that may run the closure again (any call through a value); the
+global write summary carries each closure's written captures, so a helper that re-enters
+is caught as well as a direct call. A capture only read is unaffected: no run can change it.
+Literals handed straight to `Task.scope`, a scoped `spawn`, `Task.spawn` or `Promise.run`
+run exactly once and are exempt (scoped tasks sharing a binding remain `checkTaskScopes`'
+business). A capture moved out is not tracked: the second run of such a closure aborts at
+the move-out. The sanctioned per-handler state is in `tests/fixtures/closureSharedRouteState.milo`:
+write captures freely, read them by index or through a snapshot across a park.
+
+#22 is the same gap for the container itself. A callee's `&Vec<T>` parameter is only a
+header pointer, which no realloc moves, but the callee may loop over it across its own park.
+A summary over the call graph now records which reference parameters each fn may hold a
+view into across a park, and passing a written capture to one is rejected at the caller.
+The identical hole exists for a mutable global (`var G: Vec<string>`; `show(G)` from two
+tasks is a heap-use-after-free under ASan today) and the same summary would close it, but
+not without a design decision: milojs passes its global interpreter by `&mut` into every
+parking entry point (`execBlock(gInterp, ...)`, `callFunction`, `runEventLoop`), 14 sites
+the rule rejects. A primitive meant to be shared across parks (`Once.run` on a global)
+holds no such view and passes either way.
+
+#23 has no park at all, so it needs the API to say so: `@concurrent` on `parallelMap`,
+`parallelMapWith` and `parallelScanStr` rejects a closure literal that writes or moves out
+a capture, and a closure value whose body the call cannot see.
+`tests/errors/closureEnvSharedRouteHandler.milo`, `closureEnvReentrant`,
+`closureEnvRefArgAcrossPark`, `concurrentClosureWritesCapture`.
 
 ## What the compiler does not check, and what happens instead
 

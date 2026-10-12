@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-09 (`*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-12 (a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -3277,6 +3277,47 @@ parameter the checker cannot see it (`fn twice(f: move () => i64): i64 { return 
 so the second call aborts at runtime, naming the capture, instead of computing with an
 empty one. Once-ness is not part of the closure's type; a body that only reads its
 captures may be called any number of times.
+
+#### Every run of a closure shares its captures
+
+A closure value is one environment however many times it runs, and nothing stops two runs
+overlapping: a route handler in a `Router` runs once per connection task, a closure
+parameter can be handed to two scoped tasks, and a body can reach itself through a struct
+it is stored in. So inside a closure body, a capture the body writes is treated like a
+mutable global: no loop, slice or view into it may be live across a call that can park
+the task, or across a call through a value (which may run the closure again). Reading a
+capture the body never writes is unrestricted.
+
+```milo error
+from "std/runtime" import { Task, schedulerYield }
+
+fn twice(g: () => void): void {
+    Task.scope((s) => {
+        s.spawn(() => g())
+        s.spawn(() => g())
+    })
+}
+
+fn main(): void {
+    var log: Vec<string> = []
+    twice(move () => {
+        log.push("hit".clone())
+        for l in log {
+            schedulerYield()    // another run of this closure may push to 'log' before it resumes
+            print(l)
+        }
+    })
+}
+```
+
+Read a written capture by index across the park (each step re-reads its length), or loop
+over a snapshot (`for l in log.clone()`), which the run owns. A closure handed straight to
+`Task.scope`, a scoped `spawn`, `Task.spawn` or `Promise.run` runs once and is exempt.
+
+A function that runs its closure argument on several OS threads at once declares
+`@concurrent` (std/shard's `parallelMap`, `parallelMapWith`, `parallelScanStr`). There no
+park is needed for two runs to collide, so the closure may not write or move out a capture
+at all; a named fn or a literal that only reads its captures is accepted.
 
 ### Closures in Structs
 
