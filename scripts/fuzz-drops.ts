@@ -831,9 +831,15 @@ interface Verdict {
   detail: string;
 }
 
+// The guard's RLIMIT_AS defaults to the RSS cap, which Linux enforces: ASan reserves
+// terabytes of shadow address space at startup ("failed to allocate 0x200001000 bytes")
+// and bun's own heap reservation crashes the build. Only address space is lifted; the
+// RSS and footprint watchdogs still cap what either process can actually use.
+const SPARSE_VM_MB = 64 * 1024 * 1024;
+
 async function judge(file: string, bin: string): Promise<Verdict> {
   const build = await guardedRun("bun", [MILO, "build", "--sanitize", file, "-o", bin], {
-    memMb: 2048, timeoutMs: 120_000, cwd: ROOT, env: { ...process.env, MILO_OWN_LEDGER: "1" },
+    memMb: 2048, virtualMemMb: SPARSE_VM_MB, timeoutMs: 120_000, cwd: ROOT, env: { ...process.env, MILO_OWN_LEDGER: "1" },
   });
   const out = (build.stdout + "\n" + build.stderr).replace(ANSI, "");
   const ledger = out.split("\n").map(l => LEDGER.exec(l)).filter(Boolean) as RegExpExecArray[];
@@ -853,7 +859,7 @@ async function judge(file: string, bin: string): Promise<Verdict> {
     return { kind: "ledger", sig: kinds.join(","), detail: ledger.map(m => m[0]).join("\n") };
   }
   const run = await guardedRun(bin, [], {
-    memMb: 1024, timeoutMs: 30_000, cwd: ROOT, env: { ...process.env, ASAN_OPTIONS: "detect_leaks=0" },
+    memMb: 1024, virtualMemMb: SPARSE_VM_MB, timeoutMs: 30_000, cwd: ROOT, env: { ...process.env, ASAN_OPTIONS: "detect_leaks=0" },
   });
   const a = ASAN.exec(run.stderr);
   if (a) return { kind: "asan", sig: a[1]!, detail: `AddressSanitizer: ${a[1]}` };

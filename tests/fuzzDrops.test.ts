@@ -8,10 +8,12 @@
 // This exists because the bugs here are invisible to every other oracle in the repo.
 // A struct that owns no heap and never runs its destructor leaks nothing, so the leak
 // ratchet and the ASan sweep both report clean while a user destructor is silently
-// skipped. Three such bugs were found the day this was written.
+// skipped. Three such bugs were found the day this was written. Every case is also
+// built under ASan and the ownership ledger, and this is the only place the fuzzer
+// runs on Linux (CI's macOS job runs it with a varying seed as `fuzz:drops`).
 //
-// Deliberately small. The real hunt is `bun scripts/fuzz-drops.ts --cases 300` with
-// varied seeds, and `--sanitize` on top, which belong in a manual run.
+// Deliberately small (each case is ~5 CPU-s). The real hunt is
+// `bun scripts/fuzz-drops.ts --cases 2000` with varied seeds, in a manual run.
 import { test, expect } from "bun:test";
 import { execFileSync } from "child_process";
 import { join } from "path";
@@ -22,7 +24,7 @@ test("every constructed value is destroyed exactly once", () => {
   let out = "";
   let code = 0;
   try {
-    out = execFileSync("bun", [join(ROOT, "scripts", "fuzz-drops.ts"), "--cases", "40", "--seed", "3"], {
+    out = execFileSync("bun", [join(ROOT, "scripts", "fuzz-drops.ts"), "--cases", "20", "--seed", "3", "--reduce-probes", "0"], {
       cwd: ROOT, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (e: any) {
@@ -32,7 +34,7 @@ test("every constructed value is destroyed exactly once", () => {
   expect(code, `destructor accounting did not balance:\n${out}`).toBe(0);
 
   // Not "did it exit 0" — a generator emitting invalid Milo would build nothing, check
-  // nothing and still pass. Assert how many programs actually RAN.
-  const ran = /(\d+) ran/.exec(out)?.[1];
-  expect(Number(ran ?? 0), `expected 40 programs to run, got: ${out}`).toBe(40);
+  // nothing and still pass. Assert how many programs actually BUILT (and so ran).
+  const built = /(\d+) built/.exec(out)?.[1];
+  expect(Number(built ?? 0), `expected 20 programs to build, got: ${out}`).toBe(20);
 }, 300_000);
