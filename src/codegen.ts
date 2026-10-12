@@ -7892,6 +7892,14 @@ export class Codegen {
         lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
         finalErrPayload = this.emitBoxAsIface(lines, srcPayload, srcErrFieldTy, expr.boxConversion);
         finalErrFieldTy = "{ ptr, ptr }";
+      } else if (expr.messageFn && srcErrFieldTy) {
+        // `?` into a `Result<T, string>` fn: the error's message() is the string, and the
+        // typed error itself is dropped here since nothing else will own it.
+        const msgTy = this.llvmType({ tag: "string" });
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = call ${msgTy} @${expr.messageFn.fn}(ptr ${errPayloadPtr})`);
+        this.emitDropValue(lines, errPayloadPtr, expr.messageFn.errType);
+        finalErrFieldTy = msgTy;
       } else if (expr.fromConversion && srcErrFieldTy) {
         // From conversion: wrap source err in target error enum variant
         const convEnumTy = `%${expr.fromConversion.targetEnumName}`;

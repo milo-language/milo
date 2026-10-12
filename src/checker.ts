@@ -529,6 +529,7 @@ export interface CheckResult {
   fnFieldCalls: Set<Expr>;
   cfnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
+  propagateMessages: Map<Expr, { name: string; errType: TypeKind }>;
   propagateBoxings: Map<Expr, PropagateBoxing>;
   contextBoxings: Map<Expr, PropagateBoxing>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
@@ -865,6 +866,9 @@ export class TypeChecker {
   // rather than silently handing a thin pointer to code that expects a fat one.
   private strandedCFnReads = new Map<Expr, { struct: string; field: string; span?: Span }>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
+  // `?` from a typed error into a fn returning `Result<T, string>`: the error's
+  // `message()` becomes the string. Keyed to the concrete type that owns the method.
+  private propagateMessages = new Map<Expr, { name: string; errType: TypeKind }>();
   // `?` in a fn returning Result<T, Heap<Iface>>: the operand's error is boxed and
   // coerced to the interface on the error path (see checkPropagateExpr).
   private propagateBoxings = new Map<Expr, PropagateBoxing>();
@@ -3471,6 +3475,7 @@ export class TypeChecker {
       fnFieldCalls: this.fnFieldCalls,
       cfnFieldCalls: this.cfnFieldCalls,
       propagateConversions: this.propagateConversions,
+      propagateMessages: this.propagateMessages,
       propagateBoxings: this.propagateBoxings,
       contextBoxings: this.contextBoxings,
       rangeCheckedExprs: this.rangeCheckedExprs,
@@ -11581,6 +11586,9 @@ export class TypeChecker {
           this.propagateBoxings.set(expr, boxing);
         } else if (conversion) {
           this.propagateConversions.set(expr, conversion);
+        } else if (retErr.tag === "string" && (operandErr.tag === "struct" || operandErr.tag === "enum")
+          && this.typeSatisfiesInterface(typeName(operandErr), "Error")) {
+          this.propagateMessages.set(expr, { name: typeName(operandErr), errType: operandErr });
         } else {
           this.error(`'?' error type mismatch: '${this.show(operandErr)}' cannot convert to '${this.show(retErr)}' (no wrapping variant found)`, sp);
         }

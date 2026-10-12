@@ -1,0 +1,43 @@
+// `?` from a typed error (anything with message()) into a fn returning Result<T, string>
+from "std/json" import { Json, JsonError }
+
+@derive(Json)
+struct Pt {
+    x: i32,
+}
+
+struct BadThing {
+    what: string,
+}
+
+impl BadThing {
+    fn message(self: &Self): string {
+        return $"bad {self.what}"
+    }
+}
+
+fn thing(ok: bool): Result<i32, BadThing> {
+    if ok { return Ok(7) }
+    return Err(BadThing { what: "thing" })
+}
+
+fn useThing(ok: bool): Result<i32, string> {
+    let v = thing(ok)?
+    return Ok(v + 1)
+}
+
+fn readPt(text: string): Result<i32, string> {
+    let p = Pt.fromJson(text)?
+    return Ok(p.x)
+}
+
+fn main() {
+    match useThing(true) { Result.Ok(v) => print(v), Result.Err(e) => print(e) }
+    match useThing(false) { Result.Ok(v) => print(v), Result.Err(e) => print(e) }
+    match readPt("{\"x\":3}") { Result.Ok(v) => print(v), Result.Err(e) => print(e) }
+    match readPt("{\"x\":\"no\"}") { Result.Ok(v) => print(v), Result.Err(e) => print(e) }
+}
+// @expect: 8
+// @expect: bad thing
+// @expect: 3
+// @expect: field 'x': expected integer, got string

@@ -1579,6 +1579,11 @@ caller reads `.message()` without knowing which callee failed, so a CLI's `main`
 not need one enum per layer to say what went wrong. The concrete type is still behind
 the box; a fn that wants to match on it keeps its own `Result<T, MyError>`.
 
+A fn that returns `Result<T, string>` takes the same errors through `?` without the
+box: the error's `message()` becomes the string and the typed error is dropped. This is
+the cheap form for code that only ever logs or returns the text (`Pt.fromJson(text)?`
+inside a `Result<Pt, string>` fn yields `field 'x': expected integer, got string`).
+
 ```milo
 struct NotFound { path: string }
 impl NotFound {

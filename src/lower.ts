@@ -126,24 +126,7 @@ class LowerCtx {
       const iface = this.c.interfaces.get(coercion.ifaceName);
       if (!iface) continue;
       const methods: string[] = [];
-      for (const [methodName] of iface.methods) {
-        // resolve the concrete method — inherent first, then trait impls
-        const inherent = this.c.functions.get(`${coercion.fromType}$${methodName}`);
-        if (inherent) {
-          methods.push(`${coercion.fromType}$${methodName}`);
-        } else {
-          // search trait impls for matching method
-          let found = false;
-          for (const [fnName] of this.c.functions) {
-            if (fnName.startsWith(`${coercion.fromType}$`) && fnName.endsWith(`$${methodName}`)) {
-              methods.push(fnName);
-              found = true;
-              break;
-            }
-          }
-          if (!found) methods.push(`${coercion.fromType}$${methodName}`);
-        }
-      }
+      for (const [methodName] of iface.methods) methods.push(this.concreteMethodFn(coercion.fromType, methodName));
       itableMap.set(key, { concreteType: coercion.fromType, ifaceName: coercion.ifaceName, methods });
     }
     const itables = [...itableMap.values()];
@@ -251,6 +234,15 @@ class LowerCtx {
     return contracts
       .filter(c => c.kind === "invariant")
       .map(c => ({ kind: c.kind as "invariant", expr: this.lowerExpr(c.expr), span: c.span }));
+  }
+
+  // The function a concrete type's method resolves to: inherent first, then trait impls.
+  private concreteMethodFn(typeName: string, methodName: string): string {
+    if (this.c.functions.get(`${typeName}$${methodName}`)) return `${typeName}$${methodName}`;
+    for (const [fnName] of this.c.functions) {
+      if (fnName.startsWith(`${typeName}$`) && fnName.endsWith(`$${methodName}`)) return fnName;
+    }
+    return `${typeName}$${methodName}`;
   }
 
   private lowerFn(fn: AstFn): HIRFunction {
@@ -1083,8 +1075,10 @@ class LowerCtx {
         const fnRetType = this.currentRetType;
         const fromConversion = this.c.propagateConversions.get(expr);
         const boxConversion = this.c.propagateBoxings.get(expr);
+        const messageFrom = this.c.propagateMessages.get(expr);
         return {
           kind: "Propagate",
+          messageFn: messageFrom === undefined ? undefined : { fn: this.concreteMethodFn(messageFrom.name, "message"), errType: messageFrom.errType },
           operand: this.lowerExpr(expr.operand),
           enumName: operandType?.tag === "enum" ? operandType.name : "",
           retType: fnRetType,
