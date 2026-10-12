@@ -14167,8 +14167,10 @@ export class TypeChecker {
       }
     }
     // A ref- or place-match borrows the subject (payload bindings are
-    // borrows); it is not consumed, so don't move it.
-    if (!subjBorrows) this.tryMove(subject);
+    // borrows); it is not consumed, so don't move it. A literal match only compares, so
+    // it borrows too: moving an owned string into it left nothing to drop it, one leak
+    // per `match s { "lit" => ... }`.
+    if (!subjBorrows && !isLiteralType) this.tryMove(subject);
     return armTypes;
   }
 

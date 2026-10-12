@@ -1,0 +1,48 @@
+// A match on string literals only compares the subject, so it borrows it. It used to
+// move an owned string into the match and never drop it (one leak per call under
+// `leaks`), and the string was unusable after the match for no reason.
+fn kind(cmd: string): i64 {
+    match cmd {
+        "hello" => {
+            return 1
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+
+fn label(s: string): string {
+    let n = match s {
+        "a" => 1,
+        "b" => 2,
+        _ => 0,
+    }
+    return s + "=" + n.toString()
+}
+
+fn main() {
+    var t: i64 = 0
+    var i: i64 = 0
+    while i < 1000 {
+        t = t + kind("hel" + "lo")
+        i = i + 1
+    }
+    print(t)
+    let s = "b" + ""
+    match s {
+        "b" => {
+            print("matched")
+        }
+        _ => {}
+    }
+    print(s)
+    print(label("a" + ""))
+    print(label(s))
+}
+
+// @expect: 1000
+// @expect: matched
+// @expect: b
+// @expect: a=1
+// @expect: b=2
