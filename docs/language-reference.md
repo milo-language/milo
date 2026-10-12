@@ -1842,6 +1842,40 @@ compiler cannot check and a wrong answer does not announce. There is no
 `chunks`/`windows` either — both hand back a collection of slices, and a slice is a
 second-class reference that cannot be stored in a `Vec`.
 
+### Consuming a temporary: `for x in makeVec()`
+
+A for-in over a **named** Vec or array (`for x in v`, `for x in self.items`, `for x in
+v[0]`) binds each element as a read-only `&T`: the container still owns it. A for-in over
+an **owned temporary** consumes the container instead and binds each element **by value**
+(`T`), so the body can move it on with no clone. An owned temporary is a call or method
+call result, an array literal, the result of `?`, `!` or `??` (which consume their operand
+wherever they appear, so `for x in opt!` consumes even a local `opt`), or an `if`/`match`
+whose every tail is one of those. A local, global, field, index, slice or range never is,
+even when moving it would be legal; to consume a named Vec, iterate `replace(&mut v, [])`.
+
+```milo
+fn fetchAll(): Result<Vec<Result<Vec<i64>, string>>, string> {
+    return Result.Ok([Result.Ok([1, 2]), Result.Ok([3])])
+}
+
+fn collect(): Result<Vec<Vec<i64>>, string> {
+    var out: Vec<Vec<i64>> = []
+    for r in fetchAll()? {      // r: Result<Vec<i64>, string>, not &Result<...>
+        out.push(r?)            // moves the payload out; no r.clone()
+    }
+    return Result.Ok(out)
+}
+```
+
+The binding is immutable, like a `let`, and is an ordinary owned local: moving it ends its
+life for the rest of that iteration, and whatever the body did not move is dropped at the
+end of the iteration (or at `continue`). If the loop leaves early (`break`, `return`, `?`),
+the elements no iteration reached are dropped with the container. Only Vec and fixed
+arrays are consumed this way; a temporary string, map or iterator loops exactly as a
+named one does, and so do the zero-copy `lines()`/`splitView()` passes (`split(",")`
+returns a Vec, so it is consumed). For a Copy element (`for x in nums()` over `Vec<i64>`) the difference is
+invisible.
+
 ### Writing elements in a loop: `for x in &mut v`
 
 `for x in v` binds each element as a read-only `&T`. `for x in &mut v` binds it as a
@@ -2126,8 +2160,9 @@ for k, v in m {
 }
 ```
 
-Both bindings are **by reference**, like every other `for-in` — no copy is made, and
-neither is assignable inside the loop body.
+Both bindings are **by reference**, even over a temporary map (only a temporary Vec or
+array is consumed, see [Consuming a temporary](#consuming-a-temporary-for-x-in-makevec)):
+no copy is made, and neither is assignable inside the loop body.
 
 **Iteration order is unspecified, and deliberately varies run to run.** It follows the
 table's internal bucket layout, and the hash is seeded from the OS entropy source once per

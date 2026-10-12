@@ -1,0 +1,107 @@
+// Consuming loops across iterable and element shapes: a generic element type, an element
+// big enough to be copied by memcpy rather than a load/store, a `match` that consumes the
+// binding, `!`, `??` and `match` iterables. A named Vec stays a borrow; `opt!` over a
+// named Option is consumed, because `!` already moved `opt`.
+// @expect: generic 3
+// @expect: big 7 9
+// @expect: match ok:a ok:b err:c
+// @expect: unwrap 2
+// @expect: default 1
+// @expect: match-expr 2
+// @expect: named still has 3
+// @expect: unwrapped local 2
+
+pub struct Big {
+    tag: string,
+    pad: [i64; 20],
+}
+
+fn take<T>(mk: () => Vec<T>): Vec<T> {
+    var out: Vec<T> = []
+    for x in mk() {
+        out.push(x)
+    }
+    return out
+}
+
+fn three(): Vec<string> {
+    return ["a".repeat(8000), "b".repeat(8000), "c".repeat(8000)]
+}
+
+fn bigs(): Vec<Big> {
+    var v: Vec<Big> = []
+    for i in 0..3 {
+        var p: [i64; 20] = [0; 20]
+        p[19] = i * 2 + 5
+        v.push(Big { tag: "t".repeat(8000), pad: p })
+    }
+    return v
+}
+
+fn results(): Vec<Result<string, string>> {
+    return [Result.Ok("a".repeat(1)), Result.Ok("b".repeat(1)), Result.Err("c".repeat(1))]
+}
+
+fn maybe(some: bool): Option<Vec<string>> {
+    if some {
+        return Option.Some(["x".repeat(8000), "y".repeat(8000)])
+    }
+    return Option.None
+}
+
+fn main(): i32 {
+    print("generic ", take(three).len)
+
+    var kept: Vec<Big> = []
+    for b in bigs() {
+        if b.pad[19] > 5 {
+            kept.push(b)
+        }
+    }
+    print("big ", kept[0].pad[19], " ", kept[1].pad[19])
+
+    var parts: Vec<string> = []
+    for r in results() {
+        match r {
+            Result.Ok(s) => parts.push("ok:" + s)
+            Result.Err(e) => parts.push("err:" + e)
+        }
+    }
+    print("match ", parts.join(" "))
+
+    var n: i64 = 0
+    for s in maybe(true)! {
+        parts.push(s)
+        n += 1
+    }
+    print("unwrap ", n)
+
+    n = 0
+    for s in maybe(false) ?? ["z".repeat(8000)] {
+        parts.push(s)
+        n += 1
+    }
+    print("default ", n)
+
+    n = 0
+    for s in match n { 0 => take(three), _ => three(), } {
+        if s.startsWith("b") {
+            break
+        }
+        n += 1
+    }
+    print("match-expr ", n + 1)
+
+    let named = three()
+    for s in named {
+        n += s.len
+    }
+    print("named still has ", named.len)
+    let opt = maybe(true)
+    var own: Vec<string> = []
+    for s in opt! {
+        own.push(s)
+    }
+    print("unwrapped local ", own.len)
+    return 0
+}

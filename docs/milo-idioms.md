@@ -36,7 +36,7 @@ for b in s {          // b: u8
 for i, b in s { ... } // i: i64 byte offset, b: u8
 ```
 
-The same applies to `Vec<T>` and `HashMap<K,V>`. `for` binds **by reference**, so iterating doesn't consume the collection.
+The same applies to `Vec<T>` and `HashMap<K,V>`. `for` over a named collection binds **by reference**, so iterating doesn't consume it. `for` over a temporary Vec (`for r in fetchAll()?`) consumes it and binds each element by value, so `out.push(r)` needs no `.clone()`.
 
 ### Bytes vs codepoints is a real choice — make it deliberately
 

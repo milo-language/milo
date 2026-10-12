@@ -1,0 +1,53 @@
+// A for-in over an owned temporary consumes it: each element binds by value, so the
+// body can move it on (`out.push(s)`) with no clone. Covers a call, the enumerate form,
+// a fixed array literal, and a Copy element type, whose output is the same as before.
+// @expect: 3
+// @expect: aaa bbb ccc
+// @expect: 0 x
+// @expect: 1 y
+// @expect: 5
+// @expect: p q
+// @expect: 60
+// @expect: 1 20
+
+fn mk(): Vec<string> {
+    return ["a".repeat(3), "b".repeat(3), "c".repeat(3)]
+}
+
+fn nums(): Vec<i32> {
+    return [10, 20, 30]
+}
+
+fn main(): i32 {
+    var out: Vec<string> = []
+    for s in mk() {
+        out.push(s)
+    }
+    print(out.len)
+    print(out.join(" "))
+    for i, s in ["x".repeat(1), "y".repeat(1)] {
+        print(i, " ", s)
+        out.push(s)
+    }
+    print(out.len)
+    var arr: Vec<string> = []
+    for s in mkFixed() {
+        arr.push(s)
+    }
+    print(arr.join(" "))
+    var sum: i32 = 0
+    for x in nums() {
+        sum = sum + x
+    }
+    print(sum)
+    for i, x in nums() {
+        if i == 1 {
+            print(i, " ", x)
+        }
+    }
+    return 0
+}
+
+fn mkFixed(): [string; 2] {
+    return ["p".repeat(1), "q".repeat(1)]
+}

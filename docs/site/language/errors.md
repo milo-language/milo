@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 492 distinct messages across 630 programs the compiler must reject.
+Every error message the test suite pins: 492 distinct messages across 632 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -6313,6 +6313,22 @@ fn main() {
 
 ## `cannot move the borrowed value out of 's'` {#cannot-move-the-borrowed-value-out-of-s}
 
+Only an owned temporary is consumed. A loop over a named Vec still binds each element by reference, so moving one out stays an error (the Vec still owns it).
+
+```milo skip
+fn main(): i32 {
+    let v: Vec<string> = ["a".repeat(2), "b".repeat(2)]
+    var out: Vec<string> = []
+    for s in v {
+        out.push(s)
+    }
+    print(out.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/forInNamedVecMoveElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInNamedVecMoveElement.milo)</sub>
+
 A `&S` parameter cannot be the base of a struct update: the base is consumed.
 
 ```milo skip
@@ -12203,6 +12219,25 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/enumPointerPayloadCopy.milo](https://github.com/milo-language/milo/blob/main/tests/errors/enumPointerPayloadCopy.milo)</sub>
+
+A consuming loop's binding is an ordinary owned local: once the body moves it, the rest of that iteration cannot read it.
+
+```milo skip
+fn mk(): Vec<string> {
+    return ["a".repeat(2), "b".repeat(2)]
+}
+
+fn main(): i32 {
+    var out: Vec<string> = []
+    for s in mk() {
+        out.push(s)
+        print(s)
+    }
+    return 0
+}
+```
+
+<sub>[tests/errors/forInConsumeUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInConsumeUseAfterMove.milo)</sub>
 
 `forget` consumes its argument like any other transfer — the value is gone, it is only the drop that does not run. Reading it afterwards is the same use-after-move as any.
 

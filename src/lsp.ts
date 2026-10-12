@@ -504,7 +504,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
         }
       }
       const bindTypes = checkResult?.patternBindingTypes ?? new Map();
-      const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes);
+      const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes, checkResult?.forInBindingTypes ?? new Map());
       if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`${arrayHoverNote(varHover, "stack")}` } };
     }
 
@@ -531,6 +531,9 @@ function findVarHover(
   word: string,
   exprTypes: Map<Expr, import("./types").TypeKind>,
   bindTypes: Map<import("./ast").Pattern, import("./types").TypeKind[]>,
+  // A loop binding's type depends on the loop form: a consuming loop over a temporary
+  // binds `T`, a loop over a named container `&T`. Only the checker knows which.
+  forInTypes: Map<Stmt, import("./types").TypeKind[]>,
 ): string | null {
   // A payload binding from an enum pattern (`Option.Some(n)` binds `n`).
   const patternBindHover = (pattern: import("./ast").Pattern): string | null => {
@@ -550,13 +553,13 @@ function findVarHover(
       if (resolved) return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${resolved}`;
     }
     if (stmt.kind === "IfStmt") {
-      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes); if (r) return r;
-      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r2) return r2; }
+      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes, forInTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes, forInTypes); if (r2) return r2; }
     }
     if (stmt.kind === "IfLetStmt") {
       const b = patternBindHover(stmt.pattern); if (b) return b;
-      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes); if (r) return r;
-      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r2) return r2; }
+      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes, forInTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes, forInTypes); if (r2) return r2; }
     }
     if (stmt.kind === "LetElseStmt") {
       // `let g = p else { … }` over a `?&mut T` parameter binds through `bindName`, not
@@ -567,24 +570,26 @@ function findVarHover(
         return `let ${word}: ${tk ? formatTypeName(tk) : "?"}`;
       }
       const b = patternBindHover(stmt.pattern); if (b) return b;
-      const r = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r) return r;
+      const r = findVarHover(stmt.elseBody, word, exprTypes, bindTypes, forInTypes); if (r) return r;
     }
     if (stmt.kind === "WhileStmt") {
-      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes, forInTypes); if (r) return r;
     }
     if (stmt.kind === "MatchStmt") {
       for (const arm of stmt.arms) {
         const b = patternBindHover(arm.pattern); if (b) return b;
-        const r = findVarHover(arm.body, word, exprTypes, bindTypes); if (r) return r;
+        const r = findVarHover(arm.body, word, exprTypes, bindTypes, forInTypes); if (r) return r;
       }
     }
     if (stmt.kind === "ForInStmt") {
-      if (stmt.varName === word) return `let ${stmt.varName}: (loop variable)`;
-      if (stmt.varName2 && stmt.varName2 === word) return `let ${stmt.varName2}: (loop variable)`;
-      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
+      const tys = forInTypes.get(stmt);
+      const loopVar = (i: number) => `let ${word}: ${tys?.[i] ? formatTypeName(tys[i]) : "(loop variable)"}`;
+      if (stmt.varName === word) return loopVar(0);
+      if (stmt.varName2 && stmt.varName2 === word) return loopVar(1);
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes, forInTypes); if (r) return r;
     }
     if (stmt.kind === "UnsafeBlock") {
-      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes, forInTypes); if (r) return r;
     }
   }
   return null;

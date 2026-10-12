@@ -140,7 +140,7 @@ Declares a function. Parameter types are mandatory and the return type follows t
 for x in items { … }
 for i in 0..n { … }
 ```
-Iterates a container, a range, or anything with an iterator. The loop variable **binds by reference** into the container — it does not copy the element and does not consume the container, so `items` is still usable after the loop.
+Iterates a container, a range, or anything with an iterator. Over a named container the loop variable **binds by reference**: it does not copy the element and does not consume the container, so `items` is still usable after the loop. Over an owned temporary Vec or array (`for x in makeItems()`) the loop consumes it and binds each element by value, so the body can move it.
 
 The binding is **immutable**: to change elements in place, assign through the index (`v[i] = …`) or hand the container to a function taking a `&mut [T]` slice.
 

@@ -1,0 +1,144 @@
+// Every way out of a consuming loop drops each element exactly once. `R` prints on
+// drop, so the output is the drop schedule: an element the body kept dies at the end
+// of its own iteration, a moved one dies with whoever took it, and on `break` or
+// `return` the elements no iteration reached die when the loop's container does.
+// @expect: -- break
+// @expect: see 1
+// @expect: drop 1
+// @expect: see 2
+// @expect: drop 2
+// @expect: drop 3
+// @expect: drop 4
+// @expect: after break
+// @expect: -- continue
+// @expect: drop 1
+// @expect: drop 3
+// @expect: kept 2
+// @expect: drop 2
+// @expect: after continue
+// @expect: -- return
+// @expect: drop 1
+// @expect: drop 3
+// @expect: drop 4
+// @expect: found 2
+// @expect: drop 2
+// @expect: -- return other
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 3
+// @expect: drop 4
+// @expect: missing
+// @expect: -- conditional move
+// @expect: drop 1
+// @expect: drop 3
+// @expect: kept 2
+// @expect: drop 0
+// @expect: drop 2
+// @expect: -- strings
+// @expect: 16000 32000
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn four(): Vec<R> {
+    return [R { id: 1 }, R { id: 2 }, R { id: 3 }, R { id: 4 }]
+}
+
+fn three(): Vec<R> {
+    return [R { id: 1 }, R { id: 2 }, R { id: 3 }]
+}
+
+fn find(id: i32): Option<R> {
+    for r in four() {
+        if r.id == id {
+            return Option.Some(r)
+        }
+    }
+    return Option.None
+}
+
+fn findMissing(): string {
+    for r in four() {
+        if r.id == 9 {
+            return "found"
+        }
+    }
+    return "missing"
+}
+
+fn words(): Vec<string> {
+    return ["a".repeat(8000), "b".repeat(8000), "c".repeat(8000), "d".repeat(8000), "e".repeat(8000)]
+}
+
+fn main(): i32 {
+    print("-- break")
+    for r in four() {
+        if r.id == 3 {
+            break
+        }
+        print("see ", r.id)
+    }
+    print("after break")
+
+    print("-- continue")
+    var keep: Vec<R> = []
+    for r in three() {
+        if r.id != 2 {
+            continue
+        }
+        keep.push(r)
+    }
+    print("kept ", keep[0].id)
+    keep.clear()
+    print("after continue")
+
+    print("-- return")
+    match find(2) {
+        Option.Some(r) => print("found ", r.id)
+        Option.None => print("none")
+    }
+
+    print("-- return other")
+    print(findMissing())
+
+    print("-- conditional move")
+    var evens: Vec<R> = []
+    for i, r in [R { id: 0 }, R { id: 1 }, R { id: 2 }, R { id: 3 }] {
+        if i % 2 == 0 {
+            evens.push(r)
+        }
+    }
+    print("kept ", evens.len)
+    evens.clear()
+
+    print("-- strings")
+    var a: Vec<string> = []
+    var total: i64 = 0
+    for i, w in words() {
+        if i == 3 {
+            break
+        }
+        if i == 1 {
+            continue
+        }
+        total += w.len
+        a.push(w)
+    }
+    for w in words() {
+        if w.len > 0 {
+            total += w.len
+            if total > 30000 {
+                break
+            }
+        }
+    }
+    print(a.len * 8000, " ", total)
+    return 0
+}

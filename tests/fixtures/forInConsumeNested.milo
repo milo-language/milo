@@ -1,0 +1,83 @@
+// Consuming loops nest, and work inside a closure body. The inner loop's container is
+// re-made every outer iteration and is fully dropped before the next one starts; a
+// `break` in the inner loop drops only the inner container's tail. The outer binding
+// is moved on one path (`kept.push(o)`) and dropped by `continue` on the other.
+// @expect: drop 11
+// @expect: drop 13
+// @expect: row 1 kept 1
+// @expect: drop 21
+// @expect: drop 22
+// @expect: drop 23
+// @expect: drop 2
+// @expect: kept 12
+// @expect: drop 12
+// @expect: drop 1
+// @expect: closure 3
+// @expect: if-expr 2
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn row(n: i32): Vec<R> {
+    return [R { id: n * 10 + 1 }, R { id: n * 10 + 2 }, R { id: n * 10 + 3 }]
+}
+
+fn outer(): Vec<R> {
+    return [R { id: 1 }, R { id: 2 }]
+}
+
+fn names(): Vec<string> {
+    return ["x".repeat(8000), "y".repeat(8000), "z".repeat(8000)]
+}
+
+fn main(): i32 {
+    var kept: Vec<R> = []
+    for o in outer() {
+        if o.id == 2 {
+            for r in row(o.id) {
+                if r.id == 21 {
+                    continue
+                }
+                if r.id == 22 {
+                    break
+                }
+            }
+            continue
+        }
+        for r in row(o.id) {
+            if r.id == 12 {
+                kept.push(r)
+            }
+        }
+        print("row ", o.id, " kept ", kept.len)
+        kept.push(o)
+    }
+    print("kept ", kept[0].id)
+    kept.clear()
+
+    let f = (): i64 => {
+        var out: Vec<string> = []
+        for s in names() {
+            out.push(s)
+        }
+        return out.len
+    }
+    print("closure ", f())
+
+    var n: i64 = 0
+    for s in if n == 0 { names() } else { row(0).map((r: &R): string => r.id.toString()) } {
+        if s.startsWith("z") {
+            break
+        }
+        n += 1
+    }
+    print("if-expr ", n)
+    return 0
+}

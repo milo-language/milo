@@ -137,6 +137,7 @@ export function orderGuardIncludes(headers: string[], os: string): string[] {
 }
 
 interface LocalInfo { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }
+interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; addr: string; consumeCursor?: string }
 
 // One name for codegen's return shape: the IR lines an expression emits, the SSA value it
 // leaves the result in, and that value's LLVM type.
@@ -282,7 +283,10 @@ export class Codegen {
   // Droppable locals are identified by their slot ADDRESS. A function can hold
   // several locals with the same name in different scopes, so re-resolving a
   // name through the current scope picks an unrelated slot.
-  private droppableLocals: { name: string; typeKind: TypeKind; aliveFlag: string; addr: string }[] = [];
+  // `consumeCursor`: the temporary a consuming for-in owns (genConsumedIterable). Its
+  // elements before the cursor were moved into the loop binding, so dropping it destroys
+  // only [cursor, len) and then frees the buffer.
+  private droppableLocals: DroppableLocal[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
@@ -4355,6 +4359,7 @@ export class Codegen {
   // if it owns heap data, register it as a droppable local so the buffer is freed
   // at function exit. Elements are only borrowed (&T) in the body, never moved, so
   // one whole-container drop is sound and the alive-flag makes it double-free safe.
+  // A Vec/array temporary the checker marked consuming takes genConsumedIterable instead.
   private genForEachIterableAddr(iterable: HIRExpr): Gen {
     const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
     // A field of an rvalue (`for x in mk().items`) is no place either: genLValue answered
@@ -4393,12 +4398,131 @@ export class Codegen {
     this.droppableLocals.push({ name, typeKind, aliveFlag, addr });
   }
 
+  // A consuming for-in (`for x in makeVec()`, checker's consumingForIns) owns its
+  // temporary outright: evaluated once into a slot, never registered as a whole-container
+  // drop (that would free the elements the binding already took). Instead its droppable
+  // entry carries a cursor the body advances past each element it moves out, so whichever
+  // exit runs first (loop end, `break` dropped at the loop's end label, `return` or `?`
+  // through the function drop glue) destroys exactly the elements no iteration reached, then the
+  // buffer. Registered before loopDropStart, so `continue` and the per-iteration drops
+  // never touch it.
+  private genConsumedIterable(iterable: HIRExpr): { lines: string[]; addr: string; iterTy: string; entry: DroppableLocal | null } {
+    const lines: string[] = [];
+    const iterTy = this.llvmType(iterable.type);
+    const addr = this.nextTemp();
+    this.entryAllocas.push(`  ${addr} = alloca ${iterTy}`);
+    this.genStoreInto(lines, addr, iterTy, iterable);
+    if (!this.needsDropCg(iterable.type)) return { lines, addr, iterTy, entry: null };
+    const cursor = `${addr}.cursor`;
+    this.entryAllocas.push(`  ${cursor} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${cursor}`);
+    const aliveFlag = `${addr}.alive`;
+    this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+    this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+    lines.push(`  store i1 1, ptr ${aliveFlag}`);
+    const entry: DroppableLocal = { name: `__forin_consumed.${this.scopeCounter++}`, typeKind: iterable.type, aliveFlag, addr, consumeCursor: cursor };
+    this.droppableLocals.push(entry);
+    return { lines, addr, iterTy, entry };
+  }
+
+  // Move element `elemPtr` into the consuming loop's by-value binding, then advance the
+  // container's cursor past it. Both happen before any body code, so no exit can observe
+  // the element owned twice or by nobody.
+  private emitConsumeElement(lines: string[], elemPtr: string, idx64: string, binding: { addr: string; ty: string; alive: string | null }, entry: DroppableLocal | null) {
+    if (this.isBigAgg(binding.ty)) {
+      this.emitMemcpy(lines, binding.addr, elemPtr, binding.ty);
+    } else {
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load ${binding.ty}, ptr ${elemPtr}`);
+      lines.push(`  store ${binding.ty} ${v}, ptr ${binding.addr}`);
+    }
+    if (binding.alive) lines.push(`  store i1 1, ptr ${binding.alive}`);
+    if (entry?.consumeCursor) {
+      const next = this.nextTemp();
+      lines.push(`  ${next} = add i64 ${idx64}, 1`);
+      lines.push(`  store i64 ${next}, ptr ${entry.consumeCursor}`);
+    }
+  }
+
+  // The by-value binding of a consuming loop: a loop-scoped droppable (pushed after
+  // loopDropStart) so the end of each iteration, `continue` and `break` drop it unless
+  // the body moved it, which clears the flag exactly as for any local.
+  private registerConsumedBinding(name: string, addr: string, typeKind: TypeKind): string | null {
+    if (!this.needsDropCg(typeKind)) return null;
+    const alive = `${addr}.alive`;
+    this.entryAllocas.push(`  ${alive} = alloca i1`);
+    this.entryAllocas.push(`  store i1 0, ptr ${alive}`);
+    this.droppableLocals.push({ name, typeKind, aliveFlag: alive, addr });
+    return alive;
+  }
+
+  // Drop what a consuming loop's container still owns: elements [cursor, len) (a fixed
+  // array's len is its size), then a Vec's buffer.
+  private emitConsumedTailDrop(lines: string[], addr: string, typeKind: TypeKind, cursor: string) {
+    const elem = typeKind.tag === "vec" || typeKind.tag === "array" ? typeKind.element : null;
+    if (!elem) throw new Error(`consumed for-in over ${typeKind.tag}`);
+    const elemTy = this.llvmType(elem);
+    let base: string;
+    let len: string;
+    let skipLabel: string | null = null;
+    if (typeKind.tag === "vec") {
+      this.needsFree = true;
+      const vecVal = this.nextTemp();
+      lines.push(`  ${vecVal} = load %Vec, ptr ${addr}`);
+      base = this.nextTemp();
+      lines.push(`  ${base} = extractvalue %Vec ${vecVal}, 0`);
+      len = this.nextTemp();
+      lines.push(`  ${len} = extractvalue %Vec ${vecVal}, 1`);
+      const isNull = this.nextTemp();
+      lines.push(`  ${isNull} = icmp eq ptr ${base}, null`);
+      const dropLabel = this.nextLabel("consumed.drop");
+      skipLabel = this.nextLabel("consumed.skip");
+      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
+      lines.push(`${dropLabel}:`);
+    } else {
+      base = addr;
+      len = String((typeKind as { size: number | null }).size ?? 0);
+    }
+    if (this.needsDropCg(elem)) {
+      const iAddr = this.nextTemp();
+      this.entryAllocas.push(`  ${iAddr} = alloca i64`);
+      const start = this.nextTemp();
+      lines.push(`  ${start} = load i64, ptr ${cursor}`);
+      lines.push(`  store i64 ${start}, ptr ${iAddr}`);
+      const condL = this.nextLabel("consumed.tail.cond");
+      const bodyL = this.nextLabel("consumed.tail.body");
+      const endL = this.nextLabel("consumed.tail.end");
+      lines.push(`  br label %${condL}`);
+      lines.push(`${condL}:`);
+      const i = this.nextTemp();
+      lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+      const cmp = this.nextTemp();
+      lines.push(`  ${cmp} = icmp ult i64 ${i}, ${len}`);
+      lines.push(`  br i1 ${cmp}, label %${bodyL}, label %${endL}`);
+      lines.push(`${bodyL}:`);
+      const ep = this.nextTemp();
+      lines.push(`  ${ep} = getelementptr ${elemTy}, ptr ${base}, i64 ${i}`);
+      this.emitDropValue(lines, ep, elem);
+      const ni = this.nextTemp();
+      lines.push(`  ${ni} = add i64 ${i}, 1`);
+      lines.push(`  store i64 ${ni}, ptr ${iAddr}`);
+      lines.push(`  br label %${condL}`);
+      lines.push(`${endL}:`);
+    }
+    if (skipLabel) {
+      lines.push(`  call void @free(ptr ${base})`);
+      lines.push(`  br label %${skipLabel}`);
+      lines.push(`${skipLabel}:`);
+    }
+  }
+
   private genForEach(stmt: HIRStmt & { kind: "ForEach" }): [string[], boolean] {
     const lines: string[] = [];
 
     if (stmt.iterableKind === "vec") {
       // get pointer to the vec so we can extract data ptr and len
-      const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
+      const consumed = stmt.consume ? this.genConsumedIterable(stmt.iterable) : null;
+      const [iterLines, iterAddr] = consumed ? [consumed.lines, consumed.addr] : this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const dataPtr = this.nextTemp();
       const lenPtr = this.nextTemp();
@@ -4419,8 +4543,10 @@ export class Codegen {
       const elemType = elemTypeKind.tag === "ref" ? elemTypeKind.inner : elemTypeKind;
       const elemTy = this.llvmType(elemType);
       const varAddr = this.allocaName(elemName);
-      this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      const savedLoopLocals = [this.bindLoopLocal(elemName, { type: elemTy, typeKind: elemTypeKind, mutable: elemTypeKind.tag === "ref" && elemTypeKind.mutable, isRef: true, addr: varAddr })];
+      this.entryAllocas.push(`  ${varAddr} = alloca ${consumed ? elemTy : "ptr"}`);
+      const savedLoopLocals = [this.bindLoopLocal(elemName, consumed
+        ? { type: elemTy, typeKind: elemType, mutable: false, isRef: false, addr: varAddr }
+        : { type: elemTy, typeKind: elemTypeKind, mutable: elemTypeKind.tag === "ref" && elemTypeKind.mutable, isRef: true, addr: varAddr })];
       if (stmt.varName2) {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
@@ -4435,6 +4561,7 @@ export class Codegen {
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
       this.loopDropStart = this.droppableLocals.length;
+      const bindAlive = consumed ? this.registerConsumedBinding(elemName, varAddr, elemType) : null;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -4446,7 +4573,8 @@ export class Codegen {
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
       lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-      lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+      if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, alive: bindAlive }, consumed.entry);
+      else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
       this.emitLoopInvariants(lines, stmt.invariants);
       let bodyTerminated = false;
@@ -4466,6 +4594,7 @@ export class Codegen {
       lines.push(`  br label %${condLabel}`);
 
       lines.push(`${endLabel}:`);
+      if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
       this.loopDropStart = prevDropStart;
@@ -4546,7 +4675,8 @@ export class Codegen {
       return [lines, false];
 
     } else if (stmt.iterableKind === "array") {
-      const [iterLines, iterAddr, iterTy] = this.genForEachIterableAddr(stmt.iterable);
+      const consumed = stmt.consume ? this.genConsumedIterable(stmt.iterable) : null;
+      const [iterLines, iterAddr, iterTy] = consumed ? [consumed.lines, consumed.addr, consumed.iterTy] : this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const match = iterTy.match(/\[(\d+) x (.+)\]/);
       if (!match) throw new Error("expected fixed array type for for-each");
@@ -4555,15 +4685,17 @@ export class Codegen {
       const elemTypeKind3 = stmt.varName2 ? stmt.varType2! : stmt.varType;
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i32`);
-      lines.push(`  store i32 0, ptr ${idxAddr}`);
+      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+      lines.push(`  store i64 0, ptr ${idxAddr}`);
 
       const elemName3 = stmt.varName2 ?? stmt.varName;
       const varAddr = this.allocaName(elemName3);
-      this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      const savedLoopLocals = [this.bindLoopLocal(elemName3, { type: elemTy, typeKind: elemTypeKind3, mutable: elemTypeKind3.tag === "ref" && elemTypeKind3.mutable, isRef: true, addr: varAddr })];
+      this.entryAllocas.push(`  ${varAddr} = alloca ${consumed ? elemTy : "ptr"}`);
+      const savedLoopLocals = [this.bindLoopLocal(elemName3, consumed
+        ? { type: elemTy, typeKind: elemTypeKind3, mutable: false, isRef: false, addr: varAddr }
+        : { type: elemTy, typeKind: elemTypeKind3, mutable: elemTypeKind3.tag === "ref" && elemTypeKind3.mutable, isRef: true, addr: varAddr })];
       if (stmt.varName2) {
-        savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i32", typeKind: { tag: "int", bits: 32, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
+        savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
 
       const condLabel = this.nextLabel("for.cond");
@@ -4576,18 +4708,20 @@ export class Codegen {
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
       this.loopDropStart = this.droppableLocals.length;
+      const bindAlive = consumed ? this.registerConsumedBinding(elemName3, varAddr, elemTypeKind3) : null;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
       const idx = this.nextTemp();
-      lines.push(`  ${idx} = load i32, ptr ${idxAddr}`);
+      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
       const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i32 ${idx}, ${arrSize}`);
+      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${arrSize}`);
       lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i32 ${idx}`);
-      lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+      lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i64 ${idx}`);
+      if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, alive: bindAlive }, consumed.entry);
+      else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
       this.emitLoopInvariants(lines, stmt.invariants);
       let bodyTerminated = false;
@@ -4601,12 +4735,13 @@ export class Codegen {
       lines.push(`${incrLabel}:`);
       const curIdx = this.nextTemp();
       const nextIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i32, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i32 ${curIdx}, 1`);
-      lines.push(`  store i32 ${nextIdx}, ptr ${idxAddr}`);
+      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
+      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
+      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
       lines.push(`  br label %${condLabel}`);
 
       lines.push(`${endLabel}:`);
+      if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
       this.loopDropStart = prevDropStart;
@@ -15623,14 +15758,15 @@ export class Codegen {
     if (capFlag) lines.push(`  store i1 1, ptr ${capFlag}`);
   }
 
-  private emitGuardedDrop(lines: string[], local: { name: string; typeKind: TypeKind; aliveFlag: string; addr: string }) {
+  private emitGuardedDrop(lines: string[], local: DroppableLocal) {
     const check = this.nextTemp();
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
     const dropLabel = this.nextLabel("drop.alive");
     const skipLabel = this.nextLabel("drop.skip");
     lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
     lines.push(`${dropLabel}:`);
-    this.emitDropValue(lines, local.addr, local.typeKind);
+    if (local.consumeCursor) this.emitConsumedTailDrop(lines, local.addr, local.typeKind, local.consumeCursor);
+    else this.emitDropValue(lines, local.addr, local.typeKind);
     // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
     // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
     // without this, the function epilogue (after break) or the next iteration's

@@ -560,6 +560,12 @@ export interface CheckResult {
   stringViewForIns: Map<Stmt, { mode: "lines" | "split" }>;
   // `for x in wrapper` where the struct has an `@iter` field: the field to walk instead.
   iterDelegates: Map<Stmt, string>;
+  // Vec/array for-ins over an owned temporary: the loop consumes the container and
+  // binds each element by value. Decided here (isOwnedTempIterable) so lowering and
+  // codegen never re-derive it.
+  consumingForIns: Set<Stmt>;
+  // The type each for-in binding was declared with ([varName, varName2?]), for hover.
+  forInBindingTypes: Map<Stmt, TypeKind[]>;
 }
 
 interface GenericEnumInfo {
@@ -860,6 +866,8 @@ export class TypeChecker {
   private iteratorForIns = new Map<Stmt, { nextMethod: string; elemType: TypeKind; optionEnumName: string }>();
   private stringViewForIns = new Map<Stmt, { mode: "lines" | "split" }>();
   private iterDelegates = new Map<Stmt, string>();
+  private consumingForIns = new Set<Stmt>();
+  private forInBindingTypes = new Map<Stmt, TypeKind[]>();
   private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
   // `s.f(...)` where `f` is a C function-pointer field: an indirect call with no
@@ -3505,6 +3513,8 @@ export class TypeChecker {
       iteratorForIns: this.iteratorForIns,
       stringViewForIns: this.stringViewForIns,
       iterDelegates: this.iterDelegates,
+      consumingForIns: this.consumingForIns,
+      forInBindingTypes: this.forInBindingTypes,
     };
   }
 
@@ -6415,6 +6425,7 @@ export class TypeChecker {
       this.declare(stmt.varName, { type: viewType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
     }
     for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+    this.noteForInBind(stmt);
     this.loopDepth++;
     for (const s of stmt.body) this.checkStmt(s, fnRetType);
     this.loopDepth--;
@@ -7047,6 +7058,7 @@ export class TypeChecker {
           this.pushScope();
           this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
           for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+          this.noteForInBind(stmt);
           this.loopDepth++;
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
@@ -7064,6 +7076,12 @@ export class TypeChecker {
           if (viewMode) { this.checkStringViewForIn(stmt, viewMode, fnRetType); return; }
           let iterType = this.checkExpr(stmt.iterable);
           if (stmt.mutRef) this.checkMutForInSource(stmt, iterType, sp);
+          // Consuming loop: an owned temporary Vec/array is moved into the loop, which
+          // hands each element out by value. Tested on the type BEFORE the ref-deref
+          // below, so a slice or `&Vec` result never qualifies.
+          const consume = !stmt.mutRef && this.isOwnedTempIterable(stmt.iterable) &&
+            (iterType.tag === "vec" || (iterType.tag === "array" && iterType.size !== null));
+          if (consume) this.consumingForIns.add(stmt);
           // iterating a slice (&[T]) or &Vec: deref — the loop borrows the view, not a copy
           if (iterType.tag === "ref" && (iterType.inner.tag === "array" || iterType.inner.tag === "vec")) {
             iterType = iterType.inner;
@@ -7083,11 +7101,12 @@ export class TypeChecker {
               }
             }
           }
-          // One freeze for every container shape below — see freezeIterable.
-          const iterBorrowInfo = this.freezeIterable(stmt.iterable, sp);
+          // One freeze for every container shape below (see freezeIterable). A consumed
+          // temporary has no root to freeze.
+          const iterBorrowInfo = consume ? null : this.freezeIterable(stmt.iterable, sp);
           if (iterType.tag === "vec") {
             const mutElem = !!stmt.mutRef;
-            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            const elemRef: TypeKind = consume ? iterType.element : { tag: "ref", inner: iterType.element, mutable: mutElem };
             const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
@@ -7099,6 +7118,7 @@ export class TypeChecker {
               this.declare(stmt.varName, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+            this.noteForInBind(stmt);
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -7116,6 +7136,7 @@ export class TypeChecker {
               this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+            this.noteForInBind(stmt);
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -7131,6 +7152,7 @@ export class TypeChecker {
               this.declare(stmt.varName2, { type: valRef, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+            this.noteForInBind(stmt);
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -7138,7 +7160,7 @@ export class TypeChecker {
             this.endLoopMoves(preMoves, sp, true);
           } else if (iterType.tag === "array") {
             const mutElem = !!stmt.mutRef;
-            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            const elemRef: TypeKind = consume ? iterType.element : { tag: "ref", inner: iterType.element, mutable: mutElem };
             const preMoves = this.beginLoopMoves();
             this.pushScope();
             if (stmt.varName2) {
@@ -7149,6 +7171,7 @@ export class TypeChecker {
               this.declare(stmt.varName, { type: elemRef, mutable: mutElem, moved: false, borrowed: false, read: false }, stmt.span);
             }
             for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+            this.noteForInBind(stmt);
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -7166,6 +7189,7 @@ export class TypeChecker {
               this.pushScope();
               this.declare(stmt.varName, { type: { tag: "unknown" }, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
               for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+              this.noteForInBind(stmt);
               // Moves are judged by the per-instantiation re-check; the frame only gives
               // this body's break/continue somewhere to record into.
               const loopReachable = this.reachable;
@@ -7214,6 +7238,7 @@ export class TypeChecker {
                 this.pushScope();
                 this.declare(stmt.varName, { type: elemType, mutable: false, moved: false, borrowed: false, read: false }, stmt.span);
                 for (const inv of stmt.invariants ?? []) this.checkContractClause(inv);
+                this.noteForInBind(stmt);
                 this.loopDepth++;
                 for (const s of stmt.body) this.checkStmt(s, fnRetType);
                 this.loopDepth--;
@@ -9177,6 +9202,32 @@ export class TypeChecker {
     const cut = steps.indexOf("[]");
     const fields = cut >= 0 ? steps.slice(0, cut) : steps;
     return { root: cur.name, fields, text: [cur.name, ...fields].join(".") };
+  }
+
+  private noteForInBind(stmt: Stmt & { kind: "ForInStmt" }) {
+    const names = stmt.varName2 ? [stmt.varName, stmt.varName2] : [stmt.varName];
+    this.forInBindingTypes.set(stmt, names.map(n => this.lookup(n)?.type ?? { tag: "unknown" }));
+  }
+
+  // An iterable nobody else can observe: a value produced by a call or a literal, the
+  // result of `!`, `?` or `??` (each consumes its operands wherever it is evaluated, see
+  // checkUnwrapExpr, so an accepted one owns its result even over a local), or a fork
+  // whose every tail is itself such a value. A place (local, global, field, index) is
+  // not, even when moving it would be legal: named containers keep binding by reference,
+  // so a `for x in v` never empties `v`. Neither is a fork with a place tail: a for-in
+  // does not move its iterable, so `if c { v } else { w }` there moves neither.
+  private isOwnedTempIterable(e: Expr): boolean {
+    switch (e.kind) {
+      case "Call": case "MethodCall": case "ArrayLit": case "ArrayRepeat":
+      case "Unwrap": case "Propagate": case "DefaultValue":
+        return true;
+      case "IfExpr": case "MatchExpr": {
+        const tails = this.moveTargets(e);
+        return tails.length > 0 && tails.every(t => this.isOwnedTempIterable(t));
+      }
+      default:
+        return false;
+    }
   }
 
   private freezeIterable(iterable: Expr, loopSpan?: Span): VarInfo | null {

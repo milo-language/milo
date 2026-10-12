@@ -528,13 +528,17 @@ class LowerCtx {
         let varType: TypeKind;
         let varType2: TypeKind | null = null;
         const mutElem = !!stmt.mutRef;
+        // Only a real Vec/array is consumed; the unknown-type fallback below is not.
+        const consume = this.c.consumingForIns.has(stmt) && (iterType?.tag === "vec" || iterType?.tag === "array");
+        // A consuming loop binds the element itself; every other Vec/array loop a view.
+        const elemBind = (el: TypeKind): TypeKind => consume ? el : { tag: "ref", inner: el, mutable: mutElem };
         if (iterType?.tag === "vec") {
           iterableKind = "vec";
           if (stmt.varName2) {
             varType = { tag: "int", bits: 64, signed: true };
-            varType2 = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            varType2 = elemBind(iterType.element);
           } else {
-            varType = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            varType = elemBind(iterType.element);
           }
         } else if (iterType?.tag === "string") {
           iterableKind = "string";
@@ -552,9 +556,9 @@ class LowerCtx {
           iterableKind = "array";
           if (stmt.varName2) {
             varType = { tag: "int", bits: 64, signed: true };
-            varType2 = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            varType2 = elemBind(iterType.element);
           } else {
-            varType = { tag: "ref", inner: iterType.element, mutable: mutElem };
+            varType = elemBind(iterType.element);
           }
         } else {
           iterableKind = "vec";
@@ -568,6 +572,7 @@ class LowerCtx {
           varType2,
           iterable: iterableExpr,
           iterableKind,
+          ...(consume && { consume: true }),
           body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
           ...(forInvariants.length > 0 && { invariants: forInvariants }),
           span: stmt.span,

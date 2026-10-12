@@ -1,0 +1,16 @@
+// @error: use of moved variable 's'
+// A consuming loop's binding is an ordinary owned local: once the body moves it, the
+// rest of that iteration cannot read it.
+
+fn mk(): Vec<string> {
+    return ["a".repeat(2), "b".repeat(2)]
+}
+
+fn main(): i32 {
+    var out: Vec<string> = []
+    for s in mk() {
+        out.push(s)
+        print(s)
+    }
+    return 0
+}

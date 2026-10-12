@@ -1,0 +1,45 @@
+// The shape that motivated consuming loops: `?` on each element of a Vec<Result<..>>
+// that itself came out of a `?`. The element is owned, so `r?` moves its payload out
+// with no `.clone()`. The failing call returns early from inside the loop: the Err
+// element is consumed by the `?`, the elements after it are dropped by the loop's
+// container, and the partially built `out` is dropped by the function.
+// @expect: 3 groups, 6 items
+// @expect: err: bad group 1
+
+fn fetchAll(fail: bool): Result<Vec<Result<Vec<string>, string>>, string> {
+    var v: Vec<Result<Vec<string>, string>> = []
+    v.push(Result.Ok(["a".repeat(8000), "b".repeat(8000)]))
+    if fail {
+        v.push(Result.Err("bad group 1"))
+    } else {
+        v.push(Result.Ok(["c".repeat(8000)]))
+    }
+    v.push(Result.Ok(["d".repeat(8000), "e".repeat(8000), "f".repeat(8000)]))
+    return Result.Ok(v)
+}
+
+fn collect(fail: bool): Result<Vec<Vec<string>>, string> {
+    var out: Vec<Vec<string>> = []
+    for r in fetchAll(fail)? {
+        out.push(r?)
+    }
+    return Result.Ok(out)
+}
+
+fn main(): i32 {
+    match collect(false) {
+        Result.Ok(groups) => {
+            var n: i64 = 0
+            for g in groups {
+                n += g.len
+            }
+            print(groups.len, " groups, ", n, " items")
+        }
+        Result.Err(e) => print("err: ", e)
+    }
+    match collect(true) {
+        Result.Ok(groups) => print(groups.len)
+        Result.Err(e) => print("err: ", e)
+    }
+    return 0
+}

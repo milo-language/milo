@@ -70,6 +70,24 @@ fn nodeName(g: Option<Node>): string {
 `;
 const MATCH_URI = "file:///tmp/milo-lsp-match.milo";
 
+// Hover on for-in bindings: a consuming loop over a temporary binds the element by
+// value, a loop over a named Vec binds a reference.
+const FORIN_SRC = `fn mk(): Vec<string> {
+    return ["a"]
+}
+
+fn main() {
+    let v: Vec<string> = ["b"]
+    for owned in mk() {
+        print(owned)
+    }
+    for viewed in v {
+        print(viewed)
+    }
+}
+`;
+const FORIN_URI = "file:///tmp/milo-lsp-forin.milo";
+
 // Hover on a builtin collection type and its static constructor.
 const BUILTIN_SRC = `fn main() {
     let v: Vec<i32> = Vec.new()
@@ -400,7 +418,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC], [UPDATE_URI, UPDATE_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC], [UPDATE_URI, UPDATE_SRC], [FORIN_URI, FORIN_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -424,6 +442,13 @@ test("hover on enum-pattern payload binding shows its type", async () => {
   // `n` used in the arm body `return n.name` (line 7, char 19).
   const inBody = await req(21, "textDocument/hover", { textDocument: { uri: MATCH_URI }, position: { line: 7, character: 19 } });
   expect(inBody?.contents?.value).toContain("Node");
+});
+
+test("hover on a for-in binding shows T for a consuming loop and &T otherwise", async () => {
+  const owned = await req(990, "textDocument/hover", { textDocument: { uri: FORIN_URI }, position: { line: 7, character: 15 } });
+  expect(owned?.contents?.value).toContain("let owned: string");
+  const viewed = await req(991, "textDocument/hover", { textDocument: { uri: FORIN_URI }, position: { line: 10, character: 15 } });
+  expect(viewed?.contents?.value).toContain("let viewed: &string");
 });
 
 test("hover on a nullable-extern-ref unwrap binding shows the reference type", async () => {
