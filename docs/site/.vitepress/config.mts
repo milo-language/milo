@@ -241,6 +241,7 @@ const stdlibSidebar = [
     collapsed: true,
     items: [
       { text: 'std/color', link: '/stdlib/color' },
+      { text: 'std/re', link: '/stdlib/re' },
       { text: 'std/regex', link: '/stdlib/regex' },
       { text: 'std/sort', link: '/stdlib/sort' },
       { text: 'std/testing', link: '/stdlib/testing' },

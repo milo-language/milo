@@ -114,6 +114,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | Module | What it provides |
 |--------|-----------------|
 | [`std/color`](color) | SGR text styling — `Color.red`, `Color.green`, `Color.bold`, etc. |
+| [`std/re`](re) | JavaScript-syntax regex in pure Milo (lookaround, backreferences, step budget): `Re.new`, `.test`, `.find`, `.replaceAll`, `.split` |
 | [`std/regex`](regex) | Regular expression matching — `Regex.compile`, `.isMatch`, `.find` |
 | [`std/sort`](sort) | Sorting for Vec — `sortI32`, `sortI64`, `sortStrings` |
 | [`std/testing`](testing) | `assert`, `assertEqual`, `assertStrEqual` |

@@ -58,7 +58,7 @@ Data: json, csv, base64, base32, hex, sqlite, arena, set, pool, png
 Compression: deflate, inflate, zip, zstd
 Crypto & auth: crypto, sha256, sha1, hmac, jwt, totp, checksum, xxhash
 Concurrency: runtime, sync, select, event
-Strings: string, fmt, strconv, unicode, regex, cstr
+Strings: string, fmt, strconv, unicode, re, regex, cstr
 Math & verification: math, random, sort, smt
 CLI: argparse, color, log
 Time: time, datetime, uuid

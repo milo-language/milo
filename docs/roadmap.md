@@ -167,7 +167,7 @@ Data: `json`, `csv`, `base64`, `base32`, `hex`, `binary`, `sqlite`, `arena`, `se
 Compression: `deflate`, `inflate`, `zip`, `zstd`
 Crypto & auth: `crypto`, `cryptosys` (platform arms), `sha256`, `sha512`, `sha1`, `hmac`, `hkdf`, `pbkdf2`, `subtle`, `jwt`, `totp`, `checksum`, `xxhash`
 Concurrency: `runtime`, `sync`, `select`, `event`, `timer`
-Strings: `string`, `fmt`, `strconv`, `unicode`, `regex`, `cstr`
+Strings: `string`, `fmt`, `strconv`, `unicode`, `re`, `regex`, `cstr`
 Math & verification: `math`, `random`, `rng`, `sort`, `smt`
 
 The supported surface follows [the stdlib design](stdlib-design.md): `milo api`
