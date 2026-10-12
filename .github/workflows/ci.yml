@@ -95,6 +95,17 @@ jobs:
       # driver excuses is still built and run here, which is where an open hole shows red.
       - name: AddressSanitizer sweep
         run: bun run test:asan
+      # The ownership ledger checks at COMPILE time that every owned value codegen creates
+      # is ended exactly once on every path (src/own-ledger.ts). It sees a leak whatever
+      # the allocation's size and wherever no fixture output depends on it; the leak
+      # ratchet only sees what `leaks` reports at -O2, where LLVM deletes the small ones.
+      # Its first sweep found four leaks in shipped codegen paths. Zero findings is the
+      # bar: a new codegen path that makes or consumes an owned value without ownMake/
+      # ownEnd shows up here (docs/testing.md §Ownership ledger).
+      #
+      # COST: ~70s locally for all fixtures at -j 5 (emit-ir only, no clang, no run).
+      - name: Ownership ledger
+        run: bun scripts/own-ledger.ts --check
 
       # The two soundness fuzzers.
       # Small counts here so the job stays under a few minutes; the generator shapes are

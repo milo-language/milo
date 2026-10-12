@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
-key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh
+key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-09-22 (--contracts applies a drawn sequence of mutator calls to a constructed struct param; builds struct params from their constructors and draws Vec<int>; 09-20: corpus census gate listed)
+last-verified: 2026-10-12 (ownership ledger section: CI gate at zero findings; 09-22: --contracts mutator sequences)
 -->
 
 # Testing
@@ -213,6 +213,52 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `embedded.test.ts` | embedded/no-runtime target |
 
 Keep this table current — it's the map reviewers and the sweep skill use to reason about coverage.
+
+## Ownership ledger: codegen's drop bookkeeping, checked at compile time
+
+A leaked owned value prints the right bytes, so no fixture expectation sees it, and the
+leak ratchet only sees what `leaks` reports at -O2, where LLVM deletes small allocations
+nothing observes. The ownership ledger asks the question at compile time instead: is every
+owned value codegen creates ended exactly once on every path?
+
+```bash
+bun scripts/own-ledger.ts                     # every fixture: findings + totals
+bun scripts/own-ledger.ts --filter arrayRepeat --sites
+bun scripts/own-ledger.ts --check             # the CI gate: exit 1 on any finding
+MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 bun run src/main.ts emit-ir foo.milo -o foo.ll
+```
+
+The last line keeps the markers in the IR so the line numbers in a finding point at them.
+The sweep is `emit-ir` only (no clang, no run), about 70s over all fixtures. CI runs
+`--check` next to the ASan sweep and the corpus is at zero findings, so any finding is red.
+
+**How it works.** With `MILO_OWN_LEDGER=1`, codegen brackets each owned value's life with
+`@__milo_own_make(ID)` and `@__milo_own_end(ID, KIND)` calls (KIND is DROP, MOVE, RETURN,
+ARG, STORE, CAPTURE or DROPZ). `src/own-ledger.ts` runs a dataflow over each function's CFG
+and strips the markers before clang sees them, so a ledger build behaves like a normal one.
+
+**What a finding means.** It reads `fn: ID kind (made at IR line N by ORIGIN, milo line M)`:
+
+| Kind | Meaning |
+|---|---|
+| `leak-ret` | the value may still be live at a `ret`: some path never drops, moves or returns it |
+| `leak-iter` | made inside a loop and may still be live on the back-edge: one leak per iteration |
+| `double-end` | ended on a path where it may already be ended: a double drop, or a drop after a move |
+| `end-unmade` | ended on a path where it was never made |
+| `remake-live` | made again while the previous value with that ID may still be live |
+
+ORIGIN names the codegen site (`Call`, `IndexAccess`, `match-subject`, ...). Write a repro,
+build it with `--debug` (at -O2 LLVM deletes the toy allocations) and confirm the leak under
+`leaks -atExit -- ./bin` before and after the fix; the fixture you add should make the drop
+observable where it can (a type with a printing `Drop`).
+
+**The rule for new codegen.** Any new codegen path that creates or consumes an owned value
+must call `ownMake`/`ownEnd` (or the helpers built on them: `ownMakeVal`, `ownEndVal`,
+`ownValToSlot`, `ownSetAlive`), or the ledger reports it. A value that becomes a frame
+slot's responsibility is moved onto the slot's ID (`ownValToSlot`) and is then ended by
+`emitDropValue` for that slot. A consumed value ends with the KIND that says where it went:
+MOVE into another owner, ARG to a by-value callee, STORE into a container or field, RETURN
+to the caller, DROP when this frame frees it.
 
 ## Out-of-band differential harnesses
 Not `bun test` — they need a toolchain CI supplies but a checkout may not, so run them by hand when you touch the target they cover.

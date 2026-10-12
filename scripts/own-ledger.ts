@@ -5,9 +5,12 @@
 //   bun scripts/own-ledger.ts --json             # one JSON document on stdout
 //   bun scripts/own-ledger.ts --off              # same sweep with the ledger off (overhead baseline)
 //   bun scripts/own-ledger.ts -j 4               # parallelism (default: half the cores)
+//   bun scripts/own-ledger.ts --check            # CI gate: exit 1 on any finding
 //
 // Compile only: `milo emit-ir`, no clang, no run, so the sweep is cheap and nothing compiled
 // executes. Report mode: exits 0 whatever it finds, 1 only when a fixture failed to compile.
+// --check also exits 1 when there is any finding: the corpus is at zero, and a codegen path
+// that creates an owned value without ending it on every path is a leak (docs/testing.md).
 // Each finding reads `fn: ID kind (made at IR line N by ORIGIN, milo line M; ...)`; rerun one
 // fixture with MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 `milo emit-ir` to read the IR the line
 // numbers point into, markers included.
@@ -21,13 +24,16 @@ const FIXTURES = join(ROOT, "tests", "fixtures");
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
-  console.log("usage: bun scripts/own-ledger.ts [--filter <substr>] [--json] [--off] [-j N]");
+  console.log("usage: bun scripts/own-ledger.ts [--filter <substr>] [--json] [--off] [--check] [-j N]");
   process.exit(0);
 }
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const filter = flag("--filter");
 const asJson = args.includes("--json");
 const off = args.includes("--off");
+const check = args.includes("--check");
+// --off reports nothing by construction, so a gate run with it would pass vacuously.
+if (check && off) { console.error("own-ledger: --check and --off contradict each other"); process.exit(2); }
 const jobs = Number(flag("-j") ?? Math.max(1, Math.floor(cpus().length / 2)));
 
 interface Finding { fn: string; id: number; kind: string; irLine: number; origin: string; srcLine: number; at: number }
@@ -40,6 +46,9 @@ function parse(stderr: string): Finding[] {
   for (const l of stderr.split("\n")) {
     const m = LINE_RE.exec(l);
     if (m) out.push({ fn: m[1], id: +m[2], kind: m[3], irLine: +m[4], origin: m[5], srcLine: m[6] ? +m[6] : 0, at: +m[7] });
+    // A ledger line this regex no longer reads is still a finding: if the compiler's
+    // wording drifted, --check must go red rather than report "0 findings" forever.
+    else if (l.startsWith("own-ledger: ")) out.push({ fn: "?", id: 0, kind: "unparsed", irLine: 0, origin: l.slice(12), srcLine: 0, at: 0 });
   }
   return out;
 }
@@ -96,4 +105,7 @@ if (asJson) {
   console.log(`unique sites (fn, kind, origin, line): ${sites.length}`);
   if (args.includes("--sites")) for (const [k, n] of sites) console.log(`  ${String(n).padStart(4)}  ${k}`);
 }
-process.exit(failed.length ? 1 : 0);
+// A gate that compiled nothing must not pass: a broken glob or filter reads as "0 findings".
+if (check && results.length === 0) { console.error("own-ledger --check: no fixtures matched"); process.exit(1); }
+if (check && all.length > 0) console.error(`own-ledger --check: ${all.length} finding(s); expected 0`);
+process.exit(failed.length || (check && all.length > 0) ? 1 : 0);
