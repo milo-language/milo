@@ -950,29 +950,6 @@ impl Router {
         })
     }
 
-    // Run the stream route matching `req`, if any. False means no stream route
-    // matched and `req` is untouched for the normal path.
-    fn runStream(self: &Self, req: &Request, fd: i32): bool {
-        if req.method != "GET" {
-            return false
-        }
-        for i in 0..self.streams.len {
-            let route = self.streams[i]
-            if let Option.Some(matched) = matchRoute(route.pattern, route.paramNames, req.path) {
-                var ctx = Context {
-                    req: req.clone(),
-                    params: matched,
-                    statusCode: 200,
-                    respHeaders: [],
-                }
-                let handler = self.streams[i].handler
-                handler(&mut ctx, fd)
-                return true
-            }
-        }
-        return false
-    }
-
     // Add middleware. It receives the context and `next`, the rest of the chain, and
     // returns the response.
     fn use(self: &mut Self, mw: move (&mut Context, (&mut Context) => Response) => Response): void {
@@ -1095,12 +1072,18 @@ fn writeAll(fd: i32, buf: string): void {
 }
 
 // Write all of `buf` to a stream route's socket. False once the peer is gone.
+// `@unsafe`: `fd` is a bare number the server closes when the stream handler
+// returns, so a task still holding it afterwards writes to whatever reused it. The
+// caller vouches that `fd` is still the connection it was handed.
+@unsafe
 pub fn sendAll(fd: i32, buf: &string): bool {
     unsafe { return sendFd(fd, buf, buf.len) == buf.len }
 }
 
 // Park until the peer of a stream route closes its side (or the connection errors),
 // discarding anything it sends. This is how a stream handler learns its client left.
+// `@unsafe` for the same reason as sendAll: the caller vouches `fd` is still live.
+@unsafe
 pub fn waitPeerClosed(fd: i32): void {
     var chunk: [u8; 512] = [0; 512]
     while true {
@@ -1110,6 +1093,31 @@ pub fn waitPeerClosed(fd: i32): void {
             return
         }
     }
+}
+
+// Run the active router's stream route matching `req`, if any. False means no
+// stream route matched and `req` is untouched for the normal path. A free fn, not
+// a Router method: it takes the connection's raw fd, and methods on a pub type are
+// public.
+fn runStreamRoute(req: &Request, fd: i32): bool {
+    if req.method != "GET" {
+        return false
+    }
+    for i in 0..activeRouter[0].streams.len {
+        let route = activeRouter[0].streams[i]
+        if let Option.Some(matched) = matchRoute(route.pattern, route.paramNames, req.path) {
+            var ctx = Context {
+                req: req.clone(),
+                params: matched,
+                statusCode: 200,
+                respHeaders: [],
+            }
+            let handler = activeRouter[0].streams[i].handler
+            handler(&mut ctx, fd)
+            return true
+        }
+    }
+    return false
 }
 
 // One connection in its own green task. Every read parks on EAGAIN (recvFd), so a
@@ -1130,7 +1138,7 @@ fn requestLine(req: &Request): string {
 let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\n500 Internal Server Error"
 
 fn handleConn(clientFd: i32): void {
-    taskOnPanicReply(clientFd, PANIC_REPLY)
+    unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
     if activeRouter.len == 0 {
         unsafe { sysClose(clientFd) }
         return
@@ -1138,7 +1146,7 @@ fn handleConn(clientFd: i32): void {
     serveConn(clientFd, activeRouter[0].maxBodyBytes, (req: Request): string => {
         taskOnPanicNote(requestLine(req))
         // A stream route has already written everything it will; nothing more to send.
-        if activeRouter[0].runStream(req, clientFd) {
+        if runStreamRoute(req, clientFd) {
             return ""
         }
         let head = req.method == "HEAD"

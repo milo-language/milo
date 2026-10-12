@@ -372,15 +372,6 @@ fn Router.put(self: &mut Router, pattern: string, h: move (&mut Context) => Resp
 
 Register a PUT route.
 
-#### `Router.runStream`
-
-```milo
-fn Router.runStream(self: &Router, req: &Request, fd: i32): bool
-```
-
-Run the stream route matching `req`, if any. False means no stream route
-matched and `req` is untouched for the normal path.
-
 #### `Router.setMaxBodySize`
 
 ```milo
@@ -483,6 +474,9 @@ pub fn sendAll(fd: i32, buf: &string): bool
 ```
 
 Write all of `buf` to a stream route's socket. False once the peer is gone.
+`@unsafe`: `fd` is a bare number the server closes when the stream handler
+returns, so a task still holding it afterwards writes to whatever reused it. The
+caller vouches that `fd` is still the connection it was handed.
 
 #### `serve`
 
@@ -551,5 +545,6 @@ pub fn waitPeerClosed(fd: i32): void
 
 Park until the peer of a stream route closes its side (or the connection errors),
 discarding anything it sends. This is how a stream handler learns its client left.
+`@unsafe` for the same reason as sendAll: the caller vouches `fd` is still live.
 
 <!-- /generated:api -->

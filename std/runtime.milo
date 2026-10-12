@@ -94,23 +94,23 @@ pub fn taskStructSize(): i64 {
     return 128
 }
 
-pub fn tPanicNote(): i64 {
+fn tPanicNote(): i64 {
     return 112
 }
 
-pub fn tPanicNoteLen(): i64 {
+fn tPanicNoteLen(): i64 {
     return 120
 }
 
-pub fn tPanicFd(): i64 {
+fn tPanicFd(): i64 {
     return 88
 }
 
-pub fn tPanicMsg(): i64 {
+fn tPanicMsg(): i64 {
     return 96
 }
 
-pub fn tPanicMsgLen(): i64 {
+fn tPanicMsgLen(): i64 {
     return 104
 }
 
@@ -551,6 +551,9 @@ pub fn taskOnPanicNote(note: &string): void {
 // task (see onRuntimePanic). For a task serving one connection: the client gets an
 // answer instead of a reset, and the server keeps serving everyone else. Call again to
 // replace; `fd` is not touched unless the task panics. No effect off a green task.
+// `@unsafe`: the task keeps the bare number, so the caller vouches `fd` stays open
+// for as long as the task runs (std/http's connection task owns it).
+@unsafe
 pub fn taskOnPanicReply(fd: i32, reply: &string): void {
     unsafe {
         let sched = getSched()

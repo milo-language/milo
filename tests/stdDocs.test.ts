@@ -22,7 +22,7 @@ test("every stdlib page's generated regions match the std doc-comments", () => {
 // Counted from the payload, not the rendering, so a change to how the page shows an
 // undocumented entry cannot move it. Each platform arm counts separately: an arm is its own
 // source file with its own comments.
-const UNDOCUMENTED_BASELINE = 659; // measured 2026-10-12, types included (the old count, 886, was functions only)
+const UNDOCUMENTED_BASELINE = 654; // measured 2026-10-12, types included (the old count, 886, was functions only)
 
 test("the undocumented-API count only goes down", () => {
   const undocumented = entries.filter(e => !e.docFull).length;

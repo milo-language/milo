@@ -746,6 +746,8 @@ If the current green task panics, send `reply` on `fd` and close it, then retire
 task (see onRuntimePanic). For a task serving one connection: the client gets an
 answer instead of a reset, and the server keeps serving everyone else. Call again to
 replace; `fd` is not touched unless the task panics. No effect off a green task.
+`@unsafe`: the task keeps the bare number, so the caller vouches `fd` stays open
+for as long as the task runs (std/http's connection task owns it).
 
 #### `taskReady`
 
@@ -816,36 +818,6 @@ pub fn tJoiner(): i64
 
 ```milo
 pub fn tNext(): i64
-```
-
-#### `tPanicFd`
-
-```milo
-pub fn tPanicFd(): i64
-```
-
-#### `tPanicMsg`
-
-```milo
-pub fn tPanicMsg(): i64
-```
-
-#### `tPanicMsgLen`
-
-```milo
-pub fn tPanicMsgLen(): i64
-```
-
-#### `tPanicNote`
-
-```milo
-pub fn tPanicNote(): i64
-```
-
-#### `tPanicNoteLen`
-
-```milo
-pub fn tPanicNoteLen(): i64
 ```
 
 #### `tSched`

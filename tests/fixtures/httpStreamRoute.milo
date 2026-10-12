@@ -68,12 +68,16 @@ pub fn main(): i32 {
         if let Option.Some(v) = ctx.param("room") {
             room = v
         }
-        if !sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n") {
-            return
+        // The server closes fd only after this handler returns, and the fd leaves
+        // `subscribers` before that, so every sendAll below writes to a live socket.
+        unsafe {
+            if !sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n") {
+                return
+            }
         }
         subscribers.push(fd)
         subscriberRoom.push(room.clone())
-        waitPeerClosed(fd)
+        unsafe { waitPeerClosed(fd) }
         for i in 0..subscribers.len {
             if subscribers[i] == fd {
                 subscribers.remove(i)
@@ -86,8 +90,10 @@ pub fn main(): i32 {
     r.post("/poke", (ctx: &mut Context): Response => {
         var sent: i64 = 0
         for i in 0..subscribers.len {
-            if sendAll(subscribers[i], $"data: {subscriberRoom[i]}\n\n") {
-                sent += 1
+            unsafe {
+                if sendAll(subscribers[i], $"data: {subscriberRoom[i]}\n\n") {
+                    sent += 1
+                }
             }
         }
         return ctx.text($"sent {sent}")

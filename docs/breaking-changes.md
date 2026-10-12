@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-09
+last-verified: 2026-10-12
 -->
 
 # Breaking changes
@@ -15,6 +15,22 @@ Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker op
 group of entries that release shipped; a package that wants to stay on the previous
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
+
+## `sendAll` and `waitPeerClosed` are `@unsafe` (2026-10-12)
+
+Both take the bare socket number a `Router.stream` handler is handed. The server closes
+that descriptor when the handler returns, so a task that kept the number (a subscriber
+list, a writer task) and writes after that reaches whatever the kernel reused it for: the
+dapweb ws crash. Nothing can check that from the number, so the caller now vouches for
+it. `Router.runStream` (internal plumbing) is gone, and `taskOnPanicReply` is `@unsafe`
+for the same reason.
+
+| was | now |
+|---|---|
+| `sendAll(fd, buf)` | `unsafe { sendAll(fd, buf) }`, with a comment saying why `fd` is still open |
+| `waitPeerClosed(fd)` | `unsafe { waitPeerClosed(fd) }` |
+| `router.runStream(req, fd)` | gone; the concurrent server runs stream routes itself |
+| `taskOnPanicReply(fd, reply)` | `unsafe { taskOnPanicReply(fd, reply) }` |
 
 # Released in v0.3.0 (2026-10-09)
 
