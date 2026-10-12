@@ -1,0 +1,35 @@
+// HEAD: a GET route answers it, and the bytes sent are the GET's status line and
+// headers (Content-Length of the body it would have had) with no body after them.
+
+from "std/http" import { Context, Request, Response, Router, renderFor }
+
+fn req(method: string, path: string): Request {
+    return Request { method: method, path: path, queryParams: [], rawQuery: "", headers: [], body: "" }
+}
+
+pub fn main(): void {
+    var r: Router = Router.new()
+    r.get("/page", (_c: &mut Context): Response => Response.Html("hello"))
+    r.post("/form", (_c: &mut Context): Response => Response.Text("posted"))
+
+    let head = req("HEAD", "/page")
+    let h = r.handle(head.clone())
+    let wire = renderFor(head, h.response, h.headers)
+    // @expect: head ends at headers: true
+    print("head ends at headers: " + wire.endsWith("\r\n\r\n").toString())
+    // @expect: head length header: true
+    print("head length header: " + wire.contains("Content-Length: 5\r\n").toString())
+    // @expect: head status: HTTP/1.1 200 OK
+    print("head status: " + wire.substr(0, 15))
+
+    let get = req("GET", "/page")
+    let g = r.handle(get.clone())
+    // @expect: get body: true
+    print("get body: " + renderFor(get, g.response, g.headers).endsWith("\r\n\r\nhello").toString())
+
+    // HEAD takes only GET routes
+    let headPost = req("HEAD", "/form")
+    let p = r.handle(headPost.clone())
+    // @expect: head on post route: HTTP/1.1 404
+    print("head on post route: " + renderFor(headPost, p.response, p.headers).substr(0, 12))
+}

@@ -611,6 +611,24 @@ fn isFramingHeader(name: &string): bool {
     return eqIgnoreCase(name, "Content-Length") || eqIgnoreCase(name, "Connection") || eqIgnoreCase(name, "Transfer-Encoding")
 }
 
+// The wire bytes for `req`: a HEAD request gets the headers a GET would (Content-Length
+// included) and no body (RFC 9110 9.3.2). A body after them would be read as the start
+// of the next response on a kept-alive connection.
+pub fn renderFor(req: &Request, response: &Response, extraHeaders: &Vec<Param>): string {
+    if req.method != "HEAD" {
+        return renderResponse(response, extraHeaders)
+    }
+    return headOnly(renderResponse(response, extraHeaders))
+}
+
+// Rendered response bytes cut after the header block.
+pub fn headOnly(wire: string): string {
+    let Option.Some(end) = wire.indexOf("\r\n\r\n") else {
+        return wire
+    }
+    return wire.substr(0, end + 4)
+}
+
 // Wire bytes for a Response, including the status line and headers.
 pub fn renderResponse(response: &Response, extraHeaders: &Vec<Param>): string {
     match response {
@@ -841,7 +859,7 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
         }
         serveConn(clientFd, defaultMaxBodyBytes, (req: Request): string => {
             let noHeaders: Vec<Param> = []
-            return renderResponse(handler(req), noHeaders)
+            return renderFor(req, handler(req), noHeaders)
         })
     }
     return Result.Err("server exited")
@@ -975,7 +993,8 @@ impl Router {
         var matchedParams: Vec<Param> = []
         for i in 0..self.routes.len {
             let route = self.routes[i]
-            if route.method == "*" || route.method == req.method {
+            // a GET route answers HEAD too; the server then sends its headers only
+            if route.method == "*" || route.method == req.method || (route.method == "GET" && req.method == "HEAD") {
                 let params = matchRoute(route.pattern, route.paramNames, req.path)
                 if let Option.Some(matched) = params {
                     matchIdx = i
@@ -1049,7 +1068,11 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
             continue
         }
         serveConn(clientFd, router.maxBodyBytes, (req: Request): string => {
+            let head = req.method == "HEAD"
             let handled = router.handle(req)
+            if head {
+                return headOnly(renderResponse(handled.response, handled.headers))
+            }
             return renderResponse(handled.response, handled.headers)
         })
     }
@@ -1116,7 +1139,11 @@ fn handleConn(clientFd: i32): void {
         if activeRouter[0].runStream(req, clientFd) {
             return ""
         }
+        let head = req.method == "HEAD"
         let handled = activeRouter[0].handle(req)
+        if head {
+            return headOnly(renderResponse(handled.response, handled.headers))
+        }
         return renderResponse(handled.response, handled.headers)
     })
 }

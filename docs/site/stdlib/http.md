@@ -424,6 +424,14 @@ Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context, i
 
 ### Functions
 
+#### `headOnly`
+
+```milo
+pub fn headOnly(wire: string): string
+```
+
+Rendered response bytes cut after the header block.
+
 #### `parseRequest`
 
 ```milo
@@ -432,6 +440,16 @@ pub fn parseRequest(buf: &[u8; 8192], n: i64): Request
 
 Parse a request out of a raw read buffer. Public so an alternate transport
 (std/https) can reuse the parser without duplicating it.
+
+#### `renderFor`
+
+```milo
+pub fn renderFor(req: &Request, response: &Response, extraHeaders: &Vec<Param>): string
+```
+
+The wire bytes for `req`: a HEAD request gets the headers a GET would (Content-Length
+included) and no body (RFC 9110 9.3.2). A body after them would be read as the start
+of the next response on a kept-alive connection.
 
 #### `renderRaw`
 

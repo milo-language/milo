@@ -8,7 +8,7 @@
 // client half and is not needed here.
 
 from "std/http" import {
-    Param, Request, Response, Router, parseRequest, renderResponse
+    Param, Request, Response, Router, parseRequest, renderFor
 }
 from "std/tls" import {
     TlsListener
@@ -91,9 +91,10 @@ pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Requ
                     Result.Ok(stream) => {
                         let raw = stream.recvOnce()
                         if raw.len > 0 {
-                            let resp = handler(parseTlsRequest(raw))
+                            let req = parseTlsRequest(raw)
+                            let resp = handler(req)
                             let noHeaders: Vec<Param> = []
-                            let _sent = stream.send(renderResponse(resp, noHeaders))
+                            let _sent = stream.send(renderFor(req, resp, noHeaders))
                         }
                         // stream drops here: close_notify, SSL_free, close(fd)
                     }
@@ -119,8 +120,9 @@ pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &
                     Result.Ok(stream) => {
                         let raw = stream.recvOnce()
                         if raw.len > 0 {
-                            let handled = router.handle(parseTlsRequest(raw))
-                            let _sent = stream.send(renderResponse(handled.response, handled.headers))
+                            let req = parseTlsRequest(raw)
+                            let handled = router.handle(req.clone())
+                            let _sent = stream.send(renderFor(req, handled.response, handled.headers))
                         }
                     }
                 }
