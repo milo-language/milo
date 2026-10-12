@@ -1,3 +1,6 @@
+// @skip-os: win32
+// Pins the mtime with POSIX touch on a /tmp path; Windows has neither. fsIsDirAnyOs
+// covers fileResponse on Windows.
 // fileResponse / Context.file: validators, conditional GETs and single byte ranges for a
 // static file (RFC 9110 8.8, 13, 14). The file's mtime is pinned with touch so the
 // ETag ("<size hex>-<mtime ns hex>") and Last-Modified are stable. A matching

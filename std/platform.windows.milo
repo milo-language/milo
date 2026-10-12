@@ -186,6 +186,18 @@ pub fn statBufSize(): i64 {
     return 56
 }
 
+extern fn _stat64(path: *u8, buf: *u8): i32
+
+// _stat64 into a statBufSize() buffer read at the offsets above. Never the bare `stat`
+// symbol: through oldnames.lib it is the 32-bit _stat32 (36 bytes, 32-bit size and
+// times), which the _stat64 offsets above would read as garbage.
+@unsafe
+pub fn statPath(path: *u8, buf: *u8): i32 {
+    unsafe {
+        return _stat64(path, buf)
+    }
+}
+
 // ── errno ──
 
 // The UCRT's errno is `*_errno()`, the analogue of darwin's __error().
@@ -526,6 +538,22 @@ pub fn direntTypeOffset(): i64 {
 
 pub fn direntNameOffset(): i64 {
     return -1
+}
+
+extern fn GetFileAttributesA(path: *u8): u32
+
+// 1 when `path` names a directory, else 0. Windows has no opendir; the attributes say it
+// directly (INVALID_FILE_ATTRIBUTES for a missing path, FILE_ATTRIBUTE_DIRECTORY = 0x10).
+@unsafe
+pub fn pathIsDir(path: *u8): i32 {
+    var attrs: u32 = 0
+    unsafe {
+        attrs = GetFileAttributesA(path)
+    }
+    if attrs == 0xFFFFFFFF as u32 || (attrs & 0x10 as u32) == 0 as u32 {
+        return 0
+    }
+    return 1
 }
 
 // ── pthreads over Win32 ──

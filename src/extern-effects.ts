@@ -76,6 +76,7 @@ export interface ExternEffect {
 // architecture); Windows values are the x64 SDK's.
 export const SIZES: Record<string, Partial<Record<string, number>>> = {
   "struct stat": { darwin: 144, "linux-x86_64": 144, "linux-aarch64": 128, linux: 144, wasm: 144 },
+  "struct _stat64": { windows: 56 },
   "struct timeval": { darwin: 16, linux: 16, wasm: 16 },
   "struct tm": { darwin: 56, linux: 56, windows: 36, wasm: 56 },
   "struct termios": { darwin: 72, linux: 60, wasm: 72 },
@@ -324,6 +325,8 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   stat: input(man(2, "stat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
   lstat: input(man(2, "lstat"), { in: ["path"], out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
   fstat: input(man(2, "fstat"), { out: ["buf[sizeof(struct stat)]"], errno: E, os: noWinLayout }),
+  _stat64: input(win("_stat64"), { in: ["path"], out: ["buf[sizeof(struct _stat64)]"], errno: E }),
+  GetFileAttributesA: input(win("GetFileAttributesA"), { in: ["path"] }),
   access: input(man(2, "access"), { in: ["path"], errno: E }),
   _access: input(win("_access"), { in: ["path"], errno: E }),
   readlink: input(man(2, "readlink"), { in: ["path"], out: ["buf[ret]"], errno: E }),

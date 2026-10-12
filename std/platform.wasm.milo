@@ -41,7 +41,10 @@ from "std/os" import {
     execvp,
     memcpy,
     waitpid,
-    kill
+    kill,
+    opendir,
+    closedir,
+    stat
 }
 
 // Fields carry C's spelling, not Milo camelCase — see platform.darwin.milo's comment.
@@ -215,12 +218,36 @@ pub fn statBufSize(): i64 {
     return 144
 }
 
+// stat(2) into a statBufSize() buffer read at the offsets above.
+@unsafe
+pub fn statPath(path: *u8, buf: *u8): i32 {
+    unsafe {
+        return stat(path, buf)
+    }
+}
+
 pub fn direntTypeOffset(): i64 {
     return 20
 }
 
 pub fn direntNameOffset(): i64 {
     return 21
+}
+
+// 1 when `path` names a directory, else 0. opendir succeeds only for a directory
+// (ENOTDIR for a file, ENOENT for a missing path): arch- and libc-independent, unlike
+// the S_IFDIR bit of a struct stat whose st_mode offset differs across Linux arches
+// (24 on x86_64, 16 on arm64) while this module is only OS-split.
+@unsafe
+pub fn pathIsDir(path: *u8): i32 {
+    unsafe {
+        let dir = opendir(path)
+        if dir as i64 == 0 as i64 {
+            return 0
+        }
+        closedir(dir)
+    }
+    return 1
 }
 
 // No wasm equivalent of errno or a per-thread `__error()` cell — nothing on this

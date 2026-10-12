@@ -1,3 +1,6 @@
+// @skip-os: win32
+// Pins the mtime with POSIX touch on a /tmp path; Windows has neither. fsIsDirAnyOs
+// covers fileInfo on Windows.
 // FileInfo.mtimeNs is st_mtime with its nanoseconds, read at the platform's stat
 // offset; what std/http's ETag and Last-Modified are built from. A file just written
 // is modified within a few seconds of now, and touching it with an older time moves it.

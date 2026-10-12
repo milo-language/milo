@@ -1,0 +1,36 @@
+// std/fs on every OS, Windows included: isDir/isFile go through std/platform's pathIsDir
+// (opendir on POSIX, file attributes on Windows), and fileInfo reads size and mtime at
+// each platform's stat offsets. fileResponse once reached isDir through a POSIX-only
+// opendir and failed to link on Windows. The /tmp-and-touch fixtures (fsFileInfoMtime,
+// httpStaticFile) cannot run there, so this one writes into the working directory.
+// @expect: dot dir true
+// @expect: dot file false
+// @expect: missing dir false
+// @expect: missing file false
+// @expect: written file true dir false
+// @expect: size 5 recent true
+// @expect: fileResponse on a dir: none
+from "std/fs" import { fileInfo, isDir, isFile, removeFile, writeFile }
+from "std/http" import { Param, fileResponse }
+from "std/time" import { epochSecs }
+
+fn main(): i32 {
+    print($"dot dir {isDir(".")}")
+    print($"dot file {isFile(".")}")
+    print($"missing dir {isDir("milo-no-such-dir-fixture")}")
+    print($"missing file {isFile("milo-no-such-dir-fixture")}")
+    let path = "milo-fs-anyos-fixture.txt"
+    writeFile(path, "hello")!
+    print($"written file {isFile(path)} dir {isDir(path)}")
+    let fi = fileInfo(path)!
+    let secs = fi.mtimeNs / 1000000000
+    let now = epochSecs()
+    print($"size {fi.size} recent {secs <= now && secs >= now - 60}")
+    let _ = removeFile(path)
+    let none: Vec<Param> = []
+    match fileResponse("GET", none, ".", "text/plain") {
+        Option.Some(_) => print("fileResponse on a dir: some"),
+        Option.None => print("fileResponse on a dir: none"),
+    }
+    return 0
+}

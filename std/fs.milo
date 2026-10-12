@@ -24,7 +24,6 @@ from "std/os" import {
     realpath,
     rename,
     rmdir,
-    stat,
     strerror,
     strlen,
     symlink,
@@ -50,6 +49,8 @@ from "std/platform" import {
     direntNameOffset,
     direntTypeOffset,
     getErrno,
+    pathIsDir,
+    statPath,
     statBufSize,
     statModeOffset,
     statSizeOffset,
@@ -176,7 +177,7 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
 fn fileInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
-    unsafe { r = stat(path, buf) }
+    unsafe { r = statPath(path, buf) }
     if r != 0 {
         return Option.None
     }
@@ -221,18 +222,10 @@ pub fn pathExists(path: &string): bool {
 // Check if a path is a directory.
 @replayHooked
 pub fn isDir(path: &string): bool {
-    // opendir succeeds only for a directory (ENOTDIR for a file, ENOENT for a
-    // missing path) — arch- and libc-independent, unlike reading the S_IFDIR bit
-    // out of a struct stat whose st_mode offset differs across Linux arches
-    // (24 on x86_64, 16 on arm64) while std/platform is only OS-split.
+    // Per OS (std/platform), not the struct stat's S_IFDIR bit: see pathIsDir.
     return fsStatus("fs.isdir", path, (): i64 => {
         unsafe {
-            let dir = opendir(path)
-            if dir as i64 == 0 as i64 {
-                return 0
-            }
-            closedir(dir)
-            return 1
+            return pathIsDir(path) as i64
         }
     }) == 1
 }
