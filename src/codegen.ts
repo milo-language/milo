@@ -14592,9 +14592,7 @@ export class Codegen {
   private optionOpDropsReceiver(expr: HIRExpr & { kind: "OptionOp" }): boolean {
     if (expr.op !== "map" && expr.op !== "optionAndThen") return false;
     if (!this.needsDropCg(expr.value.type)) return false;
-    const v = expr.value;
-    if (v.kind === "OptionOp") return v.op === "map" || v.op === "optionAndThen";
-    return this.isOwnedTempExpr(v);
+    return this.isOwnedTempExpr(expr.value);
   }
 
   // The value a block produces, when it produces one: a block's value is its tail
@@ -14648,6 +14646,12 @@ export class Codegen {
     // replace drops its own moved-out value inside genExpr, so it must NOT double-drop here.
     if (expr.kind === "MemReplace") return !this.isBigAgg(this.llvmType(expr.type));
     if (expr.kind === "Call" || expr.kind === "ClosureCall" || expr.kind === "InterfaceMethodCall") return true;
+    // An Option/Result combinator that yields an enum owns it: map/andThen build a fresh
+    // payload, and every op that forwards the receiver's payload (orElse, mapErr,
+    // context, ...) consumed a named receiver in the checker (consumeForwardedPayload).
+    // Not an owned temp, `e.map(f).unwrapOr(0)` leaked the Err payload once per call.
+    // The scalar ops (isSome, unwrapOr on a Copy payload) are filtered by needsDropCg.
+    if (expr.kind === "OptionOp") return expr.type.tag === "enum";
     // Builtins that allocate a fresh String/Vec are temporaries too. `i.toString()`
     // lowers to NumberToString, not Call, so `"n=" + i.toString()` used to leak the
     // converted string on every evaluation — which in a render loop is per frame.
@@ -14699,10 +14703,6 @@ export class Codegen {
       // therefore leaked the clone every time. Exactly the miss the list's own comment
       // describes for VecRemove.
       case "HashMapGetOrDefault":
-      // fold returns the ACCUMULATOR, which is owned whenever the accumulator type is —
-      // `v.fold("", (a: string, x: &i64): string => a + x.toString())` hands back a String
-      // nobody else owns. It sat in NOT_OWNED_TEMP with the scalar-yielding Vec reads.
-      // dropOwnedTemp still checks needsDropCg, so an i64 accumulator is unaffected.
       // Option-returning Vec reads: the payload is either cloned out of the buffer
       // (get/first/last/min/max/find) or moved out of it (pop). Either way nothing
       // else owns it, so `print(must(v, 0, "v"))` used to leak one copy per call.

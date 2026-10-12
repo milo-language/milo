@@ -2,17 +2,3 @@
 # One finding per line: fixture fn kind origin L<milo line>. Shrink-only: --check fails on a
 # finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
 # line. Each group names its repro and how it was confirmed.
-
-# A Result/Option combinator result (map, mapErr, orElse, ...) is not an owned temporary
-# (isOwnedTempExpr), so a consumer that does not take its payload (`.unwrapOr`, a match arm
-# that binds nothing) leaks the payload it forwarded. `e.map(f).unwrapOr(0)` with a heap Err:
-# `leaks` reports one leak per call.
-enumVariantOffsets.milo __milo_main_body leak-ret OptionOp L186
-enumVariantOffsets.milo __milo_main_body leak-ret OptionOp L188
-optionOrElse.milo main leak-ret OptionOp L50
-optionOrElse.milo main leak-ret OptionOp L61
-resultMap.milo main leak-ret OptionOp L46
-resultMap.milo main leak-ret OptionOp L53
-resultMap.milo main leak-ret OptionOp L58
-resultMap.milo main leak-ret OptionOp L67
-resultOrElse.milo main leak-ret OptionOp L62

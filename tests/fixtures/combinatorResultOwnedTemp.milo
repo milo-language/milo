@@ -1,0 +1,55 @@
+// An Option/Result combinator result (map, mapErr, orElse, andThen) is an owned
+// temporary. It was not treated as one, so a consumer that does not take the payload
+// (`.unwrapOr`, `.isOk()`, a match arm binding nothing) never dropped what the
+// combinator forwarded: `e.map(f).unwrapOr(0)` with a heap Err leaked once per call.
+pub struct Tok {
+    id: i32,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn errOf(id: i32): Result<i64, Tok> {
+    return Result.Err(Tok { id: id })
+}
+
+fn noneOf(): Option<Tok> {
+    return Option.None
+}
+
+fn main() {
+    let a = errOf(1).map((n) => n * 10).unwrapOr(7)
+    print("a ", a)
+    let e = errOf(2)
+    let b = e.map((n) => n + 1).isOk()
+    print("b ", b)
+    let c = noneOf().orElse(() => Option.Some(Tok { id: 3 })).isSome()
+    print("c ", c)
+    let r: Result<i64, Tok> = Result.Ok(5)
+    let d = r.mapErr((t) => Tok { id: t.id + 100 }).unwrapOr(0)
+    print("d ", d)
+    match errOf(4).map((n) => n * 2) {
+        Result.Ok(_) => print("ok"),
+        Result.Err(_) => print("err"),
+    }
+    let named: Option<Tok> = Option.Some(Tok { id: 5 })
+    let f = named.orElse(() => Option.Some(Tok { id: 6 })).isSome()
+    print("f ", f)
+    print("end")
+}
+
+// @expect: drop 1
+// @expect: a 7
+// @expect: drop 2
+// @expect: b false
+// @expect: drop 3
+// @expect: c true
+// @expect: d 5
+// @expect: err
+// @expect: drop 4
+// @expect: drop 5
+// @expect: f true
+// @expect: end
