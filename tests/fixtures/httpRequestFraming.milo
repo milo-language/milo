@@ -1,0 +1,142 @@
+// @skip-os: win32
+// std/http frames and decodes request bodies itself, and refuses what it cannot with
+// the RFC 9110/9112 4xx, never a 500 or a hang: Transfer-Encoding: chunked is decoded
+// (limit counted on what the chunks declare, before they arrive), Content-Encoding gzip
+// and deflate (zlib or bare) are undone with the decoded size capped, so a zip bomb is
+// 413, and the handler sees headers describing the decoded body. Malformed request lines,
+// field names and lengths are 400; unknown codings are 415/501; HTTP/2.0 on this wire is 505.
+// @expect: listening on http://127.0.0.1:47393
+// @expect: chunked: 200 [11 bytes: hello world; ce=-; cl=-]
+// @expect: chunked with ext+trailer: 200 [3 bytes: abc; ce=-; cl=-]
+// @expect: chunked over limit: 413
+// @expect: chunked malformed: 400
+// @expect: chunked not last: 400
+// @expect: gzip then chunked: 501
+// @expect: gzip: 200 [16 bytes: {"login":"milo"}; ce=-; cl=16]
+// @expect: x-gzip chunked: 200 [16 bytes: {"login":"milo"}; ce=-; cl=-]
+// @expect: deflate (zlib): 200 [16 bytes: {"login":"milo"}; ce=-; cl=16]
+// @expect: deflate (bare): 200 [16 bytes: {"login":"milo"}; ce=-; cl=16]
+// @expect: gzip, identity listed: 200 [16 bytes: {"login":"milo"}; ce=-; cl=16]
+// @expect: zip bomb: 413
+// @expect: not gzip: 400
+// @expect: br: 415
+// @expect: no version: 400
+// @expect: http/2.0: 505
+// @expect: space before colon: 400
+// @expect: no colon: 400
+// @expect: length 1x: 400
+// @expect: two lengths: 400
+// @expect: same length twice: 200 [2 bytes: ok; ce=-; cl=2]
+// @expect: uri too long: 414
+// @expect: still serving: 200 [0 bytes: ; ce=-; cl=-]
+from "std/http" import {
+    Context, Response, Router, serveRouterConcurrentOn
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/strconv" import {
+    i64ToHex
+}
+from "std/deflate" import {
+    Deflate
+}
+
+let PORT: u16 = 47393
+
+fn exchange(req: &string): string {
+    let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    conn.send(req)!
+    var out: string = ""
+    while true {
+        let chunk = conn.recv() ?? ""
+        if chunk.len == 0 {
+            break
+        }
+        out.pushStr(chunk)
+    }
+    return out
+}
+
+// The status code, and for a 200 the body in brackets.
+fn show(label: string, wire: string): void {
+    let code = wire.substr(9, 12)
+    if code != "200" {
+        print($"{label}: {code}")
+        return
+    }
+    let body = wire.substr((wire.indexOf("\r\n\r\n") ?? 0) + 4, wire.len)
+    print($"{label}: {code} [{body}]")
+}
+
+fn post(label: string, headers: &string, body: &string): void {
+    show(label, exchange("POST /echo HTTP/1.1\r\nHost: x\r\n" + headers + "\r\n" + body))
+}
+
+fn withLength(headers: &string, body: &string): string {
+    return headers + $"Content-Length: {body.len}\r\n"
+}
+
+fn clients(): void {
+    let json = "{\"login\":\"milo\"}"
+    post("chunked", "Transfer-Encoding: chunked\r\n", "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n")
+    post("chunked with ext+trailer", "Transfer-Encoding: chunked\r\n", "3;x=y\r\nabc\r\n0\r\nX-T: 1\r\n\r\n")
+    // only the size line is sent: refused before the 2000-byte chunk would arrive
+    post("chunked over limit", "Transfer-Encoding: chunked\r\n", "7d0\r\n")
+    post("chunked malformed", "Transfer-Encoding: chunked\r\n", "zz\r\nab\r\n0\r\n\r\n")
+    post("chunked not last", "Transfer-Encoding: chunked, gzip\r\n", "0\r\n\r\n")
+    post("gzip then chunked", "Transfer-Encoding: gzip, chunked\r\n", "0\r\n\r\n")
+    let gz = Deflate.gzip(json)
+    post("gzip", withLength("Content-Encoding: gzip\r\nContent-Type: application/json\r\n", gz), gz)
+    let chunkedGz = i64ToHex(gz.len) + "\r\n" + gz + "\r\n0\r\n\r\n"
+    post("x-gzip chunked", "Content-Encoding: X-GZIP\r\nTransfer-Encoding: chunked\r\n", chunkedGz)
+    let zl = Deflate.zlib(json)
+    post("deflate (zlib)", withLength("Content-Encoding: deflate\r\n", zl), zl)
+    let bare = Deflate.raw(json)
+    post("deflate (bare)", withLength("Content-Encoding: deflate\r\n", bare), bare)
+    post("gzip, identity listed", withLength("Content-Encoding: identity, gzip\r\n", gz), gz)
+    var zeros: string = ""
+    for _i in 0..300000 {
+        zeros.push('0')
+    }
+    let bomb = Deflate.gzip(zeros)
+    post("zip bomb", withLength("Content-Encoding: gzip\r\n", bomb), bomb)
+    post("not gzip", withLength("Content-Encoding: gzip\r\n", json), json)
+    post("br", withLength("Content-Encoding: br\r\n", json), json)
+    show("no version", exchange("GET /echo\r\nHost: x\r\n\r\n"))
+    show("http/2.0", exchange("GET /echo HTTP/2.0\r\nHost: x\r\n\r\n"))
+    show("space before colon", exchange("GET /echo HTTP/1.1\r\nHost : x\r\n\r\n"))
+    show("no colon", exchange("GET /echo HTTP/1.1\r\nHost x\r\n\r\n"))
+    post("length 1x", "Content-Length: 1x\r\n", "o")
+    post("two lengths", "Content-Length: 2\r\nContent-Length: 3\r\n", "ok")
+    post("same length twice", "Content-Length: 2\r\nContent-Length: 2\r\n", "ok")
+    var longUri: string = "GET /"
+    while longUri.len < 17000 {
+        longUri.push('a')
+    }
+    show("uri too long", exchange(longUri + " HTTP/1.1\r\nHost: x\r\n\r\n"))
+    post("still serving", "", "")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.setMaxBodySize(1000)
+    r.setMaxInflatedSize(100000)
+    r.post("/echo", (ctx: &mut Context): Response => {
+        let ce = ctx.header("Content-Encoding") ?? "-"
+        let cl = ctx.header("Content-Length") ?? "-"
+        return ctx.text($"{ctx.req.body.len} bytes: {ctx.req.body}; ce={ce}; cl={cl}")
+    })
+    r.get("/echo", (ctx: &mut Context): Response => {
+        return ctx.text("get")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

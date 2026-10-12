@@ -39,6 +39,14 @@ fn Inflate.gzip(src: &string): Result<string, string>
 Unwrap a gzip stream and decompress its body. Errs on malformed input or a
 checksum mismatch.
 
+#### `Inflate.gzipMax`
+
+```milo
+fn Inflate.gzipMax(src: &string, max: i64): Result<string, string>
+```
+
+Inflate.gzip with an output cap, as rawMax.
+
 #### `Inflate.raw`
 
 ```milo
@@ -48,6 +56,16 @@ fn Inflate.raw(src: &string): Result<string, string>
 Decompress a raw DEFLATE stream (no container header). Malformed input is an
 `Err`, not a crash.
 
+#### `Inflate.rawMax`
+
+```milo
+fn Inflate.rawMax(src: &string, max: i64): Result<string, string>
+```
+
+Inflate.raw that fails with INFLATE_TOO_BIG instead of producing more than `max`
+bytes: for input from someone else (a request body), where a few KiB can claim
+gigabytes.
+
 #### `Inflate.zlib`
 
 ```milo
@@ -56,6 +74,14 @@ fn Inflate.zlib(src: &string): Result<string, string>
 
 Unwrap a zlib stream and decompress its body. Errs on malformed input or a
 checksum mismatch.
+
+#### `Inflate.zlibMax`
+
+```milo
+fn Inflate.zlibMax(src: &string, max: i64): Result<string, string>
+```
+
+Inflate.zlib with an output cap, as rawMax.
 
 ### `InfState`
 
@@ -73,5 +99,6 @@ Fields:
 - `bitcnt: i64`: valid bits in bitbuf
 - `err: bool`: set when the reader runs off the end of input
 - `out: string`: decompressed bytes
+- `limit: i64`: most output bytes allowed; past it the stream fails with -30
 
 <!-- /generated:api -->

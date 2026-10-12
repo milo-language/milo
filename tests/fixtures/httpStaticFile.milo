@@ -1,0 +1,113 @@
+// fileResponse / Context.file: validators, conditional GETs and single byte ranges for a
+// static file (RFC 9110 8.8, 13, 14). The file's mtime is pinned with touch so the
+// ETag ("<size hex>-<mtime ns hex>") and Last-Modified are stable. A matching
+// If-None-Match or a not-older If-Modified-Since is a 304 with no body; Range gives 206
+// with Content-Range, 416 past the end, the whole file for several ranges, for a stale
+// If-Range and for HEAD.
+// @expect: plain: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: inm match: 304 len=0 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=- cr=- body=
+// @expect: inm weak in list: 304 len=0 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=- cr=- body=
+// @expect: inm star: 304 len=0 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=- cr=- body=
+// @expect: inm other: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: ims same: 304 len=0 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=- cr=- body=
+// @expect: ims older: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: ims garbage: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: inm other beats ims: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: range 0-4: 206 len=5 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 0-4/26 body=abcde
+// @expect: range 20-: 206 len=6 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 20-25/26 body=uvwxyz
+// @expect: range -3: 206 len=3 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 23-25/26 body=xyz
+// @expect: range 24-99: 206 len=2 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 24-25/26 body=yz
+// @expect: range past end: 416 len=25 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes */26 body=416 Range Not Satisfiable
+// @expect: range two parts: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: range bad unit: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: if-range etag: 206 len=1 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 1-1/26 body=b
+// @expect: if-range date: 206 len=1 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=bytes 1-1/26 body=b
+// @expect: if-range stale: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: head ignores range: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz
+// @expect: missing: none
+// @expect: ctx.file wire: HTTP/1.1 304 Not Modified|Cache-Control: no-cache|ETag: "1a-de0b6b3a7640000"|Last-Modified: Sun, 09 Sep 2001 01:46:40 GMT|Connection: close|Server: milo||
+// @expect: ctx.file type: text/plain; charset=utf-8
+// @expect: ctx.file missing: 404
+from "std/http" import { Context, HandledResponse, Param, Request, Response, Router, fileResponse, renderResponse }
+from "std/fs" import { writeFile, removeFile }
+from "std/process" import { capture }
+
+let PATH = "/tmp/milo-http-static-fixture.txt"
+
+fn hdr(headers: &Vec<Param>, name: &string): string {
+    for h in headers {
+        if h.name == name {
+            return h.value.clone()
+        }
+    }
+    return "-"
+}
+
+fn show(label: string, method: string, reqHeaders: Vec<Param>): void {
+    let Some(r) = fileResponse(method, reqHeaders, PATH, "text/plain; charset=utf-8") else {
+        print($"{label}: none")
+        return
+    }
+    let Response.Status(code, _ct, body) = r.response else {
+        print($"{label}: not a Status")
+        return
+    }
+    print($"{label}: {code} len={body.len} etag={hdr(r.headers, "ETag")} lm={hdr(r.headers, "Last-Modified")} ar={hdr(r.headers, "Accept-Ranges")} cr={hdr(r.headers, "Content-Range")} body={body}")
+}
+
+fn h(name: string, value: string): Param {
+    return Param { name: name, value: value }
+}
+
+fn main(): i32 {
+    writeFile(PATH, "abcdefghijklmnopqrstuvwxyz")!
+    // 2001-09-09T01:46:40Z: epoch second 1e9, so 1e18 ns, hex de0b6b3a7640000
+    let _ = capture("TZ=UTC touch -t 200109090146.40 " + PATH)
+    let etag = "\"1a-de0b6b3a7640000\""
+    let lm = "Sun, 09 Sep 2001 01:46:40 GMT"
+    show("plain", "GET", [])
+    show("inm match", "GET", [h("If-None-Match", etag.clone())])
+    show("inm weak in list", "GET", [h("if-none-match", "\"x\", W/" + etag)])
+    show("inm star", "HEAD", [h("If-None-Match", "*")])
+    show("inm other", "GET", [h("If-None-Match", "\"nope\"")])
+    show("ims same", "GET", [h("If-Modified-Since", lm.clone())])
+    show("ims older", "GET", [h("If-Modified-Since", "Sat, 08 Sep 2001 01:46:40 GMT")])
+    show("ims garbage", "GET", [h("If-Modified-Since", "yesterday")])
+    show("inm other beats ims", "GET", [h("If-None-Match", "\"nope\""), h("If-Modified-Since", lm.clone())])
+    show("range 0-4", "GET", [h("Range", "bytes=0-4")])
+    show("range 20-", "GET", [h("Range", "bytes=20-")])
+    show("range -3", "GET", [h("Range", "bytes=-3")])
+    show("range 24-99", "GET", [h("Range", "bytes=24-99")])
+    show("range past end", "GET", [h("Range", "bytes=26-30")])
+    show("range two parts", "GET", [h("Range", "bytes=0-1,4-5")])
+    show("range bad unit", "GET", [h("Range", "items=0-1")])
+    show("if-range etag", "GET", [h("Range", "bytes=1-1"), h("If-Range", etag.clone())])
+    show("if-range date", "GET", [h("Range", "bytes=1-1"), h("If-Range", lm.clone())])
+    show("if-range stale", "GET", [h("Range", "bytes=1-1"), h("If-Range", "\"old\"")])
+    show("head ignores range", "HEAD", [h("Range", "bytes=1-1")])
+    let _ = removeFile(PATH)
+    show("missing", "GET", [])
+    writeFile(PATH, "abcdefghijklmnopqrstuvwxyz")!
+    let _ = capture("TZ=UTC touch -t 200109090146.40 " + PATH)
+
+    var r = Router.new()
+    r.get("/f", (ctx: &mut Context): Response => {
+        ctx.setHeader("Cache-Control", "no-cache")
+        return ctx.file(PATH)
+    })
+    r.get("/gone", (ctx: &mut Context): Response => {
+        return ctx.file("/tmp/milo-http-static-fixture-missing.txt")
+    })
+    let cond = r.handle(Request { method: "GET", path: "/f", queryParams: [], rawQuery: "", headers: [h("If-None-Match", etag.clone())], body: "" })
+    print("ctx.file wire: " + renderResponse(cond.response, cond.headers).replace("\r\n", "|"))
+    let full = r.handle(Request { method: "GET", path: "/f", queryParams: [], rawQuery: "", headers: [], body: "" })
+    if let Response.Status(_c, ct, _b) = full.response {
+        print($"ctx.file type: {ct}")
+    }
+    let gone = r.handle(Request { method: "GET", path: "/gone", queryParams: [], rawQuery: "", headers: [], body: "" })
+    if let Response.NotFound = gone.response {
+        print("ctx.file missing: 404")
+    }
+    let _ = removeFile(PATH)
+    return 0
+}

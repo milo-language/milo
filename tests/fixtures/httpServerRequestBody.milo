@@ -10,7 +10,7 @@
 // @expect: split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello world
 // @expect: continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nServer: milo\r\n\r\n5 bytes: abcde
 // @expect: too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n413 Content Too Large
-// @expect: chunked: HTTP/1.1 411 Length Required\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 19\r\nConnection: close\r\nServer: milo\r\n\r\n411 Length Required
+// @expect: chunked: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello mi lo
 // @expect: huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nServer: milo\r\n\r\n431 Request Header Fields Too Large
 // @expect: hung up mid-request: (no response)
 // @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nServer: milo\r\n\r\n2 bytes: ok
@@ -65,7 +65,7 @@ fn clients(): void {
     // Headers only: the server refuses before reading a body, and unread bytes in
     // its receive buffer at close would turn the reply into a reset.
     show("too big", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 2000000\r\n\r\n"]))
-    show("chunked", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"]))
+    show("chunked", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n", "5\r\nmi lo\r\n0\r\n\r\n"]))
     var big: string = "GET /echo HTTP/1.1\r\nX-Pad: "
     while big.len < 16400 {
         big.push('a')

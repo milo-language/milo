@@ -53,6 +53,7 @@ Fields:
 
 - `size: i64`
 - `mode: i32`: Do not trust this field yet. It is read at a fixed byte offset into struct stat, and st_mode's offset is arch-specific (24 on x86_64 Linux, 16 on arm64) while std/platform splits by OS only — on arm64 Linux it reads a different field and comes back 0. isDir/isFile/isSymlink deliberately avoid it; so does copyFile.
+- `mtimeNs: i64`: Last modification time, nanoseconds since the Unix epoch (whole seconds on Windows, whose _stat64 has no sub-second field).
 
 ### `WalkEntry`
 

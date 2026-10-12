@@ -23,18 +23,49 @@ reach. The host must be a dotted quad or `"localhost"`; anything else fails at s
 ### Request limits
 
 The server reads a whole request before calling the handler: the headers up to the
-blank line, then exactly `Content-Length` body bytes, however many reads that takes.
-A client that sends `Expect: 100-continue` gets `HTTP/1.1 100 Continue` before the body
-is read. Requests the server refuses without running a handler:
+blank line, then the body, however many reads that takes. The body is framed by
+`Content-Length` or by `Transfer-Encoding: chunked`, which is decoded (chunk extensions
+and trailers are dropped). A body with `Content-Encoding: gzip`, `x-gzip` or `deflate`
+(zlib, or a bare DEFLATE stream) is decompressed, and the handler sees the decoded body
+with `Content-Encoding` removed and `Content-Length`, if one was sent, rewritten to the
+decoded length. A client that sends `Expect: 100-continue` gets `HTTP/1.1 100 Continue`
+before the body is read. Requests the server refuses without running a handler:
 
 | Request | Answer |
 |---|---|
+| a request line that is not `METHOD target HTTP/1.x`, a field name that is not a token (empty, or space before the colon), a `Content-Length` that is not digits or two that disagree, bad chunk framing, `chunked` not the last transfer coding, a compressed body that does not decode | 400 |
+| `Content-Length`, or the sizes chunks declare, over the router's limit (`router.setMaxBodySize(bytes)`, default 1 MiB; `serve` uses the default) | 413 |
+| a compressed body that decodes past `router.setMaxInflatedSize(bytes)` (default: the max body size); decoding stops at the cap, so a zip bomb costs at most that much memory | 413 |
+| a request line over 16 KiB | 414 |
+| a `Content-Encoding` other than gzip, x-gzip, deflate or identity | 415 |
 | request line plus headers over 16 KiB | 431 |
-| `Content-Length` over the router's limit (`router.setMaxBodySize(bytes)`, default 1 MiB; `serve` uses the default) | 413 |
-| a `Transfer-Encoding` body (chunked request bodies are not decoded) | 411 |
+| a transfer coding other than `chunked` (and `identity`) | 501 |
+| an HTTP version other than 1.x | 505 |
 
 There is no read timeout yet: a client that stops sending mid-request holds its
 connection (and, under `serveRouter`, the whole server) until it closes.
+
+### Static files
+
+`ctx.file(path)` answers with the file at `path` (404 when it is not a readable regular
+file), typed by `std/mime`. `fileResponse(method, headers, path, contentType)` is the same
+for a server that is not built on `Context`, returning the response and its headers.
+Both send validators and honor conditional and range requests:
+
+- `ETag` is strong, built from the file's size and its modification time in nanoseconds
+  (`"<size hex>-<mtime ns hex>"`), and `Last-Modified` is the mtime. Neither needs the
+  file read, so a 304 costs one `stat`.
+- `If-None-Match` naming the ETag (weak comparison, or `*`) is a 304; without
+  `If-None-Match`, an `If-Modified-Since` not older than the mtime is a 304.
+- A single `Range: bytes=` range on a GET is a 206 with `Content-Range`; one that starts
+  past the end is a 416 with `Content-Range: bytes */<size>`. Several ranges, bad syntax,
+  a HEAD, or an `If-Range` that names neither the current ETag nor the Last-Modified date
+  get the whole file.
+- `Cache-Control` is not set: how long a file may be cached is the app's call (a
+  content-hashed asset can be `immutable`, an `index.html` cannot).
+
+Nothing keeps `path` inside a directory: a handler that joins request input into it must
+refuse `..` segments itself.
 
 ### Response headers
 
@@ -232,6 +263,18 @@ fn Context.deleteCookie(self: &mut Context, name: string): void
 ```
 
 Delete a cookie on the client (`Max-Age=0`).
+
+#### `Context.file`
+
+```milo
+fn Context.file(self: &mut Context, path: &string): Response
+```
+
+The file at `path` as the response, with validators and ranges (see fileResponse):
+200, 206, 304, 416, or a 404 when it is not a readable regular file. The content
+type comes from std/mime (application/octet-stream when the extension is unknown);
+Cache-Control stays the handler's to set. Nothing here keeps `path` inside a
+directory: a handler joining user input into it must refuse `..` itself.
 
 #### `Context.header`
 
@@ -433,7 +476,14 @@ pub struct Router
 Routes requests to handlers by method and path pattern (`/users/:id`), with
 middleware run around every handler.
 
-Fields: `routes: Vec<Route>`, `streams: Vec<StreamRoute>`, `sockets: Vec<WsRoute>`, `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`, `maxBodyBytes: i64`.
+Fields:
+
+- `routes: Vec<Route>`
+- `streams: Vec<StreamRoute>`
+- `sockets: Vec<WsRoute>`
+- `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`
+- `maxBodyBytes: i64`
+- `maxInflatedBytes: i64`: 0: the same as maxBodyBytes
 
 #### `Router.addRoute`
 
@@ -504,6 +554,16 @@ fn Router.setMaxBodySize(self: &mut Router, bytes: i64): void
 
 The largest request body this router's server accepts, in bytes (default 1 MiB).
 A request declaring more is answered 413 before its body is read.
+
+#### `Router.setMaxInflatedSize`
+
+```milo
+fn Router.setMaxInflatedSize(self: &mut Router, bytes: i64): void
+```
+
+The largest body a gzip or deflate request body may decompress to (default: the
+max body size). Past it the request is answered 413, before the handler runs and
+without holding more than this many decoded bytes.
 
 #### `Router.stream`
 
@@ -675,6 +735,28 @@ Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context, &
 
 ### Functions
 
+#### `fileResponse`
+
+```milo
+pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, contentType: &string): Option<HandledResponse>
+```
+
+The response for a GET or HEAD of the file at `path`, or None when it is not a regular
+file this process can read. It carries the validators and answers conditional and
+range requests (RFC 9110 sections 8.8, 13 and 14):
+
+  ETag           strong, from the file's size and its modification time in nanoseconds
+                 ("&lt;size hex>-&lt;mtime ns hex>"), so a 304 costs a stat and no read
+  Last-Modified  the modification time, whole seconds
+  304            If-None-Match lists the ETag (or is *); without If-None-Match,
+                 If-Modified-Since is not before the modification time
+  206            a single satisfiable `Range: bytes=` range on a GET, with Content-Range;
+                 If-Range must name the current ETag or Last-Modified, else the whole file
+  416            a range that starts past the end, with `Content-Range: bytes */<size>`
+
+Several ranges get the whole file (200), which RFC 9110 allows. Cache-Control is left
+to the caller: whether a file may be cached is the app's knowledge, not the file's.
+
 #### `headOnly`
 
 ```milo
@@ -682,6 +764,14 @@ pub fn headOnly(wire: string): string
 ```
 
 Rendered response bytes cut after the header block.
+
+#### `httpDate`
+
+```milo
+pub fn httpDate(epochSec: i64): string
+```
+
+An IMF-fixdate (RFC 9110 5.6.7), e.g. `Sun, 06 Nov 1994 08:49:37 GMT`, for `epochSec`.
 
 #### `parseRequest`
 

@@ -28,6 +28,21 @@ from "std/io" import {
 from "std/time" import {
     unrecordedEpochMillis
 }
+from "std/chunked" import {
+    ChunkScan, chunkMalformed, decodeChunked
+}
+from "std/inflate" import {
+    Inflate, INFLATE_TOO_BIG
+}
+from "std/fs" import {
+    fileInfo, isFile, readFile
+}
+from "std/datetime" import {
+    DateTime, monthName, parseRfc2822, weekdayName
+}
+from "std/mime" import {
+    Mime
+}
 from "std/wsframe" import {
     computeAcceptKey, encodeWsFrame, parseWsFrame, WsFrameParse
 }
@@ -164,6 +179,22 @@ impl Context {
             return Response.Status(self.statusCode, "text/html; charset=utf-8", body)
         }
         return Response.Html(body)
+    }
+
+    // The file at `path` as the response, with validators and ranges (see fileResponse):
+    // 200, 206, 304, 416, or a 404 when it is not a readable regular file. The content
+    // type comes from std/mime (application/octet-stream when the extension is unknown);
+    // Cache-Control stays the handler's to set. Nothing here keeps `path` inside a
+    // directory: a handler joining user input into it must refuse `..` itself.
+    fn file(self: &mut Self, path: &string): Response {
+        let ct = Mime.contentType(path) ?? "application/octet-stream"
+        let Option.Some(handled) = fileResponse(self.req.method, self.req.headers, path, ct) else {
+            return Response.NotFound
+        }
+        for h in handled.headers {
+            self.respHeaders.push(h.clone())
+        }
+        return handled.response
     }
 
     // A redirect to `url`: sets the `Location` header and answers 302 Found, or the
@@ -716,11 +747,14 @@ fn readMore(fd: i32, raw: &mut string): i64 {
     return n
 }
 
-// Read one whole request: headers up to the blank line, then exactly Content-Length
-// body bytes, however many reads that takes. A single read used to be the whole
-// request, so a body the client sent in a second segment (any body past one MSS, or
-// one sent after the headers) reached the handler empty or cut short.
-fn readRequest(fd: i32, maxBody: i64): ReadOutcome {
+// Read one whole request: headers up to the blank line, then the body however many reads
+// it takes, framed by Content-Length or by Transfer-Encoding: chunked (decoded here), and
+// decompressed when it carries Content-Encoding: gzip or deflate. A request this server
+// cannot frame or decode is refused before any handler runs: 400 for a malformed request
+// line, header, length or chunk framing, 413 past the body limit (counted on the decoded
+// bytes, so a small zip bomb is refused too), 415 for an unknown content coding and 501
+// for a transfer coding other than chunked.
+fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
     var raw: string = ""
     var end: i64 = -1
     while end < 0 {
@@ -733,48 +767,265 @@ fn readRequest(fd: i32, maxBody: i64): ReadOutcome {
         }
         end = headerEnd(raw, scanFrom)
         if end < 0 && raw.len > maxHeaderBytes {
-            return ReadOutcome.Reject(431)
+            return ReadOutcome.Reject(headTooLong(raw))
         }
     }
     if end > maxHeaderBytes {
-        return ReadOutcome.Reject(431)
+        return ReadOutcome.Reject(headTooLong(raw))
     }
-    var req = parseRequestText(raw.substr(0, end))
+    let headText = raw.substr(0, end)
+    let lineProblem = requestLineProblem(headText)
+    if lineProblem != 0 {
+        return ReadOutcome.Reject(lineProblem)
+    }
+    var req = parseRequestText(headText)
     var contentLength: i64 = 0
+    var sawLength = false
+    var chunked = false
     var expectContinue = false
     for h in req.headers {
+        if !isToken(h.name) {
+            // no name, or whitespace before the colon (RFC 9112 5.1): a smuggling vector
+            return ReadOutcome.Reject(400)
+        }
         if eqIgnoreCase(h.name, "Content-Length") {
-            contentLength = parseContentLength(h.value)
-        } else if eqIgnoreCase(h.name, "Transfer-Encoding") && !eqIgnoreCase(h.value, "identity") {
-            // A chunked body is not decoded. 411 tells the client to resend with a length.
-            return ReadOutcome.Reject(411)
+            let Option.Some(n) = strictLength(h.value) else {
+                return ReadOutcome.Reject(400)
+            }
+            if sawLength && n != contentLength {
+                return ReadOutcome.Reject(400)
+            }
+            contentLength = n
+            sawLength = true
+        } else if eqIgnoreCase(h.name, "Transfer-Encoding") {
+            let codings = codingList(h.value)
+            var i: i64 = 0
+            for c in codings {
+                let last = i == codings.len - 1
+                if c == "chunked" {
+                    // chunked anywhere but last leaves the length undeterminable (RFC 9112 6.3)
+                    if !last {
+                        return ReadOutcome.Reject(400)
+                    }
+                    chunked = true
+                } else if c != "identity" {
+                    return ReadOutcome.Reject(if last { 400 } else { 501 })
+                }
+                i += 1
+            }
         } else if eqIgnoreCase(h.name, "Expect") && eqIgnoreCase(h.value, "100-continue") {
             expectContinue = true
         }
     }
-    if contentLength > maxBody {
+    // Content-Encoding is checked before the body is read: a coding this server cannot
+    // undo is 415 whatever the body holds.
+    let Option.Some(encodings) = contentCodings(req.headers) else {
+        return ReadOutcome.Reject(415)
+    }
+    if !chunked && contentLength > maxBody {
         return ReadOutcome.Reject(413)
     }
-    let want = end + contentLength
     // A client that sent Expect: 100-continue may wait for this before sending the
     // body (curl waits a second, then sends anyway). Skip it when the body is
     // already here: the client did not wait.
-    if expectContinue && raw.len < want {
+    if expectContinue && (chunked || contentLength > 0) && raw.len == end {
         writeAll(fd, "HTTP/1.1 100 Continue\r\n\r\n")
     }
-    while raw.len < want {
-        if readMore(fd, &mut raw) <= 0 {
-            return ReadOutcome.Gone
+    if chunked {
+        // Transfer-Encoding wins over Content-Length (RFC 9112 6.3); the connection closes
+        // after the response, so no byte of a smuggled second request is ever read.
+        var scan = ChunkScan.new(end)
+        while true {
+            let stop = scan.step(raw)
+            if stop >= 0 {
+                break
+            }
+            if stop == chunkMalformed {
+                return ReadOutcome.Reject(400)
+            }
+            if scan.declared() > maxBody {
+                return ReadOutcome.Reject(413)
+            }
+            // Size lines, extensions and trailers are overhead the declared count does not
+            // see: a body of one-byte chunks with long extensions is capped here instead.
+            if (raw.len - end - maxHeaderBytes) / 2 > maxBody {
+                return ReadOutcome.Reject(413)
+            }
+            if readMore(fd, &mut raw) <= 0 {
+                return ReadOutcome.Gone
+            }
+        }
+        req.body = decodeChunked(raw, end)
+    } else {
+        let want = end + contentLength
+        while raw.len < want {
+            if readMore(fd, &mut raw) <= 0 {
+                return ReadOutcome.Gone
+            }
+        }
+        req.body = raw.substr(end, want)
+    }
+    if encodings.len > 0 {
+        let status = decodeBody(&mut req, encodings, maxInflated)
+        if status != 0 {
+            return ReadOutcome.Reject(status)
         }
     }
-    req.body = raw.substr(end, want)
     return ReadOutcome.Got(req)
+}
+
+// 414 when the request line alone is past the header limit (the URI is what is long),
+// else 431.
+fn headTooLong(raw: &string): i32 {
+    let lineEnd = raw.indexOf("\n") ?? raw.len
+    return if lineEnd > maxHeaderBytes { 414 } else { 431 }
+}
+
+// 400 for a request line that is not `method SP target SP HTTP/1.x`, 505 for another
+// HTTP version, 0 when it is well formed.
+fn requestLineProblem(head: &string): i32 {
+    var lineEnd: i64 = 0
+    while lineEnd < head.len && head[lineEnd] != '\r' && head[lineEnd] != '\n' {
+        lineEnd += 1
+    }
+    let parts = head.substr(0, lineEnd).split(" ")
+    if parts.len != 3 || !isToken(parts[0]) || parts[1].len == 0 {
+        return 400
+    }
+    for ch in parts[1] {
+        if ch <= 32 || ch == 127 {
+            return 400
+        }
+    }
+    let version = parts[2].clone()
+    if version.len != 8 || !version.startsWith("HTTP/") || version[6] != '.' || version[5] < '0' || version[5] > '9' || version[7] < '0' || version[7] > '9' {
+        return 400
+    }
+    if version[5] != '1' {
+        return 505
+    }
+    return 0
+}
+
+// An RFC 9110 token: a method or a field name. Empty is not one.
+fn isToken(s: &string): bool {
+    if s.len == 0 {
+        return false
+    }
+    for ch in s {
+        let ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '!' || ch == '#' ||
+        ch == '$' || ch == '%' || ch == '&' || ch == '\'' || ch == '*' || ch == '+' || ch == '-' || ch == '.' || ch == '^' ||
+        ch == '_' || ch == '`' || ch == '|' || ch == '~'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
+// A Content-Length value: decimal digits only, optional surrounding whitespace, or None.
+// The lenient parseContentLength skips anything else, which would read "1x0" as 10.
+fn strictLength(v: &string): Option<i64> {
+    let t = v.trim()
+    if t.len == 0 {
+        return Option.None
+    }
+    for ch in t {
+        if ch < '0' || ch > '9' {
+            return Option.None
+        }
+    }
+    return Option.Some(parseContentLength(t))
+}
+
+// A comma-separated coding list, lowercased, empty members dropped.
+fn codingList(v: &string): Vec<string> {
+    var out: Vec<string> = []
+    for part in v.split(",") {
+        // parameters (`;q=...`) never change which coding it is
+        let name = part.split(";") [0].trim().toLower()
+        if name.len > 0 {
+            out.push(name)
+        }
+    }
+    return out
+}
+
+// The request's content codings in the order they were applied, identity dropped, or
+// None when one is not gzip, x-gzip or deflate.
+fn contentCodings(headers: &Vec<Param>): Option<Vec<string>> {
+    var out: Vec<string> = []
+    for h in headers {
+        if eqIgnoreCase(h.name, "Content-Encoding") {
+            for c in codingList(h.value) {
+                if c == "gzip" || c == "x-gzip" || c == "deflate" {
+                    out.push(c)
+                } else if c != "identity" {
+                    return Option.None
+                }
+            }
+        }
+    }
+    return Option.Some(out)
+}
+
+fn inflateCoding(deflate: bool, body: &string, max: i64): Result<string, string> {
+    if !deflate {
+        return Inflate.gzipMax(body, max)
+    }
+    // "deflate" means zlib (RFC 9110 8.4.1.2), but some clients send a bare DEFLATE
+    // stream, so that is tried when the zlib wrapper does not check out
+    match Inflate.zlibMax(body, max) {
+        Result.Ok(out) => {
+            return Result.Ok(out)
+        }
+        Result.Err(e) => {
+            if e == INFLATE_TOO_BIG {
+                return Result.Err(e)
+            }
+        }
+    }
+    return Inflate.rawMax(body, max)
+}
+
+// Undo the content codings on `req.body`, last applied first, never producing more than
+// `max` bytes. 0, or the status to refuse with: 413 for output past `max`, 400 for a body
+// that does not decode. The handler then sees the decoded body and headers that describe
+// it: Content-Encoding dropped and Content-Length, if sent, the decoded length.
+fn decodeBody(req: &mut Request, codings: Vec<string>, max: i64): i32 {
+    var i = codings.len - 1
+    while i >= 0 {
+        match inflateCoding(codings[i] == "deflate", req.body, max) {
+            Result.Ok(out) => {
+                req.body = out
+            }
+            Result.Err(e) => {
+                return if e == INFLATE_TOO_BIG { 413 } else { 400 }
+            }
+        }
+        i -= 1
+    }
+    var kept: Vec<Param> = []
+    for h in req.headers {
+        if eqIgnoreCase(h.name, "Content-Encoding") {
+            continue
+        }
+        if eqIgnoreCase(h.name, "Content-Length") {
+            kept.push(Param {
+                name: h.name.clone(), value: req.body.len.toString()
+            })
+        } else {
+            kept.push(h.clone())
+        }
+    }
+    req.headers = kept
+    return 0
 }
 
 // Read a request off `fd`, answer it with `respond`, and close `fd`: the one
 // connection lifecycle every server here shares.
-fn serveConn(fd: i32, maxBody: i64, respond: (Request) => string): void {
-    match readRequest(fd, maxBody) {
+fn serveConn(fd: i32, maxBody: i64, maxInflated: i64, respond: (Request) => string): void {
+    match readRequest(fd, maxBody, maxInflated) {
         ReadOutcome.Got(req) => {
             writeAll(fd, respond(req))
         }
@@ -874,12 +1125,201 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
         if clientFd < 0 {
             continue
         }
-        serveConn(clientFd, defaultMaxBodyBytes, (req: Request): string => {
+        serveConn(clientFd, defaultMaxBodyBytes, defaultMaxBodyBytes, (req: Request): string => {
             let noHeaders: Vec<Param> = []
             return renderFor(req, handler(req), noHeaders)
         })
     }
     return Result.Err("server exited")
+}
+
+// ── Static files ──
+
+// The response for a GET or HEAD of the file at `path`, or None when it is not a regular
+// file this process can read. It carries the validators and answers conditional and
+// range requests (RFC 9110 sections 8.8, 13 and 14):
+//
+//   ETag           strong, from the file's size and its modification time in nanoseconds
+//                  ("<size hex>-<mtime ns hex>"), so a 304 costs a stat and no read
+//   Last-Modified  the modification time, whole seconds
+//   304            If-None-Match lists the ETag (or is *); without If-None-Match,
+//                  If-Modified-Since is not before the modification time
+//   206            a single satisfiable `Range: bytes=` range on a GET, with Content-Range;
+//                  If-Range must name the current ETag or Last-Modified, else the whole file
+//   416            a range that starts past the end, with `Content-Range: bytes */<size>`
+//
+// Several ranges get the whole file (200), which RFC 9110 allows. Cache-Control is left
+// to the caller: whether a file may be cached is the app's knowledge, not the file's.
+pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, contentType: &string): Option<HandledResponse> {
+    if !isFile(path) {
+        return Option.None
+    }
+    let Option.Some(info) = fileInfo(path) else {
+        return Option.None
+    }
+    let etag = "\"" + hexLen(info.size) + "-" + hexLen(info.mtimeNs) + "\""
+    let mtimeSec = info.mtimeNs / 1000000000
+    let lastModified = httpDate(mtimeSec)
+    var headers: Vec<Param> = [Param {
+        name: "ETag", value: etag.clone()
+    }, Param {
+        name: "Last-Modified", value: lastModified.clone()
+    }]
+    if notModified(reqHeaders, etag, mtimeSec) {
+        return Option.Some(HandledResponse {
+            response: Response.Status(304, "", ""), headers: headers
+        })
+    }
+    let Result.Ok(body) = readFile(path) else {
+        return Option.None
+    }
+    headers.push(Param {
+        name: "Accept-Ranges", value: "bytes"
+    })
+    let range = headerValue(reqHeaders, "Range")
+    if method != "GET" || range.isNone() || !ifRangeHolds(reqHeaders, etag, lastModified) {
+        return Option.Some(HandledResponse {
+            response: Response.Status(200, contentType.clone(), body), headers: headers
+        })
+    }
+    match parseRange(range ?? "", body.len) {
+        RangeSpec.Whole => {
+            return Option.Some(HandledResponse {
+                response: Response.Status(200, contentType.clone(), body), headers: headers
+            })
+        }
+        RangeSpec.Unsatisfiable => {
+            headers.push(Param {
+                name: "Content-Range", value: $"bytes */{body.len}"
+            })
+            return Option.Some(HandledResponse {
+                response: Response.Status(416, "text/plain; charset=utf-8", statusText(416)), headers: headers
+            })
+        }
+        RangeSpec.Part(first, last) => {
+            headers.push(Param {
+                name: "Content-Range", value: $"bytes {first}-{last}/{body.len}"
+            })
+            return Option.Some(HandledResponse {
+                response: Response.Status(206, contentType.clone(), body.substr(first, last + 1)), headers: headers
+            })
+        }
+    }
+}
+
+// An IMF-fixdate (RFC 9110 5.6.7), e.g. `Sun, 06 Nov 1994 08:49:37 GMT`, for `epochSec`.
+pub fn httpDate(epochSec: i64): string {
+    let d = DateTime.fromEpoch(epochSec)
+    return weekdayName(d.weekday).substr(0, 3) + ", " + twoDigits(d.day) + " " + monthName(d.month).substr(0, 3) + " " +
+    $"{d.year} " + twoDigits(d.hour) + ":" + twoDigits(d.minute) + ":" + twoDigits(d.second) + " GMT"
+}
+
+fn twoDigits(n: i32): string {
+    return if n < 10 { $"0{n}" } else { $"{n}" }
+}
+
+// The first value of request header `name`, case-insensitive.
+fn headerValue(headers: &Vec<Param>, name: &string): Option<string> {
+    for h in headers {
+        if eqIgnoreCase(h.name, name) {
+            return Option.Some(h.value.clone())
+        }
+    }
+    return Option.None
+}
+
+// Whether the conditional headers make this a 304. If-None-Match uses the weak
+// comparison (a W/ prefix is ignored) and, when present, overrides If-Modified-Since
+// (RFC 9110 13.2.2). An unparseable If-Modified-Since is ignored.
+fn notModified(headers: &Vec<Param>, etag: &string, mtimeSec: i64): bool {
+    if let Option.Some(inm) = headerValue(headers, "If-None-Match") {
+        for raw in inm.split(",") {
+            var tag = raw.trim()
+            if tag == "*" {
+                return true
+            }
+            if tag.startsWith("W/") {
+                tag = tag.substr(2, tag.len)
+            }
+            if tag == etag {
+                return true
+            }
+        }
+        return false
+    }
+    let Option.Some(ims) = headerValue(headers, "If-Modified-Since") else {
+        return false
+    }
+    let Result.Ok(ms) = parseRfc2822(ims) else {
+        return false
+    }
+    return mtimeSec <= ms / 1000
+}
+
+// If-Range (RFC 9110 13.1.5): the range applies only when it names the current entity,
+// by the strong ETag or by exactly the Last-Modified date. Absent, it always holds.
+fn ifRangeHolds(headers: &Vec<Param>, etag: &string, lastModified: &string): bool {
+    let Option.Some(v) = headerValue(headers, "If-Range") else {
+        return true
+    }
+    let t = v.trim()
+    return t == etag || t == lastModified
+}
+
+enum RangeSpec {
+    // serve the whole representation: no usable range (several, or bad syntax)
+    Whole,
+    Unsatisfiable,
+    // first and last byte offsets, inclusive
+    Part(i64, i64),
+}
+
+// A `Range: bytes=` value against a body of `size` bytes. Bad syntax and multiple ranges
+// read as Whole: a server may ignore Range, and must not fail the request over it.
+fn parseRange(v: &string, size: i64): RangeSpec {
+    let t = v.trim()
+    if !t.toLower().startsWith("bytes=") {
+        return RangeSpec.Whole
+    }
+    let spec = t.substr(6, t.len).trim()
+    if spec.contains(",") {
+        return RangeSpec.Whole
+    }
+    let Option.Some(dash) = spec.indexOf("-") else {
+        return RangeSpec.Whole
+    }
+    let a = spec.substr(0, dash).trim()
+    let b = spec.substr(dash + 1, spec.len).trim()
+    if a.len == 0 {
+        // suffix: the last N bytes
+        let Option.Some(n) = strictLength(b) else {
+            return RangeSpec.Whole
+        }
+        if n == 0 || size == 0 {
+            return RangeSpec.Unsatisfiable
+        }
+        let first = if n >= size { 0 } else { size - n }
+        return RangeSpec.Part(first, size - 1)
+    }
+    let Option.Some(first) = strictLength(a) else {
+        return RangeSpec.Whole
+    }
+    var last = size - 1
+    if b.len > 0 {
+        let Option.Some(l) = strictLength(b) else {
+            return RangeSpec.Whole
+        }
+        if l < first {
+            return RangeSpec.Whole
+        }
+        if l < last {
+            last = l
+        }
+    }
+    if first >= size {
+        return RangeSpec.Unsatisfiable
+    }
+    return RangeSpec.Part(first, last)
 }
 
 // ── Router ──
@@ -913,6 +1353,13 @@ pub struct Router {
     sockets: Vec<WsRoute>,
     middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
     maxBodyBytes: i64,
+    // 0: the same as maxBodyBytes
+    maxInflatedBytes: i64,
+}
+
+// The decoded-size cap for a gzip/deflate request body.
+fn inflatedLimit(r: &Router): i64 {
+    return if r.maxInflatedBytes > 0 { r.maxInflatedBytes } else { r.maxBodyBytes }
 }
 
 impl Router {
@@ -924,6 +1371,7 @@ impl Router {
             sockets: [],
             middleware: [],
             maxBodyBytes: defaultMaxBodyBytes,
+            maxInflatedBytes: 0,
         }
     }
 
@@ -931,6 +1379,13 @@ impl Router {
     // A request declaring more is answered 413 before its body is read.
     fn setMaxBodySize(self: &mut Self, bytes: i64): void {
         self.maxBodyBytes = bytes
+    }
+
+    // The largest body a gzip or deflate request body may decompress to (default: the
+    // max body size). Past it the request is answered 413, before the handler runs and
+    // without holding more than this many decoded bytes.
+    fn setMaxInflatedSize(self: &mut Self, bytes: i64): void {
+        self.maxInflatedBytes = bytes
     }
 
     // Register a GET route. `:name` segments in `pattern` bind path parameters, read
@@ -1087,7 +1542,7 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
         if clientFd < 0 {
             continue
         }
-        serveConn(clientFd, router.maxBodyBytes, (req: Request): string => {
+        serveConn(clientFd, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
             let head = req.method == "HEAD"
             let handled = router.handle(req)
             if head {
@@ -1780,7 +2235,7 @@ let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plai
 
 fn handleConn(clientFd: i32, router: &Router): void {
     unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
-    serveConn(clientFd, router.maxBodyBytes, (req: Request): string => {
+    serveConn(clientFd, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
         taskOnPanicNote(requestLine(req))
         // A stream or ws route has already written everything it will; nothing more to send.
         if runLongRoute(req, clientFd, router) {
