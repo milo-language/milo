@@ -68,8 +68,10 @@ pub fn main(): i32 {
         if let Option.Some(v) = ctx.param("room") {
             room = v
         }
-        // The server closes fd only after this handler returns, and the fd leaves
-        // `subscribers` before that, so every sendAll below writes to a live socket.
+        // A stream route is handed the server's bare descriptor (sendAll is @unsafe),
+        // and the subscriber list shares it with the /poke task, which no borrow can
+        // express. It stays live: the server closes fd only after this handler
+        // returns, and the fd leaves `subscribers` before that.
         unsafe {
             if !sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n") {
                 return
@@ -77,6 +79,7 @@ pub fn main(): i32 {
         }
         subscribers.push(fd)
         subscriberRoom.push(room.clone())
+        // Same bare descriptor, still open while this handler runs.
         unsafe { waitPeerClosed(fd) }
         for i in 0..subscribers.len {
             if subscribers[i] == fd {
@@ -90,6 +93,8 @@ pub fn main(): i32 {
     r.post("/poke", (ctx: &mut Context): Response => {
         var sent: i64 = 0
         for i in 0..subscribers.len {
+            // Every fd in `subscribers` belongs to a stream handler still parked in
+            // waitPeerClosed, so it is open (see the stream route above).
             unsafe {
                 if sendAll(subscribers[i], $"data: {subscriberRoom[i]}\n\n") {
                     sent += 1
