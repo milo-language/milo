@@ -899,10 +899,13 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   // `probe`) only if the host exported its symbols into the dynamic table.
   // ELF hides them by default, so without -rdynamic the callback fails with
   // "undefined symbol". Mach-O exports them anyway, so macOS never needed it.
-  // -ldl for dlopen itself (a harmless no-op on glibc >= 2.34 where it folds
-  // into libc). Host/target-aware so a cross-compile to Linux gets it too.
+  // -ldl for dlopen itself and -lpthread for std/sync and std/runtime's threads (both
+  // harmless no-ops on glibc >= 2.34, where they fold into libc). Before 2.34 a program
+  // calling pthread_create linked only while some other library (libsqlite3) happened
+  // to drag libpthread in, and ld rejects that as "DSO missing from command line".
+  // Host/target-aware so a cross-compile to Linux gets them too.
   const targetIsLinux = target ? target.os === "linux" : process.platform === "linux";
-  const linuxLink = targetIsLinux ? " -rdynamic -ldl" : "";
+  const linuxLink = targetIsLinux ? " -rdynamic -ldl -lpthread" : "";
   const targetIsWindows = target ? target.os === "windows" : process.platform === "win32";
   // The UCRT has no separate libm — floor/pow live in the CRT proper — and `-lm` reaches
   // lld-link as a request for `m.lib`, which does not exist, so it is a hard link error
