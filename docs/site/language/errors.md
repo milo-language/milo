@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 498 distinct messages across 638 programs the compiler must reject.
+Every error message the test suite pins: 499 distinct messages across 639 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -78,6 +78,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
 - [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
 - [`'helper' is not imported`](#helper-is-not-imported)
+- [`'Holder.show' can park this task while it holds a reference into 'g's buffer`](#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
@@ -1884,6 +1885,33 @@ fn main() {
 ```
 
 <sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
+
+## `'Holder.show' can park this task while it holds a reference into 'g's buffer` {#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer}
+
+A method's receiver borrows like an argument: `g[0].show()` hands `show` a reference into g's buffer, and if `show` parks, another task can push to g and realloc it (ASan saw the use-after-free before the receiver went through the same check).
+
+```milo skip
+from "std/runtime" import {
+    schedulerYield
+}
+struct Holder { name: string }
+impl Holder {
+    fn show(self: &Self): void {
+        schedulerYield()
+        print(self.name)
+    }
+}
+var g: Vec<Holder> = []
+
+pub fn main(): i32 {
+    g.push(Holder { name: "a" })
+    g[0].show()
+    print(g.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/globalReceiverAcrossPark.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalReceiverAcrossPark.milo)</sub>
 
 ## `'id' shadows an outer binding` {#id-shadows-an-outer-binding}
 
