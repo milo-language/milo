@@ -55,6 +55,8 @@ pub extern fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
 
 pub extern fn SSL_get_error(ssl: *u8, ret: i32): i32
 
+pub extern fn ERR_clear_error(): void
+
 // ── server side ──
 
 pub extern fn TLS_server_method(): *u8
@@ -83,6 +85,12 @@ pub extern fn SSL_shutdown(ssl: *u8): i32
 // SSL_* on a nonblocking fd reports WANT_READ/WANT_WRITE; these park the
 // green task until the fd is ready and retry. On a plain OS thread (blocking
 // fd) the WANT codes never occur and these reduce to one SSL call.
+//
+// Every SSL_* call here is preceded by ERR_clear_error(). OpenSSL's error queue is
+// per OS thread, and every green task shares that thread: an entry another
+// connection left behind makes SSL_get_error report a fatal SSL_ERROR_SSL instead of
+// WANT_READ, and the read loop then ends the body early. Concurrent fetches came
+// back truncated at random record boundaries.
 fn sslWantRead(): i32 {
     return 2
 }
@@ -120,6 +128,7 @@ struct SslStep {
 @replayHooked
 fn sslStep(kind: string, arg: string, ssl: *u8, success: i32, live: () => i32): SslStep {
     if replayOff() {
+        unsafe { ERR_clear_error() }
         let r = live()
         var e: i32 = 0
         if r != success {
@@ -130,6 +139,7 @@ fn sslStep(kind: string, arg: string, ssl: *u8, success: i32, live: () => i32): 
         }
     }
     let v = replayInts(replayBlob(kind, arg, (): string => {
+        unsafe { ERR_clear_error() }
         let r = live()
         var e: i32 = 0
         if r != success {
@@ -190,6 +200,7 @@ fn sslReadOnce(ssl: *u8, fd: i32, buf: *u8, len: i32): SslStep {
         var n: i32 = 0
         var e: i32 = 0
         unsafe {
+            ERR_clear_error()
             n = SSL_read(ssl, buf, len)
             if n <= 0 {
                 e = SSL_get_error(ssl, n)
@@ -203,6 +214,7 @@ fn sslReadOnce(ssl: *u8, fd: i32, buf: *u8, len: i32): SslStep {
         var n: i32 = 0
         var e: i32 = 0
         unsafe {
+            ERR_clear_error()
             n = SSL_read(ssl, buf, len)
             if n <= 0 {
                 e = SSL_get_error(ssl, n)
