@@ -60,6 +60,16 @@ export function stripOwnLedger(lines: string[]): string[] {
 
 export function verifyOwnLedger(lines: string[]): OwnFinding[] {
   const findings: OwnFinding[] = [];
+  // A call to a `noreturn` function ends its path as surely as `unreachable` does, but
+  // codegen often follows `exit(0)` with a `br` anyway (the block needs a terminator).
+  // Without this, that dead edge would carry a moved value back around a loop.
+  const noreturn = new Set<string>();
+  for (const l of lines) {
+    if ((l.startsWith("declare ") || l.startsWith("define ")) && / noreturn\b/.test(l)) {
+      const m = /@("[^"]+"|[^\s(]+)\(/.exec(l);
+      if (m) noreturn.add(m[1]);
+    }
+  }
   let i = 0;
   while (i < lines.length) {
     const l = lines[i];
@@ -69,7 +79,7 @@ export function verifyOwnLedger(lines: string[]): OwnFinding[] {
       let j = i + 1;
       while (j < lines.length && lines[j] !== "}") j++;
       if (lines.slice(i + 1, j).some(x => x.includes("@__milo_own_"))) {
-        verifyFunction(fnName, lines, i + 1, j, findings);
+        verifyFunction(fnName, lines, i + 1, j, findings, noreturn);
       }
       i = j + 1;
       continue;
@@ -79,7 +89,7 @@ export function verifyOwnLedger(lines: string[]): OwnFinding[] {
   return findings;
 }
 
-function verifyFunction(fn: string, lines: string[], start: number, end: number, out: OwnFinding[]) {
+function verifyFunction(fn: string, lines: string[], start: number, end: number, out: OwnFinding[], noreturn: Set<string>) {
   const blocks: Block[] = [];
   const byName = new Map<string, number>();
   const makeInfo = new Map<number, { line: number; origin: string; src: number }>();
@@ -142,6 +152,9 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
       b.term = "ret"; b.termLine = lineNo;
     } else if (t === "unreachable") {
       b.term = "unreachable"; b.termLine = lineNo;
+    } else if (noreturn.size && t.includes("call ")) {
+      const cm = /\bcall [^@]*@("[^"]+"|[^\s(]+)\(/.exec(t);
+      if (cm && noreturn.has(cm[1])) { b.term = "unreachable"; b.termLine = lineNo; }
     }
   }
 
