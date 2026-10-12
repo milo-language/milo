@@ -9,7 +9,7 @@
 // impl to stderr, which is the only way to read code the user never wrote.
 //
 // Everything it calls lives in std/json: the zero-copy cursor API for decoding,
-// `jsonQuote`/`jsonBoolStr` for encoding, and `JsonError`/`JsonMismatch` for
+// `jsonQuote`/`jsonBoolStr`/`jsonFloatStr` for encoding, and `JsonError`/`JsonMismatch` for
 // failures. The resolver injects that import when the attribute is present.
 
 // A field type reduced to what the generator needs to know about it.
@@ -64,7 +64,9 @@ function emitSer(p: JsonPlan, val: string, g: Gen, d: number): string {
   switch (p.k) {
     case "string": return `jsonQuote(${val})`;
     case "bool": return `jsonBoolStr(${val})`;
-    case "int": case "float": return `${val}.toString()`;
+    case "int": return `${val}.toString()`;
+    // Not toString: a NaN or infinite field would print `nan`/`inf`, which is not JSON.
+    case "float": return p.ty === "f32" ? `jsonF32Str(${val})` : `jsonFloatStr(${val})`;
     case "struct": return `${val}.toJson()`;
     case "raw": return `${val}.rawStr()`;
     case "unitEnum": {

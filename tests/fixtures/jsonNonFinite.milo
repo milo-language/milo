@@ -1,0 +1,35 @@
+// JSON has no NaN or Infinity: a non-finite float encodes as null, through the
+// builders and through @derive(Json), and the output parses back
+from "std/json" import {
+    Json
+}
+
+@derive(Json)
+struct Reading {
+    a: f64,
+    b: f64?,
+    c: Vec<f64>,
+    d: f32,
+}
+
+pub fn main(): i32 {
+    let z = 0.0
+    let nan = 0.0 / z
+    let inf = 1.0 / z
+    let zf: f32 = 0.0
+    let r = Reading { a: nan, b: Some(inf), c: [0.0 - inf, 2.5], d: 1.0 / zf }
+    let text = r.toJson()
+    print(text)
+    // @expect: {"a":null,"b":null,"c":[null,2.5],"d":null}
+    print(Json.parse(text).isOk())
+    // @expect: true
+    let small: f32 = 0.1
+    print(Reading { a: 1.5, b: None, c: [], d: small }.toJson())
+    // @expect: {"a":1.5,"b":null,"c":[],"d":0.1}
+    let built = Json.obj().float("n", nan).float("i", 0.0 - inf).arr("xs", Json.arr().float(inf).float(0.25)).build()
+    print(built)
+    // @expect: {"n":null,"i":null,"xs":[null,0.25]}
+    print(Json.parse(built).isOk())
+    // @expect: true
+    return 0
+}
