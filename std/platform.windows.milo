@@ -347,7 +347,7 @@ pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
 // these missing calls.
 
 // Windows uses ioctlsocket(FIONBIO) for sockets and has no fcntl at all.
-pub extern fn fcntl(fd: i32, cmd: i32,...): i32
+pub extern fn fcntl(fd: i32, cmd: i32, ...): i32
 
 pub fn fGetfl(): i32 {
     return -1
@@ -777,7 +777,7 @@ extern fn _write(fd: i32, buf: *u8, count: u32): i32
 // the optional mode. The UCRT oldnames layer exports `open` as an alias for `_open`, so
 // declare it directly — no @cSig, since it comes from <io.h> under the `_`-name and the
 // header does not declare the POSIX spelling.
-pub extern fn open(path: *u8, flags: i32,...): i32
+pub extern fn open(path: *u8, flags: i32, ...): i32
 
 @cSig("io.h", "int _close(int)")
 extern fn _close(fd: i32): i32

@@ -289,7 +289,7 @@ pub fn sigchldNum(): i32 {
 
 // ── fcntl / non-blocking ──
 
-pub extern fn fcntl(fd: i32, cmd: i32,...): i32
+pub extern fn fcntl(fd: i32, cmd: i32, ...): i32
 
 pub fn fGetfl(): i32 {
     return 3
@@ -350,7 +350,7 @@ pub fn closeSocket(fd: i32): i32 {
 
 pub extern fn getcontext(ucp: *u8): i32
 
-pub extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
+pub extern fn makecontext(ucp: *u8, func: *u8, argc: i32, ...): void
 
 // @parks: the one call the checker cannot see through. Every green-task park in
 // std/runtime is a wrapper around this, and inherits the mark from here.
@@ -586,7 +586,7 @@ pub fn sockWrite(fd: i32, buf: *u8, nbyte: i64): i64 {
 }
 
 @cSig("fcntl.h", "int open(const char *, int, ...)")
-pub extern fn open(path: *u8, flags: i32,...): i32
+pub extern fn open(path: *u8, flags: i32, ...): i32
 
 @cSig("unistd.h", "int close(int)")
 pub extern fn close(fd: i32): i32

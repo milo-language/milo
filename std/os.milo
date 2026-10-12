@@ -45,7 +45,7 @@ pub extern fn stat(path: *u8, buf: *u8): i32
 pub extern fn puts(s: *u8): i32
 
 @cSig("stdio.h", "int printf(const char *, ...)")
-pub extern fn printf(fmt: *u8,...): i32
+pub extern fn printf(fmt: *u8, ...): i32
 
 // ── Memory ──
 
@@ -81,7 +81,7 @@ pub extern fn strcmp(a: *u8, b: *u8): i32
 
 pub extern fn strncmp(a: *u8, b: *u8, n: i64): i32
 
-pub extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
+pub extern fn snprintf(buf: *u8, size: i64, fmt: *u8, ...): i32
 
 // ── Network ──
 
@@ -541,7 +541,7 @@ pub extern fn tcgetattr(fd: i32, termios: *u8): i32
 
 pub extern fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
 
-pub extern fn ioctl(fd: i32, request: i64,...): i32
+pub extern fn ioctl(fd: i32, request: i64, ...): i32
 
 pub extern fn isatty(fd: i32): i32
 
@@ -568,7 +568,7 @@ pub extern fn system(cmd: *u8): i32
 
 pub extern fn fork(): i32
 
-pub extern fn execl(path: *u8, arg0: *u8,...): i32
+pub extern fn execl(path: *u8, arg0: *u8, ...): i32
 
 pub extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
