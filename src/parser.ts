@@ -1139,9 +1139,13 @@ export class Parser {
     this.expect(TokenKind.RBrace);
     let elseBody: Stmt[] | null = null;
     if (this.match(TokenKind.Else)) {
-      this.expect(TokenKind.LBrace);
-      elseBody = this.parseStmts();
-      this.expect(TokenKind.RBrace);
+      if (this.at(TokenKind.If)) {
+        elseBody = [this.parseIf()];
+      } else {
+        this.expect(TokenKind.LBrace);
+        elseBody = this.parseStmts();
+        this.expect(TokenKind.RBrace);
+      }
     }
     return { kind: "IfLetStmt", pattern, subject, thenBody, elseBody, span: s };
   }

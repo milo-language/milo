@@ -1,0 +1,23 @@
+// `if let` chains into `else if` and `else if let`, like `if` does
+fn classify(a: Option<i32>, b: Option<string>, n: i32): string {
+    if let Option.Some(x) = a {
+        return $"a {x}"
+    } else if let Option.Some(s) = b {
+        return "b " + s
+    } else if n > 0 {
+        return "positive"
+    } else {
+        return "none"
+    }
+}
+
+fn main() {
+    print(classify(Option.Some(1), Option.None, 0))
+    print(classify(Option.None, Option.Some("hi"), 0))
+    print(classify(Option.None, Option.None, 5))
+    print(classify(Option.None, Option.None, 0))
+}
+// @expect: a 1
+// @expect: b hi
+// @expect: positive
+// @expect: none
