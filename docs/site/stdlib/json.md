@@ -4,6 +4,10 @@ Strict RFC 8259 JSON: a parser with typed accessors, a cursor API that navigates
 allocating, and builders (`Json.obj()`, `Json.arr()`) for writing. `Json.parseJsonc`
 accepts comments and trailing commas.
 
+For typed decoding into structs use `@derive(Json)` (see the language reference): it
+generates `T.fromJson(text)` for an object and `T.fromJsonArray(text)` for a document
+whose top level is an array of `T`, with `toJson` / `T.toJsonArray(items)` the other way.
+
 ```milo
 from "std/json" import { Json }
 ```

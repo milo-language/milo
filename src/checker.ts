@@ -4898,7 +4898,7 @@ export class TypeChecker {
       this.error(`cannot derive Json for '${s.name}': two fields map to the JSON name '${dupe.key}'`, s.span);
       return null;
     }
-    for (const name of ["toJson", "fromJson", "fromJsonNode"]) {
+    for (const name of ["toJson", "fromJson", "fromJsonNode", "toJsonArray", "fromJsonArray"]) {
       if (this.jsonUserMethods.has(`${s.name}.${name}`)) {
         this.error(`cannot derive Json for '${s.name}': it already defines '${name}'`, s.span);
         return null;

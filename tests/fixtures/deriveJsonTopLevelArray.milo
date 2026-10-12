@@ -1,0 +1,47 @@
+// A JSON document whose top level is an array of objects decodes with the element
+// type's derived `fromJsonArray`, and encodes back with `toJsonArray`. Errors carry the
+// element index in their path.
+@derive(Json)
+struct Addr { city: string }
+
+@derive(Json)
+struct Item { id: i64, name: string, tags: Vec<string>, addr: Option<Addr> }
+
+fn main(): i32 {
+    let text = "[{\"id\":1,\"name\":\"a\",\"tags\":[\"x\"]},{\"id\":2,\"name\":\"b\",\"tags\":[],\"addr\":{\"city\":\"Oslo\"}}]"
+    let items = Item.fromJsonArray(text)!
+    print(items.len)
+    for it in items {
+        let city = match it.addr {
+            Option.Some(a) => a.city.clone()
+            Option.None => "-"
+        }
+        print($"{it.id} {it.name} {it.tags.len} {city}")
+    }
+    print(Item.toJsonArray(items))
+    let empty = Item.fromJsonArray("[]")!
+    print(empty.len)
+    print(Item.toJsonArray(empty))
+    match Item.fromJsonArray("[{\"id\":1,\"name\":\"a\",\"tags\":[]},{\"id\":2,\"name\":\"b\",\"tags\":[],\"addr\":{\"city\":3}}]") {
+        Result.Ok(_) => { print("unexpected") }
+        Result.Err(e) => { print(e.message()) }
+    }
+    match Item.fromJsonArray("{\"id\":1}") {
+        Result.Ok(_) => { print("unexpected") }
+        Result.Err(e) => { print(e.message()) }
+    }
+    match Item.fromJsonArray("[1,") {
+        Result.Ok(_) => { print("unexpected") }
+        Result.Err(_) => { print("syntax error") }
+    }
+    return 0
+}
+// @expect: 2
+// @expect: 1 a 1 -
+// @expect: 2 b 0 Oslo
+// @expect: [{"id":1,"name":"a","tags":["x"],"addr":null},{"id":2,"name":"b","tags":[],"addr":{"city":"Oslo"}}]
+// @expect: 0
+// @expect: []
+// @expect: field '[1].addr.city': expected string, got number
+// @expect: document root: expected array, got object
+// @expect: syntax error

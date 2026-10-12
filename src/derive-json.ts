@@ -1,4 +1,5 @@
-// @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct.
+// @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct, plus
+// `toJsonArray` / `fromJsonArray` for a document whose top level is an array of them.
 //
 // The generator emits Milo *source*, which the checker parses back into impl
 // decls. Emitting AST nodes by hand was the alternative; source means the
@@ -368,6 +369,35 @@ export function deriveJsonSource(structName: string, fields: JsonFieldPlan[]): s
   out.push(`            }`);
   out.push(`        }`);
   out.push(`    }`);
+
+  // ── fromJsonArray / toJsonArray ──
+  // A top-level array (`[{...}, {...}]`, what most list endpoints return) has no struct
+  // of its own to derive on, and `Vec<T>.fromJson` would be a static call on a generic
+  // type, which has no spelling. So the element type carries the array entry points,
+  // built from the same Vec plan a `Vec<T>` field uses: paths read "[3].city".
+  {
+    const plan: JsonPlan = { k: "vec", ty: `Vec<${structName}>`, elem: { k: "struct", name: structName } };
+    const g = new Gen("                ");
+    const v = emitDe(plan, "root", `""`, g, 0);
+    out.push(`    fn fromJsonArray(text: &string): Result<Vec<${structName}>, JsonError> {`);
+    out.push(`        match Json.parse(text) {`);
+    out.push(`            Result.Ok(doc) => {`);
+    out.push(`                let root = doc.curRoot()`);
+    out.push(...g.lines);
+    out.push(`                return Result.Ok(${v})`);
+    out.push(`            }`);
+    out.push(`            Result.Err(e) => {`);
+    out.push(`                return Result.Err(JsonError.Syntax(e))`);
+    out.push(`            }`);
+    out.push(`        }`);
+    out.push(`    }`);
+    const sg = new Gen("        ");
+    const sv = emitSer(plan, "items", sg, 0);
+    out.push(`    fn toJsonArray(items: &Vec<${structName}>): string {`);
+    out.push(...sg.lines);
+    out.push(`        return ${sv}`);
+    out.push(`    }`);
+  }
 
   out.push(`}`);
   return out.join("\n") + "\n";

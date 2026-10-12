@@ -4107,13 +4107,15 @@ fn main(): i32 {
 
 ### `@derive(Json)` — struct ⇄ JSON
 
-`@derive(Json)` generates three methods on a struct:
+`@derive(Json)` generates five methods on a struct:
 
 | Method | Signature |
 |---|---|
 | `toJson` | `fn toJson(self: &Self): string` |
 | `fromJson` | `fn fromJson(text: &string): Result<T, JsonError>` |
 | `fromJsonNode` | `fn fromJsonNode(doc: &Json, cur: i64): Result<T, JsonError>` — decode a sub-node; what nested fields call |
+| `fromJsonArray` | `fn fromJsonArray(text: &string): Result<Vec<T>, JsonError>` — a document whose top level is an array of `T` |
+| `toJsonArray` | `fn toJsonArray(items: &Vec<T>): string` — the inverse |
 
 ```milo
 @derive(Json)
@@ -4141,6 +4143,25 @@ let text = user.toJson()
 match User.fromJson(text) {
     Result.Ok(u) => { print(u.name) }
     Result.Err(e) => { print(e.message()) }   // "field 'address.zip': expected integer, got string"
+}
+```
+
+A list endpoint usually answers with a bare array rather than an object. The element
+type decodes it (a static call on `Vec<Item>` has no spelling), and error paths start at
+the element index:
+
+```milo
+@derive(Json)
+struct Item { id: i64, name: string }
+
+fn main() {
+    let items = Item.fromJsonArray("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]")!
+    print(items.len)                  // 2
+    print(Item.toJsonArray(items))    // [{"id":1,"name":"a"},{"id":2,"name":"b"}]
+    match Item.fromJsonArray("[{\"id\":\"x\",\"name\":\"a\"}]") {
+        Result.Ok(_) => {}
+        Result.Err(e) => { print(e.message()) }   // field '[0].id': expected integer, got string
+    }
 }
 ```
 
@@ -4174,7 +4195,7 @@ allocates none.
 
 **Escape hatch.** A type whose wire form is not an object — a date that encodes as a
 string, say — can hand-write `toJson` and `fromJsonNode` with the same signatures, and
-deriving structs will embed it. Deriving a struct that already defines one of the three
+deriving structs will embed it. Deriving a struct that already defines one of the five
 names is an error rather than a silent override.
 
 **Not covered:** `HashMap` fields, payload-carrying enums, `#[serde(default)]`-style
