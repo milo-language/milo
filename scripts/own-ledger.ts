@@ -5,22 +5,23 @@
 //   bun scripts/own-ledger.ts --json             # one JSON document on stdout
 //   bun scripts/own-ledger.ts --off              # same sweep with the ledger off (overhead baseline)
 //   bun scripts/own-ledger.ts -j 4               # parallelism (default: half the cores)
-//   bun scripts/own-ledger.ts --check            # CI gate: exit 1 on any finding
+//   bun scripts/own-ledger.ts --check            # CI gate: exit 1 on a finding not in the baseline
 //
 // Compile only: `milo emit-ir`, no clang, no run, so the sweep is cheap and nothing compiled
 // executes. Report mode: exits 0 whatever it finds, 1 only when a fixture failed to compile.
-// --check also exits 1 when there is any finding: the corpus is at zero, and a codegen path
-// that creates an owned value without ending it on every path is a leak (docs/testing.md).
+// --check also exits 1 on any finding tests/own-ledger-baseline.txt does not list (confirmed
+// real bugs awaiting a fix), and on a baseline line that no longer reproduces (docs/testing.md).
 // Each finding reads `fn: ID kind (made at IR line N by ORIGIN, milo line M; ...)`; rerun one
 // fixture with MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 `milo emit-ir` to read the IR the line
 // numbers point into, markers included.
-import { readdirSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { cpus } from "os";
 import { guardedRun } from "./guard";
 
 const ROOT = join(import.meta.dir, "..");
 const FIXTURES = join(ROOT, "tests", "fixtures");
+const BASELINE = join(ROOT, "tests", "own-ledger-baseline.txt");
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -60,7 +61,14 @@ async function one(file: string): Promise<Result> {
   delete env.MILO_OWN_LEDGER_KEEP;
   const r = await guardedRun("bun", ["run", join(ROOT, "src", "main.ts"), "emit-ir", file, "-o", "/dev/null"], { env, timeoutMs: 120_000, memMb: 2048 });
   const ms = performance.now() - t0;
-  if (r.code !== 0) return { fixture: basename(file), ok: false, findings: [], error: r.stderr.split("\n").filter(Boolean).slice(-3).join(" | "), ms };
+  if (r.code !== 0) {
+    // An undeclared copy (codegen throws in ledger mode) names itself and its call site;
+    // that beats the stack's tail.
+    const errs = r.stderr.split("\n").filter(Boolean);
+    const at = errs.findIndex(l => l.startsWith("error: own-ledger:"));
+    const error = at >= 0 ? [errs[at], errs[at + 1]?.trim()].join(" ") : errs.slice(-3).join(" | ");
+    return { fixture: basename(file), ok: false, findings: [], error, ms };
+  }
   return { fixture: basename(file), ok: true, findings: parse(r.stderr), ms };
 }
 
@@ -107,5 +115,20 @@ if (asJson) {
 }
 // A gate that compiled nothing must not pass: a broken glob or filter reads as "0 findings".
 if (check && results.length === 0) { console.error("own-ledger --check: no fixtures matched"); process.exit(1); }
-if (check && all.length > 0) console.error(`own-ledger --check: ${all.length} finding(s); expected 0`);
-process.exit(failed.length || (check && all.length > 0) ? 1 : 0);
+// The baseline lists confirmed real bugs the ledger finds that are not fixed yet, one
+// finding per line. It only shrinks: a finding not in it fails, and so does an entry whose
+// fixture ran but no longer produces it (the bug was fixed; delete the line).
+const baselineKey = (f: { fixture: string; fn: string; kind: string; origin: string; srcLine: number }) =>
+  `${f.fixture} ${f.fn} ${f.kind} ${f.origin} L${f.srcLine}`;
+const baseline = new Set(readFileSync(BASELINE, "utf8").split("\n").map(l => l.replace(/#.*/, "").trim()).filter(Boolean));
+const ran = new Set(results.filter(r => r.ok).map(r => r.fixture));
+const fresh = all.filter(f => !baseline.has(baselineKey(f)));
+const seenKeys = new Set(all.map(baselineKey));
+const stale = [...baseline].filter(k => ran.has(k.split(" ")[0]) && !seenKeys.has(k));
+if (!asJson) console.log(`baseline: ${all.length - fresh.length} of ${all.length} findings are known bugs in ${basename(BASELINE)}`);
+if (check) {
+  for (const f of fresh) console.error(`own-ledger --check: new finding: ${baselineKey(f)}`);
+  for (const k of stale) console.error(`own-ledger --check: baseline entry no longer found (fixed? delete it): ${k}`);
+  if (fresh.length || stale.length) console.error(`own-ledger --check: ${fresh.length} new finding(s), ${stale.length} stale baseline entr${stale.length === 1 ? "y" : "ies"}`);
+}
+process.exit(failed.length || (check && (fresh.length > 0 || stale.length > 0)) ? 1 : 0);

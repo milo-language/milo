@@ -4,6 +4,8 @@
 //   call void @__milo_own_make(i64 ID)            ; the value is now this frame's to dispose of
 //   call void @__milo_own_end(i64 ID, i32 KIND)   ; it no longer is (dropped, moved, returned, ...)
 //   call void @__milo_own_guard(i64 ID, i1 %c)    ; %c is ID's alive flag; the next `br i1 %c` tests it
+//   call void @__milo_own_view(i64 VID, i64 SRC)  ; SRC's bytes (0: owned outside this frame) were
+//                                                 ; copied without a move: VID borrows, never owns
 // This pass builds each function's CFG and runs a forward may-dataflow over each ID's state
 // {unmade, live, ended}. It reports an end reachable while the ID may already be ended
 // (double end) or never made, an ID that may be live at a `ret` (leak), and an ID made inside
@@ -15,11 +17,24 @@
 // flag's true edge the ID can only be live, on its false edge it cannot be. Without it every
 // guarded scope-exit drop would merge "moved on some path" with "live on another" and look
 // like a leak.
+//
+// Copy intent. Codegen declares every copy of an owned type's bytes as a MOVE (the source's
+// ID ends with a transfer kind and the destination is made), a CLONE (a fresh make) or a
+// VIEW (a view marker; nobody owns the copy). The double-owner shape, two places that each
+// free the same bytes, then surfaces as one of:
+//   drop-of-view    a view is dropped: it frees bytes its source still owns (double free)
+//   own-of-view     a view is handed to an owner (armed in a droppable slot, stored, returned,
+//                   passed by value): the new owner frees bytes the source still owns
+//   end-after-move  an ID already transferred away (MOVE/STORE/RETURN/ARG/CAPTURE) is ended
+//                   again: the new owner and this frame both dispose of it
+//   use-after-move  a view is taken of a source that may already have been transferred away
+//   use-after-drop  a view is taken of a source that may already have been dropped
 
 export const OWN_END_KINDS = ["DROP", "MOVE", "RETURN", "ARG", "STORE", "CAPTURE", "DROPZ"] as const;
 export type OwnEndKind = typeof OWN_END_KINDS[number];
 
-export type OwnFindingKind = "double-end" | "end-unmade" | "leak-ret" | "leak-iter" | "remake-live";
+export type OwnFindingKind = "double-end" | "end-unmade" | "leak-ret" | "leak-iter" | "remake-live" |
+  "drop-of-view" | "own-of-view" | "end-after-move" | "use-after-move" | "use-after-drop";
 
 export interface OwnFinding {
   fn: string;
@@ -31,9 +46,10 @@ export interface OwnFinding {
   at: number;          // 1-based IR line where the finding was observed
 }
 
-const U = 1, L = 2, E = 4;
+// unmade, live, dropped, transferred away (moved, stored, returned, passed), a view.
+const U = 1, L = 2, E = 4, M = 8, V = 16;
 
-interface Ev { op: "make" | "end"; id: number; tolerant: boolean; line: number }
+interface Ev { op: "make" | "end" | "view"; id: number; tolerant: boolean; transfer: boolean; src: number; line: number }
 interface Block {
   name: string;
   events: Ev[];
@@ -47,6 +63,7 @@ interface Block {
 const MAKE_RE = /call void @__milo_own_make\(i64 (\d+)\)(?:\s*;\s*own (\S+) L(\d+))?/;
 const END_RE = /call void @__milo_own_end\(i64 (\d+), i32 (\d+)\)/;
 const GUARD_RE = /call void @__milo_own_guard\(i64 (\d+), i1 (%[^)\s]+)\)/;
+const VIEW_RE = /call void @__milo_own_view\(i64 (\d+), i64 (\d+)\)(?:\s*;\s*own (\S+) L(\d+))?/;
 const LABEL_RE = /^([A-Za-z0-9_.$-]+):/;
 
 export function hasOwnMarkers(ir: string): boolean {
@@ -128,11 +145,15 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
       let m: RegExpExecArray | null;
       if ((m = MAKE_RE.exec(t))) {
         const id = Number(m[1]);
-        b.events.push({ op: "make", id, tolerant: false, line: lineNo });
+        b.events.push({ op: "make", id, tolerant: false, transfer: false, src: 0, line: lineNo });
         if (!makeInfo.has(id)) makeInfo.set(id, { line: lineNo, origin: m[2] ?? "?", src: m[3] ? Number(m[3]) : 0 });
       } else if ((m = END_RE.exec(t))) {
         const kind = OWN_END_KINDS[Number(m[2])] ?? "DROP";
-        b.events.push({ op: "end", id: Number(m[1]), tolerant: kind === "DROPZ", line: lineNo });
+        b.events.push({ op: "end", id: Number(m[1]), tolerant: kind === "DROPZ", transfer: kind !== "DROP" && kind !== "DROPZ", src: 0, line: lineNo });
+      } else if ((m = VIEW_RE.exec(t))) {
+        const id = Number(m[1]);
+        b.events.push({ op: "view", id, tolerant: false, transfer: false, src: Number(m[2]), line: lineNo });
+        if (!makeInfo.has(id)) makeInfo.set(id, { line: lineNo, origin: m[3] ?? "view", src: m[4] ? Number(m[4]) : 0 });
       } else if ((m = GUARD_RE.exec(t))) {
         b.guards.push({ id: Number(m[1]), cond: m[2] });
       }
@@ -158,7 +179,13 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
     }
   }
 
-  const ids = [...new Set(blocks.flatMap(b => b.events.map(e => e.id)).concat(blocks.flatMap(b => b.guards.map(g => g.id))))];
+  // A view that is never ended needs no state of its own (only its source is checked), and
+  // views are most of the markers: leaving them out keeps the dataflow narrow.
+  const ended = new Set(blocks.flatMap(b => b.events.filter(e => e.op === "end").map(e => e.id)));
+  const ids = [...new Set(blocks.flatMap(b => b.events.flatMap(e => {
+    const own = e.op !== "view" || ended.has(e.id) ? [e.id] : [];
+    return e.src ? [...own, e.src] : own;
+  })).concat(blocks.flatMap(b => b.guards.map(g => g.id))))];
   if (ids.length === 0) return;
   const idx = new Map(ids.map((id, n) => [id, n]));
   const n = ids.length;
@@ -168,8 +195,9 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
   const transfer = (b: Block, s: Uint8Array): Uint8Array => {
     const o = s.slice();
     for (const e of b.events) {
-      const k = idx.get(e.id)!;
-      o[k] = e.op === "make" ? L : E;
+      const k = idx.get(e.id);
+      if (k === undefined) continue;
+      o[k] = e.op === "make" ? L : e.op === "view" || (o[k] & V) ? V : e.transfer ? M : E;
     }
     return o;
   };
@@ -223,14 +251,27 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
     if (!inS[bi] || b.term === "unreachable") continue;
     const s = inS[bi]!.slice();
     for (const e of b.events) {
-      const k = idx.get(e.id)!;
+      const k = idx.get(e.id) ?? -1;
       if (e.op === "make") {
         if (s[k] & L) report(e.id, "remake-live", e.line);
         s[k] = L;
+      } else if (e.op === "view") {
+        // The copied bytes must still be the source's. An unmade source is a slot codegen
+        // never armed in this frame (a scratch temp), which makes no claim either way.
+        if (e.src) {
+          const sk = idx.get(e.src)!;
+          if (s[sk] & M) report(e.id, "use-after-move", e.line);
+          else if (s[sk] & E) report(e.id, "use-after-drop", e.line);
+        }
+        if (k >= 0) s[k] = V;
+      } else if (s[k] & V) {
+        // A view is never anyone's to dispose of; it stays a view, so one report per ID.
+        report(e.id, e.transfer ? "own-of-view" : "drop-of-view", e.line);
       } else {
-        if (!e.tolerant && s[k] & E) report(e.id, "double-end", e.line);
+        if (!e.tolerant && s[k] & M) report(e.id, "end-after-move", e.line);
+        else if (!e.tolerant && s[k] & E) report(e.id, "double-end", e.line);
         if (!e.tolerant && s[k] & U) report(e.id, "end-unmade", e.line);
-        s[k] = E;
+        s[k] = e.transfer ? M : E;
       }
     }
     if (b.term === "ret") {

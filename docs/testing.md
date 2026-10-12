@@ -3,7 +3,7 @@ system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
 key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-10-12 (ownership ledger section: CI gate at zero findings; 09-22: --contracts mutator sequences)
+last-verified: 2026-10-12 (ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
 -->
 
 # Testing
@@ -155,7 +155,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->878<!-- /stat --> fixtures, <!-- stat:error-fixtures -->639<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->40<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->879<!-- /stat --> fixtures, <!-- stat:error-fixtures -->639<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->40<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -224,13 +224,16 @@ owned value codegen creates ended exactly once on every path?
 ```bash
 bun scripts/own-ledger.ts                     # every fixture: findings + totals
 bun scripts/own-ledger.ts --filter arrayRepeat --sites
-bun scripts/own-ledger.ts --check             # the CI gate: exit 1 on any finding
+bun scripts/own-ledger.ts --check             # the CI gate: exit 1 on a finding not in the baseline
 MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 bun run src/main.ts emit-ir foo.milo -o foo.ll
 ```
 
 The last line keeps the markers in the IR so the line numbers in a finding point at them.
-The sweep is `emit-ir` only (no clang, no run), about 70s over all fixtures. CI runs
-`--check` next to the ASan sweep and the corpus is at zero findings, so any finding is red.
+The sweep is `emit-ir` only (no clang, no run), about 75s over all fixtures (about 8% over
+the same sweep with the ledger off). CI runs `--check` next to the ASan sweep. Every
+finding is red unless `tests/own-ledger-baseline.txt` lists it: that file holds confirmed
+real bugs not fixed yet, each with its repro, and only shrinks (an entry that no longer
+reproduces is red too). `tests/ownLedger.test.ts` pins each finding kind on hand-written IR.
 
 **How it works.** With `MILO_OWN_LEDGER=1`, codegen brackets each owned value's life with
 `@__milo_own_make(ID)` and `@__milo_own_end(ID, KIND)` calls (KIND is DROP, MOVE, RETURN,
@@ -246,6 +249,11 @@ and strips the markers before clang sees them, so a ledger build behaves like a 
 | `double-end` | ended on a path where it may already be ended: a double drop, or a drop after a move |
 | `end-unmade` | ended on a path where it was never made |
 | `remake-live` | made again while the previous value with that ID may still be live |
+| `drop-of-view` | a view (bytes copied out of a place without a move) is dropped: a double free |
+| `own-of-view` | a view is handed to an owner (armed in a droppable slot, stored, returned, passed by value): the new owner frees bytes the source still owns |
+| `end-after-move` | ended after it was already transferred away (MOVE, STORE, RETURN, ARG, CAPTURE) |
+| `use-after-move` | a view is taken of a source that may already have been transferred away |
+| `use-after-drop` | a view is taken of a source that may already have been dropped |
 
 ORIGIN names the codegen site (`Call`, `IndexAccess`, `match-subject`, ...). Write a repro,
 build it with `--debug` (at -O2 LLVM deletes the toy allocations) and confirm the leak under
@@ -259,6 +267,16 @@ slot's responsibility is moved onto the slot's ID (`ownValToSlot`) and is then e
 `emitDropValue` for that slot. A consumed value ends with the KIND that says where it went:
 MOVE into another owner, ARG to a by-value callee, STORE into a container or field, RETURN
 to the caller, DROP when this frame frees it.
+
+**Copy intent.** Every copy of an owned type's bytes declares what it does to ownership:
+`move` (the source gives the bytes up and the destination is made), `view` (the
+destination borrows, gets an `@__milo_own_view(VID, SRC)` marker and must never be ended)
+or `clone` (a fresh value). `emitMemcpy` and `valStore` take the intent as an argument; an
+SSA value gets its intent where `genExpr` produces it (`ownDeclareRead`: a moving place
+read is a make, any other place read a view, `OWN_FRESH_KINDS` a make, `OWN_STATIC_KINDS`
+a value with nothing to free). Storing an owned value whose producer declared none, or a
+byte copy of an owned type declared `plain`, throws in ledger mode and names the codegen
+call site, so a new path that copies owned bytes has to choose before the sweep compiles.
 
 ## Out-of-band differential harnesses
 Not `bun test` — they need a toolchain CI supplies but a checkout may not, so run them by hand when you touch the target they cover.

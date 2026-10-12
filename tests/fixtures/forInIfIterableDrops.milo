@@ -1,0 +1,30 @@
+// `for x in if c { v } else { w }` where the body only reads x: the taken branch moves into
+// the loop and each element drops once, the other branch drops at scope end. The smallest
+// shape of the if-iterable use-after-free (efed06dc): with the checker's move of a non-place
+// iterable reverted, the loop's temporary is a copy of v that v still owns, and the
+// ownership ledger reports it (own-of-view) without running anything.
+// @expect: see 1
+// @expect: drop 1
+// @expect: drop 2
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn pick(c: bool) {
+    let v: Vec<R> = [R { id: 1 }]
+    let w: Vec<R> = [R { id: 2 }]
+    for x in if c { v } else { w } {
+        print("see ", x.id)
+    }
+}
+
+fn main() {
+    pick(true)
+}

@@ -1,0 +1,36 @@
+# Ownership-ledger findings that are confirmed real bugs, not yet fixed (scripts/own-ledger.ts).
+# One finding per line: fixture fn kind origin L<milo line>. Shrink-only: --check fails on a
+# finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
+# line. Each group names its repro and how it was confirmed.
+
+# `[p, q]` with named owned locals: the array literal copies p and q without moving them, the
+# callee drops the array, and main drops p and q again. ASan: double-free (--debug --sanitize).
+arrayOfGenericElements.milo main own-of-view view:p L20
+arrayOfGenericElements.milo main own-of-view view:q L20
+
+# `m.getOrDefault(k, dflt)` with a named owned default: the miss path hands back dflt's bytes
+# as an owned temporary while dflt still owns them. Repro with a heap default: ASan
+# heap-use-after-free.
+getOrDefaultOwnedResult.milo main own-of-view view:dflt L36
+
+# `match s { "lit" => ... }` on an owned string moves s into the subject and never drops it.
+# Repro in a loop: `leaks --atExit` reports one leak per call.
+matchLiterals.milo handleCmd leak-ret move:cmd L31
+
+# `print(*h)` on a Heap<string> moves the payload out of the box (zeroing it: a second
+# `print(*h)` prints an empty line) and never drops it. `leaks`: one leak per call.
+heapBasic.milo main leak-ret move:HeapDeref L9
+
+# A Result/Option combinator result (map, mapErr, orElse, ...) is not an owned temporary
+# (isOwnedTempExpr), so a consumer that does not take its payload (`.unwrapOr`, a match arm
+# that binds nothing) leaks the payload it forwarded. `e.map(f).unwrapOr(0)` with a heap Err:
+# `leaks` reports one leak per call.
+enumVariantOffsets.milo __milo_main_body leak-ret OptionOp L186
+enumVariantOffsets.milo __milo_main_body leak-ret OptionOp L188
+optionOrElse.milo main leak-ret OptionOp L50
+optionOrElse.milo main leak-ret OptionOp L61
+resultMap.milo main leak-ret OptionOp L46
+resultMap.milo main leak-ret OptionOp L53
+resultMap.milo main leak-ret OptionOp L58
+resultMap.milo main leak-ret OptionOp L67
+resultOrElse.milo main leak-ret OptionOp L62
