@@ -249,6 +249,8 @@ Pattern-matches a value. Matching an enum must be **exhaustive**: leave a varian
 
 `match` is also an expression — every arm's value becomes the value of the match. Matching on a `&T` binds payloads by reference and does not move the scrutinee.
 
+Patterns nest: `Ok(Some(v))`, `Err(E.A(msg))`, `Some(0)`, `Some("x")`. Exhaustiveness looks inside them, so `Ok(Some(v))` without `Ok(None)` is an error naming `Ok(None)`, and an arm the arms above it already cover is an error too.
+
 ### `move`
 
 ```milo skip

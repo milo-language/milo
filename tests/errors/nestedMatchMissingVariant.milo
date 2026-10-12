@@ -1,0 +1,9 @@
+// @error: non-exhaustive match: missing variant 'Err'
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(Some(v)) => { return v }
+        Ok(None) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }

@@ -1,0 +1,5 @@
+// @error: 'is' tests one variant, not a nested pattern
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    print(r is Ok(Some(_)))
+}

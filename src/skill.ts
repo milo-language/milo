@@ -171,6 +171,16 @@ fn area(s: &Shape): f64 {
         Shape.Empty => 0.0
     }
 }
+
+// Patterns nest, and exhaustiveness looks inside them (drop the Ok(None) arm: error).
+fn describe(r: Result<Option<i64>, string>): string {
+    return match r {
+        Ok(Some(0)) => "zero"
+        Ok(Some(n)) => $"got {n}"
+        Ok(None) => "nothing"
+        Err(e) => e
+    }
+}
 \`\`\`
 
 ### Option & Result
@@ -458,7 +468,7 @@ fn main(): i32 {
 - No exceptions or try/catch: use \`Result<T, E>\` and \`?\` propagation.
 - No null: use \`Option<T>\` (\`T?\`) and pattern match or \`??\` for defaults.
 - Don't build JSON by string concatenation: \`@derive(Json)\` for fixed shapes, \`Json.obj()\` / \`Json.arr()\` otherwise.
-- Don't nest \`if let\` / \`match\` to unwrap: \`let ... else\`, let-chains (\`if let A = x && let B = a.f\`), \`?\` and \`??\` keep it flat.
+- Don't nest \`if let\` / \`match\` to unwrap: \`let ... else\`, let-chains (\`if let A = x && let B = a.f\`), nested patterns (\`Ok(Some(v))\`), \`?\` and \`??\` keep it flat.
 - No class inheritance: use traits and composition.
 - Don't invent std names: \`milo api <terms>\` first.
 `;

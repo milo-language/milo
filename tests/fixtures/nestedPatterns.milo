@@ -1,0 +1,149 @@
+// @expect: zero
+// @expect: some 7
+// @expect: none
+// @expect: A bad
+// @expect: B 3
+// @expect: C
+// @expect: deep
+// @expect: was Some(None)
+// @expect: q
+// @expect: ax
+// @expect: greeting
+// @expect: set to on
+// @expect: other key
+// @expect: ok yes
+// @expect: ok yes
+// @expect: A m
+// @expect: 42
+// @expect: hey!
+// @expect: long ab
+// @expect: skip
+// @expect: skip
+// @expect: skip
+// @expect: moved move me
+// @expect: first 1
+
+// Nested patterns: a payload position may hold a pattern of its own (an enum pattern or
+// a literal) instead of a binding, in match arms, if-let, let-else and let-chains. A bare
+// name in a payload position is a payload-free variant when the payload's enum has one of
+// that name (`Some(None)`), and a binding otherwise. Every binding, however deep, binds
+// by the outer subject's rule: by value from an owned subject, by view through a
+// reference or a place, by `&mut` view through a `&mut` subject.
+enum E { A(string), B(i64), C }
+
+fn classify(r: Result<Option<i64>, E>): string {
+    match r {
+        Ok(Some(0)) => { return "zero" }
+        Ok(Some(v)) => { return "some " + v.toString() }
+        Ok(None) => { return "none" }
+        Err(E.A(msg)) => { return "A " + msg }
+        Err(E.B(n)) => { return "B " + n.toString() }
+        Err(E.C) => { return "C" }
+    }
+}
+
+enum Setting { Pair(string, string), Flag(bool) }
+
+struct Box2 { inner: Option<Result<string, E>> }
+
+// A place subject through a reference: every binding is a view, the subject survives.
+fn show(b: &Box2): string {
+    match b.inner {
+        Some(Ok(s)) => { return "ok " + s }
+        Some(Err(E.A(m))) => { return "A " + m }
+        Some(Err(E.B(n))) => { return "B " + n.toString() }
+        Some(Err(E.C)) => { return "C" }
+        None => { return "none" }
+    }
+}
+
+// Through `&mut`, a nested binding writes the payload in place.
+fn bump(o: &mut Option<Result<i64, E>>) {
+    match o {
+        Some(Ok(v)) => { v = v + 1 }
+        Some(Err(E.A(m))) => { m.pushStr("!") }
+        _ => {}
+    }
+}
+
+fn pairs(v: &Vec<Option<Option<string>>>) {
+    for x in v {
+        if let Some(Some(s)) = x && s.len > 1 { print("long ", s) } else { print("skip") }
+    }
+}
+
+fn main() {
+    print(classify(Ok(Some(0))))
+    print(classify(Ok(Some(7))))
+    print(classify(Ok(None)))
+    print(classify(Err(E.A("bad"))))
+    print(classify(Err(E.B(3))))
+    print(classify(Err(E.C)))
+
+    let o: Option<Option<string>> = Some(Some("deep"))
+    if let Some(Some(s)) = o { print(s) }
+    let p: Option<Option<string>> = Some(None)
+    let Some(None) = p else { return }
+    print("was Some(None)")
+    let q: Option<Option<string>> = Some(Some("q"))
+    let Some(Some(qs)) = q else { return }
+    print(qs)
+
+    // String literals inside a payload; a match in value position.
+    let w: Result<string, E> = Err(E.A("x"))
+    let label = match w {
+        Ok("hi") => "greeting",
+        Ok(s) => s,
+        Err(E.A("x")) => "ax",
+        Err(_) => "other err",
+    }
+    print(label)
+    let w2: Result<string, E> = Ok("hi")
+    match w2 {
+        Ok("hi") => print("greeting"),
+        _ => print("?"),
+    }
+
+    // An owned subject: `v` takes its payload, and the payload matched against the
+    // literal "on" is freed by the arm, not leaked (the ASan sweep checks it).
+    let settings = [Setting.Pair("on", "set to on"), Setting.Pair("k", "other key"), Setting.Flag(true)]
+    for st in settings {
+        match st {
+            Setting.Pair("on", v) => print(v),
+            Setting.Pair(_, v) => print(v),
+            Setting.Flag(true) => {}
+            Setting.Flag(false) => print("off"),
+        }
+    }
+
+    let b = Box2 { inner: Some(Ok("yes")) }
+    print(show(b))
+    print(show(b))
+    let c = Box2 { inner: Some(Err(E.A("m"))) }
+    print(show(c))
+
+    var m1: Option<Result<i64, E>> = Some(Ok(41))
+    bump(&mut m1)
+    if let Some(Ok(v)) = m1 { print(v) }
+    var m2: Option<Result<i64, E>> = Some(Err(E.A("hey")))
+    bump(&mut m2)
+    if let Some(Err(E.A(m))) = m2 { print(m) }
+
+    var v: Vec<Option<Option<string>>> = Vec.new()
+    v.push(Some(Some("ab")))
+    v.push(Some(None))
+    v.push(None)
+    v.push(Some(Some("a")))
+    pairs(v)
+
+    let r: Result<string, string> = Ok("move me")
+    match r {
+        Ok("x") => print("x"),
+        Ok(s) => print("moved ", s),
+        Err(e) => print(e),
+    }
+
+    // A literal at depth two, inside a let-chain.
+    let deep: Result<Option<i64>, string> = Ok(Some(1))
+    if let Ok(Some(1)) = deep && true { print("first 1") }
+}

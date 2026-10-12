@@ -127,8 +127,14 @@ unsafe_block = "unsafe" block ;
 assign_stmt = expr ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" ) expr ;
 
 pattern     = "_"
-            | [ "-" ] ( INT | FLOAT ) | STRING | CHAR | "true" | "false"
-            | IDENT [ "." IDENT ] [ "(" [ IDENT { "," IDENT } ] ")" ] ;
+            | literal_pattern
+            | IDENT [ "." IDENT ] [ "(" [ sub_pattern { "," sub_pattern } ] ")" ] ;
+literal_pattern = [ "-" ] ( INT | FLOAT ) | STRING | CHAR | "true" | "false" ;
+(* A payload position: a binding (IDENT, `_` included), or a nested pattern. A bare IDENT
+   naming a payload-free variant of the payload's enum (`Some(None)`) is that variant, not
+   a binding; the checker decides, since only it knows the payload's type. *)
+sub_pattern = IDENT | literal_pattern | IDENT [ "." IDENT ] "(" [ sub_pattern { "," sub_pattern } ] ")"
+            | IDENT "." IDENT ;
 
 (* ── Expressions, loosest binding first ── *)
 expr        = coalesce ;

@@ -1,6 +1,6 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest } from "./hir";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
@@ -5590,6 +5590,9 @@ export class Codegen {
     }
 
     const tag = this.loadEnumTag(lines, subjTy, subjAddr);
+    if (stmt.arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.tests)) {
+      return this.genNestedArms(lines, stmt, subjAddr, tag, resultSlot);
+    }
 
     const layout = must(this.enumLayouts, stmt.enumName, "enum layouts");
     const endLabel = this.nextLabel("match.end");
@@ -5654,6 +5657,122 @@ export class Codegen {
     return [lines, allArmsTerminated];
   }
 
+  // The address of the payload a pattern path names, and its LLVM type. Each step reads
+  // a payload of a variant the arm's tests have already confirmed, so the per-variant
+  // offsets enumFieldPtr computes are the right ones.
+  private patPathPtr(lines: string[], subjAddr: string, path: HIRPatStep[]): { ptr: string; llTy: string } {
+    let ptr = subjAddr;
+    let llTy = "";
+    for (const st of path) {
+      const enumTy = `%${st.enumName}`;
+      const v = this.enumVariantOf(enumTy, st.variant);
+      ptr = this.enumFieldPtr(lines, enumTy, ptr, v, st.index);
+      llTy = v.fieldTypes[st.index]!;
+    }
+    return { ptr, llTy };
+  }
+
+  // One sub-pattern test: does the payload at `t.path` hold that variant / equal that literal?
+  private genPatTest(lines: string[], subjAddr: string, t: HIRPatTest): string {
+    const { ptr, llTy } = this.patPathPtr(lines, subjAddr, t.path);
+    const out = this.nextTemp();
+    if (t.kind === "tag") {
+      const tag = this.loadEnumTag(lines, `%${t.enumName}`, ptr);
+      lines.push(`  ${out} = icmp eq i32 ${tag}, ${t.tag}`);
+      return out;
+    }
+    const val = this.nextTemp();
+    lines.push(`  ${val} = load ${llTy}, ptr ${ptr}`);
+    if (t.literalKind === "string") {
+      this.hasStringType = true;
+      const litStr = this.addString(String(t.value));
+      const l1 = this.nextTemp();
+      lines.push(`  ${l1} = insertvalue %String undef, ptr ${litStr.label}, 0`);
+      const l2 = this.nextTemp();
+      lines.push(`  ${l2} = insertvalue %String ${l1}, i64 ${litStr.length - 1}, 1`);
+      return this.genStringCmp(lines, val, l2, true)[1];
+    }
+    if (t.literalKind === "bool") lines.push(`  ${out} = icmp eq i1 ${val}, ${t.value ? 1 : 0}`);
+    else if (t.literalKind === "float") {
+      const f = Number.isInteger(t.value as number) ? (t.value as number).toFixed(1) : String(t.value);
+      lines.push(`  ${out} = fcmp oeq ${llTy} ${val}, ${f}`);
+    } else lines.push(`  ${out} = icmp eq ${llTy} ${val}, ${t.value}`);
+    return out;
+  }
+
+  // A match with a nested arm. Arms are tried in order, each by its top tag and then its
+  // sub-pattern tests, and the first that passes runs; the checker has proved one does.
+  // Testing only reads the subject, so a failed test can fall through to the next arm
+  // with nothing moved. Binding happens after the choice, in the chosen arm's block, with
+  // the same move/borrow rule a flat arm uses (bindPayloads).
+  private genNestedArms(
+    lines: string[], stmt: HIRStmt & { kind: "Match" }, subjAddr: string, tag: string,
+    resultSlot?: { addr: string; ty: string },
+  ): [string[], boolean] {
+    const endLabel = this.nextLabel("match.end");
+    const bodyLabels = stmt.arms.map(() => this.nextLabel("match.arm"));
+    let testLabel = this.nextLabel("match.test");
+    lines.push(`  br label %${testLabel}`);
+    stmt.arms.forEach((arm, i) => {
+      lines.push(`${testLabel}:`);
+      const next = this.nextLabel("match.test");
+      if (arm.pattern.kind === "EnumPattern") {
+        const top = this.nextTemp();
+        lines.push(`  ${top} = icmp eq i32 ${tag}, ${arm.pattern.tag}`);
+        let ok = this.nextLabel("match.sub");
+        lines.push(`  br i1 ${top}, label %${ok}, label %${next}`);
+        for (const t of arm.pattern.tests ?? []) {
+          lines.push(`${ok}:`);
+          const c = this.genPatTest(lines, subjAddr, t);
+          ok = this.nextLabel("match.sub");
+          lines.push(`  br i1 ${c}, label %${ok}, label %${next}`);
+        }
+        lines.push(`${ok}:`);
+      }
+      lines.push(`  br label %${bodyLabels[i]}`);
+      testLabel = next;
+    });
+    lines.push(`${testLabel}:`);
+    lines.push(`  unreachable`);
+
+    let allArmsTerminated = true;
+    stmt.arms.forEach((arm, i) => {
+      lines.push(`${bodyLabels[i]}:`);
+      const armDropStart = this.droppableLocals.length;
+      const pat = arm.pattern;
+      if (pat.kind === "EnumPattern" && pat.bindings.length > 0) {
+        const items = pat.bindings.map((b, k) => {
+          const { ptr, llTy } = this.patPathPtr(lines, subjAddr, b.path ?? [{ enumName: stmt.enumName, variant: pat.variant, index: k }]);
+          return { name: b.name, llTy, fieldKind: b.type, fieldPtr: ptr };
+        });
+        const ended = this.bindPayloads(lines, subjAddr, items, !!stmt.subjectIsRef, !!stmt.subjectIsMut);
+        // The subject stops being dropped once a binding takes a payload, and every part
+        // of it a binding did not take is a matched literal or a tag. A string literal
+        // payload owns its bytes, so it is freed here rather than leaked.
+        if (ended) {
+          for (const t of pat.tests ?? []) {
+            if (t.kind !== "lit" || !this.needsDropCg(t.type)) continue;
+            this.emitDropValue(lines, this.patPathPtr(lines, subjAddr, t.path).ptr, t.type);
+          }
+        }
+      }
+      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
+      if (!armTerminated) {
+        const escaping = new Set<string>();
+        if (pat.kind === "EnumPattern") for (const b of pat.bindings) if (b.escapes) escaping.add(this.localAddr(b.name));
+        for (let d = armDropStart; d < this.droppableLocals.length; d++) {
+          if (escaping.has(this.droppableLocals[d].addr)) continue;
+          this.emitGuardedDrop(lines, this.droppableLocals[d]);
+        }
+        lines.push(`  br label %${endLabel}`);
+        allArmsTerminated = false;
+      }
+    });
+    lines.push(`${endLabel}:`);
+    if (allArmsTerminated) lines.push(`  unreachable`);
+    return [lines, allArmsTerminated];
+  }
+
   // True when `e` is a field/index chain whose root is a local bound as an
   // immutable reference (a '&T' param or an immutable ref binding). Such a
   // place can be matched in place: no writer to the referent can exist while
@@ -5675,7 +5794,21 @@ export class Codegen {
     subjectIsMut = false,
   ) {
     if (pattern.bindings.length === 0) return;
+    const items = pattern.bindings.map((b, i) => ({
+      name: b.name, llTy: variant.fieldTypes[i]!, fieldKind: b.type, fieldPtr: this.enumFieldPtr(lines, subjTy, subjAddr, variant, i),
+    }));
+    this.bindPayloads(lines, subjAddr, items, subjectIsRef, subjectIsMut);
+  }
 
+  // Binds each payload at `fieldPtr` to a local named `name`: a view for a borrowing
+  // match, a move (zeroing the source and ending the subject) for an owning one. Returns
+  // whether anything was moved out, i.e. whether the subject was ended.
+  private bindPayloads(
+    lines: string[], subjAddr: string,
+    items: { name: string; llTy: string; fieldKind: TypeKind; fieldPtr: string }[],
+    subjectIsRef: boolean,
+    subjectIsMut: boolean,
+  ): boolean {
     let subjectEnded = false;
     const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
       // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
@@ -5733,10 +5866,8 @@ export class Codegen {
       }
     };
 
-    for (let i = 0; i < pattern.bindings.length; i++) {
-      const fieldPtr = this.enumFieldPtr(lines, subjTy, subjAddr, variant, i);
-      bind(pattern.bindings[i].name, variant.fieldTypes[i], pattern.bindings[i].type, fieldPtr);
-    }
+    for (const it of items) bind(it.name, it.llTy, it.fieldKind, it.fieldPtr);
+    return subjectEnded;
   }
 
   private genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {

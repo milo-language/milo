@@ -1,0 +1,11 @@
+// @error: unreachable match arm: 'Ok(Some(v))' is already covered by the arms above it
+// `Ok(x)` takes every Ok, so the nested arm after it can never run.
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(_x) => { return 1 }
+        Ok(Some(v)) => { return v }
+        Err(_e) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }

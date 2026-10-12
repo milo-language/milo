@@ -1,0 +1,10 @@
+// @error: non-exhaustive match: missing case 'Some(_)'
+// A literal covers only itself, so `Some(0)` needs a `Some(n)` (or `_`) beside it.
+fn f(o: Option<i64>): i64 {
+    match o {
+        Some(0) => { return 1 }
+        None => { return 0 }
+    }
+}
+
+fn main() { print(f(Some(3))) }

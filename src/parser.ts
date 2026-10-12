@@ -1451,15 +1451,32 @@ export class Parser {
     }
     const bindings: string[] = [];
     const bindingSpans: Span[] = [];
+    const args: (Pattern | null)[] = [];
     if (this.match(TokenKind.LParen)) {
       while (!this.at(TokenKind.RParen)) {
-        const bindTok = this.expect(TokenKind.Ident);
-        bindings.push(bindTok.value);
-        bindingSpans.push(this.span(bindTok));
+        // A payload position is a binding (`x`, `_`) unless it is spelled as a pattern of
+        // its own: a literal (`Some(0)`) or an enum pattern (`Ok(Some(v))`, `E.A(m)`). A
+        // bare name stays a binding here; the checker turns it into a payload-free variant
+        // (`Some(None)`) when the payload's enum has a variant of that name.
+        const t = this.peek();
+        const next = this.peekN(1).kind;
+        const nested = t.kind !== TokenKind.Ident || next === TokenKind.Dot || next === TokenKind.LParen;
+        if (nested) {
+          const sub = this.parsePattern();
+          bindings.push("_");
+          bindingSpans.push(sub.span ?? this.span(t));
+          args.push(sub);
+        } else {
+          const bindTok = this.expect(TokenKind.Ident);
+          bindings.push(bindTok.value);
+          bindingSpans.push(this.span(bindTok));
+          args.push(null);
+        }
         this.match(TokenKind.Comma);
       }
       this.expect(TokenKind.RParen);
     }
+    if (args.some(a => a !== null)) return { kind: "EnumPattern", enumName, variant, bindings, bindingSpans, args, span: s };
     return { kind: "EnumPattern", enumName, variant, bindings, bindingSpans, span: s };
   }
 

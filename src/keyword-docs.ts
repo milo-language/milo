@@ -58,7 +58,7 @@ export const KEYWORD_DOCS: Record<string, string> = {
 
   in: "```milo\nfor entry in dir { … }\n```\nSeparates the loop variable from the sequence in a `for` loop. Also spells a range: `for i in 0..n`.\n\nA soft keyword — it is only special in `for` position, so `in` remains usable as a parameter or field name.",
 
-  match: "```milo\nmatch shape {\n    Shape.Circle(r) => { … }\n    Shape.Square(w) => { … }\n}\n```\nPattern-matches a value. Matching an enum must be **exhaustive**: leave a variant out and the program does not compile, which is what makes adding a variant a safe, compiler-guided change. `_` is the catch-all arm.\n\n`match` is also an expression — every arm's value becomes the value of the match. Matching on a `&T` binds payloads by reference and does not move the scrutinee.",
+  match: "```milo\nmatch shape {\n    Shape.Circle(r) => { … }\n    Shape.Square(w) => { … }\n}\n```\nPattern-matches a value. Matching an enum must be **exhaustive**: leave a variant out and the program does not compile, which is what makes adding a variant a safe, compiler-guided change. `_` is the catch-all arm.\n\n`match` is also an expression — every arm's value becomes the value of the match. Matching on a `&T` binds payloads by reference and does not move the scrutinee.\n\nPatterns nest: `Ok(Some(v))`, `Err(E.A(msg))`, `Some(0)`, `Some(\"x\")`. Exhaustiveness looks inside them, so `Ok(Some(v))` without `Ok(None)` is an error naming `Ok(None)`, and an arm the arms above it already cover is an error too.",
 
   break: "```milo\nbreak\n```\nExits the innermost enclosing `while` or `for` loop immediately.",
 

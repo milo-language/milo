@@ -2,10 +2,10 @@
 // Attaches resolved types from checker to every HIR node.
 
 import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
-import { declaredType, floatNamespaceConst } from "./ast";
+import { declaredType, floatNamespaceConst, isNestedPattern } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
 import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsBuiltin } from "./checker";
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
 import { SCOPED_SPAWN_FN } from "./checker-program-passes";
@@ -412,7 +412,7 @@ class LowerCtx {
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
         const binding = stmt.pattern.kind === "EnumPattern" ? (stmt.pattern.bindings[0] ?? "_") : "_";
-        const hirPat = this.lowerPattern(stmt.pattern, enumInfo);
+        const hirPat = this.lowerPattern(stmt.pattern, enumInfo, enumName);
         // Prefer the checker's binding type — it is `&T` when the value is a
         // borrowed enum, whereas lowerPattern gives the owned field type.
         const bindingType = this.c.patternBindingTypes.get(stmt.pattern)?.[0]
@@ -421,7 +421,9 @@ class LowerCtx {
         // as a match value: a `&T` result of a struct or enum payload was stored as a
         // `ptr` from a loaded `T` (invalid IR). So every binding escapes the arm by name
         // instead, the way the second and later bindings always have.
-        if (subjectIsRef && hirPat.kind === "EnumPattern") {
+        // A nested pattern takes the same route whatever the subject: its first binding is
+        // not payload 0, so it has no single value to hand out of the arm.
+        if ((subjectIsRef || isNestedPattern(stmt.pattern)) && hirPat.kind === "EnumPattern") {
           for (const b of hirPat.bindings) b.escapes = true;
           return {
             kind: "Match",
@@ -471,7 +473,7 @@ class LowerCtx {
           kind: "Match",
           subject: this.lowerExpr(stmt.subject),
           arms: stmt.arms.map(arm => ({
-            pattern: this.lowerPattern(arm.pattern, enumInfo),
+            pattern: this.lowerPattern(arm.pattern, enumInfo, enumName),
             body: arm.body.map(s => this.lowerStmt(s, fnRetType)),
           })),
           enumName,
@@ -633,18 +635,41 @@ class LowerCtx {
     const enumName = subjType?.tag === "enum" ? subjType.name : "";
     const enumInfo = this.c.enums.get(enumName);
     const arms = [
-      { pattern: this.lowerPattern(pattern, enumInfo), body: thenBody },
+      { pattern: this.lowerPattern(pattern, enumInfo, enumName), body: thenBody },
       { pattern: { kind: "WildcardPattern" as const }, body: elseBody },
     ];
     return { kind: "Match", subject: this.lowerExpr(subject), arms, enumName, subjectIsRef, subjectIsMut, span };
   }
 
-  private lowerPattern(pattern: Pattern, enumInfo?: EnumInfo): HIRPattern {
+  private lowerPattern(pattern: Pattern, enumInfo?: EnumInfo, enumName?: string): HIRPattern {
     if (pattern.kind === "WildcardPattern") return { kind: "WildcardPattern" };
     if (pattern.kind === "LiteralPattern") {
       return { kind: "LiteralPattern", value: pattern.value, literalKind: pattern.literalKind };
     }
     const variant = enumInfo?.variants.get(pattern.variant);
+    if (isNestedPattern(pattern) && enumName) {
+      const bindings: (HIRPattern & { kind: "EnumPattern" })["bindings"] = [];
+      const tests: HIRPatTest[] = [];
+      // Depth first, left to right: the order patternLeafNames lists the bindings in, and
+      // an order in which every test's path crosses only variants already tested.
+      const walk = (p: Pattern & { kind: "EnumPattern" }, en: string, path: HIRPatStep[]) => {
+        const v = this.c.enums.get(en)?.variants.get(p.variant);
+        p.bindings.forEach((name, i) => {
+          const ft = v?.fields[i] ?? { tag: "unknown" as const };
+          const at = [...path, { enumName: en, variant: p.variant, index: i }];
+          const sub = p.args?.[i];
+          if (!sub) { bindings.push({ name, type: ft, path: at }); return; }
+          if (sub.kind === "EnumPattern" && ft.tag === "enum") {
+            tests.push({ kind: "tag", path: at, enumName: ft.name, tag: this.c.enums.get(ft.name)?.variants.get(sub.variant)?.tag ?? 0 });
+            walk(sub, ft.name, at);
+          } else if (sub.kind === "LiteralPattern") {
+            tests.push({ kind: "lit", path: at, value: sub.value, literalKind: sub.literalKind, type: ft });
+          }
+        });
+      };
+      walk(pattern, enumName, []);
+      return { kind: "EnumPattern", variant: pattern.variant, bindings, tag: variant?.tag ?? 0, tests };
+    }
     return {
       kind: "EnumPattern",
       variant: pattern.variant,
@@ -1757,7 +1782,7 @@ class LowerCtx {
           kind: "MatchExpr",
           subject: this.lowerExpr(expr.subject),
           arms: expr.arms.map(arm => ({
-            pattern: this.lowerPattern(arm.pattern, enumInfo),
+            pattern: this.lowerPattern(arm.pattern, enumInfo, enumName),
             body: arm.body.map(s => this.lowerStmt(s, fnRetType)),
           })),
           enumName,

@@ -196,8 +196,17 @@ interface HIRMatchArm {
 // `escapes` marks a binding that outlives its arm: let-else's bindings after the first
 // are read by name in the enclosing scope, so the arm must not drop them on exit; the
 // enclosing scope's drop owns them instead.
+//
+// A nested pattern (`Ok(Some(v))`, `Some(0)`) carries `tests`: the checks below the top
+// tag, each at a path of payload projections from the subject, in an order where a
+// test's path only passes through variants already tested. Its bindings then carry their
+// own `path`. A flat pattern has neither, and binding i is payload i.
+export interface HIRPatStep { enumName: string; variant: string; index: number }
+export type HIRPatTest =
+  | { kind: "tag"; path: HIRPatStep[]; enumName: string; tag: number }
+  | { kind: "lit"; path: HIRPatStep[]; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; type: TypeKind };
 export type HIRPattern =
-  | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind; escapes?: boolean }[]; tag: number }
+  | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind; escapes?: boolean; path?: HIRPatStep[] }[]; tag: number; tests?: HIRPatTest[] }
   | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool" }
   | { kind: "WildcardPattern" };
 

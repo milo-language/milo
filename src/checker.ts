@@ -7,7 +7,8 @@ import { attributesFor } from "./attributes";
 import { recordsAttrErrors, isReplayHookedFn, replaySite, type ReplayPlan } from "./replay-externs";
 import { walkExprs } from "./safety";
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitMethod, MatchArm, Attribute, GlobalDecl } from "./ast";
-import { simpleType, declaredType, floatNamespaceConst } from "./ast";
+import { simpleType, declaredType, floatNamespaceConst, isNestedPattern, patternLeafNames } from "./ast";
+import { useful, showPat, type Pat, type SpaceEnv } from "./match-usefulness";
 import type { TypeKind } from "./types";
 import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 const spanKey = (sp: Span): string => `${sp.file ?? ""}:${sp.line}:${sp.col}`;
@@ -159,6 +160,11 @@ interface BorrowSite {
   // The callback method for `via: "callback"` (`each`, `map`).
   what?: string;
 }
+
+// A binding a pattern introduces, wherever it sits. `steps` is its path from the subject,
+// one (variant, payload index) per enum it passes through: a flat `Some(x)` has one step,
+// `Ok(Some(x))` two. `type` is the payload's own type, before the borrow rule applies.
+interface PatternLeaf { name: string; type: TypeKind; span?: Span; steps: { variant: string; index: number }[] }
 
 type PlaceStep =
   | { tag: "field"; name: string }
@@ -7348,6 +7354,9 @@ export class TypeChecker {
       }
       case "IfLetStmt": {
         const rawSubjType = this.checkExpr(stmt.subject);
+        // Names first: whether the subject is only inspected depends on which payload
+        // positions bind, and `Some(None)` binds nothing once `None` is known to be a variant.
+        this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
         const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.subject, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
@@ -7397,6 +7406,7 @@ export class TypeChecker {
             continue;
           }
           const rawSubjType = this.checkExpr(c.subject);
+          this.bindElidedPattern(c.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
           const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(c.subject, rawSubjType, [c.pattern]);
           this.bindElidedPattern(c.pattern, subjType);
           failPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
@@ -7433,6 +7443,7 @@ export class TypeChecker {
       case "LetElseStmt": {
         if (stmt.bindName !== undefined) { this.checkNullRefUnwrap(stmt, stmt.bindName, fnRetType, sp); break; }
         const rawSubjType = this.checkExpr(stmt.value);
+        this.bindElidedPattern(stmt.pattern, rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType);
         const { subjType, subjBorrows, subjIsMut } = this.enumSubjectBorrow(stmt.value, rawSubjType, [stmt.pattern]);
         this.bindElidedPattern(stmt.pattern, subjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
@@ -7469,7 +7480,10 @@ export class TypeChecker {
           } else if (stmt.pattern.bindings.length !== variant.fields.length) {
             this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
           }
-          if (variant) {
+          if (variant && isNestedPattern(stmt.pattern)) {
+            // Bindings escape into the CURRENT scope (the whole point vs if-let).
+            this.declarePatternLeaves(stmt.pattern, this.patternLeaves(stmt.pattern, subjType, true), stmt.value, subjBorrows, subjIsMut, true);
+          } else if (variant) {
             const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
             this.patternBindingTypes.set(stmt.pattern, bindTypes);
             const freezes = this.freezeSubjectFor(stmt.value, bindTypes);
@@ -8114,10 +8128,13 @@ export class TypeChecker {
   private armConsumesSubject(
     pattern: Pattern,
     enumInfo: { variants: Map<string, { fields: TypeKind[] }> },
+    subjType: TypeKind,
   ): boolean {
     if (pattern.kind !== "EnumPattern" || pattern.bindings.length === 0) return false;
     const variant = enumInfo.variants.get(pattern.variant);
     if (!variant) return false;
+    // Nested: any binding that takes a non-Copy payload, at whatever depth.
+    if (isNestedPattern(pattern)) return this.patternLeaves(pattern, subjType, false).some(l => !this.isCopyType(l.type));
     const n = Math.min(pattern.bindings.length, variant.fields.length);
     for (let i = 0; i < n; i++) {
       if (!this.isCopyType(variant.fields[i])) return true;
@@ -9483,6 +9500,17 @@ export class TypeChecker {
   // Record that pattern binding `info` (binding `index` of `variant`) is a ref into the
   // match subject, for exclusivityPlace. The binding step is a pseudo-field, so two
   // bindings of one pattern stay disjoint while either still overlaps the subject.
+  private noteRefIntoSteps(info: VarInfo, subject: Expr, path: PatternLeaf["steps"]) {
+    if (info.type.tag !== "ref") return;
+    const p = this.soloPath(subject);
+    if (!p) return;
+    const base = this.lookup(p.root);
+    const steps: PlaceStep[] = path.map(st => ({ tag: "field", name: `$${st.variant}.${st.index}` }));
+    info.refInto = base?.refInto
+      ? { root: base.refInto.root, name: base.refInto.name, steps: [...base.refInto.steps, ...p.steps, ...steps] }
+      : { root: base ?? p.root, name: p.root, steps: [...p.steps, ...steps] };
+  }
+
   private noteRefInto(info: VarInfo, subject: Expr, variant: string, index: number) {
     if (info.type.tag !== "ref") return;
     const p = this.soloPath(subject);
@@ -13592,6 +13620,9 @@ export class TypeChecker {
     const sp = expr.span;
     const opType = this.checkExpr(expr.operand);
     this.bindElidedPattern(expr.pattern, opType.tag === "ref" ? opType.inner : opType);
+    if (isNestedPattern(expr.pattern)) {
+      this.error(`'is' tests one variant, not a nested pattern`, sp, `use 'if let' (or a let-chain) to test a nested shape`);
+    }
     if (expr.pattern.kind === "EnumPattern") {
       if (opType.tag !== "enum" && opType.tag !== "unknown") {
         this.error(`'is' pattern requires an enum type, got ${this.show(opType)}`, sp);
@@ -13718,6 +13749,9 @@ export class TypeChecker {
     if (!einfo) return false;
     return patterns.every(pattern => {
       if (!pattern || pattern.kind !== "EnumPattern") return true;
+      if (isNestedPattern(pattern)) {
+        return this.patternLeaves(pattern, subjType, false).every(l => l.name === "_" || this.isCopyType(l.type));
+      }
       const v = einfo.variants.get(pattern.variant);
       if (!v) return true;
       return pattern.bindings.every((b, i) =>
@@ -13815,7 +13849,9 @@ export class TypeChecker {
     } else if (pattern.bindings.length !== variant.fields.length) {
       this.error(`variant '${pattern.variant}' has ${variant.fields.length} fields, but pattern has ${pattern.bindings.length} bindings`, ps);
     }
-    if (variant) {
+    if (variant && isNestedPattern(pattern)) {
+      this.declarePatternLeaves(pattern, this.patternLeaves(pattern, subjType, true), subject, subjBorrows, subjIsMut, true);
+    } else if (variant) {
       const bindTypes = variant.fields.slice(0, pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows, subjIsMut));
       this.patternBindingTypes.set(pattern, bindTypes);
       const freezes = this.freezeSubjectFor(subject, bindTypes);
@@ -13831,7 +13867,7 @@ export class TypeChecker {
     // Same arm-entry consumption as match: a destructuring then-branch
     // zeroes the payload before its body runs, so the subject is dead
     // there. The else-branch never destructures, so it stays readable.
-    if (!subjBorrows && this.armConsumesSubject(pattern, enumInfo)) {
+    if (!subjBorrows && this.armConsumesSubject(pattern, enumInfo, subjType)) {
       this.tryMove(subject);
       // ident-ok: tracks a NAMED binding so the then-body can read it again; a field subject has no binding to un-mark
       if (subject.kind === "Ident") {
@@ -14015,10 +14051,162 @@ export class TypeChecker {
   // `Some(x)` written without the `Option.` prefix: fill the enum name in from the
   // subject's type. Only ever fills a BLANK name, so an explicitly written prefix
   // that disagrees with the subject still produces its mismatch error.
+  //
+  // Recurses into a nested pattern the same way, from each payload's type. It also settles
+  // the one thing the parser cannot: a bare name in a payload position (`Some(None)`) is a
+  // payload-free variant when the payload's enum has a variant of that name, and a binding
+  // otherwise. Rust resolves the same spelling the same way.
   private bindElidedPattern(pattern: Pattern | undefined | null, subjType: TypeKind) {
-    if (!pattern || pattern.kind !== "EnumPattern" || pattern.enumName !== "") return;
+    if (!pattern || pattern.kind !== "EnumPattern") return;
     if (subjType.tag !== "enum") return;
-    pattern.enumName = subjType.name;
+    if (pattern.enumName === "") pattern.enumName = subjType.name;
+    const variant = this.enums.get(subjType.name)?.variants.get(pattern.variant);
+    if (!variant) return;
+    pattern.bindings.forEach((b, i) => {
+      const ft = variant.fields[i];
+      if (!ft) return;
+      const sub = pattern.args?.[i];
+      if (sub) { this.bindElidedPattern(sub, ft); return; }
+      if (ft.tag !== "enum" || b === "_") return;
+      const named = this.enums.get(ft.name)?.variants.get(b);
+      if (!named || named.fields.length !== 0) return;
+      const args = pattern.args ?? pattern.bindings.map(() => null);
+      args[i] = { kind: "EnumPattern", enumName: ft.name, variant: b, bindings: [], span: pattern.bindingSpans?.[i] ?? pattern.span };
+      pattern.args = args;
+      pattern.bindings[i] = "_";
+    });
+  }
+
+  // The bindings of an enum pattern matched against `et`, in `patternLeafNames` order. With
+  // `report`, the sub-patterns are validated as it goes (enum, variant, arity, literal
+  // kind); the top level is the caller's to validate, since each caller words that error
+  // for its own construct.
+  private patternLeaves(p: Pattern, et: TypeKind, report: boolean, steps: PatternLeaf["steps"] = []): PatternLeaf[] {
+    if (p.kind !== "EnumPattern") return [];
+    // Under a sub-pattern that cannot match, its bindings are still declared, typed
+    // `unknown`, so the one error above is the only one: no "undefined variable" cascade.
+    const unknownLeaves = (q: Pattern): PatternLeaf[] =>
+      patternLeafNames(q).map(name => ({ name, type: { tag: "unknown" }, span: q.span, steps }));
+    if (et.tag !== "enum") return unknownLeaves(p);
+    const info = this.enums.get(et.name);
+    if (info && steps.length > 0 && p.enumName !== et.name && info.baseName !== p.enumName) {
+      if (report) this.error(`pattern enum '${p.enumName}' does not match payload type '${this.show(et)}'`, p.span);
+      return unknownLeaves(p);
+    }
+    const variant = info?.variants.get(p.variant);
+    if (!info || !variant) {
+      if (report && info && steps.length > 0) this.error(`enum '${this.show(et)}' has no variant '${p.variant}'`, p.span);
+      return unknownLeaves(p);
+    }
+    if (report && steps.length > 0 && p.bindings.length !== variant.fields.length) {
+      this.error(`variant '${p.variant}' has ${variant.fields.length} fields, but pattern has ${p.bindings.length} bindings`, p.span);
+    }
+    const out: PatternLeaf[] = [];
+    const n = Math.min(p.bindings.length, variant.fields.length);
+    for (let i = 0; i < n; i++) {
+      const ft = variant.fields[i]!;
+      const at = [...steps, { variant: p.variant, index: i }];
+      const sub = p.args?.[i];
+      if (!sub) { out.push({ name: p.bindings[i]!, type: ft, span: p.bindingSpans?.[i] ?? p.span, steps: at }); continue; }
+      if (sub.kind === "EnumPattern") {
+        if (ft.tag !== "enum" && report && ft.tag !== "unknown") {
+          this.error(`payload ${i + 1} of '${p.variant}' is ${this.show(ft)}, so it cannot be matched against the variant pattern '${sub.variant}'`, sub.span);
+        }
+        out.push(...this.patternLeaves(sub, ft, report, at));
+      } else if (sub.kind === "LiteralPattern" && report) {
+        const ok = ft.tag === "unknown"
+          || (ft.tag === "int" && (sub.literalKind === "int" || sub.literalKind === "char"))
+          || (ft.tag === "float" && (sub.literalKind === "float" || sub.literalKind === "int"))
+          || (ft.tag === "string" && sub.literalKind === "string")
+          || (ft.tag === "bool" && sub.literalKind === "bool");
+        if (!ok) this.error(`a ${sub.literalKind} literal cannot match payload ${i + 1} of '${p.variant}', which is ${this.show(ft)}`, sub.span);
+      }
+    }
+    return out;
+  }
+
+  // Declares a nested pattern's bindings in the current scope: the flat binding rule
+  // (`payloadBindType`) applied to every leaf, so the outer subject alone decides between
+  // by-value and by-borrow, however deep the binding sits.
+  private declarePatternLeaves(pattern: Pattern, leaves: PatternLeaf[], subject: Expr, subjBorrows: boolean, subjIsMut: boolean, attribute: boolean): void {
+    const bindTypes = leaves.map(l => this.payloadBindType(l.type, subjBorrows, subjIsMut));
+    this.patternBindingTypes.set(pattern, bindTypes);
+    const freezes = this.freezeSubjectFor(subject, bindTypes);
+    leaves.forEach((l, i) => {
+      this.declare(l.name, { type: bindTypes[i]!, mutable: subjIsMut, moved: false, borrowed: false, read: false, span: l.span, patternBound: true,
+        copyBind: this.isCopyBind(bindTypes[i]!, this.isPlaceExpr(subject)), ...(i === 0 && freezes.length > 0 && { freezes }) });
+      const bound = this.lookup(l.name);
+      if (attribute && i === 0) this.attributeBorrows(freezes, l.name, bound);
+      if (bound) this.noteRefIntoSteps(bound, subject, l.steps);
+    });
+  }
+
+  // The type space the usefulness check walks: an enum's inhabited variants, bool's two
+  // values, and nothing enumerable for anything else.
+  private patternSpace(): SpaceEnv<TypeKind> {
+    return {
+      ctors: (ty) => {
+        if (ty.tag === "bool") return [{ name: "true", fields: [] }, { name: "false", fields: [] }];
+        if (ty.tag !== "enum") return null;
+        const info = this.enums.get(ty.name);
+        if (!info) return null;
+        return [...info.variants].filter(([, v]) => !v.fields.some(f => this.isUninhabited(f, new Set())))
+          .map(([name, v]) => ({ name, fields: v.fields }));
+      },
+    };
+  }
+
+  private toSpacePat(p: Pattern, ty: TypeKind): Pat {
+    if (p.kind === "WildcardPattern") return { k: "wild" };
+    if (p.kind === "LiteralPattern") {
+      if (p.literalKind === "bool") return { k: "ctor", name: String(p.value), args: [] };
+      const text = p.literalKind === "string" ? JSON.stringify(p.value) : p.literalKind === "char" ? `'${p.value}'` : String(p.value);
+      return { k: "lit", key: `${p.literalKind}:${p.value}`, text };
+    }
+    const fields = ty.tag === "enum" ? this.enums.get(ty.name)?.variants.get(p.variant)?.fields ?? [] : [];
+    return {
+      k: "ctor", name: p.variant,
+      args: p.bindings.map((_b, i) => {
+        const sub = p.args?.[i];
+        return sub ? this.toSpacePat(sub, fields[i] ?? { tag: "unknown" }) : { k: "wild" };
+      }),
+    };
+  }
+
+  private showPattern(p: Pattern): string {
+    if (p.kind === "WildcardPattern") return "_";
+    if (p.kind === "LiteralPattern") return p.literalKind === "string" ? JSON.stringify(p.value) : String(p.value);
+    if (p.bindings.length === 0) return p.variant;
+    return `${p.variant}(${p.bindings.map((b, i) => { const sub = p.args?.[i]; return sub ? this.showPattern(sub) : b; }).join(", ")})`;
+  }
+
+  // Exhaustiveness and dead arms for a match with a nested arm, where "each variant has an
+  // arm" stops being the question. Missing cases are reported one per top-level variant,
+  // as the flat rule does, naming the first uncovered shape inside it (`Ok(None)`).
+  private checkNestedCoverage(arms: MatchArm[], subjType: TypeKind & { tag: "enum" }, sp: Span | undefined): void {
+    const env = this.patternSpace();
+    const rows: Pat[][] = [];
+    for (const arm of arms) {
+      const pat = this.toSpacePat(arm.pattern, subjType);
+      // An arm after full coverage is only flagged when it is not a wildcard: a trailing
+      // `_` after every variant is accepted by the flat rule, and stays accepted here.
+      if (arm.pattern.kind !== "WildcardPattern" && useful(env, rows, [pat], [subjType]) === null) {
+        this.error(`unreachable match arm: '${this.showPattern(arm.pattern)}' is already covered by the arms above it`, arm.pattern.span ?? sp);
+      }
+      rows.push([pat]);
+    }
+    for (const c of env.ctors(subjType) ?? []) {
+      const w = useful(env, rows, [{ k: "ctor", name: c.name, args: c.fields.map(() => ({ k: "wild" }) as Pat) }], [subjType]);
+      if (!w) continue;
+      const top = w[0]!;
+      // "Missing variant" only when no arm names it; `Some(0)` alone leaves `Some(_)`.
+      const named = arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.variant === c.name);
+      const allWild = top.k === "ctor" && top.args.every(a => a.k === "wild");
+      if (allWild && !named) this.error(`non-exhaustive match: missing variant '${c.name}'`, sp);
+      else this.error(`non-exhaustive match: missing case '${showPat(top)}'`, sp,
+        allWild ? `a literal or variant inside '${c.name}(…)' covers only itself; add an arm for the rest of '${c.name}'` : undefined);
+      this.nonExhaustiveMatches.add(arms);
+    }
   }
 
   // `match opt { Some(x) => { x } None => { d } }` is `opt ?? d`. Both arms have to be a
@@ -14027,7 +14215,7 @@ export class TypeChecker {
   // subject binds the payload as a borrow, where `??` would not be the same program.
   // `??` is short-circuit like the match, so a default with side effects stays correct.
   private lintManualOptionDefault(arms: MatchArm[], subjType: TypeKind, sp: Span | undefined): void {
-    if (arms.length !== 2) return;
+    if (arms.length !== 2 || arms.some(a => isNestedPattern(a.pattern))) return;
     if (subjType.tag !== "enum" || this.optionInnerType(subjType) === null) return;
     const armFor = (v: string) => arms.find(a => a.pattern.kind === "EnumPattern" && a.pattern.variant === v);
     const some = armFor("Some");
@@ -14070,6 +14258,8 @@ export class TypeChecker {
     // with an empty then-branch is worse than the match it replaces.
     if (kept.pattern.kind !== "EnumPattern") return;
     const pat = kept.pattern;
+    // The rewrite it prints spells the bindings flat; a nested arm has no flat spelling.
+    if (arms.some(a => isNestedPattern(a.pattern))) return;
     const name = pat.enumName ? `${pat.enumName}.${pat.variant}` : pat.variant;
     const spelled = pat.bindings.length > 0 ? `${name}(${pat.bindings.join(", ")})` : name;
     // `describeExpr` only spells places; for a call subject it returns `<expr>`, and an
@@ -14191,6 +14381,7 @@ export class TypeChecker {
       // computed — but it is what narrows `subjType` for the enum accesses below.
       const enumInfo = must(this.enums, subjType.name, "enums");
       const covered = new Set<string>();
+      const anyNested = arms.some(a => isNestedPattern(a.pattern));
       let hasWildcard = false;
       const preMoves = this.snapshotMoveState();
       const preReachable = this.reachable;
@@ -14208,7 +14399,9 @@ export class TypeChecker {
             this.error(`enum '${subjType.name}' has no variant '${arm.pattern.variant}'`, ps);
             continue;
           }
-          if (covered.has(arm.pattern.variant)) {
+          // With a nested arm, two arms may share a variant (`Ok(Some(v))`, `Ok(None)`):
+          // checkNestedCoverage decides which arms are dead instead.
+          if (covered.has(arm.pattern.variant) && !anyNested) {
             this.error(`duplicate match arm for '${arm.pattern.variant}'`, ps);
           }
           covered.add(arm.pattern.variant);
@@ -14221,7 +14414,11 @@ export class TypeChecker {
         this.restoreMoveState(preMoves);
         this.reachable = preReachable;
         this.pushScope();
-        if (arm.pattern.kind === "EnumPattern") {
+        if (arm.pattern.kind === "EnumPattern" && isNestedPattern(arm.pattern)) {
+          if (enumInfo.variants.has(arm.pattern.variant)) {
+            this.declarePatternLeaves(arm.pattern, this.patternLeaves(arm.pattern, subjType, true), subject, subjBorrows, subjIsMut, false);
+          }
+        } else if (arm.pattern.kind === "EnumPattern") {
           const variant = enumInfo.variants.get(arm.pattern.variant);
           if (variant) {
             const bindTypes: TypeKind[] = [];
@@ -14254,7 +14451,7 @@ export class TypeChecker {
         // zeroes the payload at arm entry, so a read of the subject inside that
         // arm is a use-after-move. Deferring the move to the end of the match let
         // those reads through silently and they saw zeroed data.
-        const armConsumes = !subjBorrows && this.armConsumesSubject(arm.pattern, enumInfo);
+        const armConsumes = !subjBorrows && this.armConsumesSubject(arm.pattern, enumInfo, subjType);
         let patternMovedInfo: object | null = null;
         if (armConsumes) {
           this.tryMove(subject);
@@ -14272,7 +14469,9 @@ export class TypeChecker {
         armPaths.push({ state: this.snapshotMoveState(), reachable: this.reachable });
       }
       this.joinPaths(preMoves, armPaths);
-      if (!hasWildcard) {
+      if (anyNested) {
+        this.checkNestedCoverage(arms, subjType, sp);
+      } else if (!hasWildcard) {
         for (const [name, v] of enumInfo.variants) {
           // A variant carrying an uninhabited payload has no values, so demanding an arm
           // for it asks the reader to handle a case the checker can prove cannot occur —

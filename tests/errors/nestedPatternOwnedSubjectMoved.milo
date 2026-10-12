@@ -1,0 +1,9 @@
+// @error: use of moved variable 'r'
+// A nested binding of an owned subject takes the payload out of it, as a flat one does.
+fn main() {
+    let r: Option<Option<string>> = Some(Some("x"))
+    match r {
+        Some(Some(s)) => { print(s) print(r.isSome()) }
+        _ => {}
+    }
+}

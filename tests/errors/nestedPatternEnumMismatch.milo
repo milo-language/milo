@@ -1,0 +1,5 @@
+// @error: pattern enum 'Result' does not match payload type 'Option<i64>'
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    if let Ok(Result.Ok(x)) = r { print(x) }
+}

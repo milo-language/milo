@@ -1,0 +1,10 @@
+// @error: non-exhaustive match: missing case 'Ok(None)'
+// With a nested arm, naming every variant is not enough: `Ok(Some(v))` leaves `Ok(None)`.
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(Some(v)) => { return v }
+        Err(_e) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }

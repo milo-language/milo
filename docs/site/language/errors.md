@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 511 distinct messages across 657 programs the compiler must reject.
+Every error message the test suite pins: 521 distinct messages across 668 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -82,6 +82,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Holder.show' can park this task while it holds a reference into 'g's buffer`](#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
+- [`'is' tests one variant, not a nested pattern`](#is-tests-one-variant-not-a-nested-pattern)
 - [`'k' is borrowed by one argument and moved out by a later one (a move of 'k')`](#k-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-k)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
@@ -158,6 +159,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`a scoped task writes 'total', and so does another task in the same scope`](#a-scoped-task-writes-total-and-so-does-another-task-in-the-same-scope)
 - [`a scoped task writes 'v', and another task in the same scope reads it`](#a-scoped-task-writes-v-and-another-task-in-the-same-scope-reads-it)
 - [`a scoped task writes 'v', and the Task.scope body uses it too`](#a-scoped-task-writes-v-and-the-task-scope-body-uses-it-too)
+- [`a string literal cannot match payload 1 of 'Some', which is i64`](#a-string-literal-cannot-match-payload-1-of-some-which-is-i64)
 - [`add the import: from "std/json" import { JsonVal }`](#add-the-import-from-std-json-import-jsonval)
 - [`ambiguous From conversion`](#ambiguous-from-conversion)
 - [`an array of references is not expressible`](#an-array-of-references-is-not-expressible)
@@ -231,6 +233,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot infer Vec element type`](#cannot-infer-vec-element-type)
 - [`cannot insert into immutable HashMap`](#cannot-insert-into-immutable-hashmap)
 - [`cannot iterate 'v' with '&mut': it is not mutable`](#cannot-iterate-v-with-mut-it-is-not-mutable)
+- [`cannot move`](#cannot-move)
 - [`cannot move '{ … }.name' out of 'R', which implements Drop`](#cannot-move-name-out-of-r-which-implements-drop)
 - [`cannot move 'b' while 's' borrows it`](#cannot-move-b-while-s-borrows-it)
 - [`cannot move 'd.a' out of the borrowed 'd'`](#cannot-move-d-a-out-of-the-borrowed-d)
@@ -323,6 +326,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`ensures clause must be bool`](#ensures-clause-must-be-bool)
 - [`enum 'E' is recursive by value and has infinite size`](#enum-e-is-recursive-by-value-and-has-infinite-size)
 - [`enum 'List' has infinite size due to recursive field`](#enum-list-has-infinite-size-due-to-recursive-field)
+- [`enum 'Option<i64>' has no variant 'Ok'`](#enum-option-i64-has-no-variant-ok)
 - [`expected '='`](#expected)
 - [`expected 'IDENT'`](#expected-ident)
 - [`expected *HandleA, got *HandleB`](#expected-handlea-got-handleb)
@@ -409,7 +413,10 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`non-escaping closure parameter 'f' is stored`](#non-escaping-closure-parameter-f-is-stored)
 - [`non-escaping closure parameter 'f' is stored in a struct`](#non-escaping-closure-parameter-f-is-stored-in-a-struct)
 - [`non-exhaustive match`](#non-exhaustive-match)
+- [`non-exhaustive match: missing case 'Ok(None)'`](#non-exhaustive-match-missing-case-ok-none)
+- [`non-exhaustive match: missing case 'Some(_)'`](#non-exhaustive-match-missing-case-some)
 - [`non-exhaustive match: missing variant`](#non-exhaustive-match-missing-variant)
+- [`non-exhaustive match: missing variant 'Err'`](#non-exhaustive-match-missing-variant-err)
 - [`non-exhaustive match: missing variant 'Plain'`](#non-exhaustive-match-missing-variant-plain)
 - [`not hashable`](#not-hashable)
 - [`old() may only appear in an 'ensures' clause`](#old-may-only-appear-in-an-ensures-clause)
@@ -427,6 +434,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`out of range`](#out-of-range)
 - [`overflows u8`](#overflows-u8)
 - [`passes struct 'Pt' by value`](#passes-struct-pt-by-value)
+- [`pattern enum 'Result' does not match payload type 'Option<i64>'`](#pattern-enum-result-does-not-match-payload-type-option-i64)
+- [`payload 1 of 'Some' is i64, so it cannot be matched against the variant pattern 'Some'`](#payload-1-of-some-is-i64-so-it-cannot-be-matched-against-the-variant-pattern-some)
 - [`pointer field access requires 'unsafe' block`](#pointer-field-access-requires-unsafe-block)
 - [`pointer parameter 'c' is stored in the global 'GS', which outlives the buffer it points into`](#pointer-parameter-c-is-stored-in-the-global-gs-which-outlives-the-buffer-it-points-into)
 - [`pointer parameter 'p' is stored in the global 'G', which outlives the buffer it points into`](#pointer-parameter-p-is-stored-in-the-global-g-which-outlives-the-buffer-it-points-into)
@@ -493,6 +502,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unknown type 'Payload'`](#unknown-type-payload)
 - [`unknown type 'Widget'`](#unknown-type-widget)
 - [`unreachable code`](#unreachable-code)
+- [`unreachable match arm: 'Ok(Some(v))' is already covered by the arms above it`](#unreachable-match-arm-ok-some-v-is-already-covered-by-the-arms-above-it)
 - [`unsafe impl is only supported for the Send and Sync marker traits`](#unsafe-impl-is-only-supported-for-the-send-and-sync-marker-traits)
 - [`unsupported representation 'u32'`](#unsupported-representation-u32)
 - [`unwrap it with 'match'`](#unwrap-it-with-match)
@@ -1998,6 +2008,17 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/noTernaryOperator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/noTernaryOperator.milo)</sub>
+
+## `'is' tests one variant, not a nested pattern` {#is-tests-one-variant-not-a-nested-pattern}
+
+```milo skip
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    print(r is Ok(Some(_)))
+}
+```
+
+<sub>[tests/errors/nestedPatternIs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternIs.milo)</sub>
 
 ## `'k' is borrowed by one argument and moved out by a later one (a move of 'k')` {#k-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-k}
 
@@ -4262,6 +4283,17 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/taskScopeWriterAndBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/taskScopeWriterAndBody.milo)</sub>
 
+## `a string literal cannot match payload 1 of 'Some', which is i64` {#a-string-literal-cannot-match-payload-1-of-some-which-is-i64}
+
+```milo skip
+fn main() {
+    let o: Option<i64> = Some(1)
+    if let Some("one") = o { print("one") }
+}
+```
+
+<sub>[tests/errors/nestedPatternLiteralKind.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternLiteralKind.milo)</sub>
+
 ## `add the import: from "std/json" import { JsonVal }` {#add-the-import-from-std-json-import-jsonval}
 
 ```milo skip
@@ -5699,6 +5731,22 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/forInMutRefSharedParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefSharedParam.milo)</sub>
+
+## `cannot move` {#cannot-move}
+
+Through a reference a nested binding is a view, so it cannot be given away.
+
+```milo skip
+fn take(s: string) { print(s) }
+
+fn f(r: &Option<Option<string>>) {
+    if let Some(Some(s)) = r { take(s) }
+}
+
+fn main() { f(Some(Some("x"))) }
+```
+
+<sub>[tests/errors/nestedPatternBorrowedNoMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternBorrowedNoMove.milo)</sub>
 
 ## `cannot move '{ … }.name' out of 'R', which implements Drop` {#cannot-move-name-out-of-r-which-implements-drop}
 
@@ -8534,6 +8582,18 @@ fn main(): i32 {
 
 <sub>[tests/errors/recursiveEnumNoHeap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/recursiveEnumNoHeap.milo)</sub>
 
+## `enum 'Option<i64>' has no variant 'Ok'` {#enum-option-i64-has-no-variant-ok}
+
+```milo skip
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    let Ok(Ok(x)) = r else { return }
+    print(x)
+}
+```
+
+<sub>[tests/errors/nestedPatternWrongVariant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternWrongVariant.milo)</sub>
+
 ## `expected '='` {#expected}
 
 Use-before-init probe from docs/memory-safety-vs-rust.md: a declaration without an initializer does not parse, so there is no uninitialized binding for a later read to observe. Rust rejects the read; Milo rejects the declaration.
@@ -10198,6 +10258,40 @@ fn main(): i32 {
 
 <sub>[tests/errors/fallOffEndMatchNonExhaustive.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fallOffEndMatchNonExhaustive.milo)</sub>
 
+## `non-exhaustive match: missing case 'Ok(None)'` {#non-exhaustive-match-missing-case-ok-none}
+
+With a nested arm, naming every variant is not enough: `Ok(Some(v))` leaves `Ok(None)`.
+
+```milo skip
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(Some(v)) => { return v }
+        Err(_e) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }
+```
+
+<sub>[tests/errors/nestedMatchMissingCase.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMatchMissingCase.milo)</sub>
+
+## `non-exhaustive match: missing case 'Some(_)'` {#non-exhaustive-match-missing-case-some}
+
+A literal covers only itself, so `Some(0)` needs a `Some(n)` (or `_`) beside it.
+
+```milo skip
+fn f(o: Option<i64>): i64 {
+    match o {
+        Some(0) => { return 1 }
+        None => { return 0 }
+    }
+}
+
+fn main() { print(f(Some(3))) }
+```
+
+<sub>[tests/errors/nestedMatchMissingLiteralRest.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMatchMissingLiteralRest.milo)</sub>
+
 ## `non-exhaustive match: missing variant` {#non-exhaustive-match-missing-variant}
 
 ```milo skip
@@ -10222,6 +10316,21 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/matchNonexhaustive.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchNonexhaustive.milo)</sub>
+
+## `non-exhaustive match: missing variant 'Err'` {#non-exhaustive-match-missing-variant-err}
+
+```milo skip
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(Some(v)) => { return v }
+        Ok(None) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }
+```
+
+<sub>[tests/errors/nestedMatchMissingVariant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMatchMissingVariant.milo)</sub>
 
 ## `non-exhaustive match: missing variant 'Plain'` {#non-exhaustive-match-missing-variant-plain}
 
@@ -10539,6 +10648,28 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/externFnPtrStructParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externFnPtrStructParam.milo)</sub>
+
+## `pattern enum 'Result' does not match payload type 'Option<i64>'` {#pattern-enum-result-does-not-match-payload-type-option-i64}
+
+```milo skip
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    if let Ok(Result.Ok(x)) = r { print(x) }
+}
+```
+
+<sub>[tests/errors/nestedPatternEnumMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternEnumMismatch.milo)</sub>
+
+## `payload 1 of 'Some' is i64, so it cannot be matched against the variant pattern 'Some'` {#payload-1-of-some-is-i64-so-it-cannot-be-matched-against-the-variant-pattern-some}
+
+```milo skip
+fn main() {
+    let o: Option<i64> = Some(1)
+    if let Some(Some(x)) = o { print(x) }
+}
+```
+
+<sub>[tests/errors/nestedPatternNotEnum.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternNotEnum.milo)</sub>
 
 ## `pointer field access requires 'unsafe' block` {#pointer-field-access-requires-unsafe-block}
 
@@ -11838,6 +11969,24 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/unreachableAfterVoidReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unreachableAfterVoidReturn.milo)</sub>
 
+## `unreachable match arm: 'Ok(Some(v))' is already covered by the arms above it` {#unreachable-match-arm-ok-some-v-is-already-covered-by-the-arms-above-it}
+
+`Ok(x)` takes every Ok, so the nested arm after it can never run.
+
+```milo skip
+fn f(r: Result<Option<i64>, string>): i64 {
+    match r {
+        Ok(_x) => { return 1 }
+        Ok(Some(v)) => { return v }
+        Err(_e) => { return 0 }
+    }
+}
+
+fn main() { print(f(Ok(None))) }
+```
+
+<sub>[tests/errors/nestedMatchUnreachableArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMatchUnreachableArm.milo)</sub>
+
 ## `unsafe impl is only supported for the Send and Sync marker traits` {#unsafe-impl-is-only-supported-for-the-send-and-sync-marker-traits}
 
 ```milo skip
@@ -12534,6 +12683,20 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/contextMovesReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/contextMovesReceiver.milo)</sub>
+
+A nested binding of an owned subject takes the payload out of it, as a flat one does.
+
+```milo skip
+fn main() {
+    let r: Option<Option<string>> = Some(Some("x"))
+    match r {
+        Some(Some(s)) => { print(s) print(r.isSome()) }
+        _ => {}
+    }
+}
+```
+
+<sub>[tests/errors/nestedPatternOwnedSubjectMoved.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternOwnedSubjectMoved.milo)</sub>
 
 `expr?` consumes the operand (Err returns it, Ok extracts + zeros the slot); using it afterward must be a compile error, not a silent read of the zeroed enum.
 

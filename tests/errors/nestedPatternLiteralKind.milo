@@ -1,0 +1,5 @@
+// @error: a string literal cannot match payload 1 of 'Some', which is i64
+fn main() {
+    let o: Option<i64> = Some(1)
+    if let Some("one") = o { print("one") }
+}

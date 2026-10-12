@@ -1326,6 +1326,44 @@ match s {
 }
 ```
 
+#### Nested patterns
+
+A payload position can hold a pattern of its own instead of a binding: another enum
+pattern, or a literal. The arm matches only when every nested part does.
+
+```milo
+enum E { A(string), B(i64), C }
+
+fn classify(r: Result<Option<i64>, E>): string {
+    match r {
+        Ok(Some(0)) => { return "zero" }
+        Ok(Some(v)) => { return $"some {v}" }
+        Ok(None) => { return "none" }
+        Err(E.A(msg)) => { return $"A {msg}" }
+        Err(_) => { return "other error" }
+    }
+}
+```
+
+They work wherever a pattern does: match arms, `if let`, let-else (`let Ok(Some(v)) = r
+else { return }`), and the clauses of a let-chain. A bare name in a payload position is a
+binding, unless the payload's enum has a payload-free variant of that name: `Some(None)` is
+the variant. Every binding, however deep, binds by the rule of the outer subject (below):
+by value from an owned subject, as a view through a reference or a place, and as a `&mut`
+view through a `&mut` subject. An owned subject is consumed by an arm that takes a non-Copy
+payload, at any depth, and only inspected otherwise.
+
+Exhaustiveness looks inside nested patterns: `Ok(Some(v))` names the variant `Ok` but leaves
+`Ok(None)` uncovered, and the error says so (`missing case 'Ok(None)'`). A literal covers
+only itself, so `Some(0)` needs a `Some(n)` or `_` arm beside it. An arm the arms above it
+already cover is an error (`unreachable match arm`), the nested form of the duplicate-arm
+error. `x is P` stays a one-variant test and takes no nested pattern; there are no struct
+patterns (destructure a struct with `let { a, b } = s` after the match).
+
+Arms with nested patterns are tested in order, by tag and then by each nested test, reading
+the subject without moving it; only the chosen arm binds. A match with no nested arm compiles
+to one `switch` on the tag, as before.
+
 #### Payloads through a reference
 
 Matching an owned enum moves its payloads into the bindings. Matching through `&Enum`

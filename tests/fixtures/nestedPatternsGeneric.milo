@@ -1,0 +1,53 @@
+// @expect: 5
+// @expect: s
+// @expect: d
+// @expect: 4 -1 -2
+// @expect: other
+// @expect: still have kept
+// @expect: v 0
+// @expect: v 1
+// @expect: v 2
+
+// Nested patterns in a generic fn (one instance per T), `Some(None)` read as the variant
+// inside an exhaustive match, an owned subject that is only inspected (every binding
+// Copy) staying usable after the match, and a nested while-let.
+fn firstOk<T>(r: Result<Option<T>, string>, d: T): T {
+    match r {
+        Ok(Some(v)) => { return v }
+        Ok(None) => { return d }
+        Err(_) => { return d }
+    }
+}
+
+fn depth(o: Option<Option<i64>>): i64 {
+    match o {
+        Some(Some(x)) => { return x }
+        Some(None) => { return -1 }
+        None => { return -2 }
+    }
+}
+
+fn next(i: i64): Option<Result<i64, string>> {
+    if i < 3 { return Some(Ok(i)) }
+    if i == 3 { return Some(Err("stop")) }
+    return None
+}
+
+fn main() {
+    print(firstOk(Ok(Some(5)), 0))
+    print(firstOk(Ok(Some("s")), "d"))
+    let bad: Result<Option<string>, string> = Err("e")
+    print(firstOk(bad, "d"))
+    print(depth(Some(Some(4))), " ", depth(Some(None)), " ", depth(None))
+    let r: Result<Option<i64>, string> = Err("kept")
+    match r {
+        Ok(Some(n)) => print(n),
+        _ => print("other"),
+    }
+    if let Err(e) = r { print("still have ", e) }
+    var i = 0
+    while let Some(Ok(v)) = next(i) {
+        print("v ", v)
+        i += 1
+    }
+}

@@ -1,0 +1,5 @@
+// @error: payload 1 of 'Some' is i64, so it cannot be matched against the variant pattern 'Some'
+fn main() {
+    let o: Option<i64> = Some(1)
+    if let Some(Some(x)) = o { print(x) }
+}

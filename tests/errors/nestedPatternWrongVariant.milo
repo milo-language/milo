@@ -1,0 +1,6 @@
+// @error: enum 'Option<i64>' has no variant 'Ok'
+fn main() {
+    let r: Result<Option<i64>, string> = Ok(None)
+    let Ok(Ok(x)) = r else { return }
+    print(x)
+}

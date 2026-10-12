@@ -1,0 +1,9 @@
+// @error: cannot move
+// Through a reference a nested binding is a view, so it cannot be given away.
+fn take(s: string) { print(s) }
+
+fn f(r: &Option<Option<string>>) {
+    if let Some(Some(s)) = r { take(s) }
+}
+
+fn main() { f(Some(Some("x"))) }
