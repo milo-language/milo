@@ -1078,7 +1078,7 @@ class LowerCtx {
         }
         return { kind: "ArrayLit", elements: expr.elements.map(e => this.lowerExpr(e)), type, span: expr.span };
       case "ArrayRepeat":
-        return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, type, span: expr.span };
+        return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, cloneFn: this.c.arrayRepeatClones.get(expr), type, span: expr.span };
       case "IndexAccess":
         return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), isBorrowed: this.c.borrowedExprs.has(expr), span: expr.span };
       case "EnumLit": {

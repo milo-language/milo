@@ -1842,6 +1842,12 @@ buf[0] = 42
 
 Out-of-bounds access is a runtime panic, not silent corruption.
 
+`[v; N]` consumes `v` like any by-value use: a non-Copy `v` moves into the last slot and
+the other N-1 slots are copies, made by the type's `Clone` when it has one (a user `Clone`
+runs exactly N-1 times). A resource type (one with `Drop`, `@noCopy`, or a raw pointer
+field) with no `Clone`, and any `@noCopy` type, cannot be repeated more than once: build
+each element separately (`[open(1), open(2)]`) or use a `Vec`.
+
 ---
 
 ## Vec\<T\> — Dynamic Arrays

@@ -1,0 +1,66 @@
+// `[v; N]` of a Drop type: the user Clone runs N-1 times and the original moves into the
+// last slot, so Drop runs exactly once per value. The copies used to be memberwise and
+// ran no Clone: `[f; 3]` of a file handle closed it four times.
+// @expect: open 1
+// @expect: clone 1 -> 11
+// @expect: clone 1 -> 11
+// @expect: 11 11 1
+// @expect: open 2
+// @expect: 2
+// @expect: close 2
+// @expect: open 3
+// @expect: close 3
+// @expect: open 4
+// @expect: clone 4 -> 14
+// @expect: 14 4
+// @expect: end
+// @expect: close 14
+// @expect: close 4
+// @expect: close 11
+// @expect: close 11
+// @expect: close 1
+
+struct File {
+    fd: i64,
+}
+
+impl Drop for File {
+    fn drop(self: &mut Self): void {
+        print("close " + self.fd.toString())
+    }
+}
+
+impl Clone for File {
+    fn clone(self: &Self): Self {
+        print("clone " + self.fd.toString() + " -> " + (self.fd + 10).toString())
+        return File { fd: self.fd + 10 }
+    }
+}
+
+fn open(fd: i64): File {
+    print("open " + fd.toString())
+    return File { fd: fd }
+}
+
+fn repeatOne() {
+    let one = [open(2); 1]
+    print(one[0].fd)
+}
+
+fn repeatNone() {
+    let none = [open(3); 0]
+    sink = sink + none.len
+}
+
+var sink: i64 = 0
+
+fn main() {
+    let f = open(1)
+    let a = [f; 3]
+    print(a[0].fd.toString() + " " + a[1].fd.toString() + " " + a[2].fd.toString())
+    repeatOne()
+    repeatNone()
+    let b = [open(4); 2]
+    print(b[0].fd.toString() + " " + b[1].fd.toString())
+    print("end")
+}

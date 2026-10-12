@@ -1,10 +1,11 @@
 // `[v; N]` of a non-Copy owned temporary clones it N-1 times and moves the original into
 // the last slot. It used to clone N times and never drop the original, so one value per
 // evaluation leaked (1000 leaks for a loop of 1000 under `leaks -atExit`) and its Drop
-// never ran. A place (`[t; 2]`) is only read: every slot is a clone and `t` keeps its own.
+// never ran. A place (`[t; 2]`) is consumed the same way: one clone, and `t` moves in.
+// The copies go through Clone (Tok's derived one calls Tag's), so every Drop below
+// belongs to exactly one construction.
 //
-// No Drop count can tell a moved original from a clone, so the leak itself is caught by
-// the ownership ledger (scripts/own-ledger.ts); this pins the drops to one per slot.
+// The leak itself is caught by the ownership ledger (scripts/own-ledger.ts).
 struct Tag {
     name: string,
 }
@@ -15,6 +16,14 @@ impl Drop for Tag {
     }
 }
 
+impl Clone for Tag {
+    fn clone(self: &Self): Self {
+        print("clone " + self.name)
+        return Tag { name: self.name + "'" }
+    }
+}
+
+@derive(Clone)
 struct Tok {
     tag: Tag,
 }
@@ -40,13 +49,15 @@ fn main() {
     place()
     print("end")
 }
+// @expect: clone a
+// @expect: clone a
 // @expect: a
-// @expect: drop a
-// @expect: drop a
+// @expect: drop a'
+// @expect: drop a'
 // @expect: drop a
 // @expect: --
+// @expect: clone t
 // @expect: t
-// @expect: drop t
-// @expect: drop t
+// @expect: drop t'
 // @expect: drop t
 // @expect: end

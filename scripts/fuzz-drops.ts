@@ -74,8 +74,7 @@ const KEEP = args.includes("--keep");
 // Also generate the spellings of OPEN bugs, which every run would otherwise report.
 // Each is listed where it is gated: a read through a temporary box (`(*Heap(x)).f`,
 // `chk(*mk())`) leaks the box and never runs the payload's Drop; `[v; N]` of an
-// if/match value leaks the original; `[r; N > 1]` of a Drop type runs Drop on every
-// structural copy (N+1 drops for one value). Remove a gate in the change that fixes it.
+// if/match value leaks the original. Remove a gate in the change that fixes it.
 const KNOWN = args.includes("--known");
 // The open bugs, minimal (each also behind KNOWN where it is generated):
 //   (*Heap(newRes(k))).id            box + payload leak, Drop never runs (also `chk(*mk())`)
@@ -85,7 +84,6 @@ const KNOWN = args.includes("--known");
 //                                    moves a named place, Drop also runs twice
 //   [*Heap(newRes(k)); 1]            same class: a moved-out non-place value is copied
 //                                    as if it were a place, and the original leaks
-//   let a = [r; 1]                   r is a Drop place: copied without Clone, dropped twice
 // Judge only this case index (the generator still runs every earlier case, so the
 // program is the one the full run saw).
 const ONLY = num("--only", -1);
@@ -364,11 +362,10 @@ class Gen {
   // compose with each other: a value made by one form is consumed inside another.
   // `receiver`: the value is read in place (`.get()`, `.name`), not consumed; no temp
   // box and no if/match value (open bugs: both leak). `plain`: the `[v; N]` repeat value;
-  // no if/match or heap move-out (the original leaks) and no named place (copied structurally, so the
-  // copy and the place both run Drop). `--known` lifts both.
+  // no if/match or heap move-out (the original leaks). `--known` lifts both.
   res(depth = 0, opts: { receiver?: boolean; plain?: boolean } = {}): string {
     const mv = this.movable();
-    if (mv.length > 0 && chance(0.35) && !(opts.plain && !KNOWN)) {
+    if (mv.length > 0 && chance(0.35)) {
       const b = pick(mv);
       b.live = false;
       return b.name;
@@ -639,19 +636,16 @@ const FORMS: Form[] = [
   },
   { name: "combinator", apply(g) { g.sink(g.int(between(6, 13))); return true; } },
   {
-    // `[v; N]` copies are structural (no user Clone runs), so a Res repeated more than
-    // once is dropped N+1 times for one construction: an open bug, kept out of the
-    // balance oracle by repeating a Res only once. The N > 1 spellings use Drop-free
-    // heap owners, where the ledger and ASan are the oracles (d2c64764 was the temp's
-    // original leaking).
+    // `[v; N]` moves v into the last slot and fills the other N-1 through Res's Clone,
+    // so the balance oracle sees every copy. The string spellings have no Drop count;
+    // the ledger and ASan are their oracles (d2c64764 was the temp's original leaking).
     name: "array-repeat",
     apply(g) {
       const a = g.fresh("a"), n = between(1, 3);
       switch (between(0, 3)) {
         case 0: {
-          const n2 = KNOWN ? n : 1;
-          g.emit(`let ${a} = [${g.res(0, { plain: true })}; ${n2}]`);
-          g.sink(`chk(${a}[${n2 - 1}])`);
+          g.emit(`let ${a} = [${g.res(0, { plain: true })}; ${n}]`);
+          g.sink(`chk(${a}[${n - 1}])`);
           break;
         }
         case 1: g.emit(`let ${a} = [nameOf(${g.k()}) + "-rep"; ${n}]`); g.sink(`${a}[${n - 1}].len()`); break;
@@ -660,7 +654,7 @@ const FORMS: Form[] = [
           const t = g.fresh("t");
           g.emit(`let ${t}: string = nameOf(${g.k()}) + "-place"`);
           g.emit(`let ${a} = [${t}; ${n}]`);
-          g.sink(`${a}[${n - 1}].len() + ${t}.len()`);
+          g.sink(`${a}[${n - 1}].len()`);
         }
       }
       return true;

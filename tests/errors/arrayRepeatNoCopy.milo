@@ -1,0 +1,20 @@
+// @error: cannot repeat 'Handle' in '[v; 2]': it carries @noCopy
+// A @noCopy value has exactly one owner, so it cannot fill two slots, whatever Clone
+// says: the repeat is not the explicit `.clone()` spelling.
+@noCopy
+struct Handle {
+    id: i64,
+}
+
+impl Clone for Handle {
+    fn clone(self: &Self): Self {
+        return Handle { id: self.id }
+    }
+}
+
+pub fn main(): i32 {
+    let h = Handle { id: 1 }
+    let a = [h; 2]
+    print(a.len)
+    return 0
+}

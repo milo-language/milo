@@ -522,6 +522,9 @@ export interface CheckResult {
   borrowedExprs: Set<Expr>;
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
+  // `[v; N]` of a type with a Clone impl: the mangled clone fn codegen calls for the N-1
+  // copies (the original moves into the last slot).
+  arrayRepeatClones: Map<Expr, string>;
   functions: Map<string, FnSig>;
   // Names of the user's generic fns; with `functions`, what `userFnShadowsBuiltin` reads.
   genericFnNames: ReadonlySet<string>;
@@ -782,6 +785,7 @@ export class TypeChecker {
   private movedByPattern = new Set<object>();
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
+  private arrayRepeatClones = new Map<Expr, string>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   // Expressions whose evaluation writes the place they name (a mutating receiver, a
   // `&mut` argument), and calls of local closures with the captures their bodies write.
@@ -3511,6 +3515,7 @@ export class TypeChecker {
       borrowedExprs: this.borrowedExprs,
       autoWrappedOption: this.autoWrappedOption,
       arrayToVecCoercions: this.arrayToVecCoercions,
+      arrayRepeatClones: this.arrayRepeatClones,
       functions: this.functions,
       genericFnNames: new Set(this.genericFns.keys()),
       structs: this.structs,
@@ -11426,8 +11431,30 @@ export class TypeChecker {
     return this.setType(expr, { tag: "array", element: elemType, size: expr.elements.length });
   }
 
+  // `[v; N]` consumes `v` like any by-value use (`[v]`, `let a = v`): a non-Copy value
+  // moves into the last slot and the other N-1 slots get copies. A copy runs the type's
+  // Clone when it has one, so a user Clone (and its side effects) runs exactly N-1 times.
+  // A resource type (Drop, @noCopy, a raw pointer field) with no Clone cannot be copied
+  // at all: the copies used to be memberwise, and each one ran Drop again, so `[f; 3]`
+  // of a file handle closed it four times. The same rule the index read follows
+  // (errorIfResourceIndexRead).
   private checkArrayRepeatExpr(expr: ExprOf<"ArrayRepeat">): TypeKind {
     const elemType = this.checkExpr(expr.value, null);
+    this.tryMove(expr.value);
+    if (expr.count >= 2 && !this.isCopyType(elemType)) {
+      const clone = (elemType.tag === "struct" || elemType.tag === "enum") ? this.resolveMethod(elemType.name, "clone") : null;
+      const res = this.resourceKind(elemType);
+      if (res && (res.kind === "@noCopy" || !clone)) {
+        const via = typeEq(res.via, elemType) ? "" : ` (through '${this.show(res.via)}')`;
+        this.error(`cannot repeat '${this.show(elemType)}' in '[v; ${expr.count}]': it carries ${res.kind}${via}${res.kind === "@noCopy" ? "" : " and has no Clone"}`,
+          expr.value.span ?? expr.span,
+          res.kind === "@noCopy"
+            ? `a @noCopy value has exactly one owner, so it cannot fill ${expr.count} slots. Build each element separately ('[mk(), mk()]') or use a Vec`
+            : `each slot would be a memberwise copy that releases the resource again on drop. Implement Clone for '${this.show(res.via)}', or build each element separately ('[mk(), mk()]')`);
+      } else if (clone) {
+        this.arrayRepeatClones.set(expr, clone.mangled);
+      }
+    }
     return this.setType(expr, { tag: "array", element: elemType, size: expr.count });
   }
 

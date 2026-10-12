@@ -1,0 +1,20 @@
+// @error: cannot repeat 'Fd' in '[v; 3]': it carries Drop and has no Clone
+// `[f; 3]` used to fill the slots with memberwise copies and run Drop on each of them as
+// well as on `f`: the descriptor was closed four times. Without a Clone there is no
+// honest way to make the copies.
+struct Fd {
+    fd: i32,
+}
+
+impl Drop for Fd {
+    fn drop(self: &mut Self): void {
+        print("close(" + self.fd.toString() + ")")
+    }
+}
+
+pub fn main(): i32 {
+    let f = Fd { fd: 3 }
+    let a = [f; 3]
+    print(a.len)
+    return 0
+}

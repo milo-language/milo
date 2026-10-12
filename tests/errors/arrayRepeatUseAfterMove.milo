@@ -1,0 +1,8 @@
+// @error: use of moved variable 's'
+// `[s; N]` consumes `s` like `[s]` and `let t = s` do: the last slot takes it by move.
+pub fn main(): i32 {
+    let s = "x" + "y"
+    let a = [s; 2]
+    print(a[0] + s)
+    return 0
+}

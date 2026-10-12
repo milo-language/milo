@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 521 distinct messages across 668 programs the compiler must reject.
+Every error message the test suite pins: 523 distinct messages across 671 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -265,6 +265,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot pass immutable`](#cannot-pass-immutable)
 - [`cannot pass immutable 'x' as a '&mut' argument`](#cannot-pass-immutable-x-as-a-mut-argument)
 - [`cannot push to immutable Vec`](#cannot-push-to-immutable-vec)
+- [`cannot repeat 'Fd' in '[v; 3]': it carries Drop and has no Clone`](#cannot-repeat-fd-in-v-3-it-carries-drop-and-has-no-clone)
+- [`cannot repeat 'Handle' in '[v; 2]': it carries @noCopy`](#cannot-repeat-handle-in-v-2-it-carries-nocopy)
 - [`cannot replace 'v' while a loop iterates over it`](#cannot-replace-v-while-a-loop-iterates-over-it)
 - [`cannot replace through an immutable place`](#cannot-replace-through-an-immutable-place)
 - [`cannot return 'v.ptr()': 'v' is freed when this function returns, so the pointer would dangle`](#cannot-return-v-ptr-v-is-freed-when-this-function-returns-so-the-pointer-would-dangle)
@@ -6914,6 +6916,57 @@ fn main(): i32 {
 
 <sub>[tests/errors/vecPushImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecPushImmutable.milo)</sub>
 
+## `cannot repeat 'Fd' in '[v; 3]': it carries Drop and has no Clone` {#cannot-repeat-fd-in-v-3-it-carries-drop-and-has-no-clone}
+
+`[f; 3]` used to fill the slots with memberwise copies and run Drop on each of them as well as on `f`: the descriptor was closed four times. Without a Clone there is no honest way to make the copies.
+
+```milo skip
+struct Fd {
+    fd: i32,
+}
+
+impl Drop for Fd {
+    fn drop(self: &mut Self): void {
+        print("close(" + self.fd.toString() + ")")
+    }
+}
+
+pub fn main(): i32 {
+    let f = Fd { fd: 3 }
+    let a = [f; 3]
+    print(a.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/arrayRepeatDropNoClone.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayRepeatDropNoClone.milo)</sub>
+
+## `cannot repeat 'Handle' in '[v; 2]': it carries @noCopy` {#cannot-repeat-handle-in-v-2-it-carries-nocopy}
+
+A @noCopy value has exactly one owner, so it cannot fill two slots, whatever Clone says: the repeat is not the explicit `.clone()` spelling.
+
+```milo skip
+@noCopy
+struct Handle {
+    id: i64,
+}
+
+impl Clone for Handle {
+    fn clone(self: &Self): Self {
+        return Handle { id: self.id }
+    }
+}
+
+pub fn main(): i32 {
+    let h = Handle { id: 1 }
+    let a = [h; 2]
+    print(a.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/arrayRepeatNoCopy.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayRepeatNoCopy.milo)</sub>
+
 ## `cannot replace 'v' while a loop iterates over it` {#cannot-replace-v-while-a-loop-iterates-over-it}
 
 `replace` writes its place like a `&mut` argument does. Dropping the old Vec freed the string `x` was still reading.
@@ -12763,6 +12816,19 @@ fn main() {
 <sub>[tests/errors/unwrapUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unwrapUseAfterMove.milo)</sub>
 
 ## `use of moved variable 's'` {#use-of-moved-variable-s}
+
+`[s; N]` consumes `s` like `[s]` and `let t = s` do: the last slot takes it by move.
+
+```milo skip
+pub fn main(): i32 {
+    let s = "x" + "y"
+    let a = [s; 2]
+    print(a[0] + s)
+    return 0
+}
+```
+
+<sub>[tests/errors/arrayRepeatUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayRepeatUseAfterMove.milo)</sub>
 
 Passing the closure on is a use of what it captures by reference: `run` calls it.
 

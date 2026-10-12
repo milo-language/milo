@@ -7313,27 +7313,28 @@ export class Codegen {
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${arrTy}`);
     if (this.needsDropCg(elemKind)) {
-      // Non-Copy types: deep-clone each element so they own independent heap data. A
-      // place (`[s; 3]`) is only read, so every slot gets a clone. An owned temporary
-      // (`[mk(); 3]`) has no other owner: the last slot takes it by move, and with a
-      // count of 0 it is dropped. Cloning it into every slot leaked the original.
-      const ownsValue = this.isOwnedTempExpr(expr.value);
+      // Non-Copy types: the checker moved the value (a place's alive flag is cleared by
+      // genExpr, a temporary has no other owner), so the last slot takes it by move and
+      // the other N-1 slots get copies; with a count of 0 it is dropped. A copy calls the
+      // type's Clone when the checker found one (`cloneFn`), else it is the structural
+      // deep clone, which only a type with no Drop anywhere in it can reach.
       const srcPtr = this.nextTemp();
       lines.push(`  ${srcPtr} = alloca ${elemTy}`);
       lines.push(`  store ${elemTy} ${vv}, ptr ${srcPtr}`);
-      const clones = ownsValue ? expr.count - 1 : expr.count;
-      for (let i = 0; i < clones; i++) {
+      for (let i = 0; i < expr.count - 1; i++) {
         const pi = this.nextTemp();
         lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
-        const cloned = this.emitDeepCloneFromPtr(lines, srcPtr, elemKind);
+        const cloned = expr.cloneFn
+          ? this.emitCloneFnCall(lines, expr.cloneFn, srcPtr, elemTy)
+          : this.emitDeepCloneFromPtr(lines, srcPtr, elemKind);
         lines.push(`  store ${elemTy} ${cloned}, ptr ${pi}`);
       }
-      if (ownsValue && expr.count > 0) {
+      if (expr.count > 0) {
         const last = this.nextTemp();
         lines.push(`  ${last} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${expr.count - 1}`);
         lines.push(`  store ${elemTy} ${vv}, ptr ${last}`);
         this.ownEndVal(lines, vv, "MOVE");
-      } else if (ownsValue) {
+      } else {
         this.ownValToSlot(vv, srcPtr);
         this.emitDropValue(lines, srcPtr, elemKind);
       }
@@ -7347,6 +7348,22 @@ export class Codegen {
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
     return [lines, val, arrTy];
+  }
+
+  // Call a `clone(self: &Self): Self` fn on the value at `srcPtr`, returning the copy.
+  private emitCloneFnCall(lines: string[], fn: string, srcPtr: string, elemTy: string): string {
+    const attrs = this.fnSigs.get(fn)?.refAttrs?.[0] ?? "";
+    if (this.sretFns.has(fn)) {
+      const dest = this.nextTemp();
+      lines.push(`  ${dest} = alloca ${elemTy}`);
+      lines.push(`  call void @${fn}(ptr ${dest}, ptr${attrs} ${srcPtr})`);
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load ${elemTy}, ptr ${dest}`);
+      return v;
+    }
+    const v = this.nextTemp();
+    lines.push(`  ${v} = call ${elemTy} @${fn}(ptr${attrs} ${srcPtr})`);
+    return v;
   }
 
   private genIndexAccess(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): Gen {

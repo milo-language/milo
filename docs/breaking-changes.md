@@ -16,6 +16,21 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `[v; N]` moves `v`, and a resource without Clone cannot be repeated (2026-10-12)
+
+`[v; N]` used to read a non-Copy `v` and fill every slot with a memberwise copy that ran
+no `Clone`. For a `Drop` type every copy ran `Drop` as well as `v` itself, so `[f; 3]` of
+a file handle closed it four times. Now `v` moves into the last slot and the other N-1
+slots go through the type's `Clone`. Using `v` afterwards is a use-after-move, and a
+`Drop`, `@noCopy` or raw-pointer type with no `Clone` (any `@noCopy` type) repeated more
+than once is the error `cannot repeat 'T' in '[v; N]'`. No shim is possible: the old
+programs released the same resource more than once.
+
+| was | now |
+|---|---|
+| `let a = [s; 3]` then `s.len()` | `let a = [s.clone(); 3]`, or read `a[0]` |
+| `[fd; 2]` of a `Drop` type with no `Clone` | `impl Clone` for it, or `[open(), open()]` |
+
 ## A later argument can no longer read what an earlier argument moved (2026-10-12)
 
 `m.insert(k, m.get(k) ?? 0)`, `take(k, k.len)`, `keep<T>(k, k.len)`, `f(k, k.len)` through
