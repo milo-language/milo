@@ -1621,6 +1621,18 @@ class LowerCtx {
       case "Closure": {
         const captures = this.c.closureCaptures.get(expr) ?? [];
         const retType = type.tag === "fn" ? type.ret : { tag: "void" as const };
+        // `?`, `if`/`match` expressions and early returns in the body belong to the
+        // closure, not the enclosing fn: lowering them with the outer return type
+        // made `?` in a closure emit `ret <outer type>` with the closure's Result
+        // (invalid IR whenever the two differ).
+        const outerRetType = this.currentRetType;
+        this.currentRetType = retType;
+        let body: HIRStmt[];
+        try {
+          body = this.withRawShareReport(expr, expr.body.map(s => this.lowerStmt(s, retType)));
+        } finally {
+          this.currentRetType = outerRetType;
+        }
         return {
           kind: "Closure",
           params: expr.params.map(p => {
@@ -1628,7 +1640,7 @@ class LowerCtx {
             const resolvedType = pType?.tag === "fn" ? pType.params[expr.params.indexOf(p)] : { tag: "unknown" as const };
             return { name: p.name, type: resolvedType };
           }),
-          body: this.withRawShareReport(expr, expr.body.map(s => this.lowerStmt(s, retType))),
+          body,
           captures,
           retType,
           type,

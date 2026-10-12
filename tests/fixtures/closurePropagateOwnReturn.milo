@@ -1,0 +1,55 @@
+// `?` inside a closure returns from the closure, with the closure's Result type. It
+// was lowered with the enclosing fn's return type, so a closure in a fn returning
+// anything else (a struct here) emitted `ret %Outcome` of a Result and failed to link.
+// The nested case checks the outer type is restored after an inner closure.
+// @expect: true 42
+// @expect: false not a number: x
+// @expect: nested 10
+struct Outcome {
+    ok: bool,
+    data: string,
+}
+
+fn parseNum(s: &string): Result<i64, string> {
+    let Option.Some(n) = s.parseInt() else {
+        return Result.Err("not a number: " + s)
+    }
+    return Result.Ok(n)
+}
+
+fn run(f: () => Result<string, string>): Result<string, string> {
+    return f()
+}
+
+fn compute(input: &string): Outcome {
+    let r = run((): Result<string, string> => {
+        let n = parseNum(input)?
+        return Result.Ok((n * 2).toString())
+    })
+    match r {
+        Result.Ok(d) => {
+            return Outcome { ok: true, data: d }
+        }
+        Result.Err(e) => {
+            return Outcome { ok: false, data: e }
+        }
+    }
+}
+
+fn nested(): Result<i64, string> {
+    let inner = run((): Result<string, string> => {
+        let n = parseNum("5")?
+        return Result.Ok(n.toString())
+    })?
+    let n = parseNum(inner)?
+    return Result.Ok(n * 2)
+}
+
+pub fn main(): i32 {
+    let a = compute("21")
+    let b = compute("x")
+    print($"{a.ok} {a.data}")
+    print($"{b.ok} {b.data}")
+    print($"nested {nested()!}")
+    return 0
+}
