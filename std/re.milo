@@ -1,0 +1,1522 @@
+// std/re — regular expressions with JavaScript syntax, in pure Milo.
+//
+//   let re = Re.new("(?<!\\w)bot\\b", "i")!
+//   re.test(userAgent)
+//
+// Syntax: literals, `.`, classes `[a-z]` `[^...]`, escapes `\d \D \w \W \s \S \b \B`
+// `\n \t \r \f \v \0 \xHH \uHHHH \u{H..}`, anchors `^ $`, groups `( )`, `(?: )`,
+// `(?<name> )`, lookaround `(?= ) (?! ) (?<= ) (?<! )`, backreferences `\1` `\k<name>`,
+// alternation `|`, quantifiers `* + ? {n} {n,} {n,m}` and their lazy `?` forms.
+// Flags: `i` (ASCII case folding), `m` (^ and $ at line breaks), `s` (`.` matches
+// newlines), `g` and `u` are accepted and change nothing (every call here scans the
+// whole input; matching is always by codepoint).
+//
+// Why not std/regex: that wraps POSIX regcomp, which has none of the above, differs
+// per platform, and on macOS is not safe across threads. This engine is plain data
+// and a loop, so a Re can be shared by every task and thread that reads it.
+//
+// The matcher is a backtracking VM, as JavaScript's is, so lookaround and
+// backreferences behave the way a JS pattern expects. It never recurses on the input
+// (backtrack points live on an explicit stack) and it stops after a step budget, so
+// a pathological pattern on hostile input (`(a+)+$` on "aaaa…b") answers "no match"
+// in bounded time instead of hanging the caller. `lastBudgetHit` reports when that
+// happened.
+
+from "std/unicode" import { decodeCodepoint }
+
+// ── Program ──
+
+// Instruction opcodes. One flat Vec<ReInst>; `a`/`b` mean something per opcode.
+let RE_CHAR: i32 = 0 // a = codepoint (already case-folded under `i`)
+let RE_ANY: i32 = 1 // any codepoint; a newline only under `s`
+let RE_CLASS: i32 = 2 // a = index into classes
+let RE_SPLIT: i32 = 3 // try a first, then b
+let RE_JMP: i32 = 4 // a = target
+let RE_SAVE: i32 = 5 // slots[a] = sp
+let RE_BOL: i32 = 6
+let RE_EOL: i32 = 7
+let RE_WORDB: i32 = 8
+let RE_NWORDB: i32 = 9
+let RE_LOOK: i32 = 10 // a = kind (0 ahead, 1 neg ahead, 2 behind, 3 neg behind), b = pc after the body
+let RE_LOOKEND: i32 = 11
+let RE_BACKREF: i32 = 12 // a = group number
+let RE_MATCH: i32 = 13
+let RE_MARK: i32 = 14 // slots[a] = sp: where this loop iteration started
+let RE_PROGRESS: i32 = 15 // fail when sp == slots[a]: an iteration that matched nothing ends the loop
+
+// AST node kinds, the parse result the compiler walks.
+let RN_EMPTY: i32 = 0
+let RN_CHAR: i32 = 1
+let RN_ANY: i32 = 2
+let RN_CLASS: i32 = 3
+let RN_CAT: i32 = 4
+let RN_ALT: i32 = 5
+let RN_GROUP: i32 = 6 // a = capture number, or -1 for (?: )
+let RN_REPEAT: i32 = 7 // a = min, b = max (-1 unbounded), lazy
+let RN_BOL: i32 = 8
+let RN_EOL: i32 = 9
+let RN_WORDB: i32 = 10
+let RN_NWORDB: i32 = 11
+let RN_LOOK: i32 = 12 // a = look kind as RE_LOOK
+let RN_BACKREF: i32 = 13 // a = group number, or -1 with `name` set until resolved
+
+// Past this a counted repeat would expand into an unreasonable program.
+let RE_MAX_COUNT: i64 = 1000
+// Deeper group nesting than this is rejected while parsing, which bounds the
+// compiler's recursion by the pattern rather than trusting it.
+let RE_MAX_NEST: i64 = 200
+// Steps per match attempt before the matcher gives up, per byte of input plus a floor.
+let RE_STEP_FLOOR: i64 = 100000
+let RE_STEPS_PER_BYTE: i64 = 2000
+
+pub struct ReInst {
+    op: i32,
+    a: i64,
+    b: i64,
+}
+
+pub struct ReClass {
+    neg: bool,
+    // Inclusive codepoint ranges, flattened: lo0, hi0, lo1, hi1, …
+    ranges: Vec<i64>,
+}
+
+struct ReNode {
+    kind: i32,
+    a: i64,
+    b: i64,
+    lazy: bool,
+    kids: Vec<i64>,
+    name: string,
+}
+
+// A compiled pattern. Plain data: share it freely.
+pub struct Re {
+    prog: Vec<ReInst>,
+    classes: Vec<ReClass>,
+    groups: i64,
+    names: Vec<string>,
+    nameGroups: Vec<i64>,
+    // Loop-progress registers live after the capture slots.
+    slotCount: i64,
+    icase: bool,
+    multiline: bool,
+    dotAll: bool,
+    source: string,
+    // Which bytes can begin a match (firsts[0]) or a branch, so the scan skips
+    // start positions and alternatives that cannot.
+    firsts: Vec<ReFirst>,
+    // Per instruction: for a SPLIT, the index in `firsts` of its preferred branch's
+    // filter, or -1 (no filter); -1 for every other instruction.
+    splitFirst: Vec<i64>,
+}
+
+// One match: byte offsets into the searched text, and the text of each group
+// (`groups[0]` is the whole match; an unmatched group is None).
+pub struct ReMatch {
+    start: i64,
+    end: i64,
+    groups: Vec<Option<string>>,
+    names: Vec<string>,
+    nameGroups: Vec<i64>,
+}
+
+impl ReMatch {
+    // The whole matched text.
+    fn text(self: &Self): string {
+        return self.groups[0].clone() ?? ""
+    }
+
+    // Group `i`'s text; None when the group did not take part or does not exist.
+    fn group(self: &Self, i: i64): Option<string> {
+        if i < 0 || i >= self.groups.len {
+            return Option.None
+        }
+        return self.groups[i].clone()
+    }
+
+    // A named group's text: `(?<year>\d{4})` → m.named("year").
+    fn named(self: &Self, name: &string): Option<string> {
+        for i in 0..self.names.len {
+            if self.names[i] == name {
+                return self.group(self.nameGroups[i])
+            }
+        }
+        return Option.None
+    }
+}
+
+// ── Character helpers ──
+
+fn reIsWordCp(cp: i64): bool {
+    return (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || cp == 95
+}
+
+fn reIsDigitCp(cp: i64): bool {
+    return cp >= 48 && cp <= 57
+}
+
+// JavaScript's \s: WhiteSpace plus LineTerminator.
+fn reIsSpaceCp(cp: i64): bool {
+    if cp == 32 || (cp >= 9 && cp <= 13) || cp == 160 || cp == 5760 || cp == 8232 || cp == 8233 {
+        return true
+    }
+    return (cp >= 8192 && cp <= 8202) || cp == 8239 || cp == 8287 || cp == 12288 || cp == 65279
+}
+
+fn reIsLineTerm(cp: i64): bool {
+    return cp == 10 || cp == 13 || cp == 8232 || cp == 8233
+}
+
+fn reFold(cp: i64): i64 {
+    if cp >= 65 && cp <= 90 {
+        return cp + 32
+    }
+    return cp
+}
+
+fn reUpper(cp: i64): i64 {
+    if cp >= 97 && cp <= 122 {
+        return cp - 32
+    }
+    return cp
+}
+
+fn reAddRange(ranges: &mut Vec<i64>, lo: i64, hi: i64) {
+    ranges.push(lo)
+    ranges.push(hi)
+}
+
+fn reAddDigit(ranges: &mut Vec<i64>) {
+    reAddRange(&mut ranges, 48, 57)
+}
+
+fn reAddWord(ranges: &mut Vec<i64>) {
+    reAddRange(&mut ranges, 48, 57)
+    reAddRange(&mut ranges, 65, 90)
+    reAddRange(&mut ranges, 95, 95)
+    reAddRange(&mut ranges, 97, 122)
+}
+
+fn reAddSpace(ranges: &mut Vec<i64>) {
+    reAddRange(&mut ranges, 9, 13)
+    reAddRange(&mut ranges, 32, 32)
+    reAddRange(&mut ranges, 160, 160)
+    reAddRange(&mut ranges, 5760, 5760)
+    reAddRange(&mut ranges, 8192, 8202)
+    reAddRange(&mut ranges, 8232, 8233)
+    reAddRange(&mut ranges, 8239, 8239)
+    reAddRange(&mut ranges, 8287, 8287)
+    reAddRange(&mut ranges, 12288, 12288)
+    reAddRange(&mut ranges, 65279, 65279)
+}
+
+// The complement of a set of ranges over all codepoints, for \D \W \S inside a class.
+fn reComplement(src: &Vec<i64>): Vec<i64> {
+    // Sort pairs by lo (small n: insertion sort on pair indices).
+    var los: Vec<i64> = Vec.new()
+    var his: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i + 1 < src.len {
+        let lo = src[i]
+        let hi = src[i + 1]
+        var j: i64 = los.len
+        los.push(lo)
+        his.push(hi)
+        while j > 0 && los[j - 1] > lo {
+            los[j] = los[j - 1]
+            his[j] = his[j - 1]
+            j -= 1
+        }
+        los[j] = lo
+        his[j] = hi
+        i += 2
+    }
+    var out: Vec<i64> = Vec.new()
+    var next: i64 = 0
+    for k in 0..los.len {
+        if los[k] > next {
+            reAddRange(&mut out, next, los[k] - 1)
+        }
+        if his[k] + 1 > next {
+            next = his[k] + 1
+        }
+    }
+    if next <= 1114111 {
+        reAddRange(&mut out, next, 1114111)
+    }
+    return out
+}
+
+fn reClassHas(cls: &ReClass, cp: i64, icase: bool): bool {
+    var hit = false
+    var i: i64 = 0
+    while i + 1 < cls.ranges.len {
+        let lo = cls.ranges[i]
+        let hi = cls.ranges[i + 1]
+        if cp >= lo && cp <= hi {
+            hit = true
+            break
+        }
+        if icase {
+            let f = reFold(cp)
+            let u = reUpper(cp)
+            if (f >= lo && f <= hi) || (u >= lo && u <= hi) {
+                hit = true
+                break
+            }
+        }
+        i += 2
+    }
+    return hit != cls.neg
+}
+
+// ── Parser ──
+
+struct ReParser {
+    pat: string,
+    pos: i64,
+    nodes: Vec<ReNode>,
+    classes: Vec<ReClass>,
+    groups: i64,
+    names: Vec<string>,
+    nameGroups: Vec<i64>,
+    depth: i64,
+    err: string,
+}
+
+impl ReParser {
+    fn node(self: &mut Self, kind: i32, a: i64, b: i64): i64 {
+        self.nodes.push(ReNode { kind: kind, a: a, b: b, lazy: false, kids: Vec.new(), name: "" })
+        return self.nodes.len - 1
+    }
+
+    fn fail(self: &mut Self, msg: string): i64 {
+        if self.err.len == 0 {
+            self.err = $"{msg} at {self.pos} in /{self.pat}/"
+        }
+        return -1
+    }
+
+    fn atEnd(self: &Self): bool {
+        return self.pos >= self.pat.len
+    }
+
+    fn peek(self: &Self): u8 {
+        if self.pos >= self.pat.len {
+            return 0
+        }
+        return self.pat[self.pos]
+    }
+
+    fn peekAt(self: &Self, off: i64): u8 {
+        if self.pos + off >= self.pat.len {
+            return 0
+        }
+        return self.pat[self.pos + off]
+    }
+
+    // Next codepoint of the pattern itself, so a literal `é` is one atom.
+    fn takeCp(self: &mut Self): i64 {
+        let c = decodeCodepoint(self.pat, self.pos)
+        self.pos += c.size
+        return c.value as i64
+    }
+
+    fn parseAlt(self: &mut Self): i64 {
+        var alts: Vec<i64> = Vec.new()
+        alts.push(self.parseCat())
+        while !self.atEnd() && self.peek() == '|' {
+            self.pos += 1
+            alts.push(self.parseCat())
+        }
+        if alts.len == 1 {
+            return alts[0]
+        }
+        let n = self.node(RN_ALT, 0, 0)
+        self.nodes[n].kids = alts
+        return n
+    }
+
+    fn parseCat(self: &mut Self): i64 {
+        var items: Vec<i64> = Vec.new()
+        while !self.atEnd() && self.peek() != '|' && self.peek() != ')' {
+            let atom = self.parseQuantified()
+            if atom < 0 {
+                return -1
+            }
+            items.push(atom)
+        }
+        if items.len == 1 {
+            return items[0]
+        }
+        let n = self.node(RN_CAT, 0, 0)
+        self.nodes[n].kids = items
+        return n
+    }
+
+    // Digits of a {n,m} bound; -1 when there are none. Saturates instead of overflowing.
+    fn parseNum(self: &mut Self): i64 {
+        var n: i64 = -1
+        while !self.atEnd() && self.peek() >= '0' && self.peek() <= '9' {
+            if n < 0 {
+                n = 0
+            }
+            if n < 100000 {
+                n = n * 10 + (self.peek() as i64 - 48)
+            }
+            self.pos += 1
+        }
+        return n
+    }
+
+    fn parseQuantified(self: &mut Self): i64 {
+        let atom = self.parseAtom()
+        if atom < 0 {
+            return -1
+        }
+        var min: i64 = -1
+        var max: i64 = -1
+        let c = self.peek()
+        if c == '*' {
+            min = 0
+            self.pos += 1
+        } else if c == '+' {
+            min = 1
+            self.pos += 1
+        } else if c == '?' {
+            min = 0
+            max = 1
+            self.pos += 1
+        } else if c == '{' {
+            // `{` that is not a well-formed bound is a literal, as in JS without `u`.
+            let save = self.pos
+            self.pos += 1
+            let lo = self.parseNum()
+            var hi: i64 = lo
+            var ok = lo >= 0
+            if ok && self.peek() == ',' {
+                self.pos += 1
+                hi = self.parseNum()
+            }
+            if ok && self.peek() == '}' {
+                self.pos += 1
+                min = lo
+                max = hi
+                if hi >= 0 && hi < lo {
+                    return self.fail("numbers out of order in {} quantifier")
+                }
+                if lo > RE_MAX_COUNT || hi > RE_MAX_COUNT {
+                    return self.fail($"repeat count above {RE_MAX_COUNT}")
+                }
+            } else {
+                self.pos = save
+                ok = false
+            }
+            if !ok {
+                return atom
+            }
+        } else {
+            return atom
+        }
+        let kind = self.nodes[atom].kind
+        if kind == RN_BOL || kind == RN_EOL || kind == RN_WORDB || kind == RN_NWORDB {
+            return self.fail("nothing to repeat")
+        }
+        let n = self.node(RN_REPEAT, min, max)
+        self.nodes[n].kids.push(atom)
+        if self.peek() == '?' {
+            self.pos += 1
+            self.nodes[n].lazy = true
+        }
+        return n
+    }
+
+    fn parseAtom(self: &mut Self): i64 {
+        let c = self.peek()
+        if c == '(' {
+            return self.parseGroup()
+        }
+        if c == '[' {
+            self.pos += 1
+            return self.parseClass()
+        }
+        if c == '.' {
+            self.pos += 1
+            return self.node(RN_ANY, 0, 0)
+        }
+        if c == '^' {
+            self.pos += 1
+            return self.node(RN_BOL, 0, 0)
+        }
+        if c == '$' {
+            self.pos += 1
+            return self.node(RN_EOL, 0, 0)
+        }
+        if c == '\\' {
+            self.pos += 1
+            return self.parseEscape()
+        }
+        if c == '*' || c == '+' || c == '?' {
+            return self.fail("nothing to repeat")
+        }
+        let cp = self.takeCp()
+        return self.node(RN_CHAR, cp, 0)
+    }
+
+    fn parseGroup(self: &mut Self): i64 {
+        self.pos += 1
+        self.depth += 1
+        if self.depth > RE_MAX_NEST {
+            return self.fail("groups nested too deeply")
+        }
+        var kind = RN_GROUP
+        var a: i64 = -1
+        if self.peek() == '?' {
+            let c1 = self.peekAt(1)
+            if c1 == ':' {
+                self.pos += 2
+            } else if c1 == '=' || c1 == '!' {
+                kind = RN_LOOK
+                a = if c1 == '=' { 0 } else { 1 }
+                self.pos += 2
+            } else if c1 == '<' && (self.peekAt(2) == '=' || self.peekAt(2) == '!') {
+                kind = RN_LOOK
+                a = if self.peekAt(2) == '=' { 2 } else { 3 }
+                self.pos += 3
+            } else if c1 == '<' {
+                self.pos += 2
+                var name = ""
+                while !self.atEnd() && self.peek() != '>' {
+                    name.push(self.peek())
+                    self.pos += 1
+                }
+                if self.atEnd() || name.len == 0 {
+                    return self.fail("invalid group name")
+                }
+                self.pos += 1
+                self.groups += 1
+                a = self.groups
+                self.names.push(name)
+                self.nameGroups.push(a)
+            } else {
+                return self.fail("invalid group")
+            }
+        } else {
+            self.groups += 1
+            a = self.groups
+        }
+        let body = self.parseAlt()
+        if body < 0 {
+            return -1
+        }
+        if self.peek() != ')' {
+            return self.fail("unterminated group")
+        }
+        self.pos += 1
+        self.depth -= 1
+        let n = self.node(kind, a, 0)
+        self.nodes[n].kids.push(body)
+        return n
+    }
+
+    // Hex digits for \x \u; -1 when malformed.
+    fn parseHex(self: &mut Self, count: i64): i64 {
+        var v: i64 = 0
+        for _i in 0..count {
+            let h = self.peek()
+            var d: i64 = -1
+            if h >= '0' && h <= '9' {
+                d = h as i64 - 48
+            } else if h >= 'a' && h <= 'f' {
+                d = h as i64 - 87
+            } else if h >= 'A' && h <= 'F' {
+                d = h as i64 - 55
+            }
+            if d < 0 {
+                return -1
+            }
+            v = v * 16 + d
+            self.pos += 1
+        }
+        return v
+    }
+
+    // A character escape shared by atoms and classes (after the backslash). Returns the
+    // codepoint, or -1 for a class escape (\d \w \s and negations), which the caller
+    // handles; -2 is a parse error already reported.
+    fn charEscape(self: &mut Self): i64 {
+        if self.atEnd() {
+            self.fail("\\ at end of pattern")
+            return -2
+        }
+        let c = self.peek()
+        if c == 'd' || c == 'D' || c == 'w' || c == 'W' || c == 's' || c == 'S' {
+            return -1
+        }
+        self.pos += 1
+        if c == 'n' {
+            return 10
+        }
+        if c == 't' {
+            return 9
+        }
+        if c == 'r' {
+            return 13
+        }
+        if c == 'f' {
+            return 12
+        }
+        if c == 'v' {
+            return 11
+        }
+        if c == '0' {
+            return 0
+        }
+        if c == 'x' {
+            let save = self.pos
+            let v = self.parseHex(2)
+            if v < 0 {
+                self.pos = save
+                return 'x' as i64
+            }
+            return v
+        }
+        if c == 'u' {
+            if self.peek() == '{' {
+                self.pos += 1
+                var v: i64 = 0
+                var digits: i64 = 0
+                while !self.atEnd() && self.peek() != '}' {
+                    let d = self.parseHex(1)
+                    if d < 0 || v > 1114111 {
+                        self.fail("invalid \\u{} escape")
+                        return -2
+                    }
+                    v = v * 16 + d
+                    digits += 1
+                }
+                if self.atEnd() || digits == 0 || v > 1114111 {
+                    self.fail("invalid \\u{} escape")
+                    return -2
+                }
+                self.pos += 1
+                return v
+            }
+            let save = self.pos
+            let v = self.parseHex(4)
+            if v < 0 {
+                self.pos = save
+                return 'u' as i64
+            }
+            return v
+        }
+        if c == 'c' {
+            let l = self.peek()
+            if (l >= 'a' && l <= 'z') || (l >= 'A' && l <= 'Z') {
+                self.pos += 1
+                return (l as i64) % 32
+            }
+            return '\\' as i64
+        }
+        // Any other escaped character stands for itself (`\.`, `\/`, `\-`, …).
+        self.pos -= 1
+        return self.takeCp()
+    }
+
+    fn addClassEscape(self: &mut Self, ranges: &mut Vec<i64>) {
+        let c = self.peek()
+        self.pos += 1
+        var set: Vec<i64> = Vec.new()
+        if c == 'd' || c == 'D' {
+            reAddDigit(&mut set)
+        } else if c == 'w' || c == 'W' {
+            reAddWord(&mut set)
+        } else {
+            reAddSpace(&mut set)
+        }
+        if c == 'D' || c == 'W' || c == 'S' {
+            set = reComplement(set)
+        }
+        for v in set {
+            ranges.push(v)
+        }
+    }
+
+    fn classNode(self: &mut Self, neg: bool, ranges: Vec<i64>): i64 {
+        self.classes.push(ReClass { neg: neg, ranges: ranges })
+        return self.node(RN_CLASS, self.classes.len - 1, 0)
+    }
+
+    fn parseEscape(self: &mut Self): i64 {
+        if self.atEnd() {
+            return self.fail("\\ at end of pattern")
+        }
+        let c = self.peek()
+        if c == 'b' {
+            self.pos += 1
+            return self.node(RN_WORDB, 0, 0)
+        }
+        if c == 'B' {
+            self.pos += 1
+            return self.node(RN_NWORDB, 0, 0)
+        }
+        if c >= '1' && c <= '9' {
+            let n = self.parseNum()
+            return self.node(RN_BACKREF, n, 0)
+        }
+        if c == 'k' && self.peekAt(1) == '<' {
+            self.pos += 2
+            var name = ""
+            while !self.atEnd() && self.peek() != '>' {
+                name.push(self.peek())
+                self.pos += 1
+            }
+            if self.atEnd() {
+                return self.fail("invalid named reference")
+            }
+            self.pos += 1
+            let n = self.node(RN_BACKREF, -1, 0)
+            self.nodes[n].name = name
+            return n
+        }
+        let cp = self.charEscape()
+        if cp == -2 {
+            return -1
+        }
+        if cp == -1 {
+            var ranges: Vec<i64> = Vec.new()
+            self.addClassEscape(&mut ranges)
+            return self.classNode(false, ranges)
+        }
+        return self.node(RN_CHAR, cp, 0)
+    }
+
+    // After the `[`.
+    fn parseClass(self: &mut Self): i64 {
+        var neg = false
+        if self.peek() == '^' {
+            neg = true
+            self.pos += 1
+        }
+        var ranges: Vec<i64> = Vec.new()
+        var first = true
+        while true {
+            if self.atEnd() {
+                return self.fail("unterminated character class")
+            }
+            let c = self.peek()
+            if c == ']' && !(first && false) {
+                self.pos += 1
+                break
+            }
+            first = false
+            var lo: i64 = 0
+            if c == '\\' {
+                self.pos += 1
+                if self.peek() == 'b' {
+                    // \b inside a class is a backspace in JS
+                    self.pos += 1
+                    lo = 8
+                } else {
+                    let e = self.charEscape()
+                    if e == -2 {
+                        return -1
+                    }
+                    if e == -1 {
+                        self.addClassEscape(&mut ranges)
+                        continue
+                    }
+                    lo = e
+                }
+            } else {
+                lo = self.takeCp()
+            }
+            // A range `a-z`; a `-` first, last, or next to a class escape is literal.
+            if self.peek() == '-' && self.peekAt(1) != ']' && self.peekAt(1) != 0 {
+                let save = self.pos
+                self.pos += 1
+                var hi: i64 = 0
+                if self.peek() == '\\' {
+                    self.pos += 1
+                    let e = self.charEscape()
+                    if e == -2 {
+                        return -1
+                    }
+                    if e == -1 {
+                        // `[a-\d]`: the dash is literal
+                        reAddRange(&mut ranges, lo, lo)
+                        reAddRange(&mut ranges, 45, 45)
+                        self.addClassEscape(&mut ranges)
+                        continue
+                    }
+                    hi = e
+                } else {
+                    hi = self.takeCp()
+                }
+                if hi < lo {
+                    self.pos = save
+                    return self.fail("range out of order in character class")
+                }
+                reAddRange(&mut ranges, lo, hi)
+            } else {
+                reAddRange(&mut ranges, lo, lo)
+            }
+        }
+        return self.classNode(neg, ranges)
+    }
+}
+
+// ── Compiler ──
+
+struct ReCompiler {
+    prog: Vec<ReInst>,
+    icase: bool,
+    // The next free loop register; registers sit after the 2*(groups+1) capture slots.
+    nextReg: i64,
+}
+
+impl ReCompiler {
+    fn emit(self: &mut Self, op: i32, a: i64, b: i64): i64 {
+        self.prog.push(ReInst { op: op, a: a, b: b })
+        return self.prog.len - 1
+    }
+
+    fn compile(self: &mut Self, nodes: &Vec<ReNode>, n: i64) {
+        let k = nodes[n].kind
+        if k == RN_EMPTY {
+            return
+        }
+        if k == RN_CHAR {
+            let cp = if self.icase { reFold(nodes[n].a) } else { nodes[n].a }
+            self.emit(RE_CHAR, cp, 0)
+        } else if k == RN_ANY {
+            self.emit(RE_ANY, 0, 0)
+        } else if k == RN_CLASS {
+            self.emit(RE_CLASS, nodes[n].a, 0)
+        } else if k == RN_BOL {
+            self.emit(RE_BOL, 0, 0)
+        } else if k == RN_EOL {
+            self.emit(RE_EOL, 0, 0)
+        } else if k == RN_WORDB {
+            self.emit(RE_WORDB, 0, 0)
+        } else if k == RN_NWORDB {
+            self.emit(RE_NWORDB, 0, 0)
+        } else if k == RN_BACKREF {
+            self.emit(RE_BACKREF, nodes[n].a, 0)
+        } else if k == RN_CAT {
+            for kid in nodes[n].kids {
+                self.compile(nodes, kid)
+            }
+        } else if k == RN_ALT {
+            // split L1, next; L1: a; jmp end; next: split L2, … ; last alt
+            var jumps: Vec<i64> = Vec.new()
+            for i in 0..nodes[n].kids.len {
+                if i + 1 < nodes[n].kids.len {
+                    let split = self.emit(RE_SPLIT, 0, 0)
+                    self.prog[split].a = self.prog.len
+                    self.compile(nodes, nodes[n].kids[i])
+                    jumps.push(self.emit(RE_JMP, 0, 0))
+                    self.prog[split].b = self.prog.len
+                } else {
+                    self.compile(nodes, nodes[n].kids[i])
+                }
+            }
+            for j in jumps {
+                self.prog[j].a = self.prog.len
+            }
+        } else if k == RN_GROUP {
+            if nodes[n].a >= 0 {
+                self.emit(RE_SAVE, nodes[n].a * 2, 0)
+                self.compile(nodes, nodes[n].kids[0])
+                self.emit(RE_SAVE, nodes[n].a * 2 + 1, 0)
+            } else {
+                self.compile(nodes, nodes[n].kids[0])
+            }
+        } else if k == RN_LOOK {
+            let look = self.emit(RE_LOOK, nodes[n].a, 0)
+            self.compile(nodes, nodes[n].kids[0])
+            self.emit(RE_LOOKEND, 0, 0)
+            self.prog[look].b = self.prog.len
+        } else if k == RN_REPEAT {
+            let kid = nodes[n].kids[0]
+            let min = nodes[n].a
+            let max = nodes[n].b
+            let lazy = nodes[n].lazy
+            for _i in 0..min {
+                self.compile(nodes, kid)
+            }
+            if max < 0 {
+                // L: split body, out (swapped when lazy); body: mark r; X; progress r; jmp L
+                let reg = self.nextReg
+                self.nextReg += 1
+                let split = self.emit(RE_SPLIT, 0, 0)
+                let body = self.prog.len
+                self.emit(RE_MARK, reg, 0)
+                self.compile(nodes, kid)
+                self.emit(RE_PROGRESS, reg, 0)
+                self.emit(RE_JMP, split, 0)
+                let out = self.prog.len
+                if lazy {
+                    self.prog[split].a = out
+                    self.prog[split].b = body
+                } else {
+                    self.prog[split].a = body
+                    self.prog[split].b = out
+                }
+            } else {
+                // up to (max - min) optional copies, each one only if the previous matched
+                var splits: Vec<i64> = Vec.new()
+                for _i in min..max {
+                    let split = self.emit(RE_SPLIT, 0, 0)
+                    splits.push(split)
+                    let body = self.prog.len
+                    if lazy {
+                        self.prog[split].b = body
+                    } else {
+                        self.prog[split].a = body
+                    }
+                    self.compile(nodes, kid)
+                }
+                let out = self.prog.len
+                for s in splits {
+                    if lazy {
+                        self.prog[s].a = out
+                    } else {
+                        self.prog[s].b = out
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Construction ──
+
+impl Re {
+    // Compile `pattern` (the text between the slashes of a JS literal) with `flags`
+    // ("i", "m", "s"; "g", "u", "y" are accepted and ignored). The error names the
+    // byte offset of the problem.
+    fn new(pattern: &string, flags: &string): Result<Re, string> {
+        var icase = false
+        var multiline = false
+        var dotAll = false
+        for f in flags {
+            if f == 'i' {
+                icase = true
+            } else if f == 'm' {
+                multiline = true
+            } else if f == 's' {
+                dotAll = true
+            } else if f != 'g' && f != 'u' && f != 'y' && f != 'd' {
+                return Result.Err($"invalid regex flag '{flags}'")
+            }
+        }
+        var p = ReParser {
+            pat: pattern.clone(), pos: 0, nodes: Vec.new(), classes: Vec.new(), groups: 0,
+            names: Vec.new(), nameGroups: Vec.new(), depth: 0, err: "",
+        }
+        let root = p.parseAlt()
+        if p.err.len > 0 {
+            return Result.Err(p.err)
+        }
+        if root < 0 || !p.atEnd() {
+            if p.peek() == ')' {
+                return Result.Err($"unmatched ')' at {p.pos} in /{pattern}/")
+            }
+            return Result.Err($"invalid regex /{pattern}/")
+        }
+        // Resolve \k<name> now that every group is numbered.
+        for i in 0..p.nodes.len {
+            if p.nodes[i].kind == RN_BACKREF {
+                if p.nodes[i].a < 0 {
+                    var found: i64 = -1
+                    for j in 0..p.names.len {
+                        if p.names[j] == p.nodes[i].name {
+                            found = p.nameGroups[j]
+                        }
+                    }
+                    if found < 0 {
+                        return Result.Err($"unknown group name '{p.nodes[i].name}' in /{pattern}/")
+                    }
+                    p.nodes[i].a = found
+                } else if p.nodes[i].a > p.groups {
+                    return Result.Err($"backreference \\{p.nodes[i].a} to a missing group in /{pattern}/")
+                }
+            }
+        }
+        var c = ReCompiler { prog: Vec.new(), icase: icase, nextReg: (p.groups + 1) * 2 }
+        c.emit(RE_SAVE, 0, 0)
+        c.compile(p.nodes, root)
+        c.emit(RE_SAVE, 1, 0)
+        c.emit(RE_MATCH, 0, 0)
+        var re = Re {
+            prog: c.prog, classes: p.classes, groups: p.groups, names: p.names, nameGroups: p.nameGroups,
+            slotCount: c.nextReg, icase: icase, multiline: multiline, dotAll: dotAll, source: pattern.clone(),
+            firsts: Vec.new(), splitFirst: Vec.new(),
+        }
+        re.computeFirst()
+        return Result.Ok(re)
+    }
+}
+
+// What the first consumed codepoint of a path can be: an ASCII byte indexes `bits`,
+// any byte >= 128 asks `high`, and `any` disables the filter (an empty match, `.`,
+// a backreference).
+struct ReFirst {
+    bits: Vec<bool>,
+    high: bool,
+    any: bool,
+    // The path begins with `^` (outside multiline mode it can only start at 0).
+    bol: bool,
+}
+
+impl Re {
+    // Walk the zero-width edges from `start` and collect what the first consumed
+    // codepoint can be. Assertions (^ $ \b lookaround) do not consume, so they are
+    // stepped over: they only narrow where a match starts, never widen it, which keeps
+    // the set a superset of the truth (a filter, never a verdict).
+    fn firstFrom(self: &Self, start: i64): ReFirst {
+        var f = ReFirst { bits: Vec.new(), high: false, any: false, bol: false }
+        var lead = start
+        while lead < self.prog.len && (self.prog[lead].op == RE_SAVE || self.prog[lead].op == RE_MARK) {
+            lead += 1
+        }
+        f.bol = lead < self.prog.len && self.prog[lead].op == RE_BOL && !self.multiline
+        for _i in 0..128 {
+            f.bits.push(false)
+        }
+        var seen: Vec<bool> = Vec.new()
+        for _i in 0..self.prog.len {
+            seen.push(false)
+        }
+        var work: Vec<i64> = Vec.new()
+        work.push(start)
+        while work.len > 0 && !f.any {
+            let pc = work.pop() ?? 0
+            if seen[pc] {
+                continue
+            }
+            seen[pc] = true
+            let inst = self.prog[pc]
+            let op = inst.op
+            if op == RE_CHAR {
+                if inst.a < 128 {
+                    f.bits[inst.a] = true
+                    if self.icase {
+                        f.bits[reUpper(inst.a)] = true
+                    }
+                } else {
+                    f.high = true
+                }
+            } else if op == RE_CLASS {
+                f.high = true
+                for c in 0..128 {
+                    if reClassHas(self.classes[inst.a], c, self.icase) {
+                        f.bits[c] = true
+                    }
+                }
+            } else if op == RE_SPLIT {
+                work.push(inst.a)
+                work.push(inst.b)
+            } else if op == RE_JMP {
+                work.push(inst.a)
+            } else if op == RE_LOOK {
+                work.push(inst.b)
+            } else if op == RE_SAVE || op == RE_MARK || op == RE_PROGRESS || op == RE_BOL || op == RE_EOL
+            || op == RE_WORDB || op == RE_NWORDB {
+                work.push(pc + 1)
+            } else {
+                // ANY, BACKREF (may be empty), MATCH (empty match), LOOKEND: no filter
+                f.any = true
+            }
+        }
+        return f
+    }
+
+    // A filter for the whole pattern and one per SPLIT's preferred branch: a
+    // 200-way alternation (a bot list) then tries only the branches whose first
+    // character is the one under the cursor.
+    fn computeFirst(self: &mut Self) {
+        let top = self.firstFrom(0)
+        self.firsts.push(top)
+        for pc in 0..self.prog.len {
+            var slot: i64 = -1
+            if self.prog[pc].op == RE_SPLIT {
+                let f = self.firstFrom(self.prog[pc].a)
+                if !f.any || f.bol {
+                    self.firsts.push(f)
+                    slot = self.firsts.len - 1
+                }
+            }
+            self.splitFirst.push(slot)
+        }
+    }
+
+    fn firstOk(self: &Self, f: i64, s: &string, sp: i64): bool {
+        if self.firsts[f].bol && sp > 0 {
+            return false
+        }
+        if self.firsts[f].any {
+            return true
+        }
+        if sp >= s.len {
+            return false
+        }
+        let b = s[sp]
+        if b >= 128 {
+            return self.firsts[f].high
+        }
+        return self.firsts[f].bits[b as i64]
+    }
+
+    fn canStartAt(self: &Self, s: &string, sp: i64): bool {
+        return sp >= s.len || self.firstOk(0, s, sp)
+    }
+}
+
+// ── Matcher ──
+
+// Backtrack stack frames: a choice point to resume, or a slot write to undo.
+let RE_BT_CHOICE: i64 = 0
+let RE_BT_UNDO: i64 = 1
+let RE_BT_BARRIER: i64 = 2
+
+struct ReVm {
+    slots: Vec<i64>,
+    // Frames of three: kind, x, y. CHOICE: x = pc, y = sp. UNDO: x = slot, y = old value.
+    stack: Vec<i64>,
+    steps: i64,
+    budget: i64,
+    budgetHit: bool,
+}
+
+impl Re {
+    fn cpAt(self: &Self, s: &string, sp: i64): i64 {
+        return decodeCodepoint(s, sp).value as i64
+    }
+
+    // Start of the codepoint that ends at `sp`, for \b and lookbehind.
+    fn prevCp(self: &Self, s: &string, sp: i64): i64 {
+        if sp <= 0 {
+            return -1
+        }
+        var i = sp - 1
+        while i > 0 && (s[i] & 192) == 128 && sp - i < 4 {
+            i -= 1
+        }
+        return decodeCodepoint(s, i).value as i64
+    }
+
+    fn isWordAt(self: &Self, s: &string, sp: i64): bool {
+        if sp >= s.len {
+            return false
+        }
+        return reIsWordCp(self.cpAt(s, sp))
+    }
+
+    fn isWordBefore(self: &Self, s: &string, sp: i64): bool {
+        return sp > 0 && reIsWordCp(self.prevCp(s, sp))
+    }
+
+    fn setSlot(self: &Self, vm: &mut ReVm, slot: i64, v: i64) {
+        vm.stack.push(RE_BT_UNDO)
+        vm.stack.push(slot)
+        vm.stack.push(vm.slots[slot])
+        vm.slots[slot] = v
+    }
+
+    // Run from `pc` at `sp` until MATCH (or, for a lookaround body, LOOKEND). Returns the
+    // end position, or -1. `mustEnd` >= 0 requires the body to end exactly there (a
+    // lookbehind tried from an earlier start). Slot writes made on the way to a success
+    // stay; on failure every write is undone back to the barrier this call pushed.
+    fn run(self: &Self, vm: &mut ReVm, s: &string, startPc: i64, startSp: i64, mustEnd: i64): i64 {
+        let base = vm.stack.len
+        vm.stack.push(RE_BT_BARRIER)
+        vm.stack.push(0)
+        vm.stack.push(0)
+        var pc = startPc
+        var sp = startSp
+        while true {
+            vm.steps += 1
+            var ok = true
+            if vm.steps > vm.budget {
+                vm.budgetHit = true
+                ok = false
+            } else {
+                let inst = self.prog[pc]
+                let op = inst.op
+                if op == RE_CHAR {
+                    if sp < s.len {
+                        let c = decodeCodepoint(s, sp)
+                        var cp = c.value as i64
+                        if self.icase {
+                            cp = reFold(cp)
+                        }
+                        if cp == inst.a {
+                            sp += c.size
+                            pc += 1
+                        } else {
+                            ok = false
+                        }
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_ANY {
+                    if sp < s.len {
+                        let c = decodeCodepoint(s, sp)
+                        if !self.dotAll && reIsLineTerm(c.value as i64) {
+                            ok = false
+                        } else {
+                            sp += c.size
+                            pc += 1
+                        }
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_CLASS {
+                    if sp < s.len {
+                        let c = decodeCodepoint(s, sp)
+                        if reClassHas(self.classes[inst.a], c.value as i64, self.icase) {
+                            sp += c.size
+                            pc += 1
+                        } else {
+                            ok = false
+                        }
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_SPLIT {
+                    let f = self.splitFirst[pc]
+                    if f >= 0 && !self.firstOk(f, s, sp) {
+                        pc = inst.b
+                    } else {
+                        vm.stack.push(RE_BT_CHOICE)
+                        vm.stack.push(inst.b)
+                        vm.stack.push(sp)
+                        pc = inst.a
+                    }
+                } else if op == RE_JMP {
+                    pc = inst.a
+                } else if op == RE_SAVE || op == RE_MARK {
+                    self.setSlot(&mut vm, inst.a, sp)
+                    pc += 1
+                } else if op == RE_PROGRESS {
+                    if vm.slots[inst.a] == sp {
+                        ok = false
+                    } else {
+                        pc += 1
+                    }
+                } else if op == RE_BOL {
+                    if sp == 0 || (self.multiline && reIsLineTerm(self.prevCp(s, sp))) {
+                        pc += 1
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_EOL {
+                    if sp == s.len || (self.multiline && reIsLineTerm(self.cpAt(s, sp))) {
+                        pc += 1
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_WORDB || op == RE_NWORDB {
+                    let at = self.isWordBefore(s, sp) != self.isWordAt(s, sp)
+                    if at == (op == RE_WORDB) {
+                        pc += 1
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_BACKREF {
+                    let gs = vm.slots[inst.a * 2]
+                    let ge = vm.slots[inst.a * 2 + 1]
+                    if gs < 0 || ge < 0 {
+                        // an unset group matches the empty string, as in JS
+                        pc += 1
+                    } else {
+                        let n = ge - gs
+                        var same = sp + n <= s.len
+                        var i: i64 = 0
+                        while same && i < n {
+                            var x = s[gs + i] as i64
+                            var y = s[sp + i] as i64
+                            if self.icase {
+                                x = reFold(x)
+                                y = reFold(y)
+                            }
+                            if x != y {
+                                same = false
+                            }
+                            i += 1
+                        }
+                        if same {
+                            sp += n
+                            pc += 1
+                        } else {
+                            ok = false
+                        }
+                    }
+                } else if op == RE_LOOK {
+                    let kind = inst.a
+                    let after = inst.b
+                    var hit = false
+                    if kind < 2 {
+                        hit = self.run(&mut vm, s, pc + 1, sp, -1) >= 0
+                    } else {
+                        // Lookbehind: some start at or before sp whose body ends at sp.
+                        var k = sp
+                        while k >= 0 && !hit && !vm.budgetHit {
+                            if k == 0 || k >= s.len || (s[k] & 192) != 128 {
+                                hit = self.run(&mut vm, s, pc + 1, k, sp) >= 0
+                            }
+                            k -= 1
+                        }
+                    }
+                    let negative = kind == 1 || kind == 3
+                    if vm.budgetHit {
+                        ok = false
+                    } else if hit != negative {
+                        pc = after
+                    } else {
+                        ok = false
+                    }
+                } else if op == RE_LOOKEND {
+                    if mustEnd >= 0 && sp != mustEnd {
+                        ok = false
+                    } else {
+                        // A lookaround is atomic: drop its choice points, but keep its
+                        // slot undos so an outer backtrack still resets its captures.
+                        var w = base
+                        var r = base + 3
+                        while r < vm.stack.len {
+                            if vm.stack[r] == RE_BT_UNDO {
+                                vm.stack[w] = vm.stack[r]
+                                vm.stack[w + 1] = vm.stack[r + 1]
+                                vm.stack[w + 2] = vm.stack[r + 2]
+                                w += 3
+                            }
+                            r += 3
+                        }
+                        vm.stack.truncate(w)
+                        return sp
+                    }
+                } else if op == RE_MATCH {
+                    vm.stack.truncate(base)
+                    return sp
+                }
+            }
+            if !ok {
+                // Backtrack: undo slot writes until a choice point; give up at our barrier.
+                var resumed = false
+                while !resumed {
+                    let y = vm.stack.pop() ?? 0
+                    let x = vm.stack.pop() ?? 0
+                    let kind = vm.stack.pop() ?? RE_BT_BARRIER
+                    if kind == RE_BT_UNDO {
+                        vm.slots[x] = y
+                    } else if kind == RE_BT_CHOICE && !vm.budgetHit {
+                        pc = x
+                        sp = y
+                        resumed = true
+                    } else if kind == RE_BT_BARRIER {
+                        return -1
+                    }
+                }
+            }
+        }
+        return -1
+    }
+
+    fn matchFrom(self: &Self, s: &string, from: i64, budgetHit: &mut bool): Option<ReMatch> {
+        var vm = ReVm {
+            slots: Vec.new(), stack: Vec.new(), steps: 0,
+            budget: RE_STEP_FLOOR + s.len * RE_STEPS_PER_BYTE, budgetHit: false,
+        }
+        for _i in 0..self.slotCount {
+            vm.slots.push(-1)
+        }
+        var start = from
+        if start < 0 {
+            start = 0
+        }
+        while start <= s.len {
+            while start < s.len && !self.canStartAt(s, start) {
+                start += 1
+            }
+            let end = self.run(&mut vm, s, 0, start, -1)
+            if vm.budgetHit {
+                budgetHit = true
+                return Option.None
+            }
+            if end >= 0 {
+                var groups: Vec<Option<string>> = Vec.new()
+                for g in 0..self.groups + 1 {
+                    let gs = vm.slots[g * 2]
+                    let ge = vm.slots[g * 2 + 1]
+                    if gs >= 0 && ge >= gs {
+                        groups.push(Option.Some(s.substr(gs, ge)))
+                    } else {
+                        groups.push(Option.None)
+                    }
+                }
+                return Option.Some(ReMatch {
+                    start: vm.slots[0], end: vm.slots[1], groups: groups,
+                    names: self.names.clone(), nameGroups: self.nameGroups.clone(),
+                })
+            }
+            if start >= s.len {
+                break
+            }
+            // next codepoint boundary
+            start += 1
+            while start < s.len && (s[start] & 192) == 128 {
+                start += 1
+            }
+        }
+        return Option.None
+    }
+
+    // ── Queries ──
+
+    // Whether the pattern matches anywhere in `s` (JS `re.test(s)`).
+    fn test(self: &Self, s: &string): bool {
+        var hit = false
+        return self.matchFrom(s, 0, &mut hit).isSome()
+    }
+
+    // The first match (JS `s.match(re)` without `g`).
+    fn find(self: &Self, s: &string): Option<ReMatch> {
+        var hit = false
+        return self.matchFrom(s, 0, &mut hit)
+    }
+
+    // The first match starting at or after byte offset `from`.
+    fn findFrom(self: &Self, s: &string, from: i64): Option<ReMatch> {
+        var hit = false
+        return self.matchFrom(s, from, &mut hit)
+    }
+
+    // Every non-overlapping match, left to right (JS `s.matchAll(re)`).
+    fn findAll(self: &Self, s: &string): Vec<ReMatch> {
+        var out: Vec<ReMatch> = Vec.new()
+        var from: i64 = 0
+        var hit = false
+        while from <= s.len {
+            let Option.Some(m) = self.matchFrom(s, from, &mut hit) else {
+                break
+            }
+            // An empty match advances one codepoint so the scan terminates.
+            var next = m.end
+            if m.end == m.start {
+                next = m.end + 1
+                while next < s.len && (s[next] & 192) == 128 {
+                    next += 1
+                }
+            }
+            out.push(m)
+            from = next
+        }
+        return out
+    }
+
+    // Whether the last step budget was exceeded is not tracked per Re (a Re is shared
+    // read-only); `testBounded` reports it for a caller that must tell "no" from "gave up".
+    fn testBounded(self: &Self, s: &string): Option<bool> {
+        var hit = false
+        let r = self.matchFrom(s, 0, &mut hit)
+        if hit {
+            return Option.None
+        }
+        return Option.Some(r.isSome())
+    }
+
+    // Expand `$1`, `$<name>`, `$&`, `$$` in a replacement for one match.
+    fn expand(self: &Self, m: &ReMatch, repl: &string, out: &mut string) {
+        var i: i64 = 0
+        while i < repl.len {
+            let c = repl[i]
+            if c == '$' && i + 1 < repl.len {
+                let d = repl[i + 1]
+                if d == '$' {
+                    out.push('$')
+                    i += 2
+                    continue
+                }
+                if d == '&' {
+                    out.pushStr(m.text())
+                    i += 2
+                    continue
+                }
+                if d >= '0' && d <= '9' {
+                    var n = d as i64 - 48
+                    var used: i64 = 2
+                    if i + 2 < repl.len && repl[i + 2] >= '0' && repl[i + 2] <= '9' {
+                        let two = n * 10 + (repl[i + 2] as i64 - 48)
+                        if two >= 1 && two <= self.groups {
+                            n = two
+                            used = 3
+                        }
+                    }
+                    if n >= 1 && n <= self.groups {
+                        out.pushStr(m.group(n) ?? "")
+                        i += used
+                        continue
+                    }
+                }
+                if d == '<' {
+                    var j = i + 2
+                    var name = ""
+                    while j < repl.len && repl[j] != '>' {
+                        name.push(repl[j])
+                        j += 1
+                    }
+                    if j < repl.len && self.names.len > 0 {
+                        out.pushStr(m.named(name) ?? "")
+                        i = j + 1
+                        continue
+                    }
+                }
+            }
+            out.push(c)
+            i += 1
+        }
+    }
+
+    // Replace the first match (JS `s.replace(re, repl)`).
+    fn replace(self: &Self, s: &string, repl: &string): string {
+        let Option.Some(m) = self.find(s) else {
+            return s.clone()
+        }
+        var out = s.substr(0, m.start)
+        self.expand(m, repl, &mut out)
+        out.pushStr(s.substr(m.end, s.len))
+        return out
+    }
+
+    // Replace every match (JS `s.replaceAll(re, repl)` / `replace` with `g`).
+    fn replaceAll(self: &Self, s: &string, repl: &string): string {
+        var out = ""
+        var last: i64 = 0
+        for m in self.findAll(s) {
+            out.pushStr(s.substr(last, m.start))
+            self.expand(m, repl, &mut out)
+            last = m.end
+        }
+        out.pushStr(s.substr(last, s.len))
+        return out
+    }
+
+    // Split around every match (JS `s.split(re)`, without captured groups spliced in).
+    fn split(self: &Self, s: &string): Vec<string> {
+        var out: Vec<string> = Vec.new()
+        var last: i64 = 0
+        for m in self.findAll(s) {
+            if m.end == m.start && (m.start == 0 || m.start >= s.len) {
+                continue
+            }
+            out.push(s.substr(last, m.start))
+            last = m.end
+        }
+        out.push(s.substr(last, s.len))
+        return out
+    }
+}

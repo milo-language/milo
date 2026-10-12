@@ -159,7 +159,7 @@ Green-tier concurrency with one OS-thread escape hatch:
 - **`main` is itself a green task** wherever the program can reach `spawn`. Before this, a blocking call in `main` starved the very tasks that would satisfy it — `main` ran on the OS thread and nothing else could progress. Codegen decides this per program, so a program with no spawn keeps a plain `main`. Std APIs that block must therefore branch on `schedulerCurrent()` rather than assume they are off-scheduler
 - Public `Thread`/`Mutex`/`RwLock`/`parallel` were **removed** 2026-07-10 (green tier only — see [concurrency-simplification.md](concurrency-simplification.md))
 
-### Standard Library (<!-- stat:std-modules -->86<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->87<!-- /stat --> modules)
 
 I/O & system: `io`, `fs`, `path`, `env`, `environ`, `args`, `replay` (record/replay of clock, entropy, env, argv), `process`, `signal`, `dl`, `sysinfo`, `mem`, `os`, `platform`, `term`, `pty`, `keys`, `ansi`, `foreign` (views over memory C allocated)
 Networking: `net` (TCP + DNS), `unix` (AF_UNIX), `fetch` (HTTPS client + TLS), `tls` (TLS server transport), `openssl` (the libssl binding both use), `https` (HTTPS server), `http`, `httpmw`, `multipart`, `mime`, `html`, `ws`, `url`
@@ -218,7 +218,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 - **Package manager**: `milo init/new/add/remove/install/update/tree/why/vendor/publish` plus `tool install/uninstall/list/run`, git-based cache with a lockfile, GitHub repos as the registry, per-package name mangling. Folded into the one `milo` binary.
 - **Published packages (8)**: postgres, redis, markdown, toml, yaml, json-rpc, gl, sdl — indexed on [the packages page](site/packages.md), each graded against something that is *not itself* (CommonMark's 655 spec examples and `cmark`, Python's `tomllib`, a real PostgreSQL requiring SCRAM, a real Redis, `ruamel.yaml`). `scripts/ecosystem-check.ts` is the gate that installs each one from GitHub and builds it against this checkout — added after two packages shipped green in-repo and uninstallable to everyone else, for two different reasons (a string global invisible to its own package's functions, and a capitalised global parsing as an enumlit and recovering by a value lookup that mangling had already renamed away)
 - **Docs from source**: `milo doc <file|dir>` generates reference markdown from doc-comments; `milo api <terms>` searches std signatures
-- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->850<!-- /stat --> fixtures, <!-- stat:error-fixtures -->624<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->38<!-- /stat --> prove fixtures
+- **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner — <!-- stat:fixtures -->851<!-- /stat --> fixtures, <!-- stat:error-fixtures -->624<!-- /stat --> error fixtures, <!-- stat:prove-fixtures -->38<!-- /stat --> prove fixtures
 - **Fuzzers**: `scripts/fuzz-frontend.ts` (2 bugs per 150k mutants) and `scripts/fuzz-ownership.ts`, which grades ownership bugs under a *real* ASan oracle. Two silent-success bugs were found in the harness itself before it graded anything: `--sanitize` linked the ASan runtime but instrumented nothing, so every use-after-free read passed while the interceptors kept the sanitizer looking alive; and the fuzzer graded a UAF by whether the freed bytes happened to be reused. Surface coverage is 27 of 39 expression and statement forms, now composed at depth 5–7 rather than emitted alone at the top level of `main` — a generator can reach 39/39 wide and still test nothing about how the rules compose
 - **Benchmarks**: `benchmarks/run.sh` with per-benchmark `results-*.md` (fib, binarytrees, grep, json, matmul, maplookup)
 - **CI**: build + test on push/PR across macOS-arm64, linux-x64 and Windows-x64 (**no linux-arm64 — see In Progress**); release pipeline with `--static-deps` static linking (built on ubuntu-22.04 runners for glibc compatibility, never musl)
@@ -241,6 +241,7 @@ Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; 
 - [ ] **TLS backend** — SChannel, or OpenSSL built for `windows-msvc`; blocks HTTPS and `wsBasic`
 - [ ] **AES-GCM over CNG** — hashing landed; `BCryptEncrypt` with `BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO` is the remaining piece
 - [ ] **`std/regex`** — no C-linkable regex exists on Windows, so the Windows arm is a fail-loud stub. The real fix is a pure-Milo engine (which would drop the libc dependency everywhere)
+  - 2026-10-11: the pure-Milo engine exists as `std/re` (JavaScript syntax, lookaround, step budget). Left: move `std/regex` callers over and retire the POSIX wrapper.
 - [ ] **fd width** — `socket`/`accept` return `SOCKET` (`UINT_PTR`) but `std/os` declares `i32`; the audit script correctly flags it and stays off the Windows CI job until the fd layer goes i64
 - [ ] Unskip `tcpIpv6` / `tcpGreenConnectRefused` once real Windows confirms them (they link; Wine can't emulate `AF_INET6` or a refused `FD_CONNECT`)
 

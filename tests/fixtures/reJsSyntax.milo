@@ -1,0 +1,62 @@
+// std/re: JavaScript regex syntax in pure Milo; answers checked against node's RegExp
+from "std/re" import { Re, ReMatch }
+
+fn show(m: Option<ReMatch>): string {
+    match m {
+        Option.Some(x) => {
+            var parts: Vec<string> = Vec.new()
+            for g in x.groups {
+                parts.push(g.clone() ?? "-")
+            }
+            return parts.join(",")
+        },
+        Option.None => {
+            return "none"
+        },
+    }
+}
+
+fn main() {
+    let ua = Re.new("(?<! cu)bots?(?:\\b|_)|^mozilla\\/\\d", "i")!
+    print(ua.test("Mozilla/5.0 (compatible; Googlebot/2.1)"))
+    print(ua.test("Phone; Cubot note 20"))
+    print(show(Re.new("(\\d{4})-(\\d{2})", "")!.find("on 2026-10 ok")))
+    print(Re.new("(?<y>\\d{4})", "")!.find("y 1999")!.named("y") ?? "?")
+    print(show(Re.new("foo(?=bar)", "")!.find("foobaz foobar")))
+    print(show(Re.new("(?<=\\$)\\d+", "")!.find("cost $42")))
+    print(show(Re.new("(\\w)\\1", "")!.find("abccd")))
+    print(show(Re.new("(?<q>['\"]).*?\\k<q>", "")!.find("say 'hi' now")))
+    print(show(Re.new("a*?b", "")!.find("aaab")))
+    print(show(Re.new("(x)?y", "")!.find("y")))
+    print(Re.new("\\s+", "")!.replaceAll("a \t b  c", " "))
+    print(Re.new("(\\w+)@(\\w+)", "")!.replaceAll("ann@x bob@y", "$2:$1"))
+    print(Re.new(",\\s*", "")!.split("a, b,c").join("|"))
+    print(Re.new("x*", "")!.replaceAll("abc", "-"))
+    print(Re.new("é+", "")!.replaceAll("caféé!", "E"))
+    print(Re.new("^ab", "m")!.test("c\nab"))
+    // catastrophic backtracking stops at the step budget instead of hanging
+    print(Re.new("(a+)+$", "")!.testBounded("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab").isNone())
+    match Re.new("(ab", "") { Result.Ok(_r) => print("ok"), Result.Err(e) => print(e) }
+    match Re.new("a{3,1}", "") { Result.Ok(_r) => print("ok"), Result.Err(e) => print(e) }
+    match Re.new("x", "q") { Result.Ok(_r) => print("ok"), Result.Err(e) => print(e) }
+}
+// @expect: true
+// @expect: false
+// @expect: 2026-10,2026,10
+// @expect: 1999
+// @expect: foo
+// @expect: 42
+// @expect: cc,c
+// @expect: 'hi','
+// @expect: aaab
+// @expect: y,-
+// @expect: a b c
+// @expect: x:ann y:bob
+// @expect: a|b|c
+// @expect: -a-b-c-
+// @expect: cafE!
+// @expect: true
+// @expect: true
+// @expect: unterminated group at 3 in /(ab/
+// @expect: numbers out of order in {} quantifier at 6 in /a{3,1}/
+// @expect: invalid regex flag 'q'
