@@ -107,14 +107,20 @@ jobs:
       - name: Ownership ledger
         run: bun scripts/own-ledger.ts --check
 
-      # The two soundness fuzzers.
+      # The soundness fuzzers.
       # Small counts here so the job stays under a few minutes; the generator shapes are
       # the language's threat model, so a new rule gets a shape and this step is what
       # keeps asking. Reduction is off: a red here is triaged locally with --keep.
+      # fuzz:drops composes the ownership forms that produced the October 2026 memory
+      # bugs (for-in over iterators/channels/forks/temps, struct update, array-literal
+      # args, heap moves, combinators, [v; N], match v[i]) under four oracles: Drop
+      # balance, ASan, the ownership ledger and a read-integrity check. A reverted fix
+      # among those is red within its first ~15 cases. COST: ~5 CPU-s per case, so ~70s for 40 at --jobs 3.
       - name: Soundness fuzzers
         run: |
           bun run fuzz:tasks --n=100 --seed=${{ github.run_number }} --reduce-probes=0
           bun run fuzz:generic-drop --seed=${{ github.run_number }}
+          bun run fuzz:drops --cases 40 --jobs 3 --seed ${{ github.run_number }} --reduce-probes 0
 
   # Nothing has ever executed std/*.linux.milo — epoll, eventfd, the glibc paths — because
   # the suite above runs on macOS only. This job is the first thing that does.

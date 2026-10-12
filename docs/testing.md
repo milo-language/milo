@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
-key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts
+key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts, scripts/fuzz-drops.ts
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-10-12 (ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
+last-verified: 2026-10-12 (fuzz:drops runs the ledger on generated programs; ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
 -->
 
 # Testing
@@ -277,6 +277,17 @@ read is a make, any other place read a view, `OWN_FRESH_KINDS` a make, `OWN_STAT
 a value with nothing to free). Storing an owned value whose producer declared none, or a
 byte copy of an owned type declared `plain`, throws in ledger mode and names the codegen
 call site, so a new path that copies owned bytes has to choose before the sweep compiles.
+
+**The ledger on generated programs.** The fixture sweep only sees shapes someone wrote.
+`bun run fuzz:drops` (`scripts/fuzz-drops.ts`, also a CI step) composes the ownership
+forms behind the October 2026 memory bugs (for-in over a `next()` iterator, a Channel, a
+generic `I: Iterator`, an `if`/`match` fork and a temporary; struct update; array
+literals passed to `[T; n]` and `&[T]`; `getOrDefault`; literal matches; Heap reads and
+moves; Option/Result combinators; `[v; N]`; `match v[i]`; extern `*u8` temps), nested
+three deep with `break`/`continue`/`return`/`?`, and builds every case with
+`MILO_OWN_LEDGER=1 --sanitize`. Any ledger finding is red, beside a Drop-balance count,
+ASan and a read-integrity check. Reds are reduced into `.fuzz-findings/drops/`. Shapes of
+bugs still open are generated only with `--known`; the list is in the script's header.
 
 ## Out-of-band differential harnesses
 Not `bun test` — they need a toolchain CI supplies but a checkout may not, so run them by hand when you touch the target they cover.

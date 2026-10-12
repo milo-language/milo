@@ -36,7 +36,9 @@
 //     c    a by-reference closure that writes a capture (assignment, `&mut` argument,
 //          `&mut self` method, push), run directly, passed as a value or through
 //          another closure while a for-in over the capture is live, or inside a
-//          Task.scope while a sibling task iterates it across a park
+//          Task.scope while a sibling task iterates it across a park; or one closure
+//          that both writes the capture and lends it to a parking callee, run twice
+//          at once by sibling scoped tasks (c-reentrant-park)
 //     bg   safe noise: index loops across yields, channel ping-pong, blocking workers,
 //          writer tasks, so the hazardous shapes run next to real contention
 //
@@ -698,6 +700,14 @@ const SHAPES: Shape[] = [
     name: "c-pattern-ref-write",
     apply(p) { patternRefWrite(p); },
   },
+  {
+    // 7b43b7ec: ONE closure both writes a capture and lends it to a callee that parks,
+    // and two runs of that closure are live at once (sibling scoped tasks, or a helper
+    // that spawns its argument twice), so one run's push reallocates the Vec under the
+    // other run's loop. No for-in in the caller: the borrow is the closure's own.
+    name: "c-reentrant-park",
+    apply(p) { reentrantPark(p); },
+  },
 
   // ── bg: safe contention ──
   {
@@ -831,6 +841,38 @@ function closureWrite(p: Program, scoped: boolean) {
     ...(chance(0.5) ? [`    s.spawn((): void => { ${call} })`] : [`    sleepMs(1)`, `    ${call}`]), `})`);
 }
 
+function reentrantPark(p: Program) {
+  p.use("std/runtime", "Task", "TaskScope", "schedulerYield");
+  const log = p.fresh("log"), f = p.fresh("rf"), show = p.fresh("showAll");
+  p.fn(`fn ${show}(v: &Vec<string>): void {\n    for l in v {\n        schedulerYield()\n        print(l)\n    }\n}`);
+  p.body.push(`var ${log}: Vec<string> = ["${pick(WORDS)} a heap string long enough to be on the heap".clone()]`);
+  // The safe twins must be accepted and run clean: lending a clone, or writing nothing
+  // the lent value aliases.
+  const lend = chance(0.2) ? `${log}.clone()` : log;
+  const write = chance(0.15) ? `let n = ${log}.len()` : pick([
+    `${log}.push("x".clone())`,
+    `var k: i64 = 0\n        while k < 64 {\n            ${log}.push("y".clone())\n            k = k + 1\n        }`,
+  ]);
+  const ordered = chance(0.5) ? [write, `${show}(${lend})`] : [`${show}(${lend})`, write];
+  p.body.push(`let ${f} = move () => {`, ...ordered.map(l => `    ${l}`.replace(/\n {8}/g, "\n        ")), `}`);
+  switch (pick(["helper", "scope", "generic"])) {
+    case "helper": {
+      const both = p.fresh("both");
+      p.fn(`fn ${both}(g: () => void): void {\n    Task.scope((s: &mut TaskScope): void => {\n        s.spawn(() => g())\n        s.spawn(() => g())\n    })\n}`);
+      p.body.push(`${both}(${f})`);
+      break;
+    }
+    case "generic": {
+      const both = p.fresh("bothG");
+      p.fn(`fn ${both}<F>(g: F): void {\n    Task.scope((s: &mut TaskScope): void => {\n        s.spawn(() => g())\n        s.spawn(() => g())\n    })\n}`);
+      p.body.push(`${both}(${f})`);
+      break;
+    }
+    default:
+      p.body.push(`Task.scope((s: &mut TaskScope): void => {`, `    s.spawn(() => ${f}())`, `    s.spawn(() => ${f}())`, `})`);
+  }
+}
+
 // ── generation ────────────────────────────────────────────────────────────────
 
 interface Case { name: string; src: string; shapes: string[] }
@@ -858,6 +900,8 @@ const SEEDS = [
   "tests/errors/closureMutArgWritesIteratedVec.milo",
   "tests/errors/closureValueWritesIteratedVec.milo",
   "tests/errors/scopeBodyCallsWritingClosure.milo",
+  "tests/errors/closureEnvRefArgAcrossPark.milo",
+  "tests/errors/closureEnvSharedRouteHandler.milo",
 ];
 
 // ── the oracles ───────────────────────────────────────────────────────────────
