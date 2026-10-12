@@ -1,0 +1,25 @@
+// `.len` on a fixed array is an i64 like every other length, and reads on a module-level array
+let NAMES: [string; 3] = ["a", "b", "c"]
+
+struct S { xs: [i32; 2] }
+
+fn f(a: &[i32; 4]): i64 { return a.len }
+
+fn main() {
+    let a: [i32; 4] = [1, 2, 3, 4]
+    print(f(a))
+    print(NAMES.len)
+    let s = S { xs: [1, 2] }
+    print(s.xs.len)
+    let v: Vec<i64> = [5, 6, 7]
+    let total = v.len + a.len
+    print(total)
+    for i in 0..NAMES.len { print(NAMES[i]) }
+}
+// @expect: 4
+// @expect: 3
+// @expect: 2
+// @expect: 7
+// @expect: a
+// @expect: b
+// @expect: c

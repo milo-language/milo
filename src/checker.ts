@@ -11141,8 +11141,9 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     if (objType.tag === "array" && expr.field === "len") {
-      // fixed arrays: compile-time i32 constant; slices: runtime i64 (matches Vec)
-      return this.setType(expr, { tag: "int", bits: objType.size !== null ? 32 : 64, signed: true });
+      // i64 for fixed arrays too (a compile-time constant), so `0..a.len` and index
+      // math mix with Vec, slice and string lengths without a cast
+      return this.setType(expr, { tag: "int", bits: 64, signed: true });
     }
     if (objType.tag === "string" && expr.field === "len") {
       return this.setType(expr, { tag: "int", bits: 64, signed: true });
@@ -13996,7 +13997,9 @@ export class TypeChecker {
     const obj = { kind: "Ident", name: expr.enumName, span: expr.span } as unknown as Expr;
     let ty = info.type;
     if (ty.tag === "ref") ty = ty.inner;
-    const isField = ty.tag === "struct" && !!this.structs.get(ty.name)?.fields.some(f => f.name === expr.variant);
+    // `.len` is the one built-in field: `NAMES.len` on a module-level array reads it, not a method.
+    const isField = (ty.tag === "struct" && !!this.structs.get(ty.name)?.fields.some(f => f.name === expr.variant))
+      || (expr.variant === "len" && (ty.tag === "array" || ty.tag === "vec" || ty.tag === "string" || ty.tag === "hashmap"));
     const node = expr as any;
     const args: Expr[] = expr.args ?? [];
     if (isField && args.length === 0) {

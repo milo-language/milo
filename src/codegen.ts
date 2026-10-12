@@ -6706,7 +6706,7 @@ export class Codegen {
   private genArrayLen(expr: HIRExpr & { kind: "ArrayLen" }, lines: string[]): Gen {
     const objType = expr.object.type.tag === "ref" ? expr.object.type.inner : expr.object.type;
     if (objType.tag === "array" && objType.size !== null) {
-      return [lines, String(objType.size), "i32"];
+      return [lines, String(objType.size), "i64"];
     }
     if (objType.tag === "array" && objType.size === null) {
       // slice: runtime length from the %Vec view
@@ -6716,7 +6716,7 @@ export class Codegen {
       lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
       return [lines, len, "i64"];
     }
-    return [lines, "0", "i32"];
+    return [lines, "0", "i64"];
   }
 
   private genArrayLit(expr: HIRExpr & { kind: "ArrayLit" }, lines: string[]): Gen {
