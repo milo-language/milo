@@ -1,0 +1,29 @@
+// An array literal passed straight to a `[T; n]` param owns its elements, the same as
+// `let a = [p, q]`. The hinted path used to copy p and q without moving them, so the
+// callee dropped them with the array and main dropped them again: a double free.
+pub struct Tok {
+    id: i32,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+fn sum(a: [Tok; 2]): i32 {
+    return a[0].id + a[1].id
+}
+
+fn main() {
+    let p = Tok { id: 1 }
+    let q = Tok { id: 2 }
+    let s = sum([p, q])
+    print("sum ", s)
+    print("end")
+}
+
+// @expect: drop 1
+// @expect: drop 2
+// @expect: sum 3
+// @expect: end

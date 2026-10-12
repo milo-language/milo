@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 499 distinct messages across 639 programs the compiler must reject.
+Every error message the test suite pins: 500 distinct messages across 640 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -502,6 +502,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'h'`](#use-of-moved-variable-h)
 - [`use of moved variable 'lib'`](#use-of-moved-variable-lib)
 - [`use of moved variable 'o'`](#use-of-moved-variable-o)
+- [`use of moved variable 'p'`](#use-of-moved-variable-p)
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
 - [`use of moved variable 'st'`](#use-of-moved-variable-st)
@@ -12183,6 +12184,26 @@ fn main() {
 ```
 
 <sub>[tests/errors/optionOrElseUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/optionOrElseUseAfterMove.milo)</sub>
+
+## `use of moved variable 'p'` {#use-of-moved-variable-p}
+
+An array literal passed to a `[T; n]` param moves its elements, as `let a = [p, q]` does.
+
+```milo skip
+fn total(a: [Vec<i64>; 2]): i64 {
+    return a[0].len() + a[1].len()
+}
+
+fn main() {
+    var p: Vec<i64> = Vec.new()
+    p.push(3)
+    var q: Vec<i64> = Vec.new()
+    print(total([p, q]))
+    print(p.len())
+}
+```
+
+<sub>[tests/errors/arrayLitArgUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayLitArgUseAfterMove.milo)</sub>
 
 ## `use of moved variable 'r'` {#use-of-moved-variable-r}
 

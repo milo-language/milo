@@ -3,11 +3,6 @@
 # finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
 # line. Each group names its repro and how it was confirmed.
 
-# `[p, q]` with named owned locals: the array literal copies p and q without moving them, the
-# callee drops the array, and main drops p and q again. ASan: double-free (--debug --sanitize).
-arrayOfGenericElements.milo main own-of-view view:p L20
-arrayOfGenericElements.milo main own-of-view view:q L20
-
 # `m.getOrDefault(k, dflt)` with a named owned default: the miss path hands back dflt's bytes
 # as an owned temporary while dflt still owns them. Repro with a heap default: ASan
 # heap-use-after-free.

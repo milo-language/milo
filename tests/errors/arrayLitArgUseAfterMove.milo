@@ -1,0 +1,13 @@
+// @error: use of moved variable 'p'
+// An array literal passed to a `[T; n]` param moves its elements, as `let a = [p, q]` does.
+fn total(a: [Vec<i64>; 2]): i64 {
+    return a[0].len() + a[1].len()
+}
+
+fn main() {
+    var p: Vec<i64> = Vec.new()
+    p.push(3)
+    var q: Vec<i64> = Vec.new()
+    print(total([p, q]))
+    print(p.len())
+}

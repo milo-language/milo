@@ -9845,6 +9845,9 @@ export class TypeChecker {
         if (!this.elementFits(et, hint.element, elem)) {
           this.error(`array element has type ${this.show(et)}, but the array is declared ${this.show(hint)}`, elem.span);
         }
+        // The literal owns its elements: without this, `f([p, q])` against a `[T; n]`
+        // param left p and q live, and both the callee and the caller dropped them.
+        this.tryMove(elem);
       }
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.elements.length };
       return this.setType(expr, result);
