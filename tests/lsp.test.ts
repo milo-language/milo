@@ -331,6 +331,22 @@ fn main(): i32 {
 }
 `;
 
+// Struct update: the base of `..base` is an expression like any other, so hover,
+// goto-definition and the inlay-hint walker must all reach into it.
+const UPDATE_URI = "file:///tmp/milo-lsp-update.milo";
+const UPDATE_SRC = `struct P { x: i64, y: i64 }
+fn main() {
+    let base = P { x: 1, y: 2 }
+    let q = P { x: 3, ..base }
+    var b = P { x: 5, y: 6 }
+    let r = P { x: 4, ..b.bump() }
+    print(q.y + r.y)
+}
+impl P {
+    fn bump(self: &mut Self): P { self.y = self.y + 1; return P { x: self.x, y: self.y } }
+}
+`;
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -384,7 +400,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC], [UPDATE_URI, UPDATE_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -553,6 +569,19 @@ test("hover on a global variable shows its kind and type", async () => {
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {
   const def = await req(3, "textDocument/definition", { textDocument: { uri: STDLIB_URI }, position: STDLIB_POS });
   expect(def?.uri).toContain("std/string.milo");
+});
+
+test("hover and goto-definition reach the base of a struct update", async () => {
+  // `    let q = P { x: 3, ..base }` — `base` is on line 3 (0-based), char 26.
+  const hover = await req(91, "textDocument/hover", { textDocument: { uri: UPDATE_URI }, position: { line: 3, character: 26 } });
+  expect(hover?.contents?.value).toContain("P");
+  const def = await req(92, "textDocument/definition", { textDocument: { uri: UPDATE_URI }, position: { line: 3, character: 26 } });
+  expect(def?.uri).toBe(UPDATE_URI);
+  expect(def?.range?.start?.line).toBe(2);
+  const hints = await req(93, "textDocument/inlayHint", {
+    textDocument: { uri: UPDATE_URI }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } },
+  });
+  expect(hints.map((h: any) => `${h.position.line}:${h.position.character}:${h.label}`)).toEqual(["5:24:&mut"]);
 });
 
 test("goto-definition on a local impl-method call jumps to the method decl", async () => {

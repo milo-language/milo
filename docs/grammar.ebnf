@@ -153,7 +153,8 @@ primary     = INT | FLOAT | STRING | FSTRING | CHAR
             | "(" expr ")"
             | expr ".." expr                                 (* range, for-in only *)
             | "@" IDENT "(" STRING ")" ;                     (* @embedFile("path") *)
-struct_lit  = IDENT [ type_args ] "{" { IDENT ":" expr [ "," ] } "}" ;
+struct_lit  = IDENT [ type_args ] "{" { IDENT [ ":" expr ] [ "," ] }
+              [ ".." expr [ "," ] ] "}" ;                    (* `..base`: struct update, last *)
 array_lit   = "[" [ expr { "," expr } ] "]" ;
 closure     = [ "move" ] "(" [ param_list ] ")" [ ":" type ] "=>" ( expr | block ) ;
 if_expr     = "if" expr block "else" block ;                 (* both arms required *)

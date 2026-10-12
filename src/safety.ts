@@ -733,7 +733,7 @@ export function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s:
       case "MethodCall": ex(e.object); e.args.forEach(ex); break;
       case "FieldAccess": ex(e.object); break;
       case "IndexAccess": ex(e.object); ex(e.index); break;
-      case "StructLit": e.fields.forEach(f => ex(f.value)); break;
+      case "StructLit": e.fields.forEach(f => ex(f.value)); if (e.base) ex(e.base); break;
       case "ArrayLit": e.elements.forEach(ex); break;
       case "ArrayRepeat": ex(e.value); break;
       case "EnumLit": e.args.forEach(ex); break;

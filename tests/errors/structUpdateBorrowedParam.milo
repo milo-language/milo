@@ -1,0 +1,12 @@
+// A `&S` parameter cannot be the base of a struct update: the base is consumed.
+// @error: cannot move the borrowed value out of 's'
+struct S { a: i64, name: string }
+
+fn bump(s: &S): S {
+    return S { a: s.a + 1, ..s }
+}
+
+fn main() {
+    let s = S { a: 1, name: "x".clone() }
+    print(bump(s).a)
+}

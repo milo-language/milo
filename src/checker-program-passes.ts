@@ -300,6 +300,7 @@ export function checkEscapingClosures(host: ProgramPassHost, program: Program, v
       }
       case "StructLit":
         for (const f of n.fields as { name: string; value: Expr }[]) check(f.value, bound, cannotStore, "the struct holding it");
+        if (n.base) check(n.base as Expr, bound, cannotStore, "the struct holding it");
         break;
       case "ArrayLit":
         for (const el of n.elements as Expr[]) check(el, bound, cannotStore, "the array holding it");
@@ -667,6 +668,7 @@ export function checkNonEscapingParams(host: ProgramPassHost, program: Program, 
       if (n.kind === "Return") { direct(n.value, "is returned"); return; }
       if (n.kind === "StructLit") {
         for (const f of n.fields as { value: Expr }[]) direct(f.value, "is stored in a struct");
+        if (n.base) direct(n.base, "is stored in a struct");
         return;
       }
       if (n.kind === "Assign") { visit(n.target, ctx); direct(n.value, "is stored"); return; }
@@ -799,7 +801,7 @@ export function checkPurity(host: ProgramPassHost, program: Program, view: Progr
         case "UnaryOp": ex(e.operand, bound); break;
         case "FieldAccess": ex(e.object, bound); break;
         case "IndexAccess": ex(e.object, bound); ex(e.index, bound); break;
-        case "StructLit": e.fields.forEach(f => ex(f.value, bound)); break;
+        case "StructLit": e.fields.forEach(f => ex(f.value, bound)); if (e.base) ex(e.base, bound); break;
         case "ArrayLit": e.elements.forEach(el => ex(el, bound)); break;
         case "ArrayRepeat": ex(e.value, bound); break;
         case "Unwrap": case "Propagate": ex(e.operand, bound); break;

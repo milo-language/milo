@@ -682,11 +682,21 @@ function walkGuarded(
 // Every struct literal reachable from an expression. A literal is where a type's invariant
 // stops being an assumption and becomes an obligation: everything downstream gets to assume
 // it, so something has to establish it, and construction is that something.
+// Struct update `S { a: 1, ..base }`: each unlisted field is `base.<field>`, so the
+// invariant is checked against the mixed value rather than left with free field symbols.
+function addStructUpdateFields(lit: any, fields: Map<string, string>, toSmt: (e: Expr) => string): void {
+  if (!lit.base) return;
+  for (const name of STRUCT_FIELDS.get(lit.name) ?? []) {
+    if (!fields.has(name)) fields.set(name, toSmt({ kind: "FieldAccess", object: lit.base, field: name, span: lit.base.span }));
+  }
+}
+
 function collectStructLitsInExpr(expr: Expr, conds: string[], env: Map<string, string>, out: StructLitSite[]): void {
   walkGuarded(expr, conds, env, (n, active) => {
     if (n.kind !== "StructLit" || typeof n.name !== "string" || !STRUCT_INVARIANTS.has(n.name)) return;
     const fields = new Map<string, string>();
     for (const f of n.fields ?? []) fields.set(f.name, exprToSmtWithEnv(f.value, env));
+    addStructUpdateFields(n, fields, (e: Expr) => exprToSmtWithEnv(e, env));
     out.push({ struct: n.name, fields, conditions: [...active] });
   });
 }
@@ -1573,6 +1583,15 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>, types?: Map<strin
             const sym = `${stmt.name}_${f.name}`;
             FIELD_REFS?.add(sym);
             localEnv.set(sym, exprToSmtWithEnv(f.value, localEnv));
+          }
+          // The unlisted fields too: left unset, a shadowed binding's stale value would stand.
+          const fromBase = new Map<string, string>();
+          for (const f of stmt.value.fields) fromBase.set(f.name, "");
+          addStructUpdateFields(stmt.value, fromBase, (e: Expr) => exprToSmtWithEnv(e, localEnv));
+          for (const [name, smt] of fromBase) {
+            if (smt === "") continue;
+            FIELD_REFS?.add(`${stmt.name}_${name}`);
+            localEnv.set(`${stmt.name}_${name}`, smt);
           }
         }
         if (stmt.value) localEnv.set(stmt.name, exprToSmtWithEnv(stmt.value, localEnv));

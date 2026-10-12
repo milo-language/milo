@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 485 distinct messages across 623 programs the compiler must reject.
+Every error message the test suite pins: 492 distinct messages across 630 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -24,6 +24,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 
 - [`'?' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))`](#error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self)
 - [`'?&mut T' is only legal on a parameter of an 'extern' or '@externalLinkage' function`](#mut-t-is-only-legal-on-a-parameter-of-an-extern-or-externallinkage-function)
+- [`'..base' must be the last item in a struct literal`](#base-must-be-the-last-item-in-a-struct-literal)
 - [`'@!wrapping' takes no arguments`](#wrapping-takes-no-arguments)
 - [`'@copy' on 'Plain' does nothing: no variant of it carries a raw pointer`](#copy-on-plain-does-nothing-no-variant-of-it-carries-a-raw-pointer)
 - [`'@copy' on 'Point' does nothing: no field of it is a raw pointer`](#copy-on-point-does-nothing-no-field-of-it-is-a-raw-pointer)
@@ -139,6 +140,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
+- [`a JsonCur is read through its document: write 'doc[s].str()'`](#a-jsoncur-is-read-through-its-document-write-doc-s-str)
 - [`a nested fixed array`](#a-nested-fixed-array)
 - [`a scoped task borrows 'local', which is declared inside the Task.scope body`](#a-scoped-task-borrows-local-which-is-declared-inside-the-task-scope-body)
 - [`a scoped task must be a closure literal`](#a-scoped-task-must-be-a-closure-literal)
@@ -235,6 +237,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
 - [`cannot move the borrowed value out of 'h'`](#cannot-move-the-borrowed-value-out-of-h)
 - [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
+- [`cannot move the borrowed value out of 'p'`](#cannot-move-the-borrowed-value-out-of-p)
+- [`cannot move the borrowed value out of 's'`](#cannot-move-the-borrowed-value-out-of-s)
 - [`cannot move the borrowed value out of 'w'`](#cannot-move-the-borrowed-value-out-of-w)
 - [`cannot open`](#cannot-open)
 - [`cannot open 'nonexistent.txt'`](#cannot-open-nonexistent-txt)
@@ -270,6 +274,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot take 'Texture' out of a container by index: it carries @noCopy`](#cannot-take-texture-out-of-a-container-by-index-it-carries-nocopy)
 - [`cannot take a slice of a temporary`](#cannot-take-a-slice-of-a-temporary)
 - [`cannot take type parameters`](#cannot-take-type-parameters)
+- [`cannot use '..' struct update with 'R', which implements Drop`](#cannot-use-struct-update-with-r-which-implements-drop)
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
 - [`cannot use 'v' inside 'for x in &mut v'`](#cannot-use-v-inside-for-x-in-mut-v)
@@ -434,6 +439,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`struct 'P' has no field 'nope'`](#struct-p-has-no-field-nope)
 - [`struct 'Ping<i64>' is recursive by value and has infinite size`](#struct-ping-i64-is-recursive-by-value-and-has-infinite-size)
 - [`struct 'Plain' has no JSON codec`](#struct-plain-has-no-json-codec)
+- [`struct update base has type T, but the literal builds S`](#struct-update-base-has-type-t-but-the-literal-builds-s)
 - [`swap: operands have different ranges i32(1..9) and i32`](#swap-operands-have-different-ranges-i32-1-9-and-i32)
 - [`swap: operands have different types`](#swap-operands-have-different-types)
 - [`takes 2 parameters, the Milo declaration takes 3`](#takes-2-parameters-the-milo-declaration-takes-3)
@@ -481,6 +487,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved value 's.box'`](#use-of-moved-value-s-box)
 - [`use of moved variable`](#use-of-moved-variable)
 - [`use of moved variable 'a'`](#use-of-moved-variable-a)
+- [`use of moved variable 'base'`](#use-of-moved-variable-base)
 - [`use of moved variable 'box'`](#use-of-moved-variable-box)
 - [`use of moved variable 'c'`](#use-of-moved-variable-c)
 - [`use of moved variable 'd'`](#use-of-moved-variable-d)
@@ -628,6 +635,22 @@ fn main() {
 ```
 
 <sub>[tests/errors/nullableRefTypeArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nullableRefTypeArg.milo)</sub>
+
+## `'..base' must be the last item in a struct literal` {#base-must-be-the-last-item-in-a-struct-literal}
+
+`..base` must come last in a struct literal.
+
+```milo skip
+struct S { a: i64, b: i64 }
+
+fn main() {
+    let t = S { a: 1, b: 2 }
+    let s = S { ..t, a: 3 }
+    print(s.b)
+}
+```
+
+<sub>[tests/errors/structUpdateNotLast.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateNotLast.milo)</sub>
 
 ## `'@!wrapping' takes no arguments` {#wrapping-takes-no-arguments}
 
@@ -3793,6 +3816,21 @@ fn main() {
 
 <sub>[tests/errors/deriveJsonIntKeyedMap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonIntKeyedMap.milo)</sub>
 
+## `a JsonCur is read through its document: write 'doc[s].str()'` {#a-jsoncur-is-read-through-its-document-write-doc-s-str}
+
+A stored cursor cannot read by itself: it holds no reference to the document.
+
+```milo skip
+from "std/json" import { Json }
+fn main() {
+    let Result.Ok(doc) = Json.parse("{}") else { return }
+    let s = doc["a"]
+    print(s.str() ?? "")
+}
+```
+
+<sub>[tests/errors/jsonCurReadAlone.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonCurReadAlone.milo)</sub>
+
 ## `a nested fixed array` {#a-nested-fixed-array}
 
 `MiloType` carries ONE `isArray` flag, so an array of an array has nowhere to record the inner one. The parser built the type from the inner type's NAME alone, which silently dropped it: this annotation was accepted and meant `[i64; 2]`. A flat literal satisfied it, `g[1][0]` reported "cannot index type i64" against a program that had written a 2D array, and a nested literal reached clang as a store of `[2 x i64]` into an `i64` slot. An annotation the language cannot represent now says so.
@@ -6255,6 +6293,43 @@ pub fn main(): i32 { print(firstLine("a\nb")) return 0 }
 
 <sub>[tests/errors/stringViewIterEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewIterEscape.milo)</sub>
 
+## `cannot move the borrowed value out of 'p'` {#cannot-move-the-borrowed-value-out-of-p}
+
+A for-in binding is a borrow: moving the unlisted fields out of it would alias the element's heap buffers. Clone it: `..p.clone()`.
+
+```milo skip
+struct S { a: i64, name: string }
+
+fn main() {
+    let v = [S { a: 1, name: "x".clone() }]
+    for p in v {
+        let t = S { a: 2, ..p }
+        print(t.name)
+    }
+}
+```
+
+<sub>[tests/errors/structUpdateBorrowedBase.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateBorrowedBase.milo)</sub>
+
+## `cannot move the borrowed value out of 's'` {#cannot-move-the-borrowed-value-out-of-s}
+
+A `&S` parameter cannot be the base of a struct update: the base is consumed.
+
+```milo skip
+struct S { a: i64, name: string }
+
+fn bump(s: &S): S {
+    return S { a: s.a + 1, ..s }
+}
+
+fn main() {
+    let s = S { a: 1, name: "x".clone() }
+    print(bump(s).a)
+}
+```
+
+<sub>[tests/errors/structUpdateBorrowedParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateBorrowedParam.milo)</sub>
+
 ## `cannot move the borrowed value out of 'w'` {#cannot-move-the-borrowed-value-out-of-w}
 
 the element stays in the Vec, so it can only be cloned out.
@@ -7229,6 +7304,28 @@ fn main() {
 ```
 
 <sub>[tests/errors/interfaceGenericMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/interfaceGenericMethod.milo)</sub>
+
+## `cannot use '..' struct update with 'R', which implements Drop` {#cannot-use-struct-update-with-r-which-implements-drop}
+
+Moving fields out of a value with a destructor would leave Drop reading empty fields.
+
+```milo skip
+struct R { id: i64, name: string }
+
+impl Drop for R {
+    fn drop(self: &mut R) {
+        print("drop ", self.id)
+    }
+}
+
+fn main() {
+    let r = R { id: 1, name: "x".clone() }
+    let r2 = R { id: 2, ..r }
+    print(r2.name)
+}
+```
+
+<sub>[tests/errors/structUpdateDropBase.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateDropBase.milo)</sub>
 
 ## `cannot use '==' on enum 'Shape' with payload-bearing variants` {#cannot-use-on-enum-shape-with-payload-bearing-variants}
 
@@ -10575,6 +10672,23 @@ fn main() {
 
 <sub>[tests/errors/deriveJsonUnsupportedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonUnsupportedField.milo)</sub>
 
+## `struct update base has type T, but the literal builds S` {#struct-update-base-has-type-t-but-the-literal-builds-s}
+
+The base must be the same struct the literal builds.
+
+```milo skip
+struct S { a: i64, b: i64 }
+struct T { a: i64, b: i64 }
+
+fn main() {
+    let t = T { a: 1, b: 2 }
+    let s = S { a: 3, ..t }
+    print(s.b)
+}
+```
+
+<sub>[tests/errors/structUpdateWrongBase.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateWrongBase.milo)</sub>
+
 ## `swap: operands have different ranges i32(1..9) and i32` {#swap-operands-have-different-ranges-i32-1-9-and-i32}
 
 Each operand receives the other's value with no check between, so a ranged place swapped with a plain one held 10, and the `Option<Lvl>` niche then read it as None.
@@ -11668,6 +11782,23 @@ fn main() {
 ```
 
 <sub>[tests/errors/useAfterMoveMatchExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMoveMatchExpr.milo)</sub>
+
+## `use of moved variable 'base'` {#use-of-moved-variable-base}
+
+The base of a struct update is moved; using it afterwards is use-after-move.
+
+```milo skip
+struct S { a: i64, name: string }
+
+fn main() {
+    let base = S { a: 1, name: "x".clone() }
+    let t = S { a: 2, ..base }
+    print(t.a)
+    print(base.name)
+}
+```
+
+<sub>[tests/errors/structUpdateUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structUpdateUseAfterMove.milo)</sub>
 
 ## `use of moved variable 'box'` {#use-of-moved-variable-box}
 

@@ -1,0 +1,10 @@
+// The base must be the same struct the literal builds.
+// @error: struct update base has type T, but the literal builds S
+struct S { a: i64, b: i64 }
+struct T { a: i64, b: i64 }
+
+fn main() {
+    let t = T { a: 1, b: 2 }
+    let s = S { a: 3, ..t }
+    print(s.b)
+}

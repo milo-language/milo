@@ -3221,6 +3221,7 @@ export class TypeChecker {
         return this.pointerViewsIn(e.operand, out);
       case "StructLit":
         for (const f of e.fields) this.pointerViewsIn(f.value, out);
+        if (e.base) this.pointerViewsIn(e.base, out);
         return out;
       case "ArrayLit":
         for (const el of e.elements) this.pointerViewsIn(el, out);
@@ -8560,7 +8561,8 @@ export class TypeChecker {
       case "ArrayRepeat":
         return this.isConstGlobalInit(e.value);
       case "StructLit":
-        return e.fields.every((f) => this.isConstGlobalInit(f.value));
+        // A base is read at run time (codegen copies its unlisted fields out of it).
+        return !e.base && e.fields.every((f) => this.isConstGlobalInit(f.value));
       case "EnumLit":
         // A static method call (`Arena<T>.new()`) parses as an EnumLit and is recorded in
         // `staticCalls` — it is a real call, not a variant construction, and folding it
@@ -10903,9 +10905,10 @@ export class TypeChecker {
   // A generic struct literal checked against one concrete instance (`hint`, the
   // monomorphized struct): from a binding's annotation, or from the literal's own
   // `Pair<i64, string> { … }` type arguments.
-  private checkStructLitAsInstance(expr: ExprOf<"StructLit">, hint: Extract<TypeKind, { tag: "struct" }>): TypeKind {
+  private checkStructLitAsInstance(expr: ExprOf<"StructLit">, hint: Extract<TypeKind, { tag: "struct" }>, baseType?: TypeKind): TypeKind {
     const sp = expr.span;
     const hintInfo = must(this.structs, hint.name, "struct instance");
+    const shown = expr.name || this.show(hint);
     const namesOk = this.checkStructLitFieldNames(expr, hint.name, hintInfo.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = hintInfo.fields.find(d => d.name === f.name);
@@ -10916,22 +10919,63 @@ export class TypeChecker {
         valType = fieldDef.type;
       }
       if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
-        this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
+        this.error(`field '${f.name}' of '${shown}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
       }
       if (fieldDef.type.tag === "int") this.enforceRangeInto(f.value, valType, fieldDef.type, f.value.span);
       this.tryMove(f.value);
     }
+    this.checkStructLitBase(expr, hint, baseType);
     for (const d of hintInfo.fields) {
-      if (namesOk && !expr.fields.find(f => f.name === d.name)) {
-        this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
+      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name)) {
+        this.error(`missing field '${d.name}' in struct '${shown}'`, sp);
       }
     }
     this.rewrittenStructLits.set(expr, hint.name);
     return this.setType(expr, hint);
   }
 
+  // Struct update `S { a: 1, ..base }`. Called after the listed fields are checked, which
+  // is also the order they run in. The base is consumed whole, through tryMove, so a
+  // borrowed base gets the ordinary move-out-of-borrow error and its `.clone()` hint, and
+  // an owned local is moved (a later use is use-after-move). `baseType` is passed when the
+  // base was already checked to find the literal's type (the inferred forms).
+  private checkStructLitBase(expr: ExprOf<"StructLit">, result: Extract<TypeKind, { tag: "struct" }>, baseType?: TypeKind): void {
+    const base = expr.base;
+    if (!base) return;
+    const bt = baseType ?? this.checkExpr(base, result);
+    if (bt.tag === "unknown" || this.isPoisoned(bt)) return;
+    // A `&S` base is the right type behind a borrow: tryMove names that problem better
+    // than a type mismatch would.
+    const owned = bt.tag === "ref" ? bt.inner : bt;
+    if (!typeEq(owned, result)) {
+      this.error(`struct update base has type ${this.show(bt)}, but the literal builds ${this.show(result)}`, base.span ?? expr.span,
+        `'..base' fills the unlisted fields, so it must be a ${this.show(result)} itself`);
+      return;
+    }
+    // Rust's E0509: the unlisted fields are moved out of the base, and a Drop impl runs
+    // against the whole value, so its destructor would then see emptied fields.
+    if (this.dropImpls.has(result.name)) {
+      this.error(`cannot use '..' struct update with '${this.show(result)}', which implements Drop`, base.span ?? expr.span,
+        `the unlisted fields would be moved out of the base, leaving its destructor reading empty fields: list every field instead`);
+      return;
+    }
+    this.tryMove(base);
+  }
+
   private checkStructLitExpr(expr: ExprOf<"StructLit">): TypeKind {
     const sp = expr.span;
+    // `{ a: 1, ..base }`: the base names the struct, so this is that struct's literal,
+    // not a fresh anonymous one.
+    if (expr.name === "" && expr.base) {
+      const bt = this.checkExpr(expr.base);
+      const owned = bt.tag === "ref" ? bt.inner : bt;
+      if (owned.tag === "struct" && this.structs.has(owned.name)) return this.checkStructLitAsInstance(expr, owned, bt);
+      if (bt.tag !== "unknown" && !this.isPoisoned(bt)) {
+        this.error(`struct update base must be a struct, got ${this.show(bt)}`, expr.base.span ?? sp);
+      }
+      for (const f of expr.fields) this.checkExpr(f.value);
+      return this.setType(expr, { tag: "unknown" });
+    }
     // anonymous struct literal: { field: value, ... }
     if (expr.name === "") {
       if (expr.fields.length === 0) { this.error(`anonymous struct literal must have at least one field`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -10963,6 +11007,21 @@ export class TypeChecker {
       }
       const mangled = this.monomorphizeStruct(expr.name, expr.typeArgs.map(t => this.resolve(t)), sp);
       return this.checkStructLitAsInstance(expr, { tag: "struct", name: mangled });
+    }
+    // `Pair { a: 1, ..p }`: the base fixes the instance, including the type parameters
+    // no listed field mentions.
+    if (genericInfo && expr.base) {
+      const bt = this.checkExpr(expr.base);
+      const owned = bt.tag === "ref" ? bt.inner : bt;
+      if (owned.tag === "struct" && this.structs.get(owned.name)?.baseName === expr.name) {
+        return this.checkStructLitAsInstance(expr, owned, bt);
+      }
+      if (bt.tag !== "unknown" && !this.isPoisoned(bt)) {
+        this.error(`struct update base has type ${this.show(bt)}, but the literal builds a '${expr.name}'`, expr.base.span ?? sp,
+          `'..base' fills the unlisted fields, so it must be a '${expr.name}' itself`);
+      }
+      for (const f of expr.fields) this.checkExpr(f.value);
+      return this.setType(expr, { tag: "unknown" });
     }
     if (genericInfo) {
       const typeMap = new Map<string, TypeKind>();
@@ -11035,8 +11094,9 @@ export class TypeChecker {
       if (fieldDef.type.tag === "int") this.enforceRangeInto(f.value, valType, fieldDef.type, f.value.span);
       this.tryMove(f.value);
     }
+    this.checkStructLitBase(expr, { tag: "struct", name: expr.name });
     for (const d of info.fields) {
-      if (namesOk && !expr.fields.find(f => f.name === d.name)) {
+      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name)) {
         this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
       }
     }

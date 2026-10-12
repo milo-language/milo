@@ -184,6 +184,7 @@ export function manglePackage(
         e.name = resolveType(e.name, sc);
         for (const t of e.typeArgs ?? []) walkType(t, sc);
         for (const f of e.fields) walkExpr(f.value, sc);
+        if (e.base) walkExpr(e.base, sc);
         break;
       case "EnumLit":
         // `SOME_GLOBAL.field` parses as an EnumLit — the parser cannot tell a

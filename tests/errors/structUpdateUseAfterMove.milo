@@ -1,0 +1,10 @@
+// The base of a struct update is moved; using it afterwards is use-after-move.
+// @error: use of moved variable 'base'
+struct S { a: i64, name: string }
+
+fn main() {
+    let base = S { a: 1, name: "x".clone() }
+    let t = S { a: 2, ..base }
+    print(t.a)
+    print(base.name)
+}

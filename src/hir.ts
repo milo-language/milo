@@ -20,7 +20,9 @@ export type HIRExpr =
   | { kind: "BinOp"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "UnaryOp"; op: string; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; span?: Span }
-  | { kind: "StructLit"; name: string; fields: { name: string; value: HIRExpr }[]; type: TypeKind; span?: Span }
+  // `base` (struct update): the unlisted fields are moved out of it and codegen drops its
+  // listed (overridden) ones, so the base is consumed exactly once.
+  | { kind: "StructLit"; name: string; fields: { name: string; value: HIRExpr }[]; base?: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "FieldAccess"; object: HIRExpr; field: string; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "ArrayLit"; elements: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayRepeat"; value: HIRExpr; count: number; type: TypeKind; span?: Span }

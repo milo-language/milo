@@ -1,0 +1,15 @@
+// Moving fields out of a value with a destructor would leave Drop reading empty fields.
+// @error: cannot use '..' struct update with 'R', which implements Drop
+struct R { id: i64, name: string }
+
+impl Drop for R {
+    fn drop(self: &mut R) {
+        print("drop ", self.id)
+    }
+}
+
+fn main() {
+    let r = R { id: 1, name: "x".clone() }
+    let r2 = R { id: 2, ..r }
+    print(r2.name)
+}

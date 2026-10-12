@@ -1,0 +1,102 @@
+// Struct update `S { a: x, ..base }`: listed fields come from the initializers, every
+// other field is moved out of the base, and the base's overridden fields are dropped.
+struct Period {
+    label: string,
+    start: i64,
+    end: i64,
+    tags: Vec<string>,
+    note: string,
+}
+
+struct Inner {
+    name: string,
+    weights: Vec<i64>,
+}
+
+struct Outer {
+    id: i64,
+    inner: Inner,
+    title: string,
+}
+
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn mk(label: string): Period {
+    return Period { label, start: 1, end: 2, tags: ["a".clone(), "b".clone()], note: "from mk".clone() }
+}
+
+fn say(msg: string, v: i64): i64 {
+    print(msg)
+    return v
+}
+
+fn base(msg: string): Period {
+    print(msg)
+    return mk("base".clone())
+}
+
+fn main() {
+    // basic override; base is a call result
+    let p = Period { label: "first".clone(), start: 10, ..mk("unused".clone()) }
+    print(p.label, " ", p.start, " ", p.end, " ", p.tags.len, " ", p.note)
+
+    // base is an owned local, consumed; heap fields both overridden and moved
+    let q = Period { label: "q".clone(), tags: ["x".clone()], ..p }
+    print(q.label, " ", q.start, " ", q.tags[0], " ", q.note)
+
+    // trailing comma after the base, and every field listed (the base is just dropped)
+    let r = Period { label: "r".clone(), start: 0, end: 0, tags: Vec.new(), note: "".clone(), ..q, }
+    print(r.label, " ", r.tags.len)
+
+    // explicit fields are evaluated in source order, then the base
+    let s = Period { end: say("end", 7), start: say("start", 6), ..base("base") }
+    print(s.start, " ", s.end, " ", s.label)
+
+    // nested struct carried over from the base
+    let o = Outer { id: 1, inner: Inner { name: "in".clone(), weights: [1, 2, 3] }, title: "o".clone() }
+    let o2 = Outer { id: 2, ..o }
+    print(o2.id, " ", o2.inner.name, " ", o2.inner.weights.len, " ", o2.title)
+    let o3 = Outer { inner: Inner { name: "new".clone(), ..o2.inner.clone() }, ..o2 }
+    print(o3.id, " ", o3.inner.name, " ", o3.inner.weights[2], " ", o3.title)
+
+    // generic struct: the base fixes the instance
+    let g = Pair { first: 1, second: "two".clone() }
+    let g2 = Pair { first: 5, ..g }
+    print(g2.first, " ", g2.second)
+    let g3: Pair<i64, string> = Pair { second: "three".clone(), ..g2 }
+    print(g3.first, " ", g3.second)
+    // nothing listed: a plain move of the base
+    let g4 = Pair { ..g3 }
+    print(g4.first, " ", g4.second)
+
+    // the base named only through a clone stays usable
+    let keep = mk("keep".clone())
+    let copy = Period { start: 99, ..keep.clone() }
+    print(keep.label, " ", keep.start, " ", copy.label, " ", copy.start)
+
+    // in a loop, cloning each borrowed element
+    let v = [mk("a".clone()), mk("b".clone())]
+    for pp in v {
+        let n = Period { start: 42, ..pp.clone() }
+        print(n.label, " ", n.start)
+    }
+}
+
+// @expect: first 10 2 2 from mk
+// @expect: q 10 x from mk
+// @expect: r 0
+// @expect: end
+// @expect: start
+// @expect: base
+// @expect: 6 7 base
+// @expect: 2 in 3 o
+// @expect: 2 new 3 o
+// @expect: 5 two
+// @expect: 5 three
+// @expect: 5 three
+// @expect: keep 1 keep 99
+// @expect: a 42
+// @expect: b 42

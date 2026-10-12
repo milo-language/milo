@@ -1395,6 +1395,7 @@ export class Codegen {
           lines.push(`  ${ptr} = getelementptr %${expr.name}, ptr ${destPtr}, i32 0, i32 ${idx}`);
           this.genStoreInto(lines, ptr, fieldTy, f.value);
         }
+        this.genStructUpdateBase(lines, destPtr, expr);
         return;
       }
       if (expr.kind === "Ident" || expr.kind === "FieldAccess" ||
@@ -6698,9 +6699,50 @@ export class Codegen {
       lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
       this.genStoreInto(lines, ptr, fieldTy, f.value);
     }
+    this.genStructUpdateBase(lines, alloca, expr);
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);
     return [lines, val, structTy];
+  }
+
+  // Struct update `S { a: 1, ..base }`: fill the unlisted fields of the literal at
+  // `destPtr` from the base, after the listed fields were stored (source order). The base
+  // is evaluated once into a scratch slot; genStoreInto does the move bookkeeping (a moved
+  // local is zeroed and its alive flag cleared). Its unlisted fields are copied across and
+  // its listed ones dropped here, so each field the base owned ends with exactly one owner.
+  private genStructUpdateBase(lines: string[], destPtr: string, expr: HIRExpr & { kind: "StructLit" }): void {
+    const base = expr.base;
+    if (!base) return;
+    const layout = must(this.structLayouts, expr.name, "struct layouts");
+    const structTy = `%${expr.name}`;
+    const tmp = `%__supd.${this.scopeCounter++}`;
+    this.entryAllocas.push(`  ${tmp} = alloca ${structTy}`);
+    if (base.type.tag === "ref") {
+      // Only a Copy struct reaches here behind a `&` (the checker refuses to move a
+      // non-Copy one out of a borrow), so a byte copy of the pointee is the whole story.
+      const [bl, bv] = this.genExpr(base);
+      lines.push(...bl);
+      this.emitMemcpy(lines, tmp, bv, structTy);
+    } else {
+      this.genStoreInto(lines, tmp, structTy, base);
+    }
+    layout.fields.forEach((lf, idx) => {
+      const src = this.nextTemp();
+      lines.push(`  ${src} = getelementptr ${structTy}, ptr ${tmp}, i32 0, i32 ${idx}`);
+      if (expr.fields.some(f => f.name === lf.name)) {
+        if (this.needsDropCg(lf.typeKind)) this.emitDropValue(lines, src, lf.typeKind);
+        return;
+      }
+      const dst = this.nextTemp();
+      lines.push(`  ${dst} = getelementptr ${structTy}, ptr ${destPtr}, i32 0, i32 ${idx}`);
+      if (this.isBigAgg(lf.type)) {
+        this.emitMemcpy(lines, dst, src, lf.type);
+      } else {
+        const v = this.nextTemp();
+        lines.push(`  ${v} = load ${lf.type}, ptr ${src}`);
+        lines.push(this.valStore(lf.type, v, dst));
+      }
+    });
   }
 
   private genArrayLen(expr: HIRExpr & { kind: "ArrayLen" }, lines: string[]): Gen {
@@ -15444,7 +15486,8 @@ export class Codegen {
         return null;
       case "StructLit": {
         const layout = this.structLayouts.get(expr.name);
-        if (!layout) return null;
+        // A struct-update base is a run-time value even when every field is listed.
+        if (!layout || expr.base) return null;
         const fieldVals: string[] = [];
         for (const lf of layout.fields) {
           const ef = expr.fields.find(f => f.name === lf.name);
@@ -15487,7 +15530,7 @@ export class Codegen {
   // stays empty.
   private isFullyConstInit(g: import("./hir").HIRGlobal): boolean {
     if (this.tryConstantExpr(g.value) !== null) return true;
-    if (g.value?.kind !== "StructLit") return false;
+    if (g.value?.kind !== "StructLit" || g.value.base) return false;
     const layout = this.structLayouts.get(g.type.tag === "struct" ? g.type.name : "");
     if (!layout) return false;
     const byName = new Map(g.value.fields.map(f => [f.name, f.value]));
@@ -15518,7 +15561,7 @@ export class Codegen {
   // computed scalar) fall back to zeroinitializer for that field alone, which is their
   // correct empty form; the runtime global-init pass fills them in.
   private tryConstantStructInit(value: import("./hir").HIRExpr, type: TypeKind): string | null {
-    if (!value || value.kind !== "StructLit" || type.tag !== "struct") return null;
+    if (!value || value.kind !== "StructLit" || value.base || type.tag !== "struct") return null;
     const layout = this.structLayouts.get(type.name);
     if (!layout) return null;
     const byName = new Map(value.fields.map(f => [f.name, f.value]));

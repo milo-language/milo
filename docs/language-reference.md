@@ -1069,6 +1069,24 @@ let p = Point { x, y }        // same as Point { x: x, y: y }
 let q = Point { x, y: 99 }    // shorthand + explicit
 ```
 
+#### Struct update
+
+`..base`, last in a literal, fills every field the literal does not list from `base`, a value of the same struct (the same instance, for a generic one). A trailing comma after it is allowed; nothing else may follow it.
+
+```milo
+struct Period { label: string, start: i64, end: i64, note: string }
+let base = Period { label: "a".clone(), start: 1, end: 2, note: "n".clone() }
+let next = Period { label: "b".clone(), start: 5, ..base }
+print(next.label, " ", next.start, " ", next.end, " ", next.note)   // b 5 2 n
+```
+
+- The listed fields are evaluated in source order, then `base`, once.
+- The base is **consumed**: its unlisted fields move into the new value and its listed (overridden) fields are dropped there. An owned local used as a base is moved, so a later use is use-after-move.
+- A borrowed base (a `&T` parameter, a `for` binding, a field reached through a borrow) cannot be consumed; clone it: `..p.clone()`.
+- A base whose type implements `Drop` is rejected: moving fields out of it would leave its destructor reading emptied fields (Rust's E0509). List every field instead.
+- Listing every field and still writing `..base` is allowed; the base is simply dropped.
+- The inferred forms work too: `Pair { first: 1, ..p }` takes its type arguments from `p`, and `{ x: 1, ..p }` builds `p`'s struct.
+
 ### Newtypes — distinct type from a single field
 
 A struct with one field is a **newtype**: a zero-cost, distinct type wrapping a value. It compiles to exactly its inner type (the wrapper is elided — same registers, same ABI), but the type checker keeps it separate from the raw type and from every other newtype. This is the idiom for type-safe IDs and indices: give each pool or key space its own newtype and the compiler rejects cross-pool confusion that a bare `i64` would wave through.

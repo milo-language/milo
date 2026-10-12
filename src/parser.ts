@@ -1748,6 +1748,7 @@ export class Parser {
       // or field shorthand `{ IDENT ,` / `{ IDENT }` (desugars to `{ IDENT: IDENT }`).
       if (this.at(TokenKind.LBrace) && typeSpelled(tok.value)
           && (this.peekN(1).kind === TokenKind.RBrace
+              || this.peekN(1).kind === TokenKind.DotDot
               || (this.peekN(1).kind === TokenKind.Ident
                   && (this.peekN(2).kind === TokenKind.Colon
                       || this.peekN(2).kind === TokenKind.Comma
@@ -1831,7 +1832,18 @@ export class Parser {
   private parseStructLit(name: string, span: Span, typeArgs?: import("./ast").MiloType[]): Expr {
     this.expect(TokenKind.LBrace);
     const fields: { name: string; value: Expr }[] = [];
+    let base: Expr | undefined;
     while (!this.at(TokenKind.RBrace)) {
+      // Struct update `..base`: once, last, with at most a trailing comma after it.
+      if (this.match(TokenKind.DotDot)) {
+        base = this.parseExpr();
+        this.match(TokenKind.Comma);
+        if (!this.at(TokenKind.RBrace)) {
+          this.error(`'..base' must be the last item in a struct literal`, this.peek(), undefined,
+            `list every field before the '..': 'S { a: 1, ..base }'`);
+        }
+        break;
+      }
       const nameTok = this.expect(TokenKind.Ident);
       const fieldName = nameTok.value;
       // Field shorthand: `{ key }` desugars to `{ key: key }` (value is the
@@ -1844,7 +1856,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructLit", name, fields, ...(typeArgs && { typeArgs }), span };
+    return { kind: "StructLit", name, fields, ...(typeArgs && { typeArgs }), ...(base && { base }), span };
   }
 
   private parseCall(name: string, span: Span): Expr {

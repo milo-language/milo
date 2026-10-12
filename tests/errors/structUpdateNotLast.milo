@@ -1,0 +1,9 @@
+// `..base` must come last in a struct literal.
+// @error: '..base' must be the last item in a struct literal
+struct S { a: i64, b: i64 }
+
+fn main() {
+    let t = S { a: 1, b: 2 }
+    let s = S { ..t, a: 3 }
+    print(s.b)
+}

@@ -62,6 +62,9 @@ const cases: Record<string, string> = {
   inlineStructDecl: `struct P { x: i64, y: i64 }\n`,
   inlineStructLitArg: `fn main(): i32 {\n    take(P { x: 1, y: 2 })\n    let q = P { x: 1, y: 2 }\n    return 0\n}\n`,
   emptyFnBody: `fn take(p: P) {}\n`,
+  // Struct update: the `..` of a base keeps the space after `,`/`{` that a range's
+  // `..` does not get (`0..n`, `s[..3]`).
+  structUpdate: `fn main(): i32 {\n    let q = P { x: 1, ..p }\n    let r = P { ..q }\n    let s = P {\n        x: 2,\n        ..r.clone(),\n    }\n    for i in 0..s.x {}\n    return 0\n}\n`,
   inlineMatchArm: `fn f(o: Option<i64>): i64 {\n    match o {\n        Option.Some(n) => { return n }\n        Option.None => {}\n    }\n    return 0\n}\n`,
   inlineClosureArg: `fn main(): i32 {\n    let r = ap((n: i64) => { return n + 1 })\n    return r\n}\n`,
   // `fn` inside the group is a top-level keyword; the blank-line rule must not fire

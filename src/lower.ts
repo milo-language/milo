@@ -963,6 +963,7 @@ class LowerCtx {
           kind: "StructLit",
           name: structName,
           fields: expr.fields.map(f => ({ name: f.name, value: this.lowerExpr(f.value) })),
+          ...(expr.base && { base: this.lowerExpr(expr.base) }),
           type: { tag: "struct", name: structName },
           span: expr.span,
         };

@@ -1858,7 +1858,7 @@ function visitExpr(e: Expr, cb: (e: Expr) => void) {
     case "BinOp": visitExpr(e.left, cb); visitExpr(e.right, cb); break;
     case "UnaryOp": visitExpr(e.operand, cb); break;
     case "Call": for (const a of e.args) visitExpr(a, cb); break;
-    case "StructLit": for (const f of e.fields) visitExpr(f.value, cb); break;
+    case "StructLit": for (const f of e.fields) visitExpr(f.value, cb); if (e.base) visitExpr(e.base, cb); break;
     case "FieldAccess": visitExpr(e.object, cb); break;
     case "ArrayLit": for (const el of e.elements) visitExpr(el, cb); break;
     case "ArrayRepeat": visitExpr(e.value, cb); break;

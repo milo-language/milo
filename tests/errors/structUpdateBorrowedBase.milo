@@ -1,0 +1,12 @@
+// A for-in binding is a borrow: moving the unlisted fields out of it would alias the
+// element's heap buffers. Clone it: `..p.clone()`.
+// @error: cannot move the borrowed value out of 'p'
+struct S { a: i64, name: string }
+
+fn main() {
+    let v = [S { a: 1, name: "x".clone() }]
+    for p in v {
+        let t = S { a: 2, ..p }
+        print(t.name)
+    }
+}
