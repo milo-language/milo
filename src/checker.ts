@@ -1178,21 +1178,25 @@ export class TypeChecker {
   // then the nearest std export.
   // A name this file never imported that other modules export under per-module symbols
   // (src/resolver.ts, stage 1): nothing in the merged program is called `name` any more,
-  // so the visibility pass cannot report it as unimported. Name the modules instead.
-  private renamedExportHint(name: string, ns: "values" | "types"): string | undefined {
-    const files: string[] = [];
+  // so the visibility pass cannot report it as unimported, and the lookup that failed
+  // would say "undefined". Reported the way the visibility pass reports an unimported
+  // name, with the import line to add.
+  private unimportedRenamed(name: string, ns: "values" | "types", sp: Span | undefined): { message: string; hint: string } | undefined {
+    const files = new Set<string>();
     for (const [sym, written] of this._displayNames ?? []) {
       if (written !== name) continue;
       const o = this.declOrigins?.[ns].get(sym);
-      if (o?.anyPub) files.push(...[...o.files].map(f => basename(f)));
+      if (o?.anyPub) for (const f of o.files) files.add(f);
     }
-    if (files.length === 0) return undefined;
-    return `'${name}' is exported by ${files.sort().join(" and ")}, and this file imports it from none of them: add it to the import list of the module you mean`;
+    if (files.size === 0) return undefined;
+    const sorted = [...files].sort();
+    const hint = sorted.length === 1 && sp?.file
+      ? `it is exported by ${basename(sorted[0])}; add it to the import list: from "${importPathFrom(sp.file, sorted[0])}" import { ${name} }`
+      : `it is exported by ${sorted.map(f => basename(f)).join(" and ")}; add it to the import list of the module you mean`;
+    return { message: `'${name}' is not imported`, hint };
   }
 
   private unknownTypeHint(name: string, extra: Iterable<string> = []): string {
-    const renamed = this.renamedExportHint(name, "types");
-    if (renamed) return renamed;
     const fromStd = importHint(name);
     if (fromStd) return fromStd;
     const declared = new Set<string>([
@@ -1200,7 +1204,7 @@ export class TypeChecker {
       ...this.genericStructs.keys(), ...this.genericEnums.keys(),
       ...this.typeAliases.keys(), ...this.interfaces.keys(),
       ...PRIMITIVE_TYPE_NAMES, ...BUILTIN_GENERIC_TYPE_NAMES, ...extra,
-    ].filter(n => !n.includes("$")));
+    ].map(n => this._displayNames?.get(n) ?? n).filter(n => !n.includes("$")));
     return didYouMean(suggestions(name, declared))
       ?? didYouMean(suggestions(name, stdExportNames()))
       ?? `no type named '${name}' is declared or imported here`;
@@ -1238,7 +1242,9 @@ export class TypeChecker {
       if (reported.has(key)) return;
       reported.add(key);
       if (!unknown.has(ty.name)) unknown.set(ty.name, sp);
-      this.error(`unknown type '${ty.name}'`, sp, this.unknownTypeHint(ty.name, known));
+      const unimported = this.unimportedRenamed(ty.name, "types", sp);
+      if (unimported) this.diagnostics.push({ severity: "error", span: sp, ...unimported, code: "unimported" });
+      else this.error(`unknown type '${ty.name}'`, sp, this.unknownTypeHint(ty.name, known));
     };
     // Statements and expressions hold types in many node kinds (let annotations, casts,
     // turbofish args, closure params); a structural walk finds all of them without a
@@ -1287,7 +1293,10 @@ export class TypeChecker {
   private nameHint(name: string): string | undefined {
     const seen = new Set<string>();
     for (let i = this.scopes.length - 1; i >= 0; i--) for (const k of this.scopes[i].keys()) seen.add(k);
-    for (const k of this.functions.keys()) if (!k.includes("$")) seen.add(k);
+    for (const sym of this.functions.keys()) {
+      const k = this._displayNames?.get(sym) ?? sym;
+      if (!k.includes("$")) seen.add(k);
+    }
     return didYouMean(suggestions(name, seen));
   }
 
@@ -3806,9 +3815,11 @@ export class TypeChecker {
     // `?`-propagation) that a redeclaration does not rebind, and prelude signatures
     // already name them. Overriding one used to be allowed and merely broke the
     // prelude three files away; say so at the declaration instead.
+    // By the written name: a per-module rename (src/mangle.ts) does not make it another type.
     for (const e of program.enums) {
-      if (e.name === "Option" || e.name === "Result") {
-        this.error(`'${e.name}' is a builtin enum and cannot be redeclared`, e.span,
+      const written = display(this._displayNames, e.name);
+      if (written === "Option" || written === "Result") {
+        this.error(`'${written}' is a builtin enum and cannot be redeclared`, e.span,
           `it already has the shape you are writing — delete this declaration, or rename it if you meant a different type`);
       }
     }
@@ -10001,7 +10012,9 @@ export class TypeChecker {
         const fnType: TypeKind = { tag: "fn", params: fnSig.params.map(p => p.type), ret: fnSig.ret };
         return this.setType(expr, fnType);
       }
-      this.error(`undefined variable '${expr.name}'`, sp, this.renamedExportHint(expr.name, "values") ?? this.nameHint(expr.name));
+      const unimported = this.unimportedRenamed(expr.name, "values", sp);
+      if (unimported) this.diagnostics.push({ severity: "error", span: sp, ...unimported, code: "unimported" });
+      else this.error(`undefined variable '${expr.name}'`, sp, this.nameHint(expr.name));
       return this.setType(expr, { tag: "unknown" });
     }
     // A nullable extern reference is not a value. Every way of naming it — passing it on,
@@ -10841,7 +10854,10 @@ export class TypeChecker {
         this.rewrittenCalls.set(expr, `${mangled}$run`);
         return this.setType(expr, runSig.ret);
       }
-      this.error(`undefined function '${expr.func}'`, sp, this.renamedExportHint(expr.func, "values")); return this.setType(expr, { tag: "unknown" });
+      const unimported = this.unimportedRenamed(expr.func, "values", sp);
+      if (unimported) this.diagnostics.push({ severity: "error", span: sp, ...unimported, code: "unimported" });
+      else this.error(`undefined function '${expr.func}'`, sp);
+      return this.setType(expr, { tag: "unknown" });
     }
     if (expr.func === "todo") {
       if (expr.args.length > 1) { this.error(`todo() takes at most one argument (a message), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }

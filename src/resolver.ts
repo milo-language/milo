@@ -717,7 +717,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // reference still resolves to the (now module-scoped) decl, and the checker's
     // visibility pass reports it as private to its file instead of "undefined function".
     const bindings = new Map<string, string>();
-    const boundFrom = new Map<string, { path: string; sym: string; renamed: boolean; synthetic?: boolean; span?: Span }>();
+    const boundFrom = new Map<string, { path: string; sym: string; renamed: boolean; overridable: boolean; synthetic?: boolean; span?: Span }>();
     for (const t of u.targets) {
       if (t.pkg !== "" || t.file === undefined) continue;
       const tp = modulePlan.get(t.file);
@@ -739,7 +739,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
             hint: `the two modules each define their own '${n}', so one name would mean two things in this file. Rename one at its import: 'import { ${n} as <newName> }'.`,
           }, readSourceSafe(u.file), u.file);
         }
-        boundFrom.set(local, { path: t.path ?? "", sym, renamed: isRenamed, synthetic: t.synthetic, span: t.span });
+        boundFrom.set(local, { path: t.path ?? "", sym, renamed: isRenamed, overridable: !isRenamed && preludeFiles.has(t.file), synthetic: t.synthetic, span: t.span });
         if (sym !== local) bindings.set(local, sym);
       }
     }
@@ -748,8 +748,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // would meet in the merge as a duplicate in a file the user did not write. Imports
     // the resolver adds for @derive(Json) are not the user's to rename, and an `extern fn`
     // redeclaration binds the same C symbol rather than giving the name a second meaning.
+    // A prelude-visible std fn redeclared with its signature is the documented override
+    // (`shadows-stdlib-override`), so a file naming it in an import as well keeps that path.
     for (const [local, b] of boundFrom) {
-      if (b.synthetic) continue;
+      if (b.synthetic || b.overridable) continue;
       const declaresIt = u.prog.functions.some(f => f.name === local && !f.isExtern) || u.prog.globals.some(g => g.name === local)
         || u.prog.structs.some(s => s.name === local) || u.prog.enums.some(e => e.name === local)
         || u.prog.traits.some(t => t.name === local) || u.prog.interfaces.some(i => i.name === local)

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 499 distinct messages across 639 programs the compiler must reject.
+Every error message the test suite pins: 498 distinct messages across 638 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -75,9 +75,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
 - [`'head' cannot return a reference`](#head-cannot-return-a-reference)
-- [`'helper' is exported by a.milo and b.milo, and this file imports it from none of them`](#helper-is-exported-by-a-milo-and-b-milo-and-this-file-imports-it-from-none-of-them)
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
 - [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
+- [`'helper' is not imported`](#helper-is-not-imported)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
@@ -94,7 +94,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'parallelMap<Conn>' is not allowed: 'parallelMap' is @copyOnly and 'Conn' is not a Copy type (it implements Drop)`](#parallelmap-conn-is-not-allowed-parallelmap-is-copyonly-and-conn-is-not-a-copy-type-it-implements-drop)
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
-- [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process)
 - [`'Process' is imported from 'std/process' and also declared in this file`](#process-is-imported-from-std-process-and-also-declared-in-this-file)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
@@ -1838,21 +1837,6 @@ fn main(): void { }
 
 <sub>[tests/errors/refReturnNoteByValueParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteByValueParam.milo)</sub>
 
-## `'helper' is exported by a.milo and b.milo, and this file imports it from none of them` {#helper-is-exported-by-a-milo-and-b-milo-and-this-file-imports-it-from-none-of-them}
-
-a and b both export `helper`, and both modules are loaded, but this file imports neither one. A name it never imported is not in scope, whichever module defines it.
-
-```milo skip
-from "../fixtures/lib/collide/a" import { fromA }
-from "../fixtures/lib/collide/b" import { fromB }
-
-fn main() {
-    print(fromA() + fromB() + helper())
-}
-```
-
-<sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
-
 ## `'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file` {#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file}
 
 The file imports a's `helper` and declares a `helper` of its own. Every module's `helper` is a separate decl now, so neither one silently replaces the other: the file has to say which one the name means.
@@ -1885,6 +1869,21 @@ fn main() {
 ```
 
 <sub>[tests/errors/importSameNameTwoModules.milo](https://github.com/milo-language/milo/blob/main/tests/errors/importSameNameTwoModules.milo)</sub>
+
+## `'helper' is not imported` {#helper-is-not-imported}
+
+a and b both export `helper`, and both modules are loaded, but this file imports neither one. A name it never imported is not in scope, whichever module defines it.
+
+```milo skip
+from "../fixtures/lib/collide/a" import { fromA }
+from "../fixtures/lib/collide/b" import { fromB }
+
+fn main() {
+    print(fromA() + fromB() + helper())
+}
+```
+
+<sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
 
 ## `'id' shadows an outer binding` {#id-shadows-an-outer-binding}
 
@@ -2436,26 +2435,6 @@ fn main() {
 ```
 
 <sub>[tests/errors/structLitTypeArgsNotGeneric.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsNotGeneric.milo)</sub>
-
-## `'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process` {#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process}
-
-(The pin stops before the extension: on Windows the module is std/process.windows.milo.) Only a PRIVATE type is renamed when it shares a std type's name (see userTypeNamedLikeStd). A `pub` one may have importers in other files that would need rewriting too, so it still collides with std/process's `Process` and says so.
-
-```milo skip
-from "std/process" import { Command }
-
-pub struct Process {
-    id: i64,
-}
-
-fn main() {
-    let p = Process { id: 7 }
-    print(p.id)
-    let _c = Command.new("true")
-}
-```
-
-<sub>[tests/errors/pubUserTypeNamedLikeStd.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubUserTypeNamedLikeStd.milo)</sub>
 
 ## `'Process' is imported from 'std/process' and also declared in this file` {#process-is-imported-from-std-process-and-also-declared-in-this-file}
 

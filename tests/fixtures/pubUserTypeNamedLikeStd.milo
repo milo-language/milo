@@ -1,0 +1,16 @@
+// @expect: 7
+// A `pub` user type named like a std `pub` type (std/process's `Process`, loaded here
+// through the `Command` import) is the user module's own, exactly as a private one is
+// (userTypeNamedLikeStd). It used to collide with std's: "'Process' is defined as a
+// struct in ... and as a struct in 'std/process.milo'".
+from "std/process" import { Command }
+
+pub struct Process {
+    id: i64,
+}
+
+fn main() {
+    let p = Process { id: 7 }
+    print(p.id)
+    let _c = Command.new("true")
+}

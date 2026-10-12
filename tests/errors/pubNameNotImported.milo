@@ -1,4 +1,4 @@
-// @error: 'helper' is exported by a.milo and b.milo, and this file imports it from none of them
+// @error: 'helper' is not imported
 // a and b both export `helper`, and both modules are loaded, but this file imports
 // neither one. A name it never imported is not in scope, whichever module defines it.
 from "../fixtures/lib/collide/a" import { fromA }

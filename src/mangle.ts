@@ -71,6 +71,12 @@ export const COMPILER_KNOWN_STD_HELPERS: ReadonlySet<string> = new Set([
   "strParseInt", "strParseF64", "vecJoin",
 ]);
 
+// Trait names the checker matches by spelling: `impl Eq for T` replaces the structural
+// `==`, `impl Drop`/`impl Clone` hook moves and copies, `Send`/`Sync` gate threads. A
+// program's own `trait Eq` means exactly that hook, so renaming it would leave the
+// built-in AND the user's impl in place and every `.eq` call ambiguous.
+export const COMPILER_KNOWN_TRAITS: ReadonlySet<string> = new Set(["Eq", "Clone", "Drop", "Json", "Send", "Sync"]);
+
 // One file's top-level names the per-module pass MAY rename: its private names, or with
 // `pub` set its exported ones. The two sets are collected apart because their renames
 // differ in reach: a private name has no importers, so renaming it touches one file, while
@@ -86,7 +92,7 @@ export function collectModuleDecls(prog: Program, out: PkgDeclNames, pub: boolea
   for (const g of prog.globals) if (want(g.isPub)) out.values.add(g.name);
   for (const s of prog.structs) if (want(s.isPub) && !s.isExtern && !hasCAttr(s.attributes)) out.types.add(s.name);
   for (const e of prog.enums) if (want(e.isPub) && !hasCAttr(e.attributes)) out.types.add(e.name);
-  for (const t of prog.traits) if (want(t.isPub)) out.types.add(t.name);
+  for (const t of prog.traits) if (want(t.isPub) && !COMPILER_KNOWN_TRAITS.has(t.name)) out.types.add(t.name);
   for (const i of prog.interfaces) if (want(i.isPub)) out.types.add(i.name);
   for (const a of prog.typeAliases) if (want(a.isPub)) out.types.add(a.name);
 }
