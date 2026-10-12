@@ -20,6 +20,7 @@ from "std/os" import {
     socket,
     writeFd,
     connectFdIn6,
+    connectFdIn6Wait,
     bindIn6,
     inet_pton,
     sysSocket,
@@ -91,6 +92,87 @@ impl NetError {
             }
         }
     }
+}
+
+// ── IpAddr ──
+
+// An address of either family, as `resolveAll` returns it. `V4` holds the address as
+// `ip4` builds it; `V6` holds the 16 raw bytes (as `ip6` parses them) and the scope id,
+// the interface index a link-local peer (fe80::/10) needs, 0 otherwise.
+pub enum IpAddr {
+    V4(u32),
+    V6([u8; 16], u32),
+}
+
+impl IpAddr {
+    // Text form: a dotted quad, or RFC 5952 for v6 (lowercase hex, the longest run of
+    // two or more zero groups as `::`), with `%scope` when the scope id is not 0.
+    fn toString(self: &Self): string {
+        match self {
+            IpAddr.V4(ip) => {
+                let v = ip as i64
+                return $"{v & 255}.{(v >> 8) & 255}.{(v >> 16) & 255}.{(v >> 24) & 255}"
+            }
+            IpAddr.V6(b, scope) => {
+                return ip6Text(b, scope)
+            }
+        }
+    }
+}
+
+fn ip6Text(b: &[u8; 16], scope: u32): string {
+    var groups: [i64; 8] = [0; 8]
+    for g in 0..8 {
+        groups[g] = (b[2 * g] as i64) * 256 + (b[2 * g + 1] as i64)
+    }
+    // the longest run of zero groups, first one on a tie; a lone zero stays "0"
+    var bestAt: i64 = -1
+    var bestLen: i64 = 1
+    var g: i64 = 0
+    while g < 8 {
+        if groups[g] == 0 {
+            var e = g
+            while e < 8 && groups[e] == 0 {
+                e += 1
+            }
+            if e - g > bestLen {
+                bestAt = g
+                bestLen = e - g
+            }
+            g = e
+        } else {
+            g += 1
+        }
+    }
+    let hex = "0123456789abcdef"
+    var out: string = ""
+    g = 0
+    while g < 8 {
+        if g == bestAt {
+            out += "::"
+            g += bestLen
+            continue
+        }
+        if g > 0 && g != bestAt + bestLen {
+            out += ":"
+        }
+        let v = groups[g]
+        var started = false
+        var shift: i64 = 12
+        while shift >= 0 {
+            let d = (v >> shift) & 15
+            if d != 0 || started || shift == 0 {
+                out.push(hex[d])
+                started = true
+            }
+            shift -= 4
+        }
+        g += 1
+    }
+    if scope != 0 {
+        out += "%" + (scope as i64).toString()
+    }
+    return out
 }
 
 // ── TcpStream ──
@@ -206,6 +288,7 @@ impl TcpStream {
     // index for a link-local peer (fe80::/10), 0 otherwise.
     fn connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream, NetError> {
         unsafe {
+            ignoreSigpipe()
             ensureNetInit()
             var fd: i32 = 0
             fd = sysSocket(afInet6(), 1, 0)
@@ -221,6 +304,73 @@ impl TcpStream {
                 _fd: fd
             })
         }
+    }
+
+    // connectWait for IPv6 (see connect6).
+    fn connect6Wait(addr: [u8; 16], port: u16, scopeId: u32, wait: (i32, bool) => bool): Result<TcpStream, NetError> {
+        unsafe {
+            ignoreSigpipe()
+            ensureNetInit()
+            let fd = sysSocket(afInet6(), 1, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+            let r = connectFdIn6Wait(fd, makeSockaddr6(port, addr, scopeId), (forRead: bool): bool => wait(fd, forRead))
+            if r != 0 {
+                sysClose(fd)
+                if r as i64 == IO_GAVE_UP {
+                    return Result.Err(NetError.Timeout("connect"))
+                }
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
+            return Result.Ok(TcpStream {
+                _fd: fd
+            })
+        }
+    }
+
+    // Connect to an address of either family (see `resolveAll`).
+    fn connectAddr(addr: &IpAddr, port: u16): Result<TcpStream, NetError> {
+        match addr {
+            IpAddr.V4(ip) => {
+                return TcpStream.connect(ip, port)
+            }
+            IpAddr.V6(bytes, scope) => {
+                return TcpStream.connect6(bytes, port, scope)
+            }
+        }
+    }
+
+    // connectAddr whose in-progress connect waits through `wait`, as connectWait does.
+    fn connectAddrWait(addr: &IpAddr, port: u16, wait: (i32, bool) => bool): Result<TcpStream, NetError> {
+        match addr {
+            IpAddr.V4(ip) => {
+                return TcpStream.connectWait(ip, port, wait)
+            }
+            IpAddr.V6(bytes, scope) => {
+                return TcpStream.connect6Wait(bytes, port, scope, wait)
+            }
+        }
+    }
+
+    // Connect to `hostname`, trying every address `resolveAll` returns, in order, until
+    // one accepts. A name that resolves to both families reaches a server listening on
+    // only one of them, which `connect(resolve(host)!, port)` cannot (it only tries the
+    // first IPv4 address). The error is the last attempt's.
+    fn connectHost(hostname: &string, port: u16): Result<TcpStream, NetError> {
+        let addrs = resolveAll(hostname)?
+        var last = NetError.ConnectionFailed("no address")
+        for a in addrs {
+            match TcpStream.connectAddr(a, port) {
+                Result.Ok(s) => {
+                    return Result.Ok(s)
+                }
+                Result.Err(e) => {
+                    last = e
+                }
+            }
+        }
+        return Result.Err(last)
     }
 
     // Send `data`. Returns the number of bytes sent.
@@ -538,6 +688,154 @@ fn resolveLive(hostname: &string): Result<u32, NetError> {
             return Result.Err(NetError.DnsFailure(hostname.clone()))
         }
     }
+}
+
+// DNS lookup: every address for `hostname`, IPv4 and IPv6, in the order getaddrinfo
+// returns them. That order is RFC 6724's (which family and which address to try first
+// for this host's routes), so a client connects by trying them front to back, as
+// `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
+// Recorded as net.resolveall.
+pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
+    if !replayOff() {
+        // A record kind of its own rather than a new payload for net.resolve, so a trace
+        // recorded before resolveAll existed still replays its resolve() calls.
+        let p = replayBlob("net.resolveall", hostname, (): string => {
+            match resolveAllLive(hostname) {
+                Result.Ok(addrs) => {
+                    return encodeAddrs(addrs)
+                }
+                Result.Err(_) => {
+                    return "!"
+                }
+            }
+        })
+        if p == "!" {
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
+        }
+        return Result.Ok(decodeAddrs(p))
+    }
+    return resolveAllLive(hostname)
+}
+
+// Trace payload: space-separated `4:<u32>` or `6:<32 hex digits>:<scope>`.
+fn encodeAddrs(addrs: &Vec<IpAddr>): string {
+    let hex = "0123456789abcdef"
+    var out: string = ""
+    for a in addrs {
+        if out.len > 0 {
+            out += " "
+        }
+        match a {
+            IpAddr.V4(ip) => {
+                out += "4:" + (ip as i64).toString()
+            }
+            IpAddr.V6(b, scope) => {
+                out += "6:"
+                for i in 0..16 {
+                    out.push(hex[(b[i] as i64) >> 4])
+                    out.push(hex[(b[i] as i64) & 15])
+                }
+                out += ":" + (scope as i64).toString()
+            }
+        }
+    }
+    return out
+}
+
+fn decimalOf(s: &string, from: i64, to: i64): i64 {
+    var v: i64 = 0
+    for i in from..to {
+        v = v * 10 + ((s[i] - '0') as i64)
+    }
+    return v
+}
+
+fn hexNibble(c: u8): u8 {
+    if c >= 'a' {
+        return c - 'a' + 10
+    }
+    return c - '0'
+}
+
+fn decodeAddrs(p: &string): Vec<IpAddr> {
+    var out: Vec<IpAddr> = Vec.new()
+    for f in p.split(" ") {
+        if f.len < 3 {
+            continue
+        }
+        if f[0] == '4' {
+            out.push(IpAddr.V4(decimalOf(f, 2, f.len) as u32))
+        } else {
+            var b: [u8; 16] = [0; 16]
+            for i in 0..16 {
+                b[i] = hexNibble(f[2 + 2 * i]) * 16 + hexNibble(f[3 + 2 * i])
+            }
+            out.push(IpAddr.V6(b, decimalOf(f, 35, f.len) as u32))
+        }
+    }
+    return out
+}
+
+// Off the scheduler thread for the same reason as resolveLive.
+@replayHooked
+fn resolveAllLive(hostname: &string): Result<Vec<IpAddr>, NetError> {
+    if schedulerCurrent() as i64 == 0 || !replayOff() {
+        return lookupAll(hostname)
+    }
+    let host = hostname.clone()
+    let p = Promise<Result<Vec<IpAddr>, NetError>>.blocking(move(): Result<Vec<IpAddr>, NetError> => lookupAll(host))
+    match p.await() {
+        Result.Ok(r) => {
+            return r
+        }
+        Result.Err(_) => {
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
+        }
+    }
+}
+
+// struct addrinfo: ai_family is at 4 and ai_next at 40 on every target std supports;
+// ai_addr moves (addrinfoAddrOffset). In sockaddr_in6 the address is at 8 and the scope
+// id at 24.
+@replayHooked
+fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
+    var hints: [u8; 48] = [0; 48]
+    unsafe {
+        let h = (hints as *i32)
+        // AF_UNSPEC (0) asks for both families; SOCK_STREAM keeps one entry per address
+        // instead of one per socket type.
+        h[1] = 0
+        h[2] = 1
+    }
+    var resBuf: [u8; 8] = [0; 8]
+    var out: Vec<IpAddr> = Vec.new()
+    unsafe {
+        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
+        if err != 0 {
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
+        }
+        let head = *(resBuf as *i64)
+        var info = head
+        while info != 0 {
+            let fam = *((info + 4) as *i32)
+            let sa = *((info + addrinfoAddrOffset()) as *i64)
+            if sa != 0 && fam == 2 {
+                out.push(IpAddr.V4(*((sa + 4) as *u32)))
+            } else if sa != 0 && fam == afInet6() {
+                var b: [u8; 16] = [0; 16]
+                for i in 0..16 {
+                    b[i] = *((sa + 8 + i) as *u8)
+                }
+                out.push(IpAddr.V6(b, *((sa + 24) as *u32)))
+            }
+            info = *((info + 40) as *i64)
+        }
+        freeaddrinfo(head as *u8)
+    }
+    if out.len == 0 {
+        return Result.Err(NetError.DnsFailure(hostname.clone()))
+    }
+    return Result.Ok(out)
 }
 
 @replayHooked

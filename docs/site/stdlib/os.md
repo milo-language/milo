@@ -65,6 +65,14 @@ pub fn connectFdIn(fd: i32, addr: &SockAddrIn): i32
 pub fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32
 ```
 
+### `connectFdIn6Wait`
+
+```milo
+pub fn connectFdIn6Wait(fd: i32, addr: &SockAddrIn6, wait: (bool) => bool): i32
+```
+
+connectFdInWait for an IPv6 address.
+
 ### `connectFdInWait`
 
 ```milo

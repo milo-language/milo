@@ -31,6 +31,30 @@ print($"listening on {listener.port()}")
 
 ## API reference
 
+### `IpAddr`
+
+```milo
+pub enum IpAddr
+```
+
+An address of either family, as `resolveAll` returns it. `V4` holds the address as
+`ip4` builds it; `V6` holds the 16 raw bytes (as `ip6` parses them) and the scope id,
+the interface index a link-local peer (fe80::/10) needs, 0 otherwise.
+
+Variants:
+
+- `V4(u32)`
+- `V6([u8; 16], u32)`
+
+#### `IpAddr.toString`
+
+```milo
+fn IpAddr.toString(self: &IpAddr): string
+```
+
+Text form: a dotted quad, or RFC 5952 for v6 (lowercase hex, the longest run of
+two or more zero groups as `::`), with `%scope` when the scope id is not 0.
+
 ### `NetError`
 
 ```milo
@@ -166,6 +190,41 @@ IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot h
 a 128-bit address, so the v4 entry point keeps its shape. `scopeId` is the interface
 index for a link-local peer (fe80::/10), 0 otherwise.
 
+#### `TcpStream.connect6Wait`
+
+```milo
+fn TcpStream.connect6Wait(addr: [u8; 16], port: u16, scopeId: u32, wait: (i32, bool) => bool): Result<TcpStream, NetError>
+```
+
+connectWait for IPv6 (see connect6).
+
+#### `TcpStream.connectAddr`
+
+```milo
+fn TcpStream.connectAddr(addr: &IpAddr, port: u16): Result<TcpStream, NetError>
+```
+
+Connect to an address of either family (see `resolveAll`).
+
+#### `TcpStream.connectAddrWait`
+
+```milo
+fn TcpStream.connectAddrWait(addr: &IpAddr, port: u16, wait: (i32, bool) => bool): Result<TcpStream, NetError>
+```
+
+connectAddr whose in-progress connect waits through `wait`, as connectWait does.
+
+#### `TcpStream.connectHost`
+
+```milo
+fn TcpStream.connectHost(hostname: &string, port: u16): Result<TcpStream, NetError>
+```
+
+Connect to `hostname`, trying every address `resolveAll` returns, in order, until
+one accepts. A name that resolves to both families reaches a server listening on
+only one of them, which `connect(resolve(host)!, port)` cannot (it only tries the
+first IPv4 address). The error is the last attempt's.
+
 #### `TcpStream.connectWait`
 
 ```milo
@@ -275,5 +334,17 @@ pub fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
 DNS lookup: the first IPv4 address for `hostname`. Recorded as net.resolve.
+
+#### `resolveAll`
+
+```milo
+pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError>
+```
+
+DNS lookup: every address for `hostname`, IPv4 and IPv6, in the order getaddrinfo
+returns them. That order is RFC 6724's (which family and which address to try first
+for this host's routes), so a client connects by trying them front to back, as
+`TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
+Recorded as net.resolveall.
 
 <!-- /generated:api -->

@@ -172,7 +172,7 @@ test("milo trace lists the scenario's records by kind", () => {
   // Everything the scenario touches goes through std, so the recording has no gaps.
   expect(t.holes).toEqual([]);
   const kinds = new Set(t.records.map((x: any) => x.kind));
-  for (const k of ["args", "fs.open", "fs.read", "net.socket", "net.accept", "net.connect", "net.read", "net.write", "net.resolve", "proc.spawn", "proc.read", "proc.wait", "sched.pick"]) {
+  for (const k of ["args", "fs.open", "fs.read", "net.socket", "net.accept", "net.connect", "net.read", "net.write", "net.resolveall", "proc.spawn", "proc.read", "proc.wait", "sched.pick"]) {
     expect(kinds).toContain(k);
   }
   const open = t.records.find((x: any) => x.kind === "fs.open");

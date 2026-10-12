@@ -376,7 +376,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   recv: input(win("recv"), { out: ["buf[ret]"], errno: "net" }),
   send: effect(win("send"), { errno: "net" }),
   closesocket: effect(win("closesocket"), { errno: "net" }),
-  getaddrinfo: hole(man(3, "getaddrinfo"), "it returns a linked list of addrinfo it allocated; std/net records the resolved address (net.resolve)",
+  getaddrinfo: hole(man(3, "getaddrinfo"), "it returns a linked list of addrinfo it allocated; std/net records the resolved addresses (net.resolve, net.resolveall)",
     { in: ["node", "service"], out: ["res[deep]"] }),
   freeaddrinfo: local(man(3, "freeaddrinfo")),
 

@@ -723,8 +723,22 @@ pub let IO_GAVE_UP: i64 = -2
 @unsafe
 pub fn connectFdInWait(fd: i32, addr: &SockAddrIn, wait: (bool) => bool): i32 {
     unsafe {
+        return connectFdWait(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen(), wait)
+    }
+}
+
+// connectFdInWait for an IPv6 address.
+@unsafe
+pub fn connectFdIn6Wait(fd: i32, addr: &SockAddrIn6, wait: (bool) => bool): i32 {
+    unsafe {
+        return connectFdWait(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len(), wait)
+    }
+}
+
+fn connectFdWait(fd: i32, addr: *SockAddr, addrlen: u32, wait: (bool) => bool): i32 {
+    unsafe {
         setNonblocking(fd)
-        if connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen()) == 0 {
+        if connectOnce(fd, addr, addrlen) == 0 {
             return 0
         }
         if netErrno() != netEinprogress() {

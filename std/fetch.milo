@@ -4,7 +4,7 @@
 // bare TCP program cross-link for Windows, where the xwin sysroot ships no OpenSSL.
 
 from "std/net" import {
-    TcpStream, NetError, resolve
+    TcpStream, NetError, IpAddr, resolveAll
 }
 from "std/os" import {
     connectFdIn,
@@ -804,17 +804,68 @@ pub fn buildRequest(host: &string, path: &string, opts: &FetchOptions): string {
     return req
 }
 
-fn httpDo(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
-    let stream = TcpStream.connect(ip, port)?
+// Connect to the first of `addrs` that accepts, trying them in order (resolveAll's
+// RFC 6724 order). Sequential rather than Happy Eyeballs (RFC 8305): a refused address
+// (a v6-only or v4-only server reached through `localhost`) fails at once and the next
+// one is tried; what racing would add is an escape from an address that silently drops
+// SYNs, and fetchWithTimeout's connect limit already bounds that wait. Sequential
+// attempts also replay as the plain sequence of records they made.
+fn connectAny(addrs: &Vec<IpAddr>, port: u16): Result<TcpStream, NetError> {
+    var last = NetError.ConnectionFailed("no address")
+    for a in addrs {
+        match TcpStream.connectAddr(a, port) {
+            Result.Ok(s) => {
+                return Result.Ok(s)
+            }
+            Result.Err(e) => {
+                last = e
+            }
+        }
+    }
+    return Result.Err(last)
+}
+
+// connectAny bounded by `by` (epoch ms; 0 for none), one deadline shared by every
+// attempt: the time a dead first address took is not given back to the second.
+fn connectAnyBy(addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TcpStream, NetError> {
+    var last = NetError.ConnectionFailed("no address")
+    for a in addrs {
+        match TcpStream.connectAddrWait(a, port, (fd: i32, forRead: bool): bool => waitIo(fd, forRead, by)) {
+            Result.Ok(s) => {
+                return Result.Ok(s)
+            }
+            Result.Err(e) => {
+                if isTimeout(e) {
+                    return Result.Err(e)
+                }
+                last = e
+            }
+        }
+    }
+    return Result.Err(last)
+}
+
+fn isTimeout(e: &NetError): bool {
+    match e {
+        NetError.Timeout(_) => {
+            return true
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn httpDo(addrs: &Vec<IpAddr>, port: u16, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
+    let stream = connectAny(addrs, port)?
     stream.send(buildRequest(hostHdr, path, opts))?
     let raw = stream.recv()?
     return Result.Ok(parseResponse(raw))
 }
 
 // httpDo bounded by `connectBy` and `overallBy` (epoch ms; 0 for none).
-fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
-    let cby = sooner(connectBy, overallBy)
-    let stream = TcpStream.connectWait(ip, port, (fd: i32, forRead: bool): bool => waitIo(fd, forRead, cby))?
+fn httpDoBy(addrs: &Vec<IpAddr>, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+    let stream = connectAnyBy(addrs, port, sooner(connectBy, overallBy))?
     var fd: i32 = 0
     unsafe { fd = stream.rawFd() }
     let wait = (forRead: bool): bool => waitIo(fd, forRead, overallBy)
@@ -846,8 +897,11 @@ fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptio
     return Result.Ok(parseResponse(raw))
 }
 
-fn httpsDoBy(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
-    let stream = TlsStream.connectBy(ip, port, sni, connectBy, overallBy)?
+fn httpsDoBy(addrs: &Vec<IpAddr>, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+    let by = sooner(connectBy, overallBy)
+    var tcp = connectAnyBy(addrs, port, by)?
+    var stream = TlsStream { _fd: 0, _ssl: 0, _ctx: 0 }
+    unsafe { stream = TlsStream.fromFdBy(tcp.take(), sni, "", by)? }
     stream.sendBy(buildRequest(hostHdr, path, opts), overallBy)?
     let raw = stream.recvUpTo(overallBy, maxBytes)?
     return Result.Ok(parseResponse(raw))
@@ -857,8 +911,10 @@ fn httpsDoBy(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opt
 // authority that goes in the Host header and may carry a port. They differ on a
 // non-default port, and conflating them either breaks certificate validation or
 // emits a Host header that violates RFC 7230 5.4.
-fn httpsDo(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
-    let stream = TlsStream.connect(ip, port, sni)?
+fn httpsDo(addrs: &Vec<IpAddr>, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
+    var tcp = connectAny(addrs, port)?
+    var stream = TlsStream { _fd: 0, _ssl: 0, _ctx: 0 }
+    unsafe { stream = TlsStream.fromFd(tcp.take(), sni, "")? }
     stream.send(buildRequest(hostHdr, path, opts))?
     let raw = stream.recv()?
     return Result.Ok(parseResponse(raw))
@@ -888,7 +944,7 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
     let port = parsePort(url)
     let path = parsePath(url)
     let hdr = hostHeader(url)
-    let ip = resolve(host)?
+    let addrs = resolveAll(host)?
 
     if overallBy > 0 && unrecordedEpochMillis() >= overallBy {
         return Result.Err(NetError.Timeout("dns"))
@@ -897,11 +953,11 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
     var resp: Result<FetchResponse, NetError> = Result.Err(NetError.Other(""))
     let timed = t.connectMs > 0 || t.totalMs > 0
     if timed {
-        resp = fetchOnceAt(ip, url, opts, deadlineIn(t.connectMs), overallBy, 0)
+        resp = fetchOnceAt(addrs, url, opts, deadlineIn(t.connectMs), overallBy, 0)
     } else if useTls {
-        resp = httpsDo(ip, port, host.clone(), hdr, path, opts)
+        resp = httpsDo(addrs, port, host.clone(), hdr, path, opts)
     } else {
-        resp = httpDo(ip, port, hdr, path, opts)
+        resp = httpDo(addrs, port, hdr, path, opts)
     }
 
     let r = resp?
@@ -927,14 +983,14 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
 }
 
 // One request to `ip`, with the Host header and TLS name taken from `url`.
-fn fetchOnceAt(ip: u32, url: &string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+fn fetchOnceAt(addrs: &Vec<IpAddr>, url: &string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
     let port = parsePort(url)
     let path = parsePath(url)
     let hdr = hostHeader(url)
     if isHttps(url) {
-        return httpsDoBy(ip, port, parseHost(url), hdr, path, opts, connectBy, overallBy, maxBytes)
+        return httpsDoBy(addrs, port, parseHost(url), hdr, path, opts, connectBy, overallBy, maxBytes)
     }
-    return httpDoBy(ip, port, hdr, path, opts, connectBy, overallBy, maxBytes)
+    return httpDoBy(addrs, port, hdr, path, opts, connectBy, overallBy, maxBytes)
 }
 
 // ── Public API ──
@@ -953,7 +1009,8 @@ fn fetchOnceAt(ip: u32, url: &string, opts: &FetchOptions, connectBy: i64, overa
 // limit), and the response is parsed from what arrived, so a cut-off body comes back
 // short rather than as an error. `t` bounds the request as in fetchWithTimeout.
 pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxBytes: i64): Result<FetchResponse, NetError> {
-    return fetchOnceAt(ip, url, opts, deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
+    let addrs: Vec<IpAddr> = [IpAddr.V4(ip)]
+    return fetchOnceAt(addrs, url, opts, deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
 }
 
 // HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308

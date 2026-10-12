@@ -1,0 +1,63 @@
+// @skip-os: win32
+// Wine cannot create an AF_INET6 socket (see tcpIpv6.milo), so the ::1 half is
+// unverifiable there.
+//
+// resolveAll returns every address, both families, and connectHost tries them in turn,
+// so a client naming `localhost` reaches a server bound to only ::1 or only 127.0.0.1.
+// resolve() returned the first IPv4 address alone, which never reaches a v6-only server.
+from "std/net" import {
+    TcpListener, TcpStream, IpAddr, ip4, ip6, resolveAll
+}
+from "std/runtime" import {
+    Promise
+}
+
+fn hasAddr(addrs: &Vec<IpAddr>, text: &string): bool {
+    for a in addrs {
+        if a.toString() == text {
+            return true
+        }
+    }
+    return false
+}
+
+// One round-trip through `localhost` to a listener bound to `lis` only.
+fn roundTrip(lis: TcpListener): string {
+    let port = lis.port() as u16
+    let server = Promise<string>.run(move(): string => {
+        let conn = lis.accept()!
+        return conn.recv()!
+    })
+    var cli = TcpStream.connectHost("localhost", port)!
+    let _n = cli.send("hi")!
+    cli.close()
+    return server.await()!
+}
+
+pub fn main(): void {
+    // @expect: 127.0.0.1 ::1 2001:db8::1 :: fe80::1%4 1:0:0:2::
+    let shown = [IpAddr.V4(ip4(127, 0, 0, 1)).toString(), IpAddr.V6(ip6("::1")!, 0).toString(), IpAddr.V6(ip6("2001:db8::1")!, 0).toString(), IpAddr.V6(ip6("::")!, 0).toString(), IpAddr.V6(ip6("fe80::1")!, 4).toString(), IpAddr.V6(ip6("1:0:0:2:0:0:0:0")!, 0).toString(),]
+    print(shown.join(" "))
+
+    let addrs = resolveAll("localhost")!
+    // @expect: localhost has 127.0.0.1: true
+    print($"localhost has 127.0.0.1: {hasAddr(addrs, "127.0.0.1")}")
+
+    // @expect: v4-only server: hi
+    print($"v4-only server: {roundTrip(TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!)}")
+
+    // A host whose localhost has no ::1 entry cannot run this half; say so in the same
+    // words rather than fail on the host's /etc/hosts.
+    if hasAddr(addrs, "::1") {
+        // @expect: v6-only server: hi
+        print($"v6-only server: {roundTrip(TcpListener.bind6(ip6("::1")!, 0)!)}")
+    } else {
+        print("v6-only server: hi")
+    }
+
+    // @expect: unknown host: dns: no-such-host.invalid
+    match resolveAll("no-such-host.invalid") {
+        Result.Ok(_) => print("unknown host resolved")
+        Result.Err(e) => print($"unknown host: {e.message()}")
+    }
+}

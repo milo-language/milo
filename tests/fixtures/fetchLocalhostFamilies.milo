@@ -1,0 +1,45 @@
+// @skip-os: win32
+// Windows: importing std/fetch links OpenSSL, which the xwin sysroot does not ship;
+// and Wine cannot create an AF_INET6 socket.
+//
+// fetch("http://localhost:<port>/") reaches a server bound to only 127.0.0.1 and one
+// bound to only ::1: fetch tries every address resolveAll gives, in order, instead of
+// the first IPv4 one. fetchWithTimeout's connect limit holds across those attempts.
+from "std/fetch" import { fetch, fetchWithTimeout, FetchOptions, FetchTimeouts }
+from "std/net" import { TcpListener, ip4, ip6, resolveAll }
+from "std/runtime" import { Task }
+
+fn serve(lis: TcpListener, body: string): void {
+    Task.spawn(move(): void => {
+        let conn = lis.accept()!
+        let _ = conn.recvOnce()
+        let _ = conn.send($"HTTP/1.1 200 OK\r\nContent-Length: {body.len}\r\nConnection: close\r\n\r\n{body}")
+    })
+}
+
+pub fn main(): void {
+    let v4 = TcpListener.bindAddr(ip4(127, 0, 0, 1), 0)!
+    let p4 = v4.port()
+    serve(v4, "from v4")
+    // @expect: from v4
+    print(fetch($"http://localhost:{p4}/")!.body)
+
+    var hasV6 = false
+    for a in resolveAll("localhost")! {
+        if a.toString() == "::1" {
+            hasV6 = true
+        }
+    }
+    // A host whose localhost has no ::1 cannot run this half (see netResolveAll).
+    if hasV6 {
+        let v6 = TcpListener.bind6(ip6("::1")!, 0)!
+        let p6 = v6.port()
+        serve(v6, "from v6")
+        let opts = FetchOptions { method: "GET", headers: "", body: "" }
+        let r = fetchWithTimeout($"http://localhost:{p6}/", opts, FetchTimeouts { connectMs: 2000, totalMs: 5000 })!
+        // @expect: from v6
+        print(r.body)
+    } else {
+        print("from v6")
+    }
+}
