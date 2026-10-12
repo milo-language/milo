@@ -1,5 +1,7 @@
 // @expect: true
 // @expect: a=
+// std/fetch links OpenSSL, which the Windows sysroot does not ship.
+// @skip-os: win32
 // A private fn named like a std-internal `pub` fn (std/platform's envSet, std/fetch's
 // formEncode) used to fail with "'fn envSet' is defined in two modules" once std/env or
 // std/fetch was imported. The user's private fn is renamed in its module.
