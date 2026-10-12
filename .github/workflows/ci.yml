@@ -2,9 +2,12 @@ name: CI
 on: [push, pull_request]
 # A newer push to the same branch or PR replaces the older run: the macOS runner queue
 # was backing up by an hour, and only the newest commit's result gets looked at.
+# Main runs are never cancelled: with several sessions pushing more often than the ~70 min
+# macOS job takes, cancelling meant main almost never got a finished run. GitHub keeps one
+# run going and only the newest pending one queued behind it, so this cannot pile up.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   test:
     runs-on: macos-latest
