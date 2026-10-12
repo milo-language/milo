@@ -10881,7 +10881,17 @@ export class Codegen {
   // Slice a fixed-size array into a non-owning %Vec view (cap=0) pointing at the
   // array's own storage. Bound is the static extent N parsed from its [N x T] type.
   private genArraySlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): Gen {
-    const [aLines, arrPtr, arrTy] = this.genLValue(expr.vec);
+    let [aLines, arrPtr, arrTy] = this.genLValue(expr.vec);
+    // Not a place (`mk().sum()` on a returned [T; N]): genLValue has no address for it,
+    // so the value goes to a frame slot of its own and the view points there.
+    if (arrPtr === "null") {
+      const [vLines, val, valTy] = this.genExpr(expr.vec);
+      const slot = `%__arrtmp.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${slot} = alloca ${valTy}`);
+      aLines = [...vLines, this.valStore(valTy, val, slot)];
+      arrPtr = slot;
+      arrTy = valTy;
+    }
     lines.push(...aLines);
     const startVal = this.genBoundI64(expr.start, lines);
     const endVal = this.genBoundI64(expr.end, lines);

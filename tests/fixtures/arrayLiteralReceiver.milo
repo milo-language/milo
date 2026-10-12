@@ -1,0 +1,27 @@
+// A combinator called straight on an array literal, or on a fixed array a call
+// returned: neither has a variable to slice, and both used to slice a null address
+// (invalid IR, the build failed in the linker). The literal is a Vec temporary, freed
+// after the call, so the interpolated strings in it do not leak.
+
+fn three(): [i64; 3] {
+    return [1, 2, 3]
+}
+
+pub fn main(): void {
+    let t = "x"
+    // @expect: <x>, b
+    print([$"<{t}>", "b"].join(", "))
+    var total: i64 = 0
+    for i in 0..1000 {
+        let s = [$"a{i}", $"b{i}", "c"].join("-")
+        total += s.len
+    }
+    // @expect: 10780
+    print(total)
+    // @expect: 6
+    print(three().sum())
+    // @expect: true
+    print([1, 2, 3].contains(2))
+    // @expect: false
+    print(["a", t].isEmpty())
+}

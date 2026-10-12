@@ -1124,6 +1124,10 @@ class LowerCtx {
         const recv = (): import("./hir").HIRExpr => {
           const lowered = this.lowerExpr(expr.object);
           if (!sliceFixedArray || objTypeRaw?.tag !== "array" || objTypeRaw.size === null) return lowered;
+          // A literal receiver (`["a", b].join(", ")`) has no storage to slice: it becomes
+          // the Vec temporary it would be in argument position, which the combinator
+          // frees once it is done with it.
+          if (lowered.kind === "ArrayLit") return { ...lowered, type: { tag: "vec", element: objTypeRaw.element } };
           const i64: TypeKind = { tag: "int", bits: 64, signed: true };
           return {
             kind: "VecSlice",
