@@ -1,4 +1,4 @@
-// std/datetime — date/time components and formatting from epoch seconds
+// std/datetime — date/time components and formatting from epoch seconds, RFC 2822 and ISO 8601 parsing
 // (UTC by default; DateTime.fromEpochLocal / DateTime.localNow apply the host TZ)
 
 from "std/time" import {
@@ -260,4 +260,351 @@ fn tmI32(buf: &[u8; 128], off: i64): i32 {
         i -= 1
     }
     return v as i32
+}
+
+// ── Parsing ──
+
+// Days from 1970-01-01 to the given proleptic Gregorian date (Hinnant's
+// days_from_civil, the inverse of the breakdown in DateTime.fromEpoch).
+fn daysFromCivil(year: i64, month: i64, day: i64): i64 {
+    var y = year
+    if month <= 2 {
+        y = y - 1
+    }
+    var eraInput = y
+    if y < 0 {
+        eraInput = y - 399
+    }
+    let era = eraInput / 400
+    let yoe = y - era * 400
+    var mp = month - 3
+    if month <= 2 {
+        mp = month + 9
+    }
+    let doy = (153 * mp + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+fn daysInMonth(year: i64, month: i64): i64 {
+    if month == 2 {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        return if leap { 29 } else { 28 }
+    }
+    if month == 4 || month == 6 || month == 9 || month == 11 {
+        return 30
+    }
+    return 31
+}
+
+// Epoch milliseconds for validated UTC components; `offsetMin` is the zone's offset
+// east of UTC, subtracted to land on UTC. A leap second (:60) folds onto :59, since
+// epoch time has no slot for it.
+fn civilToMillis(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, millis: i64, offsetMin: i64): Result<i64> {
+    if month < 1 || month > 12 {
+        return Err($"month {month} out of range")
+    }
+    if day < 1 || day > daysInMonth(year, month) {
+        return Err($"day {day} out of range for {year}-{month}")
+    }
+    if hour > 23 || minute > 59 || second > 60 {
+        return Err($"time {hour}:{minute}:{second} out of range")
+    }
+    let sec = if second == 60 { 59 } else { second }
+    let days = daysFromCivil(year, month, day)
+    let secs = days * 86400 + hour * 3600 + minute * 60 + sec - offsetMin * 60
+    return Ok(secs * 1000 + millis)
+}
+
+fn isDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn isAlpha(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// Exactly `n` digits at `pos`, or -1.
+fn fixedDigits(s: &string, pos: i64, n: i64): i64 {
+    if pos + n > s.len {
+        return -1
+    }
+    var v: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        let c = s[pos + i]
+        if !isDigit(c) {
+            return -1
+        }
+        v = v * 10 + (c - '0') as i64
+        i += 1
+    }
+    return v
+}
+
+fn countDigits(s: &string, pos: i64): i64 {
+    var i = pos
+    while i < s.len && isDigit(s[i]) {
+        i += 1
+    }
+    return i - pos
+}
+
+fn skipSpaces(s: &string, pos: i64): i64 {
+    var i = pos
+    while i < s.len && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
+        i += 1
+    }
+    return i
+}
+
+// The word of ASCII letters at `pos`, lowercased.
+fn alphaWord(s: &string, pos: i64): string {
+    var i = pos
+    while i < s.len && isAlpha(s[i]) {
+        i += 1
+    }
+    return s.substr(pos, i).toLower()
+}
+
+fn monthFromName(w: &string): i64 {
+    let names = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    let full = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+    var i: i64 = 0
+    while i < 12 {
+        if w == names[i] || w == full[i] {
+            return i + 1
+        }
+        i += 1
+    }
+    // "Sept" turns up in hand-written feeds.
+    if w == "sept" {
+        return 9
+    }
+    return 0
+}
+
+// A numeric offset `+hhmm`, `+hh:mm` or `+hh` at `pos` (the sign included), as minutes
+// east of UTC with the index after it, or None when `pos` holds no sign.
+struct ZoneOffset {
+    minutes: i64,
+    next: i64,
+}
+
+fn numericOffset(s: &string, pos: i64): Option<ZoneOffset> {
+    if pos >= s.len || (s[pos] != '+' && s[pos] != '-') {
+        return None
+    }
+    let sign: i64 = if s[pos] == '-' { -1 } else { 1 }
+    let hh = fixedDigits(s, pos + 1, 2)
+    if hh < 0 {
+        return None
+    }
+    var i = pos + 3
+    var mm: i64 = 0
+    if i < s.len && s[i] == ':' {
+        mm = fixedDigits(s, i + 1, 2)
+        if mm < 0 {
+            return None
+        }
+        i += 3
+    } else if countDigits(s, i) == 2 {
+        mm = fixedDigits(s, i, 2)
+        i += 2
+    }
+    if hh > 23 || mm > 59 {
+        return None
+    }
+    return Some(ZoneOffset { minutes: sign * (hh * 60 + mm), next: i })
+}
+
+// Parse an RFC 5322 / 2822 / 1123 / 822 date, the form RSS `pubDate` and email `Date:`
+// headers use: `Mon, 12 Oct 2026 14:00:00 GMT`, `12 Oct 2026 14:00 -0700 (PDT)`.
+// Returns epoch milliseconds (UTC). The weekday is optional and not checked against
+// the date; seconds are optional. Accepted zones: numeric (`+0000`, `-07:00`), `UT`,
+// `GMT`, `UTC`, `Z`, the US zones `EST EDT CST CDT MST MDT PST PDT`, and the military
+// letters, which RFC 2822 §4.3 says to read as `-0000` (UTC). Other names (`CEST`,
+// `IST`) are ambiguous and rejected. Two-digit years follow RFC 2822 §4.3: 00-49 is
+// 20xx, 50-99 is 19xx; three digits add 1900. A trailing `(comment)` is ignored.
+pub fn parseRfc2822(s: &string): Result<i64> {
+    var i = skipSpaces(s, 0)
+    // Optional day-of-week: letters then a comma.
+    if i < s.len && isAlpha(s[i]) {
+        let w = alphaWord(s, i)
+        let j = skipSpaces(s, i + w.len)
+        if j < s.len && s[j] == ',' {
+            i = skipSpaces(s, j + 1)
+        }
+    }
+    let dn = countDigits(s, i)
+    if dn < 1 || dn > 2 {
+        return Err($"rfc 2822 date '{s}': expected a day of the month")
+    }
+    let day = fixedDigits(s, i, dn)
+    i = skipSpaces(s, i + dn)
+    let mw = alphaWord(s, i)
+    let month = monthFromName(mw)
+    if month == 0 {
+        return Err($"rfc 2822 date '{s}': unknown month '{mw}'")
+    }
+    i = skipSpaces(s, i + mw.len)
+    let yn = countDigits(s, i)
+    if yn < 2 || yn > 4 {
+        return Err($"rfc 2822 date '{s}': expected a year")
+    }
+    var year = fixedDigits(s, i, yn)
+    if yn == 2 {
+        year = if year < 50 { 2000 + year } else { 1900 + year }
+    } else if yn == 3 {
+        year = 1900 + year
+    }
+    i = skipSpaces(s, i + yn)
+    let hh = fixedDigits(s, i, 2)
+    if hh < 0 || i + 2 >= s.len || s[i + 2] != ':' {
+        return Err($"rfc 2822 date '{s}': expected hh:mm")
+    }
+    let mi = fixedDigits(s, i + 3, 2)
+    if mi < 0 {
+        return Err($"rfc 2822 date '{s}': expected hh:mm")
+    }
+    i += 5
+    var sec: i64 = 0
+    if i < s.len && s[i] == ':' {
+        sec = fixedDigits(s, i + 1, 2)
+        if sec < 0 {
+            return Err($"rfc 2822 date '{s}': expected seconds after ':'")
+        }
+        i += 3
+    }
+    i = skipSpaces(s, i)
+    var offset: i64 = 0
+    match numericOffset(s, i) {
+        Some(z) => {
+            offset = z.minutes
+            i = z.next
+        }
+        None => {
+            let z = alphaWord(s, i)
+            if z.len == 0 {
+                return Err($"rfc 2822 date '{s}': missing time zone")
+            }
+            let named = namedZoneOffset(z)
+            if named.isNone() {
+                return Err($"rfc 2822 date '{s}': unknown or ambiguous time zone '{z}'")
+            }
+            offset = named ?? 0
+            i += z.len
+        }
+    }
+    i = skipSpaces(s, i)
+    if i < s.len && s[i] == '(' {
+        while i < s.len && s[i] != ')' {
+            i += 1
+        }
+        if i >= s.len {
+            return Err($"rfc 2822 date '{s}': unclosed comment")
+        }
+        i = skipSpaces(s, i + 1)
+    }
+    if i != s.len {
+        return Err($"rfc 2822 date '{s}': unexpected text after the zone")
+    }
+    return civilToMillis(year, month, day, hh, mi, sec, 0, offset)
+}
+
+// RFC 2822 §3.3 and §4.3 zone names, as minutes east of UTC.
+fn namedZoneOffset(z: &string): Option<i64> {
+    if z == "ut" || z == "gmt" || z == "utc" || z == "z" {
+        return Some(0)
+    }
+    if z == "est" { return Some(-300) }
+    if z == "edt" { return Some(-240) }
+    if z == "cst" { return Some(-360) }
+    if z == "cdt" { return Some(-300) }
+    if z == "mst" { return Some(-420) }
+    if z == "mdt" { return Some(-360) }
+    if z == "pst" { return Some(-480) }
+    if z == "pdt" { return Some(-420) }
+    // Military zones: their signs were published backwards in RFC 822, so RFC 2822
+    // says to treat every one as carrying no zone information, i.e. UTC.
+    if z.len == 1 && z != "j" {
+        return Some(0)
+    }
+    return None
+}
+
+// Parse an ISO 8601 / RFC 3339 timestamp in extended format: `2026-10-12T14:00:00Z`,
+// `2026-10-12T14:00:00.123+02:00`, `2026-10-12 14:00:00z`, or a bare date
+// `2026-10-12` (midnight UTC). Returns epoch milliseconds (UTC). Fractional seconds take
+// any number of digits and are truncated to milliseconds; `hh:mm` without seconds is
+// accepted. The offset is `Z`, `±hh:mm`, `±hhmm` or `±hh`, and a date-time without one
+// is an error rather than a guess at local time (append `Z` if it is UTC).
+pub fn parseIso8601(s: &string): Result<i64> {
+    let n = s.len
+    if countDigits(s, 0) != 4 || n < 10 || s[4] != '-' || s[7] != '-' {
+        return Err($"iso 8601 '{s}': expected YYYY-MM-DD")
+    }
+    let year = fixedDigits(s, 0, 4)
+    let month = fixedDigits(s, 5, 2)
+    let day = fixedDigits(s, 8, 2)
+    if month < 0 || day < 0 {
+        return Err($"iso 8601 '{s}': expected YYYY-MM-DD")
+    }
+    if n == 10 {
+        return civilToMillis(year, month, day, 0, 0, 0, 0, 0)
+    }
+    if s[10] != 'T' && s[10] != 't' && s[10] != ' ' {
+        return Err($"iso 8601 '{s}': expected 'T' after the date")
+    }
+    let hh = fixedDigits(s, 11, 2)
+    let mi = fixedDigits(s, 14, 2)
+    if hh < 0 || mi < 0 || n < 16 || s[13] != ':' {
+        return Err($"iso 8601 '{s}': expected hh:mm after 'T'")
+    }
+    var i: i64 = 16
+    var sec: i64 = 0
+    var millis: i64 = 0
+    if i < n && s[i] == ':' {
+        sec = fixedDigits(s, i + 1, 2)
+        if sec < 0 {
+            return Err($"iso 8601 '{s}': expected seconds after ':'")
+        }
+        i += 3
+        if i < n && (s[i] == '.' || s[i] == ',') {
+            let fd = countDigits(s, i + 1)
+            if fd == 0 {
+                return Err($"iso 8601 '{s}': expected digits after the decimal point")
+            }
+            var k: i64 = 0
+            while k < 3 {
+                millis = millis * 10
+                if k < fd {
+                    millis = millis + (s[i + 1 + k] - '0') as i64
+                }
+                k += 1
+            }
+            i += 1 + fd
+        }
+    }
+    var offset: i64 = 0
+    if i < n && (s[i] == 'Z' || s[i] == 'z') {
+        i += 1
+    } else {
+        match numericOffset(s, i) {
+            Some(z) => {
+                offset = z.minutes
+                i = z.next
+            }
+            None => {
+                if i >= n {
+                    return Err($"iso 8601 '{s}': missing UTC offset (append 'Z' for UTC)")
+                }
+                return Err($"iso 8601 '{s}': bad UTC offset")
+            }
+        }
+    }
+    if i != n {
+        return Err($"iso 8601 '{s}': unexpected text after the offset")
+    }
+    return civilToMillis(year, month, day, hh, mi, sec, millis, offset)
 }

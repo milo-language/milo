@@ -1,0 +1,68 @@
+// std/datetime parses RFC 2822/1123/822 dates (RSS pubDate, email Date:) and ISO 8601 /
+// RFC 3339 timestamps to epoch milliseconds, and rejects what it cannot read exactly.
+from "std/datetime" import { parseRfc2822, parseIso8601, DateTime }
+
+fn show(r: Result<i64>) {
+    match r {
+        Ok(v) => { print(v) }
+        Err(e) => { print("err: " + e) }
+    }
+}
+
+fn main() {
+    show(parseRfc2822("Mon, 12 Oct 2026 14:00:00 GMT"))
+    show(parseRfc2822("Mon, 12 Oct 2026 14:00:00 +0000"))
+    show(parseRfc2822("Mon, 12 Oct 2026 14:00:00 PDT"))
+    show(parseRfc2822("12 oct 2026 14:00 -0700 (PDT)"))
+    show(parseRfc2822("Monday,  12 October 2026 14:00:00 EST"))
+    show(parseRfc2822("Fri, 31 Dec 99 23:59:00 Z"))
+    show(parseRfc2822("2 Jan 49 03:04:05 UT"))
+    show(parseRfc2822("Thu, 29 Feb 2024 12:00:00 +05:30"))
+    show(parseRfc2822("Tue, 1 Sep 2026 08:05 +0100"))
+    show(parseRfc2822("Mon, 12 Oct 2026 14:00:00 CEST"))
+    show(parseRfc2822("Mon, 12 Oct 2026 14:00:00"))
+    show(parseRfc2822("Mon, 30 Feb 2026 14:00:00 GMT"))
+    show(parseRfc2822("Mon, 12 Foo 2026 14:00:00 GMT"))
+    show(parseIso8601("2026-10-12T14:00:00Z"))
+    show(parseIso8601("2026-10-12T14:00:00.123Z"))
+    show(parseIso8601("2026-10-12t14:00:00.987654+02:00"))
+    show(parseIso8601("2026-10-12 14:00:00z"))
+    show(parseIso8601("2026-10-12T14:30-0230"))
+    show(parseIso8601("2026-10-12T14:00:00+00"))
+    show(parseIso8601("2026-10-12"))
+    show(parseIso8601("1969-12-31T23:59:59Z"))
+    show(parseIso8601("2016-12-31T23:59:60Z"))
+    show(parseIso8601("2026-10-12T14:00:00"))
+    show(parseIso8601("2026-13-12T14:00:00Z"))
+    show(parseIso8601("2026-10-12T24:00:00Z"))
+    show(parseIso8601("2026-10-12T14:00:00Zjunk"))
+    let dt = DateTime.fromEpoch(parseIso8601("2026-10-12T14:00:00.5+02:00")! / 1000)
+    print(dt.format())
+}
+// @expect: 1791813600000
+// @expect: 1791813600000
+// @expect: 1791838800000
+// @expect: 1791838800000
+// @expect: 1791831600000
+// @expect: 946684740000
+// @expect: 2493169445000
+// @expect: 1709188200000
+// @expect: 1788246300000
+// @expect: err: rfc 2822 date 'Mon, 12 Oct 2026 14:00:00 CEST': unknown or ambiguous time zone 'cest'
+// @expect: err: rfc 2822 date 'Mon, 12 Oct 2026 14:00:00': missing time zone
+// @expect: err: day 30 out of range for 2026-2
+// @expect: err: rfc 2822 date 'Mon, 12 Foo 2026 14:00:00 GMT': unknown month 'foo'
+// @expect: 1791813600000
+// @expect: 1791813600123
+// @expect: 1791806400987
+// @expect: 1791813600000
+// @expect: 1791824400000
+// @expect: 1791813600000
+// @expect: 1791763200000
+// @expect: -1000
+// @expect: 1483228799000
+// @expect: err: iso 8601 '2026-10-12T14:00:00': missing UTC offset (append 'Z' for UTC)
+// @expect: err: month 13 out of range
+// @expect: err: time 24:0:0 out of range
+// @expect: err: iso 8601 '2026-10-12T14:00:00Zjunk': unexpected text after the offset
+// @expect: 2026-10-12T12:00:00
