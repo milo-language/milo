@@ -1844,8 +1844,12 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             );
           }
           // `use(g[0])` / `sum(g)` into a `&[T]`: the argument is a view into g's buffer
-          // for as long as the callee runs, and the callee parks.
-          for (const [argIdx, a] of callArgs.entries()) {
+          // for as long as the callee runs, and the callee parks. A method's receiver is
+          // its params[0] and borrows the same way: `g[0].show()` is `show(g[0])`.
+          const viewArgs: [number, Expr][] = callArgs.map((a, i) => [i + paramOffset, a]);
+          if (n.kind === "MethodCall" && paramOffset === 1 && t === direct) viewArgs.unshift([0, n.object as Expr]);
+          for (const [prmIdx, a] of viewArgs) {
+            const argIdx = prmIdx - paramOffset;
             // A slice expression is already a reference whatever the parameter says;
             // it roots at its receiver (`g[a..b]` parses as `g.slice(a, b)`). An inline
             // `g.ptr()` is a view for the duration of the call in the same way.
@@ -1854,7 +1858,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             const g = ptrView ? rootOf(ptrView.source) : rootOf(isViewArg && a.kind === "MethodCall" ? a.object : a);
             if (!g || !mutableGlobals.has(g) || bound.has(g)) continue;
             if (iterated.includes(g) || views.some(v => v.global === g)) continue;
-            const prm = paramOffset >= 0 ? callee!.params[argIdx + paramOffset] : undefined;
+            const prm = paramOffset >= 0 ? callee!.params[prmIdx] : undefined;
             const isElement = ((): boolean => {
               let cur = a as unknown as Record<string, unknown> & { kind?: string };
               while (cur && typeof cur === "object") {

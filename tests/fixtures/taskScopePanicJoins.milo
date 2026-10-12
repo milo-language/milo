@@ -1,0 +1,35 @@
+// @skip-os: win32
+// A scoped task that panics is retired, and a retired task still counts as finished:
+// the scope's join returns instead of waiting forever on it. The scope keeps a live
+// count rather than one handle per task, so the reap of a retired task is what
+// decrements it.
+// @expect: sibling done
+// @expect: scope joined
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+fn overflow(n: i64): i64 {
+    var x: i64 = 9223372036854775800
+    for _i in 0..n {
+        x = x + 1
+    }
+    return x
+}
+
+pub fn main(): i32 {
+    let n: i64 = 100
+    Task.scope((s) => {
+        s.spawn(() => {
+            schedulerYield()
+            print($"unreachable {overflow(n)}")
+        })
+        s.spawn(() => {
+            schedulerYield()
+            schedulerYield()
+            print("sibling done")
+        })
+    })
+    print("scope joined")
+    return 0
+}

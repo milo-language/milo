@@ -92,7 +92,18 @@ pub fn mainTaskStackSize(): i64 {
 }
 
 pub fn taskStructSize(): i64 {
+    return 144
+}
+
+// The TaskScope block (see Task.scope) a scoped task reports its end to, or null.
+fn tScope(): i64 {
     return 128
+}
+
+// How many Task.scope calls are open on this task's stack. Nonzero means scoped
+// tasks may borrow this task's frame, so a panic here must abort, not retire it.
+fn tScopesOpen(): i64 {
+    return 136
 }
 
 fn tPanicNote(): i64 {
@@ -485,6 +496,11 @@ fn onRuntimePanic(): void {
         if task as i64 == 0 || rtReadI32(task, tIsMain()) != 0 {
             return
         }
+        // Retiring unmaps this task's stack, and a task it spawned on an open Task.scope
+        // may still be reading that stack. Returning makes the panic abort the process.
+        if rtLoadI64(task, tScopesOpen()) > 0 {
+            return
+        }
         // the panic message is already on stderr; say what the task was doing
         let note = rtReadPtr(task, tPanicNote())
         if note as i64 != 0 {
@@ -746,13 +762,47 @@ impl Task {
     // captures only bindings declared outside `body`, and a binding a task borrows is
     // either read by everyone in the scope or touched by that one task alone.
     fn scope(body: (&mut TaskScope) => void): void {
-        var s = TaskScope {
-            _tasks: []
+        // Raw memory because reapTask writes the live count from the scheduler's side,
+        // where no Milo reference to this frame can reach.
+        unsafe {
+            let block = malloc(16)
+            rtStoreI64(block, 0, 0)
+            rtStorePtr(block, 8, 0 as *u8)
+            let cur = schedulerCurrent()
+            if cur as i64 != 0 {
+                rtStoreI64(cur, tScopesOpen(), rtLoadI64(cur, tScopesOpen()) + 1)
+            }
+            var s = TaskScope {
+                _block: block
+            }
+            body(&mut s)
+            // Wait on a live count, not a list of handles: a server's scope never ends,
+            // and one retained handle per finished connection would grow without bound.
+            while rtLoadI64(block, 0) > 0 {
+                if cur as i64 != 0 {
+                    rtStorePtr(block, 8, cur)
+                    schedulerPark()
+                } else {
+                    schedulerBlockMain()
+                }
+            }
+            if cur as i64 != 0 {
+                rtStoreI64(cur, tScopesOpen(), rtLoadI64(cur, tScopesOpen()) - 1)
+            }
+            free(block)
         }
-        body(&mut s)
-        for t in s._tasks {
-            t.join()
-        }
+    }
+}
+
+// reapTask's report for a task spawned on a TaskScope. A task a panic retired is
+// reaped the same way, so it counts as finished too.
+fn scopeTaskEnded(block: *u8): void {
+    let live = rtLoadI64(block, 0) - 1
+    rtStoreI64(block, 0, live)
+    let waiter = rtReadPtr(block, 8)
+    if live == 0 && waiter as i64 != 0 {
+        rtStorePtr(block, 8, 0 as *u8)
+        unparkTask(waiter)
     }
 }
 
@@ -763,7 +813,9 @@ impl Task {
 // thread that spawned them (the scheduler is thread-local and nothing migrates a task).
 // If work stealing is ever added, a task spawned here must stay pinned.
 pub struct TaskScope {
-    _tasks: Vec<Task>,
+    // malloc'd by Task.scope: [0] tasks spawned and not yet reaped, [8] the task
+    // parked until that count reaches zero (null when none is).
+    _block: *u8,
 }
 
 impl TaskScope {
@@ -778,7 +830,10 @@ impl TaskScope {
             var envPtr: *u8 = 0 as *u8
             memcpy((fnPtr.addrOf()) as *u8, (f.addrOf()) as *u8, 8)
             memcpy((envPtr.addrOf()) as *u8, ((f.addrOf()) as i64 + 8) as *u8, 8)
-            self._tasks.push(Task.spawnRaw(fnPtr, envPtr, defaultStackSize()))
+            // The handle drops here; reapTask reports the task's end through tScope.
+            let t = Task.spawnRaw(fnPtr, envPtr, defaultStackSize())
+            rtStorePtr(t.raw(), tScope(), self._block)
+            rtStoreI64(self._block, 0, rtLoadI64(self._block, 0) + 1)
         }
     }
 }
@@ -1796,6 +1851,7 @@ fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 fn reapTask(sched: *u8, task: *u8): void {
     let joiner = rtReadPtr(task, tJoiner())
     let cell = rtReadPtr(task, tJoinCell())
+    let scope = rtReadPtr(task, tScope())
     unsafe {
         if !replayHeapUnmap(rtReadPtr(task, tStack()), rtLoadI64(task, tStackSize())) {
             munmap(rtReadPtr(task, tStack()), rtLoadI64(task, tStackSize()))
@@ -1829,6 +1885,9 @@ fn reapTask(sched: *u8, task: *u8): void {
     }
     if joiner as i64 != 0 {
         unparkTask(joiner)
+    }
+    if scope as i64 != 0 {
+        scopeTaskEnded(scope)
     }
     // The drain waiter is itself a task, so it is waiting to be the last one
     // left — not for the count to hit zero.

@@ -11,10 +11,13 @@ from "std/net" import {
     TcpListener, ip4
 }
 from "std/runtime" import {
-    Task, schedulerRunToCompletion, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote
+    Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote
 }
 from "std/event" import {
     setNonblocking
+}
+from "std/sync" import {
+    Channel
 }
 
 // ── Public types ──
@@ -1058,12 +1061,6 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
     return Result.Err("server exited")
 }
 
-// The router the concurrent server is handing connections to. A spawned task
-// cannot borrow a caller's stack, and module scope only permits a
-// compile-time-constant initializer, so the router rides in a Vec that starts
-// empty and holds exactly one element from the first serve call onward.
-var activeRouter: Vec<Router> = []
-
 // A green task's socket is non-blocking, so one write() may be short. sendFd loops,
 // parks only on EAGAIN, and gives up on any other error: a peer that hung up
 // (EPIPE/ECONNRESET) must end the task, or it retries forever on EPOLLHUP.
@@ -1095,16 +1092,16 @@ pub fn waitPeerClosed(fd: i32): void {
     }
 }
 
-// Run the active router's stream route matching `req`, if any. False means no
+// Run `router`'s stream route matching `req`, if any. False means no
 // stream route matched and `req` is untouched for the normal path. A free fn, not
 // a Router method: it takes the connection's raw fd, and methods on a pub type are
 // public.
-fn runStreamRoute(req: &Request, fd: i32): bool {
+fn runStreamRoute(req: &Request, fd: i32, router: &Router): bool {
     if req.method != "GET" {
         return false
     }
-    for i in 0..activeRouter[0].streams.len {
-        let route = activeRouter[0].streams[i]
+    for i in 0..router.streams.len {
+        let route = router.streams[i]
         if let Option.Some(matched) = matchRoute(route.pattern, route.paramNames, req.path) {
             var ctx = Context {
                 req: req.clone(),
@@ -1112,7 +1109,7 @@ fn runStreamRoute(req: &Request, fd: i32): bool {
                 statusCode: 200,
                 respHeaders: [],
             }
-            let handler = activeRouter[0].streams[i].handler
+            let handler = router.streams[i].handler
             handler(&mut ctx, fd)
             return true
         }
@@ -1137,24 +1134,60 @@ fn requestLine(req: &Request): string {
 // a failed assert): an answer instead of a reset, while the server keeps running.
 let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\n500 Internal Server Error"
 
-fn handleConn(clientFd: i32): void {
+fn handleConn(clientFd: i32, router: &Router): void {
     unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
-    if activeRouter.len == 0 {
-        unsafe { sysClose(clientFd) }
-        return
-    }
-    serveConn(clientFd, activeRouter[0].maxBodyBytes, (req: Request): string => {
+    serveConn(clientFd, router.maxBodyBytes, (req: Request): string => {
         taskOnPanicNote(requestLine(req))
         // A stream route has already written everything it will; nothing more to send.
-        if runStreamRoute(req, clientFd) {
+        if runStreamRoute(req, clientFd, router) {
             return ""
         }
         let head = req.method == "HEAD"
-        let handled = activeRouter[0].handle(req)
+        let handled = router.handle(req)
         if head {
             return headOnly(renderResponse(handled.response, handled.headers))
         }
         return renderResponse(handled.response, handled.headers)
+    })
+}
+
+// One connection task: take the next accepted fd and serve it. The fd comes over a
+// channel because a scoped task may borrow only what outlives the scope body, and
+// each fd is a body local (a by-reference capture would see the next accept's fd).
+fn serveNextConn(fds: &Channel<i32>, router: &Router): void {
+    match fds.recv() {
+        Result.Ok(clientFd) => {
+            handleConn(clientFd, router)
+        }
+        Result.Err(_e) => {
+            return
+        }
+    }
+}
+
+// The accept loop, run as a green task. Every connection is a task on this
+// function's own Task.scope, so each borrows `router` from the caller's frame rather
+// than from a global, and the scope keeps that frame alive while any of them runs.
+fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router): void {
+    Task.scope((s) => {
+        while true {
+            // listenFd belongs to the caller's listener, which outlives this scope.
+            unsafe { schedulerWaitRead(listenFd) }
+            // Drain: one readiness notification can cover several pending
+            // connections, and leaving them queued would stall until the next.
+            while true {
+                let clientFd = acceptPeer(listenFd)
+                if clientFd < 0 {
+                    break
+                }
+                // clientFd was just accepted; nothing else holds it until the send below.
+                unsafe { setNonblocking(clientFd) }
+                s.spawn(() => serveNextConn(fds, router))
+                // Parks only while the buffer holds 64 fds whose tasks have not run yet.
+                // It cannot fail: only a closed channel refuses, and nothing closes this one.
+                fds.send(clientFd)!
+            }
+        }
     })
 }
 
@@ -1165,44 +1198,29 @@ fn handleConn(clientFd: i32): void {
 // moment a handler talks to the network: one slow upstream then stalls every
 // other client for the whole round trip. Handlers that fetch need this loop.
 //
-// Never returns: the scheduler drives the accept task and the handlers it
-// spawns, exactly as a green-threaded server's main is supposed to.
+// Never returns once listening; a listener that cannot be opened is an Err. The
+// scheduler drives the accept task, the handlers it spawns and any task the caller
+// spawned earlier, exactly as a green-threaded server's main is supposed to.
 pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
     return serveRouterConcurrentOn("0.0.0.0", port, router)
 }
 
 // serveRouterConcurrent bound to one IPv4 address (see serveRouterOn).
 pub fn serveRouterConcurrentOn(host: &string, port: u16?, router: Router): Result<Unit> {
-    unsafe {
-        let sock = openListener(host, port)?
-        if activeRouter.len == 0 {
-            activeRouter.push(router)
-        }
-        let listenFd = listenerFd(sock)
-        // accept() has no green-aware wrapper: on a blocking listener it parks the
-        // OS thread and no other task ever runs. Non-blocking plus an explicit
-        // kqueue/epoll wait is what makes the accept loop a cooperating task.
-        setNonblocking(listenFd)
-        Task.spawn(move(): void => {
-            while true {
-                schedulerWaitRead(listenFd)
-                // Drain: one readiness notification can cover several pending
-                // connections, and leaving them queued would stall until the next.
-                while true {
-                    let clientFd = acceptPeer(listenFd)
-                    if clientFd < 0 {
-                        break
-                    }
-                    setNonblocking(clientFd)
-                    Task.spawn(move(): void => {
-                        handleConn(clientFd)
-                    })
-                }
-            }
-        })
-        schedulerRunToCompletion()
-        return Result.Err("server exited")
-    }
+    let sock = openListener(host, port)?
+    let listenFd = listenerFd(sock)
+    let fds = Channel<i32>.new(64)?
+    // accept() has no green-aware wrapper: on a blocking listener it parks the
+    // OS thread and no other task ever runs. Non-blocking plus an explicit
+    // kqueue/epoll wait is what makes the accept loop a cooperating task.
+    unsafe { setNonblocking(listenFd) }
+    // The accept loop is a scoped task rather than this body, so it is a green task
+    // (and schedulerWaitRead parks it) even when the caller is not; the join below
+    // then drives the scheduler for good, as schedulerRunToCompletion used to.
+    Task.scope((s) => {
+        s.spawn(() => acceptLoop(listenFd, fds, router))
+    })
+    return Result.Err("server exited")
 }
 
 // ── Path matching ──

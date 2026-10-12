@@ -509,8 +509,9 @@ handler is pure computation over embedded data. It stops being fine the
 moment a handler talks to the network: one slow upstream then stalls every
 other client for the whole round trip. Handlers that fetch need this loop.
 
-Never returns: the scheduler drives the accept task and the handlers it
-spawns, exactly as a green-threaded server's main is supposed to.
+Never returns once listening; a listener that cannot be opened is an Err. The
+scheduler drives the accept task, the handlers it spawns and any task the caller
+spawned earlier, exactly as a green-threaded server's main is supposed to.
 
 #### `serveRouterConcurrentOn`
 

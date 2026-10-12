@@ -1,0 +1,22 @@
+// A method's receiver borrows like an argument: `g[0].show()` hands `show` a reference
+// into g's buffer, and if `show` parks, another task can push to g and realloc it
+// (ASan saw the use-after-free before the receiver went through the same check).
+// @error: 'Holder.show' can park this task while it holds a reference into 'g's buffer
+from "std/runtime" import {
+    schedulerYield
+}
+struct Holder { name: string }
+impl Holder {
+    fn show(self: &Self): void {
+        schedulerYield()
+        print(self.name)
+    }
+}
+var g: Vec<Holder> = []
+
+pub fn main(): i32 {
+    g.push(Holder { name: "a" })
+    g[0].show()
+    print(g.len)
+    return 0
+}

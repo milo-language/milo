@@ -1,0 +1,40 @@
+// @skip-os: win32
+// A green task that panics while a Task.scope is open on its stack aborts the process.
+// Retiring it, as a panic on any other green task does, would unmap the stack its
+// scoped tasks are still borrowing `n` from; the child below would then read freed
+// memory and the program would print "survived".
+// @runtime-error: integer overflow
+from "std/runtime" import {
+    Task, schedulerYield
+}
+
+fn overflow(n: i64): i64 {
+    var x: i64 = 9223372036854775800
+    for _i in 0..n {
+        x = x + 1
+    }
+    return x
+}
+
+fn outer(): void {
+    let n: i64 = 100
+    Task.scope((s) => {
+        s.spawn(() => {
+            schedulerYield()
+            print($"child read {n}")
+        })
+        print($"unreachable {overflow(n)}")
+    })
+}
+
+pub fn main(): i32 {
+    let t = Task.spawn(move(): void => {
+        outer()
+    })
+    t.join()
+    print("survived")
+    // Exit before the scheduler resumes the orphaned child, so the unfixed runtime
+    // fails this fixture by exiting 0 rather than by however the dangling read ends.
+    exit(0)
+    return 0
+}
