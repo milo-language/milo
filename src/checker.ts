@@ -4730,6 +4730,8 @@ export class TypeChecker {
       }
       case "float": return { k: "float", ty: `f${t.bits}` };
       case "struct": {
+        // std/json's own document type: the field holds whatever JSON arrived.
+        if (t.name === "Json") return { k: "raw" };
         if (!this.jsonCapableStructs.has(t.name)) {
           return { err: `struct '${t.name}' has no JSON codec — add @derive(Json) to it` };
         }

@@ -663,6 +663,32 @@ impl Json {
         return Option.None
     }
 
+    // The JSON text of the node at `cur`, as `rawStr` gives for a whole document; ""
+    // for a missing cursor. Splicing a subtree into output this way costs one walk of
+    // that subtree, where `get`/`at` plus `rawStr` copied the entire document first.
+    fn curRaw(self: &Self, cur: i64): string {
+        let raw = jsonCurResolve(self, cur)
+        if raw < 0 {
+            return ""
+        }
+        return jsonNodeRawStr(self, raw)
+    }
+
+    // The node at `cur` as a document of its own (null for a missing cursor): what a
+    // `Json` field of a @derive(Json) struct decodes to.
+    fn curJson(self: &Self, cur: i64): Json {
+        let raw = jsonCurResolve(self, cur)
+        if raw < 0 {
+            match jsonParse("null") {
+                Result.Ok(n) => {
+                    return n
+                }
+                Result.Err(_e) => {}
+            }
+        }
+        return jsonExtractSubtree(self, raw)
+    }
+
     fn curStr(self: &Self, cur: i64): Option<string> {
         let raw = jsonCurResolve(self, cur)
         if raw < 0 {

@@ -1,0 +1,30 @@
+// A `Json` field in a @derive(Json) struct carries any JSON value through verbatim
+// (Go's json.RawMessage): numbers keep their source spelling, nested shapes survive
+// a decode/encode round trip. Json.curRaw / curJson are the cursor-side pieces: a
+// subtree's text and a subtree as its own document, without copying the whole input.
+// @expect: {"name":"x","epoch":null,"raw":{"k":[1,2.50,"z"],"n":null}}
+// @expect: round trip {"name":"y","epoch":7,"raw":[true,{"deep":1e3}]}
+// @expect: curRaw [1,2.50,"z"]
+// @expect: curRaw missing ''
+// @expect: curJson 2.50
+from "std/json" import { Json }
+
+@derive(Json)
+struct Envelope {
+    name: string,
+    epoch: Option<i64>,
+    raw: Json,
+}
+
+pub fn main(): i32 {
+    let e = Envelope { name: "x", epoch: Option.None, raw: Json.parse("{\"k\":[1,2.50,\"z\"],\"n\":null}")! }
+    print(e.toJson())
+    let back = Envelope.fromJson("{\"name\":\"y\",\"epoch\":7,\"raw\":[true,{\"deep\":1e3}]}")!
+    print("round trip " + back.toJson())
+    let doc = Json.parse("{\"k\":[1,2.50,\"z\"]}")!
+    let k = doc.curField(doc.curRoot(), "k")
+    print("curRaw " + doc.curRaw(k))
+    print("curRaw missing '" + doc.curRaw(doc.curField(doc.curRoot(), "nope")) + "'")
+    print("curJson " + doc.curJson(doc.curChild(k, 1)).rawStr())
+    return 0
+}

@@ -21,6 +21,8 @@ export type JsonPlan =
   | { k: "int"; ty: string; unsigned64: boolean; range?: { lo: string; hi: string } }
   | { k: "float"; ty: string }
   | { k: "struct"; name: string }
+  // A `Json` field: any JSON value, carried through verbatim (Go's json.RawMessage).
+  | { k: "raw" }
   | { k: "unitEnum"; name: string; variants: string[] }
   | { k: "vec"; ty: string; elem: JsonPlan }
   // A FIXED array. `size` is the exact element count the wire must supply, and `zero` is
@@ -63,6 +65,7 @@ function emitSer(p: JsonPlan, val: string, g: Gen, d: number): string {
     case "bool": return `jsonBoolStr(${val})`;
     case "int": case "float": return `${val}.toString()`;
     case "struct": return `${val}.toJson()`;
+    case "raw": return `${val}.rawStr()`;
     case "unitEnum": {
       const s = g.tmp("s");
       g.push(d, `var ${s}: string = ""`);
@@ -188,6 +191,11 @@ function emitDe(p: JsonPlan, node: string, path: string, g: Gen, d: number): str
       g.push(d, `}`);
       const t = g.tmp("v");
       g.push(d, `let ${t} = ${raw} as ${p.ty}`);
+      return t;
+    }
+    case "raw": {
+      const t = g.tmp("v");
+      g.push(d, `let ${t} = doc.curJson(${node})`);
       return t;
     }
     case "struct": {
