@@ -70,6 +70,9 @@ Fields:
 fn Re.canStartAt(self: &Re, s: &string, sp: i64): bool
 ```
 
+Whether any match can begin at byte `sp`; the scan skips start positions where
+this is false. The end of input always qualifies (an empty match may sit there).
+
 #### `Re.computeFirst`
 
 ```milo
@@ -85,6 +88,8 @@ character is the one under the cursor.
 ```milo
 fn Re.cpAt(self: &Re, s: &string, sp: i64): i64
 ```
+
+The codepoint that starts at byte `sp` of `s`.
 
 #### `Re.expand`
 
@@ -136,11 +141,16 @@ the set a superset of the truth (a filter, never a verdict).
 fn Re.firstOk(self: &Re, f: i64, s: &string, sp: i64): bool
 ```
 
+Whether a match path whose first-codepoint filter is `firsts[f]` can begin at byte
+`sp` of `s`. A filter, never a verdict: true only means the matcher must try.
+
 #### `Re.isWordAt`
 
 ```milo
 fn Re.isWordAt(self: &Re, s: &string, sp: i64): bool
 ```
+
+Whether the codepoint at `sp` is a `\w` character (false at the end of input).
 
 #### `Re.isWordBefore`
 
@@ -148,11 +158,16 @@ fn Re.isWordAt(self: &Re, s: &string, sp: i64): bool
 fn Re.isWordBefore(self: &Re, s: &string, sp: i64): bool
 ```
 
+Whether the codepoint ending at `sp` is a `\w` character (false at the start).
+
 #### `Re.matchFrom`
 
 ```milo
 fn Re.matchFrom(self: &Re, s: &string, from: i64, budgetHit: &mut bool): Option<ReMatch>
 ```
+
+The leftmost match starting at byte `from` or later, or None. Sets `budgetHit`
+when the step budget ran out first, so a caller can tell "gave up" from "no match".
 
 #### `Re.new`
 
@@ -205,6 +220,9 @@ stay; on failure every write is undone back to the barrier this call pushed.
 fn Re.setSlot(self: &Re, vm: &mut ReVm, slot: i64, v: i64)
 ```
 
+Write capture/loop register `slot`, recording the old value on the backtrack
+stack so a failed path restores it.
+
 #### `Re.split`
 
 ```milo
@@ -229,25 +247,6 @@ fn Re.testBounded(self: &Re, s: &string): Option<bool>
 
 Whether the last step budget was exceeded is not tracked per Re (a Re is shared
 read-only); `testBounded` reports it for a caller that must tell "no" from "gave up".
-
-### `ReClass`
-
-```milo
-pub struct ReClass
-```
-
-Fields:
-
-- `neg: bool`
-- `ranges: Vec<i64>`: Inclusive codepoint ranges, flattened: lo0, hi0, lo1, hi1, …
-
-### `ReInst`
-
-```milo
-pub struct ReInst
-```
-
-Fields: `op: i32`, `a: i64`, `b: i64`.
 
 ### `ReMatch`
 

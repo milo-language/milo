@@ -125,6 +125,8 @@ The boolean value of object key `key`, or None if absent or not a boolean.
 fn Json.boolAt(self: &Json, cur: i64, p: &string): Option<bool>
 ```
 
+Boolean at path `p` under cursor `cur`, or None (see `strAt`).
+
 #### `Json.boolPath`
 
 ```milo
@@ -318,6 +320,8 @@ number.
 fn Json.f64At(self: &Json, cur: i64, p: &string): Option<f64>
 ```
 
+Number at path `p` under cursor `cur`, or None (see `strAt`).
+
 #### `Json.f64Path`
 
 ```milo
@@ -350,6 +354,8 @@ out-of-range values are None, never a truncation.
 fn Json.i64At(self: &Json, cur: i64, p: &string): Option<i64>
 ```
 
+Integer at path `p` under cursor `cur`, or None (see `strAt`).
+
 #### `Json.i64Path`
 
 ```milo
@@ -362,11 +368,15 @@ fn Json.i64Path(self: &Json, p: &string): Option<i64>
 fn Json.idxBool(self: &Json, at: JsonCur): Option<bool>
 ```
 
+`.bool()` at the end of an index chain: the boolean at `at`, or None.
+
 #### `Json.idxCur`
 
 ```milo
 fn Json.idxCur(self: &Json, at: JsonCur): JsonCur
 ```
+
+`doc[cur]`: re-enter an index chain at a cursor kept in a variable.
 
 #### `Json.idxExists`
 
@@ -374,11 +384,15 @@ fn Json.idxCur(self: &Json, at: JsonCur): JsonCur
 fn Json.idxExists(self: &Json, at: JsonCur): bool
 ```
 
+`.exists()` at the end of an index chain: whether every step found something.
+
 #### `Json.idxF64`
 
 ```milo
 fn Json.idxF64(self: &Json, at: JsonCur): Option<f64>
 ```
+
+`.f64()` at the end of an index chain: the number at `at`, or None.
 
 #### `Json.idxI64`
 
@@ -386,11 +400,16 @@ fn Json.idxF64(self: &Json, at: JsonCur): Option<f64>
 fn Json.idxI64(self: &Json, at: JsonCur): Option<i64>
 ```
 
+`.i64()` at the end of an index chain: the integer at `at`, or None.
+
 #### `Json.idxItems`
 
 ```milo
 fn Json.idxItems(self: &Json, at: JsonCur): Vec<JsonCur>
 ```
+
+`for it in doc[...].items()`: a cursor per element of the array at `at`; empty
+for anything that is not an array.
 
 #### `Json.idxJson`
 
@@ -398,11 +417,17 @@ fn Json.idxItems(self: &Json, at: JsonCur): Vec<JsonCur>
 fn Json.idxJson(self: &Json, at: JsonCur): Json
 ```
 
+`.json()` at the end of an index chain: the subtree at `at` as a document of
+its own (as `curJson`).
+
 #### `Json.idxKey`
 
 ```milo
 fn Json.idxKey(self: &Json, at: JsonCur, key: &string): JsonCur
 ```
+
+`doc[...]["key"]`: the member named `key` of the object at `at`; absent when
+`at` is not an object or has no such key.
 
 #### `Json.idxKeys`
 
@@ -418,11 +443,17 @@ Object keys in document order, for `for k in doc["m"].keys()`.
 fn Json.idxKind(self: &Json, at: JsonCur): i32
 ```
 
+`.kind()` at the end of an index chain: the kind tag `curKind` reports;
+negative when absent.
+
 #### `Json.idxLen`
 
 ```milo
 fn Json.idxLen(self: &Json, at: JsonCur): i64
 ```
+
+`.len()` at the end of an index chain: element or member count; 0 for a scalar
+or an absent value.
 
 #### `Json.idxPos`
 
@@ -430,11 +461,17 @@ fn Json.idxLen(self: &Json, at: JsonCur): i64
 fn Json.idxPos(self: &Json, at: JsonCur, i: i64): JsonCur
 ```
 
+`doc[...][i]`: element `i` of the array at `at`; absent when out of range or
+not an array.
+
 #### `Json.idxRaw`
 
 ```milo
 fn Json.idxRaw(self: &Json, at: JsonCur): string
 ```
+
+`.raw()` at the end of an index chain: the value's JSON text (as `curRaw`);
+empty when absent.
 
 #### `Json.idxRoot`
 
@@ -454,11 +491,16 @@ chain as `doc[cur]`. A missing step yields a cursor every read treats as absent.
 fn Json.idxStr(self: &Json, at: JsonCur): Option<string>
 ```
 
+`.str()` at the end of an index chain: the string at `at`, or None.
+
 #### `Json.idxValueAt`
 
 ```milo
 fn Json.idxValueAt(self: &Json, at: JsonCur, i: i64): JsonCur
 ```
+
+The value of the `i`th member of the object at `at`, in document order (pairs
+with `idxKeys`).
 
 #### `Json.isArray`
 
@@ -674,8 +716,6 @@ fn JsonArr.val(self: JsonArr, val: JsonVal): JsonArr
 pub struct JsonCur
 ```
 
-Fluent object builder. Methods consume and return self to enable chaining:
-  jsonObj().str("type", "capabilities").int("seq", 3).build()
 A position inside a parsed Json: what `doc["a"][0]` evaluates to. Only `doc[...]`
 reads it (see Json.idxRoot), so it is a plain copyable number.
 
@@ -796,6 +836,9 @@ Fields: `kind: i32`, `a: i64`, `b: i64`.
 pub struct JsonObj
 ```
 
+Fluent object builder. Methods consume and return self to enable chaining:
+  jsonObj().str("type", "capabilities").int("seq", 3).build()
+
 Fields:
 
 - `members: Vec<JsonMember>`
@@ -874,6 +917,8 @@ fn JsonObj.obj(self: JsonObj, key: &string, val: JsonObj): JsonObj
 ```milo
 fn JsonObj.put(self: &mut JsonObj, key: string, val: JsonVal)
 ```
+
+Append member `key`; after `spread`, overwrite an existing `key` in place.
 
 #### `JsonObj.raw`
 

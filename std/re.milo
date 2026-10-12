@@ -69,13 +69,13 @@ let RE_MAX_NEST: i64 = 200
 let RE_STEP_FLOOR: i64 = 100000
 let RE_STEPS_PER_BYTE: i64 = 2000
 
-pub struct ReInst {
+struct ReInst {
     op: i32,
     a: i64,
     b: i64,
 }
 
-pub struct ReClass {
+struct ReClass {
     neg: bool,
     // Inclusive codepoint ranges, flattened: lo0, hi0, lo1, hi1, …
     ranges: Vec<i64>,
@@ -1053,6 +1053,8 @@ impl Re {
         }
     }
 
+    // Whether a match path whose first-codepoint filter is `firsts[f]` can begin at byte
+    // `sp` of `s`. A filter, never a verdict: true only means the matcher must try.
     fn firstOk(self: &Self, f: i64, s: &string, sp: i64): bool {
         if self.firsts[f].bol && sp > 0 {
             return false
@@ -1070,6 +1072,8 @@ impl Re {
         return self.firsts[f].bits[b as i64]
     }
 
+    // Whether any match can begin at byte `sp`; the scan skips start positions where
+    // this is false. The end of input always qualifies (an empty match may sit there).
     fn canStartAt(self: &Self, s: &string, sp: i64): bool {
         return sp >= s.len || self.firstOk(0, s, sp)
     }
@@ -1092,6 +1096,7 @@ struct ReVm {
 }
 
 impl Re {
+    // The codepoint that starts at byte `sp` of `s`.
     fn cpAt(self: &Self, s: &string, sp: i64): i64 {
         return decodeCodepoint(s, sp).value as i64
     }
@@ -1108,6 +1113,7 @@ impl Re {
         return decodeCodepoint(s, i).value as i64
     }
 
+    // Whether the codepoint at `sp` is a `\w` character (false at the end of input).
     fn isWordAt(self: &Self, s: &string, sp: i64): bool {
         if sp >= s.len {
             return false
@@ -1115,10 +1121,13 @@ impl Re {
         return reIsWordCp(self.cpAt(s, sp))
     }
 
+    // Whether the codepoint ending at `sp` is a `\w` character (false at the start).
     fn isWordBefore(self: &Self, s: &string, sp: i64): bool {
         return sp > 0 && reIsWordCp(self.prevCp(s, sp))
     }
 
+    // Write capture/loop register `slot`, recording the old value on the backtrack
+    // stack so a failed path restores it.
     fn setSlot(self: &Self, vm: &mut ReVm, slot: i64, v: i64) {
         vm.stack.push(RE_BT_UNDO)
         vm.stack.push(slot)
@@ -1326,6 +1335,8 @@ impl Re {
         return -1
     }
 
+    // The leftmost match starting at byte `from` or later, or None. Sets `budgetHit`
+    // when the step budget ran out first, so a caller can tell "gave up" from "no match".
     fn matchFrom(self: &Self, s: &string, from: i64, budgetHit: &mut bool): Option<ReMatch> {
         var vm = ReVm {
             slots: Vec.new(), stack: Vec.new(), steps: 0,
