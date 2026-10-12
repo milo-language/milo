@@ -24,6 +24,9 @@ from "std/os" import {
     sysListen,
     sysClose
 }
+from "std/runtime" import {
+    Promise, schedulerCurrent
+}
 from "std/replay" import {
     replayOff, replayBlob
 }
@@ -482,8 +485,30 @@ pub fn resolve(hostname: &string): Result<u32, NetError> {
     return resolveLive(hostname)
 }
 
+// getaddrinfo is a blocking libc call. On a green task it would stall the scheduler's
+// OS thread, so every other task waited on this lookup and parallel fetches resolved
+// one after another; a worker thread does the lookup and only the asking task parks.
+// Not under record/replay: the worker's thread spawn would be a record of its own that
+// a replay, answering the lookup from the trace, never makes.
 @replayHooked
 fn resolveLive(hostname: &string): Result<u32, NetError> {
+    if schedulerCurrent() as i64 == 0 || !replayOff() {
+        return lookupV4(hostname)
+    }
+    let host = hostname.clone()
+    let p = Promise<Result<u32, NetError>>.blocking(move(): Result<u32, NetError> => lookupV4(host))
+    match p.await() {
+        Result.Ok(r) => {
+            return r
+        }
+        Result.Err(_) => {
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
+        }
+    }
+}
+
+@replayHooked
+fn lookupV4(hostname: &string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
         let hintsFamily = (hints as *i32)
