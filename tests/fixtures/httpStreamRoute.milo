@@ -1,17 +1,20 @@
 // @skip-os: win32
 // Router.stream: a GET route that keeps its connection (server-sent events). The
-// handler writes its own headers, registers the fd, and parks in waitPeerClosed while
-// an ordinary route pushes frames to it with sendAll. The server must keep answering
-// other requests meanwhile, and the stream task must end once the client hangs up.
+// handler opens the stream, files an Outbox for its room, and parks in waitClosed while
+// an ordinary route pushes frames through the outboxes. The server must keep answering
+// other requests meanwhile, the stream task must end once the client hangs up, and an
+// outbox whose client has gone must refuse a send instead of writing anywhere.
 // @expect: listening on http://127.0.0.1:47393
-// @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n
+// @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n
 // @expect: poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 1
-// @expect: frame: data: room-7\n\n
+// @expect: frame: e\r\ndata: room-7\n\n\r\n
 // @expect: stream for room-7 ended
 // @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 0
+// @expect: subscribers left: 0
+// @expect: unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
 // @expect: post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
 from "std/http" import {
-    Context, Response, Router, serveRouterConcurrentOn, sendAll, waitPeerClosed
+    Context, Outbox, Param, Response, Router, Stream, serveRouterConcurrentOn
 }
 from "std/net" import {
     TcpStream, ip4
@@ -25,8 +28,12 @@ from "std/time" import {
 
 let PORT: u16 = 47393
 
-var subscribers: Vec<i32> = []
-var subscriberRoom: Vec<string> = []
+struct Subscriber {
+    room: string,
+    out: Outbox,
+}
+
+var subscribers: Vec<Subscriber> = []
 
 fn show(label: string, s: &string): void {
     var out: string = label + ": "
@@ -57,48 +64,39 @@ fn clients(): void {
     stream.close()
     sleepMs(50)
     show("after", exchange("POST /poke HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    print($"subscribers left: {subscribers.len}")
+    show("unknown room", exchange("GET /events/nope HTTP/1.1\r\nHost: x\r\n\r\n"))
     show("post to stream path", exchange("POST /events/room-7 HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
     exit(0)
 }
 
 pub fn main(): i32 {
     var r = Router.new()
-    r.stream("/events/:room", (ctx: &mut Context, fd: i32): void => {
-        var room: string = ""
-        if let Option.Some(v) = ctx.param("room") {
-            room = v
+    r.stream("/events/:room", (ctx: &mut Context, conn: &mut Stream): void => {
+        let room = ctx.param("room") ?? ""
+        if room == "nope" {
+            let noHeaders: Vec<Param> = []
+            conn.respond(Response.NotFound, noHeaders)
+            return
         }
-        // A stream route is handed the server's bare descriptor (sendAll is @unsafe),
-        // and the subscriber list shares it with the /poke task, which no borrow can
-        // express. It stays live: the server closes fd only after this handler
-        // returns, and the fd leaves `subscribers` before that.
-        unsafe {
-            if !sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n") {
-                return
-            }
+        conn.open("text/event-stream", [Param { name: "Cache-Control", value: "no-cache" }])
+        if !conn.send("retry: 3000\n\n") {
+            return
         }
-        subscribers.push(fd)
-        subscriberRoom.push(room.clone())
-        // Same bare descriptor, still open while this handler runs.
-        unsafe { waitPeerClosed(fd) }
-        for i in 0..subscribers.len {
-            if subscribers[i] == fd {
-                subscribers.remove(i)
-                subscriberRoom.remove(i)
-                break
-            }
-        }
+        subscribers.push(Subscriber { room: room.clone(), out: conn.outbox() })
+        conn.waitClosed()
         print($"stream for {room} ended")
     })
     r.post("/poke", (ctx: &mut Context): Response => {
+        // A refused send means that subscriber's client is gone: drop it.
         var sent: i64 = 0
-        for i in 0..subscribers.len {
-            // Every fd in `subscribers` belongs to a stream handler still parked in
-            // waitPeerClosed, so it is open (see the stream route above).
-            unsafe {
-                if sendAll(subscribers[i], $"data: {subscriberRoom[i]}\n\n") {
-                    sent += 1
-                }
+        var i: i64 = 0
+        while i < subscribers.len {
+            if subscribers[i].out.send($"data: {subscribers[i].room}\n\n") {
+                sent += 1
+                i += 1
+            } else {
+                subscribers.remove(i)
             }
         }
         return ctx.text($"sent {sent}")

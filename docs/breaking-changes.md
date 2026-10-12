@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
+key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
 last-verified: 2026-10-12
 -->
@@ -15,6 +15,31 @@ Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker op
 group of entries that release shipped; a package that wants to stay on the previous
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
+
+## Stream routes get a `Stream`, not a descriptor; `sendAll` and `waitPeerClosed` are gone (2026-10-12)
+
+A `Router.stream` handler used to be handed the server's bare socket number and write to
+it with `sendAll`; a task that kept the number (a subscriber list) wrote to whatever the
+kernel reused it for once the connection closed, which is why both calls had become
+`@unsafe` (entry below). The handler now gets the connection as a `Stream`, and tasks
+other than the connection's own reach it through an `Outbox`, which holds no descriptor
+and refuses sends once the connection has ended. The server owns and closes the socket.
+WebSocket servers get `Router.ws`, so the hand-written 101 handshake and the
+`WsConn.view` writer task are no longer needed either.
+
+| was | now |
+|---|---|
+| `r.stream(p, (ctx: &mut Context, fd: i32): void => ..)` | `r.stream(p, (ctx: &mut Context, conn: &mut Stream): void => ..)` |
+| `unsafe { sendAll(fd, "HTTP/1.1 200 OK\r\n..headers..\r\n\r\n") }` | `conn.open(contentType, headers)`; the body is chunked |
+| `unsafe { sendAll(fd, frame) }` from the handler | `conn.send(frame)` (one chunk) |
+| `unsafe { sendAll(fd, "HTTP/1.1 404 ..") }` | `conn.respond(Response.NotFound, headers)` |
+| `unsafe { waitPeerClosed(fd) }` | `conn.waitClosed()` |
+| a global `Vec<i32>` of subscriber fds, written with `sendAll` | a `Vec<Outbox>` from `conn.outbox()`; drop an outbox whose `send` returns false |
+| a stream route that answers the websocket upgrade itself | `r.ws(p, (ctx: &mut Context, ws: &mut WebSocket): void => ..)` with `ws.recv()`, `ws.sendText`, `ws.outbox()` |
+| `from "std/ws" import { computeAcceptKey }` | `from "std/wsframe" import { computeAcceptKey }` |
+
+`taskOnPanicReply` stays `pub` (std/http, another module, calls it) but is `// @internal`
+and no longer listed by `milo api`.
 
 ## `sendAll` and `waitPeerClosed` are `@unsafe` (2026-10-12)
 

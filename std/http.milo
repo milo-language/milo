@@ -17,7 +17,19 @@ from "std/event" import {
     setNonblocking
 }
 from "std/sync" import {
-    Channel
+    Channel, AtomicBool
+}
+from "std/select" import {
+    Select
+}
+from "std/io" import {
+    AsFd
+}
+from "std/time" import {
+    unrecordedEpochMillis
+}
+from "std/wsframe" import {
+    computeAcceptKey, encodeWsFrame, parseWsFrame, WsFrameParse
 }
 
 // ── Public types ──
@@ -872,11 +884,18 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
 
 // ── Router ──
 
-// A GET route that takes over the connection (see Router.stream).
+// A GET route that keeps its connection (see Router.stream).
 pub struct StreamRoute {
     pattern: string,
     paramNames: Vec<string>,
-    handler: (&mut Context, i32) => void,
+    handler: (&mut Context, &mut Stream) => void,
+}
+
+// A GET route that upgrades to a WebSocket (see Router.ws).
+pub struct WsRoute {
+    pattern: string,
+    paramNames: Vec<string>,
+    handler: (&mut Context, &mut WebSocket) => void,
 }
 
 pub struct Route {
@@ -891,6 +910,7 @@ pub struct Route {
 pub struct Router {
     routes: Vec<Route>,
     streams: Vec<StreamRoute>,
+    sockets: Vec<WsRoute>,
     middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
     maxBodyBytes: i64,
 }
@@ -901,6 +921,7 @@ impl Router {
         return Router {
             routes: [],
             streams: [],
+            sockets: [],
             middleware: [],
             maxBodyBytes: defaultMaxBodyBytes,
         }
@@ -938,15 +959,32 @@ impl Router {
         self.addRoute("*", pattern, h)
     }
 
-    // Register a GET route that owns the connection once the request is read: the
-    // handler gets the socket fd, writes its own status line and headers with
-    // `sendAll`, and may keep writing for as long as it likes (server-sent events,
-    // long poll). The server closes the fd when the handler returns. Middleware does
-    // not run, and only serveRouterConcurrent honours these routes, since one
-    // long-lived stream would stall a server that answers one connection at a time.
-    fn stream(self: &mut Self, pattern: string, h: move (&mut Context, i32) => void): void {
+    // Register a GET route that keeps its connection: server-sent events, a long poll.
+    // The handler gets the request's context and the connection as a `Stream`: it
+    // either `open`s the stream and `send`s chunks for as long as it likes, or answers
+    // with an ordinary `respond`. Other tasks reach the client through `conn.outbox()`.
+    // The server owns the socket and closes it when the handler returns. Middleware does
+    // not run, and only serveRouterConcurrent honours these routes, since one long-lived
+    // stream would stall a server that answers one connection at a time.
+    fn stream(self: &mut Self, pattern: string, h: move (&mut Context, &mut Stream) => void): void {
         let paramNames = extractParamNames(pattern)
         self.streams.push(StreamRoute {
+            pattern: pattern,
+            paramNames: paramNames,
+            handler: h,
+        })
+    }
+
+    // Register a WebSocket route. A GET on `pattern` asking to upgrade (`Upgrade:
+    // websocket`) is answered 101 by the server, which then hands the handler the
+    // connection as a `WebSocket`; a GET that does not ask falls through to the other
+    // routes. Ping, pong and the close handshake are the server's, and so is a heartbeat:
+    // a peer silent for a whole 30 s ping interval is dropped. The socket is closed (after
+    // a close frame, if none went out) when the handler returns. As with `stream`, only
+    // serveRouterConcurrent honours these routes.
+    fn ws(self: &mut Self, pattern: string, h: move (&mut Context, &mut WebSocket) => void): void {
+        let paramNames = extractParamNames(pattern)
+        self.sockets.push(WsRoute {
             pattern: pattern,
             paramNames: paramNames,
             handler: h,
@@ -1068,49 +1106,655 @@ fn writeAll(fd: i32, buf: string): void {
     unsafe { sendFd(fd, buf, buf.len) }
 }
 
-// Write all of `buf` to a stream route's socket. False once the peer is gone.
-// `@unsafe`: `fd` is a bare number the server closes when the stream handler
-// returns, so a task still holding it afterwards writes to whatever reused it. The
-// caller vouches that `fd` is still the connection it was handed.
-@unsafe
-pub fn sendAll(fd: i32, buf: &string): bool {
+// Write all of `buf` to `fd`. False once the peer is gone.
+fn sendAll(fd: i32, buf: &string): bool {
     unsafe { return sendFd(fd, buf, buf.len) == buf.len }
 }
 
-// Park until the peer of a stream route closes its side (or the connection errors),
-// discarding anything it sends. This is how a stream handler learns its client left.
-// `@unsafe` for the same reason as sendAll: the caller vouches `fd` is still live.
-@unsafe
-pub fn waitPeerClosed(fd: i32): void {
-    var chunk: [u8; 512] = [0; 512]
-    while true {
-        var n: i64 = 0
-        unsafe { n = recvFd(fd, chunk, 512) }
-        if n <= 0 {
+// ── Long-lived connections: Stream and WebSocket ──
+//
+// A stream or ws route's connection belongs to its own task, and only that task touches
+// the descriptor. Other tasks reach the client through an Outbox: a channel the
+// connection's task drains while its handler is parked in `waitClosed` or `recv`
+// (waitConn selects over the socket and the channel), or before the handler's own send.
+// One writer per socket is what keeps two senders' bytes from interleaving mid-frame, and
+// a sender that holds no descriptor cannot write to one the kernel has since reused.
+
+// What another task asks a connection to do, through its Outbox.
+enum OutMsg {
+    Data(string),
+    Close,
+}
+
+// The most messages an Outbox holds for a peer that is not reading. Past it the
+// connection is dropped rather than buffered without bound.
+let outboxCapacity: i64 = 1024
+
+// A storable, cloneable sender to one Stream or WebSocket, for tasks other than the
+// connection's own: a broadcast keeps a `Vec<Outbox>` and sends to each. Messages are
+// queued and written by the connection's task. It holds no descriptor, so once the
+// connection has ended `send` returns false and touches nothing.
+pub struct Outbox {
+    _ch: Channel<OutMsg>,
+    // Set once the connection has ended or was dropped for falling behind.
+    _gone: AtomicBool,
+}
+
+impl Outbox {
+    // Queue `data`: one body chunk for a Stream, one text message for a WebSocket. Never
+    // parks. False once the connection has ended, and also when the peer has 1024
+    // messages still unwritten: a peer that far behind is not reading, so its connection
+    // is dropped instead of buffered without bound.
+    fn send(self: &Self, data: &string): bool {
+        if self._gone.load() {
+            return false
+        }
+        if self._ch.trySend(OutMsg.Data(data.clone())) {
+            return true
+        }
+        dropConnection(self)
+        return false
+    }
+
+    // End the connection once what was queued before this is written: a Stream finishes
+    // its body, a WebSocket sends its close frame.
+    fn close(self: &Self): void {
+        if self._gone.load() {
             return
+        }
+        if !self._ch.trySend(OutMsg.Close) {
+            dropConnection(self)
+        }
+    }
+
+    // Another sender to the same connection.
+    fn clone(self: &Self): Outbox {
+        return Outbox {
+            _ch: self._ch.clone(), _gone: self._gone.clone()
         }
     }
 }
 
-// Run `router`'s stream route matching `req`, if any. False means no
-// stream route matched and `req` is untouched for the normal path. A free fn, not
-// a Router method: it takes the connection's raw fd, and methods on a pub type are
-// public.
-fn runStreamRoute(req: &Request, fd: i32, router: &Router): bool {
+// Mark the connection over and wake its task: a closed channel fires its select arm.
+// A free fn because a method on a pub type is public.
+fn dropConnection(o: &Outbox): void {
+    o._gone.store(true)
+    o._ch.close()
+}
+
+fn newOutbox(gone: bool): Outbox {
+    // Channel.new fails only when malloc does.
+    return Outbox {
+        _ch: Channel<OutMsg>.new(outboxCapacity)!, _gone: AtomicBool.new(gone)
+    }
+}
+
+// The connection's outbox handle for a new sender, created on first use: most
+// connections never get one, and the channel's ring is allocated up front.
+fn outboxOf(out: &mut Option<Outbox>, ended: bool): Outbox {
+    if let Option.Some(o) = out {
+        return o.clone()
+    }
+    let o = newOutbox(ended)
+    out = Option.Some(o.clone())
+    return o
+}
+
+// The next queued message, if any.
+fn nextOut(out: &Option<Outbox>): Option<OutMsg> {
+    if let Option.Some(o) = out {
+        return o._ch.tryRecv()
+    }
+    return Option.None
+}
+
+// True when the outbox was dropped (by `dropConnection`) and nothing is left in it.
+fn outDropped(out: &Option<Outbox>): bool {
+    if let Option.Some(o) = out {
+        return o._gone.load() && o._ch.len() == 0
+    }
+    return false
+}
+
+fn endOut(out: &Option<Outbox>): void {
+    if let Option.Some(o) = out {
+        dropConnection(o)
+    }
+}
+
+// The connection's descriptor lent to one Select wait. The connection task owns it and
+// is the one waiting, so it is open for the whole wait.
+struct SockRef {
+    fd: i32,
+}
+
+impl AsFd for SockRef {
+    @unsafe
+    fn rawFd(self: &Self): i32 {
+        return self.fd
+    }
+}
+
+let wakeRead: i64 = 0
+let wakeOut: i64 = 1
+let wakeTimeout: i64 = 2
+
+// Park the connection's task until its socket is readable, its outbox holds something
+// (or was dropped), or `timeoutMs` passes (< 0: never).
+fn waitConn(fd: i32, out: &Option<Outbox>, timeoutMs: i64): i64 {
+    var sel = Select.new()
+    sel.onRead(SockRef {
+        fd: fd
+    })
+    var outArm: i64 = -1
+    if let Option.Some(o) = out {
+        sel.onRecv(o._ch)
+        outArm = 1
+    }
+    if timeoutMs >= 0 {
+        sel.onTimeout(timeoutMs)
+    }
+    let w = sel.wait()
+    if w > 0 && w == outArm {
+        return wakeOut
+    }
+    if w > 0 {
+        return wakeTimeout
+    }
+    // 0, or -1 with no scheduler: the next read decides (it blocks if it must).
+    return wakeRead
+}
+
+// Read and discard what the peer sent. False once it has closed or the read failed.
+fn discardInput(fd: i32): bool {
+    var scratch: string = ""
+    return readMore(fd, &mut scratch) > 0
+}
+
+fn hexLen(n: i64): string {
+    let digits = "0123456789abcdef"
+    if n == 0 {
+        return "0"
+    }
+    var out: string = ""
+    var v = n
+    while v > 0 {
+        out = digits.substr(v % 16, v % 16 + 1) + out
+        v = v / 16
+    }
+    return out
+}
+
+// One chunk of a chunked body (RFC 9112 7.1). An empty `data` is no chunk at all: a
+// zero-length chunk is the end of the body.
+fn chunkOf(data: &string): string {
+    if data.len == 0 {
+        return ""
+    }
+    return hexLen(data.len) + "\r\n" + data + "\r\n"
+}
+
+// Stream states.
+let streamFresh: i32 = 0
+let streamOpen: i32 = 1
+let streamEnded: i32 = 2
+
+// A stream route's connection (see Router.stream): a 200 response whose body the
+// handler writes in chunks for as long as the client stays.
+pub struct Stream {
+    _fd: i32,
+    _state: i32,
+    // The head `open` built. It goes out with the first chunk, so a client sees the
+    // headers and the first event in one segment.
+    _head: string,
+    _out: Option<Outbox>,
+}
+
+impl Stream {
+    // Start the response: 200, Content-Type `contentType` and `headers`, with the body
+    // sent in chunks (Transfer-Encoding: chunked). Framing headers in `headers`
+    // (Content-Length, Connection, Transfer-Encoding) are dropped: the stream writes its
+    // own. No effect once the stream is open or answered.
+    fn open(self: &mut Self, contentType: &string, headers: &Vec<Param>): void {
+        if self._state != streamFresh {
+            return
+        }
+        var head: string = "HTTP/1.1 200 OK"
+        if contentType.len > 0 && !hasHeader(headers, "Content-Type") {
+            head.pushStr("\r\nContent-Type: " + headerSafe(contentType))
+        }
+        for h in headers {
+            if !isFramingHeader(h.name) {
+                head.pushStr("\r\n" + headerSafe(h.name) + ": " + headerSafe(h.value))
+            }
+        }
+        head.pushStr("\r\nTransfer-Encoding: chunked\r\n\r\n")
+        self._head = head
+        self._state = streamOpen
+    }
+
+    // Write `data` as one body chunk, after anything already queued in the outbox. False
+    // before `open` and once the client is gone. An empty `data` writes nothing.
+    fn send(self: &mut Self, data: &string): bool {
+        streamPump(&mut self)
+        if self._state != streamOpen {
+            return false
+        }
+        return streamWrite(&mut self, chunkOf(data))
+    }
+
+    // Answer with an ordinary response instead of a stream (a 404 for an unknown feed).
+    // The stream is over afterwards. No effect once the stream is open or answered.
+    fn respond(self: &mut Self, response: &Response, headers: &Vec<Param>): void {
+        if self._state != streamFresh {
+            return
+        }
+        let _ = sendAll(self._fd, renderResponse(response, headers))
+        endStream(&mut self)
+    }
+
+    // Park until the client goes away or the stream is ended through its outbox, writing
+    // what other tasks queue meanwhile. Anything the client sends is discarded.
+    fn waitClosed(self: &mut Self): void {
+        if self._state == streamOpen && self._head.len > 0 {
+            let _ = streamWrite(&mut self, "")
+        }
+        while self._state != streamEnded {
+            if waitConn(self._fd, self._out, -1) == wakeRead {
+                if !discardInput(self._fd) {
+                    endStream(&mut self)
+                }
+            } else {
+                streamPump(&mut self)
+            }
+        }
+    }
+
+    // A sender other tasks can keep to write to this stream (see Outbox). Once the
+    // stream is over its `send` returns false.
+    fn outbox(self: &mut Self): Outbox {
+        return outboxOf(&mut self._out, self._state == streamEnded)
+    }
+}
+
+// Write the pending head, if any, and `bytes` in one write. False (and the stream
+// over) if the client is gone.
+fn streamWrite(s: &mut Stream, bytes: &string): bool {
+    var buf = s._head + bytes
+    s._head = ""
+    if buf.len == 0 {
+        return true
+    }
+    if !sendAll(s._fd, buf) {
+        endStream(&mut s)
+        return false
+    }
+    return true
+}
+
+// Write what other tasks queued. Data queued before `open` is dropped: there is no
+// response to put it in yet.
+fn streamPump(s: &mut Stream): void {
+    while s._state != streamEnded {
+        match nextOut(s._out) {
+            Option.Some(msg) => {
+                match msg {
+                    OutMsg.Data(d) => {
+                        if s._state == streamOpen {
+                            let _ = streamWrite(&mut s, chunkOf(d))
+                        }
+                    }
+                    OutMsg.Close => {
+                        finishStream(&mut s)
+                    }
+                }
+            }
+            Option.None => {
+                if outDropped(s._out) {
+                    endStream(&mut s)
+                }
+                return
+            }
+        }
+    }
+}
+
+fn endStream(s: &mut Stream): void {
+    s._state = streamEnded
+    endOut(s._out)
+}
+
+// End the response properly: the last chunk for an open stream, a 500 for a handler
+// that neither opened nor answered.
+fn finishStream(s: &mut Stream): void {
+    if s._state == streamFresh {
+        let noHeaders: Vec<Param> = []
+        let _ = sendAll(s._fd, renderRaw(500, "text/plain; charset=utf-8", statusText(500), noHeaders))
+    } else if s._state == streamOpen {
+        let _ = streamWrite(&mut s, "0\r\n\r\n")
+    }
+    endStream(&mut s)
+}
+
+// How often a WebSocket pings a quiet peer; one silent for a whole interval after a
+// ping is dropped.
+let wsPingIntervalMs: i64 = 30000
+
+// A ws route's connection (see Router.ws), already upgraded.
+pub struct WebSocket {
+    _fd: i32,
+    // Bytes read that do not make a whole frame yet.
+    _in: string,
+    // The fragments of a message still arriving.
+    _msg: string,
+    _inMessage: bool,
+    _closeSent: bool,
+    _ended: bool,
+    _maxMessage: i64,
+    // Whether the peer sent anything since the last heartbeat.
+    _heard: bool,
+    _nextTick: i64,
+    _out: Option<Outbox>,
+}
+
+impl WebSocket {
+    // The next text or binary message's payload, or None once the connection is over:
+    // the peer closed it, broke the protocol, sent a message over the size limit, or went
+    // silent. Pings are answered and pongs absorbed here, and what other tasks queue in
+    // the outbox is written while this waits.
+    fn recv(self: &mut Self): Option<string> {
+        while !self._ended {
+            match parseWsFrame(self._in, self._maxMessage - self._msg.len) {
+                WsFrameParse.Frame(f) => {
+                    self._in = self._in.substr(f.size, self._in.len)
+                    if let Option.Some(m) = wsFrame(&mut self, f.opcode, f.fin, f.masked, f.payload) {
+                        return Option.Some(m)
+                    }
+                }
+                WsFrameParse.Incomplete => {
+                    wsWait(&mut self)
+                }
+                WsFrameParse.TooBig => {
+                    wsFail(&mut self, 1009)
+                }
+                WsFrameParse.Invalid => {
+                    wsFail(&mut self, 1002)
+                }
+            }
+        }
+        return Option.None
+    }
+
+    // Send `msg` as a text message, after anything already queued in the outbox. False
+    // once the connection is over or closing.
+    fn sendText(self: &mut Self, msg: &string): bool {
+        wsPump(&mut self)
+        if self._ended || self._closeSent {
+            return false
+        }
+        return wsWrite(&mut self, 1, msg)
+    }
+
+    // Start the close handshake (status 1000) after what the outbox holds. `recv` then
+    // returns None once the peer answers.
+    fn close(self: &mut Self): void {
+        wsPump(&mut self)
+        if !self._ended && !self._closeSent {
+            wsSendClose(&mut self, 1000)
+        }
+    }
+
+    // The largest message `recv` accepts, in bytes (default 1 MiB). A longer one closes
+    // the connection with status 1009 before its payload is buffered.
+    fn setMaxMessageSize(self: &mut Self, bytes: i64): void {
+        self._maxMessage = bytes
+    }
+
+    // A sender other tasks can keep to write to this socket (see Outbox). Once the
+    // connection is over its `send` returns false.
+    fn outbox(self: &mut Self): Outbox {
+        return outboxOf(&mut self._out, self._ended)
+    }
+}
+
+// Act on one frame; Some(payload) when it completes a data message.
+fn wsFrame(ws: &mut WebSocket, opcode: i32, fin: bool, masked: bool, payload: string): Option<string> {
+    ws._heard = true
+    // RFC 6455 5.1: a server must fail a connection whose client frames are unmasked.
+    if !masked {
+        wsFail(&mut ws, 1002)
+        return Option.None
+    }
+    if opcode == 9 {
+        if !ws._closeSent {
+            let _ = wsWrite(&mut ws, 10, payload)
+        }
+        return Option.None
+    }
+    if opcode == 10 {
+        return Option.None
+    }
+    if opcode == 8 {
+        if !ws._closeSent {
+            // Echo the peer's status code, as RFC 6455 5.5.1 suggests.
+            var echo: string = ""
+            if payload.len >= 2 {
+                echo = payload.substr(0, 2)
+            }
+            let _ = wsWrite(&mut ws, 8, echo)
+            ws._closeSent = true
+        }
+        wsEnd(&mut ws)
+        return Option.None
+    }
+    if opcode == 0 {
+        if !ws._inMessage {
+            wsFail(&mut ws, 1002)
+            return Option.None
+        }
+        ws._msg.pushStr(payload)
+        if !fin {
+            return Option.None
+        }
+        ws._inMessage = false
+        return Option.Some(replace(ws._msg, ""))
+    }
+    // A new data frame while a fragmented message is still arriving is a protocol error.
+    if ws._inMessage {
+        wsFail(&mut ws, 1002)
+        return Option.None
+    }
+    if fin {
+        return Option.Some(payload)
+    }
+    ws._msg = payload
+    ws._inMessage = true
+    return Option.None
+}
+
+// Wait for more of the peer's bytes, writing the outbox and running the heartbeat
+// meanwhile.
+fn wsWait(ws: &mut WebSocket): void {
+    let now = unrecordedEpochMillis()
+    if now >= ws._nextTick {
+        wsTick(&mut ws, now)
+        return
+    }
+    let w = waitConn(ws._fd, ws._out, ws._nextTick - now)
+    if w == wakeOut {
+        wsPump(&mut ws)
+    } else if w == wakeTimeout {
+        wsTick(&mut ws, unrecordedEpochMillis())
+    } else {
+        if readMore(ws._fd, &mut ws._in) <= 0 {
+            wsEnd(&mut ws)
+        }
+    }
+}
+
+// One heartbeat: drop a peer that has said nothing since the last one, ping the rest.
+fn wsTick(ws: &mut WebSocket, now: i64): void {
+    if !ws._heard {
+        wsEnd(&mut ws)
+        return
+    }
+    ws._heard = false
+    ws._nextTick = now + wsPingIntervalMs
+    if !ws._closeSent {
+        let _ = wsWrite(&mut ws, 9, "")
+    }
+}
+
+// Write what other tasks queued.
+fn wsPump(ws: &mut WebSocket): void {
+    while !ws._ended {
+        match nextOut(ws._out) {
+            Option.Some(msg) => {
+                match msg {
+                    OutMsg.Data(d) => {
+                        if !ws._closeSent {
+                            let _ = wsWrite(&mut ws, 1, d)
+                        }
+                    }
+                    OutMsg.Close => {
+                        if !ws._closeSent {
+                            wsSendClose(&mut ws, 1000)
+                        }
+                    }
+                }
+            }
+            Option.None => {
+                if outDropped(ws._out) {
+                    wsEnd(&mut ws)
+                }
+                return
+            }
+        }
+    }
+}
+
+// Write one unfragmented frame. False (and the connection over) if the peer is gone.
+fn wsWrite(ws: &mut WebSocket, opcode: i32, payload: &string): bool {
+    if !sendAll(ws._fd, encodeWsFrame(opcode, payload, true, "")) {
+        wsEnd(&mut ws)
+        return false
+    }
+    return true
+}
+
+fn wsSendClose(ws: &mut WebSocket, code: i32): void {
+    var payload: string = ""
+    payload.push(((code >> 8) & 255) as u8)
+    payload.push((code & 255) as u8)
+    let _ = wsWrite(&mut ws, 8, payload)
+    ws._closeSent = true
+}
+
+// Close with `code` and stop: the peer broke the protocol or the size limit.
+fn wsFail(ws: &mut WebSocket, code: i32): void {
+    if !ws._closeSent {
+        wsSendClose(&mut ws, code)
+    }
+    wsEnd(&mut ws)
+}
+
+fn wsEnd(ws: &mut WebSocket): void {
+    ws._ended = true
+    endOut(ws._out)
+}
+
+// After the handler returns: flush the outbox and send a close frame if none went out.
+fn finishWs(ws: &mut WebSocket): void {
+    wsPump(&mut ws)
+    if !ws._ended && !ws._closeSent {
+        wsSendClose(&mut ws, 1000)
+    }
+    wsEnd(&mut ws)
+}
+
+// Whether `req` asks to become a WebSocket (`Upgrade: websocket`, any case).
+fn isUpgradeRequest(req: &Request): bool {
+    for h in req.headers {
+        if eqIgnoreCase(h.name, "Upgrade") && h.value.toLower().contains("websocket") {
+            return true
+        }
+    }
+    return false
+}
+
+fn requestHeader(req: &Request, name: &string): string {
+    for h in req.headers {
+        if eqIgnoreCase(h.name, name) {
+            return h.value.clone()
+        }
+    }
+    return ""
+}
+
+// Upgrade the connection and run a ws route's handler on it.
+fn runWsRoute(req: &Request, fd: i32, params: Vec<Param>, handler: (&mut Context, &mut WebSocket) => void): void {
+    let key = requestHeader(req, "Sec-WebSocket-Key")
+    if key.len == 0 {
+        let noHeaders: Vec<Param> = []
+        let _ = sendAll(fd, renderRaw(400, "text/plain; charset=utf-8", statusText(400), noHeaders))
+        return
+    }
+    let accept = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + computeAcceptKey(key) + "\r\n\r\n"
+    if !sendAll(fd, accept) {
+        return
+    }
+    var ctx = Context {
+        req: req.clone(),
+        params: params,
+        statusCode: 200,
+        respHeaders: [],
+    }
+    var ws = WebSocket {
+        _fd: fd,
+        _in: "",
+        _msg: "",
+        _inMessage: false,
+        _closeSent: false,
+        _ended: false,
+        _maxMessage: defaultMaxBodyBytes,
+        _heard: true,
+        _nextTick: unrecordedEpochMillis() + wsPingIntervalMs,
+        _out: Option.None,
+    }
+    handler(&mut ctx, &mut ws)
+    finishWs(&mut ws)
+}
+
+// Run the stream or ws route matching `req`, if any. False means none matched and `req`
+// is untouched for the normal path. A free fn, not a Router method: it takes the
+// connection's raw fd, and methods on a pub type are public.
+fn runLongRoute(req: &Request, fd: i32, router: &Router): bool {
     if req.method != "GET" {
         return false
     }
+    if isUpgradeRequest(req) {
+        for i in 0..router.sockets.len {
+            if let Option.Some(matched) = matchRoute(router.sockets[i].pattern, router.sockets[i].paramNames, req.path) {
+                runWsRoute(req, fd, matched, router.sockets[i].handler)
+                return true
+            }
+        }
+    }
     for i in 0..router.streams.len {
-        let route = router.streams[i]
-        if let Option.Some(matched) = matchRoute(route.pattern, route.paramNames, req.path) {
+        if let Option.Some(matched) = matchRoute(router.streams[i].pattern, router.streams[i].paramNames, req.path) {
             var ctx = Context {
                 req: req.clone(),
                 params: matched,
                 statusCode: 200,
                 respHeaders: [],
             }
+            var conn = Stream {
+                _fd: fd, _state: streamFresh, _head: "", _out: Option.None
+            }
             let handler = router.streams[i].handler
-            handler(&mut ctx, fd)
+            handler(&mut ctx, &mut conn)
+            streamPump(&mut conn)
+            finishStream(&mut conn)
             return true
         }
     }
@@ -1138,8 +1782,8 @@ fn handleConn(clientFd: i32, router: &Router): void {
     unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
     serveConn(clientFd, router.maxBodyBytes, (req: Request): string => {
         taskOnPanicNote(requestLine(req))
-        // A stream route has already written everything it will; nothing more to send.
-        if runStreamRoute(req, clientFd, router) {
+        // A stream or ws route has already written everything it will; nothing more to send.
+        if runLongRoute(req, clientFd, router) {
             return ""
         }
         let head = req.method == "HEAD"

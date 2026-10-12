@@ -1,0 +1,143 @@
+// std/wsframe — the WebSocket wire format (RFC 6455): handshake key and frame codec, no IO.
+//
+// A leaf module apart from std/ws so that std/http can speak WebSocket without
+// referencing OpenSSL: std/ws carries the TLS client, every function of an imported
+// module is emitted, and at -O0 on a target with no libssl (Windows) the link fails on
+// symbols the program never uses. Opcodes are the RFC's wire numbers (WsOpcode in
+// std/ws names them).
+
+from "std/sha1" import {
+    Sha1
+}
+from "std/base64" import {
+    Base64
+}
+
+// The Sec-WebSocket-Accept value answering a client's Sec-WebSocket-Key (RFC 6455 4.2.2).
+pub fn computeAcceptKey(clientKey: &string): string {
+    return Base64.encode(Sha1.bytes(clientKey.clone() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+}
+
+// The bytes of one frame. `mask` is "" for a server frame and the 4-byte key for a
+// client frame (RFC 6455 5.3: client frames must be masked, server frames must not).
+pub fn encodeWsFrame(opcode: i32, payload: &string, fin: bool, mask: &string): string {
+    var out: string = ""
+    var b0: u8 = (opcode & 15) as u8
+    if fin {
+        b0 |= 128
+    }
+    out.push(b0)
+    let maskBit: u8 = if mask.len == 4 {
+        128
+    } else {
+        0
+    }
+    if payload.len < 126 {
+        out.push(maskBit | (payload.len as u8))
+    } else if payload.len < 65536 {
+        out.push(maskBit | 126)
+        out.push((payload.len >> 8) as u8)
+        out.push((payload.len & 255) as u8)
+    } else {
+        out.push(maskBit | 127)
+        for i in 0..8 {
+            out.push(((payload.len >> ((7 - i) * 8)) & 255) as u8)
+        }
+    }
+    if mask.len == 4 {
+        out.pushStr(mask)
+        for i in 0..payload.len {
+            out.push(payload[i] ^ mask[i % 4])
+        }
+    } else {
+        out.pushStr(payload)
+    }
+    return out
+}
+
+// One decoded frame, payload unmasked. `size` is how many bytes of the buffer it used.
+pub struct WsFrame {
+    opcode: i32,
+    fin: bool,
+    masked: bool,
+    payload: string,
+    size: i64,
+}
+
+pub enum WsFrameParse {
+    // The buffer holds only part of a frame.
+    Incomplete,
+    Frame(WsFrame),
+    // The header claims a payload over the limit; nothing past the header was read.
+    TooBig,
+    // A reserved opcode, a reserved bit set (no extension was negotiated), or a
+    // fragmented or oversized control frame: the connection must fail (close 1002).
+    Invalid,
+}
+
+// Decode the frame at the start of `buf`, refusing a payload longer than `maxPayload`
+// before any of it is buffered: the length is the peer's to claim.
+pub fn parseWsFrame(buf: &string, maxPayload: i64): WsFrameParse {
+    if buf.len < 2 {
+        return WsFrameParse.Incomplete
+    }
+    let b0 = buf[0]
+    let b1 = buf[1]
+    let fin = (b0 & 128) != 0
+    let opcode = (b0 & 15) as i32
+    if (b0 & 112) != 0 {
+        return WsFrameParse.Invalid
+    }
+    let isControl = opcode >= 8
+    if !(opcode <= 2 || (opcode >= 8 && opcode <= 10)) {
+        return WsFrameParse.Invalid
+    }
+    let masked = (b1 & 128) != 0
+    var len: i64 = (b1 & 127) as i64
+    var pos: i64 = 2
+    if len == 126 {
+        if buf.len < 4 {
+            return WsFrameParse.Incomplete
+        }
+        len = ((buf[2] as i64) << 8) | buf[3] as i64
+        pos = 4
+    } else if len == 127 {
+        if buf.len < 10 {
+            return WsFrameParse.Incomplete
+        }
+        // The top bit must be clear (RFC 6455 5.2); with it set the length is negative.
+        if (buf[2] & 128) != 0 {
+            return WsFrameParse.Invalid
+        }
+        len = 0
+        for i in 0..8 {
+            len = (len << 8) | buf[2 + i] as i64
+        }
+        pos = 10
+    }
+    if isControl && (!fin || len > 125) {
+        return WsFrameParse.Invalid
+    }
+    if len > maxPayload {
+        return WsFrameParse.TooBig
+    }
+    var maskAt: i64 = -1
+    if masked {
+        maskAt = pos
+        pos += 4
+    }
+    if buf.len - pos < len {
+        return WsFrameParse.Incomplete
+    }
+    var payload: string = ""
+    for i in 0..len {
+        if masked {
+            payload.push(buf[pos + i] ^ buf[maskAt + i % 4])
+        } else {
+            payload.push(buf[pos + i])
+        }
+    }
+    return WsFrameParse.Frame(WsFrame {
+        opcode: opcode, fin: fin, masked: masked, payload: payload, size: pos + len
+    })
+}

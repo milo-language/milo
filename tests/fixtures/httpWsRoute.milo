@@ -1,0 +1,136 @@
+// @skip-os: win32
+// Router.ws: the server does the upgrade and the framing, the handler gets a WebSocket.
+// Each connection echoes what it receives and broadcasts it to every peer through the
+// Outbox they filed. Once a peer has gone, its outbox refuses a send (and writes to no
+// descriptor), so the broadcaster prunes it. A GET without an upgrade falls through to
+// the ordinary routes; an upgrade with no key is refused.
+// (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
+// @expect: listening on http://127.0.0.1:47394
+// @expect: a got: echo: hi
+// @expect: a got: a says hi
+// @expect: b got: a says hi
+// @expect: b got: echo: yo
+// @expect: b got: b says yo
+// @expect: a got: b says yo
+// @expect: b left
+// @expect: stale outbox send: false
+// @expect: a got: echo: again
+// @expect: a got: a says again
+// @expect: peers: 1
+// @expect: plain get: hello
+// @expect: no key: HTTP/1.1 400 Bad Request
+// @expect: pong: true
+// @expect: a closed by server: true
+// @expect: c over the limit: true
+from "std/http" import {
+    Context, Outbox, Response, Router, WebSocket, serveRouterConcurrentOn
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/ws" import {
+    WsOpcode, wsConnect
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47394
+
+var peers: Vec<Outbox> = []
+var stale: Vec<Outbox> = []
+
+fn broadcast(msg: &string): void {
+    var i: i64 = 0
+    while i < peers.len {
+        if peers[i].send(msg) {
+            i += 1
+        } else {
+            peers.remove(i)
+        }
+    }
+}
+
+fn clients(): void {
+    let a = wsConnect(ip4(127, 0, 0, 1), PORT, "/chat/a")!
+    var b = wsConnect(ip4(127, 0, 0, 1), PORT, "/chat/b")!
+    sleepMs(20)
+    a.sendText("hi")!
+    print($"a got: {a.recv()!.payload}")
+    print($"a got: {a.recv()!.payload}")
+    print($"b got: {b.recv()!.payload}")
+    b.sendText("yo")!
+    print($"b got: {b.recv()!.payload}")
+    print($"b got: {b.recv()!.payload}")
+    print($"a got: {a.recv()!.payload}")
+    b.close()
+    sleepMs(50)
+    print($"stale outbox send: {stale[0].send("anyone?")}")
+    a.sendText("again")!
+    print($"a got: {a.recv()!.payload}")
+    print($"a got: {a.recv()!.payload}")
+    print($"peers: {peers.len}")
+
+    let plain = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    plain.send("GET /chat/a HTTP/1.1\r\nHost: x\r\n\r\n")!
+    let body = plain.recv()!
+    print($"plain get: {body.substr(body.len - 5, body.len)}")
+
+    let noKey = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    noKey.send("GET /chat/a HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")!
+    let refused = noKey.recv()!
+    print($"no key: {refused.substr(0, 24)}")
+
+    a.ping()!
+    print($"pong: {a.recvWithin(1024)!.opcode == WsOpcode.Pong}")
+
+    // "quit" makes a's handler close through its own outbox; the client sees the close.
+    a.sendText("quit")!
+    print($"a closed by server: {a.recv().isErr()}")
+
+    // c's handler accepts 16-byte messages: a longer one ends the connection (1009).
+    let c = wsConnect(ip4(127, 0, 0, 1), PORT, "/chat/c")!
+    c.sendText("this message is longer than sixteen bytes")!
+    print($"c over the limit: {c.recv().isErr()}")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.ws("/chat/:name", (ctx: &mut Context, ws: &mut WebSocket): void => {
+        let name = ctx.param("name") ?? "?"
+        let mine = ws.outbox()
+        peers.push(mine.clone())
+        if name == "b" {
+            stale.push(ws.outbox())
+        }
+        if name == "c" {
+            ws.setMaxMessageSize(16)
+        }
+        while true {
+            let Option.Some(msg) = ws.recv() else {
+                break
+            }
+            if msg == "quit" {
+                mine.close()
+                continue
+            }
+            ws.sendText("echo: " + msg)
+            broadcast($"{name} says {msg}")
+        }
+        if name == "b" {
+            print("b left")
+        }
+    })
+    r.get("/chat/:name", (ctx: &mut Context): Response => {
+        return ctx.text("hello")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

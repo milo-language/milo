@@ -574,7 +574,9 @@ pub fn taskOnPanicNote(note: &string): void {
 // answer instead of a reset, and the server keeps serving everyone else. Call again to
 // replace; `fd` is not touched unless the task panics. No effect off a green task.
 // `@unsafe`: the task keeps the bare number, so the caller vouches `fd` stays open
-// for as long as the task runs (std/http's connection task owns it).
+// for as long as the task runs (std/http's connection task owns it). `pub` only because
+// std/http is another module; no program outside std has a descriptor to give it.
+// @internal
 @unsafe
 pub fn taskOnPanicReply(fd: i32, reply: &string): void {
     unsafe {

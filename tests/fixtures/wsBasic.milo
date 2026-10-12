@@ -10,7 +10,10 @@
 // @expect: reserved opcode 3: rejected
 
 from "std/ws" import {
-    isWsUpgrade, extractWsKey, WsOpcode, computeAcceptKey
+    isWsUpgrade, extractWsKey, WsOpcode
+}
+from "std/wsframe" import {
+    computeAcceptKey
 }
 
 pub fn main(): i32 {

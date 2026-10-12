@@ -1,0 +1,112 @@
+// @skip-os: win32
+// 200 stream and 200 websocket connections opened and dropped by the client. Every one
+// must leave nothing behind: its descriptor closed by the server (counted in /dev/fd,
+// which is /proc/self/fd on Linux), its outbox refusing sends, its task finished.
+// (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
+// @expect: listening on http://127.0.0.1:47395
+// @expect: streams: 200 opened, 200 answered
+// @expect: sockets: 200 opened, 200 echoed
+// @expect: live outboxes after churn: 0
+// @expect: descriptors grew by: 0
+from "std/http" import {
+    Context, Outbox, Param, Router, Stream, WebSocket, serveRouterConcurrentOn
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/ws" import {
+    wsConnect
+}
+from "std/fs" import {
+    readDir
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47395
+let CYCLES: i64 = 200
+
+var outboxes: Vec<Outbox> = []
+
+fn openFds(): i64 {
+    return readDir("/dev/fd")!.len
+}
+
+// Send to every outbox, keeping the ones that took it.
+fn prune(): void {
+    var i: i64 = 0
+    while i < outboxes.len {
+        if outboxes[i].send("ping") {
+            i += 1
+        } else {
+            outboxes.remove(i)
+        }
+    }
+}
+
+fn clients(): void {
+    // One warm-up round of each, so lazily created runtime state is not counted as growth.
+    var streamsOk: i64 = 0
+    var socketsOk: i64 = 0
+    var before: i64 = 0
+    for round in 0..CYCLES + 1 {
+        if round == 1 {
+            sleepMs(50)
+            prune()
+            before = openFds()
+            streamsOk = 0
+            socketsOk = 0
+        }
+        var s = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+        s.send("GET /feed HTTP/1.1\r\nHost: x\r\n\r\n")!
+        if s.recvOnce().contains("hello") {
+            streamsOk += 1
+        }
+        s.close()
+
+        var w = wsConnect(ip4(127, 0, 0, 1), PORT, "/ws")!
+        w.sendText("x")!
+        if w.recv()!.payload == "x" {
+            socketsOk += 1
+        }
+        w.close()
+        // What a broadcaster does: the dead outboxes go, so what they held is freed.
+        prune()
+    }
+    sleepMs(100)
+    prune()
+    print($"streams: {CYCLES} opened, {streamsOk} answered")
+    print($"sockets: {CYCLES} opened, {socketsOk} echoed")
+    print($"live outboxes after churn: {outboxes.len}")
+    print($"descriptors grew by: {openFds() - before}")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.stream("/feed", (ctx: &mut Context, conn: &mut Stream): void => {
+        let noHeaders: Vec<Param> = []
+        conn.open("text/event-stream", noHeaders)
+        conn.send("data: hello\n\n")
+        outboxes.push(conn.outbox())
+        conn.waitClosed()
+    })
+    r.ws("/ws", (ctx: &mut Context, ws: &mut WebSocket): void => {
+        outboxes.push(ws.outbox())
+        while true {
+            let Option.Some(msg) = ws.recv() else {
+                break
+            }
+            ws.sendText(msg)
+        }
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    return 1
+}

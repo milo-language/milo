@@ -148,12 +148,6 @@ Variants:
 
 ### Functions
 
-#### `computeAcceptKey`
-
-```milo
-pub fn computeAcceptKey(clientKey: &string): string
-```
-
 #### `extractWsKey`
 
 ```milo

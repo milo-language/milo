@@ -736,19 +736,6 @@ A line logged after the panic message if the current green task panics: what it
 was doing (std/http notes the request), so a panic in the journal names its input.
 At most 512 bytes are kept. No effect off a green task.
 
-#### `taskOnPanicReply`
-
-```milo
-pub fn taskOnPanicReply(fd: i32, reply: &string): void
-```
-
-If the current green task panics, send `reply` on `fd` and close it, then retire the
-task (see onRuntimePanic). For a task serving one connection: the client gets an
-answer instead of a reset, and the server keeps serving everyone else. Call again to
-replace; `fd` is not touched unless the task panics. No effect off a green task.
-`@unsafe`: the task keeps the bare number, so the caller vouches `fd` stays open
-for as long as the task runs (std/http's connection task owns it).
-
 #### `taskReady`
 
 ```milo
