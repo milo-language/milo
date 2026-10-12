@@ -1,0 +1,50 @@
+// Type parameters infer through generic enum and HashMap arguments, as they already did
+// through Vec and generic structs: `someOf(o)` with `o: Option<i64>` used to report
+// "cannot infer type parameter(s) 'T'".
+enum Maybe<T> { Just(T), Nothing }
+
+struct Box1<T> { o: Option<T> }
+
+fn someOf<T>(o: Option<T>): Option<T> { return o }
+
+fn okOf<T, E>(r: Result<T, E>): Result<T, E> { return r }
+
+fn count<T>(v: Vec<Option<T>>): i64 { return v.len }
+
+fn size<K, V>(m: &HashMap<K, V>): i64 { return m.len }
+
+fn present<T>(o: &Option<T>): bool { return o.isSome() }
+
+fn just<T>(m: Maybe<T>, d: T): T {
+    return match m {
+        Maybe.Just(x) => x
+        Maybe.Nothing => d
+    }
+}
+
+fn main() {
+    let o: Option<i64> = Some(3)
+    print(someOf(o) ?? 0)
+    let r: Result<string, i64> = Ok("x".clone())
+    print(okOf(r) ?? "e")
+    var v: Vec<Option<string>> = Vec.new()
+    v.push(Some("a".clone()))
+    v.push(None)
+    print(count(v))
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("a", 1)
+    print(size(m))
+    let none: Option<string> = None
+    print(present(none))
+    let mj: Maybe<i64> = Maybe.Just(9)
+    print(just(mj, 0))
+    let b = Box1 { o: someOf(Some(2.5)) }
+    print(b.o ?? 0.0)
+}
+// @expect: 3
+// @expect: x
+// @expect: 2
+// @expect: 1
+// @expect: false
+// @expect: 9
+// @expect: 2.5

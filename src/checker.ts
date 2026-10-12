@@ -8054,6 +8054,24 @@ export class TypeChecker {
       this.inferTypeParamsFromHint({ ...retType, isPtr: false, ptrDepth: 0 }, inner, typeParams, typeMap);
       return;
     }
+    if (retType.typeArgs?.length === 2 && retType.name === "HashMap" && hint.tag === "hashmap") {
+      this.inferTypeParamsFromHint(retType.typeArgs[0], hint.key, typeParams, typeMap);
+      this.inferTypeParamsFromHint(retType.typeArgs[1], hint.value, typeParams, typeMap);
+      return;
+    }
+    // A generic enum (`Option<T>`, `Result<T, E>`, a user `Maybe<T>`) against its concrete
+    // instance: the monomorphized enum records its base and type arguments, as a struct
+    // does. Without this arm `fn f<T>(o: Option<T>)` could not infer T from an
+    // `Option<i64>` and every call needed a turbofish.
+    if (hint.tag === "enum" && retType.typeArgs) {
+      const info = this.enums.get(hint.name);
+      if (info?.baseName === retType.name && info.typeArgs) {
+        for (let i = 0; i < retType.typeArgs.length && i < info.typeArgs.length; i++) {
+          this.inferTypeParamsFromHint(retType.typeArgs[i], info.typeArgs[i], typeParams, typeMap);
+        }
+      }
+      return;
+    }
     // Nested generic struct: `Arena<T>` field vs a concrete `Arena_i32` hint — recurse on
     // each type-arg position so parameters nested arbitrarily deep still resolve.
     if (hint.tag === "struct" && retType.typeArgs) {
