@@ -9999,7 +9999,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `idle close: idle | next: conn 3`
 - `stale GET retried: conn 4`
 - `stale POST: connect: empty reply from server`
-- `keepAlive false: 2 new connections true`
+- `connection close: 2 new connections true`
 - `concurrent: conn 1,conn 2,conn 3,conn 4 accepts 4`
 - `then sequential: accepts 4`
 

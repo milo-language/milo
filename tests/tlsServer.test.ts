@@ -206,7 +206,7 @@ fn main() {
     let argv = args()
     var ok = 0
     for _i in 0..5 {
-        let o = FetchOptions { method: "GET", headers: "", body: "", keepAlive: argv[2] == "on" }
+        let o = FetchOptions { method: "GET", headers: if argv[2] == "on" { "" } else { "Connection: close" }, body: "" }
         match fetchWith(argv[1], o) {
             Result.Ok(r) => {
                 if r.body == "pooled" {

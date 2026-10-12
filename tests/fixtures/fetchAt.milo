@@ -11,7 +11,7 @@ from "std/net" import { TcpListener, ip4 }
 from "std/runtime" import { Task }
 
 fn get(): FetchOptions {
-    return FetchOptions { method: "GET", headers: "", body: "", keepAlive: true }
+    return FetchOptions { method: "GET", headers: "", body: "" }
 }
 
 fn limits(): FetchTimeouts {

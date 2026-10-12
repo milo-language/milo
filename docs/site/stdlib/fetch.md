@@ -20,7 +20,7 @@ match resp.header("Content-Type") {
     None => {},
 }
 
-let opts = FetchOptions { method: "POST", headers: "Content-Type: text/plain", body: "hi", keepAlive: true }
+let opts = FetchOptions { method: "POST", headers: "Content-Type: text/plain", body: "hi" }
 let posted = fetchWith("https://example.com/echo", opts)!
 print(posted.status)
 ```
@@ -35,7 +35,7 @@ green task and on a plain `main`.
 
 ```milo
 let limits = FetchTimeouts { connectMs: 5000, totalMs: 20000 }
-match fetchWithTimeout("https://example.com/feed.json", FetchOptions { method: "GET", headers: "", body: "", keepAlive: true }, limits) {
+match fetchWithTimeout("https://example.com/feed.json", FetchOptions { method: "GET", headers: "", body: "" }, limits) {
     Ok(resp) => print(resp.status),
     Err(e) => print(e.message()),   // "timeout: response" when the server stalled
 }
@@ -53,7 +53,7 @@ reads at most `maxBytes`. Vet and resolve each redirect hop the same way.
 ```milo skip
 let ip = resolve(parseHost(url))?
 if !isPublic(ip) { return Err("refused") }   // your own range check
-let resp = fetchAt(ip, url, FetchOptions { method: "GET", headers: "", body: "", keepAlive: true },
+let resp = fetchAt(ip, url, FetchOptions { method: "GET", headers: "", body: "" },
                    FetchTimeouts { connectMs: 5000, totalMs: 10000 }, 262144)?
 ```
 
@@ -79,8 +79,8 @@ connect, the DNS lookup and, for `https`, the TLS handshake.
   the server closed it as the request went out. A GET, HEAD, PUT, DELETE or OPTIONS is
   sent again once on a fresh connection; any other method returns the error, since the
   server may have acted on it.
-- **Opting out.** `keepAlive: false` in `FetchOptions` (or your own `Connection: close`
-  header) sends `Connection: close` and closes the connection after the response.
+- **Opting out.** A `Connection: close` header in `FetchOptions.headers` sends a
+  one-shot request: a fresh connection, closed after the response.
 - **Threads.** The pool is per OS thread. A `Promise.blocking` worker keeps none: its
   thread ends after one call and nothing would close what it left behind.
 
@@ -109,8 +109,7 @@ Fields:
 
 - `method: string`
 - `headers: string`
-- `body: string`
-- `keepAlive: bool`: Reuse a pooled connection to the same scheme, host and port, and return this one to the pool after the response (see the pool notes in std/fetch). false sends `Connection: close` and closes the connection after the response, as a caller's own `Connection: close` header also does.
+- `body: string`: A `Connection: close` header here opts this request out of the connection pool (see the pool notes in std/fetch); without one, the connection is reused.
 
 ### `FetchResponse`
 

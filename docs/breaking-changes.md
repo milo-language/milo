@@ -31,19 +31,6 @@ possible because the old programs computed a wrong answer.
 | `m.insert(k, (m.get(k) ?? 0.0) + 1.0)` | `let old = m.get(k) ?? 0.0` then `m.insert(k, old + 1.0)` |
 | `take(k, k.len)` | `let n = k.len` then `take(k, n)`, or put the read first |
 
-## `FetchOptions` has a `keepAlive` field (2026-10-12)
-
-std/fetch now keeps connections alive and pools them (see the fetch page), and
-`FetchOptions` gained the switch for it. Struct literals list every field, so each
-`FetchOptions { ... }` literal needs the new one. `keepAlive: true` is what `fetch` and the
-other helpers use; `false` keeps the old behavior, a `Connection: close` request and a
-fresh connection every time. A field rather than a separate setting because it belongs
-to the request: a caller that needs one request on its own connection says so there.
-
-| was | now |
-|---|---|
-| `FetchOptions { method: "GET", headers: "", body: "" }` | `FetchOptions { method: "GET", headers: "", body: "", keepAlive: true }` |
-
 ## Stream routes get a `Stream`, not a descriptor; `sendAll` and `waitPeerClosed` are gone (2026-10-12)
 
 A `Router.stream` handler used to be handed the server's bare socket number and write to

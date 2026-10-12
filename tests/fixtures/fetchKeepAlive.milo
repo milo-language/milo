@@ -114,20 +114,20 @@ pub fn main(): void {
     print($"stale GET retried: {body($"{base}/dropnext")}")
 
     // A POST is not retried: the server may have acted on it.
-    let post = FetchOptions { method: "POST", headers: "", body: "x", keepAlive: true }
+    let post = FetchOptions { method: "POST", headers: "", body: "x" }
     match fetchWith($"{base}/dropnext", post) {
         Result.Ok(r) => print($"stale POST: {r.status} {r.body}")
         // @expect: stale POST: connect: empty reply from server
         Result.Err(e) => print($"stale POST: {e.message()}")
     }
 
-    // keepAlive: false sends `Connection: close` and closes after each response.
-    let fresh = (): FetchOptions => FetchOptions { method: "GET", headers: "", body: "", keepAlive: false }
+    // A caller's `Connection: close` opts out of the pool: a new connection per request.
+    let fresh = (): FetchOptions => FetchOptions { method: "GET", headers: "Connection: close", body: "" }
     let before = accepts.load()
     let a = fetchWith($"{base}/x", fresh())!
     let b = fetchWith($"{base}/x", fresh())!
-    // @expect: keepAlive false: 2 new connections true
-    print($"keepAlive false: 2 new connections {accepts.load() - before == 2 && a.body != b.body}")
+    // @expect: connection close: 2 new connections true
+    print($"connection close: 2 new connections {accepts.load() - before == 2 && a.body != b.body}")
 
     // Four concurrent green fetches to one host each get their own connection; the
     // pool then holds all four, so four more sequential fetches open none.

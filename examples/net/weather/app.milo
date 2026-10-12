@@ -527,7 +527,6 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         method: "GET",
         headers: "User-Agent: " + contactUa.clone() + "\r\nAccept: application/geo+json,application/json,image/png,*/*",
         body: "",
-        keepAlive: true,
     }
     match fetchWith(base + path.clone(), opts) {
         Ok(resp) => {

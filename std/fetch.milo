@@ -707,12 +707,9 @@ pub fn formEncode(fields: &Vec<FormField>): string {
 pub struct FetchOptions {
     method: string,
     headers: string,
+    // A `Connection: close` header here opts this request out of the connection pool
+    // (see the pool notes in std/fetch); without one, the connection is reused.
     body: string,
-    // Reuse a pooled connection to the same scheme, host and port, and return this one
-    // to the pool after the response (see the pool notes in std/fetch). false sends
-    // `Connection: close` and closes the connection after the response, as a caller's
-    // own `Connection: close` header also does.
-    keepAlive: bool,
 }
 
 // Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
@@ -1248,8 +1245,8 @@ fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64
     let host = parseHost(url)
     let port = parsePort(url)
     let isHead = opts.method == "HEAD"
-    // A caller's own `Connection: close` asks for what keepAlive: false does.
-    let keepAlive = opts.keepAlive && poolOn() && !hasToken(findHeader(opts.headers, "Connection") ?? "", "close")
+    // A caller's own `Connection: close` is the per-request opt-out of the pool.
+    let keepAlive = poolOn() && !hasToken(findHeader(opts.headers, "Connection") ?? "", "close")
     let req = requestText(hostHeader(url), parsePath(url), opts, keepAlive)
     let key = poolKey(useTls, host, port, pin)
 
@@ -1324,7 +1321,6 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
                 method: opts.method.clone(),
                 headers: opts.headers.clone(),
                 body: opts.body.clone(),
-                keepAlive: opts.keepAlive,
             }
             if r.status == 301 || r.status == 302 {
                 redirOpts.method = "GET"
@@ -1359,7 +1355,7 @@ pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxB
 // redirects.
 pub fn fetch(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
-        method: "GET", headers: "", body: "", keepAlive: true
+        method: "GET", headers: "", body: ""
     }
     return doFetch(url.clone(), opts)
 }
@@ -1384,7 +1380,6 @@ pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "POST",
         headers: "Content-Type: application/json",
         body: body.clone(),
-        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1397,7 +1392,6 @@ pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "POST",
         headers: "Content-Type: application/x-www-form-urlencoded",
         body: body.clone(),
-        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1408,7 +1402,6 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "PUT",
         headers: "Content-Type: application/json",
         body: body.clone(),
-        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1416,7 +1409,7 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
 // HTTP DELETE.
 pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
-        method: "DELETE", headers: "", body: "", keepAlive: true
+        method: "DELETE", headers: "", body: ""
     }
     return doFetch(url.clone(), opts)
 }
@@ -1427,7 +1420,6 @@ pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError> 
         method: "PATCH",
         headers: "Content-Type: application/json",
         body: body.clone(),
-        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
