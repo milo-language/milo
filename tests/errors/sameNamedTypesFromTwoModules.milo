@@ -1,0 +1,11 @@
+// @error: 'x' declared as Item (b.milo) but got Item (a.milo)
+// a and b each export their own `struct Item`; they are two types, even where they are
+// written the same way. A message about both names the module of each, so it does not
+// read "declared as Item but got Item".
+from "../fixtures/lib/collide/a" import { Item }
+from "../fixtures/lib/collide/b" import { Item as BItem }
+
+fn main() {
+    let x: BItem = Item { x: 1 }
+    print(x.y)
+}

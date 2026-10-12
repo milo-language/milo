@@ -1,0 +1,18 @@
+// @expect: a-named 5
+// @expect: b-named w/W
+// @expect: ww b.Item(w)
+// Impls written in a third module (lib/collide/impls.milo) for two types that share the
+// name `Item`, against two traits that share the name `Named`. Each impl has to attach
+// to the type and trait its own import names, generic dispatch through a bound has to
+// find it, and an inherent method added there sits beside the one b.milo declares.
+from "./lib/collide/a" import { Item }
+from "./lib/collide/b" import { Item as BItem }
+from "./lib/collide/impls" import { nameA, nameB, twiceB }
+
+fn main() {
+    let a = Item { x: 5 }
+    let b = BItem { y: "w" }
+    print(nameA(a))
+    print(nameB(b))
+    print(twiceB(b) + " " + b.describe())
+}

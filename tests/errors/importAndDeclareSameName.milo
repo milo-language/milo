@@ -1,0 +1,13 @@
+// @error: 'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file
+// The file imports a's `helper` and declares a `helper` of its own. Every module's
+// `helper` is a separate decl now, so neither one silently replaces the other: the file
+// has to say which one the name means.
+from "../fixtures/lib/collide/a" import { helper }
+
+fn helper(): i64 {
+    return 9
+}
+
+fn main() {
+    print(helper())
+}

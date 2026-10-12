@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 495 distinct messages across 635 programs the compiler must reject.
+Every error message the test suite pins: 499 distinct messages across 639 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -75,6 +75,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
 - [`'head' cannot return a reference`](#head-cannot-return-a-reference)
+- [`'helper' is exported by a.milo and b.milo, and this file imports it from none of them`](#helper-is-exported-by-a-milo-and-b-milo-and-this-file-imports-it-from-none-of-them)
+- [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
+- [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
@@ -92,7 +95,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'parallelMap<string>' is not allowed: 'parallelMap' is @copyOnly and 'string' is not a Copy type (it owns heap memory)`](#parallelmap-string-is-not-allowed-parallelmap-is-copyonly-and-string-is-not-a-copy-type-it-owns-heap-memory)
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
 - [`'Process' is defined as a struct in 'tests/errors/pubUserTypeNamedLikeStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-pubusertypenamedlikestd-milo-and-as-a-struct-in-std-process)
-- [`'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process`](#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process)
+- [`'Process' is imported from 'std/process' and also declared in this file`](#process-is-imported-from-std-process-and-also-declared-in-this-file)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
@@ -133,6 +136,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Vec' cannot be instantiated with 'void'`](#vec-cannot-be-instantiated-with-void)
 - [`'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)`](#writer-writes-the-global-g-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15)
+- [`'x' declared as Item (b.milo) but got Item (a.milo)`](#x-declared-as-item-b-milo-but-got-item-a-milo)
 - [`'x' shadows an outer binding`](#x-shadows-an-outer-binding)
 - [`'yieldNow' can park this task while the loop variable is a reference into 'g's buffer`](#yieldnow-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`(via 'work' → 'record')`](#via-work-record)
@@ -1834,6 +1838,54 @@ fn main(): void { }
 
 <sub>[tests/errors/refReturnNoteByValueParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/refReturnNoteByValueParam.milo)</sub>
 
+## `'helper' is exported by a.milo and b.milo, and this file imports it from none of them` {#helper-is-exported-by-a-milo-and-b-milo-and-this-file-imports-it-from-none-of-them}
+
+a and b both export `helper`, and both modules are loaded, but this file imports neither one. A name it never imported is not in scope, whichever module defines it.
+
+```milo skip
+from "../fixtures/lib/collide/a" import { fromA }
+from "../fixtures/lib/collide/b" import { fromB }
+
+fn main() {
+    print(fromA() + fromB() + helper())
+}
+```
+
+<sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
+
+## `'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file` {#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file}
+
+The file imports a's `helper` and declares a `helper` of its own. Every module's `helper` is a separate decl now, so neither one silently replaces the other: the file has to say which one the name means.
+
+```milo skip
+from "../fixtures/lib/collide/a" import { helper }
+
+fn helper(): i64 {
+    return 9
+}
+
+fn main() {
+    print(helper())
+}
+```
+
+<sub>[tests/errors/importAndDeclareSameName.milo](https://github.com/milo-language/milo/blob/main/tests/errors/importAndDeclareSameName.milo)</sub>
+
+## `'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'` {#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b}
+
+Two modules each export their own `helper`. Importing both under the same local name would give one name two meanings in this file, so it is rejected at the import; an `as` alias on either one is the fix (tests/fixtures/pubNameCollision.milo).
+
+```milo skip
+from "../fixtures/lib/collide/a" import { helper }
+from "../fixtures/lib/collide/b" import { helper }
+
+fn main() {
+    print(helper())
+}
+```
+
+<sub>[tests/errors/importSameNameTwoModules.milo](https://github.com/milo-language/milo/blob/main/tests/errors/importSameNameTwoModules.milo)</sub>
+
 ## `'id' shadows an outer binding` {#id-shadows-an-outer-binding}
 
 Two levels deep: a match nested inside another match's arm rebinds `id`, which is the outer function's own parameter. This mirrors the second real-world occurrence of the shadow bug — `JSValue.Native(id)` nested inside `fn evalExprFallback(prog, id: ExprId, ...)`, thousands of lines into a file, with a diagnostic that carried no location at all.
@@ -2405,9 +2457,9 @@ fn main() {
 
 <sub>[tests/errors/pubUserTypeNamedLikeStd.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubUserTypeNamedLikeStd.milo)</sub>
 
-## `'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process` {#process-is-defined-as-a-struct-in-tests-errors-usertypeshadowsimportedstd-milo-and-as-a-struct-in-std-process}
+## `'Process' is imported from 'std/process' and also declared in this file` {#process-is-imported-from-std-process-and-also-declared-in-this-file}
 
-(The pin stops before the extension: on Windows the module is std/process.windows.milo.) A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so the duplicate-type error stays.
+A file that imports std's `Process` AND declares its own has two meanings for one name in the same file. The rename that separates a user type from a std one of the same name (userTypeNamedLikeStd) cannot apply, so the import is rejected.
 
 ```milo skip
 from "std/process" import { Process }
@@ -3611,6 +3663,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/ptrGlobalCalleePush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/ptrGlobalCalleePush.milo)</sub>
+
+## `'x' declared as Item (b.milo) but got Item (a.milo)` {#x-declared-as-item-b-milo-but-got-item-a-milo}
+
+a and b each export their own `struct Item`; they are two types, even where they are written the same way. A message about both names the module of each, so it does not read "declared as Item but got Item".
+
+```milo skip
+from "../fixtures/lib/collide/a" import { Item }
+from "../fixtures/lib/collide/b" import { Item as BItem }
+
+fn main() {
+    let x: BItem = Item { x: 1 }
+    print(x.y)
+}
+```
+
+<sub>[tests/errors/sameNamedTypesFromTwoModules.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sameNamedTypesFromTwoModules.milo)</sub>
 
 ## `'x' shadows an outer binding` {#x-shadows-an-outer-binding}
 

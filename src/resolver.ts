@@ -11,7 +11,7 @@ import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { planReplayWrappers, RR_WRAPPER_FILE, RR_IMPORTS } from "./replay-externs";
-import { collectModulePrivateDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type DisplayNames, type PkgDeclNames } from "./mangle";
+import { collectModuleDecls, collectPkgDecls, emptyPkgDecls, manglePackage, type DisplayNames, type PkgDeclNames } from "./mangle";
 
 // repo root: walk up from src/ to find the directory containing std/.
 // MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
@@ -212,7 +212,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // `file` is the resolved path of a pkg="" target, which is what lets the per-module
     // pass bind an import of a name that pass renamed (a private std helper, imported by
     // mistake, still has to resolve so the visibility check can say it is private).
-    targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string; file?: string }[];
+    targets: { names: string[]; aliases?: (string | undefined)[]; pkg: string; file?: string; path?: string; span?: Span; synthetic?: boolean }[];
   }
   const units: Unit[] = [];
   const fileImports = new Map<string, FileImports>();
@@ -346,7 +346,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         // A flat-namespace import carrying an `as` alias needs a binding in the package
         // pass (the local alias names nothing on its own), and every named import is
         // consulted by the per-module pass below.
-        unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: "", file: absPath });
+        unit.targets.push({ names: imp.names, aliases: imp.aliases, pkg: "", file: absPath, path: imp.path, span: imp.span, synthetic: synthetic.includes(imp) });
       }
       if (visited.has(absPath)) continue;
       visited.add(absPath);
@@ -548,7 +548,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         // local `M` to the real, unmangled declared name so `M.clampI64(..)`
         // resolves. Works for values and types alike (manglePackage's binding map
         // is consulted by both resolveValue and resolveType).
-        if (!t.aliases) continue;
+        // A pkg="" unit's aliases are bound by the per-module pass instead: the target
+        // may rename the name, and two aliases of one name from two modules
+        // (`helper` and `helper as helperB`) must not collapse into the same name here.
+        if (!t.aliases || u.pkg === "") continue;
         for (let i = 0; i < t.names.length; i++) {
           const a = t.aliases?.[i];
           if (a !== undefined && a !== t.names[i]) bindings.set(a, t.names[i]);
@@ -573,16 +576,18 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   }
 
   // ── stage 1: per-module namespaces ──
-  // Two user modules that each define a private `fn tone` used to collide, in code
-  // neither of them can see: name RESOLUTION is already per-module (a name from another
-  // file is invisible without an import), and only the final flat merge failed. Renaming
-  // each file's private names removes the collision without touching a single working
-  // program's meaning — a private name has no importers to rewrite by construction.
+  // Two user modules that each define a `fn tone` used to collide, in code neither of
+  // them can see: name RESOLUTION is already per-module (a name from another file is
+  // invisible without an import), and only the final flat merge failed. Renaming the
+  // contested decl in each module removes the collision; a private name has no importers
+  // to rewrite, and a `pub` one is rebound in every importer from the same plan (honoring
+  // `import { x as y }`), so each reference still reaches the decl it named.
   //
   // Packages are skipped: they already carry a `<pkg>$` namespace from the pass above,
-  // and stacking a second prefix would rename the same decl twice. std is skipped too
-  // (stage 4) — `milo api` discovery and docs/breaking-changes.md both index std by its
-  // flat names, so renaming there is a much larger decision than the user-module fix.
+  // and stacking a second prefix would rename the same decl twice. std `pub` names stay
+  // flat (stage 4 renames only std privates): `milo api` discovery and
+  // docs/breaking-changes.md both index std by its flat names. When a user decl collides
+  // with one, the USER side is renamed.
   //
   // Renames only names that ACTUALLY collide, which is what keeps the pass invisible.
   // Mangling every private name works — the collision disappears and both bodies run —
@@ -631,7 +636,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   // Plan first, rename second: an importer's bindings depend on what its targets renamed,
   // and units are not in dependency order.
-  const modulePlan = new Map<string, { id: string; priv: PkgDeclNames }>();
+  const modulePlan = new Map<string, { id: string; renamed: PkgDeclNames }>();
   const usedModuleIds = new Set<string>();
 
   // ── stage 4: std private helpers per module ──
@@ -644,25 +649,26 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   for (const u of units) {
     if (u.pkg !== "" || !u.file.startsWith(stdModuleRoot)) continue;
     const priv = emptyPkgDecls();
-    collectModulePrivateDecls(u.prog, priv, true);
+    collectModuleDecls(u.prog, priv, false, true);
     if (priv.values.size === 0 && priv.types.size === 0) continue;
-    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
+    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), renamed: priv });
   }
 
-  // Type names std keeps flat: what a non-prelude std module declares minus the private
-  // ones stage 4 just renamed. A private user type with one of these names is renamed
-  // (decided 2026-10-06): a std
-  // release adding `pub struct Process` must not break a program whose own private
-  // `Process` never met it. Types only: a type has no override semantics, any body
-  // difference was already a hard error. Fns keep the flat `shadows-stdlib` behaviour,
-  // and the prelude (Option, Result, Vec...) is excluded so redeclaring one stays an error.
+  // Names std keeps flat: what a non-prelude std module declares minus the private ones
+  // stage 4 just renamed. A user decl with one of these names is renamed in its module:
+  // a std release adding `pub struct Process` must not break a program whose own
+  // `Process` never met it. The prelude (Option, Result, Vec, the std/string fns...) is
+  // excluded, so redeclaring one stays an error, or for a fn the documented
+  // `shadows-stdlib` override.
   const stdPubTypes = new Set<string>();
+  const stdPubValues = new Set<string>();
   for (const u of units) {
     if (u.pkg !== "" || preludeFiles.has(u.file) || !u.file.startsWith(stdModuleRoot)) continue;
     const all = emptyPkgDecls();
     collectPkgDecls(u.prog, all);
-    const renamed = modulePlan.get(u.file)?.priv.types;
-    for (const n of all.types) if (!renamed?.has(n)) stdPubTypes.add(n);
+    const renamed = modulePlan.get(u.file)?.renamed;
+    for (const n of all.types) if (!renamed?.types.has(n)) stdPubTypes.add(n);
+    for (const n of all.values) if (!renamed?.values.has(n)) stdPubValues.add(n);
   }
 
   // C functions std declares. A program's own fn with one of these names, `pub` or not,
@@ -677,55 +683,102 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   for (const u of userUnits) {
     const priv = emptyPkgDecls();
-    collectModulePrivateDecls(u.prog, priv);
+    collectModuleDecls(u.prog, priv, false);
+    const pub = emptyPkgDecls();
+    collectModuleDecls(u.prog, pub, true);
     const shadowsStdExtern = u.prog.functions.filter(f => !f.isExtern && f.name !== "main" && stdExternNames.has(f.name)
       && !f.attributes?.some(a => a.name === "externalLinkage")).map(f => f.name);
     // A file that imports the std name AND declares its own is a real ambiguity in that
-    // file; it keeps the duplicate-type error rather than silently picking one.
+    // file; it stays flat so the import check below reports it rather than silently picking one.
     const imported = new Set(u.targets.flatMap(t => t.names));
     const shadowsStdType = (n: string) => stdPubTypes.has(n) && !imported.has(n);
-    if (!mangleAll) {
-      for (const n of [...priv.values]) if ((declCount.get(n) ?? 0) < 2) priv.values.delete(n);
-      for (const n of [...priv.types]) if ((declCount.get(n) ?? 0) < 2 && !shadowsStdType(n)) priv.types.delete(n);
-    } else {
-      for (const n of [...priv.values]) if (stdNames.has(n)) priv.values.delete(n);
-      for (const n of [...priv.types]) if (stdNames.has(n) && !shadowsStdType(n)) priv.types.delete(n);
-    }
-    for (const n of shadowsStdExtern) priv.values.add(n);
-    if (priv.values.size === 0 && priv.types.size === 0) continue;
-    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), priv });
+    const shadowsStdValue = (n: string) => stdPubValues.has(n) && !imported.has(n);
+    const contested = (n: string) => (declCount.get(n) ?? 0) >= 2;
+    const renamed = emptyPkgDecls();
+    for (const n of priv.values) if (mangleAll ? !stdNames.has(n) : contested(n)) renamed.values.add(n);
+    for (const n of priv.types) if ((mangleAll ? !stdNames.has(n) : contested(n)) || shadowsStdType(n)) renamed.types.add(n);
+    // MILO_MANGLE_ALL widens `pub` names too: every importer is rebound from the same
+    // plan, so the switch exercises the importer rewrite on every multi-module fixture.
+    for (const n of pub.values) if ((mangleAll ? !stdNames.has(n) : contested(n)) || shadowsStdValue(n)) renamed.values.add(n);
+    for (const n of pub.types) if ((mangleAll ? !stdNames.has(n) : contested(n)) || shadowsStdType(n)) renamed.types.add(n);
+    for (const n of shadowsStdExtern) renamed.values.add(n);
+    if (renamed.values.size === 0 && renamed.types.size === 0) continue;
+    modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), renamed });
   }
 
   const displayNames: DisplayNames = new Map();
+  const entryBindings = new Map<string, string>();
   for (const u of units) {
     if (u.pkg !== "") continue;
     const own = modulePlan.get(u.file);
-    // An import of a name the target module renamed. A private name has no legitimate
-    // importers, so this binding exists for the ERROR path: the reference still resolves
-    // to the (now module-scoped) decl, and the checker's visibility pass reports it as
-    // private to its file instead of an unrelated "undefined function".
+    // Each import's LOCAL name (`y` in `import { x as y }`) bound to the decl it names:
+    // the target's renamed symbol when the target renamed `x`, else `x` itself (an alias
+    // of a flat name). Renamed private names are bound too, for the ERROR path: the
+    // reference still resolves to the (now module-scoped) decl, and the checker's
+    // visibility pass reports it as private to its file instead of "undefined function".
     const bindings = new Map<string, string>();
+    const boundFrom = new Map<string, { path: string; sym: string; renamed: boolean; synthetic?: boolean; span?: Span }>();
     for (const t of u.targets) {
-      const tp = t.pkg === "" && t.file !== undefined ? modulePlan.get(t.file) : undefined;
-      if (!tp) continue;
+      if (t.pkg !== "" || t.file === undefined) continue;
+      const tp = modulePlan.get(t.file);
       for (let i = 0; i < t.names.length; i++) {
         const n = t.names[i];
-        if (!tp.priv.values.has(n) && !tp.priv.types.has(n)) continue;
-        // The package pass above has already rewritten an `as` alias to the declared name.
-        bindings.set(n, `${tp.id}$${n}`);
+        const local = t.aliases?.[i] ?? n;
+        const isRenamed = !!tp && (tp.renamed.values.has(n) || tp.renamed.types.has(n));
+        const sym = isRenamed ? `${tp!.id}$${n}` : n;
+        const prev = boundFrom.get(local);
+        // One local name, two different decls. While both are flat the duplicate-* checks
+        // below see the clash; once a rename separates them, only this can.
+        if (prev && prev.sym !== sym && (prev.renamed || isRenamed)) {
+          throw new ParseError({
+            severity: "error",
+            code: "import",
+            span: t.span,
+            len: (t.path ?? "").length + 7, // `from "` + path + `"`
+            message: `'${local}' is imported from both '${prev.path}' and '${t.path}'`,
+            hint: `the two modules each define their own '${n}', so one name would mean two things in this file. Rename one at its import: 'import { ${n} as <newName> }'.`,
+          }, readSourceSafe(u.file), u.file);
+        }
+        boundFrom.set(local, { path: t.path ?? "", sym, renamed: isRenamed, synthetic: t.synthetic, span: t.span });
+        if (sym !== local) bindings.set(local, sym);
       }
     }
+    // A file that declares a name AND imports the same name. With the import renamed the
+    // binding would silently win over the file's own decl; with it flat (std) the two
+    // would meet in the merge as a duplicate in a file the user did not write. Imports
+    // the resolver adds for @derive(Json) are not the user's to rename, and an `extern fn`
+    // redeclaration binds the same C symbol rather than giving the name a second meaning.
+    for (const [local, b] of boundFrom) {
+      if (b.synthetic) continue;
+      const declaresIt = u.prog.functions.some(f => f.name === local && !f.isExtern) || u.prog.globals.some(g => g.name === local)
+        || u.prog.structs.some(s => s.name === local) || u.prog.enums.some(e => e.name === local)
+        || u.prog.traits.some(t => t.name === local) || u.prog.interfaces.some(i => i.name === local)
+        || u.prog.typeAliases.some(a => a.name === local);
+      if (!declaresIt) continue;
+      throw new ParseError({
+        severity: "error",
+        code: "import",
+        span: b.span,
+        len: b.path.length + 7,
+        message: `'${local}' is imported from '${b.path}' and also declared in this file`,
+        hint: `a name has one meaning per file. Rename the import ('import { ${local} as <newName> }') or this file's own '${local}'.`,
+      }, readSourceSafe(u.file), u.file);
+    }
     for (const v of bindings.values()) fileImports.get(u.file)?.names.add(v);
+    if (u === entryUnit) {
+      for (const [k, v] of bindings) entryBindings.set(k, v);
+      for (const n of [...(own?.renamed.values ?? []), ...(own?.renamed.types ?? [])]) entryBindings.set(n, `${own!.id}$${n}`);
+    }
     if (!own && bindings.size === 0) continue;
     if (own) {
       // Record what each rename hides BEFORE it happens: the mangled name is a symbol, and
       // every surface a human reads renders it back through `display()` (src/mangle.ts).
       // `sourceName` carries the same fact on the decl itself, for the paths that hold one.
-      for (const n of own.priv.values) displayNames.set(`${own.id}$${n}`, n);
-      for (const n of own.priv.types) displayNames.set(`${own.id}$${n}`, n);
-      for (const f of u.prog.functions) if (own.priv.values.has(f.name)) f.sourceName ??= f.name;
+      for (const n of own.renamed.values) displayNames.set(`${own.id}$${n}`, n);
+      for (const n of own.renamed.types) displayNames.set(`${own.id}$${n}`, n);
+      for (const f of u.prog.functions) if (own.renamed.values.has(f.name)) f.sourceName ??= f.name;
     }
-    manglePackage(u.prog, own?.id ?? "", own?.priv ?? emptyPkgDecls(), bindings, true);
+    manglePackage(u.prog, own?.id ?? "", own?.renamed ?? emptyPkgDecls(), bindings, true);
   }
 
   // Every type/global declaration paired with the file that declared it. Unlike
@@ -828,7 +881,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         span: f.span,
         len: f.name.length,
         message: `'fn ${f.name}' is defined in two modules with different bodies`,
-        hint: `also defined in '${prev.file}'. Milo compiles all modules into one namespace, so only one body survives and every call site runs it. Rename one, or move the shared implementation into a single module both import.`,
+        hint: `also defined in '${prev.file}'. Standard-library \`pub\` names share one namespace program-wide, so only one body survives and every call site runs it. Rename one, or move the shared implementation into a single module both import.`,
       }, readSourceSafe(f.sourceFile), f.sourceFile);
     }
     if (!prev) fnDefs.set(f.name, { file: f.sourceFile ?? "(unknown)", decl: f });
@@ -878,7 +931,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         span: t.span,
         len: t.name.length,
         message: `'${t.name}' is defined as ${a(prev.kind)} in '${displayFile(prev.file)}' and as ${a(t.kind)} in '${displayFile(t.file)}'`,
-        hint: `Milo merges every module into one flat namespace, so a type name has exactly one meaning program-wide${sameKind ? " and these two definitions differ" : ""} — only one of them survives and every use of '${t.name}' resolves to it, including the other module's own uses. Rename one${sameKind ? ", or move the shared definition into a single module both import" : ""}.`,
+        hint: `the prelude's and the standard library's \`pub\` names share one namespace program-wide, so a type name has exactly one meaning there${sameKind ? " and these two definitions differ" : ""} — only one of them survives and every use of '${t.name}' resolves to it, including the other module's own uses. Rename one${sameKind ? ", or move the shared definition into a single module both import" : ""}.`,
       }, readSourceSafe(t.file), t.file);
     }
     if (!prev) typeDefs.set(t.name, { file: t.file, kind: t.kind, decl: t.decl });
@@ -907,7 +960,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         span: g.span,
         len: g.name.length,
         message: `'${g.name}' is defined as ${a(clash.kind)} in '${displayFile(clash.file)}' and as a global in '${displayFile(g.file)}'`,
-        hint: `Milo merges every module into one flat namespace, and globals share it with functions — only one '${g.name}' survives and every use resolves to it. Rename one of them.`,
+        hint: `the prelude's and the standard library's \`pub\` names share one namespace program-wide, and globals share it with functions — only one '${g.name}' survives and every use resolves to it. Rename one of them.`,
       }, readSourceSafe(g.file), g.file);
     }
     if (!prev) globalDefs.set(g.name, { file: g.file, decl: g.decl });
@@ -960,5 +1013,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible, ...(replayPlans && { replayPlans }), ...(droppedExterns.length > 0 && { droppedExterns }) };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), deriveTemplates: dedup(deriveTemplates), declOrigins, packageNames, displayNames, entryBindings, userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports, shadowedStdlib, fileImports, preludeVisible, ...(replayPlans && { replayPlans }), ...(droppedExterns.length > 0 && { droppedExterns }) };
 }

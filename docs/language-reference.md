@@ -3332,6 +3332,23 @@ no import, since they are reached through their receiver, and the prelude's name
 (`Unit`, `asciiIsDigit`, ...) are in scope everywhere. `milo fix <file>` adds every
 name the checker reports missing.
 
+Names belong to the module that declares them. Two modules may each export a `helper` or
+a `struct Item` with different definitions: each module's own code uses its own, and an
+importer gets the one its import line names. `as` binds an imported name under another
+local name, which is how one file uses both:
+
+```milo skip
+from "./a" import { helper, Item }
+from "./b" import { helper as helperB, Item as BItem }
+```
+
+Importing the same name from two modules without an alias, or importing a name the file
+also declares, is an error: one name has one meaning per file. The standard library's
+`pub` names are the same everywhere; a program's own decl with one of their names is its
+own module's (except the prelude's, which a same-signature fn overrides; see
+`shadows-stdlib-override`). C symbols (`extern fn`, `@externalLinkage`, `@cName`) keep
+their written names.
+
 A module may have its own `main` and still be imported: a core that is also a standalone
 tool (`genesisCore.milo` with a `main` that runs one ROM) lends `runFrame` to a front end
 without a copy. The entry file's `main` is the program's; an imported module's `main` is

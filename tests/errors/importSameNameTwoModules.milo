@@ -1,0 +1,10 @@
+// @error: 'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'
+// Two modules each export their own `helper`. Importing both under the same local name
+// would give one name two meanings in this file, so it is rejected at the import; an
+// `as` alias on either one is the fix (tests/fixtures/pubNameCollision.milo).
+from "../fixtures/lib/collide/a" import { helper }
+from "../fixtures/lib/collide/b" import { helper }
+
+fn main() {
+    print(helper())
+}

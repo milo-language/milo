@@ -1,0 +1,42 @@
+// The other half of ./a.milo: the same exported names, different definitions.
+
+pub struct Item { y: string }
+
+pub fn helper(): i64 { return 2 }
+
+pub fn fromB(): i64 {
+    let i = Item { y: "b" }
+    return helper() + i.y.len
+}
+
+impl Item {
+    fn describe(self: &Item): string { return "b.Item(" + self.y + ")" }
+}
+
+pub enum Mode { Fast, Slow, Off }
+
+pub fn modeName(m: Mode): string {
+    match m {
+        Fast => { return "b.Fast" }
+        Slow => { return "b.Slow" }
+        Off => { return "b.Off" }
+    }
+}
+
+pub struct Pair<T> { only: T, count: i64 }
+
+pub fn pairOf<T>(v: T): Pair<T> { return Pair { only: v, count: 1 } }
+
+pub trait Named {
+    fn name(self: &Self): string
+    fn loud(self: &Self): string
+}
+
+@derive(Json, Clone)
+pub struct Rec { name: string, tags: Vec<string> }
+
+pub fn recB(): Rec {
+    var tags: Vec<string> = Vec.new()
+    tags.push("x")
+    return Rec { name: "b", tags: tags }
+}

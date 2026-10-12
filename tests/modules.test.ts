@@ -1,6 +1,6 @@
-// Cross-module name-collision semantics (issue #5): same-named top-level fns in
-// different modules must not silently merge into one body. Different bodies are a
-// compile error; identical bodies still merge; prelude override keeps working; and
+// Cross-module name-collision semantics (issue #5): same-named top-level decls in
+// different modules must not silently merge into one body. Each module keeps its own
+// (the per-module pass renames contested names); prelude override keeps working; and
 // separately-compiled objects keep their own copies at link time (internal linkage).
 import { test, expect } from "bun:test";
 import { execSync, spawnSync } from "child_process";
@@ -28,10 +28,9 @@ function write(name: string, content: string): string {
   return p;
 }
 
-// `pub`, not private: a private helper of this shape is renamed per module now and is a
-// legal program (see "two modules may each define a private helper"). Two modules EXPORTING
-// the same name with different bodies is still a real ambiguity for anyone importing both.
-test("same-named fns with different bodies in two modules is a compile error", () => {
+// `pub` names are per-module too: each module's own call reaches its own body. This used
+// to be the "defined in two modules with different bodies" error.
+test("same-named pub fns with different bodies in two modules each keep their body", () => {
   write("dup_a.milo", `pub fn foo(): string { return "AAA" }\npub fn fromA(): string { return foo() }\n`);
   write("dup_b.milo", `pub fn foo(): string { return "BBB" }\npub fn fromB(): string { return foo() }\n`);
   const main = write("dup_main.milo", `from "dup_a" import { fromA }
@@ -42,11 +41,8 @@ fn main(): void {
 }
 `);
   const r = milo(`run ${main}`);
-  expect(r.code).not.toBe(0);
-  const msg = r.err + r.out;
-  expect(msg).toContain("defined in two modules with different bodies");
-  expect(msg).toContain("dup_a.milo");
-  expect(msg).toContain("dup_b.milo");
+  expect(`${r.code} ${r.err}`).toBe("0 ");
+  expect(r.out.trim().split("\n")).toEqual(["AAA", "BBB"]);
 });
 
 test("same-named fns with identical bodies still merge", () => {
@@ -202,14 +198,14 @@ fn main(): void {
   expect(msg).not.toContain("err_main.milo:");
 });
 
-// ── types and globals share the fn story: one flat namespace, last-wins ──
-// The live case this closed: std/fetch's `pub struct Response` vs std/http's
+// ── types and globals share the fn story ──
+// The live case that started this: std/fetch's `pub struct Response` vs std/http's
 // `pub enum Response`. Importing both compiled the enum and silently discarded
 // the struct, so std/fetch's own code failed with "cannot access field on enum
-// 'Response'" and "expected Response, got Response" — errors pointing at correct
-// code, with nothing naming the collision.
+// 'Response'" and "expected Response, got Response". That became a duplicate-type
+// error; between user modules it is now two separate types.
 
-test("a struct and an enum with the same name in two modules is a compile error", () => {
+test("a struct and an enum with the same name in two modules are two types", () => {
   write("ty_struct.milo", `pub struct Payload { code: i64 }\npub fn fromStruct(): Payload { return Payload { code: 1 } }\n`);
   write("ty_enum.milo", `pub enum Payload { Ok, Bad }\npub fn fromEnum(): Payload { return Payload.Ok }\n`);
   const main = write("ty_main.milo", `from "ty_struct" import { fromStruct }
@@ -219,17 +215,12 @@ fn main(): void {
 }
 `);
   const r = milo(`run ${main}`);
-  expect(r.code).not.toBe(0);
-  const msg = r.err + r.out;
-  // Both kinds and both files, so the user can act without opening the compiler.
-  expect(msg).toContain("'Payload' is defined as a struct in");
-  expect(msg).toContain("and as an enum in");
-  expect(msg).toContain("ty_struct.milo");
-  expect(msg).toContain("ty_enum.milo");
+  expect(`${r.code} ${r.err}`).toBe("0 ");
+  expect(r.out.trim()).toBe("1");
 });
 
-test("same-named structs with different fields in two modules is a compile error", () => {
-  write("tyd_a.milo", `pub struct Config { host: string }\npub fn hostOf(c: &Config): string { return c.host }\n`);
+test("same-named structs with different fields in two modules are two types", () => {
+  write("tyd_a.milo", `pub struct Config { host: string }\npub fn hostOf(c: &Config): string { return c.host.clone() }\n`);
   write("tyd_b.milo", `pub struct Config { port: i64 }\npub fn portOf(c: &Config): i64 { return c.port }\n`);
   const main = write("tyd_main.milo", `from "tyd_a" import { Config, hostOf }
 from "tyd_b" import { portOf }
@@ -238,17 +229,15 @@ fn main(): void {
 }
 `);
   const r = milo(`run ${main}`);
-  expect(r.code).not.toBe(0);
-  const msg = r.err + r.out;
-  expect(msg).toContain("'Config' is defined as a struct in");
-  expect(msg).toContain("tyd_a.milo");
-  expect(msg).toContain("tyd_b.milo");
+  expect(`${r.code} ${r.err}`).toBe("0 ");
+  expect(r.out.trim()).toBe("x");
 });
 
-// The tolerance guard. Vendoring the same type into two modules is legitimate and
-// must keep compiling — fns already get this and types must match them, or a
-// future tightening breaks working code with no test to catch it.
-test("byte-identical type definitions in two modules still merge", () => {
+// Vendoring the same type into two modules keeps compiling. Each copy is its own type
+// now (identical text can still mean different things, since each module resolves the
+// names inside it), so a value of one where the other is expected is a type error that
+// names both modules (tests/errors/sameNamedTypesFromTwoModules.milo).
+test("byte-identical type definitions in two modules still compile", () => {
   write("tysame_a.milo", `pub struct Pt { x: i64, y: i64 }\npub fn fromA(): Pt { return Pt { x: 1, y: 2 } }\n`);
   write("tysame_b.milo", `pub struct Pt { x: i64, y: i64 }\npub fn fromB(): Pt { return Pt { x: 10, y: 20 } }\n`);
   const main = write("tysame_main.milo", `from "tysame_a" import { Pt, fromA }
@@ -282,8 +271,7 @@ fn main(): void {
   expect(r.out.trim().split("\n")).toEqual(["true", "true"]);
 });
 
-// `pub` for the same reason as the fn case above: a private global is per-module now.
-test("same-named globals with different values in two modules is a compile error", () => {
+test("same-named pub globals with different values in two modules each keep their value", () => {
   write("gl_a.milo", `pub let LIMIT: i64 = 10\npub fn fromA(): i64 { return LIMIT }\n`);
   write("gl_b.milo", `pub let LIMIT: i64 = 20\npub fn fromB(): i64 { return LIMIT }\n`);
   const main = write("gl_main.milo", `from "gl_a" import { fromA }
@@ -293,11 +281,8 @@ fn main(): void {
 }
 `);
   const r = milo(`run ${main}`);
-  expect(r.code).not.toBe(0);
-  const msg = r.err + r.out;
-  expect(msg).toContain("'LIMIT' is defined as a global in");
-  expect(msg).toContain("gl_a.milo");
-  expect(msg).toContain("gl_b.milo");
+  expect(`${r.code} ${r.err}`).toBe("0 ");
+  expect(r.out.trim()).toBe("30");
 });
 
 test("identical globals in two modules still merge", () => {
@@ -409,20 +394,23 @@ fn main(): void {
   expect(r.out.trim().split("\n")).toEqual(["1", "2"]);
 });
 
-// The pass renames PRIVATE names only. Two modules exporting the same name is a real
-// ambiguity for anyone importing both, so that diagnostic has to survive — and keeping it
-// is also what means no import binding anywhere had to be rewritten.
-test("two pub names with different bodies still collide", () => {
+// Two modules exporting the same name is no ambiguity until one FILE imports both under
+// one name (tests/errors/importSameNameTwoModules.milo); each importer gets the decl its
+// own import line names, `as` aliases included.
+test("two pub names with different bodies resolve per importer", () => {
   write("pub_a.milo", `pub fn shared(): i64 { return 1 }\n`);
   write("pub_b.milo", `pub fn shared(): i64 { return 2 }\n`);
+  write("pub_c.milo", `from "pub_b" import { shared as other }\npub fn use2(): i64 { return other() }\n`);
   const main = write("pub_main.milo", `from "pub_a" import { shared }
+from "pub_c" import { use2 }
 fn main(): void {
     print(shared())
+    print(use2())
 }
 `);
-  write("pub_c.milo", `from "pub_b" import { shared as other }\npub fn use2(): i64 { return other() }\n`);
   const r = milo(`run ${main}`);
-  expect(r.code === 0 || r.err.includes("defined in two modules")).toBe(true);
+  expect(`${r.code} ${r.err}`).toBe("0 ");
+  expect(r.out.trim().split("\n")).toEqual(["1", "2"]);
 });
 
 test("identical private helpers in two modules still work", () => {

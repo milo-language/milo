@@ -1,0 +1,37 @@
+// One of two modules that export the same names with different definitions (the other
+// is ./b.milo). Every reference in here must reach THIS module's decl, whatever b does.
+
+pub struct Item { x: i64 }
+
+pub fn helper(): i64 { return 1 }
+
+pub fn fromA(): i64 {
+    let i = Item { x: helper() }
+    return i.x
+}
+
+impl Item {
+    fn describe(self: &Item): string { return "a.Item(" + self.x.toString() + ")" }
+}
+
+pub enum Mode { On, Off }
+
+pub fn modeName(m: Mode): string {
+    match m {
+        On => { return "a.On" }
+        Off => { return "a.Off" }
+    }
+}
+
+pub struct Pair<T> { left: T, right: T }
+
+pub fn pairOf<T>(l: T, r: T): Pair<T> { return Pair { left: l, right: r } }
+
+pub trait Named {
+    fn name(self: &Self): string
+}
+
+@derive(Json, Clone)
+pub struct Rec { id: i64, ok: bool }
+
+pub fn recA(): Rec { return Rec { id: 7, ok: true } }

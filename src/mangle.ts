@@ -71,25 +71,24 @@ export const COMPILER_KNOWN_STD_HELPERS: ReadonlySet<string> = new Set([
   "strParseInt", "strParseF64", "vecJoin",
 ]);
 
-// One file's FILE-PRIVATE top-level names — the only ones stage 1 renames.
-//
-// A `pub` name is part of a module's surface, and two modules exporting the same name is
-// a real ambiguity for anyone importing both, so leaving `pub` alone both preserves that
-// diagnostic and means no import binding anywhere has to be rewritten. A private name is
-// invisible outside its own file by construction, so renaming it cannot change the
-// meaning of any program that compiles today — which is the entire argument for the pass.
-export function collectModulePrivateDecls(prog: Program, out: PkgDeclNames, isStd = false): void {
+// One file's top-level names the per-module pass MAY rename: its private names, or with
+// `pub` set its exported ones. The two sets are collected apart because their renames
+// differ in reach: a private name has no importers, so renaming it touches one file, while
+// renaming a `pub` name also rewrites every importer's binding (the resolver does that
+// from the same plan).
+export function collectModuleDecls(prog: Program, out: PkgDeclNames, pub: boolean, isStd = false): void {
+  const want = (isPub: boolean | undefined) => !!isPub === pub;
   for (const f of prog.functions) {
-    if (f.isPub || !isModuleManglableFn(f)) continue;
+    if (!want(f.isPub) || !isModuleManglableFn(f)) continue;
     if (isStd && COMPILER_KNOWN_STD_HELPERS.has(f.name)) continue;
     out.values.add(f.name);
   }
-  for (const g of prog.globals) if (!g.isPub) out.values.add(g.name);
-  for (const s of prog.structs) if (!s.isPub && !s.isExtern && !hasCAttr(s.attributes)) out.types.add(s.name);
-  for (const e of prog.enums) if (!e.isPub && !hasCAttr(e.attributes)) out.types.add(e.name);
-  for (const t of prog.traits) if (!t.isPub) out.types.add(t.name);
-  for (const i of prog.interfaces) if (!i.isPub) out.types.add(i.name);
-  for (const a of prog.typeAliases) if (!a.isPub) out.types.add(a.name);
+  for (const g of prog.globals) if (want(g.isPub)) out.values.add(g.name);
+  for (const s of prog.structs) if (want(s.isPub) && !s.isExtern && !hasCAttr(s.attributes)) out.types.add(s.name);
+  for (const e of prog.enums) if (want(e.isPub) && !hasCAttr(e.attributes)) out.types.add(e.name);
+  for (const t of prog.traits) if (want(t.isPub)) out.types.add(t.name);
+  for (const i of prog.interfaces) if (want(i.isPub)) out.types.add(i.name);
+  for (const a of prog.typeAliases) if (want(a.isPub)) out.types.add(a.name);
 }
 
 // Accumulate one file's top-level names into a package-wide index. Called for
@@ -490,6 +489,42 @@ export function display(map: DisplayNames | undefined, text: string): string {
     displayRegexes.set(map, re);
   }
   return text.replace(re, (m) => map.get(m) ?? m);
+}
+
+/**
+ * `display`, for a message that may name two decls written the same way: `a$Pt` and
+ * `b$Pt` both read `Pt`, so "expected Pt, got Pt" would point at correct-looking code.
+ * When a written name stands for more than one decl in `text` (two renamed ones, or one
+ * renamed and one that kept the bare name, such as std's), each renamed occurrence is
+ * qualified with `origin(symbol)`, typically its file: "expected Pt (b.milo), got Pt
+ * (a.milo)". A message naming one decl renders exactly as `display` would.
+ */
+export function displayQualified(
+  map: DisplayNames | undefined, text: string, origin: (sym: string) => string | undefined,
+): string {
+  if (!map || map.size === 0) return text;
+  display(map, ""); // builds and caches the matcher
+  const re = displayRegexes.get(map)!;
+  const syms = new Map<string, Set<string>>();
+  for (const m of text.matchAll(re)) {
+    const w = map.get(m[0])!;
+    let s = syms.get(w);
+    if (!s) { s = new Set(); syms.set(w, s); }
+    s.add(m[0]);
+  }
+  const ambiguous = new Set<string>();
+  for (const [w, s] of syms) {
+    // `$` in the guard: inside a mangled `a$Pt` the bare `Pt` is not a separate mention.
+    const bare = new RegExp(`(?<![A-Za-z0-9_$])${escapeRegex(w)}(?![A-Za-z0-9_$])`);
+    if (s.size > 1 || bare.test(text)) ambiguous.add(w);
+  }
+  if (ambiguous.size === 0) return display(map, text);
+  return text.replace(re, (m) => {
+    const w = map.get(m) ?? m;
+    if (!ambiguous.has(w)) return w;
+    const o = origin(m);
+    return o ? `${w} (${o})` : w;
+  });
 }
 
 /**

@@ -42,6 +42,17 @@ const CMAIN_SRC = `from "./helper" import { fromHelper }\n\nfn tone(x: i64): i64
 writeFileSync(CMAIN, CMAIN_SRC);
 const CMAIN_URI = pathToFileURL(CMAIN).href;
 
+// A fourth workspace where two imported modules export the same `helper` and `Item` with
+// different signatures. The LSP must answer for the one THIS file's import names, even
+// though a's import comes first and a's decls read identically once unmangled.
+const PROOT = mkdtempSync(join(tmpdir(), "milo-lsp-pubcoll-"));
+writeFileSync(join(PROOT, "a.milo"), `pub struct Item { x: i64 }\n\npub fn helper(): i64 {\n    return 1\n}\n`);
+writeFileSync(join(PROOT, "b.milo"), `// b\npub struct Item { y: string }\n\npub fn helper(k: string): i64 {\n    return k.len\n}\n`);
+const PMAIN = join(PROOT, "main.milo");
+const PMAIN_SRC = `from "./a" import { helper as aHelper, Item as AItem }\nfrom "./b" import { helper, Item }\n\nfn main() {\n    let i = Item { y: "s" }\n    print(helper(i.y) + aHelper())\n}\n`;
+writeFileSync(PMAIN, PMAIN_SRC);
+const PMAIN_URI = pathToFileURL(PMAIN).href;
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -96,6 +107,7 @@ beforeAll(async () => {
   await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: MAIN_URI, languageId: "milo", version: 1, text: `fn main() {\n    let y = helper(41)\n}\n` } } });
   await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: DMAIN_URI, languageId: "milo", version: 1, text: DMAIN_SRC } } });
   await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: CMAIN_URI, languageId: "milo", version: 1, text: CMAIN_SRC } } });
+  await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: PMAIN_URI, languageId: "milo", version: 1, text: PMAIN_SRC } } });
 });
 
 afterAll(() => {
@@ -103,6 +115,7 @@ afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
   rmSync(DROOT, { recursive: true, force: true });
   rmSync(CROOT, { recursive: true, force: true });
+  rmSync(PROOT, { recursive: true, force: true });
 });
 
 test("references finds occurrences in an unopened on-disk file", async () => {
@@ -164,4 +177,27 @@ test("go-to-definition on a collided private fn lands on its declaration", async
   const hit = Array.isArray(d) ? d[0] : d;
   expect(hit?.uri).toBe(CMAIN_URI);
   expect(hit?.range?.start?.line).toBe(2);
+});
+
+test("go-to-definition on a pub name two modules export goes to the imported one", async () => {
+  const d = await req(30, "textDocument/definition", { textDocument: { uri: PMAIN_URI }, position: { line: 5, character: 11 } });
+  const hit = Array.isArray(d) ? d[0] : d;
+  expect(hit?.uri).toBe(pathToFileURL(join(PROOT, "b.milo")).href);
+  expect(hit?.range?.start?.line).toBe(3);
+  // An `as` alias leads to the declaration it renames, in its own module.
+  const a = await req(31, "textDocument/definition", { textDocument: { uri: PMAIN_URI }, position: { line: 5, character: 26 } });
+  const ahit = Array.isArray(a) ? a[0] : a;
+  expect(ahit?.uri).toBe(pathToFileURL(join(PROOT, "a.milo")).href);
+  expect(ahit?.range?.start?.line).toBe(2);
+});
+
+test("hover on a pub name two modules export shows the imported one", async () => {
+  const h = await req(32, "textDocument/hover", { textDocument: { uri: PMAIN_URI }, position: { line: 5, character: 11 } });
+  const value: string = h?.contents?.value ?? "";
+  expect(value).toContain("fn helper(k: string): i64");
+  expect(value).not.toContain("$");
+  const s = await req(33, "textDocument/hover", { textDocument: { uri: PMAIN_URI }, position: { line: 4, character: 13 } });
+  const sv: string = s?.contents?.value ?? "";
+  expect(sv).toContain("y: string");
+  expect(sv).not.toContain("$");
 });

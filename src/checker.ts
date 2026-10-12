@@ -22,7 +22,7 @@ import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskSc
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
-import { display } from "./mangle";
+import { display, displayQualified } from "./mangle";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { basename, dirname, relative, resolve as resolvePath, sep } from "path";
@@ -1176,7 +1176,23 @@ export class TypeChecker {
 
   // A missing std import gets the import line; otherwise the nearest declared type,
   // then the nearest std export.
+  // A name this file never imported that other modules export under per-module symbols
+  // (src/resolver.ts, stage 1): nothing in the merged program is called `name` any more,
+  // so the visibility pass cannot report it as unimported. Name the modules instead.
+  private renamedExportHint(name: string, ns: "values" | "types"): string | undefined {
+    const files: string[] = [];
+    for (const [sym, written] of this._displayNames ?? []) {
+      if (written !== name) continue;
+      const o = this.declOrigins?.[ns].get(sym);
+      if (o?.anyPub) files.push(...[...o.files].map(f => basename(f)));
+    }
+    if (files.length === 0) return undefined;
+    return `'${name}' is exported by ${files.sort().join(" and ")}, and this file imports it from none of them: add it to the import list of the module you mean`;
+  }
+
   private unknownTypeHint(name: string, extra: Iterable<string> = []): string {
+    const renamed = this.renamedExportHint(name, "types");
+    if (renamed) return renamed;
     const fromStd = importHint(name);
     if (fromStd) return fromStd;
     const declared = new Set<string>([
@@ -3452,9 +3468,13 @@ export class TypeChecker {
       if (!(e instanceof CheckAbort)) throw e;
     }
     if (this._displayNames?.size) {
+      const origin = (sym: string) => {
+        const files = this.declOrigins?.types.get(sym)?.files ?? this.declOrigins?.values.get(sym)?.files;
+        return files?.size === 1 ? basename([...files][0]) : undefined;
+      };
       for (const d of this.diagnostics) {
-        d.message = display(this._displayNames, d.message);
-        if (d.hint) d.hint = display(this._displayNames, d.hint);
+        d.message = displayQualified(this._displayNames, d.message, origin);
+        if (d.hint) d.hint = displayQualified(this._displayNames, d.hint, origin);
       }
     }
     return {
@@ -9981,7 +10001,7 @@ export class TypeChecker {
         const fnType: TypeKind = { tag: "fn", params: fnSig.params.map(p => p.type), ret: fnSig.ret };
         return this.setType(expr, fnType);
       }
-      this.error(`undefined variable '${expr.name}'`, sp, this.nameHint(expr.name));
+      this.error(`undefined variable '${expr.name}'`, sp, this.renamedExportHint(expr.name, "values") ?? this.nameHint(expr.name));
       return this.setType(expr, { tag: "unknown" });
     }
     // A nullable extern reference is not a value. Every way of naming it — passing it on,
@@ -10821,7 +10841,7 @@ export class TypeChecker {
         this.rewrittenCalls.set(expr, `${mangled}$run`);
         return this.setType(expr, runSig.ret);
       }
-      this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" });
+      this.error(`undefined function '${expr.func}'`, sp, this.renamedExportHint(expr.func, "values")); return this.setType(expr, { tag: "unknown" });
     }
     if (expr.func === "todo") {
       if (expr.args.length > 1) { this.error(`todo() takes at most one argument (a message), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }

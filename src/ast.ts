@@ -385,6 +385,10 @@ export interface Program {
   // performed (src/mangle.ts, display names). Empty when nothing was renamed. Every
   // human-facing surface (diagnostics, `print`, DWARF, LSP) renders through it.
   displayNames?: Map<string, string>;
+  // The entry file's names that the per-module pass rebound: local name (an import's `as`
+  // alias included) -> the symbol it now refers to. Name lookups that start from what the
+  // entry file says (LSP hover) use it to pick the right decl among same-named ones.
+  entryBindings?: Map<string, string>;
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file

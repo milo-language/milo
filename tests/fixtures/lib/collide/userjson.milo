@@ -1,0 +1,10 @@
+// A user module whose exported names are also std/json's (`Json`, `jsonQuote`), loaded
+// into a program that imports std/json too. std keeps its flat names; this module's own
+// decls are the ones renamed.
+pub struct Json { raw: string }
+
+pub fn jsonQuote(s: &string): string { return "<" + s + ">" }
+
+pub fn wrap(s: string): Json { return Json { raw: jsonQuote(s) } }
+
+pub fn rawOf(j: &Json): string { return j.raw.clone() }

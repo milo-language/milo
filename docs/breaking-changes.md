@@ -32,6 +32,24 @@ for the same reason.
 | `router.runStream(req, fd)` | gone; the concurrent server runs stream routes itself |
 | `taskOnPanicReply(fd, reply)` | `unsafe { taskOnPanicReply(fd, reply) }` |
 
+
+## A `pub` name belongs to its module (2026-10-11)
+
+Two modules may now export the same name with different definitions: each module's own
+code uses its own, and each importer gets the one its import line names
+(`import { helper as helperB }` to use both). This used to be the error "'fn helper' is
+defined in two modules with different bodies" (or "'Item' is defined as a struct in ...").
+What breaks:
+
+| was | now |
+|---|---|
+| two modules each declaring an identical `pub struct Pt`, with a value of one passed where the other is expected (the flat merge made them one type) | two types: "expected Pt (b.milo), got Pt (a.milo)". Declare the type in one module and import it in the other |
+| a file importing `x` and also declaring its own `x` (merged when the bodies matched, a duplicate error otherwise) | "'x' is imported from '...' and also declared in this file": drop one, or import it `as` another name |
+| one file importing the same name from two modules | "'x' is imported from both '...' and '...'": alias one |
+
+std's `pub` names are unchanged and stay flat; a user decl named like a non-prelude std
+one is the user module's own.
+
 # Released in v0.3.0 (2026-10-09)
 
 ## Handle and window fields are private; closing a handle consumes it (2026-10-09)

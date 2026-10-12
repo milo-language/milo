@@ -1,0 +1,29 @@
+// @expect: <hi> <q>
+// @expect: "hi"
+// @expect: {"n":3}
+// @expect: 2
+// A user module exports `struct Json` and `fn jsonQuote`, both also std/json's `pub`
+// names, in a program that imports std/json and derives Json (whose generated code
+// calls std's jsonQuote). It used to fail with "'Json' is defined as a struct in
+// 'std/json.milo' and as a struct in '.../userjson.milo'". The user module's decls are
+// renamed; std and every std caller keep the flat names.
+from "./lib/collide/userjson" import { Json as UJson, jsonQuote as userQuote, wrap, rawOf }
+from "std/json" import { jsonParse, jsonQuote }
+
+@derive(Json)
+struct Msg { n: i64 }
+
+fn main(): i32 {
+    let u: UJson = wrap("hi")
+    print(rawOf(u) + " " + userQuote("q"))
+    print(jsonQuote("hi"))
+    print(Msg { n: 3 }.toJson())
+    match jsonParse("[1,2]") {
+        Result.Ok(doc) => { print(doc.len()) }
+        Result.Err(e) => {
+            print("parse failed")
+            return 1
+        }
+    }
+    return 0
+}

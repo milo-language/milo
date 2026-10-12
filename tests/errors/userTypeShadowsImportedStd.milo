@@ -1,8 +1,7 @@
-// @error: 'Process' is defined as a struct in 'tests/errors/userTypeShadowsImportedStd.milo' and as a struct in 'std/process
-// (The pin stops before the extension: on Windows the module is std/process.windows.milo.)
+// @error: 'Process' is imported from 'std/process' and also declared in this file
 // A file that imports std's `Process` AND declares its own has two meanings for one name
-// in the same file. The private-type rename (userTypeNamedLikeStd) does not apply, so
-// the duplicate-type error stays.
+// in the same file. The rename that separates a user type from a std one of the same
+// name (userTypeNamedLikeStd) cannot apply, so the import is rejected.
 from "std/process" import { Process }
 
 struct Process {

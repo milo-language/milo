@@ -1,0 +1,27 @@
+// @expect: 1312
+// @expect: Item { x: 4 }
+// @expect: Item { y: "q" }
+// @expect: a.Item(4) b.Item(q)
+// @expect: a.Off b.Off b.Slow
+// @expect: 3 9 z 1
+// Two modules export the same names (`helper`, `Item`, `Mode`, `Pair`) with different
+// definitions. This used to fail with "'fn helper' is defined in two modules with
+// different bodies", because every `pub` name lived in one program-wide namespace. Each
+// module's own code now uses its own decl, and an importer gets the one its import line
+// names, including through `import { x as y }`. `print` of a struct shows the name as
+// written, not the per-module symbol.
+from "./lib/collide/a" import { fromA, helper, Item, Mode, modeName, Pair, pairOf }
+from "./lib/collide/b" import { fromB, helper as helperB, Item as BItem, Mode as BMode, modeName as bModeName, Pair as BPair, pairOf as bPairOf }
+
+fn main() {
+    print(fromA(), fromB(), helper(), helperB())
+    let a = Item { x: 4 }
+    let b = BItem { y: "q" }
+    print(a)
+    print(b)
+    print(a.describe() + " " + b.describe())
+    print(modeName(Mode.Off) + " " + bModeName(BMode.Off) + " " + bModeName(BMode.Slow))
+    let p: Pair<i64> = pairOf(3, 9)
+    let q: BPair<string> = bPairOf("z")
+    print(p.left.toString() + " " + p.right.toString() + " " + q.only + " " + q.count.toString())
+}

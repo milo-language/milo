@@ -1,0 +1,24 @@
+// Impls written in a THIRD module for types and traits from ./a.milo and ./b.milo, whose
+// names collide: each impl must attach to the decl its import names. b's `Named` has a
+// method a's lacks, so an impl attached to the wrong trait fails to check.
+from "./a" import { Item, Named }
+from "./b" import { Item as BItem, Named as BNamed }
+
+impl Named for Item {
+    fn name(self: &Self): string { return "a-named " + self.x.toString() }
+}
+
+impl BNamed for BItem {
+    fn name(self: &Self): string { return "b-named " + self.y }
+    fn loud(self: &Self): string { return self.y.toUpper() }
+}
+
+impl BItem {
+    fn twice(self: &BItem): string { return self.y + self.y }
+}
+
+pub fn nameA<T: Named>(v: &T): string { return v.name() }
+
+pub fn nameB<T: BNamed>(v: &T): string { return v.name() + "/" + v.loud() }
+
+pub fn twiceB(v: &BItem): string { return v.twice() }

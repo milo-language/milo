@@ -364,9 +364,14 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
     let checkResult: CheckResult | null = null;
     try { checkResult = new TypeChecker().check(program); } catch {}
+    const word = getWordAt(source, line, character);
+    // Same-named decls from two modules read identically once unmangled, so the one this
+    // file's `word` refers to is picked by symbol first, while the symbols still exist.
+    const boundSym = word ? program.entryBindings?.get(word) : undefined;
+    const boundFn = boundSym ? program.functions.find(fn => fn.name === boundSym && !fn.isExtern) : undefined;
+    const boundStruct = boundSym ? program.structs.find(s => s.name === boundSym) : undefined;
     unmangleForDisplay(program);
     const exprTypes = checkResult?.exprTypes ?? new Map();
-    const word = getWordAt(source, line, character);
     lspDebug(`hover ${line}:${character} word=${JSON.stringify(word)}`);
 
     // Variable declarations — only when hovering on the variable name itself.
@@ -381,7 +386,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     }
 
     // Free functions
-    const f = program.functions.find(fn => fn.name === word && !fn.isExtern);
+    const f = boundFn ?? program.functions.find(fn => fn.name === word && !fn.isExtern);
     if (f) {
       const params = f.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
       const sig = `${attrPrefix(f)}${pubPrefix(f.isPub)}fn ${f.name}(${params}): ${formatMiloType(f.retType)}`;
@@ -455,8 +460,8 @@ function handleHover(uri: string, line: number, character: number): object | nul
     }
 
     // Structs
-    for (const s of program.structs) {
-      if (s.name === word) {
+    for (const s of boundStruct ? [boundStruct] : program.structs) {
+      if (s === boundStruct || s.name === word) {
         const tparams = s.typeParams.length ? `<${s.typeParams.map(t => t.name).join(", ")}>` : "";
         const fields = s.fields.map(f => `    ${f.name}: ${formatMiloType(f.type)},`).join("\n");
         let hover = `\`\`\`milo\n${pubPrefix(s.isPub)}struct ${s.name}${tparams} {\n${fields}\n}\n\`\`\`${visibilityNote(s.isPub)}`;
@@ -973,6 +978,25 @@ function resolveImportPath(sourceDir: string, importPath: string): string | null
 }
 
 function findInImportedFiles(parsed: Program, sourceDir: string, word: string, visited: Set<string> = new Set()): object | null {
+  // The import line that binds `word` (as written or as an `as` alias) names the one
+  // module whose decl it is. Two modules may export the same name, so the import-order
+  // search below could otherwise land on the other module's decl.
+  for (const imp of parsed.imports) {
+    const i = imp.names.findIndex((n, k) => (imp.aliases?.[k] ?? n) === word);
+    if (i < 0) continue;
+    const absPath = resolveImportPath(sourceDir, imp.path);
+    const fileSource = absPath ? readStd(absPath) : null;
+    if (!absPath || fileSource === null) break;
+    const declared = imp.names[i];
+    const re = new RegExp(`\\b(?:fn|struct|enum|trait|interface|type|let|var)\\s+${declared}\\b`);
+    const lines = fileSource.split("\n");
+    for (let l = 0; l < lines.length; l++) {
+      if (re.test(lines[l])) {
+        return { uri: pathToFileURL(materializeStd(absPath)).href, range: { start: { line: l, character: 0 }, end: { line: l, character: 0 } } };
+      }
+    }
+    break;
+  }
   for (const imp of parsed.imports) {
     const absPath = resolveImportPath(sourceDir, imp.path);
     if (!absPath) continue;

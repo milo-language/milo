@@ -1,0 +1,35 @@
+// @expect: {"id":7,"ok":true}
+// @expect: {"name":"b","tags":["x"]}
+// @expect: 8 true
+// @expect: c y,z
+// @expect: 7 b
+// Two modules each export a `@derive(Json, Clone) struct Rec` with different fields. The
+// generated toJson/fromJson/clone belong to each module's own `Rec`, so both encode,
+// decode and clone with their own field lists.
+from "./lib/collide/a" import { Rec, recA }
+from "./lib/collide/b" import { Rec as BRec, recB }
+
+fn main(): i32 {
+    let a = recA()
+    let b = recB()
+    print(a.toJson())
+    print(b.toJson())
+    match Rec.fromJson("{\"id\":8,\"ok\":true}") {
+        Result.Ok(r) => { print(r.id.toString() + " " + r.ok.toString()) }
+        Result.Err(e) => {
+            print("decode failed: " + e.message())
+            return 1
+        }
+    }
+    match BRec.fromJson("{\"name\":\"c\",\"tags\":[\"y\",\"z\"]}") {
+        Result.Ok(r) => { print(r.name + " " + r.tags.join(",")) }
+        Result.Err(e) => {
+            print("decode failed: " + e.message())
+            return 1
+        }
+    }
+    let ac = a.clone()
+    let bc = b.clone()
+    print(ac.id.toString() + " " + bc.name)
+    return 0
+}
