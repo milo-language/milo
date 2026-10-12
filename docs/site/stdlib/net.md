@@ -48,6 +48,15 @@ Variants:
 - `SendFailed(string)`
 - `Other(string)`
 
+#### `NetError.message`
+
+```milo
+fn NetError.message(self: &NetError): string
+```
+
+What went wrong, prefixed by the stage that failed. Makes NetError an `Error`,
+so `?` turns it into a string error or boxes it as Heap&lt;Error>.
+
 ### `TcpListener`
 
 ```milo

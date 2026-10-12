@@ -58,6 +58,30 @@ pub enum NetError {
     Other(string),
 }
 
+impl NetError {
+    // What went wrong, prefixed by the stage that failed. Makes NetError an `Error`,
+    // so `?` turns it into a string error or boxes it as Heap<Error>.
+    fn message(self: &Self): string {
+        match self {
+            NetError.DnsFailure(m) => {
+                return "dns: " + m
+            }
+            NetError.ConnectionFailed(m) => {
+                return "connect: " + m
+            }
+            NetError.TlsError(m) => {
+                return "tls: " + m
+            }
+            NetError.SendFailed(m) => {
+                return "send: " + m
+            }
+            NetError.Other(m) => {
+                return m.clone()
+            }
+        }
+    }
+}
+
 // ── TcpStream ──
 
 // TCP connection handle. Automatically closes the fd when dropped.

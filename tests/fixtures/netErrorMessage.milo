@@ -1,0 +1,12 @@
+// NetError has message(), so `?` from a fetch into a string-error fn keeps the cause
+from "std/fetch" import { fetchWith, FetchOptions }
+
+fn get(): Result<i32, string> {
+    let r = fetchWith("http://127.0.0.1:1/", FetchOptions { method: "GET", headers: "", body: "" })?
+    return Result.Ok(r.status)
+}
+
+fn main() {
+    match get() { Result.Ok(s) => print(s), Result.Err(e) => print(e) }
+}
+// @expect: connect: connect() failed
