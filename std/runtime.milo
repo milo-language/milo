@@ -1224,8 +1224,11 @@ pub fn schedulerWaitWrite(fd: i32): void {
 // which is Go's g0/m0 split. `join` from main context already drives the
 // scheduler, so this is the whole change.
 //
-// Go exit semantics are unchanged: this returns as soon as `main` returns, and
-// any task still running dies with the process.
+// Go exit semantics: this returns as soon as `main` returns, and any task still
+// running dies with the process. No task gets another step after the reap of
+// main (schedulerRunOnce returns on it), main's own locals were dropped by its
+// body on the way out, and stdout is flushed by libc's exit after @main returns.
+// Abandoned tasks' frames are never unwound, so their locals' Drop never runs.
 //
 // Called only from generated code, and only when the program can actually
 // create green tasks — codegen emits the call after finding `Task.spawnWithStack`
@@ -1240,7 +1243,12 @@ pub fn schedulerRunMainRaw(fnPtr: *u8): void {
         rtWriteI32(t.raw(), tIsMain(), 1)
         t.join()
     }
-    schedulerShutdown()
+    // With tasks abandoned, leave the scheduler up: a Promise.blocking worker
+    // thread still finishing its job takes the transfer mutex to hand the result
+    // back, and freeing it under that thread is a use-after-free during exit.
+    if rtLoadI64(getSched(), sNumTasks()) == 0 {
+        schedulerShutdown()
+    }
 }
 
 // The running task, or null when the caller is not on the green scheduler. A std API
@@ -1931,6 +1939,12 @@ fn schedulerRunOnce(timeoutMs: i32): void {
     }
 
     var batch: i64 = 0
+    // A reap can satisfy the main-context caller's own wait (a join cell, a scope's
+    // live count), which it only re-checks after we return. Blocking in the poll
+    // below first would wait on tasks that have nothing to do with it: a joined
+    // `main` task finished, but a server task parked forever on accept kept the
+    // process alive past `main`'s return.
+    var reaped = false
     var task = dequeueRun(sched)
     while task as i64 != 0 {
         if batch >= 32 {
@@ -1947,7 +1961,15 @@ fn schedulerRunOnce(timeoutMs: i32): void {
 
         let state = rtReadI32(task, tState())
         if state == taskDone() {
+            let wasMain = rtReadI32(task, tIsMain()) != 0
             reapTask(sched, task)
+            reaped = true
+            // Go exit semantics: once `main` has returned no other task gets another
+            // step. Hand control straight back to schedulerRunMainRaw's join.
+            if wasMain {
+                rtStorePtr(sched, sCurrent(), 0 as *u8)
+                return
+            }
         } else if state == taskReady() {
             enqueueRun(sched, task)
         }
@@ -1962,7 +1984,7 @@ fn schedulerRunOnce(timeoutMs: i32): void {
     // -1 timeout would stall ready tasks behind idle fds.
     if rtLoadI64(sched, sNumTasks()) > 0 {
         var t = timeoutMs
-        if rtReadPtr(sched, sRunHead()) as i64 != 0 {
+        if reaped || rtReadPtr(sched, sRunHead()) as i64 != 0 {
             t = 0
         }
         pollAndWake(sched, t)

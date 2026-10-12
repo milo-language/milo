@@ -4743,7 +4743,7 @@ let t = Task.spawn(move (): void => {
 t.join()   // block until the task finishes
 ```
 
-**Exit semantics are Go's:** when `main` returns, the process exits and any tasks still running are abandoned. Waiting is always explicit — nothing drains outstanding tasks for you. Join a specific task, or use a `WaitGroup` / `Channel` / `Promise`:
+**Exit semantics are Go's:** when `main` returns, the process exits and any tasks still running are abandoned. `main` returns normally, so its own locals drop and buffered stdout is flushed; an abandoned task gets no further step, and its frame is never unwound, so its locals' `Drop` does not run. A task parked forever (an accept loop, a recv no one answers, a long sleep) does not keep the process alive. `Task.scope` is the exception by construction: it joins its tasks before returning, so a `main` blocked in one never reaches its return. Waiting is always explicit — nothing drains outstanding tasks for you. Join a specific task, or use a `WaitGroup` / `Channel` / `Promise`:
 
 ```milo
 from "std/runtime" import { Task }

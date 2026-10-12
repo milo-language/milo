@@ -1,0 +1,22 @@
+// @expect: sleeping
+// @expect: end
+
+// `main` returning abandons a task in the middle of a timer sleep: the process
+// exits at once instead of waiting out the 60 s timer (which would also blow the
+// test driver's timeout), and the task's print after the sleep never happens.
+from "std/runtime" import {
+    Task, schedulerYield
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn main() {
+    Task.spawn(move(): void => {
+        print("sleeping")
+        sleepMs(60000)
+        print("woke")
+    })
+    schedulerYield()
+    print("end")
+}

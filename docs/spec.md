@@ -13300,6 +13300,42 @@ A conforming implementation shall accept this program, and running it shall writ
 
 *Program:* [`tests/fixtures/loopInvariant.milo`](../tests/fixtures/loopInvariant.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
+### MILO-B-mainExitAbandonsParkedTask
+
+A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
+
+- `spawned`
+- `end`
+
+**Rationale.** Go exit semantics: `main` returning ends the process even while a spawned task is parked forever (here on a recv no one will ever satisfy, the shape of a server's accept loop). Before the fix the main-context join blocked in the event-loop poll on the parked task's behalf and the program hung after "end".
+
+*Program:* [`tests/fixtures/mainExitAbandonsParkedTask.milo`](../tests/fixtures/mainExitAbandonsParkedTask.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
+
+### MILO-B-mainExitAbandonsSleepingTask
+
+A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
+
+- `sleeping`
+- `end`
+
+**Rationale.** `main` returning abandons a task in the middle of a timer sleep: the process exits at once instead of waiting out the 60 s timer (which would also blow the test driver's timeout), and the task's print after the sleep never happens.
+
+*Program:* [`tests/fixtures/mainExitAbandonsSleepingTask.milo`](../tests/fixtures/mainExitAbandonsSleepingTask.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
+
+### MILO-B-mainExitFlushesAndDrops
+
+A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
+
+- `line 0`
+- `line 1`
+- `line 2`
+- `end`
+- `drop main`
+
+**Rationale.** What `main` returning past a live task still does. It returns normally, so its own locals drop (the Guard below), and buffered stdout is flushed at exit: with stdout piped, these lines sit in the buffer until then. The parked task's frame is abandoned, not unwound, so the Guard it owns never drops.
+
+*Program:* [`tests/fixtures/mainExitFlushesAndDrops.milo`](../tests/fixtures/mainExitFlushesAndDrops.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
+
 ### MILO-B-mapIterTwoLoops
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.

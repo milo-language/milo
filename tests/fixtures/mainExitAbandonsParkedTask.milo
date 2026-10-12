@@ -1,0 +1,26 @@
+// @expect: spawned
+// @expect: end
+
+// Go exit semantics: `main` returning ends the process even while a spawned task
+// is parked forever (here on a recv no one will ever satisfy, the shape of a
+// server's accept loop). Before the fix the main-context join blocked in the
+// event-loop poll on the parked task's behalf and the program hung after "end".
+from "std/runtime" import {
+    Task, schedulerYield
+}
+from "std/sync" import {
+    Channel
+}
+
+fn main() {
+    let ch = Channel<i64>.new(1)!
+    // keeps the channel open, so the recv below parks rather than seeing a close
+    let _sender = ch.clone()
+    Task.spawn(move(): void => {
+        print("spawned")
+        let v = ch.recv()!
+        print("never ", v)
+    })
+    schedulerYield()
+    print("end")
+}

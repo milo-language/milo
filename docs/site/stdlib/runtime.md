@@ -462,8 +462,11 @@ leave the OS stack to the scheduler loop and give `main` a task of its own,
 which is Go's g0/m0 split. `join` from main context already drives the
 scheduler, so this is the whole change.
 
-Go exit semantics are unchanged: this returns as soon as `main` returns, and
-any task still running dies with the process.
+Go exit semantics: this returns as soon as `main` returns, and any task still
+running dies with the process. No task gets another step after the reap of
+main (schedulerRunOnce returns on it), main's own locals were dropped by its
+body on the way out, and stdout is flushed by libc's exit after @main returns.
+Abandoned tasks' frames are never unwound, so their locals' Drop never runs.
 
 Called only from generated code, and only when the program can actually
 create green tasks — codegen emits the call after finding `Task.spawnWithStack`

@@ -1,0 +1,45 @@
+// @expect: line 0
+// @expect: line 1
+// @expect: line 2
+// @expect: end
+// @expect: drop main
+
+// What `main` returning past a live task still does. It returns normally, so its
+// own locals drop (the Guard below), and buffered stdout is flushed at exit: with
+// stdout piped, these lines sit in the buffer until then. The parked task's frame
+// is abandoned, not unwound, so the Guard it owns never drops.
+from "std/runtime" import {
+    Task, schedulerYield
+}
+from "std/sync" import {
+    Channel
+}
+
+struct Guard {
+    name: string
+}
+
+impl Drop for Guard {
+    fn drop(self: &mut Guard): void {
+        print("drop ", self.name)
+    }
+}
+
+fn main(): i32 {
+    let _g = Guard { name: "main" }
+    let ch = Channel<i64>.new(1)!
+    let _sender = ch.clone()
+    Task.spawn(move(): void => {
+        let _inTask = Guard { name: "task" }
+        let v = ch.recv()!
+        print("never ", v)
+    })
+    schedulerYield()
+    var i = 0
+    while i < 3 {
+        print("line ", i)
+        i += 1
+    }
+    print("end")
+    return 0
+}
