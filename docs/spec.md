@@ -8219,6 +8219,17 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
+- `named map copy-err`
+- `named andThen copy-err`
+- `named mapErr copy-ok`
+- `named orElse copy-ok`
+- `field map copy-err`
+- `copyForward end`
+- `drop ce`
+- `drop cd`
+- `drop cc`
+- `drop cb`
+- `drop ca`
 - `opt.map temp`
 - `drop a`
 - `opt.andThen temp`
@@ -8267,7 +8278,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `drop d2`
 - `drop c`
 
-**Rationale.** Every Option/Result combinator on an owning payload disposes of it exactly once, for a temporary receiver and a named one, on both sides. The callback side of a Result combinator only borrows its payload (`&T`/`&E`) and the combinator consumes the receiver, so codegen drops the payload after the call. Only `map` did: `andThen` leaked the Ok payload and `mapErr`/`orElse` the Err payload (500 leaks each over 1000 mixed calls under `leaks -atExit`). Each "drop" line below is the payload's Drop running.
+**Rationale.** Every Option/Result combinator on an owning payload disposes of it exactly once, for a temporary receiver and a named one, on both sides. The callback side of a Result combinator only borrows its payload (`&T`/`&E`) and the combinator consumes the receiver, so codegen drops the payload after the call. Only `map` did: `andThen` leaked the Ok payload and `mapErr`/`orElse` the Err payload (500 leaks each over 1000 mixed calls under `leaks -atExit`). Each "drop" line below is the payload's Drop running; a payload dropped twice (copyForward) or never shows up as a wrong line.
 
 *Program:* [`tests/fixtures/combinatorRefCallbackDrop.milo`](../tests/fixtures/combinatorRefCallbackDrop.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

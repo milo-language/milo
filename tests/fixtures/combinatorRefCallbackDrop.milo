@@ -3,7 +3,8 @@
 // combinator only borrows its payload (`&T`/`&E`) and the combinator consumes the
 // receiver, so codegen drops the payload after the call. Only `map` did: `andThen` leaked
 // the Ok payload and `mapErr`/`orElse` the Err payload (500 leaks each over 1000 mixed
-// calls under `leaks -atExit`). Each "drop" line below is the payload's Drop running.
+// calls under `leaks -atExit`). Each "drop" line below is the payload's Drop running;
+// a payload dropped twice (copyForward) or never shows up as a wrong line.
 struct Tr {
     name: string,
 }
@@ -38,7 +39,34 @@ fn errI(n: string): Result<i64, Tr> {
     return Result.Err(tr(n))
 }
 
+struct Box1 {
+    r: Result<Tr, i64>,
+}
+
+// A receiver whose forwarded payload is Copy is not consumed: it keeps its payload and
+// drops it at scope exit, so the combinator must not drop it too (that was a double free,
+// for `map` before any of the others dropped at all).
+fn copyForward() {
+    print("named map copy-err")
+    let a: Result<Tr, i64> = Result.Ok(Tr { name: "ca" })
+    let _a2 = a.map((t: &Tr) => t.name.len())
+    print("named andThen copy-err")
+    let b: Result<Tr, i64> = Result.Ok(Tr { name: "cb" })
+    let _b2 = b.andThen((t: &Tr): Result<i64, i64> => Result.Ok(t.name.len()))
+    print("named mapErr copy-ok")
+    let c: Result<i64, Tr> = Result.Err(Tr { name: "cc" })
+    let _c2 = c.mapErr((t: &Tr) => t.name.len())
+    print("named orElse copy-ok")
+    let d: Result<i64, Tr> = Result.Err(Tr { name: "cd" })
+    let _d2 = d.orElse((t: &Tr): Result<i64, i64> => Result.Err(t.name.len()))
+    print("field map copy-err")
+    let bx = Box1 { r: Result.Ok(Tr { name: "ce" }) }
+    let _e2 = bx.r.map((t: &Tr) => t.name.len())
+    print("copyForward end")
+}
+
 fn main() {
+    copyForward()
     print("opt.map temp")
     let _a = someT("a").map((t: &Tr) => t.name.len())
     print("opt.andThen temp")
@@ -95,6 +123,17 @@ fn main() {
     let _o = errI("o").isErr()
     print("end")
 }
+// @expect: named map copy-err
+// @expect: named andThen copy-err
+// @expect: named mapErr copy-ok
+// @expect: named orElse copy-ok
+// @expect: field map copy-err
+// @expect: copyForward end
+// @expect: drop ce
+// @expect: drop cd
+// @expect: drop cc
+// @expect: drop cb
+// @expect: drop ca
 // @expect: opt.map temp
 // @expect: drop a
 // @expect: opt.andThen temp

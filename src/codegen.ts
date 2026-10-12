@@ -15443,10 +15443,12 @@ export class Codegen {
     lines.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
     this.ownValToSlot(vv, addr);
-    // The Result combinators consume a named receiver too (the move ended the local's
-    // ID at the read), so the copy at `addr` is a value this op now owns and must end on
-    // every branch. Without an ID here a branch that disposed of nothing went unreported.
-    if (this.ownOn && expr.op.startsWith("result") && expr.op !== "resultUnwrapOrElse"
+    // A Result combinator consumes a named receiver when the payload it forwards is not
+    // Copy (checker: consumeForwardedPayload); the move ended the local's ID at the read,
+    // so the copy at `addr` is a value this op now owns and must end on every branch.
+    // Without an ID here a branch that disposed of nothing went unreported.
+    const receiverMoved = expr.value.kind === "Ident" && !!(expr.value as { isMove?: boolean }).isMove;
+    if (this.ownOn && receiverMoved && expr.op.startsWith("result") && expr.op !== "resultUnwrapOrElse"
         && this.needsDropCg(expr.value.type) && !this.ownSlot.has(addr)) {
       this.ownSlot.set(addr, this.ownMake(lines, "combinator-receiver"));
     }
@@ -15621,8 +15623,13 @@ export class Codegen {
       // the call nothing refers to it and nothing else would free it. Every combinator's
       // callback side needs this, not just `map`: `mk().andThen((s: &string) => ...)` leaked
       // the Ok payload and `mapErr`/`orElse` the Err payload, named receiver or temporary.
+      // Only when this op owns the receiver: a temporary, or a named one the checker moved
+      // in. A receiver whose forwarded payload is Copy is NOT consumed, still owns the lent
+      // payload and drops it at scope exit, so dropping it here too was a double free
+      // (`let r: Result<string, i64> = ...; r.map(...)` freed the string twice).
+      const ownsReceiver = receiverMoved || this.isOwnedTempExpr(expr.value);
       const dropLentPayload = (arg: string) => {
-        if (!paramIsRef || cbType.tag !== "fn") return;
+        if (!ownsReceiver || !paramIsRef || cbType.tag !== "fn") return;
         const first = cbType.params[0];
         if (first.tag === "ref" && this.needsDropCg(first.inner)) this.emitDropValue(lines, arg, first.inner);
       };
