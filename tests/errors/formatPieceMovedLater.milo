@@ -1,0 +1,8 @@
+// @error: 'k' is borrowed by one argument and moved out by a later one (a move of 'k')
+// An interpolated string reads its pieces by reference once all of them are evaluated,
+// so a later piece that moves an earlier one's value left it formatting an emptied string.
+fn consume(a: string): i64 { return a.len }
+fn main() {
+    let k = "abc".clone()
+    print($"{k} {consume(k)}")
+}

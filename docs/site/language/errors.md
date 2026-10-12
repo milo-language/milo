@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 502 distinct messages across 642 programs the compiler must reject.
+Every error message the test suite pins: 504 distinct messages across 648 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -81,6 +81,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Holder.show' can park this task while it holds a reference into 'g's buffer`](#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
+- [`'k' is borrowed by one argument and moved out by a later one (a move of 'k')`](#k-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-k)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
 - [`'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'`](#merge-in-impl-merge-for-box-i64-takes-other-box-string-the-trait-merge-declares-other-self)
@@ -502,6 +503,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'dflt'`](#use-of-moved-variable-dflt)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
 - [`use of moved variable 'h'`](#use-of-moved-variable-h)
+- [`use of moved variable 'k'`](#use-of-moved-variable-k)
 - [`use of moved variable 'lib'`](#use-of-moved-variable-lib)
 - [`use of moved variable 'o'`](#use-of-moved-variable-o)
 - [`use of moved variable 'p'`](#use-of-moved-variable-p)
@@ -1965,6 +1967,20 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/noTernaryOperator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/noTernaryOperator.milo)</sub>
+
+## `'k' is borrowed by one argument and moved out by a later one (a move of 'k')` {#k-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-k}
+
+An interpolated string reads its pieces by reference once all of them are evaluated, so a later piece that moves an earlier one's value left it formatting an emptied string.
+
+```milo skip
+fn consume(a: string): i64 { return a.len }
+fn main() {
+    let k = "abc".clone()
+    print($"{k} {consume(k)}")
+}
+```
+
+<sub>[tests/errors/formatPieceMovedLater.milo](https://github.com/milo-language/milo/blob/main/tests/errors/formatPieceMovedLater.milo)</sub>
 
 ## `'main' cannot be imported from './lib/frameCore'` {#main-cannot-be-imported-from-lib-framecore}
 
@@ -12148,6 +12164,72 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapDerefMovedTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMovedTwice.milo)</sub>
+
+## `use of moved variable 'k'` {#use-of-moved-variable-k}
+
+An array literal owns each element as it is built, so a later element cannot read one an earlier element moved: `[k, k.clone()]` cloned an emptied string.
+
+```milo skip
+fn main() {
+    let k = "abc".clone()
+    let a = [k, k.clone()]
+    print(a[1])
+}
+```
+
+<sub>[tests/errors/arrayLitElemReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayLitElemReadAfterMove.milo)</sub>
+
+Arguments are evaluated left to right and a by-value argument moves as it is evaluated, so a later argument that reads the moved binding reads an emptied value.
+
+```milo skip
+fn take(a: string, n: i64): i64 { return a.len + n }
+fn look(a: &string): i64 { return a.len }
+fn main() {
+    let k = "abc".clone()
+    print(take(k, look(k)))
+}
+```
+
+<sub>[tests/errors/callArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callArgReadAfterMove.milo)</sub>
+
+A call through a closure value moves its by-value arguments in order, like any call.
+
+```milo skip
+fn main() {
+    let f = (a: string, n: i64): i64 => a.len + n
+    let k = "abc".clone()
+    print(f(k, k.len))
+}
+```
+
+<sub>[tests/errors/closureCallArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallArgReadAfterMove.milo)</sub>
+
+A generic call infers from every argument before it monomorphizes, but a by-value argument still moves before the next one is evaluated.
+
+```milo skip
+fn keep<T>(a: T, n: i64): i64 { return n }
+fn main() {
+    let k = "abc".clone()
+    print(keep(k, k.len))
+}
+```
+
+<sub>[tests/errors/genericArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericArgReadAfterMove.milo)</sub>
+
+`insert` takes its key before it evaluates the value, so the key is gone by the time `m.get(k)` runs. Accepted, the lookup read an emptied key, always missed, and the counter stayed at 1 with no diagnostic. Clone the key, or read the old value first.
+
+```milo skip
+fn main() {
+    var m: HashMap<string, f64> = HashMap.new()
+    for i in 0..3 {
+        let k = "a"
+        m.insert(k, (m.get(k) ?? 0.0) + 1.0)
+    }
+    print(m.get("a") ?? -1.0)
+}
+```
+
+<sub>[tests/errors/hashmapInsertKeyReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashmapInsertKeyReadAfterMove.milo)</sub>
 
 ## `use of moved variable 'lib'` {#use-of-moved-variable-lib}
 

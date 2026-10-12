@@ -16,6 +16,21 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## A later argument can no longer read what an earlier argument moved (2026-10-12)
+
+`m.insert(k, m.get(k) ?? 0)`, `take(k, k.len)`, `keep<T>(k, k.len)`, `f(k, k.len)` through
+a closure, `[k, k.clone()]` and `$"{k} {consume(k)}"` used to compile. A by-value argument
+moves when it is evaluated (codegen empties the source right there), so each of them read
+an emptied value: the `insert` lookup always missed, `k.len` was 0. Struct and enum
+literals and method calls already rejected the same shape; plain, generic and closure
+calls, `HashMap.insert`, array literals and interpolated strings now do too. No shim is
+possible because the old programs computed a wrong answer.
+
+| was | now |
+|---|---|
+| `m.insert(k, (m.get(k) ?? 0.0) + 1.0)` | `let old = m.get(k) ?? 0.0` then `m.insert(k, old + 1.0)` |
+| `take(k, k.len)` | `let n = k.len` then `take(k, n)`, or put the read first |
+
 ## `FetchOptions` has a `keepAlive` field (2026-10-12)
 
 std/fetch now keeps connections alive and pools them (see the fetch page), and

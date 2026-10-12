@@ -1,0 +1,9 @@
+// @error: use of moved variable 'k'
+// Arguments are evaluated left to right and a by-value argument moves as it is evaluated,
+// so a later argument that reads the moved binding reads an emptied value.
+fn take(a: string, n: i64): i64 { return a.len + n }
+fn look(a: &string): i64 { return a.len }
+fn main() {
+    let k = "abc".clone()
+    print(take(k, look(k)))
+}

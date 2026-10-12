@@ -1,0 +1,31 @@
+// A read of a binding in an argument BEFORE the one that moves it is fine: it is finished
+// when the move happens. Covers plain, generic, method, builtin and literal call shapes.
+fn take(n: i64, a: string): i64 { return a.len + n }
+
+fn keep<T>(n: i64, _a: T): i64 { return n }
+
+struct S { n: i64, a: string }
+
+fn main() {
+    let k1 = "abc".clone()
+    print(take(k1.len, k1))
+    let k2 = "abcd".clone()
+    print(keep(k2.len, k2))
+    let k3 = "ab".clone()
+    let s = S { n: k3.len, a: k3 }
+    print($"{s.n} {s.a}")
+    var m: HashMap<string, f64> = HashMap.new()
+    for i in 0..3 {
+        let k = "a"
+        let old = m.get(k) ?? 0.0
+        m.insert(k, old + 1.0)
+    }
+    print(m.get("a") ?? -1.0)
+    let k4 = "xy".clone()
+    print($"{k4.len} {k4}")
+}
+// @expect: 6
+// @expect: 4
+// @expect: 2 ab
+// @expect: 3
+// @expect: 2 xy

@@ -2272,6 +2272,29 @@ print(b)         // fine
 This applies to structs, enums, strings, Vec, HashMap, and Heap.
 Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved.
 
+Arguments, struct and array literal elements, and the pieces of an interpolated string
+are evaluated left to right, and a by-value argument moves at the point it is evaluated,
+not when the call is finally made. So a later argument cannot read what an earlier one
+moved (Rust's rule): read it first, into a local or an earlier argument.
+
+```milo error
+fn main() {
+    var m: HashMap<string, f64> = HashMap.new()
+    let k = "a"
+    m.insert(k, (m.get(k) ?? 0.0) + 1.0)   // error: use of moved variable 'k'
+}
+```
+
+```milo
+fn main() {
+    var m: HashMap<string, f64> = HashMap.new()
+    let k = "a"
+    let old = m.get(k) ?? 0.0               // read before the move
+    m.insert(k, old + 1.0)
+    print(m.get("a") ?? 0.0)
+}
+```
+
 A struct whose fields are all Copy is itself Copy, and so is never move-tracked, with
 one exception: a struct with a field of raw pointer type (`*T`, directly or through a
 fixed array or an embedded struct) is move-tracked unless it is marked `@copy`. The

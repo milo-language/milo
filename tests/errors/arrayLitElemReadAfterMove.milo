@@ -1,0 +1,8 @@
+// @error: use of moved variable 'k'
+// An array literal owns each element as it is built, so a later element cannot read one
+// an earlier element moved: `[k, k.clone()]` cloned an emptied string.
+fn main() {
+    let k = "abc".clone()
+    let a = [k, k.clone()]
+    print(a[1])
+}

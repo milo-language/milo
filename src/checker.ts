@@ -10625,7 +10625,21 @@ export class TypeChecker {
         return p ? { name: p.name, mut: declaredType(p).isRefMut, show: () => formatMiloType(declaredType(p)) } : undefined;
       });
       const argTypes: TypeKind[] = [];
-      for (const arg of expr.args) argTypes.push(this.checkExpr(arg));
+      // A by-value argument moves before the next one is checked (see the plain-call
+      // loop). Inference needs every argument's type first, but a by-value parameter is
+      // visible in the declaration already; a closure waits for the concrete signature,
+      // since whether it becomes a `move` closure depends on it.
+      const movedEarly = new Set<number>();
+      expr.args.forEach((arg, i) => {
+        const t = this.checkExpr(arg);
+        argTypes.push(t);
+        const p = genericFn.decl.params[i];
+        if (!p || t.tag === "ref" || t.tag === "fn" || t.tag === "unknown") return;
+        const dt = declaredType(p);
+        if (dt.isRef || dt.isRefMut) return;
+        movedEarly.add(i);
+        this.tryMove(arg);
+      });
 
       if (expr.args.length !== genericFn.decl.params.length) {
         this.error(`function '${expr.func}' expects ${genericFn.decl.params.length} args, got ${expr.args.length}`, sp);
@@ -10768,7 +10782,7 @@ export class TypeChecker {
         // Here only a capture mutated in place blocks the move; one merely read or
         // moved out is safe to move.
         this.autoMoveClosureArg(expr.args[i], concreteSig.params[i]?.type, c => !!c.mutatedInClosure);
-        this.tryMove(expr.args[i]);
+        if (!movedEarly.has(i)) this.tryMove(expr.args[i]);
       }
       // check requires contracts at call site (generic fn)
       this.checkCallSiteExclusivity(expr.args, sp);
@@ -10811,8 +10825,7 @@ export class TypeChecker {
           const paramType = fnType.params[i];
           this.checkCallArg(expr.args[i], paramType, sp, argType =>
             this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span));
-        }
-        for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
+          // Moved before the next argument is checked: see the plain-call loop.
           if (fnType.params[i].tag === "ref" || this.decaysToPtr(expr.args[i], fnType.params[i])) continue;
           // Through a fn value: its parameter types cannot promise what the target does
           // with the argument (`typeEq` ignores `move`), so a literal is moved as before.
@@ -10916,6 +10929,13 @@ export class TypeChecker {
       const paramType = sig.params[i].type;
       this.checkCallArg(expr.args[i], paramType, sp, argType =>
         this.error(`argument ${i + 1} of '${expr.func}': expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span, this.optionUnwrapHint(paramType, argType)));
+      // A by-value argument moves as it is evaluated, before the next one runs (codegen
+      // empties the source right there), so a later argument that reads it is a use after
+      // move. Moving only once every argument was checked let `insert(k, m.get(k))` read
+      // `k` already emptied and miss the key with no diagnostic.
+      if (paramType.tag === "ref" || this.decaysToPtr(expr.args[i], paramType)) continue;
+      this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
+      this.tryMove(expr.args[i]);
     }
     for (let i = sig.params.length; i < expr.args.length; i++) {
       const vt = this.checkExpr(expr.args[i]);
@@ -10925,15 +10945,19 @@ export class TypeChecker {
           `pass it by reference (&${vt.name}) instead`);
       }
     }
-    for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
-      if (sig.params[i].type.tag === "ref") continue;
-      // String→*u8 auto-coercion borrows the ptr, doesn't move the String
-      const paramType = sig.params[i].type;
-      if (this.decaysToPtr(expr.args[i], paramType)) continue;
-      this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
-      this.tryMove(expr.args[i]);
-    }
     this.checkCallSiteExclusivity(expr.args, sp, !sig.isExtern);
+    // `format` (what `$"..."` lowers to) reads each piece by reference when it builds the
+    // string, after every piece was evaluated. A later piece that moves or frees an earlier
+    // one's place (`$"{k} {consume(k)}"`) left it formatting an emptied string.
+    if (sig.variadic && !sig.isExtern) {
+      const uses: ArgUse[] = [];
+      expr.args.forEach((a, i) => {
+        const t = this.exprTypes.get(a);
+        const p = t && !this.isCopyType(t) ? this.exclusivityPlace(a) : null;
+        if (p) uses.push({ arg: i, ...p, moved: false });
+      });
+      this.reportLaterArgWrites(uses, expr.args, sp);
+    }
     // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void.
     // Compute safety unconditionally (not just at depth 0) so an unsafe-requiring extern call
     // marks its enclosing block used, while a safe one leaves the block flagged unused.
@@ -11320,17 +11344,19 @@ export class TypeChecker {
       this.error("cannot infer type of empty array literal", sp);
       return this.setType(expr, { tag: "unknown" });
     }
+    // The literal owns its elements exactly as the hinted (`let a: [T; n] = [...]`) path
+    // already records; without this, `[s]` left `s` usable after it was handed over, and
+    // `[v[0]]` copied a Drop element out of `v` unchecked. Each element moves before the
+    // next is checked, so `[k, k.clone()]` is a use after move, not a clone of an empty `k`.
     const elemType = this.checkExpr(expr.elements[0]);
+    this.tryMove(expr.elements[0]);
     for (let i = 1; i < expr.elements.length; i++) {
       const t = this.checkExpr(expr.elements[i]);
       if (!typeEq(elemType, t) && t.tag !== "unknown") {
         this.error(`array element ${i}: expected ${this.show(elemType)}, got ${this.show(t)}`, expr.elements[i].span);
       }
+      this.tryMove(expr.elements[i]);
     }
-    // The literal owns its elements exactly as the hinted (`let a: [T; n] = [...]`) path
-    // already records; without this, `[s]` left `s` usable after it was handed over, and
-    // `[v[0]]` copied a Drop element out of `v` unchecked.
-    for (const el of expr.elements) this.tryMove(el);
     return this.setType(expr, { tag: "array", element: elemType, size: expr.elements.length });
   }
 
@@ -13006,12 +13032,14 @@ export class TypeChecker {
         if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
           this.error(`insert key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
         }
+        // The key moves before the value is evaluated, as codegen does it, so
+        // `m.insert(k, m.get(k))` is a use after move rather than a lookup of an emptied key.
+        this.tryMove(expr.args[0]);
         const valType = this.checkExpr(expr.args[1], objType.value);
         if (objType.value.tag === "int") this.enforceRangeInto(expr.args[1], valType, objType.value, expr.args[1].span);
         if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
           this.error(`insert value: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
-        this.tryMove(expr.args[0]);
         this.tryMove(expr.args[1]);
         this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });

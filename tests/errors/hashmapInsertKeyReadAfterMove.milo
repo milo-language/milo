@@ -1,0 +1,12 @@
+// @error: use of moved variable 'k'
+// `insert` takes its key before it evaluates the value, so the key is gone by the time
+// `m.get(k)` runs. Accepted, the lookup read an emptied key, always missed, and the
+// counter stayed at 1 with no diagnostic. Clone the key, or read the old value first.
+fn main() {
+    var m: HashMap<string, f64> = HashMap.new()
+    for i in 0..3 {
+        let k = "a"
+        m.insert(k, (m.get(k) ?? 0.0) + 1.0)
+    }
+    print(m.get("a") ?? -1.0)
+}

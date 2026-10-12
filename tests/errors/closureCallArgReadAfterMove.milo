@@ -1,0 +1,7 @@
+// @error: use of moved variable 'k'
+// A call through a closure value moves its by-value arguments in order, like any call.
+fn main() {
+    let f = (a: string, n: i64): i64 => a.len + n
+    let k = "abc".clone()
+    print(f(k, k.len))
+}

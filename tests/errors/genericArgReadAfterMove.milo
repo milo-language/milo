@@ -1,0 +1,8 @@
+// @error: use of moved variable 'k'
+// A generic call infers from every argument before it monomorphizes, but a by-value
+// argument still moves before the next one is evaluated.
+fn keep<T>(a: T, n: i64): i64 { return n }
+fn main() {
+    let k = "abc".clone()
+    print(keep(k, k.len))
+}
