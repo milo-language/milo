@@ -1429,8 +1429,9 @@ impl Re {
         return Option.Some(r.isSome())
     }
 
-    // Expand `$1`, `$<name>`, `$&`, `$$` in a replacement for one match.
-    fn expand(self: &Self, m: &ReMatch, repl: &string, out: &mut string) {
+    // Expand `$1`, `$<name>`, `$&`, `$$`, and `$\`` / `$'` (the subject before and after
+    // the match) in a replacement for one match of `s`.
+    fn expand(self: &Self, s: &string, m: &ReMatch, repl: &string, out: &mut string) {
         var i: i64 = 0
         while i < repl.len {
             let c = repl[i]
@@ -1443,6 +1444,16 @@ impl Re {
                 }
                 if d == '&' {
                     out.pushStr(m.text())
+                    i += 2
+                    continue
+                }
+                if d == '`' {
+                    out.pushStr(s.substr(0, m.start))
+                    i += 2
+                    continue
+                }
+                if d == '\'' {
+                    out.pushStr(s.substr(m.end, s.len))
                     i += 2
                     continue
                 }
@@ -1487,7 +1498,7 @@ impl Re {
             return s.clone()
         }
         var out = s.substr(0, m.start)
-        self.expand(m, repl, &mut out)
+        self.expand(s, m, repl, &mut out)
         out.pushStr(s.substr(m.end, s.len))
         return out
     }
@@ -1498,7 +1509,7 @@ impl Re {
         var last: i64 = 0
         for m in self.findAll(s) {
             out.pushStr(s.substr(last, m.start))
-            self.expand(m, repl, &mut out)
+            self.expand(s, m, repl, &mut out)
             last = m.end
         }
         out.pushStr(s.substr(last, s.len))

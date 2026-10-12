@@ -1,0 +1,28 @@
+// std/re replacement patterns follow String.prototype.replace, including $` (the
+// subject before the match) and $' (after it), which a port of JS code that splices
+// request text into a template can meet in that text.
+
+from "std/re" import { Re }
+
+pub fn main(): void {
+    let Result.Ok(re) = Re.new("b+", "") else {
+        return
+    }
+    // @expect: a[a]bb[c]c
+    print(re.replace("abbc", "[$`]$&[$']"))
+    // @expect: a$c
+    print(re.replace("abbc", "$$"))
+    // a lone trailing $ and an unknown $x stay literal
+    // @expect: a$xc$
+    print(re.replace("abbc", "$x") + "$")
+    // @expect: x[x]y[y]z[z]
+    let Result.Ok(each) = Re.new("[xyz]", "g") else {
+        return
+    }
+    print(each.replaceAll("xyz", "$&[$&]"))
+    // @expect: 1-$1
+    let Result.Ok(none) = Re.new("a", "") else {
+        return
+    }
+    print(none.replace("a-$1", "1"))
+}

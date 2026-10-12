@@ -89,10 +89,11 @@ fn Re.cpAt(self: &Re, s: &string, sp: i64): i64
 #### `Re.expand`
 
 ```milo
-fn Re.expand(self: &Re, m: &ReMatch, repl: &string, out: &mut string)
+fn Re.expand(self: &Re, s: &string, m: &ReMatch, repl: &string, out: &mut string)
 ```
 
-Expand `$1`, `$<name>`, `$&`, `$$` in a replacement for one match.
+Expand `$1`, `$<name>`, `$&`, `$$`, and `$\`` / `$'` (the subject before and after
+the match) in a replacement for one match of `s`.
 
 #### `Re.find`
 
