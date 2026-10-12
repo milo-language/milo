@@ -59,4 +59,18 @@ fn Url.toString(self: &Url): string
 
 Reassemble the URL from its components.
 
+### Functions
+
+#### `decodeUriComponent`
+
+```milo
+pub fn decodeUriComponent(s: &string): Option<string>
+```
+
+JavaScript's decodeURIComponent: each %XX back to its byte, '+' left alone. None
+where JS throws URIError: a '%' without two hex digits after it, or escapes that do
+not spell valid UTF-8 (a stray continuation byte, an overlong form, a surrogate, a
+code point past U+10FFFF). A request path decoded with a lenient decoder instead
+would let malformed input through as if it were text.
+
 <!-- /generated:api -->

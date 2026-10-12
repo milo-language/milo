@@ -206,3 +206,87 @@ impl Url {
         return urlString(self)
     }
 }
+
+fn hexVal(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return -1
+}
+
+// The byte of the %XX at `i`, or -1 when `i` does not start one.
+fn escapedByte(s: &string, i: i64): i64 {
+    if i + 2 >= s.len || s[i] != '%' {
+        return -1
+    }
+    let hi = hexVal(s[i + 1])
+    let lo = hexVal(s[i + 2])
+    if hi < 0 || lo < 0 {
+        return -1
+    }
+    return hi * 16 + lo
+}
+
+// JavaScript's decodeURIComponent: each %XX back to its byte, '+' left alone. None
+// where JS throws URIError: a '%' without two hex digits after it, or escapes that do
+// not spell valid UTF-8 (a stray continuation byte, an overlong form, a surrogate, a
+// code point past U+10FFFF). A request path decoded with a lenient decoder instead
+// would let malformed input through as if it were text.
+pub fn decodeUriComponent(s: &string): Option<string> {
+    var out: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        if s[i] != '%' {
+            out.push(s[i])
+            i += 1
+            continue
+        }
+        let b = escapedByte(s, i)
+        if b < 0 {
+            return Option.None
+        }
+        i += 3
+        if b < 128 {
+            out.push(b as u8)
+            continue
+        }
+        var need: i64 = 0
+        var cp: i64 = 0
+        var min: i64 = 0
+        if b >= 0xC0 && b < 0xE0 {
+            need = 1
+            cp = b & 0x1F
+            min = 0x80
+        } else if b >= 0xE0 && b < 0xF0 {
+            need = 2
+            cp = b & 0x0F
+            min = 0x800
+        } else if b >= 0xF0 && b < 0xF8 {
+            need = 3
+            cp = b & 0x07
+            min = 0x10000
+        } else {
+            return Option.None
+        }
+        out.push(b as u8)
+        for _k in 0..need {
+            let c = escapedByte(s, i)
+            if c < 0x80 || c > 0xBF {
+                return Option.None
+            }
+            cp = cp * 64 + (c & 0x3F)
+            out.push(c as u8)
+            i += 3
+        }
+        if cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+            return Option.None
+        }
+    }
+    return Option.Some(out)
+}
