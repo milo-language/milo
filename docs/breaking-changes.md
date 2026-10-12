@@ -16,6 +16,19 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `FetchOptions` has a `keepAlive` field (2026-10-12)
+
+std/fetch now keeps connections alive and pools them (see the fetch page), and
+`FetchOptions` gained the switch for it. Struct literals list every field, so each
+`FetchOptions { ... }` literal needs the new one. `keepAlive: true` is what `fetch` and the
+other helpers use; `false` keeps the old behavior, a `Connection: close` request and a
+fresh connection every time. A field rather than a separate setting because it belongs
+to the request: a caller that needs one request on its own connection says so there.
+
+| was | now |
+|---|---|
+| `FetchOptions { method: "GET", headers: "", body: "" }` | `FetchOptions { method: "GET", headers: "", body: "", keepAlive: true }` |
+
 ## Stream routes get a `Stream`, not a descriptor; `sendAll` and `waitPeerClosed` are gone (2026-10-12)
 
 A `Router.stream` handler used to be handed the server's bare socket number and write to

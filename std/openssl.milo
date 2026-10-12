@@ -283,20 +283,31 @@ pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 // ── TLS IO that can give up ──
 // The loops above park until the fd is ready, however long that takes. These hand each
 // WANT_READ/WANT_WRITE to `wait(forRead)` instead, which returns false to give up (a
-// deadline passed): they then return the SSL call's own result (<= 0). The fd must be
-// nonblocking; they work the same on a green task and on a plain thread.
+// deadline passed): they then return SSL_GAVE_UP, and on a final error the SSL call's
+// own result (0 or -1). The fd must be nonblocking; they work the same on a green task
+// and on a plain thread.
 
-fn sslWaitFor(e: i32, wait: (bool) => bool): bool {
+// What the *Wait calls return when `wait` gave up. No SSL_* call returns -2, and the
+// value says "deadline" without a second look at the clock (which a replay, running
+// faster than the recording, would read differently). Equal to std/os IO_GAVE_UP.
+pub let SSL_GAVE_UP: i32 = -2
+
+// 1 to retry the SSL call, 0 when its error is final, SSL_GAVE_UP when `wait` gave up.
+fn sslWaitFor(e: i32, wait: (bool) => bool): i32 {
+    var forRead = false
     if e == sslWantRead() {
-        return wait(true)
+        forRead = true
+    } else if e != sslWantWrite() {
+        return 0
     }
-    if e == sslWantWrite() {
-        return wait(false)
+    if wait(forRead) {
+        return 1
     }
-    return false
+    return SSL_GAVE_UP
 }
 
-// sslConnectFd through `wait`. 1 on success.
+// sslConnectFd through `wait`. 1 on success, SSL_GAVE_UP, or SSL_connect's failure.
+@replayHooked
 @unsafe
 pub fn sslConnectFdWait(ssl: *u8, fd: i32, wait: (bool) => bool): i32 {
     while true {
@@ -308,14 +319,18 @@ pub fn sslConnectFdWait(ssl: *u8, fd: i32, wait: (bool) => bool): i32 {
         if st.r == 1 {
             return 1
         }
-        if !sslWaitFor(st.e, wait) {
+        let w = sslWaitFor(st.e, wait)
+        if w == SSL_GAVE_UP {
+            return w
+        }
+        if w == 0 {
             return st.r
         }
     }
     return -1
 }
 
-// sslReadFd through `wait`: bytes read (> 0), or <= 0 on close, error or giving up.
+// sslReadFd through `wait`: bytes read (> 0), 0 or -1 on close or error, SSL_GAVE_UP.
 @unsafe
 pub fn sslReadFdWait(ssl: *u8, fd: i32, buf: *u8, len: i32, wait: (bool) => bool): i32 {
     while true {
@@ -323,14 +338,20 @@ pub fn sslReadFdWait(ssl: *u8, fd: i32, buf: *u8, len: i32, wait: (bool) => bool
         if st.r > 0 {
             return st.r
         }
-        if !sslWaitFor(st.e, wait) {
+        let w = sslWaitFor(st.e, wait)
+        if w == SSL_GAVE_UP {
+            return w
+        }
+        if w == 0 {
             return st.r
         }
     }
     return -1
 }
 
-// sslWriteAllFd through `wait`: `len`, or the failing SSL_write's result (<= 0).
+// sslWriteAllFd through `wait`: `len`, the failing SSL_write's result (0 or -1), or
+// SSL_GAVE_UP.
+@replayHooked
 @unsafe
 pub fn sslWriteAllFdWait(ssl: *u8, fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64 {
     var sent: i64 = 0
@@ -348,7 +369,11 @@ pub fn sslWriteAllFdWait(ssl: *u8, fd: i32, buf: *u8, len: i64, wait: (bool) => 
             sent += st.r as i64
             continue
         }
-        if !sslWaitFor(st.e, wait) {
+        let w = sslWaitFor(st.e, wait)
+        if w == SSL_GAVE_UP {
+            return w as i64
+        }
+        if w == 0 {
             return st.r as i64
         }
     }

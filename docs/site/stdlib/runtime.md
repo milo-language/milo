@@ -231,6 +231,17 @@ pub fn defaultStackSize(): i64
 pub fn guardPageSize(): i64
 ```
 
+#### `isWorkerThread`
+
+```milo
+pub fn isWorkerThread(): bool
+```
+
+True on a thread spawnOsThreadDetached started (a Promise.blocking worker), false on
+the main thread. Such a thread ends after one closure and runs no destructor for its
+thread_locals, so a per-thread cache (std/fetch's connection pool) skips it rather
+than leak what it holds when the thread exits.
+
 #### `kindPlain`
 
 ```milo

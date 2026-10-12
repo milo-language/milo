@@ -6,7 +6,7 @@
 from "std/fetch" import { fetchWith, FetchOptions }
 
 fn get(): Result<i32, string> {
-    let r = fetchWith("http://127.0.0.1:1/", FetchOptions { method: "GET", headers: "", body: "" })?
+    let r = fetchWith("http://127.0.0.1:1/", FetchOptions { method: "GET", headers: "", body: "", keepAlive: true })?
     return Result.Ok(r.status)
 }
 

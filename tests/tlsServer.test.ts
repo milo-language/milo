@@ -7,7 +7,7 @@
 // case 2 could pass with verification disabled and prove nothing.
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { execFileSync, spawn, type ChildProcess } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -191,4 +191,66 @@ test.skipIf(!haveOpenssl)("incoming() keeps the TLS state alive after the stream
   const bin = build("client_incoming", INCOMING_SRC);
   const out = execFileSync(bin, [], { cwd: dir, encoding: "utf-8" });
   expect(out).toContain("hello from milo tls");
+}, 120000);
+
+// fetch's keep-alive pool holds the TLS stream itself, so sequential HTTPS requests share
+// one connection and one handshake. Bun's TLS server keeps connections alive (std/https
+// closes after each response, so it cannot show reuse); the client port of each request
+// counts the connections. The CA reaches the client through SSL_CERT_FILE, which
+// OpenSSL's default verify paths read: verification stays on, and the control below
+// shows it still rejects the same server without that trust.
+const POOL_SRC = `from "std/fetch" import { fetchWith, FetchOptions }
+from "std/args" import { args }
+
+fn main() {
+    let argv = args()
+    var ok = 0
+    for _i in 0..5 {
+        let o = FetchOptions { method: "GET", headers: "", body: "", keepAlive: argv[2] == "on" }
+        match fetchWith(argv[1], o) {
+            Result.Ok(r) => {
+                if r.body == "pooled" {
+                    ok += 1
+                }
+            }
+            Result.Err(e) => {
+                print("ERR " + e.message())
+                return
+            }
+        }
+    }
+    print("OK " + ok.toString())
+}
+`;
+
+test.skipIf(!haveOpenssl)("fetch reuses one TLS connection across requests, and still verifies the peer", async () => {
+  const bin = build("client_pool", POOL_SRC);
+  const ports = new Set<number>();
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: { cert: readFileSync(join(dir, "srv.pem"), "utf-8"), key: readFileSync(join(dir, "srv.key"), "utf-8") },
+    fetch(req, srv) {
+      const ip = srv.requestIP(req);
+      if (ip) ports.add(ip.port);
+      return new Response("pooled");
+    },
+  });
+  const url = `https://localhost:${server.port}/`;
+  const run = async (mode: string, trust: boolean) => {
+    ports.clear();
+    const env: Record<string, string | undefined> = { ...process.env, SSL_CERT_FILE: trust ? join(dir, "ca.pem") : undefined };
+    const p = Bun.spawn([bin, url, mode], { cwd: dir, env, stdout: "pipe" });
+    const out = await new Response(p.stdout).text();
+    await p.exited;
+    return { out: out.trim(), conns: ports.size };
+  };
+  try {
+    expect(await run("on", true)).toEqual({ out: "OK 5", conns: 1 });
+    expect(await run("off", true)).toEqual({ out: "OK 5", conns: 5 });
+    const untrusted = await run("on", false);
+    expect(untrusted.out).toContain("ERR tls:");
+  } finally {
+    server.stop(true);
+  }
 }, 120000);

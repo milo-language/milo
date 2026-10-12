@@ -1,0 +1,155 @@
+// @skip-os: win32
+// Windows: importing std/fetch links OpenSSL, which the xwin sysroot does not ship.
+//
+// fetch keeps HTTP/1.1 connections alive and reuses them. The server below counts the
+// connections it accepts and answers every request on a connection until the client
+// hangs up, so the counts say which requests shared a socket. Every server task gives
+// up after a quiet second, since the program only exits once its tasks have.
+from "std/fetch" import { fetch, fetchWith, FetchOptions }
+from "std/net" import { TcpListener, TcpStream }
+from "std/runtime" import { Task, Promise }
+from "std/sync" import { AtomicI64 }
+from "std/time" import { sleepMs, Duration }
+from "std/timer" import { waitReadable }
+
+fn ok(body: &string): string {
+    return $"HTTP/1.1 200 OK\r\nContent-Length: {body.len}\r\n\r\n{body}"
+}
+
+// Answer each request on `conn` by its path. `n` is the connection's number.
+fn handle(conn: TcpStream, n: i64): void {
+    var served: i64 = 0
+    while waitReadable(conn, Duration.millis(1000)) {
+        let req = conn.recvOnce()
+        if req.len == 0 {
+            return
+        }
+        served += 1
+        if req.contains("/dropnext") && served > 1 {
+            // a request that arrived on a reused connection: hang up without a reply,
+            // as a server does when its idle timeout fires as the request goes out
+            return
+        }
+        if req.contains("/close") {
+            let _ = conn.send("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nclose")
+            return
+        }
+        if req.contains("/idleclose") {
+            // keep-alive by the headers, then closed while the client holds it idle
+            let _ = conn.send(ok("idle"))
+            return
+        }
+        if req.contains("/chunked") {
+            let _ = conn.send("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n7;ext=1\r\n, world\r\n0\r\nX-Trailer: t\r\n\r\n")
+        } else if req.contains("/slow") {
+            sleepMs(150)
+            let _ = conn.send(ok($"conn {n}"))
+        } else {
+            let _ = conn.send(ok($"conn {n}"))
+        }
+    }
+}
+
+fn serve(lis: TcpListener, accepts: AtomicI64): void {
+    Task.spawn(move(): void => {
+        while waitReadable(lis, Duration.millis(1000)) {
+            match lis.accept() {
+                Result.Ok(conn) => {
+                    let n = accepts.add(1) + 1
+                    Task.spawn(move(): void => handle(conn, n))
+                }
+                Result.Err(_) => {
+                    return
+                }
+            }
+        }
+    })
+}
+
+fn body(url: &string): string {
+    match fetch(url) {
+        Result.Ok(r) => {
+            return r.body
+        }
+        Result.Err(e) => {
+            return e.message()
+        }
+    }
+}
+
+pub fn main(): void {
+    let lis = TcpListener.bind(0)!
+    let base = $"http://127.0.0.1:{lis.port()}"
+    let accepts = AtomicI64.new(0)
+    serve(lis, accepts.clone())
+
+    // Ten sequential fetches, one connection.
+    var same = true
+    for _i in 0..10 {
+        if body($"{base}/x") != "conn 1" {
+            same = false
+        }
+    }
+    // @expect: 10 fetches: all on conn 1 true, accepts 1
+    print($"10 fetches: all on conn 1 {same}, accepts {accepts.load()}")
+
+    // Chunked and Content-Length framing both leave the connection reusable.
+    // @expect: chunked: hello, world | after: conn 1
+    print($"chunked: {body($"{base}/chunked")} | after: {body($"{base}/x")}")
+
+    // `Connection: close` from the server is not pooled: the next fetch connects anew.
+    // @expect: close: close | next: conn 2
+    print($"close: {body($"{base}/close")} | next: {body($"{base}/x")}")
+
+    // The server closes a connection the pool holds idle; the next fetch sees it is
+    // dead before sending and connects anew.
+    let idle = body($"{base}/idleclose")
+    sleepMs(50)
+    // @expect: idle close: idle | next: conn 3
+    print($"idle close: {idle} | next: {body($"{base}/x")}")
+
+    // The server hangs up on a request sent on a reused connection without answering:
+    // a GET goes again on a fresh connection, once.
+    // @expect: stale GET retried: conn 4
+    print($"stale GET retried: {body($"{base}/dropnext")}")
+
+    // A POST is not retried: the server may have acted on it.
+    let post = FetchOptions { method: "POST", headers: "", body: "x", keepAlive: true }
+    match fetchWith($"{base}/dropnext", post) {
+        Result.Ok(r) => print($"stale POST: {r.status} {r.body}")
+        // @expect: stale POST: connect: empty reply from server
+        Result.Err(e) => print($"stale POST: {e.message()}")
+    }
+
+    // keepAlive: false sends `Connection: close` and closes after each response.
+    let fresh = (): FetchOptions => FetchOptions { method: "GET", headers: "", body: "", keepAlive: false }
+    let before = accepts.load()
+    let a = fetchWith($"{base}/x", fresh())!
+    let b = fetchWith($"{base}/x", fresh())!
+    // @expect: keepAlive false: 2 new connections true
+    print($"keepAlive false: 2 new connections {accepts.load() - before == 2 && a.body != b.body}")
+
+    // Four concurrent green fetches to one host each get their own connection; the
+    // pool then holds all four, so four more sequential fetches open none.
+    let lis2 = TcpListener.bind(0)!
+    let base2 = $"http://127.0.0.1:{lis2.port()}"
+    let accepts2 = AtomicI64.new(0)
+    serve(lis2, accepts2.clone())
+    var ps: Vec<Promise<string>> = []
+    for _i in 0..4 {
+        let u = $"{base2}/slow"
+        ps.push(Promise<string>.run(move(): string => body(u)))
+    }
+    var conns: Vec<string> = []
+    for p in ps {
+        conns.push(p.await()!)
+    }
+    conns.sort()
+    // @expect: concurrent: conn 1,conn 2,conn 3,conn 4 accepts 4
+    print($"concurrent: {conns.join(",")} accepts {accepts2.load()}")
+    for _i in 0..4 {
+        let _ = body($"{base2}/x")
+    }
+    // @expect: then sequential: accepts 4
+    print($"then sequential: accepts {accepts2.load()}")
+}

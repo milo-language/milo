@@ -17,11 +17,14 @@ from "std/os" import {
 from "std/openssl" import {
     SSL_CTX_free, SSL_CTX_load_verify_locations, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl,
     SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, SSL_shutdown,
-    TLS_client_method, sslConnectFd, sslReadFd, sslWriteAllFd, sslConnectFdWait, sslReadFdWait, sslWriteAllFdWait
+    TLS_client_method, sslConnectFd, sslReadFd, sslWriteAllFd, sslConnectFdWait, sslReadFdWait, sslWriteAllFdWait, SSL_GAVE_UP
 }
 from "std/platform" import {
     makeSockaddr,
-    ensureNetInit
+    ensureNetInit,
+    sockRead,
+    netErrno,
+    netEagain
 }
 from "std/replay" import {
     replayRet, replayOff
@@ -45,7 +48,7 @@ from "std/sync" import {
     Channel
 }
 from "std/runtime" import {
-    Task
+    Task, isWorkerThread
 }
 from "std/event" import {
     setNonblocking
@@ -207,7 +210,7 @@ impl TlsStream {
                 SSL_free(ssl)
                 SSL_CTX_free(ctx)
                 sysClose(fd)
-                if by > 0 && unrecordedEpochMillis() >= by {
+                if r == SSL_GAVE_UP {
                     return Result.Err(NetError.Timeout("tls handshake"))
                 }
                 return Result.Err(NetError.TlsError("SSL handshake failed"))
@@ -270,7 +273,7 @@ impl TlsStream {
         unsafe {
             let n = sslWriteAllFdWait(self._ssl as *u8, fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
             if n < 0 || (n == 0 && data.len > 0) {
-                if by > 0 && unrecordedEpochMillis() >= by {
+                if n == SSL_GAVE_UP as i64 {
                     return Result.Err(NetError.Timeout("send"))
                 }
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
@@ -304,8 +307,7 @@ impl TlsStream {
                 }
             }
         }
-        // a clean close reads 0; giving up leaves SSL_read's WANT result (< 0)
-        if last < 0 && by > 0 && unrecordedEpochMillis() >= by {
+        if last == SSL_GAVE_UP {
             return Result.Err(NetError.Timeout("response"))
         }
         return Result.Ok(result)
@@ -536,7 +538,10 @@ fn decodeChunked(rawBody: &string): string {
             chunkSize = chunkSize * 16 + d
             i += 1
         }
-        // skip \r\n after size
+        // skip any `;name=value` extension, then the \r\n that ends the size line
+        while i < rawBody.len && rawBody[i] != '\r' {
+            i += 1
+        }
         if i + 1 < rawBody.len && rawBody[i] == '\r' {
             i += 2
         }
@@ -703,6 +708,11 @@ pub struct FetchOptions {
     method: string,
     headers: string,
     body: string,
+    // Reuse a pooled connection to the same scheme, host and port, and return this one
+    // to the pool after the response (see the pool notes in std/fetch). false sends
+    // `Connection: close` and closes the connection after the response, as a caller's
+    // own `Connection: close` header also does.
+    keepAlive: bool,
 }
 
 // Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
@@ -747,18 +757,14 @@ fn deadlineIn(ms: i64): i64 {
 }
 
 // Wait for `fd` to be readable (or writable) until `by` (epoch ms; 0 waits as long as
-// it takes). False when `by` came first. The verdict is a trace record, so a replay
-// times out exactly where the recording did, without waiting.
+// it takes). False when `by` came first.
+//
+// Not a trace record of its own: the wait parks on a Select, and the scheduler poll
+// that ends it is already one (sched.pick says whether the fd arm or the timer arm
+// fired), so a replay times out exactly where the recording did, without waiting. A
+// record wrapped around the wait came out AFTER the sched records written inside it,
+// and the replay, asking for the wrapper first, diverged at the first wait.
 fn waitIo(fd: i32, forRead: bool, by: i64): bool {
-    if replayOff() {
-        return waitIoLive(fd, forRead, by)
-    }
-    return replayRet("net.wait", fd.toString() + if forRead { " r" } else { " w" }, true, (): i64 => {
-        return if waitIoLive(fd, forRead, by) { 1 } else { 0 }
-    }) == 1
-}
-
-fn waitIoLive(fd: i32, forRead: bool, by: i64): bool {
     // Select's fd and timer arms are inert without a scheduler, which a plain main
     // that never spawned a task does not have.
     ensureTimersLive()
@@ -770,9 +776,12 @@ fn waitIoLive(fd: i32, forRead: bool, by: i64): bool {
         sel.onWrite(h)
     }
     if by > 0 {
-        let left = by - unrecordedEpochMillis()
-        if left <= 0 {
-            return false
+        // A deadline already past still arms the timer (at 0) rather than returning
+        // false here: that decision would read the unrecorded clock, so a replay,
+        // running faster, would make it differently.
+        var left = by - unrecordedEpochMillis()
+        if left < 0 {
+            left = 0
         }
         sel.onTimeout(left)
     }
@@ -785,8 +794,20 @@ fn waitIoLive(fd: i32, forRead: bool, by: i64): bool {
 // servers reject requests without them: Overpass 406s an Accept-less client, and
 // several public APIs 403 an anonymous one. Both are only supplied when the
 // caller has not set their own, so an explicit header always wins.
+// Asks the server to close the connection after its response (`Connection: close`),
+// so the response ends where the stream does.
 pub fn buildRequest(host: &string, path: &string, opts: &FetchOptions): string {
-    var req: string = opts.method.clone() + " " + path.clone() + " HTTP/1.1\r\nHost: " + host.clone() + "\r\nConnection: close\r\n"
+    return requestText(host, path, opts, false)
+}
+
+// buildRequest, or with `keepAlive` the same request without `Connection: close`:
+// HTTP/1.1 keeps the connection open by default, and the response is read by its
+// framing rather than to EOF.
+fn requestText(host: &string, path: &string, opts: &FetchOptions, keepAlive: bool): string {
+    var req: string = opts.method.clone() + " " + path.clone() + " HTTP/1.1\r\nHost: " + host.clone() + "\r\n"
+    if !keepAlive && findHeader(opts.headers, "Connection").isNone() {
+        req += "Connection: close\r\n"
+    }
     if opts.headers.len > 0 {
         req = req + opts.headers.clone() + "\r\n"
     }
@@ -804,29 +825,26 @@ pub fn buildRequest(host: &string, path: &string, opts: &FetchOptions): string {
     return req
 }
 
-// Connect to the first of `addrs` that accepts, trying them in order (resolveAll's
-// RFC 6724 order). Sequential rather than Happy Eyeballs (RFC 8305): a refused address
-// (a v6-only or v4-only server reached through `localhost`) fails at once and the next
-// one is tried; what racing would add is an escape from an address that silently drops
-// SYNs, and fetchWithTimeout's connect limit already bounds that wait. Sequential
-// attempts also replay as the plain sequence of records they made.
-fn connectAny(addrs: &Vec<IpAddr>, port: u16): Result<TcpStream, NetError> {
-    var last = NetError.ConnectionFailed("no address")
-    for a in addrs {
-        match TcpStream.connectAddr(a, port) {
-            Result.Ok(s) => {
-                return Result.Ok(s)
-            }
-            Result.Err(e) => {
-                last = e
-            }
+fn isTimeout(e: &NetError): bool {
+    match e {
+        NetError.Timeout(_) => {
+            return true
+        }
+        _ => {
+            return false
         }
     }
-    return Result.Err(last)
 }
 
-// connectAny bounded by `by` (epoch ms; 0 for none), one deadline shared by every
-// attempt: the time a dead first address took is not given back to the second.
+// Connect to the first of `addrs` that accepts, trying them in order (resolveAll's
+// RFC 6724 order), all bounded by `by` (epoch ms; 0 for none): one deadline shared by
+// every attempt, so the time a dead first address took is not given back to the second.
+//
+// Sequential rather than Happy Eyeballs (RFC 8305): a refused address (a v6-only or
+// v4-only server reached through `localhost`) fails at once and the next one is tried;
+// what racing would add is an escape from an address that silently drops SYNs, and
+// fetchWithTimeout's connect limit already bounds that wait. Sequential attempts also
+// replay as the plain sequence of records they made.
 fn connectAnyBy(addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TcpStream, NetError> {
     var last = NetError.ConnectionFailed("no address")
     for a in addrs {
@@ -845,79 +863,435 @@ fn connectAnyBy(addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TcpStream, NetE
     return Result.Err(last)
 }
 
-fn isTimeout(e: &NetError): bool {
-    match e {
-        NetError.Timeout(_) => {
-            return true
+// A fresh connection for one request. Plain HTTP rides in a TlsStream too, with `_ssl`
+// 0: Drop already handles that shape, and one type is what lets the pool and the
+// response reader below serve both schemes. Such a stream never leaves this module.
+fn openConn(useTls: bool, sni: &string, addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TlsStream, NetError> {
+    var tcp = connectAnyBy(addrs, port, by)?
+    unsafe {
+        if useTls {
+            return TlsStream.fromFdBy(tcp.take(), sni, "", by)
         }
-        _ => {
-            return false
-        }
+        return Result.Ok(TlsStream {
+            _fd: tcp.take(), _ssl: 0, _ctx: 0
+        })
     }
 }
 
-fn httpDo(addrs: &Vec<IpAddr>, port: u16, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
-    let stream = connectAny(addrs, port)?
-    stream.send(buildRequest(hostHdr, path, opts))?
-    let raw = stream.recv()?
-    return Result.Ok(parseResponse(raw))
-}
-
-// httpDo bounded by `connectBy` and `overallBy` (epoch ms; 0 for none).
-fn httpDoBy(addrs: &Vec<IpAddr>, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
-    let stream = connectAnyBy(addrs, port, sooner(connectBy, overallBy))?
-    var fd: i32 = 0
-    unsafe { fd = stream.rawFd() }
-    let wait = (forRead: bool): bool => waitIo(fd, forRead, overallBy)
-    let req = buildRequest(hostHdr, path, opts)
+fn connSend(c: &TlsStream, data: &string, by: i64): Result<i64, NetError> {
+    if c._ssl != 0 {
+        return c.sendBy(data, by)
+    }
+    let fd = c._fd
     unsafe {
-        let sent = sendFdWait(fd, req, req.len, wait)
+        let sent = sendFdWait(fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
         if sent == IO_GAVE_UP {
             return Result.Err(NetError.Timeout("send"))
         }
         if sent < 0 {
             return Result.Err(NetError.SendFailed("send() failed"))
         }
+        return Result.Ok(sent)
     }
+}
+
+// One read into `buf`: bytes read, 0 at EOF, < 0 on error, IO_GAVE_UP past `by`.
+fn connRead(c: &TlsStream, buf: *u8, cap: i64, by: i64): i64 {
+    let fd = c._fd
+    unsafe {
+        if c._ssl != 0 {
+            let n = sslReadFdWait(c._ssl as *u8, fd, buf, cap as i32, (forRead: bool): bool => waitIo(fd, forRead, by))
+            if n == SSL_GAVE_UP {
+                return IO_GAVE_UP
+            }
+            return n as i64
+        }
+        return recvFdWait(fd, buf, cap, (forRead: bool): bool => waitIo(fd, forRead, by))
+    }
+}
+
+// ── Response framing ──
+
+// Index just past the first CRLFCRLF at or after `from`, or -1.
+fn headEndFrom(raw: &string, from: i64): i64 {
+    var i = from
+    while i + 3 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
+            return i + 4
+        }
+        i += 1
+    }
+    return -1
+}
+
+// Index of the first CRLF at or after `from`, or -1.
+fn crlfFrom(raw: &string, from: i64): i64 {
+    var i = from
+    while i + 1 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// Walk a chunked body from `*at` (the start of a chunk-size line), advancing `at` past
+// every complete chunk so the next call resumes there instead of rescanning. Returns
+// the index just past the body (last chunk and trailers included), -1 while it is
+// incomplete, -2 if the framing is malformed.
+fn chunkedEnd(raw: &string, at: &mut i64): i64 {
+    var i = at
+    while true {
+        let lineEnd = crlfFrom(raw, i)
+        if lineEnd < 0 {
+            return -1
+        }
+        var size: i64 = 0
+        var digits: i64 = 0
+        var j = i
+        while j < lineEnd && hexDigit(raw[j]) >= 0 {
+            size = size * 16 + hexDigit(raw[j])
+            digits += 1
+            j += 1
+        }
+        // a size line may carry `;ext`, nothing else; 15 hex digits is past any real body
+        if digits == 0 || digits > 15 || (j < lineEnd && raw[j] != ';' && raw[j] != ' ') {
+            return -2
+        }
+        if size == 0 {
+            // trailer fields, then the empty line that ends the message
+            var t = lineEnd + 2
+            while true {
+                let e = crlfFrom(raw, t)
+                if e < 0 {
+                    return -1
+                }
+                if e == t {
+                    return e + 2
+                }
+                t = e + 2
+            }
+        }
+        let next = lineEnd + 2 + size + 2
+        if next > raw.len {
+            return -1
+        }
+        if raw[next - 2] != '\r' || raw[next - 1] != '\n' {
+            return -2
+        }
+        i = next
+        at = next
+    }
+    return -1
+}
+
+// Does a comma-separated header value list `token` (case-insensitive)?
+fn hasToken(value: &string, token: &string): bool {
+    var i: i64 = 0
+    while i + token.len <= value.len {
+        if strEqNocase(value, i, token, token.len) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+// What one exchange produced, and whether its connection may carry another request.
+struct Reply {
+    resp: FetchResponse,
+    reusable: bool,
+}
+
+// Send `req` on `c` and read one response by its framing: Content-Length, chunked, or
+// none (HEAD, 1xx, 204, 304), so a kept-alive connection is not read to an EOF that
+// never comes. A response with neither length nor chunked framing is read to EOF, as
+// HTTP/1.1 says, and its connection is spent. `got` is set once any response byte
+// arrives: a failure before that on a reused connection means the server had closed it.
+fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, got: &mut bool): Result<Reply, NetError> {
+    connSend(c, req, by)?
     var raw: string = ""
-    var buf: [u8; 4096] = [0; 4096]
-    while maxBytes <= 0 || raw.len < maxBytes {
+    // 16 KiB is a whole TLS record, so SSL_read never leaves part of one buffered in the
+    // SSL object, where a byte past the response would hide from the leftover check.
+    var buf: [u8; 16384] = [0; 16384]
+    var headEnd: i64 = -1
+    // frame end once known; -1 unknown yet, -2 chunked (see chunkAt), -3 read to EOF
+    var need: i64 = -1
+    var chunkAt: i64 = 0
+    var keepHdr = true
+    var frameEnd: i64 = -1
+    var capped = false
+    while true {
+        if maxBytes > 0 && raw.len >= maxBytes {
+            capped = true
+            break
+        }
+        var want: i64 = 16384
+        if maxBytes > 0 && maxBytes - raw.len < want {
+            want = maxBytes - raw.len
+        }
         var n: i64 = 0
-        unsafe { n = recvFdWait(fd, buf as *u8, 4096, wait) }
+        unsafe { n = connRead(c, buf as *u8, want, by) }
         if n == IO_GAVE_UP {
             return Result.Err(NetError.Timeout("response"))
         }
         if n <= 0 {
+            // Nothing at all: a reused connection the server had closed, or a server
+            // that hung up without answering (curl's "empty reply from server").
+            if raw.len == 0 && !got {
+                return Result.Err(NetError.ConnectionFailed("empty reply from server"))
+            }
             break
         }
+        got = true
+        let scanFrom = if raw.len > 3 { raw.len - 3 } else { 0 }
         for i in 0..n {
             raw.push(buf[i])
         }
+        if headEnd < 0 {
+            headEnd = headEndFrom(raw, scanFrom)
+            if headEnd < 0 {
+                continue
+            }
+            let status = parseStatus(raw)
+            // An interim 1xx (100 Continue, 103 Early Hints) precedes the real response
+            // on the same connection: drop it and read on. 101 is a protocol switch.
+            if status >= 100 && status < 200 && status != 101 {
+                raw = raw.substr(headEnd, raw.len)
+                headEnd = -1
+                continue
+            }
+            let headers = parseRawHeaders(raw)
+            if hasToken(findHeader(headers, "Connection") ?? "", "close") || raw.startsWith("HTTP/1.0") {
+                keepHdr = false
+            }
+            let te = findHeader(headers, "Transfer-Encoding") ?? ""
+            let cl = findHeader(headers, "Content-Length")
+            if isHead || status == 204 || status == 304 || status == 101 {
+                need = headEnd
+            } else if hasToken(te, "chunked") {
+                need = -2
+                chunkAt = headEnd
+            } else if let Option.Some(v) = cl {
+                need = headEnd + parseLength(v)
+                if need < headEnd {
+                    need = -3
+                }
+            } else {
+                need = -3
+            }
+        }
+        if need == -2 {
+            let end = chunkedEnd(raw, &mut chunkAt)
+            if end >= 0 {
+                frameEnd = end
+                break
+            }
+            if end == -2 {
+                need = -3
+            }
+        } else if need >= 0 && raw.len >= need {
+            frameEnd = need
+            break
+        }
     }
-    return Result.Ok(parseResponse(raw))
+    var reusable = false
+    if frameEnd >= 0 {
+        // Bytes past the frame mean the server and this reader disagree about where the
+        // response ended; the next request on that connection would read them first.
+        reusable = keepHdr && !capped && raw.len == frameEnd
+        if raw.len > frameEnd {
+            raw = raw.substr(0, frameEnd)
+        }
+    }
+    return Result.Ok(Reply {
+        resp: parseResponse(raw), reusable: reusable
+    })
 }
 
-fn httpsDoBy(addrs: &Vec<IpAddr>, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
-    let by = sooner(connectBy, overallBy)
-    var tcp = connectAnyBy(addrs, port, by)?
-    var stream = TlsStream { _fd: 0, _ssl: 0, _ctx: 0 }
-    unsafe { stream = TlsStream.fromFdBy(tcp.take(), sni, "", by)? }
-    stream.sendBy(buildRequest(hostHdr, path, opts), overallBy)?
-    let raw = stream.recvUpTo(overallBy, maxBytes)?
-    return Result.Ok(parseResponse(raw))
+// A Content-Length value, or -1 if it is not a plain decimal.
+fn parseLength(v: &string): i64 {
+    if v.len == 0 || v.len > 18 {
+        return -1
+    }
+    var n: i64 = 0
+    for i in 0..v.len {
+        if v[i] < '0' || v[i] > '9' {
+            return -1
+        }
+        n = n * 10 + ((v[i] - '0') as i64)
+    }
+    return n
 }
 
-// `sni` is the bare hostname the certificate is checked against; `hostHdr` is the
-// authority that goes in the Host header and may carry a port. They differ on a
-// non-default port, and conflating them either breaks certificate validation or
-// emits a Host header that violates RFC 7230 5.4.
-fn httpsDo(addrs: &Vec<IpAddr>, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions): Result<FetchResponse, NetError> {
-    var tcp = connectAny(addrs, port)?
-    var stream = TlsStream { _fd: 0, _ssl: 0, _ctx: 0 }
-    unsafe { stream = TlsStream.fromFd(tcp.take(), sni, "")? }
-    stream.send(buildRequest(hostHdr, path, opts))?
-    let raw = stream.recv()?
-    return Result.Ok(parseResponse(raw))
+// ── Connection pool ──
+//
+// Idle keep-alive connections, keyed by scheme, host and port (and fetchAt's pinned
+// address, so a vetted address is never swapped for a pooled connection to another).
+// A request checks one out (removes it), so a connection serves one request at a time
+// and concurrent green fetches to one host each get their own; it goes back when its
+// response was framed, the server did not say `Connection: close`, and nothing followed
+// the frame. At most MAX_IDLE_PER_HOST idle connections are kept per key: past that a
+// returned connection is closed. Beyond the cap, a request opens a connection rather
+// than waiting for one, so one slow response never holds up an unrelated request; the
+// cap bounds what the pool keeps, not what is in flight.
+//
+// thread_local: green tasks on one scheduler share this pool and never race on it (they
+// switch only at parks, and nothing here holds an element of it across one: entries
+// are moved out by index before any IO). A Promise.blocking worker keeps none (see
+// poolOn), since its thread ends after one call and nothing would close what it left.
+
+struct IdleConn {
+    key: string,
+    conn: TlsStream,
+    // when it went idle, epoch ms (the unrecorded clock; idleAlive's verdict is recorded)
+    since: i64,
+}
+
+thread_local var gIdle: Vec<IdleConn> = []
+
+let MAX_IDLE_PER_HOST: i64 = 6
+let MAX_IDLE: i64 = 32
+// A server typically closes an idle connection after 5 to 60 s; past this one is not
+// tried at all.
+let IDLE_MS: i64 = 30000
+
+fn poolOn(): bool {
+    return !isWorkerThread()
+}
+
+fn poolKey(useTls: bool, host: &string, port: u16, pin: &Option<u32>): string {
+    var k = if useTls { "https://" } else { "http://" }
+    k = k + host.clone() + ":" + (port as i64).toString()
+    if let Option.Some(ip) = pin {
+        k = k + "@" + (ip as i64).toString()
+    }
+    return k
+}
+
+// Whether an idle connection can carry a request: younger than IDLE_MS, and nothing to
+// read on it. Idle, a server sends nothing, so readable means EOF (it closed), a
+// close_notify, or stray bytes; any of them retires the connection, and so the one-byte
+// probe may consume what it finds. The verdict is a trace record (net.reuse), so a
+// replay reuses exactly the connections the recording did.
+fn idleAlive(fd: i32, since: i64): bool {
+    if replayOff() {
+        return idleAliveLive(fd, since) == 1
+    }
+    return replayRet("net.reuse", fd.toString(), true, (): i64 => idleAliveLive(fd, since)) == 1
+}
+
+@replayHooked
+fn idleAliveLive(fd: i32, since: i64): i64 {
+    if unrecordedEpochMillis() - since > IDLE_MS {
+        return 0
+    }
+    var b: [u8; 1] = [0; 1]
+    unsafe {
+        // the fd is nonblocking (connectAddrWait left it so): EAGAIN is the live answer
+        let n = sockRead(fd, b as *u8, 1)
+        if n < 0 && netErrno() == netEagain() {
+            return 1
+        }
+    }
+    return 0
+}
+
+// The most recently returned live connection for `key`, if any. Dead ones met on the
+// way are dropped, which closes them.
+fn checkout(key: &string): Option<TlsStream> {
+    var i = gIdle.len - 1
+    while i >= 0 {
+        if gIdle[i].key == key {
+            let e = gIdle.remove(i)
+            if idleAlive(e.conn._fd, e.since) {
+                return Option.Some(e.conn)
+            }
+        }
+        i -= 1
+    }
+    return Option.None
+}
+
+fn checkin(key: string, c: TlsStream): void {
+    var same: i64 = 0
+    for i in 0..gIdle.len {
+        if gIdle[i].key == key {
+            same += 1
+        }
+    }
+    if same >= MAX_IDLE_PER_HOST {
+        return
+    }
+    if gIdle.len >= MAX_IDLE {
+        // oldest first: the least likely to still be open server-side
+        let _old = gIdle.remove(0)
+    }
+    gIdle.push(IdleConn {
+        key: key, conn: c, since: unrecordedEpochMillis()
+    })
+}
+
+// Methods RFC 9110 calls idempotent: sending one twice means what sending it once does,
+// so a request that died on a stale connection can be sent again.
+fn idempotent(method: &string): bool {
+    return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS"
+}
+
+// One request for `url`, on a pooled connection when one is idle and on a fresh one
+// otherwise. `pin` is fetchAt's address; without it the host is resolved, and only when
+// a fresh connection is needed. Bounded by `connectBy` and `overallBy` (epoch ms; 0 for
+// none); `maxBytes` caps the bytes read (0 for none).
+fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+    let useTls = isHttps(url)
+    let host = parseHost(url)
+    let port = parsePort(url)
+    let isHead = opts.method == "HEAD"
+    // A caller's own `Connection: close` asks for what keepAlive: false does.
+    let keepAlive = opts.keepAlive && poolOn() && !hasToken(findHeader(opts.headers, "Connection") ?? "", "close")
+    let req = requestText(hostHeader(url), parsePath(url), opts, keepAlive)
+    let key = poolKey(useTls, host, port, pin)
+
+    if keepAlive {
+        if let Option.Some(c) = checkout(key) {
+            var got = false
+            match exchange(c, req, isHead, overallBy, maxBytes, &mut got) {
+                Result.Ok(reply) => {
+                    if reply.reusable {
+                        checkin(key, c)
+                    }
+                    return Result.Ok(reply.resp)
+                }
+                Result.Err(e) => {
+                    // The server closed the idle connection as this request went out
+                    // (the probe raced it). Before any response byte nothing was
+                    // answered, so an idempotent request goes again, once, on a fresh
+                    // connection. A timeout is not staleness: its deadline is spent.
+                    if got || isTimeout(e) || !idempotent(opts.method) {
+                        return Result.Err(e)
+                    }
+                }
+            }
+        }
+    }
+
+    var addrs: Vec<IpAddr> = []
+    if let Option.Some(ip) = pin {
+        addrs.push(IpAddr.V4(ip))
+    } else {
+        addrs = resolveAll(host)?
+        if overallBy > 0 && unrecordedEpochMillis() >= overallBy {
+            return Result.Err(NetError.Timeout("dns"))
+        }
+    }
+    let c = openConn(useTls, host, addrs, port, sooner(connectBy, overallBy))?
+    var got = false
+    let reply = exchange(c, req, isHead, overallBy, maxBytes, &mut got)?
+    if keepAlive && reply.reusable {
+        checkin(key, c)
+    }
+    return Result.Ok(reply.resp)
 }
 
 // The URL a redirect's Location points at, resolved against the request URL.
@@ -939,28 +1313,7 @@ fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
 // `overallBy` is the totalMs deadline as epoch ms, fixed at the first hop so redirects
 // share it.
 fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, overallBy: i64): Result<FetchResponse, NetError> {
-    let useTls = isHttps(url)
-    let host = parseHost(url)
-    let port = parsePort(url)
-    let path = parsePath(url)
-    let hdr = hostHeader(url)
-    let addrs = resolveAll(host)?
-
-    if overallBy > 0 && unrecordedEpochMillis() >= overallBy {
-        return Result.Err(NetError.Timeout("dns"))
-    }
-
-    var resp: Result<FetchResponse, NetError> = Result.Err(NetError.Other(""))
-    let timed = t.connectMs > 0 || t.totalMs > 0
-    if timed {
-        resp = fetchOnceAt(addrs, url, opts, deadlineIn(t.connectMs), overallBy, 0)
-    } else if useTls {
-        resp = httpsDo(addrs, port, host.clone(), hdr, path, opts)
-    } else {
-        resp = httpDo(addrs, port, hdr, path, opts)
-    }
-
-    let r = resp?
+    let r = fetchOnce(url, opts, Option.None, deadlineIn(t.connectMs), overallBy, 0)?
 
     // follow redirects (301, 302, 307, 308)
     if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
@@ -971,6 +1324,7 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
                 method: opts.method.clone(),
                 headers: opts.headers.clone(),
                 body: opts.body.clone(),
+                keepAlive: opts.keepAlive,
             }
             if r.status == 301 || r.status == 302 {
                 redirOpts.method = "GET"
@@ -980,17 +1334,6 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
         }
     }
     return Result.Ok(r)
-}
-
-// One request to `ip`, with the Host header and TLS name taken from `url`.
-fn fetchOnceAt(addrs: &Vec<IpAddr>, url: &string, opts: &FetchOptions, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
-    let port = parsePort(url)
-    let path = parsePath(url)
-    let hdr = hostHeader(url)
-    if isHttps(url) {
-        return httpsDoBy(addrs, port, parseHost(url), hdr, path, opts, connectBy, overallBy, maxBytes)
-    }
-    return httpDoBy(addrs, port, hdr, path, opts, connectBy, overallBy, maxBytes)
 }
 
 // ── Public API ──
@@ -1009,15 +1352,14 @@ fn fetchOnceAt(addrs: &Vec<IpAddr>, url: &string, opts: &FetchOptions, connectBy
 // limit), and the response is parsed from what arrived, so a cut-off body comes back
 // short rather than as an error. `t` bounds the request as in fetchWithTimeout.
 pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxBytes: i64): Result<FetchResponse, NetError> {
-    let addrs: Vec<IpAddr> = [IpAddr.V4(ip)]
-    return fetchOnceAt(addrs, url, opts, deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
+    return fetchOnce(url, opts, Option.Some(ip), deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
 }
 
 // HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308
 // redirects.
 pub fn fetch(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
-        method: "GET", headers: "", body: ""
+        method: "GET", headers: "", body: "", keepAlive: true
     }
     return doFetch(url.clone(), opts)
 }
@@ -1042,6 +1384,7 @@ pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "POST",
         headers: "Content-Type: application/json",
         body: body.clone(),
+        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1054,6 +1397,7 @@ pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "POST",
         headers: "Content-Type: application/x-www-form-urlencoded",
         body: body.clone(),
+        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1064,6 +1408,7 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
         method: "PUT",
         headers: "Content-Type: application/json",
         body: body.clone(),
+        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }
@@ -1071,7 +1416,7 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
 // HTTP DELETE.
 pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
-        method: "DELETE", headers: "", body: ""
+        method: "DELETE", headers: "", body: "", keepAlive: true
     }
     return doFetch(url.clone(), opts)
 }
@@ -1082,6 +1427,7 @@ pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError> 
         method: "PATCH",
         headers: "Content-Type: application/json",
         body: body.clone(),
+        keepAlive: true,
     }
     return doFetch(url.clone(), opts)
 }

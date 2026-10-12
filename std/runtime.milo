@@ -848,10 +848,22 @@ impl TaskScope {
 // foreign-thread branch → xfer list + eventLoopNotify) is what lets a green
 // awaiter park and be woken from this foreign thread.
 
+// Set by osThreadTrampoline on the threads it starts.
+thread_local var gOnWorkerThread: bool = false
+
+// True on a thread spawnOsThreadDetached started (a Promise.blocking worker), false on
+// the main thread. Such a thread ends after one closure and runs no destructor for its
+// thread_locals, so a per-thread cache (std/fetch's connection pool) skips it rather
+// than leak what it holds when the thread exits.
+pub fn isWorkerThread(): bool {
+    return gOnWorkerThread
+}
+
 // pthread entry: unpacks { fnPtr, envPtr, replay thread number }, runs the void
 // closure, frees both.
 fn osThreadTrampoline(arg: *u8): *u8 {
     unsafe {
+        gOnWorkerThread = true
         var fnPtr: *u8 = 0 as *u8
         var envPtr: *u8 = 0 as *u8
         var rrTid: i64 = 0

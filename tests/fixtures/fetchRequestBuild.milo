@@ -9,7 +9,7 @@ from "std/fetch" import {
 
 fn get(headers: string): FetchOptions {
     return FetchOptions {
-        method: "GET", headers: headers, body: ""
+        method: "GET", headers: headers, body: "", keepAlive: true
     }
 }
 
@@ -49,6 +49,7 @@ fn main(): void {
         method: "POST",
         headers: "Content-Type: application/x-www-form-urlencoded",
         body: "data=1",
+        keepAlive: true,
     }
     let post = buildRequest("example.com", "/api", withBody)
     // @expect: content length true

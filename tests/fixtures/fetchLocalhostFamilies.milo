@@ -35,7 +35,7 @@ pub fn main(): void {
         let v6 = TcpListener.bind6(ip6("::1")!, 0)!
         let p6 = v6.port()
         serve(v6, "from v6")
-        let opts = FetchOptions { method: "GET", headers: "", body: "" }
+        let opts = FetchOptions { method: "GET", headers: "", body: "", keepAlive: true }
         let r = fetchWithTimeout($"http://localhost:{p6}/", opts, FetchTimeouts { connectMs: 2000, totalMs: 5000 })!
         // @expect: from v6
         print(r.body)
