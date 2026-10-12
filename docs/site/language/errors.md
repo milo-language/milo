@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 501 distinct messages across 641 programs the compiler must reject.
+Every error message the test suite pins: 502 distinct messages across 642 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -385,6 +385,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`Milo has no '++' — write 'i += 1'`](#milo-has-no-write-i-1)
 - [`Milo says offset 0`](#milo-says-offset-0)
 - [`Milo writes through a *u32 (4-byte pointee)`](#milo-writes-through-a-u32-4-byte-pointee)
+- [`Milo's Utsname is 256 bytes, smaller than the`](#milo-s-utsname-is-256-bytes-smaller-than-the)
 - [`mismatched types`](#mismatched-types)
 - [`missing required method 'eq'`](#missing-required-method-eq)
 - [`moves a captured value out of itself when it runs`](#moves-a-captured-value-out-of-itself-when-it-runs)
@@ -9655,6 +9656,28 @@ fn main() {
 ```
 
 <sub>[tests/errors/cSigParamPointee.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cSigParamPointee.milo)</sub>
+
+## `Milo's Utsname is 256 bytes, smaller than the` {#milo-s-utsname-is-256-bytes-smaller-than-the}
+
+declares POSIX uname, which the MSVC CRT does not provide. uname writes all of `struct utsname` through its pointer (1280 bytes on darwin, 390 on Linux). A 256-byte prefix struct links and runs, and the kernel writes past it into the caller's frame, so the guard rejects a struct pointee smaller than the C one.
+
+```milo skip
+@cSig("sys/utsname.h", "int uname(struct utsname *)")
+extern fn uname(buf: ?&mut Utsname): i32
+
+extern struct Utsname {
+    sysname: [u8; 256],
+}
+
+fn main() {
+    var u = Utsname { sysname: [0; 256] }
+    unsafe {
+        print(uname(u.addrOf()))
+    }
+}
+```
+
+<sub>[tests/errors/cSigStructPointeeTooSmall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cSigStructPointeeTooSmall.milo)</sub>
 
 ## `mismatched types` {#mismatched-types}
 

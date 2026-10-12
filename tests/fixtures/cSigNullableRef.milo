@@ -13,10 +13,11 @@ extern fn time(t: ?&mut i64): i64
 @cSig("sys/utsname.h", "int uname(struct utsname *)")
 extern fn uname(buf: ?&mut Utsname): i32
 
-// A prefix of C's `struct utsname` — the pointee guard uses `>=` for a struct, so
-// declaring less than C does is legitimate.
+// uname writes all of `struct utsname` (1280 bytes on darwin, 390 on Linux), so the Milo
+// pointee must be at least that big: the guard rejects a smaller one. One buffer covers
+// both layouts; a prefix struct here was a stack overflow ASan caught.
 extern struct Utsname {
-    sysname: [u8; 256],
+    buf: [u8; 1280],
 }
 
 pub fn main(): i32 {
@@ -25,7 +26,7 @@ pub fn main(): i32 {
     print(time(noSlot) > 0)
 
     var u = Utsname {
-        sysname: [0; 256]
+        buf: [0; 1280]
     }
     unsafe {
         // @expect: 0

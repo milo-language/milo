@@ -422,6 +422,10 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
     for (const line of stderr.split("\n")) {
       const m = line.match(/static assertion failed(?: due to requirement '.*?')?:\s*(.*)$/);
       if (m) { asserts.push(m[1].trim().replace(/^"|"$/g, "")); continue; }
+      // The @cSig struct-pointee assert can't spell C's size in its own message (it is
+      // only known to the C compiler); clang's follow-up note carries it.
+      const evaluated = line.match(/expression evaluates to '(\d+) <= \d+'/);
+      if (evaluated && asserts.length) { asserts[asserts.length - 1] = asserts[asserts.length - 1]!.replace("{csize}", evaluated[1]!); continue; }
       // Not every mismatch reaches an assert: naming a field C doesn't have makes
       // `offsetof` itself ill-formed, so clang errors before evaluating the assert.
       // Translate rather than dump — the raw text cites a temp file the user can't open.
@@ -438,6 +442,8 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
     // clang reports the error then a note pointing at the real declaration, so the same
     // finding arrives twice (once as `timespec`, once as `struct timespec`).
     const seen = new Set<string>();
+    // gcc prints no evaluated-expression note, so an unfilled size says only "larger".
+    for (let i = 0; i < asserts.length; i++) asserts[i] = asserts[i]!.replace("the {csize}-byte pointee", "the larger pointee");
     const unique = asserts.filter(a => {
       const key = a.replace(/'(?:struct |union |enum )?([^']+)'/g, "'$1'");
       return seen.has(key) ? false : (seen.add(key), true);

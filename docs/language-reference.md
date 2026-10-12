@@ -3782,6 +3782,18 @@ error[c-decl]: a declaration does not match the C header it claims to describe
   glGetShaderiv parameter 3: Milo writes through a *u16 (2-byte pointee), OpenGL/gl3.h says 'GLint *'
 ```
 
+For a struct pointee the rule is *at least*, not *equal*: C reads or writes
+`sizeof` its own type through the pointer, so a Milo struct smaller than the C one is a
+buffer overflow in the caller's frame, while a larger one is only unused room. A prefix
+struct, legitimate under `@cLayout` (which only describes a layout), is rejected here;
+together with `@cLayout`'s own size check it pins the struct to exactly C's size. The rule
+covers a `const T *` too: an over-read past the caller's struct is the same bug.
+
+```
+error[c-decl]: a declaration does not match the C header it claims to describe
+  uname parameter 1: Milo's Utsname is 256 bytes, smaller than the 1280-byte pointee of sys/utsname.h's 'struct utsname *'; C reads or writes past its end
+```
+
 A Milo `*u8` parameter is the **opt-out**: it stands for C's `void *` and for any pointer
 whose pointee Milo does not model, and its pointee is never checked. Spell the real
 pointee whenever you know it.

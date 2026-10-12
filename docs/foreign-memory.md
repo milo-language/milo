@@ -216,7 +216,7 @@ records the reference the unwrap will produce, and `checkIdentExpr` rejects ever
 binding that carries it. One gate covers passing it on, storing it, a field access and
 `Option.Some(p)`, because all four reach `checkIdentExpr`. The consequence worth having is
 that `@cSig`'s pointee-width guard and `headergen`'s `T *` both worked with no change:
-`sizeof(*(struct utsname *)0) >= <milo size>` is emitted for a `?&mut Utsname` exactly as it
+`sizeof(*(struct utsname *)0) <= <milo size>` is emitted for a `?&mut Utsname` exactly as it
 is for a `*Utsname`, and `build-lib` declares `int32_t point_bump(Point* p);`.
 
 **`match` was NOT built, deliberately.** The spec offers `let`-else *or* `match` as the

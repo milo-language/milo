@@ -2093,11 +2093,25 @@ export class Codegen {
       // turns out not to be a pointer at all, clang says so and verifyCDecls translates it.
       if (/(^|[^A-Za-z0-9_])void\s*\*$/.test(ct)) continue;
       const size = this.typeSize(this.llvmType(pointee));
-      // `>=` for a struct pointee, matching @cLayout: declaring a prefix of a C struct is
-      // legitimate, so a Milo struct smaller than the C one is not an error.
-      const op = pointee.tag === "struct" ? ">=" : "==";
+      if (pointee.tag === "struct") {
+        // A struct pointee may be LARGER than C's (trailing room the callee never touches)
+        // but never smaller: C reads or writes sizeof(the C type) bytes through the
+        // pointer, so a Milo prefix struct (legitimate for @cLayout, which only describes
+        // a layout) is a stack overflow here. `uname` into a 256-byte prefix of the
+        // 1280-byte darwin utsname was exactly that. This holds for a `const T *` too: an
+        // over-read past the caller's struct is the same bug, ASan reports it the same way,
+        // and Milo erases `&T` vs `&mut T` before codegen, so the read-only case is not
+        // even distinguishable here. A @cLayout struct already asserts C >= Milo, so the
+        // two together pin it to exactly C's size. `{csize}` is filled in by verifyCDecls
+        // from clang's "expression evaluates to" note.
+        out.push(
+          `_Static_assert(sizeof(*(${ct})0) <= ${size}, ` +
+          `"${where}: Milo's ${typeName(pointee)} is ${size} bytes, smaller than the {csize}-byte pointee of ${headerLabel(cs.header)}'s '${ct}'; C reads or writes past its end");`,
+        );
+        continue;
+      }
       out.push(
-        `_Static_assert(sizeof(*(${ct})0) ${op} ${size}, ` +
+        `_Static_assert(sizeof(*(${ct})0) == ${size}, ` +
         `"${where}: Milo writes through a ${typeName(mt)} (${size}-byte pointee), ${headerLabel(cs.header)} says '${ct}'");`,
       );
     }

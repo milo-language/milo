@@ -1,0 +1,20 @@
+// @skip-os: win32
+// declares POSIX uname, which the MSVC CRT does not provide.
+
+// @error: Milo's Utsname is 256 bytes, smaller than the
+// uname writes all of `struct utsname` through its pointer (1280 bytes on darwin, 390 on
+// Linux). A 256-byte prefix struct links and runs, and the kernel writes past it into the
+// caller's frame, so the guard rejects a struct pointee smaller than the C one.
+@cSig("sys/utsname.h", "int uname(struct utsname *)")
+extern fn uname(buf: ?&mut Utsname): i32
+
+extern struct Utsname {
+    sysname: [u8; 256],
+}
+
+fn main() {
+    var u = Utsname { sysname: [0; 256] }
+    unsafe {
+        print(uname(u.addrOf()))
+    }
+}
