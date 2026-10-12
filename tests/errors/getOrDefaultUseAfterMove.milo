@@ -1,0 +1,9 @@
+// @error: use of moved variable 'dflt'
+// `getOrDefault(k, fallback: V)` takes the default by value: a miss returns it.
+fn main() {
+    var m: HashMap<i64, string> = HashMap.new()
+    m.insert(1, "one")
+    let dflt: string = "var" + "default"
+    print("D" + m.getOrDefault(9, dflt))
+    print(dflt)
+}

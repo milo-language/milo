@@ -3,11 +3,6 @@
 # finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
 # line. Each group names its repro and how it was confirmed.
 
-# `m.getOrDefault(k, dflt)` with a named owned default: the miss path hands back dflt's bytes
-# as an owned temporary while dflt still owns them. Repro with a heap default: ASan
-# heap-use-after-free.
-getOrDefaultOwnedResult.milo main own-of-view view:dflt L36
-
 # `match s { "lit" => ... }` on an owned string moves s into the subject and never drops it.
 # Repro in a loop: `leaks --atExit` reports one leak per call.
 matchLiterals.milo handleCmd leak-ret move:cmd L31

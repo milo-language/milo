@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 500 distinct messages across 640 programs the compiler must reject.
+Every error message the test suite pins: 501 distinct messages across 641 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -498,6 +498,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'd'`](#use-of-moved-variable-d)
 - [`use of moved variable 'data'`](#use-of-moved-variable-data)
 - [`use of moved variable 'db'`](#use-of-moved-variable-db)
+- [`use of moved variable 'dflt'`](#use-of-moved-variable-dflt)
 - [`use of moved variable 'f'`](#use-of-moved-variable-f)
 - [`use of moved variable 'h'`](#use-of-moved-variable-h)
 - [`use of moved variable 'lib'`](#use-of-moved-variable-lib)
@@ -12046,6 +12047,22 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/sqliteExecAfterClose.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteExecAfterClose.milo)</sub>
+
+## `use of moved variable 'dflt'` {#use-of-moved-variable-dflt}
+
+`getOrDefault(k, fallback: V)` takes the default by value: a miss returns it.
+
+```milo skip
+fn main() {
+    var m: HashMap<i64, string> = HashMap.new()
+    m.insert(1, "one")
+    let dflt: string = "var" + "default"
+    print("D" + m.getOrDefault(9, dflt))
+    print(dflt)
+}
+```
+
+<sub>[tests/errors/getOrDefaultUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOrDefaultUseAfterMove.milo)</sub>
 
 ## `use of moved variable 'f'` {#use-of-moved-variable-f}
 

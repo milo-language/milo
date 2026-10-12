@@ -1,0 +1,33 @@
+// `getOrDefault(k, fallback: V)` takes its default by value. A named default is moved
+// into the call: a miss hands it back as the result, a hit drops it. It used to stay
+// owned by the caller too, so a miss freed one buffer twice (ASan double-free under
+// `asan-sweep`). The hit path is here because moving the default made it the call's
+// to free: it leaked until the hit block dropped a moved place, not only a temporary.
+fn missOnce(m: &HashMap<i64, string>, i: i64): i64 {
+    let dflt: string = "miss-" + i.toString()
+    let got = m.getOrDefault(99, dflt)
+    let other: string = "zzzzzz-" + i.toString()
+    return got.len() + other.len()
+}
+
+fn hitOnce(m: &HashMap<i64, string>, i: i64): i64 {
+    let dflt: string = "unused-" + i.toString()
+    return m.getOrDefault(1, dflt).len()
+}
+
+fn main() {
+    var m: HashMap<i64, string> = HashMap.new()
+    m.insert(1, "one")
+    var t: i64 = 0
+    var i: i64 = 0
+    while i < 200 {
+        t = t + missOnce(m, i) + hitOnce(m, i)
+        i = i + 1
+    }
+    print(t)
+    let d: string = "fallback" + "!"
+    print(m.getOrDefault(5, d))
+}
+
+// @expect: 3980
+// @expect: fallback!

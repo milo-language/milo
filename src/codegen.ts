@@ -12961,15 +12961,16 @@ export class Codegen {
     const foundEnd = this.nextLabel("hmgd.found.end");
     lines.push(`  br label %${foundEnd}`);
     lines.push(`${foundEnd}:`);
-    // The default is dead on this path — the map had the key — so a computed one has no
-    // owner. `m.getOrDefault(k, "dflt" + i.toString())` leaked its default on every hit.
+    // The default is dead on this path (the map had the key) and the call owns it: a
+    // computed one has no other owner, and a named one was moved in by the checker.
+    // `m.getOrDefault(k, "dflt" + i.toString())` leaked its default on every hit.
     // The drop is conditional by construction: it sits in the found block, and the
     // not-found path hands that same value to the caller as the result.
     //
     // Dropping a Vec or an enum opens basic blocks of its own, so the block this path
     // ENDS in is not `foundEnd` any more. Rejoin an empty one and let the phi below name
     // that, exactly as the deep clone above already has to.
-    this.dropOwnedTemp(lines, defaultVal, valTy, expr.default);
+    this.dropConsumedArg(lines, defaultVal, valTy, expr.default);
     const foundJoin = this.nextLabel("hmgd.found.join");
     lines.push(`  br label %${foundJoin}`);
     lines.push(`${foundJoin}:`);
@@ -14715,9 +14716,7 @@ export class Codegen {
       // "take an element out and ignore it" disagreed.
       case "VecRemove":
       case "VecFind":
-      // HashMap.get clones the value out of the table for the same reason. Its
-      // sibling getOrDefault is deliberately NOT here: on a miss it hands back the
-      // caller's own default, which the caller still owns.
+      // HashMap.get clones the value out of the table for the same reason.
       case "HashMapGet":
         return true;
       case "BinOp":
@@ -14817,6 +14816,20 @@ export class Codegen {
   // operator, leaving nothing that will ever drop it.
   private dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr) {
     if (!this.isOwnedTempExpr(expr) || !this.needsDropCg(expr.type)) return;
+    this.dropValueNow(lines, val, llTy, expr);
+  }
+
+  // Free a by-value argument the operation consumed but did not keep: an owned temporary,
+  // or a place the checker moved into the call (`isMove`, whose alive flag genExpr has
+  // already cleared, so nothing else will drop it).
+  private dropConsumedArg(lines: string[], val: string, llTy: string, expr: HIRExpr) {
+    if (!this.needsDropCg(expr.type)) return;
+    const movedPlace = (expr.kind === "Ident" || expr.kind === "FieldAccess" || expr.kind === "IndexAccess") && !!expr.isMove;
+    if (!movedPlace && !this.isOwnedTempExpr(expr)) return;
+    this.dropValueNow(lines, val, llTy, expr);
+  }
+
+  private dropValueNow(lines: string[], val: string, llTy: string, expr: HIRExpr) {
     const tmpAddr = `%__tmpdrop.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${tmpAddr} = alloca ${llTy}`);
     lines.push(this.valStore(llTy, val, tmpAddr, { intent: "move", type: expr.type }));

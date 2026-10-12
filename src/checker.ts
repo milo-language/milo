@@ -13035,6 +13035,10 @@ export class TypeChecker {
           this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
         }
         this.errorIfResourceCopyOut(objType.value, "getOrDefault", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
+        // `fallback: V` is by value: a miss returns the default itself and a hit drops it.
+        // Unmoved, a named heap default was both the caller's and the result's: a miss
+        // handed its buffer out as an owned temporary, freed while `dflt` still held it.
+        this.tryMove(expr.args[1]);
         return this.setType(expr, objType.value);
       }
       // In-place access. `modify` hands the callback a `&mut V` view of the stored value,
