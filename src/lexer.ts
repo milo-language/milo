@@ -124,6 +124,17 @@ export class Lexer {
         if (ch === '{') braceDepth++;
         if (ch === '}') braceDepth--;
         value += ch;
+        // A string or char literal inside the expression is copied whole, escapes and
+        // all, so its `"`, `\"` or `}` cannot end the literal or the interpolation.
+        if (ch === '"' || ch === "'") {
+          while (true) {
+            if (this.pos >= this.source.length) this.error("unterminated string", line, col);
+            const c = this.advance();
+            value += c;
+            if (c === "\\") { value += this.advance(); continue; }
+            if (c === ch) break;
+          }
+        }
       }
     }
     const tok = this.token(TokenKind.FString, value, line, col);

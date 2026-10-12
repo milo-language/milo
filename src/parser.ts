@@ -1975,6 +1975,17 @@ export class Parser {
         let depth = 1;
         let exprStr = "";
         while (i < raw.length && depth > 0) {
+          // skip a nested string or char literal whole (the lexer kept it verbatim)
+          if (raw[i] === '"' || raw[i] === "'") {
+            const q = raw[i];
+            exprStr += raw[i++];
+            while (i < raw.length && raw[i] !== q) {
+              if (raw[i] === "\\") exprStr += raw[i++];
+              exprStr += raw[i++];
+            }
+            if (i < raw.length) exprStr += raw[i++];
+            continue;
+          }
           if (raw[i] === "{") depth++;
           else if (raw[i] === "}") { depth--; if (depth === 0) { i++; break; } }
           exprStr += raw[i];
