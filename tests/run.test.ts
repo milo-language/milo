@@ -33,11 +33,18 @@ const REJECTED_OUT = IS_WINDOWS ? join(TOOL_DIR, "rejected") : devNull;
 // tested directly: the budget only bites on a slow CI runner and the warning only fires in
 // a narrow band, so neither is observable from an ordinary run of this file.
 const POOL_TIMEOUT_MS = (n: number) => poolTimeoutMs(n, IS_WINDOWS);
-
-function reportPoolMargin(lane: string, elapsedMs: number, budgetMs: number): void {
-  const line = poolMarginWarning(lane, elapsedMs, budgetMs);
-  if (line) console.warn(line);
-}
+// The pool stops STARTING compiles at its budget, and the hook gets this much more on top:
+// enough for the compiles still in flight to finish or be killed by their own guard (60s,
+// with one retry on a non-timeout signal). So a pool that runs long fails the fixtures it
+// never reached, each by name, instead of bun killing the hook and reporting one
+// `(unnamed)` failure for the whole lane, which reads as a hang nobody can locate.
+const HOOK_HEADROOM_MS = 180_000;
+const HOOK_TIMEOUT_MS = (n: number) => POOL_TIMEOUT_MS(n) + HOOK_HEADROOM_MS;
+// A fixture binary is killed by its guard before the test's own timeout fires, so a hung
+// fixture fails with its name and the output it got as far as, and is not left running
+// under the next test.
+const FIXTURE_RUN_TIMEOUT_MS = 20_000;
+const FIXTURE_TEST_TIMEOUT_MS = 30_000;
 
 beforeAll(() => {
   execSync(`bun build --compile ${join(MILO_ROOT, "src", "main.ts")} --outfile ${MILOC}`, {
@@ -48,30 +55,50 @@ beforeAll(() => {
 // All compiles and fixture binaries run under guardedRun: macOS enforces no
 // rlimits, so a miscompiled program that allocates in a loop would otherwise
 // swap the machine to death. The guard SIGKILLs the tree on RSS breach.
-async function run(cmd: string, args: string[]): Promise<RunResult> {
+async function run(cmd: string, args: string[], timeoutMs?: number): Promise<RunResult> {
   // Bun standalone binaries reserve more than 4 GiB of sparse virtual address
   // space on Linux while using ~80 MiB RSS. Keep the real-memory guard at 4 GiB,
   // but give RLIMIT_AS enough headroom for that reservation.
-  return guardedRun(cmd, args, { env: CHILD_ENV, virtualMemMb: 8192 });
+  return guardedRun(cmd, args, { env: CHILD_ENV, virtualMemMb: 8192, timeoutMs });
 }
 
-// Retry once on signal-based failures (resource pressure under full suite).
-async function runWithRetry(cmd: string, args: string[]): Promise<RunResult> {
-  const r = await run(cmd, args);
-  if (r.signal) return run(cmd, args);
+// Retry once on signal-based failures (resource pressure under full suite). Not on a
+// timeout kill: a hang retried is the same hang, and twice the wait.
+async function runWithRetry(cmd: string, args: string[], timeoutMs?: number): Promise<RunResult> {
+  const r = await run(cmd, args, timeoutMs);
+  if (r.signal && r.guardKill !== "timeout") return run(cmd, args, timeoutMs);
   return r;
 }
 
-// Bounded-parallel map: compiles are independent and CPU-bound; cap in-flight
-// processes to avoid oversubscription.
-async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+// Bounded-parallel compile of one lane into `into`; compiles are independent and
+// CPU-bound, so in-flight processes are capped to avoid oversubscription. Stops starting
+// compiles once the lane's budget is spent (see HOOK_HEADROOM_MS) and records each file it
+// never reached as a failed build that says why and names the slowest compiles, which is
+// where to look when a runner gets slower or one fixture's compile balloons.
+async function compilePool(laneName: string, files: string[], into: Map<string, RunResult>, compile: (file: string) => Promise<RunResult>): Promise<void> {
+  const budgetMs = POOL_TIMEOUT_MS(files.length);
+  const startedAt = Date.now();
+  const took: [string, number][] = [];
   let next = 0;
   async function worker() {
-    while (next < items.length) {
-      await fn(items[next++]);
+    while (next < files.length && Date.now() - startedAt < budgetMs) {
+      const file = files[next++]!;
+      const t = Date.now();
+      into.set(file, await compile(file));
+      took.push([file, Date.now() - t]);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(COMPILE_JOBS, files.length) }, worker));
+  const slowest = took.sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([f, ms]) => `${f} ${(ms / 1000).toFixed(1)}s`).join(", ");
+  for (const file of files.slice(next)) {
+    into.set(file, {
+      stdout: "", signal: null, code: -1,
+      stderr: `not compiled: the ${laneName} pool spent its ${budgetMs / 1000}s budget after ${next} of ${files.length} compiles (${COMPILE_JOBS} jobs; slowest: ${slowest})`,
+    });
+  }
+  const line = poolMarginWarning(laneName, Date.now() - startedAt, budgetMs);
+  if (line) console.warn(`${line}; slowest: ${slowest}`);
 }
 
 // Keep workers × guard cap below half of RAM (AGENTS.md). Large CI/dev hosts can
@@ -228,8 +255,7 @@ describe("fixtures (compile + run)", () => {
   const builds = new Map<string, RunResult>();
 
   beforeAll(async () => {
-    const startedAt = Date.now();
-    await mapPool(files, COMPILE_JOBS, async (file) => {
+    await compilePool("fixtures", files, builds, (file) => {
       const path = join(FIXTURES_DIR, file);
       const outBin = join(FIXTURES_DIR, file.replace(".milo", ""));
       binaries.push(outBin + EXE);
@@ -238,10 +264,9 @@ describe("fixtures (compile + run)", () => {
       const companionC = path.replace(/\.milo$/, ".c");
       const buildArgs = ["build", path, "-o", outBin];
       if (existsSync(companionC)) buildArgs.push(companionC);
-      builds.set(file, await runWithRetry(MILOC, buildArgs));
+      return runWithRetry(MILOC, buildArgs);
     });
-    reportPoolMargin("fixtures", Date.now() - startedAt, POOL_TIMEOUT_MS(files.length));
-  }, POOL_TIMEOUT_MS(files.length));
+  }, HOOK_TIMEOUT_MS(files.length));
 
   for (const file of files) {
     test(file.replace(".milo", ""), async () => {
@@ -251,11 +276,14 @@ describe("fixtures (compile + run)", () => {
       const build = builds.get(file)!;
       if (build.code !== 0) throw new Error(`build failed for ${file}:\n${build.stderr}`);
 
-      const result = await runWithRetry(join(FIXTURES_DIR, file.replace(".milo", "")) + EXE, []);
+      const result = await runWithRetry(join(FIXTURES_DIR, file.replace(".milo", "")) + EXE, [], FIXTURE_RUN_TIMEOUT_MS);
+      if (result.guardKill === "timeout") {
+        throw new Error(`${file} hung: killed after ${FIXTURE_RUN_TIMEOUT_MS / 1000}s. Output so far:\n${result.stdout}${result.stderr}`);
+      }
       const actual = result.stdout.trim().split("\n").map(l => l.trim());
 
       expect(actual).toEqual(expected);
-    }, 30000);
+    }, FIXTURE_TEST_TIMEOUT_MS);
   }
 });
 
@@ -269,12 +297,9 @@ describe("errors (type checker rejects)", () => {
   // Compile-only lane: the compile IS the test, so results are captured in the
   // pool and the tests just assert.
   beforeAll(async () => {
-    const startedAt = Date.now();
-    await mapPool(files, COMPILE_JOBS, async (file) => {
-      results.set(file, await run(MILOC, ["build", join(ERRORS_DIR, file), "-o", REJECTED_OUT]));
-    });
-    reportPoolMargin("errors", Date.now() - startedAt, POOL_TIMEOUT_MS(files.length));
-  }, POOL_TIMEOUT_MS(files.length));
+    await compilePool("errors", files, results, (file) =>
+      run(MILOC, ["build", join(ERRORS_DIR, file), "-o", REJECTED_OUT]));
+  }, HOOK_TIMEOUT_MS(files.length));
 
   for (const file of files) {
     test(file.replace(".milo", ""), () => {
@@ -321,15 +346,13 @@ describe("runtime errors (debug mode traps)", () => {
   const builds = new Map<string, RunResult>();
 
   beforeAll(async () => {
-    const startedAt = Date.now();
-    await mapPool(files, COMPILE_JOBS, async (file) => {
+    await compilePool("runtime-errors", files, builds, (file) => {
       const path = join(RUNTIME_ERRORS_DIR, file);
       const outBin = join(RUNTIME_ERRORS_DIR, file.replace(".milo", ""));
       binaries.push(outBin + EXE);
-      builds.set(file, await runWithRetry(MILOC, ["build", path, "--debug", "-o", outBin]));
+      return runWithRetry(MILOC, ["build", path, "--debug", "-o", outBin]);
     });
-    reportPoolMargin("runtime-errors", Date.now() - startedAt, POOL_TIMEOUT_MS(files.length));
-  }, POOL_TIMEOUT_MS(files.length));
+  }, HOOK_TIMEOUT_MS(files.length));
 
   for (const file of files) {
     test(file.replace(".milo", ""), async () => {
