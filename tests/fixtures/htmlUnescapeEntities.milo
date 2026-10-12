@@ -1,0 +1,28 @@
+// Html.unescape decodes the whole HTML5 named-entity table and HTML5's numeric rules,
+// not only the five XML entities: `&nbsp;` used to come back as the literal text.
+from "std/html" import { Html }
+
+fn main() {
+    print(Html.unescape("&amp; &lt;&gt; &quot;&apos;"))
+    print(Html.unescape("caf&eacute; &copy; 2026 &mdash; &ldquo;hi&rdquo; &hellip;"))
+    print(Html.unescape("x&nbsp;y").len)
+    print(Html.unescape("&rsquo;&#8217;&#x2019;&#146;"))
+    print(Html.unescape("&#128;&#150;&#159;&#129;").len)
+    print(Html.unescape("&#128;&#150;&#159;"))
+    print(Html.unescape("&Afr;&NotEqualTilde;&check;&starf;&lbrack;&rbrack;"))
+    print(Html.unescape("&bogus; &amp &AMP; &Amp; &; &#; &#x; &#xZ;"))
+    print(Html.unescape("&#0;|&#xD800;|&#x110000;"))
+    print(Html.unescape("&amp;amp; &&amp; &lt"))
+    print(Html.unescape("&thisnameislongerthananyentityintheentiretable;"))
+}
+// @expect: & <> "'
+// @expect: café © 2026 — “hi” …
+// @expect: 4
+// @expect: ’’’’
+// @expect: 10
+// @expect: €–Ÿ
+// @expect: 𝔄≂̸✓★[]
+// @expect: &bogus; &amp & &Amp; &; &#; &#x; &#xZ;
+// @expect: �|�|�
+// @expect: &amp; && &lt
+// @expect: &thisnameislongerthananyentityintheentiretable;

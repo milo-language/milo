@@ -69,12 +69,21 @@ not remove the need to escape.
 
 ## Decoding
 
-`Html.unescape` decodes the five predefined entities (`&amp;` `&lt;` `&gt;` `&quot;` `&apos;`) and
-numeric character references (`&#39;`, `&#x27;`), leaving every other
-`&`-sequence exactly as it was. It is not a full HTML5 named-entity table:
-`&nbsp;` comes back as the literal seven characters. References to surrogates or
-out-of-range code points decode to U+FFFD rather than producing bytes that would
-not decode back as UTF-8.
+`Html.unescape` decodes every named character reference in the HTML5 table (all
+2125 names: `&amp;`, `&nbsp;`, `&rsquo;`, `&eacute;`, the MathML symbols) and numeric
+references (`&#39;`, `&#x27;`), leaving every other `&`-sequence exactly as it was.
+The terminating `;` is required: the legacy bare forms (`&amp`, `&copy`) are an HTML
+parser recovery rule and stay as written. Numeric references follow HTML5:
+`&#128;` to `&#159;` read as Windows-1252 (`&#146;` is `’`), and references to U+0000,
+surrogates or out-of-range code points decode to U+FFFD rather than producing bytes
+that would not decode back as UTF-8.
+
+The full table rather than the 252 names of HTML 4: what a browser shows for a
+document is what a decoder should produce, and the HTML5 additions (`&check;`,
+`&lbrack;`, `&NotEqualTilde;`) do turn up in real pages. The table is generated from
+the WHATWG list by `scripts/gen-html-entities.ts` and searched by binary search, so
+lookup allocates nothing; it costs programs that import std/html about 50 KB of
+source to compile.
 
 This is a display decoder, not a security function. Never decode before a
 security check and then emit the escaped original — that is the classic way to
@@ -157,15 +166,17 @@ on the way into the document.
 fn Html.unescape(s: &string): string
 ```
 
-Decode the five predefined HTML entities (&amp; &lt; &gt; &quot; &apos;)
-and numeric character references (&#39; and &#x27;), leaving every other
-`&`-sequence exactly as it was.
+Decode character references: every named entity in the HTML5 table
+(`&amp;`, `&nbsp;`, `&rsquo;`, `&NotEqualTilde;`; 2125 names, generated from
+the WHATWG list) and numeric ones (`&#39;`, `&#x27;`), leaving every other
+`&`-sequence exactly as it was. The terminating `;` is required: the legacy
+bare forms (`&amp`, `&copy`) are an HTML parser recovery rule, not names.
 
-This is a *display* decoder, not a full HTML5 named-entity table: `&nbsp;`
-comes back as the literal seven characters `&nbsp;`. Numeric references to
-surrogates, out-of-range code points, or U+0000 decode to U+FFFD rather
-than producing bytes that would not decode back as UTF-8 — or, for
-`&#0;`, a NUL that would truncate the string wherever it is next written.
+Numeric references follow HTML5: `&#128;`..`&#159;` read as Windows-1252
+(`&#146;` is ’), and surrogates, out-of-range code points, or U+0000
+decode to U+FFFD rather than producing bytes that would not decode back as
+UTF-8 — or, for `&#0;`, a NUL that would truncate the string wherever it is
+next written.
 
 Do not decode and then re-emit into HTML without escaping again, and never
 decode before a security check — running a scheme or content check on

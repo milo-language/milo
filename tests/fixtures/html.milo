@@ -35,7 +35,7 @@ fn main(): void {
     print(Html.escapeAttr("`backtick`"))
     // @expect: &#96;backtick&#96;
 
-    // unescape: the five predefined entities and numeric references
+    // unescape: named entities and numeric references
     print(Html.unescape("&lt;b&gt;hi&lt;/b&gt;"))
     // @expect: <b>hi</b>
     print(Html.unescape("&amp;amp;"))
@@ -45,8 +45,8 @@ fn main(): void {
     print(Html.unescape("&#8594;"))
     // @expect: →
     // unknown entities are left alone, not swallowed
-    print(Html.unescape("&nbsp;&frac12;"))
-    // @expect: &nbsp;&frac12;
+    print(Html.unescape("&bogus;&frac13x;"))
+    // @expect: &bogus;&frac13x;
     // unterminated / malformed references stay literal
     print(Html.unescape("&#39 &# &#x &amp"))
     // @expect: &#39 &# &#x &amp
