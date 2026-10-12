@@ -33,6 +33,9 @@ fn netErrText(e: &NetError): string {
         NetError.SendFailed(m) => {
             return m.clone()
         }
+        NetError.Timeout(m) => {
+            return "timed out: " + m
+        }
         NetError.Other(m) => {
             return m.clone()
         }
