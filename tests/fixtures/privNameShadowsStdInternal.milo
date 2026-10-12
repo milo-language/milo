@@ -1,0 +1,17 @@
+// @expect: true
+// @expect: a=
+// A private fn named like a std-internal `pub` fn (std/platform's envSet, std/fetch's
+// formEncode) used to fail with "'fn envSet' is defined in two modules" once std/env or
+// std/fetch was imported. The user's private fn is renamed in its module.
+from "std/env" import { getEnv }
+from "std/fetch" import { fetch }
+
+fn envSet(k: string): bool { return k.len() > 0 }
+
+fn formEncode(k: string): string { return k + "=" }
+
+fn main(): i32 {
+    print(envSet("a"))
+    print(formEncode("a"))
+    return 0
+}

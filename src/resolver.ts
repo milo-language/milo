@@ -695,7 +695,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     const shadowsStdValue = (n: string) => stdPubValues.has(n) && !imported.has(n);
     const contested = (n: string) => (declCount.get(n) ?? 0) >= 2;
     const renamed = emptyPkgDecls();
-    for (const n of priv.values) if (mangleAll ? !stdNames.has(n) : contested(n)) renamed.values.add(n);
+    for (const n of priv.values) if ((mangleAll ? !stdNames.has(n) : contested(n)) || shadowsStdValue(n)) renamed.values.add(n);
     for (const n of priv.types) if ((mangleAll ? !stdNames.has(n) : contested(n)) || shadowsStdType(n)) renamed.types.add(n);
     // MILO_MANGLE_ALL widens `pub` names too: every importer is rebound from the same
     // plan, so the switch exercises the importer rewrite on every multi-module fixture.
