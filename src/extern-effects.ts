@@ -213,6 +213,8 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   SSL_set_fd: local(ossl("SSL_set_fd")),
   SSL_set1_host: local(ossl("SSL_set1_host")),
   SSL_ctrl: local(ossl("SSL_ctrl")),
+  // The error queue is per-thread state OpenSSL owns; clearing it decides nothing.
+  ERR_clear_error: local(ossl("ERR_clear_error")),
 
   // ── threads and locks: ordered by std/sync, a hole anywhere else ──
   pthread_create: sync(man(3, "pthread_create")),
@@ -447,9 +449,12 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   sqlite3_column_int64: input(sqlite("column_blob")),
   sqlite3_column_double: input(sqlite("column_blob")),
   sqlite3_column_text: input(sqlite("column_blob"), { ret: "cstr" }),
+  sqlite3_column_bytes: input(sqlite("column_blob")),
   sqlite3_changes: input(sqlite("changes")),
   sqlite3_last_insert_rowid: input(sqlite("last_insert_rowid")),
   sqlite3_errmsg: input(sqlite("errcode"), { ret: "cstr" }),
+  // Replay must not call it: the statement pointer it would read is the recorded one.
+  sqlite3_db_handle: input(sqlite("db_handle"), { ret: "handle" }),
 };
 
 /** The entry for `name` on `os`, with that target's overrides applied. */
