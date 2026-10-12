@@ -73,17 +73,13 @@ const FILTER = str("--filter");
 const KEEP = args.includes("--keep");
 // Also generate the spellings of OPEN bugs, which every run would otherwise report.
 // Each is listed where it is gated: a read through a temporary box (`(*Heap(x)).f`,
-// `chk(*mk())`) leaks the box and never runs the payload's Drop; `[v; N]` of an
-// if/match value leaks the original. Remove a gate in the change that fixes it.
+// `chk(*mk())`) leaks the box and never runs the payload's Drop. Remove a gate in the
+// change that fixes it.
 const KNOWN = args.includes("--known");
 // The open bugs, minimal (each also behind KNOWN where it is generated):
 //   (*Heap(newRes(k))).id            box + payload leak, Drop never runs (also `chk(*mk())`)
 //   (match o { Some(q) => q, None => mk() }).get()   the arm's value leaks, Drop never
 //                                    runs (an `if` too, once an arm moves a named place)
-//   [match o { ... }; 1]             the repeat's original leaks; with an `if` arm that
-//                                    moves a named place, Drop also runs twice
-//   [*Heap(newRes(k)); 1]            same class: a moved-out non-place value is copied
-//                                    as if it were a place, and the original leaks
 // Judge only this case index (the generator still runs every earlier case, so the
 // program is the one the full run saw).
 const ONLY = num("--only", -1);
@@ -361,9 +357,8 @@ class Gen {
   // A Res rvalue. Moves a live binding some of the time, which is how the forms below
   // compose with each other: a value made by one form is consumed inside another.
   // `receiver`: the value is read in place (`.get()`, `.name`), not consumed; no temp
-  // box and no if/match value (open bugs: both leak). `plain`: the `[v; N]` repeat value;
-  // no if/match or heap move-out (the original leaks). `--known` lifts both.
-  res(depth = 0, opts: { receiver?: boolean; plain?: boolean } = {}): string {
+  // box and no if/match value (open bugs: both leak). `--known` lifts it.
+  res(depth = 0, opts: { receiver?: boolean } = {}): string {
     const mv = this.movable();
     if (mv.length > 0 && chance(0.35)) {
       const b = pick(mv);
@@ -372,10 +367,10 @@ class Gen {
     }
     if (depth < 1) {
       switch (between(0, 7)) {
-        case 0: if ((opts.receiver || opts.plain) && !KNOWN) break; return `*Heap(newRes(${this.k()}))`;
-        case 1: if ((opts.plain || opts.receiver) && !KNOWN) break; return `if ${this.cond()} { ${this.res(depth + 1)} } else { ${this.res(depth + 1)} }`;
-        case 2: if ((opts.plain || opts.receiver) && !KNOWN) break; return `match maybe(${this.k()}) {\n    Option.Some(q) => q,\n    Option.None => newRes(${this.k()}),\n}`;
-        case 3: if ((opts.plain || opts.receiver) && !KNOWN) break; return `match errOr(${this.k()}) {\n    Result.Ok(q) => q,\n    Result.Err(e) => e,\n}`;
+        case 0: if (opts.receiver && !KNOWN) break; return `*Heap(newRes(${this.k()}))`;
+        case 1: if (opts.receiver && !KNOWN) break; return `if ${this.cond()} { ${this.res(depth + 1)} } else { ${this.res(depth + 1)} }`;
+        case 2: if (opts.receiver && !KNOWN) break; return `match maybe(${this.k()}) {\n    Option.Some(q) => q,\n    Option.None => newRes(${this.k()}),\n}`;
+        case 3: if (opts.receiver && !KNOWN) break; return `match errOr(${this.k()}) {\n    Result.Ok(q) => q,\n    Result.Err(e) => e,\n}`;
         case 4: return `mkPair(${this.k()}).${pick(["a", "b"])}`;
       }
     }
@@ -644,7 +639,7 @@ const FORMS: Form[] = [
       const a = g.fresh("a"), n = between(1, 3);
       switch (between(0, 3)) {
         case 0: {
-          g.emit(`let ${a} = [${g.res(0, { plain: true })}; ${n}]`);
+          g.emit(`let ${a} = [${g.res()}; ${n}]`);
           g.sink(`chk(${a}[${n - 1}])`);
           break;
         }

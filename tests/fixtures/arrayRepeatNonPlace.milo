@@ -1,0 +1,68 @@
+// `[v; N]` where v is not a place: a match, an if whose arm moves a named place, or a
+// move out of a temporary box. The value is owned (the checker moved it), so it moves into
+// the last slot and the rest are clones. It used to be copied as if it were a place: the
+// original leaked (the box too, for `*Heap(x)`), and with the `if` arm moving `r`, `r` was
+// dropped a second time at scope exit.
+// @expect: make 2
+// @expect: clone 2
+// @expect: 102 2
+// @expect: --if
+// @expect: make 3
+// @expect: clone 3
+// @expect: 103 3
+// @expect: --heap
+// @expect: make 6
+// @expect: 6
+// @expect: --end
+// @expect: drop 6
+// @expect: drop 103
+// @expect: drop 3
+// @expect: drop 102
+// @expect: drop 2
+
+struct Res {
+    id: i64,
+    name: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.id.toString())
+    }
+}
+
+impl Clone for Res {
+    fn clone(self: &Self): Self {
+        print("clone " + self.id.toString())
+        return Res { id: self.id + 100, name: self.name.clone() }
+    }
+}
+
+fn newRes(k: i64): Res {
+    print("make " + k.toString())
+    return Res { id: k, name: "n" + k.toString() }
+}
+
+fn errOr(k: i64): Result<Res, Res> {
+    if k % 2 == 0 {
+        return Result.Ok(newRes(k))
+    }
+    return Result.Err(newRes(k + 1))
+}
+
+fn main() {
+    let a = [match errOr(2) {
+        Result.Ok(q) => q,
+        Result.Err(e) => e,
+    }
+    ; 2]
+    print(a[0].id.toString() + " " + a[1].id.toString())
+    print("--if")
+    let r = newRes(3)
+    let b = [if a.len == 2 { r } else { newRes(4) }; 2]
+    print(b[0].id.toString() + " " + b[1].id.toString())
+    print("--heap")
+    let c = [*Heap(newRes(6)); 1]
+    print(c[0].id)
+    print("--end")
+}
