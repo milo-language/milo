@@ -2102,7 +2102,7 @@ A conforming implementation shall reject this program at compile time.
 
 - The diagnostic shall contain: `cannot move the borrowed value out of 'a'`
 
-**Rationale.** A fork over borrowed containers is a value the loop would own, so it moves each tail exactly as `let t = if c { a } else { b }` does, and a borrow cannot be moved out of. This used to compile into a copy of the caller's Vec that the loop then freed: a use-after-free in the caller. Iterate `a` and `b` by name instead.
+**Rationale.** A fork with a borrowed container in an arm is a value the loop would own, so it moves each tail exactly as `let t = if c { a } else { b }` does, and a borrow cannot be moved out of. This used to compile into a copy of the caller's Vec that the loop then freed: a use-after-free in the caller. Iterate `a` by name instead.
 
 *Program:* [`tests/errors/forInIfRefIterable.milo`](../tests/errors/forInIfRefIterable.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
