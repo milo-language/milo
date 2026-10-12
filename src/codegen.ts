@@ -6423,6 +6423,10 @@ export class Codegen {
       }
       case "HeapDeref":
       case "PtrDeref": {
+        if (expr.kind === "HeapDeref" && expr.isMove) {
+          const emptied = this.genHeapMoveOut(expr, lines);
+          if (emptied) return emptied;
+        }
         const [ptrLines, ptrVal] = this.genExpr(expr.operand);
         lines.push(...ptrLines);
         const innerTy = this.llvmType(expr.type);
@@ -8918,6 +8922,49 @@ export class Codegen {
       this.argTempDrops.push({ addr: tmp, type: expr.type });
     }
     return [lines, tmp];
+  }
+
+  // `let x = *h` on a box whose payload has a Drop: load the payload, free the box and
+  // null the box's slot, so the box's own drop (scope exit, or the drop before a
+  // reassignment) finds null and does nothing. Zeroing the payload in place instead left
+  // a live box whose drop ran the payload's Drop on the zeroed leftover (`drop 0`); a
+  // zero is not "nothing" for a user Drop. Only a place operand has a slot to null; the
+  // checker has recorded the move of that place, so nothing reads it before a reassign.
+  // A box returned by a call (`*mk()`) is owned by nobody else, so it is freed here too;
+  // it used to leak. Returns null for any other operand, which keeps the zeroing path.
+  private genHeapMoveOut(expr: HIRExpr & { kind: "HeapDeref" }, lines: string[]): Gen | null {
+    const op = expr.operand;
+    if (op.type.tag !== "heap" || op.type.inner.tag === "interface") return null;
+    const innerTy = this.llvmType(expr.type);
+    if (op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "InterfaceMethodCall") {
+      const [opLines, box] = this.genExpr(op);
+      lines.push(...opLines);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load ${innerTy}, ptr ${box}`);
+      this.needsFree = true;
+      lines.push(`  call void @free(ptr ${box})`);
+      // the payload left as the deref's (moved) value; the box itself ends here
+      this.ownEndVal(lines, box, "DROP");
+      return [lines, val, innerTy];
+    }
+    if (!this.needsDropCg(expr.type)) return null;
+    if (op.kind === "Ident") {
+      const local = this.locals.get(op.name);
+      if (!local || local.isRef) return null;
+    } else if (op.kind !== "FieldAccess" || this.receiverIsRvalueTemp(op)) {
+      return null;
+    }
+    const [slotLines, slot] = this.genLValue(op);
+    if (slot === "null") return null;
+    lines.push(...slotLines);
+    const box = this.nextTemp();
+    lines.push(`  ${box} = load ptr, ptr ${slot}`);
+    const val = this.nextTemp();
+    lines.push(`  ${val} = load ${innerTy}, ptr ${box}`);
+    this.needsFree = true;
+    lines.push(`  call void @free(ptr ${box})`);
+    lines.push(`  store ptr null, ptr ${slot}`);
+    return [lines, val, innerTy];
   }
 
   private vecInitialCap(elemSize: number): number { return Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize)))); }

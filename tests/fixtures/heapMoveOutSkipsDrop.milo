@@ -1,0 +1,85 @@
+// A move out of a `Heap<T>` (`let x = *h`, a by-value argument) takes the payload's
+// Drop with it: the emptied box frees its allocation and runs nothing else. The move
+// used to zero the payload in place and leave the box live, so the box's drop ran
+// T's Drop on the zeroed leftover and printed a spurious `drop 0`.
+struct S {
+    n: i64
+}
+
+impl Drop for S {
+    fn drop(self: &mut S): void {
+        print("drop ", self.n)
+    }
+}
+
+struct Holder {
+    b: Heap<S>
+}
+
+fn take(s: S): i64 {
+    return s.n
+}
+
+fn mk(n: i64): Heap<S> {
+    return Heap(S { n: n })
+}
+
+fn letMove() {
+    let h = Heap(S { n: 1 })
+    let x = *h
+    print("moved ", x.n)
+}
+
+fn argMove() {
+    let h = Heap(S { n: 2 })
+    let n = take(*h)
+    print("took ", n)
+}
+
+fn reassignAfterMove() {
+    var h = Heap(S { n: 3 })
+    let x = *h
+    h = Heap(S { n: 4 })
+    print("have ", x.n, " ", (*h).n)
+}
+
+fn fieldMove() {
+    let o = Holder { b: Heap(S { n: 5 }) }
+    let x = *o.b
+    print("field ", x.n)
+}
+
+fn tempMove() {
+    let x = *mk(6)
+    print("temp ", x.n)
+}
+
+fn kept() {
+    let h = Heap(S { n: 7 })
+    print("read ", (*h).n)
+}
+
+fn main() {
+    letMove()
+    argMove()
+    reassignAfterMove()
+    fieldMove()
+    tempMove()
+    kept()
+    print("done")
+}
+
+// @expect: moved 1
+// @expect: drop 1
+// @expect: drop 2
+// @expect: took 2
+// @expect: have 3 4
+// @expect: drop 3
+// @expect: drop 4
+// @expect: field 5
+// @expect: drop 5
+// @expect: temp 6
+// @expect: drop 6
+// @expect: read 7
+// @expect: drop 7
+// @expect: done
