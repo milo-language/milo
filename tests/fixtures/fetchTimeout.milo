@@ -1,0 +1,74 @@
+// @skip-os: win32
+// Windows is skipped for the same reason as fetchRequestBuild: importing std/fetch
+// links OpenSSL, which the xwin sysroot does not ship.
+//
+// fetchWithTimeout gives up on a server that stops answering. A listener that never
+// accepts still completes the TCP handshake from its backlog, so it is a server that
+// connects and then says nothing: plain HTTP waits on the response, HTTPS on the
+// handshake. A server that drips its answer slower than the total limit times out
+// even though every single read makes progress. Without the timeout each of these
+// hung forever.
+from "std/fetch" import { fetchWithTimeout, FetchOptions, FetchTimeouts }
+from "std/net" import { TcpListener }
+from "std/runtime" import { Task }
+from "std/time" import { epochMillis, sleepFor, Duration }
+
+fn get(): FetchOptions {
+    return FetchOptions { method: "GET", headers: "", body: "" }
+}
+
+fn attempt(url: &string, totalMs: i64): string {
+    let t0 = epochMillis()
+    let r = fetchWithTimeout(url, get(), FetchTimeouts { connectMs: 1000, totalMs: totalMs })
+    let took = epochMillis() - t0
+    // generous upper bound: what matters is that it returned at all, and not early
+    let inTime = took >= totalMs - 5 && took < totalMs + 3000
+    match r {
+        Result.Ok(resp) => {
+            return $"ok {resp.status} {resp.body}"
+        }
+        Result.Err(e) => {
+            return $"{e.message()} in time: {inTime}"
+        }
+    }
+}
+
+pub fn main(): void {
+    let silent = TcpListener.bind(0)!
+    let port = silent.port()
+    print(attempt($"http://127.0.0.1:{port}/", 300))
+    print(attempt($"https://127.0.0.1:{port}/", 300))
+
+    let drip = TcpListener.bind(0)!
+    let dripPort = drip.port()
+    Task.spawn(move(): void => {
+        let conn = drip.accept()!
+        let _ = conn.recvOnce()
+        let head = "HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n"
+        let _ = conn.send(head)
+        for _i in 0..40 {
+            sleepFor(Duration.millis(50))
+            if let Result.Err(_) = conn.send("x") {
+                break
+            }
+        }
+    })
+    print(attempt($"http://127.0.0.1:{dripPort}/", 400))
+
+    let quick = TcpListener.bind(0)!
+    let quickPort = quick.port()
+    Task.spawn(move(): void => {
+        let conn = quick.accept()!
+        let _ = conn.recvOnce()
+        let _ = conn.send("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi")
+    })
+    let t = fetchWithTimeout($"http://127.0.0.1:{quickPort}/", get(), FetchTimeouts { connectMs: 1000, totalMs: 5000 })
+    match t {
+        Result.Ok(resp) => print($"ok {resp.status} {resp.body}")
+        Result.Err(e) => print(e.message())
+    }
+}
+// @expect: timeout: response in time: true
+// @expect: timeout: tls handshake in time: true
+// @expect: timeout: response in time: true
+// @expect: ok 200 hi

@@ -4,7 +4,9 @@
 // OpenSSL (required on Windows, whose xwin sysroot ships none).
 
 from "std/os" import {
-    connectFdIn, bindIn,
+    connectFdIn,
+    connectFdInWait,
+    IO_GAVE_UP, bindIn,
     signal,
     acceptFd,
     acceptFdNb,
@@ -58,6 +60,9 @@ pub enum NetError {
     ConnectionFailed(string),
     TlsError(string),
     SendFailed(string),
+    // A deadline passed; the payload names the stage that was waiting (std/fetch's
+    // fetchWithTimeout: "connect", "tls handshake", "send", "response").
+    Timeout(string),
     Other(string),
 }
 
@@ -77,6 +82,9 @@ impl NetError {
             }
             NetError.SendFailed(m) => {
                 return "send: " + m
+            }
+            NetError.Timeout(m) => {
+                return "timeout: " + m
             }
             NetError.Other(m) => {
                 return m.clone()
@@ -162,6 +170,31 @@ impl TcpStream {
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
 
+            return Result.Ok(TcpStream {
+                _fd: fd
+            })
+        }
+    }
+
+    // connect() whose in-progress connect waits through `wait(fd, forRead)`, which
+    // returns false to give up (std/fetch passes a deadline): Err(Timeout("connect")).
+    // The stream is left nonblocking, so read and write it with recvFdWait/sendFdWait.
+    fn connectWait(ip: u32, port: u16, wait: (i32, bool) => bool): Result<TcpStream, NetError> {
+        unsafe {
+            ignoreSigpipe()
+            ensureNetInit()
+            let fd = sysSocket(2, 1, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+            let r = connectFdInWait(fd, makeSockaddr(port, ip), (forRead: bool): bool => wait(fd, forRead))
+            if r != 0 {
+                sysClose(fd)
+                if r as i64 == IO_GAVE_UP {
+                    return Result.Err(NetError.Timeout("connect"))
+                }
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
+            }
             return Result.Ok(TcpStream {
                 _fd: fd
             })

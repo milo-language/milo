@@ -8,20 +8,32 @@ from "std/net" import {
 }
 from "std/os" import {
     connectFdIn,
+    recvFdWait,
+    sendFdWait,
+    IO_GAVE_UP,
     sysClose,
     sysSocket
 }
 from "std/openssl" import {
     SSL_CTX_free, SSL_CTX_load_verify_locations, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl,
     SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, SSL_shutdown,
-    TLS_client_method, sslConnectFd, sslReadFd, sslWriteAllFd
+    TLS_client_method, sslConnectFd, sslReadFd, sslWriteAllFd, sslConnectFdWait, sslReadFdWait, sslWriteAllFdWait
 }
 from "std/platform" import {
     makeSockaddr,
     ensureNetInit
 }
 from "std/replay" import {
-    replayRet
+    replayRet, replayOff
+}
+from "std/select" import {
+    Select
+}
+from "std/time" import {
+    ensureTimersLive, unrecordedEpochMillis
+}
+from "std/io" import {
+    AsFd
 }
 from "std/json" import {
     Json
@@ -108,6 +120,15 @@ impl TlsStream {
         }
     }
 
+    // connect() that gives up at `connectBy` (the TCP connect and the handshake) and at
+    // `overallBy`, both epoch ms with 0 for none. The stream it returns is nonblocking:
+    // use sendBy and recvBy on it.
+    fn connectBy(ip: u32, port: u16, hostname: &string, connectBy: i64, overallBy: i64): Result<TlsStream, NetError> {
+        let by = sooner(connectBy, overallBy)
+        var tcp = TcpStream.connectWait(ip, port, (fd: i32, forRead: bool): bool => waitIo(fd, forRead, by))?
+        unsafe { return TlsStream.fromFdBy(tcp.take(), hostname, "", by) }
+    }
+
     // Client handshake over an ALREADY-connected socket. This is the entry point a
     // protocol with in-band TLS negotiation needs — Postgres' SSLRequest, SMTP STARTTLS:
     // the socket must carry plaintext first, so TLS setup cannot own the connect() too.
@@ -124,6 +145,14 @@ impl TlsStream {
     @replayHooked
     @unsafe
     fn fromFd(fd: i32, hostname: &string, caFile: &string): Result<TlsStream, NetError> {
+        unsafe { return TlsStream.fromFdBy(fd, hostname, caFile, -1) }
+    }
+
+    // fromFd with the handshake bounded by `by` (epoch ms; 0 for none); -1 is fromFd's
+    // own unbounded, green-parking handshake.
+    @replayHooked
+    @unsafe
+    fn fromFdBy(fd: i32, hostname: &string, caFile: &string, by: i64): Result<TlsStream, NetError> {
         unsafe {
             let method = TLS_client_method()
             let ctx = SSL_CTX_new(method)
@@ -165,11 +194,19 @@ impl TlsStream {
 
             // fd is nonblocking when connecting from a green task; sslConnectFd
             // parks on WANT_READ/WANT_WRITE until the handshake completes
-            let r = sslConnectFd(ssl, fd)
+            var r: i32 = 0
+            if by < 0 {
+                r = sslConnectFd(ssl, fd)
+            } else {
+                r = sslConnectFdWait(ssl, fd, (forRead: bool): bool => waitIo(fd, forRead, by))
+            }
             if r != 1 {
                 SSL_free(ssl)
                 SSL_CTX_free(ctx)
                 sysClose(fd)
+                if by > 0 && unrecordedEpochMillis() >= by {
+                    return Result.Err(NetError.Timeout("tls handshake"))
+                }
                 return Result.Err(NetError.TlsError("SSL handshake failed"))
             }
             // Not redundant with SSL_VERIFY_PEER, despite appearances: with the
@@ -220,6 +257,46 @@ impl TlsStream {
                     result.push(buf[i])
                 }
             }
+        }
+        return Result.Ok(result)
+    }
+
+    // send() that gives up at `by` (epoch ms; 0 for none).
+    fn sendBy(self: &Self, data: &string, by: i64): Result<i64, NetError> {
+        let fd = self._fd
+        unsafe {
+            let n = sslWriteAllFdWait(self._ssl as *u8, fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
+            if n < 0 || (n == 0 && data.len > 0) {
+                if by > 0 && unrecordedEpochMillis() >= by {
+                    return Result.Err(NetError.Timeout("send"))
+                }
+                return Result.Err(NetError.SendFailed("SSL_write failed"))
+            }
+            return Result.Ok(n)
+        }
+    }
+
+    // recv() that gives up at `by` (epoch ms; 0 for none): Err(Timeout) rather than the
+    // part of the body that arrived in time.
+    fn recvBy(self: &Self, by: i64): Result<string, NetError> {
+        let fd = self._fd
+        var result: string = ""
+        var buf: [u8; 4096] = [0; 4096]
+        var last: i32 = 0
+        while true {
+            unsafe {
+                last = sslReadFdWait(self._ssl as *u8, fd, buf as *u8, 4096, (forRead: bool): bool => waitIo(fd, forRead, by))
+                if last <= 0 {
+                    break
+                }
+                for i in 0..last as i64 {
+                    result.push(buf[i])
+                }
+            }
+        }
+        // a clean close reads 0; giving up leaves SSL_read's WANT result (< 0)
+        if last < 0 && by > 0 && unrecordedEpochMillis() >= by {
+            return Result.Err(NetError.Timeout("response"))
         }
         return Result.Ok(result)
     }
@@ -618,6 +695,80 @@ pub struct FetchOptions {
     body: string,
 }
 
+// Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
+// connect together with its TLS handshake; `totalMs` bounds the whole call from the
+// first connect to the last body byte, redirects included. DNS is not covered: a lookup
+// is bounded only by the system resolver's own timeout.
+//
+// Separate from FetchOptions, not fields on it: struct literals are exhaustive, so a new
+// field would break every FetchOptions literal in every program that builds one.
+pub struct FetchTimeouts {
+    connectMs: i64,
+    totalMs: i64,
+}
+
+// A raw descriptor lent to a Select for one wait.
+struct FetchWaitFd {
+    fd: i32,
+}
+
+impl AsFd for FetchWaitFd {
+    fn rawFd(self: &Self): i32 {
+        return self.fd
+    }
+}
+
+// The earlier of two deadlines (epoch ms), where 0 is none.
+fn sooner(a: i64, b: i64): i64 {
+    if a == 0 {
+        return b
+    }
+    if b == 0 || a < b {
+        return a
+    }
+    return b
+}
+
+fn deadlineIn(ms: i64): i64 {
+    if ms <= 0 {
+        return 0
+    }
+    return unrecordedEpochMillis() + ms
+}
+
+// Wait for `fd` to be readable (or writable) until `by` (epoch ms; 0 waits as long as
+// it takes). False when `by` came first. The verdict is a trace record, so a replay
+// times out exactly where the recording did, without waiting.
+fn waitIo(fd: i32, forRead: bool, by: i64): bool {
+    if replayOff() {
+        return waitIoLive(fd, forRead, by)
+    }
+    return replayRet("net.wait", fd.toString() + if forRead { " r" } else { " w" }, true, (): i64 => {
+        return if waitIoLive(fd, forRead, by) { 1 } else { 0 }
+    }) == 1
+}
+
+fn waitIoLive(fd: i32, forRead: bool, by: i64): bool {
+    // Select's fd and timer arms are inert without a scheduler, which a plain main
+    // that never spawned a task does not have.
+    ensureTimersLive()
+    var sel = Select.new()
+    let h = FetchWaitFd { fd: fd }
+    if forRead {
+        sel.onRead(h)
+    } else {
+        sel.onWrite(h)
+    }
+    if by > 0 {
+        let left = by - unrecordedEpochMillis()
+        if left <= 0 {
+            return false
+        }
+        sel.onTimeout(left)
+    }
+    return sel.wait() == 0
+}
+
 // ── HTTP client ──
 
 // Serialize a request. HTTP does not require Accept or User-Agent, but real
@@ -647,6 +798,48 @@ fn httpDo(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions
     let stream = TcpStream.connect(ip, port)?
     stream.send(buildRequest(hostHdr, path, opts))?
     let raw = stream.recv()?
+    return Result.Ok(parseResponse(raw))
+}
+
+// httpDo bounded by `connectBy` and `overallBy` (epoch ms; 0 for none).
+fn httpDoBy(ip: u32, port: u16, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64): Result<FetchResponse, NetError> {
+    let cby = sooner(connectBy, overallBy)
+    let stream = TcpStream.connectWait(ip, port, (fd: i32, forRead: bool): bool => waitIo(fd, forRead, cby))?
+    var fd: i32 = 0
+    unsafe { fd = stream.rawFd() }
+    let wait = (forRead: bool): bool => waitIo(fd, forRead, overallBy)
+    let req = buildRequest(hostHdr, path, opts)
+    unsafe {
+        let sent = sendFdWait(fd, req, req.len, wait)
+        if sent == IO_GAVE_UP {
+            return Result.Err(NetError.Timeout("send"))
+        }
+        if sent < 0 {
+            return Result.Err(NetError.SendFailed("send() failed"))
+        }
+    }
+    var raw: string = ""
+    var buf: [u8; 4096] = [0; 4096]
+    while true {
+        var n: i64 = 0
+        unsafe { n = recvFdWait(fd, buf as *u8, 4096, wait) }
+        if n == IO_GAVE_UP {
+            return Result.Err(NetError.Timeout("response"))
+        }
+        if n <= 0 {
+            break
+        }
+        for i in 0..n {
+            raw.push(buf[i])
+        }
+    }
+    return Result.Ok(parseResponse(raw))
+}
+
+fn httpsDoBy(ip: u32, port: u16, sni: string, hostHdr: string, path: string, opts: &FetchOptions, connectBy: i64, overallBy: i64): Result<FetchResponse, NetError> {
+    let stream = TlsStream.connectBy(ip, port, sni, connectBy, overallBy)?
+    stream.sendBy(buildRequest(hostHdr, path, opts), overallBy)?
+    let raw = stream.recvBy(overallBy)?
     return Result.Ok(parseResponse(raw))
 }
 
@@ -702,10 +895,12 @@ pub fn resolveLocation(base: &string, loc: &string): string {
 let MAX_REDIRECTS: i64 = 10
 
 fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
-    return doFetchHops(url, opts, 0)
+    return doFetchHops(url, opts, 0, FetchTimeouts { connectMs: 0, totalMs: 0 }, 0)
 }
 
-fn doFetchHops(url: string, opts: FetchOptions, hops: i64): Result<FetchResponse, NetError> {
+// `overallBy` is the totalMs deadline as epoch ms, fixed at the first hop so redirects
+// share it.
+fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, overallBy: i64): Result<FetchResponse, NetError> {
     let useTls = isHttps(url)
     let host = parseHost(url)
     let port = parsePort(url)
@@ -713,8 +908,17 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64): Result<FetchResponse
     let hdr = hostHeader(url)
     let ip = resolve(host)?
 
+    if overallBy > 0 && unrecordedEpochMillis() >= overallBy {
+        return Result.Err(NetError.Timeout("dns"))
+    }
+
     var resp: Result<FetchResponse, NetError> = Result.Err(NetError.Other(""))
-    if useTls {
+    let timed = t.connectMs > 0 || t.totalMs > 0
+    if timed && useTls {
+        resp = httpsDoBy(ip, port, host.clone(), hdr, path, opts, deadlineIn(t.connectMs), overallBy)
+    } else if timed {
+        resp = httpDoBy(ip, port, hdr, path, opts, deadlineIn(t.connectMs), overallBy)
+    } else if useTls {
         resp = httpsDo(ip, port, host.clone(), hdr, path, opts)
     } else {
         resp = httpDo(ip, port, hdr, path, opts)
@@ -736,7 +940,7 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64): Result<FetchResponse
                 redirOpts.method = "GET"
                 redirOpts.body = ""
             }
-            return doFetchHops(resolveLocation(url, loc), redirOpts, hops + 1)
+            return doFetchHops(resolveLocation(url, loc), redirOpts, hops + 1, t, overallBy)
         }
     }
     return Result.Ok(r)
@@ -757,6 +961,14 @@ pub fn fetch(url: &string): Result<FetchResponse, NetError> {
 // followed as for `fetch`; a 301 or 302 turns the retry into a GET with no body.
 pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetError> {
     return doFetch(url.clone(), opts)
+}
+
+// fetchWith that gives up: Err(NetError.Timeout(stage)) once `t.connectMs` passes on
+// a connect, or `t.totalMs` on the whole request, instead of waiting on a server that
+// stopped answering. Nothing is returned from a response cut off by the deadline.
+pub fn fetchWithTimeout(url: &string, opts: FetchOptions, t: FetchTimeouts): Result<FetchResponse, NetError> {
+    let by = deadlineIn(t.totalMs)
+    return doFetchHops(url.clone(), opts, 0, t, by)
 }
 
 // HTTP POST of `body` with `Content-Type: application/json`.

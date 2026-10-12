@@ -280,6 +280,81 @@ pub fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     return -1
 }
 
+// ── TLS IO that can give up ──
+// The loops above park until the fd is ready, however long that takes. These hand each
+// WANT_READ/WANT_WRITE to `wait(forRead)` instead, which returns false to give up (a
+// deadline passed): they then return the SSL call's own result (<= 0). The fd must be
+// nonblocking; they work the same on a green task and on a plain thread.
+
+fn sslWaitFor(e: i32, wait: (bool) => bool): bool {
+    if e == sslWantRead() {
+        return wait(true)
+    }
+    if e == sslWantWrite() {
+        return wait(false)
+    }
+    return false
+}
+
+// sslConnectFd through `wait`. 1 on success.
+@unsafe
+pub fn sslConnectFdWait(ssl: *u8, fd: i32, wait: (bool) => bool): i32 {
+    while true {
+        let st = sslStep("tls.connect", fd.toString(), ssl, 1, (): i32 => {
+            unsafe {
+                return SSL_connect(ssl)
+            }
+        })
+        if st.r == 1 {
+            return 1
+        }
+        if !sslWaitFor(st.e, wait) {
+            return st.r
+        }
+    }
+    return -1
+}
+
+// sslReadFd through `wait`: bytes read (> 0), or <= 0 on close, error or giving up.
+@unsafe
+pub fn sslReadFdWait(ssl: *u8, fd: i32, buf: *u8, len: i32, wait: (bool) => bool): i32 {
+    while true {
+        let st = sslReadOnce(ssl, fd, buf, len)
+        if st.r > 0 {
+            return st.r
+        }
+        if !sslWaitFor(st.e, wait) {
+            return st.r
+        }
+    }
+    return -1
+}
+
+// sslWriteAllFd through `wait`: `len`, or the failing SSL_write's result (<= 0).
+@unsafe
+pub fn sslWriteAllFdWait(ssl: *u8, fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64 {
+    var sent: i64 = 0
+    while sent < len {
+        let chunk = sslChunk(len - sent)
+        var at: *u8 = buf
+        unsafe { at = (buf as i64 + sent) as *u8 }
+        let from = at
+        let st = sslStep("tls.write", fd.toString() + " " + chunk.toString(), ssl, chunk, (): i32 => {
+            unsafe {
+                return SSL_write(ssl, from, chunk)
+            }
+        })
+        if st.r > 0 {
+            sent += st.r as i64
+            continue
+        }
+        if !sslWaitFor(st.e, wait) {
+            return st.r as i64
+        }
+    }
+    return sent
+}
+
 // The largest count one SSL_read or SSL_write takes: their length is a C int, and
 // a 64-bit length cast to i32 wraps (2^32 + 5 bytes became a 5-byte write that
 // reported success). Every std caller with an i64 length clamps through this.

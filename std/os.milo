@@ -710,6 +710,78 @@ pub fn sendFd(fd: i32, buf: *u8, len: i64): i64 {
     }
 }
 
+// ── IO that can give up ──
+// The waits above park until the fd is ready, however long that takes. These take the
+// wait as a callback instead: `wait(forRead)` blocks until the fd is readable (true) or
+// writable (false) and returns false to give up, e.g. when a deadline passes. The fd
+// is made nonblocking, so they work the same on a green task and on a plain thread.
+// Giving up returns IO_GAVE_UP, which no syscall result can be.
+
+pub let IO_GAVE_UP: i64 = -2
+
+// connect(2) that waits through `wait`. 0 on success, -1 on failure, IO_GAVE_UP.
+@unsafe
+pub fn connectFdInWait(fd: i32, addr: &SockAddrIn, wait: (bool) => bool): i32 {
+    unsafe {
+        setNonblocking(fd)
+        if connectOnce(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen()) == 0 {
+            return 0
+        }
+        if netErrno() != netEinprogress() {
+            return -1
+        }
+        if !wait(false) {
+            return IO_GAVE_UP as i32
+        }
+        if connectResult(fd) != 0 {
+            return -1
+        }
+        return 0
+    }
+}
+
+// One socket read that waits through `wait`. Bytes read, 0 at EOF, <0 on error, IO_GAVE_UP.
+@unsafe
+pub fn recvFdWait(fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64 {
+    unsafe {
+        setNonblocking(fd)
+        while true {
+            let n = sysRecv(fd, buf, len)
+            if n < 0 && netErrno() == netEagain() {
+                if !wait(true) {
+                    return IO_GAVE_UP
+                }
+                continue
+            }
+            return n
+        }
+        return -1
+    }
+}
+
+// Write all `len` bytes, waiting through `wait`. `len`, <0 on error, or IO_GAVE_UP.
+@unsafe
+pub fn sendFdWait(fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64 {
+    unsafe {
+        setNonblocking(fd)
+        var sent: i64 = 0
+        while sent < len {
+            let n = sysSend(fd, (buf as i64 + sent) as *u8, len - sent)
+            if n < 0 && netErrno() == netEagain() {
+                if !wait(false) {
+                    return IO_GAVE_UP
+                }
+                continue
+            }
+            if n < 0 {
+                return n
+            }
+            sent += n
+        }
+        return sent
+    }
+}
+
 // Accept one connection; returns the client fd (<0 on error). In a green task
 // the client fd is left nonblocking so later readFd/writeFd calls skip a
 // redundant fcntl round-trip.

@@ -46,6 +46,7 @@ Variants:
 - `ConnectionFailed(string)`
 - `TlsError(string)`
 - `SendFailed(string)`
+- `Timeout(string)`: A deadline passed; the payload names the stage that was waiting (std/fetch's fetchWithTimeout: "connect", "tls handshake", "send", "response").
 - `Other(string)`
 
 #### `NetError.message`
@@ -164,6 +165,16 @@ fn TcpStream.connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream
 IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot hold
 a 128-bit address, so the v4 entry point keeps its shape. `scopeId` is the interface
 index for a link-local peer (fe80::/10), 0 otherwise.
+
+#### `TcpStream.connectWait`
+
+```milo
+fn TcpStream.connectWait(ip: u32, port: u16, wait: (i32, bool) => bool): Result<TcpStream, NetError>
+```
+
+connect() whose in-progress connect waits through `wait(fd, forRead)`, which
+returns false to give up (std/fetch passes a deadline): Err(Timeout("connect")).
+The stream is left nonblocking, so read and write it with recvFdWait/sendFdWait.
 
 #### `TcpStream.incoming`
 

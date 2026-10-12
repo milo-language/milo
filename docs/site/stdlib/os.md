@@ -65,6 +65,14 @@ pub fn connectFdIn(fd: i32, addr: &SockAddrIn): i32
 pub fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32
 ```
 
+### `connectFdInWait`
+
+```milo
+pub fn connectFdInWait(fd: i32, addr: &SockAddrIn, wait: (bool) => bool): i32
+```
+
+connect(2) that waits through `wait`. 0 on success, -1 on failure, IO_GAVE_UP.
+
 ### `connectFdUn`
 
 ```milo
@@ -101,11 +109,27 @@ Windows a SOCKET is NOT a CRT fd — the CRT _read/_write behind read/write fast
 so socket data must go through recv/send. Socket code (std/net, raw-socket programs) must
 use these, not readFd/writeFd, which stay bound to the CRT fd path for stdout/stdin/pipes.
 
+### `recvFdWait`
+
+```milo
+pub fn recvFdWait(fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64
+```
+
+One socket read that waits through `wait`. Bytes read, 0 at EOF, &lt;0 on error, IO_GAVE_UP.
+
 ### `sendFd`
 
 ```milo
 pub fn sendFd(fd: i32, buf: *u8, len: i64): i64
 ```
+
+### `sendFdWait`
+
+```milo
+pub fn sendFdWait(fd: i32, buf: *u8, len: i64, wait: (bool) => bool): i64
+```
+
+Write all `len` bytes, waiting through `wait`. `len`, &lt;0 on error, or IO_GAVE_UP.
 
 ### `sysAccept`
 

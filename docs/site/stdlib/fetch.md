@@ -5,7 +5,7 @@ The HTTP client and the TLS client socket. `fetch` resolves the host, speaks TLS
 program never links OpenSSL: importing `std/fetch` is what pulls it in.
 
 ```milo
-from "std/fetch" import { fetch, fetchWith, FetchOptions, FetchResponse }
+from "std/fetch" import { fetch, fetchWith, fetchWithTimeout, FetchOptions, FetchTimeouts, FetchResponse }
 ```
 
 ## Example
@@ -23,6 +23,22 @@ match resp.header("Content-Type") {
 let opts = FetchOptions { method: "POST", headers: "Content-Type: text/plain", body: "hi" }
 let posted = fetchWith("https://example.com/echo", opts)!
 print(posted.status)
+```
+
+## Timeouts
+
+`fetch` and `fetchWith` wait as long as the server takes, so one upstream that accepts
+the connection and then goes quiet hangs the caller. `fetchWithTimeout` bounds the
+connect (with its TLS handshake) and the whole request, redirects included, and answers
+`NetError.Timeout(stage)` instead. `0` leaves either limit off. It works the same on a
+green task and on a plain `main`.
+
+```milo
+let limits = FetchTimeouts { connectMs: 5000, totalMs: 20000 }
+match fetchWithTimeout("https://example.com/feed.json", FetchOptions { method: "GET", headers: "", body: "" }, limits) {
+    Ok(resp) => print(resp.status),
+    Err(e) => print(e.message()),   // "timeout: response" when the server stalled
+}
 ```
 
 <!-- generated:api -->
@@ -91,6 +107,22 @@ fn FetchResponse.text(self: &FetchResponse): string
 
 Return the response body as a string.
 
+### `FetchTimeouts`
+
+```milo
+pub struct FetchTimeouts
+```
+
+Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
+connect together with its TLS handshake; `totalMs` bounds the whole call from the
+first connect to the last body byte, redirects included. DNS is not covered: a lookup
+is bounded only by the system resolver's own timeout.
+
+Separate from FetchOptions, not fields on it: struct literals are exhaustive, so a new
+field would break every FetchOptions literal in every program that builds one.
+
+Fields: `connectMs: i64`, `totalMs: i64`.
+
 ### `FormField`
 
 ```milo
@@ -118,6 +150,16 @@ fn TlsStream.connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, N
 Open a TLS connection to an IPv4 address. `hostname` is used for SNI and
 certificate verification.
 
+#### `TlsStream.connectBy`
+
+```milo
+fn TlsStream.connectBy(ip: u32, port: u16, hostname: &string, connectBy: i64, overallBy: i64): Result<TlsStream, NetError>
+```
+
+connect() that gives up at `connectBy` (the TCP connect and the handshake) and at
+`overallBy`, both epoch ms with 0 for none. The stream it returns is nonblocking:
+use sendBy and recvBy on it.
+
 #### `TlsStream.connectWithCA`
 
 ```milo
@@ -138,6 +180,15 @@ fn TlsStream.fromFd(fd: i32, hostname: &string, caFile: &string): Result<TlsStre
 `fromTcp` over a bare descriptor. OWNERSHIP: fd is taken over by the returned
 TlsStream, and closed on every error path here. `@unsafe` because the caller must
 vouch it owns `fd` outright and neither closes nor uses it again.
+
+#### `TlsStream.fromFdBy`
+
+```milo
+fn TlsStream.fromFdBy(fd: i32, hostname: &string, caFile: &string, by: i64): Result<TlsStream, NetError>
+```
+
+fromFd with the handshake bounded by `by` (epoch ms; 0 for none); -1 is fromFd's
+own unbounded, green-parking handshake.
 
 #### `TlsStream.fromTcp`
 
@@ -176,6 +227,15 @@ fn TlsStream.recv(self: &TlsStream): Result<string, NetError>
 Read everything until the peer closes, as one string (blocks to EOF).
 Prefer `incoming()` for streaming/incremental consumption.
 
+#### `TlsStream.recvBy`
+
+```milo
+fn TlsStream.recvBy(self: &TlsStream, by: i64): Result<string, NetError>
+```
+
+recv() that gives up at `by` (epoch ms; 0 for none): Err(Timeout) rather than the
+part of the body that arrived in time.
+
 #### `TlsStream.recvOnce`
 
 ```milo
@@ -193,6 +253,14 @@ fn TlsStream.send(self: &TlsStream, data: &string): Result<i64, NetError>
 ```
 
 Send `data` over the TLS connection. Returns the number of bytes sent.
+
+#### `TlsStream.sendBy`
+
+```milo
+fn TlsStream.sendBy(self: &TlsStream, data: &string, by: i64): Result<i64, NetError>
+```
+
+send() that gives up at `by` (epoch ms; 0 for none).
 
 ### Functions
 
@@ -266,6 +334,16 @@ pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetErr
 
 An HTTP request with full control over method, headers and body. Redirects are
 followed as for `fetch`; a 301 or 302 turns the retry into a GET with no body.
+
+#### `fetchWithTimeout`
+
+```milo
+pub fn fetchWithTimeout(url: &string, opts: FetchOptions, t: FetchTimeouts): Result<FetchResponse, NetError>
+```
+
+fetchWith that gives up: Err(NetError.Timeout(stage)) once `t.connectMs` passes on
+a connect, or `t.totalMs` on the whole request, instead of waiting on a server that
+stopped answering. Nothing is returned from a response cut off by the deadline.
 
 #### `findHeader`
 
