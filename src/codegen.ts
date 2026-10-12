@@ -2830,10 +2830,24 @@ export class Codegen {
     });
     const bodies = new Map<string, Ins[]>();
     const callers = new Map<string, Set<string>>();
+    // Every panic site calls through @_milo_panic_hook, so treating that call as unknown
+    // code would withhold noalias from every fn with a bounds or overflow check. The hook
+    // only ever holds what _panicHookSet stored, so the call is modelled as calls to those
+    // fns; a store of anything but a named fn falls back to "may call anything".
+    const hookTargets = new Set<string>();
+    let hookOpaque = false;
+    for (const l of lines) {
+      const hs = l.match(/^\s*store ptr ([@%])([\w$.\-]+), ptr @_milo_panic_hook$/);
+      if (!hs) continue;
+      if (hs[1] === "@" && fns.has(hs[2])) hookTargets.add(hs[2]);
+      else hookOpaque = true;
+    }
     for (const [name, f] of fns) {
       const ins: Ins[] = [];
+      const hookVals = new Set<string>();
       for (let i = f.start + 1; i < f.end; i++) {
         const l = lines[i];
+        if (/^\s*%[\w.$\-]+ = load ptr, ptr @_milo_panic_hook$/.test(l)) hookVals.add(l.trim().split(" ")[0].slice(1));
         if (l.includes("@")) for (const r of l.matchAll(refRe)) if (this.mutableGlobals.has(r[1])) f.touches.add(r[1]);
         const def = l.match(/^\s*(%[\w.$\-]+) = (\w+)(.*)$/);
         const call = l.includes("call") ? l.match(/\bcall\b[^@%]*?([@%])([\w$.\-]+)\(/) : null;
@@ -2843,6 +2857,11 @@ export class Codegen {
           if (call[1] === "@" && fns.has(call[2])) {
             f.callees.add(call[2]);
             (callers.get(call[2]) ?? callers.set(call[2], new Set()).get(call[2])!).add(name);
+          } else if (call[1] === "%" && hookVals.has(call[2]) && !hookOpaque) {
+            for (const t of hookTargets) {
+              f.callees.add(t);
+              (callers.get(t) ?? callers.set(t, new Set()).get(t)!).add(name);
+            }
           } else if (call[1] === "%") f.mayCallAny = true;
           else if (this.hirFns.get(call[2])?.isExtern === false) f.unknown = true;
           else if (this.externCallsBack(call[2])) f.mayCallC = true;
