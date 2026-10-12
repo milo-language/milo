@@ -1,0 +1,40 @@
+// @skip-os: win32
+// dbBindFloat binds a REAL: it reads back as the same f64, compares by value against an
+// INTEGER column, and an out-of-range index is an Err rather than a silent no-op.
+// @expect: typeof real, back 2.5
+// @expect: rows >= 1.5: 2
+// @expect: rows >= -1e300: 3
+// @expect: bad index: bind_double failed
+from "std/sqlite" import {
+    dbOpen, dbExec, dbQuery, dbStep, dbColumnInt, dbColumnText, dbColumnFloat, dbBindFloat
+}
+
+pub fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "create table t(n integer)")!
+    dbExec(db, "insert into t values (1), (2), (3)")!
+    let q = dbQuery(db, "select typeof(?1), ?1")!
+    dbBindFloat(q, 1, 2.5)!
+    if dbStep(q) {
+        print($"typeof {dbColumnText(q, 0)}, back {dbColumnFloat(q, 1)}")
+    }
+    let labels = ["1.5", "-1e300"]
+    let xs = [1.5, -1.0e300]
+    for i in 0..2 {
+        let c = dbQuery(db, "select count(*) from t where n >= ?")!
+        dbBindFloat(c, 1, xs[i])!
+        if dbStep(c) {
+            print($"rows >= {labels[i]}: {dbColumnInt(c, 0)}")
+        }
+    }
+    let bad = dbQuery(db, "select ?")!
+    match dbBindFloat(bad, 7, 1.0) {
+        Result.Ok(_v) => {
+            print("bad index: bound")
+        }
+        Result.Err(e) => {
+            print($"bad index: {e}")
+        }
+    }
+    return 0
+}

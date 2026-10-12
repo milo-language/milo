@@ -463,7 +463,7 @@ instead of reimplementing it. std/http itself stays OpenSSL-free; that separatio
 why TLS lives in another module.
 
 Header rules: Content-Type and Server are defaults a handler header of the same
-name (case-insensitive) replaces. Content-Length, Connection and Transfer-Encoding
+name (case-insensitive) replaces; an empty `contentType` writes no Content-Type. Content-Length, Connection and Transfer-Encoding
 describe the framing this function writes, so a handler's copy would contradict
 the bytes on the wire and is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
 6.4.1): those go out with no body, no Content-Length and no Content-Type.

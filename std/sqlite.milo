@@ -257,6 +257,18 @@ pub fn dbBindInt64(stmt: &Statement, idx: i32, val: i64): Result<i32> {
     return Result.Ok(0)
 }
 
+// Bind an f64 to parameter `idx` (1-based). A whole-number value still binds as REAL;
+// SQLite compares REAL and INTEGER by value, so a range check against an INTEGER
+// column means the same either way.
+pub fn dbBindFloat(stmt: &Statement, idx: i32, val: f64): Result<i32> {
+    var rc: i32 = 0
+    unsafe { rc = sqlite3_bind_double(stmt._handle, idx, val) }
+    if rc != 0 {
+        return Result.Err("bind_double failed")
+    }
+    return Result.Ok(0)
+}
+
 // Bind a string to parameter `idx` (1-based). Every byte is bound, embedded NULs too.
 pub fn dbBindText(stmt: &Statement, idx: i32, val: string): Result<i32> {
     if val.len > 2147483647 {

@@ -568,7 +568,7 @@ fn headerSafe(s: &string): string {
 // why TLS lives in another module.
 //
 // Header rules: Content-Type and Server are defaults a handler header of the same
-// name (case-insensitive) replaces. Content-Length, Connection and Transfer-Encoding
+// name (case-insensitive) replaces; an empty `contentType` writes no Content-Type. Content-Length, Connection and Transfer-Encoding
 // describe the framing this function writes, so a handler's copy would contradict
 // the bytes on the wire and is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
 // 6.4.1): those go out with no body, no Content-Length and no Content-Type.
@@ -576,7 +576,9 @@ pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders:
     let bodyless = (status >= 100 && status < 200) || status == 204 || status == 304
     var resp: string = "HTTP/1.1 " + statusText(status)
     if !bodyless {
-        if !hasHeader(extraHeaders, "Content-Type") {
+        // An empty content type means the body has none (an empty redirect body, say),
+        // not a "Content-Type: " line with no value.
+        if contentType.len > 0 && !hasHeader(extraHeaders, "Content-Type") {
             resp = resp + "\r\nContent-Type: " + headerSafe(contentType)
         }
         resp = resp + "\r\nContent-Length: " + body.len.toString()

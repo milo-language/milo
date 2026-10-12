@@ -1,0 +1,32 @@
+// An empty content type renders no Content-Type header at all (Express answers a
+// redirect whose Accept matched neither text nor html that way), while a non-empty
+// one, or a handler's own Content-Type header, still goes out once.
+// @expect: empty: no content-type, length 0
+// @expect: set: Content-Type: text/plain
+// @expect: handler: Content-Type: x/y
+from "std/http" import { renderRaw, Param }
+
+fn contentTypeLine(wire: &string): string {
+    for line in wire.split("\r\n") {
+        if line.toLower().startsWith("content-type") {
+            return line.clone()
+        }
+    }
+    return "no content-type"
+}
+
+pub fn main(): i32 {
+    let none: Vec<Param> = []
+    let a = renderRaw(302, "", "", none)
+    var len = "?"
+    for line in a.split("\r\n") {
+        if line.startsWith("Content-Length: ") {
+            len = line.substr(16, line.len)
+        }
+    }
+    print($"empty: {contentTypeLine(a)}, length {len}")
+    print($"set: {contentTypeLine(renderRaw(200, "text/plain", "x", none))}")
+    let own: Vec<Param> = [Param { name: "Content-Type", value: "x/y" }]
+    print($"handler: {contentTypeLine(renderRaw(200, "", "x", own))}")
+    return 0
+}

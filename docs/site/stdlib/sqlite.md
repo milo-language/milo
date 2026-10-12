@@ -83,6 +83,16 @@ not wrap. Borrowed: the Statement still owns and finalizes it.
 
 ### Functions
 
+#### `dbBindFloat`
+
+```milo
+pub fn dbBindFloat(stmt: &Statement, idx: i32, val: f64): Result<i32>
+```
+
+Bind an f64 to parameter `idx` (1-based). A whole-number value still binds as REAL;
+SQLite compares REAL and INTEGER by value, so a range check against an INTEGER
+column means the same either way.
+
 #### `dbBindInt`
 
 ```milo
