@@ -1,0 +1,14 @@
+// A huge exponent saturates instead of overflowing or looping once per unit
+from "std/json" import { Json }
+
+fn main() {
+    let Result.Ok(a) = Json.parse("[-921e99923372036854775809, 1e999999999, 2e-99999999999999999999, 1.5e2]") else { print("err"); return }
+    print(a[0].f64() ?? 0.0)
+    print(a[1].f64() ?? 0.0)
+    print(a[2].f64() ?? 1.0)
+    print(a[3].f64() ?? 0.0)
+}
+// @expect: -inf
+// @expect: inf
+// @expect: 0
+// @expect: 150

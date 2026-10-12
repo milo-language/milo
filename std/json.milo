@@ -1549,8 +1549,16 @@ impl JsonParser {
             }
             var exp: i64 = 0
             while self.pos < self.s.len && self.s[self.pos] >= '0' && self.s[self.pos] <= '9' {
-                exp = exp * 10 + (self.s[self.pos] as i32 - 48) as i64
+                // Past 400 the factor is already inf (or the quotient 0), so stop
+                // counting: an exponent of 20 digits overflowed i64, and a large one
+                // made the loop below spin once per unit of exponent.
+                if exp < 400 {
+                    exp = exp * 10 + (self.s[self.pos] as i32 - 48) as i64
+                }
                 self.pos += 1
+            }
+            if exp > 400 {
+                exp = 400
             }
             var factor: f64 = 1.0
             var e: i64 = 0
