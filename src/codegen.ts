@@ -6872,6 +6872,19 @@ export class Codegen {
             ? (() => { const t = this.nextTemp(); lines.push(`  ${t} = extractvalue %String ${av}, 0`); return t; })()
             : this.emitCStringArg(lines, av, Codegen.RETAINING_LIBC.has(expr.func));
           argVals.push({ val: dataPtr, type: "ptr" });
+          // An owned temporary (`strlen(mk())`) is passed as its own bytes, and C only
+          // borrows them for the call, so it is dropped after the call like any argument
+          // temporary. A retaining callee keeps the pointer, so the string is leaked to it.
+          if (arg.expr.kind !== "StringLit" && this.isOwnedTempExpr(arg.expr)) {
+            if (Codegen.RETAINING_LIBC.has(expr.func)) this.ownEndVal(lines, av, "ARG");
+            else {
+              const slot = `%__cstrtmp.${this.scopeCounter++}.addr`;
+              this.entryAllocas.push(`  ${slot} = alloca %String`);
+              lines.push(`  store %String ${av}, ptr ${slot}`);
+              this.ownValToSlot(av, slot);
+              this.argTempDrops.push({ addr: slot, type: { tag: "string" } });
+            }
+          }
         } else if (wantsAddr) {
           const slot = this.nextTemp();
           lines.push(`  ${slot} = alloca %String`);

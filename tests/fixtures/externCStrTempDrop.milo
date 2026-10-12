@@ -1,0 +1,35 @@
+// An owned temporary string passed to an extern `*u8` parameter is dropped after the
+// call: C only borrows the bytes. It used to leak once per call (1000 leaks for this
+// loop under `leaks -atExit`); the ownership ledger reports the leak at compile time.
+extern fn strlen(s: *u8): i64
+
+extern fn atoi(s: *u8): i32
+
+fn mk(i: i64): string {
+    return "abc" + i.toString()
+}
+
+fn digits(i: i64): string {
+    return i.toString()
+}
+
+fn main() {
+    var t = 0
+    var i = 0
+    while i < 1000 {
+        unsafe {
+            t += strlen(mk(i))
+        }
+        i += 1
+    }
+    print(t)
+    // a concat temporary goes through the same path
+    let s = "12345"
+    unsafe {
+        print(strlen("x" + s))
+        print(atoi(digits(40) + "2"))
+    }
+}
+// @expect: 5890
+// @expect: 6
+// @expect: 402
