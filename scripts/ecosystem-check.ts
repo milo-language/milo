@@ -34,6 +34,8 @@ const PACKAGES: { repo: string; pkg: string; smoke: string }[] = [
     smoke: `from "toml" import { Toml }\nfn main(): i32 {\n    let t = Toml.parse("a = 1\\n")!\n    print((t.i64("a") ?? 0).toString())\n    return 0\n}\n` },
   { repo: "milo-yaml", pkg: "yaml",
     smoke: `from "yaml" import { yamlParse, yamlToJson }\nfn main(): i32 {\n    let d = yamlParse("a: 1\\n")!\n    print(yamlToJson(d))\n    return 0\n}\n` },
+  { repo: "milo-linkpreview", pkg: "linkpreview",
+    smoke: `from "linkpreview" import { parseHtml }\nfn main(): i32 {\n    print(parseHtml("https://x.org/", "<title>hi</title>").title ?? "")\n    return 0\n}\n` },
   { repo: "milo-markdown", pkg: "markdown",
     smoke: `from "markdown" import { mdToHtml }\nfn main(): i32 {\n    print(mdToHtml("# hi"))\n    return 0\n}\n` },
   { repo: "milo-postgres", pkg: "postgres",
@@ -70,7 +72,7 @@ for (const p of PACKAGES) {
   const dir = mkdtempSync(join(tmpdir(), `milo-eco-${p.pkg}-`));
   try {
     writeFileSync(join(dir, "milo.json"), `{ "name": "ecocheck", "version": "0.0.1" }\n`);
-    const add = run("bun", ["run", MAIN, "add", `github.com/milo-language/${p.repo}`], dir);
+    const add = run("bun", ["run", MAIN, "pkg", "add", `github.com/milo-language/${p.repo}`], dir);
     if (add.status !== 0) {
       failed++;
       console.log(`FAIL ${p.repo}: install\n${(add.stderr || add.stdout).trim().split("\n").slice(0, 4).join("\n")}`);

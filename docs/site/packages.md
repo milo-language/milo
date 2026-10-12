@@ -33,6 +33,7 @@ from "postgres" import { Conn }
 | **markdown** | `milo pkg add github.com/milo-language/milo-markdown` | CommonMark + GFM parser and HTML renderer, with a walkable AST |
 | **toml** | `milo pkg add github.com/milo-language/milo-toml` | TOML v1.0.0 parser and serializer |
 | **yaml** | `milo pkg add github.com/milo-language/milo-yaml` | YAML 1.2 subset parser |
+| **linkpreview** | `milo pkg add github.com/milo-language/milo-linkpreview` | Link previews from Open Graph, Twitter cards, oEmbed and JSON-LD, with a fetcher that refuses private addresses on every hop |
 | **json-rpc** | `milo pkg add github.com/milo-language/milo-json-rpc` | JSON-RPC 2.0 over Content-Length framing — the LSP/DAP base protocol |
 | **gl** | `milo pkg add github.com/milo-language/milo-gl` | OpenGL 3.3 core bindings and a safe layer |
 | **sdl** | `milo pkg add github.com/milo-language/milo-sdl` | SDL2 bindings — video, input, gamepad, audio |
@@ -51,6 +52,7 @@ self-consistent, not that it is correct.
 | postgres | a real PostgreSQL requiring SCRAM, with `psql` reading back what the client wrote |
 | redis | a real Redis requiring AUTH, with `redis-cli` cross-checking, and RESP2 vs RESP3 asserted as a differential |
 | yaml | `ruamel.yaml` |
+| linkpreview | real captured pages (GitHub, YouTube, arXiv, Hugging Face, Phoronix), every refused address range, and live 127.0.0.1 servers for redirects, byte caps and timeouts |
 
 ## Why these live outside the standard library
 
