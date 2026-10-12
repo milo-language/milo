@@ -1,0 +1,26 @@
+// Cursor-relative path reads, array item walks, and `{...a, k: v}` object building
+from "std/json" import { Json, jsonObj }
+
+fn main() {
+    let text = "{\"data\":[{\"cc\":{\"location\":{\"route\":\"I-80\",\"lat\":39.3},\"open\":true}},{\"cc\":{\"location\":{\"route\":\"US-50\"}}}],\"meta\":{\"a\":1,\"b\":\"x\"}}"
+    let Result.Ok(doc) = Json.parse(text) else { return }
+    for it in doc.curItems(doc.curPath("data")) {
+        let route = doc.strAt(it, "cc.location.route") ?? "?"
+        let lat = doc.f64At(it, "cc.location.lat") ?? 0.0
+        let open = doc.boolAt(it, "cc.open") ?? false
+        print($"{route} {lat} {open}")
+    }
+    print(doc.strAt(doc.curRoot(), "data[1].cc.location.route") ?? "none")
+    print(doc.strAt(doc.curRoot(), "data[99999999999999999999999].cc") ?? "none")
+    print(doc.curItems(doc.curPath("meta")).len)
+    let out = Json.obj().spread(doc, doc.curPath("meta")).str("b", "y").int("c", 3).build()
+    print(out)
+    print(Json.obj().spread(doc, -1).int("z", 1).build())
+}
+// @expect: I-80 39.3 true
+// @expect: US-50 0 false
+// @expect: US-50
+// @expect: none
+// @expect: 0
+// @expect: {"a":1,"b":"y","c":3}
+// @expect: {"z":1}

@@ -791,7 +791,13 @@ impl Json {
     // accessor already reads as "nothing here", so the walk is total for any input.
     // A key containing '.' or '[' is not addressable this way; use get()/at().
     fn curPath(self: &Self, p: &string): i64 {
-        var cur: i64 = self.curRoot()
+        return self.curAt(self.curRoot(), p)
+    }
+
+    // curPath relative to a cursor: `doc.curAt(item, "cc.location")`. A path that
+    // starts with an index ("[0].name") reads the cursor as an array.
+    fn curAt(self: &Self, start: i64, p: &string): i64 {
+        var cur: i64 = start
         var seg: string = ""
         var inIndex: bool = false
         var idx: i64 = 0
@@ -802,7 +808,10 @@ impl Json {
                     inIndex = false
                     idx = 0
                 } else if b >= '0' && b <= '9' {
-                    idx = idx * 10 + ((b as i64) - 48)
+                    // saturate: a 30-digit index is out of range, not an overflow trap
+                    if idx < 100000000000 {
+                        idx = idx * 10 + ((b as i64) - 48)
+                    }
                 } else {
                     return -1
                 }
@@ -841,6 +850,37 @@ impl Json {
             return Option.None
         }
         return Option.Some(jsonExtractSubtree(self, jsonCurIdx(cur)))
+    }
+
+    // Typed reads at a path under a cursor: `doc.strAt(cc, "location.route")` for
+    // `doc.curStr(doc.curField(doc.curField(cc, "location"), "route"))`.
+    fn strAt(self: &Self, cur: i64, p: &string): Option<string> {
+        return self.curStr(self.curAt(cur, p))
+    }
+
+    fn i64At(self: &Self, cur: i64, p: &string): Option<i64> {
+        return self.curInt(self.curAt(cur, p))
+    }
+
+    fn f64At(self: &Self, cur: i64, p: &string): Option<f64> {
+        return self.curFloat(self.curAt(cur, p))
+    }
+
+    fn boolAt(self: &Self, cur: i64, p: &string): Option<bool> {
+        return self.curBool(self.curAt(cur, p))
+    }
+
+    // Element cursors of the array at `cur`, so a walk reads `for it in doc.curItems(a)`.
+    // Empty for anything that is not an array.
+    fn curItems(self: &Self, cur: i64): Vec<i64> {
+        var out: Vec<i64> = Vec.new()
+        if self.curKind(cur) != 4 {
+            return out
+        }
+        for i in 0..self.curLen(cur) {
+            out.push(self.curChild(cur, i))
+        }
+        return out
     }
 
     fn strPath(self: &Self, p: &string): Option<string> {
@@ -1825,12 +1865,17 @@ pub fn jsonSer(v: &JsonVal): string {
 // Fluent object builder. Methods consume and return self to enable chaining:
 //   jsonObj().str("type", "capabilities").int("seq", 3).build()
 pub struct JsonObj {
-    members: Vec<JsonMember>
+    members: Vec<JsonMember>,
+    // Set once `spread` ran: from then on a key already present is overwritten in
+    // place, which is what `{...a, k: v}` does in JS. Off by default so plain
+    // building stays a push, not a scan per key.
+    merging: bool,
 }
 
 fn jsonObj(): JsonObj {
     return JsonObj {
-        members: Vec.new()
+        members: Vec.new(),
+        merging: false,
     }
 }
 
@@ -1838,68 +1883,77 @@ fn jsonObj(): JsonObj {
 // payload is usually a field the caller keeps, so an owned parameter forced a
 // `.clone()` at almost every call site. The member stores its own copy.
 impl JsonObj {
+    fn put(self: &mut Self, key: string, val: JsonVal) {
+        if self.merging {
+            for i in 0..self.members.len {
+                if self.members[i].key == key {
+                    self.members[i].val = val
+                    return
+                }
+            }
+        }
+        self.members.push(JsonMember { key: key, val: val })
+    }
+
+    // `{...src, k: v}`: copy every member of the object at `cur` (values verbatim),
+    // after which a key added again replaces its value and keeps its position.
+    // A non-object cursor contributes nothing, as spreading null does in JS.
+    fn spread(self: Self, doc: &Json, cur: i64): Self {
+        var m = self
+        m.merging = true
+        if doc.curKind(cur) != 5 {
+            return m
+        }
+        for i in 0..doc.curLen(cur) {
+            m.put(doc.curKeyAt(cur, i), JsonVal.JRaw(doc.curRaw(doc.curValueAt(cur, i))))
+        }
+        return m
+    }
+
     fn str(self: Self, key: &string, val: &string): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JStr(val.clone())
-        })
+        m.put(key.clone(), JsonVal.JStr(val.clone()))
         return m
     }
     fn int(self: Self, key: &string, val: i64): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JInt(val)
-        })
+        m.put(key.clone(), JsonVal.JInt(val))
         return m
     }
     fn float(self: Self, key: &string, val: f64): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JFloat(val)
-        })
+        m.put(key.clone(), JsonVal.JFloat(val))
         return m
     }
     fn bool(self: Self, key: &string, val: bool): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JBool(val)
-        })
+        m.put(key.clone(), JsonVal.JBool(val))
         return m
     }
     fn nil(self: Self, key: &string): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JNull
-        })
+        m.put(key.clone(), JsonVal.JNull)
         return m
     }
     fn obj(self: Self, key: &string, val: JsonObj): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JObj(val.members)
-        })
+        m.put(key.clone(), JsonVal.JObj(val.members))
         return m
     }
     fn arr(self: Self, key: &string, val: JsonArr): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JArr(val.items)
-        })
+        m.put(key.clone(), JsonVal.JArr(val.items))
         return m
     }
     fn val(self: Self, key: &string, val: JsonVal): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: val
-        })
+        m.put(key.clone(), val)
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
     fn raw(self: Self, key: &string, json: &string): Self {
         var m = self
-        m.members.push(JsonMember {
-            key: key.clone(), val: JsonVal.JRaw(json.clone())
-        })
+        m.put(key.clone(), JsonVal.JRaw(json.clone()))
         return m
     }
     // Optional-field helpers: add the key only when the Option is Some, so a
@@ -1909,9 +1963,7 @@ impl JsonObj {
         var m = self
         match val {
             Option.Some(v) => {
-                m.members.push(JsonMember {
-                    key: key.clone(), val: JsonVal.JStr(v)
-                })
+                m.put(key.clone(), JsonVal.JStr(v))
             }
             Option.None => {
             }
@@ -1922,9 +1974,7 @@ impl JsonObj {
         var m = self
         match val {
             Option.Some(v) => {
-                m.members.push(JsonMember {
-                    key: key.clone(), val: JsonVal.JInt(v)
-                })
+                m.put(key.clone(), JsonVal.JInt(v))
             }
             Option.None => {
             }
@@ -1935,9 +1985,7 @@ impl JsonObj {
         var m = self
         match val {
             Option.Some(v) => {
-                m.members.push(JsonMember {
-                    key: key.clone(), val: JsonVal.JFloat(v)
-                })
+                m.put(key.clone(), JsonVal.JFloat(v))
             }
             Option.None => {
             }
@@ -1948,9 +1996,7 @@ impl JsonObj {
         var m = self
         match val {
             Option.Some(v) => {
-                m.members.push(JsonMember {
-                    key: key.clone(), val: JsonVal.JBool(v)
-                })
+                m.put(key.clone(), JsonVal.JBool(v))
             }
             Option.None => {
             }
