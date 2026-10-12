@@ -29,7 +29,12 @@ pub struct InfState {
     bitcnt: i64, // valid bits in bitbuf
     err: bool, // set when the reader runs off the end of input
     out: string, // decompressed bytes
+    limit: i64, // most output bytes allowed; past it the stream fails with -30
 }
+
+// The error the *Max entry points return when the output would pass their limit, so a
+// caller can tell a zip bomb (HTTP 413) from a corrupt stream (400).
+pub let INFLATE_TOO_BIG: string = "inflate: output over the limit"
 
 // A canonical Huffman table: count[len] = #codes of that bit length,
 // symbol[] = symbols sorted by (length, value).
@@ -185,6 +190,9 @@ requires distcode.count.len >= 16
             return symbol
         }
         if symbol < 256 {
+            if st.out.len >= st.limit {
+                return -30
+            }
             st.out.push(symbol as u8)
         } else if symbol == 256 {
             return 0
@@ -207,6 +215,11 @@ requires distcode.count.len >= 16
             }
             if dist > st.out.len {
                 return -11
+            }
+            // checked before the copy: one 258-byte match per 2 input bits is how a few
+            // KiB of input claims gigabytes
+            if len > st.limit - st.out.len {
+                return -30
             }
             for _k in 0..len {
                 let b = st.out[st.out.len - dist]
@@ -237,6 +250,9 @@ ensures result <= 0
     }
     if st.inpos + len > src.len {
         return -2
+    }
+    if len > st.limit - st.out.len {
+        return -30
     }
     for _i in 0..len {
         st.out.push(src[st.inpos])
@@ -362,10 +378,11 @@ fn dynamic(st: &mut InfState, src: &string): i64 {
     return codes(&mut st, src, litcode, distcode)
 }
 
-// Inflate a raw DEFLATE stream (no gzip/zlib wrapper).
-fn inflate(src: &string): Result<string, string> {
+// Inflate a raw DEFLATE stream (no gzip/zlib wrapper), failing with INFLATE_TOO_BIG
+// once the output would pass `limit` bytes.
+fn inflate(src: &string, limit: i64): Result<string, string> {
     var st = InfState {
-        inpos: 0, bitbuf: 0, bitcnt: 0, err: false, out: ""
+        inpos: 0, bitbuf: 0, bitcnt: 0, err: false, out: "", limit: limit
     }
     var last: i64 = 0
     while last == 0 {
@@ -384,6 +401,9 @@ fn inflate(src: &string): Result<string, string> {
         } else {
             return Result.Err("inflate: invalid block type 3")
         }
+        if e == -30 {
+            return Result.Err(INFLATE_TOO_BIG.clone())
+        }
         if e != 0 {
             return Result.Err("inflate: corrupt stream")
         }
@@ -398,7 +418,7 @@ fn le32(src: &string, p: i64): i64 {
 
 // Inflate a gzip stream (RFC 1952): 10-byte header, optional extra/name/comment/
 // hcrc fields, DEFLATE body, then CRC-32 + ISIZE trailer. Both are verified.
-fn gzipDecompress(src: &string): Result<string, string> {
+fn gzipDecompress(src: &string, limit: i64): Result<string, string> {
     if src.len < 18 {
         return Result.Err("gzip: too short")
     }
@@ -443,7 +463,7 @@ fn gzipDecompress(src: &string): Result<string, string> {
     for i in pos..(src.len - 8) {
         body.push(src[i])
     }
-    let out = inflate(body)?
+    let out = inflate(body, limit)?
     let wantCrc = le32(src, src.len - 8)
     let wantSize = le32(src, src.len - 4)
     if Checksum.crc32(out) != wantCrc {
@@ -456,7 +476,7 @@ fn gzipDecompress(src: &string): Result<string, string> {
 }
 
 // Inflate a zlib stream (RFC 1950): 2-byte header, DEFLATE body, Adler-32 trailer.
-fn zlibDecompress(src: &string): Result<string, string> {
+fn zlibDecompress(src: &string, limit: i64): Result<string, string> {
     if src.len < 6 {
         return Result.Err("zlib: too short")
     }
@@ -478,7 +498,7 @@ fn zlibDecompress(src: &string): Result<string, string> {
     for i in pos..(src.len - 4) {
         body.push(src[i])
     }
-    let out = inflate(body)?
+    let out = inflate(body, limit)?
     let wantAdler = le32BE(src, src.len - 4)
     if Checksum.adler32(out) != wantAdler {
         return Result.Err("zlib: Adler-32 mismatch")
@@ -491,6 +511,8 @@ fn le32BE(src: &string, p: i64): i64 {
     return ((src[p] as i64) << 24) | ((src[p + 1] as i64) << 16) | ((src[p + 2] as i64) << 8) | (src[p + 3] as i64)
 }
 
+let noLimit: i64 = 9223372036854775807
+
 // Inflate namespace — Inflate.raw (raw inflate), .gzip, .zlib decompressors.
 pub struct Inflate {
 }
@@ -499,16 +521,30 @@ impl Inflate {
     // Decompress a raw DEFLATE stream (no container header). Malformed input is an
     // `Err`, not a crash.
     fn raw(src: &string): Result<string, string> {
-        return inflate(src)
+        return inflate(src, noLimit)
     }
     // Unwrap a gzip stream and decompress its body. Errs on malformed input or a
     // checksum mismatch.
     fn gzip(src: &string): Result<string, string> {
-        return gzipDecompress(src)
+        return gzipDecompress(src, noLimit)
     }
     // Unwrap a zlib stream and decompress its body. Errs on malformed input or a
     // checksum mismatch.
     fn zlib(src: &string): Result<string, string> {
-        return zlibDecompress(src)
+        return zlibDecompress(src, noLimit)
+    }
+    // Inflate.raw that fails with INFLATE_TOO_BIG instead of producing more than `max`
+    // bytes: for input from someone else (a request body), where a few KiB can claim
+    // gigabytes.
+    fn rawMax(src: &string, max: i64): Result<string, string> {
+        return inflate(src, max)
+    }
+    // Inflate.gzip with an output cap, as rawMax.
+    fn gzipMax(src: &string, max: i64): Result<string, string> {
+        return gzipDecompress(src, max)
+    }
+    // Inflate.zlib with an output cap, as rawMax.
+    fn zlibMax(src: &string, max: i64): Result<string, string> {
+        return zlibDecompress(src, max)
     }
 }

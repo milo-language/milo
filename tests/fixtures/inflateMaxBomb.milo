@@ -1,0 +1,51 @@
+// Inflate.*Max cap the output: a gzip of 4 MiB of zeros is a few KiB, and the capped
+// entry points refuse it with INFLATE_TOO_BIG (std/http answers that 413) instead of
+// allocating what the stream claims. Under the cap it inflates as usual; a corrupt
+// stream is a different error, so a caller can tell a bomb from garbage.
+// @expect: compressed small: true
+// @expect: gzip over cap: too big
+// @expect: zlib over cap: too big
+// @expect: raw over cap: too big
+// @expect: stored over cap: too big
+// @expect: gzip at cap: 4194304
+// @expect: corrupt: other error
+from "std/inflate" import { Inflate, INFLATE_TOO_BIG }
+from "std/deflate" import { Deflate }
+
+fn verdict(r: Result<string, string>): string {
+    return match r {
+        Ok(s) => $"{s.len}"
+        Err(e) => if e == INFLATE_TOO_BIG { "too big" } else { "other error" }
+    }
+}
+
+// A gzip member holding one stored (uncompressed) block of `n` bytes: the block type
+// the Huffman path's cap does not cover.
+fn storedRaw(n: i64): string {
+    var s: string = ""
+    s.push(1)
+    s.push((n & 255) as u8)
+    s.push(((n >> 8) & 255) as u8)
+    s.push(((n & 255) ^ 255) as u8)
+    s.push((((n >> 8) & 255) ^ 255) as u8)
+    for _i in 0..n {
+        s.push('a')
+    }
+    return s
+}
+
+fn main(): i32 {
+    var zeros: string = ""
+    for _i in 0..4194304 {
+        zeros.push(0)
+    }
+    let gz = Deflate.gzip(zeros)
+    print($"compressed small: {gz.len < 65536}")
+    print($"gzip over cap: {verdict(Inflate.gzipMax(gz, 1048576))}")
+    print($"zlib over cap: {verdict(Inflate.zlibMax(Deflate.zlib(zeros), 1048576))}")
+    print($"raw over cap: {verdict(Inflate.rawMax(Deflate.raw(zeros), 1048576))}")
+    print($"stored over cap: {verdict(Inflate.rawMax(storedRaw(1000), 999))}")
+    print($"gzip at cap: {verdict(Inflate.gzipMax(gz, 4194304))}")
+    print($"corrupt: {verdict(Inflate.gzipMax("\u{1f}\u{8b}\u{8}\u{0}garbagegarbagegarbage", 100))}")
+    return 0
+}
