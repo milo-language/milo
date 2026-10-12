@@ -20,6 +20,7 @@ pub fn mkCtx(headers: Vec<Param>): Context {
             method: "GET",
             path: "/",
             queryParams: [],
+            rawQuery: "",
             headers: headers,
             body: "",
         }

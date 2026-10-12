@@ -23,6 +23,7 @@ fn ctxWith(queryParams: Vec<Param>, headers: Vec<Param>, params: Vec<Param>): Co
             method: "GET",
             path: "/",
             queryParams: queryParams,
+            rawQuery: "",
             headers: headers,
             body: "",
         }

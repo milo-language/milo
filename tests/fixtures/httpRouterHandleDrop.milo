@@ -35,7 +35,7 @@ fn bodyLen(r: &Response): i64 {
 }
 
 fn get(path: string): Request {
-    return Request { method: "GET", path: path, queryParams: [], headers: [], body: "" }
+    return Request { method: "GET", path: path, queryParams: [], rawQuery: "", headers: [], body: "" }
 }
 
 fn main(): i32 {

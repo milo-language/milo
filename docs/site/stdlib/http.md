@@ -267,7 +267,14 @@ pub struct Request
 
 A parsed HTTP request.
 
-Fields: `method: string`, `path: string`, `queryParams: Vec<Param>`, `headers: Vec<Param>`, `body: string`.
+Fields:
+
+- `method: string`
+- `path: string`
+- `queryParams: Vec<Param>`
+- `rawQuery: string`: The query string exactly as sent (no '?', not percent-decoded), "" when the URL had none: what a proxy forwards or a log records, since decoded params cannot be turned back into the original bytes.
+- `headers: Vec<Param>`
+- `body: string`
 
 ### `Response`
 

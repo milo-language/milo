@@ -34,6 +34,7 @@ fn get(path: string): Request {
         method: "GET",
         path: path,
         queryParams: [],
+        rawQuery: "",
         headers: [],
         body: "",
     }

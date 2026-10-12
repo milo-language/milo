@@ -31,7 +31,7 @@ pub fn main() {
     router.use(outer)
     router.use(inner)
     let handled = router.handle(Request {
-        method: "GET", path: "/", queryParams: [], headers: [], body: "",
+        method: "GET", path: "/", queryParams: [], rawQuery: "", headers: [], body: "",
     })
     match handled.response {
         Response.Text(t) => {

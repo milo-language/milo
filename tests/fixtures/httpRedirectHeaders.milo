@@ -16,6 +16,7 @@ pub fn mkCtx(): Context {
             method: "GET",
             path: "/",
             queryParams: [],
+            rawQuery: "",
             headers: [],
             body: "",
         }

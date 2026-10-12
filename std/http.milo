@@ -30,6 +30,10 @@ pub struct Request {
     method: string,
     path: string,
     queryParams: Vec<Param>,
+    // The query string exactly as sent (no '?', not percent-decoded), "" when the
+    // URL had none: what a proxy forwards or a log records, since decoded params
+    // cannot be turned back into the original bytes.
+    rawQuery: string,
     headers: Vec<Param>,
     body: string,
 }
@@ -309,6 +313,7 @@ fn parseRequestText(raw: &string): Request {
         method: method,
         path: path,
         queryParams: queryParams,
+        rawQuery: queryStr,
         headers: headers,
         body: body,
     }
@@ -1085,16 +1090,12 @@ pub fn waitPeerClosed(fd: i32): void {
 // One connection in its own green task. Every read parks on EAGAIN (recvFd), so a
 // client trickling its request in stalls only this task; one that closes mid-request
 // ends it with the fd closed.
-// "GET /path?a=1&b=2" (query re-encoded loosely, for a log line only).
+// "GET /path?a=1&b=2", as the client sent it.
 fn requestLine(req: &Request): string {
     var out = req.method + " " + req.path
-    for i in 0..req.queryParams.len {
-        if i == 0 {
-            out.push('?')
-        } else {
-            out.push('&')
-        }
-        out.pushStr(req.queryParams[i].name + "=" + req.queryParams[i].value)
+    if req.rawQuery.len > 0 {
+        out.push('?')
+        out.pushStr(req.rawQuery)
     }
     return out
 }
