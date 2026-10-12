@@ -1,0 +1,16 @@
+// @error: use of moved variable 'w'
+// The match form of forInIfIterableUseAfterMove: every arm's place is moved into the
+// loop's temporary, the same as a `let` initializer, so `w` is gone after the loop.
+
+pub fn main(): i32 {
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b"]
+    let w: Vec<string> = ["cccccccccccccccccccccccccccccccccc"]
+    for x in match v.len {
+        0 => w,
+        _ => v,
+    } {
+        print(x)
+    }
+    print(w.len)
+    return 0
+}

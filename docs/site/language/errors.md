@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 492 distinct messages across 632 programs the compiler must reject.
+Every error message the test suite pins: 495 distinct messages across 635 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -235,6 +235,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move out of global`](#cannot-move-out-of-global)
 - [`cannot move out of global 'GE'`](#cannot-move-out-of-global-ge)
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
+- [`cannot move the borrowed value out of 'a'`](#cannot-move-the-borrowed-value-out-of-a)
 - [`cannot move the borrowed value out of 'h'`](#cannot-move-the-borrowed-value-out-of-h)
 - [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
 - [`cannot move the borrowed value out of 'p'`](#cannot-move-the-borrowed-value-out-of-p)
@@ -500,7 +501,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
 - [`use of moved variable 'st'`](#use-of-moved-variable-st)
+- [`use of moved variable 'v'`](#use-of-moved-variable-v)
 - [`use of moved variable 'value'`](#use-of-moved-variable-value)
+- [`use of moved variable 'w'`](#use-of-moved-variable-w)
 - [`use of moved variable 'x'`](#use-of-moved-variable-x)
 - [`value -1 is out of range`](#value-1-is-out-of-range)
 - [`value 100000 is out of range for i64(0..3)`](#value-100000-is-out-of-range-for-i64-0-3)
@@ -6253,6 +6256,30 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/moveBorrowOut.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveBorrowOut.milo)</sub>
+
+## `cannot move the borrowed value out of 'a'` {#cannot-move-the-borrowed-value-out-of-a}
+
+A fork over borrowed containers is a value the loop would own, so it moves each tail exactly as `let t = if c { a } else { b }` does, and a borrow cannot be moved out of. This used to compile into a copy of the caller's Vec that the loop then freed: a use-after-free in the caller. Iterate `a` and `b` by name instead.
+
+```milo skip
+fn pick(c: bool, a: &Vec<string>, b: &Vec<string>): i64 {
+    var n: i64 = 0
+    for x in if c { a } else { b } {
+        n = n + x.len
+    }
+    return n
+}
+
+fn main(): i32 {
+    let a: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    let b: Vec<string> = ["bb"]
+    print(pick(true, a, b))
+    print(a.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/forInIfRefIterable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInIfRefIterable.milo)</sub>
 
 ## `cannot move the borrowed value out of 'h'` {#cannot-move-the-borrowed-value-out-of-h}
 
@@ -12430,6 +12457,25 @@ fn main(): void {
 
 <sub>[tests/errors/sqliteStepAfterFinalize.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteStepAfterFinalize.milo)</sub>
 
+## `use of moved variable 'v'` {#use-of-moved-variable-v}
+
+A for-in iterable that is not a place is a value the loop owns, exactly as `let tmp = if c { v } else { w }` would: both branches' places are moved, so `v` cannot be read after the loop. This used to compile, copy `v` into the loop's temporary, drop that temporary, and then read and drop `v` again.
+
+```milo skip
+pub fn main(): i32 {
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b"]
+    let w: Vec<string> = ["cccccccccccccccccccccccccccccccccc"]
+    let c = v.len > 1
+    for x in if c { v } else { w } {
+        print(x)
+    }
+    print(v.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/forInIfIterableUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInIfIterableUseAfterMove.milo)</sub>
+
 ## `use of moved variable 'value'` {#use-of-moved-variable-value}
 
 ```milo skip
@@ -12445,6 +12491,27 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapUseAfterMove.milo)</sub>
+
+## `use of moved variable 'w'` {#use-of-moved-variable-w}
+
+The match form of forInIfIterableUseAfterMove: every arm's place is moved into the loop's temporary, the same as a `let` initializer, so `w` is gone after the loop.
+
+```milo skip
+pub fn main(): i32 {
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b"]
+    let w: Vec<string> = ["cccccccccccccccccccccccccccccccccc"]
+    for x in match v.len {
+        0 => w,
+        _ => v,
+    } {
+        print(x)
+    }
+    print(w.len)
+    return 0
+}
+```
+
+<sub>[tests/errors/forInMatchIterableUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMatchIterableUseAfterMove.milo)</sub>
 
 ## `use of moved variable 'x'` {#use-of-moved-variable-x}
 

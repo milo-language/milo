@@ -1,0 +1,145 @@
+// A for-in over an `if`/`match` whose branches are places is `let tmp = <fork>`
+// followed by a loop over `tmp`: the taken branch's value moves into the loop, a
+// Vec/array is consumed (elements by value), and the branch not taken is dropped at
+// scope end like any maybe-moved local. Every R prints once on drop. This used to
+// copy the branch into a temporary without moving it, a use-after-free in safe code
+// (and an `@iter` field of a fork segfaulted).
+// @expect: -- if vec
+// @expect: took 1
+// @expect: drop 2
+// @expect: kept 1
+// @expect: drop 1
+// @expect: drop 3
+// @expect: -- match vec
+// @expect: see 5
+// @expect: drop 5
+// @expect: drop 4
+// @expect: -- if array
+// @expect: see 6
+// @expect: drop 6
+// @expect: see 7
+// @expect: drop 7
+// @expect: drop 8
+// @expect: drop 80
+// @expect: -- if map
+// @expect: k 9
+// @expect: drop 9
+// @expect: drop 10
+// @expect: -- if iter field
+// @expect: see 11
+// @expect: drop 11
+// @expect: drop 12
+// @expect: -- if iterator
+// @expect: see 1
+// @expect: drop 1
+// @expect: see 2
+// @expect: drop 2
+// @expect: drop 13
+// @expect: drop 14
+// @expect: -- end
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+struct Rs {
+    @iter v: Vec<R>,
+}
+
+pub struct Gen {
+    n: i32,
+    limit: i32,
+    label: R,
+}
+
+impl Gen {
+    fn next(self: &mut Self): Option<R> {
+        if self.n >= self.limit {
+            return Option.None
+        }
+        self.n = self.n + 1
+        return Option.Some(R { id: self.n })
+    }
+}
+
+fn ifVec(c: bool) {
+    let v: Vec<R> = [R { id: 1 }, R { id: 2 }]
+    let w: Vec<R> = [R { id: 3 }]
+    var kept: Vec<R> = []
+    for r in if c { v } else { w } {
+        if r.id == 1 {
+            print("took ", r.id)
+            kept.push(r)
+        }
+    }
+    print("kept ", kept.len)
+}
+
+fn matchVec(n: i32) {
+    let v: Vec<R> = [R { id: 4 }]
+    let w: Vec<R> = [R { id: 5 }]
+    for r in match n {
+        0 => v,
+        _ => w,
+    }
+    {
+        print("see ", r.id)
+    }
+}
+
+fn ifArray(c: bool) {
+    let a: [R; 2] = [R { id: 6 }, R { id: 7 }]
+    let b: [R; 2] = [R { id: 8 }, R { id: 80 }]
+    for r in if c { a } else { b } {
+        print("see ", r.id)
+    }
+}
+
+fn ifMap(c: bool) {
+    var m1: HashMap<string, R> = HashMap.new()
+    m1.insert("k", R { id: 9 })
+    var m2: HashMap<string, R> = HashMap.new()
+    m2.insert("k", R { id: 10 })
+    for k, r in if c { m1 } else { m2 } {
+        print(k, " ", r.id)
+    }
+}
+
+fn ifIterField(c: bool) {
+    let a = Rs { v: [R { id: 11 }] }
+    let b = Rs { v: [R { id: 12 }] }
+    for r in if c { a } else { b } {
+        print("see ", r.id)
+    }
+}
+
+fn ifIterator(c: bool) {
+    let g1 = Gen { n: 0, limit: 2, label: R { id: 13 } }
+    let g2 = Gen { n: 0, limit: 2, label: R { id: 14 } }
+    for r in if c { g1 } else { g2 } {
+        print("see ", r.id)
+    }
+}
+
+fn main(): i32 {
+    print("-- if vec")
+    ifVec(true)
+    print("-- match vec")
+    matchVec(1)
+    print("-- if array")
+    ifArray(true)
+    print("-- if map")
+    ifMap(true)
+    print("-- if iter field")
+    ifIterField(true)
+    print("-- if iterator")
+    ifIterator(true)
+    print("-- end")
+    return 0
+}

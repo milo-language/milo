@@ -1,0 +1,233 @@
+// A `next()`-protocol loop binds each element by value, so the binding owns it and
+// every way out of an iteration drops it exactly once unless the body moved it. `R`
+// prints on drop, so the output is the drop schedule. The iterator's own heap state
+// (`label`, id 100) shows the rvalue iterator temporary dies exactly once, when its
+// function's scope ends, and a named iterator is only advanced, never dropped, by
+// the loop. These elements used to leak: the binding had no drop at all.
+// @expect: -- keep
+// @expect: see 1
+// @expect: drop 1
+// @expect: see 2
+// @expect: drop 2
+// @expect: drop 100
+// @expect: -- move
+// @expect: kept 3
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 3
+// @expect: drop 100
+// @expect: -- conditional move
+// @expect: drop 1
+// @expect: drop 3
+// @expect: kept 2
+// @expect: drop 2
+// @expect: drop 4
+// @expect: drop 100
+// @expect: -- break
+// @expect: see 1
+// @expect: drop 1
+// @expect: drop 2
+// @expect: after break
+// @expect: drop 100
+// @expect: -- continue
+// @expect: see 1
+// @expect: drop 1
+// @expect: drop 2
+// @expect: see 3
+// @expect: drop 3
+// @expect: drop 100
+// @expect: -- return moved
+// @expect: drop 1
+// @expect: drop 100
+// @expect: found 2
+// @expect: drop 2
+// @expect: -- return kept
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 3
+// @expect: drop 100
+// @expect: over 3
+// @expect: -- propagate
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 100
+// @expect: err bad 2
+// @expect: -- named
+// @expect: drop 1
+// @expect: drop 2
+// @expect: resume
+// @expect: rest 3
+// @expect: drop 3
+// @expect: drop 100
+// @expect: -- strings
+// @expect: 29893
+
+pub struct R {
+    id: i32,
+}
+
+impl Drop for R {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.id)
+    }
+}
+
+pub struct Gen {
+    n: i32,
+    limit: i32,
+    label: R,
+}
+
+impl Gen {
+    fn next(self: &mut Self): Option<R> {
+        if self.n >= self.limit {
+            return Option.None
+        }
+        self.n = self.n + 1
+        return Option.Some(R { id: self.n })
+    }
+}
+
+fn gen(limit: i32): Gen {
+    return Gen { n: 0, limit: limit, label: R { id: 100 } }
+}
+
+fn keep() {
+    for r in gen(2) {
+        print("see ", r.id)
+    }
+}
+
+fn moveAll() {
+    var kept: Vec<R> = []
+    for r in gen(3) {
+        kept.push(r)
+    }
+    print("kept ", kept.len)
+    kept.clear()
+}
+
+fn conditionalMove() {
+    var kept: Vec<R> = []
+    for r in gen(4) {
+        if r.id % 2 == 0 {
+            kept.push(r)
+        }
+    }
+    print("kept ", kept[0].id)
+    kept.clear()
+}
+
+fn breakOut() {
+    for r in gen(5) {
+        if r.id == 2 {
+            break
+        }
+        print("see ", r.id)
+    }
+    print("after break")
+}
+
+fn continueOn() {
+    for r in gen(3) {
+        if r.id == 2 {
+            continue
+        }
+        print("see ", r.id)
+    }
+}
+
+fn find(id: i32): Option<R> {
+    for r in gen(4) {
+        if r.id == id {
+            return Option.Some(r)
+        }
+    }
+    return Option.None
+}
+
+fn firstOver(n: i32): i32 {
+    for r in gen(5) {
+        if r.id > n {
+            return r.id
+        }
+    }
+    return 0
+}
+
+fn check(id: i32): Result<i32, string> {
+    if id == 2 {
+        return Result.Err("bad " + id.toString())
+    }
+    return Result.Ok(id)
+}
+
+fn sum(): Result<i32, string> {
+    var t: i32 = 0
+    for r in gen(3) {
+        t = t + check(r.id)?
+    }
+    return Result.Ok(t)
+}
+
+fn named() {
+    var g = gen(3)
+    for r in g {
+        if r.id == 2 {
+            break
+        }
+    }
+    print("resume")
+    for r in g {
+        print("rest ", r.id)
+    }
+}
+
+struct Words {
+    i: i64,
+}
+
+impl Words {
+    fn next(self: &mut Self): Option<string> {
+        if self.i >= 1000 {
+            return Option.None
+        }
+        self.i = self.i + 1
+        return Option.Some("word-number-padded-to-heap-" + self.i.toString())
+    }
+}
+
+fn main(): i32 {
+    print("-- keep")
+    keep()
+    print("-- move")
+    moveAll()
+    print("-- conditional move")
+    conditionalMove()
+    print("-- break")
+    breakOut()
+    print("-- continue")
+    continueOn()
+    print("-- return moved")
+    match find(2) {
+        Option.Some(r) => print("found ", r.id),
+        Option.None => print("missing"),
+    }
+    print("-- return kept")
+    let over = firstOver(2)
+    print("over ", over)
+    print("-- propagate")
+    match sum() {
+        Result.Ok(t) => print("ok ", t),
+        Result.Err(e) => print("err ", e),
+    }
+    print("-- named")
+    named()
+    print("-- strings")
+    var n: i64 = 0
+    for w in Words { i: 0 } {
+        n = n + w.len
+    }
+    print(n)
+    return 0
+}

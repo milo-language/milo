@@ -4381,11 +4381,29 @@ export class Codegen {
   // A Vec/array temporary the checker marked consuming takes genConsumedIterable instead.
   private genForEachIterableAddr(iterable: HIRExpr): Gen {
     const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
-    // A field of an rvalue (`for x in mk().items`) is no place either: genLValue answered
-    // "null" for it too, so the loop read len through a null base and silently ran zero
-    // times. It is materialized like any other rvalue.
-    const rvalueField = iterable.kind === "FieldAccess" && this.receiverIsRvalueTemp(iterable);
-    if (lvalueKinds.includes(iterable.kind) && !rvalueField) {
+    // A field of an rvalue (`for x in mk().items`, or an `@iter` field of
+    // `if c { a } else { b }`) is no place either: genLValue answered "null" for it, so
+    // the loop read len through a null base (silently zero iterations, or a SIGSEGV for
+    // a fork). The whole receiver is materialized into a scoped temp, which then IS a
+    // place, so the loop borrows the field in it and the temp drops once, whole.
+    let root = iterable;
+    while (root.kind === "FieldAccess") root = root.object;
+    if (root !== iterable && !lvalueKinds.includes(root.kind)) {
+      const lines: string[] = [];
+      const rootTy = this.llvmType(root.type);
+      const addr = this.nextTemp();
+      this.entryAllocas.push(`  ${addr} = alloca ${rootTy}`);
+      this.genStoreInto(lines, addr, rootTy, root);
+      const name = this.needsDropCg(root.type)
+        ? this.registerScopedTemp(lines, addr, root.type)
+        : `__forin_tmp.${this.scopeCounter++}`;
+      this.locals.set(name, { type: rootTy, typeKind: root.type, mutable: false, isRef: false, addr });
+      const rootIdent: HIRExpr = { kind: "Ident", name, type: root.type, isMove: false, span: root.span };
+      const rebase = (e: HIRExpr): HIRExpr => e === root ? rootIdent : e.kind === "FieldAccess" ? { ...e, object: rebase(e.object) } : e;
+      const [lvLines, lvPtr, lvTy] = this.genLValue(rebase(iterable));
+      return [[...lines, ...lvLines], lvPtr, lvTy];
+    }
+    if (lvalueKinds.includes(iterable.kind)) {
       // Indexing into a temporary container (`for x in mk()[0]`) materializes it into a
       // slot queued on argTempDrops, which no one flushed here: the whole container
       // leaked. It has to live as long as the loop, so it becomes a scoped droppable.
@@ -4395,19 +4413,18 @@ export class Codegen {
       return [lvLines, lvPtr, lvTy];
     }
     const lines: string[] = [];
-    const [valLines, val] = this.genExpr(iterable);
-    lines.push(...valLines);
     const iterTy = this.llvmType(iterable.type);
     const addr = this.nextTemp();
     this.entryAllocas.push(`  ${addr} = alloca ${iterTy}`);
-    lines.push(`  store ${iterTy} ${val}, ptr ${addr}`);
+    // genStoreInto, like every other temp slot: it keeps a big aggregate in memory.
+    this.genStoreInto(lines, addr, iterTy, iterable);
     if (this.needsDropCg(iterable.type)) this.registerScopedTemp(lines, addr, iterable.type);
     return [lines, addr, iterTy];
   }
 
   // Register before the caller sets loopDropStart so this temp is scoped to the block
   // enclosing the loop (dropped at its exit / early return), not to the loop body.
-  private registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind) {
+  private registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind): string {
     const name = `__forin_tmp.${this.scopeCounter++}`;
     this.locals.set(name, { type: this.llvmType(typeKind), typeKind, mutable: false, isRef: false, addr });
     const aliveFlag = `${addr}.alive`;
@@ -4415,6 +4432,7 @@ export class Codegen {
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
     lines.push(`  store i1 1, ptr ${aliveFlag}`);
     this.droppableLocals.push({ name, typeKind, aliveFlag, addr });
+    return name;
   }
 
   // A consuming for-in (`for x in makeVec()`, checker's consumingForIns) owns its
@@ -5130,6 +5148,9 @@ export class Codegen {
     this.loopHeader = condLabel;
     this.loopExit = endLabel;
     this.loopDropStart = this.droppableLocals.length;
+    // next() hands each element out by value, so the binding owns it exactly as a
+    // consuming Vec loop's binding does: loop-scoped, dropped unless the body moves it.
+    const bindAlive = this.registerConsumedBinding(stmt.varName, varAddr, stmt.varType);
 
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
@@ -5154,9 +5175,7 @@ export class Codegen {
     lines.push(`${bodyLabel}:`);
     // extract payload from Some variant
     const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr, "Some");
-    const val = this.nextTemp();
-    lines.push(`  ${val} = load ${elemTy}, ptr ${payloadPtr}`);
-    lines.push(`  store ${elemTy} ${val}, ptr ${varAddr}`);
+    this.emitConsumeElement(lines, payloadPtr, "", { addr: varAddr, ty: elemTy, alive: bindAlive }, null);
 
     this.emitLoopInvariants(lines, stmt.invariants);
     let bodyTerminated = false;

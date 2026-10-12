@@ -1,0 +1,16 @@
+// @error: use of moved variable 'v'
+// A for-in iterable that is not a place is a value the loop owns, exactly as
+// `let tmp = if c { v } else { w }` would: both branches' places are moved, so `v`
+// cannot be read after the loop. This used to compile, copy `v` into the loop's
+// temporary, drop that temporary, and then read and drop `v` again.
+
+pub fn main(): i32 {
+    let v: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b"]
+    let w: Vec<string> = ["cccccccccccccccccccccccccccccccccc"]
+    let c = v.len > 1
+    for x in if c { v } else { w } {
+        print(x)
+    }
+    print(v.len)
+    return 0
+}

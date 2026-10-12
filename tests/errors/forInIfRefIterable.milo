@@ -1,0 +1,21 @@
+// @error: cannot move the borrowed value out of 'a'
+// A fork over borrowed containers is a value the loop would own, so it moves each
+// tail exactly as `let t = if c { a } else { b }` does, and a borrow cannot be moved
+// out of. This used to compile into a copy of the caller's Vec that the loop then
+// freed: a use-after-free in the caller. Iterate `a` and `b` by name instead.
+
+fn pick(c: bool, a: &Vec<string>, b: &Vec<string>): i64 {
+    var n: i64 = 0
+    for x in if c { a } else { b } {
+        n = n + x.len
+    }
+    return n
+}
+
+fn main(): i32 {
+    let a: Vec<string> = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    let b: Vec<string> = ["bb"]
+    print(pick(true, a, b))
+    print(a.len)
+    return 0
+}

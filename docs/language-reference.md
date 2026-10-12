@@ -588,7 +588,11 @@ range, and after the loop it knows the invariant holds at the final index.
 #### Iterating your own types
 
 `for x in c` works over any value whose type has a `next(self: &mut Self): Option<T>`
-method: the loop calls `next` and binds each `Some(x)` until the first `None`.
+method: the loop calls `next` and binds each `Some(x)` until the first `None`. The binding
+owns its element, like a consuming loop's (below): whatever the body does not move is
+dropped at the end of its iteration, or at `continue`, `break`, `return` or `?`. A named
+iterator is only advanced, so a later loop resumes it; an iterator value (`for x in
+mk()`) is moved into the loop's temporary and dropped once, when the enclosing block ends.
 
 ```milo
 struct Countdown { n: i64 }
@@ -1844,14 +1848,17 @@ second-class reference that cannot be stored in a `Vec`.
 
 ### Consuming a temporary: `for x in makeVec()`
 
-A for-in over a **named** Vec or array (`for x in v`, `for x in self.items`, `for x in
-v[0]`) binds each element as a read-only `&T`: the container still owns it. A for-in over
-an **owned temporary** consumes the container instead and binds each element **by value**
-(`T`), so the body can move it on with no clone. An owned temporary is a call or method
-call result, an array literal, the result of `?`, `!` or `??` (which consume their operand
-wherever they appear, so `for x in opt!` consumes even a local `opt`), or an `if`/`match`
-whose every tail is one of those. A local, global, field, index, slice or range never is,
-even when moving it would be legal; to consume a named Vec, iterate `replace(&mut v, [])`.
+A for-in over a **named** Vec or array (a place: `for x in v`, `for x in self.items`,
+`for x in v[0]`) binds each element as a read-only `&T`: the container still owns it.
+Any other iterable is a value, and the loop owns it exactly as `let tmp = <iterable>`
+followed by a loop over `tmp` would: a Vec or array value is **consumed**, binding each
+element **by value** (`T`), so the body can move it on with no clone. That covers a call
+or method call result, an array literal, the result of `?`, `!` or `??` (which consume
+their operand wherever they appear, so `for x in opt!` consumes even a local `opt`), and
+an `if`/`match`. A fork's place tails are moved just as by a `let` initializer, so after
+`for x in if c { v } else { w }` neither `v` nor `w` can be used. A local, global, field,
+index, slice or range is never consumed; to consume a named Vec, iterate
+`replace(&mut v, [])`.
 
 ```milo
 fn fetchAll(): Result<Vec<Result<Vec<i64>, string>>, string> {
@@ -1871,7 +1878,8 @@ The binding is immutable, like a `let`, and is an ordinary owned local: moving i
 life for the rest of that iteration, and whatever the body did not move is dropped at the
 end of the iteration (or at `continue`). If the loop leaves early (`break`, `return`, `?`),
 the elements no iteration reached are dropped with the container. Only Vec and fixed
-arrays are consumed this way; a temporary string, map or iterator loops exactly as a
+arrays are consumed this way; a string, map or `@iter` value is still moved into the
+loop's temporary (dropped whole when the enclosing block ends) but loops exactly as a
 named one does, and so do the zero-copy `lines()`/`splitView()` passes (`split(",")`
 returns a Vec, so it is consumed). For a Copy element (`for x in nums()` over `Vec<i64>`) the difference is
 invisible.

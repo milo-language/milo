@@ -561,7 +561,7 @@ export interface CheckResult {
   // `for x in wrapper` where the struct has an `@iter` field: the field to walk instead.
   iterDelegates: Map<Stmt, string>;
   // Vec/array for-ins over an owned temporary: the loop consumes the container and
-  // binds each element by value. Decided here (isOwnedTempIterable) so lowering and
+  // binds each element by value. Decided here (isPlaceIterable) so lowering and
   // codegen never re-derive it.
   consumingForIns: Set<Stmt>;
   // The type each for-in binding was declared with ([varName, varName2?]), for hover.
@@ -7079,7 +7079,9 @@ export class TypeChecker {
           // Consuming loop: an owned temporary Vec/array is moved into the loop, which
           // hands each element out by value. Tested on the type BEFORE the ref-deref
           // below, so a slice or `&Vec` result never qualifies.
-          const consume = !stmt.mutRef && this.isOwnedTempIterable(stmt.iterable) &&
+          const ownsIterable = !stmt.mutRef && !this.isPlaceIterable(stmt.iterable);
+          if (ownsIterable) this.tryMove(stmt.iterable);
+          const consume = ownsIterable &&
             (iterType.tag === "vec" || (iterType.tag === "array" && iterType.size !== null));
           if (consume) this.consumingForIns.add(stmt);
           // iterating a slice (&[T]) or &Vec: deref — the loop borrows the view, not a copy
@@ -9209,25 +9211,16 @@ export class TypeChecker {
     this.forInBindingTypes.set(stmt, names.map(n => this.lookup(n)?.type ?? { tag: "unknown" }));
   }
 
-  // An iterable nobody else can observe: a value produced by a call or a literal, the
-  // result of `!`, `?` or `??` (each consumes its operands wherever it is evaluated, see
-  // checkUnwrapExpr, so an accepted one owns its result even over a local), or a fork
-  // whose every tail is itself such a value. A place (local, global, field, index) is
-  // not, even when moving it would be legal: named containers keep binding by reference,
-  // so a `for x in v` never empties `v`. Neither is a fork with a place tail: a for-in
-  // does not move its iterable, so `if c { v } else { w }` there moves neither.
-  private isOwnedTempIterable(e: Expr): boolean {
-    switch (e.kind) {
-      case "Call": case "MethodCall": case "ArrayLit": case "ArrayRepeat":
-      case "Unwrap": case "Propagate": case "DefaultValue":
-        return true;
-      case "IfExpr": case "MatchExpr": {
-        const tails = this.moveTargets(e);
-        return tails.length > 0 && tails.every(t => this.isOwnedTempIterable(t));
-      }
-      default:
-        return false;
-    }
+  // A for-in iterable is either a place (local, global, field, index, `*h`), which the
+  // loop borrows, so `for x in v` never empties `v`, or a value, which the loop owns
+  // exactly as `let __tmp = <iterable>` would: the checker moves it with the same
+  // tryMove a let initializer makes, so a fork's place tails (`if c { v } else { w }`)
+  // end up moved or maybe-moved just as they would there, and a Vec/array value is then
+  // consumed. A field of an rvalue (`mk().items`) stays on the place side: codegen owns
+  // its whole temporary (genForEachIterableAddr).
+  private isPlaceIterable(e: Expr): boolean {
+    return e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" ||
+      (e.kind === "UnaryOp" && e.op === "*");
   }
 
   private freezeIterable(iterable: Expr, loopSpan?: Span): VarInfo | null {
