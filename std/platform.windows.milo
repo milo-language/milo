@@ -172,6 +172,16 @@ pub fn statSizeOffset(): i64 {
     return 24
 }
 
+// st_mtime: whole seconds at statMtimeOffset, nanoseconds at statMtimeNsecOffset
+// (-1 where the struct carries none). _stat64's st_mtime is a bare __time64_t.
+pub fn statMtimeOffset(): i64 {
+    return 40
+}
+
+pub fn statMtimeNsecOffset(): i64 {
+    return -1
+}
+
 pub fn statBufSize(): i64 {
     return 56
 }

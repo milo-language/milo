@@ -1,0 +1,27 @@
+// FileInfo.mtimeNs is st_mtime with its nanoseconds, read at the platform's stat
+// offset; what std/http's ETag and Last-Modified are built from. A file just written
+// is modified within a few seconds of now, and touching it with an older time moves it.
+// @expect: size 5
+// @expect: recent true
+// @expect: set back true
+from "std/fs" import { fileInfo, writeFile, removeFile }
+from "std/time" import { epochSecs }
+from "std/process" import { capture }
+
+fn main(): i32 {
+    let path = "/tmp/milo-fs-mtime-fixture.txt"
+    writeFile(path, "hello")!
+    let fi = fileInfo(path)!
+    print($"size {fi.size}")
+    let secs = fi.mtimeNs / 1000000000
+    let now = epochSecs()
+    print($"recent {secs <= now && secs >= now - 60}")
+    // 2001-09-09T01:46:40Z, epoch second 1000000000
+    let _ = capture("touch -t 200109090146.40 " + path)
+    let older = fileInfo(path)!
+    let off = older.mtimeNs / 1000000000 - 1000000000
+    // touch -t reads local time, so allow any UTC offset
+    print($"set back {off >= -50400 && off <= 50400 && older.mtimeNs % 1000000000 == 0}")
+    let _ = removeFile(path)
+    return 0
+}

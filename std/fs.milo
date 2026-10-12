@@ -53,6 +53,8 @@ from "std/platform" import {
     statBufSize,
     statModeOffset,
     statSizeOffset,
+    statMtimeOffset,
+    statMtimeNsecOffset,
     access,
     devNullPath,
     oWriteCreateTrunc,
@@ -108,7 +110,7 @@ fn fsText(kind: string, arg: &string, live: () => Option<string>): Option<string
 fn statText(info: Option<FileInfo>): Option<string> {
     match info {
         Option.Some(fi) => {
-            return Option.Some(fi.size.toString() + " " + fi.mode.toString())
+            return Option.Some(fi.size.toString() + " " + fi.mode.toString() + " " + fi.mtimeNs.toString())
         }
         Option.None => {
             return Option.None
@@ -122,14 +124,21 @@ fn statFromText(t: Option<string>): Option<FileInfo> {
             let parts = v.split(" ")
             var size: i64 = 0
             var mode: i32 = 0
+            var mtimeNs: i64 = 0
             for i in 0..parts[0].len() {
                 size = size * 10 + ((parts[0][i] - '0') as i64)
             }
             for i in 0..parts[1].len() {
                 mode = mode * 10 + ((parts[1][i] - '0') as i32)
             }
+            // recordings made before mtimeNs existed carry two fields
+            if parts.len() > 2 {
+                for i in 0..parts[2].len() {
+                    mtimeNs = mtimeNs * 10 + ((parts[2][i] - '0') as i64)
+                }
+            }
             return Option.Some(FileInfo {
-                size: size, mode: mode
+                size: size, mode: mode, mtimeNs: mtimeNs
             })
         }
         Option.None => {
@@ -147,6 +156,9 @@ pub struct FileInfo {
     // different field and comes back 0. isDir/isFile/isSymlink deliberately avoid
     // it; so does copyFile.
     mode: i32,
+    // Last modification time, nanoseconds since the Unix epoch (whole seconds on
+    // Windows, whose _stat64 has no sub-second field).
+    mtimeNs: i64,
 }
 
 // Get file metadata, or None when the path cannot be inspected. Use read/open
@@ -168,21 +180,32 @@ fn fileInfoLive(path: &string): Option<FileInfo> {
     if r != 0 {
         return Option.None
     }
-    let modeOff = statModeOffset()
-    let sizeOff = statSizeOffset()
-    // read u16 mode (macOS) — works for permission bits
-    let modeLo = buf[modeOff] as i32
-    let modeHi = buf[modeOff + 1] as i32
-    let mode = modeLo | (modeHi << 8)
-    // read i64 size
-    var size: i64 = 0
+    return Option.Some(infoFromStat(buf))
+}
+
+// Little-endian i64 at `off` in a struct stat buffer.
+fn statI64(buf: &[u8; 144], off: i64): i64 {
+    var v: i64 = 0
     for i in 0..8 {
-        let off = i as i64
-        size = size | ((buf[sizeOff + off] as i64) << (off * 8))
+        let k = i as i64
+        v = v | ((buf[off + k] as i64) << (k * 8))
     }
-    return Option.Some(FileInfo {
-        size: size, mode: mode
-    })
+    return v
+}
+
+// The FileInfo a filled struct stat buffer describes; stat and lstat share it.
+fn infoFromStat(buf: &[u8; 144]): FileInfo {
+    let modeOff = statModeOffset()
+    // read u16 mode (macOS) — works for permission bits
+    let mode = (buf[modeOff] as i32) | ((buf[modeOff + 1] as i32) << 8)
+    var mtimeNs = statI64(buf, statMtimeOffset()) * 1000000000
+    let nsecOff = statMtimeNsecOffset()
+    if nsecOff >= 0 {
+        mtimeNs += statI64(buf, nsecOff)
+    }
+    return FileInfo {
+        size: statI64(buf, statSizeOffset()), mode: mode, mtimeNs: mtimeNs
+    }
 }
 
 // Check whether a path is visible to this process.
@@ -855,19 +878,7 @@ fn lstatInfoLive(path: &string): Option<FileInfo> {
     if r != 0 {
         return Option.None
     }
-    let modeOff = statModeOffset()
-    let sizeOff = statSizeOffset()
-    let modeLo = buf[modeOff] as i32
-    let modeHi = buf[modeOff + 1] as i32
-    let mode = modeLo | (modeHi << 8)
-    var size: i64 = 0
-    for i in 0..8 {
-        let off = i as i64
-        size = size | ((buf[sizeOff + off] as i64) << (off * 8))
-    }
-    return Option.Some(FileInfo {
-        size: size, mode: mode
-    })
+    return Option.Some(infoFromStat(buf))
 }
 
 // Check if a path is a symbolic link. Does not follow it — a dangling link is
