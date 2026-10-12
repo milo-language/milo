@@ -813,6 +813,8 @@ fn connectAnyBy(addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TcpStream, NetE
 // response reader below serve both schemes. Such a stream never leaves this module.
 fn openConn(useTls: bool, sni: &string, addrs: &Vec<IpAddr>, port: u16, by: i64): Result<TlsStream, NetError> {
     var tcp = connectAnyBy(addrs, port, by)?
+    // take() moves the fd out of the TcpStream, so the TlsStream built here is its only
+    // owner and its Drop the only close; the raw-fd constructors can't express that.
     unsafe {
         if useTls {
             return TlsStream.fromFdBy(tcp.take(), sni, "", by)
