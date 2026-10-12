@@ -1,0 +1,94 @@
+// `match w[i]` on a Vec of a non-Copy enum clones the element into the match subject
+// (an arm may overwrite `w[i]` while its payload borrows are live, and the checker allows
+// it), and that clone is freed when the match ends, on every exit: fall-through, an early
+// return, a match expression. It used to be freed never: 999 leaks for 1000 matches of a
+// `Vec<Option<string>>` under `leaks -atExit`, and the ownership ledger's leak-ret.
+//
+// The clone is structural, so it is freed structurally: the element's Drop runs once, for
+// the element, never for a clone (a clone of a resource shares its handle). No Drop count
+// can see the leak itself; the ledger (scripts/own-ledger.ts) does.
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.id.toString())
+    }
+}
+
+fn firstId(w: &mut Vec<Option<Res>>): i64 {
+    match w[0] {
+        Option.Some(r) => {
+            return r.id
+        }
+        Option.None => {}
+    }
+    return -1
+}
+
+fn main() {
+    var w: Vec<Option<Res>> = Vec.new()
+    w.push(Option.Some(Res { id: 1 }))
+    w.push(Option.None)
+    match w[0] {
+        Option.Some(r) => {
+            print("got " + r.id.toString())
+        }
+        Option.None => {
+            print("none")
+        }
+    }
+    print("a")
+    match w[1] {
+        Option.Some(r) => {
+            print("got " + r.id.toString())
+        }
+        _ => {
+            print("none")
+        }
+    }
+    print("b")
+    print(firstId(&mut w))
+    print("c")
+    let n = match w[0] {
+        Option.Some(r) => r.id + 10,
+        Option.None => 0,
+    }
+    print(n)
+    // the arm may overwrite the element: the subject is a clone, so `r` stays valid
+    match w[0] {
+        Option.Some(r) => {
+            w[0] = Option.Some(Res { id: 2 })
+            print("still " + r.id.toString())
+        }
+        Option.None => {}
+    }
+    var names: Vec<Option<string>> = Vec.new()
+    names.push(Option.Some("ab" + "cd"))
+    var total = 0
+    var i = 0
+    while i < 100 {
+        match names[0] {
+            Option.Some(nm) => {
+                total += nm.len()
+            }
+            Option.None => {}
+        }
+        i += 1
+    }
+    print(total)
+    print("end")
+}
+// @expect: got 1
+// @expect: a
+// @expect: none
+// @expect: b
+// @expect: 1
+// @expect: c
+// @expect: 11
+// @expect: drop 1
+// @expect: still 1
+// @expect: 400
+// @expect: end
+// @expect: drop 2

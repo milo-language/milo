@@ -317,6 +317,13 @@ export class Codegen {
   private generatedF32FormatHelper = false;
   private needsStrtof = false;
   private generatedStructDropHelpers = new Set<string>();
+  // Structural drop: free a value's heap storage without running any user Drop impl, the
+  // exact inverse of emitDeepCloneFromPtr (which never runs a user Clone). A structural
+  // clone of a resource shares its handle with the original, so releasing it would release
+  // the original's. A TypeKind object in this set is dropped structurally wherever it is
+  // dropped (scope exit, early return, break), so the mode travels with the local.
+  private structuralDropTypes = new WeakSet<TypeKind>();
+  private structuralDrop = false;
   private dropHelperBodies: string[][] = [];
   // Method count per interface, so a `Heap<Iface>` drop knows which itable slot holds the
   // concrete type's destructor. Populated before any body is generated; the itable
@@ -5252,9 +5259,15 @@ export class Codegen {
     // scalar matched with only a wildcard (`match x { _ => ... }`) has no literal
     // pattern, but it is NOT an enum — sending it to genEnumMatch emitted an invalid
     // `getelementptr i64` on the scalar. Only an enum subject uses the enum path.
-    // `v[i]` counts as an owned temp because a READ of it clones, but a match subject is
-    // stored from its place without the clone (genStoreInto), so it owns nothing here.
-    if (stmt.subject.kind !== "IndexAccess" && this.isOwnedTempExpr(stmt.subject) && this.needsDropCg(stmt.subject.type)) {
+    // `v[i]` counts as an owned temp because a read of it clones, and a match subject is
+    // such a read: genStoreInto clones the element into the subject slot, which no one
+    // else owns, so it goes through the temp-subject path and is freed at match exit
+    // (structurally, see genTempSubjectMatch). The clone exists because an arm may mutate
+    // the container (`v[i] = x`, a call that grows a `var` global; the checker allows
+    // both) while payload borrows point into the subject. The one exception is a place
+    // rooted at an immutable `&` binding, which genEnumMatch matches in place.
+    const inPlace = stmt.subjectIsRef && stmt.subject.type.tag === "enum" && this.placeRootedAtImmutableRef(stmt.subject);
+    if (!inPlace && this.isOwnedTempExpr(stmt.subject) && this.needsDropCg(stmt.subject.type)) {
       return this.genTempSubjectMatch(stmt, resultSlot);
     }
     if (stmt.subject.type.tag === "enum") return this.genEnumMatch(stmt, resultSlot);
@@ -5281,7 +5294,11 @@ export class Codegen {
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
     this.ownSetAlive(lines, aliveFlag, addr, "match-subject");
     this.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
-    const local = { name, typeKind: stmt.subject.type, aliveFlag, addr };
+    // A `v[i]` subject is a structural clone of the element, so it is freed structurally:
+    // running the element's Drop on it would release a resource the container still owns.
+    let dropType = stmt.subject.type;
+    if (stmt.subject.kind === "IndexAccess") { dropType = { ...dropType }; this.structuralDropTypes.add(dropType); }
+    const local = { name, typeKind: dropType, aliveFlag, addr };
     this.droppableLocals.push(local);
     const subject: HIRExpr = { kind: "Ident", name, type: stmt.subject.type, isMove: false, span: stmt.subject.span };
     const [ml, terminated] = this.genMatch({ ...stmt, subject }, resultSlot);
@@ -5503,8 +5520,9 @@ export class Codegen {
       // aliasing in one call and refs are second-class (never stored), so
       // nothing in the arm's call tree can mutate the container while payload
       // borrows are live. A mutable-rooted place keeps the clone-into-temp
-      // path below, because the arm body may legally mutate the container
-      // (e.g. v.push) and invalidate the matched slot.
+      // path (genTempSubjectMatch, which drops the clone at match exit), because
+      // the arm body may legally mutate the container (`v[i] = x`, or a call that
+      // grows a `var` global) and invalidate the matched slot.
       const [pl, pAddr, pTy] = this.genLValue(stmt.subject);
       lines.push(...pl);
       subjAddr = pAddr;
@@ -14761,6 +14779,11 @@ export class Codegen {
   }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
+    if (this.structuralDropTypes.has(typeKind) && !this.structuralDrop) {
+      this.structuralDrop = true;
+      try { this.emitDropValue(lines, allocaPtr, typeKind); } finally { this.structuralDrop = false; }
+      return;
+    }
     // A guarded drop ends its slot's ID itself. Any other drop of a droppable local's slot
     // (an assignment's overwrite) is unguarded and relies on a moved-out slot having been
     // zeroed, so it ends tolerantly (DROPZ): it may legitimately meet an ended ID.
@@ -14970,7 +14993,7 @@ export class Codegen {
       lines.push(`${skipLabel}:`);
     }
     if (typeKind.tag === "enum" && this.droppableEnums.has(typeKind.name)) {
-      const helperName = `milo.drop.${typeKind.name}`;
+      const helperName = `milo.${this.structuralDrop ? "sdrop" : "drop"}.${typeKind.name}`;
       this.ensureDropHelper(typeKind.name);
       const val = this.nextTemp();
       lines.push(`  ${val} = load %${typeKind.name}, ptr ${allocaPtr}`);
@@ -14990,18 +15013,19 @@ export class Codegen {
     }
     if (typeKind.tag === "struct" && this.structNeedsDrop(typeKind.name)) {
       this.ensureStructDropHelper(typeKind.name);
-      const helperName = `milo.drop.struct.${typeKind.name}`;
+      const helperName = `milo.${this.structuralDrop ? "sdrop" : "drop"}.struct.${typeKind.name}`;
       lines.push(`  call void @${helperName}(ptr ${allocaPtr})`);
     }
   }
 
   private ensureDropHelper(enumName: string) {
-    if (this.generatedDropHelpers.has(enumName)) return;
-    this.generatedDropHelpers.add(enumName);
+    const kind = this.structuralDrop ? "sdrop" : "drop";
+    if (this.generatedDropHelpers.has(`${kind}.${enumName}`)) return;
+    this.generatedDropHelpers.add(`${kind}.${enumName}`);
 
     const layout = must(this.enumLayouts, enumName, "enum layouts");
     const enumTy = `%${enumName}`;
-    const helperName = `milo.drop.${enumName}`;
+    const helperName = `milo.${kind}.${enumName}`;
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
@@ -15090,11 +15114,12 @@ export class Codegen {
   }
 
   private ensureStructDropHelper(structName: string) {
-    if (this.generatedStructDropHelpers.has(structName)) return;
-    this.generatedStructDropHelpers.add(structName);
+    const kind = this.structuralDrop ? "sdrop" : "drop";
+    if (this.generatedStructDropHelpers.has(`${kind}.${structName}`)) return;
+    this.generatedStructDropHelpers.add(`${kind}.${structName}`);
 
     const layout = must(this.structLayouts, structName, "struct layouts");
-    const helperName = `milo.drop.struct.${structName}`;
+    const helperName = `milo.${kind}.struct.${structName}`;
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
@@ -15116,7 +15141,7 @@ export class Codegen {
     // out of a container, leaves zeroed bytes behind that the parent's glue still
     // visits). Its residual hole is unchanged: such a struct whose heap fields are all
     // empty is indistinguishable from a moved-from one, and its Drop is skipped.
-    if (this.dropImpls.has(structName)) {
+    if (this.dropImpls.has(structName) && !this.structuralDrop) {
       const skipLabel = this.nextLabel("struct.userdrop.skip");
       const dropLabel = this.nextLabel("struct.userdrop");
       const heapCandidates = layout.fields.flatMap((f, i) => {
