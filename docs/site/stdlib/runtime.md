@@ -726,6 +726,27 @@ cross-thread unpark transfer list (mutex-guarded; drained after each poll)
 pub fn taskDone(): i32
 ```
 
+#### `taskOnPanicNote`
+
+```milo
+pub fn taskOnPanicNote(note: &string): void
+```
+
+A line logged after the panic message if the current green task panics: what it
+was doing (std/http notes the request), so a panic in the journal names its input.
+At most 512 bytes are kept. No effect off a green task.
+
+#### `taskOnPanicReply`
+
+```milo
+pub fn taskOnPanicReply(fd: i32, reply: &string): void
+```
+
+If the current green task panics, send `reply` on `fd` and close it, then retire the
+task (see onRuntimePanic). For a task serving one connection: the client gets an
+answer instead of a reset, and the server keeps serving everyone else. Call again to
+replace; `fd` is not touched unless the task panics. No effect off a green task.
+
 #### `taskReady`
 
 ```milo
@@ -795,6 +816,36 @@ pub fn tJoiner(): i64
 
 ```milo
 pub fn tNext(): i64
+```
+
+#### `tPanicFd`
+
+```milo
+pub fn tPanicFd(): i64
+```
+
+#### `tPanicMsg`
+
+```milo
+pub fn tPanicMsg(): i64
+```
+
+#### `tPanicMsgLen`
+
+```milo
+pub fn tPanicMsgLen(): i64
+```
+
+#### `tPanicNote`
+
+```milo
+pub fn tPanicNote(): i64
+```
+
+#### `tPanicNoteLen`
+
+```milo
+pub fn tPanicNoteLen(): i64
 ```
 
 #### `tSched`

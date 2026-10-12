@@ -38,6 +38,12 @@ fn WsConn.ping(self: &WsConn): Result<i32, string>
 
 Send a ping.
 
+#### `WsConn.readMessage`
+
+```milo
+fn WsConn.readMessage(self: &WsConn, maxBytes: i64, returnPongs: bool): Result<WsMessage, string>
+```
+
 #### `WsConn.recv`
 
 ```milo
@@ -47,6 +53,17 @@ fn WsConn.recv(self: &WsConn): Result<WsMessage, string>
 Read next WebSocket message. Handles fragmentation, responds to ping automatically.
 `&Self`, like the sends: a read changes nothing in the handle, so one task can read
 while scoped tasks borrowing the same connection write (`Task.scope`).
+
+#### `WsConn.recvWithin`
+
+```milo
+fn WsConn.recvWithin(self: &WsConn, maxBytes: i64): Result<WsMessage, string>
+```
+
+recv for a server facing untrusted peers. A message longer than `maxBytes` is
+refused before its payload is allocated (close 1009, Err "message too big"): the
+length is the peer's to claim. Pongs come back as messages, so a heartbeat can tell
+a live peer from a half-open socket; one arriving mid-fragment is dropped.
 
 #### `WsConn.sendBinary`
 

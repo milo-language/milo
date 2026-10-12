@@ -1,0 +1,8 @@
+// @error: a JsonCur is read through its document: write 'doc[s].str()'
+// A stored cursor cannot read by itself: it holds no reference to the document.
+from "std/json" import { Json }
+fn main() {
+    let Result.Ok(doc) = Json.parse("{}") else { return }
+    let s = doc["a"]
+    print(s.str() ?? "")
+}

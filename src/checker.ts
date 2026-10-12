@@ -39,6 +39,12 @@ import { must } from "./must";
 // is what the itable is keyed on.
 export interface PropagateBoxing { fromType: string; ifaceName: string; viaMessage: boolean; errType: TypeKind }
 
+// The reads a `doc[...]` chain ends in, and the std/json method each one calls.
+const JSON_CHAIN_READS: Record<string, string> = {
+  str: "idxStr", f64: "idxF64", i64: "idxI64", bool: "idxBool", len: "idxLen", kind: "idxKind",
+  exists: "idxExists", raw: "idxRaw", json: "idxJson", items: "idxItems", keys: "idxKeys", valueAt: "idxValueAt",
+};
+
 export const RAW_SLICE_INTRINSICS: ReadonlySet<string> = new Set(["rawSlice", "rawSliceMut"]);
 // The ownership constructors for foreign memory: the return leg of `forget`. Same file
 // seam and the same reason: an unchecked claim about a pointer's provenance belongs in
@@ -869,6 +875,9 @@ export class TypeChecker {
   // `?` from a typed error into a fn returning `Result<T, string>`: the error's
   // `message()` becomes the string. Keyed to the concrete type that owns the method.
   private propagateMessages = new Map<Expr, { name: string; errType: TypeKind }>();
+  // `doc["a"][0]` chains rewritten to `doc.idxKey(...)` calls (std/json), keyed to the
+  // `Json` place every step and the terminal read re-borrow (rewriteJsonIndex).
+  private jsonChains = new Map<Expr, Expr>();
   // `?` in a fn returning Result<T, Heap<Iface>>: the operand's error is boxed and
   // coerced to the interface on the error path (see checkPropagateExpr).
   private propagateBoxings = new Map<Expr, PropagateBoxing>();
@@ -11190,6 +11199,10 @@ export class TypeChecker {
     const rawObjType = this.checkExpr(expr.object);
     this.placeBaseDepth--;
     const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
+    if (objType.tag === "struct" && (objType.name === "Json" || objType.name === "JsonCur")) {
+      const t = this.rewriteJsonIndex(expr, objType.name);
+      if (t) return t;
+    }
     const idxType = this.checkExpr(expr.index);
     if (idxType.tag !== "int" && idxType.tag !== "unknown") {
       this.error(`array index must be integer, got ${this.show(idxType)}`, sp);
@@ -11857,6 +11870,53 @@ export class TypeChecker {
     return t;
   }
 
+  // `doc[k]` on a Json place, or `chain[k]` on a chain that started at one, becomes
+  // `doc.idxKey(start, k)` / `idxPos` / `idxCur` and is re-checked as that call. The
+  // root is re-borrowed at every step instead of carried in a value because references
+  // are second-class: nothing could hold `&Json` between steps. Returns null to let a
+  // non-chain `JsonCur` fall through to the ordinary "cannot index" error.
+  private rewriteJsonIndex(expr: ExprOf<"IndexAccess">, objName: string): TypeKind | null {
+    let root: Expr;
+    let start: Expr;
+    if (objName === "Json") {
+      if (!this.isJsonRootPlace(expr.object)) {
+        this.error(`index a Json held in a variable: bind it first ('let doc = ...' then 'doc[...]')`, expr.span);
+        return this.setType(expr, { tag: "unknown" });
+      }
+      root = expr.object;
+      start = { kind: "MethodCall", object: structuredClone(root), method: "idxRoot", args: [], span: expr.span } as Expr;
+    } else {
+      const r = this.jsonChains.get(expr.object);
+      if (!r) return null;
+      root = r;
+      start = expr.object;
+    }
+    const idxType = this.checkExpr(expr.index);
+    const idxT = idxType.tag === "ref" ? idxType.inner : idxType;
+    const method = idxT.tag === "string" ? "idxKey" : idxT.tag === "int" ? "idxPos"
+      : idxT.tag === "struct" && idxT.name === "JsonCur" ? "idxCur" : null;
+    if (!method) {
+      if (idxT.tag !== "unknown") this.error(`a Json index is a string key, an integer position or a JsonCur, got ${this.show(idxType)}`, expr.span);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    const node = expr as any;
+    const index = node.index;
+    delete node.index;
+    node.kind = "MethodCall";
+    node.object = structuredClone(root);
+    node.method = method;
+    node.args = method === "idxCur" ? [index] : [start, index];
+    this.jsonChains.set(node as Expr, root);
+    return this.checkExpr(node as Expr, null);
+  }
+
+  // A root the chain can re-borrow at every step: a name or a field path on one.
+  private isJsonRootPlace(e: Expr): boolean {
+    if (e.kind === "Ident") return true;
+    if (e.kind === "FieldAccess") return this.isJsonRootPlace(e.object);
+    return false;
+  }
+
   private checkMethodCallExprInner(expr: ExprOf<"MethodCall">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     if (expr.object.kind === "UnaryOp" && expr.object.op === "&mut") {
@@ -11867,6 +11927,24 @@ export class TypeChecker {
       expr.object = expr.object.operand;
     }
     const rawObjType = this.checkExpr(expr.object);
+    // A read at the end of a `doc[...]` chain: `doc["a"].str()` → `doc.idxStr(chain)`.
+    const chainRoot = this.jsonChains.get(expr.object);
+    if (chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur") {
+      const read = JSON_CHAIN_READS[expr.method];
+      if (read && expr.args.length === (read === "idxValueAt" ? 1 : 0)) {
+        const node = expr as any;
+        node.args = [expr.object, ...expr.args];
+        node.object = structuredClone(chainRoot);
+        node.method = read;
+        return this.checkMethodCallExprInner(node, expected);
+      }
+    }
+    if (!chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur" && JSON_CHAIN_READS[expr.method]) {
+      const name = this.describeExpr(expr.object);
+      this.error(`a JsonCur is read through its document: write 'doc[${name}].${expr.method}()'`, sp);
+      for (const a of expr.args) this.checkExpr(a);
+      return this.setType(expr, { tag: "unknown" });
+    }
     // No method can be looked up on a receiver whose own type failed; the arguments are
     // still checked so a mistake inside them is reported, but nothing is moved into a
     // signature nobody knows.

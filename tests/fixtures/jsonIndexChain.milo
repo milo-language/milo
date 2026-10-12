@@ -1,0 +1,39 @@
+// `doc["a"][0]["b"].str()`: index chains on a Json place read through cursors
+from "std/json" import { Json, JsonCur }
+
+fn route(doc: &Json, it: JsonCur): string {
+    return doc[it]["cc"]["location"]["route"].str() ?? "?"
+}
+
+fn main() {
+    let text = "{\"data\":[{\"cc\":{\"location\":{\"route\":\"I-80\",\"lat\":39.3}}},{\"cc\":{\"location\":{\"route\":\"US-50\"}}}],\"n\":3,\"ok\":true,\"m\":{\"x\":1,\"y\":2}}"
+    let Result.Ok(doc) = Json.parse(text) else { return }
+    print(doc["data"][0]["cc"]["location"]["route"].str() ?? "none")
+    print(doc["data"][0]["cc"]["location"]["lat"].f64() ?? 0.0)
+    print(doc["n"].i64() ?? 0)
+    print(doc["ok"].bool() ?? false)
+    print(doc["data"].len())
+    print(doc["nope"]["deeper"][3].exists())
+    let k = "n"
+    print(doc[k].raw())
+    for it in doc["data"].items() {
+        print(route(doc, it))
+    }
+    for key in doc["m"].keys() {
+        print(key)
+    }
+    let saved = doc["data"][1]
+    print(doc[saved]["cc"]["location"]["route"].str() ?? "?")
+}
+// @expect: I-80
+// @expect: 39.3
+// @expect: 3
+// @expect: true
+// @expect: 2
+// @expect: false
+// @expect: 3
+// @expect: I-80
+// @expect: US-50
+// @expect: x
+// @expect: y
+// @expect: US-50

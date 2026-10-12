@@ -200,6 +200,16 @@ pub fn dbLastInsertId(db: &Database): i64
 
 The rowid of the most recent successful INSERT on this connection.
 
+#### `dbNext`
+
+```milo
+pub fn dbNext(stmt: &Statement): Result<bool>
+```
+
+Advance to the next row: Ok(true) for a row, Ok(false) when done, and Err with
+sqlite's message when the step fails (a constraint violation, a busy database, or a
+table dropped since the statement was prepared, which prepare cannot see).
+
 #### `dbOpen`
 
 ```milo
@@ -230,6 +240,7 @@ Reset the statement so it can run again with new bindings.
 pub fn dbStep(stmt: &Statement): bool
 ```
 
-Advance to the next row: true if a row is available, false when done.
+Advance to the next row: true if a row is available, false when done. An error also
+reads as false; use dbNext where a failed step must not pass for an empty result.
 
 <!-- /generated:api -->

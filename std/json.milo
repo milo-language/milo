@@ -852,6 +852,91 @@ impl Json {
         return Option.Some(jsonExtractSubtree(self, jsonCurIdx(cur)))
     }
 
+    // ── Index sugar ──
+    //
+    // `doc["a"][0]["b"].str()` is rewritten by the checker into these calls, rooted at
+    // `doc` every step: a JsonCur cannot read anything alone, because a struct cannot
+    // hold the `&Json` it points into. A cursor kept in a variable re-enters the
+    // chain as `doc[cur]`. A missing step yields a cursor every read treats as absent.
+    fn idxRoot(self: &Self): JsonCur {
+        return JsonCur { c: self.curRoot() }
+    }
+
+    fn idxCur(self: &Self, at: JsonCur): JsonCur {
+        return at
+    }
+
+    fn idxKey(self: &Self, at: JsonCur, key: &string): JsonCur {
+        return JsonCur { c: self.curField(at.c, key) }
+    }
+
+    fn idxPos(self: &Self, at: JsonCur, i: i64): JsonCur {
+        return JsonCur { c: self.curChild(at.c, i) }
+    }
+
+    fn idxStr(self: &Self, at: JsonCur): Option<string> {
+        return self.curStr(at.c)
+    }
+
+    fn idxF64(self: &Self, at: JsonCur): Option<f64> {
+        return self.curFloat(at.c)
+    }
+
+    fn idxI64(self: &Self, at: JsonCur): Option<i64> {
+        return self.curInt(at.c)
+    }
+
+    fn idxBool(self: &Self, at: JsonCur): Option<bool> {
+        return self.curBool(at.c)
+    }
+
+    fn idxLen(self: &Self, at: JsonCur): i64 {
+        return self.curLen(at.c)
+    }
+
+    fn idxKind(self: &Self, at: JsonCur): i32 {
+        return self.curKind(at.c)
+    }
+
+    fn idxExists(self: &Self, at: JsonCur): bool {
+        return self.curKind(at.c) >= 0
+    }
+
+    fn idxRaw(self: &Self, at: JsonCur): string {
+        return self.curRaw(at.c)
+    }
+
+    fn idxJson(self: &Self, at: JsonCur): Json {
+        return self.curJson(at.c)
+    }
+
+    fn idxItems(self: &Self, at: JsonCur): Vec<JsonCur> {
+        var out: Vec<JsonCur> = Vec.new()
+        if self.curKind(at.c) != 4 {
+            return out
+        }
+        for i in 0..self.curLen(at.c) {
+            out.push(JsonCur { c: self.curChild(at.c, i) })
+        }
+        return out
+    }
+
+    // Object keys in document order, for `for k in doc["m"].keys()`.
+    fn idxKeys(self: &Self, at: JsonCur): Vec<string> {
+        var out: Vec<string> = Vec.new()
+        if self.curKind(at.c) != 5 {
+            return out
+        }
+        for i in 0..self.curLen(at.c) {
+            out.push(self.curKeyAt(at.c, i))
+        }
+        return out
+    }
+
+    fn idxValueAt(self: &Self, at: JsonCur, i: i64): JsonCur {
+        return JsonCur { c: self.curValueAt(at.c, i) }
+    }
+
     // Typed reads at a path under a cursor: `doc.strAt(cc, "location.route")` for
     // `doc.curStr(doc.curField(doc.curField(cc, "location"), "route"))`.
     fn strAt(self: &Self, cur: i64, p: &string): Option<string> {
@@ -1864,6 +1949,12 @@ pub fn jsonSer(v: &JsonVal): string {
 
 // Fluent object builder. Methods consume and return self to enable chaining:
 //   jsonObj().str("type", "capabilities").int("seq", 3).build()
+// A position inside a parsed Json: what `doc["a"][0]` evaluates to. Only `doc[...]`
+// reads it (see Json.idxRoot), so it is a plain copyable number.
+pub struct JsonCur {
+    c: i64,
+}
+
 pub struct JsonObj {
     members: Vec<JsonMember>,
     // Set once `spread` ran: from then on a key already present is overwritten in

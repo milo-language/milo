@@ -302,7 +302,7 @@ pub struct Router
 Routes requests to handlers by method and path pattern (`/users/:id`), with
 middleware run around every handler.
 
-Fields: `routes: Vec<Route>`, `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`, `maxBodyBytes: i64`.
+Fields: `routes: Vec<Route>`, `streams: Vec<StreamRoute>`, `middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>`, `maxBodyBytes: i64`.
 
 #### `Router.addRoute`
 
@@ -365,6 +365,15 @@ fn Router.put(self: &mut Router, pattern: string, h: move (&mut Context) => Resp
 
 Register a PUT route.
 
+#### `Router.runStream`
+
+```milo
+fn Router.runStream(self: &Router, req: &Request, fd: i32): bool
+```
+
+Run the stream route matching `req`, if any. False means no stream route
+matched and `req` is untouched for the normal path.
+
 #### `Router.setMaxBodySize`
 
 ```milo
@@ -374,6 +383,19 @@ fn Router.setMaxBodySize(self: &mut Router, bytes: i64): void
 The largest request body this router's server accepts, in bytes (default 1 MiB).
 A request declaring more is answered 413 before its body is read.
 
+#### `Router.stream`
+
+```milo
+fn Router.stream(self: &mut Router, pattern: string, h: move (&mut Context, i32) => void): void
+```
+
+Register a GET route that owns the connection once the request is read: the
+handler gets the socket fd, writes its own status line and headers with
+`sendAll`, and may keep writing for as long as it likes (server-sent events,
+long poll). The server closes the fd when the handler returns. Middleware does
+not run, and only serveRouterConcurrent honours these routes, since one
+long-lived stream would stall a server that answers one connection at a time.
+
 #### `Router.use`
 
 ```milo
@@ -382,6 +404,16 @@ fn Router.use(self: &mut Router, mw: move (&mut Context, (&mut Context) => Respo
 
 Add middleware. It receives the context and `next`, the rest of the chain, and
 returns the response.
+
+### `StreamRoute`
+
+```milo
+pub struct StreamRoute
+```
+
+A GET route that takes over the connection (see Router.stream).
+
+Fields: `pattern: string`, `paramNames: Vec<string>`, `handler: (&mut Context, i32) => void`.
 
 ### Functions
 
@@ -418,6 +450,14 @@ pub fn renderResponse(response: &Response, extraHeaders: &Vec<Param>): string
 ```
 
 Wire bytes for a Response, including the status line and headers.
+
+#### `sendAll`
+
+```milo
+pub fn sendAll(fd: i32, buf: &string): bool
+```
+
+Write all of `buf` to a stream route's socket. False once the peer is gone.
 
 #### `serve`
 
@@ -477,5 +517,14 @@ pub fn statusText(status: i32): string
 ```
 
 The status line's code and reason phrase, e.g. "404 Not Found".
+
+#### `waitPeerClosed`
+
+```milo
+pub fn waitPeerClosed(fd: i32): void
+```
+
+Park until the peer of a stream route closes its side (or the connection errors),
+discarding anything it sends. This is how a stream handler learns its client left.
 
 <!-- /generated:api -->
