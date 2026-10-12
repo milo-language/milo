@@ -72,12 +72,10 @@ const REDUCE_PROBES = num("--reduce-probes", 60);
 const FILTER = str("--filter");
 const KEEP = args.includes("--keep");
 // Also generate the spellings of OPEN bugs, which every run would otherwise report.
-// Each is listed where it is gated: a read through a temporary box (`(*Heap(x)).f`,
-// `chk(*mk())`) leaks the box and never runs the payload's Drop. Remove a gate in the
-// change that fixes it.
+// Each is listed where it is gated: a method call on an if/match value leaks it.
+// Remove a gate in the change that fixes it.
 const KNOWN = args.includes("--known");
 // The open bugs, minimal (each also behind KNOWN where it is generated):
-//   (*Heap(newRes(k))).id            box + payload leak, Drop never runs (also `chk(*mk())`)
 //   (match o { Some(q) => q, None => mk() }).get()   the arm's value leaks, Drop never
 //                                    runs (an `if` too, once an arm moves a named place)
 // Judge only this case index (the generator still runs every earlier case, so the
@@ -356,8 +354,8 @@ class Gen {
 
   // A Res rvalue. Moves a live binding some of the time, which is how the forms below
   // compose with each other: a value made by one form is consumed inside another.
-  // `receiver`: the value is read in place (`.get()`, `.name`), not consumed; no temp
-  // box and no if/match value (open bugs: both leak). `--known` lifts it.
+  // `receiver`: the value is read in place (`.get()`, `.name`), not consumed; no
+  // if/match value (open bug: it leaks). `--known` lifts it.
   res(depth = 0, opts: { receiver?: boolean } = {}): string {
     const mv = this.movable();
     if (mv.length > 0 && chance(0.35)) {
@@ -367,7 +365,7 @@ class Gen {
     }
     if (depth < 1) {
       switch (between(0, 7)) {
-        case 0: if (opts.receiver && !KNOWN) break; return `*Heap(newRes(${this.k()}))`;
+        case 0: return `*Heap(newRes(${this.k()}))`;
         case 1: if (opts.receiver && !KNOWN) break; return `if ${this.cond()} { ${this.res(depth + 1)} } else { ${this.res(depth + 1)} }`;
         case 2: if (opts.receiver && !KNOWN) break; return `match maybe(${this.k()}) {\n    Option.Some(q) => q,\n    Option.None => newRes(${this.k()}),\n}`;
         case 3: if (opts.receiver && !KNOWN) break; return `match errOr(${this.k()}) {\n    Result.Ok(q) => q,\n    Result.Err(e) => e,\n}`;
@@ -381,6 +379,8 @@ class Gen {
   read(): string {
     const live = this.live();
     if (live.length > 0 && chance(0.6)) return `chk(${pick(live).name})`;
+    // a read through a box nobody owns frees the box and drops the payload after it
+    if (chance(0.2)) return `chk(*Heap(${this.res()}))`;
     return `(${this.res(0, { receiver: true })}).get()`;
   }
 

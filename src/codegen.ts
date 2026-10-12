@@ -3648,7 +3648,9 @@ export class Codegen {
       const innerTy = this.llvmType(expr.type);
       return [lines, ptrVal, innerTy];
     }
-    if (expr.kind === "HeapDeref") {
+    // A temporary box is an rvalue: its payload is moved out and the box freed
+    // (genHeapMoveOut), so the caller materializes the value like any owned temporary.
+    if (expr.kind === "HeapDeref" && !this.isTempBoxDeref(expr)) {
       const [ptrLines, ptrVal] = this.genExpr(expr.operand);
       lines.push(...ptrLines);
       const innerTy = this.llvmType(expr.type);
@@ -6554,7 +6556,7 @@ export class Codegen {
       }
       case "HeapDeref":
       case "PtrDeref": {
-        if (expr.kind === "HeapDeref" && expr.isMove) {
+        if (expr.kind === "HeapDeref" && (expr.isMove || this.isTempBoxDeref(expr))) {
           const emptied = this.genHeapMoveOut(expr, lines);
           if (emptied) return emptied;
         }
@@ -9055,7 +9057,7 @@ export class Codegen {
     // the pointee, which is exactly the pointer `h` already holds. Falling through
     // to genExpr() would *load* the value and, for HeapDeref, zero the source box
     // as if this were a move — freeing data the caller still owns.
-    if (expr.kind === "HeapDeref" || expr.kind === "PtrDeref") {
+    if ((expr.kind === "HeapDeref" && !this.isTempBoxDeref(expr)) || expr.kind === "PtrDeref") {
       const [lines, ptr] = this.genExpr(expr.operand);
       return [lines, ptr];
     }
@@ -14847,8 +14849,20 @@ export class Codegen {
     const obj = expr.object;
     if (obj.type.tag === "ptr") return false;
     if (obj.kind === "FieldAccess") return this.receiverIsRvalueTemp(obj);
-    if (obj.kind === "Ident" || obj.kind === "IndexAccess" || obj.kind === "PtrDeref" || obj.kind === "HeapDeref") return false;
+    if (obj.kind === "Ident" || obj.kind === "IndexAccess" || obj.kind === "PtrDeref") return false;
+    if (obj.kind === "HeapDeref" && !this.isTempBoxDeref(obj)) return false;
     return this.isOwnedTempExpr(obj) && this.needsDropCg(obj.type);
+  }
+
+  // `*mk()` / `*Heap(x)`: a deref of a box nobody else owns. Even a read through it has
+  // to free the box and drop the payload once the read is done, so codegen treats every
+  // such deref as a move out of the box (genHeapMoveOut) yielding an owned temporary.
+  // Reading it in place leaked the box and never ran the payload's Drop.
+  private isTempBoxDeref(expr: HIRExpr): boolean {
+    if (expr.kind !== "HeapDeref") return false;
+    const op = expr.operand;
+    if (op.type.tag !== "heap" || op.type.inner.tag === "interface") return false;
+    return op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "InterfaceMethodCall" || op.kind === "HeapCreate";
   }
 
   // An owning field read out of a temporary receiver. The receiver is dropped as soon as
@@ -14946,6 +14960,8 @@ export class Codegen {
         return this.indexAccessClones(expr);
       case "FieldAccess":
         return this.fieldOfOwnedTemp(expr);
+      case "HeapDeref":
+        return this.isTempBoxDeref(expr);
       case "Unwrap":
       case "Propagate":
         return this.unwrapMovesPayload(expr);

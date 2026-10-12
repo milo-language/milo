@@ -1,0 +1,69 @@
+// A read through a box nobody owns (`(*Heap(x)).f`, `chk(*mk())`, `(*mk()).m()`) frees
+// the box and drops the payload once the read is done. It used to read in place and
+// leave both behind: four Res made, none dropped, and the boxes leaked.
+// @expect: make 1
+// @expect: drop 1
+// @expect: 1
+// @expect: make 2
+// @expect: drop 2
+// @expect: 2
+// @expect: make 3
+// @expect: drop 3
+// @expect: 2
+// @expect: make 4
+// @expect: drop 4
+// @expect: 4
+// @expect: make 5
+// @expect: drop 5
+// @expect: n5
+// @expect: make 6
+// @expect: drop 6
+// @expect: n6
+// @expect: 7
+// @expect: end
+
+struct Res {
+    id: i64,
+    name: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.id.toString())
+    }
+}
+
+impl Res {
+    fn get(self: &Self): i64 {
+        return self.id
+    }
+}
+
+fn newRes(k: i64): Res {
+    print("make " + k.toString())
+    return Res { id: k, name: "n" + k.toString() }
+}
+
+fn hb(k: i64): Heap<Res> {
+    return Heap(newRes(k))
+}
+
+fn chk(r: &Res): i64 {
+    return r.id
+}
+
+fn show(s: &string) {
+    print(s)
+}
+
+fn main() {
+    print((*Heap(newRes(1))).id)
+    print(chk(*hb(2)))
+    print((*hb(3)).name.len())
+    print((*Heap(newRes(4))).get())
+    show((*hb(5)).name)
+    let n = (*hb(6)).name.clone()
+    print(n)
+    print(*Heap(7))
+    print("end")
+}
