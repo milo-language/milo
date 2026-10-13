@@ -51,7 +51,7 @@ jobs:
         continue-on-error: true
         run: |
           for f in $(find examples -name milo.json); do
-            (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" install) || true
+            (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" pkg install) || true
           done
       - run: bun test
       # Checks every scalar-returning `extern fn` against this runner's real headers.
@@ -181,7 +181,7 @@ jobs:
         continue-on-error: true
         run: |
           for f in $(find examples -name milo.json); do
-            (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" install) || true
+            (cd "$(dirname "$f")" && bun run "$GITHUB_WORKSPACE/src/main.ts" pkg install) || true
           done
       - run: bun test
       # Reads this runner's headers, so it's the only thing that can check the Linux decls.

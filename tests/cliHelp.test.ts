@@ -7,7 +7,7 @@
 // what these tests cover is the two things that still cannot be: the dispatch chain in
 // main.ts, and PKG_COMMANDS in pkgcli.ts.
 import { test, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { execFileSync, spawnSync } from "child_process";
 import { join } from "path";
 import { COMPILER_COMMANDS, PACKAGE_COMMANDS, OPTIONS, knownCommandNames, renderHelp } from "../src/cli-help";
@@ -118,3 +118,29 @@ test("a flag or path that is not a file is a usage error, not a stack trace", ()
   expect(flagFirst.status).toBe(0);
   expect(JSON.parse(flagFirst.stdout).ok).toBe(true);
 }, 60000);
+
+// CI runs `milo` verbs in steps whose failure is swallowed (the example dep sync is
+// `continue-on-error` with `|| true`), so a renamed verb there becomes a silent skip, not
+// a red run. That happened: `install` moved under `pkg`, the sync errored on every example,
+// and flybyGeometry was skipped on every runner as "package not installed".
+test("every src/main.ts verb in .github/workflows and scripts/*.sh is a known command", () => {
+  const files = [
+    ...readdirSync(join(ROOT, ".github", "workflows")).filter(f => f.endsWith(".yml")).map(f => join(ROOT, ".github", "workflows", f)),
+    ...readdirSync(join(ROOT, "scripts")).filter(f => f.endsWith(".sh")).map(f => join(ROOT, "scripts", f)),
+  ];
+  const known = new Set(knownCommandNames());
+  const pkgVerbs = new Set(PACKAGE_COMMANDS.map(c => c.name));
+  const seen: string[] = [];
+  const bad: string[] = [];
+  for (const f of files) {
+    for (const m of readFileSync(f, "utf-8").matchAll(/src\/main\.ts"?\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?/g)) {
+      const [, verb, sub] = m;
+      seen.push(verb!);
+      if (!known.has(verb!)) bad.push(`${f}: '${verb}'`);
+      else if (verb === "pkg" && sub && !pkgVerbs.has(sub)) bad.push(`${f}: 'pkg ${sub}'`);
+    }
+  }
+  // The scan must find something, or a reworded step passes this vacuously.
+  expect(seen.length).toBeGreaterThan(3);
+  expect(bad).toEqual([]);
+});
