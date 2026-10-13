@@ -1,9 +1,9 @@
 // @expect: 0
 // @expect: 3
 // A `?` that fails inside an interpolation returns early. Pieces of the same
-// interpolation evaluated before it (here `wrap("q")`) are owned temporaries that the
-// error path does not drop yet: a confirmed leak listed in tests/own-ledger-baseline.txt
-// until codegen drops in-flight temporaries at a `?` exit. The success path is fine.
+// interpolation evaluated before it (here `wrap("q")`) are owned temporaries still
+// pending, and the error path drops them (codegen's pending-temporaries stack; the
+// ownership ledger gates it). The success path is unchanged.
 fn part(n: i64): Result<string, string> {
     if n > 0 {
         return Err("no")

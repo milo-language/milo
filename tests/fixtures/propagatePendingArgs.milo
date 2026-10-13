@@ -1,0 +1,66 @@
+// @expect: drop val
+// @expect: true
+// @expect: drop ref
+// @expect: true
+// @expect: drop recv
+// @expect: true
+// @expect: drop ok
+// @expect: 1
+// A `?` that fails in a later argument returns before the call, so the arguments
+// evaluated before it are still the caller's to drop: by value (`take`), behind an
+// auto-borrow (`peek`, a temporary materialised for the call) and as a method receiver.
+// Each `drop` line is that drop happening on the error path; the last pair is the
+// success path, where `take` drops its argument as usual.
+struct Tok {
+    name: string,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.name)
+    }
+}
+
+impl Tok {
+    fn with(self: &Self, n: i64): i64 {
+        return n
+    }
+}
+
+fn tok(name: string): Tok {
+    return Tok { name: name }
+}
+
+fn fail(bad: bool): Result<i64, string> {
+    if bad {
+        return Err("no")
+    }
+    return Ok(1)
+}
+
+fn take(_t: Tok, n: i64): i64 {
+    return n
+}
+
+fn peek(_t: &Tok, n: i64): i64 {
+    return n
+}
+
+fn byVal(name: string, bad: bool): Result<i64, string> {
+    return Ok(take(tok(name), fail(bad)?))
+}
+
+fn byRef(bad: bool): Result<i64, string> {
+    return Ok(peek(tok("ref"), fail(bad)?))
+}
+
+fn recv(bad: bool): Result<i64, string> {
+    return Ok(tok("recv").with(fail(bad)?))
+}
+
+fn main() {
+    print(byVal("val", true).isErr())
+    print(byRef(true).isErr())
+    print(recv(true).isErr())
+    print(byVal("ok", false) ?? 0)
+}

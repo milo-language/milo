@@ -242,6 +242,28 @@ export class Codegen {
   private loopExit: string | null = null;
   private loopDropStart: number = 0;
 
+  // Pending temporaries: owned values an expression has already evaluated but not yet
+  // handed to their consumer, e.g. `wrap(q)` in `$"{wrap(q)} {part(n)?}"` or `a()` in
+  // `f(a(), b()?)`. An early exit out of the middle of the expression (`?`, or a
+  // `return`/`break`/`continue` in an if/match arm used as a value) must drop them, or
+  // they leak: they are SSA values, so the locals' drop glue never sees them. Each entry
+  // emits the drop of one value. genExpr pushes a child's result when its parent is in
+  // PENDING_PARENTS and truncates to its entry mark on return (by then the parent has
+  // consumed its operands); aggregate literals push their partly built storage
+  // explicitly. Values queued on argTempDrops are pending too and are dropped alongside.
+  private pend = {
+    temps: [] as { val?: string; emit: (lines: string[]) => void }[],
+    parents: [] as string[],
+    // stack heights at the innermost loop body's entry: break/continue drop only above
+    loopTemps: 0,
+    loopArgTemps: 0,
+  };
+  // Constructs that evaluate every operand before consuming any. Anything else (if/match
+  // arms, `??` defaults, combinators) may consume or branch between operands, so its
+  // children are not tracked: a missed leak there is the old behaviour, a wrong drop
+  // would be a double free.
+  private static PENDING_PARENTS = new Set<string>(["Call", "CFnCall", "ClosureCall", "InterfaceMethodCall", "BinOp"]);
+
   // Bounds-check elision, narrow and provable.
   //
   // `for i in 0..v.len { ... v[i] ... }` cannot go out of range: the loop bound IS
@@ -1458,14 +1480,17 @@ export class Codegen {
       }
       if (expr.kind === "StructLit" && this.structLayouts.has(expr.name)) {
         const layout = must(this.structLayouts, expr.name, "struct layouts");
+        const pendMark = this.pend.temps.length, built: string[] = [];
         for (const f of expr.fields) {
           const idx = layout.fields.findIndex(lf => lf.name === f.name);
           const fieldTy = layout.fields[idx].type;
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = getelementptr %${expr.name}, ptr ${destPtr}, i32 0, i32 ${idx}`);
-          this.genStoreInto(lines, ptr, fieldTy, f.value, "store");
+          this.genStoreInto(lines, ptr, fieldTy, f.value, "slot");
+          this.pendStored(lines, null, ptr, layout.fields[idx].typeKind, built);
         }
         this.genStructUpdateBase(lines, destPtr, expr);
+        this.endStored(lines, built, pendMark);
         if (this.ownOn && this.needsDropCg(expr.type)) this.ownSlot.set(destPtr, this.ownMake(lines, "StructLit"));
         return null;
       }
@@ -3351,7 +3376,10 @@ export class Codegen {
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
     if (this.ownOn && stmt.span) this.ownSrcLine = stmt.span.line;
+    // A statement consumes its own expressions: they are never another value's operands.
+    this.pend.parents.push("stmt");
     const [lines, terminated] = this.genStmtRaw(stmt);
+    this.pend.parents.pop();
     // Precise per-stmt line tagging. Nested stmts (via recursive genStmt) mark first;
     // skip-if-marked leaves only this stmt's own lines for its span.
     if (this.emitDebug && stmt.span) this.markDbg(lines, stmt.span.line, stmt.span.col);
@@ -3502,6 +3530,7 @@ export class Codegen {
       case "Return": {
         if (!stmt.value) {
           this.emitEnsuresChecks(lines);
+          this.emitPendingDrops(lines, 0, 0);
           this.emitDropGlue(lines);
           if (this.currentFnName === "main") {
             // main is forced to i32 (see genFn); a bare `return` must still yield a 0 exit code.
@@ -3526,6 +3555,7 @@ export class Codegen {
           } else {
             this.emitEnsuresChecks(lines);
           }
+          this.emitPendingDrops(lines, 0, 0);
           this.emitDropGlue(lines);
           lines.push("  ret void");
           return [lines, true];
@@ -3543,6 +3573,7 @@ export class Codegen {
         } else {
           this.emitEnsuresChecks(lines);
         }
+        this.emitPendingDrops(lines, 0, 0);
         this.emitDropGlue(lines);
         // A sortByKey extractor hands back a borrow of the element (the checker's one
         // exemption): returning that view transfers nothing.
@@ -3555,12 +3586,14 @@ export class Codegen {
       case "While": return this.genWhile(stmt);
       case "Break":
         if (this.loopExit) {
+          this.emitPendingDrops(lines, this.pend.loopTemps, this.pend.loopArgTemps);
           this.emitLoopDropGlue(lines);
           lines.push(`  br label %${this.loopExit}`);
         }
         return [lines, true];
       case "Continue":
         if (this.loopHeader) {
+          this.emitPendingDrops(lines, this.pend.loopTemps, this.pend.loopArgTemps);
           this.emitLoopDropGlue(lines);
           lines.push(`  br label %${this.loopHeader}`);
         }
@@ -4342,10 +4375,10 @@ export class Codegen {
     const endLabel = this.nextLabel("while.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
-    const prevDropStart = this.loopDropStart;
+    const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
     this.loopHeader = condLabel;
     this.loopExit = endLabel;
-    this.loopDropStart = this.droppableLocals.length;
+    this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
     const lensPushed = this.pushHoistedLens(lines, stmt.body);
 
     lines.push(`  br label %${condLabel}`);
@@ -4378,7 +4411,7 @@ export class Codegen {
     if (lensPushed) this.hoistedLens.pop();
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
-    this.loopDropStart = prevDropStart;
+    this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
     return [lines, false];
   }
 
@@ -4449,11 +4482,11 @@ export class Codegen {
     const endLabel = this.nextLabel("for.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
-    const prevDropStart = this.loopDropStart;
+    const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
     // continue goes to increment, not condition
     this.loopHeader = incrLabel;
     this.loopExit = endLabel;
-    this.loopDropStart = this.droppableLocals.length;
+    this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
     const lensPushed = this.pushHoistedLens(lines, stmt.body);
 
@@ -4495,7 +4528,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
-    this.loopDropStart = prevDropStart;
+    this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
     this.unbindLoopLocals(savedLoopLocals);
     return [lines, false];
   }
@@ -4724,10 +4757,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
-      const prevDropStart = this.loopDropStart;
+      const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
-      this.loopDropStart = this.droppableLocals.length;
+      this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
       const bindAlive = consumed ? this.registerConsumedBinding(elemName, varAddr, elemType) : null;
 
       lines.push(`  br label %${condLabel}`);
@@ -4765,7 +4798,7 @@ export class Codegen {
       if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
-      this.loopDropStart = prevDropStart;
+      this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
       this.unbindLoopLocals(savedLoopLocals);
       return [lines, false];
 
@@ -4799,10 +4832,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
-      const prevDropStart = this.loopDropStart;
+      const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
-      this.loopDropStart = this.droppableLocals.length;
+      this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -4838,7 +4871,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
-      this.loopDropStart = prevDropStart;
+      this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
       this.unbindLoopLocals(savedLoopLocals);
       return [lines, false];
 
@@ -4872,10 +4905,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
-      const prevDropStart = this.loopDropStart;
+      const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
-      this.loopDropStart = this.droppableLocals.length;
+      this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
       const bindAlive = consumed ? this.registerConsumedBinding(elemName3, varAddr, elemTypeKind3) : null;
 
       lines.push(`  br label %${condLabel}`);
@@ -4913,7 +4946,7 @@ export class Codegen {
       if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
-      this.loopDropStart = prevDropStart;
+      this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
       this.unbindLoopLocals(savedLoopLocals);
       return [lines, false];
 
@@ -4961,10 +4994,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
-      const prevDropStart = this.loopDropStart;
+      const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
       this.loopHeader = nextLabel;
       this.loopExit = endLabel;
-      this.loopDropStart = this.droppableLocals.length;
+      this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -5018,7 +5051,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
-      this.loopDropStart = prevDropStart;
+      this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
       this.unbindLoopLocals(savedLoopLocals);
       return [lines, false];
     }
@@ -5122,10 +5155,10 @@ export class Codegen {
     const endLabel = this.nextLabel("strview.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
-    const prevDropStart = this.loopDropStart;
+    const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
     this.loopHeader = incrLabel;
     this.loopExit = endLabel;
-    this.loopDropStart = this.droppableLocals.length;
+    this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
@@ -5243,7 +5276,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
-    this.loopDropStart = prevDropStart;
+    this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
     this.unbindLoopLocals(savedLoopLocals);
     return [lines, false];
   }
@@ -5276,10 +5309,10 @@ export class Codegen {
     const endLabel = this.nextLabel("iter.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
-    const prevDropStart = this.loopDropStart;
+    const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
     this.loopHeader = condLabel;
     this.loopExit = endLabel;
-    this.loopDropStart = this.droppableLocals.length;
+    this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
     // next() hands each element out by value, so the binding owns it exactly as a
     // consuming Vec loop's binding does: loop-scoped, dropped unless the body moves it.
     const bindAlive = this.registerConsumedBinding(stmt.varName, varAddr, stmt.varType);
@@ -5323,7 +5356,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
-    this.loopDropStart = prevDropStart;
+    this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
     this.unbindLoopLocals(savedLoopLocals);
     return [lines, false];
   }
@@ -6162,7 +6195,9 @@ export class Codegen {
           const [al, av, at] = this.genExpr(arg.expr);
           lines.push(...al);
           fmtTemps.push({ val: av, ty: at, expr: arg.expr });
+          const bufMark = tempBufs.length;
           this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.pendBufs(tempBufs, bufMark);
         }
         const fmtStr = this.addString(partFmts.join(""));
         const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
@@ -6234,7 +6269,9 @@ export class Codegen {
             this.emitStdoutWrite(lines, dataPtr, lenVal);
           }
         } else {
+          const bufMark = tempBufs.length;
           this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.pendBufs(tempBufs, bufMark);
         }
       }
       flushBatch();
@@ -6275,7 +6312,9 @@ export class Codegen {
           lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
           this.emitStderrWrite(lines, dataPtr, lenVal);
         } else {
+          const bufMark = tempBufs.length;
           this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.pendBufs(tempBufs, bufMark);
         }
       }
       partFmts.push("\n");
@@ -6594,7 +6633,12 @@ export class Codegen {
   // sret-lowered fn (set by genStoreInto); the callee then writes straight
   // into that pointer and no aggregate SSA value is materialized.
   public genExpr(expr: HIRExpr, sretDest?: string): Gen {
+    const pendMark = this.pend.temps.length;
+    this.pend.parents.push(expr.kind);
     const r = this.genExprRaw(expr, sretDest);
+    this.pend.parents.pop();
+    this.pend.temps.length = pendMark;
+    this.pendIfOperand(expr, r);
     if (this.ownOn && this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
       // The producers are exactly isOwnedTempExpr's list: the expressions whose value
       // nobody else owns. An sret result lives at its destination instead of a register.
@@ -6608,6 +6652,72 @@ export class Codegen {
     }
     if (this.ownOn) this.ownProducer.set(r[1], expr.kind);
     return r;
+  }
+
+  // A child's result stays pending while its parent evaluates the remaining operands.
+  // A moved local is included: genIdent already zeroed its slot, so nothing else frees it.
+  private pendIfOperand(expr: HIRExpr, r: Gen) {
+    const parent = this.pend.parents[this.pend.parents.length - 1];
+    if (!parent || !Codegen.PENDING_PARENTS.has(parent)) return;
+    const [, val, llTy] = r;
+    if (!val.startsWith("%") || !this.needsDropCg(expr.type)) return;
+    if (!this.isOwnedTempExpr(expr) && !(expr.kind === "Ident" && expr.isMove)) return;
+    this.pend.temps.push({ val, emit: l => this.dropValueNow(l, val, llTy, expr) });
+  }
+
+  // An element or field just stored into a literal under construction. Until the literal
+  // is complete it is pending (an early exit drops it in place), so the ledger keeps its ID
+  // on the slot rather than ending it as a STORE now. `val` is null when the value was
+  // built in place (genStoreInto has already put its ID on the slot).
+  // `readdr` recomputes the slot's address in the exit's own block, for an address that
+  // must not be used outside the block that computed it (an enum payload's).
+  private pendStored(lines: string[], val: string | null, ptr: string, tk: TypeKind, built: string[], readdr?: (lines: string[]) => string) {
+    if (!this.needsDropCg(tk)) {
+      // Nothing to drop on an exit; the ledger still ends whatever ID the value carried.
+      if (val) this.ownEndVal(lines, val, "STORE");
+      else this.endStored(lines, [ptr], this.pend.temps.length);
+      return;
+    }
+    if (val) this.ownValToSlot(val, ptr);
+    built.push(ptr);
+    this.pend.temps.push({ emit: l => {
+      const at = readdr ? readdr(l) : ptr;
+      if (at !== ptr && this.ownOn && this.ownSlot.has(ptr)) this.ownSlot.set(at, this.ownSlot.get(ptr)!);
+      this.emitDropValue(l, at, tk);
+    } });
+  }
+
+  // The literal is complete: its elements now belong to it.
+  private endStored(lines: string[], built: string[], pendMark: number) {
+    this.pend.temps.length = pendMark;
+    if (!this.ownOn) return;
+    for (const p of built) {
+      const id = this.ownSlot.get(p);
+      if (id) { this.ownEnd(lines, id, "STORE"); this.ownSlot.delete(p); }
+    }
+  }
+
+  // Scratch buffers print/format mallocs for a part, freed once the line is built.
+  private pendBufs(bufs: string[], from: number) {
+    for (const b of bufs.slice(from)) this.pend.temps.push({ emit: l => l.push(`  call void @free(ptr ${b})`) });
+  }
+
+  // A value handed to another owner mid-expression (an argument slot on argTempDrops)
+  // is no longer this stack's to drop.
+  private unpend(val: string) {
+    const i = this.pend.temps.findLastIndex(t => t.val === val);
+    if (i >= 0) this.pend.temps.splice(i, 1);
+  }
+
+  // Drop everything pending above the given stack heights: (0, 0) for an exit out of the
+  // function, the loop body's marks for break/continue.
+  private emitPendingDrops(lines: string[], tempsFrom: number, argTempsFrom: number, argTempsTo = this.argTempDrops.length) {
+    for (let i = this.pend.temps.length - 1; i >= tempsFrom; i--) this.pend.temps[i].emit(lines);
+    for (let i = argTempsTo - 1; i >= argTempsFrom; i--) {
+      const t = this.argTempDrops[i];
+      this.emitDropValue(lines, t.addr, t.type);
+      if (t.ownVal) this.ownEndVal(lines, t.ownVal, "DROP");
+    }
   }
 
   private genExprRaw(expr: HIRExpr, sretDest?: string): Gen {
@@ -7288,6 +7398,9 @@ export class Codegen {
     const tempMark = this.argTempDrops.length;
     const argVals: { val: string; type: string }[] = [];
     const refPtrs: { ptr: string; mut: boolean }[] = [];
+    // An argument passes to the callee at the call, not when it is evaluated: a later
+    // argument's `?` still owes its drop (see pend), so the ledger ends them together.
+    const argEnds: string[] = [];
     for (let i = 0; i < expr.args.length; i++) {
       const arg = expr.args[i];
       if (arg.passByRef) {
@@ -7336,13 +7449,14 @@ export class Codegen {
           // borrows them for the call, so it is dropped after the call like any argument
           // temporary. A retaining callee keeps the pointer, so the string is leaked to it.
           if (arg.expr.kind !== "StringLit" && this.isOwnedTempExpr(arg.expr)) {
-            if (Codegen.RETAINING_LIBC.has(expr.func)) this.ownEndVal(lines, av, "ARG");
+            if (Codegen.RETAINING_LIBC.has(expr.func)) argEnds.push(av);
             else {
               const slot = `%__cstrtmp.${this.scopeCounter++}.addr`;
               this.entryAllocas.push(`  ${slot} = alloca %String`);
               lines.push(`  store %String ${av}, ptr ${slot}`);
               this.ownValToSlot(av, slot);
               this.argTempDrops.push({ addr: slot, type: { tag: "string" } });
+              this.unpend(av);
             }
           }
         } else if (wantsAddr) {
@@ -7357,7 +7471,7 @@ export class Codegen {
           argVals.push({ val: fnPtr, type: "ptr" });
         } else {
           argVals.push({ val: av, type: at });
-          this.ownEndVal(lines, av, "ARG");
+          argEnds.push(av);
           // The caller owns a `move` closure's heap environment right up to the call and
           // then stops dropping it (an owning fn type is not Copy, so passing it is a
           // move), while the callee's parameter is declared non-owning and never picks the
@@ -7368,11 +7482,13 @@ export class Codegen {
             const slot = `%__clarg.${this.scopeCounter++}.addr`;
             this.entryAllocas.push(`  ${slot} = alloca { ptr, ptr }`);
             lines.push(`  store { ptr, ptr } ${av}, ptr ${slot}`);
-            this.argTempDrops.push({ addr: slot, type: { ...argTk, owning: true } as TypeKind });
+            this.argTempDrops.push({ addr: slot, type: { ...argTk, owning: true } as TypeKind, ownVal: av });
+            this.unpend(av);
           }
         }
       }
     }
+    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");
     this.emitAliasGuards(lines, refPtrs, expr.span);
     // extern fns passing/returning a struct by value need native-ABI lowering:
     // coerce args into registers, byval/indirect big ones, sret the return.
@@ -7416,14 +7532,17 @@ export class Codegen {
     const structTy = `%${expr.name}`;
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${structTy}`);
+    const pendMark = this.pend.temps.length, built: string[] = [];
     for (const f of expr.fields) {
       const idx = layout.fields.findIndex(lf => lf.name === f.name);
       const fieldTy = layout.fields[idx].type;
       const ptr = this.nextTemp();
       lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
-      this.genStoreInto(lines, ptr, fieldTy, f.value, "store");
+      this.genStoreInto(lines, ptr, fieldTy, f.value, "slot");
+      this.pendStored(lines, null, ptr, layout.fields[idx].typeKind, built);
     }
     this.genStructUpdateBase(lines, alloca, expr);
+    this.endStored(lines, built, pendMark);
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);
     return [lines, val, structTy];
@@ -7513,14 +7632,17 @@ export class Codegen {
       const bytes = n * elemSize;
       const buf = this.nextTemp();
       lines.push(`  ${buf} = call ptr @malloc(i64 ${bytes})`);
+      const pendMark = this.pend.temps.length, built: string[] = [];
+      this.pend.temps.push({ emit: l => l.push(`  call void @free(ptr ${buf})`) });
       for (let i = 0; i < n; i++) {
         const [el, ev] = this.genExpr(expr.elements[i]);
         lines.push(...el);
         const pi = this.nextTemp();
         lines.push(`  ${pi} = getelementptr ${vecElemTy}, ptr ${buf}, i64 ${i}`);
         lines.push(`  store ${vecElemTy} ${ev}, ptr ${pi}`);
-        this.ownEndVal(lines, ev, "STORE");
+        this.pendStored(lines, ev, pi, expr.type.element, built);
       }
+      this.endStored(lines, built, pendMark);
       const v0 = this.nextTemp();
       lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
       const v1 = this.nextTemp();
@@ -7539,15 +7661,18 @@ export class Codegen {
     const ptr0 = this.nextTemp();
     lines.push(`  ${ptr0} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 0`);
     lines.push(`  store ${elemTy} ${firstVal}, ptr ${ptr0}`);
-    this.ownEndVal(lines, firstVal, "STORE");
+    const elemTk: TypeKind = expr.type.tag === "array" ? expr.type.element : { tag: "int", bits: 32, signed: true };
+    const pendMark = this.pend.temps.length, built: string[] = [];
+    this.pendStored(lines, firstVal, ptr0, elemTk, built);
     for (let i = 1; i < expr.elements.length; i++) {
       const [el, ev] = this.genExpr(expr.elements[i]);
       lines.push(...el);
       const pi = this.nextTemp();
       lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
       lines.push(`  store ${elemTy} ${ev}, ptr ${pi}`);
-      this.ownEndVal(lines, ev, "STORE");
+      this.pendStored(lines, ev, pi, elemTk, built);
     }
+    this.endStored(lines, built, pendMark);
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
     return [lines, val, arrTy];
@@ -7681,13 +7806,15 @@ export class Codegen {
     const alloca = this.nextTemp();
     lines.push(`  ${alloca} = alloca ${enumTy}`);
     this.storeEnumTag(lines, enumTy, alloca, variant.tag);
+    const pendMark = this.pend.temps.length, built: string[] = [];
     for (let i = 0; i < expr.args.length; i++) {
       const [argLines, argVal, argTy] = this.genExpr(expr.args[i]);
       lines.push(...argLines);
       const fieldPtr = this.enumFieldPtr(lines, enumTy, alloca, variant, i);
       lines.push(`  store ${argTy} ${argVal}, ptr ${fieldPtr}`);
-      this.ownEndVal(lines, argVal, "STORE");
+      this.pendStored(lines, argVal, fieldPtr, expr.args[i].type, built, l => this.enumFieldPtr(l, enumTy, alloca, variant, i));
     }
+    this.endStored(lines, built, pendMark);
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
     return [lines, val, enumTy];
@@ -7968,6 +8095,11 @@ export class Codegen {
     const savedCapFlags = this.captureFlagByAddr;
     this.captureFlagByAddr = new Map();
     const savedDroppable = this.droppableLocals;
+    // The closure is its own function: its exits must not drop the enclosing
+    // expression's pending temporaries (they live in the other frame).
+    const savedPend = this.pend, savedArgTemps = this.argTempDrops;
+    this.pend = { temps: [], parents: [], loopTemps: 0, loopArgTemps: 0 };
+    this.argTempDrops = [];
     const ownRestore = this.ownEnterFn();
     const savedLoopHeader = this.loopHeader;
     const savedLoopExit = this.loopExit;
@@ -8148,6 +8280,8 @@ export class Codegen {
     this.locals = savedLocals;
     this.captureFlagByAddr = savedCapFlags;
     this.droppableLocals = savedDroppable;
+    this.pend = savedPend;
+    this.argTempDrops = savedArgTemps;
     ownRestore();
     this.entryAllocas = savedEntryAllocas;
     this.emittedAddrs = savedEmittedAddrs;
@@ -8264,6 +8398,7 @@ export class Codegen {
     lines.push(...calLines);
     const cTempMark = this.argTempDrops.length;
     const argVals: { val: string; type: string }[] = [];
+    const argEnds: string[] = [];
     for (const arg of expr.args) {
       if (arg.passByRef) {
         const [al, aPtr] = this.genLValueForArg(arg.expr);
@@ -8273,9 +8408,10 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        this.ownEndVal(lines, av, "ARG");
+        argEnds.push(av);
       }
     }
+    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
     const cArgsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
     const cRetTy = this.llvmType(expr.type);
     if (cRetTy === "void") {
@@ -8307,6 +8443,7 @@ export class Codegen {
     // freshly minted foreign view) is a %Vec value, so materialise it and pass its
     // address: the same thing genCall does one layer up for a direct call.
     const calleeParams = expr.callee.type.tag === "fn" ? expr.callee.type.params : [];
+    const argEnds: string[] = [];
     for (let i = 0; i < expr.args.length; i++) {
       const arg = expr.args[i];
       const pt = calleeParams[i];
@@ -8320,17 +8457,19 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        this.ownEndVal(lines, av, "ARG");
+        argEnds.push(av);
         // Same ownership hand-off as a direct call's closure argument (see genCall).
         if (this.ownsClosureEnv(arg.expr) && at === "{ ptr, ptr }"
             && !this.indirectParamEscapes(expr.callee.type, i)) {
           const slot = `%__clarg.${this.scopeCounter++}.addr`;
           this.entryAllocas.push(`  ${slot} = alloca { ptr, ptr }`);
           lines.push(`  store { ptr, ptr } ${av}, ptr ${slot}`);
-          this.argTempDrops.push({ addr: slot, type: { ...arg.expr.type, owning: true } as TypeKind });
+          this.argTempDrops.push({ addr: slot, type: { ...arg.expr.type, owning: true } as TypeKind, ownVal: av });
+          this.unpend(av);
         }
       }
     }
+    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
     this.emitAliasGuards(lines, refPtrs, expr.span);
 
     const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -8550,6 +8689,7 @@ export class Codegen {
     const imTempMark = this.argTempDrops.length;
     const argVals: { val: string; type: string }[] = [{ val: dataPtr, type: "ptr" }];
     const refPtrs: { ptr: string; mut: boolean }[] = [];
+    const argEnds: string[] = [];
     for (const arg of expr.args) {
       if (arg.passByRef) {
         const [al, aPtr] = this.genLValueForArg(arg.expr);
@@ -8560,9 +8700,10 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        this.ownEndVal(lines, av, "ARG");
+        argEnds.push(av);
       }
     }
+    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
     this.emitAliasGuards(lines, refPtrs, expr.span);
 
     const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -8657,6 +8798,10 @@ export class Codegen {
   }
 
   private genPropagate(expr: HIRExpr & { kind: "Propagate" }, lines: string[]): Gen {
+    // Slots the operand itself queues on argTempDrops are its caller's to release on the
+    // ok path, and the Err payload may still point into one, so the error exit leaves
+    // them alone; everything queued before the operand is pending and dropped.
+    const argTempsBefore = this.argTempDrops.length;
     const [ol, ov] = this.genExpr(expr.operand);
     lines.push(...ol);
 
@@ -8696,6 +8841,7 @@ export class Codegen {
     // payload here cannot double-free.
     lines.push(`${errLabel}:`);
     this.ownEndVal(lines, ov, "RETURN");
+    this.emitPendingDrops(lines, 0, 0, argTempsBefore);
     this.emitDropGlue(lines);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
     if (retEnumName === expr.enumName && !expr.fromConversion && !expr.boxConversion) {
@@ -9330,6 +9476,7 @@ export class Codegen {
     if (this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
       this.ownValToSlot(ev, tmp);
       this.argTempDrops.push({ addr: tmp, type: expr.type });
+      this.unpend(ev);
     }
     return [lines, tmp];
   }
@@ -13935,7 +14082,7 @@ export class Codegen {
   // the borrow — references are second-class — so the temp is dead the moment the
   // call returns, and nothing else will ever free it. Recorded here by
   // genLValueForArg and flushed by the call site that consumed them.
-  private argTempDrops: { addr: string; type: TypeKind }[] = [];
+  private argTempDrops: { addr: string; type: TypeKind; ownVal?: string }[] = [];
   private hirFns = new Map<string, HIRFunction>();
   private closureParamEscapeCache = new Map<string, boolean>();
 
@@ -15202,6 +15349,11 @@ export class Codegen {
     for (let d = this.droppableLocals.length - 1; d >= start; d--) {
       this.emitGuardedDrop(lines, this.droppableLocals[d]);
     }
+  }
+
+  private enterLoopBodyPending() {
+    this.pend.loopTemps = this.pend.temps.length;
+    this.pend.loopArgTemps = this.argTempDrops.length;
   }
 
   private emitLoopDropGlue(lines: string[]) {

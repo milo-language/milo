@@ -157,7 +157,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->938<!-- /stat --> fixtures, <!-- stat:error-fixtures -->674<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->941<!-- /stat --> fixtures, <!-- stat:error-fixtures -->674<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -270,6 +270,16 @@ slot's responsibility is moved onto the slot's ID (`ownValToSlot`) and is then e
 `emitDropValue` for that slot. A consumed value ends with the KIND that says where it went:
 MOVE into another owner, ARG to a by-value callee, STORE into a container or field, RETURN
 to the caller, DROP when this frame frees it.
+
+**Pending temporaries.** An owned value evaluated as an operand is pending until its
+consumer runs (`pend` in `src/codegen.ts`): `wrap(q)` in `$"{wrap(q)} {part(n)?}"`, `a()`
+in `f(a(), b()?)` or `a() + b()?`, the stored fields of a half-built literal. An early exit
+from the middle of an expression (`?`, or `return`/`break`/`continue` in an if/match arm
+used as a value) drops what is pending, then the locals. A new construct that evaluates
+several operands before consuming any joins `PENDING_PARENTS`; one that stores operands
+into storage under construction registers them with `pendStored`/`endStored`. The ledger
+ends a by-value argument (ARG) at the call and a literal's element (STORE) when the literal
+is complete, not where each was evaluated, so a missed pending drop is a `leak-ret`.
 
 **Copy intent.** Every copy of an owned type's bytes declares what it does to ownership:
 `move` (the source gives the bytes up and the destination is made), `view` (the

@@ -1,0 +1,112 @@
+// @expect: drop field
+// @expect: true
+// @expect: drop v1
+// @expect: drop v0
+// @expect: true
+// @expect: drop a0
+// @expect: true
+// @expect: drop e
+// @expect: true
+// @expect: drop big
+// @expect: true
+// @expect: drop field
+// @expect: 1
+// @expect: drop v0
+// @expect: drop v1
+// @expect: drop late
+// @expect: 3
+// @expect: drop a0
+// @expect: drop late
+// @expect: 2
+// @expect: drop e
+// @expect: 1
+// @expect: drop big
+// @expect: 1
+// A `?` in a later element of a literal returns while the literal is half built: the
+// elements already stored are owned by nothing yet, so the error path drops them (and
+// frees a Vec literal's buffer). Struct, Vec, fixed array, enum payload, and a struct
+// big enough to be built in place in its destination.
+struct Tok {
+    name: string,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.name)
+    }
+}
+
+fn tok(name: string): Tok {
+    return Tok { name: name }
+}
+
+fn fail(bad: bool): Result<i64, string> {
+    if bad {
+        return Err("no")
+    }
+    return Ok(1)
+}
+
+fn tokOr(bad: bool): Result<Tok, string> {
+    if bad {
+        return Err("no")
+    }
+    return Ok(tok("late"))
+}
+
+struct Pair {
+    a: Tok,
+    b: i64,
+}
+
+struct Big {
+    a: Tok,
+    pad: [i64; 32],
+    b: i64,
+}
+
+enum Two {
+    Both(Tok, i64),
+    Neither,
+}
+
+fn structLit(bad: bool): Result<i64, string> {
+    let p = Pair { a: tok("field"), b: fail(bad)? }
+    return Ok(p.b)
+}
+
+fn vecLit(bad: bool): Result<i64, string> {
+    let v: Vec<Tok> = [tok("v0"), tok("v1"), tokOr(bad)?]
+    return Ok(v.len)
+}
+
+fn arrLit(bad: bool): Result<i64, string> {
+    let a: [Tok; 2] = [tok("a0"), tokOr(bad)?]
+    return Ok(a.len)
+}
+
+fn enumLit(bad: bool): Result<i64, string> {
+    let e = Two.Both(tok("e"), fail(bad)?)
+    if let Two.Both(_, n) = e {
+        return Ok(n)
+    }
+    return Ok(0)
+}
+
+fn bigLit(bad: bool): Result<i64, string> {
+    let g = Big { a: tok("big"), pad: [0; 32], b: fail(bad)? }
+    return Ok(g.b)
+}
+
+fn main() {
+    print(structLit(true).isErr())
+    print(vecLit(true).isErr())
+    print(arrLit(true).isErr())
+    print(enumLit(true).isErr())
+    print(bigLit(true).isErr())
+    print(structLit(false) ?? 0)
+    print(vecLit(false) ?? 0)
+    print(arrLit(false) ?? 0)
+    print(enumLit(false) ?? 0)
+    print(bigLit(false) ?? 0)
+}

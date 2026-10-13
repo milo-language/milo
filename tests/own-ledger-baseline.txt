@@ -2,9 +2,3 @@
 # One finding per line: fixture fn kind origin L<milo line>. Shrink-only: --check fails on a
 # finding missing here AND on a line here that no longer reproduces. Fix the bug, delete the
 # line. Each group names its repro and how it was confirmed.
-
-# A failing `?` inside an interpolation returns without dropping the pieces evaluated
-# before it (genPropagate's error branch runs the locals' drop glue only, not in-flight
-# temporaries). Confirmed in the emitted IR: the prop.err branch returns past the free of
-# wrap("q")'s string. Repro: tests/fixtures/propagateInFormatPending.milo.
-propagateInFormatPending.milo whole leak-ret Call L19

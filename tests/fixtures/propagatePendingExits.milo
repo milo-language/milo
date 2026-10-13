@@ -1,0 +1,84 @@
+// @expect: drop ret
+// @expect: true
+// @expect: drop brk
+// @expect: 0
+// @expect: drop cont
+// @expect: drop cont
+// @expect: drop cont
+// @expect: 2
+// @expect: drop ifv
+// @expect: true
+// @expect: true
+// @expect: 3
+// An arm of an if/match used as a value can leave the whole expression with `return`,
+// `break` or `continue`. Operands evaluated before that arm are pending and dropped on
+// the way out, and an if/match value is itself pending while a later operand's `?` runs.
+// String concatenation's left operand is the same case (checked by the ownership ledger:
+// a string's drop is not observable).
+struct Tok {
+    name: string,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.name)
+    }
+}
+
+fn tok(name: string): Tok {
+    return Tok { name: name }
+}
+
+fn fail(bad: bool): Result<i64, string> {
+    if bad {
+        return Err("no")
+    }
+    return Ok(1)
+}
+
+fn take(_t: Tok, n: i64): i64 {
+    return n
+}
+
+fn armReturn(o: Option<i64>): Result<i64, string> {
+    let n = take(tok("ret"), match o {
+        Option.Some(v) => v,
+        Option.None => {
+            return Err("none")
+        },
+    })
+    return Ok(n)
+}
+
+fn armBreak(): i64 {
+    var n: i64 = 0
+    for i in 0..3 {
+        n += take(tok("brk"), if i == 0 { break } else { i })
+    }
+    return n
+}
+
+fn armContinue(): i64 {
+    var n: i64 = 0
+    for i in 0..3 {
+        n += take(tok("cont"), if i == 1 { continue } else { 1 })
+    }
+    return n
+}
+
+fn ifValue(bad: bool, c: bool): Result<i64, string> {
+    return Ok(take(if c { tok("ifv") } else { tok("ifw") }, fail(bad)?))
+}
+
+fn concat(bad: bool): Result<string, string> {
+    return Ok("y".repeat(64) + (fail(bad)?).toString())
+}
+
+fn main() {
+    print(armReturn(Option.None).isErr())
+    print(armBreak())
+    print(armContinue())
+    print(ifValue(true, true).isErr())
+    print(concat(true).isErr())
+    print((concat(false) ?? "").len - 62)
+}
