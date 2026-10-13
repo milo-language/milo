@@ -44,7 +44,10 @@ beforeAll(() => {
 
 afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, len: number): Promise<Uint8Array> {
+// WebCrypto takes BufferSource, which since TS 5.7 excludes a SharedArrayBuffer-backed view.
+type Bytes = Uint8Array<ArrayBuffer>;
+
+async function hkdf(salt: Bytes, ikm: Bytes, info: Bytes, len: number): Promise<Bytes> {
   const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
   return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, len * 8));
 }
