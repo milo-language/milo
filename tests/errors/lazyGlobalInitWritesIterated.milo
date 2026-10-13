@@ -1,0 +1,18 @@
+// @error: the first read of 'G' (it runs that global's initializer) writes the global 'H', which is being iterated here
+// A read of a lazy global may run its initializer, and this one pushes to the global the
+// loop is iterating: the loop variable would point into a freed buffer.
+var H: Vec<string> = []
+
+fn build(): string {
+    H.push("grown")
+    return "g"
+}
+
+let G = build()
+
+fn main() {
+    H.push("a")
+    for x in H {
+        print(x, G)
+    }
+}

@@ -1,0 +1,20 @@
+// @error: the first read of 'G' (it runs that global's initializer) can park this task while the loop variable is a reference into 'H's buffer
+// G's initializer sleeps, which parks the green task; if this loop's read of G is the
+// first one, another task could push to H (and free the buffer `x` points into) while it
+// waits. A global whose initializer does not park (K) is fine to read in the same loop.
+from "std/time" import { sleepMs }
+
+var H: Vec<string> = ["a"]
+
+fn slow(): string {
+    sleepMs(1)
+    return "s"
+}
+
+let G = slow()
+let K = "k" + "!"
+
+fn main() {
+    for x in H { print(x, K) }
+    for x in H { print(x, G) }
+}

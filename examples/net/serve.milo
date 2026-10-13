@@ -126,13 +126,11 @@ pub fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
     if isDir(filePath) {
         // try index.html first
         let indexPath = Path.join(filePath, "index.html")
-        if isFile(indexPath) {
-            if let Ok(content) = readFile(indexPath) {
-                if !quiet {
-                    print($"200 GET {req.path} -> index.html")
-                }
-                return Response.Status(200, "text/html", content)
+        if isFile(indexPath) && let Ok(content) = readFile(indexPath) {
+            if !quiet {
+                print($"200 GET {req.path} -> index.html")
             }
+            return Response.Status(200, "text/html", content)
         }
         // directory listing
         let listing = dirListing(filePath, req.path)

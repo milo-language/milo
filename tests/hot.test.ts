@@ -226,7 +226,7 @@ describe.skipIf(process.platform === "win32")("hot reload", () => {
 
       // A `let` filled at startup (a string) cannot be re-run, so it is refused.
       const r3 = await h.edit(GLOBALS.replace(`let NAME: string = "aa"`, `let NAME: string = "bb"`));
-      expect(r3).toEqual({ kind: "refuse", reason: "global NAME initializer changed (runs at startup)" });
+      expect(r3).toEqual({ kind: "refuse", reason: "global NAME initializer changed (an initializer runs once, at startup or first read)" });
     } finally { h.stop(); }
   }, 60000);
 

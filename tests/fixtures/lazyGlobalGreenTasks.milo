@@ -1,0 +1,34 @@
+// @expect: ready
+// @expect: ready
+// @expect: ready
+// @expect: ready 1
+
+// Green tasks on one thread: the first reader's initializer parks (sleepMs), the others
+// read the global meanwhile and wait by yielding to the scheduler rather than spinning
+// the thread or mistaking it for a cycle. The initializer runs once.
+from "std/runtime" import { Task }
+from "std/time" import { sleepMs }
+
+var inits: i64 = 0
+
+fn slowName(): string {
+    inits += 1
+    sleepMs(30)
+    return "ready"
+}
+
+let NAME = slowName()
+
+pub fn main(): i32 {
+    var ts: Vec<Task> = Vec.new()
+    var i: i64 = 0
+    while i < 3 {
+        ts.push(Task.spawn(move(): void => {
+            print(NAME)
+        }))
+        i += 1
+    }
+    for t in ts { t.join() }
+    print(NAME, " ", inits)
+    return 0
+}

@@ -16,7 +16,7 @@ Every type here is a reference-counted handle. `.clone()` gives another task or 
 
 ## Example: Lazy static
 
-A module-level `var` already runs a real initializer in dependency order before `main`, so an *eager* static needs no `Once` at all. Reach for `Once` when the work must be deferred past the start of `main` or is expensive and usually unwanted. The shape is a global plus a guard function, because a getter cannot hand back a `&T`:
+A module-level global whose initializer runs code is already initialized lazily, on its first read and exactly once, so a lazy static needs no `Once` at all. Reach for `Once` when the one-time work is a side effect at a point you choose, or fills several globals together. The shape is a global plus a guard function, because a getter cannot hand back a `&T`:
 
 ```milo
 from "std/sync" import { Once }

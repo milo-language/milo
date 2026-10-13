@@ -1852,17 +1852,13 @@ fn streamWrite(s: &mut Stream, bytes: &string): bool {
 fn streamPump(s: &mut Stream): void {
     while s._state != streamEnded {
         match nextOut(s._out) {
-            Option.Some(msg) => {
-                match msg {
-                    OutMsg.Data(d) => {
-                        if s._state == streamOpen {
-                            let _ = streamWrite(&mut s, chunkOf(d))
-                        }
-                    }
-                    OutMsg.Close => {
-                        finishStream(&mut s)
-                    }
+            Option.Some(OutMsg.Data(d)) => {
+                if s._state == streamOpen {
+                    let _ = streamWrite(&mut s, chunkOf(d))
                 }
+            }
+            Option.Some(OutMsg.Close) => {
+                finishStream(&mut s)
             }
             Option.None => {
                 if outDropped(s._out) {
@@ -2064,18 +2060,14 @@ fn wsTick(ws: &mut WebSocket, now: i64): void {
 fn wsPump(ws: &mut WebSocket): void {
     while !ws._ended {
         match nextOut(ws._out) {
-            Option.Some(msg) => {
-                match msg {
-                    OutMsg.Data(d) => {
-                        if !ws._closeSent {
-                            let _ = wsWrite(&mut ws, 1, d)
-                        }
-                    }
-                    OutMsg.Close => {
-                        if !ws._closeSent {
-                            wsSendClose(&mut ws, 1000)
-                        }
-                    }
+            Option.Some(OutMsg.Data(d)) => {
+                if !ws._closeSent {
+                    let _ = wsWrite(&mut ws, 1, d)
+                }
+            }
+            Option.Some(OutMsg.Close) => {
+                if !ws._closeSent {
+                    wsSendClose(&mut ws, 1000)
                 }
             }
             Option.None => {

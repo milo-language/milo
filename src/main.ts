@@ -302,7 +302,9 @@ function compileWithGuards(source: string, target: TargetInfo, filePath?: string
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
   return { ir, cGuards: cg.cDeclGuards(), linkLibs: hirModule.linkLibs ?? [], hasMain,
-           nonConstGlobals: hirModule.nonConstGlobals ?? [],
+           // Only the ones that still run at startup: a global something reads is
+           // initialized at that first read, which needs no entry point.
+           nonConstGlobals: cg.startupGlobals,
            varGlobals: hirModule.globals.filter(g => g.mutable).map(g => g.name) };
 }
 
@@ -995,9 +997,10 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
   const contractChecks = forceContractChecks ?? (optFlag === "-O0");
   const { ir, cGuards, linkLibs, nonConstGlobals } = compileWithGuards(source, target, sourcePath, warningConfig, trapOnOverflow, false, contractChecks);
   // `--no-entry` strips `@main`, and `@main` is the only caller of the generated
-  // `@__milo.global_init`. So in a --no-entry object every global whose initializer
-  // has to run stays whatever the static form was: "" / 0 / empty, forever, with no
-  // diagnostic. That is true whether or not the module HAS a main (the entry is
+  // `@__milo.global_init`, which fills the globals nothing reads (a global something
+  // reads is initialized lazily, at that read, and is fine here). So in a --no-entry
+  // object such a global stays whatever the static form was: "" / 0 / empty, forever,
+  // with no diagnostic. That is true whether or not the module HAS a main (the entry is
   // renamed to `@_milo_unused_main`, which strands the init call in dead code), so
   // the guard is on the flag alone. Reject before any object file is written.
   if (noEntry && nonConstGlobals.length > 0) {

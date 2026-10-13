@@ -483,20 +483,21 @@ returning from `run` has seen the initializer's writes. It is correct under both
 a green task parks and the scheduler keeps running, a plain OS thread waits on a condition
 variable. Re-entering `run` from inside its own initializer aborts rather than hanging.
 
-**You often need no `Once` at all.** A module-level `var` already runs a real initializer,
-in dependency order, before `main`:
+**You often need no `Once` at all.** A module-level global whose initializer runs code is
+initialized on its first read, exactly once, with the same guarantees under green tasks and
+threads:
 
 ```milo
 fn buildTable(): Vec<i64> {
     return [1, 2, 3]
 }
 
-var gTable: Vec<i64> = buildTable()   // eager, runs before main
+let gTable: Vec<i64> = buildTable()   // lazy: runs at the first read of gTable
 ```
 
-Reach for `Once` when initialization must be deferred past the start of `main` (it needs
-argv or a config file) or is expensive and usually unwanted. The shape is a global plus a
-guard function, because a getter cannot hand back a `&T` — references are second-class:
+Reach for `Once` when the one-time work is not "compute this global's value": a side
+effect that must happen exactly once at a point you choose, or an initializer that fills
+several globals together. The shape is a global plus a guard function, because a getter cannot hand back a `&T` — references are second-class:
 
 ```milo
 from "std/sync" import { Once }

@@ -2720,6 +2720,63 @@ element (`clone`, `get`/`first`/`last`, `keys`/`values`/`getOrDefault`), and rea
 `v[i]` by value anywhere (see [Ownership and Move Semantics](#ownership-and-move-semantics)). "Carries" is
 transitive: a `Vec<Option<Fd>>` element is as much a resource as an `Fd`.
 
+### Global initializers: constant, or run on first read
+
+A module-level `let` or `var` with a **constant** initializer (literals, arithmetic on
+them, arrays and struct literals of constants, `""`, `[]`) is a static value baked into
+the binary. Reading it costs nothing.
+
+Any other initializer, a call, a non-empty string, a `Vec` with elements, a method call,
+runs on the global's **first read**, exactly once, and the value is kept:
+
+```milo
+from "std/re" import { Re }
+
+fn loadStations(): Vec<string> {
+    print("loading")
+    return ["KSFO", "KOAK"]
+}
+
+let STATIONS = loadStations()
+let EMAIL = Re.new("^[a-z]+@[a-z]+\\.[a-z]+$", "i")!
+
+fn main() {
+    print("start")              // printed before "loading"
+    print(STATIONS.len)         // first read: runs loadStations()
+    print(STATIONS.len)         // already initialized
+    print(EMAIL.test("a@b.co"))
+}
+```
+
+What that means in practice:
+
+- **Order follows the reads.** An initializer can read a global declared after it; the one
+  it reads is initialized first, on demand.
+- **Once, under concurrency.** When green tasks or `Promise.blocking` threads race to the
+  first read, one runs the initializer and the rest wait for it, so every reader sees the
+  finished value. A reader lets other green tasks run while it waits only when the
+  initializer is a parked task on its own thread; waiting on another thread just yields the
+  CPU. So a read can park only when the initializer itself can.
+- **A failing initializer panics at the first read**, and the message names the global
+  (`note: this panic happened while initializing global 'PORT'`). It ends the process even
+  on a green task, since the global would otherwise stay half-built forever.
+- **Cycles.** An initializer that reads, directly, a global whose initializer reads it back
+  is a compile error. One that gets there through function calls is caught at run time:
+  `initialization cycle: global 'A' is read while its own initializer is running`, where the
+  old ahead-of-time order silently read the other global's zeroed value.
+- **Cost.** Each statement that reads such a global first checks that it is initialized:
+  one atomic load and a branch, which LLVM keeps out of the way once it is set. A constant
+  global has no check at all, so a hot loop over a lookup table wants a constant table.
+- **A read can run code.** The checker treats a read of such a global like a call to its
+  initializer: an initializer that pushes to a global you are iterating, or that can park,
+  is reported at the read, the same as an explicit call would be. Copy what a loop needs
+  into a local before it starts and the reads inside the loop go away.
+- **A global nothing reads** exists only for what its initializer does, so that initializer
+  still runs once at startup, before `main`.
+
+The check sits in front of the whole statement that reads the global, so in `c && G.len > 0`
+the initializer runs even when `c` is false; inside `if c { … }` it runs only when `c` holds.
+
 ### Globals are read and borrowed, never moved
 
 A global (`let` or `var` at file scope) has no single owner: every function, and every
@@ -5142,14 +5199,14 @@ All four use audited `unsafe impl Send` / `Sync` markers because their raw-point
 
 `Once` runs one initializer exactly once, however many green tasks or `Promise.blocking` threads reach it at the same time. The losers block until the winner finishes, so every caller that returns from `run` has seen the initializer's writes. A green waiter parks (the scheduler keeps running), an OS-thread waiter blocks on a condition variable, and the main thread with a live scheduler drives it. Re-entering `run` from inside its own initializer would wait for itself forever, so it aborts with that message rather than hanging.
 
-A module-level `var` already runs a real initializer, in dependency order, before `main` — so an *eager* static needs no `Once`:
+A module-level global with a non-constant initializer is already a lazy static: it is initialized on its first read, exactly once, under the same concurrency guarantees (see [Global initializers](#global-initializers-constant-or-run-on-first-read)). So the common case needs no `Once`:
 
 ```milo
 fn buildTable(): Vec<i64> {
     return [1, 2, 3]
 }
 
-var gTable: Vec<i64> = buildTable()   // runs before main
+let gTable: Vec<i64> = buildTable()   // runs at the first read of gTable
 
 fn main(): i32 {
     print(gTable.len)
@@ -5157,7 +5214,7 @@ fn main(): i32 {
 }
 ```
 
-Reach for `Once` when initialization must be deferred past the start of `main` (it needs argv or a config file) or is expensive and usually unwanted. The shape is a global plus a guard function, because a getter cannot hand back a `&T` — references are second-class:
+Reach for `Once` when the one-time work is not "compute this global's value": a side effect that has to happen exactly once at a point you choose, or an initializer that fills several globals together. The shape is a global plus a guard function, because a getter cannot hand back a `&T` — references are second-class:
 
 ```milo
 from "std/sync" import { Once }
@@ -5182,7 +5239,7 @@ fn main(): i32 {
 }
 ```
 
-Callers do `ensureTable()` and then read `gTable` directly. There is no `Lazy<T>` or `OnceCell<T>`: with no way to return a reference, every `get()` would deep-copy the cached value, turning a cache into a per-access allocation.
+Callers do `ensureTable()` and then read `gTable` directly. There is no `Lazy<T>` or `OnceCell<T>` type: with no way to return a reference, every `get()` would deep-copy the cached value, turning a cache into a per-access allocation. The lazy global is the language-level form of the same thing, read in place.
 
 ### Pitfalls
 

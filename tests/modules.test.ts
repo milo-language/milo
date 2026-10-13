@@ -137,22 +137,37 @@ int main(void) { printf("%lld %lld\\n", fromA(), fromB()); return 0; }
 });
 
 // `--no-entry` strips @main, and @main is the only caller of @__milo.global_init, so a
-// global whose initializer has to RUN stays zero in the object with nothing said about
-// it. `pub let A: string = "hello"` came out as the empty string. The condition is the
-// flag alone: a module that HAS a main is no safer, because --no-entry renames it to
+// global whose initializer has to RUN at startup stays zero in the object with nothing
+// said about it. Only a global nothing reads still runs there: one something reads is
+// initialized lazily at that read, which needs no entry. The condition is the flag alone:
+// a module that HAS a main is no safer, because --no-entry renames it to
 // @_milo_unused_main and strands the init call in dead code.
-test("emit-obj --no-entry rejects a global whose initializer has to run", () => {
-  const lib = write("no_entry_runtime_global.milo", `pub let GREETING: string = "hello"\npub fn greet(): string { return GREETING.clone() }\n`);
+test("emit-obj --no-entry rejects a global whose initializer has to run at startup", () => {
+  const lib = write("no_entry_runtime_global.milo", `pub let GREETING: string = bootLog()\nfn bootLog(): string { print("boot") return "x" }\npub fn greet(): i64 { return 1 }\n`);
   const r = milo(`emit-obj ${lib} --no-entry -o ${join(DIR, "no_entry_runtime_global.o")}`);
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("global 'GREETING' needs an initializer that runs");
   expect(existsSync(join(DIR, "no_entry_runtime_global.o"))).toBe(false);
 
   // Same module with a main(): still rejected, for the stranded-init reason.
-  const withMain = write("no_entry_runtime_global_main.milo", `pub let GREETING: string = "hello"\nfn main(): void { print(GREETING) }\n`);
+  const withMain = write("no_entry_runtime_global_main.milo", `pub let GREETING: string = bootLog()\nfn bootLog(): string { print("boot") return "x" }\nfn main(): void { print("m") }\n`);
   const r2 = milo(`emit-obj ${withMain} --no-entry -o ${join(DIR, "no_entry_runtime_global_main.o")}`);
   expect(r2.code).not.toBe(0);
   expect(r2.err).toContain("needs an initializer that runs");
+});
+
+// A global the module reads is initialized at its first read, so a --no-entry object
+// called from C fills it correctly with no entry point.
+test("emit-obj --no-entry accepts a runtime-initialized global the module reads", () => {
+  const lib = write("no_entry_lazy_global.milo", `pub let GREETING: string = "hel" + "lo"\n@externalLinkage\npub fn greetLen(): i64 { return GREETING.len }\n`);
+  const obj = join(DIR, "no_entry_lazy_global.o");
+  const r = milo(`emit-obj ${lib} --no-entry -o ${obj}`);
+  expect(`${r.code}: ${r.err}`).toBe(`0: ${r.err}`);
+  const cMain = join(DIR, "no_entry_lazy_main.c");
+  writeFileSync(cMain, `#include <stdio.h>\nextern long long greetLen(void);\nint main(void) { printf("%lld\\n", greetLen()); return 0; }\n`);
+  const bin = join(DIR, "no_entry_lazy_main");
+  execSync(`cc ${cMain} ${obj} -o ${bin}`, { stdio: ["pipe", "pipe", "pipe"] });
+  expect(execSync(bin, { encoding: "utf-8" }).trim()).toBe("5");
 });
 
 // The case --no-entry exists for: constant globals fold to real LLVM constants, so

@@ -1357,14 +1357,15 @@ impl Drop for WaitGroup {
 // running), a plain OS thread waits on a condition variable, and the main thread
 // with a live scheduler drives it — the same three-branch shape as WaitGroup.
 //
-// This is Milo's lazy static. Module-level `var`s already run real initializers
-// in dependency order before `main`, so an *eager* static needs nothing:
+// A module-level global whose initializer runs code is already a lazy static: it is
+// initialized on its first read, exactly once, with the same guarantees as this. So the
+// common case needs nothing:
 //
-//   var gTable: Vec<i64> = buildTable()   // runs before main, no Once needed
+//   let gTable: Vec<i64> = buildTable()   // runs at the first read of gTable
 //
-// Reach for Once when the work must be deferred past the start of main (it needs
-// argv or a config file) or is expensive and usually unwanted. The shape is a
-// global plus a guard function, because a getter cannot hand back a `&T`:
+// Reach for Once when the one-time work is a side effect at a point you choose, or an
+// initializer that fills several globals together. The shape is a global plus a guard
+// function, because a getter cannot hand back a `&T`:
 //
 //   var gTable: Vec<i64> = []
 //   var gTableOnce: Once = Once.new()

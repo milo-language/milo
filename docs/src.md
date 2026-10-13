@@ -47,6 +47,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
+| `src/lazy-globals.ts` | Lazy module globals: the HIR pass that puts a first-use guard in front of every read. |
 | `src/lexer.ts` | Tokenizer: source text -> the token stream the parser consumes. |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering pass. |
 | `src/lsp.ts` | milod — Milo Language Server Speaks LSP over JSON-RPC/stdio. |

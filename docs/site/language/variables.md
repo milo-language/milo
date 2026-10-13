@@ -14,6 +14,31 @@ let name = "Milo"   // type inference works
 
 `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=` and `^=` all exist, and the target can be any assignable place (`v[i] += 1`, `p.x -= dx`). There is no `++`.
 
+### Module-level globals
+
+A `let` or `var` at file scope is a global. A constant initializer (`let MAX = 64`) is a
+static value. Anything else, a function call, a regex, a non-empty string, runs on the
+global's first read, exactly once, even when tasks and threads race to it; a failing
+initializer panics there and names the global.
+
+```milo
+fn loadStations(): Vec<string> {
+    print("loading")
+    return ["KSFO", "KOAK"]
+}
+
+let STATIONS = loadStations()
+
+fn main() {
+    print("start")          // printed first
+    print(STATIONS.len)     // runs loadStations() here
+}
+```
+
+Each statement that reads such a global checks it is initialized first: one atomic load
+and a branch. See the [language reference](https://github.com/milo-language/milo/blob/main/docs/language-reference.md#global-initializers-constant-or-run-on-first-read)
+for the ordering, cycle and concurrency rules.
+
 ## Primitive types
 
 | Type | Description |

@@ -276,8 +276,7 @@ fn audienceMatches(doc: &Json, want: &string): i64 {
 // ── Signing ──
 
 // Compact header for `alg`; matches the {"alg":...,"typ":"JWT"} that mainstream
-// libraries emit, so signatures line up byte-for-byte. A function rather than a
-// module-scope `let` because Milo disallows runtime global initializers.
+// libraries emit, so signatures line up byte-for-byte.
 fn joseHeader(alg: &JwtAlg): string {
     return "{\"alg\":\"" + jwtAlgName(alg) + "\",\"typ\":\"JWT\"}"
 }

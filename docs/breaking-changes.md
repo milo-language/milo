@@ -45,6 +45,30 @@ programs released the same resource more than once.
 | `let a = [s; 3]` then `s.len()` | `let a = [s.clone(); 3]`, or read `a[0]` |
 | `[fd; 2]` of a `Drop` type with no `Clone` | `impl Clone` for it, or `[open(), open()]` |
 
+## A non-constant global initializer runs at the global's first read (2026-10-12)
+
+A module-level `let`/`var` whose initializer runs code used to run before `main`, in an
+order the checker computed. It now runs at the global's first read, exactly once (see the
+language reference, "Global initializers"). Three visible consequences:
+
+- Side effects of such an initializer (a `print`, a file read) happen at the first read,
+  not at startup. A global that nothing reads still runs its initializer before `main`,
+  so the "register at startup" idiom keeps working.
+- A cycle through function calls (`let A = mkA()` where `mkA` reads `B`, and `B`'s
+  initializer reads `A`) used to read the other global's zeroed value silently; it now
+  panics with `initialization cycle: global 'A' is read while its own initializer is running`.
+- The checker treats a read of such a global as a call to its initializer. A read inside
+  a loop over a mutable global is now rejected when the initializer writes that global or
+  can park. No shim is possible: the old program could have the same first read happen
+  there.
+
+| was | now |
+|---|---|
+| `for x in H { use(G) }` (G's initializer parks) | `let g = G.clone()` before the loop, then `use(g)` |
+
+A bare name in a payload position that names a payload-free variant of the payload's enum
+(`Some(None)`) is now that variant, not a binding of that name.
+
 ## A later argument can no longer read what an earlier argument moved (2026-10-12)
 
 `m.insert(k, m.get(k) ?? 0)`, `take(k, k.len)`, `keep<T>(k, k.len)`, `f(k, k.len)` through

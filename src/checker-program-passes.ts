@@ -25,7 +25,15 @@ export interface ProgramView {
   rootOf(e: unknown): string | undefined;
   // A mangled name as the user wrote it, for diagnostics.
   pretty(name: string): string;
+  // Globals whose initializer runs code, by name, to the synthetic fn in `fns` whose body
+  // is that initializer. Such a global is initialized on its first read (src/lazy-globals.ts),
+  // so a read may run the initializer: the passes treat it as a call.
+  lazyInits: Map<string, string>;
 }
+
+// The name of the synthetic fn standing for a lazy global's initializer.
+export const LAZY_INIT_FN_PREFIX = "<init of ";
+export const lazyInitFnName = (global: string) => `${LAZY_INIT_FN_PREFIX}${global}>`;
 
 // The slice of the checker these passes read. Every member is a per-body result that is
 // complete by the time `checkProgram` runs them; the passes write nothing back except
@@ -1307,6 +1315,7 @@ type ClosureLit = Extract<Expr, { kind: "Closure" }>;
 // A callee as a diagnostic names it, pseudo-callees included.
 function sayCallee(view: ProgramView, t: string, implicit: ImplicitCalls): string {
   if (t === INDIRECT) return "a call through a function value";
+  if (t.startsWith(LAZY_INIT_FN_PREFIX)) return `the first read of '${view.pretty(t.slice(LAZY_INIT_FN_PREFIX.length, -1))}' (it runs that global's initializer)`;
   if (t === FOREIGN) return "a call into foreign code";
   const c = implicit.closureById.get(t);
   if (c) return `the closure on line ${c.span?.line ?? "?"}`;
@@ -1477,6 +1486,11 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
     // Any type's method of that name may sit behind the itable: no per-interface impl
     // list is needed to stay closed.
     if (iface) for (const name of fns.keys()) if (name.endsWith(`$${iface.methodName}`)) out.push(name);
+    // A lazy global's first read runs its initializer, wherever that read happens.
+    if (n.kind === "Ident" && resolve(n.name, scope) === undefined) {
+      const init = view.lazyInits.get(n.name);
+      if (init) out.push(init);
+    }
     const ty = host.exprTypes.get(n);
     if (n.kind === "Closure") { const id = closureIds.get(n); out.push(...(id ? closureDrops([id]) : ty ? dropFnsOf(ty) : [])); }
     else if (n.kind === "Ident" && ty && isFnType(ty)) { const v = valuesOf(n, scope); out.push(...(v === null ? dropFnsOf(ty) : closureDrops(v))); }
@@ -2024,11 +2038,17 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
         const valueTy = !callee && spelled ? host.closureCalls.get(n as unknown as Expr) ?? host.cfnCalls.get(n as unknown as Expr) : undefined;
         const byValue = (i: number) => (valueTy?.tag === "fn" || valueTy?.tag === "cfn") && !!valueTy.params[i] && valueTy.params[i].tag !== "ref";
         if (t && parks.has(t)) {
+          // A lazy global parks only at its first read, but which read is first is a run
+          // time fact; reading a local copy inside the loop takes the read out of it.
+          const lazyRead = t.startsWith(LAZY_INIT_FN_PREFIX) ? view.pretty(t.slice(LAZY_INIT_FN_PREFIX.length, -1)) : undefined;
+          const hintFor = (g: string) => lazyRead
+            ? `take what the loop needs from '${lazyRead}' before it starts (a local copy, 'let v = ${lazyRead}.clone()'), so no read inside it can run the initializer; or ${parkHint(g)}`
+            : parkHint(g);
           for (const g of iterated) {
             report(
               `${say(t)} can park this task while the loop variable is a reference into '${nm(g)}'s buffer; ${rival(g)} may push to '${nm(g)}' before it resumes`,
               span,
-              parkHint(g),
+              hintFor(g),
             );
           }
           for (const v of views) {
@@ -2036,7 +2056,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
             report(
               `${say(t)} can park this task while ${describeView(v)}; ${rival(v.global)} may push to '${nm(v.global)}' before it resumes`,
               span,
-              parkHint(v.global),
+              hintFor(v.global),
             );
           }
           // `use(g[0])` / `sum(g)` into a `&[T]`: the argument is a view into g's buffer

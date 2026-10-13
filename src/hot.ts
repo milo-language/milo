@@ -16,6 +16,7 @@ import {
   declareFor, externDeclFor, endOfType, textHash, quoteIfNeeded, type Module, type Func, type Global,
 } from "./cgu";
 import { GLOBAL_INIT_FN } from "./codegen";
+import { LAZY_INIT_PREFIX } from "./lazy-globals";
 import { monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 
 // Module-local symbols are exported from the host under this prefix. Exporting them under
@@ -160,6 +161,13 @@ class View {
    */
   startupSegments(): { segs: Record<string, string>; tail: string } {
     const segs: Record<string, string> = {};
+    // A lazy global's initializer is its own function and runs at first read; an edit to
+    // it is attributed to the global the same way, since patching code that already ran
+    // changes nothing and patching code that has not yet run would split one global's
+    // life across two initializers.
+    for (const [name, fn] of this.fns) {
+      if (name.startsWith(LAZY_INIT_PREFIX)) segs[name.slice(LAZY_INIT_PREFIX.length)] = this.bodyHash(fn.text.split("\n").slice(1).join("\n"));
+    }
     const f = this.fns.get(GLOBAL_INIT_FN);
     if (!f) return { segs, tail: "" };
     const lines = f.text.split("\n").slice(1);
@@ -396,7 +404,7 @@ export function emitPatch(manifest: HotManifest, current: Record<string, string>
   for (const name of new Set([...Object.keys(startup.segs), ...Object.keys(manifest.startup)])) {
     const key = `${STARTUP_KEY}${name}`, now = startup.segs[name] ?? "";
     if (now === (current[key] ?? manifest.startup[name] ?? "")) continue;
-    if (!vars.has(name)) return { kind: "refuse", reason: `global ${name} initializer changed (runs at startup)` };
+    if (!vars.has(name)) return { kind: "refuse", reason: `global ${name} initializer changed (an initializer runs once, at startup or first read)` };
     varNote(name);
     hashes[key] = now;
   }
@@ -427,7 +435,7 @@ export function emitPatch(manifest: HotManifest, current: Record<string, string>
     if (signature(h) !== was.sig) return { kind: "refuse", reason: `signature of ${f.name} changed` };
     // Runs once, before main; every change in it was attributed to a global above (a
     // refusal or a var note), and patching it would change nothing.
-    if (f.name === GLOBAL_INIT_FN) continue;
+    if (f.name === GLOBAL_INIT_FN || f.name.startsWith(LAZY_INIT_PREFIX)) continue;
     const hash = v.fnHash(f);
     if (hash === current[f.name]) continue;
     if (!was.patchable) return { kind: "refuse", reason: `${f.name} changed but is not patchable` };

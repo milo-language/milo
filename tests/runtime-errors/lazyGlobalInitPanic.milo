@@ -1,0 +1,11 @@
+// @runtime-error: this panic happened while initializing global 'PORT'
+
+// An initializer that fails panics at the global's first read, and says which global.
+fn parsePort(): Result<i64, string> { return Err("PORT is not a number") }
+
+let PORT: i64 = parsePort()!
+
+fn main() {
+    print("before")
+    print(PORT)
+}

@@ -174,6 +174,9 @@ export type HIRStmt =
   // A plain statement sequence lowered from one source statement (a let-chain needs a flag
   // local around its clauses). Opens no scope: codegen runs `body` in place.
   | { kind: "Block"; body: HIRStmt[]; span?: Span }
+  // Make sure lazy global `name` is initialized before the statement after this one reads
+  // it (src/lazy-globals.ts places these; codegen calls the global's guarded entry).
+  | { kind: "LazyGlobalInit"; name: string; span?: Span }
   // `let g = p else { … }` over a `?&mut T` extern parameter. `ptr` is the incoming
   // pointer (the parameter's real ABI type), `elseBody` runs when it is null and always
   // diverges, and `name` binds an ordinary second-class ref to the pointee on the other
@@ -230,6 +233,9 @@ export interface HIRFunction {
   // entry ahead of the body — but only in a contract-checking build, so a release binary
   // pays nothing for a clause it never evaluates.
   oldSnapshots?: (HIRStmt & { kind: "Let" })[];
+  // Lazy globals the contracts or `old(...)` snapshots read: initialized at entry, before
+  // either is evaluated (src/lazy-globals.ts).
+  entryGuards?: string[];
   isExtern: boolean;
   isVariadic: boolean;
   // @wrapping: the routine's + - * -x, div INT_MIN/-1 and over-shifts use defined modular

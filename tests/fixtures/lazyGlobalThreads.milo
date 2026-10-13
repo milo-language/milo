@@ -1,0 +1,39 @@
+// @expect: 40
+// @expect: 1
+
+// Four OS threads race to read a lazy global first. One runs the initializer (slowly:
+// it sleeps mid-way) and the other three wait for it, so it runs once and every reader
+// sees the finished value.
+from "std/runtime" import { Promise }
+from "std/time" import { sleepMs }
+from "std/sync" import { AtomicI64 }
+
+let INITS = AtomicI64.new(0)
+
+fn slowTable(): Vec<i64> {
+    INITS.add(1)
+    sleepMs(50)
+    return [1, 2, 3, 4]
+}
+
+let TABLE = slowTable()
+
+fn sum(): i64 {
+    var t: i64 = 0
+    for x in TABLE { t += x }
+    return t
+}
+
+pub fn main(): i32 {
+    var ps: Vec<Promise<i64>> = Vec.new()
+    var i: i64 = 0
+    while i < 4 {
+        ps.push(Promise<i64>.blocking(move(): i64 => sum()))
+        i = i + 1
+    }
+    var total: i64 = 0
+    for p in ps { total = total + p.await()! }
+    print(total)
+    print(INITS.load())
+    return 0
+}

@@ -4,7 +4,7 @@
 // All arithmetic is unsigned 64-bit with wraparound, so every add/mul is spelled
 // `.wrappingAdd` / `.wrappingMul` — Milo traps on overflow by default, and XXH64's
 // mixing relies on mod-2^64 wrap. Shifts are on `u64`, so `>>` is logical. The five
-// primes are functions, not module-scope `let`s (Milo forbids runtime global init).
+// primes are functions returning constants.
 
 fn p1(): u64 {
     return 0x9E3779B185EBCA87

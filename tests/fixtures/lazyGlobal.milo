@@ -1,0 +1,52 @@
+// @expect: booted before main
+// @expect: main starts
+// @expect: building table
+// @expect: reading suffix
+// @expect: 3
+// @expect: 3 builds: 1
+// @expect: ab!
+// @expect: 7
+// @expect: replaced
+// @expect: hello
+
+// A module global whose initializer runs code is initialized on its first read, exactly
+// once, and a constant initializer stays a static value with no guard. Initializers run
+// in the order reads need them, not in declaration order: TABLE reads SUFFIX, declared
+// after it. A global nothing reads exists for its initializer's side effect, which still
+// runs before main.
+var builds: i64 = 0
+
+fn buildTable(): Vec<string> {
+    print("building table")
+    builds += 1
+    return ["a", "b" + SUFFIX, "c"]
+}
+
+fn suffix(): string {
+    print("reading suffix")
+    return "!"
+}
+
+fn boot(): bool {
+    print("booted before main")
+    return true
+}
+
+let TABLE = buildTable()
+let SUFFIX: string = suffix()
+let BOOTED: bool = boot()
+var COUNT: i64 = 3 + 4
+var NAME: string = "hel" + "lo"
+var OVERWRITTEN: string = "initial".toUpper()
+
+fn main() {
+    print("main starts")
+    print(TABLE.len)
+    print(TABLE.len, " builds: ", builds)
+    print(TABLE[0] + TABLE[1])
+    print(COUNT)
+    // Assigning first still initializes first (the old value is dropped by the store).
+    OVERWRITTEN = "replaced"
+    print(OVERWRITTEN)
+    print(NAME)
+}

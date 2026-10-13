@@ -19,7 +19,7 @@ import type { Diagnostic, DiagnosticNote, WarningConfig } from "./diagnostics";
 import { checkVisibility } from "./visibility";
 import { countCSigParams } from "./csig";
 import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
-import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
+import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError, formatMiloType } from "./derive-template";
@@ -5328,6 +5328,21 @@ export class TypeChecker {
     // and generic instances; program.functions holds free fns.
     const fns = new Map<string, Function>();
     for (const f of [...program.functions, ...this.monomorphizedFns]) fns.set(f.name, f);
+    // A global whose initializer runs code is initialized on its first read, so the
+    // initializer is a fn that any read may call: give each one a body the passes can
+    // walk. This side may only ever call MORE globals lazy than codegen does (see
+    // isConstGlobalInit), which is the side that keeps the passes sound.
+    const lazyInits = new Map<string, string>();
+    for (const g of program.globals) {
+      if (this.isConstGlobalInit(g.value)) continue;
+      const name = lazyInitFnName(g.name);
+      lazyInits.set(g.name, name);
+      fns.set(name, {
+        kind: "Function", name, typeParams: [], params: [], retType: simpleType("void"), contracts: [],
+        body: [{ kind: "ExprStmt", expr: g.value, span: g.value.span }], isExtern: false, isVariadic: false,
+        ...(g.span && { span: g.span }),
+      });
+    }
     // `Type$method` reads as `Type.method`; a monomorphized `foo_i64` reads as `foo`.
     const asWritten = new Map<string, string>();
     for (const f of this.monomorphizedFns) if (f.sourceName) asWritten.set(f.name, f.sourceName);
@@ -5351,6 +5366,7 @@ export class TypeChecker {
       // which would otherwise turn a module prefix into `gfx.tone`, a name the diagnostic
       // post-pass can no longer recognise.
       pretty: (n) => asWritten.get(n) ?? display(this._displayNames, n).replace(/\$/g, "."),
+      lazyInits,
     };
   }
 
@@ -7582,8 +7598,14 @@ export class TypeChecker {
     return vecTy;
   }
 
-  // Runtime global initializers run in `program.globals` order, so a global that reads
-  // another has to sit after it. Source order does not guarantee that: the resolver
+  // A global whose initializer runs code is initialized at its first read (codegen,
+  // src/lazy-globals.ts), so for those this order no longer decides anything at run time;
+  // what still runs in `program.globals` order is the initializers of globals nothing
+  // reads, before main. The direct-cycle error below holds for both: no order, lazy or
+  // not, can satisfy `let A = B + 1; let B = A + 1`.
+  //
+  // Historically all runtime initializers ran in this order, so a global that reads
+  // another had to sit after it. Source order does not guarantee that: the resolver
   // appends the entry module's globals before walking its imports, so `let FRAG = HEAD +
   // SKY_GLSL` built from an imported chunk read a zeroed string and silently produced a
   // truncated shader. Sort by dependency instead — direct reads, plus reads inside
@@ -7670,7 +7692,7 @@ export class TypeChecker {
     for (const i of onDirectCycle) {
       const g = globals[i]!;
       this.error(`global '${g.name}': initializer depends on itself through another global`, g.span,
-        `module-level initializers run in dependency order before main; a cycle has no valid order`);
+        `each initializer needs the value the other one is still computing, so no order can satisfy them (a cycle through function calls is caught at run time, at the first read)`);
     }
 
     // Stable topological order: emit each global after everything it depends on,

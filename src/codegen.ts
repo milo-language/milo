@@ -1,6 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest, HIRGlobal } from "./hir";
+import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
@@ -208,6 +209,12 @@ export class Codegen {
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
   private needsGlobalInit = false;
+  private needsSchedYield = false;
+  // Module globals whose initializer runs code: zeroed at load, filled on first read
+  // (src/lazy-globals.ts places the guards, emitLazyGlobals the machinery).
+  private lazyGlobals = new Map<string, HIRGlobal>();
+  // Runtime-initialized globals nothing reads, filled before main by GLOBAL_INIT_FN.
+  public startupGlobals: string[] = [];
   private needsOverflowCheck = false;
   private needsRangeCheck = false;
   private needsContractCheck = false;
@@ -2198,20 +2205,21 @@ export class Codegen {
     for (const v of Object.values(n)) this.collectCallees(v, out);
   }
 
-  private mainCanSpawnGreenTasks(functions: HIRFunction[], initFn: HIRFunction | null): boolean {
+  private mainCanSpawnGreenTasks(functions: HIRFunction[], initFns: HIRFunction[]): boolean {
     // wasm's makecontext is an abort stub and bare metal has no scheduler at
     // all: a program targeting them that spawns is already broken, and wrapping
     // would break the ones that don't.
     const os = this.target.os;
     if (os !== "darwin" && os !== "linux" && os !== "windows") return false;
-    const byName = new Map(functions.map(f => [f.name, f]));
+    // A lazy global's initializer runs on whatever task first reads it, main's included,
+    // so its init fn is a root as much as main is.
+    const byName = new Map([...functions, ...initFns].map(f => [f.name, f]));
     if (!byName.has(Codegen.GREEN_RUN_MAIN_FN)) return false;
     // The wrapper calls the body with no arguments; a `main` that takes any
     // would emit a call that does not match its callee.
     if ((byName.get("main")?.params.length ?? 0) > 0) return false;
     const seen = new Set<string>();
-    const stack = ["main"];
-    if (initFn) stack.push(initFn.name);
+    const stack = ["main", ...initFns.map(f => f.name)];
     while (stack.length > 0) {
       const name = stack.pop()!;
       if (seen.has(name)) continue;
@@ -2405,33 +2413,54 @@ export class Codegen {
       if (g.mutable) this.mutableGlobals.add(g.name);
     }
 
-    // A global whose initializer needs to run code (an arena, a populated Vec) is emitted
-    // zeroed and filled in by a generated routine that main calls before its own body.
-    // Evaluation is `module.globals` order, which the checker has already sorted so that
-    // every global follows the ones its initializer reads (across modules too).
+    // A global whose initializer needs to run code (an arena, a populated Vec, a parsed
+    // table) is emitted zeroed and filled on first read, by its own init function: lazy,
+    // so a program pays only for the globals it touches, and initializers run in the
+    // order reads need them rather than an order computed ahead of time. A constant
+    // initializer stays a static LLVM initializer with no guard at all.
+    //
+    // A global that nothing reads exists for what its initializer does (std/replay boots
+    // record/replay that way), so that initializer still runs before main, in
+    // `module.globals` order, which the checker sorted by dependency.
     const runtimeInitGlobals = module.globals.filter(g => !this.isFullyConstInit(g));
-    this.needsGlobalInit = runtimeInitGlobals.length > 0;
-    const initFn: HIRFunction | null = runtimeInitGlobals.length === 0 ? null : {
-      name: GLOBAL_INIT_FN,
+    const initFns: HIRFunction[] = runtimeInitGlobals.map(g => ({
+      name: `${LAZY_INIT_PREFIX}${g.name}`,
       params: [],
       retType: { tag: "void" },
-      body: runtimeInitGlobals.map(g => ({
+      body: [{
         kind: "Assign" as const,
         target: { kind: "Ident" as const, name: g.name, type: g.type },
         value: g.value,
         isInit: true,
-      })),
+      }],
+      isExtern: false,
+      isVariadic: false,
+      ...(g.sourceFile && { sourceFile: g.sourceFile }),
+    }));
+    const read = guardLazyGlobals([...functions, ...initFns], new Set(runtimeInitGlobals.map(g => g.name)));
+    this.lazyGlobals = new Map(runtimeInitGlobals.filter(g => read.has(g.name)).map(g => [g.name, g]));
+    const lazyInitFns = initFns.filter((_f, i) => read.has(runtimeInitGlobals[i]!.name));
+    const eager = initFns.filter((_f, i) => !read.has(runtimeInitGlobals[i]!.name));
+    this.needsGlobalInit = eager.length > 0;
+    this.startupGlobals = runtimeInitGlobals.filter(g => !read.has(g.name)).map(g => g.name);
+    const initFn: HIRFunction | null = eager.length === 0 ? null : {
+      name: GLOBAL_INIT_FN,
+      params: [],
+      retType: { tag: "void" },
+      body: eager.flatMap(f => f.body),
       isExtern: false,
       isVariadic: false,
     };
+    const startupFns = initFn ? [...lazyInitFns, initFn] : lazyInitFns;
 
-    this.wrapMainGreen = this.mainCanSpawnGreenTasks(functions, initFn);
+    this.wrapMainGreen = this.mainCanSpawnGreenTasks(functions, startupFns);
     if (this.wrapMainGreen) this.emit(`@${Codegen.MAIN_EXIT_GLOBAL} = internal global i32 0`);
 
     // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
     for (const fn of functions) fnBodies.push(this.replayEngineScope(fn, this.genFunction(fn)));
-    if (initFn) fnBodies.push(this.genFunction(initFn));
+    for (const fn of startupFns) fnBodies.push(this.genFunction(fn));
+    if (this.lazyGlobals.size > 0) this.closureBodies.push(this.emitLazyGlobals(functions));
 
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.name));
@@ -2465,6 +2494,8 @@ export class Codegen {
         // handle be NULL. Returns an NTSTATUS (0 = success), not an errno.
         ? "declare i32 @BCryptGenRandom(ptr, ptr, i32, i32)"
         : "declare i32 @getentropy(ptr, i64)");
+    if (this.needsSchedYield && !declaredExterns.has("sched_yield"))
+      this.output.splice(1, 0, "declare i32 @sched_yield()");
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
     if (this.needsStrlen && !declaredExterns.has("strlen"))
@@ -3239,6 +3270,7 @@ export class Codegen {
     const allocaInsertPoint = lines.length;
 
     this.currentEnsures = [];
+    for (const g of fn.entryGuards ?? []) lines.push(`  call void @"${LAZY_GUARD_PREFIX}${g}"()`);
     if (this.contractChecks && fn.oldSnapshots) {
       // Before any `requires` runs, and certainly before the body: `old(e)` names the value
       // at entry, so the snapshot must be taken while that state is still the current one.
@@ -3561,6 +3593,9 @@ export class Codegen {
         return this.genMatch(stmt);
       case "NullRefUnwrap":
         return this.genNullRefUnwrap(stmt);
+      case "LazyGlobalInit":
+        lines.push(`  call void @"${LAZY_GUARD_PREFIX}${stmt.name}"()`);
+        return [lines, false];
       case "UnsafeBlock": case "Block": {
         let terminated = false;
         for (const s of stmt.body) {
@@ -5670,7 +5705,224 @@ export class Codegen {
     return [lines, allArmsTerminated];
   }
 
-  // The address of the payload a pattern path names, and its LLVM type. Each step reads
+  // The machinery behind lazy globals (see src/lazy-globals.ts for where reads are guarded).
+  //
+  // Per global G: a state word (0 not started, 1 initializer running, 2 done), the token
+  // of whoever is running the initializer, and `__milo.lazy.G`, the guard every read goes
+  // through: one acquire load and a branch once G is initialized, which is the whole cost
+  // of laziness on the hot path. The first reader wins a compare-and-swap, runs
+  // `__milo.lazyinit.G` and publishes with a release store; a reader that loses waits.
+  //
+  // The token tells "another task or thread is initializing G" (wait for it) from "this
+  // task is, and has come back round to G" (an initialization cycle: waiting would never
+  // end, so it panics, naming G). It is the running green task when there is one, since
+  // two tasks share an OS thread, and otherwise the address of a thread-local byte, which
+  // is distinct per thread. Waiting yields to the scheduler on a green task, drives it on
+  // a main thread that has one (the initializer may be a parked task), and yields the CPU
+  // on a plain thread. Without std/runtime in the program there are no green tasks, and
+  // without threads (a bare-metal target) a busy G can only be a cycle.
+  //
+  // A global declared `thread_local` gets thread-local state too: each thread initializes
+  // its own copy on its own first read.
+  private emitLazyGlobals(functions: HIRFunction[]): string[] {
+    const L: string[] = [];
+    // Bare metal and wasm run one thread: plain loads and stores (a Cortex-M0 has no
+    // 64-bit compare-and-swap to lower an atomic to), and no thread-local storage.
+    const bare = !!this.target.bareMetal;
+    const tls = bare ? "" : "thread_local ";
+    const has = (n: string) => functions.some(f => f.name === n && !f.isExtern);
+    const green = !bare && has("schedulerCurrent") && has("schedulerYield") && has("schedulerExists") && has("schedulerPollMain");
+    L.push(`@__milo_lazy_tid = internal ${tls}global i8 0`);
+    // What this thread is initializing, for the panic note. Values, not a list of stack
+    // frames: green tasks interleave on one thread, so this can go stale, and a stale name
+    // pointer is still a valid constant (the token check below keeps it from misleading).
+    L.push(`@__milo_lazy_cur_name = internal ${tls}global ptr null`);
+    L.push(`@__milo_lazy_cur_tok = internal ${tls}global i64 0`);
+    for (const [name, g] of this.lazyGlobals) {
+      const gtls = g.threadLocal && !bare ? "thread_local " : "";
+      const shown = this.addString(display(this.displayNames, name));
+      L.push(`@"${name}.lazy" = internal ${gtls}global i64 0`);
+      L.push(`@"${name}.lazyown" = internal ${gtls}global i64 0`);
+      L.push(`@"${name}.lazythr" = internal ${gtls}global i64 0`);
+      L.push(`define internal void @"${LAZY_GUARD_PREFIX}${name}"() {`);
+      L.push(`entry.bb:`);
+      L.push(bare ? `  %s = load i64, ptr @"${name}.lazy", align 8` : `  %s = load atomic i64, ptr @"${name}.lazy" acquire, align 8`);
+      L.push(`  %d = icmp eq i64 %s, 2`);
+      L.push(`  br i1 %d, label %done, label %slow`);
+      L.push(`slow:`);
+      L.push(`  call void @__milo_lazy_slow(ptr @"${name}.lazy", ptr @"${name}.lazyown", ptr @"${name}.lazythr", ptr ${shown.label}, ptr @"${LAZY_INIT_PREFIX}${name}")`);
+      L.push(`  br label %done`);
+      L.push(`done:`);
+      L.push(`  ret void`);
+      L.push(`}`);
+    }
+
+    L.push(`define internal i64 @__milo_lazy_token() {`);
+    L.push(`entry.bb:`);
+    if (green) {
+      L.push(`  %t = call ptr @schedulerCurrent()`);
+      L.push(`  %n = icmp eq ptr %t, null`);
+      L.push(`  br i1 %n, label %thread, label %task`);
+      L.push(`task:`);
+      L.push(`  %ti = ptrtoint ptr %t to i64`);
+      L.push(`  ret i64 %ti`);
+      L.push(`thread:`);
+    }
+    L.push(`  %a = call i64 @__milo_lazy_thread()`);
+    L.push(`  ret i64 %a`);
+    L.push(`}`);
+    L.push(`define internal i64 @__milo_lazy_thread() {`);
+    L.push(`entry.bb:`);
+    L.push(`  %a = ptrtoint ptr @__milo_lazy_tid to i64`);
+    L.push(`  %a1 = or i64 %a, 1`);
+    L.push(`  ret i64 %a1`);
+    L.push(`}`);
+
+    // Waiting for an initializer another task on THIS thread is running: that task is
+    // parked (it could not have let us run otherwise), so this one has to let the
+    // scheduler run, by yielding from a task or by driving it from the main thread. The
+    // checker charges that park to the read, because the initializer itself parks.
+    // An initializer on ANOTHER thread needs nothing from this one, so that wait only
+    // yields the CPU and never lets another green task in: a read of a global whose
+    // initializer does not park must never park.
+    if (!bare) {
+      L.push(`define internal void @__milo_lazy_wait(i1 %here) {`);
+      L.push(`entry.bb:`);
+      L.push(`  br i1 %here, label %sched, label %os`);
+      L.push(`sched:`);
+      if (green) {
+        L.push(`  %t = call ptr @schedulerCurrent()`);
+        L.push(`  %n = icmp eq ptr %t, null`);
+        L.push(`  br i1 %n, label %nottask, label %task`);
+        L.push(`task:`);
+        L.push(`  call void @schedulerYield()`);
+        L.push(`  ret void`);
+        L.push(`nottask:`);
+        L.push(`  %e = call i1 @schedulerExists()`);
+        L.push(`  br i1 %e, label %drive, label %os`);
+        L.push(`drive:`);
+        L.push(`  call void @schedulerPollMain()`);
+        L.push(`  ret void`);
+      } else {
+        L.push(`  br label %os`);
+      }
+      L.push(`os:`);
+      if (!this.isWindows) {
+        this.needsSchedYield = true;
+        L.push(`  call i32 @sched_yield()`);
+      }
+      L.push(`  ret void`);
+      L.push(`}`);
+    }
+
+    const cycleFmt = this.addString("error: initialization cycle: global '%s' is read while its own initializer is running\n");
+    const byFmt = this.addString("  (read by the initializer of '%s')\n");
+    const noteFmt = this.addString("note: this panic happened while initializing global '%s' (it is initialized on first read)\n");
+    L.push(`define internal void @__milo_lazy_slow(ptr %st, ptr %own, ptr %thr, ptr %name, ptr %init) noinline {`);
+    L.push(`entry.bb:`);
+    L.push(`  %tok = call i64 @__milo_lazy_token()`);
+    L.push(`  %me = call i64 @__milo_lazy_thread()`);
+    L.push(`  br label %try`);
+    L.push(`try:`);
+    if (bare) {
+      L.push(`  %old = load i64, ptr %st, align 8`);
+      L.push(`  %won = icmp eq i64 %old, 0`);
+      L.push(`  br i1 %won, label %claim, label %lost`);
+      L.push(`claim:`);
+      L.push(`  store i64 1, ptr %st, align 8`);
+      L.push(`  br label %run`);
+    } else {
+      L.push(`  %pair = cmpxchg ptr %st, i64 0, i64 1 acq_rel acquire, align 8`);
+      L.push(`  %won = extractvalue { i64, i1 } %pair, 1`);
+      L.push(`  %old = extractvalue { i64, i1 } %pair, 0`);
+      L.push(`  br i1 %won, label %run, label %lost`);
+    }
+    L.push(`run:`);
+    L.push(bare ? `  store i64 %tok, ptr %own, align 8` : `  store atomic i64 %tok, ptr %own release, align 8`);
+    L.push(bare ? `  store i64 %me, ptr %thr, align 8` : `  store atomic i64 %me, ptr %thr release, align 8`);
+    L.push(`  %pn = load ptr, ptr @__milo_lazy_cur_name`);
+    L.push(`  %pt = load i64, ptr @__milo_lazy_cur_tok`);
+    L.push(`  store ptr %name, ptr @__milo_lazy_cur_name`);
+    L.push(`  store i64 %tok, ptr @__milo_lazy_cur_tok`);
+    L.push(`  call void %init()`);
+    L.push(`  store ptr %pn, ptr @__milo_lazy_cur_name`);
+    L.push(`  store i64 %pt, ptr @__milo_lazy_cur_tok`);
+    L.push(bare ? `  store i64 2, ptr %st, align 8` : `  store atomic i64 2, ptr %st release, align 8`);
+    L.push(`  ret void`);
+    L.push(`lost:`);
+    L.push(`  %fin = icmp eq i64 %old, 2`);
+    // On a target with no threads and no scheduler, nobody else can be running it.
+    L.push(`  br i1 %fin, label %out, label %${bare ? "cycle" : "busy"}`);
+    if (!bare) {
+      L.push(`busy:`);
+      L.push(`  %o = load atomic i64, ptr %own acquire, align 8`);
+      L.push(`  %mine = icmp eq i64 %o, %tok`);
+      L.push(`  br i1 %mine, label %cycle, label %wait`);
+      L.push(`wait:`);
+      L.push(`  %ot = load atomic i64, ptr %thr acquire, align 8`);
+      L.push(`  %here = icmp eq i64 %ot, %me`);
+      L.push(`  call void @__milo_lazy_wait(i1 %here)`);
+      L.push(`  br label %try`);
+    }
+    L.push(`cycle:`);
+    const cyc: string[] = [];
+    this.emitFdPrintf(cyc, 2, cycleFmt.label, `, ptr %name`);
+    L.push(...cyc);
+    L.push(`  %cn = load ptr, ptr @__milo_lazy_cur_name`);
+    L.push(`  %ct = load i64, ptr @__milo_lazy_cur_tok`);
+    L.push(`  %cnn = icmp ne ptr %cn, null`);
+    L.push(`  %cself = icmp eq i64 %ct, %tok`);
+    L.push(`  %cother = icmp ne ptr %cn, %name`);
+    L.push(`  %c1 = and i1 %cnn, %cself`);
+    L.push(`  %c2 = and i1 %c1, %cother`);
+    L.push(`  br i1 %c2, label %by, label %die`);
+    L.push(`by:`);
+    const by: string[] = [];
+    this.emitFdPrintf(by, 2, byFmt.label, `, ptr %cn`);
+    L.push(...by);
+    L.push(`  br label %die`);
+    L.push(`die:`);
+    // The note would repeat what was just said.
+    L.push(`  store ptr null, ptr @__milo_lazy_cur_name`);
+    const die: string[] = [];
+    this.panicAbort(die);
+    L.push(...die);
+    L.push(`  unreachable`);
+    L.push(`out:`);
+    L.push(`  ret void`);
+    L.push(`}`);
+
+    L.push(`define internal void @__milo_lazy_panic_note() {`);
+    L.push(`entry.bb:`);
+    L.push(`  %cn = load ptr, ptr @__milo_lazy_cur_name`);
+    L.push(`  %cnn = icmp ne ptr %cn, null`);
+    L.push(`  br i1 %cnn, label %check, label %out`);
+    L.push(`check:`);
+    L.push(`  %ct = load i64, ptr @__milo_lazy_cur_tok`);
+    L.push(`  %tok = call i64 @__milo_lazy_token()`);
+    L.push(`  %same = icmp eq i64 %ct, %tok`);
+    L.push(`  br i1 %same, label %note, label %out`);
+    L.push(`note:`);
+    const note: string[] = [];
+    this.emitFdPrintf(note, 2, noteFmt.label, `, ptr %cn`);
+    L.push(...note);
+    if (this.target.os !== "none") {
+      this.needsFflush = true;
+      this.needsAbort = true;
+      L.push(`  call i32 @fflush(ptr null)`);
+      L.push(`  call void @abort()`);
+    } else {
+      this.needsExit = true;
+      L.push(`  call void @exit(i32 1)`);
+    }
+    L.push(`  unreachable`);
+    L.push(`out:`);
+    L.push(`  ret void`);
+    L.push(`}`);
+    return L;
+  }
+
+  // The address of the payload a pattern path names, and its LLVM type.  // The address of the payload a pattern path names, and its LLVM type. Each step reads
   // a payload of a variant the arm's tests have already confirmed, so the per-variant
   // offsets enumFieldPtr computes are the right ones.
   private patPathPtr(lines: string[], subjAddr: string, path: HIRPatStep[]): { ptr: string; llTy: string } {
@@ -7931,7 +8183,7 @@ export class Codegen {
       // are globals, so they were already static. Scoped by currentFnName rather than
       // a spanning flag so a closure created *inside* another closure's body during
       // global init still gets a per-call frame env (that body runs many times).
-      const staticEnv = !isMove && this.currentFnName === GLOBAL_INIT_FN;
+      const staticEnv = !isMove && (this.currentFnName === GLOBAL_INIT_FN || this.currentFnName.startsWith(LAZY_INIT_PREFIX));
       if (isMove || expr.heapEnv) {
         // heap-allocate env for move closures (safe to send to other threads)
         this.needsMalloc = true;
@@ -13254,6 +13506,10 @@ export class Codegen {
       return;
     }
     this.needsAbort = true;
+    // A panic inside a lazy global's initializer names the global, and ends the process
+    // even on a green task: retiring just the task would leave the global marked as being
+    // initialized, and every later reader would wait for it forever.
+    if (this.lazyGlobals.size > 0) lines.push(`  call void @__milo_lazy_panic_note()`);
     // abort() raises SIGABRT immediately WITHOUT flushing stdio — unlike exit(), which does.
     // The panic message was just printf'd (block-buffered on a piped stdout, e.g. Linux under
     // a test harness), so flush it first or it's lost with the process. fflush(NULL) flushes

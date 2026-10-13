@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 523 distinct messages across 671 programs the compiler must reject.
+Every error message the test suite pins: 525 distinct messages across 673 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -470,6 +470,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
 - [`the closure on line 14 writes the global 'G', which is being iterated here`](#the-closure-on-line-14-writes-the-global-g-which-is-being-iterated-here)
+- [`the first read of 'G' (it runs that global's initializer) can park this task while the loop variable is a reference into 'H's buffer`](#the-first-read-of-g-it-runs-that-global-s-initializer-can-park-this-task-while-the-loop-variable-is-a-reference-into-h-s-buffer)
+- [`the first read of 'G' (it runs that global's initializer) writes the global 'H', which is being iterated here`](#the-first-read-of-g-it-runs-that-global-s-initializer-writes-the-global-h-which-is-being-iterated-here)
 - [`the implicit 'D.drop' writes the global 'G', which is being iterated here`](#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here)
 - [`the ranges 0..2 and 1..3 overlap`](#the-ranges-0-2-and-1-3-overlap)
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
@@ -11307,6 +11309,55 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/globalIterClosureParamWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalIterClosureParamWrites.milo)</sub>
+
+## `the first read of 'G' (it runs that global's initializer) can park this task while the loop variable is a reference into 'H's buffer` {#the-first-read-of-g-it-runs-that-global-s-initializer-can-park-this-task-while-the-loop-variable-is-a-reference-into-h-s-buffer}
+
+G's initializer sleeps, which parks the green task; if this loop's read of G is the first one, another task could push to H (and free the buffer `x` points into) while it waits. A global whose initializer does not park (K) is fine to read in the same loop.
+
+```milo skip
+from "std/time" import { sleepMs }
+
+var H: Vec<string> = ["a"]
+
+fn slow(): string {
+    sleepMs(1)
+    return "s"
+}
+
+let G = slow()
+let K = "k" + "!"
+
+fn main() {
+    for x in H { print(x, K) }
+    for x in H { print(x, G) }
+}
+```
+
+<sub>[tests/errors/lazyGlobalInitParksInLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lazyGlobalInitParksInLoop.milo)</sub>
+
+## `the first read of 'G' (it runs that global's initializer) writes the global 'H', which is being iterated here` {#the-first-read-of-g-it-runs-that-global-s-initializer-writes-the-global-h-which-is-being-iterated-here}
+
+A read of a lazy global may run its initializer, and this one pushes to the global the loop is iterating: the loop variable would point into a freed buffer.
+
+```milo skip
+var H: Vec<string> = []
+
+fn build(): string {
+    H.push("grown")
+    return "g"
+}
+
+let G = build()
+
+fn main() {
+    H.push("a")
+    for x in H {
+        print(x, G)
+    }
+}
+```
+
+<sub>[tests/errors/lazyGlobalInitWritesIterated.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lazyGlobalInitWritesIterated.milo)</sub>
 
 ## `the implicit 'D.drop' writes the global 'G', which is being iterated here` {#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here}
 

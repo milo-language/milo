@@ -1,0 +1,15 @@
+// @runtime-error: initialization cycle: global 'A' is read while its own initializer is running
+
+// A cycle through functions: the checker's dependency order only sees reads written in
+// the initializers themselves, and `A`'s initializer reaches `B` through `mkA`. Lazy
+// initialization catches it at run time instead of reading a zeroed `B`.
+fn mkA(): string { return "a" + B }
+
+fn mkB(): string { return "b" + A }
+
+let A: string = mkA()
+let B: string = mkB()
+
+fn main() {
+    print(A)
+}
