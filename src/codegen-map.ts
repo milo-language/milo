@@ -9,7 +9,7 @@ import type { OwnEndKind } from "./own-ledger";
 import type { Gen, StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { must } from "./must";
 
-// %HashMap field indices. The struct is { data, len, cap, seed }, and these offsets
+// %HashMap field indices. The struct is { data, len, cap, seed, tombs }, and these offsets
 // appeared as bare `i32 0, i32 N` at 22 sites in codegen.ts — the only clue to which field
 // an N meant was the local variable name at the use site, so adding a field meant finding
 // and re-reading every one of them.
