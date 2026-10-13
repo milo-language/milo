@@ -8,6 +8,9 @@
 // would be two owners of one heap environment, which is why no destructor could exist
 // for a closure before the split. A non-owning value (a by-reference closure, or a bare
 // function) still passes to a `move` parameter — it owns nothing, so nothing is lost.
+// The other way round, a `move` closure passed to a plain `(T) => R` parameter is lent,
+// not moved: the callee may only call it (tests/fixtures/moveClosureLentToPlainParam.milo),
+// and the caller keeps and drops it.
 from "std/runtime" import {
     Task
 }

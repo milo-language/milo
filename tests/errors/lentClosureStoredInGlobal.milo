@@ -1,0 +1,17 @@
+// The global spelling of lentClosureStoredInStruct: a lent `move` closure would outlive
+// the caller that still owns and drops it.
+// @error: non-escaping closure parameter 'f' is stored
+
+var G: (i64) => i64 = (x: i64) => x
+
+fn keep(f: (i64) => i64) {
+    G = f
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    keep(h)
+    print(G(1))
+    return 0
+}

@@ -1,0 +1,15 @@
+// Passing a `move` closure to a `move` parameter still gives it away (only a plain
+// parameter borrows it), so using it afterwards is a use after move.
+// @error: use of moved variable 'h'
+
+fn take(f: move (i64) => i64): i64 {
+    return f(1)
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    print(take(h))
+    print(h(2))
+    return 0
+}

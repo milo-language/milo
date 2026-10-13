@@ -1,0 +1,21 @@
+// An impl method is called through the trait's signature, so it may not declare `move`
+// where the trait's closure parameter is plain: callers lend, and the impl would drop.
+// @error: takes 'f: move (i64) => i64'
+
+trait Apply {
+    fn apply(self: &Self, f: (i64) => i64): i64
+}
+
+struct A { n: i64 }
+
+impl Apply for A {
+    fn apply(self: &A, f: move (i64) => i64): i64 {
+        return f(self.n)
+    }
+}
+
+pub fn main(): i32 {
+    let a = A { n: 1 }
+    print(a.apply((x: i64) => x))
+    return 0
+}

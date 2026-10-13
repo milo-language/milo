@@ -1,0 +1,16 @@
+// A fn whose closure parameter is `move` drops what it is given, so it must not pass as a
+// fn value with a plain parameter: a call through that value lends the closure, and the
+// caller would drop it a second time.
+// @error: type mismatch: 'f' declared as ((i64) => i64) => i64 but got (move (i64) => i64) => i64
+
+fn take(h: move (i64) => i64): i64 {
+    return h(1)
+}
+
+pub fn main(): i32 {
+    let f: ((i64) => i64) => i64 = take
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    print(f(h))
+    return 0
+}

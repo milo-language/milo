@@ -1218,8 +1218,18 @@ export class Codegen {
   // argument and a `let f = move …` argument agree on who frees.
   private ownsClosureEnv(e: HIRExpr): boolean {
     if (e.type.tag !== "fn") return false;
+    if (this.isLentClosure(e)) return false;
     if (e.type.owning === true) return true;
     return e.kind === "Closure" && e.isMove === true && e.captures.length > 0;
+  }
+
+  // An owning closure place passed by value that the checker did not move out of: it was
+  // lent to a plain `(T) => R` parameter (checker `lendsOwningClosure`). The place still
+  // owns it and drops it at its own scope exit, so the call neither frees it afterwards
+  // (that would be a double free) nor ends it as a transfer in the ownership ledger.
+  private isLentClosure(e: HIRExpr): boolean {
+    return e.type.tag === "fn" && e.type.owning === true
+      && (e.kind === "Ident" || e.kind === "FieldAccess" || e.kind === "IndexAccess" || e.kind === "HeapDeref") && !e.isMove;
   }
 
   // Does `fnName`'s parameter `idx` outlive the call — is there anything that could still
@@ -1331,7 +1341,8 @@ export class Codegen {
     const memo = this.closureParamEscapeCache.get(key);
     if (memo !== undefined) return memo;
     // Only a target whose parameters match the fn value's type can be called through it.
-    // `typeEq` ignores `move`, exactly as the checker does when a fn is stored into a slot.
+    // `typeEq` is the checker's own rule for storing a fn into a slot: it ignores a closure
+    // value's `move` but not a closure parameter's (types.ts sameFnOwnership).
     const fits = (params: TypeKind[]) =>
       params.length === want.length && params.every((t, i) => typeEq(t, want[i]));
     const { fns, closures } = this.collectFnValueTargets();
@@ -6916,7 +6927,7 @@ export class Codegen {
           argVals.push({ val: fnPtr, type: "ptr" });
         } else {
           argVals.push({ val: av, type: at });
-          argEnds.push(av);
+          if (!this.isLentClosure(arg.expr)) argEnds.push(av);
           // The caller owns a `move` closure's heap environment right up to the call and
           // then stops dropping it (an owning fn type is not Copy, so passing it is a
           // move), while the callee's parameter is declared non-owning and never picks the
@@ -7858,7 +7869,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        argEnds.push(av);
+        if (!this.isLentClosure(arg.expr)) argEnds.push(av);
       }
     }
     for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
@@ -7907,7 +7918,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        argEnds.push(av);
+        if (!this.isLentClosure(arg.expr)) argEnds.push(av);
         // Same ownership hand-off as a direct call's closure argument (see genCall).
         if (this.ownsClosureEnv(arg.expr) && at === "{ ptr, ptr }"
             && !this.indirectParamEscapes(expr.callee.type, i)) {
@@ -8150,7 +8161,7 @@ export class Codegen {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
-        argEnds.push(av);
+        if (!this.isLentClosure(arg.expr)) argEnds.push(av);
       }
     }
     for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall

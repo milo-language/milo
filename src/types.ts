@@ -114,10 +114,19 @@ export function typeEq(a: TypeKind, b: TypeKind, rangeStrict = false): boolean {
     }
     case "fn": case "cfn": {
       const bf = b as typeof a;
-      return a.params.length === bf.params.length && a.params.every((p, i) => nested(p, bf.params[i])) && nested(a.ret, bf.ret);
+      return a.params.length === bf.params.length && a.params.every((p, i) => nested(p, bf.params[i]) && sameFnOwnership(p, bf.params[i]!)) && nested(a.ret, bf.ret);
     }
     case "interface": return a.name === (b as typeof a).name;
   }
+}
+
+// A closure PARAMETER's `move` is part of a fn type even though a closure value's is not:
+// a caller lends an owning closure to a plain `(T) => R` parameter and keeps dropping it
+// (checker `lendsOwningClosure`), so a target whose parameter is `move` (it drops what it
+// is given) must not be callable through a fn value whose parameter is plain, or the
+// closure is freed twice. Also used for impl-vs-trait and interface parameter matching.
+export function sameFnOwnership(a: TypeKind, b: TypeKind): boolean {
+  return a.tag !== "fn" || b.tag !== "fn" || !!a.owning === !!b.owning;
 }
 
 // `demangle` maps a monomorphized struct/enum name (`Pair_i64_string`) back to what the

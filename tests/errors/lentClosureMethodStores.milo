@@ -1,0 +1,20 @@
+// The method spelling: `self.m(h)` lends `h` to a plain parameter, so the method may not
+// keep it either.
+// @error: non-escaping closure parameter 'f' is stored
+
+struct Holder { f: (i64) => i64 }
+
+impl Holder {
+    fn set(self: &mut Holder, f: (i64) => i64) {
+        self.f = f
+    }
+}
+
+pub fn main(): i32 {
+    var o = Holder { f: (x: i64) => x }
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    o.set(h)
+    print(o.f(1))
+    return 0
+}

@@ -1,0 +1,14 @@
+// The return spelling of lentClosureStoredInStruct.
+// @error: non-escaping closure parameter 'f' is returned
+
+fn keep(f: (i64) => i64): (i64) => i64 {
+    return f
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let g = keep(h)
+    print(g(1))
+    return 0
+}

@@ -648,21 +648,13 @@ export function checkNonEscapingParams(host: ProgramPassHost, program: Program, 
     const off = call.kind !== "Call" && sig.params[0]?.name === "self" ? 1 : 0;
     return sig.params[i + off]?.type ?? null;
   };
-  for (const fn of [...program.functions, ...host.monomorphizedFns]) {
-    if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
-    // The one callee that keeps a plain closure param: checkTaskScopes holds its callers.
-    if (fn.name === SCOPED_SPAWN_FN) continue;
-    const sig = host.functions.get(fn.name);
-    if (!sig) continue;
-    const params = new Set(sig.params.filter(p => isNonEscapingFnParam(p.type)).map(p => p.name));
-    if (params.size === 0) continue;
-    const who = view.pretty(fn.name);
+  const checkBody = (body: unknown, params: Set<string>, who: string): void => {
     const report = (name: string, span: Span | undefined, what: string) => {
       const key = `${span?.file ?? ""}:${span?.line ?? 0}:${span?.col ?? 0}:${name}`;
       if (seen.has(key)) return;
       seen.add(key);
       host.error(`non-escaping closure parameter '${name}' ${what}`, span,
-        `a plain closure parameter can only be called or passed on to another plain closure parameter; if '${who}' stores, returns or spawns it, declare it '${name}: move (…) => …'`);
+        `a plain closure parameter can only be called or passed on to another plain closure parameter; if ${who} stores, returns or spawns it, declare it '${name}: move (…) => …'`);
     };
     const visit = (node: unknown, ctx: string): void => {
       if (!node || typeof node !== "object") return;
@@ -709,7 +701,32 @@ export function checkNonEscapingParams(host: ProgramPassHost, program: Program, 
         if (k !== "span" && k !== "type") visit(n[k], ctx);
       }
     };
-    visit(fn.body, "is used as a value here, which may keep it past the call");
+    visit(body, "is used as a value here, which may keep it past the call");
+  };
+  // A closure literal's plain closure parameter is held to the same rule: a call through
+  // a fn value lends an owning closure exactly as a direct call does (checker
+  // `lendsOwningClosure`), and the literal is one of the targets that call can reach.
+  const checkClosureLiterals = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const x of node) checkClosureLiterals(x); return; }
+    const n = node as Record<string, unknown> & { kind?: string };
+    if (n.kind === "Closure") {
+      const ty = host.exprTypes.get(n as unknown as Expr);
+      const ps = n.params as { name: string }[];
+      const params = new Set(ty?.tag === "fn" ? ps.filter((_, i) => isNonEscapingFnParam(ty.params[i])).map(p => p.name) : []);
+      if (params.size > 0) checkBody(n.body, params, "the closure");
+    }
+    for (const k of Object.keys(n)) if (k !== "span" && k !== "type") checkClosureLiterals(n[k]);
+  };
+  for (const fn of [...program.functions, ...host.monomorphizedFns]) {
+    if (fn.isExtern || !fn.body || fn.typeParams.length > 0) continue;
+    checkClosureLiterals(fn.body);
+    // The one callee that keeps a plain closure param: checkTaskScopes holds its callers.
+    if (fn.name === SCOPED_SPAWN_FN) continue;
+    const sig = host.functions.get(fn.name);
+    if (!sig) continue;
+    const params = new Set(sig.params.filter(p => isNonEscapingFnParam(p.type)).map(p => p.name));
+    if (params.size > 0) checkBody(fn.body, params, `'${view.pretty(fn.name)}'`);
   }
 }
 

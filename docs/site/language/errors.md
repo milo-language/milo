@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 547 distinct messages across 695 programs the compiler must reject.
+Every error message the test suite pins: 550 distinct messages across 706 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -485,6 +485,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`struct update base has type T, but the literal builds S`](#struct-update-base-has-type-t-but-the-literal-builds-s)
 - [`swap: operands have different ranges i32(1..9) and i32`](#swap-operands-have-different-ranges-i32-1-9-and-i32)
 - [`swap: operands have different types`](#swap-operands-have-different-types)
+- [`takes 'f: move (i64) => i64'`](#takes-f-move-i64-i64)
 - [`takes 2 parameters, the Milo declaration takes 3`](#takes-2-parameters-the-milo-declaration-takes-3)
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
@@ -502,6 +503,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
 - [`type 'i64' does not implement trait 'AsFd'`](#type-i64-does-not-implement-trait-asfd)
 - [`type 'Math' has no static method 'minimum'`](#type-math-has-no-static-method-minimum)
+- [`type 'P' does not satisfy interface 'Applier'`](#type-p-does-not-satisfy-interface-applier)
 - [`type alias 'A' is cyclic`](#type-alias-a-is-cyclic)
 - [`type alias 'Loop' is cyclic`](#type-alias-loop-is-cyclic)
 - [`type alias 'Pair' takes 1 type argument(s), got 0`](#type-alias-pair-takes-1-type-argument-s-got-0)
@@ -511,6 +513,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`type mismatch in '-': u32 vs i32`](#type-mismatch-in-u32-vs-i32)
 - [`type mismatch in '+': i64 vs i32`](#type-mismatch-in-i64-vs-i32)
 - [`type mismatch: 'a' declared as i32 but got i64`](#type-mismatch-a-declared-as-i32-but-got-i64)
+- [`type mismatch: 'f' declared as ((i64) => i64) => i64 but got (move (i64) => i64) => i64`](#type-mismatch-f-declared-as-i64-i64-i64-but-got-move-i64-i64-i64)
 - [`type parameter 'T' cannot carry a bound`](#type-parameter-t-cannot-carry-a-bound)
 - [`undefined function 'adoptHeap'`](#undefined-function-adoptheap)
 - [`undefined function 'adoptVec'`](#undefined-function-adoptvec)
@@ -10468,6 +10471,24 @@ fn main(): i32 {
 
 ## `non-escaping closure parameter 'f' is captured by a 'move' closure` {#non-escaping-closure-parameter-f-is-captured-by-a-move-closure}
 
+A lent `move` closure captured by a `move` closure the callee returns would run after the caller dropped it.
+
+```milo skip
+fn keep(f: (i64) => i64): move (i64) => i64 {
+    return move (x: i64) => f(x)
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let g = keep(h)
+    print(g(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureCapturedByMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureCapturedByMove.milo)</sub>
+
 A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures). A `move` closure copies the `{fn, env}` pair, and the env may point into the caller.
 
 ```milo skip
@@ -10512,6 +10533,25 @@ pub fn main(): i32 {
 
 ## `non-escaping closure parameter 'f' is passed to 'push', which may keep it` {#non-escaping-closure-parameter-f-is-passed-to-push-which-may-keep-it}
 
+The Vec spelling of lentClosureStoredInStruct.
+
+```milo skip
+fn keep(v: &mut Vec<(i64) => i64>, f: (i64) => i64) {
+    v.push(f)
+}
+
+pub fn main(): i32 {
+    var v: Vec<(i64) => i64> = []
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    keep(&mut v, h)
+    print(v[0](1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosurePushedToVec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosurePushedToVec.milo)</sub>
+
 A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
 
 ```milo skip
@@ -10552,6 +10592,24 @@ pub fn main(): i32 {
 
 ## `non-escaping closure parameter 'f' is returned` {#non-escaping-closure-parameter-f-is-returned}
 
+The return spelling of lentClosureStoredInStruct.
+
+```milo skip
+fn keep(f: (i64) => i64): (i64) => i64 {
+    return f
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let g = keep(h)
+    print(g(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureReturned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureReturned.milo)</sub>
+
 A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
 
 ```milo skip
@@ -10569,6 +10627,49 @@ pub fn main(): i32 {
 <sub>[tests/errors/nonEscapingParamReturned.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamReturned.milo)</sub>
 
 ## `non-escaping closure parameter 'f' is stored` {#non-escaping-closure-parameter-f-is-stored}
+
+The method spelling: `self.m(h)` lends `h` to a plain parameter, so the method may not keep it either.
+
+```milo skip
+struct Holder { f: (i64) => i64 }
+
+impl Holder {
+    fn set(self: &mut Holder, f: (i64) => i64) {
+        self.f = f
+    }
+}
+
+pub fn main(): i32 {
+    var o = Holder { f: (x: i64) => x }
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    o.set(h)
+    print(o.f(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureMethodStores.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureMethodStores.milo)</sub>
+
+The global spelling of lentClosureStoredInStruct: a lent `move` closure would outlive the caller that still owns and drops it.
+
+```milo skip
+var G: (i64) => i64 = (x: i64) => x
+
+fn keep(f: (i64) => i64) {
+    G = f
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    keep(h)
+    print(G(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureStoredInGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureStoredInGlobal.milo)</sub>
 
 A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures).
 
@@ -10593,6 +10694,43 @@ pub fn main(): i32 {
 <sub>[tests/errors/nonEscapingParamStoredInGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nonEscapingParamStoredInGlobal.milo)</sub>
 
 ## `non-escaping closure parameter 'f' is stored in a struct` {#non-escaping-closure-parameter-f-is-stored-in-a-struct}
+
+A call through a fn value lends a `move` closure just like a direct call, so a closure LITERAL's plain closure parameter is held to the same no-escape rule as a fn's.
+
+```milo skip
+struct Box { f: (i64) => i64 }
+
+pub fn main(): i32 {
+    let keep = (f: (i64) => i64): Box => Box { f: f }
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let b = keep(h)
+    print(b.f(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureLiteralParamStores.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureLiteralParamStores.milo)</sub>
+
+A `move` closure passed to a plain closure parameter is only lent (the caller keeps dropping it), so a callee that stores the parameter would hold a dangling environment.
+
+```milo skip
+struct Box { f: (i64) => i64 }
+
+fn keep(f: (i64) => i64): Box {
+    return Box { f: f }
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let b = keep(h)
+    print(b.f(1))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureStoredInStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureStoredInStruct.milo)</sub>
 
 A plain closure-typed parameter is non-escaping: the callee may call it or pass it on to another plain closure parameter, nothing else (docs/language-reference.md, Closures). Storing it would let a by-reference closure from the caller outlive the caller's frame.
 
@@ -11566,6 +11704,32 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/swapTypeMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapTypeMismatch.milo)</sub>
 
+## `takes 'f: move (i64) => i64'` {#takes-f-move-i64-i64}
+
+An impl method is called through the trait's signature, so it may not declare `move` where the trait's closure parameter is plain: callers lend, and the impl would drop.
+
+```milo skip
+trait Apply {
+    fn apply(self: &Self, f: (i64) => i64): i64
+}
+
+struct A { n: i64 }
+
+impl Apply for A {
+    fn apply(self: &A, f: move (i64) => i64): i64 {
+        return f(self.n)
+    }
+}
+
+pub fn main(): i32 {
+    let a = A { n: 1 }
+    print(a.apply((x: i64) => x))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureImplMoveParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureImplMoveParam.milo)</sub>
+
 ## `takes 2 parameters, the Milo declaration takes 3` {#takes-2-parameters-the-milo-declaration-takes-3}
 
 Arity is checkable with no header in the picture, and it has to be: the guard TU compares C parameter i against Milo parameter i, so a signature listing a different number of parameters would silently shift every width comparison by one and report a mismatch against the wrong parameter — or, worse, agree by luck.
@@ -11922,6 +12086,40 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/poisonedBindingNoCascade.milo](https://github.com/milo-language/milo/blob/main/tests/errors/poisonedBindingNoCascade.milo)</sub>
 
+## `type 'P' does not satisfy interface 'Applier'` {#type-p-does-not-satisfy-interface-applier}
+
+Dynamic dispatch lends a `move` closure to the interface's plain closure parameter, so a method declaring that parameter `move` (it drops what it gets) does not satisfy it.
+
+```milo skip
+interface Applier {
+    fn apply(self: &Self, f: (i64) => i64): i64
+}
+
+struct P {
+    n: i64
+}
+
+impl P {
+    fn apply(self: &Self, f: move (i64) => i64): i64 {
+        return f(self.n)
+    }
+}
+
+fn viaApplier(v: &Vec<Heap<Applier>>): i64 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    return v[0].apply(h)
+}
+
+fn main(): i32 {
+    let v: Vec<Heap<Applier>> = [Heap(P { n: 3 })]
+    print(viaApplier(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureInterfaceMoveParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureInterfaceMoveParam.milo)</sub>
+
 ## `type alias 'A' is cyclic` {#type-alias-a-is-cyclic}
 
 An alias is expanded, so one that names itself has no type to expand into and the expansion does not terminate. Before this it ran until the host stack died and printed a JavaScript trace instead of a diagnostic - it did exit nonzero, so the build failed either way, but the message named a line of the compiler rather than a line of the program. A struct or enum may refer to itself through an indirection; an alias cannot.
@@ -12067,6 +12265,26 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/flexIntLocked.milo](https://github.com/milo-language/milo/blob/main/tests/errors/flexIntLocked.milo)</sub>
+
+## `type mismatch: 'f' declared as ((i64) => i64) => i64 but got (move (i64) => i64) => i64` {#type-mismatch-f-declared-as-i64-i64-i64-but-got-move-i64-i64-i64}
+
+A fn whose closure parameter is `move` drops what it is given, so it must not pass as a fn value with a plain parameter: a call through that value lends the closure, and the caller would drop it a second time.
+
+```milo skip
+fn take(h: move (i64) => i64): i64 {
+    return h(1)
+}
+
+pub fn main(): i32 {
+    let f: ((i64) => i64) => i64 = take
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    print(f(h))
+    return 0
+}
+```
+
+<sub>[tests/errors/lentClosureMoveParamFnValue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/lentClosureMoveParamFnValue.milo)</sub>
 
 ## `type parameter 'T' cannot carry a bound` {#type-parameter-t-cannot-carry-a-bound}
 
@@ -12961,6 +13179,24 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapDerefMovedTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMovedTwice.milo)</sub>
+
+Passing a `move` closure to a `move` parameter still gives it away (only a plain parameter borrows it), so using it afterwards is a use after move.
+
+```milo skip
+fn take(f: move (i64) => i64): i64 {
+    return f(1)
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    print(take(h))
+    print(h(2))
+    return 0
+}
+```
+
+<sub>[tests/errors/moveClosureMovedToMoveParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveClosureMovedToMoveParam.milo)</sub>
 
 ## `use of moved variable 'k'` {#use-of-moved-variable-k}
 

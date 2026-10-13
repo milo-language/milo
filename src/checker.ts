@@ -10,7 +10,7 @@ import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span
 import { simpleType, declaredType, floatNamespaceConst, isNestedPattern, patternLeafNames } from "./ast";
 import { useful, showPat, type Pat, type SpaceEnv } from "./match-usefulness";
 import type { TypeKind } from "./types";
-import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
+import { typeFromAst, PRIMITIVE_TYPE_NAMES, typeEq, sameFnOwnership, typeName, UNKNOWN_TYPE_NAME, NEVER_TYPE, isNumeric, isCopy, isScalar, SLICE_COMBINATORS, ARRAY_COMBINATORS } from "./types";
 const spanKey = (sp: Span): string => `${sp.file ?? ""}:${sp.line}:${sp.col}`;
 
 // Type names the checker builds in rather than reading from a declaration.
@@ -4870,7 +4870,7 @@ export class TypeChecker {
     for (let i = 0; i < implParams.length; i++) {
       const got = implParams[i]!.type;
       const want = expected.params[i]!.type;
-      if (typeEq(got, want)) continue;
+      if (typeEq(got, want) && sameFnOwnership(got, want)) continue;
       const mode =
         got.tag !== "ref" && want.tag === "ref" ? " by value"
         : got.tag === "ref" && want.tag !== "ref" ? " by reference"
@@ -5833,7 +5833,7 @@ export class TypeChecker {
       const expected = sig.params[i + 1];
       if (!expected) break;
       this.checkMethodArg(expr, i, expected.type, sp);
-      if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i]!, expected.type)) this.tryMove(expr.args[i]!);
+      if (!this.argIsBorrowed(expr.args[i]!, expected.type)) this.tryMove(expr.args[i]!);
     }
     this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
     this.resolvedMethods.set(expr, mangled);
@@ -5960,7 +5960,7 @@ export class TypeChecker {
       if (resolved.sig.params.length !== ifaceMethod.params.length) return false;
       // check non-self param types match
       for (let i = 1; i < ifaceMethod.params.length; i++) {
-        if (!typeEq(resolved.sig.params[i].type, ifaceMethod.params[i].type)) return false;
+        if (!typeEq(resolved.sig.params[i].type, ifaceMethod.params[i].type) || !sameFnOwnership(resolved.sig.params[i].type, ifaceMethod.params[i].type)) return false;
       }
       // check return type matches
       if (!typeEq(resolved.sig.ret, ifaceMethod.ret)) return false;
@@ -5969,7 +5969,8 @@ export class TypeChecker {
   }
 
   // try implicit coercion from concrete type to interface type
-  // returns true if coercion is valid and was recorded
+  // returns true if coercion is valid and was recorded, or if it was rejected with its own
+  // "does not satisfy" error (so the caller does not add a type-mismatch cascade on top)
   private tryInterfaceCoercion(expr: Expr, sourceType: TypeKind, targetType: TypeKind): boolean {
     // &T → &Interface
     if (targetType.tag === "ref" && targetType.inner.tag === "interface") {
@@ -5982,6 +5983,7 @@ export class TypeChecker {
           return true;
         }
         this.error(`type '${srcName}' does not satisfy interface '${ifaceName}'`, expr.span);
+        return true;
       }
       return false;
     }
@@ -5996,6 +5998,7 @@ export class TypeChecker {
             return true;
           }
           this.error(`type '${srcName}' does not satisfy interface '${ifaceName}'`, expr.span);
+          return true;
         }
       }
       return false;
@@ -10684,7 +10687,7 @@ export class TypeChecker {
         // Here only a capture mutated in place blocks the move; one merely read or
         // moved out is safe to move.
         this.autoMoveClosureArg(expr.args[i], concreteSig.params[i]?.type, c => !!c.mutatedInClosure);
-        if (!movedEarly.has(i)) this.tryMove(expr.args[i]);
+        if (!movedEarly.has(i) && !this.lendsOwningClosure(expr.args[i], concreteSig.params[i]?.type)) this.tryMove(expr.args[i]);
       }
       // check requires contracts at call site (generic fn)
       this.checkCallSiteExclusivity(expr.args, sp);
@@ -10728,9 +10731,10 @@ export class TypeChecker {
           this.checkCallArg(expr.args[i], paramType, sp, argType =>
             this.error(`closure argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span));
           // Moved before the next argument is checked: see the plain-call loop.
-          if (fnType.params[i].tag === "ref" || this.decaysToPtr(expr.args[i], fnType.params[i])) continue;
-          // Through a fn value: its parameter types cannot promise what the target does
-          // with the argument (`typeEq` ignores `move`), so a literal is moved as before.
+          if (this.argIsBorrowed(expr.args[i], fnType.params[i])) continue;
+          // Through a fn value a closure LITERAL is still made `move`, as before: which
+          // target runs is unknown here. (An owning closure VALUE is lent above; the
+          // target's parameter is plain by typeEq + sameFnOwnership.)
           this.autoMoveClosureArg(expr.args[i], fnType.params[i], c => c.mutable, true);
           this.tryMove(expr.args[i]);
         }
@@ -10835,7 +10839,7 @@ export class TypeChecker {
       // empties the source right there), so a later argument that reads it is a use after
       // move. Moving only once every argument was checked let `insert(k, m.get(k))` read
       // `k` already emptied and miss the key with no diagnostic.
-      if (paramType.tag === "ref" || this.decaysToPtr(expr.args[i], paramType)) continue;
+      if (this.argIsBorrowed(expr.args[i], paramType)) continue;
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
       this.tryMove(expr.args[i]);
     }
@@ -11521,6 +11525,24 @@ export class TypeChecker {
     return argType;
   }
 
+  // A by-value parameter that does not take the argument: a `&T` param, an array decaying
+  // to a pointer, or an owning closure lent to a plain closure parameter.
+  private argIsBorrowed(arg: Expr, paramType: TypeKind): boolean {
+    return paramType.tag === "ref" || this.decaysToPtr(arg, paramType) || this.lendsOwningClosure(arg, paramType);
+  }
+
+  // A plain `(T) => R` parameter cannot keep what it is given (checkNonEscapingParams),
+  // so a `move` closure passed to one is lent, not given: the caller still owns and drops
+  // it, and the callee may call it any number of times. Moving it instead made a capture
+  // passed on this way consume the enclosing `move` closure (call-once trap) and left
+  // nobody to drop the environment. A fn value's plain parameter is equally binding,
+  // since typeEq keeps a `move` parameter from being passed off as a plain one.
+  private lendsOwningClosure(arg: Expr, paramType: TypeKind | undefined): boolean {
+    if (paramType?.tag !== "fn" || paramType.owning) return false;
+    const argType = this.exprTypes.get(arg);
+    return argType?.tag === "fn" && argType.owning === true;
+  }
+
   // A string auto-coerces to `*u8` and a `[T; N]` decays to `*T` for FFI and builtins. The
   // argument is borrowed for the call, not moved.
   private decaysToPtr(arg: Expr, paramType: TypeKind): boolean {
@@ -11563,7 +11585,7 @@ export class TypeChecker {
       this.checkCallArg(expr.args[i], paramType, sp, argType =>
         this.error(`'${expr.variant}' argument ${i + 1}: expected ${this.show(paramType)}, got ${this.show(argType)}`, expr.args[i].span));
       this.autoMoveClosureArg(expr.args[i], paramType, c => c.mutable);
-      if (paramType.tag !== "ref" && !this.decaysToPtr(expr.args[i], paramType)) this.tryMove(expr.args[i]);
+      if (!this.argIsBorrowed(expr.args[i], paramType)) this.tryMove(expr.args[i]);
     }
     this.checkCallSiteExclusivity(expr.args, sp);
     return paramOffset;
@@ -13509,7 +13531,7 @@ export class TypeChecker {
             const expected = ifaceMethod.params[i + 1];
             if (!expected) break;
             this.checkMethodArg(expr, i, expected.type, sp);
-            if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected.type)) this.tryMove(expr.args[i]);
+            if (!this.argIsBorrowed(expr.args[i], expected.type)) this.tryMove(expr.args[i]);
           }
           this.checkCallSiteExclusivity([expr.object, ...expr.args], sp);
           // compute method index for itable slot
@@ -13591,7 +13613,7 @@ export class TypeChecker {
           }
           return false;
         });
-        if (expected.type.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected.type)) {
+        if (!this.argIsBorrowed(expr.args[i], expected.type)) {
           this.autoMoveClosureArg(expr.args[i], expected.type, c => c.mutable);
           this.tryMove(expr.args[i]);
         }
@@ -13630,7 +13652,7 @@ export class TypeChecker {
             const expected = fnType.params[i];
             if (!expected) break;
             this.checkMethodArg(expr, i, expected, sp);
-            if (expected.tag !== "ref" && !this.decaysToPtr(expr.args[i], expected)) this.tryMove(expr.args[i]);
+            if (!this.argIsBorrowed(expr.args[i], expected)) this.tryMove(expr.args[i]);
           }
           this.checkCallSiteExclusivity(expr.args, sp, fnType.tag !== "cfn");
           if (fnType.tag === "cfn") this.cfnFieldCalls.add(expr);

@@ -1,0 +1,14 @@
+// A call through a fn value lends a `move` closure just like a direct call, so a closure
+// LITERAL's plain closure parameter is held to the same no-escape rule as a fn's.
+// @error: non-escaping closure parameter 'f' is stored in a struct
+
+struct Box { f: (i64) => i64 }
+
+pub fn main(): i32 {
+    let keep = (f: (i64) => i64): Box => Box { f: f }
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let b = keep(h)
+    print(b.f(1))
+    return 0
+}

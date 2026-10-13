@@ -1,0 +1,29 @@
+// Dynamic dispatch lends a `move` closure to the interface's plain closure parameter, so
+// a method declaring that parameter `move` (it drops what it gets) does not satisfy it.
+// @error: type 'P' does not satisfy interface 'Applier'
+
+interface Applier {
+    fn apply(self: &Self, f: (i64) => i64): i64
+}
+
+struct P {
+    n: i64
+}
+
+impl P {
+    fn apply(self: &Self, f: move (i64) => i64): i64 {
+        return f(self.n)
+    }
+}
+
+fn viaApplier(v: &Vec<Heap<Applier>>): i64 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    return v[0].apply(h)
+}
+
+fn main(): i32 {
+    let v: Vec<Heap<Applier>> = [Heap(P { n: 3 })]
+    print(viaApplier(v))
+    return 0
+}

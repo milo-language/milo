@@ -1,0 +1,61 @@
+// A `move` closure passed to a plain `(T) => R` parameter is lent, not given: the callee
+// cannot keep it, so the caller still owns it, may call it and lend it again, and drops
+// its environment once at the end of scope. Every call form a plain parameter is reached
+// through: free fn, method, static fn, a fn-typed local, a fn-typed struct field, and a
+// generic fn.
+// @expect: 3
+// @expect: 13
+// @expect: 23
+// @expect: 33
+// @expect: 43
+// @expect: 53
+// @expect: 63
+// @expect: 72
+
+struct Acc {
+    base: i64
+}
+
+impl Acc {
+    fn apply(self: &Acc, f: (i64) => i64): i64 {
+        return f(self.base) + f(0) - f(0)
+    }
+
+    fn make(f: (i64) => i64, x: i64): Acc {
+        return Acc { base: f(x) }
+    }
+}
+
+struct Runner {
+    run: ((i64) => i64, i64) => i64
+}
+
+fn call(f: (i64) => i64, x: i64): i64 {
+    return f(x)
+}
+
+fn callTwice(f: (i64) => i64, x: i64): i64 {
+    return f(f(x)) - 3
+}
+
+fn viaGeneric<T>(f: (T) => T, x: T): T {
+    return f(x)
+}
+
+pub fn main(): i32 {
+    var tag = "abc"
+    tag.pushStr("")
+    let h = move(x: i64) => x + tag.len
+    print(call(h, 0))
+    print(callTwice(h, 10))
+    let a = Acc { base: 20 }
+    print(a.apply(h))
+    print(Acc.make(h, 30).base)
+    let viaLocal = (f: (i64) => i64, x: i64): i64 => f(x)
+    print(viaLocal(h, 40))
+    let r = Runner { run: call }
+    print(r.run(h, 50))
+    print(viaGeneric(h, 60))
+    print(h(69))
+    return 0
+}

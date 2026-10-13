@@ -1,0 +1,19 @@
+// A move closure passed to a non-owning closure parameter is borrowed, not moved:
+// capturing it in another move closure and passing it on must not make that closure call-once.
+// @expect: 2
+// @expect: 3
+
+fn call(f: (i64) => i64, x: i64): i64 {
+    return f(x)
+}
+
+fn wrap(h: move (i64) => i64): move (i64) => i64 {
+    return move(x: i64) => call(h, x)
+}
+
+pub fn main(): i32 {
+    let g = wrap(move(x: i64) => x + 1)
+    print($"{g(1)}")
+    print($"{g(2)}")
+    return 0
+}

@@ -1,0 +1,15 @@
+// The Vec spelling of lentClosureStoredInStruct.
+// @error: non-escaping closure parameter 'f' is passed to 'push', which may keep it
+
+fn keep(v: &mut Vec<(i64) => i64>, f: (i64) => i64) {
+    v.push(f)
+}
+
+pub fn main(): i32 {
+    var v: Vec<(i64) => i64> = []
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    keep(&mut v, h)
+    print(v[0](1))
+    return 0
+}

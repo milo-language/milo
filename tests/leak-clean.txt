@@ -391,6 +391,8 @@ mime
 module_globals
 moduleWrapping
 moveClosureCaptureConsumed
+moveClosureLentThroughCapture
+moveClosureLentToPlainParam
 moveClosureType
 moveFieldThenReassign
 moveIfElse

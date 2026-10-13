@@ -1,0 +1,17 @@
+// A `move` closure passed to a plain closure parameter is only lent (the caller keeps
+// dropping it), so a callee that stores the parameter would hold a dangling environment.
+// @error: non-escaping closure parameter 'f' is stored in a struct
+
+struct Box { f: (i64) => i64 }
+
+fn keep(f: (i64) => i64): Box {
+    return Box { f: f }
+}
+
+pub fn main(): i32 {
+    let s = "abc"
+    let h = move (x: i64) => x + s.len
+    let b = keep(h)
+    print(b.f(1))
+    return 0
+}
