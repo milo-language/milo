@@ -14,9 +14,9 @@
 // Each finding reads `fn: ID kind (made at IR line N by ORIGIN, milo line M; ...)`; rerun one
 // fixture with MILO_OWN_LEDGER=1 MILO_OWN_LEDGER_KEEP=1 `milo emit-ir` to read the IR the line
 // numbers point into, markers included.
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync } from "fs";
 import { join, basename } from "path";
-import { cpus } from "os";
+import { cpus, tmpdir } from "os";
 import { guardedRun } from "./guard";
 
 const ROOT = join(import.meta.dir, "..");
@@ -70,6 +70,24 @@ async function one(file: string): Promise<Result> {
     return { fixture: basename(file), ok: false, findings: [], error, ms };
   }
   return { fixture: basename(file), ok: true, findings: parse(r.stderr), ms };
+}
+
+// The gate's baseline is empty, so "0 findings" is the pass state, and a ledger that is
+// silently OFF (the env var renamed, codegen no longer reading it) also reports 0 findings.
+// Before trusting that zero, prove the markers are being emitted at all: compile one fixture
+// that makes owned strings with the markers kept, and require them in the IR.
+const CANARY = join(FIXTURES, "stringBasic.milo");
+if (check) {
+  const dir = mkdtempSync(join(tmpdir(), "milo-own-canary-"));
+  const ir = join(dir, "canary.ll");
+  const r = await guardedRun("bun", ["run", join(ROOT, "src", "main.ts"), "emit-ir", CANARY, "-o", ir],
+    { env: { ...process.env, MILO_OWN_LEDGER: "1", MILO_OWN_LEDGER_KEEP: "1" }, timeoutMs: 120_000, memMb: 2048 });
+  const text = r.code === 0 && existsSync(ir) ? readFileSync(ir, "utf8") : "";
+  rmSync(dir, { recursive: true, force: true });
+  if (!text.includes("call void @__milo_own_make(") || !text.includes("call void @__milo_own_end(")) {
+    console.error(`own-ledger --check: canary ${basename(CANARY)} emitted no ledger markers with MILO_OWN_LEDGER=1; the ledger is not running, so a clean sweep would mean nothing`);
+    process.exit(1);
+  }
 }
 
 const files = readdirSync(FIXTURES).filter(f => f.endsWith(".milo") && (!filter || f.includes(filter))).sort().map(f => join(FIXTURES, f));
