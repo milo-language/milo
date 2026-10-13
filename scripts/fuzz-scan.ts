@@ -104,12 +104,6 @@ export function scan(src: string): RawTok[] {
   return out;
 }
 
-export function render(src: string, toks: RawTok[]): string {
-  let out = "";
-  for (const t of toks) out += src.slice(t.start, t.end);
-  return out;
-}
-
 // Materialize each token's text so mutants can be built by array splicing without
 // carrying the original source along.
 export function texts(src: string): string[] {
