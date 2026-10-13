@@ -58,6 +58,10 @@ export interface StructField {
   type: MiloType;
   // `@cOpaque` — filler with no C counterpart; @cLayout must not check it (see checker).
   attributes?: Attribute[];
+  // `name: T = expr`: the value a struct literal that omits the field gets. The checker
+  // copies this AST into each such literal, so it is evaluated afresh at every one; it is
+  // never itself checked or lowered.
+  default?: Expr;
 }
 
 export interface TypeParam {
@@ -100,7 +104,9 @@ export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: Mil
 // `base`: struct update, `S { a: 1, ..base }`. Every unlisted field is moved out of
 // `base`, which is evaluated once, after the listed fields, and consumed whole. A walker
 // that visits `fields` must visit `base` too, or it misses the moves and borrows in it.
-export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; typeArgs?: MiloType[]; base?: Expr; span?: Span }
+// A field with `fromDefault` was not written: the checker copied it from the field's
+// declared default, so its names belong to the struct's file, not the literal's.
+export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr; fromDefault?: true }[]; typeArgs?: MiloType[]; base?: Expr; span?: Span }
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
 
 // `f64.NAN` / `f64.INF` / `f64.NEG_INF` (and f32) parse as a FieldAccess whose object is a

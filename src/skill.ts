@@ -156,6 +156,23 @@ fn main(): i32 {
 }
 \`\`\`
 
+Fields may declare defaults; a literal may omit them and gets a fresh copy each time.
+A default is a literal, \`[]\`, \`null\`, an enum variant, a static call (\`Vec.new()\`),
+a struct literal of those, or an immutable Copy global. \`..base\` fills the rest instead.
+\`\`\`milo
+struct Options {
+    url: string,
+    timeoutMs: i64 = 30000,
+    tags: Vec<string> = [],
+}
+
+fn main(): i32 {
+    let o = Options { url: "https://example.com" }
+    print($"{o.timeoutMs} {o.tags.len}")   // 30000 0
+    return 0
+}
+\`\`\`
+
 ### Enums & Match
 \`\`\`milo
 enum Shape {
@@ -436,12 +453,13 @@ struct Config {
     owner: string?,           // None encodes as null
     @json("log_level")        // wire name differs from the field
     logLevel: i64,
+    retries: i64 = 3,         // an absent key decodes to the default
 }
 
 fn main(): i32 {
     let config = Config { name: "app", port: 8080, debug: false, owner: None, logLevel: 2 }
     let text = config.toJson()
-    print(text)   // {"name":"app","port":8080,"debug":false,"owner":null,"log_level":2}
+    print(text)   // {"name":"app","port":8080,"debug":false,"owner":null,"log_level":2,"retries":3}
 
     match Config.fromJson(text) {
         Ok(back) => print(back.port)

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 526 distinct messages across 674 programs the compiler must reject.
+Every error message the test suite pins: 538 distinct messages across 686 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -32,6 +32,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'@copyOnly(U)' on 'pick': 'U' is not one of its type parameters`](#copyonly-u-on-pick-u-is-not-one-of-its-type-parameters)
 - [`'@derive' is not supported on methods`](#derive-is-not-supported-on-methods)
 - [`'@mustUse' takes no arguments`](#mustuse-takes-no-arguments)
+- [`'@ordered' on 'smallest': it has no type parameters to constrain`](#ordered-on-smallest-it-has-no-type-parameters-to-constrain)
 - [`'@pure' takes no arguments`](#pure-takes-no-arguments)
 - [`'@wrapping' on extern fn`](#wrapping-on-extern-fn)
 - [`'@wrapping' takes no arguments`](#wrapping-takes-no-arguments-2)
@@ -52,6 +53,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'b' may reallocate here while 'p' still points into its buffer (from 'b.bytes.ptr()' on line 26)`](#b-may-reallocate-here-while-p-still-points-into-its-buffer-from-b-bytes-ptr-on-line-26)
 - [`'bad' cannot return a slice of 'other'`](#bad-cannot-return-a-slice-of-other)
 - [`'bad' cannot return a slice of 'tmp'`](#bad-cannot-return-a-slice-of-tmp)
+- [`'bisectLeft<Task>' is not allowed: 'bisectLeft' orders its elements with '<', which 'Task' does not have`](#bisectleft-task-is-not-allowed-bisectleft-orders-its-elements-with-which-task-does-not-have)
 - [`'break' outside of loop`](#break-outside-of-loop)
 - [`'bump' in 'impl Counter for Tally' takes 'self: &Tally' by shared reference; the trait 'Counter' declares 'self: &mut Self'`](#bump-in-impl-counter-for-tally-takes-self-tally-by-shared-reference-the-trait-counter-declares-self-mut-self)
 - [`'bx' is moved and borrowed in the same call`](#bx-is-moved-and-borrowed-in-the-same-call)
@@ -74,6 +76,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
+- [`'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop`](#getorinsert-is-not-available-on-hashmap-i64-res-getorinsert-copies-its-element-out-and-res-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
 - [`'head' cannot return a reference`](#head-cannot-return-a-reference)
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
@@ -90,6 +93,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Meters' is not a generic type`](#meters-is-not-a-generic-type)
 - [`'n' is captured by a closure argument and borrowed in the same call`](#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'n' shadows an outer binding`](#n-shadows-an-outer-binding)
+- [`'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have`](#new-is-not-available-on-binaryheap-task-new-orders-its-elements-with-which-task-does-not-have)
 - [`'nonexistent' is not exported by 'lib/math'`](#nonexistent-is-not-exported-by-lib-math)
 - [`'Ops.read' is a C function pointer and cannot be used as a value`](#ops-read-is-a-c-function-pointer-and-cannot-be-used-as-a-value)
 - [`'Option' is a builtin enum and cannot be redeclared`](#option-is-a-builtin-enum-and-cannot-be-redeclared)
@@ -318,6 +322,11 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`declared as *u8 but got **u8`](#declared-as-u8-but-got-u8)
 - [`declared as string but got Result`](#declared-as-string-but-got-result)
 - [`decreases clause must be an integer measure`](#decreases-clause-must-be-an-integer-measure)
+- [`default for field 'Box.items' may not name a type parameter`](#default-for-field-box-items-may-not-name-a-type-parameter)
+- [`default for field 'Cfg.limit' may not be an arithmetic or comparison expression`](#default-for-field-cfg-limit-may-not-be-an-arithmetic-or-comparison-expression)
+- [`default for field 'Cfg.limit' may not call 'compute'`](#default-for-field-cfg-limit-may-not-call-compute)
+- [`default for field 'Cfg.limit' reads 'LIMIT', a 'var'`](#default-for-field-cfg-limit-reads-limit-a-var)
+- [`default for field 'Cfg.limit': expected i64, got string`](#default-for-field-cfg-limit-expected-i64-got-string)
 - [`depends on itself through another global`](#depends-on-itself-through-another-global)
 - [`did you mean 'clampF64' or 'clampI64'?`](#did-you-mean-clampf64-or-clampi64)
 - [`did you mean 'Point'?`](#did-you-mean-point)
@@ -401,6 +410,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`Milo writes through a *u32 (4-byte pointee)`](#milo-writes-through-a-u32-4-byte-pointee)
 - [`Milo's Utsname is 256 bytes, smaller than the`](#milo-s-utsname-is-256-bytes-smaller-than-the)
 - [`mismatched types`](#mismatched-types)
+- [`missing field 'url' in struct 'Req'`](#missing-field-url-in-struct-req)
 - [`missing required method 'eq'`](#missing-required-method-eq)
 - [`moves a captured value out of itself when it runs`](#moves-a-captured-value-out-of-itself-when-it-runs)
 - [`must be an integer literal`](#must-be-an-integer-literal)
@@ -471,6 +481,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
 - [`targetOs() takes no arguments`](#targetos-takes-no-arguments)
 - [`the closure on line 14 writes the global 'G', which is being iterated here`](#the-closure-on-line-14-writes-the-global-g-which-is-being-iterated-here)
+- [`the default for field 'limit' reads the global 'LIMIT', but a local 'LIMIT' shadows it here`](#the-default-for-field-limit-reads-the-global-limit-but-a-local-limit-shadows-it-here)
 - [`the first read of 'G' (it runs that global's initializer) can park this task while the loop variable is a reference into 'H's buffer`](#the-first-read-of-g-it-runs-that-global-s-initializer-can-park-this-task-while-the-loop-variable-is-a-reference-into-h-s-buffer)
 - [`the first read of 'G' (it runs that global's initializer) writes the global 'H', which is being iterated here`](#the-first-read-of-g-it-runs-that-global-s-initializer-writes-the-global-h-which-is-being-iterated-here)
 - [`the implicit 'D.drop' writes the global 'G', which is being iterated here`](#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here)
@@ -543,6 +554,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`variable 'args' already declared in this scope`](#variable-args-already-declared-in-this-scope)
 - [`variant 'Some' has 1 fields, but pattern has 2 bindings`](#variant-some-has-1-fields-but-pattern-has-2-bindings)
 - [`was already moved out of it`](#was-already-moved-out-of-it)
+- [`which each literal would move out of the global`](#which-each-literal-would-move-out-of-the-global)
 - [`which implements Drop`](#which-implements-drop)
 - [`write 'self: &mut Self'`](#write-self-mut-self)
 - [`write 'self: &Self'`](#write-self-self)
@@ -808,6 +820,25 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/mustUseArgsRejected.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mustUseArgsRejected.milo)</sub>
+
+## `'@ordered' on 'smallest': it has no type parameters to constrain` {#ordered-on-smallest-it-has-no-type-parameters-to-constrain}
+
+`@ordered` withholds a generic from a type argument with no `<`; a concrete fn has none.
+
+```milo skip
+@ordered
+fn smallest(v: &Vec<i64>): i64 {
+    return v[0]
+}
+
+fn main(): i32 {
+    let v: Vec<i64> = [1]
+    print(smallest(v))
+    return 0
+}
+```
+
+<sub>[tests/errors/orderedConcreteFn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/orderedConcreteFn.milo)</sub>
 
 ## `'@pure' takes no arguments` {#pure-takes-no-arguments}
 
@@ -1314,6 +1345,26 @@ fn main(): void { }
 ```
 
 <sub>[tests/errors/viewOfLocalNote.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewOfLocalNote.milo)</sub>
+
+## `'bisectLeft<Task>' is not allowed: 'bisectLeft' orders its elements with '<', which 'Task' does not have` {#bisectleft-task-is-not-allowed-bisectleft-orders-its-elements-with-which-task-does-not-have}
+
+An `@ordered` generic fn is rejected at the call, on the caller's line, instead of at the `<` inside std/collections.
+
+```milo skip
+from "std/collections" import { bisectLeft }
+
+struct Task {
+    pri: i64,
+}
+
+fn main(): i32 {
+    let v: Vec<Task> = []
+    print(bisectLeft(v, Task { pri: 1 }))
+    return 0
+}
+```
+
+<sub>[tests/errors/orderedBisectFn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/orderedBisectFn.milo)</sub>
 
 ## `'break' outside of loop` {#break-outside-of-loop}
 
@@ -1859,6 +1910,34 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/dropElementHashMapGet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropElementHashMapGet.milo)</sub>
 
+## `'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop` {#getorinsert-is-not-available-on-hashmap-i64-res-getorinsert-copies-its-element-out-and-res-carries-drop}
+
+std/prelude's `HashMap.getOrInsert` returns a copy of the value, so it is `@copyOut`: withheld from a map whose value carries Drop, while `upsert` stays (tests/fixtures/hashMapUpsert.milo).
+
+```milo skip
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop")
+    }
+}
+
+fn main(): i32 {
+    var m: HashMap<i64, Res> = HashMap.new()
+    m.upsert(1, Res { id: 1 }, (r: &mut Res): void => {
+        r.id += 1
+    })
+    let r = m.getOrInsert(1, Res { id: 2 })
+    print(r.id)
+    return 0
+}
+```
+
+<sub>[tests/errors/copyOutHashMapGetOrInsert.milo](https://github.com/milo-language/milo/blob/main/tests/errors/copyOutHashMapGetOrInsert.milo)</sub>
+
 ## `'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')` {#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items}
 
 ```milo skip
@@ -2286,6 +2365,26 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/shadowClosureParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shadowClosureParam.milo)</sub>
+
+## `'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have` {#new-is-not-available-on-binaryheap-task-new-orders-its-elements-with-which-task-does-not-have}
+
+`BinaryHeap.new` is `@ordered`: its natural order is `<`, which a struct does not have. Only that constructor is withheld; `withCompare` stays (tests/fixtures/collectionsHeap.milo).
+
+```milo skip
+from "std/collections" import { BinaryHeap }
+
+struct Task {
+    pri: i64,
+}
+
+fn main(): i32 {
+    var h = BinaryHeap<Task>.new()
+    h.push(Task { pri: 1 })
+    return 0
+}
+```
+
+<sub>[tests/errors/orderedHeapNew.milo](https://github.com/milo-language/milo/blob/main/tests/errors/orderedHeapNew.milo)</sub>
 
 ## `'nonexistent' is not exported by 'lib/math'` {#nonexistent-is-not-exported-by-lib-math}
 
@@ -8400,6 +8499,78 @@ fn main() {
 
 <sub>[tests/errors/decreasesNotInteger.milo](https://github.com/milo-language/milo/blob/main/tests/errors/decreasesNotInteger.milo)</sub>
 
+## `default for field 'Box.items' may not name a type parameter` {#default-for-field-box-items-may-not-name-a-type-parameter}
+
+`[]` or `Vec.new()` already take their element type from the field's type.
+
+```milo skip
+struct Box<T> { items: Vec<T> = Vec<T>.new(), first: T }
+fn main(): i32 {
+    let b = Box { first: 1 }
+    return b.items.len as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultTypeParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultTypeParam.milo)</sub>
+
+## `default for field 'Cfg.limit' may not be an arithmetic or comparison expression` {#default-for-field-cfg-limit-may-not-be-an-arithmetic-or-comparison-expression}
+
+A default is copied into every literal that omits the field, so it is limited to forms that need nothing from where the literal is written. Arithmetic belongs in a constructor.
+
+```milo skip
+struct Cfg { limit: i64 = 10 * 2 }
+fn main(): i32 {
+    let c = Cfg {}
+    return c.limit as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultArith.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultArith.milo)</sub>
+
+## `default for field 'Cfg.limit' may not call 'compute'` {#default-for-field-cfg-limit-may-not-call-compute}
+
+A free fn call could read anything; a static call on a type (`Vec.new()`) is the constructor form a default may use.
+
+```milo skip
+fn compute(): i64 { return 3 }
+struct Cfg { limit: i64 = compute() }
+fn main(): i32 {
+    let c = Cfg {}
+    return c.limit as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultCall.milo)</sub>
+
+## `default for field 'Cfg.limit' reads 'LIMIT', a 'var'` {#default-for-field-cfg-limit-reads-limit-a-var}
+
+A default must mean the same value at every literal.
+
+```milo skip
+var LIMIT: i64 = 5
+struct Cfg { limit: i64 = LIMIT }
+fn main(): i32 {
+    LIMIT = 6
+    let c = Cfg {}
+    return c.limit as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultVarGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultVarGlobal.milo)</sub>
+
+## `default for field 'Cfg.limit': expected i64, got string` {#default-for-field-cfg-limit-expected-i64-got-string}
+
+Checked at the declaration, so a default no literal ever uses is still reported.
+
+```milo skip
+struct Cfg { limit: i64 = "ten" }
+fn main(): i32 {
+    return 0
+}
+```
+
+<sub>[tests/errors/fieldDefaultType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultType.milo)</sub>
+
 ## `depends on itself through another global` {#depends-on-itself-through-another-global}
 
 ```milo skip
@@ -10020,6 +10191,20 @@ fn main(): i32 {
 
 <sub>[tests/errors/if_expr_mismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/if_expr_mismatch.milo)</sub>
 
+## `missing field 'url' in struct 'Req'` {#missing-field-url-in-struct-req}
+
+Only a field with a default may be omitted.
+
+```milo skip
+struct Req { url: string, timeoutMs: i64 = 30000 }
+fn main(): i32 {
+    let r = Req { timeoutMs: 5 }
+    return r.timeoutMs as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultStillMissing.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultStillMissing.milo)</sub>
+
 ## `missing required method 'eq'` {#missing-required-method-eq}
 
 ```milo skip
@@ -11328,6 +11513,22 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/globalIterClosureParamWrites.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalIterClosureParamWrites.milo)</sub>
+
+## `the default for field 'limit' reads the global 'LIMIT', but a local 'LIMIT' shadows it here` {#the-default-for-field-limit-reads-the-global-limit-but-a-local-limit-shadows-it-here}
+
+The default's names resolve where the struct is declared; a local with the same name at the literal would otherwise silently become the default.
+
+```milo skip
+let LIMIT: i64 = 5
+struct Cfg { limit: i64 = LIMIT }
+fn main(): i32 {
+    let LIMIT: i64 = 9
+    let c = Cfg {}
+    return (c.limit + LIMIT) as i32
+}
+```
+
+<sub>[tests/errors/fieldDefaultShadowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultShadowed.milo)</sub>
 
 ## `the first read of 'G' (it runs that global's initializer) can park this task while the loop variable is a reference into 'H's buffer` {#the-first-read-of-g-it-runs-that-global-s-initializer-can-park-this-task-while-the-loop-variable-is-a-reference-into-h-s-buffer}
 
@@ -13419,6 +13620,22 @@ fn main() {
 ```
 
 <sub>[tests/errors/movePartiallyMovedStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/movePartiallyMovedStruct.milo)</sub>
+
+## `which each literal would move out of the global` {#which-each-literal-would-move-out-of-the-global}
+
+A string global named as a default would be moved into the first literal, leaving the global empty for the next one.
+
+```milo skip
+let NAME: string = "anon"
+struct User { name: string = NAME }
+fn main(): i32 {
+    let u = User {}
+    print(u.name)
+    return 0
+}
+```
+
+<sub>[tests/errors/fieldDefaultMovesGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/fieldDefaultMovesGlobal.milo)</sub>
 
 ## `which implements Drop` {#which-implements-drop}
 

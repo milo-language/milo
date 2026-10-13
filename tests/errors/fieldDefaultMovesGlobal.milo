@@ -1,0 +1,10 @@
+// @error: which each literal would move out of the global
+// A string global named as a default would be moved into the first literal, leaving the
+// global empty for the next one.
+let NAME: string = "anon"
+struct User { name: string = NAME }
+fn main(): i32 {
+    let u = User {}
+    print(u.name)
+    return 0
+}

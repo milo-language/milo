@@ -1,0 +1,10 @@
+// @error: the default for field 'limit' reads the global 'LIMIT', but a local 'LIMIT' shadows it here
+// The default's names resolve where the struct is declared; a local with the same name at
+// the literal would otherwise silently become the default.
+let LIMIT: i64 = 5
+struct Cfg { limit: i64 = LIMIT }
+fn main(): i32 {
+    let LIMIT: i64 = 9
+    let c = Cfg {}
+    return (c.limit + LIMIT) as i32
+}

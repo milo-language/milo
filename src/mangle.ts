@@ -421,7 +421,7 @@ export function manglePackage(
     for (const tp of s.typeParams ?? []) sc.bindType(tp.name);
     walkBounds(s.typeParams, sc);
     walkDeriveArgs(s.attributes, sc);
-    for (const f of s.fields) walkType(f.type, sc);
+    for (const f of s.fields) { walkType(f.type, sc); walkExpr(f.default, sc); }
   }
   for (const e of prog.enums) {
     const sc = topScope();

@@ -1,0 +1,9 @@
+// @error: default for field 'Cfg.limit' reads 'LIMIT', a 'var'
+// A default must mean the same value at every literal.
+var LIMIT: i64 = 5
+struct Cfg { limit: i64 = LIMIT }
+fn main(): i32 {
+    LIMIT = 6
+    let c = Cfg {}
+    return c.limit as i32
+}

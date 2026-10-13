@@ -1,0 +1,7 @@
+// @error: default for field 'Box.items' may not name a type parameter
+// `[]` or `Vec.new()` already take their element type from the field's type.
+struct Box<T> { items: Vec<T> = Vec<T>.new(), first: T }
+fn main(): i32 {
+    let b = Box { first: 1 }
+    return b.items.len as i32
+}

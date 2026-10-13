@@ -1,0 +1,6 @@
+// @error: default for field 'Cfg.limit': expected i64, got string
+// Checked at the declaration, so a default no literal ever uses is still reported.
+struct Cfg { limit: i64 = "ten" }
+fn main(): i32 {
+    return 0
+}

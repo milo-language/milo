@@ -1,0 +1,7 @@
+// A struct whose default reads a module-private global (fieldDefaults.milo).
+let LIMIT: i64 = 42
+
+pub struct Limits {
+    max: i64 = LIMIT,
+    name: string = "lib",
+}

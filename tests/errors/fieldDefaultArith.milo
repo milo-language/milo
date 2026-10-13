@@ -1,0 +1,8 @@
+// @error: default for field 'Cfg.limit' may not be an arithmetic or comparison expression
+// A default is copied into every literal that omits the field, so it is limited to forms
+// that need nothing from where the literal is written. Arithmetic belongs in a constructor.
+struct Cfg { limit: i64 = 10 * 2 }
+fn main(): i32 {
+    let c = Cfg {}
+    return c.limit as i32
+}

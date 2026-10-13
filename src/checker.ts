@@ -779,6 +779,13 @@ export class TypeChecker {
   private staticCalls = new Map<Expr, string>();
   private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
   private rewrittenStructLits = new Map<Expr, string>();
+  // Field defaults (`timeoutMs: i64 = 30000`), by declared struct name (a generic's base
+  // name): field -> the pristine default AST, copied into each literal that omits it.
+  private structDefaults = new Map<string, Map<string, Expr>>();
+  // Fields whose default was rejected: a literal omitting one is not ALSO missing a field.
+  private badDefaults = new Set<string>();
+  // Literals already filled (a literal can be checked more than once).
+  private defaultsFilled = new WeakSet<Expr>();
   private movedExprs = new Set<Expr>();
   private viewLets = new Set<Stmt>();
   // Candidates for viewLets in the function being checked, decided once its body is done.
@@ -2726,6 +2733,7 @@ export class TypeChecker {
       fields: generic.decl.fields.map(f => ({
         name: f.name,
         type: this.substituteMiloType(f.type, generic.typeParams, typeArgs),
+        ...(f.default && { default: f.default }),
       })),
       // Where the generic lives: record/replay asks whether a type is std's own.
       ...(generic.decl.span && { span: generic.decl.span }),
@@ -3828,6 +3836,8 @@ export class TypeChecker {
 
     this.reportUnknownTypeNames(program);
 
+    this.registerFieldDefaults(program);
+
     // register structs — two passes so generic structs are available when resolving fields
     for (const s of program.structs) {
       if (s.typeParams.length > 0) {
@@ -4352,6 +4362,7 @@ export class TypeChecker {
       }
     }
     this._globalTypes = globalTypes;
+    this.checkFieldDefaultTypes(program);
 
     // The outer `recover` per function catches a `fatal()` fired in the signature
     // or contracts, before the per-statement boundaries inside the body exist.
@@ -5056,7 +5067,7 @@ export class TypeChecker {
         }
         key = arg;
       }
-      fields.push({ field: f.name, key, plan });
+      fields.push({ field: f.name, key, plan, ...(f.default && { hasDefault: true }) });
     }
     const dupe = fields.find((f, i) => fields.findIndex(g => g.key === f.key) !== i);
     if (dupe) {
@@ -11323,10 +11334,147 @@ export class TypeChecker {
   // A generic struct literal checked against one concrete instance (`hint`, the
   // monomorphized struct): from a binding's annotation, or from the literal's own
   // `Pair<i64, string> { … }` type arguments.
+  // ── Field defaults ──
+  //
+  // A default is restricted to what needs nothing from the place a literal is written:
+  // literals (a leading `-` included), `[]`, `null`/`None`, enum variants and `Some`/
+  // `Ok`/`Err` of allowed values, a static call on a type (`Vec.new()`,
+  // `Duration.ms(500)`), a struct literal of allowed values, a cast of one, and an
+  // immutable Copy-typed global (`= DEFAULT_TIMEOUT_MS`). No locals, no `self`, no free
+  // fn calls: the default's AST is copied into every literal that omits the field, so
+  // anything that could resolve differently there (or move out of a global) is refused.
+  // The copy is evaluated at each literal, after the listed fields, in declaration order.
+  private registerFieldDefaults(program: Program) {
+    for (const s of program.structs) {
+      const typeParams = new Set(s.typeParams.map(t => t.name));
+      for (const f of s.fields) {
+        if (!f.default) continue;
+        const why = this.defaultFormError(f.default, typeParams);
+        if (why) {
+          this.error(`default for field '${s.name}.${f.name}' ${why}`, f.default.span ?? s.span,
+            `a default may be a literal, '[]', 'null', an enum variant, a static call on a type ('Vec.new()'), a struct literal of those, or an immutable Copy global; compute anything else in a constructor`);
+          this.badDefaults.add(`${s.name}.${f.name}`);
+          continue;
+        }
+        let m = this.structDefaults.get(s.name);
+        if (!m) { m = new Map(); this.structDefaults.set(s.name, m); }
+        m.set(f.name, f.default);
+      }
+    }
+  }
+
+  // Why `e` cannot be a field default, or null when it can.
+  private defaultFormError(e: Expr, typeParams: Set<string>): string | null {
+    const sub = (xs: Expr[]) => { for (const x of xs) { const w = this.defaultFormError(x, typeParams); if (w) return w; } return null; };
+    const namesParam = (ts: import("./ast").MiloType[] | undefined) => (ts ?? []).some(t => typeParams.has(t.name) || namesParam(t.typeArgs));
+    switch (e.kind) {
+      case "IntLit": case "FloatLit": case "BoolLit": case "CharLit": return null;
+      case "StringLit": return null;
+      case "Ident": return null; // an immutable Copy global: checked with its type (checkFieldDefaultTypes)
+      case "UnaryOp":
+        return e.op === "-" && (e.operand.kind === "IntLit" || e.operand.kind === "FloatLit") ? null : `may not apply '${e.op}' to anything but a number literal`;
+      case "ArrayLit": return sub(e.elements);
+      case "FieldAccess": return floatNamespaceConst(e) ? null : "may not read a field";
+      case "CastExpr": return namesParam([e.targetType]) ? "may not name a type parameter" : this.defaultFormError(e.operand, typeParams);
+      case "EnumLit":
+        if (typeParams.has(e.enumName) || namesParam(e.typeArgs)) return "may not name a type parameter";
+        return sub(e.args);
+      case "Call":
+        if (e.func === "Some" || e.func === "Ok" || e.func === "Err") return sub(e.args);
+        return `may not call '${e.func}'`;
+      case "StructLit":
+        if (e.base) return "may not use '..' struct update";
+        if (typeParams.has(e.name) || namesParam(e.typeArgs)) return "may not name a type parameter";
+        return sub(e.fields.map(f => f.value));
+      default: return `may not be ${e.kind === "BinOp" ? "an arithmetic or comparison expression" : e.kind === "MethodCall" ? "a method call" : "this kind of expression"}`;
+    }
+  }
+
+  // Type-check each non-generic struct's defaults once, at the declaration, against the
+  // field type: a struct no literal ever omits a field of still gets a wrong default
+  // reported. A generic's defaults depend on the instance and are checked per literal.
+  private checkFieldDefaultTypes(program: Program) {
+    for (const s of program.structs) {
+      if (s.typeParams.length > 0) continue;
+      const info = this.structs.get(s.name);
+      const defs = this.structDefaults.get(s.name);
+      if (!info || !defs) continue;
+      for (const [name, def] of defs) {
+        const fieldDef = info.fields.find(d => d.name === name);
+        if (!fieldDef || fieldDef.type.tag === "unknown") continue;
+        const copy = structuredClone(def);
+        if (!this.checkDefaultGlobals(copy, `${s.name}.${name}`)) { this.badDefaults.add(`${s.name}.${name}`); defs.delete(name); continue; }
+        let t = this.checkExpr(copy, fieldDef.type);
+        if (fieldDef.type.tag === "int" && t.tag === "int" && this.isConstIntExpr(copy)) t = fieldDef.type;
+        if (!typeEq(fieldDef.type, t) && t.tag !== "unknown" && !this.tryInterfaceCoercion(copy, t, fieldDef.type)) {
+          this.error(`default for field '${s.name}.${name}': expected ${this.show(fieldDef.type)}, got ${this.show(t)}`, def.span ?? s.span);
+          this.badDefaults.add(`${s.name}.${name}`); defs.delete(name);
+        }
+      }
+    }
+  }
+
+  // Every name a default reads must be an immutable global of a Copy type: a `var` could
+  // differ between literals, and a non-Copy global would be MOVED into each literal.
+  private checkDefaultGlobals(e: Expr, field: string): boolean {
+    let ok = true;
+    const walk = (x: Expr) => {
+      if (x.kind === "Ident") {
+        const info = this.globalScope?.get(x.name);
+        if (!info) { this.error(`default for field '${field}' reads '${x.name}', which is not a module-level 'let'`, x.span); ok = false; }
+        else if (info.mutable) { this.error(`default for field '${field}' reads '${x.name}', a 'var': a default must be the same at every literal`, x.span, `declare it with 'let'`); ok = false; }
+        else if (!this.isCopyType(info.type)) { this.error(`default for field '${field}' reads '${x.name}', a ${this.show(info.type)}, which each literal would move out of the global`, x.span, `write the value itself, e.g. a string literal`); ok = false; }
+        return;
+      }
+      for (const k of Object.keys(x) as (keyof typeof x)[]) {
+        const v = x[k] as unknown;
+        if (Array.isArray(v)) for (const it of v) { if (it && typeof it === "object" && "kind" in it) walk(it as Expr); else if (it && typeof it === "object" && "value" in it) walk((it as { value: Expr }).value); }
+        else if (v && typeof v === "object" && "kind" in (v as object) && k !== "targetType") walk(v as Expr);
+      }
+    };
+    walk(e);
+    return ok;
+  }
+
+  // Copy each omitted field's default into the literal. A name the default reads must
+  // still mean the global here, so a local shadowing it is an error, not a silent rebind.
+  private fillFieldDefaults(expr: ExprOf<"StructLit">, declName: string) {
+    if (expr.base || this.defaultsFilled.has(expr)) return;
+    this.defaultsFilled.add(expr);
+    const defs = this.structDefaults.get(declName);
+    if (!defs) return;
+    for (const [name, def] of defs) {
+      if (expr.fields.some(f => f.name === name)) continue;
+      const value = structuredClone(def);
+      const shadowed = this.shadowedDefaultName(value);
+      if (shadowed) {
+        this.error(`the default for field '${name}' reads the global '${shadowed}', but a local '${shadowed}' shadows it here`, expr.span,
+          `rename the local, or write '${name}: ...' in this literal`);
+      }
+      expr.fields.push({ name, value, fromDefault: true });
+    }
+  }
+
+  private shadowedDefaultName(e: Expr): string | null {
+    if (e.kind === "Ident") {
+      for (let i = this.scopes.length - 1; i >= 0; i--) {
+        const sc = this.scopes[i];
+        if (sc === this.globalScope) return null;
+        if (sc.has(e.name)) return e.name;
+      }
+      return null;
+    }
+    const kids: Expr[] = e.kind === "ArrayLit" ? e.elements : e.kind === "EnumLit" || e.kind === "Call" ? e.args
+      : e.kind === "StructLit" ? e.fields.map(f => f.value) : e.kind === "CastExpr" || e.kind === "UnaryOp" ? [e.operand] : [];
+    for (const k of kids) { const n = this.shadowedDefaultName(k); if (n) return n; }
+    return null;
+  }
+
   private checkStructLitAsInstance(expr: ExprOf<"StructLit">, hint: Extract<TypeKind, { tag: "struct" }>, baseType?: TypeKind): TypeKind {
     const sp = expr.span;
     const hintInfo = must(this.structs, hint.name, "struct instance");
     const shown = expr.name || this.show(hint);
+    this.fillFieldDefaults(expr, hintInfo.baseName ?? hint.name);
     const namesOk = this.checkStructLitFieldNames(expr, hint.name, hintInfo.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = hintInfo.fields.find(d => d.name === f.name);
@@ -11344,7 +11492,7 @@ export class TypeChecker {
     }
     this.checkStructLitBase(expr, hint, baseType);
     for (const d of hintInfo.fields) {
-      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name)) {
+      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name) && !this.badDefaults.has(`${hintInfo.baseName ?? hint.name}.${d.name}`)) {
         this.error(`missing field '${d.name}' in struct '${shown}'`, sp);
       }
     }
@@ -11443,10 +11591,12 @@ export class TypeChecker {
     }
     if (genericInfo) {
       const typeMap = new Map<string, TypeKind>();
+      this.fillFieldDefaults(expr, expr.name);
       const namesOk = this.checkStructLitFieldNames(expr, expr.name, genericInfo.decl.fields.map(d => d.name));
       for (const f of expr.fields) {
         const declField = genericInfo.decl.fields.find(d => d.name === f.name);
-        if (!declField) continue;
+        // A default fixes no type parameter: it is checked against the instance below.
+        if (!declField || f.fromDefault) continue;
         const valType = this.checkExpr(f.value);
         // Infer type params from the field's declared (unsubstituted) type against the
         // argument's concrete type — recursively, so `Vec<T>`/`[T]`/nested generics
@@ -11467,7 +11617,7 @@ export class TypeChecker {
       for (const f of expr.fields) {
         const fieldDef = info.fields.find(d => d.name === f.name);
         if (!fieldDef) continue;
-        const valType = must(this.exprTypes, f.value, "expr types");
+        const valType = f.fromDefault ? this.checkExpr(f.value, fieldDef.type) : must(this.exprTypes, f.value, "expr types");
         if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
           this.error(`field '${f.name}' of '${expr.name}': expected ${this.show(fieldDef.type)}, got ${this.show(valType)}`, sp);
         }
@@ -11479,7 +11629,7 @@ export class TypeChecker {
         this.tryMove(f.value);
       }
       for (const d of info.fields) {
-        if (namesOk && !expr.fields.find(f => f.name === d.name)) {
+        if (namesOk && !expr.fields.find(f => f.name === d.name) && !this.badDefaults.has(`${expr.name}.${d.name}`)) {
           this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
         }
       }
@@ -11487,6 +11637,7 @@ export class TypeChecker {
     }
     const info = this.structs.get(expr.name);
     if (!info) { this.error(`unknown struct '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
+    this.fillFieldDefaults(expr, info.baseName ?? expr.name);
     const namesOk = this.checkStructLitFieldNames(expr, expr.name, info.fields.map(d => d.name));
     for (const f of expr.fields) {
       const fieldDef = info.fields.find(d => d.name === f.name);
@@ -11514,7 +11665,7 @@ export class TypeChecker {
     }
     this.checkStructLitBase(expr, { tag: "struct", name: expr.name });
     for (const d of info.fields) {
-      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name)) {
+      if (namesOk && !expr.base && !expr.fields.find(f => f.name === d.name) && !this.badDefaults.has(`${info.baseName ?? expr.name}.${d.name}`)) {
         this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
       }
     }

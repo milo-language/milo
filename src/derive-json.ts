@@ -39,6 +39,8 @@ export interface JsonFieldPlan {
   field: string;
   key: string; // wire name — differs from `field` only under @json("…")
   plan: JsonPlan;
+  // The field declares a default: an absent key decodes to it instead of failing.
+  hasDefault?: boolean;
 }
 
 // Milo string literal. Renames are validated before they reach here, and field
@@ -339,9 +341,14 @@ export function deriveJsonSource(structName: string, fields: JsonFieldPlan[]): s
   {
     const g = new Gen("        ");
     const vals: string[] = [];
+    // A defaulted field is left out of the literal, which then fills it with its default,
+    // and is overwritten only when its key is present. So absent means the default, and a
+    // present `null` still means what it means for the type (None, or a mismatch).
+    const defaulted: { f: JsonFieldPlan; node: string }[] = [];
     for (const f of fields) {
       const node = g.tmp("n");
       g.push(0, `let ${node} = doc.curField(cur, ${lit(f.key)})`);
+      if (f.hasDefault) { defaulted.push({ f, node }); continue; }
       // Only an Option field tolerates absence; everything else is required, so
       // a typo'd key is an error rather than a zeroed field.
       if (f.plan.k !== "option") {
@@ -355,8 +362,21 @@ export function deriveJsonSource(structName: string, fields: JsonFieldPlan[]): s
     out.push(`        if doc.curKind(cur) != 5 {`);
     out.push(`            return ${mismatch(`""`, "object", "cur")}`);
     out.push(`        }`);
-    out.push(...g.lines);
-    out.push(`        return Result.Ok(${structName} { ${vals.join(", ")} })`);
+    if (defaulted.length === 0) {
+      out.push(...g.lines);
+      out.push(`        return Result.Ok(${structName} { ${vals.join(", ")} })`);
+    } else {
+      const res = g.tmp("out");
+      g.push(0, `var ${res} = ${structName} { ${vals.join(", ")} }`);
+      for (const { f, node } of defaulted) {
+        g.push(0, `if ${node} >= 0 {`);
+        const v = emitDe(f.plan, node, lit(f.key), g, 1);
+        g.push(1, `${res}.${f.field} = ${v}`);
+        g.push(0, `}`);
+      }
+      out.push(...g.lines);
+      out.push(`        return Result.Ok(${res})`);
+    }
     out.push(`    }`);
   }
 

@@ -134,7 +134,8 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
       case "StructLit":
         refType(e.name, sc, refFile, e.span);
         for (const t of e.typeArgs ?? []) walkType(t, sc, refFile, e.span);
-        for (const f of e.fields) walkExpr(f.value, sc, refFile);
+        // A copied-in default was checked where its struct is declared (the struct walk below).
+        for (const f of e.fields) if (!f.fromDefault) walkExpr(f.value, sc, refFile);
         if (e.base) walkExpr(e.base, sc, refFile);
         break;
       case "EnumLit":
@@ -308,7 +309,7 @@ export function checkVisibility(prog: Program, builtinNames: ReadonlySet<string>
     const sc = scNone(); const refFile = s.span?.file;
     for (const tp of s.typeParams ?? []) sc.bindType(tp.name);
     // A field carries no span of its own; the struct's puts the report in the right file.
-    for (const f of s.fields) walkType(f.type, sc, refFile, s.span);
+    for (const f of s.fields) { walkType(f.type, sc, refFile, s.span); walkExpr(f.default, sc, refFile); }
   }
   for (const e of prog.enums) {
     const sc = scNone(); const refFile = e.span?.file;

@@ -1,0 +1,90 @@
+// Field defaults: a struct literal may omit a field that declares `= value`, and gets a
+// fresh copy of that value. Covers literals, consts, empty collections, enum variants,
+// static constructors, nested defaulted structs, generics, struct update and @derive(Json).
+from "./lib/defaultsLib" import { Limits }
+
+enum Method { Get, Post }
+let DEFAULT_TIMEOUT: i64 = 30000
+// Same name as defaultsLib's private global: the lib's default must still read its own.
+let LIMIT: i64 = 1
+
+struct Header { name: string, value: string }
+
+struct FetchOptions {
+    url: string,
+    timeoutMs: i64 = DEFAULT_TIMEOUT,
+    headers: Vec<Header> = [],
+    method: Method = Method.Get,
+    body: string = "",
+    retries: i32 = -1,
+    proxy: string? = null,
+    scale: f64 = 1.5,
+    extra: HashMap<string, i64> = HashMap.new(),
+}
+
+struct Inner { a: i64 = 7, b: string = "bee" }
+
+struct Outer { inner: Inner = Inner {}, n: u8 = 3 }
+
+struct Wrap<T> { items: Vec<T> = [], first: T, count: i64 = 0 }
+
+@derive(Json)
+struct Opts {
+    url: string,
+    timeoutMs: i64 = 30000,
+    tags: Vec<string> = [],
+    note: string? = Some("dflt"),
+    @json("max_retries") retries: i32 = 3,
+}
+
+fn main(): i32 {
+    var o = FetchOptions { url: "http://x", method: Method.Post }
+    print($"{o.timeoutMs} {o.headers.len} {o.body.len} {o.retries} {o.scale} {o.url} {o.extra.len}")
+    match o.method { Method.Get => print("get") Method.Post => print("post") }
+    match o.proxy { Some(p) => print(p) None => print("no proxy") }
+    // each literal gets its own copy: growing one leaves the next empty
+    o.headers.push(Header { name: "a", value: "b" })
+    let o2 = FetchOptions { url: "u", timeoutMs: 5 }
+    print($"{o.headers.len} {o2.headers.len} {o2.timeoutMs}")
+
+    let ou = Outer {}
+    print($"{ou.inner.a} {ou.inner.b} {ou.n}")
+
+    let w = Wrap { first: "s" }
+    print($"{w.items.len} {w.first} {w.count}")
+    let w2: Wrap<i64> = Wrap { first: 3, count: 2 }
+    print($"{w2.items.len} {w2.first} {w2.count}")
+    let w3 = Wrap<bool> { first: true }
+    print(w3.first)
+
+    // `..base` fills every unlisted field from the base, defaults included
+    let up = FetchOptions { url: "z", ..o2 }
+    print($"{up.timeoutMs} {up.url}")
+
+    let l = Limits {}
+    print($"{l.max} {l.name} {LIMIT}")
+
+    let a = Opts.fromJson("{\"url\":\"u\"}")!
+    print($"{a.url} {a.timeoutMs} {a.tags.len} {a.note.clone() ?? "none"} {a.retries}")
+    let b = Opts.fromJson("{\"url\":\"v\",\"timeoutMs\":5,\"tags\":[\"x\"],\"note\":null,\"max_retries\":9}")!
+    print($"{b.url} {b.timeoutMs} {b.tags.len} {b.note ?? "none"} {b.retries}")
+    match Opts.fromJson("{\"timeoutMs\":5}") { Ok(_) => print("ok") Err(e) => print(e.message()) }
+    match Opts.fromJson("{\"url\":\"u\",\"timeoutMs\":\"x\"}") { Ok(_) => print("ok") Err(e) => print(e.message()) }
+    print(a.toJson())
+    return 0
+}
+// @expect: 30000 0 0 -1 1.5 http://x 0
+// @expect: post
+// @expect: no proxy
+// @expect: 1 0 5
+// @expect: 7 bee 3
+// @expect: 0 s 0
+// @expect: 0 3 2
+// @expect: true
+// @expect: 5 z
+// @expect: 42 lib 1
+// @expect: u 30000 0 dflt 3
+// @expect: v 5 1 none 9
+// @expect: missing field 'url'
+// @expect: field 'timeoutMs': expected integer, got string
+// @expect: {"url":"u","timeoutMs":30000,"tags":[],"note":"dflt","max_retries":3}

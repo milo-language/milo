@@ -66,7 +66,7 @@ type_args   = "<" type { "," type } ">" ;
 range_bound = "(" [ "-" ] INT ".." [ "-" ] INT ")" ;         (* ranged integer: i32(0..100) *)
 
 (* ── Declarations ── *)
-struct_decl = "struct" IDENT [ type_params ] "{" { [ attribute ] IDENT ":" type [ "," ] } "}"
+struct_decl = "struct" IDENT [ type_params ] "{" { [ attribute ] IDENT ":" type [ "=" expr ] [ "," ] } "}"
               { contract } ;
 enum_decl   = "enum" IDENT [ type_params ] [ ":" IDENT ] "{" { enum_variant [ "," ] } "}" ;
 enum_variant = IDENT [ "(" type { "," type } ")" ] [ "=" [ "-" ] INT ] ;

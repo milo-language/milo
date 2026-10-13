@@ -1,0 +1,7 @@
+// @error: missing field 'url' in struct 'Req'
+// Only a field with a default may be omitted.
+struct Req { url: string, timeoutMs: i64 = 30000 }
+fn main(): i32 {
+    let r = Req { timeoutMs: 5 }
+    return r.timeoutMs as i32
+}

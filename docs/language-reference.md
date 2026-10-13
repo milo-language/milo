@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-12 (a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-12 (field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1090,6 +1090,38 @@ print(next.label, " ", next.start, " ", next.end, " ", next.note)   // b 5 2 n
 - A base whose type implements `Drop` is rejected: moving fields out of it would leave its destructor reading emptied fields (Rust's E0509). List every field instead.
 - Listing every field and still writing `..base` is allowed; the base is simply dropped.
 - The inferred forms work too: `Pair { first: 1, ..p }` takes its type arguments from `p`, and `{ x: 1, ..p }` builds `p`'s struct.
+
+#### Field defaults
+
+A field may declare a default with `= value`. A literal that omits the field gets the default; a literal that lists it overrides it. Adding a defaulted field to a struct therefore breaks no existing literal.
+
+```milo
+enum Method { Get, Post }
+let DEFAULT_TIMEOUT_MS: i64 = 30000
+
+struct Header { name: string, value: string }
+
+struct FetchOptions {
+    url: string,
+    timeoutMs: i64 = DEFAULT_TIMEOUT_MS,
+    headers: Vec<Header> = [],
+    method: Method = Method.Get,
+    retries: i32 = -1,
+}
+
+fn main() {
+    let a = FetchOptions { url: "https://example.com" }
+    let b = FetchOptions { url: "https://example.com", method: Method.Post, timeoutMs: 5000 }
+    print(a.timeoutMs, " ", a.headers.len, " ", b.timeoutMs)   // 30000 0 5000
+}
+```
+
+- **What a default may be.** A literal (a leading `-` included), `[]`, `null`/`None`, an enum variant, `Some`/`Ok`/`Err` of an allowed value, a static call on a type (`Vec.new()`, `HashMap.new()`, `Duration.ms(500)`), a struct literal of allowed values (`inner: Inner = Inner {}`, which takes `Inner`'s own defaults), a cast of one, and an immutable module-level `let` of a Copy type. Anything else (arithmetic, a free fn call, a method call, a `var`, a `string` global) is a compile error naming the field; compute it in a constructor instead.
+- **Why that set.** The default is copied into every literal that omits the field, so it must mean the same thing wherever the literal is written: it cannot read a local, a parameter or `self`, and a global it names must still be that global at the literal (a local of the same name there is an error, not a silent rebinding). A `var` could differ between two literals, and naming a non-Copy global would move it out of the global into the first literal. Within those limits a static constructor call is allowed even though it runs code: that is what an empty collection or a small value type needs.
+- **Evaluated at each literal.** Every literal that omits the field evaluates its own copy, after the listed fields, in declaration order. Two literals never share a default `Vec`.
+- **Checked at the declaration.** A non-generic struct's defaults are type-checked against their fields where the struct is declared, so a wrong default is reported even if no literal omits it. A generic struct's defaults are checked at each literal, against that instance's field types, and may not name a type parameter (`[]` and `Vec.new()` already take theirs from the field). A default fixes no type parameter: `Wrap { first: "s" }` infers `T` from `first` alone.
+- **Struct update wins.** `S { a: 1, ..base }` fills every unlisted field from `base`; defaults do not apply.
+- **JSON.** With `@derive(Json)`, a defaulted field whose key is absent decodes to its default instead of failing with `JsonError.Missing`. A key that is present decodes as usual, so an explicit `null` is still `None` for an `Option` field and a mismatch for any other.
 
 ### Newtypes — distinct type from a single field
 

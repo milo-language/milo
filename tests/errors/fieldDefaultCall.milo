@@ -1,0 +1,9 @@
+// @error: default for field 'Cfg.limit' may not call 'compute'
+// A free fn call could read anything; a static call on a type (`Vec.new()`) is the
+// constructor form a default may use.
+fn compute(): i64 { return 3 }
+struct Cfg { limit: i64 = compute() }
+fn main(): i32 {
+    let c = Cfg {}
+    return c.limit as i32
+}

@@ -474,7 +474,9 @@ export class Parser {
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
       const fieldType = this.parseSpannedType();
-      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
+      // `timeoutMs: i64 = 30000`: a literal may omit the field (checker: fillFieldDefaults).
+      const fieldDefault = this.match(TokenKind.Eq) ? this.parseExpr() : undefined;
+      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}), ...(fieldDefault ? { default: fieldDefault } : {}) });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
@@ -611,7 +613,9 @@ export class Parser {
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
       const fieldType = this.parseSpannedType();
-      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
+      // `timeoutMs: i64 = 30000`: a literal may omit the field (checker: fillFieldDefaults).
+      const fieldDefault = this.match(TokenKind.Eq) ? this.parseExpr() : undefined;
+      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}), ...(fieldDefault ? { default: fieldDefault } : {}) });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
