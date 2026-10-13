@@ -1,0 +1,37 @@
+// print, interpolation, toString and JSON encoding all write an f64 as the shortest
+// decimal that parses back to the same bits: 0.1 is "0.1", not 0.1000000000000000055,
+// and the extremes (the smallest subnormal, the largest finite double) survive. -0.0
+// keeps its sign, which an `x + 0.0` in the formatter used to drop. Every printed form
+// is parsed back and compared bit for bit.
+from "std/json" import { Json }
+
+// @expect: 0.1 | {"x":0.1} | {"x":0.1} | round-trips true
+// @expect: 0.3 | {"x":0.3} | {"x":0.3} | round-trips true
+// @expect: 1e+21 | {"x":1e+21} | {"x":1e+21} | round-trips true
+// @expect: 5e-324 | {"x":5e-324} | {"x":5e-324} | round-trips true
+// @expect: 1.7976931348623157e+308 | {"x":1.7976931348623157e+308} | {"x":1.7976931348623157e+308} | round-trips true
+// @expect: -0 | {"x":-0} | {"x":-0} | round-trips true
+// @expect: 0 | {"x":0} | {"x":0} | round-trips true
+// @expect: 0.3333333333333333 | {"x":0.3333333333333333} | {"x":0.3333333333333333} | round-trips true
+// @expect: 100 | {"x":100} | {"x":100} | round-trips true
+// @expect: 1e-07 | {"x":1e-07} | {"x":1e-07} | round-trips true
+// @expect: 2.5e-05 | {"x":2.5e-05} | {"x":2.5e-05} | round-trips true
+// @expect: 9007199254740992 | {"x":9007199254740992} | {"x":9007199254740992} | round-trips true
+// @expect: -1.5 | {"x":-1.5} | {"x":-1.5} | round-trips true
+// @expect: 2.2250738585072014e-308 | {"x":2.2250738585072014e-308} | {"x":2.2250738585072014e-308} | round-trips true
+
+@derive(Json)
+struct P {
+    x: f64,
+}
+
+fn main(): i32 {
+    let vals: Vec<f64> = [0.1, 0.3, 1e21, 5e-324, 1.7976931348623157e308, -0.0, 0.0, 1.0 / 3.0, 100.0, 1e-7, 2.5e-5, 9007199254740993.0, -1.5, 2.2250738585072014e-308]
+    for v in vals {
+        let s = v.toString()
+        let back = s.parseF64() ?? 99.0
+        let same = back == v && (1.0 / back > 0.0) == (1.0 / v > 0.0)
+        print($"{v} | {P { x: v }.toJson()} | {Json.obj().float("x", v).build()} | round-trips {same}")
+    }
+    return 0
+}

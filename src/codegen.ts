@@ -14492,7 +14492,9 @@ export class Codegen {
     // The digit walk and snprintf both want a double; f32 is promoted once.
     const widen = bits === 32
       ? [`  %d = fpext float %v to double`]
-      : [`  %d = fadd double %v, 0.000000e+00`];
+      // `x + -0.0` is the identity for every x; `x + 0.0` turned -0.0 into +0.0, and
+      // print(-0.0) said "0".
+      : [`  %d = fadd double %v, -0.000000e+00`];
     this.dropHelperBodies.push([
       `define private i64 @milo.fmt.f${bits}(${ty} %v, ptr %buf) {`,
       `entry.bb:`,
