@@ -200,6 +200,18 @@ fn TtlCache.get(self: &mut TtlCache, key: &K): Option<V>
 A copy of the value under `key` if it has not expired, marking it most recently
 used; an expired entry is dropped and reads as None.
 
+#### `TtlCache.getWithin`
+
+```milo
+fn TtlCache.getWithin(self: &mut TtlCache, key: &K, maxAge: &Duration): Option<V>
+```
+
+A copy of the value under `key` if it has not expired and was put less than
+`maxAge` ago, marking it most recently used; None otherwise. An entry too old
+for `maxAge` but not yet expired stays, untouched, for a later read with a
+looser bound: put with the longest age any reader accepts (say 60 s for a
+stale-if-error fallback) and read the fresh path with a shorter one (2 s).
+
 #### `TtlCache.len`
 
 ```milo

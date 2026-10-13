@@ -7982,6 +7982,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `purge 3 len 1`
 - `capped evicts a: false b true c true`
 - `modify true expired false remove Some(10)`
+- `within fresh Some(7) stale None fallback Some(7) expired None`
 - `drops expire 1 purge 3 evict 4 end 6 live 0`
 
 **Rationale.** TtlCache on an injected clock: lazy expiry on get, contains without dropping, per-entry ttl, purge, LRU eviction once a capacity is set, and a Drop value released exactly once on expiry, purge, eviction and the cache's own drop.

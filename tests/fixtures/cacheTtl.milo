@@ -4,6 +4,7 @@
 // @expect: purge 3 len 1
 // @expect: capped evicts a: false b true c true
 // @expect: modify true expired false remove Some(10)
+// @expect: within fresh Some(7) stale None fallback Some(7) expired None
 // @expect: drops expire 1 purge 3 evict 4 end 6 live 0
 // TtlCache on an injected clock: lazy expiry on get, contains without dropping,
 // per-entry ttl, purge, LRU eviction once a capacity is set, and a Drop value released
@@ -98,6 +99,17 @@ fn main(): i32 {
         v += 1
     })
     print($"modify {hit} expired {late} remove {capped.remove("m")}")
+
+    var sw = TtlCache<string, i64>.new(Duration.secs(60))
+    sw.setClockMs(move(): i64 => nowMs)
+    sw.put("k", 7)
+    nowMs += 1000
+    let fresh = sw.getWithin("k", Duration.secs(2))
+    nowMs += 2000
+    let stale = sw.getWithin("k", Duration.secs(2))
+    let fallback = sw.getWithin("k", Duration.secs(60))
+    nowMs += 60000
+    print($"within fresh {fresh} stale {stale} fallback {fallback} expired {sw.getWithin("k", Duration.secs(600))}")
 
     let line = drops()
     print($"{line} end {gone} live {made - gone}")

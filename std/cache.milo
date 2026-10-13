@@ -98,6 +98,7 @@ impl LruCache<K, V> {
 // `replace` and leave nothing behind for a Drop impl to see.
 struct Stamped<V> {
     value: Option<V>,
+    storedAtMs: i64,
     expiresAtMs: i64,
 }
 
@@ -176,6 +177,25 @@ impl TtlCache<K, V> {
         return replace(copy.value, Option.None)
     }
 
+    // A copy of the value under `key` if it has not expired and was put less than
+    // `maxAge` ago, marking it most recently used; None otherwise. An entry too old
+    // for `maxAge` but not yet expired stays, untouched, for a later read with a
+    // looser bound: put with the longest age any reader accepts (say 60 s for a
+    // stale-if-error fallback) and read the fresh path with a shorter one (2 s).
+    @copyOut
+    fn getWithin(self: &mut Self, key: &K, maxAge: &Duration): Option<V> {
+        let now = self.clock()
+        let maxAgeMs = maxAge.toMillis()
+        var young = false
+        let _ = self.map.read(key, (s: &Stamped<V>): void => {
+            young = now - s.storedAtMs < maxAgeMs
+        })
+        if !young {
+            return Option.None
+        }
+        return self.get(key)
+    }
+
     // Run `f` on the value under `key` in place if it has not expired, marking it most
     // recently used; false (and `f` not run) on a miss or an expired entry.
     fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
@@ -233,9 +253,11 @@ impl TtlCache<K, V> {
 }
 
 fn putStamped<K, V>(c: &mut TtlCache<K, V>, key: K, value: V, ttlMs: i64): void {
+    let now = c.clock()
     let stamped = Stamped {
         value: Option.Some(value),
-        expiresAtMs: c.clock() + ttlMs,
+        storedAtMs: now,
+        expiresAtMs: now + ttlMs,
     }
     if c.map.contains(key) {
         let _ = c.map.moveToEnd(key)
