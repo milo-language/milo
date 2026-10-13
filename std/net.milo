@@ -644,6 +644,8 @@ impl TcpListener {
 // ── DNS ──
 
 // DNS lookup: the first IPv4 address for `hostname`. Recorded as net.resolve.
+// On a green task the lookup (getaddrinfo, which blocks) runs on a worker OS thread
+// and parks only the calling task, so other tasks, and other lookups, keep running.
 pub fn resolve(hostname: &string): Result<u32, NetError> {
     if !replayOff() {
         let p = replayBlob("net.resolve", hostname, (): string => {
@@ -694,7 +696,7 @@ fn resolveLive(hostname: &string): Result<u32, NetError> {
 // returns them. That order is RFC 6724's (which family and which address to try first
 // for this host's routes), so a client connects by trying them front to back, as
 // `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
-// Recorded as net.resolveall.
+// Recorded as net.resolveall. Off the scheduler thread on a green task, as `resolve` is.
 pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
     if !replayOff() {
         // A record kind of its own rather than a new payload for net.resolve, so a trace

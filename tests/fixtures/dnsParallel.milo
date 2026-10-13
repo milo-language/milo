@@ -1,0 +1,33 @@
+// std/net resolves on a worker thread, so a lookup parks only the green task that
+// asked: two tasks resolving at once (resolve and resolveAll, the one fetch uses) are
+// both inside getaddrinfo together. The second task can only get there if the first
+// lookup left the scheduler free to run it. dnsParallel.c replaces getaddrinfo with one
+// that holds each caller until a second one arrives (3 s timeout), so a serialized
+// resolver shows up as a maximum of 1 and a 6 s run, not as a flaky timing.
+// @skip-os: win32
+// @expect: resolve: ok
+// @expect: resolveAll: ok
+// @expect: lookups in getaddrinfo at once: 2
+
+from "std/runtime" import { Task, schedulerRunToCompletion }
+from "std/net" import { resolve, resolveAll }
+
+extern fn dnsMaxConcurrent(): i32
+
+pub fn main(): i32 {
+    Task.spawn(move(): void => {
+        let ok = resolve("localhost").isOk()
+        print($"resolve: {if ok { "ok" } else { "failed" }}")
+    })
+    Task.spawn(move(): void => {
+        let ok = resolveAll("localhost").isOk()
+        print($"resolveAll: {if ok { "ok" } else { "failed" }}")
+    })
+    schedulerRunToCompletion()
+    var most: i32 = 0
+    unsafe {
+        most = dnsMaxConcurrent()
+    }
+    print($"lookups in getaddrinfo at once: {most}")
+    return 0
+}

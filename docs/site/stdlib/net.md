@@ -334,6 +334,8 @@ pub fn resolve(hostname: &string): Result<u32, NetError>
 ```
 
 DNS lookup: the first IPv4 address for `hostname`. Recorded as net.resolve.
+On a green task the lookup (getaddrinfo, which blocks) runs on a worker OS thread
+and parks only the calling task, so other tasks, and other lookups, keep running.
 
 #### `resolveAll`
 
@@ -345,6 +347,6 @@ DNS lookup: every address for `hostname`, IPv4 and IPv6, in the order getaddrinf
 returns them. That order is RFC 6724's (which family and which address to try first
 for this host's routes), so a client connects by trying them front to back, as
 `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
-Recorded as net.resolveall.
+Recorded as net.resolveall. Off the scheduler thread on a green task, as `resolve` is.
 
 <!-- /generated:api -->
