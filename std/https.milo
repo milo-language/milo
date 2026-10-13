@@ -8,10 +8,10 @@
 // client half and is not needed here.
 
 from "std/http" import {
-    Param, Request, Response, Router, parseRequest, renderFor
+    Request, Response, Router, serveHandlerExchange, serveRouterExchange
 }
 from "std/tls" import {
-    TlsListener
+    TlsConn, TlsListener
 }
 from "std/net" import {
     NetError
@@ -42,17 +42,17 @@ fn netErrText(e: &NetError): string {
     }
 }
 
-// parseRequest reads a fixed-size stack buffer (the shape std/http's own accept loop
-// hands it); the TLS read gives a string. Bytes past 8192 are dropped, matching the
-// plaintext server's single 8192-byte read.
-fn parseTlsRequest(raw: &string): Request {
-    var buf: [u8; 8192] = [0; 8192]
-    var n: i64 = 0
-    while n < raw.len && n < 8192 {
-        buf[n] = raw[n]
-        n += 1
-    }
-    return parseRequest(buf, n)
+// Append one TLS read to `raw`: the byte count, 0 once the peer has closed or the read
+// failed. This is the `read` std/http's request reader takes, so a request over TLS is
+// framed, size-capped and decoded by the same code as one over plain TCP.
+fn tlsRead(stream: &TlsConn, raw: &mut string): i64 {
+    let got = stream.recvOnce()
+    raw.pushStr(got)
+    return got.len
+}
+
+fn tlsWrite(stream: &TlsConn, data: &string): void {
+    let _sent = stream.send(data)
 }
 
 // Bind, load the cert chain and announce. Shared by serveTls() and serveRouterTls():
@@ -76,8 +76,10 @@ fn bindTls(port: u16?, certPath: &string, keyPath: &string): Result<TlsListener>
 }
 
 // Serve HTTPS on `port` (None = OS-chosen) with the PEM cert chain and private key at
-// `certPath`/`keyPath`. One request per connection, closed after the response — the same
-// contract as http.serve. Only returns on a fatal bind/listen error.
+// `certPath`/`keyPath`. One request per connection, closed after the response, read with
+// std/http's own reader (chunked and gzip/deflate bodies, the 1 MiB body cap and the
+// 400/413/414/431/501/505 refusals): the same contract as http.serve. Only returns on a
+// fatal bind/listen error.
 pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Request) => Response): Result<Unit> {
     match bindTls(port, certPath, keyPath) {
         Result.Err(e) => {
@@ -92,13 +94,7 @@ pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Requ
                         continue
                     }
                     Result.Ok(stream) => {
-                        let raw = stream.recvOnce()
-                        if raw.len > 0 {
-                            let req = parseTlsRequest(raw)
-                            let resp = handler(req)
-                            let noHeaders: Vec<Param> = []
-                            let _sent = stream.send(renderFor(req, resp, noHeaders))
-                        }
+                        serveHandlerExchange((raw: &mut string): i64 => tlsRead(stream, &mut raw), (data: &string): void => tlsWrite(stream, data), handler)
                         // stream drops here: close_notify, SSL_free, close(fd)
                     }
                 }
@@ -108,7 +104,8 @@ pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Requ
     return Result.Err("server exited")
 }
 
-// serveRouter over TLS — routes and Context-set headers behave exactly as in std/http.
+// serveRouter over TLS: routes, Context-set headers and the router's body limits behave
+// exactly as in std/http.
 pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &Router): Result<Unit> {
     match bindTls(port, certPath, keyPath) {
         Result.Err(e) => {
@@ -121,12 +118,7 @@ pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &
                         continue
                     }
                     Result.Ok(stream) => {
-                        let raw = stream.recvOnce()
-                        if raw.len > 0 {
-                            let req = parseTlsRequest(raw)
-                            let handled = router.handle(req.clone())
-                            let _sent = stream.send(renderFor(req, handled.response, handled.headers))
-                        }
+                        serveRouterExchange((raw: &mut string): i64 => tlsRead(stream, &mut raw), (data: &string): void => tlsWrite(stream, data), router)
                     }
                 }
             }

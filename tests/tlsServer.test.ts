@@ -15,6 +15,7 @@ const ROOT = join(import.meta.dir, "..");
 const MAIN = join(ROOT, "src", "main.ts");
 const PORT_SERVE = 18441;
 const PORT_ROUTER = 18442;
+const PORT_LIMITED = 18443;
 let dir = "";
 // Probed at module load, not in beforeAll: test.skipIf() is evaluated when the file is
 // read, so a flag set later would always read as "openssl present" and the cases would
@@ -51,6 +52,9 @@ from "std/http" import { Request, Response }
 fn handle(req: &Request): Response {
     if req.path == "/hello" {
         return Response.Text("hello from milo tls")
+    }
+    if req.path == "/len" {
+        return Response.Text(req.body.len.toString())
     }
     return Response.NotFound
 }
@@ -103,6 +107,27 @@ fn main() {
 }
 `;
 
+// A router with a small body cap: std/https reads requests with std/http's own reader, so
+// the framing (Content-Length across many TLS records, chunked, gzip) and the refusals
+// (413, 431, 505) are the same as the plaintext server's.
+const LIMITED_SRC = `from "std/https" import { serveRouterTls }
+from "std/http" import { Context, Router }
+
+fn main() {
+    var router = Router.new()
+    router.setMaxBodySize(65536)
+    router.post("/echo", (c: &mut Context) => {
+        let b = c.req.body.clone()
+        let head = if b.len > 8 { b.substr(0, 8) } else { b.clone() }
+        return c.text($"{b.len} {head}")
+    })
+    let r = serveRouterTls(Option.Some(${PORT_LIMITED} as u16), "srv.pem", "srv.key", router)
+    if let Result.Err(m) = r {
+        print("server error: " + m)
+    }
+}
+`;
+
 let clientTrusting = "";
 let clientUntrusting = "";
 
@@ -122,6 +147,10 @@ beforeAll(async () => {
 
   await startServer(build("serve", SERVE_SRC));
   await startServer(build("router", ROUTER_SRC));
+  await startServer(build("limited", LIMITED_SRC));
+  writeFileSync(join(dir, "big.bin"), "abcdefgh".repeat(12500));
+  writeFileSync(join(dir, "mid.bin"), "chunk me".repeat(4000));
+  writeFileSync(join(dir, "mid.gz"), Bun.gzipSync(Buffer.from("zipped!!".repeat(5000))));
   clientTrusting = build("client_ca", CLIENT_SRC.replace("__CA__", join(dir, "ca.pem")));
   clientUntrusting = build("client_noca", CLIENT_SRC.replace("__CA__", ""));
 }, 300000);
@@ -253,4 +282,45 @@ test.skipIf(!haveOpenssl)("fetch reuses one TLS connection across requests, and 
   } finally {
     server.stop(true);
   }
+}, 120000);
+
+// Raw bytes over TLS, for requests curl will not send (a bad version, oversized headers).
+// Returns the status line.
+async function rawTls(port: number, request: string): Promise<string> {
+  const tls = await import("node:tls");
+  return new Promise((resolve, reject) => {
+    const sock = tls.connect({ host: "127.0.0.1", port, servername: "localhost", ca: readFileSync(join(dir, "ca.pem")) }, () => {
+      sock.write(request);
+    });
+    let got = "";
+    sock.on("data", (d: Buffer) => { got += d.toString("latin1"); });
+    sock.on("end", () => resolve(got.split("\r\n")[0]!));
+    sock.on("close", () => resolve(got.split("\r\n")[0]!));
+    sock.on("error", reject);
+  });
+}
+
+// The TLS server used to make one 8 KiB read and parse whatever it held, so a body
+// spanning more records arrived truncated and chunked or gzip bodies arrived undecoded.
+test.skipIf(!haveOpenssl)("serveTls reads a body spanning many TLS records", () => {
+  expect(curl(["--cacert", "ca.pem", "--data-binary", "@big.bin", `https://localhost:${PORT_SERVE}/len`]))
+    .toBe("100000");
+}, 120000);
+
+test.skipIf(!haveOpenssl)("serveRouterTls decodes chunked and gzip request bodies", () => {
+  expect(curl(["--cacert", "ca.pem", "-H", "Transfer-Encoding: chunked", "--data-binary", "@mid.bin",
+    `https://localhost:${PORT_LIMITED}/echo`])).toBe("32000 chunk me");
+  expect(curl(["--cacert", "ca.pem", "-H", "Content-Encoding: gzip", "--data-binary", "@mid.gz",
+    `https://localhost:${PORT_LIMITED}/echo`])).toBe("40000 zipped!!");
+}, 120000);
+
+test.skipIf(!haveOpenssl)("serveRouterTls refuses what std/http refuses: 413, 431, 505", async () => {
+  // Expect: 100-continue makes curl wait for the answer before sending the body, so the
+  // early 413 is read rather than lost to a reset mid-upload.
+  expect(curl(["--cacert", "ca.pem", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Expect: 100-continue", "--data-binary", "@big.bin",
+    `https://localhost:${PORT_LIMITED}/echo`])).toBe("413");
+  expect(await rawTls(PORT_LIMITED, `GET / HTTP/1.1\r\nHost: x\r\nX-Big: ${"a".repeat(20000)}\r\n\r\n`))
+    .toBe("HTTP/1.1 431 Request Header Fields Too Large");
+  expect(await rawTls(PORT_LIMITED, "GET / HTTP/2.0\r\nHost: x\r\n\r\n"))
+    .toBe("HTTP/1.1 505 HTTP Version Not Supported");
 }, 120000);

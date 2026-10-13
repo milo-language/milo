@@ -754,7 +754,11 @@ fn readMore(fd: i32, raw: &mut string): i64 {
 // line, header, length or chunk framing, 413 past the body limit (counted on the decoded
 // bytes, so a small zip bomb is refused too), 415 for an unknown content coding and 501
 // for a transfer coding other than chunked.
-fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
+//
+// `read` appends one read's worth of bytes to its argument and returns the count (<= 0
+// at EOF or on error); `write` sends all of its argument. Taking the transport as two
+// closures is what lets std/https read requests through TLS with this same code.
+fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i64, maxInflated: i64): ReadOutcome {
     var raw: string = ""
     var end: i64 = -1
     while end < 0 {
@@ -762,7 +766,7 @@ fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
         if raw.len > 3 {
             scanFrom = raw.len - 3
         }
-        if readMore(fd, &mut raw) <= 0 {
+        if read(&mut raw) <= 0 {
             return ReadOutcome.Gone
         }
         end = headerEnd(raw, scanFrom)
@@ -829,7 +833,7 @@ fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
     // body (curl waits a second, then sends anyway). Skip it when the body is
     // already here: the client did not wait.
     if expectContinue && (chunked || contentLength > 0) && raw.len == end {
-        writeAll(fd, "HTTP/1.1 100 Continue\r\n\r\n")
+        write("HTTP/1.1 100 Continue\r\n\r\n")
     }
     if chunked {
         // Transfer-Encoding wins over Content-Length (RFC 9112 6.3); the connection closes
@@ -851,7 +855,7 @@ fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
             if (raw.len - end - maxHeaderBytes) / 2 > maxBody {
                 return ReadOutcome.Reject(413)
             }
-            if readMore(fd, &mut raw) <= 0 {
+            if read(&mut raw) <= 0 {
                 return ReadOutcome.Gone
             }
         }
@@ -859,7 +863,7 @@ fn readRequest(fd: i32, maxBody: i64, maxInflated: i64): ReadOutcome {
     } else {
         let want = end + contentLength
         while raw.len < want {
-            if readMore(fd, &mut raw) <= 0 {
+            if read(&mut raw) <= 0 {
                 return ReadOutcome.Gone
             }
         }
@@ -1022,20 +1026,49 @@ fn decodeBody(req: &mut Request, codings: Vec<string>, max: i64): i32 {
     return 0
 }
 
-// Read a request off `fd`, answer it with `respond`, and close `fd`: the one
-// connection lifecycle every server here shares.
-fn serveConn(fd: i32, maxBody: i64, maxInflated: i64, respond: (Request) => string): void {
-    match readRequest(fd, maxBody, maxInflated) {
+// Read one request through `read`, answer it through `write` with what `respond`
+// renders, or with the status readRequest refused it with: the one request lifecycle
+// every server shares, the plaintext ones here and std/https's over TLS. Closing the
+// transport is the caller's.
+fn serveExchange(read: (&mut string) => i64, write: (&string) => void, maxBody: i64, maxInflated: i64, respond: (Request) => string): void {
+    match readRequest(read, write, maxBody, maxInflated) {
         ReadOutcome.Got(req) => {
-            writeAll(fd, respond(req))
+            write(respond(req))
         }
         ReadOutcome.Reject(code) => {
             let noHeaders: Vec<Param> = []
-            writeAll(fd, renderRaw(code, "text/plain; charset=utf-8", statusText(code), noHeaders))
+            write(renderRaw(code, "text/plain; charset=utf-8", statusText(code), noHeaders))
         }
         ReadOutcome.Gone => {}
     }
-    unsafe { sysClose(fd) }
+}
+
+// @internal
+// One request answered by `handler`, as `serve` answers it, over any transport (`read`
+// and `write` as readRequest takes them). std/https's serveTls drives it over TLS.
+pub fn serveHandlerExchange(read: (&mut string) => i64, write: (&string) => void, handler: (&Request) => Response): void {
+    serveExchange(read, write, defaultMaxBodyBytes, defaultMaxBodyBytes, (req: Request): string => {
+        let noHeaders: Vec<Param> = []
+        return renderFor(req, handler(req), noHeaders)
+    })
+}
+
+// @internal
+// One request routed through `router` with its body limits, as `serveRouter` answers
+// it, over any transport. std/https's serveRouterTls drives it over TLS.
+pub fn serveRouterExchange(read: (&mut string) => i64, write: (&string) => void, router: &Router): void {
+    serveExchange(read, write, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
+        let head = req.method == "HEAD"
+        let handled = router.handle(req)
+        if head {
+            return headOnly(renderResponse(handled.response, handled.headers))
+        }
+        return renderResponse(handled.response, handled.headers)
+    })
+}
+
+fn fdWrite(fd: i32, data: &string): void {
+    let _sent = sendAll(fd, data)
 }
 
 // ── Public API ──
@@ -1125,10 +1158,8 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
         if clientFd < 0 {
             continue
         }
-        serveConn(clientFd, defaultMaxBodyBytes, defaultMaxBodyBytes, (req: Request): string => {
-            let noHeaders: Vec<Param> = []
-            return renderFor(req, handler(req), noHeaders)
-        })
+        serveHandlerExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), handler)
+        unsafe { sysClose(clientFd) }
     }
     return Result.Err("server exited")
 }
@@ -1531,14 +1562,8 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
         if clientFd < 0 {
             continue
         }
-        serveConn(clientFd, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
-            let head = req.method == "HEAD"
-            let handled = router.handle(req)
-            if head {
-                return headOnly(renderResponse(handled.response, handled.headers))
-            }
-            return renderResponse(handled.response, handled.headers)
-        })
+        serveRouterExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router)
+        unsafe { sysClose(clientFd) }
     }
     return Result.Err("server exited")
 }
@@ -1546,11 +1571,7 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
 // A green task's socket is non-blocking, so one write() may be short. sendFd loops,
 // parks only on EAGAIN, and gives up on any other error: a peer that hung up
 // (EPIPE/ECONNRESET) must end the task, or it retries forever on EPOLLHUP.
-fn writeAll(fd: i32, buf: string): void {
-    unsafe { sendFd(fd, buf, buf.len) }
-}
-
-// Write all of `buf` to `fd`. False once the peer is gone.
+// False once the peer is gone.
 fn sendAll(fd: i32, buf: &string): bool {
     unsafe { return sendFd(fd, buf, buf.len) == buf.len }
 }
@@ -2216,7 +2237,7 @@ let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plai
 
 fn handleConn(clientFd: i32, router: &Router): void {
     unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
-    serveConn(clientFd, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
+    serveExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
         taskOnPanicNote(requestLine(req))
         // A stream or ws route has already written everything it will; nothing more to send.
         if runLongRoute(req, clientFd, router) {
@@ -2229,6 +2250,7 @@ fn handleConn(clientFd: i32, router: &Router): void {
         }
         return renderResponse(handled.response, handled.headers)
     })
+    unsafe { sysClose(clientFd) }
 }
 
 // One connection task: take the next accepted fd and serve it. The fd comes over a

@@ -19,7 +19,8 @@ from "std/https" import { serveTls, serveRouterTls }
 pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &Router): Result<Unit>
 ```
 
-serveRouter over TLS — routes and Context-set headers behave exactly as in std/http.
+serveRouter over TLS: routes, Context-set headers and the router's body limits behave
+exactly as in std/http.
 
 ### `serveTls`
 
@@ -28,7 +29,9 @@ pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Requ
 ```
 
 Serve HTTPS on `port` (None = OS-chosen) with the PEM cert chain and private key at
-`certPath`/`keyPath`. One request per connection, closed after the response — the same
-contract as http.serve. Only returns on a fatal bind/listen error.
+`certPath`/`keyPath`. One request per connection, closed after the response, read with
+std/http's own reader (chunked and gzip/deflate bodies, the 1 MiB body cap and the
+400/413/414/431/501/505 refusals): the same contract as http.serve. Only returns on a
+fatal bind/listen error.
 
 <!-- /generated:api -->
