@@ -3,7 +3,8 @@
 // both inside getaddrinfo together. The second task can only get there if the first
 // lookup left the scheduler free to run it. dnsParallel.c replaces getaddrinfo with one
 // that holds each caller until a second one arrives (3 s timeout), so a serialized
-// resolver shows up as a maximum of 1 and a 6 s run, not as a flaky timing.
+// resolver shows up as a maximum of 1 and a 6 s run, not as a flaky timing. The tasks
+// report through channels and main prints, because which lookup finishes first varies.
 // @skip-os: win32
 // @expect: resolve: ok
 // @expect: resolveAll: ok
@@ -11,19 +12,24 @@
 
 from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/net" import { resolve, resolveAll }
+from "std/sync" import { Channel }
 
 extern fn dnsMaxConcurrent(): i32
 
 pub fn main(): i32 {
+    let one = Channel<bool>.new(1)!
+    let all = Channel<bool>.new(1)!
+    let oneTx = one.clone()
+    let allTx = all.clone()
     Task.spawn(move(): void => {
-        let ok = resolve("localhost").isOk()
-        print($"resolve: {if ok { "ok" } else { "failed" }}")
+        oneTx.send(resolve("localhost").isOk())!
     })
     Task.spawn(move(): void => {
-        let ok = resolveAll("localhost").isOk()
-        print($"resolveAll: {if ok { "ok" } else { "failed" }}")
+        allTx.send(resolveAll("localhost").isOk())!
     })
     schedulerRunToCompletion()
+    print($"resolve: {if one.recv()! { "ok" } else { "failed" }}")
+    print($"resolveAll: {if all.recv()! { "ok" } else { "failed" }}")
     var most: i32 = 0
     unsafe {
         most = dnsMaxConcurrent()

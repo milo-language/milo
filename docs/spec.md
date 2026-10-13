@@ -9320,7 +9320,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `resolveAll: ok`
 - `lookups in getaddrinfo at once: 2`
 
-**Rationale.** std/net resolves on a worker thread, so a lookup parks only the green task that asked: two tasks resolving at once (resolve and resolveAll, the one fetch uses) are both inside getaddrinfo together. The second task can only get there if the first lookup left the scheduler free to run it. dnsParallel.c replaces getaddrinfo with one that holds each caller until a second one arrives (3 s timeout), so a serialized resolver shows up as a maximum of 1 and a 6 s run, not as a flaky timing.
+**Rationale.** std/net resolves on a worker thread, so a lookup parks only the green task that asked: two tasks resolving at once (resolve and resolveAll, the one fetch uses) are both inside getaddrinfo together. The second task can only get there if the first lookup left the scheduler free to run it. dnsParallel.c replaces getaddrinfo with one that holds each caller until a second one arrives (3 s timeout), so a serialized resolver shows up as a maximum of 1 and a 6 s run, not as a flaky timing. The tasks report through channels and main prints, because which lookup finishes first varies.
 
 *Program:* [`tests/fixtures/dnsParallel.milo`](../tests/fixtures/dnsParallel.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
