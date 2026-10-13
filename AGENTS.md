@@ -143,7 +143,7 @@ has no home.
   and — if `wine` is installed — RUNS the cross-built exe rather than only linking it.
   That distinction matters: a `setvbuf` call MSVC rejects at startup linked cleanly and
   killed every Windows binary, and only CI caught it.
-  Wine validates the link and the CRT calls but is not the OS — CI's `test-windows` job is the authority on whether generated code actually runs. With `MILO_WINDOWS_SDK` set, `verifyCDecls` DOES run the `@cLayout`/`@cSig` guards on a Windows cross-compile (it compiles the guard TU with `--target=<triple>` against xwin's headers), so a wrong layout is caught on the dev host, not only in CI. Other target≠host crosses still skip (no sysroot to read).
+  Wine validates the link and the CRT calls but is not the OS — CI's `test-windows` job is the authority on whether generated code actually runs. With `MILO_WINDOWS_SDK` set, `verifyCDecls` DOES run the `@cLayout`/`@cSig` guards on a Windows cross-compile (it compiles the guard TU with `--target=<triple>` against xwin's headers), so a wrong layout is caught on the dev host, not only in CI. Any other hosted target≠host cross does the same when `MILO_SYSROOT` points at a copy of the target's root (its `/usr/include` and `/usr/lib`): the guards read those headers and the link goes through `ld.lld` with `--sysroot`. Without it they skip, announced. `MILO_CC` picks the clang (by default `/usr/bin/clang` wins, which on a mac is Apple's: its codegen differs from upstream LLVM).
 
 ### Layout
 

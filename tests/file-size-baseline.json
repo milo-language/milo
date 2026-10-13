@@ -33,7 +33,7 @@
   "src/lexer.ts": 378,
   "src/lower.ts": 1810,
   "src/lsp.ts": 2404,
-  "src/main.ts": 2329,
+  "src/main.ts": 2357,
   "src/mangle.ts": 597,
   "src/match-usefulness.ts": 93,
   "src/must.ts": 15,

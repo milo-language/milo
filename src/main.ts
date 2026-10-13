@@ -361,8 +361,7 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
   //
   // Skipping is announced, never silent: an unverified @cLayout/@cSig looks identical to
   // a verified one, and a guard you think is running is worse than no guard at all.
-  // Verifying properly needs a sysroot for the target, which the compiler has no notion
-  // of yet (there is no -I/-isysroot anywhere in the build).
+  // Verifying properly needs the target's headers: MILO_WINDOWS_SDK or MILO_SYSROOT.
   const host = getHostTarget();
   if (target.bareMetal) {
     console.error(`warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it`);
@@ -370,18 +369,22 @@ function verifyCDeclsUntimed(cGuards: string, target: TargetInfo, linkLibs: stri
   }
   // A Windows cross-compile CAN be verified when the target sysroot is present: compile
   // the guard TU with the target triple (so clang uses LLP64) against xwin's headers.
-  // Only this exact case — every other target≠host cross has no sysroot to read, so it
-  // still skips, announced.
+  // Without one of them a target≠host cross has no headers to read, so it skips, announced.
   const crossWindows =
     target.os === "windows" && process.platform !== "win32" && !!process.env.MILO_WINDOWS_SDK;
-  if ((target.os !== host.os || target.arch !== host.arch) && !crossWindows) {
+  // Same for a hosted cross build given the target's root via MILO_SYSROOT.
+  const sysroot = crossSysroot(target);
+  if ((target.os !== host.os || target.arch !== host.arch) && !crossWindows && !sysroot) {
     console.error(`warning: @cLayout/@cSig guards skipped — building for ${target.triple}, but verification would read this ${host.os}-${host.arch} host's headers`);
     return;
   }
   const tc = detectToolchain();
   const cc = tc.kind === "clang" ? tc.path : "cc";
-  const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}` : "";
-  const libFlags = pkgConfigCflags(linkLibs);
+  const crossFlags = crossWindows ? `--target=${target.triple} ${windowsIncludeFlags()}`
+    : sysroot ? `--target=${target.triple} --sysroot="${sysroot}"` : "";
+  // The host's pkg-config describes the host's prefix (Homebrew's -I on a mac), which
+  // would shadow the sysroot's headers; the sysroot's /usr/include already has them.
+  const libFlags = sysroot ? "" : pkgConfigCflags(linkLibs);
   // The llc+cc fallback has no toolchain id to key on, so it is never cached.
   const cacheKey = tc.kind === "clang" && cdeclCacheEnabled()
     ? cdeclCacheKey(cGuards, tc.id, `${crossFlags}\0${libFlags}`) : null;
@@ -572,7 +575,11 @@ type Toolchain = { kind: "clang"; path: string; id: string } | { kind: "llc+cc" 
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
-  const candidates = ["/usr/bin/clang", "clang"];
+  // MILO_CC names the one clang to use. Without it /usr/bin/clang always wins, and on a
+  // mac that is Apple's, whose codegen differs from upstream LLVM (it splits hot/cold
+  // paths into `.cold.N` functions by default): a cross build meant to match what a
+  // Linux box's clang produces needs a way to pick Homebrew's instead.
+  const candidates = process.env.MILO_CC ? [process.env.MILO_CC] : ["/usr/bin/clang", "clang"];
   let tooOld: { path: string; major: number } | null = null;
   for (const cc of candidates) {
     try {
@@ -587,6 +594,8 @@ function detectToolchain(): Toolchain {
       return cachedToolchain;
     } catch {}
   }
+  // A MILO_CC that doesn't run is a typo, not a request for the llc+cc fallback.
+  if (process.env.MILO_CC && !tooOld) throw new Error(`MILO_CC=${process.env.MILO_CC} is not a working clang ('${process.env.MILO_CC} --version' failed)`);
   try {
     execSync("llc --version", { stdio: ["pipe", "pipe", "pipe"] });
     execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
@@ -816,6 +825,25 @@ function windowsIncludeFlags(): string {
     .map(d => `-isystem "${root}/${d}"`).join(" ");
 }
 
+// MILO_SYSROOT: the target's root filesystem (its /usr/include, crt*.o, libc and the
+// libraries the program links), for a hosted non-Windows cross build such as
+// `--target=linux-x64` from a mac. Only when target != host: a native build reads the
+// host's own root, and a stray env var must not redirect it. Null when it doesn't apply.
+function crossSysroot(target: TargetInfo): string | null {
+  const root = process.env.MILO_SYSROOT;
+  if (!root || target.bareMetal || target.os === "windows") return null;
+  const host = getHostTarget();
+  return (target.os === host.os && target.arch === host.arch) ? null : root;
+}
+
+// Link flags for a MILO_SYSROOT cross build. lld because the host's own linker only
+// writes the host's format (ld64 has no ELF output); clang finds crt1.o, libgcc and
+// the -l libraries under the sysroot from --sysroot alone.
+function crossSysrootFlags(target: TargetInfo): string {
+  const root = crossSysroot(target);
+  return root ? ` --sysroot="${root}" -fuse-ld=lld` : "";
+}
+
 /**
  * Compile `llFile` as N codegen units in parallel processes and link the objects.
  * Returns false when the build was not split, leaving the caller's single-module path to
@@ -919,7 +947,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   // lld-link as a request for `m.lib`, which does not exist, so it is a hard link error
   // rather than a harmless no-op the way it is on macOS.
   const mathLink = targetIsWindows ? "" : " -lm";
-  const winSysroot = target ? windowsSysrootFlags(target) : "";
+  const sysrootFlags = target ? windowsSysrootFlags(target) + crossSysrootFlags(target) : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
     // Mach-O keeps DWARF in the .o and references it from the executable via a debug
@@ -941,7 +969,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
       }
     } else {
       const linkFlags = `-o ${outFile}${libs}${extra}${mathLink}${linuxLink}`;
-      const ccFlags = `${tgt}${winSysroot}${opt}${san}`;
+      const ccFlags = `${tgt}${sysrootFlags}${opt}${san}`;
       if (compileSplit(tc.path, tc.id, llFile, ccFlags, linkFlags, optFlag, emitDebug, programId)) return;
       // -lm: numToStr and other std math call floor/pow from libm. macOS folds
       // libm into libSystem so clang links it implicitly; Linux does not, so
@@ -1360,7 +1388,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     }
     const host = getHostTarget();
     if (!target.bareMetal && (target.os !== host.os || target.arch !== host.arch)) {
-      console.error(`hint: cross-compiling to ${target.triple} needs a linker and sysroot for that target — the host toolchain can't link it. Until then, build on the target.`);
+      console.error(`hint: cross-compiling to ${target.triple} needs a linker and sysroot for that target — the host toolchain can't link it. Point MILO_SYSROOT at a copy of the target's root (its /usr/include and /usr/lib), with ld.lld on PATH, or build on the target.`);
     }
     process.exit(1);
   } finally {
