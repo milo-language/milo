@@ -53,6 +53,12 @@ _Goes on: `fn`, `method`._
 
 This generic hands a `T` out of a container by copy (`Some(self.data[i])`). The copy is structural and never runs a Drop, so it exists only for a `T` that carries no Drop or @noCopy anywhere inside it: on a generic struct the method is absent from an instantiation with such a `T` (calling it names this reason), and a generic fn is rejected at the call. The rest of the type stays usable, which is what @copyOnly on the whole struct could not give a container whose other methods borrow.
 
+### `@ordered(…)`
+
+_Goes on: `fn`, `method`._
+
+This generic compares a `T` with `<`, which exists only on integers, floats and strings. On a generic struct the method is absent from an instantiation with any other `T` (calling it names this reason), and a generic fn is rejected at the call, so `BinaryHeap<Task>` keeps its comparator constructor and loses only the natural-order one, instead of failing inside std on a `<` the caller never wrote. Bare, it constrains every type parameter; `@ordered(K)` names the ones it compares.
+
 ### `@cLayout(…)`
 
 _Goes on: `struct`._

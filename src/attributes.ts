@@ -73,6 +73,18 @@ export const ATTRIBUTES: AttrInfo[] = [
       "borrow.",
   },
   {
+    name: "ordered",
+    targets: ["fn", "method"],
+    doc:
+      "This generic compares a `T` with `<`, which exists only on integers, floats and " +
+      "strings. On a generic struct the method is absent from an instantiation with any " +
+      "other `T` (calling it names this reason), and a generic fn is rejected at the call, " +
+      "so `BinaryHeap<Task>` keeps its comparator constructor and loses only the " +
+      "natural-order one, instead of failing inside std on a `<` the caller never wrote. " +
+      "Bare, it constrains every type parameter; `@ordered(K)` names the ones it compares.",
+    takesArgs: true,
+  },
+  {
     name: "cLayout",
     targets: ["struct"],
     takesArgs: true,

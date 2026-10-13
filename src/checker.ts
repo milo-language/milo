@@ -2463,7 +2463,12 @@ export class TypeChecker {
   // pre-registered before the first monomorphization for exactly this reason; the
   // by-index rule inside the instantiated body is the fail-closed backstop for a
   // resource this early answer cannot see (a struct declared later that nests one).
-  private copyOutUnavailable = new Map<string, { kind: string; via: TypeKind; arg: TypeKind }>();
+  //
+  // `@ordered` is the same withholding for a routine that compares `T` with `<`, which
+  // exists only on integers, floats and strings: `BinaryHeap<Task>` keeps `withCompare`
+  // and loses the natural-order `new`, rather than failing inside std on a `<` the
+  // caller never wrote.
+  private withheldMethods = new Map<string, { reason: string; hint: string }>();
   private copyOutBlocker(attrs: Attribute[] | undefined, typeArgs: TypeKind[]) {
     if (!attrs?.some(a => a.name === "copyOut")) return null;
     for (const arg of typeArgs) {
@@ -2472,10 +2477,31 @@ export class TypeChecker {
     }
     return null;
   }
-  private copyOutMethodUnavailable(m: Function, mangled: string, typeArgs: TypeKind[]): boolean {
-    const blocker = this.copyOutBlocker(m.attributes, typeArgs);
-    if (!blocker) return false;
-    this.copyOutUnavailable.set(`${mangled}.${m.name}`, blocker);
+  // Bare, every type parameter must have `<`; `@ordered(K)` names the ones that must,
+  // so `SortedMap<i64, Res>` keeps its natural-order `new` (only the keys are compared).
+  private orderedBlocker(attrs: Attribute[] | undefined, typeParams: string[], typeArgs: TypeKind[]): TypeKind | null {
+    const attr = attrs?.find(a => a.name === "ordered");
+    if (!attr) return null;
+    return typeArgs.find((arg, i) =>
+      (attr.args.length === 0 || attr.args.includes(typeParams[i]!)) && !isNumeric(arg) && arg.tag !== "string") ?? null;
+  }
+  // Why a generic `what` cannot exist for these type arguments, or null when it can.
+  private withheldReason(what: string, attrs: Attribute[] | undefined, typeParams: string[], typeArgs: TypeKind[]): { reason: string; hint: string } | null {
+    const res = this.copyOutBlocker(attrs, typeArgs);
+    if (res) return { reason: this.copyOutReason(what, res), hint: TypeChecker.COPY_OUT_HINT };
+    const unordered = this.orderedBlocker(attrs, typeParams, typeArgs);
+    if (unordered) {
+      return {
+        reason: `${what} orders its elements with '<', which '${this.show(unordered)}' does not have`,
+        hint: `'<' exists only on integers, floats and strings; for another type use a form of this API that takes a comparator, where there is one`,
+      };
+    }
+    return null;
+  }
+  private methodWithheld(m: Function, mangled: string, typeParams: string[], typeArgs: TypeKind[]): boolean {
+    const why = this.withheldReason(`'${m.name}'`, m.attributes, typeParams, typeArgs);
+    if (!why) return false;
+    this.withheldMethods.set(`${mangled}.${m.name}`, why);
     return true;
   }
   private copyOutReason(what: string, b: { kind: string; via: TypeKind; arg: TypeKind }): string {
@@ -2715,11 +2741,11 @@ export class TypeChecker {
           traitName: gi.traitName,
           typeName: mangled,
           typeParams: [],
-          methods: gi.methods.filter(m => !this.copyOutMethodUnavailable(m, mangled, typeArgs)).map(m => ({
+          methods: gi.methods.filter(m => !this.methodWithheld(m, mangled, generic.typeParams, typeArgs)).map(m => ({
             ...m,
-            // `@copyOut` has been decided for this instance; the concrete impl has no
-            // type parameters left for it to constrain, and registerImpl says so.
-            ...(m.attributes && { attributes: m.attributes.filter(a => a.name !== "copyOut") }),
+            // `@copyOut`/`@ordered` have been decided for this instance; the concrete impl
+            // has no type parameters left for them to constrain, and registerImpl says so.
+            ...(m.attributes && { attributes: m.attributes.filter(a => a.name !== "copyOut" && a.name !== "ordered") }),
             body: this.substituteBody(m.body, generic.typeParams, typeArgs, baseName, mangled),
             params: m.params.map(p => ({
               name: p.name,
@@ -2882,10 +2908,9 @@ export class TypeChecker {
     // it as a "no method" error inside the generic's own file.
     if (boundFailed) return mangled;
 
-    const blocker = this.copyOutBlocker(generic.decl.attributes, typeArgs);
-    if (blocker) {
-      this.error(`'${baseName}<${typeArgs.map(a => this.show(a)).join(", ")}>' is not allowed: ${this.copyOutReason(`'${baseName}'`, blocker)}`, sp,
-        TypeChecker.COPY_OUT_HINT);
+    const withheld = this.withheldReason(`'${baseName}'`, generic.decl.attributes, generic.typeParams, typeArgs);
+    if (withheld) {
+      this.error(`'${baseName}<${typeArgs.map(a => this.show(a)).join(", ")}>' is not allowed: ${withheld.reason}`, sp, withheld.hint);
       return mangled;
     }
 
@@ -4142,11 +4167,15 @@ export class TypeChecker {
           // Bare only: it constrains every type parameter, since the copy is of whatever
           // the container holds and a routine copying out one parameter and not another
           // has not come up. On a concrete fn it would be a claim about nothing.
-          else if (attr.name === "copyOut") {
-            if (attr.args.length > 0) this.error(`'@copyOut' takes no arguments`, undefined, `write '@copyOut fn ${fn.name}<...>(...)'`);
+          else if (attr.name === "copyOut" || attr.name === "ordered") {
+            const a = attr.name;
+            if (a === "copyOut" && attr.args.length > 0) this.error(`'@copyOut' takes no arguments`, undefined, `write '@copyOut fn ${fn.name}<...>(...)'`);
+            if (a === "ordered") this.validateOrderedArgs(fn.name, attr, fn.typeParams.map(t => t.name), undefined);
             if (fn.typeParams.length === 0) {
-              this.error(`'@copyOut' on '${fn.name}': it has no type parameters to constrain`, undefined,
-                `'@copyOut' withholds a generic from a type argument that carries Drop or @noCopy; a concrete fn has none, so drop the attribute`);
+              this.error(`'@${a}' on '${fn.name}': it has no type parameters to constrain`, undefined,
+                a === "copyOut"
+                  ? `'@copyOut' withholds a generic from a type argument that carries Drop or @noCopy; a concrete fn has none, so drop the attribute`
+                  : `'@ordered' withholds a generic from a type argument that has no '<'; a concrete fn has none, so drop the attribute`);
             }
           }
           // @thread marks a fn that hands a closure param to a real OS thread. It is the
@@ -5641,6 +5670,17 @@ export class TypeChecker {
     }
   }
 
+  // `@ordered(K)` names type parameters; a name the declaration does not have would
+  // constrain nothing, silently.
+  private validateOrderedArgs(declName: string, attr: Attribute, typeParams: string[], span?: Span): void {
+    attr.args.forEach((arg, i) => {
+      if (attr.argKinds?.[i] !== "ident" || !typeParams.includes(arg)) {
+        this.error(`'@ordered(${arg})' on '${declName}': '${arg}' is not one of its type parameters`, span,
+          `it declares ${typeParams.map(t => `'${t}'`).join(", ") || "none"}; write '@ordered' bare to constrain all of them`);
+      }
+    });
+  }
+
   // `@copy` on an enum: the same claims as on a struct, against a variant payload.
   private validateEnumCopyAttr(e: import("./ast").EnumDecl, attr: Attribute, program: Program) {
     if (attr.args && attr.args.length > 0) {
@@ -6020,13 +6060,15 @@ export class TypeChecker {
         if (!attributesFor("method").includes(attr.name)) {
           this.error(`'@${attr.name}' is not supported on methods — '${typeName}.${m.name}'`, m.span ?? impl.span,
             `only ${attributesFor("method").map(a => `'@${a}'`).join(", ")} apply to a method`);
-        } else if (attr.args.length > 0) {
+        } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);
-        } else if (attr.name === "copyOut" && !(impl.typeParams && impl.typeParams.length > 0 && !impl.traitName)) {
-          this.error(`'@copyOut' on '${typeName}.${m.name}': only a method of a generic inherent impl can be withheld per instantiation`, m.span ?? impl.span,
+        } else if ((attr.name === "copyOut" || attr.name === "ordered") && !(impl.typeParams && impl.typeParams.length > 0 && !impl.traitName)) {
+          this.error(`'@${attr.name}' on '${typeName}.${m.name}': only a method of a generic inherent impl can be withheld per instantiation`, m.span ?? impl.span,
             impl.traitName ? `a trait impl's method set is fixed by the trait; move the copying method to 'impl ${typeName} { ... }'`
               : `'${typeName}' has no type parameters, so there is no instantiation to withhold it from`);
+        } else if (attr.name === "ordered") {
+          this.validateOrderedArgs(`${typeName}.${m.name}`, attr, impl.typeParams.map(t => t.name), m.span ?? impl.span);
         }
       }
     }
@@ -6265,6 +6307,9 @@ export class TypeChecker {
     const concreteName = `${container}_${args.map(a => this.mangleTypeName(a)).join("_")}`;
     const already = this.resolveMethod(concreteName, method);
     if (already) return already;
+    // Withheld at an earlier instantiation of this container; registering the impl
+    // again would not bring it back.
+    if (this.withheldMethods.has(`${concreteName}.${method}`)) return null;
     if (!templates.some(t => t.impl.methods.some(m => m.name === method))) return null;
 
     const argsMilo = args.map(a => this.typeKindToMiloType(a));
@@ -6284,12 +6329,15 @@ export class TypeChecker {
         traitName: gi.traitName,
         typeName: concreteName,
         typeParams: [],
-        methods: gi.methods.map(m => ({
+        methods: gi.methods.filter(m => !this.methodWithheld(m, concreteName, names, args)).map(m => ({
           ...m,
+          ...(m.attributes && { attributes: m.attributes.filter(a => a.name !== "copyOut" && a.name !== "ordered") }),
           params: m.params.map(p => ({
             name: p.name,
+            // The receiver keeps its declared mode: forcing `&Self` here made every
+            // `self: &mut Self` method on a container impl unable to mutate the container.
             type: p.name === "self"
-              ? { name: container, typeArgs: argsMilo, isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null }
+              ? { name: container, typeArgs: argsMilo, isPtr: false, isRef: !declaredType(p).isRefMut, isRefMut: !!declaredType(p).isRefMut, isArray: false, arraySize: null }
               : this.substituteSelfInMiloType(this.substituteParamType(declaredType(p), names, args), container, argsMilo),
           })),
           retType: this.substituteSelfInMiloType(this.substituteMiloType(m.retType, names, args), container, argsMilo),
@@ -6300,6 +6348,15 @@ export class TypeChecker {
       this.registerImpl(concreteImpl, prog, this._pendingImplFns);
     }
     return this.resolveMethod(concreteName, method);
+  }
+
+  // A container impl method `@copyOut`/`@ordered` withheld from this instantiation:
+  // say why, instead of the bare "has no method" a reader would take for a typo.
+  private reportWithheldContainerMethod(container: string, args: TypeKind[], objType: TypeKind, method: string, sp?: Span): boolean {
+    const why = this.withheldMethods.get(`${container}_${args.map(a => this.mangleTypeName(a)).join("_")}.${method}`);
+    if (!why) return false;
+    this.error(`'${method}' is not available on '${this.show(objType)}': ${why.reason}`, sp, why.hint);
+    return true;
   }
 
   private resolveMethod(objTypeName: string, methodName: string): { mangled: string; sig: FnSig } | null {
@@ -11927,6 +11984,11 @@ export class TypeChecker {
       }
       const asMethod2 = this.staticCallOnVariable(expr, expected);
       if (asMethod2) return asMethod2;
+      const withheld = this.withheldMethods.get(`${mangled}.${expr.variant}`);
+      if (withheld) {
+        this.error(`'${expr.variant}' is not available on '${expr.enumName}<${typeArgs.map(a => this.show(a)).join(", ")}>': ${withheld.reason}`, sp, withheld.hint);
+        return this.setType(expr, { tag: "unknown" });
+      }
       this.error(`'${expr.enumName}<...>' has no static method '${expr.variant}'`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
@@ -13294,6 +13356,7 @@ export class TypeChecker {
       {
         const blanket = this.instantiateContainerImpl("Vec", [objType.element], expr.method);
         if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp);
+        if (this.reportWithheldContainerMethod("Vec", [objType.element], objType, expr.method, sp)) return this.setType(expr, { tag: "unknown" });
       }
       this.error(`Vec has no method '${expr.method}'`, sp, memberHint(expr.method, VEC_MEMBERS));
       return this.setType(expr, { tag: "unknown" });
@@ -13446,6 +13509,7 @@ export class TypeChecker {
       {
         const blanket = this.instantiateContainerImpl("HashMap", [objType.key, objType.value], expr.method);
         if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp);
+        if (this.reportWithheldContainerMethod("HashMap", [objType.key, objType.value], objType, expr.method, sp)) return this.setType(expr, { tag: "unknown" });
       }
       this.error(`HashMap has no method '${expr.method}'`, sp, memberHint(expr.method, HASHMAP_MEMBERS));
       return this.setType(expr, { tag: "unknown" });
@@ -13816,10 +13880,9 @@ export class TypeChecker {
       return this.setType(expr, objType);
     }
 
-    const skipped = objType.tag === "struct" ? this.copyOutUnavailable.get(`${objType.name}.${expr.method}`) : undefined;
+    const skipped = objType.tag === "struct" ? this.withheldMethods.get(`${objType.name}.${expr.method}`) : undefined;
     if (skipped) {
-      this.error(`'${expr.method}' is not available on '${this.show(objType)}': ${this.copyOutReason(`'${expr.method}'`, skipped)}`, sp,
-        TypeChecker.COPY_OUT_HINT);
+      this.error(`'${expr.method}' is not available on '${this.show(objType)}': ${skipped.reason}`, sp, skipped.hint);
       return this.setType(expr, { tag: "unknown" });
     }
     this.error(`type '${this.show(objType)}' has no method '${expr.method}'`, sp,

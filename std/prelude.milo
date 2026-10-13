@@ -53,3 +53,33 @@ impl ErrorContext {
         return self.note + ": " + self.cause.message()
     }
 }
+
+// Insert-or-update in one call, the spelling of Rust's `*m.entry(k).or_insert(0) += 1`.
+// Milo cannot hand out a `&mut V` into the table (references are second-class), so the
+// update arrives as a callback that receives one, the way `modify` does.
+impl HashMap<K, V> {
+    // Run `f` on the value under `key` in place, inserting `init` first when the key is
+    // absent; true when it inserted. Counting is `m.upsert(word, 0, (c: &mut i64) => { c += 1 })`.
+    fn upsert(self: &mut Self, key: K, init: V, f: (&mut V) => void): bool {
+        if self.modify(key, f) {
+            return false
+        }
+        var v = init
+        f(&mut v)
+        self.insert(key, v)
+        return true
+    }
+
+    // A copy of the value under `key`, inserting `init` first when the key is absent
+    // (Python's dict.setdefault). Use `getOrInsertWith` when building `init` is costly.
+    @copyOut
+    fn getOrInsert(self: &mut Self, key: K, init: V): V {
+        if let Some(v) = self.get(key) {
+            return v
+        }
+        // insert consumes `key`; the copy reads the stored value back out.
+        let probe = key.clone()
+        self.insert(key, init)
+        return self.get(probe)!
+    }
+}

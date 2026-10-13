@@ -1,0 +1,23 @@
+// @error: 'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop
+// std/prelude's `HashMap.getOrInsert` returns a copy of the value, so it is `@copyOut`:
+// withheld from a map whose value carries Drop, while `upsert` stays
+// (tests/fixtures/hashMapUpsert.milo).
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop")
+    }
+}
+
+fn main(): i32 {
+    var m: HashMap<i64, Res> = HashMap.new()
+    m.upsert(1, Res { id: 1 }, (r: &mut Res): void => {
+        r.id += 1
+    })
+    let r = m.getOrInsert(1, Res { id: 2 })
+    print(r.id)
+    return 0
+}

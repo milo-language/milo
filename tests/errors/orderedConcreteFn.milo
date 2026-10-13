@@ -1,0 +1,12 @@
+// @error: '@ordered' on 'smallest': it has no type parameters to constrain
+// `@ordered` withholds a generic from a type argument with no `<`; a concrete fn has none.
+@ordered
+fn smallest(v: &Vec<i64>): i64 {
+    return v[0]
+}
+
+fn main(): i32 {
+    let v: Vec<i64> = [1]
+    print(smallest(v))
+    return 0
+}
