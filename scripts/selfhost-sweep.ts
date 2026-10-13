@@ -223,6 +223,14 @@ async function main() {
         console.error(`\nRATCHET FAILED: ${regressed.length} fixture(s) regressed:\n  ${regressed.join("\n  ")}`);
         process.exit(1);
       }
+      // Guard kills are excused one at a time, but a milo-self that hangs on every input
+      // gets EVERY fixture killed: `regressed` is then empty and the wipeout check above
+      // never runs, so the ratchet would pass having measured nothing.
+      const measuredClaimed = claimed.filter(n => !unmeasured.has(n)).length;
+      if (measuredClaimed < Math.ceil(claimed.length * 0.9)) {
+        console.error(`\nRATCHET BLIND: only ${measuredClaimed}/${claimed.length} manifest fixtures got a verdict; the guard killed the rest. Re-run with the machine idle, or check that milo-self terminates.`);
+        process.exit(1);
+      }
       console.log(`\nRATCHET OK — all ${claimed.length} manifest fixtures still pass`);
     }
 

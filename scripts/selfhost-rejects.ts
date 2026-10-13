@@ -196,6 +196,14 @@ if (check || write) {
       console.error(`\nSOUNDNESS RATCHET FAILED: ${regressed.length} negative test(s) regressed:\n  ${regressed.join("\n  ")}`);
       process.exit(1);
     }
+    // Excusing a guard kill is right one at a time and wrong in bulk: a milo-self that
+    // hangs or runs away on every input gets every entry killed, `regressed` comes out
+    // empty, and the ratchet would pass having measured nothing (same floor as leak-check).
+    const measuredClaimed = claimed.filter(n => !unmeasuredNames.has(n)).length;
+    if (measuredClaimed < Math.ceil(claimed.length * 0.9)) {
+      console.error(`\nSOUNDNESS RATCHET BLIND: only ${measuredClaimed}/${claimed.length} manifest entries got a verdict; the guard killed the rest. Re-run with the machine idle, or check that milo-self terminates.`);
+      process.exit(1);
+    }
     console.log(`\nSOUNDNESS RATCHET OK — all ${claimed.length} manifest entries still behave correctly`);
     process.exit(0);
   }
