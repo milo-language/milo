@@ -1,0 +1,224 @@
+// Typed IR builder: codegen describes instructions as typed values, and a backend prints them.
+//
+// `Builder` is the backend interface (the shape of rustc_codegen_ssa's BuilderMethods), so
+// lowering written against it does not care whether the output is LLVM text, an in-process
+// LLVM, or a fast debug backend. `LlvmTextBuilder` is the only backend today and prints
+// EXACTLY the text the string-pushing codegen printed: migration is gated on byte-identical
+// IR (scripts/ir-same.ts), so spacing, operand order and naming here are a compatibility
+// contract, not style. See docs/plans/codegen-ir-2026-10.md, phase 1.
+//
+// The builder appends to a caller-owned `lines` array that unmigrated helpers also push to,
+// and takes temp and label names from Codegen's own counters, so a migrated function can sit
+// in the middle of string-emitting code and leave the numbering of everything around it
+// unchanged.
+
+import type { Gen } from "./codegen";
+
+export type TyKind = "void" | "int" | "float" | "ptr" | "agg";
+export interface Ty { readonly ll: string; readonly kind: TyKind; readonly bits?: number }
+
+const intTys = new Map<number, Ty>();
+export const Ty = {
+  void: { ll: "void", kind: "void" } as Ty,
+  ptr: { ll: "ptr", kind: "ptr" } as Ty,
+  int(bits: number): Ty {
+    let t = intTys.get(bits);
+    if (!t) intTys.set(bits, t = { ll: `i${bits}`, kind: "int", bits });
+    return t;
+  },
+  get i1(): Ty { return Ty.int(1); },
+  get i8(): Ty { return Ty.int(8); },
+  get i32(): Ty { return Ty.int(32); },
+  get i64(): Ty { return Ty.int(64); },
+  /** Classify a type string as Codegen.llvmType prints it. */
+  of(ll: string): Ty {
+    if (ll === "void") return Ty.void;
+    if (ll === "ptr") return Ty.ptr;
+    const m = /^i(\d+)$/.exec(ll);
+    if (m) return Ty.int(Number(m[1]));
+    if (ll === "half" || ll === "float" || ll === "double" || ll === "fp128") return { ll, kind: "float" };
+    return { ll, kind: "agg" };
+  },
+};
+
+/** A typed operand: a register (`%t.12`), global (`@g`), or constant (`42`, `null`, `undef`). */
+export interface Val { readonly ref: string; readonly ty: Ty }
+export function val(ref: string, ty: Ty): Val { return { ref, ty }; }
+
+export interface Block { readonly name: string }
+
+/** Codegen's name counters. Injected so builder-made names interleave with string-made ones. */
+export interface NameSource {
+  nextTemp(): string;
+  nextLabel(prefix?: string): string;
+}
+
+export type BinOp = "add" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
+export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
+export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
+
+export interface Builder {
+  // Inline at the current position, as today's codegen emits it; hoisting to the entry
+  // block would change the text, so it waits for a commit that is allowed to.
+  alloca(ty: Ty): Val;
+  load(ty: Ty, ptr: Val): Val;
+  store(v: Val, ptr: Val): void;
+  gep(base: Ty, ptr: Val, idx: Val[]): Val;
+  binop(op: BinOp, a: Val, b: Val): Val;
+  icmp(pred: ICmpPred, a: Val, b: Val): Val;
+  cast(op: CastOp, v: Val, to: Ty): Val;
+  /** The builder knows no aggregate layouts, so the caller names the element type. */
+  extractvalue(agg: Val, idx: number, elt: Ty): Val;
+  insertvalue(agg: Val, elt: Val, idx: number): Val;
+  phi(ty: Ty, incoming: [Val, Block][]): Val;
+  /** A call whose result is used; `ret` must not be void. */
+  call(ret: Ty, callee: string, args: Val[]): Val;
+  /** A call printed with no result name: void, or a result nobody reads. */
+  callDiscard(ret: Ty, callee: string, args: Val[]): void;
+  newBlock(prefix: string): Block;
+  /** Start emitting into `b` (prints its label). */
+  position(b: Block): void;
+  br(dest: Block): void;
+  condBr(cond: Val, t: Block, f: Block): void;
+  /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
+  raw(line: string): void;
+}
+
+// Terminators as they open a line, plus the `]` that closes a multi-line switch.
+const TERMINATOR = /^\s+(br|ret|switch|unreachable|resume|indirectbr)\b|^\s+\]$/;
+
+export class LlvmTextBuilder implements Builder {
+  constructor(readonly lines: string[], private readonly names: NameSource) {}
+
+  alloca(ty: Ty): Val {
+    if (ty.kind === "void") this.fail("alloca of void");
+    return this.def(`alloca ${ty.ll}`, Ty.ptr);
+  }
+
+  load(ty: Ty, ptr: Val): Val {
+    if (ty.kind === "void") this.fail("load of void");
+    this.wantPtr("load", ptr);
+    return this.def(`load ${ty.ll}, ptr ${ptr.ref}`, ty);
+  }
+
+  store(v: Val, ptr: Val): void {
+    if (v.ty.kind === "void") this.fail(`store of void value ${v.ref}`);
+    this.wantPtr("store", ptr);
+    this.emit(`store ${v.ty.ll} ${v.ref}, ptr ${ptr.ref}`);
+  }
+
+  gep(base: Ty, ptr: Val, idx: Val[]): Val {
+    if (base.kind === "void") this.fail("getelementptr over void");
+    this.wantPtr("getelementptr", ptr);
+    for (const i of idx) if (i.ty.kind !== "int") this.fail(`getelementptr index ${i.ref} is ${i.ty.ll}, not an integer`);
+    return this.def(`getelementptr ${base.ll}, ptr ${ptr.ref}, ${idx.map(i => `${i.ty.ll} ${i.ref}`).join(", ")}`, Ty.ptr);
+  }
+
+  binop(op: BinOp, a: Val, b: Val): Val {
+    this.sameTy(op, a, b);
+    return this.def(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty);
+  }
+
+  icmp(pred: ICmpPred, a: Val, b: Val): Val {
+    this.sameTy(`icmp ${pred}`, a, b);
+    return this.def(`icmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1);
+  }
+
+  cast(op: CastOp, v: Val, to: Ty): Val {
+    if (v.ty.kind === "void" || to.kind === "void") this.fail(`${op} involving void`);
+    return this.def(`${op} ${v.ty.ll} ${v.ref} to ${to.ll}`, to);
+  }
+
+  extractvalue(agg: Val, idx: number, elt: Ty): Val {
+    if (agg.ty.kind !== "agg") this.fail(`extractvalue from non-aggregate ${agg.ty.ll}`);
+    return this.def(`extractvalue ${agg.ty.ll} ${agg.ref}, ${idx}`, elt);
+  }
+
+  insertvalue(agg: Val, elt: Val, idx: number): Val {
+    if (agg.ty.kind !== "agg") this.fail(`insertvalue into non-aggregate ${agg.ty.ll}`);
+    return this.def(`insertvalue ${agg.ty.ll} ${agg.ref}, ${elt.ty.ll} ${elt.ref}, ${idx}`, agg.ty);
+  }
+
+  phi(ty: Ty, incoming: [Val, Block][]): Val {
+    if (ty.kind === "void") this.fail("phi of void");
+    for (const [v] of incoming) if (v.ty.ll !== ty.ll) this.fail(`phi ${ty.ll} incoming ${v.ref} is ${v.ty.ll}`);
+    return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${v.ref}, %${b.name}]`).join(", ")}`, ty);
+  }
+
+  call(ret: Ty, callee: string, args: Val[]): Val {
+    if (ret.kind === "void") this.fail(`call ${callee} returns void; use callDiscard`);
+    return this.def(callText(ret, callee, args), ret);
+  }
+
+  callDiscard(ret: Ty, callee: string, args: Val[]): void {
+    this.emit(callText(ret, callee, args));
+  }
+
+  newBlock(prefix: string): Block {
+    return { name: this.names.nextLabel(prefix) };
+  }
+
+  position(b: Block): void {
+    this.lines.push(`${b.name}:`);
+  }
+
+  br(dest: Block): void {
+    this.emit(`br label %${dest.name}`);
+  }
+
+  condBr(cond: Val, t: Block, f: Block): void {
+    if (cond.ty.ll !== "i1") this.fail(`br condition ${cond.ref} is ${cond.ty.ll}, not i1`);
+    this.emit(`br i1 ${cond.ref}, label %${t.name}, label %${f.name}`);
+  }
+
+  raw(line: string): void {
+    this.lines.push(line);
+  }
+
+  // The temp is drawn before the line is checked and pushed, matching the order the
+  // string code used (`const t = nextTemp(); lines.push(...)`).
+  private def(rhs: string, ty: Ty): Val {
+    const ref = this.names.nextTemp();
+    this.emit(`${ref} = ${rhs}`);
+    return { ref, ty };
+  }
+
+  private emit(inst: string): void {
+    // Read from the text, not tracked in a flag: unmigrated helpers push labels and
+    // branches into the same array, so only the array knows where the block ends.
+    const last = this.lastInstruction();
+    if (last !== undefined && TERMINATOR.test(last)) this.fail(`'${inst.trim()}' appended after terminator '${last.trim()}' with no label between`);
+    this.lines.push(`  ${inst}`);
+  }
+
+  private lastInstruction(): string | undefined {
+    for (let i = this.lines.length - 1; i >= 0; i--) {
+      const l = this.lines[i];
+      const t = l.trim();
+      if (t === "" || t.startsWith(";")) continue;
+      return l;
+    }
+    return undefined;
+  }
+
+  private wantPtr(what: string, p: Val): void {
+    if (p.ty.kind !== "ptr") this.fail(`${what} through non-pointer ${p.ref} (${p.ty.ll})`);
+  }
+
+  private sameTy(what: string, a: Val, b: Val): void {
+    if (a.ty.ll !== b.ty.ll) this.fail(`${what} operand types differ: ${a.ref} is ${a.ty.ll}, ${b.ref} is ${b.ty.ll}`);
+  }
+
+  private fail(msg: string): never {
+    throw new Error(`ir: ${msg}`);
+  }
+}
+
+function callText(ret: Ty, callee: string, args: Val[]): string {
+  return `call ${ret.ll} ${callee}(${args.map(a => `${a.ty.ll} ${a.ref}`).join(", ")})`;
+}
+
+/** Shim for unmigrated callers that still expect the `Gen` tuple. */
+export function asGen(lines: string[], v: Val): Gen {
+  return [lines, v.ref, v.ty.ll];
+}

@@ -8,6 +8,7 @@ import type { Span } from "./ast";
 import type { OwnEndKind } from "./own-ledger";
 import type { Gen, StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { must } from "./must";
+import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Val } from "./ir";
 
 // %HashMap field indices. The struct is { data, len, cap, seed, tombs }, and these offsets
 // appeared as bare `i32 0, i32 N` at 22 sites in codegen.ts — the only clue to which field
@@ -64,113 +65,71 @@ export interface CodegenMapCtx {
 }
 
 function emitFnvHash(ctx: CodegenMapCtx, lines: string[], keyVal: string, keyType: TypeKind, seedReg: string): string {
+  const b = new LlvmTextBuilder(lines, ctx);
   // FNV-1a: hash = offset_basis ^ seed; then fold the key's bytes in.
-  const offsetBasis = "14695981039346656037";
-  const h0 = ctx.nextTemp();
-  lines.push(`  ${h0} = xor i64 ${offsetBasis}, ${seedReg}`);
-  return emitHashInto(ctx, lines, h0, keyVal, keyType);
+  const h0 = b.binop("xor", val("14695981039346656037", Ty.i64), val(seedReg, Ty.i64));
+  return hashInto(ctx, b, h0, val(keyVal, Ty.of(ctx.llvmType(keyType))), keyType).ref;
 }
 
-// Fold `val`'s bytes into the running FNV-1a accumulator `acc`, returning the new
+// Fold `v`'s bytes into the running FNV-1a accumulator `acc`, returning the new
 // accumulator. Structs recurse field-by-field over the *same* recursion that derives
 // equality — so `a == b ⟹ hash(a) == hash(b)` holds by construction (the eq–hash
 // coherence law). Hash values are NOT stable across compiler versions or runs (the
 // table seed varies): never persist them or put them on the wire.
-function emitHashInto(ctx: CodegenMapCtx, lines: string[], acc: string, val: string, type: TypeKind): string {
-  const prime = "1099511628211";
+function hashInto(ctx: CodegenMapCtx, b: Builder, acc: Val, v: Val, type: TypeKind): Val {
+  const prime = val("1099511628211", Ty.i64);
 
   if (type.tag === "bool") {
-    const byte = ctx.nextTemp();
-    lines.push(`  ${byte} = zext i1 ${val} to i64`);
-    const x = ctx.nextTemp();
-    lines.push(`  ${x} = xor i64 ${acc}, ${byte}`);
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = mul i64 ${x}, ${prime}`);
-    return result;
+    const byte = b.cast("zext", v, Ty.i64);
+    return b.binop("mul", b.binop("xor", acc, byte), prime);
   }
 
   if (type.tag === "int") {
-    let val64: string;
-    if (type.bits === 64) {
-      val64 = val;
-    } else {
-      val64 = ctx.nextTemp();
-      if (type.signed) {
-        lines.push(`  ${val64} = sext i${type.bits} ${val} to i64`);
-      } else {
-        lines.push(`  ${val64} = zext i${type.bits} ${val} to i64`);
-      }
-    }
+    const val64 = type.bits === 64 ? v : b.cast(type.signed ? "sext" : "zext", v, Ty.i64);
     // unrolled 8-byte FNV-1a
     let hash = acc;
     for (let i = 0; i < 8; i++) {
-      const shifted = ctx.nextTemp();
-      lines.push(`  ${shifted} = lshr i64 ${val64}, ${i * 8}`);
-      const byte = ctx.nextTemp();
-      lines.push(`  ${byte} = and i64 ${shifted}, 255`);
-      const xored = ctx.nextTemp();
-      lines.push(`  ${xored} = xor i64 ${hash}, ${byte}`);
-      hash = ctx.nextTemp();
-      lines.push(`  ${hash} = mul i64 ${xored}, ${prime}`);
+      const shifted = b.binop("lshr", val64, val(String(i * 8), Ty.i64));
+      const byte = b.binop("and", shifted, val("255", Ty.i64));
+      hash = b.binop("mul", b.binop("xor", hash, byte), prime);
     }
     return hash;
   }
 
   if (type.tag === "string") {
     ctx.hasStringType = true;
-    const strData = ctx.nextTemp();
-    lines.push(`  ${strData} = extractvalue %String ${val}, 0`);
-    const strLen = ctx.nextTemp();
-    lines.push(`  ${strLen} = extractvalue %String ${val}, 1`);
-    const iAddr = ctx.nextTemp();
-    lines.push(`  ${iAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${iAddr}`);
-    const hAddr = ctx.nextTemp();
-    lines.push(`  ${hAddr} = alloca i64`);
-    lines.push(`  store i64 ${acc}, ptr ${hAddr}`);
-    const condLabel = ctx.nextLabel("fnv.cond");
-    const bodyLabel = ctx.nextLabel("fnv.body");
-    const endLabel = ctx.nextLabel("fnv.end");
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const iVal = ctx.nextTemp();
-    lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-    const cmp = ctx.nextTemp();
-    lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${strLen}`);
-    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-    lines.push(`${bodyLabel}:`);
-    const bytePtr = ctx.nextTemp();
-    lines.push(`  ${bytePtr} = getelementptr i8, ptr ${strData}, i64 ${iVal}`);
-    const byte = ctx.nextTemp();
-    lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
-    const byte64 = ctx.nextTemp();
-    lines.push(`  ${byte64} = zext i8 ${byte} to i64`);
-    const curH = ctx.nextTemp();
-    lines.push(`  ${curH} = load i64, ptr ${hAddr}`);
-    const xored = ctx.nextTemp();
-    lines.push(`  ${xored} = xor i64 ${curH}, ${byte64}`);
-    const newH = ctx.nextTemp();
-    lines.push(`  ${newH} = mul i64 ${xored}, ${prime}`);
-    lines.push(`  store i64 ${newH}, ptr ${hAddr}`);
-    const nextI = ctx.nextTemp();
-    lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-    lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${endLabel}:`);
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = load i64, ptr ${hAddr}`);
-    return result;
+    const strData = b.extractvalue(v, 0, Ty.ptr);
+    const strLen = b.extractvalue(v, 1, Ty.i64);
+    const iAddr = b.alloca(Ty.i64);
+    b.store(val("0", Ty.i64), iAddr);
+    const hAddr = b.alloca(Ty.i64);
+    b.store(acc, hAddr);
+    const cond = b.newBlock("fnv.cond");
+    const body = b.newBlock("fnv.body");
+    const end = b.newBlock("fnv.end");
+    b.br(cond);
+    b.position(cond);
+    const iVal = b.load(Ty.i64, iAddr);
+    b.condBr(b.icmp("ult", iVal, strLen), body, end);
+    b.position(body);
+    const bytePtr = b.gep(Ty.i8, strData, [iVal]);
+    const byte64 = b.cast("zext", b.load(Ty.i8, bytePtr), Ty.i64);
+    const curH = b.load(Ty.i64, hAddr);
+    b.store(b.binop("mul", b.binop("xor", curH, byte64), prime), hAddr);
+    b.store(b.binop("add", iVal, val("1", Ty.i64)), iAddr);
+    b.br(cond);
+    b.position(end);
+    return b.load(Ty.i64, hAddr);
   }
 
   if (type.tag === "struct") {
     const layout = ctx.structLayouts.get(type.name);
     if (!layout) throw new Error(`hash: unknown struct layout '${type.name}'`);
-    const structTy = ctx.llvmType(type);
     let hash = acc;
     for (let i = 0; i < layout.fields.length; i++) {
-      const fieldVal = ctx.nextTemp();
-      lines.push(`  ${fieldVal} = extractvalue ${structTy} ${val}, ${i}`);
-      hash = emitHashInto(ctx, lines, hash, fieldVal, layout.fields[i].typeKind);
+      const fieldTy = layout.fields[i].typeKind;
+      const fieldVal = b.extractvalue(v, i, Ty.of(ctx.llvmType(fieldTy)));
+      hash = hashInto(ctx, b, hash, fieldVal, fieldTy);
     }
     return hash;
   }
@@ -179,62 +138,49 @@ function emitHashInto(ctx: CodegenMapCtx, lines: string[], acc: string, val: str
 }
 
 function emitKeyCompare(ctx: CodegenMapCtx, lines: string[], k1: string, k2: string, keyType: TypeKind): string {
+  const ty = Ty.of(ctx.llvmType(keyType));
+  return keysEqual(ctx, new LlvmTextBuilder(lines, ctx), val(k1, ty), val(k2, ty), keyType).ref;
+}
+
+function keysEqual(ctx: CodegenMapCtx, b: Builder, k1: Val, k2: Val, keyType: TypeKind): Val {
   if (keyType.tag === "int" || keyType.tag === "bool") {
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = icmp eq ${ctx.llvmType(keyType)} ${k1}, ${k2}`);
-    return result;
+    return b.icmp("eq", k1, k2);
   }
   if (keyType.tag === "string") {
     ctx.needsMemcmp = true;
-    const aLen = ctx.nextTemp();
-    lines.push(`  ${aLen} = extractvalue %String ${k1}, 1`);
-    const bLen = ctx.nextTemp();
-    lines.push(`  ${bLen} = extractvalue %String ${k2}, 1`);
-    const lenEq = ctx.nextTemp();
-    lines.push(`  ${lenEq} = icmp eq i64 ${aLen}, ${bLen}`);
-    const cmpDataLabel = ctx.nextLabel("keycmp.data");
-    const cmpFalseLabel = ctx.nextLabel("keycmp.ne");
-    const cmpDoneLabel = ctx.nextLabel("keycmp.done");
-    lines.push(`  br i1 ${lenEq}, label %${cmpDataLabel}, label %${cmpFalseLabel}`);
-    lines.push(`${cmpDataLabel}:`);
-    const aData = ctx.nextTemp();
-    lines.push(`  ${aData} = extractvalue %String ${k1}, 0`);
-    const bData = ctx.nextTemp();
-    lines.push(`  ${bData} = extractvalue %String ${k2}, 0`);
-    const cmpResult = ctx.nextTemp();
-    lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${aLen})`);
-    const dataEq = ctx.nextTemp();
-    lines.push(`  ${dataEq} = icmp eq i32 ${cmpResult}, 0`);
-    lines.push(`  br label %${cmpDoneLabel}`);
-    lines.push(`${cmpFalseLabel}:`);
-    lines.push(`  br label %${cmpDoneLabel}`);
-    lines.push(`${cmpDoneLabel}:`);
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = phi i1 [${dataEq}, %${cmpDataLabel}], [false, %${cmpFalseLabel}]`);
-    return result;
+    const aLen = b.extractvalue(k1, 1, Ty.i64);
+    const bLen = b.extractvalue(k2, 1, Ty.i64);
+    const lenEq = b.icmp("eq", aLen, bLen);
+    const cmpData = b.newBlock("keycmp.data");
+    const cmpFalse = b.newBlock("keycmp.ne");
+    const cmpDone = b.newBlock("keycmp.done");
+    b.condBr(lenEq, cmpData, cmpFalse);
+    b.position(cmpData);
+    const aData = b.extractvalue(k1, 0, Ty.ptr);
+    const bData = b.extractvalue(k2, 0, Ty.ptr);
+    const cmpResult = b.call(Ty.i32, "@memcmp", [aData, bData, aLen]);
+    const dataEq = b.icmp("eq", cmpResult, val("0", Ty.i32));
+    b.br(cmpDone);
+    b.position(cmpFalse);
+    b.br(cmpDone);
+    b.position(cmpDone);
+    return b.phi(Ty.i1, [[dataEq, cmpData], [val("false", Ty.i1), cmpFalse]]);
   }
   if (keyType.tag === "struct") {
     // Structural equality — the same field recursion that hashing folds over, so the
     // eq–hash coherence law holds by construction.
     const layout = ctx.structLayouts.get(keyType.name);
     if (!layout) throw new Error(`compare: unknown struct layout '${keyType.name}'`);
-    const structTy = ctx.llvmType(keyType);
-    let acc: string | null = null;
+    let acc: Val | null = null;
     for (let i = 0; i < layout.fields.length; i++) {
-      const f1 = ctx.nextTemp();
-      lines.push(`  ${f1} = extractvalue ${structTy} ${k1}, ${i}`);
-      const f2 = ctx.nextTemp();
-      lines.push(`  ${f2} = extractvalue ${structTy} ${k2}, ${i}`);
-      const fieldEq = emitKeyCompare(ctx, lines, f1, f2, layout.fields[i].typeKind);
-      if (acc === null) {
-        acc = fieldEq;
-      } else {
-        const a = ctx.nextTemp();
-        lines.push(`  ${a} = and i1 ${acc}, ${fieldEq}`);
-        acc = a;
-      }
+      const fieldTk = layout.fields[i].typeKind;
+      const fieldTy = Ty.of(ctx.llvmType(fieldTk));
+      const f1 = b.extractvalue(k1, i, fieldTy);
+      const f2 = b.extractvalue(k2, i, fieldTy);
+      const fieldEq = keysEqual(ctx, b, f1, f2, fieldTk);
+      acc = acc === null ? fieldEq : b.binop("and", acc, fieldEq);
     }
-    return acc ?? "true"; // a fieldless struct compares equal vacuously
+    return acc ?? val("true", Ty.i1); // a fieldless struct compares equal vacuously
   }
   throw new Error(`uncomparable key type: ${keyType.tag}`);
 }
@@ -266,29 +212,23 @@ function mapReceiverPtr(ctx: CodegenMapCtx, lines: string[], mapExpr: HIRExpr): 
 export function genHashMapNew(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapNew" }, lines: string[]): Gen {
   ctx.hasHashMapType = true;
   ctx.needsMalloc = true;
-  const entryTy = ctx.hashMapEntryType(expr.keyType, expr.valueType);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const entryTy = Ty.of(ctx.hashMapEntryType(expr.keyType, expr.valueType));
   // allocate initial 8 entries, zeroed
-  const entrySize = ctx.nextTemp();
-  lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-  const entrySizeI = ctx.nextTemp();
-  lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-  const { buf: dataPtr, bytes: totalSize } = ctx.emitAllocBytes(lines, entrySizeI, 8, "hmnew", expr.span);
-  // zero the memory
+  const entrySize = b.gep(entryTy, val("null", Ty.ptr), [val("1", Ty.i32)]);
+  const entrySizeI = b.cast("ptrtoint", entrySize, Ty.i64);
+  const { buf, bytes } = ctx.emitAllocBytes(lines, entrySizeI.ref, 8, "hmnew", expr.span);
   ctx.needsMemset = true;
-  lines.push(`  call ptr @memset(ptr ${dataPtr}, i32 0, i64 ${totalSize})`);
+  b.callDiscard(Ty.ptr, "@memset", [val(buf, Ty.ptr), val("0", Ty.i32), val(bytes, Ty.i64)]);
 
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %HashMap undef, ptr ${dataPtr}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %HashMap ${s0}, i64 0, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %HashMap ${s1}, i64 8, 2`);
+  const zero = val("0", Ty.i64);
+  let m = b.insertvalue(val("undef", Ty.of("%HashMap")), val(buf, Ty.ptr), HM_DATA);
+  m = b.insertvalue(m, zero, HM_LEN);
+  m = b.insertvalue(m, val("8", Ty.i64), HM_CAP);
   // seed = 0 (lazy init on first insert)
-  const s3 = ctx.nextTemp();
-  lines.push(`  ${s3} = insertvalue %HashMap ${s2}, i64 0, 3`);
-  const s4 = ctx.nextTemp();
-  lines.push(`  ${s4} = insertvalue %HashMap ${s3}, i64 0, ${HM_TOMBS}`);
-  return [lines, s4, "%HashMap"];
+  m = b.insertvalue(m, zero, HM_SEED);
+  m = b.insertvalue(m, zero, HM_TOMBS);
+  return asGen(lines, m);
 }
 
 export function genHashMapInsert(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapInsert" }, lines: string[]): Gen {

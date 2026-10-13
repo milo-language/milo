@@ -49,6 +49,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/headergen.ts` | C header generator for `milo build-lib`. |
 | `src/hir.ts` | Typed HIR — every expression carries its resolved TypeKind. |
 | `src/hot.ts` | Hot reload (`milo build --hot`, `milo hot`): an IR-text transform that makes every function patchable through a data slot, the patch emitter that diffs a new build against the host's manifest, and th… |
+| `src/ir.ts` | Typed IR builder: codegen describes instructions as typed values, and a backend prints them. |
 | `src/keyword-docs.ts` | Hover documentation for every keyword in the language, plus the contextual words (`old`, `result`) a contract introduces. |
 | `src/lang-info.ts` | `milo lang [--json]` — the language's own vocabulary, as data. |
 | `src/lazy-globals.ts` | Lazy module globals: the HIR pass that puts a first-use guard in front of every read. |
