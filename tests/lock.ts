@@ -9,9 +9,12 @@
 // never permanently block testing.
 import { openSync, writeSync, closeSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import { afterAll } from "bun:test";
 
-const LOCK = join(import.meta.dir, "..", ".test-suite.lock");
+// In the temp dir, not the checkout: every git worktree is its own checkout, and a lock
+// beside the sources let one suite per worktree run at once (agents work in worktrees).
+const LOCK = join(tmpdir(), "milo-test-suite.lock");
 const POLL_MS = 500;
 const MAX_WAIT_MS = 45 * 60 * 1000; // safety valve — longer than the full suite
 const STALE_MS = 60 * 60 * 1000;    // an owner older than this with a live-looking pid is force-stolen
