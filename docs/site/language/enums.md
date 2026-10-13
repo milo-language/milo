@@ -85,6 +85,49 @@ if let Some(val) = x {
 }
 ```
 
+## Nested and literal patterns
+
+A payload position can hold another pattern or a literal, so one arm can look inside
+several layers. The checker still requires the arms to cover every case: `Ok(Some(n))`
+leaves `Ok(None)` to handle.
+
+```milo
+fn parse(s: &string): Result<Option<i64>, string> {
+    if s.len == 0 { return Result.Ok(Option.None) }
+    if s == "x" { return Result.Err("bad") }
+    return Result.Ok(Option.Some(s.len))
+}
+
+pub fn main(): i32 {
+    for s in ["", "x", "abc", "a"] {
+        match parse(s) {
+            Ok(Some(1)) => print("one"),
+            Ok(Some(n)) => print($"got {n}"),
+            Ok(None) => print("empty"),
+            Err(e) => print($"error {e}"),
+        }
+    }
+    return 0
+}
+```
+
+The same patterns work in `if let`, `while let` and `let ... else`.
+
+## Let-chains
+
+`if let` and `while let` can be joined with ordinary conditions by `&&`. Later clauses
+see the bindings of earlier ones, and the block runs only when every clause holds.
+
+```milo
+let m: Option<i64> = Some(4)
+let limit = 10
+if let Some(v) = m && v < limit {
+    print($"small {v}")
+}
+```
+
+`||` next to a `let` clause is an error, since the binding would not exist on every path.
+
 ## Option shorthand
 
 `T?` is shorthand for `Option<T>`, keeping function signatures clean when a value might be absent.

@@ -179,6 +179,7 @@ describe("language surface site coverage", () => {
   // question: does the syntax that was just added need a page on docs/site/language/?
   // Answer it, THEN update this list.
   const PINNED_PRODUCTIONS = [
+    "chain_clause", "chain_operand", "let_chain", "literal_pattern", "sub_pattern",
     "additive", "and_expr", "arg_list", "array_lit", "assign_stmt", "attribute", "attribute_arg",
     "balanced_tokens", "base_type", "bitand_expr", "bitor_expr", "bitxor_expr", "block", "closure",
     "coalesce", "comment", "comparison", "contract", "declaration", "derive_decl", "digit", "enum_decl",
