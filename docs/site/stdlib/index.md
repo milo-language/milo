@@ -68,6 +68,8 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/hex`](hex) | Hex encode/decode — `Hex.encode`, `Hex.decode` |
 | [`std/binary`](binary) | Fixed-width int/float codecs — `Bytes.readU32Le`, `Bytes.writeI16Be`, both byte orders |
 | [`std/png`](png) | PNG encode/decode: `Png.encode`, `Png.decode` |
+| [`std/jpeg`](jpeg) | JPEG encode/decode, baseline and progressive: `Jpeg.decode`, `Jpeg.encode`, `Jpeg.orientation` |
+| [`std/image`](image) | The `Image` type both codecs share, with `crop`, `resize`, `rotate90`, `oriented` |
 
 ## Date, Time & IDs
 

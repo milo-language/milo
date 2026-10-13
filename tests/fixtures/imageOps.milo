@@ -1,0 +1,101 @@
+// @expect: src 3x2 [1 2 3 / 4 5 6]
+// @expect: rotate90 2x3 [4 1 / 5 2 / 6 3]
+// @expect: rotate180 3x2 [6 5 4 / 3 2 1]
+// @expect: rotate270 2x3 [3 6 / 2 5 / 1 4]
+// @expect: flipHorizontal 3x2 [3 2 1 / 6 5 4]
+// @expect: flipVertical 3x2 [4 5 6 / 1 2 3]
+// @expect: oriented1 3x2 [1 2 3 / 4 5 6]
+// @expect: oriented2 3x2 [3 2 1 / 6 5 4]
+// @expect: oriented3 3x2 [6 5 4 / 3 2 1]
+// @expect: oriented4 3x2 [4 5 6 / 1 2 3]
+// @expect: oriented5 2x3 [1 4 / 2 5 / 3 6]
+// @expect: oriented6 2x3 [4 1 / 5 2 / 6 3]
+// @expect: oriented7 2x3 [6 3 / 5 2 / 4 1]
+// @expect: oriented8 2x3 [3 6 / 2 5 / 1 4]
+// @expect: crop 2x1 [5 6]
+// @expect: image: crop 2x2 at (2, 1) is outside the 3x2 image
+// @expect: area 2x1 [3 5]
+// @expect: bilinear-identity true
+// @expect: lanczos-identity true
+// @expect: upscale 6x4 rgb 72 bytes
+// @expect: image: cannot resize to 0x4
+// @expect: png gray roundtrip true
+// @expect: decode-sniff png=1ch jpeg=3ch other=image: not a PNG or JPEG file
+from "std/image" import {
+    Image,
+    ResizeFilter
+}
+from "std/jpeg" import {
+    Jpeg,
+    JpegSubsampling
+}
+
+// Pixel values are their own labels, so each line shows where every source pixel went.
+// EXIF orientations follow the TIFF definition: 5 is a transpose, 7 a transverse, 6 a
+// quarter turn clockwise, 8 counter-clockwise.
+fn show(label: &string, img: &Image) {
+    var s = $"{label} {img.width}x{img.height} ["
+    for y in 0..img.height {
+        if y > 0 {
+            s.pushStr(" / ")
+        }
+        for x in 0..img.width {
+            if x > 0 {
+                s.pushStr(" ")
+            }
+            s.pushInt(img.pixels[y * img.width + x])
+        }
+    }
+    s.pushStr("]")
+    print(s)
+}
+
+fn gray(w: i64, h: i64, vals: &Vec<i64>): Image {
+    var px = ""
+    for i in 0..vals.len {
+        px.push(vals[i] as u8)
+    }
+    return Image { width: w, height: h, channels: 1, pixels: px }
+}
+
+pub fn main(): i32 {
+    let img = gray(3, 2, [1, 2, 3, 4, 5, 6])
+    show("src", img)
+    show("rotate90", img.rotate90())
+    show("rotate180", img.rotate180())
+    show("rotate270", img.rotate270())
+    show("flipHorizontal", img.flipHorizontal())
+    show("flipVertical", img.flipVertical())
+    for o in 1..9 {
+        show($"oriented{o}", img.oriented(o))
+    }
+    show("crop", img.crop(1, 1, 2, 1)!)
+    match img.crop(2, 1, 2, 2) {
+        Ok(_c) => print("crop outside accepted")
+        Err(e) => print(e)
+    }
+
+    // A 4x2 area downscale to 2x1 is the mean of each 2x2 block: (1+3+2+6)/4, (5+7+4+4)/4.
+    let four = gray(4, 2, [1, 3, 5, 7, 2, 6, 4, 4])
+    show("area", four.resize(2, 1, ResizeFilter.Area)!)
+    // Same-size resampling lands every tap on a source pixel: an exact copy.
+    print($"bilinear-identity {four.resize(4, 2, ResizeFilter.Bilinear)!.pixels == four.pixels}")
+    print($"lanczos-identity {four.resize(4, 2, ResizeFilter.Lanczos3)!.pixels == four.pixels}")
+    let rgb = Image { width: 2, height: 2, channels: 3, pixels: "\x10\x20\x30\x40\x50\x60\x70\x80\x90\xa0\xb0\xc0" }
+    let up = rgb.resize(6, 4, ResizeFilter.Lanczos3)!
+    print($"upscale {up.width}x{up.height} rgb {up.pixels.len} bytes")
+    match rgb.resize(0, 4, ResizeFilter.Area) {
+        Ok(_r) => print("zero width accepted")
+        Err(e) => print(e)
+    }
+
+    let png = img.encodePng()!
+    print($"png gray roundtrip {Image.decode(png)!.pixels == img.pixels}")
+    let jpg = Jpeg.encode(rgb, 90, JpegSubsampling.Chroma444)!
+    let other = match Image.decode("BM....") {
+        Ok(_i) => "decoded"
+        Err(e) => e
+    }
+    print($"decode-sniff png={Image.decode(png)!.channels}ch jpeg={Image.decode(jpg)!.channels}ch other={other}")
+    return 0
+}

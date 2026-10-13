@@ -37,7 +37,10 @@
 // costs nothing but the reprojection.
 
 from "std/png" import {
-    Png, PngImage, encodePng
+    Png, encodePng
+}
+from "std/image" import {
+    Image
 }
 from "std/binary" import {
     Bytes
@@ -1184,7 +1187,7 @@ fn orthoTileUrl(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): string {
 }
 
 // One request, decoded, or None.
-fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<PngImage> {
+fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Image> {
     let url = orthoTileUrl(latMin, lonMin, latMax, lonMax)
     var attempt = 0
     while attempt < 3 {
@@ -1252,7 +1255,7 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
         let latHi = latMax - (latMax - latMin) * (ty as f64) / (ORTHO_TILES as f64)
         let latLo = latMax - (latMax - latMin) * ((ty + 1) as f64) / (ORTHO_TILES as f64)
 
-        var band: Vec<PngImage> = Vec.new()
+        var band: Vec<Image> = Vec.new()
         for tx in 0..ORTHO_TILES {
             let lonLo = lonMin + (lonMax - lonMin) * (tx as f64) / (ORTHO_TILES as f64)
             let lonHi = lonMin + (lonMax - lonMin) * ((tx + 1) as f64) / (ORTHO_TILES as f64)

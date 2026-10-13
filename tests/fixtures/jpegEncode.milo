@@ -1,0 +1,98 @@
+// @expect: rgb q50 420 a842ebe99cc0182e615875dbb76cb735e11f67b049ab016beaa050cbd5876bbb
+// @expect: rgb q90 444 d0c6ebc97220a290b9569fab45c293fcf6e0af5b0ecfab4d7e7c185a1a8dd3b3
+// @expect: rgb q10 420 be5f5fbaa9acad9cf2e72382371c8431511d3a5f23745222c1afc66ff86d03a8
+// @expect: rgb q100 444 2c75adac29fea2f46f371e33ccebb86de72273502b4e892c1530fd7ca6ce9ccf
+// @expect: gray q75 420 84ac5633125e29c1af4411c1b0409be3f17df9bb4446eccf899a669715351c50
+// @expect: roundtrip 37x29x3 maxdiff<=40 true
+// @expect: rgba drops alpha true
+// @expect: jpeg: quality 0 is outside 1..100
+// @expect: jpeg: cannot encode 2 channels (1, 3 or 4)
+// @expect: jpeg: 2x2x3 image needs 12 bytes, has 3
+from "std/jpeg" import {
+    Jpeg,
+    JpegSubsampling
+}
+from "std/image" import {
+    Image
+}
+from "std/sha256" import {
+    Sha256
+}
+
+// Each expected hash is of the file libjpeg-turbo's `cjpeg -baseline` writes for the
+// same pixels (scripts/jpeg-grade.ts --write-fixtures builds them from the identical
+// synth() image), so these pin byte-for-byte agreement with cjpeg: tables, quality
+// scaling, FDCT, quantization rounding, 2x2 downsampling and edge padding included.
+fn synth(w: i64, h: i64): Image {
+    var px = String.withCapacity(w * h * 3)
+    for y in 0..h {
+        for x in 0..w {
+            let noise = ((x * 73856093) ^ (y * 19349663)) & 15
+            var edge: i64 = 0
+            if ((x >> 3) + (y >> 3)) % 5 == 0 {
+                edge = 96
+            }
+            px.push(((x * 255 / (w - 1) + edge + noise) & 255) as u8)
+            px.push(((y * 255 / (h - 1) + noise) & 255) as u8)
+            px.push((((x + y) * 2 + edge) & 255) as u8)
+        }
+    }
+    return Image { width: w, height: h, channels: 3, pixels: px }
+}
+
+fn enc(label: &string, img: &Image, q: i64, sub: JpegSubsampling, tag: &string) {
+    match Jpeg.encode(img, q, sub) {
+        Ok(bytes) => print($"{label} q{q} {tag} {Sha256.hash(bytes)}")
+        Err(e) => print(e)
+    }
+}
+
+pub fn main(): i32 {
+    let img = synth(37, 29)
+    enc("rgb", img, 50, JpegSubsampling.Chroma420, "420")
+    enc("rgb", img, 90, JpegSubsampling.Chroma444, "444")
+    enc("rgb", img, 10, JpegSubsampling.Chroma420, "420")
+    enc("rgb", img, 100, JpegSubsampling.Chroma444, "444")
+    var gray = String.withCapacity(37 * 29)
+    for i in 0..37 * 29 {
+        gray.push(img.pixels[i * 3 + 1])
+    }
+    enc("gray", Image { width: 37, height: 29, channels: 1, pixels: gray }, 75, JpegSubsampling.Chroma420, "420")
+
+    // Decoding our own q95 4:4:4 output stays close to the source.
+    let back = Jpeg.decode(Jpeg.encode(img, 95, JpegSubsampling.Chroma444)!)!
+    var worst: i64 = 0
+    for i in 0..img.pixels.len {
+        var d = (img.pixels[i] as i64) - (back.pixels[i] as i64)
+        if d < 0 {
+            d = 0 - d
+        }
+        if d > worst {
+            worst = d
+        }
+    }
+    print($"roundtrip {back.width}x{back.height}x{back.channels} maxdiff<=40 {worst <= 40}")
+
+    // RGBA encodes as its RGB: the same bytes as the 3-channel image.
+    var rgba = String.withCapacity(37 * 29 * 4)
+    for i in 0..37 * 29 {
+        rgba.pushStr(img.pixels.slice(i * 3, i * 3 + 3))
+        rgba.push(7)
+    }
+    let a = Jpeg.encode(Image { width: 37, height: 29, channels: 4, pixels: rgba }, 80, JpegSubsampling.Chroma420)!
+    print($"rgba drops alpha {a == Jpeg.encode(img, 80, JpegSubsampling.Chroma420)!}")
+
+    match Jpeg.encode(img, 0, JpegSubsampling.Chroma420) {
+        Ok(_b) => print("quality 0 accepted")
+        Err(e) => print(e)
+    }
+    match Jpeg.encode(Image { width: 1, height: 1, channels: 2, pixels: "ab" }, 80, JpegSubsampling.Chroma420) {
+        Ok(_b) => print("2 channels accepted")
+        Err(e) => print(e)
+    }
+    match Jpeg.encode(Image { width: 2, height: 2, channels: 3, pixels: "abc" }, 80, JpegSubsampling.Chroma420) {
+        Ok(_b) => print("short buffer accepted")
+        Err(e) => print(e)
+    }
+    return 0
+}

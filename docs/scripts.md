@@ -56,6 +56,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/fuzz-generic-drop.ts` | Is every generic std body sound for a `T` that owns heap? |
 | `scripts/fuzz-hashmap.ts` | Differential falsifier for the built-in HASHMAP — the open-addressing table codegen-map.ts emits, not a .milo file. |
 | `scripts/fuzz-int.ts` | Differential falsifier for INTEGER arithmetic across every width. |
+| `scripts/fuzz-jpeg.ts` | Crash fuzzer for std/jpeg's decoder: mutated and truncated JPEGs must come back as Ok or Err, never a trap, a hang or a runaway allocation. |
 | `scripts/fuzz-ownership.ts` | Differential falsifier for the OWNERSHIP checker. |
 | `scripts/fuzz-scan.ts` | Raw lexical splitter used by the frontend fuzzer for mutation and reduction. |
 | `scripts/fuzz-string.ts` | Differential falsifier for the built-in STRING methods codegen.ts emits. |
@@ -79,6 +80,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/hir-cover.ts` | Which fixtures exercise which HIR expression kinds? |
 | `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
 | `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
+| `scripts/jpeg-grade.ts` | Grades std/jpeg against libjpeg-turbo: decoder pixels vs djpeg, encoder bytes vs cjpeg, and decode/encode speed. |
 | `scripts/leak-check.ts` | Leak gate: compile every stdout-comparable fixture, run it, and fail if the process exits still holding heap it allocated. |
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
 | `scripts/lsp-probe.ts` | Differential + crash-safety probe for the Milo language server. |

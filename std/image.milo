@@ -1,0 +1,337 @@
+// std/image — an 8-bit raster shared by std/png and std/jpeg, with crop, resize, rotate/flip.
+//
+// One pixel layout for every codec: row-major, top-down, `channels` interleaved bytes per
+// pixel (1 gray, 3 RGB, 4 RGBA), no row padding. Keeping the codecs on one type is what
+// lets a JPEG be cropped, resized and written back out as a PNG without a conversion
+// step per pair of formats.
+
+from "std/math" import {
+    Math
+}
+from "std/png" import {
+    Png
+}
+from "std/jpeg" import {
+    Jpeg
+}
+
+// An 8-bit image. The methods below assume it is well formed:
+// `pixels.len == width * height * channels`, which every decoder and method here
+// guarantees for the images it returns.
+pub struct Image {
+    width: i64,
+    height: i64,
+    channels: i64, // 1 (gray), 3 (RGB) or 4 (RGBA)
+    pixels: string, // row-major, top-down, channels bytes per pixel, no row padding
+}
+
+// The resampling kernel for Image.resize.
+pub enum ResizeFilter {
+    // Box filter: each output pixel is the area-weighted mean of the source pixels it
+    // covers. The right choice for downscaling; upscaling with it is nearest-neighbour.
+    Area,
+    // Triangle filter over the 2x2 nearest source pixels (widened to the covered area
+    // when downscaling).
+    Bilinear,
+    // Windowed sinc with 3 lobes: sharpest, at the cost of slight ringing on hard edges.
+    Lanczos3,
+}
+
+fn blank(width: i64, height: i64, channels: i64): Image {
+    let n = width * height * channels
+    let block = "\x00".repeat(4096)
+    var px = block.repeat(n / 4096)
+    px.pushStr(block.slice(0, n % 4096))
+    return Image { width: width, height: height, channels: channels, pixels: px }
+}
+
+// Copy pixel (sx, sy) of `src` to pixel index `di` of `dst`.
+fn copyPixel(src: &Image, sx: i64, sy: i64, dst: &mut Image, di: i64) {
+    let ch = src.channels
+    let s = (sy * src.width + sx) * ch
+    let d = di * ch
+    for c in 0..ch {
+        dst.pixels.setByte(d + c, src.pixels[s + c])
+    }
+}
+
+// Every geometric transform below is "output pixel (x, y) comes from source pixel
+// map(x, y)"; `kind` picks the map. Output dimensions swap for the quarter turns.
+fn remap(img: &Image, kind: i64): Image {
+    let w = img.width
+    let h = img.height
+    let swap = kind == 1 || kind == 3 || kind == 6 || kind == 7
+    var ow = w
+    var oh = h
+    if swap {
+        ow = h
+        oh = w
+    }
+    var out = blank(ow, oh, img.channels)
+    for y in 0..oh {
+        for x in 0..ow {
+            var sx = x
+            var sy = y
+            if kind == 1 {
+                // rotate 90 clockwise
+                sx = y
+                sy = h - 1 - x
+            } else if kind == 2 {
+                sx = w - 1 - x
+                sy = h - 1 - y
+            } else if kind == 3 {
+                // rotate 270 clockwise
+                sx = w - 1 - y
+                sy = x
+            } else if kind == 4 {
+                sx = w - 1 - x
+            } else if kind == 5 {
+                sy = h - 1 - y
+            } else if kind == 6 {
+                // transpose (mirror across the main diagonal)
+                sx = y
+                sy = x
+            } else if kind == 7 {
+                // transverse (mirror across the anti-diagonal)
+                sx = w - 1 - y
+                sy = h - 1 - x
+            }
+            copyPixel(img, sx, sy, &mut out, y * ow + x)
+        }
+    }
+    return out
+}
+
+fn kernel(filter: &ResizeFilter, x: f64): f64 {
+    let a = Math.abs(x)
+    match filter {
+        ResizeFilter.Area => {
+            if x >= -0.5 && x < 0.5 {
+                return 1.0
+            }
+            return 0.0
+        }
+        ResizeFilter.Bilinear => {
+            if a < 1.0 {
+                return 1.0 - a
+            }
+            return 0.0
+        }
+        ResizeFilter.Lanczos3 => {
+            if a >= 3.0 {
+                return 0.0
+            }
+            return sinc(x) * sinc(x / 3.0)
+        }
+    }
+}
+
+fn sinc(x: f64): f64 {
+    if x == 0.0 {
+        return 1.0
+    }
+    let px = x * 3.141592653589793
+    return Math.sin(px) / px
+}
+
+fn support(filter: &ResizeFilter): f64 {
+    return match filter {
+        ResizeFilter.Area => 0.5
+        ResizeFilter.Bilinear => 1.0
+        ResizeFilter.Lanczos3 => 3.0
+    }
+}
+
+// Per-output-sample source span and normalised weights for resampling `inSize` samples
+// to `outSize` (Pillow's precomputed-coefficient scheme). When shrinking, the kernel
+// is stretched by the scale factor so every source sample contributes: that is what
+// turns the box filter into a true area average.
+struct Taps {
+    start: Vec<i64>,
+    count: Vec<i64>,
+    weights: Vec<f64>,
+    stride: i64,
+}
+
+fn taps(inSize: i64, outSize: i64, filter: &ResizeFilter): Taps {
+    let scale = (inSize as f64) / (outSize as f64)
+    var fscale = scale
+    if fscale < 1.0 {
+        fscale = 1.0
+    }
+    let sup = support(filter) * fscale
+    let stride = (Math.ceil(sup) as i64) * 2 + 1
+    var t = Taps { start: Vec.filled(outSize, 0), count: Vec.filled(outSize, 0), weights: Vec.filled(outSize * stride, 0.0), stride: stride }
+    for i in 0..outSize {
+        let center = ((i as f64) + 0.5) * scale
+        var lo = Math.floor(center - sup + 0.5) as i64
+        if lo < 0 {
+            lo = 0
+        }
+        var hi = Math.floor(center + sup + 0.5) as i64
+        if hi > inSize {
+            hi = inSize
+        }
+        if hi - lo > stride {
+            hi = lo + stride
+        }
+        var total = 0.0
+        for j in lo..hi {
+            let wv = kernel(filter, ((j as f64) - center + 0.5) / fscale)
+            t.weights[i * stride + j - lo] = wv
+            total += wv
+        }
+        if total != 0.0 {
+            for j in 0..(hi - lo) {
+                t.weights[i * stride + j] = t.weights[i * stride + j] / total
+            }
+        }
+        t.start[i] = lo
+        t.count[i] = hi - lo
+    }
+    return t
+}
+
+fn toByte(v: f64): u8 {
+    let r = Math.round(v)
+    if r <= 0.0 {
+        return 0
+    }
+    if r >= 255.0 {
+        return 255
+    }
+    return r as u8
+}
+
+impl Image {
+    // Decode a PNG or JPEG, chosen by the file's signature bytes. JPEG EXIF
+    // orientation is not applied; see Jpeg.orientation and Image.oriented.
+    fn decode(src: &string): Result<Image, string> {
+        if src.len >= 8 && src[0] == 137 && src[1] == 80 && src[2] == 78 && src[3] == 71 {
+            return Png.decode(src)
+        }
+        if src.len >= 2 && src[0] == 0xFF && src[1] == 0xD8 {
+            return Jpeg.decode(src)
+        }
+        return Result.Err("image: not a PNG or JPEG file")
+    }
+
+    // Encode as PNG (8-bit gray, RGB or RGBA by channel count).
+    fn encodePng(self: &Self): Result<string, string> {
+        return Png.encode(self.pixels, self.width, self.height, self.channels)
+    }
+
+    // The w x h rectangle whose top-left corner is (x, y). Err when the rectangle is
+    // empty or reaches outside the image.
+    fn crop(self: &Self, x: i64, y: i64, w: i64, h: i64): Result<Image, string> {
+        if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > self.width || y + h > self.height {
+            return Result.Err($"image: crop {w}x{h} at ({x}, {y}) is outside the {self.width}x{self.height} image")
+        }
+        let ch = self.channels
+        var px = String.withCapacity(w * h * ch)
+        for row in y..(y + h) {
+            let s = (row * self.width + x) * ch
+            px.pushStr(self.pixels.slice(s, s + w * ch))
+        }
+        return Result.Ok(Image { width: w, height: h, channels: ch, pixels: px })
+    }
+
+    // Resample to width x height with `filter`, separably (rows, then columns).
+    // Channels are filtered independently; RGBA is not premultiplied, so a hard alpha
+    // edge can pick up the colour of fully transparent neighbours. Err when either
+    // target side is not positive.
+    fn resize(self: &Self, width: i64, height: i64, filter: ResizeFilter): Result<Image, string> {
+        if width <= 0 || height <= 0 {
+            return Result.Err($"image: cannot resize to {width}x{height}")
+        }
+        let ch = self.channels
+        let sw = self.width
+        let sh = self.height
+        let tx = taps(sw, width, filter)
+        let ty = taps(sh, height, filter)
+        // Horizontal pass into an f64 buffer, so the vertical pass rounds only once.
+        var mid: Vec<f64> = Vec.filled(width * sh * ch, 0.0)
+        for y in 0..sh {
+            let row = y * sw * ch
+            for x in 0..width {
+                let lo = tx.start[x]
+                let n = tx.count[x]
+                for c in 0..ch {
+                    var acc = 0.0
+                    for k in 0..n {
+                        acc += tx.weights[x * tx.stride + k] * (self.pixels[row + (lo + k) * ch + c] as f64)
+                    }
+                    mid[(y * width + x) * ch + c] = acc
+                }
+            }
+        }
+        var out = blank(width, height, ch)
+        for y in 0..height {
+            let lo = ty.start[y]
+            let n = ty.count[y]
+            for x in 0..width {
+                for c in 0..ch {
+                    var acc = 0.0
+                    for k in 0..n {
+                        acc += ty.weights[y * ty.stride + k] * mid[((lo + k) * width + x) * ch + c]
+                    }
+                    out.pixels.setByte((y * width + x) * ch + c, toByte(acc))
+                }
+            }
+        }
+        return Result.Ok(out)
+    }
+
+    // Rotated a quarter turn clockwise (width and height swap).
+    fn rotate90(self: &Self): Image {
+        return remap(self, 1)
+    }
+
+    // Rotated half a turn.
+    fn rotate180(self: &Self): Image {
+        return remap(self, 2)
+    }
+
+    // Rotated three quarter turns clockwise, i.e. a quarter turn counter-clockwise.
+    fn rotate270(self: &Self): Image {
+        return remap(self, 3)
+    }
+
+    // Mirrored left to right.
+    fn flipHorizontal(self: &Self): Image {
+        return remap(self, 4)
+    }
+
+    // Mirrored top to bottom.
+    fn flipVertical(self: &Self): Image {
+        return remap(self, 5)
+    }
+
+    // The image as it should be displayed given an EXIF orientation tag (1-8, as
+    // Jpeg.orientation returns): 6 is a camera held upright, stored rotated, and comes
+    // back turned 90 degrees clockwise. Values outside 2..8 return an unchanged copy.
+    fn oriented(self: &Self, orientation: i64): Image {
+        if orientation == 2 {
+            return remap(self, 4)
+        }
+        if orientation == 3 {
+            return remap(self, 2)
+        }
+        if orientation == 4 {
+            return remap(self, 5)
+        }
+        if orientation == 5 {
+            return remap(self, 6)
+        }
+        if orientation == 6 {
+            return remap(self, 1)
+        }
+        if orientation == 7 {
+            return remap(self, 7)
+        }
+        if orientation == 8 {
+            return remap(self, 3)
+        }
+        return Image { width: self.width, height: self.height, channels: self.channels, pixels: self.pixels.clone() }
+    }
+}

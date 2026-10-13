@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo
+key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo, std/png.milo, std/image.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
 last-verified: 2026-10-12
 -->
@@ -15,6 +15,22 @@ Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker op
 group of entries that release shipped; a package that wants to stay on the previous
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
+
+## `std/png`'s `PngImage` is now `std/image`'s `Image` (2026-10-12)
+
+`Png.decode` returns the `Image` type that `std/jpeg` also decodes to and that
+`std/image`'s crop/resize/rotate work on. The fields are the same (`width`, `height`,
+`channels`, `pixels`), so only the type name changes. No alias: a second name for one
+type is the permanent convenience layer the stdlib design rules out, and an annotation
+naming the old type fails to compile rather than meaning something else.
+
+| was | now |
+|---|---|
+| `from "std/png" import { Png, PngImage }` | `from "std/png" import { Png }` and `from "std/image" import { Image }` |
+| `fn load(): Option<PngImage>` | `fn load(): Option<Image>` |
+
+`Png.decode`/`Png.encode` also accept 8-bit grayscale now (`channels: 1`, PNG colour
+type 0), which used to be an `Err`.
 
 ## `Random.bytes(n)` returns the bytes; the pointer form is `Random.fillRaw` (2026-10-12)
 

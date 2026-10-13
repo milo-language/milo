@@ -3,9 +3,10 @@
 // Parses the chunk stream, concatenates IDAT, zlib-inflates it, then reverses the
 // per-scanline filters (None/Sub/Up/Average/Paeth) to recover raw pixels. This is
 // the payload path that motivated the compression stdlib: a real, filtered, zlib-
-// wrapped format decoded end to end. Supports 8-bit truecolor (RGB, colorType 2)
-// and truecolor+alpha (RGBA, colorType 6), no interlace — the common web/screenshot
-// case. Palette, <8-bit, 16-bit, and Adam7 interlace are out of scope for now.
+// wrapped format decoded end to end. Supports 8-bit grayscale (colorType 0),
+// truecolor (RGB, colorType 2) and truecolor+alpha (RGBA, colorType 6), no
+// interlace — the common web/screenshot case. Palette, gray+alpha, <8-bit, 16-bit,
+// and Adam7 interlace are out of scope for now. Images are std/image's Image.
 
 from "std/inflate" import {
     Inflate
@@ -19,12 +20,8 @@ from "std/checksum" import {
 from "std/binary" import {
     Bytes
 }
-
-pub struct PngImage {
-    width: i64,
-    height: i64,
-    channels: i64, // 3 (RGB) or 4 (RGBA)
-    pixels: string, // row-major, channels bytes per pixel, top-down
+from "std/image" import {
+    Image
 }
 
 // PNG is big-endian throughout. Chunk lengths and IHDR dimensions are read out of
@@ -62,7 +59,7 @@ fn paeth(a: i64, b: i64, c: i64): i64 {
     return c
 }
 
-fn decodePng(src: &string): Result<PngImage, string> {
+fn decodePng(src: &string): Result<Image, string> {
     if src.len < 8 {
         return Result.Err("png: too short")
     }
@@ -116,7 +113,9 @@ fn decodePng(src: &string): Result<PngImage, string> {
             if interlace != 0 {
                 return Result.Err("png: interlaced images unsupported")
             }
-            if colorType == 2 {
+            if colorType == 0 {
+                channels = 1
+            } else if colorType == 2 {
                 channels = 3
             } else if colorType == 6 {
                 channels = 4
@@ -182,7 +181,7 @@ fn decodePng(src: &string): Result<PngImage, string> {
         }
     }
 
-    return Result.Ok(PngImage {
+    return Result.Ok(Image {
         width: width, height: height, channels: channels, pixels: out
     })
 }
@@ -202,7 +201,7 @@ fn chunk(out: &mut string, kind: &string, body: &string) {
     Bytes.writeU32Be(&mut out, Checksum.crc32(crcInput) as u32)
 }
 
-// Encode 8-bit truecolour (3 channels) or truecolour+alpha (4) to a PNG.
+// Encode 8-bit grayscale (1 channel), truecolour (3) or truecolour+alpha (4) to a PNG.
 //
 // Every scanline is written with filter type 0 (None). Filtering exists to make
 // the deflate stream smaller, and the encoder's job here is to be obviously
@@ -210,8 +209,8 @@ fn chunk(out: &mut string, kind: &string, body: &string) {
 // get subtly wrong, and this is the write side of a decoder that already has to
 // implement all five of them to read other people's files.
 pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Result<string, string> {
-    if channels != 3 && channels != 4 {
-        return Result.Err($"encodePng: channels must be 3 or 4, got {channels}")
+    if channels != 1 && channels != 3 && channels != 4 {
+        return Result.Err($"encodePng: channels must be 1, 3 or 4, got {channels}")
     }
     if width <= 0 || height <= 0 {
         return Result.Err($"encodePng: bad size {width}x{height}")
@@ -250,7 +249,9 @@ pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Resul
     Bytes.writeU32Be(&mut ihdr, width as u32)
     Bytes.writeU32Be(&mut ihdr, height as u32)
     ihdr.push(8) // bit depth
-    if channels == 3 {
+    if channels == 1 {
+        ihdr.push(0) // grayscale
+    } else if channels == 3 {
         ihdr.push(2) // truecolour
     } else {
         ihdr.push(6) // truecolour + alpha
@@ -269,7 +270,7 @@ pub struct Png {
 }
 
 impl Png {
-    fn decode(src: &string): Result<PngImage, string> {
+    fn decode(src: &string): Result<Image, string> {
         return decodePng(src)
     }
 

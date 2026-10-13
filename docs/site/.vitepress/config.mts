@@ -197,6 +197,8 @@ const stdlibSidebar = [
       { text: 'std/hex', link: '/stdlib/hex' },
       { text: 'std/binary', link: '/stdlib/binary' },
       { text: 'std/png', link: '/stdlib/png' },
+      { text: 'std/jpeg', link: '/stdlib/jpeg' },
+      { text: 'std/image', link: '/stdlib/image' },
     ]
   },
   {

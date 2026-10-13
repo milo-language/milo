@@ -1,0 +1,89 @@
+// @expect: b420 37x29x3 0abe1d8f9e86261b12e61cd35953e1efb3f0cf2b6e9975bb5d225cfd6bac9596
+// @expect: b444 37x29x3 78e522d29428c14b8bfebb4a43196bbac8d891c67a2823981ef3701e4b8f897f
+// @expect: b422 37x29x3 be7bc1f2172fb5647c4ff13b535cb6de1ce4203336be052c787340478eb2a883
+// @expect: b440 37x29x3 b72383988ae88a2a481273efa44cf4f4115a9c2579fff1c9129ea47e247616fb
+// @expect: b411 37x29x3 6ee2ccd9ba2d5f5141f85ed86c7e623693aad0deb6df8a3b7ee968292f0f0b79
+// @expect: gray 37x29x1 4ce72faf6f8c92074e69b0c0584d00711538ea3fd91a00973a33b1571792b5cd
+// @expect: rgb 37x29x3 3edd07bfc062d49d08fe80172120b9c17868fb50a2fde5cd91eb1c1095ddfb3d
+// @expect: opt 37x29x3 cd9bb391efc6c1a9e73ed5e748ad34f0d76cb54ec75dca047e96f52c1c80fc67
+// @expect: prog420 37x29x3 0abe1d8f9e86261b12e61cd35953e1efb3f0cf2b6e9975bb5d225cfd6bac9596
+// @expect: prog444rst 37x29x3 78e522d29428c14b8bfebb4a43196bbac8d891c67a2823981ef3701e4b8f897f
+// @expect: rst1 37x29x3 0abe1d8f9e86261b12e61cd35953e1efb3f0cf2b6e9975bb5d225cfd6bac9596
+// @expect: q100 3x2x3 c47b9cdb5680b791db188c5332c964dcc1301ac2098428d3fcf489e7fb0822d2
+// @expect: orientation plain=1 exif6le=6 exif8be=8 png=1
+// @expect: exif6le 37x29 -> oriented 29x37
+// @expect: arith jpeg: arithmetic-coded JPEG is not supported
+// @expect: lossless jpeg: lossless JPEG is not supported
+// @expect: p12 jpeg: 12-bit samples are not supported (8-bit only)
+// @expect: truncated jpeg: truncated image data
+// @expect: cut-header jpeg: truncated segment
+// @expect: not-jpeg jpeg: not a JPEG (no SOI marker)
+// @expect: huge jpeg: 60000x60000 is over the 134217728-pixel limit
+// @expect: liar jpeg: truncated image data
+from "std/jpeg" import {
+    Jpeg
+}
+from "std/sha256" import {
+    Sha256
+}
+
+// Every file in lib/jpeg was written by libjpeg-turbo's cjpeg from one synthetic 37x29
+// image (scripts/jpeg-grade.ts --write-fixtures), and each expected hash is of the pixels
+// libjpeg-turbo's djpeg decodes from it: an external oracle, matched byte for byte. The
+// variants cover every sampling layout cjpeg writes, grayscale, Adobe RGB, optimized
+// Huffman tables, progressive (with restarts), restart markers, and q100 at 3x2, where
+// libjpeg-turbo's narrow-image upsampling rule (replicate, not triangle) applies.
+fn check(name: &string, src: &string) {
+    match Jpeg.decode(src) {
+        Ok(img) => print($"{name} {img.width}x{img.height}x{img.channels} {Sha256.hash(img.pixels)}")
+        Err(e) => print($"{name} {e}")
+    }
+}
+
+pub fn main(): i32 {
+    check("b420", @embedFile("lib/jpeg/b420.jpg"))
+    check("b444", @embedFile("lib/jpeg/b444.jpg"))
+    check("b422", @embedFile("lib/jpeg/b422.jpg"))
+    check("b440", @embedFile("lib/jpeg/b440.jpg"))
+    check("b411", @embedFile("lib/jpeg/b411.jpg"))
+    check("gray", @embedFile("lib/jpeg/gray.jpg"))
+    check("rgb", @embedFile("lib/jpeg/rgb.jpg"))
+    check("opt", @embedFile("lib/jpeg/opt.jpg"))
+    check("prog420", @embedFile("lib/jpeg/prog420.jpg"))
+    check("prog444rst", @embedFile("lib/jpeg/prog444rst.jpg"))
+    check("rst1", @embedFile("lib/jpeg/rst1.jpg"))
+    check("q100", @embedFile("lib/jpeg/q100.jpg"))
+
+    let plain = @embedFile("lib/jpeg/b420.jpg")
+    let le = @embedFile("lib/jpeg/exif6le.jpg")
+    let be = @embedFile("lib/jpeg/exif8be.jpg")
+    let o6 = Jpeg.orientation(le)
+    print($"orientation plain={Jpeg.orientation(plain)} exif6le={o6} exif8be={Jpeg.orientation(be)} png={Jpeg.orientation("\x89PNG\r\n")}")
+    let img = Jpeg.decode(le)!
+    let up = img.oriented(o6)
+    print($"exif6le {img.width}x{img.height} -> oriented {up.width}x{up.height}")
+
+    check("arith", @embedFile("lib/jpeg/arith.jpg"))
+    check("lossless", @embedFile("lib/jpeg/lossless.jpg"))
+    check("p12", @embedFile("lib/jpeg/p12.jpg"))
+    // Cut inside the entropy-coded data, and inside a marker segment.
+    check("truncated", plain.substr(0, plain.len - 200))
+    check("cut-header", plain.substr(0, 100))
+    check("not-jpeg", "GIF89a")
+    // SOF dimensions are rewritten: 60000x60000 is refused by the pixel cap before any
+    // allocation, and 4000x3000 in a 1 KB file promises more blocks than it has bits.
+    let sof = plain.indexOf("\xff\xc0")!
+    var huge = plain.clone()
+    huge.setByte(sof + 5, 0xEA)
+    huge.setByte(sof + 6, 0x60)
+    huge.setByte(sof + 7, 0xEA)
+    huge.setByte(sof + 8, 0x60)
+    check("huge", huge)
+    var liar = plain.clone()
+    liar.setByte(sof + 5, 0x0B)
+    liar.setByte(sof + 6, 0xB8)
+    liar.setByte(sof + 7, 0x0F)
+    liar.setByte(sof + 8, 0xA0)
+    check("liar", liar)
+    return 0
+}

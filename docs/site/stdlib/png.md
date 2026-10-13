@@ -1,12 +1,13 @@
 # std/png
 
 Encode and decode PNG images (RFC 2083) in pure Milo: the chunk stream, zlib
-inflation, and the per-scanline filters. It handles 8-bit truecolor RGB and RGBA without
-interlacing, the common web and screenshot case. Palette, sub-8-bit, 16-bit and Adam7
-images are not supported.
+inflation, and the per-scanline filters. It handles 8-bit grayscale, RGB and RGBA without
+interlacing, the common web and screenshot case. Palette, gray+alpha, sub-8-bit, 16-bit and
+Adam7 images are not supported. Decoded images are [`std/image`](image)'s `Image`, the type
+[`std/jpeg`](jpeg) uses too.
 
 ```milo
-from "std/png" import { Png, PngImage }
+from "std/png" import { Png }
 ```
 
 ## Example
@@ -35,7 +36,7 @@ Png namespace — Png.decode(src) reads a PNG, Png.encode(...) writes one.
 #### `Png.decode`
 
 ```milo
-fn Png.decode(src: &string): Result<PngImage, string>
+fn Png.decode(src: &string): Result<Image, string>
 ```
 
 #### `Png.encode`
@@ -43,19 +44,6 @@ fn Png.decode(src: &string): Result<PngImage, string>
 ```milo
 fn Png.encode(pixels: &string, width: i64, height: i64, channels: i64): Result<string, string>
 ```
-
-### `PngImage`
-
-```milo
-pub struct PngImage
-```
-
-Fields:
-
-- `width: i64`
-- `height: i64`
-- `channels: i64`: 3 (RGB) or 4 (RGBA)
-- `pixels: string`: row-major, channels bytes per pixel, top-down
 
 ### Functions
 
@@ -65,7 +53,7 @@ Fields:
 pub fn encodePng(pixels: &string, width: i64, height: i64, channels: i64): Result<string, string>
 ```
 
-Encode 8-bit truecolour (3 channels) or truecolour+alpha (4) to a PNG.
+Encode 8-bit grayscale (1 channel), truecolour (3) or truecolour+alpha (4) to a PNG.
 
 Every scanline is written with filter type 0 (None). Filtering exists to make
 the deflate stream smaller, and the encoder's job here is to be obviously
