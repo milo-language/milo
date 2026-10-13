@@ -234,7 +234,24 @@ interface Fixture {
   setup: string[];
   self: string;
   vars: Record<string, string>;
+  // How a static call names the type, when it is not `Owner<T>` (a keyed map is `<i64, T>`).
+  owner?: string;
 }
+
+// Keyed containers are instantiated at K = i64, V = T: `Res` is neither hashable nor
+// ordered, and the value slot is where the ownership being judged lives.
+const KEYED_VARS: Record<string, string> = {
+  "K": "7", "&K": "k1", "V": "mk(7)", "i64": "4",
+  "(&mut V) => void": "(v: &mut T): void => {\n            sink = sink + peek(v)\n        }",
+  "(&V) => void": "(v: &T): void => {\n            sink = sink + peek(v)\n        }",
+  "(&K, &V) => void": "(k: &i64, v: &T): void => {\n            sink = sink + k + peek(v)\n        }",
+  "move (&K, &K) => i64": "(a: &i64, b: &i64): i64 => a - b",
+};
+const keyed = (module: string, type: string, make: string, put: string): Fixture => ({
+  imports: { [module]: [type] },
+  setup: [`let k1: i64 = 1`, `var m = ${type}<i64, T>.${make}`, `m.${put}(1, mk(1))`, `m.${put}(2, mk(2))`],
+  self: "m", vars: KEYED_VARS, owner: `${type}<i64, T>`,
+});
 
 const FIXTURES: Record<string, Fixture> = {
   Arena: {
@@ -261,6 +278,37 @@ const FIXTURES: Record<string, Fixture> = {
     imports: { "std/sync": ["Channel"] },
     setup: ["let c = Channel<T>.new(4)!", "c.send(mk(1))!", "c.send(mk(2))!"],
     self: "c", vars: {},
+  },
+  // std/collections and std/cache. Counter and the Vec helpers order or hash T, so only
+  // their <string> run is accepted; that run is the oracle for them.
+  Deque: {
+    imports: { "std/collections": ["Deque"] },
+    setup: ["var d: Deque<T> = Deque<T>.new()", "d.pushBack(mk(1))", "d.pushFront(mk(2))"],
+    self: "d", vars: {},
+  },
+  BinaryHeap: {
+    imports: { "std/collections": ["BinaryHeap"] },
+    // Built with a comparator so the <res> run is accepted too (only new/fromVec need '<').
+    setup: ["var h: BinaryHeap<T> = BinaryHeap<T>.withCompare((a: &T, b: &T): i64 => peek(a) - peek(b))", "h.push(mk(1))", "h.push(mk(2))"],
+    self: "h", vars: { "move (&T, &T) => i64": "(a: &T, b: &T): i64 => peek(a) - peek(b)" },
+  },
+  Counter: {
+    imports: { "std/collections": ["Counter"] },
+    setup: ["var c: Counter<T> = Counter<T>.new()", "c.add(mk(1))", "c.add(mk(1))", "let k1 = mk(1)"],
+    self: "c", vars: { "K": "mk(2)", "&K": "k1", "i64": "2" },
+  },
+  Vec: {
+    imports: {},
+    setup: ["var v: Vec<T> = mkVec(4)"],
+    self: "v", vars: { "i64": "2" },
+  },
+  OrderedMap: keyed("std/collections", "OrderedMap", "new()", "insert"),
+  SortedMap: keyed("std/collections", "SortedMap", "new()", "insert"),
+  LruCache: keyed("std/cache", "LruCache", "new(4)", "put"),
+  TtlCache: {
+    ...keyed("std/cache", "TtlCache", "new(Duration.secs(60))", "put"),
+    imports: { "std/cache": ["TtlCache"], "std/time": ["Duration"] },
+    vars: { ...KEYED_VARS, "Duration": "Duration.secs(60)", "&Duration": "Duration.secs(30)", "move () => i64": "(): i64 => 0" },
   },
 };
 
@@ -311,7 +359,7 @@ function derive(sym: Symbol): Path | null {
   let call: string;
   if (isFree) call = `${sym.name}(${args.join(", ")})`;
   else if (selfParam) call = `${fixture.self}.${sym.name.split(".")[1]}(${args.join(", ")})`;
-  else call = `${sym.owner}<T>.${sym.name.split(".")[1]}(${args.join(", ")})`;
+  else call = `${fixture.owner ?? `${sym.owner}<T>`}.${sym.name.split(".")[1]}(${args.join(", ")})`;
   if (/^Result</.test(sym.returns)) call += "!";
   const stmt = sym.returns === "void" ? call : `let r = ${call}`;
   const imports = { ...fixture.imports };
