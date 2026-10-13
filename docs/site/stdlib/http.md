@@ -765,14 +765,6 @@ pub fn headOnly(wire: string): string
 
 Rendered response bytes cut after the header block.
 
-#### `httpDate`
-
-```milo
-pub fn httpDate(epochSec: i64): string
-```
-
-An IMF-fixdate (RFC 9110 5.6.7), e.g. `Sun, 06 Nov 1994 08:49:37 GMT`, for `epochSec`.
-
 #### `parseRequest`
 
 ```milo

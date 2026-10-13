@@ -16,6 +16,17 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `httpDate` moved out of std/http as `formatRfc2822` in std/datetime (2026-10-12)
+
+std/http's `httpDate(epochSec)` and the new std/datetime formatter wrote the same
+IMF-fixdate (`Mon, 12 Oct 2026 14:00:00 GMT`), and two public spellings of one format is
+what the flat namespace cannot afford. The one that stays is std/datetime's, next to the
+parser that reads it back, and it takes epoch milliseconds like `parseRfc2822` returns.
+
+| was | now |
+|---|---|
+| `from "std/http" import { httpDate }` then `httpDate(secs)` | `from "std/datetime" import { formatRfc2822 }` then `formatRfc2822(secs * 1000)` |
+
 ## A Drop-typed `if`/`match` read in place consumes its named arms (2026-10-12)
 
 `(if c { r } else { mk() }).get()` and `chk(match o { Some(q) => q, None => r })`, where

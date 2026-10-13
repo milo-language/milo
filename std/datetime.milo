@@ -1,4 +1,4 @@
-// std/datetime — date/time components and formatting from epoch seconds, RFC 2822 and ISO 8601 parsing
+// std/datetime — date/time components and formatting (ISO 8601, RFC 2822, strftime-style), RFC 2822 and ISO 8601 parsing
 // (UTC by default; DateTime.fromEpochLocal / DateTime.localNow apply the host TZ)
 
 from "std/time" import {
@@ -25,12 +25,16 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    // Components in UTC for the given epoch seconds.
+    // Components in UTC for the given epoch seconds (negative is before 1970).
     fn fromEpoch(epochSec: i64): DateTime {
-        // days since 1970-01-01
-        var secs = epochSec
-        let totalDays = secs / 86400
-        let daySeconds = secs - totalDays * 86400
+        // Days since 1970-01-01, floored: `/` truncates toward zero, which put the
+        // second before the epoch at 00:00:-1 on 1970-01-01.
+        var totalDays = epochSec / 86400
+        var daySeconds = epochSec - totalDays * 86400
+        if daySeconds < 0 {
+            daySeconds += 86400
+            totalDays -= 1
+        }
 
         let hour = (daySeconds / 3600) as i32
         let minute = ((daySeconds - (hour as i64) * 3600) / 60) as i32
@@ -219,6 +223,142 @@ pub fn monthName(m: i32): string {
         return "December"
     }
     return "Unknown"
+}
+
+// ── Formatting epoch milliseconds ──
+
+// An instant split into UTC components plus its millisecond, floored so an instant
+// before 1970 breaks down onto the right second.
+struct Instant {
+    dt: DateTime,
+    millis: i64,
+}
+
+fn instantOf(ms: i64): Instant {
+    var secs = ms / 1000
+    var millis = ms - secs * 1000
+    if millis < 0 {
+        millis += 1000
+        secs -= 1
+    }
+    return Instant { dt: DateTime.fromEpoch(secs), millis: millis }
+}
+
+fn padI64(val: i64, width: i64): string {
+    var s = if val < 0 { (0 - val).toString() } else { val.toString() }
+    while s.len < width {
+        s = "0" + s
+    }
+    return if val < 0 { "-" + s } else { s }
+}
+
+// ISO 8601 / RFC 3339 in UTC with millisecond precision, `2026-10-12T14:00:00.000Z`,
+// for epoch milliseconds `ms` (the form JavaScript's toISOString writes).
+// parseIso8601 reads it back to the same `ms`.
+pub fn formatIso8601(ms: i64): string {
+    let t = instantOf(ms)
+    let d = t.dt
+    return padI64(d.year as i64, 4) + "-" + padI32(d.month, 2) + "-" + padI32(d.day, 2) + "T" + padI32(d.hour, 2) + ":" +
+    padI32(d.minute, 2) + ":" + padI32(d.second, 2) + "." + padI64(t.millis, 3) + "Z"
+}
+
+// An RFC 5322 / 2822 date in UTC, in the IMF-fixdate form HTTP requires (RFC 9110
+// 5.6.7): `Mon, 12 Oct 2026 14:00:00 GMT`, for epoch milliseconds `ms`. The one form
+// is right for HTTP `Date`, `Last-Modified` and `Expires`, cookie `Expires`, RSS
+// `pubDate` and email `Date:`. Sub-second precision is dropped (floored);
+// parseRfc2822 reads the result back to the whole second.
+pub fn formatRfc2822(ms: i64): string {
+    let d = instantOf(ms).dt
+    return weekdayName(d.weekday).substr(0, 3) + ", " + padI32(d.day, 2) + " " + monthName(d.month).substr(0, 3) + " " +
+    padI64(d.year as i64, 4) + " " + padI32(d.hour, 2) + ":" + padI32(d.minute, 2) + ":" + padI32(d.second, 2) + " GMT"
+}
+
+// Format epoch milliseconds `ms` with a strftime-style `pattern`, at a fixed offset of
+// `offsetMinutes` east of UTC (0 for UTC, -420 for PDT). There is no time zone
+// database: the caller supplies the offset that applies to the instant.
+//
+//   %Y year (2026)        %m month 01-12      %d day 01-31       %e day, space-padded
+//   %H hour 00-23         %I hour 01-12       %M minute 00-59    %S second 00-60
+//   %L millisecond 000    %p AM or PM         %j day of year 001-366
+//   %a Mon   %A Monday    %b Oct   %B October %z offset +hhmm    %y year 00-99
+//   %F = %Y-%m-%d         %T = %H:%M:%S       %% a literal %
+//
+// A `-` after `%` drops a numeric field's padding (`%-d` is 5, `%-I` is 2). Names are
+// English. A directive not listed is copied to the output unchanged, as C strftime
+// implementations do.
+pub fn formatDateTime(ms: i64, pattern: &string, offsetMinutes: i64): string {
+    let t = instantOf(ms + offsetMinutes * 60000)
+    let d = t.dt
+    var out = ""
+    var i: i64 = 0
+    while i < pattern.len {
+        let c = pattern[i]
+        if c != '%' || i + 1 >= pattern.len {
+            out.push(c)
+            i += 1
+            continue
+        }
+        var j = i + 1
+        let noPad = pattern[j] == '-' && j + 1 < pattern.len
+        if noPad {
+            j += 1
+        }
+        let f = pattern[j]
+        let w: i64 = if noPad { 0 } else { 2 }
+        if f == 'Y' {
+            out.pushStr(padI64(d.year as i64, if noPad { 0 } else { 4 }))
+        } else if f == 'y' {
+            let y = d.year as i64 % 100
+            out.pushStr(padI64(if y < 0 { y + 100 } else { y }, w))
+        } else if f == 'm' {
+            out.pushStr(padI64(d.month as i64, w))
+        } else if f == 'd' {
+            out.pushStr(padI64(d.day as i64, w))
+        } else if f == 'e' {
+            if d.day < 10 && !noPad {
+                out.push(' ')
+            }
+            out.pushStr(d.day.toString())
+        } else if f == 'H' {
+            out.pushStr(padI64(d.hour as i64, w))
+        } else if f == 'I' {
+            let h = d.hour as i64 % 12
+            out.pushStr(padI64(if h == 0 { 12 } else { h }, w))
+        } else if f == 'M' {
+            out.pushStr(padI64(d.minute as i64, w))
+        } else if f == 'S' {
+            out.pushStr(padI64(d.second as i64, w))
+        } else if f == 'L' {
+            out.pushStr(padI64(t.millis, if noPad { 0 } else { 3 }))
+        } else if f == 'p' {
+            out.pushStr(if d.hour < 12 { "AM" } else { "PM" })
+        } else if f == 'j' {
+            let doy = daysFromCivil(d.year as i64, d.month as i64, d.day as i64) - daysFromCivil(d.year as i64, 1, 1) + 1
+            out.pushStr(padI64(doy, if noPad { 0 } else { 3 }))
+        } else if f == 'a' {
+            out.pushStr(weekdayName(d.weekday).substr(0, 3))
+        } else if f == 'A' {
+            out.pushStr(weekdayName(d.weekday))
+        } else if f == 'b' {
+            out.pushStr(monthName(d.month).substr(0, 3))
+        } else if f == 'B' {
+            out.pushStr(monthName(d.month))
+        } else if f == 'z' {
+            let a = if offsetMinutes < 0 { 0 - offsetMinutes } else { offsetMinutes }
+            out.push(if offsetMinutes < 0 { '-' } else { '+' })
+            out.pushStr(padI64(a / 60, 2) + padI64(a % 60, 2))
+        } else if f == 'F' {
+            out.pushStr(padI64(d.year as i64, 4) + "-" + padI32(d.month, 2) + "-" + padI32(d.day, 2))
+        } else if f == 'T' {
+            out.pushStr(padI32(d.hour, 2) + ":" + padI32(d.minute, 2) + ":" + padI32(d.second, 2))
+        } else if f == '%' {
+            out.push('%')
+        } else {
+            out.pushStr(pattern.substr(i, j + 1))
+        }
+        i = j + 1
+    }
+    return out
 }
 
 fn padI32(val: i32, width: i32): string {

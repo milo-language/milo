@@ -1,0 +1,42 @@
+// std/datetime formats epoch milliseconds as ISO 8601 (UTC, millisecond precision,
+// `Z`), as the RFC 2822 IMF-fixdate HTTP uses, and with a strftime-style pattern at a
+// fixed offset. Each format round-trips through the parser for it, and instants
+// before 1970 (negative milliseconds) break down onto the right second.
+from "std/datetime" import { formatIso8601, formatRfc2822, formatDateTime, parseIso8601, parseRfc2822, DateTime }
+
+// @expect: 1970-01-01T00:00:00.000Z | Thu, 01 Jan 1970 00:00:00 GMT | iso true rfc true
+// @expect: 2026-10-12T14:00:00.000Z | Mon, 12 Oct 2026 14:00:00 GMT | iso true rfc true
+// @expect: 2026-10-12T14:00:00.123Z | Mon, 12 Oct 2026 14:00:00 GMT | iso true rfc true
+// @expect: 2024-02-29T06:30:00.999Z | Thu, 29 Feb 2024 06:30:00 GMT | iso true rfc true
+// @expect: 2000-02-29T00:00:00.000Z | Tue, 29 Feb 2000 00:00:00 GMT | iso true rfc true
+// @expect: 1969-12-31T23:59:59.999Z | Wed, 31 Dec 1969 23:59:59 GMT | iso true rfc true
+// @expect: 1969-12-30T23:59:59.999Z | Tue, 30 Dec 1969 23:59:59 GMT | iso true rfc true
+// @expect: 9999-12-31T23:59:59.999Z | Fri, 31 Dec 9999 23:59:59 GMT | iso true rfc true
+// @expect: 0001-01-01T00:00:00.000Z | Mon, 01 Jan 0001 00:00:00 GMT | iso true rfc true
+// @expect: 2026-10-12 21:05:09.042 +0000
+// @expect: Mon Oct 12 2026, 2:05:09 PM (-0700)
+// @expect: Tuesday, October 13, 26; day 286; 2026-10-13 02:35:09 %
+// @expect: 10/12/2026 11AM %Q
+// @expect: 001 1  1|1 12
+// @expect: 1969-12-31T23:59:59
+
+fn main(): i32 {
+    let samples: Vec<i64> = [0, 1791813600000, 1791813600123, 1709188200999, 951782400000, -1, -86400001, 253402300799999, -62135596800000]
+    for ms in samples {
+        let iso = formatIso8601(ms)
+        let rfc = formatRfc2822(ms)
+        let isoBack = parseIso8601(iso)!
+        let rfcBack = parseRfc2822(rfc)!
+        // RFC 2822 has whole seconds: it must come back floored to the second.
+        let floorSec = ms - (((ms % 1000) + 1000) % 1000)
+        print($"{iso} | {rfc} | iso {isoBack == ms} rfc {rfcBack == floorSec}")
+    }
+    let t = parseIso8601("2026-10-12T21:05:09.042Z")!
+    print(formatDateTime(t, "%Y-%m-%d %H:%M:%S.%L %z", 0))
+    print(formatDateTime(t, "%a %b %d %Y, %-I:%M:%S %p (%z)", -420))
+    print(formatDateTime(t, "%A, %B %e, %y; day %j; %F %T %%", 330))
+    print(formatDateTime(t, "%-m/%-d/%Y %I%p %Q", -600))
+    print(formatDateTime(parseIso8601("2024-12-31T23:30:00Z")!, "%j %-j %e|%-e %I", 60))
+    print(DateTime.fromEpoch(-1).format())
+    return 0
+}

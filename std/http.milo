@@ -38,7 +38,7 @@ from "std/fs" import {
     fileInfo, isFile, readFile
 }
 from "std/datetime" import {
-    DateTime, monthName, parseRfc2822, weekdayName
+    formatRfc2822, parseRfc2822
 }
 from "std/mime" import {
     Mime
@@ -1159,7 +1159,7 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
     }
     let etag = "\"" + hexLen(info.size) + "-" + hexLen(info.mtimeNs) + "\""
     let mtimeSec = info.mtimeNs / 1000000000
-    let lastModified = httpDate(mtimeSec)
+    let lastModified = formatRfc2822(mtimeSec * 1000)
     var headers: Vec<Param> = [Param {
         name: "ETag", value: etag.clone()
     }, Param {
@@ -1205,17 +1205,6 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
             })
         }
     }
-}
-
-// An IMF-fixdate (RFC 9110 5.6.7), e.g. `Sun, 06 Nov 1994 08:49:37 GMT`, for `epochSec`.
-pub fn httpDate(epochSec: i64): string {
-    let d = DateTime.fromEpoch(epochSec)
-    return weekdayName(d.weekday).substr(0, 3) + ", " + twoDigits(d.day) + " " + monthName(d.month).substr(0, 3) + " " +
-    $"{d.year} " + twoDigits(d.hour) + ":" + twoDigits(d.minute) + ":" + twoDigits(d.second) + " GMT"
-}
-
-fn twoDigits(n: i32): string {
-    return if n < 10 { $"0{n}" } else { $"{n}" }
 }
 
 // The first value of request header `name`, case-insensitive.
