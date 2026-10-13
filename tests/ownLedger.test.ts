@@ -51,3 +51,34 @@ test("a view that may have been dropped on one path is reported at the join", ()
   ];
   expect(verifyOwnLedger(ir).map(f => `${f.id} ${f.kind}`)).toEqual(["2 drop-of-view"]);
 });
+
+const PART = (pid: number, fid: number) => `  call void @__milo_own_part(i64 ${pid}, i64 ${fid})`;
+const DROPF = 7;
+
+test("dropping a parent whole after a field left it is part-double-drop", () => {
+  expect(kinds([MAKE(1), PART(1, 2), END(1, DROP)])).toEqual(["2 part-double-drop"]);
+});
+
+test("a field-by-field drop that skips the moved field is clean", () => {
+  expect(kinds([MAKE(1), PART(1, 2), END(1, DROPF)])).toEqual([]);
+});
+
+test("a part moved on one path and dropped whole at the join is reported", () => {
+  const ir = [
+    "define void @f(i1 %c) {", "entry:", MAKE(1), "  br i1 %c, label %a, label %b",
+    "a:", PART(1, 2), "  br label %b",
+    "b:", END(1, DROP), "  ret void", "}",
+  ];
+  expect(verifyOwnLedger(ir).map(f => `${f.id} ${f.kind}`)).toEqual(["2 part-double-drop"]);
+});
+
+test("a part guarded by its flag and dropped on the live edge is clean", () => {
+  const ir = [
+    "define void @f(i1 %c) {", "entry:", MAKE(1), "  br i1 %c, label %a, label %b",
+    "a:", PART(1, 2), "  br label %b",
+    "b:", "  %f = load i1, ptr %flag", "  call void @__milo_own_guard(i64 2, i1 %f)", "  br i1 %f, label %live, label %done",
+    "live:", END(2, DROP), "  br label %done",
+    "done:", END(1, DROPF), "  ret void", "}",
+  ];
+  expect(verifyOwnLedger(ir).map(f => `${f.id} ${f.kind}`)).toEqual([]);
+});

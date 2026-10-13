@@ -6,6 +6,7 @@
 //   call void @__milo_own_guard(i64 ID, i1 %c)    ; %c is ID's alive flag; the next `br i1 %c` tests it
 //   call void @__milo_own_view(i64 VID, i64 SRC)  ; SRC's bytes (0: owned outside this frame) were
 //                                                 ; copied without a move: VID borrows, never owns
+//   call void @__milo_own_part(i64 PID, i64 FID)  ; a field FID was moved out of PID's value
 // This pass builds each function's CFG and runs a forward may-dataflow over each ID's state
 // {unmade, live, ended}. It reports an end reachable while the ID may already be ended
 // (double end) or never made, an ID that may be live at a `ret` (leak), and an ID made inside
@@ -29,12 +30,22 @@
 //                   again: the new owner and this frame both dispose of it
 //   use-after-move  a view is taken of a source that may already have been transferred away
 //   use-after-drop  a view is taken of a source that may already have been dropped
+//
+// Parts. A field moved out of a local (`take(e.value)`) leaves the rest of the local behind,
+// still the local's to drop. Each such field is a part ID of the local's ID: made with it,
+// ended by the part marker (the move), and ended again by a whole-value end of the parent,
+// which drops every field. So a parent ended whole while a part may already have left is
+//   part-double-drop  the parent's drop visits a field that was moved out (its zeroed
+//                     leftover is dropped: a user Drop runs twice)
+// The end kind DROPF is the parent's field-by-field drop, which drops each moved field only
+// on its own flag's live edge (guarded, ending the part with DROP), so it ends no part;
+// DROPZF is the same drop where DROPZ would be used (an assignment's overwrite).
 
-export const OWN_END_KINDS = ["DROP", "MOVE", "RETURN", "ARG", "STORE", "CAPTURE", "DROPZ"] as const;
+export const OWN_END_KINDS = ["DROP", "MOVE", "RETURN", "ARG", "STORE", "CAPTURE", "DROPZ", "DROPF", "DROPZF"] as const;
 export type OwnEndKind = typeof OWN_END_KINDS[number];
 
 export type OwnFindingKind = "double-end" | "end-unmade" | "leak-ret" | "leak-iter" | "remake-live" |
-  "drop-of-view" | "own-of-view" | "end-after-move" | "use-after-move" | "use-after-drop";
+  "drop-of-view" | "own-of-view" | "end-after-move" | "use-after-move" | "use-after-drop" | "part-double-drop";
 
 export interface OwnFinding {
   fn: string;
@@ -49,7 +60,7 @@ export interface OwnFinding {
 // unmade, live, dropped, transferred away (moved, stored, returned, passed), a view.
 const U = 1, L = 2, E = 4, M = 8, V = 16;
 
-interface Ev { op: "make" | "end" | "view"; id: number; tolerant: boolean; transfer: boolean; src: number; line: number }
+interface Ev { op: "make" | "end" | "view" | "part"; id: number; tolerant: boolean; transfer: boolean; src: number; line: number; fieldwise?: boolean }
 interface Block {
   name: string;
   events: Ev[];
@@ -64,6 +75,7 @@ const MAKE_RE = /call void @__milo_own_make\(i64 (\d+)\)(?:\s*;\s*own (\S+) L(\d
 const END_RE = /call void @__milo_own_end\(i64 (\d+), i32 (\d+)\)/;
 const GUARD_RE = /call void @__milo_own_guard\(i64 (\d+), i1 (%[^)\s]+)\)/;
 const VIEW_RE = /call void @__milo_own_view\(i64 (\d+), i64 (\d+)\)(?:\s*;\s*own (\S+) L(\d+))?/;
+const PART_RE = /call void @__milo_own_part\(i64 (\d+), i64 (\d+)\)/;
 const LABEL_RE = /^([A-Za-z0-9_.$-]+):/;
 
 // Drop every marker line. Returns the same array when there is nothing to strip.
@@ -106,6 +118,9 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
   const blocks: Block[] = [];
   const byName = new Map<string, number>();
   const makeInfo = new Map<number, { line: number; origin: string; src: number }>();
+  // parent ID -> the part IDs moved out of it somewhere in this function
+  const parts = new Map<number, Set<number>>();
+  const partIds = new Set<number>();
   let cur: Block | null = null;
   const open = (name: string) => {
     cur = { name, events: [], guards: [], succs: [], brCond: null, term: "fall", termLine: 0 };
@@ -145,7 +160,15 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
         if (!makeInfo.has(id)) makeInfo.set(id, { line: lineNo, origin: m[2] ?? "?", src: m[3] ? Number(m[3]) : 0 });
       } else if ((m = END_RE.exec(t))) {
         const kind = OWN_END_KINDS[Number(m[2])] ?? "DROP";
-        b.events.push({ op: "end", id: Number(m[1]), tolerant: kind === "DROPZ", transfer: kind !== "DROP" && kind !== "DROPZ", src: 0, line: lineNo });
+        b.events.push({ op: "end", id: Number(m[1]), tolerant: kind === "DROPZ" || kind === "DROPZF", transfer: !kind.startsWith("DROP"), src: 0, line: lineNo, fieldwise: kind === "DROPF" || kind === "DROPZF" });
+      } else if ((m = PART_RE.exec(t))) {
+        const pid = Number(m[1]), fid = Number(m[2]);
+        let ps = parts.get(pid);
+        if (!ps) { ps = new Set(); parts.set(pid, ps); }
+        ps.add(fid);
+        partIds.add(fid);
+        if (!makeInfo.has(fid)) makeInfo.set(fid, { line: lineNo, origin: "field-move", src: 0 });
+        b.events.push({ op: "part", id: fid, tolerant: false, transfer: true, src: pid, line: lineNo });
       } else if ((m = VIEW_RE.exec(t))) {
         const id = Number(m[1]);
         b.events.push({ op: "view", id, tolerant: false, transfer: false, src: Number(m[2]), line: lineNo });
@@ -180,6 +203,7 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
   const ended = new Set(blocks.flatMap(b => b.events.filter(e => e.op === "end").map(e => e.id)));
   const ids = [...new Set(blocks.flatMap(b => b.events.flatMap(e => {
     const own = e.op !== "view" || ended.has(e.id) ? [e.id] : [];
+    // a part's parent is in `src` only to be tracked, as a view's source is
     return e.src ? [...own, e.src] : own;
   })).concat(blocks.flatMap(b => b.guards.map(g => g.id))))];
   if (ids.length === 0) return;
@@ -194,6 +218,9 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
       const k = idx.get(e.id);
       if (k === undefined) continue;
       o[k] = e.op === "make" ? L : e.op === "view" || (o[k] & V) ? V : e.transfer ? M : E;
+      // A parent made or ended whole makes or ends its parts with it.
+      const ps = e.op === "make" || (e.op === "end" && !e.fieldwise) ? parts.get(e.id) : undefined;
+      if (ps) for (const f of ps) { const fk = idx.get(f); if (fk !== undefined) o[fk] = e.op === "make" ? L : E; }
     }
     return o;
   };
@@ -248,9 +275,14 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
     const s = inS[bi]!.slice();
     for (const e of b.events) {
       const k = idx.get(e.id) ?? -1;
+      const ps = parts.get(e.id);
       if (e.op === "make") {
-        if (s[k] & L) report(e.id, "remake-live", e.line);
+        if (s[k] & L && !partIds.has(e.id)) report(e.id, "remake-live", e.line);
         s[k] = L;
+        if (ps) for (const f of ps) s[idx.get(f)!] = L;
+      } else if (e.op === "part") {
+        if (s[k] & (M | E)) report(e.id, "end-after-move", e.line);
+        s[k] = M;
       } else if (e.op === "view") {
         // The copied bytes must still be the source's. An unmade source is a slot codegen
         // never armed in this frame (a scratch temp), which makes no claim either way.
@@ -266,12 +298,20 @@ function verifyFunction(fn: string, lines: string[], start: number, end: number,
       } else {
         if (!e.tolerant && s[k] & M) report(e.id, "end-after-move", e.line);
         else if (!e.tolerant && s[k] & E) report(e.id, "double-end", e.line);
-        if (!e.tolerant && s[k] & U) report(e.id, "end-unmade", e.line);
+        if (!e.tolerant && s[k] & U && !partIds.has(e.id)) report(e.id, "end-unmade", e.line);
         s[k] = e.transfer ? M : E;
+        if (ps && !e.fieldwise) {
+          for (const f of ps) {
+            const fk = idx.get(f)!;
+            if (s[fk] & (M | E)) report(f, "part-double-drop", e.line);
+            s[fk] = E;
+          }
+        }
       }
     }
     if (b.term === "ret") {
-      for (let k = 0; k < n; k++) if (s[k] & L) report(ids[k], "leak-ret", b.termLine);
+      // A live part is part of its parent's value; the parent's own state speaks for it.
+      for (let k = 0; k < n; k++) if (s[k] & L && !partIds.has(ids[k])) report(ids[k], "leak-ret", b.termLine);
     }
   }
 

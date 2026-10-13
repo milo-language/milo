@@ -3184,6 +3184,9 @@ export class Codegen {
     this.locals.clear();
     this.droppableLocals = [];
     this.ownVal.clear(); this.ownSlot.clear(); this.ownFlag.clear(); this.ownView.clear(); this.ownStatic.clear();
+    this.ownPartIds.clear();
+    this.partialMovePaths = this.scanPartialMoves(fn.body);
+    this.fieldMoveFlags = new Map();
     this.ownSrcLine = fn.line ?? 0;
     this.entryAllocas = [];
     this.emittedAddrs.clear();
@@ -3262,6 +3265,7 @@ export class Codegen {
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
           lines.push(`  ${aliveFlag} = alloca i1`);
+          this.registerFieldFlags(lines, `%${p.name}.addr`, p.name, p.type);
           this.ownSetAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
@@ -3446,6 +3450,8 @@ export class Codegen {
         if (declDroppable) {
           this.entryAllocas.push(`  ${declAliveFlag} = alloca i1`);
           this.entryAllocas.push(`  store i1 0, ptr ${declAliveFlag}`);
+          // before the loop overwrite-drop below, which must go field by field too
+          this.registerFieldFlags(this.entryAllocas, addrName, stmt.name, stmt.type);
         }
         if (this.needsDropCg(stmt.type)) {
           this.entryAllocas.push(this.zeroStore(declTy, addrName));
@@ -3511,11 +3517,14 @@ export class Codegen {
           const isLValueTgt =
             !stmt.isInit &&
             (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess");
+          const cover = isLValueTgt ? this.flagsCovering(stmt.target) : null;
           if (isLValueTgt && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
-            this.emitDropValue(lines, tPtr, stmt.target.type);
+            if (cover) this.emitDropPlace(lines, tPtr, stmt.target.type, cover.flags, cover.path);
+            else this.emitDropValue(lines, tPtr, stmt.target.type);
           }
           this.emitMemcpy(lines, tPtr, tmp, assignLlTy, { intent: "move", type: stmt.target.type });
           this.ownAssigned(lines, tPtr, this.ownOn ? this.ownSlot.get(tmp) : undefined);
+          if (cover) this.rearmFieldFlags(lines, cover);
           this.rearmAssignedLocal(lines, stmt.target);
           return [lines, false];
         }
@@ -3530,11 +3539,14 @@ export class Codegen {
         const isLValueTarget =
           !stmt.isInit &&
           (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess");
+        const cover = isLValueTarget ? this.flagsCovering(stmt.target) : null;
         if (isLValueTarget && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
-          this.emitDropValue(lines, targetPtr, stmt.target.type);
+          if (cover) this.emitDropPlace(lines, targetPtr, stmt.target.type, cover.flags, cover.path);
+          else this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
         lines.push(this.valStore(valTy, val, targetPtr, this.ownValIntent(val, stmt.target.type)));
         this.ownAssigned(lines, targetPtr, this.ownOn ? this.ownIdOf(val) : undefined);
+        if (cover) this.rearmFieldFlags(lines, cover);
         this.rearmAssignedLocal(lines, stmt.target);
         return [lines, false];
       }
@@ -4663,6 +4675,7 @@ export class Codegen {
     const alive = `${addr}.alive`;
     this.entryAllocas.push(`  ${alive} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${alive}`);
+    this.registerFieldFlags(this.entryAllocas, addr, name, typeKind);
     this.droppableLocals.push({ name, typeKind, aliveFlag: alive, addr });
     return alive;
   }
@@ -6157,6 +6170,7 @@ export class Codegen {
         const aliveFlag = `${addr}.alive`;
         this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
         this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+        this.registerFieldFlags(this.entryAllocas, addr, name, fieldKind);
         this.ownSetAlive(lines, aliveFlag, addr, `match-bind:${name}`);
         this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
       }
@@ -6815,8 +6829,10 @@ export class Codegen {
         } else {
           if (expr.isMove && owning) {
             // Moving a non-Copy field out of a named struct: zero the source field so the
-            // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
+            // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null). A
+            // zeroed value with a user Drop is not empty, so its flag says it left.
             lines.push(this.zeroStore(fieldTy, ptr));
+            this.clearFieldMoveFlag(lines, expr);
           }
           // Release a receiver nobody owns once a Copy field has been read out of it; an
           // owning field read in place would still point into it.
@@ -8106,6 +8122,9 @@ export class Codegen {
     const savedCapFlags = this.captureFlagByAddr;
     this.captureFlagByAddr = new Map();
     const savedDroppable = this.droppableLocals;
+    const savedPartial = this.partialMovePaths, savedFieldFlags = this.fieldMoveFlags;
+    this.partialMovePaths = this.scanPartialMoves(expr.body);
+    this.fieldMoveFlags = new Map();
     // The closure is its own function: its exits must not drop the enclosing
     // expression's pending temporaries (they live in the other frame).
     const savedPend = this.pend, savedArgTemps = this.argTempDrops;
@@ -8256,6 +8275,7 @@ export class Codegen {
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
           closureBody.push(`  ${aliveFlag} = alloca i1`);
+          this.registerFieldFlags(closureBody, `%${p.name}.addr`, p.name, p.type);
           this.ownSetAlive(closureBody, aliveFlag, `%${p.name}.addr`, "closure-param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
@@ -8291,6 +8311,7 @@ export class Codegen {
     this.locals = savedLocals;
     this.captureFlagByAddr = savedCapFlags;
     this.droppableLocals = savedDroppable;
+    this.partialMovePaths = savedPartial; this.fieldMoveFlags = savedFieldFlags;
     this.pend = savedPend;
     this.argTempDrops = savedArgTemps;
     ownRestore();
@@ -15388,6 +15409,176 @@ export class Codegen {
     if (capFlag) lines.push(`  store i1 1, ptr ${capFlag}`);
   }
 
+  // ---- Field-move flags.
+  //
+  // Moving a field out of a local (`take(e.value)`, `let { a, b } = s`) zeroes the field,
+  // and the local's drop glue later visits the zeroed bytes. That is only harmless when the
+  // zeroed form drops to nothing, which holds for strings and collections but not for a
+  // type with a user Drop: `Res { id: 0 }` is a live-looking value, so its Drop ran a
+  // second time on the leftover. A field whose drop runs a user Drop therefore gets its
+  // own run-time liveness flag, exactly like a local's alive flag: set when the local is
+  // armed, cleared by the move, set again by an assignment to the field, and tested where
+  // the local (or the field) is dropped, which then goes field by field. The checker
+  // rejects moving out of a struct that itself has a Drop impl, so dropping the parents
+  // field by field is the same as running their glue.
+
+  // Names (in the function being generated) of locals some field of which is moved out,
+  // with the moved paths ("value", "inner.value"). Keyed by name, not binding: a shadowed
+  // name only gets flags that are never cleared, which drop the same as no flags.
+  private partialMovePaths = new Map<string, Set<string>>();
+  // Slot address of a local -> moved path -> its flag.
+  private fieldMoveFlags = new Map<string, Map<string, string>>();
+
+  // `e.a.b` → { root: "e", path: "a.b" }; null unless every step is a by-value struct field.
+  private fieldMovePlace(expr: HIRExpr & { kind: "FieldAccess" }): { root: string; path: string } | null {
+    const parts: string[] = [expr.field];
+    let cur: HIRExpr = expr.object;
+    while (cur.kind === "FieldAccess") {
+      if (cur.type.tag !== "struct") return null;
+      parts.unshift(cur.field);
+      cur = cur.object;
+    }
+    if (cur.kind !== "Ident" || cur.type.tag !== "struct") return null;
+    return { root: cur.name, path: parts.join(".") };
+  }
+
+  private scanPartialMoves(body: unknown): Map<string, Set<string>> {
+    const out = new Map<string, Set<string>>();
+    const walk = (n: unknown) => {
+      if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+      if (!n || typeof n !== "object") return;
+      const o = n as Record<string, unknown>;
+      if (o.kind === "FieldAccess" && o.isMove) {
+        const fa = o as unknown as HIRExpr & { kind: "FieldAccess" };
+        const place = this.typeRunsUserDrop(fa.type) ? this.fieldMovePlace(fa) : null;
+        if (place) {
+          let s = out.get(place.root);
+          if (!s) { s = new Set(); out.set(place.root, s); }
+          s.add(place.path);
+        }
+      }
+      for (const k in o) if (k !== "type" && k !== "span" && k !== "retType") walk(o[k]);
+    };
+    walk(body);
+    return out;
+  }
+
+  // Give the local at `addr` a flag for each of its moved paths. `sink` receives the
+  // allocas (the entry block for a `let`, the prologue for a parameter); the flags start
+  // dead and ownSetAlive arms them with the local.
+  private registerFieldFlags(sink: string[], addr: string, name: string, type: TypeKind) {
+    const paths = this.partialMovePaths.get(name);
+    if (!paths || type.tag !== "struct" || this.fieldMoveFlags.has(addr)) return;
+    const flags = new Map<string, string>();
+    for (const path of paths) {
+      const t = this.fieldTypeAtPath(type, path);
+      if (!t || !this.typeRunsUserDrop(t)) continue;
+      const flag = `${addr}.fmv.${path}`;
+      sink.push(`  ${flag} = alloca i1`);
+      sink.push(`  store i1 0, ptr ${flag}`);
+      flags.set(path, flag);
+    }
+    if (flags.size > 0) this.fieldMoveFlags.set(addr, flags);
+  }
+
+  private fieldTypeAtPath(type: TypeKind, path: string): TypeKind | null {
+    let t: TypeKind = type;
+    for (const f of path.split(".")) {
+      if (t.tag !== "struct") return null;
+      const field = this.structLayouts.get(t.name)?.fields.find(x => x.name === f);
+      if (!field) return null;
+      t = field.typeKind;
+    }
+    return t;
+  }
+
+  // The flag of the field `expr` moves out of a local, cleared here; null when it has none.
+  private clearFieldMoveFlag(lines: string[], expr: HIRExpr & { kind: "FieldAccess" }) {
+    if (!this.typeRunsUserDrop(expr.type)) return;
+    const place = this.fieldMovePlace(expr);
+    const local = place && this.locals.get(place.root);
+    if (!place || !local || local.isRef) return;
+    const addr = this.localAddr(place.root);
+    const flag = this.fieldMoveFlags.get(addr)?.get(place.path);
+    if (flag) lines.push(`  store i1 0, ptr ${flag}`);
+    // Ledger: the field leaves its parent's ID. A later whole drop of the parent (one that
+    // does not go field by field) is then the double drop this class of bug is.
+    if (!this.ownOn) return;
+    const pid = this.ownSlot.get(addr);
+    if (pid) lines.push(`  call void @__milo_own_part(i64 ${pid}, i64 ${this.ownPartId(addr, place.path, flag)})`);
+  }
+
+  private ownPartIds = new Map<string, number>();
+  private ownPartId(addr: string, path: string, flag: string | undefined): number {
+    if (flag) return this.ownFlagId(flag);
+    const key = `${addr}\0${path}`;
+    let id = this.ownPartIds.get(key);
+    if (!id) { id = this.ownNextId++; this.ownPartIds.set(key, id); }
+    return id;
+  }
+
+  // Drop the value of `type` at `ptr`, the place `prefix` of the local whose flags are
+  // `flags` ("" for the local itself): a flagged place drops only when its flag says it is
+  // still there, and a place with flagged places under it drops field by field.
+  private emitDropPlace(lines: string[], ptr: string, type: TypeKind, flags: Map<string, string>, prefix: string) {
+    const under = [...flags.keys()].some(p => prefix === "" || p.startsWith(`${prefix}.`));
+    const body = () => {
+      if (!under || type.tag !== "struct") { this.emitDropValue(lines, ptr, type); return; }
+      const layout = must(this.structLayouts, type.name, "struct layouts");
+      for (let i = layout.fields.length - 1; i >= 0; i--) {
+        const f = layout.fields[i];
+        if (!this.needsDropCg(f.typeKind)) continue;
+        const fp = this.nextTemp();
+        lines.push(`  ${fp} = getelementptr %${type.name}, ptr ${ptr}, i32 0, i32 ${i}`);
+        this.emitDropPlace(lines, fp, f.typeKind, flags, prefix === "" ? f.name : `${prefix}.${f.name}`);
+      }
+    };
+    // The whole local dropped outside its guarded drop (an assignment's overwrite) ends
+    // its ID here, as emitDropValue's DROPZ would, but without claiming the moved fields.
+    if (prefix === "" && this.ownOn && !this.ownInGuard) this.ownEnd(lines, this.ownSlot.get(ptr), "DROPZF");
+    const own = prefix === "" ? undefined : flags.get(prefix);
+    if (!own) { body(); return; }
+    const c = this.nextTemp();
+    lines.push(`  ${c} = load i1, ptr ${own}`);
+    const fid = this.ownOn ? this.ownFlagId(own) : 0;
+    if (fid) lines.push(`  call void @__milo_own_guard(i64 ${fid}, i1 ${c})`);
+    const liveL = this.nextLabel("fmv.live"), skipL = this.nextLabel("fmv.skip");
+    lines.push(`  br i1 ${c}, label %${liveL}, label %${skipL}`);
+    lines.push(`${liveL}:`);
+    body();
+    if (fid) this.ownEnd(lines, fid, "DROP");
+    lines.push(`  store i1 0, ptr ${own}`);
+    lines.push(`  br label %${skipL}`);
+    lines.push(`${skipL}:`);
+  }
+
+  // The flags of a local's places at or under `path` ("" for the whole local), or null.
+  private flagsCovering(target: HIRExpr): { flags: Map<string, string>; path: string } | null {
+    if (this.fieldMoveFlags.size === 0) return null;
+    let root: string, path: string;
+    if (target.kind === "Ident") { root = target.name; path = ""; }
+    else if (target.kind === "FieldAccess") {
+      const place = this.fieldMovePlace(target);
+      if (!place) return null;
+      root = place.root; path = place.path;
+    } else return null;
+    const local = this.locals.get(root);
+    if (!local || local.isRef) return null;
+    const flags = this.fieldMoveFlags.get(this.localAddr(root));
+    if (!flags) return null;
+    const hit = [...flags.keys()].some(p => path === "" || p === path || p.startsWith(`${path}.`));
+    return hit ? { flags, path } : null;
+  }
+
+  // An assignment put a value back at `path`: every flagged place at or under it is there again.
+  private rearmFieldFlags(lines: string[], cover: { flags: Map<string, string>; path: string }) {
+    for (const [p, flag] of cover.flags) {
+      if (cover.path !== "" && p !== cover.path && !p.startsWith(`${cover.path}.`)) continue;
+      lines.push(`  store i1 1, ptr ${flag}`);
+      if (this.ownOn && cover.path !== "") lines.push(`  call void @__milo_own_make(i64 ${this.ownFlagId(flag)}) ; own reassign-field L${this.ownSrcLine}`);
+    }
+  }
+
   private emitGuardedDrop(lines: string[], local: DroppableLocal) {
     const check = this.nextTemp();
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
@@ -15399,10 +15590,12 @@ export class Codegen {
     lines.push(`${dropLabel}:`);
     const savedInGuard = this.ownInGuard;
     this.ownInGuard = true;
+    const fieldFlags = local.consumeCursor ? undefined : this.fieldMoveFlags.get(local.addr);
     if (local.consumeCursor) this.emitConsumedTailDrop(lines, local.addr, local.typeKind, local.consumeCursor);
+    else if (fieldFlags) this.emitDropPlace(lines, local.addr, local.typeKind, fieldFlags, "");
     else this.emitDropValue(lines, local.addr, local.typeKind);
     this.ownInGuard = savedInGuard;
-    if (ownId) this.ownEnd(lines, ownId, "DROP");
+    if (ownId) this.ownEnd(lines, ownId, fieldFlags ? "DROPF" : "DROP");
     // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
     // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
     // without this, the function epilogue (after break) or the next iteration's
@@ -15615,6 +15808,8 @@ export class Codegen {
   // slot's ID here, so the slot's guarded drop is what must end it.
   private ownSetAlive(lines: string[], flag: string, addr: string, origin: string) {
     lines.push(`  store i1 1, ptr ${flag}`);
+    const fieldFlags = this.fieldMoveFlags.get(addr);
+    if (fieldFlags) for (const f of fieldFlags.values()) lines.push(`  store i1 1, ptr ${f}`);
     if (!this.ownOn) return;
     const id = this.ownFlagId(flag);
     const prev = this.ownSlot.get(addr);

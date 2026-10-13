@@ -1,0 +1,123 @@
+// A field moved out of a local is dropped once, by its new owner. The local's drop
+// skips it, and a field assigned back is dropped again. Res has no heap field, so its
+// zeroed leftover looks live: before field-move flags its Drop ran on `Res { id: 0 }`.
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Holder { value: Res, other: Res }
+
+struct Outer { inner: Holder, tag: string }
+
+fn take(r: Res): void { print($"took {r.id}") }
+
+fn fromParam(h: Holder): void {
+    take(h.other)
+    print("param done")
+}
+
+fn conditional(c: bool): void {
+    let h = Holder { value: Res { id: 30 }, other: Res { id: 31 } }
+    if c { take(h.value) }
+    print($"cond {c} done")
+}
+
+fn holders(): Vec<Holder> {
+    var hs: Vec<Holder> = Vec.new()
+    hs.push(Holder { value: Res { id: 60 }, other: Res { id: 61 } })
+    return hs
+}
+
+fn main(): i32 {
+    let e = Holder { value: Res { id: 1 }, other: Res { id: 2 } }
+    take(e.value)
+    print("after take")
+
+    let s = Holder { value: Res { id: 3 }, other: Res { id: 4 } }
+    let { value, other } = s
+    print($"destructured {value.id} {other.id}")
+
+    var r = Holder { value: Res { id: 5 }, other: Res { id: 6 } }
+    take(r.value)
+    r.value = Res { id: 7 }
+    print("reassigned field")
+
+    let o = Outer { inner: Holder { value: Res { id: 8 }, other: Res { id: 9 } }, tag: "t" }
+    take(o.inner.value)
+    print($"nested {o.tag}")
+
+    var w = Holder { value: Res { id: 10 }, other: Res { id: 11 } }
+    take(w.other)
+    w = Holder { value: Res { id: 12 }, other: Res { id: 13 } }
+    print("reassigned whole")
+
+    fromParam(Holder { value: Res { id: 20 }, other: Res { id: 21 } })
+    conditional(true)
+    conditional(false)
+
+    var i = 0
+    while i < 2 {
+        let l = Holder { value: Res { id: 40 + i }, other: Res { id: 50 + i } }
+        take(l.value)
+        i = i + 1
+    }
+
+    for h in holders() {
+        take(h.value)
+    }
+    let maybe: Option<Holder> = Some(Holder { value: Res { id: 70 }, other: Res { id: 71 } })
+    match maybe {
+        Some(h) => take(h.other)
+        None => print("none")
+    }
+    print("end")
+    return 0
+}
+// @expect: took 1
+// @expect: drop 1
+// @expect: after take
+// @expect: destructured 3 4
+// @expect: took 5
+// @expect: drop 5
+// @expect: reassigned field
+// @expect: took 8
+// @expect: drop 8
+// @expect: nested t
+// @expect: took 11
+// @expect: drop 11
+// @expect: drop 10
+// @expect: reassigned whole
+// @expect: took 21
+// @expect: drop 21
+// @expect: param done
+// @expect: drop 20
+// @expect: took 30
+// @expect: drop 30
+// @expect: cond true done
+// @expect: drop 31
+// @expect: cond false done
+// @expect: drop 31
+// @expect: drop 30
+// @expect: took 40
+// @expect: drop 40
+// @expect: drop 50
+// @expect: took 41
+// @expect: drop 41
+// @expect: drop 51
+// @expect: took 60
+// @expect: drop 60
+// @expect: drop 61
+// @expect: took 71
+// @expect: drop 71
+// @expect: drop 70
+// @expect: end
+// @expect: drop 13
+// @expect: drop 12
+// @expect: drop 9
+// @expect: drop 6
+// @expect: drop 7
+// @expect: drop 4
+// @expect: drop 3
+// @expect: drop 2

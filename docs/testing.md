@@ -3,7 +3,7 @@ system: testing
 purpose: how to write/run tests, what to avoid, and an index of every test file and what it covers
 key-files: tests/run.test.ts, tests/fixtures/, tests/errors/, tests/known-red.txt, tests/*.test.ts, tools/wasm/float-diff.sh, src/own-ledger.ts, scripts/own-ledger.ts, scripts/fuzz-drops.ts
 update-when: a test file or out-of-band harness is added/removed/repurposed, or the fixture protocol changes
-last-verified: 2026-10-12 (fuzz:drops runs the ledger on generated programs; ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
+last-verified: 2026-10-12 (ledger parts: part-double-drop for a field moved out of a local; fuzz:drops runs the ledger on generated programs; ownership ledger section: copy intent, view findings, shrink-only baseline; 09-22: --contracts mutator sequences)
 -->
 
 # Testing
@@ -157,7 +157,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->952<!-- /stat --> fixtures, <!-- stat:error-fixtures -->678<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->953<!-- /stat --> fixtures, <!-- stat:error-fixtures -->678<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -240,7 +240,10 @@ reproduces is red too). `tests/ownLedger.test.ts` pins each finding kind on hand
 
 **How it works.** With `MILO_OWN_LEDGER=1`, codegen brackets each owned value's life with
 `@__milo_own_make(ID)` and `@__milo_own_end(ID, KIND)` calls (KIND is DROP, MOVE, RETURN,
-ARG, STORE, CAPTURE or DROPZ). `src/own-ledger.ts` runs a dataflow over each function's CFG
+ARG, STORE, CAPTURE, DROPZ, or DROPF/DROPZF for a local dropped field by field). A field
+whose drop runs a user Drop, moved out of a local (`take(e.value)`, `let { a, b } = s`),
+is a part of the local's ID: `@__milo_own_part(PID, FID)` marks the move, and the local's
+whole-value drop ends every part with it. `src/own-ledger.ts` runs a dataflow over each function's CFG
 and strips the markers before clang sees them, so a ledger build behaves like a normal one.
 
 **What a finding means.** It reads `fn: ID kind (made at IR line N by ORIGIN, milo line M)`:
@@ -257,6 +260,7 @@ and strips the markers before clang sees them, so a ledger build behaves like a 
 | `end-after-move` | ended after it was already transferred away (MOVE, STORE, RETURN, ARG, CAPTURE) |
 | `use-after-move` | a view is taken of a source that may already have been transferred away |
 | `use-after-drop` | a view is taken of a source that may already have been dropped |
+| `part-double-drop` | a local is dropped whole after a field may have been moved out of it: its drop glue visits the zeroed leftover, and a user Drop runs on it (codegen drops such a local field by field, each moved field behind its own flag) |
 
 ORIGIN names the codegen site (`Call`, `IndexAccess`, `match-subject`, ...). Write a repro,
 build it with `--debug` (at -O2 LLVM deletes the toy allocations) and confirm the leak under
