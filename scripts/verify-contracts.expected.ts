@@ -26,6 +26,8 @@ export interface Expected {
 }
 
 export const EXPECTED: Record<string, Expected> = {
+  // Untracked since it gained contracts: CI listed it under "Not in the ratchet" every run.
+  "examples/basics/kvstore.milo": { proven: 4, unknown: 19, errors: 0 },
   // Was 0 proven / 64 unknown — every VC in the file died on the first float literal,
   // which the SMT translator had no rule for. With `FloatLit` translating and `Pid`
   // carrying `invariant outMin < outMax`, the contracts are checked rather than decorative.

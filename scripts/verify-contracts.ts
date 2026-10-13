@@ -152,6 +152,12 @@ function ratchet(r: FileResult, out: { regressions: string[]; gains: string[]; u
     out.regressions.push(`${r.file}: prove produced no report (compile failure or guard kill)`);
     return;
   }
+  // Refutations are gated by matching their `✗` lines against BASELINE, so a tally that
+  // counts more refutations than lines parsed means a refuted contract the gate cannot
+  // see: a reworded report line would otherwise turn every refutation into a silent pass.
+  if (r.failed !== r.refutations.length) {
+    out.regressions.push(`${r.file}: prove reports ${r.failed} refuted but ${r.refutations.length} counterexample line(s) parsed — the report format drifted`);
+  }
   const e = EXPECTED[r.file];
   if (!e) {
     out.untracked.push(r.file);
