@@ -1,0 +1,402 @@
+// std/webpush: Web Push message encryption (RFC 8291 over RFC 8188 aes128gcm) and VAPID (RFC 8292)
+//
+// Sending a push message to a browser is an HTTPS POST to the subscription's endpoint
+// with three things this module makes:
+//
+//   body           WebPush.encrypt(payload, p256dh, auth): the payload encrypted to
+//                  the browser's P-256 key, one aes128gcm record
+//   Authorization  WebPush.vapid(endpoint, subject, keys, expiresAt): an ES256-signed
+//                  JWT and the server's public key, so the push service knows who sent it
+//   headers        `Content-Encoding: aes128gcm` and a `TTL` (seconds the push service
+//                  may hold the message), which the caller adds
+//
+// The elliptic-curve work (P-256 ECDH, ECDSA) is OpenSSL's libcrypto; HKDF is
+// std/hkdf, AES-128-GCM is std/crypto. Not independently audited: checked against the
+// RFC 8291 test vector and, for the ES256 signature, verified by WebCrypto in
+// tests/webpush.test.ts.
+
+from "std/base64" import {
+    Base64
+}
+from "std/hkdf" import {
+    Hkdf
+}
+from "std/crypto" import {
+    Crypto
+}
+from "std/sha256" import {
+    Sha256
+}
+from "std/random" import {
+    Random
+}
+from "std/url" import {
+    Url
+}
+
+@link("crypto")
+pub extern fn EC_KEY_new_by_curve_name(nid: i32): *u8
+
+pub extern fn EC_KEY_free(key: *u8): void
+
+pub extern fn EC_KEY_get0_group(key: *u8): *u8
+
+pub extern fn EC_KEY_set_private_key(key: *u8, priv: *u8): i32
+
+pub extern fn EC_KEY_get0_private_key(key: *u8): *u8
+
+pub extern fn EC_KEY_set_public_key(key: *u8, pt: *u8): i32
+
+pub extern fn EC_KEY_get0_public_key(key: *u8): *u8
+
+pub extern fn EC_KEY_generate_key(key: *u8): i32
+
+pub extern fn EC_POINT_new(group: *u8): *u8
+
+pub extern fn EC_POINT_free(pt: *u8): void
+
+pub extern fn EC_POINT_mul(group: *u8, r: *u8, n: *u8, q: *u8, m: *u8, ctx: *u8): i32
+
+pub extern fn EC_POINT_oct2point(group: *u8, pt: *u8, buf: *u8, len: u64, ctx: *u8): i32
+
+pub extern fn EC_POINT_point2oct(group: *u8, pt: *u8, form: i32, buf: *u8, len: u64, ctx: *u8): u64
+
+pub extern fn BN_bin2bn(s: *u8, len: i32, ret: *u8): *u8
+
+pub extern fn BN_bn2binpad(bn: *u8, to: *u8, tolen: i32): i32
+
+pub extern fn BN_free(bn: *u8): void
+
+pub extern fn ECDH_compute_key(out: *u8, outlen: u64, pubKey: *u8, key: *u8, kdf: *u8): i32
+
+pub extern fn ECDSA_do_sign(dgst: *u8, dlen: i32, key: *u8): *u8
+
+pub extern fn ECDSA_SIG_get0(sig: *u8, pr: *u8, ps: *u8): void
+
+pub extern fn ECDSA_SIG_free(sig: *u8): void
+
+// NID_X9_62_prime256v1, the curve Web Push and VAPID both use.
+let P256: i32 = 415
+
+// POINT_CONVERSION_UNCOMPRESSED: 0x04 || X || Y, 65 bytes for P-256.
+let UNCOMPRESSED: i32 = 4
+
+// The record size written into the aes128gcm header. A push service must accept a
+// 4096-byte message (RFC 8030 7.2): 86 bytes of header plus one record of at most
+// 4010, which is 3993 bytes of plaintext after the padding delimiter and the GCM tag.
+let RECORD_SIZE: i64 = 4096
+let MAX_PAYLOAD: i64 = 3993
+
+// WebPushError: why a message or a VAPID header could not be made.
+pub enum WebPushError {
+    // The subscription's `p256dh` key is not a P-256 point, or its `auth` secret is
+    // not 16 bytes. Payload: what was wrong. The subscription is unusable: delete it.
+    BadSubscription(string),
+    // The payload is longer than the 3993 bytes one 4096-byte push message holds.
+    // Payload: the payload's length.
+    PayloadTooLarge(i64),
+    // The VAPID private key is not a 32-byte P-256 scalar (base64url), or the endpoint
+    // is not an absolute https URL. Payload: what was wrong.
+    BadVapidKey(string),
+    // libcrypto failed where valid inputs should not fail. Payload: the step.
+    CryptoFailure(string),
+}
+
+impl WebPushError {
+    // One-line description.
+    fn message(self: &Self): string {
+        return match self {
+            WebPushError.BadSubscription(m) => "bad push subscription: " + m
+            WebPushError.PayloadTooLarge(n) => $"push payload of {n} bytes exceeds {MAX_PAYLOAD}"
+            WebPushError.BadVapidKey(m) => "bad VAPID key: " + m
+            WebPushError.CryptoFailure(m) => "crypto failure: " + m
+        }
+    }
+}
+
+// VapidKeys: an application server's P-256 key pair, both halves base64url as VAPID
+// and the browser's `applicationServerKey` expect them: `publicKey` is the 65-byte
+// uncompressed point, `privateKey` the 32-byte scalar. Keep `privateKey` secret.
+pub struct VapidKeys {
+    publicKey: string,
+    privateKey: string,
+}
+
+impl VapidKeys {
+    // A fresh key pair. Generate once and store it: every subscription a browser made
+    // is bound to the public key it was given.
+    fn generate(): Result<VapidKeys, WebPushError> {
+        let k = EcKey.generate()?
+        return Ok(VapidKeys { publicKey: Base64.urlEncode(k.publicPoint()?), privateKey: Base64.urlEncode(k.privateScalar()?) })
+    }
+
+    // The key pair for a stored base64url `privateKey`, its public half derived.
+    fn fromPrivate(privateKey: &string): Result<VapidKeys, WebPushError> {
+        let raw = Base64.urlDecode(privateKey).mapErr((e) => WebPushError.BadVapidKey(e.clone()))?
+        let k = EcKey.fromPrivate(raw).mapErr((_e) => WebPushError.BadVapidKey("not a P-256 private key"))?
+        return Ok(VapidKeys { publicKey: Base64.urlEncode(k.publicPoint()?), privateKey: privateKey.clone() })
+    }
+}
+
+// WebPush: message encryption and VAPID authorization.
+pub struct WebPush {
+}
+
+impl WebPush {
+    // Encrypt `payload` for a subscription whose keys are `p256dh` and `auth`, base64url
+    // as `PushSubscription.toJSON().keys` gives them. Returns the request body: one
+    // aes128gcm record (RFC 8188) under a fresh sender key and salt (RFC 8291). Send it
+    // with `Content-Encoding: aes128gcm`.
+    fn encrypt(payload: &string, p256dh: &string, auth: &string): Result<string, WebPushError> {
+        let sender = EcKey.generate()?
+        return encryptWithKey(payload, p256dh, auth, sender, Random.bytes(16))
+    }
+
+    // `encrypt` with the sender's private key (32 raw bytes) and the 16-byte salt chosen
+    // by the caller instead of at random, so a known-answer test (RFC 8291 Appendix A)
+    // can reproduce a message exactly. Reusing either across messages breaks the
+    // encryption: production code calls `encrypt`.
+    fn encryptWith(payload: &string, p256dh: &string, auth: &string, senderPrivate: &string, salt: &string): Result<string, WebPushError> {
+        if salt.len != 16 {
+            return Err(WebPushError.CryptoFailure($"salt must be 16 bytes, got {salt.len}"))
+        }
+        let sender = EcKey.fromPrivate(senderPrivate).mapErr((_e) => WebPushError.CryptoFailure("sender key is not a P-256 private key"))?
+        return encryptWithKey(payload, p256dh, auth, sender, salt.clone())
+    }
+
+    // The `Authorization` header value for a push to `endpoint` (RFC 8292):
+    // `vapid t=<JWT>, k=<public key>`. The JWT is ES256-signed with `keys`, its `aud` is
+    // the endpoint's origin, `sub` is `subject` (a `mailto:` or `https:` contact for the
+    // push service operator) and `exp` is `expiresAt` in epoch seconds, which push
+    // services require to be within 24 hours.
+    fn vapid(endpoint: &string, subject: &string, keys: &VapidKeys, expiresAt: i64): Result<string, WebPushError> {
+        let url = Url.parse(endpoint.clone()).mapErr((e) => WebPushError.BadVapidKey("endpoint: " + e))?
+        if url.scheme != "https" || url.host.len == 0 {
+            return Err(WebPushError.BadVapidKey("endpoint is not an absolute https URL"))
+        }
+        let aud = if url.port > 0 && url.port != 443 { $"https://{url.host}:{url.port}" } else { $"https://{url.host}" }
+        let raw = Base64.urlDecode(keys.privateKey).mapErr((e) => WebPushError.BadVapidKey(e.clone()))?
+        let key = EcKey.fromPrivate(raw).mapErr((_e) => WebPushError.BadVapidKey("not a P-256 private key"))?
+        let header = Base64.urlEncode("{\"typ\":\"JWT\",\"alg\":\"ES256\"}")
+        let claims = Base64.urlEncode("{\"aud\":" + jsonStr(aud) + ",\"exp\":" + expiresAt.toString() + ",\"sub\":" + jsonStr(subject) + "}")
+        let signingInput = header + "." + claims
+        let sig = key.signP1363(Sha256.bytes(signingInput))?
+        return Ok($"vapid t={signingInput}.{Base64.urlEncode(sig)}, k={Base64.urlEncode(key.publicPoint()?)}")
+    }
+}
+
+// The JSON string literal for `s`: only `"` and `\` and control bytes need escaping in
+// a URL origin or a mailto contact.
+fn jsonStr(s: &string): string {
+    var out = "\""
+    for c in s {
+        if c == '"' || c == '\\' {
+            out.push('\\')
+            out.push(c)
+        } else if c < 32 {
+            out.pushStr("\\u00")
+            out.push("0123456789abcdef"[(c >> 4) as i64])
+            out.push("0123456789abcdef"[(c & 15) as i64])
+        } else {
+            out.push(c)
+        }
+    }
+    out.push('"')
+    return out
+}
+
+fn encryptWithKey(payload: &string, p256dh: &string, auth: &string, sender: EcKey, salt: string): Result<string, WebPushError> {
+    if payload.len > MAX_PAYLOAD {
+        return Err(WebPushError.PayloadTooLarge(payload.len))
+    }
+    let uaPublic = Base64.urlDecode(p256dh).mapErr((e) => WebPushError.BadSubscription("p256dh: " + e))?
+    let authSecret = Base64.urlDecode(auth).mapErr((e) => WebPushError.BadSubscription("auth: " + e))?
+    if authSecret.len != 16 {
+        return Err(WebPushError.BadSubscription($"auth secret must be 16 bytes, got {authSecret.len}"))
+    }
+    let asPublic = sender.publicPoint()?
+    let ecdhSecret = sender.agree(uaPublic)?
+    // RFC 8291 3.3-3.4: mix the auth secret into the ECDH secret, bound to both keys,
+    // then RFC 8188 2.2: derive the content key and nonce from that and the salt.
+    var keyInfo = "WebPush: info"
+    keyInfo.push(0)
+    keyInfo.pushStr(uaPublic)
+    keyInfo.pushStr(asPublic)
+    let prkKey = Hkdf.extractSha256(authSecret, ecdhSecret)
+    let ikm = Hkdf.expandSha256(prkKey, keyInfo, 32).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    let prk = Hkdf.extractSha256(salt, ikm)
+    var cekInfo = "Content-Encoding: aes128gcm"
+    cekInfo.push(0)
+    var nonceInfo = "Content-Encoding: nonce"
+    nonceInfo.push(0)
+    let cek = Hkdf.expandSha256(prk, cekInfo, 16).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    let nonce = Hkdf.expandSha256(prk, nonceInfo, 12).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    // One record, so it is the last: padding delimiter 0x02 (RFC 8188 2), no padding.
+    var plain = payload.clone()
+    plain.push(2)
+    let sealed = Crypto.aesGcm128Encrypt(cek, nonce, plain, "").mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    // Header (RFC 8188 2.1): salt, record size (u32 big-endian), key id length, key id.
+    var out = salt
+    out.push(((RECORD_SIZE >> 24) & 255) as u8)
+    out.push(((RECORD_SIZE >> 16) & 255) as u8)
+    out.push(((RECORD_SIZE >> 8) & 255) as u8)
+    out.push((RECORD_SIZE & 255) as u8)
+    out.push(asPublic.len as u8)
+    out.pushStr(asPublic)
+    out.pushStr(sealed.ciphertext)
+    out.pushStr(sealed.tag)
+    return Ok(out)
+}
+
+// One libcrypto EC_KEY on P-256, freed on drop.
+struct EcKey {
+    _key: i64,
+}
+
+impl Drop for EcKey {
+    fn drop(self: &mut Self): void {
+        if self._key != 0 {
+            unsafe { EC_KEY_free(self._key as *u8) }
+        }
+    }
+}
+
+impl EcKey {
+    fn generate(): Result<EcKey, WebPushError> {
+        var k: i64 = 0
+        unsafe {
+            k = EC_KEY_new_by_curve_name(P256) as i64
+            if k != 0 && EC_KEY_generate_key(k as *u8) != 1 {
+                EC_KEY_free(k as *u8)
+                k = 0
+            }
+        }
+        if k == 0 {
+            return Err(WebPushError.CryptoFailure("EC key generation"))
+        }
+        return Ok(EcKey { _key: k })
+    }
+
+    // The key for a 32-byte big-endian scalar, with its public point computed.
+    fn fromPrivate(scalar: &string): Result<EcKey, string> {
+        if scalar.len != 32 {
+            return Err($"a P-256 private key is 32 bytes, got {scalar.len}")
+        }
+        var k: i64 = 0
+        var ok = false
+        unsafe {
+            k = EC_KEY_new_by_curve_name(P256) as i64
+            if k != 0 {
+                let group = EC_KEY_get0_group(k as *u8)
+                let bn = BN_bin2bn(scalar, 32, 0 as *u8)
+                let pt = EC_POINT_new(group)
+                // EC_KEY_set_private_key rejects 0 and anything at or past the order.
+                ok = bn as i64 != 0 && pt as i64 != 0 && EC_KEY_set_private_key(k as *u8, bn) == 1 &&
+                EC_POINT_mul(group, pt, bn, 0 as *u8, 0 as *u8, 0 as *u8) == 1 && EC_KEY_set_public_key(k as *u8, pt) == 1
+                if pt as i64 != 0 {
+                    EC_POINT_free(pt)
+                }
+                if bn as i64 != 0 {
+                    BN_free(bn)
+                }
+            }
+        }
+        let key = EcKey { _key: k }
+        if !ok {
+            return Err("not a valid P-256 private key")
+        }
+        return Ok(key)
+    }
+
+    // The public key as the 65-byte uncompressed point.
+    fn publicPoint(self: &Self): Result<string, WebPushError> {
+        var buf: [u8; 65] = [0; 65]
+        var n: u64 = 0
+        unsafe {
+            let group = EC_KEY_get0_group(self._key as *u8)
+            n = EC_POINT_point2oct(group, EC_KEY_get0_public_key(self._key as *u8), UNCOMPRESSED, buf, 65, 0 as *u8)
+        }
+        if n != 65 {
+            return Err(WebPushError.CryptoFailure("encoding the public key"))
+        }
+        return Ok(bytesOf(buf, 65))
+    }
+
+    fn privateScalar(self: &Self): Result<string, WebPushError> {
+        var buf: [u8; 32] = [0; 32]
+        var n: i32 = 0
+        unsafe { n = BN_bn2binpad(EC_KEY_get0_private_key(self._key as *u8), buf, 32) }
+        if n != 32 {
+            return Err(WebPushError.CryptoFailure("encoding the private key"))
+        }
+        var out = ""
+        for b in buf {
+            out.push(b)
+        }
+        return Ok(out)
+    }
+
+    // The ECDH shared secret (the 32-byte X coordinate) with the peer's uncompressed
+    // point. libcrypto's oct2point checks the point is on the curve, which is what
+    // stops an invalid-curve attack on this key.
+    fn agree(self: &Self, peer: &string): Result<string, WebPushError> {
+        if peer.len != 65 || peer[0] != 4 {
+            return Err(WebPushError.BadSubscription("p256dh is not a 65-byte uncompressed P-256 point"))
+        }
+        var secret: [u8; 32] = [0; 32]
+        var n: i32 = -1
+        unsafe {
+            let group = EC_KEY_get0_group(self._key as *u8)
+            let pt = EC_POINT_new(group)
+            if pt as i64 != 0 {
+                if EC_POINT_oct2point(group, pt, peer, 65, 0 as *u8) == 1 {
+                    n = ECDH_compute_key(secret, 32, pt, self._key as *u8, 0 as *u8)
+                } else {
+                    n = -2
+                }
+                EC_POINT_free(pt)
+            }
+        }
+        if n == -2 {
+            return Err(WebPushError.BadSubscription("p256dh is not a point on P-256"))
+        }
+        if n != 32 {
+            return Err(WebPushError.CryptoFailure("ECDH"))
+        }
+        var out = ""
+        for b in secret {
+            out.push(b)
+        }
+        return Ok(out)
+    }
+
+    // ECDSA over a 32-byte digest, as JWS ES256 encodes it (RFC 7518 3.4): r and s,
+    // each 32 bytes big-endian, not DER.
+    fn signP1363(self: &Self, digest: string): Result<string, WebPushError> {
+        var rBytes: [u8; 32] = [0; 32]
+        var sBytes: [u8; 32] = [0; 32]
+        var ok = false
+        unsafe {
+            let sig = ECDSA_do_sign(digest, 32, self._key as *u8)
+            if sig as i64 != 0 {
+                var r: [i64; 1] = [0; 1]
+                var s: [i64; 1] = [0; 1]
+                ECDSA_SIG_get0(sig, r as *u8, s as *u8)
+                ok = BN_bn2binpad(r[0] as *u8, rBytes, 32) == 32 && BN_bn2binpad(s[0] as *u8, sBytes, 32) == 32
+                ECDSA_SIG_free(sig)
+            }
+        }
+        if !ok {
+            return Err(WebPushError.CryptoFailure("ECDSA signing"))
+        }
+        return Ok(bytesOf(rBytes, 32) + bytesOf(sBytes, 32))
+    }
+}
+
+fn bytesOf(buf: &[u8], n: i64): string {
+    var out = ""
+    for i in 0..n {
+        out.push(buf[i])
+    }
+    return out
+}

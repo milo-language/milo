@@ -28,6 +28,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/unix`](unix) | Unix-domain sockets: `UnixListener`, `UnixStream` |
 | [`std/http`](http) | HTTP server with Hono-style router, context, middleware |
 | [`std/httpmw`](httpmw) | Optional HTTP middleware: `gzip`, `verifyBearer` |
+| [`std/webpush`](webpush) | Web Push: payload encryption (RFC 8291) and VAPID headers (RFC 8292): `WebPush.encrypt`, `WebPush.vapid`, `VapidKeys` |
 | [`std/html`](html) | HTML escaping — `Html.escapeText`, `Html.escapeAttr`, `Html.isSafeUrl` |
 | [`std/mime`](mime) | Media types by extension — `Mime.fromPath`, `Mime.contentType` |
 | [`std/multipart`](multipart) | `multipart/form-data` parsing — `Multipart.parse`, `Part.safeFilename` |
