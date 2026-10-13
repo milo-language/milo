@@ -665,8 +665,9 @@ pub struct FetchOptions {
 // first connect to the last body byte, redirects included. DNS is not covered: a lookup
 // is bounded only by the system resolver's own timeout.
 //
-// Separate from FetchOptions, not fields on it: struct literals are exhaustive, so a new
-// field would break every FetchOptions literal in every program that builds one.
+// Separate from FetchOptions because it predates field defaults, when a new field broke
+// every FetchOptions literal. Folding it in now (`connectMs: i64 = 0` on FetchOptions)
+// would still remove this type and fetchWithTimeout's third argument from every caller.
 pub struct FetchTimeouts {
     connectMs: i64,
     totalMs: i64,
