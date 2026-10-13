@@ -242,8 +242,8 @@ fn be16(src: &string, p: i64): i64 {
     return ((src[p] as i64) << 8) | (src[p + 1] as i64)
 }
 
-// n zero bytes. `"\x00".repeat(n)` copies one byte per iteration; repeating a 4 KiB
-// block is two orders of magnitude faster on a frame-sized buffer.
+// n zero bytes. Repeating a 4 KiB block keeps the count inside strRepeat's contract
+// (at most 16M repeats) for any frame size.
 fn zeroBytes(n: i64): string {
     let block = "\x00".repeat(4096)
     var out = block.repeat(n / 4096)

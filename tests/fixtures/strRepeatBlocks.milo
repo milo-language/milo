@@ -1,0 +1,28 @@
+// @expect: 0 0 0
+// @expect: 7 xxxxxxx
+// @expect: abcabcabcabcabc
+// @expect: 15 ababababababababababababababa
+// @expect: 1000 0 0
+// @expect: éé
+// @expect: llll
+// @expect: 300000 99 120
+// String repeat builds its result in block copies: a memset for a one-byte pattern,
+// otherwise one copy of the pattern and then doubling copies of what is already written,
+// with a short final chunk when the count is not a power of two. Each line pins one
+// shape: empty inputs, one byte, odd counts, a multibyte character, a view as the
+// pattern, and a long run checked at both ends.
+fn main() {
+    print("".repeat(5).len, " ", "a".repeat(0).len, " ", "abc".repeat(0).len)
+    let x = "x".repeat(7)
+    print(x.len, " ", x)
+    print("abc".repeat(5))
+    let ab = "ab".repeat(15)
+    print(ab.len / 2, " ", ab.slice(0, 29))
+    let z = "\x00".repeat(1000)
+    print(z.len, " ", z[0] as i64, " ", z[999] as i64)
+    print("é".repeat(2))
+    let word = "hello"
+    print(word.slice(2, 4).repeat(2))
+    let big = "cx".repeat(150000)
+    print(big.len, " ", big[0] as i64, " ", big[299999] as i64)
+}
