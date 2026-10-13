@@ -16,6 +16,20 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## A Drop-typed `if`/`match` read in place consumes its named arms (2026-10-12)
+
+`(if c { r } else { mk() }).get()` and `chk(match o { Some(q) => q, None => r })`, where
+the value has a `Drop` (or is `@noCopy`, or holds a raw pointer) and some arm yields a
+fresh value, used to read `r` in place and leak whichever value the fresh arm made. The
+value now has one owner whichever arm ran and is dropped after the read, so `r` is
+consumed, exactly as `let x = if c { r } else { mk() }` consumes it. Using `r` afterwards
+is a use-after-move. A fork of only named places (`chk(if c { a } else { b })`) is still
+a plain borrow, and for any other type the place arm is cloned, so nothing changes there.
+
+| was | now |
+|---|---|
+| `(if c { r } else { mk() }).get()` then `r.get()` | `if c { r.get() } else { mk().get() }` |
+
 ## `[v; N]` moves `v`, and a resource without Clone cannot be repeated (2026-10-12)
 
 `[v; N]` used to read a non-Copy `v` and fill every slot with a memberwise copy that ran

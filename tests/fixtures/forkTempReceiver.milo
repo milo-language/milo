@@ -1,0 +1,118 @@
+// An if/match value read in place (a method receiver, a `&T` argument, a field read) is
+// dropped once the read is done. It used to leak whenever an arm yielded anything but a
+// temporary: a match binding (`Some(q) => q`), or a named place. A Drop type's place arm
+// is consumed by the fork (as `let x = if ..` would); any other type's is cloned, so the
+// place keeps its value. A fork of only places is a plain borrow: nothing moves and
+// nothing extra is dropped.
+// @expect: make 2
+// @expect: drop 2
+// @expect: 2
+// @expect: make 9
+// @expect: drop 9
+// @expect: 9
+// @expect: make 4
+// @expect: drop 4
+// @expect: 4
+// @expect: make 6
+// @expect: drop 6
+// @expect: 6
+// @expect: make 3
+// @expect: drop 3
+// @expect: 3
+// @expect: make 8
+// @expect: drop 8
+// @expect: 8
+// @expect: make 12
+// @expect: drop 12
+// @expect: n12
+// @expect: make 10
+// @expect: make 11
+// @expect: 11
+// @expect: 10
+// @expect: ab 2
+// @expect: abx 2
+// @expect: end
+// @expect: drop 11
+// @expect: drop 10
+
+struct Res {
+    id: i64,
+    name: string,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.id.toString())
+    }
+}
+
+impl Res {
+    fn get(self: &Self): i64 {
+        return self.id
+    }
+}
+
+fn newRes(k: i64): Res {
+    print("make " + k.toString())
+    return Res { id: k, name: "n" + k.toString() }
+}
+
+fn maybe(k: i64): Option<Res> {
+    if k % 2 == 0 {
+        return Option.Some(newRes(k))
+    }
+    return Option.None
+}
+
+fn errOr(k: i64): Result<Res, Res> {
+    if k % 2 == 0 {
+        return Result.Ok(newRes(k))
+    }
+    return Result.Err(newRes(k + 1))
+}
+
+fn chk(r: &Res): i64 {
+    return r.id
+}
+
+fn slen(s: &string): i64 {
+    return s.len() as i64
+}
+
+fn main() {
+    print((match maybe(2) {
+        Option.Some(q) => q,
+        Option.None => newRes(9),
+    }).get())
+    print((match maybe(1) {
+        Option.Some(q) => q,
+        Option.None => newRes(9),
+    }).get())
+    print((match errOr(4) {
+        Result.Ok(q) => q,
+        Result.Err(e) => e,
+    }).get())
+    print(chk(match errOr(5) {
+        Result.Ok(q) => q,
+        Result.Err(e) => e,
+    }))
+    let r = newRes(3)
+    print((if r.id > 0 { r } else { newRes(4) }).get())
+    print((match maybe(8) {
+        Option.Some(q) => q,
+        Option.None => newRes(9),
+    }).id)
+    let r2 = newRes(12)
+    print((if r2.id > 0 { r2 } else { newRes(13) }).name)
+    let a = newRes(10)
+    let b = newRes(11)
+    print(chk(match b.id {
+        11 => b,
+        _ => a,
+    }))
+    print(chk(if a.id == 10 { a } else { b }))
+    let s = "a" + "b"
+    print((if s.len() > 1 { s } else { s + "y" }) + " " + slen(if s.len() > 1 { s } else { s + "y" }).toString())
+    print((if s.len() > 5 { s } else { s + "x" }) + " " + s.len().toString())
+    print("end")
+}

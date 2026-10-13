@@ -6098,7 +6098,7 @@ export class TypeChecker {
         this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
         this.errorIfCopyBind(expr.object, expr.method, sp);
       }
-      this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
+      this.autoBorrow(expr.object, { mutable: selfParam.type.mutable });
     } else {
       this.tryMove(expr.object);
     }
@@ -8223,6 +8223,48 @@ export class TypeChecker {
     return out;
   }
 
+  // A value fed to a `&T` parameter or a by-reference receiver. A fork there whose arms
+  // mix an owned value with a named place (`(if c { r } else { mk() }).get()`) has to
+  // own its value whichever arm ran, so codegen drops it after the call; the place arm
+  // is cloned for that (codegen's blockValueOwnsResult). A resource type cannot be
+  // cloned structurally (its Drop would run twice), so for one the fork consumes its
+  // places, exactly as `let x = if c { r } else { mk() }` does.
+  private autoBorrow(expr: Expr, how: { mutable: boolean }) {
+    this.autoBorrowed.set(expr, how);
+    this.consumeMixedResourceFork(expr);
+  }
+
+  // Also reached from a field read (`(if c { r } else { mk() }).name`).
+  private consumeMixedResourceFork(expr: Expr) {
+    if (expr.kind !== "IfExpr" && expr.kind !== "MatchExpr") return;
+    const ty = this.exprTypes.get(expr);
+    if (ty && this.resourceKind(ty) && this.forkHasOwnedTail(expr)) this.tryMove(expr);
+  }
+
+  // Whether some arm of a fork yields an owned value rather than a place: a call, a
+  // literal of an owning type, a binding the match arm made. A string literal owns
+  // nothing and does not count.
+  private forkHasOwnedTail(e: Expr): boolean {
+    const arms = e.kind === "IfExpr" ? [{ body: e.thenBody, bound: new Set<string>() }, { body: e.elseBody, bound: new Set<string>() }]
+      : e.kind === "MatchExpr" ? e.arms.map(a => ({ body: a.body, bound: new Set(patternLeafNames(a.pattern)) }))
+      : [];
+    return arms.some(({ body, bound }) => {
+      const t = this.tailExprOf(body);
+      return !!t && this.tailIsOwnedValue(t, bound);
+    });
+  }
+
+  private tailIsOwnedValue(t: Expr, bound: Set<string>): boolean {
+    switch (t.kind) {
+      case "Ident": return bound.has(t.name);
+      case "FieldAccess": case "IndexAccess": case "StringLit": return false;
+      case "UnaryOp": return t.op !== "*" || !(t.operand.kind === "Ident" || t.operand.kind === "FieldAccess" || t.operand.kind === "IndexAccess");
+      case "Unwrap": case "Propagate": return this.tailIsOwnedValue(t.operand, bound);
+      case "IfExpr": case "MatchExpr": return this.forkHasOwnedTail(t);
+      default: return true;
+    }
+  }
+
   private tryMove(expr: Expr) {
     this.moveRequested.add(expr);
     const targets = this.moveTargets(expr);
@@ -9759,7 +9801,7 @@ export class TypeChecker {
         }
       }
     }
-    this.autoBorrowed.set(arg, { mutable });
+    this.autoBorrow(arg, { mutable });
   }
 
   // Freeze the receiver while checking a callback that iterates it — the callback
@@ -10261,8 +10303,8 @@ export class TypeChecker {
           const methodName = traitName.toLowerCase();
           const mangled = `${lt.name}$${traitName}$${methodName}`;
           this.resolvedOperators.set(expr, mangled);
-          this.autoBorrowed.set(expr.left, { mutable: false });
-          this.autoBorrowed.set(expr.right, { mutable: false });
+          this.autoBorrow(expr.left, { mutable: false });
+          this.autoBorrow(expr.right, { mutable: false });
           return this.setType(expr, lt);
         }
       }
@@ -10311,8 +10353,8 @@ export class TypeChecker {
           if (this.typeImplementsTrait(lt.name, "Eq")) {
             const mangled = `${lt.name}$Eq$eq`;
             this.resolvedOperators.set(expr, mangled);
-            this.autoBorrowed.set(expr.left, { mutable: false });
-            this.autoBorrowed.set(expr.right, { mutable: false });
+            this.autoBorrow(expr.left, { mutable: false });
+            this.autoBorrow(expr.right, { mutable: false });
           } else {
             this.error(`cannot use '${expr.op}' on ${this.show(lt)}`, sp, `implement Eq trait or compare individual fields`);
           }
@@ -10684,7 +10726,7 @@ export class TypeChecker {
           }
         }
       }
-      this.autoBorrowed.set(expr.args[0], { mutable: false });
+      this.autoBorrow(expr.args[0], { mutable: false });
       return this.setType(expr, { tag: "string" });
     }
     // Generic function — infer type params from args, monomorphize
@@ -11352,6 +11394,7 @@ export class TypeChecker {
     this.placeBaseDepth++;
     let objType = this.checkExpr(expr.object);
     this.placeBaseDepth--;
+    this.consumeMixedResourceFork(expr.object);
     // A field of a value whose type already failed is not a new mistake (see isPoisoned).
     if (this.isPoisoned(objType)) return this.setType(expr, { tag: "unknown" });
     // auto-deref through references for field access
@@ -11626,7 +11669,7 @@ export class TypeChecker {
           this.rewrittenCalls.set(expr as any, mangled);
           const concreteSig = must(this.functions, mangled, "functions");
           if (concreteSig.params[0]?.type.tag === "ref") {
-            this.autoBorrowed.set(expr.args[0], { mutable: false });
+            this.autoBorrow(expr.args[0], { mutable: false });
           } else {
             this.tryMove(expr.args[0]);
           }
@@ -13483,7 +13526,7 @@ export class TypeChecker {
         const ifaceMethod = iface.methods.get(expr.method);
         if (ifaceMethod) {
           // self is always borrowed for interface calls
-          this.autoBorrowed.set(expr.object, { mutable: ifaceMethod.params[0]?.type.tag === "ref" && (ifaceMethod.params[0].type as any).mutable });
+          this.autoBorrow(expr.object, { mutable: ifaceMethod.params[0]?.type.tag === "ref" && (ifaceMethod.params[0].type as any).mutable });
           if (expr.args.length !== ifaceMethod.params.length - 1) {
             this.error(`'${expr.method}' expects ${ifaceMethod.params.length - 1} argument(s), got ${expr.args.length}`, sp);
           }
@@ -13536,7 +13579,7 @@ export class TypeChecker {
           // a `&var self` method may mutate the receiver — same hazard as builtins
           if (selfParam.type.mutable) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
           if (selfParam.type.mutable) this.errorIfCopyBind(expr.object, expr.method, sp);
-          this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
+          this.autoBorrow(expr.object, { mutable: selfParam.type.mutable });
         } else {
           this.tryMove(expr.object);
         }

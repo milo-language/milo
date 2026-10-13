@@ -72,12 +72,11 @@ const REDUCE_PROBES = num("--reduce-probes", 60);
 const FILTER = str("--filter");
 const KEEP = args.includes("--keep");
 // Also generate the spellings of OPEN bugs, which every run would otherwise report.
-// Each is listed where it is gated: a method call on an if/match value leaks it.
-// Remove a gate in the change that fixes it.
+// Each is listed where it is gated. Remove a gate in the change that fixes it.
 const KNOWN = args.includes("--known");
 // The open bugs, minimal (each also behind KNOWN where it is generated):
-//   (match o { Some(q) => q, None => mk() }).get()   the arm's value leaks, Drop never
-//                                    runs (an `if` too, once an arm moves a named place)
+//   (none open)
+void KNOWN;
 // Judge only this case index (the generator still runs every earlier case, so the
 // program is the one the full run saw).
 const ONLY = num("--only", -1);
@@ -354,9 +353,9 @@ class Gen {
 
   // A Res rvalue. Moves a live binding some of the time, which is how the forms below
   // compose with each other: a value made by one form is consumed inside another.
-  // `receiver`: the value is read in place (`.get()`, `.name`), not consumed; no
-  // if/match value (open bug: it leaks). `--known` lifts it.
-  res(depth = 0, opts: { receiver?: boolean } = {}): string {
+  // Read in place (`(v).get()`, `(v).name`), an if/match value owns itself and is
+  // dropped after the read.
+  res(depth = 0): string {
     const mv = this.movable();
     if (mv.length > 0 && chance(0.35)) {
       const b = pick(mv);
@@ -366,9 +365,9 @@ class Gen {
     if (depth < 1) {
       switch (between(0, 7)) {
         case 0: return `*Heap(newRes(${this.k()}))`;
-        case 1: if (opts.receiver && !KNOWN) break; return `if ${this.cond()} { ${this.res(depth + 1)} } else { ${this.res(depth + 1)} }`;
-        case 2: if (opts.receiver && !KNOWN) break; return `match maybe(${this.k()}) {\n    Option.Some(q) => q,\n    Option.None => newRes(${this.k()}),\n}`;
-        case 3: if (opts.receiver && !KNOWN) break; return `match errOr(${this.k()}) {\n    Result.Ok(q) => q,\n    Result.Err(e) => e,\n}`;
+        case 1: return `if ${this.cond()} { ${this.res(depth + 1)} } else { ${this.res(depth + 1)} }`;
+        case 2: return `match maybe(${this.k()}) {\n    Option.Some(q) => q,\n    Option.None => newRes(${this.k()}),\n}`;
+        case 3: return `match errOr(${this.k()}) {\n    Result.Ok(q) => q,\n    Result.Err(e) => e,\n}`;
         case 4: return `mkPair(${this.k()}).${pick(["a", "b"])}`;
       }
     }
@@ -381,7 +380,7 @@ class Gen {
     if (live.length > 0 && chance(0.6)) return `chk(${pick(live).name})`;
     // a read through a box nobody owns frees the box and drops the payload after it
     if (chance(0.2)) return `chk(*Heap(${this.res()}))`;
-    return `(${this.res(0, { receiver: true })}).get()`;
+    return `(${this.res()}).get()`;
   }
 
   // An i64 that consumes or inspects Res values. Each alternative is one bug's shape.
@@ -683,13 +682,13 @@ const FORMS: Form[] = [
   {
     name: "extern-cstr",
     apply(g) {
-      const arg = pick([`nameOf(${g.k()})`, `"x" + nameOf(${g.k()})`, `(${g.res(0, { receiver: true })}).name`]);
+      const arg = pick([`nameOf(${g.k()})`, `"x" + nameOf(${g.k()})`, `(${g.res()}).name`]);
       g.emit(`unsafe {\n    sink = sink + strlen(${arg}) as i64\n}`);
       return true;
     },
   },
   // ── the older flat fragments, as leaves ──
-  { name: "closure-temp", apply(g) { const f = g.fresh("f"); g.emit(`let ${f} = move () => (${g.res(0, { receiver: true })}).get()`); g.sink(`${f}()`); return true; } },
+  { name: "closure-temp", apply(g) { const f = g.fresh("f"); g.emit(`let ${f} = move () => (${g.res()}).get()`); g.sink(`${f}()`); return true; } },
   {
     name: "closure-capture",
     apply(g) {

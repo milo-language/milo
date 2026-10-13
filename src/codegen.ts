@@ -178,6 +178,11 @@ const HM_TOMBS = 4;
 // one place or the two drift, which is exactly what happened.
 const HASHMAP_FIELDS = 5;
 
+// An if/match expression's result slot. `cloneViews`: the fork's value is owned
+// (blockValueOwnsResult) but some arm yields a view of a place it does not consume, so
+// that arm stores a clone and the place keeps its own value.
+type ForkSlot = { addr: string; ty: string; cloneViews?: boolean };
+
 export class Codegen {
   private target: TargetInfo;
   private output: string[] = [];
@@ -5301,7 +5306,7 @@ export class Codegen {
     return [lines, false];
   }
 
-  private genMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
+  private genMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
     // Route by the SUBJECT's type, not just the pattern kinds. genEnumMatch reads a
     // tag/payload out of the scrutinee via GEP, which is only valid for an enum. A
     // scalar matched with only a wildcard (`match x { _ => ... }`) has no literal
@@ -5329,7 +5334,7 @@ export class Codegen {
   // borrowing match whose bindings point into the slot) leaves it to be dropped after
   // the match, or by the return/break/continue drop glue when the arm leaves early.
   // Before this, those arms leaked the subject.
-  private genTempSubjectMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
+  private genTempSubjectMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
     const lines: string[] = [];
     const ty = this.llvmType(stmt.subject.type);
     const name = `__matchsubj.${this.scopeCounter++}`;
@@ -5358,7 +5363,7 @@ export class Codegen {
   // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs
   // as-is. In value mode (match-expression) all but the tail run as stmts and
   // the tail ExprStmt's value is stored into resultSlot — same shape as IfExpr.
-  private emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: { addr: string; ty: string }): boolean {
+  private emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart = this.droppableLocals.length): boolean {
     if (!resultSlot) {
       for (const s of body) {
         const [sl, t] = this.genStmt(s);
@@ -5375,13 +5380,20 @@ export class Codegen {
     if (body.length > 0) {
       const last = body[body.length - 1];
       if (last.kind === "ExprStmt") {
-        const [vl, vv] = this.genExpr(last.expr);
+        const [vl, gv] = this.genExpr(last.expr);
         lines.push(...vl);
+        // A local the arm itself declared (a pattern binding, an arm `let`) is moved out
+        // by the yield below. A place from outside the arm is only read unless the
+        // checker moved it (isMove): the place keeps its value and its drop.
+        const yieldedIdx = last.expr.kind === "Ident"
+          ? this.droppableLocals.findIndex(d => d.addr === this.localAddr((last.expr as { name: string }).name)) : -1;
+        const armLocal = yieldedIdx >= armDropStart;
+        const vv = gv !== "void" && resultSlot.cloneViews && this.forkTailIsView(last.expr, armLocal)
+          ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
         if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
         // The non-moving yield below is a move codegen decides on its own (the HIR read
         // was a view): the value, not the view, is what the result slot receives.
-        const yieldMoves = this.ownOn && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove &&
-          this.droppableLocals.some(d => d.addr === this.localAddr((last.expr as { name: string }).name));
+        const yieldMoves = this.ownOn && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove && armLocal;
         if (yieldMoves && this.ownView.delete(vv)) this.ownMakeVal(lines, vv, "yield-move");
         if (vv !== "void") this.ownIntoResult(lines, resultSlot.addr, vv);
         // Yielding a droppable local out of the arm hands its heap data to the
@@ -5392,8 +5404,7 @@ export class Codegen {
         // and by-name lookup cleared the first entry's flag — dropping a live
         // value belonging to an unrelated scope.
         if (vv !== "void" && last.expr.kind === "Ident") {
-          const yieldedAddr = this.localAddr((last.expr as { name: string }).name);
-          const yielded = this.droppableLocals.find(d => d.addr === yieldedAddr);
+          const yielded = armLocal || (last.expr as { isMove?: boolean }).isMove ? this.droppableLocals[yieldedIdx] : undefined;
           // A moving Ident already cleared the flag (and ended the slot's ledger ID) in
           // genExpr; this second clear is then a no-op, not a second move.
           if (yielded && (last.expr as { isMove?: boolean }).isMove) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
@@ -5408,7 +5419,7 @@ export class Codegen {
     return false;
   }
 
-  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
+  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
     const lines: string[] = [];
     const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
     lines.push(...subjLines);
@@ -5545,7 +5556,7 @@ export class Codegen {
     return [lines, allArmsTerminated];
   }
 
-  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
+  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
     const lines: string[] = [];
     let subjAddr: string;
     let subjTy: string;
@@ -5623,7 +5634,7 @@ export class Codegen {
         const variant = must(layout.variants, arm.pattern.variant, "variants");
         this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef, !!stmt.subjectIsMut);
       }
-      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
+      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot, armDropStart);
       // Drop the arm's own bindings when it falls through: the alloca is reused
       // on the next visit, so waiting for the function epilogue would drop only
       // the final binding and leak every earlier one (a match inside a loop).
@@ -5709,7 +5720,7 @@ export class Codegen {
   // the same move/borrow rule a flat arm uses (bindPayloads).
   private genNestedArms(
     lines: string[], stmt: HIRStmt & { kind: "Match" }, subjAddr: string, tag: string,
-    resultSlot?: { addr: string; ty: string },
+    resultSlot?: ForkSlot,
   ): [string[], boolean] {
     const endLabel = this.nextLabel("match.end");
     const bodyLabels = stmt.arms.map(() => this.nextLabel("match.arm"));
@@ -5758,7 +5769,7 @@ export class Codegen {
           }
         }
       }
-      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
+      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot, armDropStart);
       if (!armTerminated) {
         const escaping = new Set<string>();
         if (pat.kind === "EnumPattern") for (const b of pat.bindings) if (b.escapes) escaping.add(this.localAddr(b.name));
@@ -8163,6 +8174,7 @@ export class Codegen {
     const isVoid = resultTy === "void";
     if (!isVoid) this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
     if (this.ownOn && this.needsDropCg(expr.type)) this.ownResultSlots.set(resultAddr, { arms: 0, type: expr.type });
+    const cloneViews = !isVoid && this.isOwnedTempExpr(expr);
 
     const [condLines, condVal] = this.genExpr(expr.cond);
     lines.push(...condLines);
@@ -8182,8 +8194,9 @@ export class Codegen {
     if (!thenTerminated && expr.thenBody.length > 0) {
       const last = expr.thenBody[expr.thenBody.length - 1];
       if (last.kind === "ExprStmt") {
-        const [vl, vv] = this.genExpr(last.expr);
+        const [vl, gv] = this.genExpr(last.expr);
         lines.push(...vl);
+        const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
         if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
         if (vv !== "void" && !isVoid) this.ownIntoResult(lines, resultAddr, vv);
       } else {
@@ -8204,8 +8217,9 @@ export class Codegen {
     if (!elseTerminated && expr.elseBody.length > 0) {
       const last = expr.elseBody[expr.elseBody.length - 1];
       if (last.kind === "ExprStmt") {
-        const [vl, vv] = this.genExpr(last.expr);
+        const [vl, gv] = this.genExpr(last.expr);
         lines.push(...vl);
+        const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
         if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
         if (vv !== "void" && !isVoid) this.ownIntoResult(lines, resultAddr, vv);
       } else {
@@ -8244,7 +8258,7 @@ export class Codegen {
       subjectIsMut: expr.subjectIsMut,
       span: expr.span,
     };
-    const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy });
+    const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
     lines.push(...ml);
     // Every arm diverged (return/break) — genMatch already closed endLabel
     // with `unreachable`, so a load here would follow a terminator. The
@@ -14824,22 +14838,91 @@ export class Codegen {
 
   // Whether an `if`/`match` used as an EXPRESSION hands back a value nobody else owns.
   //
-  // Every arm that can produce the result has to be one we own, the same AND that guards
-  // DefaultValue. But NOT the same predicate: DefaultValue accepts an Ident because
-  // genDefaultValue MOVES out of the branch it takes, zeroing the source. An `if` arm does
-  // not — `if c { a } else { b }` for locals a and b leaves both still owned by the
-  // enclosing scope, and dropping the result on top of that aborts with a double free
-  // (measured: exit 133). So an Ident arm makes this false, which leaves that shape
-  // leaking rather than crashing; fixing it needs the arm's source zeroed first.
-  private blockValueOwnsResult(bodies: HIRStmt[][], type: TypeKind): boolean {
-    if (!this.needsDropCg(type)) return false;
-    if (bodies.length === 0) return false;
-    for (const body of bodies) {
+  // It does when some arm yields an owned value: a temporary, a place the checker moved
+  // (isMove: genExpr zeroes it), or a match arm's own binding (the yield moves it). An
+  // arm that yields a place it does not consume (`if c { a } else { mk() }` read in place)
+  // then stores a clone (ForkSlot.cloneViews), so whichever arm ran, the consumer drops
+  // exactly one value it owns. For a resource type the checker moves such a place instead
+  // (moveMixedFork), since a structural clone would run its Drop twice. A string literal
+  // owns nothing, and a fork of only views and literals stays a view.
+  private blockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean {
+    if (!this.needsDropCg(expr.type)) return false;
+    const arms = expr.kind === "IfExpr"
+      ? [{ body: expr.thenBody, bound: new Set<string>() }, { body: expr.elseBody, bound: new Set<string>() }]
+      : expr.arms.map(a => ({ body: a.body, bound: this.matchArmLocals(a, !!expr.subjectIsRef) }));
+    let owned = false;
+    for (const { body, bound } of arms) {
       const tail = this.armTailExpr(body);
-      if (!tail) return false;
-      if (tail.kind !== "StringLit" && !this.isOwnedTempExpr(tail)) return false;
+      if (!tail) {
+        const last = body[body.length - 1];
+        if (last && (last.kind === "Return" || last.kind === "Break" || last.kind === "Continue")) continue;
+        // `if true { .. } else { .. }`: the dead arm is lowered empty
+        if (!last && expr.kind === "IfExpr" && expr.cond.kind === "BoolLit") continue;
+        return false;
+      }
+      if (tail.kind === "StringLit") continue;
+      if (!this.forkTailIsView(tail, tail.kind === "Ident" && bound.has(tail.name))) owned = true;
+      // A view of a type with a user Drop cannot be cloned structurally (the copy would
+      // run the Drop again); the checker consumes such a place where it can see the read
+      // (consumeMixedResourceFork). Anywhere it did not, stay a view: a leak, not a
+      // double drop.
+      else if (this.typeRunsUserDrop(tail.type)) return false;
     }
+    return owned;
+  }
+
+  // Whether destroying a value of `t` runs some user Drop impl.
+  private typeRunsUserDrop(t: TypeKind, seen: Set<string> = new Set()): boolean {
+    switch (t.tag) {
+      case "struct": {
+        if (this.dropImpls.has(t.name)) return true;
+        if (seen.has(t.name)) return false;
+        seen.add(t.name);
+        return (this.structLayouts.get(t.name)?.fields ?? []).some(f => this.typeRunsUserDrop(f.typeKind, seen));
+      }
+      case "enum": {
+        if (this.dropImpls.has(t.name)) return true;
+        if (seen.has(t.name)) return false;
+        seen.add(t.name);
+        const layout = this.enumLayouts.get(t.name);
+        if (!layout) return false;
+        return [...layout.variants.values()].some(v => v.fieldTypeKinds.some(f => this.typeRunsUserDrop(f, seen)));
+      }
+      case "vec": case "array": return this.typeRunsUserDrop(t.element, seen);
+      case "heap": return t.inner.tag === "interface" || this.typeRunsUserDrop(t.inner, seen);
+      case "hashmap": return this.typeRunsUserDrop(t.key, seen) || this.typeRunsUserDrop(t.value, seen);
+      case "interface": case "fn": return true;
+      default: return false;
+    }
+  }
+
+  // The names a match arm declares itself: its pattern's bindings (owned unless the
+  // subject is matched by reference) and its top-level `let`s.
+  private matchArmLocals(arm: { pattern: HIRPattern; body: HIRStmt[] }, subjectIsRef: boolean): Set<string> {
+    const out = new Set<string>();
+    if (arm.pattern.kind === "EnumPattern" && !subjectIsRef) for (const b of arm.pattern.bindings) out.add(b.name);
+    for (const st of arm.body) if (st.kind === "Let") out.add(st.name);
+    return out;
+  }
+
+  // An arm tail that reads a place without consuming it. `armLocal`: an Ident the arm
+  // declared, which the yield moves.
+  private forkTailIsView(tail: HIRExpr, armLocal: boolean): boolean {
+    if (tail.kind === "StringLit" || armLocal || !this.needsDropCg(tail.type)) return false;
+    if (this.isOwnedTempExpr(tail)) return false;
+    if ((tail.kind === "Ident" || tail.kind === "FieldAccess" || tail.kind === "IndexAccess" || tail.kind === "HeapDeref") && tail.isMove) return false;
     return true;
+  }
+
+  // A fresh copy of a value read out of a place (the place keeps its own).
+  private cloneViewValue(lines: string[], val: string, tk: TypeKind): string {
+    const lt = this.llvmType(tk);
+    const slot = `%__forkclone.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${slot} = alloca ${lt}`);
+    lines.push(`  store ${lt} ${val}, ptr ${slot}`);
+    const cloned = this.emitDeepCloneFromPtr(lines, slot, tk);
+    this.ownMakeVal(lines, cloned, "fork-clone");
+    return cloned;
   }
 
   // Whether a field chain bottoms out in an rvalue nobody owns (`mk().a.b`), as opposed to
@@ -14968,9 +15051,8 @@ export class Codegen {
       case "DefaultValue":
         return this.defaultValueOwnsResult(expr);
       case "IfExpr":
-        return this.blockValueOwnsResult([expr.thenBody, expr.elseBody], expr.type);
       case "MatchExpr":
-        return this.blockValueOwnsResult(expr.arms.map(a => a.body), expr.type);
+        return this.blockValueOwnsResult(expr);
       default:
         return false;
     }
