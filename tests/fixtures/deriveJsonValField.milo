@@ -1,0 +1,59 @@
+// A `JsonVal` field in a @derive(Json) struct encodes as its serialized text and decodes
+// to JRaw of the node's source text, so a builder's output is stored with no parse
+// round trip and decode then encode is byte-identical. A user enum that only borrows
+// the name JsonVal is not std's and stays an ordinary (payload-free) enum.
+// @expect: raw {"id":1,"v":{"a":[1,2.50]},"o":null,"xs":[]}
+// @expect: arr {"id":2,"v":[1,"x"],"o":7,"xs":[null,true]}
+// @expect: obj {"id":3,"v":{"k":"v\n"},"o":"s","xs":[{"z":1},[1]]}
+// @expect: str {"id":4,"v":"hi","o":null,"xs":[]}
+// @expect: null {"id":5,"v":null,"o":null,"xs":[]}
+// @expect: round trip {"id":6,"v":{"n":1e3,"a":[true,null,2.50]},"o":[1,{"d":0.10}],"xs":["a",{"b":[]},3]}
+// @expect: same true
+// @expect: missing null
+// @expect: user Mine {"k":"B"}
+from "std/json" import { Json, JsonVal, JsonMember }
+
+@derive(Json)
+struct Row {
+    id: i64,
+    v: JsonVal,
+    o: Option<JsonVal>,
+    xs: Vec<JsonVal>,
+}
+
+enum Fake { A, B }
+
+@derive(Json)
+struct Mine { k: Fake }
+
+fn row(id: i64, v: JsonVal, o: Option<JsonVal>, xs: Vec<JsonVal>): Row {
+    return Row { id: id, v: v, o: o, xs: xs }
+}
+
+pub fn main(): i32 {
+    let a = Json.arr()
+    let b = a.int(1).str("x").build()
+    print("raw " + row(1, JsonVal.JRaw("{\"a\":[1,2.50]}"), Option.None, Vec.new()).toJson())
+    var xs2: Vec<JsonVal> = Vec.new()
+    xs2.push(JsonVal.JNull)
+    xs2.push(JsonVal.JBool(true))
+    print("arr " + row(2, JsonVal.JRaw(b), Option.Some(JsonVal.JInt(7)), xs2).toJson())
+    var mem: Vec<JsonMember> = Vec.new()
+    mem.push(JsonMember { key: "k", val: JsonVal.JStr("v\n") })
+    var zs: Vec<JsonVal> = Vec.new()
+    zs.push(JsonVal.JRaw("{\"z\":1}"))
+    var inner: Vec<JsonVal> = Vec.new()
+    inner.push(JsonVal.JInt(1))
+    zs.push(JsonVal.JArr(inner))
+    print("obj " + row(3, JsonVal.JObj(mem), Option.Some(JsonVal.JStr("s")), zs).toJson())
+    print("str " + row(4, JsonVal.JStr("hi"), Option.None, Vec.new()).toJson())
+    print("null " + row(5, JsonVal.JNull, Option.None, Vec.new()).toJson())
+    let src = "{\"id\":6,\"v\":{\"n\":1e3,\"a\":[true,null,2.50]},\"o\":[1,{\"d\":0.10}],\"xs\":[\"a\",{\"b\":[]},3]}"
+    let back = Row.fromJson(src)!
+    print("round trip " + back.toJson())
+    print("same " + (back.toJson() == src).toString())
+    let miss = Row.fromJson("{\"id\":1,\"v\":null,\"xs\":[]}")!
+    print("missing " + miss.v.toJsonText())
+    print("user Mine " + Mine { k: Fake.B }.toJson())
+    return 0
+}

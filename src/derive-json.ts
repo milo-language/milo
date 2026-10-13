@@ -24,6 +24,10 @@ export type JsonPlan =
   | { k: "struct"; name: string }
   // A `Json` field: any JSON value, carried through verbatim (Go's json.RawMessage).
   | { k: "raw" }
+  // A `JsonVal` field (std/json's builder tree). Encodes as its serialized text, decodes
+  // to `JRaw(<source text of the node>)`: the value is carried verbatim, never rebuilt
+  // into JArr/JObj, so decode then encode is byte-identical.
+  | { k: "jsonval" }
   | { k: "unitEnum"; name: string; variants: string[] }
   | { k: "vec"; ty: string; elem: JsonPlan }
   // A FIXED array. `size` is the exact element count the wire must supply, and `zero` is
@@ -71,6 +75,7 @@ function emitSer(p: JsonPlan, val: string, g: Gen, d: number): string {
     case "float": return p.ty === "f32" ? `jsonF32Str(${val})` : `jsonFloatStr(${val})`;
     case "struct": return `${val}.toJson()`;
     case "raw": return `${val}.rawStr()`;
+    case "jsonval": return `${val}.toJsonText()`;
     case "unitEnum": {
       const s = g.tmp("s");
       g.push(d, `var ${s}: string = ""`);
@@ -201,6 +206,11 @@ function emitDe(p: JsonPlan, node: string, path: string, g: Gen, d: number): str
     case "raw": {
       const t = g.tmp("v");
       g.push(d, `let ${t} = doc.curJson(${node})`);
+      return t;
+    }
+    case "jsonval": {
+      const t = g.tmp("v");
+      g.push(d, `let ${t} = doc.curJsonVal(${node})`);
       return t;
     }
     case "struct": {

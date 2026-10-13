@@ -208,6 +208,15 @@ fn Json.curJson(self: &Json, cur: i64): Json
 The node at `cur` as a document of its own (null for a missing cursor): what a
 `Json` field of a @derive(Json) struct decodes to.
 
+#### `Json.curJsonVal`
+
+```milo
+fn Json.curJsonVal(self: &Json, cur: i64): JsonVal
+```
+
+The node at `cur` as `JsonVal.JRaw` of its source text (`null` for a missing
+cursor): what a `JsonVal` field of a @derive(Json) struct decodes to.
+
 #### `Json.curKeyAt`
 
 ```milo
@@ -1029,6 +1038,14 @@ Variants:
 - `JArr(Vec<JsonVal>)`
 - `JObj(Vec<JsonMember>)`
 - `JRaw(string)`: Pre-serialized JSON spliced verbatim — the caller guarantees validity. Lets builders compose with fragments produced elsewhere (other builders, pass-through payloads) without a parse/rebuild round trip.
+
+#### `JsonVal.toJsonText`
+
+```milo
+fn JsonVal.toJsonText(self: &JsonVal): string
+```
+
+Method form of jsonSer, so @derive(Json) output needs no free-function import.
 
 ### Functions
 

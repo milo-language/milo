@@ -674,6 +674,16 @@ impl Json {
         return jsonNodeRawStr(self, raw)
     }
 
+    // The node at `cur` as `JsonVal.JRaw` of its source text (`null` for a missing
+    // cursor): what a `JsonVal` field of a @derive(Json) struct decodes to.
+    fn curJsonVal(self: &Self, cur: i64): JsonVal {
+        let raw = self.curRaw(cur)
+        if raw.len() == 0 {
+            return JsonVal.JRaw("null")
+        }
+        return JsonVal.JRaw(raw)
+    }
+
     // The node at `cur` as a document of its own (null for a missing cursor): what a
     // `Json` field of a @derive(Json) struct decodes to.
     fn curJson(self: &Self, cur: i64): Json {
@@ -1937,6 +1947,13 @@ pub enum JsonVal {
 
 pub struct JsonMember {
     key: string, val: JsonVal
+}
+
+impl JsonVal {
+    // Method form of jsonSer, so @derive(Json) output needs no free-function import.
+    fn toJsonText(self: &Self): string {
+        return jsonSer(self)
+    }
 }
 
 pub fn jsonSer(v: &JsonVal): string {

@@ -14,6 +14,15 @@ import { Parser } from "./parser";
 // Generic enums whose Clone impl exists only when their payloads clone.
 export const CONDITIONAL_CLONE_BASES = new Set(["Option", "Result"]);
 
+const JSONVAL_VARIANTS = ["JNull", "JBool", "JInt", "JFloat", "JStr", "JArr", "JObj", "JRaw"];
+function isStdJsonVal(info: EnumInfo): boolean {
+  if (info.variants.size !== JSONVAL_VARIANTS.length) return false;
+  return JSONVAL_VARIANTS.every((n, i) => {
+    const v = info.variants.get(n);
+    return !!v && v.tag === i && v.fields.length === (n === "JNull" ? 0 : 1);
+  });
+}
+
 export interface DeriveHost {
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
@@ -340,6 +349,10 @@ export class DeriveSynth {
         }
         const info = this.host.enums.get(t.name);
         if (!info) return { err: `unknown enum '${t.name}'` };
+        // std/json's JsonVal: the `Json` struct check goes by name alone; the shape check
+        // is added so a user enum that merely borrows the name (payload-free, or other variants)
+        // still takes the ordinary unit-enum path and its errors.
+        if (t.name === "JsonVal" && isStdJsonVal(info)) return { k: "jsonval" };
         const variants: string[] = [];
         for (const [name, v] of info.variants) {
           if (v.fields.length > 0) {
