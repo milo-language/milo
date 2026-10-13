@@ -1071,6 +1071,11 @@ fn fdWrite(fd: i32, data: &string): void {
     let _sent = sendAll(fd, data)
 }
 
+// Close an accepted connection once its exchange is over.
+fn closeFd(fd: i32): void {
+    unsafe { sysClose(fd) }
+}
+
 // ── Public API ──
 
 // The IPv4 address `host` names: a dotted quad, or "localhost" for 127.0.0.1.
@@ -1159,7 +1164,7 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
             continue
         }
         serveHandlerExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), handler)
-        unsafe { sysClose(clientFd) }
+        closeFd(clientFd)
     }
     return Result.Err("server exited")
 }
@@ -1563,7 +1568,7 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
             continue
         }
         serveRouterExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router)
-        unsafe { sysClose(clientFd) }
+        closeFd(clientFd)
     }
     return Result.Err("server exited")
 }
@@ -2250,7 +2255,7 @@ fn handleConn(clientFd: i32, router: &Router): void {
         }
         return renderResponse(handled.response, handled.headers)
     })
-    unsafe { sysClose(clientFd) }
+    closeFd(clientFd)
 }
 
 // One connection task: take the next accepted fd and serve it. The fd comes over a
