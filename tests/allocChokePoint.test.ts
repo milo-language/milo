@@ -7,10 +7,17 @@
 // past the allocation — from safe code. A rule written out per site is a rule the next site
 // forgets, so the gate is on the shape rather than on anyone remembering.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC = join(import.meta.dir, "..", "src", "codegen.ts");
+const SRC_DIR = join(import.meta.dir, "..", "src");
+const SRC = join(SRC_DIR, "codegen.ts");
+// codegen.ts is split into codegen-*.ts siblings (codegen-vec, codegen-map); a malloc moved
+// into one of them must not escape the scan just by changing files.
+const CODEGEN_FILES = readdirSync(SRC_DIR).filter(f => /^codegen(-[\w-]+)?\.ts$/.test(f)).map(f => join(SRC_DIR, f));
+// Matched without a visibility modifier: emitAllocBytes is public so the codegen-*.ts ctx
+// interfaces can reach it, and a test keyed on `private` went red on that alone.
+const isHelperDecl = (l: string) => /^\s+(?:private |public )?emitAllocBytes\(/.test(l);
 
 // The one hand-written IR template that allocates without the helper. It lives inside a
 // `define` emitted as a string array, so there is no `lines` array to hand the helper.
@@ -24,27 +31,32 @@ describe("allocation choke point", () => {
   const lines = src.split("\n");
 
   test("no multiply feeds a malloc outside emitAllocBytes", () => {
-    const helperStart = lines.findIndex(l => l.includes("private emitAllocBytes"));
-    expect(helperStart).toBeGreaterThan(-1);
-    const helperEnd = helperStart + 60;
+    expect(lines.findIndex(isHelperDecl)).toBeGreaterThan(-1);
+    expect(CODEGEN_FILES.length).toBeGreaterThan(2);
 
     const offenders: string[] = [];
-    lines.forEach((line, i) => {
-      if (!line.includes("call ptr @malloc")) return;
-      if (i >= helperStart && i <= helperEnd) return;
-      if (ALLOWED_RAW_IR.some(a => line.includes(a))) return;
-      // A multiply within the preceding window is what produced a byte count.
-      const window = lines.slice(Math.max(0, i - 10), i).join("\n");
-      if (/= mul i64/.test(window)) {
-        offenders.push(`${SRC}:${i + 1}: ${line.trim()}`);
-      }
-    });
+    for (const file of CODEGEN_FILES) {
+      const fl = readFileSync(file, "utf8").split("\n");
+      const helperStart = fl.findIndex(isHelperDecl);
+      const helperEnd = helperStart < 0 ? -1 : helperStart + 60;
+      fl.forEach((line, i) => {
+        if (!line.includes("call ptr @malloc")) return;
+        if (i >= helperStart && i <= helperEnd) return;
+        if (ALLOWED_RAW_IR.some(a => line.includes(a))) return;
+        // A multiply within the preceding window is what produced a byte count.
+        const window = fl.slice(Math.max(0, i - 10), i).join("\n");
+        if (/= mul i64/.test(window)) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
 
     expect(offenders).toEqual([]);
   });
 
   test("emitAllocBytes checks the multiply and the allocation", () => {
-    const helperStart = lines.findIndex(l => l.includes("private emitAllocBytes"));
+    const helperStart = lines.findIndex(isHelperDecl);
+    expect(helperStart).toBeGreaterThan(-1);
     const body = lines.slice(helperStart, helperStart + 60).join("\n");
     // Both halves must survive; a refactor that drops either one re-opens the hole this
     // file exists to keep closed.

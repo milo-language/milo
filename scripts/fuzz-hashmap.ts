@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Differential falsifier for the built-in HASHMAP — the open-addressing table codegen.ts
+// Differential falsifier for the built-in HASHMAP — the open-addressing table codegen-map.ts
 // emits, not a .milo file.
 //
 // HashMap is the only container whose bookkeeping lives entirely in generated LLVM IR:

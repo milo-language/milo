@@ -7,6 +7,11 @@ import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
+import {
+  genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
+  genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
+  HM_DATA, HM_CAP, HM_TOMBS, HASHMAP_FIELDS, HASH_SEED_FN,
+} from "./codegen-map";
 import { cSigParams, headerLabel } from "./csig";
 import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
 import { resolve, dirname, basename, relative, isAbsolute } from "path";
@@ -74,14 +79,14 @@ interface ExternAbiInfo {
   ret: RetClass;
 }
 
-interface StructLayout {
+export interface StructLayout {
   name: string;
   fields: { name: string; type: string; typeKind: TypeKind }[];
 }
 
-interface EnumVariant { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }
+export interface EnumVariant { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }
 
-interface EnumLayout {
+export interface EnumLayout {
   name: string;
   // Each variant is laid out like the C struct `{ i32 tag; <its fields> }`, so its first
   // field sits right after the tag at that field's own alignment, not after padding some
@@ -149,7 +154,7 @@ interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; 
 // than invalid. Making them distinct branded types is the real fix and costs ~390 call-site
 // changes here; this alias is the one place that change would need to land, and Milo's
 // newtypes make it free on the other side of the port. See docs/backlog.md.
-type Gen = [lines: string[], value: string, type: string];
+export type Gen = [lines: string[], value: string, type: string];
 
 // What a byte copy (emitMemcpy, valStore) does to ownership, for the ledger. `move`: the
 // source gives the bytes up (its ID ends or its slot is zeroed) and the destination owns
@@ -161,23 +166,6 @@ interface CopyDecl { intent: CopyIntent; type: TypeKind }
 // Attribute-group number for the `--sanitize` marker. Emitted IR carries no other
 // attribute groups, so 0 is always free.
 const SANITIZE_ATTRS = 0;
-
-// %HashMap field indices. The struct is { data, len, cap, seed }, and these offsets
-// appeared as bare `i32 0, i32 N` at 22 sites in this file — the only clue to which field
-// an N meant was the local variable name at the use site, so adding a field meant finding
-// and re-reading every one of them.
-const HM_DATA = 0;
-const HM_LEN = 1;
-const HM_CAP = 2;
-const HM_SEED = 3;
-// Deleted slots, counted so the resize trigger can see them. Without it a table can reach
-// a state where every slot is occupied-or-tombstone, and a probe that stops only at an
-// EMPTY slot would never terminate.
-const HM_TOMBS = 4;
-// Field count of %HashMap, and the single source for its size. Every field is 8 bytes
-// (one ptr + four i64), so the size is just the count — but the COUNT has to come from
-// one place or the two drift, which is exactly what happened.
-const HASHMAP_FIELDS = 5;
 
 // An if/match expression's result slot. `cloneViews`: the fork's value is owned
 // (blockValueOwnsResult) but some arm yields a view of a place it does not consume, so
@@ -199,13 +187,13 @@ export class Codegen {
   private currentFnSret = false;
   // extern fns that pass/return a struct by value need native-ABI lowering (byval/sret/coerce)
   private externAbi = new Map<string, ExternAbiInfo>();
-  private structLayouts = new Map<string, StructLayout>();
+  public structLayouts = new Map<string, StructLayout>();
   private cLayoutStructs: HIRStruct[] = [];
   // `extern type` names: a pointer to one is a C handle whose pointee Milo never sizes.
   private opaqueTypes = new Set<string>();
   private cSigs: { fnName: string; header: string; sig: string; retType: TypeKind; params?: { type: TypeKind }[] }[] = [];
   private cValues: { global: string; cName: string; header: string; value: string; signed: boolean }[] = [];
-  private enumLayouts = new Map<string, EnumLayout>();
+  public enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
   private needsGlobalInit = false;
@@ -236,8 +224,8 @@ export class Codegen {
   private needsStderrSym = false;
   private needsSetvbuf = false;
   private needsExit = false;
-  private needsMalloc = false;
-  private needsFree = false;
+  public needsMalloc = false;
+  public needsFree = false;
   private needsRealloc = false;
   private emittedBufAppend = false;
   private emittedIntFmt = false;
@@ -245,10 +233,10 @@ export class Codegen {
   public needsMemcpy = false;
   private needsStrlen = false;
   public needsMemcmp = false;
-  private hasStringType = false;
+  public hasStringType = false;
   public hasVecType = false;
-  private hasHashMapType = false;
-  private needsGetentropy = false;
+  public hasHashMapType = false;
+  public needsGetentropy = false;
   private needsStrtod = false;
   private loopHeader: string | null = null;
   private loopExit: string | null = null;
@@ -548,7 +536,6 @@ export class Codegen {
   // start, because std/replay removes both variables from the environment once it
   // has read them (so child processes do not write into the parent's trace).
   private static readonly RR_HASH_INIT_FN = "__milo_rr_hash_init";
-  private static readonly HASH_SEED_FN = "__milo_hash_seed";
   private static readonly RR_HASH_SEED_GLOBAL = "__milo_rr_hseed";
   private needsRrHashInit = false;
 
@@ -592,7 +579,7 @@ export class Codegen {
   private hashSeedFn(): string[] {
     const lines: string[] = [];
     lines.push(`@${Codegen.RR_HASH_SEED_GLOBAL} = internal global i64 0`);
-    lines.push(`define internal i64 @${Codegen.HASH_SEED_FN}() {`);
+    lines.push(`define internal i64 @${HASH_SEED_FN}() {`);
     lines.push("entry.bb:");
     lines.push("  %buf = alloca i64");
     lines.push(`  %det = load i64, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
@@ -1175,7 +1162,7 @@ export class Codegen {
 
   // Set the variant of the enum at `addr`. On a niche enum the payload variant has no
   // tag to write (its payload store is the whole value), so only the fieldless one writes.
-  private storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string) {
+  public storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string) {
     const niche = this.nicheOfEnumTy(enumTy);
     if (!niche) {
       const tagPtr = this.nextTemp();
@@ -1232,7 +1219,7 @@ export class Codegen {
   }
 
   // Address of `variant`'s first payload field (a niche enum's payload is the enum).
-  private enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string {
+  public enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string {
     return this.enumFieldPtr(lines, enumTy, addr, variant, 0);
   }
 
@@ -1669,7 +1656,7 @@ export class Codegen {
     return escapes;
   }
 
-  private needsDropCg(t: TypeKind): boolean {
+  public needsDropCg(t: TypeKind): boolean {
     // An owning closure holds a heap environment. It is droppable exactly because it is
     // not Copy (src/types.ts isCopy): single ownership is what makes running a destructor
     // on it sound, and until that landed, attaching one produced a use-after-free.
@@ -4047,7 +4034,7 @@ export class Codegen {
   // Rust/C++ take unsigned size params + an allocator capacity-overflow guard; this is
   // the runtime half of that guard for `Vec.filled` / `Vec.withCapacity` /
   // `String.withCapacity`, whose counts are i64 and can be negative.
-  private emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }) {
+  public emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }) {
     this.needsPrintf = true;
     this.needsExit = true;
     const neg = this.nextTemp();
@@ -6958,29 +6945,29 @@ export class Codegen {
         this.ownKeyExtractor = this.ownOn;
         try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.ownKeyExtractor = false; }
       case "HashMapNew":
-        return this.genHashMapNew(expr, lines);
+        return genHashMapNew(this, expr, lines);
       case "HashMapInsert":
-        return this.genHashMapInsert(expr, lines);
+        return genHashMapInsert(this, expr, lines);
       case "HashMapGet":
-        return this.genHashMapGet(expr, lines);
+        return genHashMapGet(this, expr, lines);
       case "HashMapGetOrDefault":
-        return this.genHashMapGetOrDefault(expr, lines);
+        return genHashMapGetOrDefault(this, expr, lines);
       case "HashMapContains":
-        return this.genHashMapContains(expr, lines);
+        return genHashMapContains(this, expr, lines);
       case "HashMapModify":
-        return this.genHashMapModify(expr, lines);
+        return genHashMapModify(this, expr, lines);
       case "HashMapGetOrInsertWith":
-        return this.genHashMapGetOrInsertWith(expr, lines);
+        return genHashMapGetOrInsertWith(this, expr, lines);
       case "HashMapRemove":
-        return this.genHashMapRemove(expr, lines);
+        return genHashMapRemove(this, expr, lines);
       case "HashMapWithCapacity":
-        return this.genHashMapWithCapacity(expr, lines);
+        return genHashMapWithCapacity(this, expr, lines);
       case "HashMapClone":
-        return this.genHashMapClone(expr, lines);
+        return genHashMapClone(this, expr, lines);
       case "HashMapClear":
-        return this.genHashMapClear(expr, lines);
+        return genHashMapClear(this, expr, lines);
       case "HashMapEntries":
-        return this.genHashMapEntries(expr, lines);
+        return genHashMapEntries(this, expr, lines);
       case "HashMapLen": {
         this.hasHashMapType = true;
         const [ol, ov] = this.genExpr(expr.object);
@@ -10788,7 +10775,7 @@ export class Codegen {
     return ptr;
   }
 
-  private emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string } {
+  public emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string } {
     this.needsMalloc = true;
     const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
     const buf = this.nextTemp();
@@ -12075,1423 +12062,13 @@ export class Codegen {
     return [lines, ptr, elemTy];
   }
 
-  // ── HashMap codegen ──
+  // ── HashMap codegen (the lowering itself lives in codegen-map.ts) ──
 
-  private hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string {
+  public hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string {
     return `{ i8, ${this.llvmType(keyType)}, ${this.llvmType(valueType)} }`;
   }
 
-  private emitFnvHash(lines: string[], keyVal: string, keyType: TypeKind, seedReg: string): string {
-    // FNV-1a: hash = offset_basis ^ seed; then fold the key's bytes in.
-    const offsetBasis = "14695981039346656037";
-    const h0 = this.nextTemp();
-    lines.push(`  ${h0} = xor i64 ${offsetBasis}, ${seedReg}`);
-    return this.emitHashInto(lines, h0, keyVal, keyType);
-  }
-
-  // Fold `val`'s bytes into the running FNV-1a accumulator `acc`, returning the new
-  // accumulator. Structs recurse field-by-field over the *same* recursion that derives
-  // equality — so `a == b ⟹ hash(a) == hash(b)` holds by construction (the eq–hash
-  // coherence law). Hash values are NOT stable across compiler versions or runs (the
-  // table seed varies): never persist them or put them on the wire.
-  private emitHashInto(lines: string[], acc: string, val: string, type: TypeKind): string {
-    const prime = "1099511628211";
-
-    if (type.tag === "bool") {
-      const byte = this.nextTemp();
-      lines.push(`  ${byte} = zext i1 ${val} to i64`);
-      const x = this.nextTemp();
-      lines.push(`  ${x} = xor i64 ${acc}, ${byte}`);
-      const result = this.nextTemp();
-      lines.push(`  ${result} = mul i64 ${x}, ${prime}`);
-      return result;
-    }
-
-    if (type.tag === "int") {
-      let val64: string;
-      if (type.bits === 64) {
-        val64 = val;
-      } else {
-        val64 = this.nextTemp();
-        if (type.signed) {
-          lines.push(`  ${val64} = sext i${type.bits} ${val} to i64`);
-        } else {
-          lines.push(`  ${val64} = zext i${type.bits} ${val} to i64`);
-        }
-      }
-      // unrolled 8-byte FNV-1a
-      let hash = acc;
-      for (let i = 0; i < 8; i++) {
-        const shifted = this.nextTemp();
-        lines.push(`  ${shifted} = lshr i64 ${val64}, ${i * 8}`);
-        const byte = this.nextTemp();
-        lines.push(`  ${byte} = and i64 ${shifted}, 255`);
-        const xored = this.nextTemp();
-        lines.push(`  ${xored} = xor i64 ${hash}, ${byte}`);
-        hash = this.nextTemp();
-        lines.push(`  ${hash} = mul i64 ${xored}, ${prime}`);
-      }
-      return hash;
-    }
-
-    if (type.tag === "string") {
-      this.hasStringType = true;
-      const strData = this.nextTemp();
-      lines.push(`  ${strData} = extractvalue %String ${val}, 0`);
-      const strLen = this.nextTemp();
-      lines.push(`  ${strLen} = extractvalue %String ${val}, 1`);
-      const iAddr = this.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      const hAddr = this.nextTemp();
-      lines.push(`  ${hAddr} = alloca i64`);
-      lines.push(`  store i64 ${acc}, ptr ${hAddr}`);
-      const condLabel = this.nextLabel("fnv.cond");
-      const bodyLabel = this.nextLabel("fnv.body");
-      const endLabel = this.nextLabel("fnv.end");
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const iVal = this.nextTemp();
-      lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-      const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${strLen}`);
-      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-      lines.push(`${bodyLabel}:`);
-      const bytePtr = this.nextTemp();
-      lines.push(`  ${bytePtr} = getelementptr i8, ptr ${strData}, i64 ${iVal}`);
-      const byte = this.nextTemp();
-      lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
-      const byte64 = this.nextTemp();
-      lines.push(`  ${byte64} = zext i8 ${byte} to i64`);
-      const curH = this.nextTemp();
-      lines.push(`  ${curH} = load i64, ptr ${hAddr}`);
-      const xored = this.nextTemp();
-      lines.push(`  ${xored} = xor i64 ${curH}, ${byte64}`);
-      const newH = this.nextTemp();
-      lines.push(`  ${newH} = mul i64 ${xored}, ${prime}`);
-      lines.push(`  store i64 ${newH}, ptr ${hAddr}`);
-      const nextI = this.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${endLabel}:`);
-      const result = this.nextTemp();
-      lines.push(`  ${result} = load i64, ptr ${hAddr}`);
-      return result;
-    }
-
-    if (type.tag === "struct") {
-      const layout = this.structLayouts.get(type.name);
-      if (!layout) throw new Error(`hash: unknown struct layout '${type.name}'`);
-      const structTy = this.llvmType(type);
-      let hash = acc;
-      for (let i = 0; i < layout.fields.length; i++) {
-        const fieldVal = this.nextTemp();
-        lines.push(`  ${fieldVal} = extractvalue ${structTy} ${val}, ${i}`);
-        hash = this.emitHashInto(lines, hash, fieldVal, layout.fields[i].typeKind);
-      }
-      return hash;
-    }
-
-    throw new Error(`unhashable key type: ${type.tag}`);
-  }
-
-  private emitKeyCompare(lines: string[], k1: string, k2: string, keyType: TypeKind): string {
-    if (keyType.tag === "int" || keyType.tag === "bool") {
-      const result = this.nextTemp();
-      lines.push(`  ${result} = icmp eq ${this.llvmType(keyType)} ${k1}, ${k2}`);
-      return result;
-    }
-    if (keyType.tag === "string") {
-      this.needsMemcmp = true;
-      const aLen = this.nextTemp();
-      lines.push(`  ${aLen} = extractvalue %String ${k1}, 1`);
-      const bLen = this.nextTemp();
-      lines.push(`  ${bLen} = extractvalue %String ${k2}, 1`);
-      const lenEq = this.nextTemp();
-      lines.push(`  ${lenEq} = icmp eq i64 ${aLen}, ${bLen}`);
-      const cmpDataLabel = this.nextLabel("keycmp.data");
-      const cmpFalseLabel = this.nextLabel("keycmp.ne");
-      const cmpDoneLabel = this.nextLabel("keycmp.done");
-      lines.push(`  br i1 ${lenEq}, label %${cmpDataLabel}, label %${cmpFalseLabel}`);
-      lines.push(`${cmpDataLabel}:`);
-      const aData = this.nextTemp();
-      lines.push(`  ${aData} = extractvalue %String ${k1}, 0`);
-      const bData = this.nextTemp();
-      lines.push(`  ${bData} = extractvalue %String ${k2}, 0`);
-      const cmpResult = this.nextTemp();
-      lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${aLen})`);
-      const dataEq = this.nextTemp();
-      lines.push(`  ${dataEq} = icmp eq i32 ${cmpResult}, 0`);
-      lines.push(`  br label %${cmpDoneLabel}`);
-      lines.push(`${cmpFalseLabel}:`);
-      lines.push(`  br label %${cmpDoneLabel}`);
-      lines.push(`${cmpDoneLabel}:`);
-      const result = this.nextTemp();
-      lines.push(`  ${result} = phi i1 [${dataEq}, %${cmpDataLabel}], [false, %${cmpFalseLabel}]`);
-      return result;
-    }
-    if (keyType.tag === "struct") {
-      // Structural equality — the same field recursion that hashing folds over, so the
-      // eq–hash coherence law holds by construction.
-      const layout = this.structLayouts.get(keyType.name);
-      if (!layout) throw new Error(`compare: unknown struct layout '${keyType.name}'`);
-      const structTy = this.llvmType(keyType);
-      let acc: string | null = null;
-      for (let i = 0; i < layout.fields.length; i++) {
-        const f1 = this.nextTemp();
-        lines.push(`  ${f1} = extractvalue ${structTy} ${k1}, ${i}`);
-        const f2 = this.nextTemp();
-        lines.push(`  ${f2} = extractvalue ${structTy} ${k2}, ${i}`);
-        const fieldEq = this.emitKeyCompare(lines, f1, f2, layout.fields[i].typeKind);
-        if (acc === null) {
-          acc = fieldEq;
-        } else {
-          const a = this.nextTemp();
-          lines.push(`  ${a} = and i1 ${acc}, ${fieldEq}`);
-          acc = a;
-        }
-      }
-      return acc ?? "true"; // a fieldless struct compares equal vacuously
-    }
-    throw new Error(`uncomparable key type: ${keyType.tag}`);
-  }
-
-  // The address of a map for a keyed operation.
-  //
-  // genLValue answers the literal "null" for anything that is not a place, so a lookup on
-  // a TEMPORARY receiver — `makeMap().contains(k)`, `parseHeaders(s).get(k)` — GEP'd from
-  // null, read a capacity out of low memory, and then probed. The probe only stops at an
-  // empty slot, so with a garbage capacity it never stopped: a HANG out of ordinary safe
-  // code, not a wrong answer. Every keyed op had it, at every revision.
-  //
-  // A temporary has no address until we give it one. Materialize it into a slot and tell
-  // the caller to drop that slot when the lookup is done — it is an owned value nobody
-  // else will ever free.
-  private mapReceiverPtr(lines: string[], mapExpr: HIRExpr): { ptr: string; tempSlot: string | null } {
-    const [ptrLines, ptr] = this.genLValue(mapExpr);
-    lines.push(...ptrLines);
-    if (ptr !== "null") return { ptr, tempSlot: null };
-    const [exprLines, exprVal, exprTy] = this.genExpr(mapExpr);
-    lines.push(...exprLines);
-    const slot = this.nextTemp();
-    lines.push(`  ${slot} = alloca ${exprTy}`);
-    lines.push(`  store ${exprTy} ${exprVal}, ptr ${slot}`);
-    this.ownValToSlot(exprVal, slot);
-    return { ptr: slot, tempSlot: slot };
-  }
-
-  private genHashMapNew(expr: HIRExpr & { kind: "HashMapNew" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    this.needsMalloc = true;
-    const entryTy = this.hashMapEntryType(expr.keyType, expr.valueType);
-    // allocate initial 8 entries, zeroed
-    const entrySize = this.nextTemp();
-    lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-    const entrySizeI = this.nextTemp();
-    lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-    const { buf: dataPtr, bytes: totalSize } = this.emitAllocBytes(lines, entrySizeI, 8, "hmnew", expr.span);
-    // zero the memory
-    this.needsMemset = true;
-    lines.push(`  call ptr @memset(ptr ${dataPtr}, i32 0, i64 ${totalSize})`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %HashMap undef, ptr ${dataPtr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %HashMap ${s0}, i64 0, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %HashMap ${s1}, i64 8, 2`);
-    // seed = 0 (lazy init on first insert)
-    const s3 = this.nextTemp();
-    lines.push(`  ${s3} = insertvalue %HashMap ${s2}, i64 0, 3`);
-    const s4 = this.nextTemp();
-    lines.push(`  ${s4} = insertvalue %HashMap ${s3}, i64 0, ${HM_TOMBS}`);
-    return [lines, s4, "%HashMap"];
-  }
-
-  private genHashMapInsert(expr: HIRExpr & { kind: "HashMapInsert" }, lines: string[]): Gen {
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapInsert on non-hashmap");
-    // get pointer to map
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
-
-    // eval key and value
-    const [keyLines, keyVal] = this.genExpr(expr.key);
-    lines.push(...keyLines);
-    const [valLines, valVal] = this.genExpr(expr.value);
-    lines.push(...valLines);
-    this.emitHashMapInsertValues(lines, mapPtr, mapType, keyVal, valVal, expr.span);
-    this.ownEndVal(lines, keyVal, "STORE"); this.ownEndVal(lines, valVal, "STORE");
-    // Inserting into a temporary is pointless but legal, and the temporary still leaks
-    // without this.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, mapType);
-    return [lines, "0", "void"];
-  }
-
-  // The insert proper, on an already-evaluated key and value: seed, grow, probe, store.
-  // `getOrInsertWith` reaches it with a value its init closure produced after its own
-  // probe missed; the key was evaluated once, up front, for both probes.
-  private emitHashMapInsertValues(lines: string[], mapPtr: string, mapType: TypeKind & { tag: "hashmap" }, keyVal: string, valVal: string, span?: Span): void {
-    this.hasHashMapType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsGetentropy = true;
-
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const valTy = this.llvmType(valueType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
-    // lazy seed init
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const seedIsZero = this.nextTemp();
-    lines.push(`  ${seedIsZero} = icmp eq i64 ${seed}, 0`);
-    const initLabel = this.nextLabel("seed.init");
-    const haveLabel = this.nextLabel("seed.have");
-    const preLabel = this.nextLabel("seed.pre");
-    lines.push(`  br label %${preLabel}`);
-    lines.push(`${preLabel}:`);
-    lines.push(`  br i1 ${seedIsZero}, label %${initLabel}, label %${haveLabel}`);
-    lines.push(`${initLabel}:`);
-    const newSeed = this.nextTemp();
-    lines.push(`  ${newSeed} = call i64 @${Codegen.HASH_SEED_FN}()`);
-    const isStillZero = this.nextTemp();
-    lines.push(`  ${isStillZero} = icmp eq i64 ${newSeed}, 0`);
-    const finalSeed = this.nextTemp();
-    lines.push(`  ${finalSeed} = select i1 ${isStillZero}, i64 14695981039346656037, i64 ${newSeed}`);
-    lines.push(`  store i64 ${finalSeed}, ptr ${seedPtr}`);
-    lines.push(`  br label %${haveLabel}`);
-    lines.push(`${haveLabel}:`);
-    const activeSeed = this.nextTemp();
-    lines.push(`  ${activeSeed} = phi i64 [${seed}, %${preLabel}], [${finalSeed}, %${initLabel}]`);
-
-    // load cap and len
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_LEN}`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-
-    // resize check: (len + tombstones + 1) * 4 >= cap * 3
-    //
-    // Tombstones are counted, not just live entries. A probe below stops only at an EMPTY
-    // slot, so the table must always have one; a load factor computed from `len` alone
-    // lets insert/remove churn tombstone every slot while len stays near zero, and then
-    // no probe terminates. Rehashing drops tombstones, which is what makes this the fix
-    // for both that and the duplicate-key bug.
-    const tombsPtr = this.nextTemp();
-    lines.push(`  ${tombsPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_TOMBS}`);
-    const tombs = this.nextTemp();
-    lines.push(`  ${tombs} = load i64, ptr ${tombsPtr}`);
-    const lenPlusTombs = this.nextTemp();
-    lines.push(`  ${lenPlusTombs} = add i64 ${len}, ${tombs}`);
-    const lenPlus1 = this.nextTemp();
-    lines.push(`  ${lenPlus1} = add i64 ${lenPlusTombs}, 1`);
-    const lhs = this.nextTemp();
-    lines.push(`  ${lhs} = mul i64 ${lenPlus1}, 4`);
-    const rhs = this.nextTemp();
-    lines.push(`  ${rhs} = mul i64 ${cap}, 3`);
-    const needResize = this.nextTemp();
-    lines.push(`  ${needResize} = icmp uge i64 ${lhs}, ${rhs}`);
-    const resizeLabel = this.nextLabel("hm.resize");
-    const insertLabel = this.nextLabel("hm.insert");
-    lines.push(`  br i1 ${needResize}, label %${resizeLabel}, label %${insertLabel}`);
-
-    // resize block
-    lines.push(`${resizeLabel}:`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = shl i64 ${cap}, 1`); // cap * 2
-    const entrySize = this.nextTemp();
-    lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-    const entrySizeI = this.nextTemp();
-    lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-    const { buf: newData, bytes: newTotalSize } = this.emitAllocBytes(lines, entrySizeI, newCap, "hmresize", span);
-    this.needsMemset = true;
-    lines.push(`  call ptr @memset(ptr ${newData}, i32 0, i64 ${newTotalSize})`);
-    // rehash all occupied entries from old data
-    const oldData = this.nextTemp();
-    lines.push(`  ${oldData} = load ptr, ptr ${dataFieldPtr}`);
-    const rehashCond = this.nextLabel("rehash.cond");
-    const rehashBody = this.nextLabel("rehash.body");
-    const rehashEnd = this.nextLabel("rehash.end");
-    const riAddr = this.nextTemp();
-    lines.push(`  ${riAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${riAddr}`);
-    lines.push(`  br label %${rehashCond}`);
-    lines.push(`${rehashCond}:`);
-    const ri = this.nextTemp();
-    lines.push(`  ${ri} = load i64, ptr ${riAddr}`);
-    const riCmp = this.nextTemp();
-    lines.push(`  ${riCmp} = icmp ult i64 ${ri}, ${cap}`);
-    lines.push(`  br i1 ${riCmp}, label %${rehashBody}, label %${rehashEnd}`);
-    lines.push(`${rehashBody}:`);
-    const oldEntryPtr = this.nextTemp();
-    lines.push(`  ${oldEntryPtr} = getelementptr ${entryTy}, ptr ${oldData}, i64 ${ri}`);
-    const oldState = this.nextTemp();
-    lines.push(`  ${oldState} = load i8, ptr ${oldEntryPtr}`);
-    const isOccupied = this.nextTemp();
-    lines.push(`  ${isOccupied} = icmp eq i8 ${oldState}, 1`);
-    const rehashInsert = this.nextLabel("rehash.ins");
-    const rehashNext = this.nextLabel("rehash.next");
-    lines.push(`  br i1 ${isOccupied}, label %${rehashInsert}, label %${rehashNext}`);
-    lines.push(`${rehashInsert}:`);
-    // load key from old entry
-    const oldKeyPtr = this.nextTemp();
-    lines.push(`  ${oldKeyPtr} = getelementptr ${entryTy}, ptr ${oldEntryPtr}, i32 0, i32 1`);
-    const oldKey = this.nextTemp();
-    lines.push(`  ${oldKey} = load ${keyTy}, ptr ${oldKeyPtr}`);
-    // load value from old entry
-    const oldValPtr = this.nextTemp();
-    lines.push(`  ${oldValPtr} = getelementptr ${entryTy}, ptr ${oldEntryPtr}, i32 0, i32 2`);
-    const oldVal = this.nextTemp();
-    lines.push(`  ${oldVal} = load ${valTy}, ptr ${oldValPtr}`);
-    // hash key with new mask
-    const rehashHash = this.emitFnvHash(lines, oldKey, keyType, activeSeed);
-    const newMask = this.nextTemp();
-    lines.push(`  ${newMask} = sub i64 ${newCap}, 1`);
-    // probe in new array
-    const rjAddr = this.nextTemp();
-    lines.push(`  ${rjAddr} = alloca i64`);
-    const rehashSlot0 = this.nextTemp();
-    lines.push(`  ${rehashSlot0} = and i64 ${rehashHash}, ${newMask}`);
-    lines.push(`  store i64 ${rehashSlot0}, ptr ${rjAddr}`);
-    const rehashProbeCond = this.nextLabel("rehash.probe");
-    lines.push(`  br label %${rehashProbeCond}`);
-    lines.push(`${rehashProbeCond}:`);
-    const rj = this.nextTemp();
-    lines.push(`  ${rj} = load i64, ptr ${rjAddr}`);
-    const newEntryPtr = this.nextTemp();
-    lines.push(`  ${newEntryPtr} = getelementptr ${entryTy}, ptr ${newData}, i64 ${rj}`);
-    const newState = this.nextTemp();
-    lines.push(`  ${newState} = load i8, ptr ${newEntryPtr}`);
-    const newEmpty = this.nextTemp();
-    lines.push(`  ${newEmpty} = icmp eq i8 ${newState}, 0`);
-    const rehashStore = this.nextLabel("rehash.store");
-    const rehashProbeNext = this.nextLabel("rehash.pnext");
-    lines.push(`  br i1 ${newEmpty}, label %${rehashStore}, label %${rehashProbeNext}`);
-    lines.push(`${rehashStore}:`);
-    lines.push(`  store i8 1, ptr ${newEntryPtr}`);
-    const newKeyPtr = this.nextTemp();
-    lines.push(`  ${newKeyPtr} = getelementptr ${entryTy}, ptr ${newEntryPtr}, i32 0, i32 1`);
-    lines.push(`  store ${keyTy} ${oldKey}, ptr ${newKeyPtr}`);
-    const newValPtr = this.nextTemp();
-    lines.push(`  ${newValPtr} = getelementptr ${entryTy}, ptr ${newEntryPtr}, i32 0, i32 2`);
-    lines.push(`  store ${valTy} ${oldVal}, ptr ${newValPtr}`);
-    lines.push(`  br label %${rehashNext}`);
-    lines.push(`${rehashProbeNext}:`);
-    const rjNext = this.nextTemp();
-    lines.push(`  ${rjNext} = add i64 ${rj}, 1`);
-    const rjWrapped = this.nextTemp();
-    lines.push(`  ${rjWrapped} = and i64 ${rjNext}, ${newMask}`);
-    lines.push(`  store i64 ${rjWrapped}, ptr ${rjAddr}`);
-    lines.push(`  br label %${rehashProbeCond}`);
-    lines.push(`${rehashNext}:`);
-    const riNext = this.nextTemp();
-    lines.push(`  ${riNext} = add i64 ${ri}, 1`);
-    lines.push(`  store i64 ${riNext}, ptr ${riAddr}`);
-    lines.push(`  br label %${rehashCond}`);
-    lines.push(`${rehashEnd}:`);
-    // free old data, update map fields
-    lines.push(`  call void @free(ptr ${oldData})`);
-    lines.push(`  store ptr ${newData}, ptr ${dataFieldPtr}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    // The rehash loop above relocates occupied slots only, so the new table has none.
-    lines.push(`  store i64 0, ptr ${tombsPtr}`);
-    lines.push(`  br label %${insertLabel}`);
-
-    // insert block — probe for slot
-    lines.push(`${insertLabel}:`);
-    const curCap = this.nextTemp();
-    lines.push(`  ${curCap} = load i64, ptr ${capPtr}`);
-    const curData = this.nextTemp();
-    lines.push(`  ${curData} = load ptr, ptr ${dataFieldPtr}`);
-    const curSeed = this.nextTemp();
-    lines.push(`  ${curSeed} = load i64, ptr ${seedPtr}`);
-    const hash = this.emitFnvHash(lines, keyVal, keyType, curSeed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${curCap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel("hm.probe");
-    const probeOccupied = this.nextLabel("hm.occupied");
-    const probeEmpty = this.nextLabel("hm.empty");
-    const probeNext = this.nextLabel("hm.pnext");
-    const insertDone = this.nextLabel("hm.done");
-    const probeNotOcc = this.nextLabel("hm.notocc");
-    const probeTomb = this.nextLabel("hm.tomb");
-    const probeTombRecord = this.nextLabel("hm.tombrec");
-
-    // Where to put the entry if the key turns out to be absent: the FIRST tombstone
-    // passed on the way, or the empty slot that ends the probe. -1 = none seen yet.
-    // Stopping at a tombstone instead of remembering it is what let `insert` write a
-    // second copy of a key that already existed further along the chain.
-    const firstTombAddr = this.nextTemp();
-    lines.push(`  ${firstTombAddr} = alloca i64`);
-    lines.push(`  store i64 -1, ptr ${firstTombAddr}`);
-
-    lines.push(`  br label %${probeCond}`);
-    lines.push(`${probeCond}:`);
-    const slot = this.nextTemp();
-    lines.push(`  ${slot} = load i64, ptr ${slotAddr}`);
-    const entryPtr = this.nextTemp();
-    lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${curData}, i64 ${slot}`);
-    const state = this.nextTemp();
-    lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-    // state == 1 (occupied) -> check key
-    const stateIsOccupied = this.nextTemp();
-    lines.push(`  ${stateIsOccupied} = icmp eq i8 ${state}, 1`);
-    lines.push(`  br i1 ${stateIsOccupied}, label %${probeOccupied}, label %${probeNotOcc}`);
-
-    // not occupied: either a tombstone to remember and probe past, or the empty slot
-    // that proves the key is absent.
-    lines.push(`${probeNotOcc}:`);
-    const stateIsTomb = this.nextTemp();
-    lines.push(`  ${stateIsTomb} = icmp eq i8 ${state}, 2`);
-    lines.push(`  br i1 ${stateIsTomb}, label %${probeTomb}, label %${probeEmpty}`);
-
-    lines.push(`${probeTomb}:`);
-    const seenTomb = this.nextTemp();
-    lines.push(`  ${seenTomb} = load i64, ptr ${firstTombAddr}`);
-    const tombUnset = this.nextTemp();
-    lines.push(`  ${tombUnset} = icmp eq i64 ${seenTomb}, -1`);
-    lines.push(`  br i1 ${tombUnset}, label %${probeTombRecord}, label %${probeNext}`);
-
-    lines.push(`${probeTombRecord}:`);
-    lines.push(`  store i64 ${slot}, ptr ${firstTombAddr}`);
-    lines.push(`  br label %${probeNext}`);
-
-    // occupied: compare keys
-    lines.push(`${probeOccupied}:`);
-    const existingKeyPtr = this.nextTemp();
-    lines.push(`  ${existingKeyPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-    const existingKey = this.nextTemp();
-    lines.push(`  ${existingKey} = load ${keyTy}, ptr ${existingKeyPtr}`);
-    const keysMatch = this.emitKeyCompare(lines, keyVal, existingKey, keyType);
-    const overwriteLabel = this.nextLabel("hm.overwrite");
-    lines.push(`  br i1 ${keysMatch}, label %${overwriteLabel}, label %${probeNext}`);
-
-    // overwrite existing value
-    lines.push(`${overwriteLabel}:`);
-    const existingValPtr = this.nextTemp();
-    lines.push(`  ${existingValPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    // TODO(insert-return-value): return old value as Option<V>
-    if (this.needsDropCg(valueType)) {
-      this.emitDropValue(lines, existingValPtr, valueType);
-    }
-    lines.push(`  store ${valTy} ${valVal}, ptr ${existingValPtr}`);
-    // The map keeps the key it already has, so the one just handed in has no owner:
-    // the checker moved it out of the caller and this path never stores it. Without
-    // this, re-inserting a `String` key leaked its buffer on every duplicate.
-    if (this.needsDropCg(keyType)) {
-      const dupKeyAddr = this.nextTemp();
-      lines.push(`  ${dupKeyAddr} = alloca ${keyTy}`);
-      lines.push(`  store ${keyTy} ${keyVal}, ptr ${dupKeyAddr}`);
-      this.emitDropValue(lines, dupKeyAddr, keyType);
-    }
-    lines.push(`  br label %${insertDone}`);
-
-    // Empty slot reached: the key is definitely absent, because the probe walked every
-    // slot between its home and here. Reuse the first tombstone passed if there was one,
-    // which keeps the chain short; otherwise take this slot.
-    lines.push(`${probeEmpty}:`);
-    const tombCandidate = this.nextTemp();
-    lines.push(`  ${tombCandidate} = load i64, ptr ${firstTombAddr}`);
-    const reuseTomb = this.nextTemp();
-    lines.push(`  ${reuseTomb} = icmp ne i64 ${tombCandidate}, -1`);
-    const writeSlot = this.nextTemp();
-    lines.push(`  ${writeSlot} = select i1 ${reuseTomb}, i64 ${tombCandidate}, i64 ${slot}`);
-    const writePtr = this.nextTemp();
-    lines.push(`  ${writePtr} = getelementptr ${entryTy}, ptr ${curData}, i64 ${writeSlot}`);
-    // Reusing a tombstone retires it — otherwise the count only ever grows and the table
-    // rehashes on a load it does not actually carry.
-    const tombsNow = this.nextTemp();
-    lines.push(`  ${tombsNow} = load i64, ptr ${tombsPtr}`);
-    const tombsLess = this.nextTemp();
-    lines.push(`  ${tombsLess} = sub i64 ${tombsNow}, 1`);
-    const tombsAfter = this.nextTemp();
-    lines.push(`  ${tombsAfter} = select i1 ${reuseTomb}, i64 ${tombsLess}, i64 ${tombsNow}`);
-    lines.push(`  store i64 ${tombsAfter}, ptr ${tombsPtr}`);
-    lines.push(`  store i8 1, ptr ${writePtr}`);
-    const newKeySlotPtr = this.nextTemp();
-    lines.push(`  ${newKeySlotPtr} = getelementptr ${entryTy}, ptr ${writePtr}, i32 0, i32 1`);
-    lines.push(`  store ${keyTy} ${keyVal}, ptr ${newKeySlotPtr}`);
-    const newValSlotPtr = this.nextTemp();
-    lines.push(`  ${newValSlotPtr} = getelementptr ${entryTy}, ptr ${writePtr}, i32 0, i32 2`);
-    lines.push(`  store ${valTy} ${valVal}, ptr ${newValSlotPtr}`);
-    // increment len
-    const curLen = this.nextTemp();
-    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-    lines.push(`  br label %${insertDone}`);
-
-    // probe next slot
-    lines.push(`${probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-    lines.push(`  br label %${probeCond}`);
-
-    lines.push(`${insertDone}:`);
-  }
-
-  // The open-addressing probe every keyed HashMap op opens with: read the slot, an empty
-  // state means the key is absent, a tombstone means keep probing, an occupied state
-  // compares the key. contains/remove/get/getOrDefault each carried this verbatim, so a
-  // change to the tombstone rule or the state encoding had to land in four places.
-  //
-  // The labels are allocated by the CALLER and passed in, not minted here: each call site
-  // allocates its seven labels in its own order, and taking that over would renumber them
-  // and cost the byte-identical-IR check that verifies this refactor changed nothing.
-  private emitHashProbePrologue(
-    lines: string[],
-    at: {
-      probeCond: string;
-      probeCheck: string;
-      probeOccupied: string;
-      probeNext: string;
-      // Where an empty slot goes (key absent) and where a key match goes. Only these two
-      // differ between callers: remove() jumps straight to its done/remove blocks.
-      emptyTarget: string;
-      matchTarget: string;
-    },
-    map: {
-      slotAddr: string;
-      data: string;
-      entryTy: string;
-      keyTy: string;
-      keyVal: string;
-      keyType: TypeKind;
-    },
-  ): { slot: string; entryPtr: string } {
-    lines.push(`  br label %${at.probeCond}`);
-    lines.push(`${at.probeCond}:`);
-    const slot = this.nextTemp();
-    lines.push(`  ${slot} = load i64, ptr ${map.slotAddr}`);
-    const entryPtr = this.nextTemp();
-    lines.push(`  ${entryPtr} = getelementptr ${map.entryTy}, ptr ${map.data}, i64 ${slot}`);
-    const state = this.nextTemp();
-    lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-    // state == 0 (empty) -> the key is not in the map
-    const stateIsEmpty = this.nextTemp();
-    lines.push(`  ${stateIsEmpty} = icmp eq i8 ${state}, 0`);
-    lines.push(`  br i1 ${stateIsEmpty}, label %${at.emptyTarget}, label %${at.probeCheck}`);
-
-    // state == 1 (occupied) -> compare keys; state == 2 (tombstone) -> keep probing
-    lines.push(`${at.probeCheck}:`);
-    const stateIsOccupied = this.nextTemp();
-    lines.push(`  ${stateIsOccupied} = icmp eq i8 ${state}, 1`);
-    lines.push(`  br i1 ${stateIsOccupied}, label %${at.probeOccupied}, label %${at.probeNext}`);
-
-    lines.push(`${at.probeOccupied}:`);
-    const existingKeyPtr = this.nextTemp();
-    lines.push(`  ${existingKeyPtr} = getelementptr ${map.entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-    const existingKey = this.nextTemp();
-    lines.push(`  ${existingKey} = load ${map.keyTy}, ptr ${existingKeyPtr}`);
-    const keysMatch = this.emitKeyCompare(lines, map.keyVal, existingKey, map.keyType);
-    lines.push(`  br i1 ${keysMatch}, label %${at.matchTarget}, label %${at.probeNext}`);
-    return { slot, entryPtr };
-  }
-
-  private genHashMapContains(expr: HIRExpr & { kind: "HashMapContains" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapContains on non-hashmap");
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
-    const [keyLines, keyVal] = this.genExpr(expr.key);
-    lines.push(...keyLines);
-
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-
-    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel("hmc.probe");
-    const probeOccupied = this.nextLabel("hmc.occupied");
-    const probeCheck = this.nextLabel("hmc.check");
-    const foundLabel = this.nextLabel("hmc.found");
-    const notFoundLabel = this.nextLabel("hmc.notfound");
-    const probeNext = this.nextLabel("hmc.pnext");
-    const doneLabel = this.nextLabel("hmc.done");
-
-    const { slot } = this.emitHashProbePrologue(
-      lines,
-      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
-    );
-
-    lines.push(`${foundLabel}:`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${notFoundLabel}:`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-    lines.push(`  br label %${probeCond}`);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi i1 [true, %${foundLabel}], [false, %${notFoundLabel}]`);
-    this.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
-    // A materialized receiver is an owned temporary nobody else will free. This runs after
-    // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
-    return [lines, result, "i1"];
-  }
-
-  // One keyed probe, shared by modify and getOrInsertWith: evaluates the receiver and
-  // key, opens the probe, and returns the labels plus what the found block needs (the
-  // entry pointer) and what the not-found block needs (the map pointer and the evaluated
-  // key). The caller writes both blocks and the join.
-  private beginHashMapProbe(lines: string[], map: HIRExpr, key: HIRExpr, prefix: string): {
-    mapPtr: string; mapTempSlot: string | null; keyVal: string; keyTy: string; keyType: TypeKind; entryPtr: string; slot: string; mask: string; slotAddr: string;
-    probeCond: string; probeNext: string; foundLabel: string; notFoundLabel: string;
-  } {
-    this.hasHashMapType = true;
-    const mapType = map.type;
-    if (mapType.tag !== "hashmap") throw new Error(`${prefix} on non-hashmap`);
-    const keyType = mapType.key;
-    const keyTy = this.llvmType(keyType);
-    const entryTy = this.hashMapEntryType(keyType, mapType.value);
-
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, map);
-    const [keyLines, keyVal] = this.genExpr(key);
-    lines.push(...keyLines);
-
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-
-    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel(`${prefix}.probe`);
-    const probeOccupied = this.nextLabel(`${prefix}.occupied`);
-    const probeCheck = this.nextLabel(`${prefix}.check`);
-    const foundLabel = this.nextLabel(`${prefix}.found`);
-    const notFoundLabel = this.nextLabel(`${prefix}.notfound`);
-    const probeNext = this.nextLabel(`${prefix}.pnext`);
-    const { slot, entryPtr } = this.emitHashProbePrologue(
-      lines,
-      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
-    );
-    return { mapPtr, mapTempSlot, keyVal, keyTy, keyType, entryPtr, slot, mask, slotAddr, probeCond, probeNext, foundLabel, notFoundLabel };
-  }
-
-  private emitProbeNext(lines: string[], p: { slot: string; mask: string; slotAddr: string; probeCond: string; probeNext: string }): void {
-    lines.push(`${p.probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${p.slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${p.mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${p.slotAddr}`);
-    lines.push(`  br label %${p.probeCond}`);
-  }
-
-  // `m.modify(k, f)`: on a hit, call f with a pointer to the stored value (a `&mut V`
-  // view, so the callback writes the entry in place) and yield true; a miss yields false.
-  private genHashMapModify(expr: HIRExpr & { kind: "HashMapModify" }, lines: string[]): Gen {
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapModify on non-hashmap");
-    const entryTy = this.hashMapEntryType(mapType.key, mapType.value);
-    // The callback first: its environment must exist before the probe branches.
-    const [cl, cv] = this.genExpr(expr.callback);
-    lines.push(...cl);
-    const fnPtr = this.nextTemp();
-    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-    const envPtr = this.nextTemp();
-    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
-
-    const p = this.beginHashMapProbe(lines, expr.map, expr.key, "hmm");
-    const doneLabel = this.nextLabel("hmm.done");
-
-    lines.push(`${p.foundLabel}:`);
-    const valPtr = this.nextTemp();
-    lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${p.entryPtr}, i32 0, i32 2`);
-    lines.push(`  call void ${fnPtr}(ptr ${envPtr}, ptr ${valPtr})`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${p.notFoundLabel}:`);
-    lines.push(`  br label %${doneLabel}`);
-    this.emitProbeNext(lines, p);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi i1 [true, %${p.foundLabel}], [false, %${p.notFoundLabel}]`);
-    this.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
-    if (p.mapTempSlot) this.emitDropValue(lines, p.mapTempSlot, mapType);
-    return [lines, result, "i1"];
-  }
-
-  // `m.getOrInsertWith(k, init)`: a miss calls init() and inserts the result under the
-  // key that was already evaluated for the probe; a hit does nothing. Yields whether it
-  // inserted. On a hit the key, if it was an owned temporary, is dropped as `get` does;
-  // on a miss the insert takes ownership of it.
-  private genHashMapGetOrInsertWith(expr: HIRExpr & { kind: "HashMapGetOrInsertWith" }, lines: string[]): Gen {
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrInsertWith on non-hashmap");
-    const [cl, cv] = this.genExpr(expr.init);
-    lines.push(...cl);
-    const fnPtr = this.nextTemp();
-    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-    const envPtr = this.nextTemp();
-    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
-
-    const p = this.beginHashMapProbe(lines, expr.map, expr.key, "hmi");
-    const doneLabel = this.nextLabel("hmi.done");
-    const valTy = this.llvmType(mapType.value);
-
-    lines.push(`${p.foundLabel}:`);
-    this.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
-    // The drop can open blocks; the phi names the one we end in.
-    const foundEnd = this.nextLabel("hmi.found.end");
-    lines.push(`  br label %${foundEnd}`);
-    lines.push(`${foundEnd}:`);
-    lines.push(`  br label %${doneLabel}`);
-
-    lines.push(`${p.notFoundLabel}:`);
-    const produced = this.nextTemp();
-    lines.push(`  ${produced} = call ${valTy} ${fnPtr}(ptr ${envPtr})`);
-    this.emitHashMapInsertValues(lines, p.mapPtr, mapType, p.keyVal, produced, expr.span);
-    this.ownEndVal(lines, p.keyVal, "STORE");
-    // The insert opened blocks of its own; the phi below needs the block we end in.
-    const insertedEnd = this.nextLabel("hmi.inserted");
-    lines.push(`  br label %${insertedEnd}`);
-    lines.push(`${insertedEnd}:`);
-    lines.push(`  br label %${doneLabel}`);
-    this.emitProbeNext(lines, p);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi i1 [false, %${foundEnd}], [true, %${insertedEnd}]`);
-    if (p.mapTempSlot) this.emitDropValue(lines, p.mapTempSlot, mapType);
-    return [lines, result, "i1"];
-  }
-
-  private genHashMapRemove(expr: HIRExpr & { kind: "HashMapRemove" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapRemove on non-hashmap");
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
-    const [keyLines, keyVal] = this.genExpr(expr.key);
-    lines.push(...keyLines);
-
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_LEN}`);
-
-    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel("hmr.probe");
-    const probeCheck = this.nextLabel("hmr.check");
-    const probeOccupied = this.nextLabel("hmr.occupied");
-    const removeLabel = this.nextLabel("hmr.remove");
-    const probeNext = this.nextLabel("hmr.pnext");
-    const doneLabel = this.nextLabel("hmr.done");
-
-    const { slot, entryPtr } = this.emitHashProbePrologue(
-      lines,
-      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: doneLabel, matchTarget: removeLabel },
-      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
-    );
-
-    lines.push(`${removeLabel}:`);
-    // set tombstone
-    lines.push(`  store i8 2, ptr ${entryPtr}`);
-    // drop key and value if needed
-    if (this.needsDropCg(keyType)) {
-      const kPtr = this.nextTemp();
-      lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-      this.emitDropValue(lines, kPtr, keyType);
-    }
-    if (this.needsDropCg(valueType)) {
-      const vPtr = this.nextTemp();
-      lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-      this.emitDropValue(lines, vPtr, valueType);
-    }
-    // decrement len
-    const curLen = this.nextTemp();
-    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = sub i64 ${curLen}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-    // The slot just became a tombstone. Insert's resize trigger reads this, so a remove
-    // that did not count itself would let tombstones accumulate past the load factor.
-    const rmTombsPtr = this.nextTemp();
-    lines.push(`  ${rmTombsPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_TOMBS}`);
-    const rmTombs = this.nextTemp();
-    lines.push(`  ${rmTombs} = load i64, ptr ${rmTombsPtr}`);
-    const rmTombsNew = this.nextTemp();
-    lines.push(`  ${rmTombsNew} = add i64 ${rmTombs}, 1`);
-    lines.push(`  store i64 ${rmTombsNew}, ptr ${rmTombsPtr}`);
-    lines.push(`  br label %${doneLabel}`);
-
-    lines.push(`${probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-    lines.push(`  br label %${probeCond}`);
-
-    lines.push(`${doneLabel}:`);
-    this.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
-    // A materialized receiver is an owned temporary nobody else will free. This runs after
-    // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
-    return [lines, "0", "void"];
-  }
-
-  // HashMap.withCapacity(n): pre-size the table so inserting n entries never rehashes.
-  // Insert grows when (len+1)*4 >= cap*3, so the table must hold cap > 4(n+1)/3; the
-  // loop rounds that up to a power of two (the mask-based probe requires one).
-  private genHashMapWithCapacity(expr: HIRExpr & { kind: "HashMapWithCapacity" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    this.needsMalloc = true;
-    this.needsMemset = true;
-    const entryTy = this.hashMapEntryType(expr.keyType, expr.valueType);
-    const [capLines, nVal] = this.genExpr(expr.capacity);
-    lines.push(...capLines);
-    this.emitNonNegativeCheck(lines, nVal, "capacity", expr.span);
-
-    const nPlus1 = this.nextTemp();
-    lines.push(`  ${nPlus1} = add i64 ${nVal}, 1`);
-    const scaled = this.nextTemp();
-    lines.push(`  ${scaled} = mul i64 ${nPlus1}, 4`);
-    const wantDiv = this.nextTemp();
-    lines.push(`  ${wantDiv} = udiv i64 ${scaled}, 3`);
-    const want = this.nextTemp();
-    lines.push(`  ${want} = add i64 ${wantDiv}, 1`);
-
-    const capSlot = this.nextTemp();
-    lines.push(`  ${capSlot} = alloca i64`);
-    lines.push(`  store i64 8, ptr ${capSlot}`);
-    const roundCond = this.nextLabel("hmwc.cond");
-    const roundBody = this.nextLabel("hmwc.body");
-    const roundEnd = this.nextLabel("hmwc.end");
-    lines.push(`  br label %${roundCond}`);
-    lines.push(`${roundCond}:`);
-    const curCap = this.nextTemp();
-    lines.push(`  ${curCap} = load i64, ptr ${capSlot}`);
-    const tooSmall = this.nextTemp();
-    lines.push(`  ${tooSmall} = icmp ult i64 ${curCap}, ${want}`);
-    lines.push(`  br i1 ${tooSmall}, label %${roundBody}, label %${roundEnd}`);
-    lines.push(`${roundBody}:`);
-    const dbl = this.nextTemp();
-    lines.push(`  ${dbl} = shl i64 ${curCap}, 1`);
-    lines.push(`  store i64 ${dbl}, ptr ${capSlot}`);
-    lines.push(`  br label %${roundCond}`);
-    lines.push(`${roundEnd}:`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capSlot}`);
-
-    const entrySize = this.nextTemp();
-    lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-    const entrySizeI = this.nextTemp();
-    lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-    const { buf: dataPtr, bytes: totalSize } = this.emitAllocBytes(lines, entrySizeI, cap, "hmwith", expr.span);
-    lines.push(`  call ptr @memset(ptr ${dataPtr}, i32 0, i64 ${totalSize})`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %HashMap undef, ptr ${dataPtr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %HashMap ${s0}, i64 0, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %HashMap ${s1}, i64 ${cap}, 2`);
-    const s3 = this.nextTemp();
-    lines.push(`  ${s3} = insertvalue %HashMap ${s2}, i64 0, 3`);
-    const s4 = this.nextTemp();
-    lines.push(`  ${s4} = insertvalue %HashMap ${s3}, i64 0, ${HM_TOMBS}`);
-    return [lines, s4, "%HashMap"];
-  }
-
-  private genHashMapClone(expr: HIRExpr & { kind: "HashMapClone" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    const passed = this.cloneOfOwnedTemp(expr.object, lines);
-    if (passed) return passed;
-    const [ol, ov] = this.genExpr(expr.object);
-    lines.push(...ol);
-    // emitDeepCloneFromPtr reads through a pointer; the spill is a shallow copy
-    // that is never dropped — only the clone it produces is owned by the caller.
-    const slot = this.nextTemp();
-    lines.push(`  ${slot} = alloca %HashMap`);
-    lines.push(`  store %HashMap ${ov}, ptr ${slot}`);
-    const cloned = this.emitDeepCloneFromPtr(lines, slot, expr.object.type);
-    return [lines, cloned, "%HashMap"];
-  }
-
-  // Drop every live key/value, then zero the states. Capacity and the hash seed
-  // survive — clear() is "empty this map", not "give the memory back", so a
-  // rebuild after clear() reuses the table it already paid for (Vec.clear too).
-  private genHashMapClear(expr: HIRExpr & { kind: "HashMapClear" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    this.needsMemset = true;
-    const mapType = expr.object.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapClear on non-hashmap");
-    const entryTy = this.hashMapEntryType(mapType.key, mapType.value);
-    const [mapPtrLines, mapPtr] = this.genLValue(expr.object);
-    lines.push(...mapPtrLines);
-
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const isNull = this.nextTemp();
-    lines.push(`  ${isNull} = icmp eq ptr ${data}, null`);
-    const doLabel = this.nextLabel("hmc.do");
-    const endLabel = this.nextLabel("hmc.end");
-    lines.push(`  br i1 ${isNull}, label %${endLabel}, label %${doLabel}`);
-    lines.push(`${doLabel}:`);
-
-    if (this.needsDropCg(mapType.key) || this.needsDropCg(mapType.value)) {
-      const cond = this.nextLabel("hmc.cond");
-      const body = this.nextLabel("hmc.body");
-      const dropIt = this.nextLabel("hmc.drop");
-      const step = this.nextLabel("hmc.step");
-      const loopEnd = this.nextLabel("hmc.loopend");
-      const iAddr = this.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      lines.push(`  br label %${cond}`);
-      lines.push(`${cond}:`);
-      const i = this.nextTemp();
-      lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-      const more = this.nextTemp();
-      lines.push(`  ${more} = icmp ult i64 ${i}, ${cap}`);
-      lines.push(`  br i1 ${more}, label %${body}, label %${loopEnd}`);
-      lines.push(`${body}:`);
-      const entryPtr = this.nextTemp();
-      lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${i}`);
-      const state = this.nextTemp();
-      lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-      const occupied = this.nextTemp();
-      lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
-      lines.push(`  br i1 ${occupied}, label %${dropIt}, label %${step}`);
-      lines.push(`${dropIt}:`);
-      if (this.needsDropCg(mapType.key)) {
-        const kPtr = this.nextTemp();
-        lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-        this.emitDropValue(lines, kPtr, mapType.key);
-      }
-      if (this.needsDropCg(mapType.value)) {
-        const vPtr = this.nextTemp();
-        lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-        this.emitDropValue(lines, vPtr, mapType.value);
-      }
-      lines.push(`  br label %${step}`);
-      lines.push(`${step}:`);
-      const nextI = this.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${i}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${cond}`);
-      lines.push(`${loopEnd}:`);
-    }
-
-    const entrySize = this.nextTemp();
-    lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-    const entrySizeI = this.nextTemp();
-    lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-    const totalSize = this.nextTemp();
-    lines.push(`  ${totalSize} = mul i64 ${entrySizeI}, ${cap}`);
-    lines.push(`  call ptr @memset(ptr ${data}, i32 0, i64 ${totalSize})`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_LEN}`);
-    lines.push(`  store i64 0, ptr ${lenPtr}`);
-    // The memset above put every slot back to EMPTY, so no tombstone survives either.
-    const clearTombsPtr = this.nextTemp();
-    lines.push(`  ${clearTombsPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_TOMBS}`);
-    lines.push(`  store i64 0, ptr ${clearTombsPtr}`);
-    lines.push(`  br label %${endLabel}`);
-    lines.push(`${endLabel}:`);
-    return [lines, "0", "void"];
-  }
-
-  // keys()/values() → a fresh Vec holding a deep clone of each occupied slot's
-  // key (or value). The map keeps its own copy, so the two never share a buffer.
-  private genHashMapEntries(expr: HIRExpr & { kind: "HashMapEntries" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.hasHashMapType = true;
-    this.needsMalloc = true;
-    const mapType = expr.object.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapEntries on non-hashmap");
-    const elemType = expr.field === "key" ? mapType.key : mapType.value;
-    const fieldIdx = expr.field === "key" ? 1 : 2;
-    const entryTy = this.hashMapEntryType(mapType.key, mapType.value);
-    const elemTy = this.llvmType(elemType);
-    const elemSize = this.typeSizeOf(elemType);
-
-    const [ol, ov] = this.genExpr(expr.object);
-    lines.push(...ol);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = extractvalue %HashMap ${ov}, 0`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = extractvalue %HashMap ${ov}, 1`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = extractvalue %HashMap ${ov}, 2`);
-    const { buf } = this.emitAllocBytes(lines, len, elemSize, "hmvals", expr.span);
-
-    const iAddr = this.nextTemp();
-    lines.push(`  ${iAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${iAddr}`);
-    const outAddr = this.nextTemp();
-    lines.push(`  ${outAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${outAddr}`);
-    const cond = this.nextLabel("hme.cond");
-    const body = this.nextLabel("hme.body");
-    const take = this.nextLabel("hme.take");
-    const step = this.nextLabel("hme.step");
-    const end = this.nextLabel("hme.end");
-    lines.push(`  br label %${cond}`);
-    lines.push(`${cond}:`);
-    const i = this.nextTemp();
-    lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-    const more = this.nextTemp();
-    lines.push(`  ${more} = icmp ult i64 ${i}, ${cap}`);
-    lines.push(`  br i1 ${more}, label %${body}, label %${end}`);
-    lines.push(`${body}:`);
-    const entryPtr = this.nextTemp();
-    lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${i}`);
-    const state = this.nextTemp();
-    lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-    const occupied = this.nextTemp();
-    lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
-    lines.push(`  br i1 ${occupied}, label %${take}, label %${step}`);
-    lines.push(`${take}:`);
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 ${fieldIdx}`);
-    const cloned = this.emitDeepCloneFromPtr(lines, srcPtr, elemType);
-    const outIdx = this.nextTemp();
-    lines.push(`  ${outIdx} = load i64, ptr ${outAddr}`);
-    const dstPtr = this.nextTemp();
-    lines.push(`  ${dstPtr} = getelementptr ${elemTy}, ptr ${buf}, i64 ${outIdx}`);
-    lines.push(`  store ${elemTy} ${cloned}, ptr ${dstPtr}`);
-    const nextOut = this.nextTemp();
-    lines.push(`  ${nextOut} = add i64 ${outIdx}, 1`);
-    lines.push(`  store i64 ${nextOut}, ptr ${outAddr}`);
-    lines.push(`  br label %${step}`);
-    lines.push(`${step}:`);
-    const nextI = this.nextTemp();
-    lines.push(`  ${nextI} = add i64 ${i}, 1`);
-    lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-    lines.push(`  br label %${cond}`);
-    lines.push(`${end}:`);
-    const v0 = this.nextTemp();
-    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-    const v1 = this.nextTemp();
-    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${len}, 1`);
-    const v2 = this.nextTemp();
-    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
-    // keys()/values() build a fresh Vec of deep clones, so nothing points into the map
-    // afterwards and a temporary receiver can go: `mkMap().keys().len` leaked the map,
-    // its keys and its values on every call.
-    this.dropOwnedTemp(lines, ov, "%HashMap", expr.object);
-    return [lines, v2, "%Vec"];
-  }
-
-  private genHashMapGet(expr: HIRExpr & { kind: "HashMapGet" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapGet on non-hashmap");
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const valTy = this.llvmType(valueType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
-    const optionEnumName = expr.optionEnumName;
-    const optionLayout = this.enumLayouts.get(optionEnumName);
-    if (!optionLayout) throw new Error(`no enum layout for ${optionEnumName}`);
-    const optionTy = `%${optionEnumName}`;
-
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
-    const [keyLines, keyVal] = this.genExpr(expr.key);
-    lines.push(...keyLines);
-
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-
-    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel("hmg.probe");
-    const probeCheck = this.nextLabel("hmg.check");
-    const probeOccupied = this.nextLabel("hmg.occupied");
-    const foundLabel = this.nextLabel("hmg.found");
-    const notFoundLabel = this.nextLabel("hmg.notfound");
-    const probeNext = this.nextLabel("hmg.pnext");
-    const doneLabel = this.nextLabel("hmg.done");
-
-    const { slot, entryPtr } = this.emitHashProbePrologue(
-      lines,
-      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
-    );
-
-    // found — construct Some(value)
-    lines.push(`${foundLabel}:`);
-    const valPtr = this.nextTemp();
-    lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    // Deep-clone, don't `load`: a shallow copy aliases the map's heap, and a later
-    // `insert` on the same key drops the old value out from under it (the copy-back
-    // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Vec indexing already does
-    // this; emitDeepCloneFromPtr degrades to a plain load for Copy types.
-    const foundVal = this.emitDeepCloneFromPtr(lines, valPtr, valueType);
-    // The clone can open new basic blocks (vec/enum clone loops), so the phi at
-    // the bottom must name the block we actually end in, not `foundLabel`.
-    const foundEnd = this.nextLabel("hmg.found.end");
-    lines.push(`  br label %${foundEnd}`);
-    lines.push(`${foundEnd}:`);
-    // build Option::Some(val) — tag=0, payload=value
-    const someAlloca = this.nextTemp();
-    lines.push(`  ${someAlloca} = alloca ${optionTy}`);
-    const someTag = must(optionLayout.variants, "Some", "variants").tag;
-    this.storeEnumTag(lines, optionTy, someAlloca, someTag);
-    const somePayloadPtr = this.enumPayloadPtr(lines, optionTy, someAlloca, someTag);
-    lines.push(`  store ${valTy} ${foundVal}, ptr ${somePayloadPtr}`);
-    const someVal = this.nextTemp();
-    lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
-    lines.push(`  br label %${doneLabel}`);
-
-    // not found — construct None
-    lines.push(`${notFoundLabel}:`);
-    const noneAlloca = this.nextTemp();
-    lines.push(`  ${noneAlloca} = alloca ${optionTy}`);
-    // zero it first to avoid garbage in payload
-    this.needsMemset = true;
-    const optionSize = this.nextTemp();
-    lines.push(`  ${optionSize} = getelementptr ${optionTy}, ptr null, i32 1`);
-    const optionSizeI = this.nextTemp();
-    lines.push(`  ${optionSizeI} = ptrtoint ptr ${optionSize} to i64`);
-    lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optionSizeI})`);
-    const noneTag = must(optionLayout.variants, "None", "variants").tag;
-    this.storeEnumTag(lines, optionTy, noneAlloca, noneTag);
-    const noneVal = this.nextTemp();
-    lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
-    lines.push(`  br label %${doneLabel}`);
-
-    lines.push(`${probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-    lines.push(`  br label %${probeCond}`);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi ${optionTy} [${someVal}, %${foundEnd}], [${noneVal}, %${notFoundLabel}]`);
-    // The key was built by the CALLER and handed to a lookup that only reads it. Nothing
-    // takes ownership on this path, so without a drop `m.get("k" + i.toString())` leaks
-    // that string on every call — one 16-byte allocation per lookup, in about the most
-    // ordinary map idiom there is. `insert` already knew this for its overwrite path;
-    // the four read-only lookups did not. dropOwnedTemp no-ops unless the argument really
-    // is an owned temporary, so a variable or a literal key is untouched.
-    this.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
-    // A materialized receiver is an owned temporary nobody else will free. This runs after
-    // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
-    return [lines, result, optionTy];
-  }
-
-  private genHashMapGetOrDefault(expr: HIRExpr & { kind: "HashMapGetOrDefault" }, lines: string[]): Gen {
-    this.hasHashMapType = true;
-    const mapType = expr.map.type;
-    if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrDefault on non-hashmap");
-    const keyType = mapType.key;
-    const valueType = mapType.value;
-    const keyTy = this.llvmType(keyType);
-    const valTy = this.llvmType(valueType);
-    const entryTy = this.hashMapEntryType(keyType, valueType);
-
-    const { ptr: mapPtr, tempSlot: mapTempSlot } = this.mapReceiverPtr(lines, expr.map);
-    const [keyLines, keyVal] = this.genExpr(expr.key);
-    lines.push(...keyLines);
-    const [defaultLines, defaultVal] = this.genExpr(expr.default);
-    lines.push(...defaultLines);
-
-    const seedPtr = this.nextTemp();
-    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-    const seed = this.nextTemp();
-    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-
-    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
-    const mask = this.nextTemp();
-    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-    const slotAddr = this.nextTemp();
-    lines.push(`  ${slotAddr} = alloca i64`);
-    const slot0 = this.nextTemp();
-    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-    const probeCond = this.nextLabel("hmgd.probe");
-    const probeCheck = this.nextLabel("hmgd.check");
-    const probeOccupied = this.nextLabel("hmgd.occupied");
-    const foundLabel = this.nextLabel("hmgd.found");
-    const notFoundLabel = this.nextLabel("hmgd.notfound");
-    const probeNext = this.nextLabel("hmgd.pnext");
-    const doneLabel = this.nextLabel("hmgd.done");
-
-    const { slot, entryPtr } = this.emitHashProbePrologue(
-      lines,
-      { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-      { slotAddr, data, entryTy, keyTy, keyVal, keyType },
-    );
-
-    // found — return the value directly (deep-cloned; see genHashMapGet)
-    lines.push(`${foundLabel}:`);
-    const valPtr = this.nextTemp();
-    lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    const foundVal = this.emitDeepCloneFromPtr(lines, valPtr, valueType);
-    // see genHashMapGet: the clone may have opened new blocks
-    const foundEnd = this.nextLabel("hmgd.found.end");
-    lines.push(`  br label %${foundEnd}`);
-    lines.push(`${foundEnd}:`);
-    // The default is dead on this path (the map had the key) and the call owns it: a
-    // computed one has no other owner, and a named one was moved in by the checker.
-    // `m.getOrDefault(k, "dflt" + i.toString())` leaked its default on every hit.
-    // The drop is conditional by construction: it sits in the found block, and the
-    // not-found path hands that same value to the caller as the result.
-    //
-    // Dropping a Vec or an enum opens basic blocks of its own, so the block this path
-    // ENDS in is not `foundEnd` any more. Rejoin an empty one and let the phi below name
-    // that, exactly as the deep clone above already has to.
-    this.dropConsumedArg(lines, defaultVal, valTy, expr.default);
-    const foundJoin = this.nextLabel("hmgd.found.join");
-    lines.push(`  br label %${foundJoin}`);
-    lines.push(`${foundJoin}:`);
-    lines.push(`  br label %${doneLabel}`);
-
-    // not found — use the default value
-    lines.push(`${notFoundLabel}:`);
-    this.ownEndVal(lines, defaultVal, "MOVE");
-    lines.push(`  br label %${doneLabel}`);
-
-    lines.push(`${probeNext}:`);
-    const nextSlot = this.nextTemp();
-    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-    const wrappedSlot = this.nextTemp();
-    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-    lines.push(`  br label %${probeCond}`);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi ${valTy} [${foundVal}, %${foundJoin}], [${defaultVal}, %${notFoundLabel}]`);
-    this.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
-    // A materialized receiver is an owned temporary nobody else will free. This runs after
-    // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-    if (mapTempSlot) this.emitDropValue(lines, mapTempSlot, expr.map.type);
-    return [lines, result, valTy];
-  }
-
-  private needsMemset = false;
+  public needsMemset = false;
   private needsMemsetIntrinsic = false;
   private needsSnprintf = false;
   private needsAbort = false;
@@ -14647,7 +13224,7 @@ export class Codegen {
   // emitDeepCloneFromPtr: given a pointer to a value of type `typeKind`,
   // produce a fully-cloned value (deep copy of all heap-owned data).
   // Used for auto-clone on Vec[i] reads so the source Vec stays intact.
-  private emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string {
+  public emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string {
     const lt = this.llvmType(typeKind);
 
     // Copy types: just load
@@ -15385,7 +13962,7 @@ export class Codegen {
   // leaked it: `mk().clone()`, and `v[i].clone()` on any collection whose indexing
   // already clones (a sized array `["a", "b"][i]`, a `Vec<Vec<i32>>` row), once per
   // evaluation. Null when `src` is a place, which really does need the copy.
-  private cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null {
+  public cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null {
     if (!this.isOwnedTempExpr(src) || !this.needsDropCg(src.type)) return null;
     const [sl, sv, st] = this.genExpr(src);
     lines.push(...sl);
@@ -15394,7 +13971,7 @@ export class Codegen {
 
   // Free a value that was produced by a call and then consumed in-place by an
   // operator, leaving nothing that will ever drop it.
-  private dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr) {
+  public dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr) {
     if (!this.isOwnedTempExpr(expr) || !this.needsDropCg(expr.type)) return;
     this.dropValueNow(lines, val, llTy, expr);
   }
@@ -15402,7 +13979,7 @@ export class Codegen {
   // Free a by-value argument the operation consumed but did not keep: an owned temporary,
   // or a place the checker moved into the call (`isMove`, whose alive flag genExpr has
   // already cleared, so nothing else will drop it).
-  private dropConsumedArg(lines: string[], val: string, llTy: string, expr: HIRExpr) {
+  public dropConsumedArg(lines: string[], val: string, llTy: string, expr: HIRExpr) {
     if (!this.needsDropCg(expr.type)) return;
     const movedPlace = (expr.kind === "Ident" || expr.kind === "FieldAccess" || expr.kind === "IndexAccess") && !!expr.isMove;
     if (!movedPlace && !this.isOwnedTempExpr(expr)) return;
@@ -15417,7 +13994,7 @@ export class Codegen {
     this.emitDropValue(lines, tmpAddr, expr.type);
   }
 
-  private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
+  public emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
     if (this.structuralDropTypes.has(typeKind) && !this.structuralDrop) {
       this.structuralDrop = true;
       try { this.emitDropValue(lines, allocaPtr, typeKind); } finally { this.structuralDrop = false; }
@@ -16695,14 +15272,14 @@ export class Codegen {
   }
 
   // A view is ended too: ending one is exactly the finding (drop-of-view, own-of-view).
-  private ownEndVal(lines: string[], val: string, kind: OwnEndKind) {
+  public ownEndVal(lines: string[], val: string, kind: OwnEndKind) {
     if (!this.ownOn) return;
     this.ownEnd(lines, this.ownIdOf(val), kind);
   }
 
   // The owned (or viewed) value in register `val` was stored whole into the frame slot
   // `addr`: same runtime value, same ID, now found by address (emitDropValue(addr) ends it).
-  private ownValToSlot(val: string, addr: string) {
+  public ownValToSlot(val: string, addr: string) {
     if (!this.ownOn) return;
     const id = this.ownIdOf(val);
     if (id) this.ownSlot.set(addr, id);
