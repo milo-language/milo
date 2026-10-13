@@ -471,8 +471,11 @@ fn main(): i32 {
     print(body)   // {"name":"app","port":8080,"owner":null}
 
     // untyped reads: index, then a typed read; a missing step reads as None
-    let doc = Json.parse("{\\"server\\": {\\"port\\": 8080}}")!
+    let doc = Json.parse("{\\"server\\": {\\"port\\": 8080, \\"hosts\\": [\\"a\\"]}}")!
     print(doc["server"]["port"].i64() ?? 0)
+    // a dotted path (with [i] for arrays) is one step: doc.at(...), or .at(...) after doc[...]
+    print(doc.at("server.hosts[0]").str() ?? "none")
+    for h in doc.at("server.hosts").items() { print(doc[h].str() ?? "") }
     return 0
 }
 \`\`\`

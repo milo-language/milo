@@ -1,0 +1,9 @@
+// @error: a JsonCur is read through its document: write 'doc[c].at()'
+// A JsonCur kept in a variable is only a position; the document reads it.
+from "std/json" import { Json }
+fn main(): i32 {
+    let doc = Json.parse("{\"a\":{\"b\":1}}")!
+    let c = doc.at("a")
+    print(c.at("b").i64() ?? 0)
+    return 0
+}

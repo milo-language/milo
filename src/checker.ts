@@ -12572,6 +12572,40 @@ export class TypeChecker {
     return this.checkExpr(node as Expr, null);
   }
 
+  // `doc.at("data.user.orgs[0].name")`, or `.at(path)` on a `doc[...]` chain: a path step,
+  // rewritten to `doc.idxPath(start, path)` so the result is a chain like `doc[k]`'s and
+  // ends in the same reads (`.str()`, `.i64()`, `.items()`, ...). Only a string argument:
+  // `doc.at(i)` with an integer stays Json.at, the owned-element accessor. Null when this
+  // is not a path step.
+  private rewriteJsonPathStep(expr: ExprOf<"MethodCall">, objType: TypeKind, chainRoot: Expr | undefined, expected: TypeKind | null): TypeKind | null {
+    if (expr.method !== "at" || expr.args.length !== 1) return null;
+    const bare = objType.tag === "ref" ? objType.inner : objType;
+    if (bare.tag !== "struct") return null;
+    const onChain = !!chainRoot && bare.name === "JsonCur";
+    const onDoc = !chainRoot && bare.name === "Json";
+    if (!onChain && !onDoc) return null;
+    const argT = this.checkExpr(expr.args[0]);
+    const argBare = argT.tag === "ref" ? argT.inner : argT;
+    if (argBare.tag !== "string") {
+      if (onDoc) return null;
+      if (argBare.tag !== "unknown") this.error(`a Json path step takes a string path ("a.b[0].c"), got ${this.show(argT)}`, expr.span, `index a position with 'doc[...][i]'`);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    if (onDoc && !this.isJsonRootPlace(expr.object)) {
+      this.error(`a Json path is read from a Json held in a variable: bind it first ('let doc = ...' then 'doc.at(...)')`, expr.span);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    const root = onChain ? chainRoot! : expr.object;
+    const start: Expr = onChain ? expr.object
+      : { kind: "MethodCall", object: structuredClone(root), method: "idxRoot", args: [], span: expr.span } as Expr;
+    const node = expr as any;
+    node.object = structuredClone(root);
+    node.method = "idxPath";
+    node.args = [start, expr.args[0]];
+    this.jsonChains.set(node as Expr, root);
+    return this.checkMethodCallExprInner(node, expected);
+  }
+
   // A root the chain can re-borrow at every step: a name or a field path on one.
   private isJsonRootPlace(e: Expr): boolean {
     if (e.kind === "Ident") return true;
@@ -12591,6 +12625,8 @@ export class TypeChecker {
     const rawObjType = this.checkExpr(expr.object);
     // A read at the end of a `doc[...]` chain: `doc["a"].str()` → `doc.idxStr(chain)`.
     const chainRoot = this.jsonChains.get(expr.object);
+    const pathStep = this.rewriteJsonPathStep(expr, rawObjType, chainRoot, expected);
+    if (pathStep) return pathStep;
     if (chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur") {
       const read = JSON_CHAIN_READS[expr.method];
       if (read && expr.args.length === (read === "idxValueAt" ? 1 : 0)) {
@@ -12601,7 +12637,7 @@ export class TypeChecker {
         return this.checkMethodCallExprInner(node, expected);
       }
     }
-    if (!chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur" && JSON_CHAIN_READS[expr.method]) {
+    if (!chainRoot && rawObjType.tag === "struct" && rawObjType.name === "JsonCur" && (JSON_CHAIN_READS[expr.method] || expr.method === "at")) {
       const name = this.describeExpr(expr.object);
       this.error(`a JsonCur is read through its document: write 'doc[${name}].${expr.method}()'`, sp);
       for (const a of expr.args) this.checkExpr(a);

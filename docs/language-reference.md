@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-12 (field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-12 (doc.at(path) chain step; field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -4540,6 +4540,25 @@ A path segment is a key, or `[n]` for an array index. A missing key, an out-of-r
 index, or a value of the wrong kind all yield `None` — the walk never panics, whatever
 the document turns out to contain. Keys containing `.` or `[` are not addressable this
 way; use `get`/`at` for those.
+
+The same path is one step of an index chain: `doc.at(path)` starts one, and `.at(path)`
+continues any `doc[...]`. It ends in the chain reads (`.str()`, `.i64()`, `.items()`,
+...) and allocates nothing per step, so it is the form for walking a large document,
+such as a GraphQL answer, in a loop:
+
+```milo
+from "std/json" import { Json }
+
+let doc = Json.parse("{\"data\":{\"user\":{\"orgs\":{\"nodes\":[{\"login\":\"milo\",\"stats\":{\"members\":3}}]}}}}")!
+for org in doc.at("data.user.orgs.nodes").items() {
+    print(doc[org]["login"].str() ?? "?", " ", doc[org].at("stats.members").i64() ?? 0)   // milo 3
+}
+print(doc.at("data.user.orgs.nodes[0].login").str() ?? "none")   // milo
+print(doc.at("data.viewer.login").exists())                      // false
+```
+
+Only a string argument is a path step: `doc.at(0)` with an integer is still the owned
+element accessor above, returning `Option<Json>`.
 
 ---
 

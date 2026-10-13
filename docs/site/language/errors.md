@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 538 distinct messages across 686 programs the compiler must reject.
+Every error message the test suite pins: 541 distinct messages across 689 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -155,6 +155,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
 - [`a JSON object's keys are strings`](#a-json-object-s-keys-are-strings)
+- [`a Json path is read from a Json held in a variable`](#a-json-path-is-read-from-a-json-held-in-a-variable)
+- [`a Json path step takes a string path ("a.b[0].c"), got i64`](#a-json-path-step-takes-a-string-path-a-b-0-c-got-i64)
+- [`a JsonCur is read through its document: write 'doc[c].at()'`](#a-jsoncur-is-read-through-its-document-write-doc-c-at)
 - [`a JsonCur is read through its document: write 'doc[s].str()'`](#a-jsoncur-is-read-through-its-document-write-doc-s-str)
 - [`a nested fixed array`](#a-nested-fixed-array)
 - [`a scoped task borrows 'local', which is declared inside the Task.scope body`](#a-scoped-task-borrows-local-which-is-declared-inside-the-task-scope-body)
@@ -4197,6 +4200,51 @@ fn main() {
 ```
 
 <sub>[tests/errors/deriveJsonIntKeyedMap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonIntKeyedMap.milo)</sub>
+
+## `a Json path is read from a Json held in a variable` {#a-json-path-is-read-from-a-json-held-in-a-variable}
+
+A chain re-borrows its document at every step, so the document has to be a place.
+
+```milo skip
+from "std/json" import { Json }
+fn main(): i32 {
+    print(Json.parse("{\"a\":{\"b\":1}}")!.at("a.b").i64() ?? 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/jsonPathStepTemp.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonPathStepTemp.milo)</sub>
+
+## `a Json path step takes a string path ("a.b[0].c"), got i64` {#a-json-path-step-takes-a-string-path-a-b-0-c-got-i64}
+
+On a chain, `.at` is only the path step; a position is an index.
+
+```milo skip
+from "std/json" import { Json }
+fn main(): i32 {
+    let doc = Json.parse("{\"a\":[1,2]}")!
+    print(doc["a"].at(1).i64() ?? 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/jsonPathStepInt.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonPathStepInt.milo)</sub>
+
+## `a JsonCur is read through its document: write 'doc[c].at()'` {#a-jsoncur-is-read-through-its-document-write-doc-c-at}
+
+A JsonCur kept in a variable is only a position; the document reads it.
+
+```milo skip
+from "std/json" import { Json }
+fn main(): i32 {
+    let doc = Json.parse("{\"a\":{\"b\":1}}")!
+    let c = doc.at("a")
+    print(c.at("b").i64() ?? 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/jsonPathStepBareCur.milo](https://github.com/milo-language/milo/blob/main/tests/errors/jsonPathStepBareCur.milo)</sub>
 
 ## `a JsonCur is read through its document: write 'doc[s].str()'` {#a-jsoncur-is-read-through-its-document-write-doc-s-str}
 

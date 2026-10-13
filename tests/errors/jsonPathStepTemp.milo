@@ -1,0 +1,7 @@
+// @error: a Json path is read from a Json held in a variable
+// A chain re-borrows its document at every step, so the document has to be a place.
+from "std/json" import { Json }
+fn main(): i32 {
+    print(Json.parse("{\"a\":{\"b\":1}}")!.at("a.b").i64() ?? 0)
+    return 0
+}

@@ -36,6 +36,11 @@ pub fn main(): i32 {
     let doc = Json.parse(page)!
     print(doc["users"][1]["name"].str() ?? "?")
     print(doc["users"][5]["name"].str() ?? "no such user")
+    // a dotted path is one step: `doc.at(...)` here, or `.at(...)` after any `doc[...]`
+    print(doc.at("users[1].email").str() ?? "no email")
+    for u in doc.at("users").items() {
+        print($"{doc[u].at("name").str() ?? "?"} is {doc[u]["age"].i64() ?? 0}")
+    }
 
     // 4. Errors name the field that was wrong
     match User.fromJson("{\"name\":\"x\",\"age\":\"old\",\"active\":true,\"email\":null}") {

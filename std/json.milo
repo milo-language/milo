@@ -862,6 +862,12 @@ impl Json {
         return JsonCur { c: self.curRoot() }
     }
 
+    // `doc.at("a.b[0].c")` / `doc[...].at(path)`: the value at a dotted path under `at`
+    // (the syntax of curPath); absent when any step is missing.
+    fn idxPath(self: &Self, at: JsonCur, p: &string): JsonCur {
+        return JsonCur { c: self.curAt(at.c, p) }
+    }
+
     // `doc[cur]`: re-enter an index chain at a cursor kept in a variable.
     fn idxCur(self: &Self, at: JsonCur): JsonCur {
         return at

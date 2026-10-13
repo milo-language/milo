@@ -1,0 +1,8 @@
+// @error: a Json path step takes a string path ("a.b[0].c"), got i64
+// On a chain, `.at` is only the path step; a position is an index.
+from "std/json" import { Json }
+fn main(): i32 {
+    let doc = Json.parse("{\"a\":[1,2]}")!
+    print(doc["a"].at(1).i64() ?? 0)
+    return 0
+}

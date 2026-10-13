@@ -44,6 +44,10 @@ cursor methods below with no allocation per step. A step stored in a variable is
 it is read back through the document as `doc[cur]["field"]`. The chain must start at a
 `Json` held in a variable or field.
 
+A dotted path is one step: `doc.at("data.user.orgs[0].login")` starts a chain and
+`doc[cur].at("stats.members")` continues one (keys, and `[n]` for an array position, the
+syntax of `curPath`). An integer `doc.at(i)` is the owned element accessor instead.
+
 The owned accessors (`get`, `at`) return a subtree as its own `Json`, a deep clone per
 call. That reads well and is fine for configuration-sized input; on a large document
 navigated in a loop, use indexing or the cursor methods (`curRoot`, `curField`,
@@ -458,6 +462,15 @@ fn Json.idxLen(self: &Json, at: JsonCur): i64
 
 `.len()` at the end of an index chain: element or member count; 0 for a scalar
 or an absent value.
+
+#### `Json.idxPath`
+
+```milo
+fn Json.idxPath(self: &Json, at: JsonCur, p: &string): JsonCur
+```
+
+`doc.at("a.b[0].c")` / `doc[...].at(path)`: the value at a dotted path under `at`
+(the syntax of curPath); absent when any step is missing.
 
 #### `Json.idxPos`
 

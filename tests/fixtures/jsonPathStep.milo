@@ -1,0 +1,35 @@
+// `doc.at("a.b[0].c")` and `doc[...].at(path)`: a dotted path as one step of a doc[...] chain,
+// ending in the same typed reads. A missing step reads as absent. An integer `doc.at(i)`
+// is still Json.at, the owned-element accessor.
+from "std/json" import { Json }
+
+fn login(doc: &Json): string {
+    return doc.at("data.viewer.login").str() ?? "?"
+}
+
+fn main(): i32 {
+    let doc = Json.parse("{\"data\":{\"viewer\":{\"login\":\"ada\"},\"user\":{\"organizations\":{\"nodes\":[{\"login\":\"milo\",\"members\":3},{\"login\":\"rust\",\"members\":9}]}}},\"items\":[{\"name\":\"first\"}]}")!
+    print(login(doc))
+    for n in doc.at("data.user.organizations.nodes").items() {
+        print($"{doc[n]["login"].str() ?? ""} {doc[n].at("members").i64() ?? 0}")
+    }
+    print(doc.at("items[0].name").str() ?? "none")
+    print(doc["data"].at("user.organizations.nodes[1].login").str() ?? "none")
+    print(doc.at("data.nope.login").str() ?? "missing")
+    print(doc.at("items[5].name").exists())
+    print(doc.at("data.user.organizations.nodes").len())
+    let first = doc.at("data.user.organizations.nodes[0]")
+    print(doc[first]["login"].str() ?? "")
+    print(doc.at(0).isNone())
+    return 0
+}
+// @expect: ada
+// @expect: milo 3
+// @expect: rust 9
+// @expect: first
+// @expect: rust
+// @expect: missing
+// @expect: false
+// @expect: 2
+// @expect: milo
+// @expect: true
