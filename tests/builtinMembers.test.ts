@@ -86,8 +86,9 @@ test("every builtin member in the table is dispatched by the checker", () => {
 
 // `json` is dispatched inside checkMethodCallExpr but is not a builtin member: it is
 // the auto-stringify coercion for an http context's `ctx.json(struct)` ARGUMENT, and
-// the receiver is a user type with its own impl block.
-const NOT_MEMBERS = new Set(["json"]);
+// the receiver is a user type with its own impl block. `at` is likewise std/json's own
+// `Json.at`, named in the dispatch only to rewrite `doc.at("a.b")` into a path step.
+const NOT_MEMBERS = new Set(["json", "at"]);
 
 // Every method name the dispatch mentions, from both forms it uses: direct
 // `expr.method === "x"` comparisons and the `[...].includes(expr.method)` lists.
