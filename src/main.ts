@@ -2230,7 +2230,7 @@ async function main() {
     const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.
-    const useZ3 = rest.includes("--solver=z3") || rest.includes("--z3");
+    const useZ3 = rest.includes("--solver=z3");
     const pr = useZ3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
     if (rest.includes("--json")) writeStdout(display(program.displayNames, proveJson(pr)));
     else console.log(display(program.displayNames, formatProveReport(pr)));
