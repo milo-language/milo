@@ -166,6 +166,8 @@ const stdlibSidebar = [
       { text: 'std/json', link: '/stdlib/json' },
       { text: 'std/arena', link: '/stdlib/arena' },
       { text: 'std/set', link: '/stdlib/set' },
+      { text: 'std/collections', link: '/stdlib/collections' },
+      { text: 'std/cache', link: '/stdlib/cache' },
       { text: 'std/sqlite', link: '/stdlib/sqlite' },
     ]
   },

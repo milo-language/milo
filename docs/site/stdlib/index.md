@@ -40,6 +40,8 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/json`](json) | Zero-copy JSON parser: `Json.parse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`). Serializing a struct is the built-in `jsonStringify`, no import |
 | [`std/arena`](arena) | Generational arena for cyclic/graph data with safe `Handle<T>`; the how-to is [Patterns](/language/patterns#build-a-tree-or-graph-whose-nodes-refer-to-each-other) |
 | [`std/set`](set) | `HashSet<T>` — `s.add`, `s.contains`, `s.remove` |
+| [`std/collections`](collections) | `BinaryHeap`, `Deque`, `SortedMap` (B-tree), `OrderedMap`, `Counter`, `bisectLeft`/`insertSorted` |
+| [`std/cache`](cache) | `LruCache` and `TtlCache` (per-entry expiry, optional LRU capacity) |
 
 ## CLI & System
 

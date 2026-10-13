@@ -1,0 +1,271 @@
+// std/cache — LruCache and TtlCache, bounded in-memory caches over std/collections' OrderedMap
+//
+// Both keep entries in recency order in an OrderedMap: a hit moves its key to the end,
+// so the least recently used entry is always the first one, and eviction is a popFirst.
+// Every operation is amortized O(1) except TtlCache.purge, which scans.
+//
+// Reads come in the two shapes std/collections uses: `get` hands back a copy of the
+// value (`@copyOut`, absent for a value carrying Drop) and `modify` lends it to a
+// callback as `&mut V`, which works for every value type.
+
+from "std/collections" import { OrderedMap }
+from "std/time" import { Duration, epochMillis }
+
+// A cache holding at most `capacity` entries that evicts the least recently used one
+// to make room. `get`, `modify` and `put` count as a use; `contains` and `peek` do not.
+pub struct LruCache<K, V> {
+    map: OrderedMap<K, V>,
+    cap: i64,
+}
+
+impl LruCache<K, V> {
+    // An empty cache holding at most `capacity` entries (at least 1).
+    //
+    // A generic static takes its type arguments: `LruCache<string, i64>.new(100)`.
+    fn new(capacity: i64): LruCache<K, V> {
+        assert(capacity >= 1, "LruCache capacity must be at least 1")
+        return LruCache {
+            map: OrderedMap.new(),
+            cap: capacity,
+        }
+    }
+
+    // A copy of the value under `key`, marking it most recently used; None on a miss.
+    @copyOut
+    fn get(self: &mut Self, key: &K): Option<V> {
+        if !self.map.moveToEnd(key) {
+            return Option.None
+        }
+        return self.map.get(key)
+    }
+
+    // A copy of the value under `key` without marking it used.
+    @copyOut
+    fn peek(self: &Self, key: &K): Option<V> {
+        return self.map.get(key)
+    }
+
+    // Run `f` on the value under `key` in place, marking it most recently used; false
+    // (and `f` not run) on a miss.
+    fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
+        if !self.map.moveToEnd(key) {
+            return false
+        }
+        return self.map.modify(key, f)
+    }
+
+    // Insert or replace the value under `key` and mark it most recently used. When
+    // that makes the cache hold more than its capacity, the least recently used entry
+    // is dropped.
+    fn put(self: &mut Self, key: K, value: V): void {
+        if self.map.contains(key) {
+            let _ = self.map.moveToEnd(key)
+        }
+        self.map.insert(key, value)
+        while self.map.len() > self.cap {
+            let _evicted = self.map.popFirst()
+        }
+    }
+
+    // Whether `key` is cached, without marking it used.
+    fn contains(self: &Self, key: &K): bool {
+        return self.map.contains(key)
+    }
+
+    // Remove `key` and hand back its value, or None when absent.
+    fn remove(self: &mut Self, key: &K): Option<V> {
+        return self.map.remove(key)
+    }
+
+    // Number of cached entries.
+    fn len(self: &Self): i64 {
+        return self.map.len()
+    }
+
+    // The most entries the cache holds.
+    fn capacity(self: &Self): i64 {
+        return self.cap
+    }
+
+    // Drop every entry.
+    fn clear(self: &mut Self): void {
+        self.map.clear()
+    }
+}
+
+// A cached value and when it stops being served, in clock milliseconds. The value is
+// always Some while stored; the Option is what lets `remove` take it out with
+// `replace` and leave nothing behind for a Drop impl to see.
+struct Stamped<V> {
+    value: Option<V>,
+    expiresAtMs: i64,
+}
+
+// A cache whose entries expire a fixed time after they were put (or a per-entry time
+// with `putFor`), optionally also bounded to `capacity` entries with LRU eviction.
+//
+// Expiry is lazy: an expired entry is never served, and is dropped when a lookup
+// meets it or when `purge` sweeps. Until then it still counts in `len` and toward the
+// capacity, so a cache that is written but rarely read should `purge` now and then.
+//
+// The clock is `epochMillis` from std/time unless `setClockMs` swaps in another, which
+// is how a test steps time without sleeping.
+pub struct TtlCache<K, V> {
+    map: OrderedMap<K, Stamped<V>>,
+    ttlMs: i64,
+    // 0 means unbounded.
+    cap: i64,
+    clock: move () => i64,
+}
+
+impl TtlCache<K, V> {
+    // An empty, unbounded cache whose entries live for `ttl`.
+    //
+    // A generic static takes its type arguments: `TtlCache<string, i64>.new(Duration.secs(30))`.
+    fn new(ttl: Duration): TtlCache<K, V> {
+        return TtlCache {
+            map: OrderedMap.new(),
+            ttlMs: ttl.toMillis(),
+            cap: 0,
+            clock: move(): i64 => epochMillis(),
+        }
+    }
+
+    // An empty cache whose entries live for `ttl` and that holds at most `capacity`
+    // entries (at least 1), evicting the least recently used one to make room.
+    fn withCapacity(ttl: Duration, capacity: i64): TtlCache<K, V> {
+        assert(capacity >= 1, "TtlCache capacity must be at least 1")
+        return TtlCache {
+            map: OrderedMap.new(),
+            ttlMs: ttl.toMillis(),
+            cap: capacity,
+            clock: move(): i64 => epochMillis(),
+        }
+    }
+
+    // Read the time from `nowMs` (milliseconds on any fixed origin) instead of the
+    // wall clock. Expiry times already stored keep the old clock's origin, so swap it
+    // before the first put.
+    fn setClockMs(self: &mut Self, nowMs: move () => i64): void {
+        self.clock = nowMs
+    }
+
+    // Insert or replace the value under `key`, live for the cache's ttl from now.
+    fn put(self: &mut Self, key: K, value: V): void {
+        let ttl = self.ttlMs
+        putStamped(&mut self, key, value, ttl)
+    }
+
+    // Insert or replace the value under `key`, live for `ttl` from now instead of the
+    // cache's default.
+    fn putFor(self: &mut Self, key: K, value: V, ttl: &Duration): void {
+        putStamped(&mut self, key, value, ttl.toMillis())
+    }
+
+    // A copy of the value under `key` if it has not expired, marking it most recently
+    // used; an expired entry is dropped and reads as None.
+    @copyOut
+    fn get(self: &mut Self, key: &K): Option<V> {
+        if !liveEntry(&mut self, key) {
+            return Option.None
+        }
+        let Some(s) = self.map.get(key) else {
+            return Option.None
+        }
+        var copy = s
+        return replace(copy.value, Option.None)
+    }
+
+    // Run `f` on the value under `key` in place if it has not expired, marking it most
+    // recently used; false (and `f` not run) on a miss or an expired entry.
+    fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
+        if !liveEntry(&mut self, key) {
+            return false
+        }
+        return self.map.modify(key, (s: &mut Stamped<V>): void => {
+            applyMut(&mut s.value, f)
+        })
+    }
+
+    // Whether `key` holds an unexpired value. Does not mark it used or drop it.
+    fn contains(self: &Self, key: &K): bool {
+        let now = self.clock()
+        var live = false
+        let _ = self.map.read(key, (s: &Stamped<V>): void => {
+            live = s.expiresAtMs > now
+        })
+        return live
+    }
+
+    // Remove `key` and hand back its value, expired or not; None when absent.
+    fn remove(self: &mut Self, key: &K): Option<V> {
+        let Some(s) = self.map.remove(key) else {
+            return Option.None
+        }
+        var held = s
+        return replace(held.value, Option.None)
+    }
+
+    // Drop every expired entry now; returns how many went. O(n).
+    fn purge(self: &mut Self): i64 {
+        let now = self.clock()
+        var dead: Vec<K> = Vec.new()
+        self.map.each((k: &K, s: &Stamped<V>): void => {
+            if s.expiresAtMs <= now {
+                dead.push(k.clone())
+            }
+        })
+        for k in dead {
+            let _gone = self.map.remove(k)
+        }
+        return dead.len
+    }
+
+    // Number of entries held, counting expired ones not yet dropped.
+    fn len(self: &Self): i64 {
+        return self.map.len()
+    }
+
+    // Drop every entry.
+    fn clear(self: &mut Self): void {
+        self.map.clear()
+    }
+}
+
+fn putStamped<K, V>(c: &mut TtlCache<K, V>, key: K, value: V, ttlMs: i64): void {
+    let stamped = Stamped {
+        value: Option.Some(value),
+        expiresAtMs: c.clock() + ttlMs,
+    }
+    if c.map.contains(key) {
+        let _ = c.map.moveToEnd(key)
+    }
+    c.map.insert(key, stamped)
+    while c.cap > 0 && c.map.len() > c.cap {
+        let _evicted = c.map.popFirst()
+    }
+}
+
+// Whether `key` is present and unexpired, marking it most recently used; an expired
+// entry is dropped here.
+fn liveEntry<K, V>(c: &mut TtlCache<K, V>, key: &K): bool {
+    let now = c.clock()
+    var expired = false
+    if !c.map.read(key, (s: &Stamped<V>): void => {
+        expired = s.expiresAtMs <= now
+    }) {
+        return false
+    }
+    if expired {
+        let _gone = c.map.remove(key)
+        return false
+    }
+    let _ = c.map.moveToEnd(key)
+    return true
+}
+
+fn applyMut<V>(slot: &mut Option<V>, f: (&mut V) => void): void {
+    if let Some(v) = slot {
+        f(&mut v)
+    }
+}

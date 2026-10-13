@@ -1,0 +1,117 @@
+// @expect: get a Some(1) len 3
+// @expect: evicted b true c false a false d false
+// @expect: peek Some(3) keeps order: evicts c
+// @expect: put existing a=10 bumps it: evicts d
+// @expect: modify true false remove Some(10) None len 1
+// @expect: model ok hits 1596 len 64
+// @expect: drops evict 2 clear 4 end 6 live 0
+// LruCache: get/modify/put bump recency, peek/contains do not, eviction drops the least
+// recently used entry, and a Drop value is released exactly once on evict, replace,
+// remove, clear and the cache's own drop.
+from "std/cache" import { LruCache }
+from "std/rng" import { Rng }
+
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone += 1
+    }
+}
+
+fn mk(id: i64): Res {
+    made += 1
+    return Res { id: id }
+}
+
+fn drops(): string {
+    var c = LruCache<i64, Res>.new(2)
+    c.put(1, mk(1))
+    c.put(2, mk(2))
+    let _touched = c.modify(1, (r: &mut Res): void => {
+        r.id += 100
+    })
+    c.put(3, mk(3))
+    c.put(1, mk(4))
+    let evict = gone
+    c.put(5, mk(5))
+    let _r = c.remove(5)
+    c.clear()
+    let clear = gone
+    c.put(6, mk(6))
+    return $"drops evict {evict} clear {clear}"
+}
+
+fn main(): i32 {
+    var c = LruCache<string, i64>.new(3)
+    c.put("a", 1)
+    c.put("b", 2)
+    c.put("c", 3)
+    print($"get a {c.get("a")} len {c.len()}")
+    c.put("d", 4)
+    print($"evicted b {!c.contains("b")} c {!c.contains("c")} a {!c.contains("a")} d {!c.contains("d")}")
+    let p = c.peek("c")
+    c.put("e", 5)
+    print($"peek {p} keeps order: evicts {if c.contains("c") { "?" } else { "c" }}")
+    c.put("a", 10)
+    c.put("f", 6)
+    print($"put existing a={c.peek("a")!} bumps it: evicts {if c.contains("d") { "?" } else { "d" }}")
+    let hit = c.modify("e", (v: &mut i64): void => {
+        v += 1
+    })
+    let miss = c.modify("zz", (v: &mut i64): void => {
+        v += 1
+    })
+    let removed = c.remove("a")
+    let _f = c.remove("f")
+    print($"modify {hit} {miss} remove {removed} {c.remove("a")} len {c.len()}")
+
+    // Against a model: a Vec of keys in recency order, oldest first.
+    var big = LruCache<i64, i64>.new(64)
+    var model: Vec<i64> = []
+    var r = Rng.new(7)
+    var hits: i64 = 0
+    var ok = true
+    for _i in 0..5000 {
+        let k = r.int(100)
+        let at = model.indexOf(k)
+        if r.bool() {
+            big.put(k, k * 3)
+            if let Some(j) = at {
+                let _old = model.remove(j)
+            }
+            model.push(k)
+            if model.len > 64 {
+                let _lru = model.remove(0)
+            }
+        } else {
+            let got = big.get(k)
+            if let Some(j) = at {
+                hits += 1
+                let _old = model.remove(j)
+                model.push(k)
+                if (got ?? -1) != k * 3 {
+                    ok = false
+                }
+            } else if got.isSome() {
+                ok = false
+            }
+        }
+    }
+    for k in 0..100 {
+        if big.contains(k) != model.contains(k) {
+            ok = false
+        }
+    }
+    if ok {
+        print($"model ok hits {hits} len {big.len()}")
+    }
+    let line = drops()
+    print($"{line} end {gone} live {made - gone}")
+    return 0
+}

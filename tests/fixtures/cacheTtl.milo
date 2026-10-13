@@ -1,0 +1,105 @@
+// @expect: fresh Some(1) contains true
+// @expect: expired None contains false len 1 then 0
+// @expect: putFor short None long Some(3)
+// @expect: purge 3 len 1
+// @expect: capped evicts a: false b true c true
+// @expect: modify true expired false remove Some(10)
+// @expect: drops expire 1 purge 3 evict 4 end 6 live 0
+// TtlCache on an injected clock: lazy expiry on get, contains without dropping,
+// per-entry ttl, purge, LRU eviction once a capacity is set, and a Drop value released
+// exactly once on expiry, purge, eviction and the cache's own drop.
+from "std/cache" import { TtlCache }
+from "std/time" import { Duration }
+
+// The test clock. A global rather than a captured var: the clock closure is `move`, so
+// it would capture a copy.
+var nowMs: i64 = 1000
+
+var made: i64 = 0
+var gone: i64 = 0
+
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone += 1
+    }
+}
+
+fn mk(id: i64): Res {
+    made += 1
+    return Res { id: id }
+}
+
+fn drops(): string {
+    var c = TtlCache<i64, Res>.withCapacity(Duration.millis(100), 2)
+    c.setClockMs(move(): i64 => nowMs)
+    c.put(1, mk(1))
+    nowMs += 150
+    let _miss = c.modify(1, (r: &mut Res): void => {
+        r.id += 1
+    })
+    let expire = gone
+    c.put(2, mk(2))
+    c.put(3, mk(3))
+    nowMs += 150
+    let _purged = c.purge()
+    let purge = gone
+    c.put(4, mk(4))
+    c.put(5, mk(5))
+    c.put(6, mk(6))
+    let evict = gone
+    return $"drops expire {expire} purge {purge} evict {evict}"
+}
+
+fn main(): i32 {
+    var c = TtlCache<string, i64>.new(Duration.secs(10))
+    c.setClockMs(move(): i64 => nowMs)
+    c.put("a", 1)
+    nowMs += 5000
+    print($"fresh {c.get("a")} contains {c.contains("a")}")
+    nowMs += 6000
+    let gotA = c.get("a")
+    // contains does not drop; len still counts the entry until a lookup or purge meets it.
+    c.put("z", 0)
+    nowMs += 10000
+    let lenBefore = c.len()
+    let _z = c.get("z")
+    print($"expired {gotA} contains {c.contains("z")} len {lenBefore} then {c.len()}")
+
+    c.putFor("short", 2, Duration.millis(10))
+    c.putFor("long", 3, Duration.mins(1))
+    nowMs += 20
+    print($"putFor short {c.get("short")} long {c.get("long")}")
+
+    c.put("x", 1)
+    c.put("y", 2)
+    c.put("w", 3)
+    nowMs += 30000
+    // x, y and w (10s) are expired, long (1 min) is not.
+    print($"purge {c.purge()} len {c.len()}")
+
+    var capped = TtlCache<string, i64>.withCapacity(Duration.secs(60), 2)
+    capped.setClockMs(move(): i64 => nowMs)
+    capped.put("a", 1)
+    capped.put("b", 2)
+    capped.put("c", 3)
+    print($"capped evicts a: {capped.contains("a")} b {capped.contains("b")} c {capped.contains("c")}")
+
+    capped.put("m", 9)
+    let hit = capped.modify("m", (v: &mut i64): void => {
+        v += 1
+    })
+    capped.putFor("gone", 1, Duration.millis(1))
+    nowMs += 5
+    let late = capped.modify("gone", (v: &mut i64): void => {
+        v += 1
+    })
+    print($"modify {hit} expired {late} remove {capped.remove("m")}")
+
+    let line = drops()
+    print($"{line} end {gone} live {made - gone}")
+    return 0
+}
