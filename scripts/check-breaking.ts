@@ -100,9 +100,22 @@ function shortName(qualified: string): string {
   return qualified.slice(qualified.lastIndexOf(".") + 1);
 }
 
-export function undocumented(breaks: Break[]): Break[] {
-  const doc = readFileSync(join(ROOT, "docs", "breaking-changes.md"), "utf-8");
-  return breaks.filter(b => !doc.includes(shortName(b.name)));
+// A name counts as written up only when an inline code span names it as an identifier of
+// its own. A plain substring test passed far too easily: removing `pub struct Csv` was
+// "documented" by an unrelated older entry about `Csv.parse`, and any short name (`len`,
+// `Pool`) is a substring of something. `Csv.parse` and `x.len` use the name as a namespace
+// or a method, not the item itself, so a neighbouring `.` disqualifies a match.
+export function documentedNames(doc: string): (name: string) => boolean {
+  const spans = doc.replace(/^```[\s\S]*?^```/gm, "").match(/`[^`\n]+`/g) ?? [];
+  return (name: string) => {
+    const re = new RegExp(`(?<![\\w.])${name}(?![\\w.])`);
+    return spans.some(s => re.test(s));
+  };
+}
+
+export function undocumented(breaks: Break[], doc = readFileSync(join(ROOT, "docs", "breaking-changes.md"), "utf-8")): Break[] {
+  const has = documentedNames(doc);
+  return breaks.filter(b => !has(shortName(b.name)));
 }
 
 if (import.meta.main) {

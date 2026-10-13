@@ -28,6 +28,14 @@ test("the surface scan can still read std at the last release tag", () => {
   expect(Object.keys(before).length).toBeGreaterThan(100);
 }, 120000);
 
+test("a break counts as documented only where a code span names the item itself", () => {
+  const removed = (name: string) => ({ name: `std/m.${name}`, kind: "removed" as const, before: "" });
+  // `Csv.parse` is about a method of Csv; it says nothing about Csv itself going away.
+  const doc = "## `Csv.parse` returns Result\n\n```milo\nlet x = Pool.new()\n```\nthe Ring type is gone\n| `from \"std/ws\" import { computeAcceptKey }` |";
+  expect(undocumented([removed("Csv"), removed("Pool"), removed("Ring"), removed("computeAcceptKey")], doc)
+    .map(b => b.name)).toEqual(["std/m.Csv", "std/m.Pool", "std/m.Ring"]);
+});
+
 test("every public std break since the last release is documented", () => {
   const breaks = breaksSince(lastReleaseTag());
   const missing = undocumented(breaks).map(b => `${b.kind} ${b.name}`);
