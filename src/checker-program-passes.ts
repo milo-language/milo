@@ -1628,7 +1628,7 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
   // The old rule applied this to EVERY extern for parking only, which was harmless
   // while no entry could park; once a napi entry could, `pthread_mutex_destroy` parked.
   const reentersMilo = (f: Function) =>
-    !!f.isExtern && (!host.fnDeclaredInStd(f) || f.name === "dlopen" || f.name === "dlclose");
+    !!f.isExtern && (!host.fnDeclaredInStd(f) || (f.linkName ?? f.name) === "dlopen" || (f.linkName ?? f.name) === "dlclose");
   const model = { implicitTargets, isIndirect, enter, dropFnsOf, paramDropsOf, envFor, fnValues, closureIds, closureById, closureScope, reachable, reentersMilo };
   implicitCache.set(view, model);
   return model;

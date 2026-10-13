@@ -394,7 +394,13 @@ export function manglePackage(
   if (pkg !== "") {
     const val = (n: string) => !restrictToDecls || decls.values.has(n);
     const typ = (n: string) => !restrictToDecls || decls.types.has(n);
-    for (const f of prog.functions) if (isManglableFn(f) && val(f.name)) f.name = q(f.name);
+    for (const f of prog.functions) {
+      // An extern is renamed only when the plan names it (restrictToDecls): it is then a
+      // per-module view of a C symbol, and `linkName` keeps the symbol it binds.
+      if (!(isManglableFn(f) || (restrictToDecls && f.isExtern)) || !val(f.name)) continue;
+      if (f.isExtern) f.linkName ??= f.name;
+      f.name = q(f.name);
+    }
     for (const g of prog.globals) if (val(g.name)) g.name = q(g.name);
     for (const s of prog.structs) if (typ(s.name)) s.name = q(s.name);
     for (const e of prog.enums) if (typ(e.name)) e.name = q(e.name);

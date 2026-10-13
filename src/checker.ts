@@ -5395,9 +5395,10 @@ export class TypeChecker {
         `expected the declaration as C spells it — e.g. 'ssize_t ${f.name}(int, void *, size_t)'`);
       return;
     }
-    if (!new RegExp(`(^|[^A-Za-z0-9_])${f.name}\\s*\\(`).test(sig)) {
-      this.error(`@cSig on '${f.name}': the signature declares a different function`, undefined,
-        `'${sig}' must name '${f.name}' — the assert is generated against that symbol`);
+    const cSym = f.linkName ?? f.name;
+    if (!new RegExp(`(^|[^A-Za-z0-9_])${cSym}\\s*\\(`).test(sig)) {
+      this.error(`@cSig on '${cSym}': the signature declares a different function`, undefined,
+        `'${sig}' must name '${cSym}' — the assert is generated against that symbol`);
       return;
     }
     // Arity is checkable here, with no header in the picture: the guard TU compares C

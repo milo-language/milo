@@ -1,0 +1,28 @@
+// @expect: 72 105 33 0
+// @expect: 5 5
+// @expect: 7 7
+// @expect: xyxyxy
+
+// Each module's extern is its own typed view of the C function: this file's memcpy takes
+// `&mut [u8; 4]` and returns nothing, std/string's (behind `.repeat`) takes `*u8` and
+// returns `*u8`, and lib/externViews/lenU and lenI each declare strlen and abs their own
+// way. Every call type-checks against its own module's declaration, and all of them link
+// to the one C symbol. `abs` here is lenI's `pub extern`, imported with its signature.
+from "./lib/externViews/lenU" import { lenU, absI }
+from "./lib/externViews/lenI" import { lenI, abs }
+
+extern fn memcpy(dst: &mut [u8; 4], src: *u8, n: i64): void
+
+pub fn main(): i32 {
+    var buf: [u8; 4] = [0; 4]
+    unsafe { memcpy(&mut buf, "Hi!", 3) }
+    print(buf[0], " ", buf[1], " ", buf[2], " ", buf[3])
+    var a: u32 = 0
+    unsafe { a = abs(-5) }
+    print(a, " ", absI(-5))
+    let u: u64 = lenU("seven!!")
+    let i: i64 = lenI("seven!!")
+    print(u, " ", i)
+    print("xy".repeat(3))
+    return 0
+}

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 545 distinct messages across 693 programs the compiler must reject.
+Every error message the test suite pins: 546 distinct messages across 694 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -63,6 +63,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'continue' outside of loop`](#continue-outside-of-loop)
 - [`'dangle' cannot return a reference`](#dangle-cannot-return-a-reference)
 - [`'e' shadows an outer binding`](#e-shadows-an-outer-binding)
+- [`'extern fn abs' is defined twice in this file`](#extern-fn-abs-is-defined-twice-in-this-file)
 - [`'f' returns i64 but can reach the end of its body without a 'return'`](#f-returns-i64-but-can-reach-the-end-of-its-body-without-a-return)
 - [`'f' writes the global 'G', and is passed a reference into 'G' here`](#f-writes-the-global-g-and-is-passed-a-reference-into-g-here)
 - [`'first' cannot return a reference`](#first-cannot-return-a-reference)
@@ -1541,6 +1542,21 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/shadowFnParamMatchArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/shadowFnParamMatchArm.milo)</sub>
+
+## `'extern fn abs' is defined twice in this file` {#extern-fn-abs-is-defined-twice-in-this-file}
+
+Two modules may each declare a C function their own way, but one module has one view of it: a second declaration with another signature in the same file is an error.
+
+```milo skip
+extern fn abs(x: i32): i32
+extern fn abs(x: i32): u32
+
+pub fn main(): i32 {
+    unsafe { return abs(-1) }
+}
+```
+
+<sub>[tests/errors/externConflictSameModule.milo](https://github.com/milo-language/milo/blob/main/tests/errors/externConflictSameModule.milo)</sub>
 
 ## `'f' returns i64 but can reach the end of its body without a 'return'` {#f-returns-i64-but-can-reach-the-end-of-its-body-without-a-return}
 

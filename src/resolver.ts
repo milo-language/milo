@@ -47,6 +47,11 @@ function uniqueModuleId(file: string, used: Set<string>, os?: string): string {
   return id;
 }
 
+// An extern's Milo-level signature, for telling two declarations of one C function apart.
+function externSigOf(f: { params: { type: unknown }[]; retType: unknown; isVariadic: boolean }): string {
+  return JSON.stringify([f.params.map(p => p.type), f.retType, f.isVariadic], (k, v) => k === "span" ? undefined : v);
+}
+
 function toStdlibKey(absPath: string): string | null {
   return absPath.startsWith(STDLIB_DIR + "/") ? absPath.slice(STDLIB_DIR.length + 1) : null;
 }
@@ -706,7 +711,39 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     modulePlan.set(u.file, { id: uniqueModuleId(u.file, usedModuleIds, target.os), renamed });
   }
 
-  const displayNames: DisplayNames = new Map();
+  const displayNamesPending = new Map<string, string>();
+  // Externs per module. Each module's `extern fn` is its own typed view of a C symbol, so a
+  // module whose declaration's signature differs from the one the flat merge keeps (the
+  // last, as for every other name) gets its own renamed copy that still links to the C
+  // name (`linkName`). Its calls then type-check against what that module wrote, instead
+  // of std/string's `memcpy(dst: *u8, ...)` being checked against a program's
+  // `memcpy(dst: &mut [u8; 16], ...)`. Declarations with the kept signature stay flat
+  // and merge as before, which is what keeps @records/@externalLinkage merging and
+  // record/replay's wrappers (planned by flat name) working for them.
+  {
+    const keptSig = new Map<string, string>();
+    for (const u of units) for (const f of u.prog.functions) if (f.isExtern) keptSig.set(f.name, externSigOf(f));
+    for (const u of units) {
+      const diverging = u.prog.functions.filter(f => f.isExtern && keptSig.get(f.name) !== externSigOf(f)).map(f => f.name);
+      if (diverging.length === 0) continue;
+      if (u.pkg !== "") {
+        // A package's `pub` extern is bound flat by its importers (externs are not
+        // package-mangled), so only its private ones can move.
+        const priv = diverging.filter(n => !u.prog.functions.some(f => f.name === n && f.isPub));
+        if (priv.length === 0) continue;
+        const id = uniqueModuleId(u.file, usedModuleIds, target.os);
+        for (const f of u.prog.functions) if (f.isExtern && priv.includes(f.name)) f.sourceName ??= f.name;
+        for (const n of priv) displayNamesPending.set(`${id}$${n}`, n);
+        manglePackage(u.prog, id, { values: new Set(priv), types: new Set() }, new Map(), true);
+        continue;
+      }
+      let plan = modulePlan.get(u.file);
+      if (!plan) { plan = { id: uniqueModuleId(u.file, usedModuleIds, target.os), renamed: emptyPkgDecls() }; modulePlan.set(u.file, plan); }
+      for (const n of diverging) plan.renamed.values.add(n);
+    }
+  }
+
+  const displayNames: DisplayNames = new Map(displayNamesPending);
   const entryBindings = new Map<string, string>();
   for (const u of units) {
     if (u.pkg !== "") continue;
@@ -750,6 +787,10 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // redeclaration binds the same C symbol rather than giving the name a second meaning.
     // A prelude-visible std fn redeclared with its signature is the documented override
     // (`shadows-stdlib-override`), so a file naming it in an import as well keeps that path.
+    // A file's own `extern fn` is the view of that C function its calls use, whatever an
+    // import of the same name would bind (the imported declaration may be a per-module
+    // rename with another signature).
+    for (const f of u.prog.functions) if (f.isExtern) bindings.delete(f.name);
     for (const [local, b] of boundFrom) {
       if (b.synthetic || b.overridable) continue;
       const declaresIt = u.prog.functions.some(f => f.name === local && !f.isExtern) || u.prog.globals.some(g => g.name === local)
@@ -974,8 +1015,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   // that declares `@records` or `@externalLinkage` on its own `extern fn getpid` keeps it
   // when std (pulled in by an import, or by record/replay's wrappers) declares getpid too.
   {
-    const sigOf = (f: (typeof functions)[number]) =>
-      JSON.stringify([f.params.map(p => p.type), f.retType, f.isVariadic], (k, v) => k === "span" ? undefined : v);
+    const sigOf = externSigOf;
     const kept = new Map<string, (typeof functions)[number]>();
     for (const f of functions) if (f.isExtern) kept.set(f.name, f);
     // STDLIB_DIR is the directory holding std/ (the repo root in a checkout).

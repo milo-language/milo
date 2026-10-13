@@ -1,0 +1,9 @@
+// @error: 'extern fn abs' is defined twice in this file
+// Two modules may each declare a C function their own way, but one module has one view
+// of it: a second declaration with another signature in the same file is an error.
+extern fn abs(x: i32): i32
+extern fn abs(x: i32): u32
+
+pub fn main(): i32 {
+    unsafe { return abs(-1) }
+}

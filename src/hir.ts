@@ -239,6 +239,8 @@ export interface HIRFunction {
   // either is evaluated (src/lazy-globals.ts).
   entryGuards?: string[];
   isExtern: boolean;
+  // An extern's C symbol when it differs from `name` (see the AST field of the same name).
+  linkName?: string;
   isVariadic: boolean;
   // @wrapping: the routine's + - * -x, div INT_MIN/-1 and over-shifts use defined modular
   // arithmetic instead of trapping. Correctness dial

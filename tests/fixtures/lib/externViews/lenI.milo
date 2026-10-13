@@ -1,0 +1,9 @@
+// Another module's view of the same C functions, with different Milo signatures: a
+// signed length, and an abs this module exports with an unsigned result.
+extern fn strlen(s: *u8): i64
+
+pub extern fn abs(n: i32): u32
+
+pub fn lenI(s: *u8): i64 {
+    unsafe { return strlen(s) }
+}

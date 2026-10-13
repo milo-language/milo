@@ -150,7 +150,7 @@ class LowerCtx {
     // mapping (the C signature is the truth; the Milo decl's widths must agree).
     const cSigs = [...this.c.cSigs.entries()].flatMap(([fnName, s]) => {
       const fn = functions.find(f => f.name === fnName);
-      return fn ? [{ fnName, header: s.header, sig: s.sig, retType: fn.retType, params: fn.params.map(p => ({ type: p.type })) }] : [];
+      return fn ? [{ fnName: fn.linkName ?? fnName, header: s.header, sig: s.sig, retType: fn.retType, params: fn.params.map(p => ({ type: p.type })) }] : [];
     });
     // @cValue carries the literal through to codegen as text. The checker already
     // rejected anything that isn't an integer literal (optionally negated), so the
@@ -222,6 +222,7 @@ class LowerCtx {
       // Externs were the gap: `lowerFunction` stamped the origin file but `lowerExtern`
       // did not, so every `extern` declaration reached the HIR with no module to belong to.
       ...(fn.sourceFile && { sourceFile: fn.sourceFile }),
+      ...(fn.linkName && { linkName: fn.linkName }),
       params: fn.params.map((p, i) => this.lowerParam(p, sig, i)),
       retType: sig?.ret ?? typeFromAst(fn.retType),
       body: [],

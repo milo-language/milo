@@ -18,6 +18,7 @@ import { resolve, dirname, basename, relative, isAbsolute } from "path";
 import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
 import { display } from "./mangle";
+import { mapSymbols } from "./cgu";
 import { OWN_END_KINDS, type OwnEndKind, verifyOwnLedger, stripOwnLedger, formatOwnFinding, type OwnFinding } from "./own-ledger";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
@@ -2475,7 +2476,7 @@ export class Codegen {
     if (this.lazyGlobals.size > 0) this.closureBodies.push(this.emitLazyGlobals(functions));
 
     // auto-declare C functions needed by built-ins and bounds checks
-    const declaredExterns = new Set(externs.map(e => e.name));
+    const declaredExterns = new Set(externs.map(e => e.linkName ?? e.name));
     // The bounds/overflow handler bodies are emitted after this point, so whichever
     // printf emitFdPrintf will pick has to be declared here — by the time it sets the
     // flag itself, the declares are already out.
@@ -2682,8 +2683,18 @@ export class Codegen {
     if (this.hasStringType)
       this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
 
-    // insert extern declarations
-    for (const ext of externs) {
+    // insert extern declarations. A per-module extern (`linkName` set) is one more typed
+    // view of a C symbol another declaration may already name: the symbol is declared
+    // once (a second `declare` of it is an LLVM redefinition error), the unrenamed
+    // declaration's type preferred, and each call site states its own function type, which
+    // opaque pointers allow to differ from the declared one. The calls still name the
+    // per-module symbol here; the rewrite at the end of generate() points them at the C one.
+    const linkDeclared = new Set<string>();
+    const ordered = [...externs.filter(e => !e.linkName), ...externs.filter(e => e.linkName)];
+    for (const ext of ordered) {
+      const sym = ext.linkName ?? ext.name;
+      if (linkDeclared.has(sym)) continue;
+      linkDeclared.add(sym);
       const sig = must(this.fnSigs, ext.name, "fn sigs");
       let retType = sig.retType;
       let paramTypes: string[];
@@ -2695,7 +2706,7 @@ export class Codegen {
         paramTypes = [...sig.paramTypes];
       }
       if (ext.isVariadic) paramTypes.push("...");
-      this.output.splice(1, 0, `declare ${retType} @${ext.name}(${paramTypes.join(", ")})`);
+      this.output.splice(1, 0, `declare ${retType} @${sym}(${paramTypes.join(", ")})`);
     }
 
     if (this.needsSetvbuf) fnBodies.push(this.lineBufferInitFn());
@@ -2750,7 +2761,9 @@ export class Codegen {
     if (this.fnSigs.has("replayHeapMalloc")) this.output = this.replayHeapCalls(this.output);
     // Last: it reads the final call graph, the replay heap's calls included.
     if (noaliasEnabled()) this.output = this.applyNoalias(this.output);
-    const ir = this.output.join("\n") + "\n";
+    const externLinks = new Map(externs.filter(e => e.linkName).map(e => [e.name, e.linkName!]));
+    let ir = this.output.join("\n") + "\n";
+    if (externLinks.size > 0) ir = mapSymbols(ir, n => externLinks.get(n));
     this.assertNicheAccessRouted(ir);
     this.assertEnumPayloadPacked(ir);
     return ir;

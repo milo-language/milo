@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-12 (Vec<T>/HashMap<K, V> statics spelled, Vec<T>.fromJson; doc.at(path) chain step; field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-13 (same-named externs in different modules; earlier: Vec<T>/HashMap<K, V> statics spelled, Vec<T>.fromJson; doc.at(path) chain step; field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -3731,6 +3731,19 @@ extern fn puts(s: *u8): i32
 extern fn printf(fmt: *u8, ...): i32
 extern fn malloc(size: u64): *u8
 ```
+
+**Same C function, several modules.** An `extern fn` is one module's typed view of a C
+symbol, so two modules may declare the same C function with different Milo signatures,
+for instance std/string's `memcpy(dst: *u8, src: *u8, n: i64): *u8` next to a program's
+`memcpy(dst: &mut [u8; 16], src: *u8, n: i64): void`. Each module's calls are checked
+against the declaration that module wrote, or the one it imports (a file's own `extern fn`
+wins over an imported one of the same name), and every declaration links to the one C
+symbol. The signatures have to be ABI-compatible with what C defines; nothing checks that
+unless the declaration carries `@cSig`. Declarations with identical signatures are merged
+into one, which is how a `@records` written on one copy reaches the
+others. Calls through a declaration whose signature differs from the merged one are not
+redirected through record/replay's generated wrapper. Within a single file a C function
+has one declaration: declaring it twice is the `defined twice in this file` error.
 
 ### Safe vs Unsafe Extern Calls
 

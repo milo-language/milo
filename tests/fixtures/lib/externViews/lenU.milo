@@ -1,0 +1,12 @@
+// One module's view of strlen and abs: an unsigned length, and abs on i32.
+extern fn strlen(s: *u8): u64
+
+extern fn abs(x: i32): i32
+
+pub fn lenU(s: *u8): u64 {
+    unsafe { return strlen(s) }
+}
+
+pub fn absI(x: i32): i32 {
+    unsafe { return abs(x) }
+}
