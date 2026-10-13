@@ -2781,6 +2781,28 @@ element (`clone`, `get`/`first`/`last`, `keys`/`values`/`getOrDefault`), and rea
 `v[i]` by value anywhere (see [Ownership and Move Semantics](#ownership-and-move-semantics)). "Carries" is
 transitive: a `Vec<Option<Fd>>` element is as much a resource as an `Fd`.
 
+### `@ordered`: generics that compare with `<`
+
+`<` exists only on integers, floats and strings, so a generic method that orders its
+elements with it cannot work for a struct. `@ordered` on that method withholds only it
+from an instantiation whose type argument has no `<`, and calling it says why; the rest
+of the type stays usable. `BinaryHeap<Task>` keeps `withCompare` and loses only the
+natural-order `new`:
+
+```milo error
+from "std/collections" import { BinaryHeap }
+
+struct Task { pri: i64 }
+
+fn main() {
+    var h = BinaryHeap<Task>.new()    // error: 'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have
+}
+```
+
+Bare, it constrains every type parameter; `@ordered(K)` names the ones the method
+compares. Allowed on a method of a generic inherent impl (including `impl Vec<T>` and
+`impl HashMap<K, V>` blocks) or on a generic fn.
+
 ### Global initializers: constant, or run on first read
 
 A module-level `let` or `var` with a **constant** initializer (literals, arithmetic on
