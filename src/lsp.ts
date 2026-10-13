@@ -370,6 +370,12 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const boundSym = word ? program.entryBindings?.get(word) : undefined;
     const boundFn = boundSym ? program.functions.find(fn => fn.name === boundSym && !fn.isExtern) : undefined;
     const boundStruct = boundSym ? program.structs.find(s => s.name === boundSym) : undefined;
+    // Externs whose signatures differ are renamed per module (resolver.ts), so after
+    // unmangling two `malloc`s read alike: pick this file's own, else the flat one an
+    // unqualified call binds, while the renamed symbols still tell them apart.
+    const docPath = uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+    const boundExt = word ? program.functions.find(fn => fn.isExtern && (fn.linkName ?? fn.name) === word && fn.sourceFile === docPath)
+      ?? program.functions.find(fn => fn.isExtern && fn.name === word) : undefined;
     unmangleForDisplay(program);
     const exprTypes = checkResult?.exprTypes ?? new Map();
     lspDebug(`hover ${line}:${character} word=${JSON.stringify(word)}`);
@@ -398,7 +404,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     // Extern declarations. Skipped by the branch above, so hovering an FFI symbol —
     // the one call whose safety rule a reader cannot infer from the name — used to
     // return nothing at all.
-    const ext = program.functions.find(fn => fn.name === word && fn.isExtern);
+    const ext = boundExt ?? program.functions.find(fn => fn.name === word && fn.isExtern);
     if (ext) {
       const params = ext.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`);
       if (ext.isVariadic) params.push("...");
