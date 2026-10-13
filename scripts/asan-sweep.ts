@@ -130,7 +130,10 @@ console.log(`\n${ran} ${corpus} ran under AddressSanitizer, ${buildFailed} could
 
 // A sweep that builds nothing reports zero errors and exits 0 forever. Say so instead.
 // Only on a FULL sweep: `--filter vec` is meant to run a handful.
-const floor = wantFixtures ? 300 : 20;
+// The fixed floor alone let ~60% of the corpus stop building under --sanitize (a build
+// failure is listed, never fatal) while the gate stayed green; 90% of what discovery
+// found must actually run.
+const floor = Math.max(wantFixtures ? 300 : 20, Math.ceil(entries.length * 0.9));
 if (!filter && ran < floor) {
   console.error(`only ${ran} ${corpus} ran (expected at least ${floor}) — the sweep is not exercising the corpus`);
   process.exit(2);
