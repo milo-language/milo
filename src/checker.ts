@@ -2899,7 +2899,7 @@ export class TypeChecker {
       JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
       (_key, value) => {
       if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
-      if (value && typeof value === "object" && value.kind === "CastExpr") this.instanceCasts.add(value);
+      if (value && typeof value === "object" && (value.kind === "CastExpr" || (value.kind === "Call" && value.func === "forget"))) this.instanceNodes.add(value);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
@@ -10534,7 +10534,7 @@ export class TypeChecker {
         return this.setType(expr, { tag: "void" });
       }
       const t = this.checkExpr(expr.args[0]);
-      if (this.isCopyType(t)) {
+      if (this.isCopyType(t) && !this.instanceNodes.has(expr)) {
         this.warn("useless-forget", `'forget' on a Copy value does nothing`, sp,
           `${this.show(t)} owns no resource, so there is no drop to suppress`);
       }
@@ -12030,14 +12030,17 @@ export class TypeChecker {
   // inference types the arguments bare, then again against the signature it inferred
   // FROM them), and a cast in a generic instance's body (the target may have been `T`).
   private castsCheckedBare = new WeakSet<Expr>();
-  private instanceCasts = new WeakSet<object>();
+  // Casts and `forget` calls cloned into a generic instance's body. Copy-ness and the
+  // cast target are facts about the instance, not the generic source: `forget(v)` on a
+  // `T` is required in the source even when one instantiation makes T an i64.
+  private instanceNodes = new WeakSet<object>();
   private lintRedundantCast(expr: ExprOf<"CastExpr">, toType: TypeKind, expected: TypeKind | null) {
     const neg = expr.operand.kind === "UnaryOp" && expr.operand.op === "-";
     const lit = neg && expr.operand.kind === "UnaryOp" ? expr.operand.operand : expr.operand;
     if (lit.kind !== "IntLit" && lit.kind !== "FloatLit") return;
     if (this.currentFnIsDep) return; // as extern-call: a dependency is not the reader's to edit; std is held to zero
     if (!expected) { this.castsCheckedBare.add(expr); return; }
-    if (this.castsCheckedBare.has(expr) || this.instanceCasts.has(expr) || !typeEq(expected, toType)) return;
+    if (this.castsCheckedBare.has(expr) || this.instanceNodes.has(expr) || !typeEq(expected, toType)) return;
     if (expected.tag === "int" && expected.min !== undefined) return; // a range type checks the literal; the cast skips that
     if (lit.kind === "FloatLit" ? toType.tag !== "float" : toType.tag !== "int") return;
     if (lit.kind === "IntLit" && toType.tag === "int") {
