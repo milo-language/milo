@@ -1,0 +1,120 @@
+// @expect: a
+// @expect: b
+// @expect: err
+// @expect: 7
+// @expect: b
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: err
+// @expect: 0
+// @expect: two
+// @expect: many
+// @expect: else-two
+// @expect: a-t-a
+// @expect: a-f
+// @expect: blk
+// @expect: b
+// @expect: hi
+
+// A match used as a match arm (or if-expr branch) whose arms all yield void
+// or diverge is a void/never-typed match expression: it must not get a result
+// slot (`alloca void` is invalid IR).
+enum E { A, B }
+
+fn voidArms(r: Result<E, string>) {
+    match r {
+        Ok(e) => match e {
+            E.A => print("a")
+            E.B => print("b")
+        }
+        Err(_m) => print("err")
+    }
+}
+
+fn someReturn(r: Result<E, string>): i32 {
+    match r {
+        Ok(e) => match e {
+            E.A => { return 7 }
+            E.B => print("b")
+        }
+        Err(_m) => print("err")
+    }
+    return 0
+}
+
+fn allReturn(r: Result<E, string>): i32 {
+    match r {
+        Ok(e) => match e {
+            E.A => { return 1 }
+            E.B => { return 2 }
+        }
+        Err(_m) => print("err")
+    }
+    return 0
+}
+
+fn literal(n: i32) {
+    match n {
+        1 => print("one")
+        _ => match n {
+            2 => print("two")
+            _ => print("many")
+        }
+    }
+}
+
+fn ifThenMatch(e: E, flag: bool) {
+    match e {
+        E.A => if flag {
+            match e {
+                E.A => print("a-t-a")
+                E.B => print("a-t-b")
+            }
+        } else { print("a-f") }
+        E.B => print("b")
+    }
+}
+
+fn blockArm(r: Result<E, string>) {
+    match r {
+        Ok(e) => {
+            print("blk")
+            match e {
+                E.A => print("a")
+                E.B => print("b")
+            }
+        }
+        Err(_m) => print("err")
+    }
+}
+
+fn ownedPayload(r: Result<string, string>) {
+    match r {
+        Ok(s) => match s.len() {
+            0 => print("owned empty")
+            _ => print(s)
+        }
+        Err(m) => print(m)
+    }
+}
+
+fn main(): i32 {
+    voidArms(Ok(E.A))
+    voidArms(Ok(E.B))
+    voidArms(Err("x"))
+    print(someReturn(Ok(E.A)))
+    print(someReturn(Ok(E.B)))
+    print(allReturn(Ok(E.A)))
+    print(allReturn(Ok(E.B)))
+    print(allReturn(Err("x")))
+    literal(2)
+    literal(3)
+    let n = 2
+    if n > 5 { print("t") } else { match n { 2 => print("else-two") _ => print("else-other") } }
+    ifThenMatch(E.A, true)
+    ifThenMatch(E.A, false)
+    blockArm(Ok(E.B))
+    ownedPayload(Ok("hi"))
+    return 0
+}

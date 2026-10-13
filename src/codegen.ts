@@ -8496,11 +8496,8 @@ export class Codegen {
 
   private genMatchExpr(expr: HIRExpr & { kind: "MatchExpr" }, lines: string[]): Gen {
     const resultTy = this.llvmType(expr.type);
-    const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
-    if (this.ownOn && this.needsDropCg(expr.type)) this.ownResultSlots.set(resultAddr, { arms: 0, type: expr.type });
-    // Reuse the statement match generator, passing a result slot so each
-    // arm's tail value is stored instead of discarded.
+    // Reuse the statement match generator; a result slot (when there is one)
+    // makes each arm's tail value be stored instead of discarded.
     const asStmt = {
       kind: "Match" as const,
       subject: expr.subject,
@@ -8510,6 +8507,16 @@ export class Codegen {
       subjectIsMut: expr.subjectIsMut,
       span: expr.span,
     };
+    // A void- or never-typed match expression (e.g. a match that is itself a match
+    // arm, every arm yielding void or diverging) has no value to carry, and
+    // `alloca void` is invalid IR: lower it as a plain statement match.
+    if (resultTy === "void") {
+      lines.push(...this.genMatch(asStmt)[0]);
+      return [lines, "void", "void"];
+    }
+    const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
+    if (this.ownOn && this.needsDropCg(expr.type)) this.ownResultSlots.set(resultAddr, { arms: 0, type: expr.type });
     const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
     lines.push(...ml);
     // Every arm diverged (return/break) — genMatch already closed endLabel
