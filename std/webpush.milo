@@ -181,7 +181,8 @@ impl WebPush {
         let claims = Base64.urlEncode("{\"aud\":" + jsonStr(aud) + ",\"exp\":" + expiresAt.toString() + ",\"sub\":" + jsonStr(subject) + "}")
         let signingInput = header + "." + claims
         let sig = key.signP1363(Sha256.bytes(signingInput))?
-        return Ok($"vapid t={signingInput}.{Base64.urlEncode(sig)}, k={Base64.urlEncode(key.publicPoint()?)}")
+        let point = key.publicPoint()?
+        return Ok($"vapid t={signingInput}.{Base64.urlEncode(sig)}, k={Base64.urlEncode(point)}")
     }
 }
 

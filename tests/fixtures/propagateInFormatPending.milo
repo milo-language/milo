@@ -1,0 +1,31 @@
+// @expect: 0
+// @expect: 3
+// A `?` that fails inside an interpolation returns early. Pieces of the same
+// interpolation evaluated before it (here `wrap("q")`) are owned temporaries that the
+// error path does not drop yet: a confirmed leak listed in tests/own-ledger-baseline.txt
+// until codegen drops in-flight temporaries at a `?` exit. The success path is fine.
+fn part(n: i64): Result<string, string> {
+    if n > 0 {
+        return Err("no")
+    }
+    return Ok("x")
+}
+
+fn wrap(s: &string): string {
+    return "<" + s + ">" + "y".repeat(256)
+}
+
+fn whole(n: i64): Result<string, string> {
+    return Ok($"a {wrap("q")} and {part(n)?} b")
+}
+
+fn main() {
+    var errs: i64 = 0
+    for i in 0..3 {
+        if whole(1).isErr() {
+            errs += 1
+        }
+    }
+    print((whole(0) ?? "").len - 269)
+    print(errs)
+}
