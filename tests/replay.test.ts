@@ -67,7 +67,7 @@ fn main() {
         print("rand " + Random.int(1000000).toString() + " " + Random.u32().toString() + " " + Random.float().toString())
     }
     var b: [u8; 8] = [0; 8]
-    unsafe { Random.bytes(b as *u8, 8) }
+    unsafe { Random.fillRaw(b as *u8, 8) }
     print("bytes " + b[0].toString() + " " + b[3].toString() + " " + b[7].toString())
     print("uuid " + Uuid.v4().toString())
     print("local " + DateTime.localNow().format())

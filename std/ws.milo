@@ -382,7 +382,7 @@ impl WsConn {
         if self._isClient {
             var key: [u8; 4] = [0; 4]
             unsafe {
-                Random.bytes(key as *u8, 4)
+                Random.fillRaw(key as *u8, 4)
             }
             for i in 0..4 {
                 mask.push(key[i])

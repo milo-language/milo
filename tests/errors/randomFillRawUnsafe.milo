@@ -1,0 +1,11 @@
+// Random.fillRaw writes through a raw pointer, so calling it needs `unsafe` even with
+// the pointer already in hand; Random.bytes(n) is the safe form.
+from "std/random" import { Random }
+
+fn main(): i32 {
+    var key: [u8; 16] = [0; 16]
+    var p: *u8 = 0 as *u8
+    unsafe { p = key as *u8 }
+    Random.fillRaw(p, 16) // @error: calling 'Random.fillRaw' requires an unsafe block
+    return 0
+}

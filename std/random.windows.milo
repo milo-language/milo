@@ -160,9 +160,31 @@ impl Random {
     fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
         shuffleI64(&mut v, n)
     }
-    // Fill `buf` with `n` random bytes.
+    // `n` cryptographically secure random bytes (the OS CSPRNG), as a byte string: the
+    // representation std's crypto APIs take keys, salts and nonces in (Hex.encode,
+    // Base64.urlEncode, Crypto.aesGcmEncrypt). Never fails; if the OS entropy source is
+    // unavailable the process exits rather than return predictable bytes.
+    fn bytes(n: i64): string {
+        var out = ""
+        if n <= 0 {
+            return out
+        }
+        var chunk: [u8; 256] = [0; 256]
+        var done: i64 = 0
+        while done < n {
+            let take = if n - done < 256 { n - done } else { 256 }
+            unsafe { randBytes(chunk as *u8, take) }
+            for i in 0..take {
+                out.push(chunk[i])
+            }
+            done += take
+        }
+        return out
+    }
+    // Fill `buf` with `n` random bytes, as `bytes` does: the raw form for a fixed
+    // array a caller already holds. `buf` must point at `n` writable bytes.
     @unsafe
-    fn bytes(buf: *u8, n: i64): void {
+    fn fillRaw(buf: *u8, n: i64): void {
         randBytes(buf, n)
     }
 }

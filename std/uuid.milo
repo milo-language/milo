@@ -65,7 +65,7 @@ impl Uuid {
     fn v4(): Uuid {
         var b: [u8; 16] = [0; 16]
         unsafe {
-            Random.bytes(b as *u8, 16)
+            Random.fillRaw(b as *u8, 16)
         }
         // version 4: high nibble of byte 6 = 0100
         b[6] = (b[6] & 0x0f as u8) | 0x40 as u8
@@ -105,7 +105,7 @@ impl Uuid {
 
         var b: [u8; 16] = [0; 16]
         unsafe {
-            Random.bytes(b as *u8, 16)
+            Random.fillRaw(b as *u8, 16)
         }
         b[0] = ((ms >> 40) & 0xff) as u8
         b[1] = ((ms >> 32) & 0xff) as u8

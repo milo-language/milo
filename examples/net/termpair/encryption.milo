@@ -39,7 +39,7 @@ ensures result.len == 16
 {
     var buf: [u8; 16] = [0; 16]
     unsafe {
-        Random.bytes(buf as *u8, 16)
+        Random.fillRaw(buf as *u8, 16)
     }
     var s: string = ""
     for i in 0..16 {

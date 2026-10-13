@@ -16,6 +16,19 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `Random.bytes(n)` returns the bytes; the pointer form is `Random.fillRaw` (2026-10-12)
+
+`Random.bytes(buf: *u8, n)` was the only way to get random bytes, and it needed a raw
+pointer and `unsafe` for what key, salt and nonce generation do all the time. The safe
+form takes the good name: `Random.bytes(n): string` returns `n` CSPRNG bytes as the byte
+string std's crypto APIs take. The pointer form keeps working under its new name, for a
+fixed array a caller already holds. No alias: one name with two signatures is not
+possible, and the old call no longer type-checks, so nothing silently changes meaning.
+
+| was | now |
+|---|---|
+| `unsafe { Random.bytes(buf as *u8, n) }` | `unsafe { Random.fillRaw(buf as *u8, n) }`, or `let key = Random.bytes(n)` |
+
 ## `httpDate` moved out of std/http as `formatRfc2822` in std/datetime (2026-10-12)
 
 std/http's `httpDate(epochSec)` and the new std/datetime formatter wrote the same
