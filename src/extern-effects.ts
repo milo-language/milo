@@ -153,6 +153,22 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   EVP_EncryptFinal_ex: pure(ossl("EVP_EncryptFinal_ex")), EVP_DecryptInit_ex: pure(ossl("EVP_DecryptInit_ex")),
   EVP_DecryptUpdate: pure(ossl("EVP_DecryptUpdate")), EVP_DecryptFinal_ex: pure(ossl("EVP_DecryptFinal_ex")),
   EVP_aes_128_gcm: pure(ossl("EVP_aes_128_gcm")), EVP_aes_256_gcm: pure(ossl("EVP_aes_256_gcm")),
+  // std/webpush's P-256 (ECDH, ECDSA). Handles are allocator state; the math reads and
+  // writes only memory the caller passed in.
+  EC_KEY_new_by_curve_name: local(ossl("EC_KEY_new_by_curve_name")), EC_KEY_free: local(ossl("EC_KEY_free")),
+  EC_POINT_new: local(ossl("EC_POINT_new")), EC_POINT_free: local(ossl("EC_POINT_free")),
+  BN_free: local(ossl("BN_free")), ECDSA_SIG_free: local(ossl("ECDSA_SIG_free")),
+  BN_bin2bn: local(ossl("BN_bin2bn")), BN_bn2binpad: pure(ossl("BN_bn2binpad")),
+  EC_KEY_get0_group: pure(ossl("EC_KEY_get0_group")), EC_KEY_get0_private_key: pure(ossl("EC_KEY_get0_private_key")),
+  EC_KEY_get0_public_key: pure(ossl("EC_KEY_get0_public_key")),
+  EC_KEY_set_private_key: pure(ossl("EC_KEY_set_private_key")), EC_KEY_set_public_key: pure(ossl("EC_KEY_set_public_key")),
+  EC_POINT_mul: pure(ossl("EC_POINT_mul")), EC_POINT_oct2point: pure(ossl("EC_POINT_oct2point")),
+  EC_POINT_point2oct: pure(ossl("EC_POINT_point2oct")), ECDH_compute_key: pure(ossl("ECDH_compute_key")),
+  ECDSA_SIG_get0: pure(ossl("ECDSA_SIG_get0")),
+  // OpenSSL draws these from its own RNG, below any call milo sees, and keeps the result
+  // inside an opaque key or signature, so there are no bytes to copy back under replay.
+  EC_KEY_generate_key: hole(ossl("EC_KEY_generate_key"), "OpenSSL draws the key from its own RNG into an opaque EC_KEY; a replay generates a different key"),
+  ECDSA_do_sign: hole(ossl("ECDSA_do_sign"), "OpenSSL draws the nonce from its own RNG into an opaque ECDSA_SIG; a replay signs with a different nonce"),
   BCryptCreateHash: local(win("BCryptCreateHash")), BCryptDestroyHash: local(win("BCryptDestroyHash")),
   BCryptHashData: pure(win("BCryptHashData")), BCryptFinishHash: pure(win("BCryptFinishHash")),
   regcomp: local(man(3, "regcomp")),

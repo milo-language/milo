@@ -191,7 +191,8 @@ own redeclaration of the extern does not have. A hole is never silent:
   replayed.
 - **std is held to it**: `tests/externEffects.test.ts` checks every std module on each
   target with `--replay-holes` and allows only `dlopen` and `dlsym` (std/dl), whose loaded
-  code is invisible by nature.
+  code is invisible by nature, and `EC_KEY_generate_key` and `ECDSA_do_sign`
+  (std/webpush), whose randomness OpenSSL draws internally into opaque structs.
 
 ### Phase 4: OS threads
 

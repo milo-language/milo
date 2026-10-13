@@ -84,7 +84,8 @@ test("every recorded extern's description generates a wrapper on every target it
 
 // std is held to the holes it documents: a std fn that calls an extern nobody records
 // (and that is not one of std's own recording wrappers, `@replayHooked`) shows up here.
-// The allowed ones are the dynamic loader, whose loaded code is invisible by nature.
+// The allowed ones are the dynamic loader, whose loaded code is invisible by nature, and
+// std/webpush's key generation and signing, whose randomness OpenSSL draws internally.
 test("std's own extern calls have no replay holes but the documented ones", () => {
   const dir = mkdtempSync(join(tmpdir(), "milo-stdholes-"));
   try {
@@ -103,7 +104,7 @@ test("std's own extern calls have no replay holes but the documented ones", () =
       const args = ["run", join(import.meta.dir, "..", "src", "main.ts"), "check", ...(target ? ["--target", target] : []), "--replay-holes", file];
       const r = spawnSync("bun", args, { encoding: "utf-8" });
       const holes = new Set([...r.stderr.matchAll(/warning\[replay-hole\][^\n]*?'(\w+)' is not recorded/g)].map(m => m[1]));
-      expect({ os, holes: [...holes].sort() }).toEqual({ os, holes: os === "windows" ? [] : ["dlopen", "dlsym"] });
+      expect({ os, holes: [...holes].sort() }).toEqual({ os, holes: ["ECDSA_do_sign", "EC_KEY_generate_key", ...(os === "windows" ? [] : ["dlopen", "dlsym"])] });
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

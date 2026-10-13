@@ -17,7 +17,7 @@
   "src/derive-json.ts": 406,
   "src/derive-template.ts": 211,
   "src/diagnostics.ts": 119,
-  "src/extern-effects.ts": 517,
+  "src/extern-effects.ts": 533,
   "src/fixes.ts": 211,
   "src/fmtbin.ts": 157,
   "src/headergen.ts": 169,
