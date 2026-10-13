@@ -1,0 +1,20 @@
+// @error: cannot move the borrowed value out of 's'
+//
+// A nested payload binding through a '&W' is a view too; the arm tail cannot move it.
+enum W {
+    Wrap(Option<string>),
+    Empty,
+}
+
+fn pick(w: &W): string {
+    return match w {
+        W.Wrap(Option.Some(s)) => s
+        W.Wrap(Option.None) => "none".clone()
+        W.Empty => "empty".clone()
+    }
+}
+
+fn main() {
+    let w = W.Wrap(Option.Some("a string long enough to live on the heap".clone()))
+    print(pick(w))
+}

@@ -766,6 +766,12 @@ export class TypeChecker {
   // really moves, which checkCallSiteExclusivity counts as exclusive uses. Asking the
   // path rather than re-deriving it keeps builtins (`format` reads its args) out.
   private moveRequested = new WeakSet<Expr>();
+  // The binding each Ident resolved to when it was checked. A fork's tail is moved only
+  // after the whole fork is checked (tryMove forwards a match/if to its arm tails), and by
+  // then the arm's scope is popped: `lookup` misses the pattern binding, so a `&T` payload
+  // view returned as the arm's value (`match e { E.A(msg) => msg }` on `e: &E`) escaped
+  // the borrowed-move rule and double-freed.
+  private identBinding = new WeakMap<Expr, VarInfo>();
   private rewrittenCalls = new Map<Expr, string>();
   private replaySites = new Map<Expr, { wrapper: string; site: string; fixed?: number }>();
   private replayRawShares = new Map<Expr, string>();
@@ -8030,7 +8036,12 @@ export class TypeChecker {
     if (expr.kind === "UnaryOp" && expr.op === "*") { this.tryMoveOutOfHeap(expr); return; }
     // ident-ok: asks whether the BINDING was declared `&T`, which is a property of the declaration, not of storage
     if (expr.kind === "Ident") {
-      const info = this.lookup(expr.name);
+      const live = this.lookup(expr.name);
+      const resolved = this.identBinding.get(expr);
+      // The binding's scope has closed (a fork tail, see identBinding): the binding is
+      // dead, so only the borrowed-move rule below applies; nothing else should be marked.
+      const scopeClosed = !!resolved && resolved !== live;
+      const info = scopeClosed ? resolved : live;
       // Moving in an owned position through a borrow (`&T`, T non-Copy) would
       // shallow-copy the pointee — e.g. a String's heap buffer — aliasing it
       // with the real owner and double-freeing on drop. Reject; clone to own.
@@ -8040,6 +8051,7 @@ export class TypeChecker {
           `'${expr.name}' is a reference — call .clone() to take an owned copy`);
         return;
       }
+      if (scopeClosed) return;
       if (info && this.isPoisoned(info.type)) return;
       if (info?.isGlobal && !this.isCopyType(info.type)) {
         this.errorMoveOutOfGlobal(expr, expr.name, expr.name);
@@ -9942,6 +9954,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     info.read = true;
+    this.identBinding.set(expr, info);
     if (info.closureSources && info.type.tag === "fn") this.checkClosureValueWrites(expr.name, info, sp);
     if (this.pendingUseNotes.size > 0) this.noteStillUsed(info, sp);
     // `unsafe` admits the read: the new owner is then the programmer's claim to make

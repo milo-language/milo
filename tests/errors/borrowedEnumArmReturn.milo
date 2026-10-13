@@ -1,0 +1,18 @@
+// @error: cannot move the borrowed value out of 'msg'
+//
+// A 'return' statement inside the arm block: the binding is still in scope.
+enum E {
+    A(i64, string),
+    B(string),
+}
+
+fn pick(e: &E): string {
+    match e {
+        E.A(_n, msg) => { return msg }
+        E.B(msg) => { return msg }
+    }
+}
+fn main() {
+    let e = E.B("a string long enough to live on the heap".clone())
+    print(pick(e))
+}

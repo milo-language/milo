@@ -1,0 +1,19 @@
+// @error: cannot move the borrowed value out of 'msg'
+//
+// A '&mut E' subject binds '&mut' views; moving one out by value is the same aliasing.
+enum E {
+    A(i64, string),
+    B(string),
+}
+
+fn pick(e: &mut E): string {
+    return match e {
+        E.A(_n, msg) => msg
+        E.B(msg) => msg
+    }
+}
+fn main() {
+    let e = E.B("a string long enough to live on the heap".clone())
+    var f = e
+    print(pick(&mut f))
+}

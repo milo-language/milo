@@ -1,0 +1,21 @@
+// @error: cannot move the borrowed value out of 'msg'
+//
+// An arm's tail hands its payload binding out as the match's value. Through a '&E'
+// the binding is a view, so returning it shallow-copied the caller's buffer and
+// double-freed (exit 133). The tail is moved after the arm's scope closes, which is
+// how it slipped past the rule a 'return msg' statement already hit.
+enum E {
+    A(i64, string),
+    B(string),
+}
+
+fn pick(e: &E): string {
+    return match e {
+        E.A(_n, msg) => msg
+        E.B(msg) => msg
+    }
+}
+fn main() {
+    let e = E.B("a string long enough to live on the heap".clone())
+    print(pick(e))
+}

@@ -1,0 +1,16 @@
+// @error: cannot move the borrowed value out of 'm'
+//
+// A let-else payload through a '&E' is a view; returning it would alias the caller's buffer.
+enum E {
+    A(i64, string),
+    B(string),
+}
+
+fn pick(e: &E): string {
+    let E.B(m) = e else { return "none".clone() }
+    return m
+}
+fn main() {
+    let e = E.B("a string long enough to live on the heap".clone())
+    print(pick(e))
+}

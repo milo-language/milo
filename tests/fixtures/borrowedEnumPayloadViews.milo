@@ -1,0 +1,81 @@
+// Payload bindings matched through a '&E' (or '&mut E') are views: every borrowing use
+// compiles, and an arm tail that clones hands out an owned copy. Only a by-value move of
+// the view is rejected (tests/errors/borrowedEnum*.milo).
+// @expect: hello world, long enough to heap allocate
+// @expect: x:short
+// @expect: 41
+// @expect: 5
+// @expect: mut:long payload on the heap for the mut case!
+// @expect: inner payload string that lives on the heap
+// @expect: hello world, long enough to heap allocate
+// @expect: hello world, long enough to heap allocate
+enum E {
+    A(i64, string),
+    B(string),
+}
+
+enum W {
+    Wrap(Option<string>),
+    Empty,
+}
+
+fn show(s: &string): string {
+    return "x:" + s
+}
+
+fn take(e: &E): string {
+    return match e {
+        E.A(_n, msg) => msg.clone()
+        E.B(msg) => msg.clone()
+    }
+}
+
+fn describe(e: &E): string {
+    match e {
+        E.A(_n, msg) => { return show(msg) }
+        E.B(msg) => { return show(msg) }
+    }
+}
+
+fn size(e: &E): i64 {
+    let n = match e {
+        E.A(_n, msg) => msg.len()
+        E.B(msg) => msg.len()
+    }
+    return n
+}
+
+fn tag(e: &mut E): string {
+    if let E.B(m) = e { return "mut:" + m }
+    return "none".clone()
+}
+
+fn inner(w: &W): string {
+    return match w {
+        W.Wrap(Option.Some(s)) => s.clone()
+        W.Wrap(Option.None) => "none".clone()
+        W.Empty => "empty".clone()
+    }
+}
+
+fn first(e: &E): string {
+    let E.A(_n, m) = e else { return "not A".clone() }
+    return m.clone()
+}
+
+fn main() {
+    let e = E.A(1, "hello world, long enough to heap allocate".clone())
+    let s = take(e)
+    print(s)
+    print(describe(E.B("short".clone())))
+    print(size(e).toString())
+    print(size(E.B("hello".clone())).toString())
+    var b = E.B("long payload on the heap for the mut case!".clone())
+    print(tag(&mut b))
+    print(inner(W.Wrap(Option.Some("inner payload string that lives on the heap".clone()))))
+    print(first(e))
+    match e {
+        E.A(_n, m) => print(m)
+        E.B(m) => print(m)
+    }
+}
