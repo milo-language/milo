@@ -114,3 +114,12 @@ test("a file that will not compile is reported without aborting the rest of the 
   expect(json.tests.map((t: any) => t.name)).toEqual(["testContract_clampTo"]);
   expect(json.passed).toBe(1);
 });
+
+test("a --contracts run that finds no contract-bearing fn fails rather than passing empty", () => {
+  // CI's sweep is `milo test --contracts std examples`; zero discovered tests there means
+  // discovery broke, and a green exit would hide it.
+  const { code, json } = run("examples/hello.milo");
+  expect({ code, tests: json.tests.length }).toEqual({ code: 1, tests: 0 });
+  const text = Bun.spawnSync(["bun", "run", MILO, "test", "--contracts", "examples/hello.milo"], { cwd: ROOT });
+  expect(text.exitCode).toBe(1);
+});

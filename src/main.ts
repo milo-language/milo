@@ -1628,7 +1628,7 @@ async function runTests(
       })),
     }, null, 2) + "\n");
     if (failed > 0 || compileErrors.length > 0) process.exit(1);
-    if (outcomes.length === 0 && filter) process.exit(1);
+    if (outcomes.length === 0 && (filter || contracts)) process.exit(1);
     return;
   }
 
@@ -1648,6 +1648,13 @@ async function runTests(
   // A filter that matched nothing is a mistyped pattern, not a green run.
   if (outcomes.length === 0 && filter) {
     console.log(`no test matched '${filter}'`);
+    process.exit(1);
+  }
+  // CI's contract sweep is `milo test --contracts std examples`: if discovery stopped
+  // recognizing contracts it would run nothing and exit 0, a green step that checked
+  // nothing. A --contracts run over paths with no contract-bearing fn is an error.
+  if (outcomes.length === 0 && contracts) {
+    console.log("no contract-bearing fn found: --contracts ran nothing");
     process.exit(1);
   }
 }

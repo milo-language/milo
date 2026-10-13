@@ -78,6 +78,8 @@ and synthesizes one property test per fn carrying a `requires`/`ensures`. Each t
 A refutation prints the arguments that produced it. This is a different question from
 `milo prove`: the prover asks whether the contract is *provable*, this asks whether it is
 *true on drawn inputs*, and it finds the contract that is too weak rather than too strong.
+A run that discovers no contract-bearing fn at all exits 1: zero tests over std means
+discovery broke, not that std is clean.
 Its first sweep of std found five contracts promising results that exhaust memory
 (`strRepeat`, both pads, `Pool.new`, `inflate.zeros`) and one missing character-boundary
 precondition on `strCharAt`.
