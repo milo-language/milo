@@ -81,6 +81,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/hir-ratchet.ts` | How much of src-milo's backend still re-derives what the frontend already knew? |
 | `scripts/ir-diff.ts` | Byte-exact IR differential: emit LLVM IR for every fixture with BOTH compilers and compare the bytes. |
 | `scripts/ir-same.ts` | Byte-identical IR gate: proves a codegen refactor changed no emitted LLVM IR, by emitting IR for every fixture and example in both a base commit and the working tree and comparing the bytes. |
+| `scripts/ir-sites.ts` | IR string-site ratchet: counts the places in src/ that still emit LLVM IR as text instead of through the typed builder (src/ir.ts), and fails if any file's count grows. |
 | `scripts/jpeg-grade.ts` | Grades std/jpeg against libjpeg-turbo: decoder pixels vs djpeg, encoder bytes vs cjpeg, and decode/encode speed. |
 | `scripts/leak-check.ts` | Leak gate: compile every stdout-comparable fixture, run it, and fail if the process exits still holding heap it allocated. |
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
