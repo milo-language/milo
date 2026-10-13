@@ -1,0 +1,51 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/Bl5bAftEhCKRnvCaVXpaehnEpE0</id>
+  <title>arXiv Query: search_query=cat:cs.PL&amp;id_list=&amp;start=0&amp;max_results=50</title>
+  <updated>2026-10-12T14:02:53Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=cat:cs.PL&amp;start=0&amp;max_results=50&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>50</opensearch:itemsPerPage>
+  <opensearch:totalResults>10419</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2610.13679v1</id>
+    <title>A Simplified Layout Algebra for GPU Kernels</title>
+    <updated>2026-10-09T14:45:50Z</updated>
+    <link href="https://arxiv.org/abs/2610.13679v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2610.13679v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The layout algebra behind NVIDIA's CuTe library describes how tensor tiles map onto threads and memory. A layout is a shape with a stride for each entry, so a coordinate's address is the sum of its indices times their strides. As formalized by Shah and by Cecka, its central operations (e.g., composition, complement, division, product) are guarded by at least six interacting admissibility conditions. We show that this complexity is an artifact of a representational choice, not of the domain.
+  We present a layout algebra in which every layout names the space its inputs and outputs live in: logical, physical, or thread-value indices. A layout into logical or thread-value space must be a bijection from its $N$ coordinates onto $[0,N)$. A layout into physical space must be alias-free: distinct coordinates land on distinct addresses, except under broadcast, where many threads read one value on purpose and the layout must mark where. Nothing maps out of a physical index.
+  Composing $f$ with $g$ requires only that $f$'s range be exactly $g$'s flattened coordinate set. The index arithmetic can always be emitted naively: compute $f$, split the result by division and remainder into $g$'s coordinates, and apply $g$. Often the composite simplifies to a layout; we show that when it does, there is a coarsest such form, whose digits every other one refines, and we emit that.
+  A warp's or thread's slice is a \emph{restriction}. A restricted layout is no longer composable, which forces the user to settle the whole view of a tile before taking slices.
+  We validate the algebra by reproducing within it CuTe's operations, such as composition, complement, and division. We implement it in OCaml and use the implementation to rederive CuTe's atoms and usage patterns. The decision procedure is proved correct in Rocq.</summary>
+    <category term="cs.PL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-10-09T14:45:50Z</published>
+    <arxiv:primary_category term="cs.PL"/>
+    <author>
+      <name>Nan An</name>
+    </author>
+    <author>
+      <name>Xiaotian Zhou</name>
+    </author>
+  </entry>
+    <entry>
+    <id>http://arxiv.org/abs/2610.12911v1</id>
+    <title>Coexponential Exploration in the Clef Programming Language</title>
+    <updated>2026-10-09T03:03:03Z</updated>
+    <link href="https://arxiv.org/abs/2610.12911v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2610.12911v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Clef was created as a concurrent programming language whose compiler tracks state ownership, waiting computations and request dependencies. We develop a coexponential account of stateful services and their client pools within this design. Delimited continuations retain the computation and resources needed to complete each interaction. These structures give our compiler premises for verifying service composition and preserving it through native lowering to multiple hardware targets.
+  We connect finite actor state transitions to the initial, service and final rules of a coexponential server. A separate operational account relates actor dispatch to single-use continuation frames. We prove state-ownership and reply preservation for that translation, give a finite communication-summary analysis, and circular-wait exclusion from the conditions needed. A further result identifies when changing service order preserves both state and replies.
+  Our Program Semantic Graph retains these facts through compilation. We are researching reusable proofs to confirm the ownership and communication interfaces, while our BAREWire implementation connects message meaning to its unboxed representation across respective endpoints. A distributed worker example preserves request identity across suspension, reordered replies and boundary conversion. Urschel's elimination-growth bounds supply quantitative premises for a solver service, whose accuracy and failure budget compose with the protocol contract.
+  The design we envision connects automatic structural analysis, reusable proof terms and native realization. Protocols determine the admissible interactions, continuations expose their storage requirements, and retained dependencies support differential compilation. Developers can express ordinary stateful services while the compiler carries the conditions for their correct composition across execution targets.</summary>
+    <category term="cs.PL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LO" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-10-09T03:03:03Z</published>
+    <arxiv:comment>34 pages, 4 figures, 3 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.PL"/>
+    <author>
+      <name>Houston Haynes</name>
+    </author>
+  </entry>
+    </feed>

@@ -1,0 +1,55 @@
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"
+    		xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>LWN.net</title>
+        <link>https://lwn.net</link>
+        <description> LWN.net is a comprehensive source of news and opinions from
+        and about the Linux community.  This is the main LWN.net feed,
+        listing all articles which are posted to the site front page.
+</description>
+        <language>en-us</language>
+        <pubDate>Mon, 12 Oct 2026 14:28:02 +0000</pubDate>
+        <lastBuildDate>Mon, 12 Oct 2026 14:28:02 +0000</lastBuildDate>
+        <docs>https://www.rssboard.org/rss-specification</docs>
+        <webMaster>lwn@lwn.net</webMaster>
+        <atom:link href="https://lwn.net/headlines/rss2"
+    		rel="self" type="application/rss+xml"/>
+    <item>
+        <title>LineageOS 24 released</title>
+        <link>https://lwn.net/Articles/1099950/</link>
+        <guid>https://lwn.net/Articles/1099950/</guid>
+        <dc:creator>jzb</dc:creator>
+        <description>&lt;p&gt;The &lt;a href=&quot;https://lineageos.org/&quot;&gt;LineageOS&lt;/a&gt; project, which produces an
+Android-based distribution for mobile devices, has &lt;a
+href=&quot;https://lineageos.org/Changelog-32/&quot;&gt;announced&lt;/a&gt; the release of
+LineageOS 24.0.&lt;/p&gt;
+
+&lt;blockquote class=&quot;bq&quot;&gt;
+&lt;p&gt;We're a bit sentimental about this release, as it precedes a really fun
+upcoming milestone.&lt;/p&gt;
+
+&lt;p&gt;On December 24, 2026, LineageOS will celebrate 10 years. It's a remarkable
+milestone for a project built by a passionate community of developers,
+maintainers, contributors, and users who have kept so many devices alive along
+the way.&lt;/p&gt;
+
+&lt;p&gt;[...] We've been hard at work rebasing all of our changes and features since
+Android 17's release in June. Android 17's first release mainly contained
+iterative improvements and some UI/UX refinements, but due to our previous
+efforts adapting to Google's heavy refactoring over the last several versions,
+we were able to rebase onto Android 17's code-base faster than anticipated. Yes
+you read that right: We're early this year!&lt;/p&gt;
+&lt;/blockquote&gt;</description>
+        <pubDate>Mon, 12 Oct 2026 13:13:57 +0000</pubDate>
+        </item>
+    <item>
+        <title>Security updates for Monday</title>
+        <link>https://lwn.net/Articles/1099949/</link>
+        <guid>https://lwn.net/Articles/1099949/</guid>
+        <dc:creator>jzb</dc:creator>
+        <description>Security updates have been issued by &lt;b&gt;AlmaLinux&lt;/b&gt; (cjose, compat-openssl10, compat-openssl11, curl, dogtag-pki, dovecot, emacs, glibc, kernel, openssl, python3.12, python3.14, and sssd), &lt;b&gt;Debian&lt;/b&gt; (chromium, ghostscript, tor, and vips), &lt;b&gt;Fedora&lt;/b&gt; (kernel, libical, markdownlint-cli2, openbao, openvpn, php-getid3, python3.10, python3.11, and python3.13), &lt;b&gt;Mageia&lt;/b&gt; (capnproto, chirp, flatpak, freetype2, hamlib, mingw-pcre2, pcre2, openssl, tomcat, tomcat-native, and xdg-dbus-proxy), &lt;b&gt;Oracle&lt;/b&gt; (bind, cjose, dogtag-pki, dovecot, firefox, kernel, nodejs:24, openssl, pki-core:10.6, python3.12, python3.14, ruby:2.5, rust-sequoia-sq, sssd, and tftp), &lt;b&gt;Red Hat&lt;/b&gt; (libxml2), &lt;b&gt;Slackware&lt;/b&gt; (mutt), &lt;b&gt;SUSE&lt;/b&gt; (apache-sshd, bind, ccache, chromium, cpp13, dash, expat, fetchmail, flatpak, golang-github-prometheus-prometheus, grafana, system-user-grafana, incus, libpng16-16, libsoup, logback, openssh8.4, perl-DBI, php8, python3-paramiko, python312, python313-asyncpg, python313-azure-identity, python313-Babel, python313-Beaker, python313-bjoern, python313-black, python313-Brotli, python313-CairoSVG, python313-Flask-Cors, python313-FontTools, python313-Jinja2, python313-jwcrypto, python313-MechanicalSoup, python313-oauthlib, python313-PyJWT, python313-PyMySQL, python313-PyYAML, python313-virtualenv, python313-XStatic-jquery-ui, qemu, rsyslog, shadowsocks-rust, squid, stunnel, swtpm, trivy, unbound, wpa_supplicant, and yast2-users), and &lt;b&gt;Ubuntu&lt;/b&gt; (libdbi-perl).
+</description>
+        <pubDate>Mon, 12 Oct 2026 13:00:41 +0000</pubDate>
+        </item>
+    </channel>
+</rss>

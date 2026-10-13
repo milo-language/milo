@@ -1,0 +1,731 @@
+// std/xml: a strict XML 1.0 pull parser plus a small owned-tree DOM, pure Milo
+//
+// Two layers over one tokenizer:
+//
+//   XmlReader  a pull parser: `next()` hands out one XmlEvent at a time (start tag
+//              with its attributes, end tag, text, CDATA, comment, processing
+//              instruction) and never builds a tree. Use it for large documents or
+//              when you only want a few elements.
+//   Xml.parse  builds an XmlNode tree from the same events, for the common case of
+//              reading a feed or a config file whole.
+//
+// What it checks (it is strict: the first violation is an XmlError, never a guess):
+// well-formedness (one root element, end tags match, attribute names unique, no
+// `<` in attribute values, `&` always starts a reference), UTF-8 (input must be
+// valid UTF-8; an `<?xml encoding=...?>` naming anything but UTF-8 or US-ASCII is
+// rejected, as is a UTF-16 byte order mark), and the XML Char production (no C0
+// controls other than tab, LF and CR).
+//
+// What it deliberately does not do:
+//
+//   - DTDs. A `<!DOCTYPE>` with only an external id is skipped. One with an internal
+//     subset (`<!DOCTYPE x [ ... ]>`) is rejected with XmlError.DoctypeSubset: that is
+//     where entity declarations live, and expanding declared entities is what the
+//     "billion laughs" attack exploits. So the only entity references are XML's five
+//     predefined ones (`&amp; &lt; &gt; &quot; &apos;`) and numeric character
+//     references; HTML's named entities (`&nbsp;`) are an error, as XML requires.
+//   - Namespace resolution. Names are kept exactly as written, prefix included:
+//     an element is named "dc:creator" or "atom:link", and `xmlns`/`xmlns:p`
+//     declarations are ordinary attributes. Matching a prefixed name literally is
+//     what feed readers do in practice; resolving prefixes to URIs is left to the
+//     caller, who can read the `xmlns:*` attributes.
+//   - Validation, external entities, or any encoding other than UTF-8.
+
+from "std/unicode" import {
+    decodeCodepoint, encodeCodepoint
+}
+
+// XmlError: why a document was rejected. The first field of every variant is the
+// byte offset into the input where the problem was found.
+pub enum XmlError {
+    // Malformed markup. Payload: offset and what was wrong.
+    Syntax(i64, string),
+    // An end tag that does not close the open element. Payload: offset, the name
+    // that was open, the name the end tag gave.
+    MismatchedTag(i64, string, string),
+    // `&name;` where name is not one of XML's five predefined entities, or a
+    // numeric reference to a code point XML does not allow. Payload: offset and
+    // the reference text between `&` and `;`.
+    UnknownEntity(i64, string),
+    // A `<!DOCTYPE>` with an internal subset, refused rather than expanded (see the
+    // module comment). Payload: offset of the `<!DOCTYPE`.
+    DoctypeSubset(i64),
+    // Input that is not UTF-8: an invalid byte sequence, a UTF-16 byte order mark,
+    // or a declared encoding other than UTF-8/US-ASCII. Payload: offset and detail.
+    Encoding(i64, string),
+    // Elements nested deeper than Xml.parse allows (512). Payload: offset of the
+    // start tag that went over. XmlReader has no depth limit.
+    TooDeep(i64),
+}
+
+impl XmlError {
+    // The byte offset into the input where the error was found.
+    fn offset(self: &Self): i64 {
+        return match self {
+            XmlError.Syntax(at, _m) => at
+            XmlError.MismatchedTag(at, _a, _b) => at
+            XmlError.UnknownEntity(at, _n) => at
+            XmlError.DoctypeSubset(at) => at
+            XmlError.Encoding(at, _m) => at
+            XmlError.TooDeep(at) => at
+        }
+    }
+
+    // One-line description, ending with the byte offset.
+    fn message(self: &Self): string {
+        let what = match self {
+            XmlError.Syntax(_at, m) => m.clone()
+            XmlError.MismatchedTag(_at, open, found) => $"end tag </{found}> does not match open element <{open}>"
+            XmlError.UnknownEntity(_at, name) => $"unknown entity reference &{name};"
+            XmlError.DoctypeSubset(_at) => "DOCTYPE with an internal subset is not supported (entity declarations are refused)"
+            XmlError.Encoding(_at, m) => m.clone()
+            XmlError.TooDeep(_at) => $"elements nested deeper than {MAX_DEPTH}"
+        }
+        return $"{what} at byte {self.offset()}"
+    }
+}
+
+// XmlAttr: one attribute, value entity-decoded and whitespace-normalized as XML
+// requires (a literal tab, LF or CR in the value reads as a space).
+pub struct XmlAttr {
+    name: string,
+    value: string,
+}
+
+// XmlStart: a start tag. `name` keeps any namespace prefix ("atom:link").
+pub struct XmlStart {
+    name: string,
+    attrs: Vec<XmlAttr>,
+}
+
+// XmlPi: a processing instruction `<?target data?>`. The XML declaration
+// (`<?xml version="1.0"?>`) is not one and is never reported.
+pub struct XmlPi {
+    target: string,
+    data: string,
+}
+
+// XmlEvent: one step of a pull parse.
+pub enum XmlEvent {
+    // `<name attr="v">`. A self-closing `<name/>` reports StartTag then EndTag, so a
+    // consumer never needs to treat the two spellings differently.
+    StartTag(XmlStart),
+    // `</name>`, already checked against the matching StartTag.
+    EndTag(string),
+    // Character data, entity references decoded, CRLF and lone CR read as LF. May
+    // be whitespace only (indentation between elements is text inside an element).
+    // Text outside the root element is whitespace and is never reported.
+    Text(string),
+    // The contents of `<![CDATA[ ... ]]>`, verbatim.
+    CData(string),
+    // The contents of `<!-- ... -->`.
+    Comment(string),
+    // `<?target data?>`.
+    Pi(XmlPi),
+}
+
+let MAX_DEPTH: i64 = 512
+
+// Tokenizer state, kept apart from the input so Xml.parse can drive it over a
+// borrowed string while XmlReader owns its own copy.
+struct Scan {
+    pos: i64,
+    stack: Vec<string>,
+    started: bool,
+    sawRoot: bool,
+    sawDoctype: bool,
+    // Set by a self-closing tag: the next call reports its EndTag.
+    pendingEnd: bool,
+}
+
+fn newScan(): Scan {
+    return Scan { pos: 0, stack: [], started: false, sawRoot: false, sawDoctype: false, pendingEnd: false }
+}
+
+// XmlReader: a pull parser over a document it owns.
+pub struct XmlReader {
+    src: string,
+    scan: Scan,
+}
+
+impl XmlReader {
+    // A reader over `text`. Nothing is checked until the first `next()`.
+    fn new(text: string): XmlReader {
+        return XmlReader { src: text, scan: newScan() }
+    }
+
+    // The next event, or None once the root element has closed and only
+    // whitespace, comments or PIs remain. An error is final: calling `next()`
+    // again after one is unspecified.
+    fn next(self: &mut Self): Result<Option<XmlEvent>, XmlError> {
+        return nextEvent(self.src, &mut self.scan)
+    }
+}
+
+// XmlNode: an element of a parsed document, as an owned tree.
+//
+// Character data uses the ElementTree layout so mixed content keeps its order with
+// only element children in `children`: `text` is the character data after the
+// start tag and before the first child element, and each child's `tail` is the
+// character data after that child's end tag and before the next sibling. In
+// `<p>a<b>b</b>c</p>`, p.text is "a", b.text is "b" and b.tail is "c". CDATA is
+// merged into the surrounding text; comments and processing instructions are
+// dropped. Iterate `children` with `for` to visit elements without copying.
+pub struct XmlNode {
+    name: string,
+    attrs: Vec<XmlAttr>,
+    children: Vec<XmlNode>,
+    text: string,
+    tail: string,
+}
+
+impl XmlNode {
+    // The value of attribute `name` (matched exactly, prefix included), or None.
+    fn attr(self: &Self, name: &string): Option<string> {
+        for a in self.attrs {
+            if a.name == name {
+                return Some(a.value.clone())
+            }
+        }
+        return None
+    }
+
+    // A copy of the first child element named `name`, or None. This deep-copies
+    // the subtree; to walk a large document, iterate `children` with `for`, which
+    // borrows.
+    fn child(self: &Self, name: &string): Option<XmlNode> {
+        for c in self.children {
+            if c.name == name {
+                return Some(c.clone())
+            }
+        }
+        return None
+    }
+
+    // The textContent of the first child element named `name`, or None when there
+    // is no such child. The text is not trimmed.
+    fn childText(self: &Self, name: &string): Option<string> {
+        for c in self.children {
+            if c.name == name {
+                return Some(c.textContent())
+            }
+        }
+        return None
+    }
+
+    // All character data inside this element, descendants included, in document
+    // order (this element's own `tail` is not part of it). Not trimmed.
+    fn textContent(self: &Self): string {
+        var out = ""
+        appendText(self, &mut out)
+        return out
+    }
+}
+
+fn appendText(n: &XmlNode, out: &mut string): void {
+    out.pushStr(n.text)
+    for c in n.children {
+        appendText(c, &mut out)
+        out.pushStr(c.tail)
+    }
+}
+
+// Xml: whole-document parsing.
+pub struct Xml {
+}
+
+impl Xml {
+    // Parse `text` into a tree and return its root element. Strict: the first
+    // well-formedness, encoding or entity problem is the error (see XmlError and
+    // the module comment for what is and is not accepted). Elements may nest at
+    // most 512 deep (XmlError.TooDeep); use XmlReader for deeper documents.
+    fn parse(text: &string): Result<XmlNode, XmlError> {
+        var scan = newScan()
+        var open: Vec<XmlNode> = []
+        var root: Option<XmlNode> = None
+        while true {
+            let startPos = scan.pos
+            let Some(ev) = nextEvent(text, &mut scan)?else {
+                break
+            }
+            match ev {
+                XmlEvent.StartTag(s) => {
+                    if open.len >= MAX_DEPTH {
+                        return Err(XmlError.TooDeep(startPos))
+                    }
+                    open.push(XmlNode { name: s.name, attrs: s.attrs, children: [], text: "", tail: "" })
+                }
+                XmlEvent.EndTag(_name) => {
+                    let Some(done) = open.pop() else {
+                        return Err(XmlError.Syntax(startPos, "end tag with no open element"))
+                    }
+                    if open.len == 0 {
+                        root = Some(done)
+                    } else {
+                        open[open.len - 1].children.push(done)
+                    }
+                }
+                XmlEvent.Text(t) => appendData(&mut open, t)
+                XmlEvent.CData(t) => appendData(&mut open, t)
+                XmlEvent.Comment(_c) => {}
+                XmlEvent.Pi(_p) => {}
+            }
+        }
+        let Some(r) = root else {
+            return Err(XmlError.Syntax(text.len, "no root element"))
+        }
+        return Ok(r)
+    }
+}
+
+// Character data goes to the open element's `text` until it has a child, then to
+// that last child's `tail` (the ElementTree layout, see XmlNode).
+fn appendData(open: &mut Vec<XmlNode>, data: string): void {
+    if open.len == 0 {
+        return
+    }
+    let top = open.len - 1
+    let kids = open[top].children.len
+    if kids == 0 {
+        open[top].text.pushStr(data)
+    } else {
+        open[top].children[kids - 1].tail.pushStr(data)
+    }
+}
+
+// ── tokenizer ──
+
+fn isSpace(c: u8): bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+// XML's NameStartChar, at byte granularity: every non-ASCII byte is accepted, since
+// the input was already checked to be UTF-8 and the non-ASCII ranges XML excludes
+// are rare enough that a strict table would cost more than it catches.
+fn isNameStart(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 128
+}
+
+fn isNameChar(c: u8): bool {
+    return isNameStart(c) || (c >= '0' && c <= '9') || c == '-' || c == '.'
+}
+
+fn startsAt(src: &string, pos: i64, lit: &string): bool {
+    if pos + lit.len > src.len {
+        return false
+    }
+    for i in 0..lit.len {
+        if src[pos + i] != lit[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn skipSpace(src: &string, pos: i64): i64 {
+    var p = pos
+    while p < src.len && isSpace(src[p]) {
+        p += 1
+    }
+    return p
+}
+
+// End of the name starting at `pos`, or `pos` itself when no name starts there.
+fn nameEnd(src: &string, pos: i64): i64 {
+    if pos >= src.len || !isNameStart(src[pos]) {
+        return pos
+    }
+    var p = pos + 1
+    while p < src.len && isNameChar(src[p]) {
+        p += 1
+    }
+    return p
+}
+
+// XML's Char production for a decoded code point.
+fn isXmlChar(cp: i32): bool {
+    if cp == 9 || cp == 10 || cp == 13 {
+        return true
+    }
+    if cp < 32 {
+        return false
+    }
+    if cp >= 55296 && cp <= 57343 {
+        return false
+    }
+    return cp != 65534 && cp != 65535 && cp <= 1114111
+}
+
+// The whole input is checked once, up front, so the tokenizer can treat every
+// byte >= 0x80 as part of a valid code point.
+fn checkChars(src: &string, from: i64): Result<Unit, XmlError> {
+    var p = from
+    while p < src.len {
+        let c = src[p]
+        if c < 128 {
+            if c < 32 && c != 9 && c != 10 && c != 13 {
+                return Err(XmlError.Syntax(p, $"control character {c} is not allowed in XML"))
+            }
+            p += 1
+            continue
+        }
+        let cp = decodeCodepoint(src, p)
+        // decodeCodepoint reports malformed UTF-8 as U+FFFD of size 1; a real U+FFFD
+        // in the input is 3 bytes long.
+        if cp.value == 65533 && cp.size == 1 {
+            return Err(XmlError.Encoding(p, "invalid UTF-8"))
+        }
+        if !isXmlChar(cp.value) {
+            return Err(XmlError.Syntax(p, $"code point U+{cp.value} is not allowed in XML"))
+        }
+        p += cp.size
+    }
+    return Ok(Unit {})
+}
+
+// Byte order mark, the character check, then the XML declaration if present.
+fn startDocument(src: &string, st: &mut Scan): Result<Unit, XmlError> {
+    if src.len >= 2 && ((src[0] == 254 && src[1] == 255) || (src[0] == 255 && src[1] == 254)) {
+        return Err(XmlError.Encoding(0, "UTF-16 input is not supported; convert it to UTF-8"))
+    }
+    if src.len >= 3 && src[0] == 239 && src[1] == 187 && src[2] == 191 {
+        st.pos = 3
+    }
+    checkChars(src, st.pos)?
+    let declAt = st.pos
+    if startsAt(src, declAt, "<?xml") && declAt + 5 < src.len && isSpace(src[declAt + 5]) {
+        var attrs: Vec<XmlAttr> = []
+        let end = readAttrs(src, declAt + 5, &mut attrs)?
+        if !startsAt(src, end, "?>") {
+            return Err(XmlError.Syntax(end, "expected '?>' to end the XML declaration"))
+        }
+        for a in attrs {
+            if a.name == "encoding" {
+                let enc = a.value.toLower()
+                if enc != "utf-8" && enc != "utf8" && enc != "us-ascii" && enc != "ascii" {
+                    return Err(XmlError.Encoding(declAt, $"declared encoding '{a.value}' is not supported; only UTF-8 input is"))
+                }
+            }
+        }
+        st.pos = end + 2
+    }
+    return Ok(Unit {})
+}
+
+// Attributes from `pos` up to (not including) `>`, `/>` or `?>`; returns where
+// that terminator starts. Each attribute needs whitespace before it.
+fn readAttrs(src: &string, pos: i64, attrs: &mut Vec<XmlAttr>): Result<i64, XmlError> {
+    var p = pos
+    while true {
+        let afterSpace = skipSpace(src, p)
+        if afterSpace >= src.len {
+            return Err(XmlError.Syntax(src.len, "unexpected end of input inside a tag"))
+        }
+        let c = src[afterSpace]
+        if c == '>' || c == '/' || c == '?' {
+            return Ok(afterSpace)
+        }
+        if afterSpace == p {
+            return Err(XmlError.Syntax(p, "expected whitespace before an attribute"))
+        }
+        let nameStart = afterSpace
+        let nEnd = nameEnd(src, nameStart)
+        if nEnd == nameStart {
+            return Err(XmlError.Syntax(nameStart, "expected an attribute name"))
+        }
+        let name = src.substr(nameStart, nEnd)
+        var q = skipSpace(src, nEnd)
+        if q >= src.len || src[q] != '=' {
+            return Err(XmlError.Syntax(q, $"expected '=' after attribute {name}"))
+        }
+        q = skipSpace(src, q + 1)
+        if q >= src.len || (src[q] != '"' && src[q] != '\'') {
+            return Err(XmlError.Syntax(q, $"expected a quoted value for attribute {name}"))
+        }
+        let quote = src[q]
+        let Some(close) = src.indexOfFrom(if quote == '"' { "\"" } else { "'" }, q + 1) else {
+            return Err(XmlError.Syntax(q, $"unterminated value for attribute {name}"))
+        }
+        for a in attrs {
+            if a.name == name {
+                return Err(XmlError.Syntax(nameStart, $"duplicate attribute {name}"))
+            }
+        }
+        let value = decodeData(src, q + 1, close, true)?
+        attrs.push(XmlAttr { name: name, value: value })
+        p = close + 1
+    }
+    return Ok(p)
+}
+
+// Decode src[from..to]: entity and character references, line endings (CRLF and
+// lone CR read as LF), and for an attribute value, literal whitespace to a space.
+// In text, `]]>` is an error and `<` cannot occur (the caller stopped there).
+fn decodeData(src: &string, from: i64, to: i64, inAttr: bool): Result<string, XmlError> {
+    var out = ""
+    var p = from
+    while p < to {
+        let c = src[p]
+        if c == '&' {
+            let Some(semi) = src.indexOfFrom(";", p + 1) else {
+                return Err(XmlError.Syntax(p, "'&' must start an entity or character reference"))
+            }
+            if semi >= to || (src[p + 1] != '#' && !isNameStart(src[p + 1])) {
+                return Err(XmlError.Syntax(p, "'&' must start an entity or character reference"))
+            }
+            let cp = refCodepoint(src, p, semi)?
+            encodeCodepoint(&mut out, cp)
+            p = semi + 1
+            continue
+        }
+        if c == '<' && inAttr {
+            return Err(XmlError.Syntax(p, "'<' is not allowed in an attribute value"))
+        }
+        if c == '\r' {
+            out.push(if inAttr { ' ' } else { '\n' })
+            p += if p + 1 < to && src[p + 1] == '\n' { 2 } else { 1 }
+            continue
+        }
+        if inAttr && (c == '\n' || c == '\t') {
+            out.push(' ')
+        } else {
+            if !inAttr && c == ']' && startsAt(src, p, "]]>") {
+                return Err(XmlError.Syntax(p, "']]>' is not allowed in text"))
+            }
+            out.push(c)
+        }
+        p += 1
+    }
+    return Ok(out)
+}
+
+fn hexVal(c: u8): i32 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i32
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i32 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i32 + 10
+    }
+    return -1
+}
+
+// The code point of the reference `&...;` spanning src[amp..semi].
+fn refCodepoint(src: &string, amp: i64, semi: i64): Result<i32, XmlError> {
+    let name = src.substr(amp + 1, semi)
+    if name == "amp" {
+        return Ok(38)
+    }
+    if name == "lt" {
+        return Ok(60)
+    }
+    if name == "gt" {
+        return Ok(62)
+    }
+    if name == "quot" {
+        return Ok(34)
+    }
+    if name == "apos" {
+        return Ok(39)
+    }
+    if name.len < 2 || name[0] != '#' {
+        return Err(XmlError.UnknownEntity(amp, name))
+    }
+    let hex = name[1] == 'x'
+    let first: i64 = if hex { 2 } else { 1 }
+    if first >= name.len {
+        return Err(XmlError.UnknownEntity(amp, name))
+    }
+    var v: i32 = 0
+    for i in first..name.len {
+        let d = if hex { hexVal(name[i]) } else if name[i] >= '0' && name[i] <= '9' { (name[i] - '0') as i32 } else { -1 }
+        if d < 0 {
+            return Err(XmlError.UnknownEntity(amp, name))
+        }
+        // Past the last code point already: stop before the i32 can overflow.
+        if v > 1114111 {
+            return Err(XmlError.UnknownEntity(amp, name))
+        }
+        v = v * (if hex { 16 } else { 10 }) + d
+    }
+    if !isXmlChar(v) {
+        return Err(XmlError.UnknownEntity(amp, name))
+    }
+    return Ok(v)
+}
+
+fn nextEvent(src: &string, st: &mut Scan): Result<Option<XmlEvent>, XmlError> {
+    if !st.started {
+        st.started = true
+        startDocument(src, &mut st)?
+    }
+    if st.pendingEnd {
+        st.pendingEnd = false
+        let Some(name) = st.stack.pop() else {
+            return Err(XmlError.Syntax(st.pos, "end tag with no open element"))
+        }
+        return Ok(Some(XmlEvent.EndTag(name)))
+    }
+    while true {
+        let pos = st.pos
+        if pos >= src.len {
+            if st.stack.len > 0 {
+                let open = st.stack[st.stack.len - 1].clone()
+                return Err(XmlError.Syntax(pos, $"unexpected end of input: <{open}> is not closed"))
+            }
+            if !st.sawRoot {
+                return Err(XmlError.Syntax(pos, "no root element"))
+            }
+            return Ok(None)
+        }
+        if src[pos] != '<' {
+            let end = src.indexOfFrom("<", pos) ?? src.len
+            if st.stack.len == 0 {
+                for i in pos..end {
+                    if !isSpace(src[i]) {
+                        let where = if st.sawRoot { "after" } else { "before" }
+                        return Err(XmlError.Syntax(i, $"text is not allowed {where} the root element"))
+                    }
+                }
+                st.pos = end
+                continue
+            }
+            let text = decodeData(src, pos, end, false)?
+            st.pos = end
+            return Ok(Some(XmlEvent.Text(text)))
+        }
+        if startsAt(src, pos, "<!--") {
+            let Some(close) = src.indexOfFrom("--", pos + 4) else {
+                return Err(XmlError.Syntax(pos, "unterminated comment"))
+            }
+            if !startsAt(src, close, "-->") {
+                return Err(XmlError.Syntax(close, "'--' is not allowed inside a comment"))
+            }
+            st.pos = close + 3
+            return Ok(Some(XmlEvent.Comment(src.substr(pos + 4, close))))
+        }
+        if startsAt(src, pos, "<![CDATA[") {
+            if st.stack.len == 0 {
+                return Err(XmlError.Syntax(pos, "CDATA section outside the root element"))
+            }
+            let Some(close) = src.indexOfFrom("]]>", pos + 9) else {
+                return Err(XmlError.Syntax(pos, "unterminated CDATA section"))
+            }
+            st.pos = close + 3
+            return Ok(Some(XmlEvent.CData(normalizeNewlines(src, pos + 9, close))))
+        }
+        if startsAt(src, pos, "<!DOCTYPE") {
+            if st.sawRoot || st.sawDoctype {
+                return Err(XmlError.Syntax(pos, "DOCTYPE must come once, before the root element"))
+            }
+            st.sawDoctype = true
+            st.pos = skipDoctype(src, pos)?
+            continue
+        }
+        if startsAt(src, pos, "<?") {
+            let tEnd = nameEnd(src, pos + 2)
+            if tEnd == pos + 2 {
+                return Err(XmlError.Syntax(pos + 2, "expected a processing instruction target"))
+            }
+            let target = src.substr(pos + 2, tEnd)
+            if target.toLower() == "xml" {
+                return Err(XmlError.Syntax(pos, "the XML declaration must be at the very start of the document"))
+            }
+            let Some(close) = src.indexOfFrom("?>", tEnd) else {
+                return Err(XmlError.Syntax(pos, "unterminated processing instruction"))
+            }
+            if close > tEnd && !isSpace(src[tEnd]) {
+                return Err(XmlError.Syntax(tEnd, "expected whitespace after the processing instruction target"))
+            }
+            let dataStart = skipSpace(src, tEnd)
+            let data = if dataStart < close { src.substr(dataStart, close) } else { "" }
+            st.pos = close + 2
+            return Ok(Some(XmlEvent.Pi(XmlPi { target: target, data: data })))
+        }
+        if startsAt(src, pos, "</") {
+            let nEnd = nameEnd(src, pos + 2)
+            if nEnd == pos + 2 {
+                return Err(XmlError.Syntax(pos + 2, "expected an element name in the end tag"))
+            }
+            let name = src.substr(pos + 2, nEnd)
+            let gt = skipSpace(src, nEnd)
+            if gt >= src.len || src[gt] != '>' {
+                return Err(XmlError.Syntax(gt, $"expected '>' to end </{name}"))
+            }
+            let Some(open) = st.stack.pop() else {
+                return Err(XmlError.Syntax(pos, $"end tag </{name}> with no open element"))
+            }
+            if open != name {
+                return Err(XmlError.MismatchedTag(pos, open, name))
+            }
+            st.pos = gt + 1
+            return Ok(Some(XmlEvent.EndTag(name)))
+        }
+        if startsAt(src, pos, "<!") {
+            return Err(XmlError.Syntax(pos, "unknown markup declaration"))
+        }
+        let nEnd = nameEnd(src, pos + 1)
+        if nEnd == pos + 1 {
+            return Err(XmlError.Syntax(pos + 1, "expected an element name after '<'"))
+        }
+        if st.stack.len == 0 && st.sawRoot {
+            return Err(XmlError.Syntax(pos, "only one root element is allowed"))
+        }
+        st.sawRoot = true
+        let name = src.substr(pos + 1, nEnd)
+        var attrs: Vec<XmlAttr> = []
+        let end = readAttrs(src, nEnd, &mut attrs)?
+        if startsAt(src, end, "/>") {
+            st.pendingEnd = true
+            st.pos = end + 2
+        } else if src[end] == '>' {
+            st.pos = end + 1
+        } else {
+            return Err(XmlError.Syntax(end, $"expected '>' or '/>' to end <{name}"))
+        }
+        st.stack.push(name.clone())
+        return Ok(Some(XmlEvent.StartTag(XmlStart { name: name, attrs: attrs })))
+    }
+    return Ok(None)
+}
+
+fn normalizeNewlines(src: &string, from: i64, to: i64): string {
+    var out = ""
+    var p = from
+    while p < to {
+        if src[p] == '\r' {
+            out.push('\n')
+            p += if p + 1 < to && src[p + 1] == '\n' { 2 } else { 1 }
+            continue
+        }
+        out.push(src[p])
+        p += 1
+    }
+    return out
+}
+
+// Skip `<!DOCTYPE name [SYSTEM "x" | PUBLIC "x" "y"]>`; an internal subset `[` is
+// refused. Quoted literals are skipped whole so a `[` or `>` inside one is inert.
+fn skipDoctype(src: &string, at: i64): Result<i64, XmlError> {
+    var p = at + 9
+    while p < src.len {
+        let c = src[p]
+        if c == '>' {
+            return Ok(p + 1)
+        }
+        if c == '[' {
+            return Err(XmlError.DoctypeSubset(at))
+        }
+        if c == '"' || c == '\'' {
+            let Some(close) = src.indexOfFrom(if c == '"' { "\"" } else { "'" }, p + 1) else {
+                return Err(XmlError.Syntax(p, "unterminated literal in DOCTYPE"))
+            }
+            p = close + 1
+            continue
+        }
+        p += 1
+    }
+    return Err(XmlError.Syntax(at, "unterminated DOCTYPE"))
+}

@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <generator uri="https://blog.rust-lang.org/" version="0.1.0">Rust Blog</generator>
+    <link href="https://blog.rust-lang.org/feed.xml" rel="self" type="application/atom+xml" />
+    <link href="https://blog.rust-lang.org/" rel="alternate" type="text/html" />
+    <id>https://blog.rust-lang.org/</id>
+    <title>Rust Blog</title>
+    <subtitle>Empowering everyone to build reliable and efficient software.</subtitle>
+    <author>
+        <name>Maintained by the Rust Teams.</name>
+        <uri>https://github.com/rust-lang/blog.rust-lang.org/</uri>
+    </author>
+    <updated>2026-10-02T11:31:16+00:00</updated>
+
+    
+    <entry>
+        <title>Demoting i686 Windows targets to std-only</title>
+        <link rel="alternate" href="https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/" type="text/html" title="Demoting i686 Windows targets to std-only" />
+        <published>2026-10-02T00:00:00+00:00</published>
+        <updated>2026-10-02T00:00:00+00:00</updated>
+        <id>https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/</id>
+        <content type="html" xml:base="https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/">&lt;p&gt;With Rust 1.100.0, the following changes to 32-bit Windows targets will happen:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;i686-pc-windows-msvc&lt;/code&gt; Tier 1 &lt;em&gt;with&lt;/em&gt; host tools target will be demoted to Tier 1 &lt;em&gt;without&lt;/em&gt; host tools.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;i686-pc-windows-gnu&lt;/code&gt; Tier 2 &lt;em&gt;with&lt;/em&gt; host tools target will be demoted to Tier 2 &lt;em&gt;without&lt;/em&gt; host tools.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Builds of the standard library will continue to be distributed, but host tools such as the compiler will be no longer available. &lt;code&gt;i686-pc-windows-msvc&lt;/code&gt; as a Tier 1 target still undergoes CI testing.&lt;/p&gt;
+&lt;p&gt;To build 32-bit Windows binaries, cross-compiling from a still-supported host toolchain (such as a 64-bit Windows ones) will be required from now on.&lt;/p&gt;
+&lt;h2 id&#x3D;&quot;background&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#background&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Background&lt;/h2&gt;
+&lt;p&gt;Desktop and Server 32-bit only x86 CPUs are no longer sold for over 15 years, and general 32-bit Windows support has ended in October 2025. This means that the development platforms these targets are meant for hardly exist these days, and even if they do exist they typically aren&#x27;t capable enough for development.&lt;/p&gt;
+&lt;p&gt;Even on the modern x86_64 hardware, building i686 Windows toolchains has proven to be problematic. We have encountered compiler binaries crashing when built with the i686 MSVC target, and the GNU C++ toolchain failing with OOMs during LLVM build.&lt;/p&gt;
+&lt;p&gt;Considering all these things, cross-compiling these targets from a better supported one is what we have found to be the best solution forward. As part of that, we stopped producing host tools for these targets. For the time being, the prebuilt standard library is still available, and in case of &lt;code&gt;i686-pc-windows-msvc&lt;/code&gt; still tested on CI.&lt;/p&gt;
+&lt;h2 id&#x3D;&quot;what-changes&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#what-changes&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+What Changes?&lt;/h2&gt;
+&lt;p&gt;After Rust 1.100, it will no longer be possible to install toolchains on 32-bit Windows hosts. We recommend cross-compiling from a still-supported host (such as a 64-bit Windows toolchain) instead. Other 32-bit platforms are not impacted by this change.&lt;/p&gt;
+&lt;p&gt;For more details about these demotions, see &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://github.com/rust-lang/rfcs/blob/51783df9a76c355de7ceebeae101cba47f8ca463/text/3999-std-only-i686-msvc.md&quot;&gt;RFC 3999&lt;/a&gt; for &lt;code&gt;i686-pc-windows-msvc&lt;/code&gt; demotion, and &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://github.com/rust-lang/compiler-team/issues/1020&quot;&gt;MCP 1020&lt;/a&gt; for &lt;code&gt;i686-pc-windows-gnu&lt;/code&gt; demotion.&lt;/p&gt;
+</content>
+
+        <author>
+            <name>Mateusz Mikuła, Ralf Jung</name>
+        </author>
+    </entry>
+    <entry>
+        <title>Announcing Rust 1.99.0</title>
+        <link rel="alternate" href="https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/" type="text/html" title="Announcing Rust 1.99.0" />
+        <published>2026-10-01T00:00:00+00:00</published>
+        <updated>2026-10-01T00:00:00+00:00</updated>
+        <id>https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/</id>
+        <content type="html" xml:base="https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/">&lt;p&gt;The Rust team is happy to announce a new version of Rust, 1.99.0. Rust is a programming language empowering everyone to build reliable and efficient software.&lt;/p&gt;
+&lt;p&gt;If you have a previous version of Rust installed via &lt;code&gt;rustup&lt;/code&gt;, you can get 1.99.0 with:&lt;/p&gt;
+&lt;pre class&#x3D;&quot;giallo z-code&quot;&gt;&lt;code data-lang&#x3D;&quot;shellsession&quot;&gt;&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span&gt;$&lt;/span&gt;&lt;span&gt; rustup update stable&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;If you don&#x27;t have it already, you can get &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://www.rust-lang.org/install.html&quot;&gt;&lt;code&gt;rustup&lt;/code&gt;&lt;/a&gt; from the appropriate page on our website, and check out the &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/releases.html#version-1990-2026-10-01&quot;&gt;detailed release notes for 1.99.0&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;If you&#x27;d like to help us out by testing future releases, you might consider updating locally to use the beta channel (&lt;code&gt;rustup default beta&lt;/code&gt;) or the nightly channel (&lt;code&gt;rustup default nightly&lt;/code&gt;). Please &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://github.com/rust-lang/rust/issues/new/choose&quot;&gt;report&lt;/a&gt; any bugs you might come across!&lt;/p&gt;
+&lt;h2 id&#x3D;&quot;what-s-in-1-99-0-stable&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#what-s-in-1-99-0-stable&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+What&#x27;s in 1.99.0 stable&lt;/h2&gt;
+&lt;h3 id&#x3D;&quot;extern-c-variadics&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#extern-c-variadics&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+extern &quot;C&quot; variadics&lt;/h3&gt;
+&lt;p&gt;Rust 1.99.0 stabilizes defining C-ABI variadic functions with &quot;C&quot; and
+&quot;C-unwind&quot; ABIs. Variadic functions defined this way use a variable argument
+list (&lt;code&gt;...&lt;/code&gt;) and accept an arbitrary number of arguments. Rust could already
+call externally-defined variadic functions (e.g., &lt;code&gt;libc::printf&lt;/code&gt;). With Rust
+1.99, these functions can now be written in Rust itself:&lt;/p&gt;
+&lt;pre class&#x3D;&quot;giallo z-code&quot;&gt;&lt;code data-lang&#x3D;&quot;rust&quot;&gt;&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-punctuation z-definition z-comment z-comment&quot;&gt;///&lt;/span&gt;&lt;span class&#x3D;&quot;z-comment&quot;&gt; SAFETY: must be called with (at least) 2 i32 arguments.&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt;unsafe&lt;/span&gt;&lt;span class&#x3D;&quot;z-storage z-type&quot;&gt; extern&lt;/span&gt;&lt;span class&#x3D;&quot;z-punctuation z-definition z-string z-string&quot;&gt; &amp;quot;&lt;/span&gt;&lt;span class&#x3D;&quot;z-string z-quoted z-string&quot;&gt;C&lt;/span&gt;&lt;span class&#x3D;&quot;z-punctuation z-definition z-string z-string&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt; fn&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-function&quot;&gt; sum&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class&#x3D;&quot;z-storage z-storage z-modifier&quot;&gt;mut&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; args&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt;:&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt; ...&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt; -&amp;gt;&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-type&quot;&gt; i32&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-punctuation z-definition z-comment z-comment&quot;&gt;    //&lt;/span&gt;&lt;span class&#x3D;&quot;z-comment z-line z-double-slash z-comment&quot;&gt; SAFETY: guaranteed by the caller.&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-storage z-type&quot;&gt;    let&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; a&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator z-assignment z-keyword z-operator&quot;&gt; &#x3D;&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt; unsafe&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; args&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt;.&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-function&quot;&gt;next_arg&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt;::&lt;/span&gt;&lt;span&gt;&amp;lt;&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-type&quot;&gt;i32&lt;/span&gt;&lt;span&gt;&amp;gt;&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-storage z-type&quot;&gt;    let&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; b&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator z-assignment z-keyword z-operator&quot;&gt; &#x3D;&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt; unsafe&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; args&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt;.&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-function&quot;&gt;next_arg&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt;::&lt;/span&gt;&lt;span&gt;&amp;lt;&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-type&quot;&gt;i32&lt;/span&gt;&lt;span&gt;&amp;gt;&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;span&gt;;&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt;    a&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt; +&lt;/span&gt;&lt;span class&#x3D;&quot;z-variable&quot;&gt; b&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt;fn&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-function&quot;&gt; foo&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span class&#x3D;&quot;z-keyword z-operator&quot;&gt; -&amp;gt;&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-type&quot;&gt; i32&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span class&#x3D;&quot;z-keyword&quot;&gt;    unsafe&lt;/span&gt;&lt;span&gt; {&lt;/span&gt;&lt;span class&#x3D;&quot;z-entity z-name z-function&quot;&gt; sum&lt;/span&gt;&lt;span&gt;(&lt;/span&gt;&lt;span class&#x3D;&quot;z-constant z-numeric&quot;&gt;0&lt;/span&gt;&lt;span class&#x3D;&quot;z-constant z-numeric z-entity z-name z-type&quot;&gt;i32&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;span class&#x3D;&quot;z-constant z-numeric&quot;&gt; 2&lt;/span&gt;&lt;span class&#x3D;&quot;z-constant z-numeric z-entity z-name z-type&quot;&gt;i32&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;span&gt; }&lt;/span&gt;&lt;/span&gt;
+&lt;span class&#x3D;&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;The type of &lt;code&gt;...&lt;/code&gt; is &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/std/ffi/struct.VaList.html&quot;&gt;&lt;code&gt;VaList&lt;/code&gt;&lt;/a&gt;,
+which is ABI-compatible with the C &lt;code&gt;va_list&lt;/code&gt; type across targets. What types can be read from a &lt;code&gt;VaList&lt;/code&gt; is guarded by the
+&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/std/ffi/trait.VaArgSafe.html&quot;&gt;&lt;code&gt;VaArgSafe&lt;/code&gt;&lt;/a&gt; trait.&lt;/p&gt;
+&lt;p&gt;For more details on c-variadic functions, see the
+&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/reference/items/functions.html#c-variadic-functions&quot;&gt;Reference&lt;/a&gt;.
+This release also stabilizes support for defining naked variadic functions with
+non-&quot;C&quot; ABIs, which must be written via inline assembly.&lt;/p&gt;
+&lt;h3 id&#x3D;&quot;layout-information-from-raw-pointers&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#layout-information-from-raw-pointers&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Layout information from raw pointers&lt;/h3&gt;
+&lt;p&gt;This release settles the safety requirements for retrieving the size and
+alignment on raw pointers to both &lt;code&gt;Sized&lt;/code&gt; (trivially safe, already possible on
+stable) and non-&lt;code&gt;Sized&lt;/code&gt; types.&lt;/p&gt;
+&lt;p&gt;This is done by stabilizing three functions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/alloc/struct.Layout.html#method.for_value_raw&quot;&gt;&lt;code&gt;Layout::for_value_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/mem/fn.size_of_val_raw.html&quot;&gt;&lt;code&gt;mem::size_of_val_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/mem/fn.align_of_val_raw.html&quot;&gt;&lt;code&gt;mem::align_of_val_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id&#x3D;&quot;recommend-against-round-trip-unleaking-after-box-leak&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#recommend-against-round-trip-unleaking-after-box-leak&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Recommend against round-trip unleaking after &lt;code&gt;Box::leak&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;While there are no changes to the language semantics in Rust 1.99, we have
+updated the documentation on &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/std/boxed/struct.Box.html#method.leak&quot;&gt;&lt;code&gt;Box::leak&lt;/code&gt;&lt;/a&gt; to recommend against patterns that
+later deallocate that memory. This was done because such code was found to have
+problematic interactions with current and future potential compiler optimizations,
+and is especially problematic with the upcoming stabilization of custom allocators.
+Instead, &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_non_null&quot;&gt;&lt;code&gt;Box::into_non_null&lt;/code&gt;&lt;/a&gt; or &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw&quot;&gt;&lt;code&gt;Box::into_raw&lt;/code&gt;&lt;/a&gt; should be preferred.&lt;/p&gt;
+&lt;p&gt;This guidance also applies to other &lt;code&gt;leak&lt;/code&gt; functions in the standard library.&lt;/p&gt;
+&lt;h3 id&#x3D;&quot;stabilized-apis&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#stabilized-apis&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Stabilized APIs&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/iter/trait.IntoIterator.html#impl-IntoIterator-for-Box%3C%5BT;+N%5D,+A%3E&quot;&gt;&lt;code&gt;IntoIterator&lt;/code&gt; for &lt;code&gt;Box&amp;lt;[T; N]&amp;gt;&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/iter/trait.IntoIterator.html#impl-IntoIterator-for-%26Box%3C%5BT;+N%5D,+A%3E&quot;&gt;&lt;code&gt;IntoIterator&lt;/code&gt; for &lt;code&gt;&amp;amp;Box&amp;lt;[T; N]&amp;gt;&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/iter/trait.IntoIterator.html#impl-IntoIterator-for-%26mut+Box%3C%5BT;+N%5D,+A%3E&quot;&gt;&lt;code&gt;IntoIterator&lt;/code&gt; for &lt;code&gt;&amp;amp;mut Box&amp;lt;[T; N]&amp;gt;&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/collections/struct.VecDeque.html#method.retain_back&quot;&gt;&lt;code&gt;VecDeque::retain_back&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/ffi/struct.VaList.html&quot;&gt;&lt;code&gt;core::ffi::VaList&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/boxed/struct.Box.html#method.into_non_null&quot;&gt;&lt;code&gt;Box::into_non_null&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/boxed/struct.Box.html#method.from_non_null&quot;&gt;&lt;code&gt;Box::from_non_null&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.into_parts&quot;&gt;&lt;code&gt;Vec::into_parts&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.from_parts&quot;&gt;&lt;code&gt;Vec::from_parts&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/mem/fn.size_of_val_raw.html&quot;&gt;&lt;code&gt;core::mem::size_of_val_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/mem/fn.align_of_val_raw.html&quot;&gt;&lt;code&gt;core::mem::align_of_val_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/core/alloc/struct.Layout.html#method.for_value_raw&quot;&gt;&lt;code&gt;core::alloc::Layout::for_value_raw&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/string/struct.String.html#method.from_utf8_lossy_owned&quot;&gt;&lt;code&gt;String::from_utf8_lossy_owned&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/string/struct.FromUtf8Error.html#method.into_utf8_lossy&quot;&gt;&lt;code&gt;string::FromUtf8Error::into_utf8_lossy&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/iter/struct.StepBy.html#impl-FusedIterator-for-StepBy%3CI%3E&quot;&gt;&lt;code&gt;FusedIterator for StepBy&amp;lt;I&amp;gt;&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/fs/fn.set_times.html&quot;&gt;&lt;code&gt;std::fs::set_times&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/stable/std/fs/fn.set_times_nofollow.html&quot;&gt;&lt;code&gt;std::fs::set_times_nofollow&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id&#x3D;&quot;other-changes&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#other-changes&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Other changes&lt;/h3&gt;
+&lt;p&gt;Check out everything that changed in &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://github.com/rust-lang/rust/releases/tag/1.99.0&quot;&gt;Rust&lt;/a&gt;, &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://doc.rust-lang.org/nightly/cargo/CHANGELOG.html#cargo-199-2026-10-01&quot;&gt;Cargo&lt;/a&gt;, and &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://github.com/rust-lang/rust-clippy/blob/master/CHANGELOG.md#rust-199&quot;&gt;Clippy&lt;/a&gt;.&lt;/p&gt;
+&lt;h2 id&#x3D;&quot;contributors-to-1-99-0&quot;&gt;&lt;a class&#x3D;&quot;anchor&quot; href&#x3D;&quot;#contributors-to-1-99-0&quot; aria-hidden&#x3D;&quot;true&quot;&gt;&lt;/a&gt;
+Contributors to 1.99.0&lt;/h2&gt;
+&lt;p&gt;Many people came together to create Rust 1.99.0. We couldn&#x27;t have done it without all of you. &lt;a rel&#x3D;&quot;external&quot; href&#x3D;&quot;https://thanks.rust-lang.org/rust/1.99.0/&quot;&gt;Thanks!&lt;/a&gt;&lt;/p&gt;
+</content>
+
+        <author>
+            <name>The Rust Release Team</name>
+        </author>
+    </entry>
+    </feed>

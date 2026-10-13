@@ -62,6 +62,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | Module | What it provides |
 |--------|-----------------|
 | [`std/csv`](csv) | CSV parsing with header support — `Csv.parse`, `Csv.stringify` |
+| [`std/xml`](xml) | Strict XML 1.0: a pull parser (`XmlReader`) and an owned tree (`Xml.parse`, `XmlNode`) |
 | [`std/base64`](base64) | Base64 encode/decode — `Base64.encode`, `Base64.decode` |
 | [`std/hex`](hex) | Hex encode/decode — `Hex.encode`, `Hex.decode` |
 | [`std/binary`](binary) | Fixed-width int/float codecs — `Bytes.readU32Le`, `Bytes.writeI16Be`, both byte orders |

@@ -1,0 +1,63 @@
+// std/xml's pull parser reports every event kind in document order: the XML
+// declaration is consumed (not a PI), a DOCTYPE with only an external id is skipped,
+// <x/> is a StartTag then an EndTag, the five predefined entities and decimal/hex
+// character references decode, CRLF reads as LF, and a literal tab or newline in an
+// attribute value reads as a space. The DOM keeps mixed content in order with the
+// ElementTree text/tail layout.
+// @expect: pi style [href="a.css"]
+// @expect: comment [ top ]
+// @expect: start note id=[n1] title=[a b c] xmlns:x=[urn:x]
+// @expect: text [a<b&"'>😀é\nline]
+// @expect: start x:empty
+// @expect: end x:empty
+// @expect: cdata [<raw> & ]]
+// @expect: end note
+// @expect: comment [ after ]
+// @expect: end of document
+// @expect: text=[one ] b.tail=[ three ] i.text=[four ]
+// @expect: textContent=[one two three four five six]
+// @expect: childText b=[two] i=[four five] q=[none]
+// @expect: attr missing: none
+
+from "std/xml" import { Xml, XmlReader, XmlEvent }
+
+fn show(s: &string): string {
+    return s.replace("\n", "\\n")
+}
+
+fn main(): i32 {
+    let doc = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<!DOCTYPE note SYSTEM \"note[1].dtd\">\n<?style href=\"a.css\"?>\n<!-- top -->\n<note id=\"n&#49;\" title='a\tb\nc' xmlns:x=\"urn:x\">a&lt;b&amp;&quot;&apos;&gt;&#x1F600;&#233;\r\nline<x:empty/><![CDATA[<raw> & ]]]></note>\n<!-- after -->\n"
+    var r = XmlReader.new(doc)
+    while true {
+        let ev = r.next()
+        let Ok(maybe) = ev else {
+            print("error")
+            return 1
+        }
+        let Some(e) = maybe else {
+            print("end of document")
+            break
+        }
+        match e {
+            XmlEvent.StartTag(s) => {
+                var attrs = ""
+                for a in s.attrs {
+                    attrs.pushStr($" {a.name}=[{show(a.value)}]")
+                }
+                print($"start {s.name}{attrs}")
+            }
+            XmlEvent.EndTag(n) => print($"end {n}")
+            XmlEvent.Text(t) => print($"text [{show(t)}]")
+            XmlEvent.CData(t) => print($"cdata [{t}]")
+            XmlEvent.Comment(t) => print($"comment [{t}]")
+            XmlEvent.Pi(p) => print($"pi {p.target} [{p.data}]")
+        }
+    }
+
+    let root = Xml.parse("<p>one <b>two</b> three <i>four <u>five</u></i> six</p>")!
+    print($"text=[{root.text}] b.tail=[{root.children[0].tail}] i.text=[{root.children[1].text}]")
+    print($"textContent=[{root.textContent()}]")
+    print($"childText b=[{root.childText("b") ?? "none"}] i=[{root.childText("i") ?? "none"}] q=[{root.childText("q") ?? "none"}]")
+    print($"attr missing: {root.attr("id") ?? "none"}")
+    return 0
+}

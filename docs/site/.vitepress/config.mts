@@ -191,6 +191,7 @@ const stdlibSidebar = [
     collapsed: true,
     items: [
       { text: 'std/csv', link: '/stdlib/csv' },
+      { text: 'std/xml', link: '/stdlib/xml' },
       { text: 'std/base64', link: '/stdlib/base64' },
       { text: 'std/hex', link: '/stdlib/hex' },
       { text: 'std/binary', link: '/stdlib/binary' },

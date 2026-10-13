@@ -1,0 +1,116 @@
+// std/xml reads real feeds: an RSS 2.0 channel (LWN, with dc: and atom: prefixed
+// elements and HTML escaped into <description>) and two Atom feeds (the Rust blog,
+// whose content is escaped HTML, and an arXiv query with arxiv: elements and
+// several <link>s told apart by rel). Prefixed names match literally.
+// @expect: rss 2.0 dc=http://purl.org/dc/elements/1.1/
+// @expect: channel: LWN.net
+// @expect: self: https://lwn.net/headlines/rss2
+// @expect: item: LineageOS 24 released by jzb
+// @expect:   Mon, 12 Oct 2026 13:13:57 +0000 https://lwn.net/Articles/1099950/
+// @expect:   <p>The <a href="https://lineageos.org/">LineageO
+// @expect: item: Security updates for Monday by jzb
+// @expect:   Mon, 12 Oct 2026 13:00:41 +0000 https://lwn.net/Articles/1099949/
+// @expect:   Security updates have been issued by <b>AlmaLinu
+// @expect: feed xmlns=http://www.w3.org/2005/Atom
+// @expect: feed: Rust Blog
+// @expect: entry: Demoting i686 Windows targets to std-only
+// @expect:   2026-10-02T00:00:00+00:00 https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/
+// @expect:   author Mateusz Mikuła, Ralf Jung
+// @expect:   <p>With Rust 1.100.0, the following changes to 3
+// @expect: entry: Announcing Rust 1.99.0
+// @expect:   2026-10-01T00:00:00+00:00 https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/
+// @expect:   author The Rust Release Team
+// @expect:   <p>The Rust team is happy to announce a new vers
+// @expect: entries: 2
+// @expect: feed xmlns=http://www.w3.org/2005/Atom
+// @expect: feed: arXiv Query: search_query=cat:cs.PL&id_list=&start=0&max_res
+// @expect: entry: A Simplified Layout Algebra for GPU Kernels
+// @expect:   2026-10-09T14:45:50Z https://arxiv.org/abs/2610.13679v1
+// @expect:   pdf https://arxiv.org/pdf/2610.13679v1
+// @expect:   categories cs.PL
+// @expect:   author Nan An
+// @expect:   The layout algebra behind NVIDIA's CuTe library
+// @expect: entry: Coexponential Exploration in the Clef Programming Language
+// @expect:   2026-10-09T03:03:03Z https://arxiv.org/abs/2610.12911v1
+// @expect:   pdf https://arxiv.org/pdf/2610.12911v1
+// @expect:   categories cs.PL cs.DC cs.LO
+// @expect:   comment 34 pages, 4 figures, 3 tables
+// @expect:   author Houston Haynes
+// @expect:   Clef was created as a concurrent programming lan
+// @expect: entries: 2
+
+from "std/xml" import { Xml, XmlNode }
+
+fn clip(s: &string, n: i64): string {
+    let t = s.trim()
+    return if t.len > n { t.substr(0, n).trim() } else { t }
+}
+
+fn atomLink(entry: &XmlNode, rel: &string): string {
+    for l in entry.children {
+        if l.name == "link" && (l.attr("rel") ?? "alternate") == rel {
+            return l.attr("href") ?? ""
+        }
+    }
+    return ""
+}
+
+fn rss(text: &string): void {
+    let root = Xml.parse(text)!
+    print($"{root.name} {root.attr("version") ?? "?"} dc={root.attr("xmlns:dc") ?? "?"}")
+    let channel = root.child("channel")!
+    print($"channel: {channel.childText("title") ?? ""}")
+    print($"self: {channel.child("atom:link")!.attr("href") ?? ""}")
+    for item in channel.children {
+        if item.name != "item" {
+            continue
+        }
+        print($"item: {item.childText("title") ?? ""} by {item.childText("dc:creator") ?? ""}")
+        print($"  {item.childText("pubDate") ?? ""} {item.childText("link") ?? ""}")
+        print($"  {clip(item.childText("description") ?? "", 48)}")
+    }
+}
+
+fn atom(text: &string): void {
+    let feed = Xml.parse(text)!
+    print($"{feed.name} xmlns={feed.attr("xmlns") ?? "?"}")
+    print($"feed: {clip(feed.childText("title") ?? "", 60)}")
+    var n = 0
+    for e in feed.children {
+        if e.name != "entry" {
+            continue
+        }
+        n += 1
+        print($"entry: {e.childText("title") ?? ""}")
+        print($"  {e.childText("updated") ?? ""} {atomLink(e, "alternate")}")
+        let pdf = atomLink(e, "related")
+        if pdf.len > 0 {
+            print($"  pdf {pdf}")
+        }
+        var cats = ""
+        for c in e.children {
+            if c.name == "category" {
+                cats.pushStr(c.attr("term") ?? "")
+                cats.push(' ')
+            }
+        }
+        if cats.len > 0 {
+            print($"  categories {cats.trim()}")
+        }
+        if let Some(comment) = e.childText("arxiv:comment") {
+            print($"  comment {comment}")
+        }
+        let authors = e.child("author")!
+        print($"  author {authors.childText("name") ?? ""}")
+        let body = e.childText("content") ?? (e.childText("summary") ?? "")
+        print($"  {clip(body, 48)}")
+    }
+    print($"entries: {n}")
+}
+
+fn main(): i32 {
+    rss(@embedFile("lib/xml/lwn.rss"))
+    atom(@embedFile("lib/xml/rustblog.atom"))
+    atom(@embedFile("lib/xml/arxiv.atom"))
+    return 0
+}

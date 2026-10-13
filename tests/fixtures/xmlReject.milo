@@ -1,0 +1,80 @@
+// std/xml is strict: each malformed document is an XmlError at the first problem,
+// with the byte offset. A DOCTYPE with an internal subset (where the "billion laughs"
+// entity bomb lives) is refused before any entity is declared, HTML's named entities
+// are unknown to XML, and input that is not UTF-8 is rejected rather than guessed at.
+// @expect: billion laughs: DOCTYPE with an internal subset is not supported (entity declarations are refused) at byte 22
+// @expect:   DoctypeSubset at 22
+// @expect: html entity: unknown entity reference &nbsp; at byte 4
+// @expect: bad char ref: unknown entity reference &#0; at byte 3
+// @expect: bare amp: '&' must start an entity or character reference at byte 8
+// @expect: amp before semicolon: '&' must start an entity or character reference at byte 5
+// @expect: mismatch: end tag </a> does not match open element <b> at byte 6
+// @expect:   MismatchedTag 6 b a
+// @expect: unclosed: unexpected end of input: <a> is not closed at byte 10
+// @expect: two roots: only one root element is allowed at byte 4
+// @expect: text after root: text is not allowed after the root element at byte 4
+// @expect: empty: no root element at byte 2
+// @expect: duplicate attr: duplicate attribute x at byte 9
+// @expect: unquoted attr: expected a quoted value for attribute x at byte 5
+// @expect: lt in attr: '<' is not allowed in an attribute value at byte 6
+// @expect: no space between attrs: expected whitespace before an attribute at byte 8
+// @expect: cdata end in text: ']]>' is not allowed in text at byte 3
+// @expect: double dash comment: '--' is not allowed inside a comment at byte 10
+// @expect: control char: control character 1 is not allowed in XML at byte 3
+// @expect: invalid utf8: invalid UTF-8 at byte 3
+// @expect: utf16 bom: UTF-16 input is not supported; convert it to UTF-8 at byte 0
+// @expect: latin1: declared encoding 'ISO-8859-1' is not supported; only UTF-8 input is at byte 0
+// @expect: late decl: the XML declaration must be at the very start of the document at byte 3
+// @expect: too deep: elements nested deeper than 512 at byte 1536
+// @expect: bom ok: accepted <a>
+// @expect: doctype ok: accepted <html>
+
+from "std/xml" import { Xml, XmlError }
+
+fn check(label: &string, doc: &string): void {
+    match Xml.parse(doc) {
+        Ok(root) => print($"{label}: accepted <{root.name}>")
+        Err(e) => print($"{label}: {e.message()}")
+    }
+}
+
+fn main(): i32 {
+    let laughs = "<?xml version=\"1.0\"?>\n<!DOCTYPE lolz [\n <!ENTITY lol \"lol\">\n <!ENTITY lol2 \"&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;\">\n]>\n<lolz>&lol2;</lolz>"
+    check("billion laughs", laughs)
+    match Xml.parse(laughs) {
+        Err(XmlError.DoctypeSubset(at)) => print($"  DoctypeSubset at {at}")
+        _ => print("  wrong variant")
+    }
+    check("html entity", "<p>a&nbsp;b</p>")
+    check("bad char ref", "<p>&#0;</p>")
+    check("bare amp", "<p>fish & chips</p>")
+    check("amp before semicolon", "<p>a & b; c</p>")
+    check("mismatch", "<a><b></a></b>")
+    match Xml.parse("<a><b></a></b>") {
+        Err(XmlError.MismatchedTag(at, open, found)) => print($"  MismatchedTag {at} {open} {found}")
+        _ => print("  wrong variant")
+    }
+    check("unclosed", "<a><b></b>")
+    check("two roots", "<a/><b/>")
+    check("text after root", "<a/>junk")
+    check("empty", "  ")
+    check("duplicate attr", "<a x=\"1\" x=\"2\"/>")
+    check("unquoted attr", "<a x=1/>")
+    check("lt in attr", "<a x=\"<\"/>")
+    check("no space between attrs", "<a x=\"1\"y=\"2\"/>")
+    check("cdata end in text", "<a>]]></a>")
+    check("double dash comment", "<a><!-- a -- b --></a>")
+    check("control char", "<a>\x01</a>")
+    check("invalid utf8", "<a>\xff</a>")
+    check("utf16 bom", "\xff\xfe<a/>")
+    check("latin1", "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a/>")
+    check("late decl", "<a><?xml version=\"1.0\"?></a>")
+    var deep = ""
+    for _i in 0..600 {
+        deep.pushStr("<d>")
+    }
+    check("too deep", deep)
+    check("bom ok", "\xef\xbb\xbf<a>ok</a>")
+    check("doctype ok", "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"x.dtd\"><html/>")
+    return 0
+}
