@@ -1003,8 +1003,15 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
   // with no diagnostic. That is true whether or not the module HAS a main (the entry is
   // renamed to `@_milo_unused_main`, which strands the init call in dead code), so
   // the guard is on the flag alone. Reject before any object file is written.
-  if (noEntry && nonConstGlobals.length > 0) {
-    for (const name of nonConstGlobals) {
+  //
+  // One startup global is exempt: std/replay's `rrBooted` exists only to decide the
+  // record/replay mode before main's first line. A library has no first line, and
+  // every replay hook decides the mode itself on first use (replayModeNow), so in an
+  // object nothing is lost when it never runs. Without the exemption any --no-entry
+  // object that reaches std/replay (std/time, std/fs, ...) could not be built at all.
+  const mustRun = nonConstGlobals.filter(g => g !== "replay$rrBooted");
+  if (noEntry && mustRun.length > 0) {
+    for (const name of mustRun) {
       console.error(`error: global '${name}' needs an initializer that runs, and '--no-entry' produces an object with no entry point to run it`);
     }
     console.error(`hint: give it a constant initializer ('= ""', '= 0', '= []') and assign the real value from your own entry point, or drop '--no-entry' and build the module into a program with 'fn main()'`);

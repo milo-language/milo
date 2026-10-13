@@ -156,6 +156,17 @@ test("emit-obj --no-entry rejects a global whose initializer has to run at start
   expect(r2.err).toContain("needs an initializer that runs");
 });
 
+// std/replay's boot global is the one startup global a library may skip: every replay
+// hook decides the mode on first use. Reaching std/replay (here through std/time) must
+// not make a --no-entry object unbuildable; that broke milojs's embedding library.
+test("emit-obj --no-entry accepts std/replay's boot global", () => {
+  const lib = write("no_entry_replay.milo", `from "std/time" import { now }\n@externalLinkage\npub fn stamp(): i64 {\n    let _t = now()\n    return 1\n}\n`);
+  const obj = join(DIR, "no_entry_replay.o");
+  const r = milo(`emit-obj ${lib} --no-entry -o ${obj}`);
+  expect(`${r.code}: ${r.err}`).toBe(`0: ${r.err}`);
+  expect(existsSync(obj)).toBe(true);
+});
+
 // A global the module reads is initialized at its first read, so a --no-entry object
 // called from C fills it correctly with no entry point.
 test("emit-obj --no-entry accepts a runtime-initialized global the module reads", () => {

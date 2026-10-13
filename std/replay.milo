@@ -146,7 +146,9 @@ impl ReplayLock {
 }
 
 let rrLock: ReplayLock = ReplayLock { _unused: 0 }
-// Last, so the state above is already initialized when this runs.
+// Last, so the state above is already initialized when this runs. Nothing reads
+// it: it exists to decide the mode before main. A --no-entry object never runs it
+// (main.ts exempts it by name), which is fine because every hook decides lazily.
 let rrBooted: bool = replayModeNow() > 0
 
 // True when neither recording nor replaying. The single check every hook makes
