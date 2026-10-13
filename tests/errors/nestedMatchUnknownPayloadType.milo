@@ -1,0 +1,10 @@
+// @error: unknown type 'Optionoy'
+// A nested pattern over a payload whose type failed to resolve used to crash the
+// usefulness check (the type column fell out of step with the pattern column).
+fn main() {
+    let r: Option<Optionoy<string>> = Some(Some("x"))
+    match r {
+        Some(Some(s)) => { print(s) }
+        _ => {}
+    }
+}

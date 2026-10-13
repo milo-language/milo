@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 546 distinct messages across 694 programs the compiler must reject.
+Every error message the test suite pins: 547 distinct messages across 695 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -523,6 +523,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`unknown escape sequence '\q'`](#unknown-escape-sequence-q)
 - [`unknown module directive '@!foo'`](#unknown-module-directive-foo)
 - [`unknown type 'Foo'`](#unknown-type-foo)
+- [`unknown type 'Optionoy'`](#unknown-type-optionoy)
 - [`unknown type 'Payload'`](#unknown-type-payload)
 - [`unknown type 'Widget'`](#unknown-type-widget)
 - [`unreachable code`](#unreachable-code)
@@ -12254,6 +12255,22 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/unknownTypeStructField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeStructField.milo)</sub>
+
+## `unknown type 'Optionoy'` {#unknown-type-optionoy}
+
+A nested pattern over a payload whose type failed to resolve used to crash the usefulness check (the type column fell out of step with the pattern column).
+
+```milo skip
+fn main() {
+    let r: Option<Optionoy<string>> = Some(Some("x"))
+    match r {
+        Some(Some(s)) => { print(s) }
+        _ => {}
+    }
+}
+```
+
+<sub>[tests/errors/nestedMatchUnknownPayloadType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedMatchUnknownPayloadType.milo)</sub>
 
 ## `unknown type 'Payload'` {#unknown-type-payload}
 

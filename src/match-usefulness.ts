@@ -41,17 +41,20 @@ function specializeLit(row: Pat[], key: string): Pat[] | null {
 
 // A value vector that `q` matches and no row of `rows` does, or null when every value `q`
 // matches is already matched by some row (`q` is useless).
-export function useful<T>(env: SpaceEnv<T>, rows: Pat[][], q: Pat[], tys: T[]): Pat[] | null {
+// A column whose type is `undefined` is open (nothing enumerable): a pattern can name more
+// fields than its type is known to have when that type failed to resolve, and the type
+// vector must stay aligned with the pattern vector regardless.
+export function useful<T>(env: SpaceEnv<T>, rows: Pat[][], q: Pat[], tys: (T | undefined)[]): Pat[] | null {
   if (q.length === 0) return rows.length === 0 ? [] : null;
   const head = q[0]!;
-  const ty = tys[0]!;
-  const ctorList = env.ctors(ty);
+  const ty = tys[0];
+  const ctorList = ty === undefined ? null : env.ctors(ty);
   const fieldsOf = (name: string): T[] => ctorList?.find(c => c.name === name)?.fields ?? [];
 
   const tryCtor = (name: string, arity: number, fields: T[]): Pat[] | null => {
     const sub = rows.flatMap(r => { const s = specialize(r, name, arity); return s ? [s] : []; });
     const qs = specialize(q, name, arity)!;
-    const w = useful(env, sub, qs, [...fields, ...tys.slice(1)]);
+    const w = useful(env, sub, qs, [...Array.from({ length: arity }, (_, i) => fields[i]), ...tys.slice(1)]);
     return w ? [{ k: "ctor", name, args: w.slice(0, arity) }, ...w.slice(arity)] : null;
   };
 
