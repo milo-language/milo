@@ -44,7 +44,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapClear", "HashMapContains", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
-"HashMapNew", "HashMapRemove", "HeapCreate", "HeapDeref", "HeapPtr", "Ident",
+"HashMapNew", "HashMapRemove", "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
