@@ -71,12 +71,8 @@ const JOBS = num("--jobs", Math.max(1, Math.min(6, Math.floor(cpus().length / 2)
 const REDUCE_PROBES = num("--reduce-probes", 60);
 const FILTER = str("--filter");
 const KEEP = args.includes("--keep");
-// Also generate the spellings of OPEN bugs, which every run would otherwise report.
-// Each is listed where it is gated. Remove a gate in the change that fixes it.
-const KNOWN = args.includes("--known");
-// The open bugs, minimal (each also behind KNOWN where it is generated):
-//   (none open)
-void KNOWN;
+// `--known` used to also generate the spellings of open bugs. None are open; a new one
+// gets a gate here (`const KNOWN = args.includes("--known")`) and an entry in the header.
 // Judge only this case index (the generator still runs every earlier case, so the
 // program is the one the full run saw).
 const ONLY = num("--only", -1);
@@ -610,8 +606,7 @@ const FORMS: Form[] = [
     },
   },
   {
-    // The heap form over a heapless Drop payload (see Tok). Channels are not used with
-    // Tok: send zeroes the moved-from local and drops it, an open bug for this shape.
+    // The heap form over a heapless Drop payload (see Tok).
     name: "heap-tok",
     apply(g) {
       const h = g.fresh("ht");
@@ -625,6 +620,32 @@ const FORMS: Form[] = [
         default: break;
       }
       if (reassign) g.emit(`${h} = Heap(newTok(${g.k()}))`);
+      return true;
+    },
+  },
+  {
+    // A heapless Drop payload through a Channel: send moves into the buffer and leaves
+    // no husk to drop, and an empty tryRecv or a recv on a closed channel builds nothing.
+    // Values still queued drop with the channel.
+    name: "channel-tok",
+    apply(g) {
+      const c = g.fresh("ct");
+      const how = between(0, 3);
+      // a for-in drives next(), which needs a mutable receiver
+      g.emit(`${how === 2 ? "var" : "let"} ${c} = Channel<Tok>.new(4)!`);
+      g.emit(`${c}.send(newTok(${g.k()}))!`);
+      if (chance(0.5)) { const t = g.fresh("tk"); g.emit(`let ${t} = newTok(${g.k()})`); g.sink(`b2i(${c}.trySend(${t}))`); }
+      switch (how) {
+        case 0: g.sink(`useTok(${c}.recv()!)`); break;
+        case 1: g.sink(`match ${c}.tryRecv() {\n    Option.Some(t) => t.id,\n    Option.None => 0,\n}`); break;
+        case 2: { g.emit(`${c}.close()`); const t = g.fresh("t"); g.emit(`for ${t} in ${c} {\n    sink = sink + ${t}.id\n}`); break; }
+        default: break;
+      }
+      if (chance(0.5)) {
+        g.emit(`${c}.close()`);
+        g.sink(`match ${c}.tryRecv() {\n    Option.Some(t) => t.id,\n    Option.None => 0,\n}`);
+        g.sink(`match ${c}.recv() {\n    Result.Ok(t) => t.id,\n    Result.Err(_) => 0,\n}`);
+      }
       return true;
     },
   },

@@ -1,0 +1,58 @@
+// `Channel.send` of a Drop type that owns no heap moves the value into the buffer and
+// ends the local without a drop. It used to memset the local to zero and drop it, so a
+// user Drop ran on the husk: `drop 0` once per send. recv/tryRecv on an empty or closed
+// channel likewise dropped an untouched zeroed value.
+// @expect: sent
+// @expect: got 1
+// @expect: drop 1
+// @expect: got 2
+// @expect: drop 2
+// @expect: empty
+// @expect: closed
+// @expect: end
+from "std/sync" import { Channel }
+
+struct Tok {
+    id: i64,
+}
+
+impl Drop for Tok {
+    fn drop(self: &mut Self): void {
+        print("drop " + self.id.toString())
+    }
+}
+
+fn main() {
+    let c = Channel<Tok>.new(4)!
+    c.send(Tok { id: 1 })!
+    let t = Tok { id: 2 }
+    let ok = c.trySend(t)
+    if ok {
+        print("sent")
+    }
+    let a = c.recv()!
+    print("got " + a.id.toString())
+    forgetless(a)
+    match c.tryRecv() {
+        Option.Some(b) => {
+            print("got " + b.id.toString())
+        },
+        Option.None => print("none"),
+    }
+    match c.tryRecv() {
+        Option.Some(b) => print("got " + b.id.toString()),
+        Option.None => print("empty"),
+    }
+    c.close()
+    match c.recv() {
+        Result.Ok(b) => print("got " + b.id.toString()),
+        Result.Err(e) => print("closed"),
+    }
+    print("end")
+}
+
+fn forgetless(t: Tok) {
+    sink = sink + t.id
+}
+
+var sink: i64 = 0

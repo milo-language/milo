@@ -155,7 +155,7 @@ green (`tests/contracts/contractTestsVacuous.milo`).
 - `tests/fixtures/*.milo` — **compiled + executed.** stdout must match the `// @expect: <line>` annotations, one per expected output line.
 - `tests/errors/*.milo` — **must fail type-check.** Error output must contain the `// @error: <substring>` annotation.
 
-Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->922<!-- /stat --> fixtures, <!-- stat:error-fixtures -->673<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
+Add a test by dropping a `.milo` file in the right directory with the right annotation. That's it. (<!-- stat:fixtures -->923<!-- /stat --> fixtures, <!-- stat:error-fixtures -->673<!-- /stat --> error cases, <!-- stat:runtime-error-fixtures -->42<!-- /stat --> runtime-error cases.)
 
 **Known-red fixtures.** `tests/known-red.txt` lists fixtures that reproduce an *open*
 soundness hole (today: the `hole*` reproducers from the September 2026 soundness
@@ -283,11 +283,12 @@ call site, so a new path that copies owned bytes has to choose before the sweep 
 forms behind the October 2026 memory bugs (for-in over a `next()` iterator, a Channel, a
 generic `I: Iterator`, an `if`/`match` fork and a temporary; struct update; array
 literals passed to `[T; n]` and `&[T]`; `getOrDefault`; literal matches; Heap reads and
-moves; Option/Result combinators; `[v; N]`; `match v[i]`; extern `*u8` temps), nested
+moves; a heapless Drop payload sent through a Channel; Option/Result combinators;
+`[v; N]`; `match v[i]`; extern `*u8` temps), nested
 three deep with `break`/`continue`/`return`/`?`, and builds every case with
 `MILO_OWN_LEDGER=1 --sanitize`. Any ledger finding is red, beside a Drop-balance count,
-ASan and a read-integrity check. Reds are reduced into `.fuzz-findings/drops/`. Shapes of
-bugs still open are generated only with `--known`; the list is in the script's header.
+ASan and a read-integrity check. Reds are reduced into `.fuzz-findings/drops/`. No
+open bug is gated out of the generator; the script's header says how to gate a new one.
 
 ## Out-of-band differential harnesses
 Not `bun test` — they need a toolchain CI supplies but a checkout may not, so run them by hand when you touch the target they cover.
