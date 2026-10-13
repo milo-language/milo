@@ -30,6 +30,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
+| `src/checker-derive.ts` | Derive synthesis: the Clone, Eq and Json impls `@derive` (and Eq's auto-derive) generates, and the expansion of user `derive <Trait> { ... |
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
