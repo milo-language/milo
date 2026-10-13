@@ -62,6 +62,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/fuzz-vec.ts` | Differential falsifier for the built-in VEC — the growable array codegen.ts emits. |
 | `scripts/fuzz-worker.ts` | Case runner for scripts/fuzz-frontend.ts. |
 | `scripts/gen-benchmarks.ts` | Renders the benchmark table in benchmarks/README.md and the docs-site chart data from benchmarks/results.json, the one place the numbers live. |
+| `scripts/gen-case-map.ts` | Regenerates the simple case mapping tables at the bottom of std/unicode.milo from the Unicode Character Database. |
 | `scripts/gen-error-catalog.ts` | Generates docs/site/language/errors.md, every compile error the test suite pins, with the program that provokes it. |
 | `scripts/gen-html-entities.ts` | Regenerates the named character reference table at the bottom of std/html.milo from the WHATWG HTML entity list. |
 | `scripts/gen-json-conformance.ts` | Generates a JSON conformance fixture from the canonical json.org JSON_checker suite (fail1..33, pass1..3) as vendored by CPython's test_json. |

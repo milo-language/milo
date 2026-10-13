@@ -37,8 +37,8 @@ match "hello".indexOf("l") {
 | `charAt(i: i64): string` | the whole character starting at BYTE offset i: charAt(1) of "aéb" is "é"; an offset inside a multibyte character aborts. Iterate with `for c in s.codePoints()` for characters |
 | `substr(start: i64, end: i64): string` | BYTE offsets — a bound inside a multibyte character splits it and yields invalid UTF-8, silently |
 | `slice(start: i64, end: i64): &string` | a view, not a copy — the receiver is frozen while it lives. BYTE offsets, like substr |
-| `toLower(): string` | ASCII only — "AÉB" lowercases to "aÉb" |
-| `toUpper(): string` | ASCII only — "aéb" uppercases to "AéB" |
+| `toLower(): string` | ASCII only — "AÉB" lowercases to "aÉb"; std/unicode's unicodeLower maps every script |
+| `toUpper(): string` | ASCII only — "aéb" uppercases to "AéB"; std/unicode's unicodeUpper maps every script |
 | `trim(): string` |  |
 | `trimStart(): string` |  |
 | `trimEnd(): string` |  |

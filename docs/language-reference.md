@@ -982,7 +982,7 @@ a digest. The operations whose names promise characters answer in characters:
 | `charAt(i)` | the whole character that starts at byte `i`; aborts on a continuation byte |
 | `codePoints()`, `reverse()` | characters |
 | `padStart(n, p)`, `padEnd(n, p)` | `n` counts characters, `p` is cycled by character |
-| `toUpper()`, `toLower()`, `splitWords()` | ASCII letters only; `"aéb".toUpper()` is `"AéB"` |
+| `toUpper()`, `toLower()`, `splitWords()` | ASCII letters only; `"aéb".toUpper()` is `"AéB"` (std/unicode's `unicodeUpper`/`unicodeLower` map every script) |
 
 ```milo
 let s = "aéb"

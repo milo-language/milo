@@ -1,0 +1,40 @@
+// std/unicode's unicodeLower/unicodeUpper apply the Unicode simple case mapping (one
+// code point to one, generated from UnicodeData.txt by scripts/gen-case-map.ts) across
+// scripts, where the built-in s.toLower()/s.toUpper() touch ASCII only. Byte length
+// can change (U+023F is 2 bytes, its uppercase U+2C7E is 3); ß has no one-code-point
+// uppercase and stays; malformed UTF-8 bytes pass through untouched. The Kelvin sign
+// lowercases to an ASCII k, which is why protocol code keeps the ASCII-only builtin.
+from "std/unicode" import { unicodeLower, unicodeUpper, lowerCodepoint, upperCodepoint }
+
+// @expect: àéîõü ç ñ
+// @expect: ÀÉÎÕÜ Ç Ñ
+// @expect: STRAßE
+// @expect: σασ καλημερα
+// @expect: ПРИВЕТ МИР
+// @expect: Ǆ Ǆ Ǉ
+// @expect: ａｂｃ 𐐨𐐩
+// @expect: 3
+// @expect: keep-alive
+// @expect: false
+// @expect: 日本語 123 !?
+// @expect: 3 255 98
+// @expect: 105 73 223 -1
+
+fn main(): i32 {
+    print(unicodeLower("ÀÉÎÕÜ Ç Ñ"))
+    print(unicodeUpper("àéîõü ç ñ"))
+    print(unicodeUpper("straße"))
+    print(unicodeLower("ΣΑΣ ΚΑΛΗΜΕΡΑ"))
+    print(unicodeUpper("привет мир"))
+    print(unicodeUpper("ǆ ǅ ǉ"))
+    print(unicodeLower("ＡＢＣ 𐐀𐐁"))
+    print(unicodeUpper("ȿ").len)
+    print(unicodeLower("\u{212A}eep-Alive"))
+    print("\u{212A}eep-Alive".toLower() == "keep-alive")
+    print(unicodeLower("日本語 123 !?"))
+    let bad = "a\xffB"
+    let low = unicodeLower(bad)
+    print($"{low.len} {low[1]} {low[2]}")
+    print($"{lowerCodepoint(0x130)} {upperCodepoint(0x131)} {upperCodepoint(0xDF)} {lowerCodepoint(-1)}")
+    return 0
+}
