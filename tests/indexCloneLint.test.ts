@@ -21,9 +21,12 @@ function lint(src: string): string[] {
 
 const MARK = `struct Mark { name: string, n: i64 }\n`;
 const FILL = `  var v: Vec<Mark> = Vec.new()\n  v.push(Mark { name: "a", n: 1 })\n`;
+// Writing the container while the binding lives keeps the copy: without it a read-only
+// `let` aliases the element (checker viewLets) and there is nothing to warn about.
+const WRITE = `  v.push(Mark { name: "b", n: 2 })\n`;
 
 test("on by default — no opt-in needed", () => {
-  const src = `${MARK}fn main() {\n${FILL}  let m = v[0]\n  print(m.n)\n}\n`;
+  const src = `${MARK}fn main() {\n${FILL}  let m = v[0]\n${WRITE}  print(m.n)\n}\n`;
   const prog = new Parser(new Lexer(src).tokenize(), src).parse();
   const out = new TypeChecker().check(prog).diagnostics.filter(d => d.code === "index-clone");
   expect(out.length).toBe(1);
@@ -32,14 +35,14 @@ test("on by default — no opt-in needed", () => {
 
 // The escape hatch has to work, or the default is a mandate rather than a default.
 test("--allow=index-clone silences it", () => {
-  const src = `${MARK}fn main() {\n${FILL}  let m = v[0]\n  print(m.n)\n}\n`;
+  const src = `${MARK}fn main() {\n${FILL}  let m = v[0]\n${WRITE}  print(m.n)\n}\n`;
   const prog = new Parser(new Lexer(src).tokenize(), src).parse();
   const cfg = { denied: new Set<string>(), allowed: new Set(["index-clone"]) };
   expect(new TypeChecker(cfg).check(prog).diagnostics.filter(d => d.code === "index-clone")).toEqual([]);
 });
 
 test("flags a let binding of a struct element with heap fields", () => {
-  const out = lint(`${MARK}fn main() {\n${FILL}  let m = v[0]\n  print(m.n)\n}\n`);
+  const out = lint(`${MARK}fn main() {\n${FILL}  let m = v[0]\n${WRITE}  print(m.n)\n}\n`);
   expect(out.length).toBe(1);
   expect(out[0]).toContain("deep-copies the Mark");
 });
@@ -89,7 +92,19 @@ test("a field read materialises no element", () => {
 });
 
 test("a string element counts — the clone is a malloc per binding", () => {
-  const out = lint(`fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  print(s)\n}\n`);
+  const out = lint(`fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  v.push("b")\n  print(s)\n}\n`);
   expect(out.length).toBe(1);
   expect(out[0]).toContain("deep-copies the string");
+});
+
+// A `let` that is only read, of a container nothing writes while it lives, binds the
+// element in place: no copy, so no warning (tests/letIndexView.test.ts checks the IR).
+test("a read-only let of an unwritten container aliases the element and is not flagged", () => {
+  expect(lint(`${MARK}fn main() {\n${FILL}  let m = v[0]\n  print(m.n)\n}\n`)).toEqual([]);
+  expect(lint(`fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  print(s)\n}\n`)).toEqual([]);
+});
+
+test("moving the binding keeps the copy and the warning", () => {
+  const out = lint(`fn keep(s: string): string {\n  return s\n}\nfn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  print(keep(s))\n}\n`);
+  expect(out.length).toBe(1);
 });

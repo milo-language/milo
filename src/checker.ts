@@ -573,6 +573,8 @@ export interface CheckResult {
   // binds each element by value. Decided here (isPlaceIterable) so lowering and
   // codegen never re-derive it.
   consumingForIns: Set<Stmt>;
+  // `let x = v[i]` bindings that alias the element instead of cloning it (resolveViewBinds).
+  viewLets: Set<Stmt>;
   // The type each for-in binding was declared with ([varName, varName2?]), for hover.
   forInBindingTypes: Map<Stmt, TypeKind[]>;
 }
@@ -778,6 +780,9 @@ export class TypeChecker {
   private variantTagCompares = new Map<Expr, { operand: Expr; tag: number }>();
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
+  private viewLets = new Set<Stmt>();
+  // Candidates for viewLets in the function being checked, decided once its body is done.
+  private viewBindPending = new Map<Stmt, { root: string; lint: () => void }>();
   private borrowedExprs = new Set<Expr>();
   // Subjects consumed by the destructuring arm/pattern currently being checked.
   // Only drives the wording of the use-after-move error, which is otherwise
@@ -1595,6 +1600,113 @@ export class TypeChecker {
     this.warn("string-concat-in-loop",
       `'${name}' is rebuilt with '+' on every iteration, copying the whole accumulator each time`,
       span, `append in place: '${name}.pushStr(...)' for a string, '${name}.push(...)' for a byte`);
+  }
+
+  // `let x = v[i]` copies the element so the container stays intact. When nothing can
+  // observe the difference, codegen binds `x` to the element in place instead, the way
+  // `for x in v` does: `x` is never moved (a `let` is never written), nothing writes or
+  // moves the container's root from the binding to the end of its block, and the element
+  // type's clone and drop do nothing but copy and free (no Drop or hand-written Clone
+  // anywhere in it). The root's name is all this tracks, so a shadowing binding, a
+  // closure capturing it, or an `unsafe` block only ever costs the optimisation.
+  // Returns the root to watch, or null when the binding is not a candidate.
+  private viewBindRoot(stmt: Stmt & { kind: "LetDecl" }, hint: TypeKind | null, valType: TypeKind): string | null {
+    const v = stmt.value;
+    if (v.kind !== "IndexAccess" || this.closureFrames.length > 0) return null;
+    if (hint && !typeEq(hint, valType)) return null;
+    if (valType.tag === "ref" || this.isCopyType(valType) || !this.viewBindPure(valType, new Set())) return null;
+    let objTy = this.exprTypes.get(v.object);
+    if (objTy?.tag === "ref") objTy = objTy.inner;
+    if (objTy?.tag !== "vec" && objTy?.tag !== "array") return null;
+    const p = this.soloPath(v.object);
+    if (!p) return null;
+    const info = this.lookup(p.root);
+    if (!info || info.isGlobal || this.globalScopeInfos.has(info) || info.nullableRef) return null;
+    if (info.borrowKinds?.includes("pointer")) return null;
+    return p.root;
+  }
+
+  // Cloning and dropping a value of `t` have no effect but copying and freeing bytes.
+  private viewBindPure(t: TypeKind, seen: Set<string>): boolean {
+    switch (t.tag) {
+      case "int": case "float": case "bool": case "string": return true;
+      case "vec": case "array": return this.viewBindPure(t.element, seen);
+      case "struct": case "enum": {
+        if (this.dropImpls.has(t.name) || this.handWrittenClone.has(t.name)) return false;
+        if (seen.has(t.name)) return true;
+        seen.add(t.name);
+        if (t.tag === "struct") {
+          const info = this.structs.get(t.name);
+          return !!info && !info.noCopy && !info.pointerField && info.fields.every(f => this.viewBindPure(f.type, seen));
+        }
+        const info = this.enums.get(t.name);
+        return !!info && [...info.variants.values()].every(vr => vr.fields.every(f => this.viewBindPure(f, seen)));
+      }
+      default: return false;
+    }
+  }
+
+  // Decide every pending candidate in `body`, a function body just checked: by now the
+  // move, write and borrow sets cover every statement after each binding.
+  private resolveViewBinds(body: Stmt[]) {
+    if (this.viewBindPending.size === 0) return;
+    const pending = this.viewBindPending;
+    this.viewBindPending = new Map();
+    const captured = new Set<string>();
+    const scan = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) {
+        n.forEach((st, i) => {
+          const c = pending.get(st as Stmt);
+          if (!c) return;
+          pending.delete(st as Stmt);
+          const name = (st as Stmt & { kind: "LetDecl" }).name;
+          if (!captured.has(c.root) && !captured.has(name) && this.viewBindRegionClean(n.slice(i + 1), c.root, name)) this.viewLets.add(st as Stmt);
+          else c.lint();
+        });
+      }
+      for (const [k, v] of Object.entries(n)) if (k !== "span") scan(v);
+    };
+    // A closure anywhere in the function may run inside the region and write what it
+    // captured, so a captured root (or binding) is never viewed.
+    const closures = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const x of n) closures(x); return; }
+      const e = n as Expr;
+      if (e.kind === "Closure") for (const cap of this.closureCaptures.get(e) ?? []) captured.add(cap.name);
+      for (const [k, v] of Object.entries(n)) if (k !== "span") closures(v);
+    };
+    closures(body);
+    scan(body);
+    for (const c of pending.values()) c.lint();
+  }
+
+  // Nothing in `region` writes, moves or mutably borrows a place under `root`, or moves
+  // any part of `name`.
+  private viewBindRegionClean(region: Stmt[], root: string, name: string): boolean {
+    const roots = (e: Expr): string[] => this.placesOf(e).flatMap(p => p.tag === "path" ? [p.root] : []);
+    let clean = true;
+    const visit = (n: unknown): void => {
+      if (!clean || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const x of n) visit(x); return; }
+      const node = n as { kind?: string };
+      const e = n as Expr;
+      if (node.kind === "UnsafeBlock") { clean = false; return; }
+      if (node.kind === "Assign" && roots((n as { target: Expr }).target).includes(root)) { clean = false; return; }
+      if (node.kind === "ForInStmt" && (n as { mutRef?: boolean }).mutRef && roots((n as { iterable: Expr }).iterable).includes(root)) { clean = false; return; }
+      if (typeof node.kind === "string") {
+        const written = this.writtenExprs.has(e) || !!this.autoBorrowed.get(e)?.mutable || this.explicitMutArgs.has(e) || this.matchSubjectMut.has(e);
+        // Moving an element out of a container clones it, so only a binding or a field moves.
+        const moved = (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e);
+        if (written || moved) {
+          const rs = roots(e);
+          if (rs.includes(root) || (moved && rs.includes(name))) { clean = false; return; }
+        }
+      }
+      for (const [k, v] of Object.entries(n)) if (k !== "span") visit(v);
+    };
+    visit(region);
+    return clean;
   }
 
   private lintIndexClone(value: Expr, ty: TypeKind, span?: Span) {
@@ -3554,6 +3666,7 @@ export class TypeChecker {
       stringViewForIns: this.stringViewForIns,
       iterDelegates: this.iterDelegates,
       consumingForIns: this.consumingForIns,
+      viewLets: this.viewLets,
       forInBindingTypes: this.forInBindingTypes,
     };
   }
@@ -6746,6 +6859,7 @@ export class TypeChecker {
     // One boundary per statement: a `fatal()` abandons the statement it fired in,
     // not the function, so a body with three independent errors still reports three.
     for (const stmt of fn.body) this.recover(() => this.checkStmt(stmt, retType));
+    this.resolveViewBinds(fn.body);
     this.scanUnreachable(fn.body);
     if (!fn.isExtern) this.lintUncheckedFfiContract(fn);
     // `main` keeps its implicit `return 0` (C's rule, and what codegen emits); no
@@ -6862,7 +6976,9 @@ export class TypeChecker {
           }
         }
         if (bindingType.tag === "array") this.lintStackArray(stmt.name, bindingType, sp);
-        this.lintIndexClone(stmt.value, bindingType, sp);
+        const viewRoot = this.viewBindRoot(stmt, hint, valType);
+        if (viewRoot) this.viewBindPending.set(stmt, { root: viewRoot, lint: () => this.lintIndexClone(stmt.value, bindingType, sp) });
+        else this.lintIndexClone(stmt.value, bindingType, sp);
         const letCarried = this.pointerBorrowsCarriedBy(stmt.value);
         this.pointerMoveKeepsHolders = letCarried !== null;
         try { this.tryMove(stmt.value); } finally { this.pointerMoveKeepsHolders = false; }

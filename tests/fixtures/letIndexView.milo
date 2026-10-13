@@ -1,0 +1,58 @@
+// @expect: a 2 x
+// @expect: b 0 -
+// @expect: same true
+// @expect: row 3 9
+// @expect: ab
+// @expect: 7
+// @expect: some true
+// A `let` bound to an element (`let m = v[i]`) that is only read, of a container nothing
+// writes while the binding lives, aliases the element instead of deep-copying it (the
+// copy is gone from the IR: tests/letIndexView.test.ts). Every read here must see exactly
+// what a copy would have held: fields, nested Vecs, a borrow passed on, `.clone()`, a
+// nested index, a `&Vec` parameter as the container and an Option element.
+struct Mark {
+    name: string,
+    tags: Vec<string>,
+}
+
+fn tagCount(m: &Mark): i64 {
+    return m.tags.len
+}
+
+fn firstTag(m: &Mark): string {
+    if m.tags.len == 0 {
+        return "-"
+    }
+    return m.tags[0].clone()
+}
+
+fn sumRow(grid: &Vec<Vec<i64>>, r: i64): i64 {
+    let row = grid[r]
+    var t: i64 = 0
+    for x in row {
+        t += x
+    }
+    return t
+}
+
+fn main() {
+    let v: Vec<Mark> = [Mark { name: "a", tags: ["x", "y"] }, Mark { name: "b", tags: [] }]
+    for i in 0..2 {
+        let m = v[i]
+        print(m.name, " ", tagCount(m), " ", firstTag(m))
+    }
+    let first = v[0]
+    let copy = first.clone()
+    print("same ", copy.name == first.name && copy.tags.len == first.tags.len)
+    let grid: Vec<Vec<i64>> = [[1, 2], [4, 5]]
+    let row = grid[1]
+    print("row ", row.len + 1, " ", sumRow(grid, 1))
+    let words: Vec<string> = ["ab", "cd"]
+    let w = words[0]
+    print(w)
+    let cell = grid[1][0]
+    print(cell + 3)
+    let opts: Vec<Option<string>> = [Option.None, Option.Some("q")]
+    let o = opts[1]
+    print("some ", o.isSome())
+}

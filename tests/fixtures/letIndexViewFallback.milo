@@ -1,0 +1,187 @@
+// @expect: push a
+// @expect: assign a
+// @expect: reassign a
+// @expect: mutarg a
+// @expect: method a
+// @expect: clear a
+// @expect: sort b
+// @expect: swap a
+// @expect: remove a
+// @expect: pop b
+// @expect: closure a
+// @expect: forin a
+// @expect: moved a
+// @expect: returned a
+// @expect: field a
+// @expect: loop a
+// `let x = v[i]` keeps its copy whenever anything could tell a copy from an alias of the
+// element: the container is written, reallocated, reordered, reassigned or moved while the
+// binding lives (directly, through `&mut`, a `&mut self` method, a closure or a `&mut`
+// loop), or the binding itself is moved. Each case reads the binding after the change, in
+// its own function so one case's verdict cannot decide another's; an alias would print
+// the new contents or read freed memory (the ASan sweep runs this).
+struct Bag {
+    items: Vec<string>,
+    other: Vec<string>,
+}
+
+impl Bag {
+    fn reset(self: &mut Self): void {
+        self.items = ["z"]
+    }
+}
+
+// Heap strings, so a freed element is a use-after-free rather than a static literal.
+fn fresh(): Vec<string> {
+    return ["a".repeat(1), "b".repeat(1)]
+}
+
+fn clobber(v: &mut Vec<string>): void {
+    v[0] = "z"
+}
+
+fn keep(s: string): string {
+    return s
+}
+
+fn push() {
+    var v = fresh()
+    let x = v[0]
+    v.push("c".repeat(100))
+    print("push ", x)
+}
+
+fn assign() {
+    var v = fresh()
+    let x = v[0]
+    v[0] = "z"
+    print("assign ", x)
+}
+
+fn reassign() {
+    var v = fresh()
+    let x = v[0]
+    v = ["z"]
+    print("reassign ", x)
+}
+
+fn mutarg() {
+    var v = fresh()
+    let x = v[0]
+    clobber(&mut v)
+    print("mutarg ", x)
+}
+
+fn method() {
+    var bag = Bag { items: fresh(), other: [] }
+    let x = bag.items[0]
+    bag.reset()
+    print("method ", x)
+}
+
+fn clear() {
+    var v = fresh()
+    let x = v[0]
+    v.clear()
+    print("clear ", x)
+}
+
+fn sort() {
+    var v: Vec<string> = ["b".repeat(1), "a".repeat(1)]
+    let x = v[0]
+    v.sort()
+    print("sort ", x)
+}
+
+fn swap() {
+    var v = fresh()
+    let x = v[0]
+    v.swap(0, 1)
+    print("swap ", x)
+}
+
+fn remove() {
+    var v = fresh()
+    let x = v[0]
+    let _gone = v.remove(0)
+    print("remove ", x)
+}
+
+fn pop() {
+    var v = fresh()
+    let x = v[1]
+    let _gone = v.pop()
+    v.push("q".repeat(1))
+    print("pop ", x)
+}
+
+fn closure() {
+    var v = fresh()
+    let x = v[0]
+    var zap = () => {
+        v[0] = "z"
+    }
+    zap()
+    print("closure ", x)
+}
+
+fn forin() {
+    var v = fresh()
+    let x = v[0]
+    for s in &mut v {
+        s = "z"
+    }
+    print("forin ", x)
+}
+
+fn moved() {
+    let v = fresh()
+    let x = v[0]
+    let kept = keep(x)
+    print("moved ", kept)
+}
+
+fn firstOf(v: &mut Vec<string>): string {
+    let x = v[0]
+    v[0] = "z"
+    return x
+}
+
+fn field() {
+    var bag = Bag { items: fresh(), other: [] }
+    let x = bag.items[0]
+    bag.other.push("q")
+    bag.items = ["z"]
+    print("field ", x)
+}
+
+fn inLoop() {
+    var v = fresh()
+    for r in 0..2 {
+        let x = v[0]
+        v[0] = "z"
+        if r == 0 {
+            print("loop ", x)
+        }
+    }
+}
+
+fn main() {
+    push()
+    assign()
+    reassign()
+    mutarg()
+    method()
+    clear()
+    sort()
+    swap()
+    remove()
+    pop()
+    closure()
+    forin()
+    moved()
+    var w = fresh()
+    print("returned ", firstOf(&mut w))
+    field()
+    inLoop()
+}

@@ -299,6 +299,7 @@ class LowerCtx {
           type: valType,
           value,
           mutable: stmt.kind === "VarDecl",
+          ...(value.kind === "IndexAccess" && this.c.viewLets.has(stmt) && { viewBind: true }),
           span: stmt.span,
         };
       }

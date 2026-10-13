@@ -158,7 +158,9 @@ export interface HIRArg {
 // ── Statements ──
 
 export type HIRStmt =
-  | { kind: "Let"; name: string; type: TypeKind; value: HIRExpr; mutable: boolean; span?: Span }
+  // viewBind: the value is an element read (IndexAccess) the checker proved no one can
+  // tell from a clone, so the binding aliases the element in place (checker viewLets).
+  | { kind: "Let"; name: string; type: TypeKind; value: HIRExpr; mutable: boolean; viewBind?: boolean; span?: Span }
   // `isInit` marks a first write into a slot that holds no value yet (the generated
   // module-global initializer). The slot is still zeroinitializer, so running Drop on
   // it would hand a null pointer to a `drop` that dereferences.

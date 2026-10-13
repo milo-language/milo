@@ -3391,6 +3391,17 @@ export class Codegen {
 
     switch (stmt.kind) {
       case "Let": {
+        // A view binding points at the element, registered like a `for x in v` element:
+        // a slot holding its address, no copy, nothing to drop (see checker viewLets).
+        if (stmt.viewBind && stmt.value.kind === "IndexAccess") {
+          const [pl, ptr] = this.genLValue(stmt.value);
+          lines.push(...pl);
+          const addr = this.allocaName(stmt.name);
+          this.entryAllocas.push(`  ${addr} = alloca ptr`);
+          lines.push(`  store ptr ${ptr}, ptr ${addr}`);
+          this.locals.set(stmt.name, { type: this.llvmType(stmt.type), typeKind: stmt.type, mutable: false, isRef: true, addr });
+          return [lines, false];
+        }
         // For `&T` locals (slices), store the inner value directly. The ref-ness is
         // a compile-time concept (enforces no-escape). At runtime it's a non-owning
         // %String (cap=0) or similar — no pointer indirection needed.

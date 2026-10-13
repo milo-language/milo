@@ -131,7 +131,7 @@ let tok = toks.remove(i)                   // the whole element leaves; its fiel
 let name = replace(toks[i].text, "")       // take the field, leave something in its place
 ```
 
-Reading a WHOLE element (`let t = toks[i]`) already deep-clones (see the `index-clone` lint). A field of a call result (`f().name`) is still a plain move: the temporary is consumed and nothing is left behind.
+Reading a WHOLE element (`let t = toks[i]`) deep-clones (see the `index-clone` lint), unless the binding is only read and nothing writes or moves `toks` while it lives: then it aliases the element like `for t in toks`, with no copy. A field of a call result (`f().name`) is still a plain move: the temporary is consumed and nothing is left behind.
 
 ## Control flow
 

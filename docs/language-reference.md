@@ -1919,6 +1919,13 @@ is structural, so for an element carrying `Drop` or `@noCopy` it would be a seco
 Vec (see [`@copyOut`](#copyout-generics-that-copy-an-element-out)); borrow with
 `for x in v` or `v[i].field`, or take the element out for real with `remove`/`pop`.
 
+A `let x = v[i]` of an owned element is a copy too, with one exception that changes cost
+but not meaning: when `x` is only read and nothing writes, moves or `&mut`-borrows `v`
+while `x` lives (no closure captures either, no `unsafe` block follows), and the element
+type has no `Drop` or hand-written `Clone` anywhere in it, the compiler binds `x` to the
+element in place, as `for x in v` does, and copies nothing. Any write to `v` in that
+stretch keeps the copy, and the `index-clone` warning says so.
+
 ```milo
 let v: Vec<i64> = [3, 1, 4]
 v.get(0)          // Some(3)

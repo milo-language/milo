@@ -113,12 +113,13 @@ fn main() {
   },
   {
     name: "index-clone",
-    doc: "Indexing a collection of owned values (`v[0]`, `m[key]`) copies the element out, because the language has no stored references to hand back. On a `string` or a `Vec` that copy is a heap allocation per index.",
-    fix: "Bind a borrow with a method that lends (`v.at(i)`), or hoist the element out once instead of indexing in a loop.",
+    doc: "Indexing a collection of owned values (`v[0]`, `m[key]`) copies the element out, because the language has no stored references to hand back. On a `string` or a `Vec` that copy is a heap allocation per index. A `let` binding that is only read, of a container nothing writes or moves while the binding lives, is the exception: it aliases the element like `for x in v` does, copies nothing and is not reported.",
+    fix: "Bind a borrow with a method that lends (`v.at(i)`), hoist the element out once instead of indexing in a loop, or keep the binding read-only and leave the container alone while it lives.",
     example: `fn main() {
   var v: Vec<string> = Vec.new()
   v.push("a")
   let m = v[0]
+  v.push("b")
   print(m)
 }
 `,
