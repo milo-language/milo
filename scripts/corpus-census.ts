@@ -217,6 +217,12 @@ if (check || process.env.MILO_CENSUS_UPDATE) {
     // to call that a pass. A sibling checkout missing from this run is skipped and named.
     if (filter) { console.error("--check does not take a root filter"); process.exit(2); }
     const absent = Object.keys(base).filter(n => !(n in now));
+    // Sibling checkouts may be absent; this repo's own roots never are. Losing one, or the
+    // block scanner matching nothing (std always has FFI unsafe), reads as a shrink and
+    // would pass. Either way the census measured nothing it can vouch for.
+    const ownMissing = ["std", "examples", "src-milo", "fixtures"].filter(n => !(n in now));
+    if (ownMissing.length) { console.error(`census gate BROKEN: this repo's own root(s) ${ownMissing.join(", ")} measured no files`); process.exit(2); }
+    if (results.std!.unsafe === 0) { console.error("census gate BROKEN: found no `unsafe` block at all in std; the block scanner no longer matches"); process.exit(2); }
     if (absent.length) console.log(`not measured (checkout absent): ${absent.join(", ")}`);
     const grew = Object.entries(now).filter(([n, v]) => n in base && v > base[n]).map(([n, v]) => `${n}: ${base[n]} -> ${v}`);
     const shrank = Object.entries(now).filter(([n, v]) => n in base && v < base[n]).map(([n, v]) => `${n}: ${base[n]} -> ${v}`);
