@@ -177,6 +177,8 @@ pub fn fileInfo(path: &string): Option<FileInfo> {
 fn fileInfoLive(path: &string): Option<FileInfo> {
     var buf: [u8; 144] = [0; 144]
     var r: i32 = 0
+    // statPath is the per-OS stat; `buf` is sized for the largest struct stat any
+    // platform arm writes (144 bytes), and path is a NUL-terminated owned string.
     unsafe { r = statPath(path, buf) }
     if r != 0 {
         return Option.None
@@ -224,6 +226,7 @@ pub fn pathExists(path: &string): bool {
 pub fn isDir(path: &string): bool {
     // Per OS (std/platform), not the struct stat's S_IFDIR bit: see pathIsDir.
     return fsStatus("fs.isdir", path, (): i64 => {
+        // pathIsDir only reads `path`, an owned string that stays alive for the call.
         unsafe {
             return pathIsDir(path) as i64
         }
