@@ -1630,6 +1630,9 @@ export class TypeChecker {
     const info = this.lookup(p.root);
     if (!info || info.isGlobal || this.globalScopeInfos.has(info) || info.nullableRef) return null;
     if (info.borrowKinds?.includes("pointer")) return null;
+    // A root that views another binding (`let s = v[0..1]`) is not the container: a
+    // write to `v[0]` is legal while `s` lives and is invisible to a scan for `s`.
+    if (info.freezes?.length || info.refInto) return null;
     return p.root;
   }
 
@@ -11409,7 +11412,7 @@ export class TypeChecker {
   // Why `e` cannot be a field default, or null when it can.
   private defaultFormError(e: Expr, typeParams: Set<string>): string | null {
     const sub = (xs: Expr[]) => { for (const x of xs) { const w = this.defaultFormError(x, typeParams); if (w) return w; } return null; };
-    const namesParam = (ts: import("./ast").MiloType[] | undefined) => (ts ?? []).some(t => typeParams.has(t.name) || namesParam(t.typeArgs));
+    const namesParam = (ts: import("./ast").MiloType[] | undefined): boolean => (ts ?? []).some(t => typeParams.has(t.name) || namesParam(t.typeArgs));
     switch (e.kind) {
       case "IntLit": case "FloatLit": case "BoolLit": case "CharLit": return null;
       case "StringLit": return null;
@@ -11469,8 +11472,7 @@ export class TypeChecker {
         else if (!this.isCopyType(info.type)) { this.error(`default for field '${field}' reads '${x.name}', a ${this.show(info.type)}, which each literal would move out of the global`, x.span, `write the value itself, e.g. a string literal`); ok = false; }
         return;
       }
-      for (const k of Object.keys(x) as (keyof typeof x)[]) {
-        const v = x[k] as unknown;
+      for (const [k, v] of Object.entries(x) as [string, unknown][]) {
         if (Array.isArray(v)) for (const it of v) { if (it && typeof it === "object" && "kind" in it) walk(it as Expr); else if (it && typeof it === "object" && "value" in it) walk((it as { value: Expr }).value); }
         else if (v && typeof v === "object" && "kind" in (v as object) && k !== "targetType") walk(v as Expr);
       }
