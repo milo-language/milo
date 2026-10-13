@@ -1943,8 +1943,10 @@ v.find((n: &i64) => n > 3)       // Some(4) — the value, not the index
 string, bool. There is no ordering on a struct (equality and hashing are derived
 facts; ordering is an opinion), so use `sortByKey` then `first`, or `fold`.
 
-There is no `binarySearch`: its contract is "the Vec is already sorted", which the
-compiler cannot check and a wrong answer does not announce. There is no
+There is no `binarySearch` method: its contract is "the Vec is already sorted", which the
+compiler cannot check and a wrong answer does not announce. `bisectLeft`/`bisectRight` in
+[std/collections](site/stdlib/collections.md) are the free-function form, with that
+contract in their names' Python lineage and their doc comments. There is no
 `chunks`/`windows` either — both hand back a collection of slices, and a slice is a
 second-class reference that cannot be stored in a `Vec`.
 
@@ -2250,9 +2252,23 @@ if !counts.modify(word, (c: &mut i64): void => { c = c + 1 }) {
 }
 ```
 
-For a Copy value the two-lookup form is as short: `m.insert(word, m.getOrDefault(word,
-0) + 1)`. `modify` is what removes the clone-mutate-insert round trip for a value that
-owns heap memory.
+The prelude joins the two halves: `upsert(key, init, f)` runs `f` on the stored value,
+inserting `init` first when the key is absent, and takes the key once, so counting is
+one call even when the key is moved in. `getOrInsert(key, init)` is Python's
+`setdefault`: a copy of the stored value, inserting `init` when absent.
+
+```milo
+var counts: HashMap<string, i64> = HashMap.new()
+for w in "a b a".split(" ") {
+    counts.upsert(w, 0, (c: &mut i64): void => { c += 1 })
+}
+let n = counts.getOrInsert("c", 0)   // 0, and "c" is now stored
+```
+
+`m.insert(word, m.getOrDefault(word, 0) + 1)` does not compile when `word` is moved:
+`insert` takes it before `getOrDefault` reads it. `modify` is what removes the
+clone-mutate-insert round trip for a value that owns heap memory. Insertion-ordered maps,
+sorted maps and a `Counter` are in [std/collections](site/stdlib/collections.md).
 
 ### Iteration
 

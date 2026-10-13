@@ -1,0 +1,72 @@
+// @expect: len 4 front 1 back 4
+// @expect: order 1 2 3 4
+// @expect: get 0 1 get 3 4 get 4 none true
+// @expect: pops 1 4 left [2, 3]
+// @expect: wrap [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+// @expect: modified [-3, -2, 99, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9] out of range false
+// @expect: drained 13 empty true
+// @expect: cleared 0 then 5
+// @expect: strings c a b
+// Deque: both ends, indexed reads across the ring's wrap point, growth while the
+// front has wrapped, modify in place, clear keeping capacity, and owned strings.
+from "std/collections" import { Deque }
+
+fn main(): i32 {
+    var d = Deque<i64>.new()
+    d.pushBack(2)
+    d.pushFront(1)
+    d.pushBack(3)
+    d.pushBack(4)
+    print($"len {d.len()} front {d.front()!} back {d.back()!}")
+    var parts: Vec<string> = []
+    d.each((x: &i64): void => {
+        parts.push(x.toString())
+    })
+    print($"order {parts.join(" ")}")
+    print($"get 0 {d.get(0)!} get 3 {d.get(3)!} get 4 none {d.get(4).isNone()}")
+    let a = d.popFront()!
+    let b = d.popBack()!
+    print($"pops {a} {b} left {d.toVec()}")
+
+    // pushFront wraps head below 0; the pushes after force growth while wrapped.
+    var w = Deque<i64>.withCapacity(4)
+    for i in 0..10 {
+        w.pushBack(i)
+        if i < 3 {
+            w.pushFront(-(i + 1))
+        }
+    }
+    print($"wrap {w.toVec()}")
+    let ok = w.modify(2, (x: &mut i64): void => {
+        x = 99
+    })
+    let bad = w.modify(13, (x: &mut i64): void => {
+        x = 0
+    })
+    if ok {
+        print($"modified {w.toVec()} out of range {bad}")
+    }
+    var n: i64 = 0
+    while let Some(_x) = w.popFront() {
+        n += 1
+    }
+    print($"drained {n} empty {w.isEmpty()}")
+
+    w.pushBack(1)
+    w.pushFront(2)
+    w.clear()
+    let afterClear = w.len()
+    w.pushBack(5)
+    print($"cleared {afterClear} then {w.front()!}")
+
+    var s = Deque<string>.new()
+    s.pushBack("a")
+    s.pushBack("b")
+    s.pushFront("c")
+    var joined: Vec<string> = []
+    s.each((x: &string): void => {
+        joined.push(x.clone())
+    })
+    print($"strings {joined.join(" ")}")
+    return 0
+}

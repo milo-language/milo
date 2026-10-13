@@ -1,0 +1,95 @@
+// @expect: order ["b", "a", "c"] values [2, 10, 3]
+// @expect: get Some(10) None contains true
+// @expect: removed Some(2) None order ["a", "c"]
+// @expect: moved ["c", "a"] missing false
+// @expect: popFirst c=3 left ["a"]
+// @expect: read 10 modify 11
+// @expect: churn ok len 100 first 4900 last 4999
+// @expect: counter a=3 b=2 c=1 zz=0 len 4
+// @expect: mostCommon [a:3, b:2]
+// @expect: ties [x:2, y:2, z:2]
+// @expect: all 4
+// OrderedMap: insertion order through replace, remove, moveToEnd and popFirst, and
+// compaction under churn (5000 inserts, 4900 removes); Counter's mostCommon with
+// first-appearance tie order.
+from "std/collections" import { OrderedMap, Counter, MapEntry }
+
+fn show(es: &Vec<MapEntry<string, i64>>): string {
+    var parts: Vec<string> = []
+    for e in es {
+        parts.push($"{e.key}:{e.value}")
+    }
+    return "[" + parts.join(", ") + "]"
+}
+
+fn main(): i32 {
+    var m = OrderedMap<string, i64>.new()
+    m.insert("b", 2)
+    m.insert("a", 1)
+    m.insert("c", 3)
+    m.insert("a", 10)
+    print($"order {m.keys()} values {m.values()}")
+    print($"get {m.get("a")} {m.get("q")} contains {m.contains("c")}")
+    let gone = m.remove("b")
+    print($"removed {gone} {m.remove("b")} order {m.keys()}")
+    let moved = m.moveToEnd("a")
+    let missing = m.moveToEnd("q")
+    if moved {
+        print($"moved {m.keys()} missing {missing}")
+    }
+    let e = m.popFirst()!
+    print($"popFirst {e.key}={e.value} left {m.keys()}")
+    var seen: i64 = 0
+    let _ = m.read("a", (v: &i64): void => {
+        seen = v
+    })
+    let _ = m.modify("a", (v: &mut i64): void => {
+        v += 1
+    })
+    print($"read {seen} modify {m.get("a")!}")
+
+    var big = OrderedMap<i64, i64>.new()
+    for i in 0..5000 {
+        big.insert(i, i * 2)
+    }
+    var ok = true
+    for i in 0..4900 {
+        if i % 2 == 0 {
+            if (big.remove(i) ?? -1) != i * 2 {
+                ok = false
+            }
+        } else {
+            // Every key below i is gone, so i is the oldest.
+            let oldest = big.popFirst()!
+            if oldest.key != i || oldest.value != i * 2 {
+                ok = false
+            }
+        }
+        // Alternately move 4998 and 4999 to the end: one tombstone per iteration, and
+        // the last (odd) iteration leaves them in key order.
+        let _ = big.moveToEnd(4998 + i % 2)
+    }
+    let ks = big.keys()
+    for i in 0..ks.len {
+        if ks[i] != 4900 + i || big.get(ks[i])! != ks[i] * 2 {
+            ok = false
+        }
+    }
+    if ok {
+        print($"churn ok len {big.len()} first {ks[0]} last {ks[ks.len - 1]}")
+    }
+
+    var c = Counter<string>.new()
+    for w in ["a", "b", "a", "c", "b", "a", "d"] {
+        c.add(w)
+    }
+    print($"counter a={c.count("a")} b={c.count("b")} c={c.count("c")} zz={c.count("zz")} len {c.len()}")
+    print($"mostCommon {show(c.mostCommon(2))}")
+    var t = Counter<string>.new()
+    for w in ["x", "y", "z", "z", "y", "x"] {
+        t.add(w)
+    }
+    print($"ties {show(t.mostCommon(-1))}")
+    print($"all {c.mostCommon(-1).len}")
+    return 0
+}

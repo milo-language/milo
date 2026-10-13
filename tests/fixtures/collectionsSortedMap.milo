@@ -1,0 +1,138 @@
+// @expect: basic 5 ["apple", "banana", "cherry", "date", "fig"]
+// @expect: get Some(2) None contains true false
+// @expect: floor Some("cherry") ceil Some("date") none None None
+// @expect: first Some("apple") last Some("fig")
+// @expect: range banana=2 cherry=3 date=4
+// @expect: removed Some(3) None len 4 ["apple", "banana", "date", "fig"]
+// @expect: modify 20 missing false
+// @expect: desc [30, 20, 10]
+// @expect: differential ok 30000 ops
+// @expect: cleared 0 [] then [7]
+// SortedMap: the B-tree against a sorted-Vec model over 30000 random inserts and
+// removes, enough keys that splits, rotations both ways, merges and root collapses all
+// run; floor/ceil/range/first/last checked against the model after every batch.
+from "std/collections" import { SortedMap, bisectLeft, bisectRight }
+from "std/rng" import { Rng }
+
+fn check(m: &SortedMap<i64, i64>, model: &HashMap<i64, i64>, r: &mut Rng): bool {
+    var want = model.keys()
+    want.sort()
+    if m.len() != want.len || $"{m.keys()}" != $"{want}" {
+        print("keys differ")
+        return false
+    }
+    var vals: Vec<i64> = []
+    for k in want {
+        vals.push(model.get(k)!)
+    }
+    if $"{m.values()}" != $"{vals}" {
+        print("values differ")
+        return false
+    }
+    if want.len > 0 && (m.first()! != want[0] || m.last()! != want[want.len - 1]) {
+        print("ends differ")
+        return false
+    }
+    for _q in 0..50 {
+        let x = r.int(2100) - 50
+        let fi = bisectRight(want, x)
+        let wantFloor: Option<i64> = if fi > 0 { Some(want[fi - 1]) } else { None }
+        let ci = bisectLeft(want, x)
+        let wantCeil: Option<i64> = if ci < want.len { Some(want[ci]) } else { None }
+        if $"{m.floor(x)}" != $"{wantFloor}" || $"{m.ceil(x)}" != $"{wantCeil}" {
+            print($"floor/ceil differ at {x}")
+            return false
+        }
+        let hi = x + r.int(200)
+        var got: i64 = 0
+        m.range(x, hi, (k: &i64, _v: &i64): void => {
+            got += k
+        })
+        var expect: i64 = 0
+        var j = ci
+        while j < want.len && want[j] < hi {
+            expect += want[j]
+            j += 1
+        }
+        if got != expect {
+            print($"range differs at {x}..{hi}")
+            return false
+        }
+    }
+    return true
+}
+
+fn main(): i32 {
+    var m = SortedMap<string, i64>.new()
+    m.insert("date", 4)
+    m.insert("banana", 2)
+    m.insert("fig", 6)
+    m.insert("apple", 1)
+    m.insert("cherry", 3)
+    print($"basic {m.len()} {m.keys()}")
+    print($"get {m.get("banana")} {m.get("zzz")} contains {m.contains("fig")} {m.contains("grape")}")
+    print($"floor {m.floor("coconut")} ceil {m.ceil("coconut")} none {m.floor("aardvark")} {m.ceil("zebra")}")
+    print($"first {m.first()} last {m.last()}")
+    var parts: Vec<string> = []
+    m.range("b", "e", (k: &string, v: &i64): void => {
+        parts.push($"{k}={v}")
+    })
+    print($"range {parts.join(" ")}")
+    let gone = m.remove("cherry")
+    print($"removed {gone} {m.remove("cherry")} len {m.len()} {m.keys()}")
+    m.insert("banana", 10)
+    let hit = m.modify("banana", (v: &mut i64): void => {
+        v = v * 2
+    })
+    let miss = m.modify("kiwi", (v: &mut i64): void => {
+        v = 0
+    })
+    if hit {
+        print($"modify {m.get("banana")!} missing {miss}")
+    }
+
+    var desc = SortedMap<i64, bool>.withCompare(move(a: &i64, b: &i64): i64 => b - a)
+    desc.insert(10, true)
+    desc.insert(30, true)
+    desc.insert(20, true)
+    print($"desc {desc.keys()}")
+
+    var big = SortedMap<i64, i64>.new()
+    var model: HashMap<i64, i64> = HashMap.new()
+    var r = Rng.new(12345)
+    var ops: i64 = 0
+    var ok = true
+    for round in 0..30 {
+        for _i in 0..1000 {
+            let k = r.int(2000)
+            // Insert-heavy early rounds grow the tree; remove-heavy late rounds shrink it.
+            let insertPct = if round < 15 { 70 } else { 30 }
+            if r.int(100) < insertPct {
+                let v = r.int(1000000)
+                big.insert(k, v)
+                model.insert(k, v)
+            } else {
+                let got = big.remove(k)
+                let want = model.get(k)
+                if $"{got}" != $"{want}" {
+                    print($"remove {k} differs")
+                    ok = false
+                }
+                model.remove(k)
+            }
+            ops += 1
+        }
+        if ok && !check(big, model, &mut r) {
+            ok = false
+        }
+    }
+    if ok {
+        print($"differential ok {ops} ops")
+    }
+    big.clear()
+    let afterClear = big.len()
+    let emptyKeys = big.keys()
+    big.insert(7, 7)
+    print($"cleared {afterClear} {emptyKeys} then {big.keys()}")
+    return 0
+}

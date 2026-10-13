@@ -1,0 +1,1315 @@
+// std/collections — BinaryHeap, Deque, SortedMap, OrderedMap, Counter and bisect
+//
+// Every container here owns its elements and drops each exactly once: on a pop or
+// remove the value moves out to the caller, on clear or when the container itself
+// drops it is released in place. Nothing hands out a reference into the storage
+// (references are second-class), so reads come in two shapes:
+//
+//   - a copying read (`get`, `peek`, `front`, `keys`, `toVec`, ...) that clones the
+//     element out. These are `@copyOut`: absent for an element carrying Drop or
+//     @noCopy, since the clone would be a second owner of the resource.
+//   - a borrowing read (`each`, `range`, `read`, `modify`) that hands the element to
+//     a callback as `&T` / `&mut T` and works for every element type.
+//
+// Ordered containers take a comparator `(a: &T, b: &T) => i64` read by sign, like
+// `Vec.sortBy`: negative puts `a` first. The plain constructors use the natural
+// order of `<`, which exists for integers, floats and strings; a struct element
+// needs the comparator form (there is no ordering on a struct, see Vec.min).
+
+// The natural order of `<`, as a comparator. Two comparisons rather than `a - b`,
+// which traps on overflow near the i64 limits and does not exist for strings.
+fn naturalCompare<T>(a: &T, b: &T): i64 {
+    if a < b {
+        return -1
+    }
+    if b < a {
+        return 1
+    }
+    return 0
+}
+
+// ── BinaryHeap ──────────────────────────────────────────────────────────────
+
+// A priority queue: `pop` always returns the smallest element under the heap's
+// comparator, so the default is a min-heap (Python's heapq). For a max-heap pass
+// a reversed comparator: `BinaryHeap<i64>.withCompare(move (a: &i64, b: &i64): i64 => b - a)`.
+//
+// push and pop are O(log n), peek O(1), fromVec O(n). Named BinaryHeap because
+// `Heap<T>` is the builtin owning box.
+pub struct BinaryHeap<T> {
+    data: Vec<T>,
+    cmp: move (&T, &T) => i64,
+}
+
+impl BinaryHeap<T> {
+    // An empty min-heap in the natural order of `<` (integers, floats, strings).
+    //
+    // A generic static takes its type argument: `BinaryHeap<i64>.new()`.
+    @ordered
+    fn new(): BinaryHeap<T> {
+        return BinaryHeap {
+            data: Vec.new(),
+            cmp: move(a: &T, b: &T): i64 => naturalCompare(a, b),
+        }
+    }
+
+    // An empty heap ordered by `cmp`; `pop` returns the element `cmp` puts first.
+    fn withCompare(cmp: move (&T, &T) => i64): BinaryHeap<T> {
+        return BinaryHeap {
+            data: Vec.new(),
+            cmp: cmp,
+        }
+    }
+
+    // Build a min-heap from `items` in O(n) (Floyd's heapify), taking ownership.
+    @ordered
+    fn fromVec(items: Vec<T>): BinaryHeap<T> {
+        var h: BinaryHeap<T> = BinaryHeap {
+            data: items,
+            cmp: move(a: &T, b: &T): i64 => naturalCompare(a, b),
+        }
+        heapify(&mut h)
+        return h
+    }
+
+    // Build a heap ordered by `cmp` from `items` in O(n), taking ownership.
+    fn fromVecWith(items: Vec<T>, cmp: move (&T, &T) => i64): BinaryHeap<T> {
+        var h: BinaryHeap<T> = BinaryHeap {
+            data: items,
+            cmp: cmp,
+        }
+        heapify(&mut h)
+        return h
+    }
+
+    // Add an element. O(log n).
+    fn push(self: &mut Self, item: T): void {
+        self.data.push(item)
+        siftUp(&mut self, self.data.len - 1)
+    }
+
+    // Remove and return the first element under the comparator, or None when
+    // empty. O(log n).
+    fn pop(self: &mut Self): Option<T> {
+        let n = self.data.len
+        if n == 0 {
+            return Option.None
+        }
+        self.data.swap(0, n - 1)
+        let top = self.data.pop()
+        siftDown(&mut self, 0)
+        return top
+    }
+
+    // A copy of the element `pop` would return, without removing it. O(1).
+    @copyOut
+    fn peek(self: &Self): Option<T> {
+        if self.data.len == 0 {
+            return Option.None
+        }
+        return Option.Some(self.data[0])
+    }
+
+    // Number of elements.
+    fn len(self: &Self): i64 {
+        return self.data.len
+    }
+
+    // True when there are no elements.
+    fn isEmpty(self: &Self): bool {
+        return self.data.len == 0
+    }
+
+    // Drop every element, keeping the storage's capacity.
+    fn clear(self: &mut Self): void {
+        self.data.clear()
+    }
+
+    // Consume the heap into a Vec in pop order (ascending for the default
+    // min-heap). O(n log n).
+    fn intoSortedVec(self: Self): Vec<T> {
+        var h = self
+        var out: Vec<T> = Vec.withCapacity(h.data.len)
+        while let Some(x) = h.pop() {
+            out.push(x)
+        }
+        return out
+    }
+}
+
+fn heapify<T>(h: &mut BinaryHeap<T>): void {
+    var i = h.data.len / 2 - 1
+    while i >= 0 {
+        siftDown(&mut h, i)
+        i -= 1
+    }
+}
+
+fn siftUp<T>(h: &mut BinaryHeap<T>, start: i64): void {
+    var i = start
+    while i > 0 {
+        let parent = (i - 1) / 2
+        if h.cmp(h.data[i], h.data[parent]) >= 0 {
+            return
+        }
+        h.data.swap(i, parent)
+        i = parent
+    }
+}
+
+fn siftDown<T>(h: &mut BinaryHeap<T>, start: i64): void {
+    let n = h.data.len
+    var i = start
+    while true {
+        let left = 2 * i + 1
+        if left >= n {
+            return
+        }
+        var best = left
+        let right = left + 1
+        if right < n && h.cmp(h.data[right], h.data[left]) < 0 {
+            best = right
+        }
+        if h.cmp(h.data[best], h.data[i]) >= 0 {
+            return
+        }
+        h.data.swap(i, best)
+        i = best
+    }
+}
+
+// The `n` smallest elements of `items`, ascending (Python's heapq.nsmallest).
+// Copies the elements; `items` is untouched. O(m + n log m) for m items.
+@copyOut
+@ordered
+pub fn nsmallest<T>(items: &Vec<T>, n: i64): Vec<T> {
+    return takeFirst(BinaryHeap.fromVec(items.clone()), n)
+}
+
+// The `n` largest elements of `items`, descending (Python's heapq.nlargest).
+// Copies the elements; `items` is untouched. O(m + n log m) for m items.
+@copyOut
+@ordered
+pub fn nlargest<T>(items: &Vec<T>, n: i64): Vec<T> {
+    let h = BinaryHeap.fromVecWith(items.clone(), move(a: &T, b: &T): i64 => naturalCompare(b, a))
+    return takeFirst(h, n)
+}
+
+fn takeFirst<T>(heap: BinaryHeap<T>, n: i64): Vec<T> {
+    var h = heap
+    var out: Vec<T> = Vec.new()
+    while out.len < n {
+        let Some(x) = h.pop() else {
+            break
+        }
+        out.push(x)
+    }
+    return out
+}
+
+// ── Deque ───────────────────────────────────────────────────────────────────
+
+// A double-ended queue on a growable ring buffer: push and pop at either end in
+// amortized O(1), indexed reads in O(1). Index 0 is the front.
+//
+// Iterate in order with `each` (borrows every element) or snapshot with `toVec`.
+pub struct Deque<T> {
+    // Ring storage; a slot outside [head, head + count) is None. Option rather than
+    // raw memory so the empty slots need no unsafe and drop as no-ops.
+    buf: Vec<Option<T>>,
+    head: i64,
+    count: i64,
+}
+
+impl Deque<T> {
+    // An empty deque. No allocation until the first push.
+    //
+    // A generic static takes its type argument: `Deque<string>.new()`.
+    fn new(): Deque<T> {
+        return Deque {
+            buf: Vec.new(),
+            head: 0,
+            count: 0,
+        }
+    }
+
+    // An empty deque with room for `capacity` elements before it grows.
+    fn withCapacity(capacity: i64): Deque<T> {
+        var buf: Vec<Option<T>> = Vec.withCapacity(capacity)
+        while buf.len < capacity {
+            buf.push(Option.None)
+        }
+        return Deque {
+            buf: buf,
+            head: 0,
+            count: 0,
+        }
+    }
+
+    // Append at the back. Amortized O(1).
+    fn pushBack(self: &mut Self, item: T): void {
+        if self.count == self.buf.len {
+            grow(&mut self)
+        }
+        let at = (self.head + self.count) % self.buf.len
+        self.buf[at] = Option.Some(item)
+        self.count += 1
+    }
+
+    // Prepend at the front. Amortized O(1).
+    fn pushFront(self: &mut Self, item: T): void {
+        if self.count == self.buf.len {
+            grow(&mut self)
+        }
+        self.head = (self.head + self.buf.len - 1) % self.buf.len
+        self.buf[self.head] = Option.Some(item)
+        self.count += 1
+    }
+
+    // Remove and return the front element, or None when empty. O(1).
+    fn popFront(self: &mut Self): Option<T> {
+        if self.count == 0 {
+            return Option.None
+        }
+        let item = replace(self.buf[self.head], Option.None)
+        self.head = (self.head + 1) % self.buf.len
+        self.count -= 1
+        return item
+    }
+
+    // Remove and return the back element, or None when empty. O(1).
+    fn popBack(self: &mut Self): Option<T> {
+        if self.count == 0 {
+            return Option.None
+        }
+        let at = (self.head + self.count - 1) % self.buf.len
+        self.count -= 1
+        return replace(self.buf[at], Option.None)
+    }
+
+    // A copy of the front element, or None when empty.
+    @copyOut
+    fn front(self: &Self): Option<T> {
+        return copyAt(self, 0)
+    }
+
+    // A copy of the back element, or None when empty.
+    @copyOut
+    fn back(self: &Self): Option<T> {
+        return copyAt(self, self.count - 1)
+    }
+
+    // A copy of element `i` counted from the front, or None when `i` is outside
+    // 0..len. O(1).
+    @copyOut
+    fn get(self: &Self, i: i64): Option<T> {
+        return copyAt(self, i)
+    }
+
+    // Run `f` on element `i` in place; false (and `f` not run) when `i` is outside
+    // 0..len.
+    fn modify(self: &mut Self, i: i64, f: (&mut T) => void): bool {
+        if i < 0 || i >= self.count {
+            return false
+        }
+        applyMut(&mut self.buf[(self.head + i) % self.buf.len], f)
+        return true
+    }
+
+    // Call `f` on every element from front to back, borrowed.
+    fn each(self: &Self, f: (&T) => void): void {
+        var i: i64 = 0
+        while i < self.count {
+            if let Some(x) = self.buf[(self.head + i) % self.buf.len] {
+                f(x)
+            }
+            i += 1
+        }
+    }
+
+    // A copy of the elements from front to back.
+    @copyOut
+    fn toVec(self: &Self): Vec<T> {
+        var out: Vec<T> = Vec.withCapacity(self.count)
+        var i: i64 = 0
+        while i < self.count {
+            if let Some(x) = copyAt(self, i) {
+                out.push(x)
+            }
+            i += 1
+        }
+        return out
+    }
+
+    // Number of elements.
+    fn len(self: &Self): i64 {
+        return self.count
+    }
+
+    // True when there are no elements.
+    fn isEmpty(self: &Self): bool {
+        return self.count == 0
+    }
+
+    // Drop every element, keeping the ring's capacity.
+    fn clear(self: &mut Self): void {
+        var i: i64 = 0
+        while i < self.count {
+            self.buf[(self.head + i) % self.buf.len] = Option.None
+            i += 1
+        }
+        self.head = 0
+        self.count = 0
+    }
+}
+
+// A place `v[i]` matches as a shared view; a `&mut Option<T>` subject is what binds
+// the payload as `&mut T`.
+fn applyMut<T>(slot: &mut Option<T>, f: (&mut T) => void): void {
+    if let Some(x) = slot {
+        f(&mut x)
+    }
+}
+
+fn copyAt<T>(d: &Deque<T>, i: i64): Option<T> {
+    if i < 0 || i >= d.count {
+        return Option.None
+    }
+    return d.buf[(d.head + i) % d.buf.len]
+}
+
+// Double the ring, unrolling it so the front lands at slot 0.
+fn grow<T>(d: &mut Deque<T>): void {
+    let oldCap = d.buf.len
+    let newCap = if oldCap < 4 { 8 } else { oldCap * 2 }
+    var nb: Vec<Option<T>> = Vec.withCapacity(newCap)
+    var i: i64 = 0
+    while i < d.count {
+        nb.push(replace(d.buf[(d.head + i) % oldCap], Option.None))
+        i += 1
+    }
+    while nb.len < newCap {
+        nb.push(Option.None)
+    }
+    d.buf = nb
+    d.head = 0
+}
+
+// ── bisect ──────────────────────────────────────────────────────────────────
+
+// The first index at which `x` could be inserted into the ascending `v` and keep
+// it sorted: before any element equal to `x` (Python's bisect_left). O(log n).
+//
+// `v` must already be sorted ascending by `<`; on an unsorted Vec the answer is
+// some index in 0..=len, not an error.
+@ordered
+pub fn bisectLeft<T>(v: &Vec<T>, x: &T): i64 {
+    var lo: i64 = 0
+    var hi = v.len
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if v[mid] < x {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+
+// Like bisectLeft, but after any element equal to `x` (Python's bisect_right).
+@ordered
+pub fn bisectRight<T>(v: &Vec<T>, x: &T): i64 {
+    var lo: i64 = 0
+    var hi = v.len
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if x < v[mid] {
+            hi = mid
+        } else {
+            lo = mid + 1
+        }
+    }
+    return lo
+}
+
+// Insert `x` into the ascending `v`, after any equal elements (Python's
+// insort_right). O(log n) to find the slot, O(n) to shift.
+@ordered
+pub fn insertSorted<T>(v: &mut Vec<T>, x: T): void {
+    let at = bisectRight(v, x)
+    v.insert(at, x)
+}
+
+// ── SortedMap ───────────────────────────────────────────────────────────────
+
+// A key and its value, as `OrderedMap.popFirst` and `Counter.mostCommon` hand them out.
+pub struct MapEntry<K, V> {
+    key: K,
+    value: V,
+}
+
+// Minimum degree of the B-tree: a node other than the root holds DEGREE - 1 to
+// 2 * DEGREE - 1 keys, so a node's keys stay within a few cache lines for small K.
+let DEGREE: i64 = 8
+let MAX_KEYS: i64 = 15
+
+// One B-tree node. Children are indices into SortedMap.nodes rather than boxes, so a
+// split or merge moves a few i64s and never re-homes a subtree.
+struct BNode<K, V> {
+    keys: Vec<K>,
+    vals: Vec<V>,
+    // Empty for a leaf; otherwise keys.len + 1 children.
+    kids: Vec<i64>,
+}
+
+// A map that keeps its keys sorted: get, insert and remove in O(log n), in-order
+// iteration, range queries and floor/ceil lookups.
+//
+// It is a B-tree rather than a balanced binary tree: each node keeps up to 15 keys in
+// a Vec, so a lookup touches about log16(n) nodes and binary-searches a contiguous
+// run in each, where a red-black or AVL tree chases log2(n) separate allocations.
+// Nodes live in one arena Vec and point at each other by index, which needs no
+// unsafe and no Heap per node.
+pub struct SortedMap<K, V> {
+    nodes: Vec<BNode<K, V>>,
+    // Indices of nodes a merge emptied, reused before the arena grows.
+    free: Vec<i64>,
+    root: i64,
+    count: i64,
+    cmp: move (&K, &K) => i64,
+}
+
+// Where a key sits: node index (-1 when absent) and position in that node.
+struct Loc {
+    node: i64,
+    idx: i64,
+}
+
+impl SortedMap<K, V> {
+    // An empty map ordered by the natural order of `<` on K (integers, floats,
+    // strings).
+    //
+    // A generic static takes its type arguments: `SortedMap<string, i64>.new()`.
+    @ordered(K)
+    fn new(): SortedMap<K, V> {
+        return SortedMap.withCompare(move(a: &K, b: &K): i64 => naturalCompare(a, b))
+    }
+
+    // An empty map ordered by `cmp`; two keys are the same key when `cmp` returns 0.
+    fn withCompare(cmp: move (&K, &K) => i64): SortedMap<K, V> {
+        var nodes: Vec<BNode<K, V>> = Vec.new()
+        nodes.push(BNode {
+            keys: Vec.new(),
+            vals: Vec.new(),
+            kids: Vec.new(),
+        })
+        return SortedMap {
+            nodes: nodes,
+            free: Vec.new(),
+            root: 0,
+            count: 0,
+            cmp: cmp,
+        }
+    }
+
+    // Insert or replace the value under `key`; a replaced value is dropped. O(log n).
+    fn insert(self: &mut Self, key: K, value: V): void {
+        if self.nodes[self.root].keys.len == MAX_KEYS {
+            let old = self.root
+            var kids: Vec<i64> = Vec.new()
+            kids.push(old)
+            let noKeys: Vec<K> = Vec.new()
+            let noVals: Vec<V> = Vec.new()
+            self.root = allocNode(&mut self, noKeys, noVals, kids)
+            splitChild(&mut self, self.root, 0)
+        }
+        // Top-down: every full child is split before the descent enters it, so the
+        // leaf that takes the key always has room and nothing propagates back up.
+        var n = self.root
+        while true {
+            let i = lowerIn(self, n, key)
+            if i < self.nodes[n].keys.len && self.cmp(self.nodes[n].keys[i], key) == 0 {
+                self.nodes[n].vals[i] = value
+                return
+            }
+            if self.nodes[n].kids.len == 0 {
+                self.nodes[n].keys.insert(i, key)
+                self.nodes[n].vals.insert(i, value)
+                self.count += 1
+                return
+            }
+            var c = self.nodes[n].kids[i]
+            if self.nodes[c].keys.len == MAX_KEYS {
+                splitChild(&mut self, n, i)
+                let d = self.cmp(key, self.nodes[n].keys[i])
+                if d == 0 {
+                    self.nodes[n].vals[i] = value
+                    return
+                }
+                if d > 0 {
+                    c = self.nodes[n].kids[i + 1]
+                }
+            }
+            n = c
+        }
+    }
+
+    // A copy of the value under `key`, or None. O(log n).
+    @copyOut
+    fn get(self: &Self, key: &K): Option<V> {
+        let at = locate(self, key)
+        if at.node < 0 {
+            return Option.None
+        }
+        return Option.Some(self.nodes[at.node].vals[at.idx])
+    }
+
+    // Whether `key` is present. O(log n).
+    fn contains(self: &Self, key: &K): bool {
+        return locate(self, key).node >= 0
+    }
+
+    // Run `f` on the value under `key` in place; false (and `f` not run) when the
+    // key is absent. O(log n).
+    fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
+        let at = locate(self, key)
+        if at.node < 0 {
+            return false
+        }
+        f(&mut self.nodes[at.node].vals[at.idx])
+        return true
+    }
+
+    // Remove `key` and hand back its value, or None when absent. O(log n).
+    fn remove(self: &mut Self, key: &K): Option<V> {
+        let out = removeFrom(&mut self, key)
+        let r = self.root
+        if self.nodes[r].keys.len == 0 && self.nodes[r].kids.len > 0 {
+            self.root = self.nodes[r].kids[0]
+            self.nodes[r].kids.clear()
+            self.free.push(r)
+        }
+        if out.isSome() {
+            self.count -= 1
+        }
+        return out
+    }
+
+    // A copy of the smallest key, or None when empty. O(log n).
+    @copyOut
+    fn first(self: &Self): Option<K> {
+        if self.count == 0 {
+            return Option.None
+        }
+        var n = self.root
+        while self.nodes[n].kids.len > 0 {
+            n = self.nodes[n].kids[0]
+        }
+        return Option.Some(self.nodes[n].keys[0])
+    }
+
+    // A copy of the largest key, or None when empty. O(log n).
+    @copyOut
+    fn last(self: &Self): Option<K> {
+        if self.count == 0 {
+            return Option.None
+        }
+        var n = self.root
+        while self.nodes[n].kids.len > 0 {
+            n = self.nodes[n].kids[self.nodes[n].kids.len - 1]
+        }
+        return Option.Some(self.nodes[n].keys[self.nodes[n].keys.len - 1])
+    }
+
+    // A copy of the largest key <= `key`, or None. O(log n).
+    @copyOut
+    fn floor(self: &Self, key: &K): Option<K> {
+        var bestNode: i64 = -1
+        var bestIdx: i64 = 0
+        var n = self.root
+        while true {
+            let i = lowerIn(self, n, key)
+            if i < self.nodes[n].keys.len && self.cmp(self.nodes[n].keys[i], key) == 0 {
+                return Option.Some(self.nodes[n].keys[i])
+            }
+            if i > 0 {
+                bestNode = n
+                bestIdx = i - 1
+            }
+            if self.nodes[n].kids.len == 0 {
+                break
+            }
+            n = self.nodes[n].kids[i]
+        }
+        if bestNode < 0 {
+            return Option.None
+        }
+        return Option.Some(self.nodes[bestNode].keys[bestIdx])
+    }
+
+    // A copy of the smallest key >= `key`, or None. O(log n).
+    @copyOut
+    fn ceil(self: &Self, key: &K): Option<K> {
+        var bestNode: i64 = -1
+        var bestIdx: i64 = 0
+        var n = self.root
+        while true {
+            let i = lowerIn(self, n, key)
+            if i < self.nodes[n].keys.len {
+                if self.cmp(self.nodes[n].keys[i], key) == 0 {
+                    return Option.Some(self.nodes[n].keys[i])
+                }
+                bestNode = n
+                bestIdx = i
+            }
+            if self.nodes[n].kids.len == 0 {
+                break
+            }
+            n = self.nodes[n].kids[i]
+        }
+        if bestNode < 0 {
+            return Option.None
+        }
+        return Option.Some(self.nodes[bestNode].keys[bestIdx])
+    }
+
+    // Call `f` on every entry in ascending key order, borrowed. O(n).
+    fn each(self: &Self, f: (&K, &V) => void): void {
+        if self.count > 0 {
+            walkAll(self, self.root, f)
+        }
+    }
+
+    // Call `f` on every entry with `lo <= key < hi`, in ascending key order,
+    // borrowed. O(log n + entries visited).
+    fn range(self: &Self, lo: &K, hi: &K, f: (&K, &V) => void): void {
+        if self.count > 0 {
+            let _ = walkRange(self, self.root, lo, hi, f)
+        }
+    }
+
+    // A copy of every key, ascending.
+    @copyOut
+    fn keys(self: &Self): Vec<K> {
+        var out: Vec<K> = Vec.withCapacity(self.count)
+        if self.count > 0 {
+            collectKeys(self, self.root, &mut out)
+        }
+        return out
+    }
+
+    // A copy of every value, in ascending key order.
+    @copyOut
+    fn values(self: &Self): Vec<V> {
+        var out: Vec<V> = Vec.withCapacity(self.count)
+        if self.count > 0 {
+            collectVals(self, self.root, &mut out)
+        }
+        return out
+    }
+
+    // Number of entries.
+    fn len(self: &Self): i64 {
+        return self.count
+    }
+
+    // True when there are no elements.
+    fn isEmpty(self: &Self): bool {
+        return self.count == 0
+    }
+
+    // Drop every entry.
+    fn clear(self: &mut Self): void {
+        var nodes: Vec<BNode<K, V>> = Vec.new()
+        nodes.push(BNode {
+            keys: Vec.new(),
+            vals: Vec.new(),
+            kids: Vec.new(),
+        })
+        self.nodes = nodes
+        self.free.clear()
+        self.root = 0
+        self.count = 0
+    }
+}
+
+// The first position in node `n` whose key is >= `key` (binary search).
+fn lowerIn<K, V>(m: &SortedMap<K, V>, n: i64, key: &K): i64 {
+    var lo: i64 = 0
+    var hi = m.nodes[n].keys.len
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if m.cmp(m.nodes[n].keys[mid], key) < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+
+fn locate<K, V>(m: &SortedMap<K, V>, key: &K): Loc {
+    var n = m.root
+    while true {
+        let i = lowerIn(m, n, key)
+        if i < m.nodes[n].keys.len && m.cmp(m.nodes[n].keys[i], key) == 0 {
+            return Loc { node: n, idx: i }
+        }
+        if m.nodes[n].kids.len == 0 {
+            break
+        }
+        n = m.nodes[n].kids[i]
+    }
+    return Loc { node: -1, idx: 0 }
+}
+
+fn allocNode<K, V>(m: &mut SortedMap<K, V>, keys: Vec<K>, vals: Vec<V>, kids: Vec<i64>): i64 {
+    let node = BNode {
+        keys: keys,
+        vals: vals,
+        kids: kids,
+    }
+    if let Some(at) = m.free.pop() {
+        m.nodes[at] = node
+        return at
+    }
+    m.nodes.push(node)
+    return m.nodes.len - 1
+}
+
+// Split the full child `kids[i]` of `p`: its upper DEGREE - 1 keys move to a new
+// right sibling and its median moves up into `p` at position i.
+fn splitChild<K, V>(m: &mut SortedMap<K, V>, p: i64, i: i64): void {
+    let c = m.nodes[p].kids[i]
+    var rk: Vec<K> = Vec.withCapacity(DEGREE - 1)
+    var rv: Vec<V> = Vec.withCapacity(DEGREE - 1)
+    var rc: Vec<i64> = Vec.new()
+    while m.nodes[c].keys.len > DEGREE {
+        rk.push(m.nodes[c].keys.pop()!)
+        rv.push(m.nodes[c].vals.pop()!)
+    }
+    rk.reverse()
+    rv.reverse()
+    while m.nodes[c].kids.len > DEGREE {
+        rc.push(m.nodes[c].kids.pop()!)
+    }
+    rc.reverse()
+    let mk = m.nodes[c].keys.pop()!
+    let mv = m.nodes[c].vals.pop()!
+    let r = allocNode(&mut m, rk, rv, rc)
+    m.nodes[p].keys.insert(i, mk)
+    m.nodes[p].vals.insert(i, mv)
+    m.nodes[p].kids.insert(i + 1, r)
+}
+
+// Top-down delete (CLRS 18.3): before the descent enters a child it is topped up to
+// at least DEGREE keys, so removing one from a leaf never leaves it underfull.
+fn removeFrom<K, V>(m: &mut SortedMap<K, V>, key: &K): Option<V> {
+    var n = m.root
+    while true {
+        let i = lowerIn(m, n, key)
+        let found = i < m.nodes[n].keys.len && m.cmp(m.nodes[n].keys[i], key) == 0
+        if m.nodes[n].kids.len == 0 {
+            if !found {
+                return Option.None
+            }
+            let _gone = m.nodes[n].keys.remove(i)
+            return Option.Some(m.nodes[n].vals.remove(i))
+        }
+        if found {
+            let left = m.nodes[n].kids[i]
+            let right = m.nodes[n].kids[i + 1]
+            // The key's in-order neighbour takes its slot, taken from whichever side
+            // can spare one; when neither can, the two sides merge around the key and
+            // the descent continues into the merged node.
+            if m.nodes[left].keys.len >= DEGREE {
+                return Option.Some(takeFromMax(&mut m, left, n, i))
+            }
+            if m.nodes[right].keys.len >= DEGREE {
+                return Option.Some(takeFromMin(&mut m, right, n, i))
+            }
+            merge(&mut m, n, i)
+            n = left
+        } else {
+            n = fillChild(&mut m, n, i)
+        }
+    }
+    return Option.None
+}
+
+// Replace entry `i` of node `n` with the largest entry under `start` and return the
+// value it held (its key drops). The popped key and value move as whole values: a
+// MapEntry taken apart field by field would leave a zeroed husk for a Drop impl to see.
+fn takeFromMax<K, V>(m: &mut SortedMap<K, V>, start: i64, n: i64, i: i64): V {
+    var leaf = start
+    while m.nodes[leaf].kids.len > 0 {
+        leaf = fillChild(&mut m, leaf, m.nodes[leaf].kids.len - 1)
+    }
+    let k = m.nodes[leaf].keys.pop()!
+    let v = m.nodes[leaf].vals.pop()!
+    let _oldKey = replace(m.nodes[n].keys[i], k)
+    return replace(m.nodes[n].vals[i], v)
+}
+
+// takeFromMax's mirror: the smallest entry under `start` takes the slot.
+fn takeFromMin<K, V>(m: &mut SortedMap<K, V>, start: i64, n: i64, i: i64): V {
+    var leaf = start
+    while m.nodes[leaf].kids.len > 0 {
+        leaf = fillChild(&mut m, leaf, 0)
+    }
+    let k = m.nodes[leaf].keys.remove(0)
+    let v = m.nodes[leaf].vals.remove(0)
+    let _oldKey = replace(m.nodes[n].keys[i], k)
+    return replace(m.nodes[n].vals[i], v)
+}
+
+// Make child `i` of `p` hold at least DEGREE keys, by borrowing through the
+// separator from a sibling that can spare one or by merging with a sibling. Returns
+// the node the descent should enter (the left sibling when it merged leftwards).
+fn fillChild<K, V>(m: &mut SortedMap<K, V>, p: i64, i: i64): i64 {
+    let c = m.nodes[p].kids[i]
+    if m.nodes[c].keys.len >= DEGREE {
+        return c
+    }
+    let nk = m.nodes[p].keys.len
+    if i > 0 && m.nodes[m.nodes[p].kids[i - 1]].keys.len >= DEGREE {
+        rotateRight(&mut m, p, i - 1)
+        return c
+    }
+    if i < nk && m.nodes[m.nodes[p].kids[i + 1]].keys.len >= DEGREE {
+        rotateLeft(&mut m, p, i)
+        return c
+    }
+    if i < nk {
+        merge(&mut m, p, i)
+        return c
+    }
+    let left = m.nodes[p].kids[i - 1]
+    merge(&mut m, p, i - 1)
+    return left
+}
+
+// Move the last entry of kids[s] up into separator s, and the separator down to the
+// front of kids[s + 1].
+fn rotateRight<K, V>(m: &mut SortedMap<K, V>, p: i64, s: i64): void {
+    let left = m.nodes[p].kids[s]
+    let right = m.nodes[p].kids[s + 1]
+    let lk = m.nodes[left].keys.pop()!
+    let lv = m.nodes[left].vals.pop()!
+    let sk = replace(m.nodes[p].keys[s], lk)
+    let sv = replace(m.nodes[p].vals[s], lv)
+    m.nodes[right].keys.insert(0, sk)
+    m.nodes[right].vals.insert(0, sv)
+    if let Some(kid) = m.nodes[left].kids.pop() {
+        m.nodes[right].kids.insert(0, kid)
+    }
+}
+
+// Move the first entry of kids[s + 1] up into separator s, and the separator down to
+// the end of kids[s].
+fn rotateLeft<K, V>(m: &mut SortedMap<K, V>, p: i64, s: i64): void {
+    let left = m.nodes[p].kids[s]
+    let right = m.nodes[p].kids[s + 1]
+    let rk = m.nodes[right].keys.remove(0)
+    let rv = m.nodes[right].vals.remove(0)
+    let sk = replace(m.nodes[p].keys[s], rk)
+    let sv = replace(m.nodes[p].vals[s], rv)
+    m.nodes[left].keys.push(sk)
+    m.nodes[left].vals.push(sv)
+    if m.nodes[right].kids.len > 0 {
+        let kid = m.nodes[right].kids.remove(0)
+        m.nodes[left].kids.push(kid)
+    }
+}
+
+// Fold separator s and all of kids[s + 1] into kids[s]; the emptied right node goes
+// on the free list.
+fn merge<K, V>(m: &mut SortedMap<K, V>, p: i64, s: i64): void {
+    let left = m.nodes[p].kids[s]
+    let right = m.nodes[p].kids[s + 1]
+    let sk = m.nodes[p].keys.remove(s)
+    let sv = m.nodes[p].vals.remove(s)
+    let _right = m.nodes[p].kids.remove(s + 1)
+    m.nodes[left].keys.push(sk)
+    m.nodes[left].vals.push(sv)
+    let rk = replace(m.nodes[right].keys, Vec.new())
+    let rv = replace(m.nodes[right].vals, Vec.new())
+    let rc = replace(m.nodes[right].kids, Vec.new())
+    m.nodes[left].keys.extend(rk)
+    m.nodes[left].vals.extend(rv)
+    m.nodes[left].kids.extend(rc)
+    m.free.push(right)
+}
+
+fn walkAll<K, V>(m: &SortedMap<K, V>, n: i64, f: (&K, &V) => void): void {
+    let leaf = m.nodes[n].kids.len == 0
+    var i: i64 = 0
+    while i < m.nodes[n].keys.len {
+        if !leaf {
+            walkAll(m, m.nodes[n].kids[i], f)
+        }
+        f(m.nodes[n].keys[i], m.nodes[n].vals[i])
+        i += 1
+    }
+    if !leaf {
+        walkAll(m, m.nodes[n].kids[i], f)
+    }
+}
+
+// The copying reads index the storage directly (`out.push(m.nodes[n].keys[i])`) rather
+// than calling `.clone()`, which a generic struct element does not have: the structural
+// copy exists for every type `@copyOut` lets through.
+fn collectKeys<K, V>(m: &SortedMap<K, V>, n: i64, out: &mut Vec<K>): void {
+    let leaf = m.nodes[n].kids.len == 0
+    var i: i64 = 0
+    while i < m.nodes[n].keys.len {
+        if !leaf {
+            collectKeys(m, m.nodes[n].kids[i], &mut out)
+        }
+        out.push(m.nodes[n].keys[i])
+        i += 1
+    }
+    if !leaf {
+        collectKeys(m, m.nodes[n].kids[i], &mut out)
+    }
+}
+
+fn collectVals<K, V>(m: &SortedMap<K, V>, n: i64, out: &mut Vec<V>): void {
+    let leaf = m.nodes[n].kids.len == 0
+    var i: i64 = 0
+    while i < m.nodes[n].vals.len {
+        if !leaf {
+            collectVals(m, m.nodes[n].kids[i], &mut out)
+        }
+        out.push(m.nodes[n].vals[i])
+        i += 1
+    }
+    if !leaf {
+        collectVals(m, m.nodes[n].kids[i], &mut out)
+    }
+}
+
+// In-order walk of [lo, hi) under node `n`; false once a key >= hi was reached, so
+// the callers stop too.
+fn walkRange<K, V>(m: &SortedMap<K, V>, n: i64, lo: &K, hi: &K, f: (&K, &V) => void): bool {
+    let leaf = m.nodes[n].kids.len == 0
+    var i = lowerIn(m, n, lo)
+    while i < m.nodes[n].keys.len {
+        if !leaf && !walkRange(m, m.nodes[n].kids[i], lo, hi, f) {
+            return false
+        }
+        if m.cmp(m.nodes[n].keys[i], hi) >= 0 {
+            return false
+        }
+        f(m.nodes[n].keys[i], m.nodes[n].vals[i])
+        i += 1
+    }
+    if !leaf {
+        return walkRange(m, m.nodes[n].kids[i], lo, hi, f)
+    }
+    return true
+}
+
+// ── OrderedMap ──────────────────────────────────────────────────────────────
+
+// A hash map that remembers insertion order (Python's dict, an "index map"): get,
+// insert, remove and moveToEnd in amortized O(1), iteration in insertion order.
+// Re-inserting an existing key replaces its value and keeps its position.
+//
+// Each key is stored twice (the index and the slot), so insert clones a new key once.
+pub struct OrderedMap<K, V> {
+    // Key -> slot position.
+    index: HashMap<K, i64>,
+    // Slots in insertion order; a removed entry leaves a None tombstone until the
+    // next compaction, which is what keeps remove O(1).
+    slotKeys: Vec<Option<K>>,
+    slotVals: Vec<Option<V>>,
+    // No live slot sits before this position (popFirst advances it).
+    head: i64,
+    live: i64,
+}
+
+impl OrderedMap<K, V> {
+    // An empty map.
+    //
+    // A generic static takes its type arguments: `OrderedMap<string, i64>.new()`.
+    fn new(): OrderedMap<K, V> {
+        return OrderedMap {
+            index: HashMap.new(),
+            slotKeys: Vec.new(),
+            slotVals: Vec.new(),
+            head: 0,
+            live: 0,
+        }
+    }
+
+    // Insert `key` at the end, or replace its value (dropping the old one) and keep
+    // its position when it is already present. Amortized O(1).
+    fn insert(self: &mut Self, key: K, value: V): void {
+        if let Some(at) = self.index.get(key) {
+            self.slotVals[at] = Option.Some(value)
+            return
+        }
+        self.index.insert(key.clone(), self.slotKeys.len)
+        self.slotKeys.push(Option.Some(key))
+        self.slotVals.push(Option.Some(value))
+        self.live += 1
+    }
+
+    // A copy of the value under `key`, or None. O(1).
+    @copyOut
+    fn get(self: &Self, key: &K): Option<V> {
+        let Some(at) = self.index.get(key) else {
+            return Option.None
+        }
+        return self.slotVals[at]
+    }
+
+    // Whether `key` is present. O(1).
+    fn contains(self: &Self, key: &K): bool {
+        return self.index.contains(key)
+    }
+
+    // Run `f` on the value under `key`, borrowed; false (and `f` not run) when the
+    // key is absent. The read that works for every V, including one carrying Drop.
+    fn read(self: &Self, key: &K, f: (&V) => void): bool {
+        let Some(at) = self.index.get(key) else {
+            return false
+        }
+        if let Some(v) = self.slotVals[at] {
+            f(v)
+        }
+        return true
+    }
+
+    // Run `f` on the value under `key` in place; false (and `f` not run) when the
+    // key is absent. Does not change the key's position.
+    fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
+        let Some(at) = self.index.get(key) else {
+            return false
+        }
+        applyMut(&mut self.slotVals[at], f)
+        return true
+    }
+
+    // Remove `key` and hand back its value, or None when absent. Amortized O(1).
+    fn remove(self: &mut Self, key: &K): Option<V> {
+        let Some(at) = self.index.get(key) else {
+            return Option.None
+        }
+        self.index.remove(key)
+        self.slotKeys[at] = Option.None
+        let out = replace(self.slotVals[at], Option.None)
+        self.live -= 1
+        compactIfSparse(&mut self)
+        return out
+    }
+
+    // Move `key` to the end of the order, as if it had just been inserted; false
+    // when absent. Amortized O(1).
+    fn moveToEnd(self: &mut Self, key: &K): bool {
+        let Some(at) = self.index.get(key) else {
+            return false
+        }
+        let end = self.slotKeys.len
+        if at == end - 1 {
+            return true
+        }
+        self.slotKeys.push(replace(self.slotKeys[at], Option.None))
+        self.slotVals.push(replace(self.slotVals[at], Option.None))
+        let _ = self.index.modify(key, (p: &mut i64): void => {
+            p = end
+        })
+        compactIfSparse(&mut self)
+        return true
+    }
+
+    // Remove and return the oldest entry, or None when empty. Amortized O(1).
+    fn popFirst(self: &mut Self): Option<MapEntry<K, V>> {
+        while self.head < self.slotKeys.len && self.slotKeys[self.head].isNone() {
+            self.head += 1
+        }
+        if self.head == self.slotKeys.len {
+            return Option.None
+        }
+        let at = self.head
+        self.head += 1
+        let Some(key) = replace(self.slotKeys[at], Option.None) else {
+            return Option.None
+        }
+        let Some(value) = replace(self.slotVals[at], Option.None) else {
+            return Option.None
+        }
+        self.index.remove(key)
+        self.live -= 1
+        compactIfSparse(&mut self)
+        return Option.Some(MapEntry { key: key, value: value })
+    }
+
+    // Call `f` on every entry in insertion order, borrowed.
+    fn each(self: &Self, f: (&K, &V) => void): void {
+        var i = self.head
+        while i < self.slotKeys.len {
+            if let Some(k) = self.slotKeys[i] {
+                if let Some(v) = self.slotVals[i] {
+                    f(k, v)
+                }
+            }
+            i += 1
+        }
+    }
+
+    // A copy of every key, in insertion order.
+    @copyOut
+    fn keys(self: &Self): Vec<K> {
+        var out: Vec<K> = Vec.withCapacity(self.live)
+        var i = self.head
+        while i < self.slotKeys.len {
+            let slot = self.slotKeys[i]
+            if let Some(k) = slot {
+                out.push(k)
+            }
+            i += 1
+        }
+        return out
+    }
+
+    // A copy of every value, in insertion order.
+    @copyOut
+    fn values(self: &Self): Vec<V> {
+        var out: Vec<V> = Vec.withCapacity(self.live)
+        var i = self.head
+        while i < self.slotVals.len {
+            let slot = self.slotVals[i]
+            if let Some(v) = slot {
+                out.push(v)
+            }
+            i += 1
+        }
+        return out
+    }
+
+    // Number of entries.
+    fn len(self: &Self): i64 {
+        return self.live
+    }
+
+    // True when there are no elements.
+    fn isEmpty(self: &Self): bool {
+        return self.live == 0
+    }
+
+    // Drop every entry.
+    fn clear(self: &mut Self): void {
+        self.index.clear()
+        self.slotKeys.clear()
+        self.slotVals.clear()
+        self.head = 0
+        self.live = 0
+    }
+}
+
+// Squeeze the tombstones out once they outnumber the live entries. Each tombstone
+// was made by one O(1) operation and is copied past once here, which is what makes
+// remove, moveToEnd and popFirst amortized O(1).
+fn compactIfSparse<K, V>(m: &mut OrderedMap<K, V>): void {
+    let n = m.slotKeys.len
+    if n < 32 || n <= 2 * m.live {
+        return
+    }
+    var nk: Vec<Option<K>> = Vec.withCapacity(m.live)
+    var nv: Vec<Option<V>> = Vec.withCapacity(m.live)
+    var i = m.head
+    while i < n {
+        if m.slotKeys[i].isSome() {
+            nk.push(replace(m.slotKeys[i], Option.None))
+            nv.push(replace(m.slotVals[i], Option.None))
+            let pos = nk.len - 1
+            if let Some(k) = nk[pos] {
+                let _ = m.index.modify(k, (p: &mut i64): void => {
+                    p = pos
+                })
+            }
+        }
+        i += 1
+    }
+    m.slotKeys = nk
+    m.slotVals = nv
+    m.head = 0
+}
+
+// ── Counter ─────────────────────────────────────────────────────────────────
+
+// A multiset that counts how often each key was added (Python's collections.Counter).
+// Built on OrderedMap, so `mostCommon` breaks ties by first appearance, as Python does,
+// instead of by the run-to-run hash order a HashMap would give.
+pub struct Counter<K> {
+    counts: OrderedMap<K, i64>,
+}
+
+impl Counter<K> {
+    // An empty counter.
+    //
+    // A generic static takes its type argument: `Counter<string>.new()`.
+    fn new(): Counter<K> {
+        return Counter {
+            counts: OrderedMap.new(),
+        }
+    }
+
+    // Count one more `key`. Amortized O(1).
+    fn add(self: &mut Self, key: K): void {
+        let seen = self.counts.modify(key, (c: &mut i64): void => {
+            c += 1
+        })
+        if !seen {
+            self.counts.insert(key, 1)
+        }
+    }
+
+    // How many times `key` was added; 0 when never.
+    fn count(self: &Self, key: &K): i64 {
+        var n: i64 = 0
+        let _ = self.counts.read(key, (c: &i64): void => {
+            n = c
+        })
+        return n
+    }
+
+    // Number of distinct keys.
+    fn len(self: &Self): i64 {
+        return self.counts.len()
+    }
+
+    // The `n` most frequent keys with their counts, most frequent first; ties keep
+    // first-appearance order. A negative `n` returns every key. O(k + n log k) for k
+    // distinct keys.
+    @copyOut
+    fn mostCommon(self: &Self, n: i64): Vec<MapEntry<K, i64>> {
+        let keys = self.counts.keys()
+        let counts = self.counts.values()
+        let want = if n < 0 || n > keys.len { keys.len } else { n }
+        var order: Vec<i64> = Vec.withCapacity(keys.len)
+        for i in 0..keys.len {
+            order.push(i)
+        }
+        // Positions rather than (key, count) records, so the result's keys are taken
+        // from `keys` whole: a record taken apart would leave a zeroed husk behind.
+        let ranks = counts.clone()
+        var heap = BinaryHeap<i64>.fromVecWith(order, move(a: &i64, b: &i64): i64 => {
+            if ranks[a] != ranks[b] {
+                return if ranks[a] > ranks[b] { -1 } else { 1 }
+            }
+            return a - b
+        })
+        var out: Vec<MapEntry<K, i64>> = Vec.withCapacity(want)
+        while out.len < want {
+            let Some(at) = heap.pop() else {
+                break
+            }
+            out.push(MapEntry { key: keys[at], value: counts[at] })
+        }
+        return out
+    }
+}

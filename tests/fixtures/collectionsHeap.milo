@@ -1,0 +1,54 @@
+// @expect: peek 1 len 5
+// @expect: 1 2 3 5 8
+// @expect: max 9 7 4
+// @expect: sorted [1, 2, 3, 5, 8]
+// @expect: small [1, 2, 3] large [9, 8, 7]
+// @expect: tasks b a c
+// @expect: empty true none true
+// BinaryHeap: natural min-heap, reversed comparator for a max-heap, O(n) fromVec,
+// intoSortedVec, heapq-style nsmallest/nlargest, and a struct element through a
+// comparator (a struct has no `<`).
+from "std/collections" import { BinaryHeap, nsmallest, nlargest }
+
+struct Task {
+    name: string,
+    pri: i64,
+}
+
+fn main(): i32 {
+    var h = BinaryHeap<i64>.new()
+    for x in [5, 1, 8, 3, 2] {
+        h.push(x)
+    }
+    print($"peek {h.peek()!} len {h.len()}")
+    var parts: Vec<string> = []
+    while let Some(x) = h.pop() {
+        parts.push(x.toString())
+    }
+    print(parts.join(" "))
+
+    var mx = BinaryHeap<i64>.withCompare(move(a: &i64, b: &i64): i64 => b - a)
+    for x in [4, 9, 7] {
+        mx.push(x)
+    }
+    print($"max {mx.pop()!} {mx.pop()!} {mx.pop()!}")
+
+    let built = BinaryHeap<i64>.fromVec([5, 3, 8, 1, 2])
+    print($"sorted {built.intoSortedVec()}")
+
+    let data: Vec<i64> = [7, 1, 9, 3, 8, 2]
+    print($"small {nsmallest(data, 3)} large {nlargest(data, 3)}")
+
+    var tasks = BinaryHeap<Task>.withCompare(move(a: &Task, b: &Task): i64 => a.pri - b.pri)
+    tasks.push(Task { name: "a", pri: 2 })
+    tasks.push(Task { name: "c", pri: 3 })
+    tasks.push(Task { name: "b", pri: 1 })
+    let t1 = tasks.pop()!
+    let t2 = tasks.pop()!
+    let t3 = tasks.pop()!
+    print($"tasks {t1.name} {t2.name} {t3.name}")
+
+    var e = BinaryHeap<string>.new()
+    print($"empty {e.isEmpty()} none {e.pop().isNone()}")
+    return 0
+}

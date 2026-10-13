@@ -1,0 +1,136 @@
+// @expect: heap pop 1 clear 5 drop 8 live 0
+// @expect: deque pop 2 clear 20 drop 35 live 0
+// @expect: sortedmap replace 1 remove 151 clear 201 drop 251 live 0
+// @expect: sortedkeys remove 150 drop 300 live 0
+// @expect: orderedmap replace 1 churn 52 clear 201 drop 251 live 0
+// Every container drops each element exactly once: on pop/remove (the value handed to
+// the caller drops there), on replace, on clear, and when the container goes out of
+// scope. Each number is how many drops a phase has seen so far, and `live` is
+// made - gone after the container is gone: a leak shows as live > 0, a double drop as
+// a count past what was made.
+from "std/collections" import { BinaryHeap, Deque, SortedMap, OrderedMap }
+
+var made: i64 = 0
+var gone: i64 = 0
+var base: i64 = 0
+
+struct Res {
+    id: i64,
+}
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void {
+        gone += 1
+    }
+}
+
+fn mk(id: i64): Res {
+    made += 1
+    return Res { id: id }
+}
+
+fn consume(r: Res): i64 {
+    return r.id
+}
+
+fn heap(): string {
+    var h = BinaryHeap<Res>.withCompare(move(a: &Res, b: &Res): i64 => a.id - b.id)
+    for i in 0..5 {
+        h.push(mk(4 - i))
+    }
+    let _id = consume(h.pop()!)
+    let pop = gone - base
+    h.clear()
+    let clear = gone - base
+    for i in 0..3 {
+        h.push(mk(i))
+    }
+    return $"heap pop {pop} clear {clear}"
+}
+
+fn deque(): string {
+    var d = Deque<Res>.withCapacity(2)
+    for i in 0..10 {
+        d.pushBack(mk(i))
+        d.pushFront(mk(100 + i))
+    }
+    let _a = consume(d.popBack()!)
+    let _b = consume(d.popFront()!)
+    let pop = gone - base
+    d.clear()
+    let clear = gone - base
+    for i in 0..15 {
+        d.pushFront(mk(i))
+    }
+    return $"deque pop {pop} clear {clear}"
+}
+
+fn sortedmap(): string {
+    var m = SortedMap<i64, Res>.new()
+    for i in 0..200 {
+        m.insert(i, mk(i))
+    }
+    m.insert(7, mk(7))
+    let replace = gone - base
+    for i in 0..150 {
+        let _id = consume(m.remove((i * 7) % 200)!)
+    }
+    let remove = gone - base
+    m.clear()
+    let clear = gone - base
+    for i in 0..50 {
+        m.insert(i, mk(i))
+    }
+    return $"sortedmap replace {replace} remove {remove} clear {clear}"
+}
+
+fn sortedkeys(): string {
+    var m = SortedMap<Res, i64>.withCompare(move(a: &Res, b: &Res): i64 => a.id - b.id)
+    for i in 0..300 {
+        m.insert(mk(i), i)
+    }
+    for i in 0..150 {
+        let probe = mk(i * 2)
+        let _v = m.remove(probe)
+    }
+    // The 150 probes were Res values too: count them as made and dropped, then
+    // subtract them from the phase's tally.
+    let remove = gone - base - 150
+    base += 150
+    return $"sortedkeys remove {remove}"
+}
+
+fn orderedmap(): string {
+    var m = OrderedMap<i64, Res>.new()
+    for i in 0..200 {
+        m.insert(i, mk(i))
+    }
+    m.insert(3, mk(3))
+    let replace = gone - base
+    for i in 0..50 {
+        let _r = m.remove(i * 2)
+        let _m = m.moveToEnd(i * 2 + 1)
+        let _p = m.popFirst()
+    }
+    let churn = gone - base
+    m.clear()
+    let clear = gone - base
+    for i in 0..50 {
+        m.insert(i, mk(i))
+    }
+    return $"orderedmap replace {replace} churn {churn} clear {clear}"
+}
+
+fn report(line: string): void {
+    print($"{line} drop {gone - base} live {made - gone}")
+    base = gone
+}
+
+fn main(): i32 {
+    report(heap())
+    report(deque())
+    report(sortedmap())
+    report(sortedkeys())
+    report(orderedmap())
+    return 0
+}

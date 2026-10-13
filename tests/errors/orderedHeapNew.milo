@@ -1,0 +1,14 @@
+// @error: 'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have
+// `BinaryHeap.new` is `@ordered`: its natural order is `<`, which a struct does not have.
+// Only that constructor is withheld; `withCompare` stays (tests/fixtures/collectionsHeap.milo).
+from "std/collections" import { BinaryHeap }
+
+struct Task {
+    pri: i64,
+}
+
+fn main(): i32 {
+    var h = BinaryHeap<Task>.new()
+    h.push(Task { pri: 1 })
+    return 0
+}
