@@ -1,0 +1,65 @@
+// @expect: ab
+// @expect: ia
+// @expect: pb
+// @expect: err
+// @expect: none-err
+// @expect: b
+// @expect: ib
+// @expect: w
+enum E { A, B }
+
+// Siblings of matchVoidNested: a void-typed nested match inside a let-chain's body and
+// else, a let-else's else block, an if-expression branch, and under a nested pattern
+// arm. Each lowers through a different statement path, and each must take the
+// no-result-slot route (`alloca void` is invalid IR).
+fn f(o: Option<E>, r: &Result<E, string>, r2: &Result<E, string>, r3: Result<E, string>) {
+    if let Some(e) = o && let Ok(x) = r {
+        match e {
+            E.A => match x {
+                E.A => print("aa")
+                E.B => print("ab")
+            }
+            E.B => print("b")
+        }
+    } else {
+        match r2 {
+            Ok(_x) => print("ok")
+            Err(_m) => print("err")
+        }
+    }
+    let Some(e2) = o else {
+        match r2 {
+            Ok(_x) => print("none-ok")
+            Err(_m) => print("none-err")
+        }
+        return
+    }
+    if true {
+        match e2 {
+            E.A => print("ia")
+            E.B => print("ib")
+        }
+    } else {
+        print("no")
+    }
+    let oo: Option<Result<E, string>> = Some(r3)
+    match oo {
+        Some(Ok(y)) => match y {
+            E.A => print("pa")
+            E.B => print("pb")
+        }
+        _ => match o {
+            Some(_q) => print("w")
+            None => print("n")
+        }
+    }
+}
+
+fn main(): i32 {
+    let a: Result<E, string> = Ok(E.B)
+    let b: Result<E, string> = Err("x")
+    f(Some(E.A), a, b, Ok(E.B))
+    f(None, b, b, Err("y"))
+    f(Some(E.B), a, a, Err("z"))
+    return 0
+}
