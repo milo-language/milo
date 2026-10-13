@@ -159,14 +159,6 @@ export function isNumeric(t: TypeKind): boolean {
   return t.tag === "int" || t.tag === "float";
 }
 
-export function isInteger(t: TypeKind): boolean {
-  return t.tag === "int";
-}
-
-export function isFloat(t: TypeKind): boolean {
-  return t.tag === "float";
-}
-
 // primitives are Copy (no move tracking needed)
 // Payload-free enums are also Copy — they're just a tag, no heap-owning data inside.
 // The optional `enumIsPayloadFree` callback lets the caller (the checker) inject its

@@ -66,10 +66,6 @@ const GUARD_RE = /call void @__milo_own_guard\(i64 (\d+), i1 (%[^)\s]+)\)/;
 const VIEW_RE = /call void @__milo_own_view\(i64 (\d+), i64 (\d+)\)(?:\s*;\s*own (\S+) L(\d+))?/;
 const LABEL_RE = /^([A-Za-z0-9_.$-]+):/;
 
-export function hasOwnMarkers(ir: string): boolean {
-  return ir.includes("@__milo_own_");
-}
-
 // Drop every marker line. Returns the same array when there is nothing to strip.
 export function stripOwnLedger(lines: string[]): string[] {
   return lines.filter(l => !l.includes("@__milo_own_"));

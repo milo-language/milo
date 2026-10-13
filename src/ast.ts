@@ -176,18 +176,6 @@ export function patternLeafNames(p: Pattern): string[] {
   return out;
 }
 
-// Spans parallel to `patternLeafNames`.
-export function patternLeafSpans(p: Pattern): (Span | undefined)[] {
-  if (p.kind !== "EnumPattern") return [];
-  const out: (Span | undefined)[] = [];
-  p.bindings.forEach((_b, i) => {
-    const sub = p.args?.[i];
-    if (sub) out.push(...patternLeafSpans(sub));
-    else out.push(p.bindingSpans?.[i] ?? p.span);
-  });
-  return out;
-}
-
 // Every enum pattern inside `p`, `p` included: what a walker that resolves or renames
 // enum names has to visit.
 export function enumPatternsIn(p: Pattern): (Pattern & { kind: "EnumPattern" })[] {

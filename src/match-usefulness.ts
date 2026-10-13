@@ -17,8 +17,6 @@ export type Pat =
   // exactly itself, so only a wildcard can complete a column of them.
   | { k: "lit"; key: string; text: string };
 
-export interface Ctor { name: string; fields: unknown[] }
-
 export interface SpaceEnv<T> {
   // The constructors of `ty` that can hold a value (uninhabited variants left out), or
   // null when the type's values are not enumerable (ints, strings, …).

@@ -11,7 +11,6 @@ interface CodegenCtx {
   typeSizeOf(t: TypeKind): number;
   genExpr(expr: any): [string[], string, string];
   genLValue(expr: any): [string[], string, string];
-  genStringCmp(lines: string[], lv: string, rv: string, isEq: boolean): [string[], string, string];
   entryAllocas: string[];
   scopeCounter: number;
   hasVecType: boolean;
