@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { guardFeatureMacros, orderGuardIncludes } from "../src/codegen";
+import { guardFeatureMacros, orderGuardIncludes } from "../src/c-guards";
 
 // The @cLayout/@cSig guard TU only compiles on Windows if winsock2.h precedes the
 // headers that depend on it. Only CI's windows-latest job compiles that TU for real

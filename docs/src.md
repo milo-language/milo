@@ -27,11 +27,13 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/ast.ts` | AST node types: what the parser produces and the checker walks. |
 | `src/attributes.ts` | The attribute vocabulary, in one place. |
 | `src/builtin-members.ts` | The builtin method surface, for the receivers whose dispatch is a hand-written if-chain in checker.ts rather than a symbol table. |
+| `src/c-guards.ts` | The C translation unit that checks a program's `@cLayout`, `@cSig` and `@cValue` claims against the real headers (`_Static_assert`s compiled with `-fsyntax-only` by verifyCDecls, then discarded). |
 | `src/cdeclcache.ts` | Cache of passing @cLayout/@cSig/@cValue verifications, so an unchanged program does not re-run `cc -fsyntax-only` over the guard TU on every build (~90ms on an SDL+GL game, paid even when nothing cha… |
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
+| `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
 | `src/codegen-map.ts` | HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
