@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 525 distinct messages across 673 programs the compiler must reject.
+Every error message the test suite pins: 526 distinct messages across 674 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -178,6 +178,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`calling '_loadU8' requires an unsafe block`](#calling-loadu8-requires-an-unsafe-block)
 - [`calling 'adopt' requires an unsafe block`](#calling-adopt-requires-an-unsafe-block)
 - [`calling 'ptr' requires an unsafe block`](#calling-ptr-requires-an-unsafe-block)
+- [`calling 'Random.fillRaw' requires an unsafe block`](#calling-random-fillraw-requires-an-unsafe-block)
 - [`calling 'rawFd' requires an unsafe block`](#calling-rawfd-requires-an-unsafe-block)
 - [`calling 'rtWriteI64' requires an unsafe block`](#calling-rtwritei64-requires-an-unsafe-block)
 - [`calling 'withRaw' requires an unsafe block`](#calling-withraw-requires-an-unsafe-block)
@@ -4621,6 +4622,24 @@ fn main() {
 ```
 
 <sub>[tests/errors/mappedMemoryPtrNeedsUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mappedMemoryPtrNeedsUnsafe.milo)</sub>
+
+## `calling 'Random.fillRaw' requires an unsafe block` {#calling-random-fillraw-requires-an-unsafe-block}
+
+Random.fillRaw writes through a raw pointer, so calling it needs `unsafe` even with the pointer already in hand; Random.bytes(n) is the safe form.
+
+```milo skip
+from "std/random" import { Random }
+
+fn main(): i32 {
+    var key: [u8; 16] = [0; 16]
+    var p: *u8 = 0 as *u8
+    unsafe { p = key as *u8 }
+    Random.fillRaw(p, 16) // @error: calling 'Random.fillRaw' requires an unsafe block
+    return 0
+}
+```
+
+<sub>[tests/errors/randomFillRawUnsafe.milo](https://github.com/milo-language/milo/blob/main/tests/errors/randomFillRawUnsafe.milo)</sub>
 
 ## `calling 'rawFd' requires an unsafe block` {#calling-rawfd-requires-an-unsafe-block}
 
