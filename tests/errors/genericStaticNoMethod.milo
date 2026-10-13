@@ -1,0 +1,5 @@
+// @error: 'HashMap' has no static method 'filled'
+fn main(): i32 {
+    let m = HashMap<string, i64>.filled(3, 0)
+    return 0
+}

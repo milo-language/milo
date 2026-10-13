@@ -1,0 +1,47 @@
+// Static calls with the type arguments spelled on the receiver: builtin collections
+// (`Vec<i64>.new()`, `HashMap<string, i64>.new()`), `Vec<T>.fromJson` for an element with a
+// Json codec (the element type's fromJsonArray), and a user generic's static method.
+@derive(Json)
+struct Item { id: i64, name: string }
+
+@derive(Json)
+struct Pair<A, B> { a: A, b: B }
+
+impl Pair<A, B> {
+    fn make(a: A, b: B): Pair<A, B> { return Pair { a: a, b: b } }
+}
+
+fn main(): i32 {
+    var m = HashMap<string, i64>.new()
+    m.insert("a", 1)
+    print(m.len)
+    var v = Vec<i64>.new()
+    v.push(4)
+    print(v.len)
+    let c = Vec<string>.withCapacity(8)
+    print(c.len)
+    let f = Vec<i64>.filled(3, 7)
+    print(f[2])
+    let hm = HashMap<string, Vec<i64>>.withCapacity(4)
+    print(hm.len)
+    let items = Vec<Item>.fromJson("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]")!
+    print($"{items.len} {items[1].name}")
+    match Vec<Item>.fromJson("[{\"id\":\"x\",\"name\":\"a\"}]") {
+        Ok(_) => print("ok")
+        Err(e) => print(e.message())
+    }
+    let ps = Vec<Pair<i64, string>>.fromJson("[{\"a\":1,\"b\":\"x\"}]")!
+    print(ps[0].b)
+    let p = Pair<i64, string>.make(1, "y")
+    print(p.b)
+    return 0
+}
+// @expect: 1
+// @expect: 1
+// @expect: 0
+// @expect: 7
+// @expect: 0
+// @expect: 2 b
+// @expect: field '[0].id': expected integer, got string
+// @expect: x
+// @expect: y

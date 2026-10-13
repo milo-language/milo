@@ -394,9 +394,9 @@ export function deriveJsonSource(structName: string, fields: JsonFieldPlan[]): s
 
   // ── fromJsonArray / toJsonArray ──
   // A top-level array (`[{...}, {...}]`, what most list endpoints return) has no struct
-  // of its own to derive on, and `Vec<T>.fromJson` would be a static call on a generic
-  // type, which has no spelling. So the element type carries the array entry points,
-  // built from the same Vec plan a `Vec<T>` field uses: paths read "[3].city".
+  // of its own to derive on, so the element type carries the array entry points, built
+  // from the same Vec plan a `Vec<T>` field uses: paths read "[3].city". The checker
+  // spells `Vec<T>.fromJson(text)` as `T.fromJsonArray(text)` (spelledBuiltinStatic).
   {
     const plan: JsonPlan = { k: "vec", ty: `Vec<${structName}>`, elem: { k: "struct", name: structName } };
     const g = new Gen("                ");

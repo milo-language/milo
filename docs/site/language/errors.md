@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 541 distinct messages across 689 programs the compiler must reject.
+Every error message the test suite pins: 545 distinct messages across 693 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -78,6 +78,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop`](#getorinsert-is-not-available-on-hashmap-i64-res-getorinsert-copies-its-element-out-and-res-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
+- [`'HashMap' has no static method 'filled'`](#hashmap-has-no-static-method-filled)
 - [`'head' cannot return a reference`](#head-cannot-return-a-reference)
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
 - [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
@@ -129,6 +130,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'total' can park this task while it holds a reference into 'g's buffer`](#total-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'Unit' is defined as a struct in 'std/prelude.milo' and as a struct in`](#unit-is-defined-as-a-struct-in-std-prelude-milo-and-as-a-struct-in)
 - [`'unwrapOrElse' on a non-Copy Result<string>`](#unwraporelse-on-a-non-copy-result-string)
+- [`'v' declared as Vec<string> but got Vec<i64>`](#v-declared-as-vec-string-but-got-vec-i64)
 - [`'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)`](#v-goes-out-of-scope-before-p-which-would-still-point-into-its-buffer-from-v-ptr-on-line-13)
 - [`'v' is borrowed by a scoped task and written by the Task.scope body`](#v-is-borrowed-by-a-scoped-task-and-written-by-the-task-scope-body)
 - [`'v' is borrowed by one argument and changed by a mutation of 'v' in a later one`](#v-is-borrowed-by-one-argument-and-changed-by-a-mutation-of-v-in-a-later-one)
@@ -144,6 +146,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'v' may reallocate here while 'ps' still points into its buffer (from 'v.ptr()' on line 11)`](#v-may-reallocate-here-while-ps-still-points-into-its-buffer-from-v-ptr-on-line-11)
 - [`'v' may reallocate here while 'q' still points into its buffer (from 'v.ptr()' on line 10)`](#v-may-reallocate-here-while-q-still-points-into-its-buffer-from-v-ptr-on-line-10)
 - [`'Vec' cannot be instantiated with 'void'`](#vec-cannot-be-instantiated-with-void)
+- [`'Vec' takes 1 type argument, got 2`](#vec-takes-1-type-argument-got-2)
+- [`'Vec<i64>.fromJson' needs 'i64' to have a Json codec`](#vec-i64-fromjson-needs-i64-to-have-a-json-codec)
 - [`'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)`](#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9)
 - [`'writer' writes the global 'g' while 'p' still points into 'g's buffer (from 'g.ptr()' on line 15)`](#writer-writes-the-global-g-while-p-still-points-into-g-s-buffer-from-g-ptr-on-line-15)
 - [`'x' declared as Item (b.milo) but got Item (a.milo)`](#x-declared-as-item-b-milo-but-got-item-a-milo)
@@ -1958,6 +1962,17 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/laterArgMovesBorrowedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/laterArgMovesBorrowedField.milo)</sub>
 
+## `'HashMap' has no static method 'filled'` {#hashmap-has-no-static-method-filled}
+
+```milo skip
+fn main(): i32 {
+    let m = HashMap<string, i64>.filled(3, 0)
+    return 0
+}
+```
+
+<sub>[tests/errors/genericStaticNoMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticNoMethod.milo)</sub>
+
 ## `'head' cannot return a reference` {#head-cannot-return-a-reference}
 
 @note: 6:12 the returned slice points into 'v', a parameter dropped when 'head' returns A by-value parameter is owned by the callee, so a slice of it dangles at the return.
@@ -3378,6 +3393,19 @@ fn main() {
 
 <sub>[tests/errors/resultUnwrapOrElseNonCopy.milo](https://github.com/milo-language/milo/blob/main/tests/errors/resultUnwrapOrElseNonCopy.milo)</sub>
 
+## `'v' declared as Vec<string> but got Vec<i64>` {#v-declared-as-vec-string-but-got-vec-i64}
+
+The spelled instance is the type, so it must agree with the annotation.
+
+```milo skip
+fn main(): i32 {
+    let v: Vec<string> = Vec<i64>.new()
+    return v.len as i32
+}
+```
+
+<sub>[tests/errors/genericStaticMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticMismatch.milo)</sub>
+
 ## `'v' goes out of scope before 'p', which would still point into its buffer (from 'v.ptr()' on line 13)` {#v-goes-out-of-scope-before-p-which-would-still-point-into-its-buffer-from-v-ptr-on-line-13}
 
 ```milo skip
@@ -3900,6 +3928,32 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/vecVoidElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecVoidElement.milo)</sub>
+
+## `'Vec' takes 1 type argument, got 2` {#vec-takes-1-type-argument-got-2}
+
+A static call on a builtin collection spells exactly its type's arguments.
+
+```milo skip
+fn main(): i32 {
+    let v = Vec<i64, string>.new()
+    return v.len as i32
+}
+```
+
+<sub>[tests/errors/genericStaticArity.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticArity.milo)</sub>
+
+## `'Vec<i64>.fromJson' needs 'i64' to have a Json codec` {#vec-i64-fromjson-needs-i64-to-have-a-json-codec}
+
+`Vec<T>.fromJson` is the element type's array decoder, which only @derive(Json) creates.
+
+```milo skip
+fn main(): i32 {
+    let v = Vec<i64>.fromJson("[1]")
+    return 0
+}
+```
+
+<sub>[tests/errors/genericStaticFromJsonNoCodec.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericStaticFromJsonNoCodec.milo)</sub>
 
 ## `'w' may reallocate here while 'p' still points into its buffer (from 'v.ptr()' on line 9)` {#w-may-reallocate-here-while-p-still-points-into-its-buffer-from-v-ptr-on-line-9}
 

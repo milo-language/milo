@@ -1,0 +1,6 @@
+// @error: 'Vec' takes 1 type argument, got 2
+// A static call on a builtin collection spells exactly its type's arguments.
+fn main(): i32 {
+    let v = Vec<i64, string>.new()
+    return v.len as i32
+}

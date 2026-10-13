@@ -406,6 +406,8 @@ let first = items[0].clone()   // indexing borrows; clone to own a copy
 for item in items {            // for-in borrows each element
     print(item)
 }
+var counts = HashMap<string, i64>.new()   // or spell the type on the call
+counts.insert("one", 1)
 \`\`\`
 
 ### HashMap
@@ -465,6 +467,9 @@ fn main(): i32 {
         Ok(back) => print(back.port)
         Err(e) => print($"bad config: {e.message()}")
     }
+    // a top-level array: Vec<Config>.fromJson(text), the same as Config.fromJsonArray(text)
+    let all = Vec<Config>.fromJson("[" + text + "]")!
+    print(all.len)
 
     // a shape with no struct: the builder escapes every value
     let body = Json.obj().str("name", config.name).int("port", config.port).nil("owner").build()

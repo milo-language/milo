@@ -1,0 +1,6 @@
+// @error: 'Vec<i64>.fromJson' needs 'i64' to have a Json codec
+// `Vec<T>.fromJson` is the element type's array decoder, which only @derive(Json) creates.
+fn main(): i32 {
+    let v = Vec<i64>.fromJson("[1]")
+    return 0
+}

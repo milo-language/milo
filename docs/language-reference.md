@@ -3,7 +3,7 @@ system: language-reference
 purpose: the syntax-and-semantics reference for Milo — types, control flow, ownership, slices, Heap, arenas, generics
 key-files: src/parser.ts, src/checker.ts, docs/grammar.ebnf, std/arena.milo
 update-when: surface syntax or a language feature changes, or a stdlib type gets first-class reference docs
-last-verified: 2026-10-12 (doc.at(path) chain step; field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
+last-verified: 2026-10-12 (Vec<T>/HashMap<K, V> statics spelled, Vec<T>.fromJson; doc.at(path) chain step; field defaults; a closure's written captures are shared by all its runs; @concurrent; earlier: `*h` by value moves out of a Heap; replace/swap places take the &mut-argument checks; passing a by-ref closure counts as calling it, &mut args and &mut self receivers are capture writes; earlier: integer niche Option layout, ranged-int flow rules; earlier: non-escaping closure params, by-reference captures of self/&T; earlier: milo test --contracts; Result.context; Error interface and ? boxing into Heap<Error>; charAt/padStart/padEnd count characters; struct destructuring; unchecked-ffi-contract lint; once-closure second call aborts; destruction order documented, locals now reverse; todo(); HashMap modify/getOrInsertWith; &mut payload views through a &mut enum subject; @copy on pointer-payload enums; explicit &mut on non-receiver call arguments is mandatory; impl methods checked against the trait signature; @parks; ptr()/cstr() element views unified with the global view list; @copyOnly; @copy on pointer-holding structs; by-value element reads of a resource type rejected at every site, @copyOut; full snippet sweep last run 2026-07-31)
 -->
 
 # The Milo Language Guide
@@ -1904,7 +1904,13 @@ Vec owns its elements and frees them when it goes out of scope.
 var a: Vec<i64> = Vec.new()              // empty, no allocation
 var b: Vec<i64> = Vec.withCapacity(1024) // empty, pre-sized (no realloc up to 1024 pushes)
 var c: Vec<u8>  = Vec.filled(4096, 0)    // 4096 copies of 0 — zeroed buffer
+let d = Vec<string>.new()                // the element spelled on the call instead
+let m = HashMap<string, i64>.withCapacity(64)
 ```
+
+Spelling the type arguments on the receiver (`Vec<T>.new()`, `HashMap<K, V>.new()`, as
+for a user generic's `Stack<bool>.new()`) gives the value that type with no annotation;
+a context that wants another type is a mismatch.
 
 `Vec.filled(n, v)` requires `v` to be a `Copy` type (the value is duplicated into
 every slot); build a non-`Copy` Vec with a `push` loop.
@@ -4395,15 +4401,15 @@ match User.fromJson(text) {
 ```
 
 A list endpoint usually answers with a bare array rather than an object. The element
-type decodes it (a static call on `Vec<Item>` has no spelling), and error paths start at
-the element index:
+type decodes it, and `Vec<Item>.fromJson(text)` is the same call spelled for the result
+type (it is `Item.fromJsonArray(text)`). Error paths start at the element index:
 
 ```milo
 @derive(Json)
 struct Item { id: i64, name: string }
 
 fn main() {
-    let items = Item.fromJsonArray("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]")!
+    let items = Vec<Item>.fromJson("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]")!
     print(items.len)                  // 2
     print(Item.toJsonArray(items))    // [{"id":1,"name":"a"},{"id":2,"name":"b"}]
     match Item.fromJsonArray("[{\"id\":\"x\",\"name\":\"a\"}]") {

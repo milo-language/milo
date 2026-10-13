@@ -1,0 +1,6 @@
+// @error: 'v' declared as Vec<string> but got Vec<i64>
+// The spelled instance is the type, so it must agree with the annotation.
+fn main(): i32 {
+    let v: Vec<string> = Vec<i64>.new()
+    return v.len as i32
+}

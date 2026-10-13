@@ -7762,7 +7762,8 @@ export class TypeChecker {
   // `x.push(...)` (see the push handler). Returns null for anything else, so the
   // normal (element-required) path — and its error — is untouched everywhere else.
   private tryDeferVecInfer(value: Expr): TypeKind | null {
-    if (value.kind !== "EnumLit" || value.enumName !== "Vec") return null;
+    // `Vec<T>.new()` spells its element; nothing to defer.
+    if (value.kind !== "EnumLit" || value.enumName !== "Vec" || value.typeArgs?.length) return null;
     if (value.variant === "new") {
       if (value.args.length !== 0) this.error(`'Vec.new' takes no arguments`, value.span);
     } else if (value.variant === "withCapacity") {
@@ -10075,6 +10076,40 @@ export class TypeChecker {
   // `Option<T>` slot hands a plain value `T`, which is auto-wrapped (`let o: Option<i64> =
   // 5`). An enum literal (`Option.None`) needs the Option itself, and an if or match hands
   // the whole expected type to each branch tail, where this applies again at the leaf.
+  // `Vec<i64>.new()`, `HashMap<string, i64>.withCapacity(8)`: a static call on a builtin
+  // collection with its type arguments spelled. Returns the instance type (checked like
+  // an annotated `Vec.new()`), "rewritten" when the call became another call, or null
+  // after an error. `Vec<T>.fromJson(text)` is `T.fromJsonArray(text)`: the derive puts
+  // the array decoder on the element type, and this is the spelling that names it.
+  private spelledBuiltinStatic(expr: ExprOf<"EnumLit">): TypeKind | "rewritten" | null {
+    const args = expr.typeArgs!;
+    const want = expr.enumName === "Vec" ? 1 : 2;
+    if (args.length !== want) {
+      this.error(`'${expr.enumName}' takes ${want} type argument${want === 1 ? "" : "s"}, got ${args.length}`, expr.span,
+        `'${expr.enumName === "Vec" ? "Vec<T>" : "HashMap<K, V>"}.${expr.variant}(...)'`);
+      return null;
+    }
+    if (expr.enumName === "Vec" && expr.variant === "fromJson") {
+      const elem = this.resolve(args[0]);
+      if (elem.tag === "unknown") return null;
+      if (elem.tag !== "struct" || !this.jsonCapableStructs.has(elem.name)) {
+        this.error(`'Vec<${this.show(elem)}>.fromJson' needs '${this.show(elem)}' to have a Json codec`, expr.span,
+          `add @derive(Json) to the element struct; the call is then '${this.show(elem)}.fromJsonArray(text)'`);
+        return null;
+      }
+      expr.enumName = elem.name;
+      expr.variant = "fromJsonArray";
+      delete expr.typeArgs;
+      return "rewritten";
+    }
+    if (!["new", "withCapacity", "filled"].includes(expr.variant) || (expr.enumName === "HashMap" && expr.variant === "filled")) {
+      this.error(`'${expr.enumName}' has no static method '${expr.variant}'`, expr.span,
+        expr.enumName === "Vec" ? `Vec's are 'new', 'withCapacity', 'filled' and, for an element with a Json codec, 'fromJson'` : `HashMap's are 'new' and 'withCapacity'`);
+      return null;
+    }
+    return this.resolve({ name: expr.enumName, typeArgs: args, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null, span: expr.span });
+  }
+
   private hintFor(expr: Expr, expected: TypeKind): TypeKind {
     if (expr.kind === "EnumLit" || expr.kind === "IfExpr" || expr.kind === "MatchExpr") return expected;
     return this.optionInnerType(expected) ?? expected;
@@ -10088,7 +10123,14 @@ export class TypeChecker {
   // they wanted and report the mismatch in their own words.
   private checkExpr(expr: Expr, expected: TypeKind | null = null): TypeKind {
     this.canonicalizePreludeVariant(expr);
-    const hint = expected && this.hintFor(expr, expected);
+    let hint = expected && this.hintFor(expr, expected);
+    if (expr.kind === "EnumLit" && expr.typeArgs?.length && (expr.enumName === "Vec" || expr.enumName === "HashMap")) {
+      const spelled = this.spelledBuiltinStatic(expr);
+      if (spelled === null) return this.setType(expr, { tag: "unknown" });
+      // The spelled instance is the type, as an annotation would give it; a context that
+      // wants another type reports the mismatch in its own words.
+      if (spelled !== "rewritten") hint = spelled;
+    }
     if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
       if (expr.kind === "IntLit") {
         const v = expr.value;
