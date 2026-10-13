@@ -101,10 +101,14 @@ const files = miloFiles(SRC_MILO);
 const counts: Record<string, number> = {};
 const byFile: Record<string, Record<string, number>> = {};
 
-for (const [name] of COUNTERS) counts[name] = 0;
+// Every occurrence including definitions: a counter whose name appears NOWHERE was renamed
+// (or its whole mechanism deleted), and either way its 0 is not a measurement.
+const mentions: Record<string, number> = {};
+for (const [name] of COUNTERS) { counts[name] = 0; mentions[name] = 0; }
 for (const f of files) {
   const src = stripImports(stripComments(readFileSync(f, "utf-8")));
   for (const [name] of COUNTERS) {
+    mentions[name] += (src.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length;
     // `fn mkUnlowered(` is the definition, not a use of the bridge.
     const uses = src.match(new RegExp(`\\b${name}\\b`, "g")) ?? [];
     const defs = src.match(new RegExp(`\\bfn\\s+${name}\\b`, "g")) ?? [];
@@ -172,6 +176,16 @@ if (check) {
     process.exit(1);
   }
   const base = JSON.parse(readFileSync(BASELINE, "utf-8")) as Baseline;
+  // A rename drops a counter to 0 and would read as progress. Real progress to zero
+  // leaves the definition behind or gets rebaselined with --write; a name that vanished
+  // entirely while the baseline still counts sites is a counter that stopped matching.
+  const vanished = COUNTERS.map(([n]) => n).filter(n => (base.counts[n] ?? 0) > 0 && mentions[n] === 0);
+  if (vanished.length > 0) {
+    console.error(`\nRATCHET BLIND: ${vanished.join(", ")} no longer appear anywhere in src-milo, yet the baseline counts ` +
+      `${vanished.map(n => base.counts[n]).join(", ")} site(s). Renamed? Point COUNTERS at the new name; ` +
+      `if the mechanism is truly gone, rebaseline with --write.`);
+    process.exit(1);
+  }
   const grew = COUNTERS
     .map(([n]) => [n, base.counts[n] ?? 0, counts[n]] as const)
     .filter(([, was, now]) => now > was);
