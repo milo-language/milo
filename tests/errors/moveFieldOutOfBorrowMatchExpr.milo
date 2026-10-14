@@ -1,13 +1,18 @@
 // @error: cannot move 'd.a' out of the borrowed 'd'
 // Same rule as the if-expression form: every arm tail is a candidate result and
 // each one has to answer the move-out-of-borrow question.
-struct Doc { a: string, b: string }
+struct Doc { a: Text, b: Text }
 
-fn pick(d: &Doc, n: i64): string {
+fn pick(d: &Doc, n: i64): Text {
     return match n { 0 => d.a, _ => d.b }
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "", b: "bbb" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, 0))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

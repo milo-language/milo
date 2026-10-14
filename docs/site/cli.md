@@ -431,6 +431,7 @@ Parsed by every command that takes a source file. Each acts on the ones that app
 | `-g` | Emit DWARF line info (source-level lldb/hades); composes with any -O / --debug. |
 | `-O<level>` | Clang opt level: 0,1,2,3,s,z (default: -O2). |
 | `--sanitize` | Link with AddressSanitizer (requires clang). |
+| `--sanitize=thread` | Link with ThreadSanitizer instead (requires clang). |
 | `--static-deps` | Static-link native deps (openssl/sqlite) for a portable binary. |
 | `--overflow-checks` | Trap on +/-/\* overflow at any -O (on by default in every mode). |
 | `--no-overflow-checks` | Wrap on +/-/\* overflow at any -O (opt out of the default traps). |

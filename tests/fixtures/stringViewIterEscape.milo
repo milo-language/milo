@@ -1,0 +1,13 @@
+// A piece is a `&string` view into the receiver. Returning it as an owned string is a
+// copy out of a borrow: a view has no count header (cap 0), so the copy allocates, and the
+// result outlives the loop and the receiver safely. Before shared strings this was the
+// error "cannot move the borrowed value out of 'line'".
+fn firstLine(s: &string): string {
+    for line in s.lines() {
+        return line
+    }
+    return ""
+}
+
+pub fn main(): i32 { print(firstLine("a\nb".repeat(2))) return 0 }
+// @expect: a

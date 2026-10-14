@@ -1,0 +1,110 @@
+// A string copied out of a place the code does not own is a second handle to the same
+// counted buffer: a `&string` param, a field behind `&Row`, a payload bound through `&E`,
+// a global, a field of a container element. No .clone() needed, and each handle keeps
+// its own text when either side is later written.
+
+struct Inner { tag: string }
+
+struct Row { login: string, inner: Inner, n: i64 }
+
+enum E { A(string), B(i64) }
+
+let G: string = "glob".repeat(2)
+
+fn fromParam(s: &string): string { return s }
+
+fn fromField(r: &Row): string { return r.login }
+
+fn fromNested(r: &Row): string { return r.inner.tag }
+
+fn fromPayload(e: &E): string {
+    match e {
+        E.A(s) => { return s }
+        E.B(n) => { return n.toString() }
+    }
+}
+
+fn fromGlobal(): string { return G }
+
+fn fromFork(r: &Row, pick: bool): string {
+    return if pick { r.login } else { r.inner.tag }
+}
+
+fn fromMutParam(s: &mut string): string {
+    let before: string = s
+    s.push(33)
+    return before
+}
+
+fn rowOf(name: string): Row {
+    return Row { login: name, inner: Inner { tag: "t".repeat(3) }, n: 1 }
+}
+
+fn main() {
+    let r = rowOf("ann".repeat(2))
+    var a = fromField(r)
+    var b = fromParam(a)
+    a.push(49)
+    b.push(50)
+    print(a)
+    print(b)
+    print(r.login)
+
+    var t = fromNested(r)
+    t.pushStr("!")
+    print(t)
+    print(r.inner.tag)
+
+    let e = E.A("pay".repeat(2))
+    var p = fromPayload(e)
+    p.pushStr("?")
+    print(p)
+    match e {
+        E.A(s) => print(s)
+        E.B(n) => print(n)
+    }
+
+    var g = fromGlobal()
+    g.push(46)
+    print(g)
+    print(G)
+
+    print(fromFork(r, true))
+    print(fromFork(r, false))
+
+    var m = "mut".repeat(2)
+    let old = fromMutParam(&mut m)
+    print(old)
+    print(m)
+
+    // A field of an element that stays in its container.
+    let rows = [rowOf("x".repeat(2)), rowOf("y".repeat(3))]
+    var f = rows[1].login
+    f.push(43)
+    print(f)
+    print(rows[1].login)
+
+    // Into a struct literal, then the struct goes away first.
+    let held = Row { login: fromParam(r.login), inner: Inner { tag: r.inner.tag }, n: 2 }
+    let keep: string = held.login
+    print(keep)
+    print(held.inner.tag)
+}
+
+// @expect: annann1
+// @expect: annann2
+// @expect: annann
+// @expect: ttt!
+// @expect: ttt
+// @expect: paypay?
+// @expect: paypay
+// @expect: globglob.
+// @expect: globglob
+// @expect: annann
+// @expect: ttt
+// @expect: mutmut
+// @expect: mutmut!
+// @expect: yyy+
+// @expect: yyy
+// @expect: annann
+// @expect: ttt

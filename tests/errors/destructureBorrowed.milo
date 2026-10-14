@@ -1,13 +1,18 @@
 // A non-Copy field of a borrowed struct cannot be moved out by a pattern either; the
 // rule and the message are the field read's.
 // @error: cannot move 'r.name' out of the borrowed 'r'
-struct R { fd: i32, name: string }
+struct R { fd: i32, name: Text }
 fn g(r: &R): void {
     let { name } = r
     print(name)
 }
 fn main(): i32 {
-    let r = R { fd: 1, name: "x" }
+    let r = R { fd: 1, name: Text { s: "x" } }
     g(r)
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

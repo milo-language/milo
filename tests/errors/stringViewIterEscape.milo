@@ -1,9 +1,0 @@
-// A piece is a `&string`: second-class, so it cannot leave the loop that borrowed it.
-fn firstLine(s: &string): string {
-    for line in s.lines() {
-        return line
-    }
-    return ""
-}
-pub fn main(): i32 { print(firstLine("a\nb")) return 0 }
-// @error: cannot move the borrowed value out of 'line'

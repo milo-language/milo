@@ -3,14 +3,14 @@
 // `return S` hands the global's value to the caller.
 // A global has no single owner, so moving out of it left the slot zeroed and the
 // next reader (here, the second call of f) silently saw an empty value.
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
-fn g(): string {
+fn g(): Text {
     return S
 }
 
 fn f(): i64 {
-    return g().len
+    return g().s.len
 }
 
 pub fn main(): i32 {
@@ -18,3 +18,8 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

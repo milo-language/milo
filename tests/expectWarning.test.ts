@@ -26,7 +26,7 @@ function check(src: string, flags: string[]): { out: string; code: number } {
   return { out: (r.stdout ?? "") + (r.stderr ?? ""), code: r.status ?? 1 };
 }
 
-const HAS_FINDING = `fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let m = v[0]\n  v.push("b")\n  print(m)\n}\n`;
+const HAS_FINDING = `fn main() {\n  var v: Vec<Vec<i64>> = Vec.new()\n  v.push(Vec.new())\n  let m = v[0]\n  v.push(Vec.new())\n  print(m.len)\n}\n`;
 const CLEAN = `fn main() {\n  print("clean")\n}\n`;
 
 test("an expectation that is met stays silent", () => {

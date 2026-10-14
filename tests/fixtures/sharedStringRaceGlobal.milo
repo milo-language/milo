@@ -1,0 +1,26 @@
+// A heap-backed immutable global read from two OS threads, each taking an owned copy.
+// Every copy is a count increment on G's header and every drop a decrement, from both
+// threads at once: a non-atomic count loses updates here (a double free or a leak).
+// Run under --sanitize and --sanitize=thread as well as plain.
+from "std/runtime" import { Promise }
+
+let G: string = "abc".repeat(20)
+
+fn takeCopy(): i64 {
+    var total: i64 = 0
+    for i in 0..100000 {
+        let mine = G.clone()
+        let again: string = G
+        total += mine.len - again.len + mine.len
+    }
+    return total
+}
+
+fn main() {
+    let p = Promise.blocking(move(): i64 => takeCopy())
+    let a = takeCopy()
+    let b = p.await()!
+    print(a + b)
+}
+
+// @expect: 12000000

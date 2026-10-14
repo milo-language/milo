@@ -198,6 +198,7 @@ export const OPTIONS: CliOption[] = [
   { flag: "-g", help: ["emit DWARF line info (source-level lldb/hades); composes with any -O / --debug"] },
   { flag: "-O<level>", help: ["clang opt level: 0,1,2,3,s,z (default: -O2)"] },
   { flag: "--sanitize", help: ["link with AddressSanitizer (requires clang)"] },
+  { flag: "--sanitize=thread", help: ["link with ThreadSanitizer instead (requires clang)"] },
   { flag: "--static-deps", help: ["static-link native deps (openssl/sqlite) for a portable binary"] },
   { flag: "--overflow-checks", help: ["trap on +/-/* overflow at any -O (on by default in every mode)"] },
   { flag: "--no-overflow-checks", help: ["wrap on +/-/* overflow at any -O (opt out of the default traps)"] },

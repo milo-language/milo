@@ -1,9 +1,14 @@
 // @error: cannot move
 // Through a reference a nested binding is a view, so it cannot be given away.
-fn take(s: string) { print(s) }
+fn take(s: Text) { print(s) }
 
-fn f(r: &Option<Option<string>>) {
+fn f(r: &Option<Option<Text>>) {
     if let Some(Some(s)) = r { take(s) }
 }
 
-fn main() { f(Some(Some("x"))) }
+fn main() { f(Some(Some(Text { s: "x" }))) }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

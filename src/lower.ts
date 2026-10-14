@@ -723,6 +723,8 @@ class LowerCtx {
   }
 
   private replayFns = new Set<string>();
+  // The shared-string expression being lowered under its StringClone wrapper.
+  private sharingExpr: Expr | null = null;
 
   // Whether `fn` belongs to the record/replay engine (see HIRFunction.replayEngine):
   // std/replay itself except its allocator, a generated extern wrapper, a `@replayHooked`
@@ -785,6 +787,14 @@ class LowerCtx {
   }
 
   private lowerExprRaw(expr: Expr, type: TypeKind): HIRExpr {
+    // A string copied out of a borrow, a global or a container element: a second handle
+    // to the same counted buffer (checker's sharedStringExprs).
+    if (this.c.sharedStringExprs.has(expr) && this.sharingExpr !== expr) {
+      this.sharingExpr = expr;
+      let str: HIRExpr;
+      try { str = this.lowerExprRaw(expr, type); } finally { this.sharingExpr = null; }
+      return { kind: "StringClone", str, type: { tag: "string" }, span: expr.span };
+    }
     switch (expr.kind) {
       case "IntLit":
         return { kind: "IntLit", value: expr.value, type, span: expr.span };

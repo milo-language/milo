@@ -1,0 +1,74 @@
+// Sharing in loops: every handle made by a count increment is dropped by a decrement, so
+// nothing leaks (scripts/leak-check.ts) and the last drop frees (scripts/asan-sweep.ts).
+// Also a shared string moved into a struct field, the struct dropped first.
+
+struct Row { login: string, n: i64 }
+
+struct Holder { name: string, id: i64 }
+
+fn copyOut(r: &Row): string { return r.login }
+
+fn hold(s: &string, id: i64): Holder {
+    return Holder { name: s, id: id }
+}
+
+fn main() {
+    var rows: Vec<Row> = Vec.new()
+    for i in 0..50 {
+        rows.push(Row { login: $"user{i}", n: i })
+    }
+    var total: i64 = 0
+    var keep: Vec<string> = Vec.new()
+    for round in 0..200 {
+        for r in rows {
+            let s = copyOut(r)
+            total += s.len
+            if round % 50 == 0 {
+                keep.push(s)
+            }
+        }
+        var i: i64 = 0
+        while i < rows.len {
+            var e = rows[i].login
+            if i % 7 == 0 {
+                e.push(33)
+            }
+            total += e.len
+            i += 1
+        }
+    }
+    print(total)
+    print(keep.len)
+    print(keep[keep.len - 1])
+
+    // The struct owns one handle and goes first; the other handle still reads the text.
+    let base = "shared-name".repeat(2)
+    var other = base.clone()
+    if true {
+        let h = hold(base, 7)
+        print(h.name)
+        print(h.id)
+    }
+    other.push(46)
+    print(other)
+    print(base)
+
+    // Reassigning a slot that holds a shared handle drops just that handle.
+    var slot = base.clone()
+    for k in 0..100 {
+        slot = base.clone()
+    }
+    slot.push(33)
+    print(slot)
+    print(base)
+}
+
+// @expect: 117600
+// @expect: 200
+// @expect: user49
+// @expect: shared-nameshared-name
+// @expect: 7
+// @expect: shared-nameshared-name.
+// @expect: shared-nameshared-name
+// @expect: shared-nameshared-name!
+// @expect: shared-nameshared-name

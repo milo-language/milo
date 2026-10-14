@@ -3,12 +3,12 @@
 // Assigning a global into a local moves it (assigning TO a var global stays legal).
 // A global has no single owner, so moving out of it left the slot zeroed and the
 // next reader (here, the second call of f) silently saw an empty value.
-var S: string = "hello"
+var S: Text = Text { s: "hello" }
 
 fn f(): i64 {
-    var y = "x"
+    var y = Text { s: "x" }
     y = S
-    return y.len
+    return y.s.len
 }
 
 pub fn main(): i32 {
@@ -16,3 +16,8 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

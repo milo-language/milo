@@ -2,19 +2,24 @@
 //
 // A nested payload binding through a '&W' is a view too; the arm tail cannot move it.
 enum W {
-    Wrap(Option<string>),
+    Wrap(Option<Text>),
     Empty,
 }
 
-fn pick(w: &W): string {
+fn pick(w: &W): Text {
     return match w {
         W.Wrap(Option.Some(s)) => s
-        W.Wrap(Option.None) => "none".clone()
-        W.Empty => "empty".clone()
+        W.Wrap(Option.None) => Text { s: "none".clone() }
+        W.Empty => Text { s: "empty".clone() }
     }
 }
 
 fn main() {
-    let w = W.Wrap(Option.Some("a string long enough to live on the heap".clone()))
+    let w = W.Wrap(Option.Some(Text { s: "a Text long enough to live on the heap".clone() }))
     print(pick(w))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

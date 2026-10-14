@@ -62,7 +62,7 @@ match "hello".indexOf("l") {
 | `clear()` | empties the string, keeping its capacity |
 | `truncate(len: i64)` | keeps the first len BYTES and the capacity; len past the end is a no-op, a len inside a multibyte character aborts |
 | `setByte(i: i64, b: u8)` | overwrites byte i in place, the write-side twin of s[i]; i outside 0..len aborts. A byte op like s[i]: it does not keep the text valid UTF-8 |
-| `cstr(): *u8` | NUL-terminated view; the string must outlive the pointer |
+| `cstr(): *u8` | NUL-terminated view; the string must outlive the pointer, and the bytes are read-only (another handle may share the buffer) |
 | `clone(): string` |  |
 
 <!-- /generated:builtins -->

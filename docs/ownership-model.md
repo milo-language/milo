@@ -8,7 +8,7 @@ last-verified: 2026-09-20 (explicit &mut on call arguments; an element read by v
 
 # Ownership & references — why there are no lifetimes
 
-Milo is memory-safe with **no garbage collector, no reference counting in safe code, and no lifetime annotations**. This page explains how that works and why the design is shaped this way, especially if you're coming from Rust and wondering where `<'a>` went.
+Milo is memory-safe with **no garbage collector, no reference counting in safe code (beyond a string buffer's internal, copy-on-write count), and no lifetime annotations**. This page explains how that works and why the design is shaped this way, especially if you're coming from Rust and wondering where `<'a>` went.
 
 ## The one rule: references are second-class
 

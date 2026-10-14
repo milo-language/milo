@@ -1,0 +1,97 @@
+// Copy on write: two handles to one counted string buffer never see each other's writes.
+// Each mutator is applied to one side of a fresh share, then both sides are printed.
+
+fn shared(): string {
+    return "abc".repeat(2)
+}
+
+fn main() {
+    var a = shared()
+    var b = a.clone()
+    a.push(33)
+    print(a)
+    print(b)
+
+    var c = b.clone()
+    c.pushStr("+tail")
+    print(c)
+    print(b)
+
+    var d = b.clone()
+    d += "-plus"
+    print(d)
+    print(b)
+
+    var e = b.clone()
+    e = e + "-concat"
+    print(e)
+    print(b)
+
+    var f = b.clone()
+    f.pushInt(42)
+    print(f)
+    print(b)
+
+    var g = b.clone()
+    g.truncate(2)
+    print(g)
+    print(b)
+
+    var h = b.clone()
+    h.clear()
+    print(h.len)
+    print(b)
+
+    var k = b.clone()
+    k.setByte(0, 90)
+    print(k)
+    print(b)
+
+    var m = b.clone()
+    m.pushStr($"<{b}|{m}>")
+    print(m)
+    print(b)
+
+    // Self-append through a shared buffer: the source is re-based onto the copy.
+    var n = b.clone()
+    n.pushStr(n)
+    print(n)
+    print(b)
+
+    // The original side writes while three handles share it.
+    var p = b.clone()
+    let q = b.clone()
+    b.push(64)
+    print(b)
+    print(p)
+    print(q)
+    p.push(35)
+    print(p)
+    print(q)
+}
+
+// @expect: abcabc!
+// @expect: abcabc
+// @expect: abcabc+tail
+// @expect: abcabc
+// @expect: abcabc-plus
+// @expect: abcabc
+// @expect: abcabc-concat
+// @expect: abcabc
+// @expect: abcabc42
+// @expect: abcabc
+// @expect: ab
+// @expect: abcabc
+// @expect: 0
+// @expect: abcabc
+// @expect: Zbcabc
+// @expect: abcabc
+// @expect: abcabc<abcabc|abcabc>
+// @expect: abcabc
+// @expect: abcabcabcabc
+// @expect: abcabc
+// @expect: abcabc@
+// @expect: abcabc
+// @expect: abcabc
+// @expect: abcabc#
+// @expect: abcabc

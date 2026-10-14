@@ -112,6 +112,8 @@ A sweep of all ~200 `.clone()` calls in milojs found exactly **one** that auto-b
 1. **The value outlives the borrow.** Anything stored in a `let`, a struct field, or a `Vec` must be owned. There is no way to bind a borrow to a local — `let x: &T = ...` does not exist, auto-borrow is argument-position only.
 2. **The callee takes `string` by value.** Then a clone is the only alternative to a move.
 
+A `string` is the exception to both: its heap buffer is reference counted, so copying one out of a borrow (`return r.name` with `r: &Row`, a `&string` parameter, `v[i]`) is allowed and costs a count increment, and `.clone()` costs the same, so a string `.clone()` written only to get an owned copy out of a borrow is redundant. One is still needed to keep using an owned local after passing it by value. Keep `&string` parameters anyway: passing one costs nothing, not even the increment.
+
 So before adding a clone, check whether the callee could take `&string` instead. If it genuinely needs ownership, the clone is correct and not a smell. Do not "optimize" clones away without checking which case you're in — dropping a required one is a silent data-loss bug, not a compile error (see below).
 
 ### Moving a field out of a container element is an error

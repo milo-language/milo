@@ -518,6 +518,7 @@ export interface CheckResult {
   rewrittenStructLits: Map<Expr, string>;
   movedExprs: Set<Expr>;
   borrowedExprs: Set<Expr>;
+  sharedStringExprs: Set<Expr>;
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
   // `[v; N]` of a type with a Clone impl: the mangled clone fn codegen calls for the N-1
@@ -795,6 +796,11 @@ export class TypeChecker {
   // Candidates for viewLets in the function being checked, decided once its body is done.
   private viewBindPending = new Map<Stmt, { root: string; lint: () => void }>();
   private borrowedExprs = new Set<Expr>();
+  // Strings copied out of a place this code does not own (a `&string` binding, a field
+  // behind a borrow, a field of a container element, a global). Heap string buffers are
+  // reference counted, so the copy is a count increment rather than a move or an error:
+  // lowering wraps each one in a StringClone, which shares the buffer.
+  private sharedStringExprs = new Set<Expr>();
   // Subjects consumed by the destructuring arm/pattern currently being checked.
   // Only drives the wording of the use-after-move error, which is otherwise
   // misleading here (the transfer point is the pattern, not an earlier stmt).
@@ -1746,6 +1752,8 @@ export class TypeChecker {
     if (this.isCopyType(ty)) return;
     // A ref binding (`let r: &T = ...`) borrows rather than clones.
     if (ty.tag === "ref") return;
+    // A string element is shared by count (see sharedStringExprs), not copied.
+    if (ty.tag === "string") return;
     this.warn(
       "index-clone",
       `this deep-copies the ${this.show(ty)} out of the container`,
@@ -3664,6 +3672,7 @@ export class TypeChecker {
       rewrittenStructLits: this.rewrittenStructLits,
       movedExprs: this.movedExprs,
       borrowedExprs: this.borrowedExprs,
+      sharedStringExprs: this.sharedStringExprs,
       autoWrappedOption: this.autoWrappedOption,
       arrayToVecCoercions: this.arrayToVecCoercions,
       arrayRepeatClones: this.arrayRepeatClones,
@@ -8045,6 +8054,12 @@ export class TypeChecker {
       // Moving in an owned position through a borrow (`&T`, T non-Copy) would
       // shallow-copy the pointee — e.g. a String's heap buffer — aliasing it
       // with the real owner and double-freeing on drop. Reject; clone to own.
+      // Not in a sortByKey extractor: the sort never drops its keys, so a shared copy
+      // would leak its count (see the FieldAccess note below).
+      if (info && info.type.tag === "ref" && info.type.inner.tag === "string" && this.keyExtractorDepth === 0) {
+        this.sharedStringExprs.add(expr);
+        return;
+      }
       if (info && info.type.tag === "ref" &&
           !this.isCopyType(info.type.inner)) {
         this.error(`cannot move the borrowed value out of '${expr.name}'`, expr.span,
@@ -8053,6 +8068,10 @@ export class TypeChecker {
       }
       if (scopeClosed) return;
       if (info && this.isPoisoned(info.type)) return;
+      if (info?.isGlobal && info.type.tag === "string") {
+        this.sharedStringExprs.add(expr);
+        return;
+      }
       if (info?.isGlobal && !this.isCopyType(info.type)) {
         this.errorMoveOutOfGlobal(expr, expr.name, expr.name);
         return;
@@ -8160,6 +8179,13 @@ export class TypeChecker {
       const fieldType = this.exprTypes.get(expr);
       if (fieldType && !this.isCopyType(fieldType) && !this.isPoisoned(fieldType)) {
         const base = this.borrowBasePath(expr);
+        // A string field the code does not own outright (behind a borrow, in a global, in
+        // an element that stays in its container) is shared, never moved or refused. An
+        // owned root keeps the move: that is free and leaves nothing to count.
+        if (fieldType.tag === "string" && this.keyExtractorDepth === 0 && (base !== null || this.globalRootOf(expr) !== null || this.fieldIsInElement(expr))) {
+          this.sharedStringExprs.add(expr);
+          return;
+        }
         if (base === null) {
           const globalRoot = this.globalRootOf(expr);
           if (globalRoot !== null) {
@@ -8296,10 +8322,13 @@ export class TypeChecker {
   // sound thing to zero; the field has to be cloned or the element taken out first. A
   // temporary root (`f().name`, `makeVec()[0].name`) is consumed whole, so it keeps the
   // move. A `&T` root never reaches here (the borrowed branch of `tryMoveLeaf` owns it).
-  private errorIfFieldMovedOutOfElement(expr: Extract<Expr, { kind: "FieldAccess" }>): boolean {
-    const throughElement = this.placesOf(expr).some(p =>
+  private fieldIsInElement(expr: Extract<Expr, { kind: "FieldAccess" }>): boolean {
+    return this.placesOf(expr).some(p =>
       p.tag === "path" && p.steps.some(s => s.tag === "index") && this.lookup(p.root) !== null);
-    if (!throughElement) return false;
+  }
+
+  private errorIfFieldMovedOutOfElement(expr: Extract<Expr, { kind: "FieldAccess" }>): boolean {
+    if (!this.fieldIsInElement(expr)) return false;
     const path = this.describeExpr(expr);
     const container = this.describeExpr(this.indexedContainerOf(expr) ?? expr.object);
     this.error(`cannot move '${path}' out of '${container}': the element stays in the container, so the move would leave a zeroed '${expr.field}' behind`, expr.span,

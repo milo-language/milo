@@ -16,7 +16,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
-import { Codegen } from "./codegen";
+import { Codegen, sanitizerKind } from "./codegen";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -928,7 +928,7 @@ function compileSplit(cc: string, ccId: string, llFile: string, ccFlags: string,
 // source path, since `milo run` links to a fresh temp path every time.
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo, programId: string = outFile) {
   const tc = detectToolchain();
-  const san = sanitize ? " -fsanitize=address" : "";
+  const san = sanitize ? ` -fsanitize=${sanitizerKind()}` : "";
   // Empty when the target is the host, so the common path is unchanged.
   const tgt = target ? clangTargetFlags(target) : "";
   // On Linux a dlopen'd library resolves a callback into the host (std/dl's
@@ -1875,6 +1875,9 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     }
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
+    // The kind rides in the environment so the boolean `sanitize` plumbing (codegen's
+    // function attribute, the link flag) needs no second parameter; see sanitizerKind.
+    else if (args[i] === "--sanitize=thread") { sanitize = true; process.env.MILO_SANITIZE = "thread"; }
     else if (args[i] === "--static-deps") { staticDeps = true; }
     else if (args[i] === "--overflow-checks") { overflowChecks = true; }
     else if (args[i] === "--no-overflow-checks") { overflowChecks = false; }

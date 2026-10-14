@@ -2,13 +2,18 @@
 // A fork owns nothing itself — it evaluates to one of its tails, so consuming it
 // consumes whichever tail ran. `return d.a` was always rejected; spelled through
 // an if-expression it used to compile and double-free at runtime.
-struct Doc { a: string, b: string }
+struct Doc { a: Text, b: Text }
 
-fn pick(d: &Doc, c: bool): string {
+fn pick(d: &Doc, c: bool): Text {
     return if c { d.a } else { d.b }
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "", b: "bbb" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, true))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

@@ -1,0 +1,57 @@
+// `v[i]` on a Vec<string> (and a sized array, a map value, a Vec clone) shares the
+// element's buffer by count; writing either side afterwards copies first.
+
+fn main() {
+    var v: Vec<string> = Vec.new()
+    for i in 0..3 {
+        v.push($"item{i}")
+    }
+    var x = v[1]
+    x.push(33)
+    print(x)
+    print(v[1])
+
+    let y = v[2]
+    v[2].pushStr("-changed")
+    print(y)
+    print(v[2])
+
+    let w = v.clone()
+    v[0].setByte(0, 73)
+    print(v[0])
+    print(w[0])
+
+    let arr: [string; 2] = ["left".repeat(1), "right".repeat(1)]
+    var z = arr[0]
+    z.truncate(2)
+    print(z)
+    print(arr[0])
+
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("k", "val".repeat(2))
+    var got = m.get("k")!
+    got.push(126)
+    print(got)
+    print(m.get("k")!)
+
+    // A literal element is copied, not counted (cap 0 has no header).
+    var lits: Vec<string> = Vec.new()
+    lits.push("lit")
+    var l = lits[0]
+    l.push(33)
+    print(l)
+    print(lits[0])
+}
+
+// @expect: item1!
+// @expect: item1
+// @expect: item2
+// @expect: item2-changed
+// @expect: Item0
+// @expect: item0
+// @expect: le
+// @expect: left
+// @expect: valval~
+// @expect: valval
+// @expect: lit!
+// @expect: lit

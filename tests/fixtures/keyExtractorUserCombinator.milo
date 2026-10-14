@@ -1,0 +1,29 @@
+// A user combinator handed `(u: &User) => u.name`: the closure returns a second handle to
+// the name's counted buffer (shared strings), and `pick` drops it when done, which only
+// decrements. Before shared strings this was rejected: the closure handed back an alias of
+// the borrowed User's buffer and `pick`'s scope-end drop freed it (heap-use-after-free
+// under ASan, 2026-08-16). A struct or Vec field is still rejected here
+// (tests/errors/mapMoveFieldOutOfBorrow.milo); `sortByKey` keeps its exemption, since
+// it never drops its keys.
+struct User { name: string }
+
+fn pick(v: &Vec<User>, key: (&User) => string): i32 {
+    var best = 0
+    var i = 1
+    while i < v.len() {
+        let a = key(v[i])
+        let b = key(v[best])
+        if a < b { best = i }
+        i = i + 1
+    }
+    return best as i32
+}
+
+fn main() {
+    var v: Vec<User> = Vec.new()
+    v.push(User { name: "zed" })
+    v.push(User { name: "amy" })
+    let i = pick(v, (u: &User) => u.name)
+    print(i.toString())
+}
+// @expect: 1

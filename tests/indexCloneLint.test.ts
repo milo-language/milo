@@ -91,10 +91,13 @@ test("a field read materialises no element", () => {
   expect(out).toEqual([]);
 });
 
-test("a string element counts — the clone is a malloc per binding", () => {
-  const out = lint(`fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  v.push("b")\n  print(s)\n}\n`);
+// A string element's buffer is reference counted: the copy is a count increment, not a
+// malloc, so there is nothing to warn about. A Vec element still deep-copies.
+test("a string element is shared, not flagged; a Vec element is", () => {
+  expect(lint(`fn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  v.push("b")\n  print(s)\n}\n`)).toEqual([]);
+  const out = lint(`fn main() {\n  var v: Vec<Vec<i64>> = Vec.new()\n  v.push(Vec.new())\n  let s = v[0]\n  v.push(Vec.new())\n  print(s.len)\n}\n`);
   expect(out.length).toBe(1);
-  expect(out[0]).toContain("deep-copies the string");
+  expect(out[0]).toContain("deep-copies the Vec<i64>");
 });
 
 // A `let` that is only read, of a container nothing writes while it lives, binds the
@@ -105,6 +108,6 @@ test("a read-only let of an unwritten container aliases the element and is not f
 });
 
 test("moving the binding keeps the copy and the warning", () => {
-  const out = lint(`fn keep(s: string): string {\n  return s\n}\nfn main() {\n  var v: Vec<string> = Vec.new()\n  v.push("a")\n  let s = v[0]\n  print(keep(s))\n}\n`);
+  const out = lint(`fn keep(s: Vec<i64>): Vec<i64> {\n  return s\n}\nfn main() {\n  var v: Vec<Vec<i64>> = Vec.new()\n  v.push(Vec.new())\n  let s = v[0]\n  print(keep(s).len)\n}\n`);
   expect(out.length).toBe(1);
 });

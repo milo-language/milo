@@ -39,7 +39,8 @@ afterAll(() => {
 type Probe = "moveOutOfBorrow" | "extractThenMutate" | "consumeInline" | "mutateWhileBorrowed";
 
 const CONTAINERS: Record<string, Record<Probe, string>> = {
-  // A struct field: the spelling the checker rejects outright.
+  // A struct field. A `string` field copies out of a borrow by sharing its counted buffer
+  // (it was rejected outright before shared strings); any other non-Copy field still is.
   field: {
     moveOutOfBorrow: `
 struct Box { v: string }

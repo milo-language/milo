@@ -2,11 +2,11 @@
 
 // `forget(S)` consumes its argument; on a global it would leave the slot zeroed for
 // every later reader.
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     forget(S)
-    return S.len
+    return S.s.len
 }
 
 pub fn main(): i32 {
@@ -14,3 +14,8 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

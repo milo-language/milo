@@ -142,6 +142,14 @@ interface CopyDecl { intent: CopyIntent; type: TypeKind }
 // attribute groups, so 0 is always free.
 const SANITIZE_ATTRS = 0;
 
+// Which sanitizer `--sanitize` means: AddressSanitizer, or ThreadSanitizer under
+// `--sanitize=thread` (MILO_SANITIZE=thread). Read by the function attribute below and the
+// link flag in main.ts, which have to agree: clang instruments only functions carrying the
+// matching `sanitize_*` attribute.
+export function sanitizerKind(): "address" | "thread" {
+  return process.env.MILO_SANITIZE === "thread" ? "thread" : "address";
+}
+
 // An if/match expression's result slot. `cloneViews`: the fork's value is owned
 // (blockValueOwnsResult) but some arm yields a view of a place it does not consume, so
 // that arm stores a clone and the place keeps its own value.
@@ -205,6 +213,7 @@ export class Codegen {
   private emittedBufAppend = false;
   private emittedIntFmt = false;
   private emittedStrReserve = false;
+  private emittedStrRt = false;
   public needsMemcpy = false;
   private needsStrlen = false;
   public needsMemcmp = false;
@@ -2258,7 +2267,7 @@ export class Codegen {
         ? `${l.slice(0, dbg)} #${SANITIZE_ATTRS}${l.slice(dbg)}`
         : `${l.slice(0, -1).trimEnd()} #${SANITIZE_ATTRS} {`;
     }
-    out.push("", `attributes #${SANITIZE_ATTRS} = { sanitize_address }`);
+    out.push("", `attributes #${SANITIZE_ATTRS} = { sanitize_${sanitizerKind()} }`);
   }
 
   // Record/replay's fixed-address heap (std/replay): every allocation Milo code makes goes
@@ -5665,8 +5674,7 @@ export class Codegen {
         lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
         const bufSize = this.nextTemp();
         lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
-        const buf = this.nextTemp();
-        lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+        const buf = this.emitStrAlloc(lines, bufSize, "fmt", expr.span);
         lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmtStr.label}${argsStr})`);
         for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
         for (const t of fmtTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
@@ -5928,21 +5936,7 @@ export class Codegen {
       lines.push(...ll);
       // len+1 with a trailing NUL, matching _cstrToString's layout so the result
       // can still be handed to C without another copy.
-      const cap = this.nextTemp();
-      lines.push(`  ${cap} = add i64 ${lv}, 1`);
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${pv}, i64 ${lv})`);
-      const nulPtr = this.nextTemp();
-      lines.push(`  ${nulPtr} = getelementptr i8, ptr ${buf}, i64 ${lv}`);
-      lines.push(`  store i8 0, ptr ${nulPtr}`);
-      const b1 = this.nextTemp();
-      lines.push(`  ${b1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
-      const b2 = this.nextTemp();
-      lines.push(`  ${b2} = insertvalue %String ${b1}, i64 ${lv}, 1`);
-      const b3 = this.nextTemp();
-      lines.push(`  ${b3} = insertvalue %String ${b2}, i64 ${cap}, 2`);
-      return [lines, b3, "%String"];
+      return [lines, this.emitStrFrom(lines, pv, lv), "%String"];
     }
     if (expr.func === "_cstrToString") {
       this.needsMalloc = true;
@@ -5955,21 +5949,7 @@ export class Codegen {
       lines.push(`  ${len} = call i64 @strlen(ptr ${pv})`);
       // Allocate len+1 and write trailing NUL so the Milo string can be passed to
       // C functions (open, printf, etc.) without re-copying. cap stays at len+1.
-      const cap = this.nextTemp();
-      lines.push(`  ${cap} = add i64 ${len}, 1`);
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${pv}, i64 ${len})`);
-      const nulPtr = this.nextTemp();
-      lines.push(`  ${nulPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-      lines.push(`  store i8 0, ptr ${nulPtr}`);
-      const s1 = this.nextTemp();
-      lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
-      const s2 = this.nextTemp();
-      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
-      const s3 = this.nextTemp();
-      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
-      return [lines, s3, "%String"];
+      return [lines, this.emitStrFrom(lines, pv, len), "%String"];
     }
     if (expr.func === "_strDataPtr") {
       // Extract the data pointer (field 0) from a &string. The argument reaches
@@ -6011,21 +5991,7 @@ export class Codegen {
       lines.push(`  ${len} = call i64 @strlen(ptr ${cstr})`);
       // Allocate len+1 and NUL-terminate so the arg string can be passed to
       // C functions (open, etc.) directly without re-copying.
-      const cap = this.nextTemp();
-      lines.push(`  ${cap} = add i64 ${len}, 1`);
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${cstr}, i64 ${len})`);
-      const nulPtr = this.nextTemp();
-      lines.push(`  ${nulPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-      lines.push(`  store i8 0, ptr ${nulPtr}`);
-      const s1 = this.nextTemp();
-      lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
-      const s2 = this.nextTemp();
-      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
-      const s3 = this.nextTemp();
-      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
-      return [lines, s3, "%String"];
+      return [lines, this.emitStrFrom(lines, cstr, len), "%String"];
     }
     return [lines, "void", "void"];
   }
@@ -6622,8 +6588,8 @@ export class Codegen {
     lines.push(`  ${isZero} = icmp eq i64 ${capVal}, 0`);
     const cap = this.nextTemp();
     lines.push(`  ${cap} = select i1 ${isZero}, i64 1, i64 ${capVal}`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
+    const buf = this.emitStrAlloc(lines, cap, "strcap", expr.span);
+    lines.push(`  store i8 0, ptr ${buf}`);
     const s0 = this.nextTemp();
     lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
     const s1 = this.nextTemp();
@@ -8609,87 +8575,11 @@ export class Codegen {
 
   // In-place append into the String at `tgtPtr` (an alloca holding a %String).
   // Used to turn `x = x + rhs` into amortized-O(1) growth instead of fresh malloc each time.
+  // It is pushStr: the receiver is made unique before the write, and an rhs that points
+  // into x's own buffer (a view of x) is re-based across the grow rather than read after
+  // the old block is gone.
   private emitStringAppendInPlace(lines: string[], tgtPtr: string, rhsVal: string): void {
-    this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
-
-    // Load current x = {ptr, len, cap}
-    const cur = this.nextTemp();
-    lines.push(`  ${cur} = load %String, ptr ${tgtPtr}`);
-    const xData = this.nextTemp();
-    lines.push(`  ${xData} = extractvalue %String ${cur}, 0`);
-    const xLen = this.nextTemp();
-    lines.push(`  ${xLen} = extractvalue %String ${cur}, 1`);
-    const xCap = this.nextTemp();
-    lines.push(`  ${xCap} = extractvalue %String ${cur}, 2`);
-
-    // Extract rhs len + data
-    const rData = this.nextTemp();
-    lines.push(`  ${rData} = extractvalue %String ${rhsVal}, 0`);
-    const rLen = this.nextTemp();
-    lines.push(`  ${rLen} = extractvalue %String ${rhsVal}, 1`);
-
-    // Need cap >= xLen + rLen + 1 for the trailing NUL.
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${xLen}, ${rLen}`);
-    const needed = this.nextTemp();
-    lines.push(`  ${needed} = add i64 ${newLen}, 1`);
-    const fits = this.nextTemp();
-    lines.push(`  ${fits} = icmp uge i64 ${xCap}, ${needed}`);
-
-    const growLabel = this.nextLabel("strapp.grow");
-    const writeLabel = this.nextLabel("strapp.write");
-    lines.push(`  br i1 ${fits}, label %${writeLabel}, label %${growLabel}`);
-
-    // ── grow ──
-    lines.push(`${growLabel}:`);
-    // new_cap = max(needed, cap*2). If cap==0 use needed directly.
-    const doubled = this.nextTemp();
-    lines.push(`  ${doubled} = shl i64 ${xCap}, 1`);
-    const doubleBigger = this.nextTemp();
-    lines.push(`  ${doubleBigger} = icmp uge i64 ${doubled}, ${needed}`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${doubleBigger}, i64 ${doubled}, i64 ${needed}`);
-    const newBuf = this.nextTemp();
-    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newCap})`);
-    // copy old contents (xLen bytes — may be 0 on first append from "")
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${xData}, i64 ${xLen})`);
-    // free old buffer iff it was heap-owned (cap > 0); literals have cap==0
-    const capOwned = this.nextTemp();
-    lines.push(`  ${capOwned} = icmp ugt i64 ${xCap}, 0`);
-    const freeLabel = this.nextLabel("strapp.free");
-    const skipFreeLabel = this.nextLabel("strapp.skipfree");
-    lines.push(`  br i1 ${capOwned}, label %${freeLabel}, label %${skipFreeLabel}`);
-    lines.push(`${freeLabel}:`);
-    lines.push(`  call void @free(ptr ${xData})`);
-    lines.push(`  br label %${skipFreeLabel}`);
-    lines.push(`${skipFreeLabel}:`);
-    // store new ptr + cap into x; len updated below in writeLabel
-    const grewWithBuf = this.nextTemp();
-    lines.push(`  ${grewWithBuf} = insertvalue %String ${cur}, ptr ${newBuf}, 0`);
-    const grewWithCap = this.nextTemp();
-    lines.push(`  ${grewWithCap} = insertvalue %String ${grewWithBuf}, i64 ${newCap}, 2`);
-    lines.push(`  store %String ${grewWithCap}, ptr ${tgtPtr}`);
-    lines.push(`  br label %${writeLabel}`);
-
-    // ── write rhs at xLen, then bump len ──
-    lines.push(`${writeLabel}:`);
-    const cur2 = this.nextTemp();
-    lines.push(`  ${cur2} = load %String, ptr ${tgtPtr}`);
-    const xData2 = this.nextTemp();
-    lines.push(`  ${xData2} = extractvalue %String ${cur2}, 0`);
-    const writeDst = this.nextTemp();
-    lines.push(`  ${writeDst} = getelementptr i8, ptr ${xData2}, i64 ${xLen}`);
-    lines.push(`  call ptr @memcpy(ptr ${writeDst}, ptr ${rData}, i64 ${rLen})`);
-    // null terminator at new_len
-    const nulDst = this.nextTemp();
-    lines.push(`  ${nulDst} = getelementptr i8, ptr ${xData2}, i64 ${newLen}`);
-    lines.push(`  store i8 0, ptr ${nulDst}`);
-    const withLen = this.nextTemp();
-    lines.push(`  ${withLen} = insertvalue %String ${cur2}, i64 ${newLen}, 1`);
-    lines.push(`  store %String ${withLen}, ptr ${tgtPtr}`);
+    this.emitAppendFormatParts(lines, tgtPtr, [{ val: rhsVal, ty: "%String", tk: { tag: "string" } }]);
   }
 
   private genStringConcat(lines: string[], lv: string, rv: string): Gen {
@@ -8709,8 +8599,7 @@ export class Codegen {
     // +1 for null terminator
     const allocSz = this.nextTemp();
     lines.push(`  ${allocSz} = add i64 ${total}, 1`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
+    const buf = this.emitStrAlloc(lines, allocSz, "strcat");
     lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${aData}, i64 ${aLen})`);
     const dst = this.nextTemp();
     lines.push(`  ${dst} = getelementptr i8, ptr ${buf}, i64 ${aLen}`);
@@ -10362,19 +10251,11 @@ export class Codegen {
     lines.push(`${copyL}:`);
     const len = this.nextTemp();
     lines.push(`  ${len} = extractvalue %String ${str}, 1`);
-    const size = this.nextTemp();
-    lines.push(`  ${size} = add i64 ${len}, 1`);
-    const { buf } = this.emitAllocBytes(lines, size, 1, "cstrarg");
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
-    const end = this.nextTemp();
-    lines.push(`  ${end} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-    lines.push(`  store i8 0, ptr ${end}`);
+    const owned = this.emitStrFrom(lines, data, len);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = extractvalue %String ${owned}, 0`);
     lines.push(`  store ptr ${buf}, ptr ${ptrSlot}`);
-    const o0 = this.nextTemp(), o1 = this.nextTemp(), o2 = this.nextTemp();
-    lines.push(`  ${o0} = insertvalue %String undef, ptr ${buf}, 0`);
-    lines.push(`  ${o1} = insertvalue %String ${o0}, i64 ${len}, 1`);
-    lines.push(`  ${o2} = insertvalue %String ${o1}, i64 ${size}, 2`);
-    lines.push(`  store %String ${o2}, ptr ${ownSlot}`);
+    lines.push(`  store %String ${owned}, ptr ${ownSlot}`);
     lines.push(`  br label %${doneL}`);
     lines.push(`${doneL}:`);
     const ptr = this.nextTemp();
@@ -10446,10 +10327,8 @@ export class Codegen {
   // REALLOC_MIN_BYTES goes through realloc, so it grows in place or by page remap: peak
   // memory stays near the new size instead of old + new, and nothing is copied when the
   // block can extend. A smaller one is malloc + memcpy + free (see REALLOC_MIN_BYTES).
-  // `owned`, when given, is an i1 that is false for a buffer this code does not own (a
-  // string's static literal, cap 0): that one is copied into a fresh block and never
-  // handed to realloc or free.
-  private emitGrowBytes(lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span, owned?: string): string {
+  // Vec buffers only: a string's carries a count header and grows in @milo.str.reserve.
+  private emitGrowBytes(lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span): string {
     if (!this.hasRealloc || elemSize === 0) {
       // Zero-size elements stay on malloc: realloc(p, 0) may free p and return null.
       this.needsFree = true;
@@ -10463,8 +10342,7 @@ export class Codegen {
       lines.push(`  br i1 ${hasData}, label %${copyL}, label %${doneL}`);
       lines.push(`${copyL}:`);
       lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${oldBuf}, i64 ${keepBytes})`);
-      if (owned) lines.push(`  br i1 ${owned}, label %${freeL}, label %${doneL}`);
-      else lines.push(`  br label %${freeL}`);
+      lines.push(`  br label %${freeL}`);
       lines.push(`${freeL}:`);
       lines.push(`  call void @free(ptr ${oldBuf})`);
       lines.push(`  br label %${doneL}`);
@@ -10478,11 +10356,7 @@ export class Codegen {
     const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
     const big = this.nextTemp();
     lines.push(`  ${big} = icmp uge i64 ${keepBytes}, ${REALLOC_MIN_BYTES}`);
-    let useRe = big;
-    if (owned) {
-      useRe = this.nextTemp();
-      lines.push(`  ${useRe} = and i1 ${owned}, ${big}`);
-    }
+    const useRe = big;
     const reL = this.nextLabel(`${tag}.realloc`);
     const freshL = this.nextLabel(`${tag}.fresh`);
     const joinL = this.nextLabel(`${tag}.grown`);
@@ -10508,8 +10382,7 @@ export class Codegen {
     lines.push(`  br i1 ${both}, label %${cpL}, label %${freshDoneL}`);
     lines.push(`${cpL}:`);
     lines.push(`  call ptr @memcpy(ptr ${fresh}, ptr ${oldBuf}, i64 ${keepBytes})`);
-    if (owned) lines.push(`  br i1 ${owned}, label %${freeL}, label %${freshDoneL}`);
-    else lines.push(`  br label %${freeL}`);
+    lines.push(`  br label %${freeL}`);
     lines.push(`${freeL}:`);
     lines.push(`  call void @free(ptr ${oldBuf})`);
     lines.push(`  br label %${freshDoneL}`);
@@ -10750,18 +10623,20 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
-  // String.push(u8) — same grow logic as Vec but element size is 1
+  // String.push(u8). The fast path stays inline: room for the byte and its NUL, and a
+  // count of 1 (a heap buffer this handle holds alone). Anything else (a literal, a full
+  // buffer, a shared one) goes through @milo.str.reserve, which copies or grows.
   private genStringPush(expr: HIRExpr & { kind: "StringPush" }, lines: string[]): Gen {
     this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
+    this.strRt();
 
     const [strPtrLines, strPtr] = this.genLValue(expr.str);
     lines.push(...strPtrLines);
     const [byteLines, byteVal] = this.genExpr(expr.byte);
     lines.push(...byteLines);
 
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
     const lenPtr = this.nextTemp();
     lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
     const len = this.nextTemp();
@@ -10770,69 +10645,46 @@ export class Codegen {
     lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
     const cap = this.nextTemp();
     lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-
-    // grow when len + 1 >= cap to reserve room for null terminator
     const lenPlus1 = this.nextTemp();
     lines.push(`  ${lenPlus1} = add i64 ${len}, 1`);
-    const needsGrow = this.nextTemp();
-    lines.push(`  ${needsGrow} = icmp uge i64 ${lenPlus1}, ${cap}`);
-    const growLabel = this.nextLabel("str.grow");
-    const pushLabel = this.nextLabel("str.push");
-    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
-
-    lines.push(`${growLabel}:`);
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
-    const doubled = this.nextTemp();
-    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-    const baseCap = this.nextTemp();
-    lines.push(`  ${baseCap} = select i1 ${isZero}, i64 16, i64 ${doubled}`);
-    // Doubling alone is not enough, and neither is the 16-byte floor: a string
-    // whose buffer is a static literal carries cap 0, so the floor was taken for
-    // a buffer of ANY length and the memcpy below then wrote `len` bytes into 16.
-    // `var s = "<15 or more bytes>"` followed by s.push(c) was a heap overflow in
-    // safe code. Demand room for the bytes we are about to copy, the byte being
-    // pushed, and the terminator.
-    const wantCap = this.nextTemp();
-    lines.push(`  ${wantCap} = add i64 ${len}, 2`);
-    const capTooSmall = this.nextTemp();
-    lines.push(`  ${capTooSmall} = icmp ult i64 ${baseCap}, ${wantCap}`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${capTooSmall}, i64 ${wantCap}, i64 ${baseCap}`);
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const oldBuf = this.nextTemp();
-    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    // cap == 0 means a static/unowned buffer: copied, never reallocated or freed.
-    const owned = this.nextTemp();
-    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-    const newBuf = this.emitGrowBytes(lines, oldBuf, len, newCap, 1, "strgrow", undefined, owned);
-    const storeLabel = this.nextLabel("str.store");
-    lines.push(`  br label %${storeLabel}`);
-
-    lines.push(`${storeLabel}:`);
-    const dataPtr2 = this.nextTemp();
-    lines.push(`  ${dataPtr2} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr2}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    lines.push(`  br label %${pushLabel}`);
-
-    lines.push(`${pushLabel}:`);
-    const curDataPtr = this.nextTemp();
-    lines.push(`  ${curDataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const curData = this.nextTemp();
-    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
-    const curLen = this.nextTemp();
-    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
+    // cap > len + 1 leaves room for the byte and the NUL, and implies a heap buffer.
+    const room = this.nextTemp();
+    lines.push(`  ${room} = icmp ult i64 ${lenPlus1}, ${cap}`);
+    const chkL = this.nextLabel("str.chk");
+    const fastL = this.nextLabel("str.fast");
+    const slowL = this.nextLabel("str.slow");
+    const storeL = this.nextLabel("str.push");
+    lines.push(`  br i1 ${room}, label %${chkL}, label %${slowL}`);
+    lines.push(`${chkL}:`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    const hdr = this.nextTemp();
+    lines.push(`  ${hdr} = getelementptr i8, ptr ${data}, i64 -8`);
+    const rc = this.nextTemp();
+    lines.push(this.target.os === "none" ? `  ${rc} = load i64, ptr ${hdr}, align 8` : `  ${rc} = load atomic i64, ptr ${hdr} acquire, align 8`);
+    const only = this.nextTemp();
+    lines.push(`  ${only} = icmp eq i64 ${rc}, 1`);
+    lines.push(`  br i1 ${only}, label %${fastL}, label %${slowL}`);
+    lines.push(`${fastL}:`);
+    lines.push(`  br label %${storeL}`);
+    lines.push(`${slowL}:`);
+    const grown = this.nextTemp();
+    lines.push(`  ${grown} = call ptr ${this.strReserveFn()}(ptr ${strPtr}, i64 1)`);
+    this.emitAllocNullCheck(lines, grown, "strgrow", expr.span);
+    const slowEnd = this.nextLabel("str.slowend");
+    lines.push(`  br label %${slowEnd}`);
+    lines.push(`${slowEnd}:`);
+    lines.push(`  br label %${storeL}`);
+    lines.push(`${storeL}:`);
+    const cur = this.nextTemp();
+    lines.push(`  ${cur} = phi ptr [ ${data}, %${fastL} ], [ ${grown}, %${slowEnd} ]`);
     const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr i8, ptr ${curData}, i64 ${curLen}`);
+    lines.push(`  ${elemPtr} = getelementptr i8, ptr ${cur}, i64 ${len}`);
     lines.push(`  store i8 ${byteVal}, ptr ${elemPtr}`);
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+    lines.push(`  store i64 ${lenPlus1}, ptr ${lenPtr}`);
     // null-terminate for FFI safety
     const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${curData}, i64 ${newLen}`);
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${cur}, i64 ${lenPlus1}`);
     lines.push(`  store i8 0, ptr ${nullPtr}`);
 
     return [lines, "void", "void"];
@@ -10880,6 +10732,8 @@ export class Codegen {
     const doneL = this.nextLabel("strtrunc.done");
     lines.push(`  br i1 ${noop}, label %${doneL}, label %${cutL}`);
     lines.push(`${cutL}:`);
+    // The NUL written at the new end is a write; another handle must not see it.
+    this.emitStrUnique(lines, strPtr);
     const data = this.nextTemp();
     lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
     if (expr.length) {
@@ -10922,7 +10776,7 @@ export class Codegen {
     this.needsMemcpy = true;
     const size = this.nextTemp();
     lines.push(`  ${size} = add i64 ${n}, 1`);
-    const { buf } = this.emitAllocBytes(lines, size, 1, "strtrunc", expr.span);
+    const buf = this.emitStrAlloc(lines, size, "strtrunc", expr.span);
     lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${n})`);
     const bend = this.nextTemp();
     lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${n}`);
@@ -10969,6 +10823,7 @@ export class Codegen {
     lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${len}, ptr ${filePtr}, i32 ${expr.span?.line ?? 0})`);
     lines.push(`  unreachable`);
     lines.push(`${okL}:`);
+    this.emitStrUnique(lines, strPtr);
     const cap = this.nextTemp();
     lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
     const owned = this.nextTemp();
@@ -10982,7 +10837,7 @@ export class Codegen {
     lines.push(`  ${old} = load ptr, ptr ${dataPtr}`);
     const size = this.nextTemp();
     lines.push(`  ${size} = add i64 ${len}, 1`);
-    const { buf } = this.emitAllocBytes(lines, size, 1, "strsetbyte", expr.span);
+    const buf = this.emitStrAlloc(lines, size, "strsetbyte", expr.span);
     lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${old}, i64 ${len})`);
     const bend = this.nextTemp();
     lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${len}`);
@@ -11004,9 +10859,6 @@ export class Codegen {
   // amortized like Vec.push and copies only the addition.
   private genStringPushStr(expr: HIRExpr & { kind: "StringPushStr" }, lines: string[]): Gen {
     this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
 
     const [strPtrLines, strPtr] = this.genLValue(expr.str);
     lines.push(...strPtrLines);
@@ -11021,87 +10873,9 @@ export class Codegen {
     }
     const [otherLines, otherVal] = this.genExpr(expr.other);
     lines.push(...otherLines);
-
-    const addPtr = this.nextTemp();
-    lines.push(`  ${addPtr} = extractvalue %String ${otherVal}, 0`);
-    const addLen = this.nextTemp();
-    lines.push(`  ${addLen} = extractvalue %String ${otherVal}, 1`);
-
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
-    const oldBuf = this.nextTemp();
-    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${len}, ${addLen}`);
-    // +1 keeps room for the null terminator, matching StringPush
-    const need = this.nextTemp();
-    lines.push(`  ${need} = add i64 ${newLen}, 1`);
-    const needsGrow = this.nextTemp();
-    lines.push(`  ${needsGrow} = icmp ugt i64 ${need}, ${cap}`);
-    const growLabel = this.nextLabel("strs.grow");
-    const inPlaceLabel = this.nextLabel("strs.inplace");
-    const endLabel = this.nextLabel("strs.end");
-    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${inPlaceLabel}`);
-
-    lines.push(`${growLabel}:`);
-    const doubled = this.nextTemp();
-    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-    const doubleFits = this.nextTemp();
-    lines.push(`  ${doubleFits} = icmp ugt i64 ${doubled}, ${need}`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${doubleFits}, i64 ${doubled}, i64 ${need}`);
-    // cap == 0 means a static/unowned buffer: copied, never reallocated or freed.
-    const owned = this.nextTemp();
-    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-    // `s.pushStr(s)` (or a view of s) makes `addPtr` point into the old buffer, which
-    // the grow may release; its bytes [0, len) survive at the same offset in the new one.
-    const oldI = this.nextTemp();
-    lines.push(`  ${oldI} = ptrtoint ptr ${oldBuf} to i64`);
-    const addI = this.nextTemp();
-    lines.push(`  ${addI} = ptrtoint ptr ${addPtr} to i64`);
-    const off = this.nextTemp();
-    lines.push(`  ${off} = sub i64 ${addI}, ${oldI}`);
-    const inside = this.nextTemp();
-    lines.push(`  ${inside} = icmp ult i64 ${off}, ${len}`);
-    const newBuf = this.emitGrowBytes(lines, oldBuf, len, newCap, 1, "strrsv", undefined, owned);
-    const remapped = this.nextTemp();
-    lines.push(`  ${remapped} = getelementptr i8, ptr ${newBuf}, i64 ${off}`);
-    const src = this.nextTemp();
-    lines.push(`  ${src} = select i1 ${inside}, ptr ${remapped}, ptr ${addPtr}`);
-    const growDst = this.nextTemp();
-    lines.push(`  ${growDst} = getelementptr i8, ptr ${newBuf}, i64 ${len}`);
-    lines.push(`  call ptr @memcpy(ptr ${growDst}, ptr ${src}, i64 ${addLen})`);
-    const storeLabel = this.nextLabel("strs.store");
-    lines.push(`  br label %${storeLabel}`);
-    lines.push(`${storeLabel}:`);
-    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    lines.push(`  br label %${endLabel}`);
-
-    lines.push(`${inPlaceLabel}:`);
-    // Self-append in the in-place path is safe: source [0,len) and destination
-    // [len,2*len) cannot overlap.
-    const dst = this.nextTemp();
-    lines.push(`  ${dst} = getelementptr i8, ptr ${oldBuf}, i64 ${len}`);
-    lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${addPtr}, i64 ${addLen})`);
-    lines.push(`  br label %${endLabel}`);
-
-    lines.push(`${endLabel}:`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-    const curData = this.nextTemp();
-    lines.push(`  ${curData} = load ptr, ptr ${dataPtr}`);
-    const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${curData}, i64 ${newLen}`);
-    lines.push(`  store i8 0, ptr ${nullPtr}`);
+    // One string part: the same reserve (unique first, then grow) and the same re-basing
+    // of a source that points into the receiver (`s.pushStr(s)`) as an interpolation.
+    this.emitAppendFormatParts(lines, strPtr, [{ val: otherVal, ty: "%String", tk: { tag: "string" } }], expr.span);
 
     // pushStr copies the bytes in; a temporary source (a call result, or the
     // clone `v[i]` produces) is dead afterwards and nothing else frees it.
@@ -11192,10 +10966,9 @@ export class Codegen {
     const subLen = this.nextTemp();
     lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
 
-    const buf = this.nextTemp();
     const allocLen = this.nextTemp();
     lines.push(`  ${allocLen} = add i64 ${subLen}, 1`);
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocLen})`);
+    const buf = this.emitStrAlloc(lines, allocLen, "substr", expr.span);
 
     const srcPtr = this.nextTemp();
     lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
@@ -11454,9 +11227,7 @@ export class Codegen {
     const vt = expr.valueType;
     if (vt.tag === "int") {
       // 24 bytes holds any 64-bit decimal (20 digits with the sign) and the NUL.
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 24)`);
-      this.emitAllocNullCheck(lines, buf, "itos", expr.span);
+      const buf = this.emitStrAlloc(lines, "24", "itos", expr.span);
       const n = this.emitIntFmt(lines, buf, vVal, vTy, vt);
       const nul = this.nextTemp();
       lines.push(`  ${nul} = getelementptr i8, ptr ${buf}, i64 ${n}`);
@@ -11472,7 +11243,7 @@ export class Codegen {
     // Floats don't go through snprintf directly: they need the round-trip
     // search in @milo.fmt.f64, which already writes an owned buffer we can
     // hand straight to %String.
-    const { buf, len } = this.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines);
+    const { buf, len } = this.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines, true);
     const f0 = this.nextTemp();
     lines.push(`  ${f0} = insertvalue %String undef, ptr ${buf}, 0`);
     const f1 = this.nextTemp();
@@ -11510,25 +11281,7 @@ export class Codegen {
     if (passed) return passed;
     const [sLines, sVal] = this.genExpr(expr.str);
     lines.push(...sLines);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = extractvalue %String ${sVal}, 0`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = extractvalue %String ${sVal}, 1`);
-    const allocSz = this.nextTemp();
-    lines.push(`  ${allocSz} = add i64 ${len}, 1`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
-    const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-    lines.push(`  store i8 0, ptr ${nullPtr}`);
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
-    return [lines, s2, "%String"];
+    return [lines, this.emitStrShare(lines, sVal), "%String"];
   }
 
   private genStringFind(expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
@@ -11937,31 +11690,294 @@ export class Codegen {
     return n;
   }
 
+  // Shared strings. A heap string buffer (cap > 0) carries an 8-byte reference count
+  // immediately before its bytes, so a %String's ptr still points at the text and cstr(),
+  // views and FFI see no difference. A cap-0 string (a literal, or a view) has no header
+  // and never touches one. Copying a string out of a borrow is a count increment
+  // (@milo.str.share), a drop is a decrement (@milo.str.release), and every in-place
+  // mutation calls @milo.str.unique first, which copies a buffer whose count is above 1,
+  // so two handles never observe each other's writes.
+  //
+  // The count is atomic: strings already reach several OS threads without a boundary copy
+  // (immutable heap globals, std/seal's Shared, channel sends, a global set in Once.run),
+  // and a non-atomic count lost increments there (tests/fixtures/sharedStringRace*.milo).
+  // Increment is relaxed (a new handle is made from one the thread already holds, as in
+  // Arc); decrement is release with an acquire fence before the free, so every write a
+  // thread made through its handle happens before the buffer is freed. A count read as 1
+  // with acquire ordering means this handle is the only one: no other thread holds a
+  // handle it could copy from, so the free (or the in-place write) cannot race.
+  private strRt(): void {
+    if (this.emittedStrRt) return;
+    this.emittedStrRt = true;
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+    this.needsOverflowCheck = true;
+    const where = this.addString("<string allocation>");
+    const body: string[] = [
+      // Nothing to report a source line against from inside the runtime; the failed size
+      // is what matters and the message says it was an allocation.
+      "define internal void @milo.str.oom() noreturn cold noinline {",
+      "entry:",
+      `  call void @__milo_overflow_fail(ptr ${where.label}, i32 0)`,
+      "  unreachable",
+      "}",
+      "",
+      // n bytes of text after a fresh count of 1; null when malloc fails (or n is so large
+      // that n + 8 wraps), so the caller's own null check reports it.
+      "define internal ptr @milo.str.alloc(i64 %n) {",
+      "entry:",
+      "  %huge = icmp ugt i64 %n, -9",
+      "  br i1 %huge, label %fail, label %go",
+      "go:",
+      "  %sz = add i64 %n, 8",
+      "  %p = call ptr @malloc(i64 %sz)",
+      "  %ok = icmp ne ptr %p, null",
+      "  br i1 %ok, label %init, label %fail",
+      "init:",
+      "  store i64 1, ptr %p, align 8",
+      "  %d = getelementptr i8, ptr %p, i64 8",
+      "  ret ptr %d",
+      "fail:",
+      "  ret ptr null",
+      "}",
+      "",
+      // Frees a buffer this handle is known to hold alone (after @milo.str.unique).
+      "define internal void @milo.str.free(ptr %d) {",
+      "entry:",
+      "  %h = getelementptr i8, ptr %d, i64 -8",
+      "  call void @free(ptr %h)",
+      "  ret void",
+      "}",
+      "",
+      // Drops one handle to a heap buffer (the caller has checked cap > 0).
+      "define internal void @milo.str.release(ptr %d) {",
+      "entry:",
+      "  %h = getelementptr i8, ptr %d, i64 -8",
+      "  %rc = load atomic i64, ptr %h acquire, align 8",
+      "  %only = icmp eq i64 %rc, 1",
+      "  br i1 %only, label %free, label %dec",
+      "dec:",
+      "  %old = atomicrmw sub ptr %h, i64 1 release, align 8",
+      "  %last = icmp eq i64 %old, 1",
+      "  br i1 %last, label %sync, label %done",
+      "sync:",
+      "  fence acquire",
+      "  br label %free",
+      "free:",
+      "  call void @free(ptr %h)",
+      "  br label %done",
+      "done:",
+      "  ret void",
+      "}",
+      "",
+      // A fresh unique copy of `len` bytes, NUL-terminated. Aborts when out of memory.
+      "define internal %String @milo.str.from(ptr %src, i64 %len) {",
+      "entry:",
+      "  %cap = add i64 %len, 1",
+      "  %b = call ptr @milo.str.alloc(i64 %cap)",
+      "  %ok = icmp ne ptr %b, null",
+      "  br i1 %ok, label %fill, label %oom",
+      "oom:",
+      "  call void @milo.str.oom()",
+      "  unreachable",
+      "fill:",
+      "  call ptr @memcpy(ptr %b, ptr %src, i64 %len)",
+      "  %end = getelementptr i8, ptr %b, i64 %len",
+      "  store i8 0, ptr %end",
+      "  %r0 = insertvalue %String undef, ptr %b, 0",
+      "  %r1 = insertvalue %String %r0, i64 %len, 1",
+      "  %r2 = insertvalue %String %r1, i64 %cap, 2",
+      "  ret %String %r2",
+      "}",
+      "",
+      // A second owning handle to the same text. A heap buffer is shared by count. A cap-0
+      // string is copied: it may be a view into a buffer someone else owns, and a literal
+      // costs no more to copy than it does today.
+      "define internal %String @milo.str.share(%String %s) {",
+      "entry:",
+      "  %cap = extractvalue %String %s, 2",
+      "  %heap = icmp ugt i64 %cap, 0",
+      "  br i1 %heap, label %inc, label %copy",
+      "inc:",
+      "  %d = extractvalue %String %s, 0",
+      "  %h = getelementptr i8, ptr %d, i64 -8",
+      "  %old = atomicrmw add ptr %h, i64 1 monotonic, align 8",
+      "  ret %String %s",
+      "copy:",
+      "  %d2 = extractvalue %String %s, 0",
+      "  %len = extractvalue %String %s, 1",
+      "  %r = call %String @milo.str.from(ptr %d2, i64 %len)",
+      "  ret %String %r",
+      "}",
+      "",
+      // Make the %String at %s the only handle to its buffer before a write. A cap-0 string
+      // is left alone (every writer already copies a literal out first); a shared heap
+      // buffer is copied with the same capacity and this handle's count released.
+      "define internal void @milo.str.unique(ptr %s) {",
+      "entry:",
+      "  %capp = getelementptr %String, ptr %s, i32 0, i32 2",
+      "  %cap = load i64, ptr %capp",
+      "  %heap = icmp ugt i64 %cap, 0",
+      "  br i1 %heap, label %chk, label %done",
+      "chk:",
+      "  %datap = getelementptr %String, ptr %s, i32 0, i32 0",
+      "  %d = load ptr, ptr %datap",
+      "  %h = getelementptr i8, ptr %d, i64 -8",
+      "  %rc = load atomic i64, ptr %h acquire, align 8",
+      "  %only = icmp eq i64 %rc, 1",
+      "  br i1 %only, label %done, label %copy",
+      "copy:",
+      "  %lenp = getelementptr %String, ptr %s, i32 0, i32 1",
+      "  %len = load i64, ptr %lenp",
+      "  %need = add i64 %len, 1",
+      "  %small = icmp ult i64 %cap, %need",
+      "  %nc = select i1 %small, i64 %need, i64 %cap",
+      "  %b = call ptr @milo.str.alloc(i64 %nc)",
+      "  %ok = icmp ne ptr %b, null",
+      "  br i1 %ok, label %fill, label %oom",
+      "oom:",
+      "  call void @milo.str.oom()",
+      "  unreachable",
+      "fill:",
+      "  call ptr @memcpy(ptr %b, ptr %d, i64 %len)",
+      "  %end = getelementptr i8, ptr %b, i64 %len",
+      "  store i8 0, ptr %end",
+      "  store ptr %b, ptr %datap",
+      "  store i64 %nc, ptr %capp",
+      "  call void @milo.str.release(ptr %d)",
+      "  br label %done",
+      "done:",
+      "  ret void",
+      "}",
+    ];
+    if (this.hasRealloc) {
+      this.needsRealloc = true;
+      // Resize a buffer this handle holds alone; the count (1) moves with the block.
+      body.push(
+        "",
+        "define internal ptr @milo.str.realloc(ptr %d, i64 %n) {",
+        "entry:",
+        "  %huge = icmp ugt i64 %n, -9",
+        "  br i1 %huge, label %fail, label %go",
+        "go:",
+        "  %h = getelementptr i8, ptr %d, i64 -8",
+        "  %sz = add i64 %n, 8",
+        "  %p = call ptr @realloc(ptr %h, i64 %sz)",
+        "  %ok = icmp ne ptr %p, null",
+        "  br i1 %ok, label %fin, label %fail",
+        "fin:",
+        "  %r = getelementptr i8, ptr %p, i64 8",
+        "  ret ptr %r",
+        "fail:",
+        "  ret ptr null",
+        "}",
+      );
+    }
+    this.helperFnBodies.push(this.strAtomicsForTarget(body));
+  }
+
+  // A bare-metal target (Cortex-M, os "none") has no threads to share a string with, and
+  // 32-bit M-profile cores have no 64-bit atomic instructions: LLVM would lower the count
+  // updates to `__atomic_*_8` libcalls that nothing there provides. Plain loads and stores
+  // say the same thing single-threaded.
+  private strAtomicsForTarget(body: string[]): string[] {
+    if (this.target.os !== "none") return body;
+    return body.flatMap(l => {
+      const load = l.match(/^(\s+%\S+) = load atomic i64, ptr (%\S+) \w+, align 8$/);
+      if (load) return [`${load[1]} = load i64, ptr ${load[2]}, align 8`];
+      const rmw = l.match(/^\s+(%\S+) = atomicrmw (add|sub) ptr (%\S+), i64 1 \w+, align 8$/);
+      if (rmw) {
+        const [, old, op, p] = rmw;
+        return [`  ${old} = load i64, ptr ${p}, align 8`, `  ${old}.n = ${op} i64 ${old}, 1`, `  store i64 ${old}.n, ptr ${p}, align 8`];
+      }
+      if (l.trim() === "fence acquire") return [];
+      return [l];
+    });
+  }
+
+  // A fresh string buffer of `n` bytes (count 1), null-checked against `span`.
+  private emitStrAlloc(lines: string[], n: string, tag: string, span?: Span): string {
+    this.strRt();
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @milo.str.alloc(i64 ${n})`);
+    this.emitAllocNullCheck(lines, buf, tag, span);
+    return buf;
+  }
+
+  // An owned NUL-terminated copy of `len` bytes at `src`.
+  private emitStrFrom(lines: string[], src: string, len: string): string {
+    this.strRt();
+    const s = this.nextTemp();
+    lines.push(`  ${s} = call %String @milo.str.from(ptr ${src}, i64 ${len})`);
+    return s;
+  }
+
+  // A second owning handle to the string value `val` (see strRt).
+  private emitStrShare(lines: string[], val: string): string {
+    this.strRt();
+    const s = this.nextTemp();
+    lines.push(`  ${s} = call %String @milo.str.share(%String ${val})`);
+    return s;
+  }
+
+  // Before an in-place write to the %String at `strPtr`: make it the only handle to its
+  // buffer, and return `srcs` (pointers to bytes about to be copied in) re-based onto the
+  // buffer the string holds afterwards when they pointed into the one it held before. A
+  // source that is this very string (`s.pushStr(s)`) or another handle to the same buffer
+  // would otherwise read the old block, which the release inside @milo.str.unique frees if
+  // the last other handle went away on another thread meanwhile.
+  private emitStrUnique(lines: string[], strPtr: string, srcs: string[] = []): string[] {
+    this.strRt();
+    let pre = "", preLen = "";
+    if (srcs.length) {
+      const dp = this.nextTemp(), lp = this.nextTemp();
+      pre = this.nextTemp(); preLen = this.nextTemp();
+      lines.push(`  ${dp} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+      lines.push(`  ${pre} = load ptr, ptr ${dp}`);
+      lines.push(`  ${lp} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+      lines.push(`  ${preLen} = load i64, ptr ${lp}`);
+    }
+    lines.push(`  call void @milo.str.unique(ptr ${strPtr})`);
+    if (!srcs.length) return [];
+    const dp2 = this.nextTemp(), cur = this.nextTemp();
+    lines.push(`  ${dp2} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    lines.push(`  ${cur} = load ptr, ptr ${dp2}`);
+    const preI = this.nextTemp();
+    lines.push(`  ${preI} = ptrtoint ptr ${pre} to i64`);
+    return srcs.map(src => {
+      const si = this.nextTemp(), off = this.nextTemp(), inside = this.nextTemp(), moved = this.nextTemp(), sel = this.nextTemp();
+      lines.push(`  ${si} = ptrtoint ptr ${src} to i64`);
+      lines.push(`  ${off} = sub i64 ${si}, ${preI}`);
+      lines.push(`  ${inside} = icmp ult i64 ${off}, ${preLen}`);
+      lines.push(`  ${moved} = getelementptr i8, ptr ${cur}, i64 ${off}`);
+      lines.push(`  ${sel} = select i1 ${inside}, ptr ${moved}, ptr ${src}`);
+      return sel;
+    });
+  }
+
   // `@milo.str.reserve(s, extra)`: make the %String at `s` hold len + extra bytes plus
   // the NUL, growing by doubling (16-byte floor), with emitGrowBytes's realloc policy.
   // Returns the data pointer, or null when the allocation failed (the caller aborts with
-  // its own source location). A cap-0 buffer is a static literal this string does not
-  // own: it is copied, never handed to realloc or free.
+  // its own source location). The string is made unique first (see strRt), so the
+  // returned buffer is this handle's alone. A cap-0 buffer is a static literal or a view
+  // this string does not own: it is copied, never handed to realloc or free.
   private strReserveFn(): string {
     if (!this.emittedStrReserve) {
       this.emittedStrReserve = true;
-      this.needsMalloc = true;
-      this.needsMemcpy = true;
-      this.needsFree = true;
-      this.hasStringType = true;
+      this.strRt();
       let grow: string[];
       if (this.hasRealloc) {
-        this.needsRealloc = true;
-        grow = ["  %r = call ptr @realloc(ptr %old, i64 %newcap)", "  br label %join"];
+        grow = ["  %r = call ptr @milo.str.realloc(ptr %old, i64 %newcap)", "  br label %join"];
       } else {
-        this.needsFree = true;
         grow = [
-          "  %r = call ptr @malloc(i64 %newcap)",
+          "  %r = call ptr @milo.str.alloc(i64 %newcap)",
           "  %rok = icmp ne ptr %r, null",
           "  br i1 %rok, label %recp, label %join",
           "recp:",
           "  call ptr @memcpy(ptr %r, ptr %old, i64 %len)",
-          "  call void @free(ptr %old)",
+          "  call void @milo.str.free(ptr %old)",
           "  br label %join",
         ];
       }
@@ -11969,6 +11985,7 @@ export class Codegen {
       this.helperFnBodies.push([
         "define internal ptr @milo.str.reserve(ptr %s, i64 %extra) {",
         "entry:",
+        "  call void @milo.str.unique(ptr %s)",
         "  %datap = getelementptr %String, ptr %s, i32 0, i32 0",
         "  %lenp = getelementptr %String, ptr %s, i32 0, i32 1",
         "  %capp = getelementptr %String, ptr %s, i32 0, i32 2",
@@ -11992,7 +12009,7 @@ export class Codegen {
         "re:",
         ...grow,
         "fresh:",
-        "  %m = call ptr @malloc(i64 %newcap)",
+        "  %m = call ptr @milo.str.alloc(i64 %newcap)",
         "  %hasold = icmp ne ptr %old, null",
         "  %mok = icmp ne ptr %m, null",
         "  %both = and i1 %hasold, %mok",
@@ -12001,7 +12018,7 @@ export class Codegen {
         "  call ptr @memcpy(ptr %m, ptr %old, i64 %len)",
         "  br i1 %owned, label %freeold, label %join",
         "freeold:",
-        "  call void @free(ptr %old)",
+        "  call void @milo.str.free(ptr %old)",
         "  br label %join",
         "join:",
         `  %nb = phi ptr ${reIn}, [ %m, %fresh ], [ %m, %cp ], [ %m, %freeold ]`,
@@ -12625,8 +12642,7 @@ export class Codegen {
     lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
     const bufSize = this.nextTemp();
     lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+    const buf = this.emitStrAlloc(lines, bufSize, "jsonstr", expr.span);
 
     // snprintf(buf, size, fmt, ...) to write
     lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}${argsStr})`);
@@ -12727,12 +12743,18 @@ export class Codegen {
 
   // Formats a float into a fresh malloc'd buffer and returns it. Callers own the
   // buffer — free it, or hand it to a temp-buf list that frees it.
-  private emitFloatToBuf(val: string, bits: number, lines: string[]): { buf: string; len: string } {
+  // `asString`: the buffer becomes a %String's, so it carries the count header (strRt).
+  private emitFloatToBuf(val: string, bits: number, lines: string[], asString = false): { buf: string; len: string } {
     const w = bits === 32 ? 32 : 64;
     this.ensureFloatFormatHelper(w);
     this.needsMalloc = true;
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${F64_BUF})`);
+    let buf: string;
+    if (asString) {
+      buf = this.emitStrAlloc(lines, String(F64_BUF), "ftos");
+    } else {
+      buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${F64_BUF})`);
+    }
     const len = this.nextTemp();
     lines.push(`  ${len} = call i64 @milo.fmt.f${w}(${w === 32 ? "float" : "double"} ${val}, ptr ${buf})`);
     return { buf, len };
@@ -12842,31 +12864,12 @@ export class Codegen {
       return v;
     }
 
+    // The one switch for every implicit string copy (`v[i]`, a field read out of a
+    // borrow, a struct or Vec clone): a heap buffer is shared by count, not copied.
     if (typeKind.tag === "string") {
-      this.hasStringType = true;
-      this.needsMalloc = true;
-      this.needsMemcpy = true;
       const orig = this.nextTemp();
       lines.push(`  ${orig} = load %String, ptr ${srcPtr}`);
-      const data = this.nextTemp();
-      lines.push(`  ${data} = extractvalue %String ${orig}, 0`);
-      const len = this.nextTemp();
-      lines.push(`  ${len} = extractvalue %String ${orig}, 1`);
-      const allocSz = this.nextTemp();
-      lines.push(`  ${allocSz} = add i64 ${len}, 1`);
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
-      const nullPtr = this.nextTemp();
-      lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-      lines.push(`  store i8 0, ptr ${nullPtr}`);
-      const s0 = this.nextTemp();
-      lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-      const s1 = this.nextTemp();
-      lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
-      const s2 = this.nextTemp();
-      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
-      return s2;
+      return this.emitStrShare(lines, orig);
     }
 
     if (typeKind.tag === "vec") {
@@ -13644,7 +13647,7 @@ export class Codegen {
       return;
     }
     if (typeKind.tag === "string") {
-      this.needsFree = true;
+      this.strRt();
       const old = this.nextTemp();
       lines.push(`  ${old} = load %String, ptr ${allocaPtr}`);
       const cap = this.nextTemp();
@@ -13657,7 +13660,8 @@ export class Codegen {
       lines.push(`${dropLabel}:`);
       const ptr = this.nextTemp();
       lines.push(`  ${ptr} = extractvalue %String ${old}, 0`);
-      lines.push(`  call void @free(ptr ${ptr})`);
+      // One handle fewer; the buffer goes when the last one does (see strRt).
+      lines.push(`  call void @milo.str.release(ptr ${ptr})`);
       lines.push(`  br label %${skipLabel}`);
       lines.push(`${skipLabel}:`);
     }

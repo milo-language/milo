@@ -1,13 +1,18 @@
 // @error: cannot move 'd.a' out of the borrowed 'd'
 // `??` forks the same way: the result is either the payload — which lives in the
 // borrowed value's storage — or the default.
-struct Doc { a: string }
+struct Doc { a: Text }
 
-fn pick(d: &Doc, o: Option<string>): string {
+fn pick(d: &Doc, o: Option<Text>): Text {
     return o ?? d.a
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" } }
     print(pick(d, Option.None))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

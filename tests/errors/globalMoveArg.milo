@@ -3,10 +3,10 @@
 // Passing a global to a by-value parameter moves it.
 // A global has no single owner, so moving out of it left the slot zeroed and the
 // next reader (here, the second call of f) silently saw an empty value.
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
-fn take(s: string): i64 {
-    return s.len
+fn take(s: Text): i64 {
+    return s.s.len
 }
 
 fn f(): i64 {
@@ -18,3 +18,8 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

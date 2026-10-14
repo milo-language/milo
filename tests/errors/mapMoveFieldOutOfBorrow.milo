@@ -10,15 +10,20 @@
 // `u.name.clone()` here.
 
 struct User {
-    name: string,
+    name: Text,
     age: i32,
 }
 
 fn main() {
     var users: Vec<User> = [User {
-        name: "Alice", age: 30,
+        name: Text { s: "Alice" }, age: 30,
     }
     ,]
     let names = users.map((u: &User) => u.name)
     print(names[0])
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

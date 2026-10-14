@@ -2,14 +2,19 @@
 //
 // The Option form of borrowedEnumTailMove: a 'Some' binding through a '&Option' leaving
 // as the match's value.
-fn pick(o: &Option<string>): string {
+fn pick(o: &Option<Text>): Text {
     return match o {
         Some(s) => s
-        None => "none".clone()
+        None => Text { s: "none".clone() }
     }
 }
 
 fn main() {
-    let o: Option<string> = Some("a string long enough to live on the heap".clone())
+    let o: Option<Text> = Some(Text { s: "a Text long enough to live on the heap".clone() })
     print(pick(o))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

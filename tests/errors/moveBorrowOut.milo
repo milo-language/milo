@@ -1,10 +1,10 @@
 // moving a non-Copy value out of a borrow would alias the owner's heap data
 // (double-free); it must be rejected — clone to take ownership.
-fn take(s: string) {
+fn take(s: Text) {
     print(s)
 }
 
-fn f(s: &string) {
+fn f(s: &Text) {
     take(s)
 }
 
@@ -12,3 +12,8 @@ fn main(): i32 {
     return 0
 }
 // @error: cannot move the borrowed value out of
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

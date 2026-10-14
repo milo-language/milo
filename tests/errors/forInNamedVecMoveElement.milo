@@ -3,11 +3,16 @@
 // by reference, so moving one out stays an error (the Vec still owns it).
 
 fn main(): i32 {
-    let v: Vec<string> = ["a".repeat(2), "b".repeat(2)]
-    var out: Vec<string> = []
+    let v: Vec<Text> = [Text { s: "a".repeat(2) }, Text { s: "b".repeat(2) }]
+    var out: Vec<Text> = []
     for s in v {
         out.push(s)
     }
-    print(out.len)
+    print(out.len())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

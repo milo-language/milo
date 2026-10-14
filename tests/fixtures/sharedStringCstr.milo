@@ -1,0 +1,45 @@
+// cstr() after sharing: both handles point at the one counted buffer (the bytes, not the
+// count header in front of them), and after a write each handle's pointer reads its own
+// NUL-terminated text.
+extern fn strlen(s: *u8): i64
+
+fn main() {
+    var a = "hello".repeat(2)
+    let b = a.clone()
+    unsafe {
+        let pa = a.cstr() as i64
+        let pb = b.cstr() as i64
+        print(pa == pb)
+        print(strlen(a.cstr()))
+    }
+    a.pushStr(" world")
+    unsafe {
+        let pa = a.cstr() as i64
+        let pb = b.cstr() as i64
+        print(pa == pb)
+        print(strlen(a.cstr()))
+        print(strlen(b.cstr()))
+    }
+    var c = b.clone()
+    c.truncate(3)
+    unsafe {
+        print(strlen(c.cstr()))
+        print(strlen(b.cstr()))
+        print(strlen(b))
+    }
+    print(a)
+    print(b)
+    print(c)
+}
+
+// @expect: true
+// @expect: 10
+// @expect: false
+// @expect: 16
+// @expect: 10
+// @expect: 3
+// @expect: 10
+// @expect: 10
+// @expect: hellohello world
+// @expect: hellohello
+// @expect: hel

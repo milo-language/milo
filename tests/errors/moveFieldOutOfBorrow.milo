@@ -6,16 +6,21 @@
 // rejected here; the field read is the same hazard one level down.
 
 struct Doc {
-    text: string,
+    text: Text,
 }
 
-fn describe(d: &Doc): string {
+fn describe(d: &Doc): Text {
     return d.text
 }
 
 fn main() {
     let doc = Doc {
-        text: "hi",
+        text: Text { s: "hi" },
     }
     print(describe(doc))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

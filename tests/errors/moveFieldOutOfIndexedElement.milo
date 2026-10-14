@@ -4,17 +4,22 @@
 // "" with no diagnostic. The element never changed hands, so it is an error now; the
 // hint names the three ways out (`.clone()`, `remove`/`pop`, `replace`).
 struct Tok {
-    text: string,
+    text: Text,
     n: i64,
 }
 
 fn main(): i32 {
     var toks: Vec<Tok> = Vec.new()
     toks.push(Tok {
-        text: "hi", n: 1,
+        text: Text { s: "hi" }, n: 1,
     })
     let name = toks[0].text
     print(name)
     print(toks[0].text)
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

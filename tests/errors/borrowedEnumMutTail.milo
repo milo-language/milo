@@ -2,18 +2,23 @@
 //
 // A '&mut E' subject binds '&mut' views; moving one out by value is the same aliasing.
 enum E {
-    A(i64, string),
-    B(string),
+    A(i64, Text),
+    B(Text),
 }
 
-fn pick(e: &mut E): string {
+fn pick(e: &mut E): Text {
     return match e {
         E.A(_n, msg) => msg
         E.B(msg) => msg
     }
 }
 fn main() {
-    let e = E.B("a string long enough to live on the heap".clone())
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
     var f = e
     print(pick(&mut f))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

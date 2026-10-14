@@ -75,7 +75,7 @@ Not "learn before Rust" — that requires years of pedagogical tooling.
 
 - `let` = immutable (SSA register), `var` = mutable (alloca) — the cost model is visible; syntax tells you what LLVM will do
 - No pointers in safe code
-- No garbage collector, no reference counting
+- No garbage collector. The one reference count is a heap string buffer's: atomic, copy on write, and invisible to the program (a string is still a value)
 - No lifetime annotations, ever
 
 ## The Three Safety Mechanisms

@@ -1,0 +1,32 @@
+// Two OS threads read the same heap string through std/seal's Shared (Send + Sync) and
+// each take an owned handle to it, by .clone() and by copying out of the `&string`. Both
+// threads count on one header at once; the count is atomic, so it never loses an update.
+// Run under --sanitize and --sanitize=thread as well as plain.
+from "std/seal" import { seal, share, sharedWith, sealedWith, Sealed, Shared }
+from "std/runtime" import { Promise }
+
+fn takeCopy(sh: &Shared): i64 {
+    var total: i64 = 0
+    for i in 0..100000 {
+        let n = sharedWith(sh, (s: &Sealed): i64 => sealedWith(s, (b: &string): i64 => {
+            let mine = b.clone()
+            let other: string = b
+            return mine.len - other.len + mine.len
+        }))
+        total += n
+    }
+    return total
+}
+
+fn main() {
+    var buf = "x".repeat(64)
+    buf.push(121)
+    let sh = share(seal(buf))
+    let sh2 = sh.clone()
+    let p = Promise.blocking(move(): i64 => takeCopy(sh2))
+    let a = takeCopy(sh)
+    let b = p.await()!
+    print(a + b)
+}
+
+// @expect: 13000000

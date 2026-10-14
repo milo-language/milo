@@ -887,8 +887,36 @@ it a warning.
 
 ## Strings
 
-Strings are owned UTF-8 byte buffers (similar to Rust's `String`). They are heap-allocated
-with a `{ptr, len, cap}` layout.
+Strings are UTF-8 byte buffers with value semantics. They are heap-allocated with a
+`{ptr, len, cap}` layout; a string literal points at static bytes and allocates nothing
+until it is written.
+
+A heap string buffer is reference counted, so a string behaves like a value that is cheap
+to copy. Copying one out of a place you do not own is allowed and costs one count
+increment, not an allocation: a `&string` parameter or pattern binding, a field behind a
+`&T`, a field of a container element, a global, and `v[i]` of a `Vec<string>`. `.clone()`
+is the same increment. The first in-place write to a buffer that another handle shares
+copies it first (copy on write), so two handles never see each other's writes. A plain
+move of an owned string touches no count. The count is atomic, so strings that reach
+several threads (an immutable global, `std/seal`'s `Shared`, a channel) stay sound.
+Only `string` works this way: a `Vec` or a struct holding strings still needs `.clone()`
+to be copied out of a borrow.
+
+```milo
+struct User { name: string }
+
+fn nameOf(u: &User): string {
+    return u.name           // shares u.name's buffer; no clone needed
+}
+
+fn main() {
+    let u = User { name: "ada".repeat(2) }
+    var n = nameOf(u)
+    n.push(33)              // copies first: u.name is untouched
+    print(n)                // adaada!
+    print(u.name)           // adaada
+}
+```
 
 ```milo
 let greeting = "hello"
@@ -919,7 +947,7 @@ for line in message.lines() {        // line: &string, one per '\n' ('\r\n' hand
 // Owned copy — when you need a string that outlives the source
 let owned = message.substr(0, 5)  // allocates new string
 
-// Deep copy
+// Second handle (a count increment; the buffer is copied on the first write)
 let copy = greeting.clone()
 
 // Comparison
@@ -2574,18 +2602,20 @@ fn main() {
 
 A non-Copy **field** of an element cannot be moved out either. The element stays in the
 container, so there is nothing sound to leave in the field's place: the old behaviour
-zeroed it, and the next `v[i].field` read handed back an empty string. Clone the field,
+zeroed it, and the next `v[i].field` read handed back an empty Vec. Clone the field,
 take the element out first (`remove`/`pop`), or `replace` the field in place; a field of
-a call result (`f().name`) is still a plain move, since the temporary is consumed whole:
+a call result (`f().name`) is still a plain move, since the temporary is consumed whole.
+A `string` field is the exception: `let name = toks[0].text` shares the buffer by count
+(see [Strings](#strings)) and leaves the element whole:
 
 ```milo error
-struct Tok { text: string }
+struct Tok { parts: Vec<i64> }
 
 fn main() {
     var toks: Vec<Tok> = Vec.new()
-    toks.push(Tok { text: "hi" })
-    let name = toks[0].text   // error: cannot move 'toks[...].text' out of 'toks': the element stays in the container
-    print(name)
+    toks.push(Tok { parts: Vec.new() })
+    let parts = toks[0].parts   // error: cannot move 'toks[...].parts' out of 'toks': the element stays in the container
+    print(parts.len)
 }
 ```
 
@@ -2866,17 +2896,19 @@ A global (`let` or `var` at file scope) has no single owner: every function, and
 later call of the same one, reads the same slot. So a non-Copy global, or a non-Copy
 field of one, can be read, borrowed (passed to a `&T` parameter, iterated, interpolated,
 matched when it is a `let`) and assigned to when it is a `var`, but never moved from.
-Clone it to take a copy of your own.
+Clone it to take a copy of your own. A `string` global (or `string` field of one) is the
+exception: using it by value shares its counted buffer (see [Strings](#strings)), so
+`take(GREETING)` compiles and costs a count increment.
 
 ```milo error
-let GREETING: string = "hello"
+let PRIMES: Vec<i64> = [2, 3, 5]
 
-fn take(s: string): i64 { return s.len }
+fn take(v: Vec<i64>): i64 { return v.len() }
 
 fn main() {
-    print(GREETING.len)            // fine: a read
-    print(take(GREETING.clone()))  // fine: the callee owns a copy
-    print(take(GREETING))          // error: cannot move out of global 'GREETING'
+    print(PRIMES.len())            // fine: a read
+    print(take(PRIMES.clone()))    // fine: the callee owns a copy
+    print(take(PRIMES))            // error: cannot move out of global 'PRIMES'
 }
 ```
 
@@ -2991,23 +3023,26 @@ not one of its fields. Both would shallow-copy a heap buffer the borrow does not
 two owners and a double free:
 
 ```milo error
-struct Doc { text: string }
+struct Doc { lines: Vec<i64> }
 
-fn describe(d: &Doc): string {
-    return d.text                 // COMPILE ERROR: cannot move the borrowed value out of 'd'
+fn describe(d: &Doc): Vec<i64> {
+    return d.lines                // COMPILE ERROR: cannot move 'd.lines' out of the borrowed 'd'
 }
 ```
 
-Write `return d.text.clone()` to take an owned copy. `clone()` exists on every type for this
+Write `return d.lines.clone()` to take an owned copy. A `string` is the exception: a
+string's buffer is reference counted, so `return d.text` on a `string` field shares it
+(one count increment) and compiles. `clone()` exists on every type for this
 reason, including `Copy` scalars where it is the identity — so a generic
 `fn get<T>(w: &Wrapper<T>): T { return w.val.clone() }` compiles for `T = i64` and
 `T = string` alike.
 
 `sortByKey`'s key extractor is the one exemption: the sort reads the key to compare it and
 never stores or drops it, so `users.sortByKey((u: &User) => u.name)` is the supported way to
-sort by a string field. Every other closure is subject to the rule, `map` included — it
-*keeps* what the closure returns, so `users.map((u: &User) => u.name.clone())` needs the
-clone, and the allocation it costs is meant to be visible.
+sort by a field. Every other closure is subject to the rule, `map` included — it
+*keeps* what the closure returns. For a `string` field that is now a shared handle
+(`users.map((u: &User) => u.name)` compiles); a `Vec` or struct field still needs
+`.clone()`, and the allocation it costs is meant to be visible.
 
 This is Milo's key insight: by restricting where references can live, you get
 memory safety without a borrow checker or lifetime annotations.

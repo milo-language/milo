@@ -2,15 +2,20 @@
 //
 // An if-let payload through a '&E' is a view; returning it would alias the caller's buffer.
 enum E {
-    A(i64, string),
-    B(string),
+    A(i64, Text),
+    B(Text),
 }
 
-fn pick(e: &E): string {
+fn pick(e: &E): Text {
     if let E.B(m) = e { return m }
-    return "none".clone()
+    return Text { s: "none".clone() }
 }
 fn main() {
-    let e = E.B("a string long enough to live on the heap".clone())
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
     print(pick(e))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }

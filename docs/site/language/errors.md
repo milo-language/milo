@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 550 distinct messages across 706 programs the compiler must reject.
+Every error message the test suite pins: 551 distinct messages across 712 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -263,7 +263,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot move the borrowed value out of`](#cannot-move-the-borrowed-value-out-of)
 - [`cannot move the borrowed value out of 'a'`](#cannot-move-the-borrowed-value-out-of-a)
 - [`cannot move the borrowed value out of 'h'`](#cannot-move-the-borrowed-value-out-of-h)
-- [`cannot move the borrowed value out of 'line'`](#cannot-move-the-borrowed-value-out-of-line)
+- [`cannot move the borrowed value out of 'm'`](#cannot-move-the-borrowed-value-out-of-m)
+- [`cannot move the borrowed value out of 'msg'`](#cannot-move-the-borrowed-value-out-of-msg)
 - [`cannot move the borrowed value out of 'p'`](#cannot-move-the-borrowed-value-out-of-p)
 - [`cannot move the borrowed value out of 's'`](#cannot-move-the-borrowed-value-out-of-s)
 - [`cannot move the borrowed value out of 'w'`](#cannot-move-the-borrowed-value-out-of-w)
@@ -5981,13 +5982,18 @@ pub fn main(): void {
 Through a reference a nested binding is a view, so it cannot be given away.
 
 ```milo skip
-fn take(s: string) { print(s) }
+fn take(s: Text) { print(s) }
 
-fn f(r: &Option<Option<string>>) {
+fn f(r: &Option<Option<Text>>) {
     if let Some(Some(s)) = r { take(s) }
 }
 
-fn main() { f(Some(Some("x"))) }
+fn main() { f(Some(Some(Text { s: "x" }))) }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/nestedPatternBorrowedNoMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedPatternBorrowedNoMove.milo)</sub>
@@ -6037,16 +6043,21 @@ fn main(): i32 {
 `??` forks the same way: the result is either the payload — which lives in the borrowed value's storage — or the default.
 
 ```milo skip
-struct Doc { a: string }
+struct Doc { a: Text }
 
-fn pick(d: &Doc, o: Option<string>): string {
+fn pick(d: &Doc, o: Option<Text>): Text {
     return o ?? d.a
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" } }
     print(pick(d, Option.None))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfBorrowDefaultValue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfBorrowDefaultValue.milo)</sub>
@@ -6054,16 +6065,21 @@ fn main() {
 A fork owns nothing itself — it evaluates to one of its tails, so consuming it consumes whichever tail ran. `return d.a` was always rejected; spelled through an if-expression it used to compile and double-free at runtime.
 
 ```milo skip
-struct Doc { a: string, b: string }
+struct Doc { a: Text, b: Text }
 
-fn pick(d: &Doc, c: bool): string {
+fn pick(d: &Doc, c: bool): Text {
     return if c { d.a } else { d.b }
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "", b: "bbb" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, true))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfBorrowIfExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfBorrowIfExpr.milo)</sub>
@@ -6071,16 +6087,21 @@ fn main() {
 Same rule as the if-expression form: every arm tail is a candidate result and each one has to answer the move-out-of-borrow question.
 
 ```milo skip
-struct Doc { a: string, b: string }
+struct Doc { a: Text, b: Text }
 
-fn pick(d: &Doc, n: i64): string {
+fn pick(d: &Doc, n: i64): Text {
     return match n { 0 => d.a, _ => d.b }
 }
 
 fn main() {
-    var d = Doc { a: "aaa" + "", b: "bbb" + "" }
+    var d = Doc { a: Text { s: "aaa" + "" }, b: Text { s: "bbb" + "" } }
     print(pick(d, 0))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfBorrowMatchExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfBorrowMatchExpr.milo)</sub>
@@ -6091,19 +6112,24 @@ Returning a non-Copy field out of a `&T` used to compile, and produced a String 
 
 ```milo skip
 struct Doc {
-    text: string,
+    text: Text,
 }
 
-fn describe(d: &Doc): string {
+fn describe(d: &Doc): Text {
     return d.text
 }
 
 fn main() {
     let doc = Doc {
-        text: "hi",
+        text: Text { s: "hi" },
     }
     print(describe(doc))
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfBorrow.milo)</sub>
@@ -6146,16 +6172,21 @@ pub fn main(): i32 {
 A non-Copy field of a borrowed struct cannot be moved out by a pattern either; the rule and the message are the field read's.
 
 ```milo skip
-struct R { fd: i32, name: string }
+struct R { fd: i32, name: Text }
 fn g(r: &R): void {
     let { name } = r
     print(name)
 }
 fn main(): i32 {
-    let r = R { fd: 1, name: "x" }
+    let r = R { fd: 1, name: Text { s: "x" } }
     g(r)
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/destructureBorrowed.milo](https://github.com/milo-language/milo/blob/main/tests/errors/destructureBorrowed.milo)</sub>
@@ -6206,7 +6237,7 @@ The same hazard through a field chain and through `self`: with only the one-leve
 
 ```milo skip
 struct Inner {
-    s: string,
+    s: Text,
 }
 
 struct Outer {
@@ -6214,7 +6245,7 @@ struct Outer {
 }
 
 impl Outer {
-    fn take(self: &Self): string {
+    fn take(self: &Self): Text {
         return self.inner.s
     }
 }
@@ -6222,11 +6253,16 @@ impl Outer {
 fn main() {
     let o = Outer {
         inner: Inner {
-            s: "hi",
+            s: Text { s: "hi" },
         },
     }
     print(o.take())
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/nestedFieldMoveOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nestedFieldMoveOutOfBorrow.milo)</sub>
@@ -6271,70 +6307,52 @@ Moving a non-Copy field out of a container element used to compile and zero the 
 
 ```milo skip
 struct Tok {
-    text: string,
+    text: Text,
     n: i64,
 }
 
 fn main(): i32 {
     var toks: Vec<Tok> = Vec.new()
     toks.push(Tok {
-        text: "hi", n: 1,
+        text: Text { s: "hi" }, n: 1,
     })
     let name = toks[0].text
     print(name)
     print(toks[0].text)
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveFieldOutOfIndexedElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfIndexedElement.milo)</sub>
 
 ## `cannot move 'u.name' out of the borrowed 'u'` {#cannot-move-u-name-out-of-the-borrowed-u}
 
-`v.sortByKey((u: &User) => u.name)` compiles; this identical closure handed to a user's own non-retaining combinator does not. That asymmetry looks like a missing generalization, and it is NOT — relaxing it is a use-after-free, proven under ASan (heap-use-after-free in `pick`, 2026-08-16). The reason is not retention. `pick` never stores the key: it compares it and lets it go. The problem is that letting it go IS a free — `let a = key(v[i])` binds an owned string, so it carries ordinary scope-end drop glue, and the buffer it drops belongs to the User the closure only borrowed. `sortByKey` is exempt because a builtin is the one kind of callee that can promise never to drop the key it was handed. So the property that would close this is not "does the callee retain the result" but "can the callee hold the result without owning it" — which needs a borrowed return, and second-class references cannot return one. Don't wire a retention analysis to this rule; see backlog Tier 1 #6.
-
-```milo skip
-struct User { name: string }
-
-fn pick(v: &Vec<User>, key: (&User) => string): i32 {
-  var best = 0
-  var i = 1
-  while i < v.len() {
-    let a = key(v[i])
-    let b = key(v[best])
-    if a < b { best = i }
-    i = i + 1
-  }
-  return best as i32
-}
-
-fn main() {
-  var v: Vec<User> = Vec.new()
-  v.push(User { name: "zed" })
-  v.push(User { name: "amy" })
-  let i = pick(v, (u: &User) => u.name)
-  print(i.toString())
-}
-```
-
-<sub>[tests/errors/keyExtractorUserCombinator.milo](https://github.com/milo-language/milo/blob/main/tests/errors/keyExtractorUserCombinator.milo)</sub>
-
 `map` RETAINS what its closure returns, so a closure handing back a field of its borrowed parameter built a Vec\<string\> aliasing the source elements' buffers, and both freed them: a live double-free abort (exit 133), not a hypothetical one. This is why the move-out-of-a-borrow exemption is keyed to `sortByKey` alone rather than to closures in general — sortByKey reads the key to compare it and never stores or drops it, and that property has to be proved per callee, not assumed. Write `u.name.clone()` here.
 
 ```milo skip
 struct User {
-    name: string,
+    name: Text,
     age: i32,
 }
 
 fn main() {
     var users: Vec<User> = [User {
-        name: "Alice", age: 30,
+        name: Text { s: "Alice" }, age: 30,
     }
     ,]
     let names = users.map((u: &User) => u.name)
     print(names[0])
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/mapMoveFieldOutOfBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mapMoveFieldOutOfBorrow.milo)</sub>
@@ -6344,10 +6362,10 @@ fn main() {
 Passing a global to a by-value parameter moves it. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
-fn take(s: string): i64 {
-    return s.len
+fn take(s: Text): i64 {
+    return s.s.len
 }
 
 fn f(): i64 {
@@ -6359,6 +6377,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveArg.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveArg.milo)</sub>
@@ -6366,11 +6389,11 @@ pub fn main(): i32 {
 An array literal element takes its value by move.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     let a = [S]
-    return a[0].len
+    return a[0].s.len
 }
 
 pub fn main(): i32 {
@@ -6378,6 +6401,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveArrayLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveArrayLit.milo)</sub>
@@ -6385,12 +6413,12 @@ pub fn main(): i32 {
 Assigning a global into a local moves it (assigning TO a var global stays legal). A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-var S: string = "hello"
+var S: Text = Text { s: "hello" }
 
 fn f(): i64 {
-    var y = "x"
+    var y = Text { s: "x" }
     y = S
-    return y.len
+    return y.s.len
 }
 
 pub fn main(): i32 {
@@ -6398,6 +6426,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveAssign.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveAssign.milo)</sub>
@@ -6405,12 +6438,12 @@ pub fn main(): i32 {
 Globals are never captured; a move closure's body that moves one moves the global itself. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     let c = move () => {
         let t = S
-        return t.len
+        return t.s.len
     }
     return c()
 }
@@ -6420,6 +6453,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveClosure.milo)</sub>
@@ -6454,11 +6492,11 @@ pub fn main(): i32 {
 Wrapping a global in `Some(...)` moves it into the payload. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     let o = Some(S)
-    return o!.len
+    return o!.s.len
 }
 
 pub fn main(): i32 {
@@ -6466,6 +6504,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveEnumLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveEnumLit.milo)</sub>
@@ -6474,15 +6517,15 @@ Moving a non-Copy field out of a global struct. A global has no single owner, so
 
 ```milo skip
 struct P {
-    name: string,
+    name: Text,
     age: i64,
 }
 
-let G: P = P { name: "bob", age: 3 }
+let G: P = P { name: Text { s: "bob" }, age: 3 }
 
 fn f(): i64 {
     let n = G.name
-    return n.len
+    return n.s.len
 }
 
 pub fn main(): i32 {
@@ -6490,6 +6533,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveField.milo)</sub>
@@ -6497,11 +6545,11 @@ pub fn main(): i32 {
 `forget(S)` consumes its argument; on a global it would leave the slot zeroed for every later reader.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     forget(S)
-    return S.len
+    return S.s.len
 }
 
 pub fn main(): i32 {
@@ -6509,6 +6557,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveForget.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveForget.milo)</sub>
@@ -6516,11 +6569,11 @@ pub fn main(): i32 {
 An if-expression consumes whichever tail ran, so a global tail is a move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
-    let x = if S.len > 0 { S } else { "zz" }
-    return x.len
+    let x = if S.s.len > 0 { S } else { Text { s: "zz" } }
+    return x.s.len
 }
 
 pub fn main(): i32 {
@@ -6528,6 +6581,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveIfTail.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveIfTail.milo)</sub>
@@ -6535,11 +6593,11 @@ pub fn main(): i32 {
 `let x = S` binds the global's value by move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     let x = S
-    return x.len
+    return x.s.len
 }
 
 pub fn main(): i32 {
@@ -6547,6 +6605,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveLet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveLet.milo)</sub>
@@ -6555,18 +6618,18 @@ Moving a field two levels into a global. A global has no single owner, so moving
 
 ```milo skip
 struct In {
-    t: string,
+    t: Text,
 }
 
 struct Out {
     i: In,
 }
 
-let G: Out = Out { i: In { t: "hello" } }
+let G: Out = Out { i: In { t: Text { s: "hello" } } }
 
 fn f(): i64 {
     let t = G.i.t
-    return t.len
+    return t.s.len
 }
 
 pub fn main(): i32 {
@@ -6574,6 +6637,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveNestedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveNestedField.milo)</sub>
@@ -6581,12 +6649,12 @@ pub fn main(): i32 {
 Pushing a global into a Vec moves it into the Vec. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 fn f(): i64 {
-    var v: Vec<string> = Vec.new()
+    var v: Vec<Text> = Vec.new()
     v.push(S)
-    return v[0].len
+    return v[0].s.len
 }
 
 pub fn main(): i32 {
@@ -6594,6 +6662,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMovePush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMovePush.milo)</sub>
@@ -6601,14 +6674,14 @@ pub fn main(): i32 {
 `return S` hands the global's value to the caller. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
-fn g(): string {
+fn g(): Text {
     return S
 }
 
 fn f(): i64 {
-    return g().len
+    return g().s.len
 }
 
 pub fn main(): i32 {
@@ -6616,6 +6689,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveReturn.milo)</sub>
@@ -6675,15 +6753,15 @@ pub fn main(): i32 {
 A struct literal field takes its value by move. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-let S: string = "hello"
+let S: Text = Text { s: "hello" }
 
 struct D {
-    s: string,
+    s: Text,
 }
 
 fn f(): i64 {
     let d = D { s: S }
-    return d.s.len
+    return d.s.s.len
 }
 
 pub fn main(): i32 {
@@ -6691,6 +6769,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveStructLit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveStructLit.milo)</sub>
@@ -6717,11 +6800,11 @@ pub fn main(): i32 {
 A `var` global is no more movable than a `let` one; only assignment to it is legal. A global has no single owner, so moving out of it left the slot zeroed and the next reader (here, the second call of f) silently saw an empty value.
 
 ```milo skip
-var S: string = "hello"
+var S: Text = Text { s: "hello" }
 
 fn f(): i64 {
     let x = S
-    return x.len
+    return x.s.len
 }
 
 pub fn main(): i32 {
@@ -6729,6 +6812,11 @@ pub fn main(): i32 {
     print(f())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/globalMoveVar.milo](https://github.com/milo-language/milo/blob/main/tests/errors/globalMoveVar.milo)</sub>
@@ -6787,11 +6875,11 @@ pub fn main(): i32 {
 moving a non-Copy value out of a borrow would alias the owner's heap data (double-free); it must be rejected — clone to take ownership.
 
 ```milo skip
-fn take(s: string) {
+fn take(s: Text) {
     print(s)
 }
 
-fn f(s: &string) {
+fn f(s: &Text) {
     take(s)
 }
 
@@ -6799,6 +6887,11 @@ fn main(): i32 {
     return 0
 }
 // @error: cannot move the borrowed value out of
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/moveBorrowOut.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveBorrowOut.milo)</sub>
@@ -6849,22 +6942,169 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/heapDerefMoveThroughBorrow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapDerefMoveThroughBorrow.milo)</sub>
 
-## `cannot move the borrowed value out of 'line'` {#cannot-move-the-borrowed-value-out-of-line}
+## `cannot move the borrowed value out of 'm'` {#cannot-move-the-borrowed-value-out-of-m}
 
-A piece is a `&string`: second-class, so it cannot leave the loop that borrowed it.
+An if-let payload through a '&E' is a view; returning it would alias the caller's buffer.
 
 ```milo skip
-fn firstLine(s: &string): string {
-    for line in s.lines() {
-        return line
-    }
-    return ""
+enum E {
+    A(i64, Text),
+    B(Text),
 }
-pub fn main(): i32 { print(firstLine("a\nb")) return 0 }
-// @error: cannot move the borrowed value out of 'line'
+
+fn pick(e: &E): Text {
+    if let E.B(m) = e { return m }
+    return Text { s: "none".clone() }
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(e))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
-<sub>[tests/errors/stringViewIterEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewIterEscape.milo)</sub>
+<sub>[tests/errors/borrowedEnumIfLetReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumIfLetReturn.milo)</sub>
+
+A let-else payload through a '&E' is a view; returning it would alias the caller's buffer.
+
+```milo skip
+enum E {
+    A(i64, Text),
+    B(Text),
+}
+
+fn pick(e: &E): Text {
+    let E.B(m) = e else { return Text { s: "none".clone() } }
+    return m
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(e))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumLetElse.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumLetElse.milo)</sub>
+
+## `cannot move the borrowed value out of 'msg'` {#cannot-move-the-borrowed-value-out-of-msg}
+
+A 'return' statement inside the arm block: the binding is still in scope.
+
+```milo skip
+enum E {
+    A(i64, Text),
+    B(Text),
+}
+
+fn pick(e: &E): Text {
+    match e {
+        E.A(_n, msg) => { return msg }
+        E.B(msg) => { return msg }
+    }
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(e))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumArmReturn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumArmReturn.milo)</sub>
+
+A '&mut E' subject binds '&mut' views; moving one out by value is the same aliasing.
+
+```milo skip
+enum E {
+    A(i64, Text),
+    B(Text),
+}
+
+fn pick(e: &mut E): Text {
+    return match e {
+        E.A(_n, msg) => msg
+        E.B(msg) => msg
+    }
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    var f = e
+    print(pick(&mut f))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumMutTail.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumMutTail.milo)</sub>
+
+Same as borrowedEnumTailMove, with the match feeding a 'let' instead of a 'return'.
+
+```milo skip
+enum E {
+    A(i64, Text),
+    B(Text),
+}
+
+fn pick(e: &E): Text {
+    let s = match e {
+        E.A(_n, msg) => msg
+        E.B(msg) => msg
+    }
+    return s
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(e))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumTailLet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumTailLet.milo)</sub>
+
+An arm's tail hands its payload binding out as the match's value. Through a '&E' the binding is a view, so returning it shallow-copied the caller's buffer and double-freed (exit 133). The tail is moved after the arm's scope closes, which is how it slipped past the rule a 'return msg' statement already hit.
+
+```milo skip
+enum E {
+    A(i64, Text),
+    B(Text),
+}
+
+fn pick(e: &E): Text {
+    return match e {
+        E.A(_n, msg) => msg
+        E.B(msg) => msg
+    }
+}
+fn main() {
+    let e = E.B(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(e))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumTailMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumTailMove.milo)</sub>
 
 ## `cannot move the borrowed value out of 'p'` {#cannot-move-the-borrowed-value-out-of-p}
 
@@ -6886,18 +7126,75 @@ fn main() {
 
 ## `cannot move the borrowed value out of 's'` {#cannot-move-the-borrowed-value-out-of-s}
 
+A nested payload binding through a '&W' is a view too; the arm tail cannot move it.
+
+```milo skip
+enum W {
+    Wrap(Option<Text>),
+    Empty,
+}
+
+fn pick(w: &W): Text {
+    return match w {
+        W.Wrap(Option.Some(s)) => s
+        W.Wrap(Option.None) => Text { s: "none".clone() }
+        W.Empty => Text { s: "empty".clone() }
+    }
+}
+
+fn main() {
+    let w = W.Wrap(Option.Some(Text { s: "a Text long enough to live on the heap".clone() }))
+    print(pick(w))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedEnumNestedTail.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedEnumNestedTail.milo)</sub>
+
+The Option form of borrowedEnumTailMove: a 'Some' binding through a '&Option' leaving as the match's value.
+
+```milo skip
+fn pick(o: &Option<Text>): Text {
+    return match o {
+        Some(s) => s
+        None => Text { s: "none".clone() }
+    }
+}
+
+fn main() {
+    let o: Option<Text> = Some(Text { s: "a Text long enough to live on the heap".clone() })
+    print(pick(o))
+}
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
+```
+
+<sub>[tests/errors/borrowedOptionTailMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/borrowedOptionTailMove.milo)</sub>
+
 Only an owned temporary is consumed. A loop over a named Vec still binds each element by reference, so moving one out stays an error (the Vec still owns it).
 
 ```milo skip
 fn main(): i32 {
-    let v: Vec<string> = ["a".repeat(2), "b".repeat(2)]
-    var out: Vec<string> = []
+    let v: Vec<Text> = [Text { s: "a".repeat(2) }, Text { s: "b".repeat(2) }]
+    var out: Vec<Text> = []
     for s in v {
         out.push(s)
     }
-    print(out.len)
+    print(out.len())
     return 0
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/forInNamedVecMoveElement.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInNamedVecMoveElement.milo)</sub>
@@ -6925,13 +7222,18 @@ the element stays in the Vec, so it can only be cloned out.
 
 ```milo skip
 pub fn main(): void {
-    var ws: Vec<string> = ["a"]
-    var keep: Vec<string> = Vec.new()
+    var ws: Vec<Text> = [Text { s: "a" }]
+    var keep: Vec<Text> = Vec.new()
     for w in &mut ws {
         keep.push(w)
     }
     print(keep.len())
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
 ```
 
 <sub>[tests/errors/forInMutRefMoveOut.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInMutRefMoveOut.milo)</sub>

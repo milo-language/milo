@@ -5,7 +5,7 @@
 // caller's field, so the caller read an empty string afterwards.
 
 struct Inner {
-    s: string,
+    s: Text,
 }
 
 struct Outer {
@@ -13,7 +13,7 @@ struct Outer {
 }
 
 impl Outer {
-    fn take(self: &Self): string {
+    fn take(self: &Self): Text {
         return self.inner.s
     }
 }
@@ -21,8 +21,13 @@ impl Outer {
 fn main() {
     let o = Outer {
         inner: Inner {
-            s: "hi",
+            s: Text { s: "hi" },
         },
     }
     print(o.take())
 }
+
+// Text stands in for `string`: a string copied out of a borrow, a global or an element
+// is shared by count now (tests/fixtures/sharedStringBorrows.milo), so the rule is held
+// with a type that still moves.
+struct Text { s: string }
