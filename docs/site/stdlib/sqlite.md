@@ -318,11 +318,15 @@ Reset the statement so it can run again with new bindings.
 pub fn dbRowBool(st: &Statement, name: &string, what: &string): Result<bool>
 ```
 
+The column `name` of the current row as a bool (nonzero is true); NULL is an Err naming `what`. Called by `@derive(Row)`.
+
 #### `dbRowF64`
 
 ```milo
 pub fn dbRowF64(st: &Statement, name: &string, what: &string): Result<f64>
 ```
+
+The column `name` of the current row as an f64; NULL is an Err naming `what`. Called by `@derive(Row)`.
 
 #### `dbRowI32`
 
@@ -330,11 +334,15 @@ pub fn dbRowF64(st: &Statement, name: &string, what: &string): Result<f64>
 pub fn dbRowI32(st: &Statement, name: &string, what: &string): Result<i32>
 ```
 
+The column `name` of the current row as an i32; NULL is an Err naming `what`. Called by `@derive(Row)`.
+
 #### `dbRowI64`
 
 ```milo
 pub fn dbRowI64(st: &Statement, name: &string, what: &string): Result<i64>
 ```
+
+The column `name` of the current row as an i64; NULL is an Err naming `what`. Called by `@derive(Row)`.
 
 #### `dbRowOptBool`
 
@@ -342,11 +350,15 @@ pub fn dbRowI64(st: &Statement, name: &string, what: &string): Result<i64>
 pub fn dbRowOptBool(st: &Statement, name: &string, what: &string): Result<bool?>
 ```
 
+The column `name` of the current row as a bool (nonzero is true), NULL as None. Called by `@derive(Row)`.
+
 #### `dbRowOptF64`
 
 ```milo
 pub fn dbRowOptF64(st: &Statement, name: &string, what: &string): Result<f64?>
 ```
+
+The column `name` of the current row as an f64, NULL as None. Called by `@derive(Row)`.
 
 #### `dbRowOptI32`
 
@@ -354,11 +366,15 @@ pub fn dbRowOptF64(st: &Statement, name: &string, what: &string): Result<f64?>
 pub fn dbRowOptI32(st: &Statement, name: &string, what: &string): Result<i32?>
 ```
 
+The column `name` of the current row as an i32, NULL as None. Called by `@derive(Row)`.
+
 #### `dbRowOptI64`
 
 ```milo
 pub fn dbRowOptI64(st: &Statement, name: &string, what: &string): Result<i64?>
 ```
+
+The column `name` of the current row as an i64, NULL as None. Called by `@derive(Row)`.
 
 #### `dbRowOptStr`
 
@@ -366,11 +382,15 @@ pub fn dbRowOptI64(st: &Statement, name: &string, what: &string): Result<i64?>
 pub fn dbRowOptStr(st: &Statement, name: &string, what: &string): Result<string?>
 ```
 
+The column `name` of the current row as a string, NULL as None. Called by `@derive(Row)`.
+
 #### `dbRowStr`
 
 ```milo
 pub fn dbRowStr(st: &Statement, name: &string, what: &string): Result<string>
 ```
+
+The column `name` of the current row as a string; NULL is an Err naming `what`. Called by `@derive(Row)`.
 
 #### `dbStep`
 
