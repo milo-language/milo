@@ -1,0 +1,60 @@
+// Test server for the zero-downtime restart gate (tests/httpZeroDowntime.test.ts).
+// Env: MAXCONN (default 512), DRAINMS (default 10000), SLOWMS (default 2000), PORT (own bind).
+// /events is a stream parked in waitClosed. / answers "ok"; /slow sleeps SLOWMS then answers "slow"; /max reports the highest
+// concurrency the handlers saw.
+from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterConcurrentWith }
+from "std/env" import { Env }
+from "std/time" import { sleepMs }
+from "std/strconv" import { parseInt }
+
+var active: i64 = 0
+var maxSeen: i64 = 0
+
+fn envInt(name: string, dflt: i64): i64 {
+    let v = Env.get(name)
+    if v.isNone() {
+        return dflt
+    }
+    return parseInt(v ?? "") ?? dflt
+}
+
+fn main(): i32 {
+    let slowMs = envInt("SLOWMS", 2000)
+    let opts = ServeOptions { maxConn: envInt("MAXCONN", 512), drainMs: envInt("DRAINMS", 10000) }
+    var router = Router.new()
+    router.get("/", (c: &mut Context) => {
+        return c.text("ok")
+    })
+    router.get("/slow", (c: &mut Context) => {
+        active += 1
+        if active > maxSeen {
+            maxSeen = active
+        }
+        sleepMs(slowMs)
+        active -= 1
+        return c.text("slow")
+    })
+    // A long-lived connection: parked in waitClosed until the client leaves or the drain starts.
+    router.stream("/events", (ctx: &mut Context, conn: &mut Stream): void => {
+        let noHeaders: Vec<Param> = []
+        conn.open("text/event-stream", noHeaders)
+        if !conn.send("hello\n\n") {
+            return
+        }
+        conn.waitClosed()
+    })
+    router.get("/max", (c: &mut Context) => {
+        return c.text(maxSeen.toString())
+    })
+    let port = envInt("PORT", 0)
+    var p: u16? = null
+    if port > 0 {
+        p = Option.Some(port as u16)
+    }
+    let r = serveRouterConcurrentWith("127.0.0.1", p, router, opts)
+    if let Result.Err(m) = r {
+        print("server error: " + m)
+        return 1
+    }
+    return 0
+}

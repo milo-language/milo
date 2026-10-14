@@ -141,6 +141,9 @@ Bind to one IPv4 address (see `ip4`). `bindAddr(ip4(127, 0, 0, 1), port)`
 is the loopback-only listener a local dev server wants: `bind` takes every
 interface, so anything it serves is reachable from the network.
 
+Started under systemd socket activation (LISTEN_FDS/LISTEN_PID), this adopts the
+passed socket instead and `addr` and `port` are ignored: the unit file chose them.
+
 #### `TcpListener.port`
 
 ```milo
@@ -348,5 +351,22 @@ returns them. That order is RFC 6724's (which family and which address to try fi
 for this host's routes), so a client connects by trying them front to back, as
 `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
 Recorded as net.resolveall. Off the scheduler thread on a green task, as `resolve` is.
+
+#### `takeInheritedListenFd`
+
+```milo
+pub fn takeInheritedListenFd(): i32
+```
+
+Socket activation (systemd's LISTEN_FDS protocol): the already-bound, already-listening
+socket the service manager passes in, or -1 when this process was not started that way.
+LISTEN_PID must name THIS process (the variables also reach children, which must not
+claim a socket meant for their parent). The variables are removed once read, as systemd
+asks, so a child we spawn never mistakes them for its own.
+
+Every listener constructor asks this first, so each serve variant gets socket
+activation from the one place. Only the first listener of the process gets the
+socket: the variables are gone afterwards. Skipped under record/replay (descriptors are
+synthetic there) and on targets with no inheritance (Windows).
 
 <!-- /generated:api -->

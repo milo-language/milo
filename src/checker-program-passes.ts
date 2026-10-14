@@ -446,6 +446,8 @@ export function isNonEscapingFnParam(t: TypeKind | undefined): boolean {
 // a private user type named `TaskScope` is renamed by the resolver, so these are std's.
 export const TASK_SCOPE_FN = "Task$scope";
 export const SCOPED_SPAWN_FN = "TaskScope$spawn";
+// A read of the scope's live task count: it cannot spawn, so it may sit anywhere in the body.
+export const SCOPED_LIVE_FN = "TaskScope$live";
 
 export function checkTaskScopes(host: ProgramPassHost, program: Program, view: ProgramView): void {
   const seen = new Set<string>();
@@ -592,6 +594,11 @@ export function checkTaskScopes(host: ProgramPassHost, program: Program, view: P
       for (const fr2 of frames) fr2.depth++;
       visit(arg.body, frames);
       for (const fr2 of frames) fr2.depth--;
+      return;
+    }
+    if (n.kind === "MethodCall" && view.calleeOf(n as unknown as Expr) === SCOPED_LIVE_FN
+        && (n.object as Expr).kind === "Ident" && top && handleFrame((n.object as { name: string }).name) === top && top.depth === 0) {
+      visit(n.args, frames);
       return;
     }
     if (n.kind === "Ident" && handleFrame(n.name as string)) {

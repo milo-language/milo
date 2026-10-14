@@ -5,7 +5,11 @@ from "std/os" import {
     sysClose,
     sysAccept,
     recvFd,
-    sendFd
+    sendFd,
+    signal as osSignal
+}
+from "std/platform" import {
+    pipe as osPipe, write as osWrite, exitNow
 }
 from "std/net" import {
     TcpListener, ip4
@@ -26,7 +30,7 @@ from "std/io" import {
     AsFd
 }
 from "std/time" import {
-    unrecordedEpochMillis
+    unrecordedEpochMillis, sleepMs
 }
 from "std/chunked" import {
     ChunkScan, chunkMalformed, decodeChunked
@@ -1076,6 +1080,74 @@ fn closeFd(fd: i32): void {
     unsafe { sysClose(fd) }
 }
 
+// ── Graceful drain (SIGTERM) ──
+//
+// SIGTERM stops the server accepting, lets requests in flight finish, then exits 0 after
+// at most ServeOptions.drainMs. The handler is a C signal handler, so it can only touch
+// plain globals and write(2) one byte to a pipe: the byte is what wakes the accept loop
+// and every connection parked in waitConn. The pipe is never read, so it stays readable
+// and reaches tasks that start waiting after the signal too.
+
+// 1 once SIGTERM arrived.
+var gTerm: i32 = 0
+// Read and write ends of the drain pipe; -1 for a server that has none (the sequential
+// variants, which have nothing parked to wake).
+var gDrainR: i32 = -1
+var gDrainW: i32 = -1
+// 1 while a sequential server sits in accept() with nothing in flight: SIGTERM then has
+// nothing to wait for and the handler exits at once.
+var gIdleAccept: i32 = 0
+
+fn termHandler(_sig: i32): void {
+    unsafe {
+        gTerm = 1
+        if gDrainW >= 0 {
+            var b: [u8; 1] = [1]
+            osWrite(gDrainW, b as *u8, 1)
+        }
+        if gIdleAccept == 1 {
+            exitNow(0)
+        }
+    }
+}
+
+// The descriptor that becomes readable when draining starts; -1 when none.
+fn drainWatchFd(): i32 {
+    unsafe { return gDrainR }
+}
+
+// Install the SIGTERM drain. `broadcast` also creates the drain pipe, for servers whose
+// connections park (the concurrent ones).
+fn installDrain(broadcast: bool): void {
+    unsafe {
+        if broadcast && gDrainR < 0 {
+            var fds: [i32; 2] = [0; 2]
+            if osPipe(fds as *i32) == 0 {
+                // the handler's write must never block
+                setNonblocking(fds[1])
+                gDrainR = fds[0]
+                gDrainW = fds[1]
+            }
+        }
+        osSignal(15, termHandler as *u8)
+    }
+}
+
+fn terminated(): bool {
+    unsafe { return gTerm == 1 }
+}
+
+// Knobs for the concurrent servers (serveRouterConcurrentWith).
+pub struct ServeOptions {
+    // Most connections served at once. At the cap the server stops calling accept() until
+    // one finishes, so the excess waits in the kernel's listen backlog (see the
+    // backpressure note on acceptLoop).
+    maxConn: i64 = 512,
+    // After SIGTERM: how long requests in flight may keep running before the process
+    // exits anyway.
+    drainMs: i64 = 10000,
+}
+
 // ── Public API ──
 
 // The IPv4 address `host` names: a dotted quad, or "localhost" for 127.0.0.1.
@@ -1153,18 +1225,40 @@ fn acceptPeer(listenFd: i32): i32 {
     }
 }
 
+// acceptPeer for the one-at-a-time servers. While it blocks there is nothing in flight, so
+// SIGTERM may end the process right there (termHandler). The flag is raised just before
+// accept(); a signal in the few instructions between accept() returning and the flag
+// dropping would lose that one connection to a reset, which a client retries.
+fn acceptIdle(listenFd: i32): i32 {
+    unsafe {
+        gIdleAccept = 1
+        // Raised first, then checked: a SIGTERM before the flag is seen here, one after it
+        // exits in the handler.
+        if gTerm == 1 {
+            exit(0)
+        }
+    }
+    let fd = acceptPeer(listenFd)
+    unsafe { gIdleAccept = 0 }
+    return fd
+}
+
 // The simplest server: every request goes to `handler`. Good for a static file server
 // or a single-handler app. Answers one connection at a time, on every interface.
 pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
     let sock = openListener("0.0.0.0", port)?
     let listenFd = listenerFd(sock)
+    installDrain(false)
     while true {
-        let clientFd = acceptPeer(listenFd)
+        let clientFd = acceptIdle(listenFd)
         if clientFd < 0 {
             continue
         }
         serveHandlerExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), handler)
         closeFd(clientFd)
+        if terminated() {
+            exit(0)
+        }
     }
     return Result.Err("server exited")
 }
@@ -1562,13 +1656,17 @@ pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
 pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
     let sock = openListener(host, port)?
     let listenFd = listenerFd(sock)
+    installDrain(false)
     while true {
-        let clientFd = acceptPeer(listenFd)
+        let clientFd = acceptIdle(listenFd)
         if clientFd < 0 {
             continue
         }
         serveRouterExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router)
         closeFd(clientFd)
+        if terminated() {
+            exit(0)
+        }
     }
     return Result.Err("server exited")
 }
@@ -1708,27 +1806,47 @@ impl AsFd for SockRef {
 let wakeRead: i64 = 0
 let wakeOut: i64 = 1
 let wakeTimeout: i64 = 2
+// The server began draining (SIGTERM): the connection should wind down now.
+let wakeDrain: i64 = 3
 
 // Park the connection's task until its socket is readable, its outbox holds something
-// (or was dropped), or `timeoutMs` passes (< 0: never).
+// (or was dropped), `timeoutMs` passes (< 0: never), or the server starts draining.
 fn waitConn(fd: i32, out: &Option<Outbox>, timeoutMs: i64): i64 {
     var sel = Select.new()
     sel.onRead(SockRef {
         fd: fd
     })
+    var arm: i64 = 1
     var outArm: i64 = -1
     if let Option.Some(o) = out {
         sel.onRecv(o._ch)
-        outArm = 1
+        outArm = arm
+        arm += 1
     }
+    var timeoutArm: i64 = -1
     if timeoutMs >= 0 {
         sel.onTimeout(timeoutMs)
+        timeoutArm = arm
+        arm += 1
+    }
+    // The drain pipe stays readable once SIGTERM wrote to it, so it wakes this wait and
+    // every later one: a long-lived connection must not hold the drain to its cap.
+    var drainArm: i64 = -1
+    let drainFd = drainWatchFd()
+    if drainFd >= 0 {
+        sel.onRead(SockRef {
+            fd: drainFd
+        })
+        drainArm = arm
     }
     let w = sel.wait()
     if w > 0 && w == outArm {
         return wakeOut
     }
-    if w > 0 {
+    if w > 0 && w == drainArm {
+        return wakeDrain
+    }
+    if w > 0 && w == timeoutArm {
         return wakeTimeout
     }
     // 0, or -1 with no scheduler: the next read decides (it blocks if it must).
@@ -1830,7 +1948,11 @@ impl Stream {
             let _ = streamWrite(&mut self, "")
         }
         while self._state != streamEnded {
-            if waitConn(self._fd, self._out, -1) == wakeRead {
+            let w = waitConn(self._fd, self._out, -1)
+            if w == wakeDrain {
+                streamPump(&mut self)
+                endStream(&mut self)
+            } else if w == wakeRead {
                 if !discardInput(self._fd) {
                     endStream(&mut self)
                 }
@@ -2051,6 +2173,9 @@ fn wsWait(ws: &mut WebSocket): void {
         wsPump(&mut ws)
     } else if w == wakeTimeout {
         wsTick(&mut ws, unrecordedEpochMillis())
+    } else if w == wakeDrain {
+        // 1001: going away, the code for a server shutting down
+        wsFail(&mut ws, 1001)
     } else {
         if readMore(ws._fd, &mut ws._in) <= 0 {
             wsEnd(&mut ws)
@@ -2261,10 +2386,13 @@ fn handleConn(clientFd: i32, router: &Router): void {
 // One connection task: take the next accepted fd and serve it. The fd comes over a
 // channel because a scoped task may borrow only what outlives the scope body, and
 // each fd is a body local (a by-reference capture would see the next accept's fd).
-fn serveNextConn(fds: &Channel<i32>, router: &Router): void {
+// `done` tells a capped accept loop that a slot has opened.
+fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>): void {
     match fds.recv() {
         Result.Ok(clientFd) => {
             handleConn(clientFd, router)
+            // Full means a wake-up is already pending, which is all one is for.
+            let _ = done.trySend(0)
         }
         Result.Err(_e) => {
             return
@@ -2275,27 +2403,74 @@ fn serveNextConn(fds: &Channel<i32>, router: &Router): void {
 // The accept loop, run as a green task. Every connection is a task on this
 // function's own Task.scope, so each borrows `router` from the caller's frame rather
 // than from a global, and the scope keeps that frame alive while any of them runs.
-fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router): void {
+//
+// Backpressure design: at `maxConn` connections in flight the loop stops calling
+// accept() until one finishes. The excess then waits in the kernel's listen backlog
+// (1024, capped by somaxconn), which is bounded; past it the kernel drops SYNs and
+// clients retransmit. So memory is bounded by maxConn tasks and never by the offered load:
+// a reverse proxy in front (nginx) times out the wait, where an unbounded
+// task-per-connection server would grow until the OOM killer takes a 1 GB droplet.
+//
+// On SIGTERM (see "Graceful drain") it closes this process's copy of the listener,
+// waits for the connections in flight, and exits. Under socket activation the service
+// manager still holds the socket, so new connections queue for the next process.
+fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, drainMs: i64): void {
+    let done = Channel<i32>.new(1)!
     Task.scope((s) => {
-        while true {
-            // listenFd belongs to the caller's listener, which outlives this scope.
-            unsafe { schedulerWaitRead(listenFd) }
-            // Drain: one readiness notification can cover several pending
-            // connections, and leaving them queued would stall until the next.
-            while true {
-                let clientFd = acceptPeer(listenFd)
-                if clientFd < 0 {
-                    break
-                }
-                // clientFd was just accepted; nothing else holds it until the send below.
-                unsafe { setNonblocking(clientFd) }
-                s.spawn(() => serveNextConn(fds, router))
-                // Parks only while the buffer holds 64 fds whose tasks have not run yet.
-                // It cannot fail: only a closed channel refuses, and nothing closes this one.
-                fds.send(clientFd)!
+        while !terminated() {
+            // The scope's own live count is the in-flight number, and the one that
+            // cannot drift: a handler that panics is reaped like any other task, where
+            // a counter decremented at the end of the handler would leak its slot.
+            if s.live() >= maxConn {
+                var capSel = Select.new()
+                capSel.onRecv(done)
+                armDrain(&mut capSel)
+                // The timeout is a safety net for a slot freed with no wake-up (a panicked
+                // task runs no code at its end).
+                capSel.onTimeout(100)
+                capSel.wait()
+                let _t = done.tryRecv()
+                continue
             }
+            let clientFd = acceptPeer(listenFd)
+            if clientFd < 0 {
+                var idleSel = Select.new()
+                idleSel.onRead(SockRef {
+                    fd: listenFd
+                })
+                armDrain(&mut idleSel)
+                idleSel.wait()
+                continue
+            }
+            // clientFd was just accepted; nothing else holds it until the send below.
+            unsafe { setNonblocking(clientFd) }
+            s.spawn(() => serveNextConn(fds, router, done))
+            // Parks only while the buffer holds 64 fds whose tasks have not run yet.
+            // It cannot fail: only a closed channel refuses, and nothing closes this one.
+            fds.send(clientFd)!
+        }
+        // Draining. Closing stops new accepts here; connections already queued in the
+        // kernel stay with whoever else holds the socket.
+        unsafe { sysClose(listenFd) }
+        let deadline = unrecordedEpochMillis() + drainMs
+        while s.live() > 0 {
+            if unrecordedEpochMillis() >= deadline {
+                print("drain timeout: exiting with connections still open")
+                exit(0)
+            }
+            sleepMs(5)
         }
     })
+}
+
+// Arm the drain pipe, if the server has one, on `sel`.
+fn armDrain(sel: &mut Select): void {
+    let fd = drainWatchFd()
+    if fd >= 0 {
+        sel.onRead(SockRef {
+            fd: fd
+        })
+    }
 }
 
 // Like serveRouter, but each connection is handled in its own green task.
@@ -2305,7 +2480,8 @@ fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router): void {
 // moment a handler talks to the network: one slow upstream then stalls every
 // other client for the whole round trip. Handlers that fetch need this loop.
 //
-// Never returns once listening; a listener that cannot be opened is an Err. The
+// Never returns once listening, except by exiting the process 0 after a SIGTERM drain
+// (ServeOptions); a listener that cannot be opened is an Err. The
 // scheduler drives the accept task, the handlers it spawns and any task the caller
 // spawned earlier, exactly as a green-threaded server's main is supposed to.
 pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
@@ -2314,19 +2490,38 @@ pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
 
 // serveRouterConcurrent bound to one IPv4 address (see serveRouterOn).
 pub fn serveRouterConcurrentOn(host: &string, port: u16?, router: Router): Result<Unit> {
+    return serveRouterConcurrentWith(host, port, router, ServeOptions {
+    })
+}
+
+// serveRouterConcurrentOn with its limits spelled out: the connection cap and the SIGTERM
+// drain deadline (ServeOptions).
+pub fn serveRouterConcurrentWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit> {
     let sock = openListener(host, port)?
     let listenFd = listenerFd(sock)
+    // acceptLoop owns the descriptor from here: it closes it when draining, and a
+    // second close from the listener's drop could hit a descriptor reused since.
+    forget(sock)
     let fds = Channel<i32>.new(64)?
     // accept() has no green-aware wrapper: on a blocking listener it parks the
     // OS thread and no other task ever runs. Non-blocking plus an explicit
     // kqueue/epoll wait is what makes the accept loop a cooperating task.
     unsafe { setNonblocking(listenFd) }
+    installDrain(true)
+    var maxConn = opts.maxConn
+    if maxConn < 1 {
+        maxConn = 1
+    }
+    let drainMs = opts.drainMs
     // The accept loop is a scoped task rather than this body, so it is a green task
     // (and schedulerWaitRead parks it) even when the caller is not; the join below
     // then drives the scheduler for good, as schedulerRunToCompletion used to.
     Task.scope((s) => {
-        s.spawn(() => acceptLoop(listenFd, fds, router))
+        s.spawn(() => acceptLoop(listenFd, fds, router, maxConn, drainMs))
     })
+    if terminated() {
+        exit(0)
+    }
     return Result.Err("server exited")
 }
 

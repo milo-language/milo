@@ -12,7 +12,7 @@
 // std/fetch is what pulls SSL_* in.
 
 from "std/net" import {
-    NetError, ignoreSigpipe
+    NetError, ignoreSigpipe, takeInheritedListenFd
 }
 from "std/os" import {
     acceptFd,
@@ -150,24 +150,27 @@ impl TlsListener {
 
             ignoreSigpipe()
             ensureNetInit()
-            var fd: i32 = 0
-            unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+            // Socket activation hands over an already-listening socket (see std/net).
+            var fd: i32 = takeInheritedListenFd()
             if fd < 0 {
-                return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
-            }
+                unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
+                if fd < 0 {
+                    return Result.Err(NetError.ConnectionFailed("sysSocket() failed"))
+                }
 
-            var one: i32 = 1
-            unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
+                var one: i32 = 1
+                unsafe { setsockopt(fd, solSocket(), soReuseaddr(), one, 4) }
 
-            var addr = makeSockaddr(port, 0)
-            if bindIn(fd, addr) < 0 {
-                sysClose(fd)
-                return Result.Err(NetError.ConnectionFailed("bind() failed"))
-            }
-            unsafe {
-                if sysListen(fd, 1024) < 0 {
+                var addr = makeSockaddr(port, 0)
+                if bindIn(fd, addr) < 0 {
                     sysClose(fd)
-                    return Result.Err(NetError.ConnectionFailed("sysListen() failed"))
+                    return Result.Err(NetError.ConnectionFailed("bind() failed"))
+                }
+                unsafe {
+                    if sysListen(fd, 1024) < 0 {
+                        sysClose(fd)
+                        return Result.Err(NetError.ConnectionFailed("sysListen() failed"))
+                    }
                 }
             }
 

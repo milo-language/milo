@@ -41,7 +41,13 @@ from "std/platform" import {
     soReuseaddr,
     makeSockaddr6,
     afInet6,
-    ensureNetInit
+    ensureNetInit,
+    listenFdsStart,
+    getpid,
+    fcntl
+}
+from "std/env" import {
+    Env
 }
 from "std/sync" import {
     Channel
@@ -527,6 +533,66 @@ pub fn ignoreSigpipe(): void {
     }
 }
 
+// Socket activation (systemd's LISTEN_FDS protocol): the already-bound, already-listening
+// socket the service manager passes in, or -1 when this process was not started that way.
+// LISTEN_PID must name THIS process (the variables also reach children, which must not
+// claim a socket meant for their parent). The variables are removed once read, as systemd
+// asks, so a child we spawn never mistakes them for its own.
+//
+// Every listener constructor asks this first, so each serve variant gets socket
+// activation from the one place. Only the first listener of the process gets the
+// socket: the variables are gone afterwards. Skipped under record/replay (descriptors are
+// synthetic there) and on targets with no inheritance (Windows).
+pub fn takeInheritedListenFd(): i32 {
+    let first = listenFdsStart()
+    if first < 0 || !replayOff() {
+        return -1
+    }
+    let fdsVar = Env.get("LISTEN_FDS")
+    let pidVar = Env.get("LISTEN_PID")
+    if fdsVar.isNone() && pidVar.isNone() {
+        return -1
+    }
+    let _a = Env.remove("LISTEN_FDS")
+    let _b = Env.remove("LISTEN_PID")
+    let Option.Some(nText) = fdsVar else {
+        return -1
+    }
+    let Option.Some(pidText) = pidVar else {
+        return -1
+    }
+    // LISTEN_FDS=1 or more; the first descriptor is the one used.
+    unsafe {
+        if digitsValue(nText) < 1 || digitsValue(pidText) != getpid() as i64 {
+            return -1
+        }
+        // A descriptor that is not a socket is a misconfigured unit: bind our own rather
+        // than serve on something that cannot accept.
+        if getSockPort(first) < 0 {
+            return -1
+        }
+        // F_SETFD = 2, FD_CLOEXEC = 1 on linux and darwin: processes we exec do not inherit it.
+        fcntl(first, 2, 1)
+    }
+    return first
+}
+
+// The value of a string of ASCII digits; -1 for anything else (including empty).
+fn digitsValue(text: &string): i64 {
+    if text.len == 0 || text.len > 18 {
+        return -1
+    }
+    var v: i64 = 0
+    for i in 0..text.len {
+        let c = text[i]
+        if c < '0' || c > '9' {
+            return -1
+        }
+        v = v * 10 + (c - '0') as i64
+    }
+    return v
+}
+
 impl TcpListener {
     // Bind to 0.0.0.0:port (every interface) and start listening. SO_REUSEADDR is set so a quick
     // restart doesn't fail with "address already in use". Pass port 0 to let the
@@ -538,9 +604,18 @@ impl TcpListener {
     // Bind to one IPv4 address (see `ip4`). `bindAddr(ip4(127, 0, 0, 1), port)`
     // is the loopback-only listener a local dev server wants: `bind` takes every
     // interface, so anything it serves is reachable from the network.
+    //
+    // Started under systemd socket activation (LISTEN_FDS/LISTEN_PID), this adopts the
+    // passed socket instead and `addr` and `port` are ignored: the unit file chose them.
     fn bindAddr(addr: u32, port: u16): Result<TcpListener, NetError> {
         unsafe {
             ignoreSigpipe()
+            let inherited = takeInheritedListenFd()
+            if inherited >= 0 {
+                return Result.Ok(TcpListener {
+                    _fd: inherited
+                })
+            }
             let AF_INET: i32 = 2
             let SOCK_STREAM: i32 = 1
 
@@ -573,6 +648,13 @@ impl TcpListener {
     // or all-zero for the v6 wildcard "::").
     fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
         unsafe {
+            let inherited = takeInheritedListenFd()
+            if inherited >= 0 {
+                ignoreSigpipe()
+                return Result.Ok(TcpListener {
+                    _fd: inherited
+                })
+            }
             ensureNetInit()
             var fd: i32 = 0
             fd = sysSocket(afInet6(), 1, 0)

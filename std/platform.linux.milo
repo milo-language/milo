@@ -321,6 +321,12 @@ pub fn sigchldNum(): i32 {
     return 17
 }
 
+// First descriptor of an inherited listener (LISTEN_FDS socket activation), or -1 for none.
+// systemd socket activation passes the first inherited listener as fd 3 (SD_LISTEN_FDS_START).
+pub fn listenFdsStart(): i32 {
+    return 3
+}
+
 // ── fcntl / non-blocking ──
 
 pub extern fn fcntl(fd: i32, cmd: i32, ...): i32

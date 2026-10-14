@@ -389,6 +389,12 @@ pub fn sigchldNum(): i32 {
     return -1
 }
 
+// First descriptor of an inherited listener (LISTEN_FDS socket activation), or -1 for none.
+// no socket activation on Windows: the LISTEN_FDS environment is ignored.
+pub fn listenFdsStart(): i32 {
+    return -1
+}
+
 // ── ucontext over Win32 fibers ──
 //
 // std/runtime wants stackful coroutine switching and reads the context layout entirely

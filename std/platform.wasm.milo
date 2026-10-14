@@ -357,6 +357,12 @@ pub fn sigchldNum(): i32 {
     return 20
 }
 
+// First descriptor of an inherited listener (LISTEN_FDS socket activation), or -1 for none.
+// no sockets to inherit.
+pub fn listenFdsStart(): i32 {
+    return -1
+}
+
 // ── fcntl / non-blocking ── (meaningless without real fds, kept for surface parity)
 
 pub extern fn fcntl(fd: i32, cmd: i32, ...): i32

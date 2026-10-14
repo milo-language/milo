@@ -821,6 +821,13 @@ pub struct TaskScope {
 }
 
 impl TaskScope {
+    // Tasks spawned on this scope that have not finished yet; one a panic retired counts
+    // as finished (it is reaped like any other). A server caps its connections on it.
+    // @internal
+    fn live(self: &Self): i64 {
+        unsafe { return rtLoadI64(self._block, 0) }
+    }
+
     // Start a green task running `f`; `Task.scope` joins it before returning. `f` is a
     // plain closure param on purpose: it may borrow. This fn is the one place a plain
     // closure param is kept past the call (checkNonEscapingParams exempts it by name),
