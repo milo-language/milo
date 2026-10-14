@@ -1,6 +1,7 @@
 // resolves import declarations by recursively parsing imported files
 // and merging all declarations into a single program
 
+import { ROW_IMPORT_NAMES } from "./derive-row";
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname, sep } from "path";
 import { depDirForSpec } from "./pkg";
@@ -335,6 +336,11 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     const derivesMap = jsonDerivers.some(s => s.fields.some(f => mentionsHashMap(f.type)));
     if (derivesMap && !prog.imports.some(i => i.path === "std/sort")) {
       synthetic.push({ kind: "ImportDecl", path: "std/sort", names: ["sortStrings"] });
+    }
+    // `@derive(Row)` calls the dbRow* readers in std/sqlite. Injected even when the file
+    // imports std/sqlite itself, since its import list names only what the user wrote.
+    if (prog.structs.some(s => s.attributes?.some(a => a.name === "derive" && a.args.includes("Row")))) {
+      synthetic.push({ kind: "ImportDecl", path: "std/sqlite", names: ROW_IMPORT_NAMES });
     }
     let admitted = fileImports.get(unit.file);
     if (!admitted) { admitted = { names: new Set(), wholeFiles: new Set() }; fileImports.set(unit.file, admitted); }

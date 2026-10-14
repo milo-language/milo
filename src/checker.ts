@@ -4510,7 +4510,7 @@ export class TypeChecker {
       // A template may not take a built-in's name. Silently losing to `Eq` would make a
       // package's derive a no-op that still type-checks, which is the worst failure a
       // plugin point can have.
-      if (tpl.name === "Eq" || tpl.name === "Json") {
+      if (tpl.name === "Eq" || tpl.name === "Json" || tpl.name === "Row") {
         this.error(`'derive ${tpl.name}' collides with the built-in @derive(${tpl.name})`, tpl.span,
           `rename the template — a user derive cannot replace a built-in one`);
         continue;

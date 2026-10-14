@@ -1,0 +1,64 @@
+// @skip-os: win32
+// @derive(Row): fromRow reads each field from the column with the same name, so SELECT
+// order does not matter and extra columns are ignored. NULL into a non-Option field and a
+// missing column are errors that name the struct and field.
+// @expect: 7 x 2.5 true 9 Some(5) Some(true) Some("hi")
+// @expect: 8 y 1 false -1 None None None
+// @expect: Missing.userId: no column named 'userId' in result
+// @expect: NullName.name: column 'name' is NULL but the field is not an Option
+// @expect: 7
+from "std/sqlite" import { dbOpen, dbExec, dbQuery, dbNext }
+
+@derive(Row)
+struct Item {
+    id: i64, name: string, score: f64, ok: bool, small: i32, opt: i64?, flag: bool?, note: string?,
+}
+
+@derive(Row)
+struct Missing {
+    id: i64, userId: i64,
+}
+
+@derive(Row)
+struct NullName {
+    name: string,
+}
+
+@derive(Row)
+struct Aliased {
+    userId: i64,
+}
+
+fn main() {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "CREATE TABLE t (id INTEGER, name TEXT, score REAL, ok INTEGER, small INTEGER, opt INTEGER, flag INTEGER, note TEXT, junk TEXT)")!
+    dbExec(db, "INSERT INTO t VALUES (7, 'x', 2.5, 1, 9, 5, 1, 'hi', 'z')")!
+    dbExec(db, "INSERT INTO t VALUES (8, 'y', 1, 0, -1, NULL, NULL, NULL, 'z')")!
+    let st = dbQuery(db, "SELECT note, junk, flag, opt AS opt, small, ok, score, name, id FROM t ORDER BY id")!
+    while dbNext(st)! {
+        match Item.fromRow(st) {
+            Result.Ok(r) => print($"{r.id} {r.name} {r.score} {r.ok} {r.small} {r.opt} {r.flag} {r.note}")
+            Result.Err(e) => print(e)
+        }
+    }
+    let m = dbQuery(db, "SELECT id FROM t")!
+    while dbNext(m)! {
+        match Missing.fromRow(m) {
+            Result.Ok(r) => print(r.id)
+            Result.Err(e) => print(e)
+        }
+        break
+    }
+    let n = dbQuery(db, "SELECT NULL AS name")!
+    while dbNext(n)! {
+        match NullName.fromRow(n) {
+            Result.Ok(r) => print(r.name)
+            Result.Err(e) => print(e)
+        }
+    }
+    let a = dbQuery(db, "SELECT id AS userId FROM t ORDER BY id")!
+    while dbNext(a)! {
+        print(Aliased.fromRow(a)!.userId)
+        break
+    }
+}

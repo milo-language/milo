@@ -485,6 +485,15 @@ fn main(): i32 {
 }
 \`\`\`
 
+### SQLite rows
+\`@derive(Row)\` adds \`fromRow(st)\`: each field is read from the column of the same name (the SQL alias), so column order does not matter. Field types: i64, i32, f64, bool, string, and Option of each; NULL into a non-Option field or a missing column is an \`Err\`.
+\`\`\`milo
+@derive(Row)
+struct Post { id: i64, userId: i64, title: string? }
+// let st = dbQuery(db, "SELECT p.user_id AS userId, p.id, p.title FROM posts p")!
+// while dbNext(st)! { let p = Post.fromRow(st)! }
+\`\`\`
+
 ## What NOT to Do
 - No garbage collector or reference counting: values are moved or cloned explicitly.
 - Don't store references in structs or collections, or return them from free functions.

@@ -5710,6 +5710,31 @@ while dbStep(stmt) {
 dbFinalize(stmt)
 ```
 
+### Reading rows into a struct
+
+`@derive(Row)` generates `fromRow(st: &Statement): Result<Self>`, which reads each field from the
+result column with the same name (exact match against the SQL alias). Column order does not matter
+and extra columns are ignored. Field types: `i64`, `i32`, `f64`, `bool` (`!= 0`), `string`, and
+`Option` of each (NULL is `None`). A NULL in a non-Option field, or a field with no column, is an
+`Err` naming the struct and field; any other field type is a compile error. Names are resolved on
+every call (fields x columns string compares).
+
+```milo
+from "std/sqlite" import { dbOpen, dbExec, dbQuery, dbNext }
+
+@derive(Row)
+struct Post { id: i64, userId: i64, title: string? }
+
+let db = dbOpen(":memory:")!
+dbExec(db, "CREATE TABLE posts (id INTEGER, user_id INTEGER, title TEXT)")!
+dbExec(db, "INSERT INTO posts VALUES (1, 7, NULL)")!
+let st = dbQuery(db, "SELECT p.user_id AS userId, p.id, p.title FROM posts p")!
+while dbNext(st)! {
+    let p = Post.fromRow(st)!
+    print($"{p.id} {p.userId}")
+}
+```
+
 | Function | Description |
 |----------|-------------|
 | `dbOpen(path)` | Open/create database |
@@ -5723,6 +5748,7 @@ dbFinalize(stmt)
 | `dbColumnFloat(stmt, col)` | Get f64 column |
 | `dbColumnText(stmt, col)` | Get string column |
 | `dbColumnIsNull(stmt, col)` | Check if NULL |
+| `dbColumnName(stmt, col)` | Column name (the SQL alias) |
 | `dbBindInt(stmt, idx, val)` | Bind i32 parameter |
 | `dbBindText(stmt, idx, val)` | Bind string parameter |
 | `dbFinalize(stmt)` | Free statement |

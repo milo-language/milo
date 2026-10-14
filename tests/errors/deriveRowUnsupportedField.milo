@@ -1,0 +1,12 @@
+// @error: field 'tags' has type 'Vec<i64>', which has no sqlite column form
+// A Row field must be one a single column can hold; a Vec has no column, so the
+// derive names the field and lists what is supported.
+@derive(Row)
+struct Post {
+    id: i64,
+    tags: Vec<i64>,
+}
+
+fn main() {
+    print("x")
+}

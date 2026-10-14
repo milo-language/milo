@@ -386,3 +386,115 @@ pub fn dbReset(stmt: &Statement): void {
 pub fn dbLastInsertId(db: &Database): i64 {
     unsafe { return sqlite3_last_insert_rowid(db._handle) }
 }
+
+pub extern fn sqlite3_column_name(stmt: *u8, col: i32): *u8
+
+// The name of column `col` (0-based) in the result set: the SQL alias when there is one
+// (`SELECT p.user_id AS userId` is "userId"). Empty when `col` is out of range.
+pub fn dbColumnName(stmt: &Statement, col: i32): string {
+    unsafe {
+        let ptr = sqlite3_column_name(stmt._handle, col)
+        if ptr == 0 as *u8 {
+            return ""
+        }
+        return _cstrToString(ptr)
+    }
+}
+
+// Index of the column named exactly `name`, or Err naming `what` (the "Struct.field"
+// being read) when the result has no such column.
+pub fn dbColumnIndex(stmt: &Statement, name: &string, what: &string): Result<i32> {
+    let n = dbColumnCount(stmt)
+    var i: i32 = 0
+    while i < n {
+        if dbColumnName(stmt, i) == name {
+            return Result.Ok(i)
+        }
+        i = i + 1
+    }
+    return Result.Err($"{what}: no column named '{name}' in result")
+}
+
+// The readers `@derive(Row)` calls, one per supported field type plus an Option form
+// (NULL is None). A non-Option read of NULL is an Err rather than a silent 0 or "", so a
+// schema change cannot turn into wrong data. `what` is "Struct.field" for the messages.
+
+pub fn dbRowI64(st: &Statement, name: &string, what: &string): Result<i64> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Err($"{what}: column '{name}' is NULL but the field is not an Option")
+    }
+    return Result.Ok(dbColumnInt64(st, c))
+}
+
+pub fn dbRowOptI64(st: &Statement, name: &string, what: &string): Result<i64?> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Ok(null)
+    }
+    return Result.Ok(Some(dbColumnInt64(st, c)))
+}
+
+pub fn dbRowI32(st: &Statement, name: &string, what: &string): Result<i32> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Err($"{what}: column '{name}' is NULL but the field is not an Option")
+    }
+    return Result.Ok(dbColumnInt(st, c))
+}
+
+pub fn dbRowOptI32(st: &Statement, name: &string, what: &string): Result<i32?> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Ok(null)
+    }
+    return Result.Ok(Some(dbColumnInt(st, c)))
+}
+
+pub fn dbRowF64(st: &Statement, name: &string, what: &string): Result<f64> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Err($"{what}: column '{name}' is NULL but the field is not an Option")
+    }
+    return Result.Ok(dbColumnFloat(st, c))
+}
+
+pub fn dbRowOptF64(st: &Statement, name: &string, what: &string): Result<f64?> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Ok(null)
+    }
+    return Result.Ok(Some(dbColumnFloat(st, c)))
+}
+
+pub fn dbRowBool(st: &Statement, name: &string, what: &string): Result<bool> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Err($"{what}: column '{name}' is NULL but the field is not an Option")
+    }
+    return Result.Ok(dbColumnInt64(st, c) != 0)
+}
+
+pub fn dbRowOptBool(st: &Statement, name: &string, what: &string): Result<bool?> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Ok(null)
+    }
+    return Result.Ok(Some(dbColumnInt64(st, c) != 0))
+}
+
+pub fn dbRowStr(st: &Statement, name: &string, what: &string): Result<string> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Err($"{what}: column '{name}' is NULL but the field is not an Option")
+    }
+    return Result.Ok(dbColumnText(st, c))
+}
+
+pub fn dbRowOptStr(st: &Statement, name: &string, what: &string): Result<string?> {
+    let c = dbColumnIndex(st, name, what)?
+    if dbColumnIsNull(st, c) {
+        return Result.Ok(null)
+    }
+    return Result.Ok(Some(dbColumnText(st, c)))
+}

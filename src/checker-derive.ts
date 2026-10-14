@@ -6,6 +6,7 @@ import type { Program, Function, Expr, MiloType, Span, StructDecl, EnumDecl, Imp
 import { simpleType } from "./ast";
 import { type TypeKind, typeName } from "./types";
 import type { StructInfo, EnumInfo, ImplInfo } from "./checker";
+import { deriveRowSource, ROW_SUPPORTED, type RowFieldPlan, type RowKind } from "./derive-row";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
 import { Lexer } from "./lexer";
@@ -216,6 +217,7 @@ export class DeriveSynth {
     if (traitName === "Eq") return this.deriveEq(s);
     if (traitName === "Clone") return this.deriveClone(s);
     if (traitName === "Json") return this.deriveJson(s);
+    if (traitName === "Row") return this.deriveRow(s);
     const tpl = this.host.deriveTemplates.get(traitName);
     if (tpl) {
       // Same one-bit visibility every other declaration has. Without it a template that a
@@ -228,7 +230,7 @@ export class DeriveSynth {
       }
       return this.expandUserDerive(s, tpl);
     }
-    const known = ["Eq", "Json", ...this.host.deriveTemplates.keys()];
+    const known = ["Eq", "Json", "Row", ...this.host.deriveTemplates.keys()];
     this.host.error(`cannot derive '${traitName}' — no built-in derive and no 'derive ${traitName} { … }' template is in scope`, s.span,
       `available: ${known.map(k => `'${k}'`).join(", ")}. A user-defined derive is a top-level 'derive ${traitName} { … }' block; import the module that declares it`);
     return null;
@@ -398,6 +400,57 @@ export class DeriveSynth {
       default:
         return { err: `type '${this.host.show(t)}' has no JSON form` };
     }
+  }
+
+  // The column kind for a Row field type, or null when it has no sqlite column form.
+  private rowKindFor(t: TypeKind): RowKind | null {
+    if (t.tag === "string") return "Str";
+    if (t.tag === "bool") return "Bool";
+    if (t.tag === "float") return t.bits === 64 ? "F64" : null;
+    // Plain i64/i32 only: a narrower or ranged int would need a range check on read.
+    if (t.tag === "int" && t.signed && t.min === undefined && t.max === undefined) {
+      return t.bits === 64 ? "I64" : t.bits === 32 ? "I32" : null;
+    }
+    return null;
+  }
+
+  deriveRow(s: StructDecl): ImplDecl | null {
+    if (s.isExtern || s.isOpaque) {
+      this.host.error(`cannot derive Row for '${s.name}': it is a foreign type`, s.span);
+      return null;
+    }
+    if (this.host.jsonUserMethods.has(`${s.name}.fromRow`)) {
+      this.host.error(`cannot derive Row for '${s.name}': it already defines 'fromRow'`, s.span);
+      return null;
+    }
+    const fields: RowFieldPlan[] = [];
+    for (const f of s.fields) {
+      const t = this.host.resolve(f.type);
+      const inner = t.tag === "enum" ? this.host.optionInnerType(t) : null;
+      const kind = this.rowKindFor(inner ?? t);
+      if (!kind) {
+        this.host.error(`cannot derive Row for '${s.name}': field '${f.name}' has type '${this.host.show(t)}', which has no sqlite column form`, s.span,
+          `supported field types: ${ROW_SUPPORTED}`);
+        return null;
+      }
+      fields.push({ field: f.name, kind, optional: inner !== null });
+    }
+    const src = deriveRowSource(s.name, fields);
+    if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Row)\n${src}\n`);
+    let parsed: Program;
+    try {
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Row for ${s.name}>`).parse();
+    } catch (e) {
+      this.host.error(`internal error: generated Row reader for '${s.name}' did not parse: ${e instanceof Error ? e.message : String(e)}`, s.span);
+      return null;
+    }
+    const impl = parsed.impls[0];
+    if (!impl) {
+      this.host.error(`internal error: generated Row reader for '${s.name}' produced no impl`, s.span);
+      return null;
+    }
+    for (const m of impl.methods) m.sourceFile = s.span?.file;
+    return this.stampOrigin(impl, s);
   }
 
   deriveJson(s: StructDecl): ImplDecl | null {

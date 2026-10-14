@@ -41,6 +41,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |
 | `src/csig.ts` | Parsing for the C signature text in `@cSig("<header>", "<signature>")`. |
 | `src/derive-json.ts` | @derive(Json) — generates `toJson` / `fromJson` / `fromJsonNode` for a struct, plus `toJsonArray` / `fromJsonArray` for a document whose top level is an array of them. |
+| `src/derive-row.ts` | @derive(Row): `Struct.fromRow(st)` reads each field from the sqlite result column with the same name (the SQL alias), so a SELECT can reorder or add columns without breaking the mapping. |
 | `src/derive-template.ts` | User-defined `@derive(Trait)` — the template mechanism that lets a derive ship in a package instead of a compiler PR. |
 | `src/diagnostics.ts` | Elm-style error formatting: source context, carets and severity, shared by the CLI and the LSP so a message reads the same in a terminal and an editor. |
 | `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |

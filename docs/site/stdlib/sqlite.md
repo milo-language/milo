@@ -81,7 +81,57 @@ fn Statement.handle(self: &Statement): *u8
 The raw `sqlite3_stmt*`, for callers that reach sqlite3 functions this module does
 not wrap. Borrowed: the Statement still owns and finalizes it.
 
+### `Transaction`
+
+```milo
+pub struct Transaction
+```
+
+An open transaction. Rolls back when it goes out of scope; `commit()` is the only way
+to keep the writes. Move-only (the raw handle makes it move-tracked), and `commit` /
+`rollback` consume it, so it cannot be used afterwards.
+
+  let tx = dbBegin(db)?
+  dbExec(db, "INSERT ...")?     // an early return via `?` drops tx -> ROLLBACK
+  tx.commit()?
+
+Fields: `done: bool`.
+
+#### `Transaction.commit`
+
+```milo
+fn Transaction.commit(self: Transaction): Result<i32>
+```
+
+COMMIT, consuming the guard. On Err the transaction is still open in sqlite
+(e.g. SQLITE_BUSY), so the guard rolls it back as it drops at the end of this fn.
+
+#### `Transaction.rollback`
+
+```milo
+fn Transaction.rollback(self: Transaction): Result<i32>
+```
+
+ROLLBACK now, consuming the guard.
+
 ### Functions
+
+#### `dbBegin`
+
+```milo
+pub fn dbBegin(db: &Database): Result<Transaction>
+```
+
+BEGIN a deferred transaction. Hold the result in a `let`; it rolls back on drop.
+
+#### `dbBeginImmediate`
+
+```milo
+pub fn dbBeginImmediate(db: &Database): Result<Transaction>
+```
+
+BEGIN IMMEDIATE: takes the write lock up front, so a write transaction under WAL
+contention fails here with SQLITE_BUSY rather than at its first write.
 
 #### `dbBindFloat`
 
@@ -151,6 +201,15 @@ pub fn dbColumnFloat(stmt: &Statement, col: i32): f64
 
 The column `col` (0-based) of the current row as an f64.
 
+#### `dbColumnIndex`
+
+```milo
+pub fn dbColumnIndex(stmt: &Statement, name: &string, what: &string): Result<i32>
+```
+
+Index of the column named exactly `name`, or Err naming `what` (the "Struct.field"
+being read) when the result has no such column.
+
 #### `dbColumnInt`
 
 ```milo
@@ -174,6 +233,15 @@ pub fn dbColumnIsNull(stmt: &Statement, col: i32): bool
 ```
 
 Whether column `col` (0-based) of the current row is NULL.
+
+#### `dbColumnName`
+
+```milo
+pub fn dbColumnName(stmt: &Statement, col: i32): string
+```
+
+The name of column `col` (0-based) in the result set: the SQL alias when there is one
+(`SELECT p.user_id AS userId` is "userId"). Empty when `col` is out of range.
 
 #### `dbColumnText`
 
@@ -243,6 +311,66 @@ pub fn dbReset(stmt: &Statement): void
 ```
 
 Reset the statement so it can run again with new bindings.
+
+#### `dbRowBool`
+
+```milo
+pub fn dbRowBool(st: &Statement, name: &string, what: &string): Result<bool>
+```
+
+#### `dbRowF64`
+
+```milo
+pub fn dbRowF64(st: &Statement, name: &string, what: &string): Result<f64>
+```
+
+#### `dbRowI32`
+
+```milo
+pub fn dbRowI32(st: &Statement, name: &string, what: &string): Result<i32>
+```
+
+#### `dbRowI64`
+
+```milo
+pub fn dbRowI64(st: &Statement, name: &string, what: &string): Result<i64>
+```
+
+#### `dbRowOptBool`
+
+```milo
+pub fn dbRowOptBool(st: &Statement, name: &string, what: &string): Result<bool?>
+```
+
+#### `dbRowOptF64`
+
+```milo
+pub fn dbRowOptF64(st: &Statement, name: &string, what: &string): Result<f64?>
+```
+
+#### `dbRowOptI32`
+
+```milo
+pub fn dbRowOptI32(st: &Statement, name: &string, what: &string): Result<i32?>
+```
+
+#### `dbRowOptI64`
+
+```milo
+pub fn dbRowOptI64(st: &Statement, name: &string, what: &string): Result<i64?>
+```
+
+#### `dbRowOptStr`
+
+```milo
+pub fn dbRowOptStr(st: &Statement, name: &string, what: &string): Result<string?>
+```
+
+#### `dbRowStr`
+
+```milo
+pub fn dbRowStr(st: &Statement, name: &string, what: &string): Result<string>
+```
 
 #### `dbStep`
 
