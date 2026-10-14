@@ -17433,7 +17433,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `hello world`
 - `hello world`
 
-**Rationale.** A literal held in a string has no heap buffer (cap 0): handing it to C copies it into a NUL-terminated block, so the literal and every handle made from it stay intact.
+**Rationale.** A literal held in a string has no heap buffer (cap 0): handing it to C copies it into a NUL-terminated block, so the literal and every handle made from it stay intact. memset, not bzero (the Windows CRT has no bzero), declared void so the call stays a safe one: its pointer result is not needed.
 
 *Program:* [`tests/fixtures/sharedStringCBoundaryLiteral.milo`](../tests/fixtures/sharedStringCBoundaryLiteral.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -17449,7 +17449,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `hello world`
 - `hello world`
 
-**Rationale.** A string handed to C as `*u8` is made the only handle to its buffer first: C may write through the pointer, and a shared buffer would carry that write into every other handle.
+**Rationale.** A string handed to C as `*u8` is made the only handle to its buffer first: C may write through the pointer, and a shared buffer would carry that write into every other handle. memset, not bzero (the Windows CRT has no bzero), declared void so the call stays a safe one: its pointer result is not needed.
 
 *Program:* [`tests/fixtures/sharedStringCBoundarySafe.milo`](../tests/fixtures/sharedStringCBoundarySafe.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

@@ -184,9 +184,28 @@ class Program {
   }
 
   source(): string {
-    return `struct Pair {
-    a: string,
-    b: string,
+    return `// Str stands in for an owned buffer. Not \`string\` itself: strings are values (copy on
+// write, shared where the code reads them again), so a string is no longer move-tracked
+// and could not exercise the rules this harness is for.
+struct Str {
+    s: string,
+}
+
+fn mk(w: string): Str {
+    return Str { s: w }
+}
+
+fn say(x: &Str) {
+    print(x.s)
+}
+
+fn borrowPair(p: &Pair): i64 {
+    return p.a.s.len + p.b.s.len
+}
+
+struct Pair {
+    a: Str,
+    b: Str,
 }
 
 // A type whose destructor is observable. Its output is part of the predicted stdout,
@@ -194,21 +213,21 @@ class Program {
 // Added after a partial move out of a Drop type turned out to skip the destructor
 // entirely — a silent resource leak the string-only shapes could not express.
 struct Res {
-    name: string,
+    name: Str,
 }
 
 impl Drop for Res {
     fn drop(self: &mut Self) {
-        print("drop " + self.name)
+        print("drop " + self.name.s)
     }
 }
 
-fn consume(s: string): i64 {
-    return s.len()
+fn consume(s: Str): i64 {
+    return s.s.len
 }
 
-fn borrow(s: &string): i64 {
-    return s.len()
+fn borrow(s: &Str): i64 {
+    return s.s.len
 }
 
 fn main() {
@@ -236,7 +255,7 @@ const SHAPES: Shape[] = [
     name: "declare",
     apply(p) {
       const v = p.fresh("v"), word = pick(WORDS);
-      p.emit(`let ${v} = "${word}"`);
+      p.emit(`let ${v} = mk("${word}")`);
       p.slots.push({ ref: v, word, live: true });
       return true;
     },
@@ -257,7 +276,7 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live);
-      p.emit(`print(${s.ref})`);
+      p.emit(`say(${s.ref})`);
       p.say(s.word);
       return true;
     },
@@ -352,7 +371,7 @@ const SHAPES: Shape[] = [
       let q = p.vecs.length > 0 && chance(0.6) ? pick(p.vecs) : null;
       if (!q) {
         q = { name: p.fresh("q"), words: [] };
-        p.emit(`var ${q.name}: Vec<string> = Vec.new()`);
+        p.emit(`var ${q.name}: Vec<Str> = Vec.new()`);
         p.vecs.push(q);
       }
       p.emit(`${q.name}.push(${s.ref})`);
@@ -370,9 +389,9 @@ const SHAPES: Shape[] = [
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("o"), v = p.fresh("v");
       const fallback = pick(WORDS);
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
-      p.emit(`let ${v} = ${o} ?? "${fallback}"`);
+      p.emit(`let ${v} = ${o} ?? mk("${fallback}")`);
       // Always Some, so the fallback never runs — the point is the move, not the branch.
       p.slots.push({ ref: v, word: s.word, live: true });
       return true;
@@ -406,7 +425,7 @@ const SHAPES: Shape[] = [
       if (!c.value) return false;   // an untaken branch would print nothing to check
       const r = p.fresh("r"), word = pick(WORDS);
       p.block(true, `if ${c.name} {`, () => {
-        p.emit(`let ${r} = Res { name: "${word}" }`);
+        p.emit(`let ${r} = Res { name: mk("${word}") }`);
         p.emit(`print(borrow(${r}.name))`);
         p.say(String(word.length));
       });
@@ -434,7 +453,7 @@ const SHAPES: Shape[] = [
     name: "declare-var",
     apply(p) {
       const v = p.fresh("w"), word = pick(WORDS);
-      p.emit(`var ${v} = "${word}"`);
+      p.emit(`var ${v} = mk("${word}")`);
       p.slots.push({ ref: v, word, live: true, mut: true });
       return true;
     },
@@ -487,7 +506,7 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("u"), v = p.fresh("v");
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
       p.emit(`let ${v} = ${o}!`);
       p.slots.push({ ref: v, word: s.word, live: true });
@@ -504,7 +523,7 @@ const SHAPES: Shape[] = [
       const filled = p.filledVecs();
       if (filled.length === 0) return false;
       const q = pick(filled);
-      p.block(true, `for w in ${q.name} {`, () => p.emit(`print(w)`));
+      p.block(true, `for w in ${q.name} {`, () => p.emit(`say(w)`));
       for (const w of q.words) p.say(w);
       return true;
     },
@@ -520,7 +539,7 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("mo");
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
       p.open(`match ${o} {`);
       p.open(`Option.Some(x) => {`);
@@ -545,10 +564,10 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("io");
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
       p.open(`if let Option.Some(y) = ${o} {`);
-      p.emit(`print(y)`);
+      p.emit(`say(y)`);
       p.close();
       p.say(s.word);
       return true;
@@ -564,7 +583,7 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("lo"), v = p.fresh("le");
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
       p.open(`let Option.Some(${v}) = ${o} else {`);
       p.emit(`return`);
@@ -584,7 +603,7 @@ const SHAPES: Shape[] = [
       const n = p.fresh("n"), w = p.fresh("lw"), word = pick(WORDS);
       p.emit(`var ${n} = 0`);
       p.open(`while ${n} < 2 {`);
-      p.emit(`let ${w} = "${word}"`);
+      p.emit(`let ${w} = mk("${word}")`);
       p.emit(`print(consume(${w}))`);
       p.emit(`${n} = ${n} + 1`);
       p.close();
@@ -621,7 +640,7 @@ const SHAPES: Shape[] = [
       const filled = p.filledVecs().filter(v => v.words.length > 1);
       const q = filled.find(v => new Set(v.words.map(w => w.length)).size === v.words.length);
       if (!q) return false;
-      p.emit(`${q.name}.sortByKey((e: &string) => e.len())`);
+      p.emit(`${q.name}.sortByKey((e: &Str) => e.s.len)`);
       q.words.sort((a, b) => a.length - b.length);
       return true;
     },
@@ -698,7 +717,7 @@ const SHAPES: Shape[] = [
       const live = p.live();
       if (live.length === 0) return false;
       const s = pick(live), o = p.fresh("no"), y = p.fresh("y");
-      p.emit(`let ${o}: Option<string> = Option.Some(${s.ref})`);
+      p.emit(`let ${o}: Option<Str> = Option.Some(${s.ref})`);
       p.take(s);
       // Always Some, so the block always runs; the fork is for the checker, not the model.
       p.block(true, `if let Option.Some(${y}) = ${o} {`, () => {
@@ -760,11 +779,11 @@ function generate(invalidate: boolean): Case {
       const live = p.live();
       switch (spelling) {
         case "borrow": p.emit(`print(borrow(${s.ref}))`); break;
-        case "print": p.emit(`print(${s.ref})`); break;
+        case "print": p.emit(`say(${s.ref})`); break;
         case "consume": p.emit(`print(consume(${s.ref}))`); break;
         case "rebind": p.emit(`let ${p.fresh("v")} = ${s.ref}`); break;
         case "fork": {
-          const other = live.length > 0 ? pick(live).ref : `"${pick(WORDS)}"`;
+          const other = live.length > 0 ? pick(live).ref : `mk("${pick(WORDS)}")`;
           p.emit(`let ${p.fresh("v")} = if ${p.cond().name} { ${s.ref} } else { ${other} }`);
           break;
         }
@@ -773,7 +792,7 @@ function generate(invalidate: boolean): Case {
         // still exist — so a non-field slot falls back to an ordinary use-after-move.
         case "whole": {
           if (!s.ref.includes(".")) { p.emit(`print(borrow(${s.ref}))`); break; }
-          p.emit(`print(${s.ref.split(".")[0]!})`);
+          p.emit(`print(borrowPair(${s.ref.split(".")[0]!}))`);
           break;
         }
         // A field taken out of a type with a destructor. Self-contained, because the
@@ -781,7 +800,7 @@ function generate(invalidate: boolean): Case {
         // then never ran at all.
         case "drop-partial": {
           const r = p.fresh("r");
-          p.emit(`let ${r} = Res { name: "${pick(WORDS)}" }`);
+          p.emit(`let ${r} = Res { name: mk("${pick(WORDS)}") }`);
           p.emit(`let ${p.fresh("v")} = ${r}.name`);
           break;
         }

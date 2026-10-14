@@ -31,11 +31,11 @@ export const lessons: Lesson[] = [
   },
   {
     title: 'Ownership and moves', file: 'ownership.milo', fails: true,
-    desc: 'A heap value like `string` has one owner. `let b = a` moves it, so using `a` afterwards is a compile error. Change line 3 to `let b = a.clone()` and it compiles.',
-    take: 'Small types (`i32`, `f64`) copy automatically. Heap values move unless you `.clone()` them, so copies are never silent, and no GC cleans up behind you.',
+    desc: 'A heap value like a `Vec` has one owner. `let b = a` moves it, so using `a` afterwards is a compile error. Change line 3 to `let b = a.clone()` and it compiles.',
+    take: 'Small types (`i32`, `f64`) copy automatically. Heap values move unless you `.clone()` them, so copies are never silent, and no GC cleans up behind you. `string` is the exception: strings are values, copy-on-write, and never need `.clone()`.',
     out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)     // error: a was moved', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
     code: `fn main(): i32 {
-    let a = "owned string"
+    let a: Vec<i64> = [1, 2, 3]
     let b = a    // moves a into b
     print(a)     // error: a was moved
     print(b)

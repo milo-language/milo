@@ -1,6 +1,8 @@
 // A string handed to C as `*u8` is made the only handle to its buffer first: C may write
 // through the pointer, and a shared buffer would carry that write into every other handle.
-extern fn bzero(p: *u8, n: i64)
+// memset, not bzero (the Windows CRT has no bzero), declared void so the call stays a
+// safe one: its pointer result is not needed.
+extern fn memset(p: *u8, c: i32, n: i64)
 
 struct Row { name: string }
 
@@ -8,7 +10,7 @@ fn main() {
     var a = ""
     a.pushStr("hello world")
     let b = a.clone()
-    bzero(a, 5)
+    memset(a, 0, 5)
     print(a.len)
     print(a.substr(5, 11))
     print(b)
@@ -17,13 +19,13 @@ fn main() {
     var r = Row { name: "" }
     r.name.pushStr("field text")
     let c = r.name.clone()
-    bzero(r.name, 5)
+    memset(r.name, 0, 5)
     print(r.name.substr(5, 10))
     print(c)
 
     // A temporary that shares the buffer: the copy C writes is the temporary's own.
     let d = b.clone()
-    bzero(d.clone(), 5)
+    memset(d.clone(), 0, 5)
     print(d)
     print(b)
 }

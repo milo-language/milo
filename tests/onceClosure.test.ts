@@ -10,14 +10,16 @@ import { join } from "node:path";
 
 const MAIN = join(import.meta.dir, "..", "src", "main.ts");
 
+// Vec captures, not strings: a string capture is shared (value strings), so a closure
+// over one can run any number of times.
 const SRC = `
-fn consume(s: string): i64 { return s.len }
+fn consume(s: Vec<i64>): i64 { return s.len }
 fn twice(f: move () => i64): i64 { return f() + f() }
 fn once(f: move () => i64): i64 { return f() }
 fn main(): i32 {
-    let s = "abc"
+    let s: Vec<i64> = [1, 2, 3]
     print(once(move (): i64 => consume(s)))
-    let t = "abcd"
+    let t: Vec<i64> = [1, 2, 3, 4]
     print(twice(move (): i64 => consume(t)))
     return 0
 }

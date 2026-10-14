@@ -131,7 +131,8 @@ fn main() {
     let a = scale(n, cosT)
     let b = scale(a, cosT * 2.0)
     let c = cosT.len(missingArg)
-    let s = "owned"
+    // A Vec, not a string: a reused string is shared (value strings), not a move error.
+    let s: Vec<i64> = [1]
     let t = s
     print(s)
     print(b.x + cosT + c + cosT.field)
