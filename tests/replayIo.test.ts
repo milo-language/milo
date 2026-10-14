@@ -287,7 +287,11 @@ test.skipIf(!lldb)("under lldb, a breakpoint on miloReplayStop stops at the reco
     { cwd: dir, env: env({ MILO_REPLAY: trace, MILO_REPLAY_STOP: "3" }), encoding: "utf-8", timeout: 60000 });
   expect(r.stdout).toContain("stop reason = breakpoint 1.1");
   expect(r.stdout).toMatch(/frame #0: .*miloReplayStop/);
-  expect(r.stdout).toMatch(/frame #1: .*noteConsumed/);
+  // replayStopHit sits between them unless -O2 inlines it, which flips with unrelated
+  // codegen size changes (shared strings un-inlined it on macOS). Either way the stop is
+  // reached from the consumed record.
+  expect(r.stdout).toMatch(/frame #1: .*(replayStopHit|noteConsumed)/);
+  expect(r.stdout).toMatch(/frame #[12]: .*noteConsumed/);
   // lldb's launch alone can take several seconds on a cold CI runner; the default 5s test
   // timeout killed it mid-`run` while the spawn itself was still allowed 60s.
 }, 90_000);

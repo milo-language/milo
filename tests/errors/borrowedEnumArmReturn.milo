@@ -9,7 +9,7 @@ enum E {
 fn pick(e: &E): Text {
     match e {
         E.A(_n, msg) => { return msg }
-        E.B(msg) => { return msg }
+        E.B(_) => { return Text { s: "b" } }
     }
 }
 fn main() {

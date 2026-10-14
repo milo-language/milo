@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 551 distinct messages across 712 programs the compiler must reject.
+Every error message the test suite pins: 553 distinct messages across 714 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -370,6 +370,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field '_ssl' of 'WsConn' is private to 'std/ws.milo'`](#field-ssl-of-wsconn-is-private-to-std-ws-milo)
 - [`field '_x' of 'S' is private to`](#field-x-of-s-is-private-to)
 - [`field 'a' of 'Pair': expected i64, got string`](#field-a-of-pair-expected-i64-got-string)
+- [`field 'tags' has type 'Vec<i64>', which has no sqlite column form`](#field-tags-has-type-vec-i64-which-has-no-sqlite-column-form)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
 - [`from "std/json" import { Json }`](#from-std-json-import-json)
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
@@ -556,6 +557,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'r'`](#use-of-moved-variable-r)
 - [`use of moved variable 's'`](#use-of-moved-variable-s)
 - [`use of moved variable 'st'`](#use-of-moved-variable-st)
+- [`use of moved variable 'tx'`](#use-of-moved-variable-tx)
 - [`use of moved variable 'v'`](#use-of-moved-variable-v)
 - [`use of moved variable 'value'`](#use-of-moved-variable-value)
 - [`use of moved variable 'w'`](#use-of-moved-variable-w)
@@ -7007,7 +7009,7 @@ enum E {
 fn pick(e: &E): Text {
     match e {
         E.A(_n, msg) => { return msg }
-        E.B(msg) => { return msg }
+        E.B(_) => { return Text { s: "b" } }
     }
 }
 fn main() {
@@ -7034,7 +7036,7 @@ enum E {
 fn pick(e: &mut E): Text {
     return match e {
         E.A(_n, msg) => msg
-        E.B(msg) => msg
+        E.B(_) => Text { s: "b" }
     }
 }
 fn main() {
@@ -7062,7 +7064,7 @@ enum E {
 fn pick(e: &E): Text {
     let s = match e {
         E.A(_n, msg) => msg
-        E.B(msg) => msg
+        E.B(_) => Text { s: "b" }
     }
     return s
 }
@@ -7090,7 +7092,7 @@ enum E {
 fn pick(e: &E): Text {
     return match e {
         E.A(_n, msg) => msg
-        E.B(msg) => msg
+        E.B(_) => Text { s: "b" }
     }
 }
 fn main() {
@@ -9671,6 +9673,24 @@ fn main() {
 ```
 
 <sub>[tests/errors/structLitTypeArgsMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/structLitTypeArgsMismatch.milo)</sub>
+
+## `field 'tags' has type 'Vec<i64>', which has no sqlite column form` {#field-tags-has-type-vec-i64-which-has-no-sqlite-column-form}
+
+A Row field must be one a single column can hold; a Vec has no column, so the derive names the field and lists what is supported.
+
+```milo skip
+@derive(Row)
+struct Post {
+    id: i64,
+    tags: Vec<i64>,
+}
+
+fn main() {
+    print("x")
+}
+```
+
+<sub>[tests/errors/deriveRowUnsupportedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveRowUnsupportedField.milo)</sub>
 
 ## `for range start must be an integer` {#for-range-start-must-be-an-integer}
 
@@ -14036,6 +14056,25 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/sqliteStepAfterFinalize.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteStepAfterFinalize.milo)</sub>
+
+## `use of moved variable 'tx'` {#use-of-moved-variable-tx}
+
+A Transaction is consumed by commit (and rollback), so a second use is a compile error.
+
+```milo skip
+from "std/sqlite" import {
+    dbOpen, dbExec, dbBegin
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let tx = dbBegin(db)!
+    tx.commit()!
+    tx.commit()!
+}
+```
+
+<sub>[tests/errors/sqliteTransactionAfterCommit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqliteTransactionAfterCommit.milo)</sub>
 
 ## `use of moved variable 'v'` {#use-of-moved-variable-v}
 
