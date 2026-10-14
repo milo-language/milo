@@ -463,6 +463,7 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   sqlite3_bind_null: effect(sqlite("bind_blob")),
   sqlite3_bind_text: effect(sqlite("bind_blob"), { in: ["text"] }),
   sqlite3_column_count: input(sqlite("column_count")),
+  sqlite3_column_name: input(sqlite("column_name"), { ret: "cstr" }),
   sqlite3_column_type: input(sqlite("column_blob")),
   sqlite3_column_int: input(sqlite("column_blob")),
   sqlite3_column_int64: input(sqlite("column_blob")),
