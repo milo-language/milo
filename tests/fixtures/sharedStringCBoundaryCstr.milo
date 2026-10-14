@@ -1,0 +1,23 @@
+// cstr() hands out a pointer C may write through, so the string is made the only handle
+// to its buffer first (a shared buffer would carry the write into the other handles).
+extern fn memset(p: *u8, c: i32, n: i64): *u8
+
+fn main() {
+    var a = ""
+    a.pushStr("hello world")
+    let b = a.clone()
+    unsafe { memset(a.cstr(), 88, 5) }
+    print(a)
+    print(b)
+
+    // A unique string keeps its buffer: no copy when nothing shares it.
+    var u = ""
+    u.pushStr("unique")
+    let before = u.cstr() as i64
+    let after = u.cstr() as i64
+    print(before == after)
+}
+
+// @expect: XXXXX world
+// @expect: hello world
+// @expect: true

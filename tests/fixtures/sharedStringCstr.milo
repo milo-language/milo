@@ -1,6 +1,6 @@
-// cstr() after sharing: both handles point at the one counted buffer (the bytes, not the
-// count header in front of them), and after a write each handle's pointer reads its own
-// NUL-terminated text.
+// cstr() after sharing: C may write through the pointer, so cstr() first makes its string
+// the only handle to the buffer (sharedStringCBoundary*.milo). The two handles' pointers
+// then differ, and each reads its own NUL-terminated text (the bytes, not the count header).
 extern fn strlen(s: *u8): i64
 
 fn main() {
@@ -32,7 +32,7 @@ fn main() {
     print(c)
 }
 
-// @expect: true
+// @expect: false
 // @expect: 10
 // @expect: false
 // @expect: 16

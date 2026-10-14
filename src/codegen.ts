@@ -1,6 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest, HIRGlobal } from "./hir";
+import { LlvmTextBuilder, Ty, val } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -6250,6 +6251,7 @@ export class Codegen {
         return [lines, len, "i64"];
       }
       case "StringCstr": {
+        this.emitCStrUniquePlace(expr.object, lines);
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
         const dataPtr = this.nextTemp();
@@ -6845,7 +6847,10 @@ export class Codegen {
           argVals.push({ val: `@${arg.expr.name}`, type: "ptr" });
           continue;
         }
-        const [al, av, at] = this.genExpr(arg.expr);
+        const toCStr = argTk.tag === "string" && !!sig && !sig.wantsStringAddr?.[i]
+          && (i >= sig.paramTypes.length || sig.paramTypes[i] === "ptr") && arg.expr.kind !== "StringLit";
+        if (toCStr) this.emitCStrUniquePlace(arg.expr, lines);
+        let [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         // String → char* coercion, for extern/FFI calls ONLY (including variadic args).
         // The `paramTypes[i] === "ptr"` test alone is not enough to identify one: a
@@ -6863,24 +6868,27 @@ export class Codegen {
           // A literal is NUL-terminated in place, and so is every owned string. A view
           // (`splitView`, `lines()`, `slice`) is not: its bytes run on into the parent, so
           // C read "a.txt,zz" for the piece "a.txt". A literal is not a view.
+          // An owned temporary (`strlen(mk())`) is passed as its own bytes, and C only
+          // borrows them for the call, so it is dropped after the call like any argument
+          // temporary. A retaining callee keeps the pointer, so the string is leaked to it.
+          // The temporary may share its buffer (f(s.clone())), so it is made unique in
+          // its slot before C sees the bytes, as a place is (emitCStrUniquePlace).
+          const ownedTemp = arg.expr.kind !== "StringLit" && this.isOwnedTempExpr(arg.expr);
+          if (ownedTemp && !Codegen.RETAINING_LIBC.has(expr.func)) {
+            const slot = `%__cstrtmp.${this.scopeCounter++}.addr`;
+            this.entryAllocas.push(`  ${slot} = alloca %String`);
+            lines.push(`  store %String ${av}, ptr ${slot}`);
+            this.ownValToSlot(av, slot);
+            this.argTempDrops.push({ addr: slot, type: { tag: "string" } });
+            this.unpend(av);
+            this.emitStrUnique(lines, slot);
+            av = new LlvmTextBuilder(lines, this).load(Ty.of("%String"), val(slot, Ty.ptr)).ref;
+          }
           const dataPtr = arg.expr.kind === "StringLit"
             ? (() => { const t = this.nextTemp(); lines.push(`  ${t} = extractvalue %String ${av}, 0`); return t; })()
             : this.emitCStringArg(lines, av, Codegen.RETAINING_LIBC.has(expr.func));
           argVals.push({ val: dataPtr, type: "ptr" });
-          // An owned temporary (`strlen(mk())`) is passed as its own bytes, and C only
-          // borrows them for the call, so it is dropped after the call like any argument
-          // temporary. A retaining callee keeps the pointer, so the string is leaked to it.
-          if (arg.expr.kind !== "StringLit" && this.isOwnedTempExpr(arg.expr)) {
-            if (Codegen.RETAINING_LIBC.has(expr.func)) argEnds.push(av);
-            else {
-              const slot = `%__cstrtmp.${this.scopeCounter++}.addr`;
-              this.entryAllocas.push(`  ${slot} = alloca %String`);
-              lines.push(`  store %String ${av}, ptr ${slot}`);
-              this.ownValToSlot(av, slot);
-              this.argTempDrops.push({ addr: slot, type: { tag: "string" } });
-              this.unpend(av);
-            }
-          }
+          if (ownedTemp && Codegen.RETAINING_LIBC.has(expr.func)) argEnds.push(av);
         } else if (wantsAddr) {
           const slot = this.nextTemp();
           lines.push(`  ${slot} = alloca %String`);
@@ -10262,6 +10270,32 @@ export class Codegen {
     lines.push(`  ${ptr} = load ptr, ptr ${ptrSlot}`);
     if (!keep) this.argTempDrops.push({ addr: ownSlot, type: { tag: "string" } });
     return ptr;
+  }
+
+  // Before a string's bytes go to C as *u8 (an extern argument, cstr()): C may write
+  // through the pointer, so a string this code owns outright is made the only handle to
+  // its buffer (a copy only when the count says it is shared), or the write would reach
+  // every other handle. Only a place rooted at an owned local: a &string borrow or a
+  // global stays as is, since swapping its buffer would write through a shared borrow
+  // (and race a reader on another thread); the bytes C gets there are read-only. An
+  // index step is skipped too, since evaluating the place twice would repeat its side
+  // effects. Owned temporaries are handled at the call (their slot is made unique).
+  private emitCStrUniquePlace(expr: HIRExpr, lines: string[]): void {
+    if (expr.type.tag !== "string" || !this.isOwnedLocalPlace(expr)) return;
+    const [al, addr] = this.genLValueForArg(expr);
+    lines.push(...al);
+    this.emitStrUnique(lines, addr);
+  }
+
+  private isOwnedLocalPlace(expr: HIRExpr): boolean {
+    if (expr.kind === "Ident") {
+      const local = this.locals.get(expr.name);
+      return !!local && !local.isRef;
+    }
+    if (expr.kind === "FieldAccess") {
+      return expr.object.type.tag === "struct" && this.isOwnedLocalPlace(expr.object);
+    }
+    return false;
   }
 
   public emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string } {

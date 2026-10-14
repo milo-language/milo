@@ -1,0 +1,14 @@
+// A literal held in a string has no heap buffer (cap 0): handing it to C copies it into a
+// NUL-terminated block, so the literal and every handle made from it stay intact.
+extern fn bzero(p: *u8, n: i64)
+
+fn main() {
+    let a = "hello world"
+    let b = a.clone()
+    bzero(a, 5)
+    print(a)
+    print(b)
+}
+
+// @expect: hello world
+// @expect: hello world

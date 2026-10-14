@@ -14,7 +14,7 @@
   "src/codegen-dwarf.ts": 404,
   "src/codegen-map.ts": 1415,
   "src/codegen-vec.ts": 286,
-  "src/codegen.ts": 15291,
+  "src/codegen.ts": 15325,
   "src/contract-tests.ts": 706,
   "src/csig.ts": 59,
   "src/derive-json.ts": 436,
