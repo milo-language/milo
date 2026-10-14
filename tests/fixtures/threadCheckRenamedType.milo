@@ -1,0 +1,18 @@
+// @expect: 5 7 1
+// A generic instance over a module-renamed type (runOnce over Vec<threadA$Rec>) has two
+// '$' in its name. The thread check took that for a trait impl method, lost track of
+// which closure the blocking wrapper runs, and reported every mutable global the main
+// thread touches as a race on a real OS thread.
+from "./lib/collide/threadA" import { sumOffThread }
+from "./lib/collide/threadB" import { recY }
+
+var hits: i64 = 0
+
+fn main() {
+    let bump = (): i64 => {
+        hits = hits + 1
+        return hits
+    }
+    let s = sumOffThread()
+    print($"{s} {recY()} {bump()}")
+}

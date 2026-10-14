@@ -277,6 +277,9 @@ export interface Function {
   // instance is called `foo_i64`, which nobody typed — diagnostics about the generic's
   // body should say `foo`.
   sourceName?: string;
+  // Set by the checker on trait impl methods, which operators, for-in and Drop call with no
+  // visible call site. Not inferable from the name: a module-renamed type adds `$`s too.
+  implTrait?: string;
   // The C symbol an `extern fn` binds, when `name` is not it: a module whose extern
   // declares a different signature than another module's extern of the same C function is
   // renamed per module (src/resolver.ts), and every such declaration links to this symbol.

@@ -1,7 +1,7 @@
 {
   "src/abi.ts": 171,
   "src/api-search.ts": 472,
-  "src/ast.ts": 454,
+  "src/ast.ts": 457,
   "src/attributes.ts": 261,
   "src/builtin-members.ts": 240,
   "src/c-guards.ts": 273,
@@ -9,7 +9,7 @@
   "src/cgu.ts": 605,
   "src/checker-derive.ts": 584,
   "src/checker-program-passes.ts": 2214,
-  "src/checker.ts": 14961,
+  "src/checker.ts": 14964,
   "src/cli-help.ts": 287,
   "src/codegen-dwarf.ts": 404,
   "src/codegen-map.ts": 1415,

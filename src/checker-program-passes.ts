@@ -1583,7 +1583,7 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
   const ifaceMethods = new Set([...host.interfaceMethodCalls.values()].map(i => i.methodName));
   const opaque = (name: string, f: Function) =>
     fnValues.has(name) || !!f.attributes?.some(a => a.name === "externalLinkage")
-    || (name.match(/\$/g)?.length ?? 0) >= 2 || [...ifaceMethods].some(m => name.endsWith(`$${m}`));
+    || f.implTrait !== undefined || [...ifaceMethods].some(m => name.endsWith(`$${m}`));
   for (const [name, f] of fns) {
     const sig = host.functions.get(name);
     paramValues.set(name, f.params.map((_, j) => !opaque(name, f) && isFnType(sig?.params[j]?.type) ? new Set<string>() : null));
@@ -1636,7 +1636,7 @@ function implicitCalls(host: ProgramPassHost, program: Program, view: ProgramVie
       for (const k of Object.keys(n)) if (k !== "span") scan(n[k], scope);
     };
     for (const [name, f] of fns) {
-      if (!host.isGenericInstance(f) || (name.match(/\$/g)?.length ?? 0) >= 2
+      if (!host.isGenericInstance(f) || f.implTrait !== undefined
           || f.attributes?.some(a => a.name === "externalLinkage")) add(name);
     }
     for (const g of program.globals) scan(g.value, { shadow: new Set() });

@@ -1,0 +1,6 @@
+struct Rec { y: i64 }
+
+pub fn recY(): i64 {
+    let r = Rec { y: 7 }
+    return r.y
+}

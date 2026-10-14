@@ -5737,6 +5737,7 @@ export class TypeChecker {
               decl: {
                 ...m,
                 name: `${typeName}$${impl.traitName}$${m.name}`,
+                implTrait: impl.traitName,
                 params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
                 retType: this.substituteSelfInMiloType(m.retType, typeName),
               },
@@ -5749,6 +5750,7 @@ export class TypeChecker {
         const concreteFn: Function = {
           ...m,
           name: mangled,
+          implTrait: impl.traitName,
           params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
           retType: this.substituteSelfInMiloType(m.retType, typeName),
         };
@@ -5771,6 +5773,7 @@ export class TypeChecker {
           const concreteFn: Function = {
             kind: "Function",
             name: mangled,
+            implTrait: impl.traitName,
             typeParams: [],
             params: traitMethod.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
             retType: this.substituteSelfInMiloType(traitMethod.retType, typeName),

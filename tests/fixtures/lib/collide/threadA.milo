@@ -1,0 +1,13 @@
+from "std/runtime" import { Promise }
+
+// Same name as threadB's private Rec, so the resolver renames both per module.
+struct Rec { x: i64 }
+
+pub fn sumOffThread(): i64 {
+    let p = Promise<Vec<Rec>>.blocking(move(): Vec<Rec> => {
+        return [Rec { x: 2 }, Rec { x: 3 }]
+    })
+    var total: i64 = 0
+    for r in p.await()! { total = total + r.x }
+    return total
+}
