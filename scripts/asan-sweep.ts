@@ -12,6 +12,7 @@
 //   bun scripts/asan-sweep.ts --all           # both corpora
 //   bun scripts/asan-sweep.ts --filter vec    # only entries whose name contains "vec"
 //   bun scripts/asan-sweep.ts --verbose       # name every entry as it runs
+//   MILO_SANITIZE=thread bun scripts/asan-sweep.ts --filter promise   # ThreadSanitizer instead
 //
 // Leak detection is OFF here on purpose: LeakSanitizer does not exist on darwin/arm64, and
 // leaks are already ratcheted by scripts/leak-check.ts. This is for the errors ASan finds
@@ -112,7 +113,8 @@ try {
       out = (e.stdout ?? "") + (e.stderr ?? "");
     }
     ran++;
-    const m = /ERROR: AddressSanitizer: ([^\n]*)/.exec(out);
+    // MILO_SANITIZE=thread makes `--sanitize` ThreadSanitizer (src/codegen.ts sanitizerKind).
+    const m = /(?:ERROR: AddressSanitizer|WARNING: ThreadSanitizer): ([^\n]*)/.exec(out);
     if (m) errors.push({ name, detail: m[1]!.slice(0, 120) });
     else if (VERBOSE) console.log(`ok   ${name}`);
   }
@@ -126,7 +128,7 @@ for (const e of errors) {
 }
 if (unbuildable.length) console.log(`\ncould not build under -fsanitize=address: ${unbuildable.join(", ")}`);
 const corpus = wantExamples && wantFixtures ? "fixtures + examples" : wantExamples ? "examples" : "fixtures";
-console.log(`\n${ran} ${corpus} ran under AddressSanitizer, ${buildFailed} could not build, ${errors.length} reported an error`);
+console.log(`\n${ran} ${corpus} ran under ${process.env.MILO_SANITIZE === "thread" ? "ThreadSanitizer" : "AddressSanitizer"}, ${buildFailed} could not build, ${errors.length} reported an error`);
 
 // A sweep that builds nothing reports zero errors and exits 0 forever. Say so instead.
 // Only on a FULL sweep: `--filter vec` is meant to run a handful.

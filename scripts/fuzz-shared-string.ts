@@ -70,6 +70,8 @@ function genCase(seed: number): { src: string; expect: string[] } {
     return { code: `"${base}".repeat(${k})`, val: base.repeat(k) };
   };
 
+  let byteIx = 0;
+  const nextByte = () => ALPHABET.charCodeAt(byteIx++ % ALPHABET.length);
   const h: string[] = [];
   const body: string[] = [];
   const expect: string[] = [];
@@ -103,7 +105,7 @@ function genCase(seed: number): { src: string; expect: string[] } {
     const s = int(H);
     const kind = pick([
       "clone", "param", "field", "payload", "index", "elemField", "global",
-      "push", "pushStr", "pushSelf", "plusEq", "concat", "pushInt", "fmt", "truncate", "clear", "setByte",
+      "push", "push", "pushRun", "shareThenPush", "pushStr", "pushSelf", "plusEq", "concat", "pushInt", "fmt", "truncate", "clear", "setByte",
       "vecWrite", "vecSet", "rowWrite", "fresh", "print",
     ]);
     switch (kind) {
@@ -114,7 +116,24 @@ function genCase(seed: number): { src: string; expect: string[] } {
       case "index": { const i = int(3); body.push(`    h${d} = v[${i}]`); h[d] = v[i]!; break; }
       case "elemField": { const r = int(2); body.push(`    h${d} = rows[${r}].name`); h[d] = rows[r]!; break; }
       case "global": body.push(`    h${d} = G`); h[d] = "global-text"; break;
-      case "push": { const c = ALPHABET.charCodeAt(int(ALPHABET.length)); body.push(`    h${d}.push(${c})`); h[d] += String.fromCharCode(c); break; }
+      case "push": { const c = nextByte(); body.push(`    h${d}.push(${c})`); h[d] += String.fromCharCode(c); break; }
+      // Several bytes in a row, so a buffer with spare capacity (push's inline fast path)
+      // is what the next share sees.
+      case "pushRun": {
+        for (let k = 0, n = 1 + int(20); k < n; k++) { const c = nextByte(); body.push(`    h${d}.push(${c})`); h[d] += String.fromCharCode(c); }
+        break;
+      }
+      // Two handles to one buffer that has room, then both push: an in-place write to a
+      // shared buffer shows up as one handle's byte in the other.
+      case "shareThenPush": {
+        if (d === s) { op--; continue; }
+        body.push(`    h${d}.pushStr("grow-room-grow-room")`);
+        h[d] += "grow-room-grow-room";
+        body.push(`    h${s} = h${d}.clone()`);
+        h[s] = h[d]!;
+        for (const t of [d, s]) { const c = nextByte(); body.push(`    h${t}.push(${c})`); h[t] += String.fromCharCode(c); }
+        break;
+      }
       case "pushStr": body.push(`    h${d}.pushStr(h${s})`); h[d] = h[d]! + h[s]!; break;
       case "pushSelf": body.push(`    h${d}.pushStr(h${d})`); h[d] = h[d]! + h[d]!; break;
       case "plusEq": { const t = randStr(4); body.push(`    h${d} += "${t}"`); h[d] += t; break; }
