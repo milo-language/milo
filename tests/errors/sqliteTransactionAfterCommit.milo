@@ -1,0 +1,12 @@
+// @error: use of moved variable 'tx'
+// A Transaction is consumed by commit (and rollback), so a second use is a compile error.
+from "std/sqlite" import {
+    dbOpen, dbExec, dbBegin
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let tx = dbBegin(db)!
+    tx.commit()!
+    tx.commit()!
+}

@@ -154,6 +154,87 @@ pub fn dbExec(db: &Database, sql: string): Result<i32> {
     }
 }
 
+// An open transaction. Rolls back when it goes out of scope; `commit()` is the only way
+// to keep the writes. Move-only (the raw handle makes it move-tracked), and `commit` /
+// `rollback` consume it, so it cannot be used afterwards.
+//
+//   let tx = dbBegin(db)?
+//   dbExec(db, "INSERT ...")?     // an early return via `?` drops tx -> ROLLBACK
+//   tx.commit()?
+pub struct Transaction {
+    _handle: *u8,
+    // A never-stepped prepared statement whose only job is to keep the connection alive:
+    // sqlite3_close_v2 defers the free until the last statement is finalized, so a
+    // `dbClose(db)` while the guard lives cannot leave the Drop below running on a freed
+    // sqlite3*.
+    _pin: Statement,
+    done: bool,
+}
+
+impl Drop for Transaction {
+    fn drop(self: &mut Self): void {
+        // Rollback is the one implicit effect (it is what makes `?` inside a transaction
+        // safe); commit is always explicit. Its error is ignored: nothing can act on it.
+        if !self.done {
+            self.done = true
+            unsafe { sqlite3_exec(self._handle, "ROLLBACK", 0 as *u8, 0 as *u8, 0 as *u8) }
+        }
+    }
+}
+
+impl Transaction {
+    // COMMIT, consuming the guard. On Err the transaction is still open in sqlite
+    // (e.g. SQLITE_BUSY), so the guard rolls it back as it drops at the end of this fn.
+    fn commit(self: Self): Result<i32> {
+        var t = self
+        unsafe {
+            let rc = sqlite3_exec(t._handle, "COMMIT", 0 as *u8, 0 as *u8, 0 as *u8)
+            if rc != 0 {
+                return Result.Err(_cstrToString(sqlite3_errmsg(t._handle)))
+            }
+        }
+        t.done = true
+        return Result.Ok(0)
+    }
+
+    // ROLLBACK now, consuming the guard.
+    fn rollback(self: Self): Result<i32> {
+        var t = self
+        t.done = true
+        unsafe {
+            let rc = sqlite3_exec(t._handle, "ROLLBACK", 0 as *u8, 0 as *u8, 0 as *u8)
+            if rc != 0 {
+                return Result.Err(_cstrToString(sqlite3_errmsg(t._handle)))
+            }
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn _begin(db: &Database, sql: string): Result<Transaction> {
+    dbExec(db, sql)?
+    let pin = match dbQuery(db, "ROLLBACK") {
+        Ok(p) => p
+        Err(e) => {
+            // The BEGIN succeeded but the guard cannot be built: undo it by hand.
+            let _ = dbExec(db, "ROLLBACK")
+            return Result.Err(e)
+        }
+    }
+    return Result.Ok(Transaction { _handle: db._handle, _pin: pin, done: false })
+}
+
+// BEGIN a deferred transaction. Hold the result in a `let`; it rolls back on drop.
+pub fn dbBegin(db: &Database): Result<Transaction> {
+    return _begin(db, "BEGIN")
+}
+
+// BEGIN IMMEDIATE: takes the write lock up front, so a write transaction under WAL
+// contention fails here with SQLITE_BUSY rather than at its first write.
+pub fn dbBeginImmediate(db: &Database): Result<Transaction> {
+    return _begin(db, "BEGIN IMMEDIATE")
+}
+
 // Prepare a query for row-by-row iteration with `dbStep`.
 pub fn dbQuery(db: &Database, sql: string): Result<Statement> {
     unsafe {

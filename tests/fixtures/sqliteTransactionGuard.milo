@@ -1,0 +1,81 @@
+// @skip-os: win32
+// Transaction rolls back on drop on every exit path; commit keeps the row.
+from "std/sqlite" import {
+    dbOpen, dbExec, dbQuery, dbStep, dbColumnInt, dbBegin, dbBeginImmediate, dbClose, Database
+}
+
+fn count(db: &Database): i32 {
+    let st = dbQuery(db, "select count(*) from t")!
+    dbStep(st)
+    return dbColumnInt(st, 0)
+}
+
+fn earlyReturn(db: &Database): void {
+    let tx = dbBegin(db)!
+    dbExec(db, "insert into t values (1)")!
+    if count(db) == 1 {
+        return
+    }
+    tx.commit()!
+}
+
+fn failing(db: &Database): Result<i32> {
+    let tx = dbBegin(db)!
+    dbExec(db, "insert into t values (2)")?
+    dbExec(db, "insert into nosuchtable values (3)")?
+    tx.commit()?
+    return Result.Ok(0)
+}
+
+fn scopeEnd(db: &Database): void {
+    let _tx = dbBegin(db)!
+    dbExec(db, "insert into t values (3)")!
+}
+
+fn breakOut(db: &Database): void {
+    for i in 0..3 {
+        let tx = dbBegin(db)!
+        dbExec(db, "insert into t values (4)")!
+        if i == 1 {
+            break
+        }
+        tx.rollback()!
+    }
+}
+
+fn committed(db: &Database): void {
+    let tx = dbBeginImmediate(db)!
+    dbExec(db, "insert into t values (5)")!
+    tx.commit()!
+}
+
+// The connection is closed while the guard lives; its Drop must still be sound.
+fn closedFirst(): void {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "create table t(x)")!
+    let _tx = dbBegin(db)!
+    dbClose(db)
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    dbExec(db, "create table t(x integer)")!
+    earlyReturn(db)
+    print($"early return: {count(db)}")
+    print($"question mark: {failing(db).isOk()} {count(db)}")
+    scopeEnd(db)
+    print($"scope end: {count(db)}")
+    breakOut(db)
+    print($"break: {count(db)}")
+    committed(db)
+    print($"commit: {count(db)}")
+    closedFirst()
+    print("closed first ok")
+}
+
+// @expect: early return: 0
+// @expect: question mark: false 0
+// @expect: scope end: 0
+// @expect: break: 0
+// @expect: commit: 1
+// @expect: closed first ok

@@ -5715,6 +5715,7 @@ dbFinalize(stmt)
 | `dbOpen(path)` | Open/create database |
 | `dbClose(db)` | Close database |
 | `dbExec(db, sql)` | Execute non-query SQL |
+| `dbBegin(db)` / `dbBeginImmediate(db)` | Start a transaction; returns a `Transaction` guard that rolls back when dropped. `tx.commit()` / `tx.rollback()` consume it |
 | `dbQuery(db, sql)` | Prepare query |
 | `dbStep(stmt)` | Next row (true if available) |
 | `dbColumnInt(stmt, col)` | Get i32 column |
