@@ -897,7 +897,9 @@ increment, not an allocation: a `&string` parameter or pattern binding, a field 
 `&T`, a field of a container element, a global, and `v[i]` of a `Vec<string>`. `.clone()`
 is the same increment. The first in-place write to a buffer that another handle shares
 copies it first (copy on write), so two handles never see each other's writes. A plain
-move of an owned string touches no count. The count is atomic, so strings that reach
+move of an owned string touches no count, and an owned string read again after it was
+passed or stored is shared rather than an error (see
+[Ownership and Move Semantics](#ownership-and-move-semantics)). The count is atomic, so strings that reach
 several threads (an immutable global, `std/seal`'s `Shared`, a channel) stay sound.
 Only `string` works this way: a `Vec` or a struct holding strings still needs `.clone()`
 to be copied out of a borrow.
@@ -2447,14 +2449,34 @@ Slices (`v[a..b]`), `Heap<T>`, and `std/arena` together cover the cases Rust use
 Values have a single owner. Assignment transfers ownership.
 
 ```milo
-let a = "hello"
+let a: Vec<i64> = [1, 2]
 let b = a          // a is moved into b
 // a is now invalid — using it here is a compile error
 print(b)         // fine
 ```
 
-This applies to structs, enums, strings, Vec, HashMap, and Heap.
+This applies to structs, enums, Vec, HashMap, and Heap.
 Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved.
+
+**Strings are values, copy-on-write; `.clone()` is never needed on a string.** A `string`
+passed, stored or bound again while the code still reads it afterwards is shared (one
+atomic count increment, see [Strings](#strings)); the first write to a shared buffer copies
+it. The last use of a string still moves, so code that never reused one pays nothing. This
+holds for a string local, a string field of an owned struct, and a string captured by a
+`move` closure; `forget(s)` still ends `s`. `.clone()` on a string stays legal and is the
+same share.
+
+```milo
+struct Row { name: string }
+
+fn main() {
+    var s = "ada".repeat(2)
+    let r = Row { name: s }   // shared: s is read again below
+    s.push(33)                // copies first; r.name is untouched
+    print(s)                  // adaada!
+    print(r.name)             // adaada
+}
+```
 
 Arguments, struct and array literal elements, and the pieces of an interpolated string
 are evaluated left to right, and a by-value argument moves at the point it is evaluated,
@@ -2462,20 +2484,21 @@ not when the call is finally made. So a later argument cannot read what an earli
 moved (Rust's rule): read it first, into a local or an earlier argument.
 
 ```milo error
+fn keep(v: Vec<i64>, n: i64): i64 { return n + v.len }
+
 fn main() {
-    var m: HashMap<string, f64> = HashMap.new()
-    let k = "a"
-    m.insert(k, (m.get(k) ?? 0.0) + 1.0)   // error: use of moved variable 'k'
+    let v: Vec<i64> = [1, 2, 3]
+    print(keep(v, v.len))   // error: use of moved variable 'v'
 }
 ```
 
 ```milo
+fn keep(v: Vec<i64>, n: i64): i64 { return n + v.len }
+
 fn main() {
-    var m: HashMap<string, f64> = HashMap.new()
-    let k = "a"
-    let old = m.get(k) ?? 0.0               // read before the move
-    m.insert(k, old + 1.0)
-    print(m.get("a") ?? 0.0)
+    let v: Vec<i64> = [1, 2, 3]
+    let n = v.len           // read before the move
+    print(keep(v, n))
 }
 ```
 
@@ -2488,20 +2511,21 @@ a raw pointer (`enum Slot { Some(*u8), Empty }` is move-tracked; `@copy` on the 
 opts out). See the `@copy` section below.
 
 Ownership is tracked per **place**, not per variable, so a field can be moved out on
-its own and the rest of the struct stays usable:
+its own and the rest of the struct stays usable (a `string` field is the exception to
+everything in this part: it is shared out when it is read again, and the struct stays whole):
 
 ```milo
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
-    var p = Pair { a: "one", b: "two" }
+    var p = Pair { a: [1], b: [2] }
     let x = p.a        // p.a is moved out; p.b is untouched
     print(x)
     print(p.b)         // fine — a different place
-    p.a = "three"      // assignment puts a value back
+    p.a = [3]          // assignment puts a value back
     print(p.a)         // fine again
 }
 ```
@@ -2510,12 +2534,12 @@ Using the field after it was moved is an error, the same as for a whole variable
 
 ```milo error
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
-    let p = Pair { a: "one", b: "two" }
+    let p = Pair { a: [1], b: [2] }
     let x = p.a
     print(x)
     print(p.a)         // error: use of moved value 'p.a'
@@ -2527,16 +2551,16 @@ error too — it would hand the next owner an empty field dressed up as data:
 
 ```milo error
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn take(p: Pair): i64 {
-    return p.b.len()
+    return p.b.len
 }
 
 fn main() {
-    let p = Pair { a: "one", b: "two" }
+    let p = Pair { a: [1], b: [2] }
     let x = p.a
     print(x)
     print(take(p))     // error: 'p.a' was already moved out of it
@@ -2548,12 +2572,12 @@ would show the emptied field as if it were data:
 
 ```milo error
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
-    let p = Pair { a: "one", b: "two" }
+    let p = Pair { a: [1], b: [2] }
     let x = p.a
     print(x)
     print(p)           // error: 'p' is incomplete: 'p.a' was moved out of it
@@ -2566,18 +2590,18 @@ empty one:
 
 ```milo error
 struct Res {
-    name: string,
+    ids: Vec<i64>,
 }
 
 impl Drop for Res {
     fn drop(self: &mut Self) {
-        print("dropping " + self.name)
+        print(self.ids.len)
     }
 }
 
 fn main() {
-    let r = Res { name: "alpha" }
-    let stolen = r.name    // error: cannot move 'r.name' out of 'Res', which implements Drop
+    let r = Res { ids: [1, 2] }
+    let stolen = r.ids     // error: cannot move 'r.ids' out of 'Res', which implements Drop
     print(stolen)
 }
 ```

@@ -5,16 +5,19 @@
 // Found by scripts/fuzz-ownership.ts.
 // @error: use of moved value 'p.a'
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
     let p = Pair {
-        a: "delta", b: "papa"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let x = p.a
     let y = p.a
     print(x)
     print(y)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

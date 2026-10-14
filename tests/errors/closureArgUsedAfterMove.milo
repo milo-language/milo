@@ -1,11 +1,14 @@
 // @error: use of moved variable 's'
 // Passing the closure on is a use of what it captures by reference: `run` calls it.
 fn run(f: () => void): void { f() }
-fn consume(s: string): void { print(s) }
+fn consume(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var s = "a heap string long enough to be on the heap for sure".clone()
+    var s = Vec<i64>.filled(3, 7)
     let f = (): void => { print(s) }
     consume(s)
     run(f)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

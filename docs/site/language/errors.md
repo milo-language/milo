@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 553 distinct messages across 714 programs the compiler must reject.
+Every error message the test suite pins: 553 distinct messages across 713 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -2150,11 +2150,14 @@ fn main() {
 An interpolated string reads its pieces by reference once all of them are evaluated, so a later piece that moves an earlier one's value left it formatting an emptied string.
 
 ```milo skip
-fn consume(a: string): i64 { return a.len }
+fn consume(a: Vec<i64>): i64 { return a.len }
 fn main() {
-    let k = "abc".clone()
+    let k = Vec<i64>.filled(3, 7)
     print($"{k} {consume(k)}")
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/formatPieceMovedLater.milo](https://github.com/milo-language/milo/blob/main/tests/errors/formatPieceMovedLater.milo)</sub>
@@ -6005,14 +6008,17 @@ struct Text { s: string }
 Destructuring takes fields out by value, so it follows the move rules: a struct that implements Drop cannot be taken apart, by pattern any more than by hand.
 
 ```milo skip
-struct R { fd: i32, name: string }
+struct R { fd: i32, name: Vec<i64> }
 impl Drop for R { fn drop(self: &mut Self): void { print("close") } }
-fn f(): R { return R { fd: 1, name: "x" } }
+fn f(): R { return R { fd: 1, name: Vec<i64>.filled(3, 7) } }
 fn main(): i32 {
     let { name } = f()
     print(name)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/destructureDropStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/destructureDropStruct.milo)</sub>
@@ -6145,12 +6151,12 @@ from "std/runtime" import {
     Promise
 }
 
-fn measure(s: string): i64 {
+fn measure(s: Vec<i64>): i64 {
     return s.len
 }
 
 pub fn main(): i32 {
-    let needle: string = "milo"
+    let needle: Vec<i64> = Vec<i64>.filled(3, 7)
     var ps: Vec<Promise<i64>> = Vec.new()
     var i: i64 = 0
     while i < 3 {
@@ -6165,6 +6171,9 @@ pub fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureMoveInLoopViaCall.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureMoveInLoopViaCall.milo)</sub>
@@ -6196,11 +6205,11 @@ struct Text { s: string }
 ## `cannot move 's' out of a loop` {#cannot-move-s-out-of-a-loop}
 
 ```milo skip
-fn consume(s: string): void {
+fn consume(s: Vec<i64>): void {
 }
 
 fn main(): i32 {
-    let s: string = "hello"
+    let s: Vec<i64> = Vec<i64>.filled(3, 7)
     var i: i32 = 0
     while i < 3 {
         consume(s)
@@ -6208,6 +6217,9 @@ fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveInLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveInLoop.milo)</sub>
@@ -6215,12 +6227,12 @@ fn main(): i32 {
 A path that ends in `continue` starts the next iteration, so a move on it runs again: the second `take(s)` used to receive an emptied string.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     for i in 0..3 {
         if i < 2 {
             take(s)
@@ -6229,6 +6241,9 @@ pub fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveOnContinueLoopsAgain.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnContinueLoopsAgain.milo)</sub>
@@ -10138,23 +10153,26 @@ fn main() {
 
 ## `is incomplete` {#is-incomplete}
 
-A struct with a field moved out is not the whole value any more, so using it AS a whole shows the emptied field as if it were data — 'Pair { a: "", b: "two" }'. Reading a different field stays fine; this is only the whole-value use. Rust: E0382, borrow of partially moved value.
+A struct with a field moved out is not the whole value any more, so using it AS a whole shows the emptied field as if it were data — 'Pair { a: Vec\<i64\>.filled(3, 7), b: Vec\<i64\>.filled(3, 7) }'. Reading a different field stays fine; this is only the whole-value use. Rust: E0382, borrow of partially moved value.
 
 ```milo skip
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
     let p = Pair {
-        a: "one", b: "two"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let x = p.a
     print(x)
     print(p.b)
     print(p)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/readPartiallyMovedStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/readPartiallyMovedStruct.milo)</sub>
@@ -10675,17 +10693,20 @@ fn main(): i32 {
 A closure that moves a capture out owns it, `move` written or not: by reference, the move emptied the caller's variable behind its back, the caller then freed it again (an ASan double free), and a second call read the emptied slot.
 
 ```milo skip
-fn take(s: string): i64 {
+fn take(s: Vec<i64>): i64 {
     return s.len
 }
 
 pub fn main(): i32 {
-    let s = "a string long enough to live on the heap".clone()
+    let s = Vec<i64>.filled(3, 7)
     let f = (): i64 => take(s)
     print(f().toString())
     print(f().toString())
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureConsumesCaptureCalledTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureConsumesCaptureCalledTwice.milo)</sub>
@@ -10693,16 +10714,19 @@ pub fn main(): i32 {
 A `move` closure whose body moves a capture out can only run once. Captures live in the environment's own slots, so handing one to a callee by value zeroes the slot it came from. A second call therefore reads an emptied capture. That used to be a double free; once captures aliased their slots it became a silent wrong answer (this program printed 52 then 0), which is worse to debug than either.
 
 ```milo skip
-fn consume(s: string): i64 {
-    return s.len()
+fn consume(s: Vec<i64>): i64 {
+    return s.len
 }
 
 fn main(): void {
-    let s = "hello world, long enough to force a heap allocation" + "!"
+    let s = Vec<i64>.filled(3, 7)
     let f = move () => consume(s)
     print(f())
     print(f())
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveClosureCalledTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveClosureCalledTwice.milo)</sub>
@@ -13039,19 +13063,22 @@ A field is a place: moving out of it a second time has to be caught the same way
 
 ```milo skip
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
     let p = Pair {
-        a: "delta", b: "papa"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let x = p.a
     let y = p.a
     print(x)
     print(y)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveFieldTwice.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldTwice.milo)</sub>
@@ -13061,15 +13088,18 @@ fn main() {
 The closure reads `p.name` through its by-reference capture, and the field was moved out between building the closure and calling it.
 
 ```milo skip
-struct P { name: string, age: i64 }
-fn eat(s: string): void { print(s) }
+struct P { name: Vec<i64>, age: i64 }
+fn eat(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var p = P { name: "a heap string long enough to be on the heap for sure".clone(), age: 3 }
+    var p = P { name: Vec<i64>.filled(3, 7), age: 3 }
     let f = () => { print(p.name) }
     eat(p.name)
     f()
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureReadsMovedField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureReadsMovedField.milo)</sub>
@@ -13203,21 +13233,6 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/sharedMutAcrossThreads.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sharedMutAcrossThreads.milo)</sub>
 
-```milo skip
-fn take(s: string): i32 {
-    return 0
-}
-
-fn main(): i32 {
-    let s = "hello"
-    take(s)
-    take(s)
-    return 0
-}
-```
-
-<sub>[tests/errors/stringUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringUseAfterMove.milo)</sub>
-
 ## `use of moved variable 'a'` {#use-of-moved-variable-a}
 
 freeze() consumes the arena. Reaching for the old binding afterwards is the compile-time half of the guarantee: no path survives through which a slot could be freed after the freeze, so a frozen handle cannot go stale.
@@ -13243,38 +13258,47 @@ A binding consumed on either arm of a fork is unusable afterwards — which arm 
 
 ```milo skip
 fn main() {
-    var a = "aaa" + ""
-    var b = "bbb" + ""
+    var a = Vec<i64>.filled(3, 7)
+    var b = Vec<i64>.filled(3, 7)
     let c = true
     let s = if c { a } else { b }
     print(s)
     print(a)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/useAfterMoveIfExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMoveIfExpr.milo)</sub>
 
 ```milo skip
 fn main(): i32 {
-    let a = "owned string"
+    let a = Vec<i64>.filled(3, 7)
     let b = a
     print(a)
     print(b)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/useAfterMoveLetBinding.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMoveLetBinding.milo)</sub>
 
 ```milo skip
 fn main() {
-    var a = "aaa" + ""
-    var b = "bbb" + ""
+    var a = Vec<i64>.filled(3, 7)
+    var b = Vec<i64>.filled(3, 7)
     let n = 0
     let s = match n { 0 => a, _ => b }
     print(s)
     print(a)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/useAfterMoveMatchExpr.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMoveMatchExpr.milo)</sub>
@@ -13338,11 +13362,11 @@ pub fn main(): i32 {
 The let-else restore covers only the else block. A move inside the else is still a move for the rest of that block: here `take(c)` moves it and the return reads it.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
-fn f(c: string, o: Option<i64>): Option<string> {
+fn f(c: Vec<i64>, o: Option<i64>): Option<Vec<i64>> {
     let Option.Some(_v) = o else {
         take(c)
         return Option.Some(c)
@@ -13351,9 +13375,12 @@ fn f(c: string, o: Option<i64>): Option<string> {
 }
 
 pub fn main(): i32 {
-    let _a = f("x", Option.None)
+    let _a = f(Vec<i64>.filled(1, 1), Option.None)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/letElseMoveStillCounts.milo](https://github.com/milo-language/milo/blob/main/tests/errors/letElseMoveStillCounts.milo)</sub>
@@ -13363,20 +13390,23 @@ pub fn main(): i32 {
 `??` moves its default operand whether or not its result is bound. Recording that only when the result landed in a move position meant `(o ?? d).len` moved `d` with no diagnostic, and the later read of `d` printed an empty string.
 
 ```milo skip
-fn maybe(i: i64): Option<string> {
+fn maybe(i: i64): Option<Vec<i64>> {
     if i > 0 {
-        return Option.Some("s")
+        return Option.Some(Vec<i64>.filled(3, 7))
     }
     return Option.None
 }
 
 fn main() {
-    var d = "default-"
-    d.pushStr("x")
+    var d = Vec<i64>.filled(3, 7)
+    d.push(4)
     let n = (maybe(0) ?? d).len
     print(n.toString())
     print(d)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/coalesceMovesDefault.milo](https://github.com/milo-language/milo/blob/main/tests/errors/coalesceMovesDefault.milo)</sub>
@@ -13430,12 +13460,15 @@ fn main(): void {
 
 ```milo skip
 fn main() {
-    var m: HashMap<i64, string> = HashMap.new()
-    m.insert(1, "one")
-    let dflt: string = "var" + "default"
-    print("D" + m.getOrDefault(9, dflt))
+    var m: HashMap<i64, Vec<i64>> = HashMap.new()
+    m.insert(1, Vec<i64>.filled(1, 1))
+    let dflt: Vec<i64> = Vec<i64>.filled(3, 7)
+    print(m.getOrDefault(9, dflt).len)
     print(dflt)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/getOrDefaultUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOrDefaultUseAfterMove.milo)</sub>
@@ -13526,10 +13559,13 @@ An array literal owns each element as it is built, so a later element cannot rea
 
 ```milo skip
 fn main() {
-    let k = "abc".clone()
+    let k = Vec<i64>.filled(3, 7)
     let a = [k, k.clone()]
     print(a[1])
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/arrayLitElemReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayLitElemReadAfterMove.milo)</sub>
@@ -13537,12 +13573,15 @@ fn main() {
 Arguments are evaluated left to right and a by-value argument moves as it is evaluated, so a later argument that reads the moved binding reads an emptied value.
 
 ```milo skip
-fn take(a: string, n: i64): i64 { return a.len + n }
-fn look(a: &string): i64 { return a.len }
+fn take(a: Vec<i64>, n: i64): i64 { return a.len + n }
+fn look(a: &Vec<i64>): i64 { return a.len }
 fn main() {
-    let k = "abc".clone()
+    let k = Vec<i64>.filled(3, 7)
     print(take(k, look(k)))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/callArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callArgReadAfterMove.milo)</sub>
@@ -13551,10 +13590,13 @@ A call through a closure value moves its by-value arguments in order, like any c
 
 ```milo skip
 fn main() {
-    let f = (a: string, n: i64): i64 => a.len + n
-    let k = "abc".clone()
+    let f = (a: Vec<i64>, n: i64): i64 => a.len + n
+    let k = Vec<i64>.filled(3, 7)
     print(f(k, k.len))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureCallArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCallArgReadAfterMove.milo)</sub>
@@ -13564,9 +13606,12 @@ A generic call infers from every argument before it monomorphizes, but a by-valu
 ```milo skip
 fn keep<T>(a: T, n: i64): i64 { return n }
 fn main() {
-    let k = "abc".clone()
+    let k = Vec<i64>.filled(3, 7)
     print(keep(k, k.len))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/genericArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericArgReadAfterMove.milo)</sub>
@@ -13575,13 +13620,17 @@ fn main() {
 
 ```milo skip
 fn main() {
-    var m: HashMap<string, f64> = HashMap.new()
+    var m: HashMap<Key, f64> = HashMap.new()
     for i in 0..3 {
-        let k = "a"
+        let k = Key { name: "a" }
         m.insert(k, (m.get(k) ?? 0.0) + 1.0)
     }
-    print(m.get("a") ?? -1.0)
+    print(m.get(Key { name: "a" }) ?? -1.0)
 }
+
+// Key stands in for `string`: strings are values now (copy on write, shared by count where
+// the code reads them again), so the rule is held with a key type that still moves.
+struct Key { name: string }
 ```
 
 <sub>[tests/errors/hashmapInsertKeyReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashmapInsertKeyReadAfterMove.milo)</sub>
@@ -13785,11 +13834,14 @@ fn main() {
 
 ```milo skip
 pub fn main(): i32 {
-    let s = "x" + "y"
+    let s = Vec<i64>.filled(3, 7)
     let a = [s; 2]
-    print(a[0] + s)
+    print(a[0].len + s.len)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/arrayRepeatUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/arrayRepeatUseAfterMove.milo)</sub>
@@ -13798,14 +13850,17 @@ Passing the closure on is a use of what it captures by reference: `run` calls it
 
 ```milo skip
 fn run(f: () => void): void { f() }
-fn consume(s: string): void { print(s) }
+fn consume(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var s = "a heap string long enough to be on the heap for sure".clone()
+    var s = Vec<i64>.filled(3, 7)
     let f = (): void => { print(s) }
     consume(s)
     run(f)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureArgUsedAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureArgUsedAfterMove.milo)</sub>
@@ -13813,14 +13868,17 @@ pub fn main(): i32 {
 `f` reads `s` through its by-reference capture, which is the caller's own slot. Moving `s` zeroes that slot, so the call would read an empty string: calling the closure is a use of `s` like any direct read.
 
 ```milo skip
-fn consume(s: string): void { print(s.len.toString()) }
+fn consume(s: Vec<i64>): void { print(s.len.toString()) }
 pub fn main(): i32 {
-    var s = "a heap string long enough to be on the heap for sure".clone()
+    var s = Vec<i64>.filled(3, 7)
     let f = (): i64 => s.len
     consume(s)
     print(f().toString())
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/closureCaptureUsedAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/closureCaptureUsedAfterMove.milo)</sub>
@@ -13850,18 +13908,21 @@ fn main(): i32 {
 A consuming loop's binding is an ordinary owned local: once the body moves it, the rest of that iteration cannot read it.
 
 ```milo skip
-fn mk(): Vec<string> {
-    return ["a".repeat(2), "b".repeat(2)]
+fn mk(): Vec<Vec<i64>> {
+    return [Vec<i64>.filled(2, 1), Vec<i64>.filled(2, 2)]
 }
 
 fn main(): i32 {
-    var out: Vec<string> = []
+    var out: Vec<Vec<i64>> = []
     for s in mk() {
         out.push(s)
         print(s)
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/forInConsumeUseAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/forInConsumeUseAfterMove.milo)</sub>
@@ -13885,7 +13946,7 @@ from "std/runtime" import {
 }
 
 fn main(): i32 {
-    let s = "hello"
+    let s = Vec<i64>.filled(3, 7)
     Task.spawn(move(): void => {
         print(s)
     }
@@ -13893,6 +13954,9 @@ fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveAfterClosureCapture.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveAfterClosureCapture.milo)</sub>
@@ -13900,7 +13964,7 @@ fn main(): i32 {
 Only the path that ends in `exit` is dropped at the join: the other arm moved `s` and does reach the print.
 
 ```milo skip
-fn take(s: string) {
+fn take(s: Vec<i64>) {
     print(s)
 }
 
@@ -13909,7 +13973,7 @@ fn cond(): bool {
 }
 
 pub fn main(): i32 {
-    let s = "x".clone()
+    let s = Vec<i64>.filled(3, 7)
     if cond() {
         take(s)
     } else {
@@ -13919,6 +13983,9 @@ pub fn main(): i32 {
     return 0
 }
 // @error: use of moved variable 's'
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveOnArmBesideExit.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnArmBesideExit.milo)</sub>
@@ -13926,12 +13993,12 @@ pub fn main(): i32 {
 Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose arms both break: each break carries the move to the loop exit.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     var o: Option<i64> = Option.Some(1)
     for i in 0..3 {
         match o {
@@ -13950,6 +14017,9 @@ pub fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveOnBreakInMatchArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakInMatchArm.milo)</sub>
@@ -13957,12 +14027,12 @@ pub fn main(): i32 {
 The if-statement join drops a path that ends in `break` (it does not fall through to the statement after the if), but that path still reaches the code after the loop. Its move used to be lost there, and `print(s)` read an emptied string.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     var n = 0
     while n < 3 {
         n = n + 1
@@ -13974,6 +14044,9 @@ pub fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveOnBreakUsedAfterLoop.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveOnBreakUsedAfterLoop.milo)</sub>
@@ -13981,15 +14054,15 @@ pub fn main(): i32 {
 The loop is left from its condition too, which can be before the body ever ran: a re-assignment inside the body does not make `s` valid after the loop. The exit state used to be the end of the body alone, so this read an emptied string when n is 0.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 fn run(n: i64): void {
-    var s = "hello".clone()
+    var s = Vec<i64>.filled(3, 7)
     take(s)
     for _i in 0..n {
-        s = "again".clone()
+        s = Vec<i64>.filled(3, 7)
     }
     print(s)
 }
@@ -13998,20 +14071,26 @@ pub fn main(): i32 {
     run(0)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveReassignedOnlyInLoopBody.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveReassignedOnlyInLoopBody.milo)</sub>
 
 ```milo skip
-fn consume(s: string): void {
+fn consume(s: Vec<i64>): void {
 }
 
 fn main(): i32 {
-    let s: string = "hello"
+    let s: Vec<i64> = Vec<i64>.filled(3, 7)
     consume(s)
     consume(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/useAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/useAfterMove.milo)</sub>
@@ -14019,12 +14098,12 @@ fn main(): i32 {
 `while let` desugars to `while true { if let ... else { break } }`, so the body's own `break` is the only way the move reaches the code after the loop.
 
 ```milo skip
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     var v: Vec<i64> = Vec.new()
     v.push(1)
     while let Option.Some(_x) = v.pop() {
@@ -14034,6 +14113,9 @@ pub fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/whileLetBreakMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/whileLetBreakMove.milo)</sub>
@@ -14313,22 +14395,25 @@ Once a field has left, the struct is no longer the whole value. Passing it on an
 
 ```milo skip
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn take(p: Pair): i64 {
-    return p.b.len()
+    return p.b.len
 }
 
 fn main() {
     let p = Pair {
-        a: "delta", b: "papa"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let stolen = p.a
     print(stolen)
     print(take(p))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/movePartiallyMovedStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/movePartiallyMovedStruct.milo)</sub>
@@ -14355,22 +14440,25 @@ Rust's E0509. A Drop impl takes '&mut self' and is written against every field b
 
 ```milo skip
 struct Res {
-    name: string,
+    name: Vec<i64>,
 }
 
 impl Drop for Res {
     fn drop(self: &mut Self) {
-        print("dropping " + self.name)
+        print(self.name.len)
     }
 }
 
 fn main() {
     let r = Res {
-        name: "alpha"
+        name: Vec<i64>.filled(3, 7)
     }
     let stolen = r.name
     print(stolen)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
 ```
 
 <sub>[tests/errors/moveFieldOutOfDropType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/moveFieldOutOfDropType.milo)</sub>

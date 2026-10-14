@@ -1,11 +1,11 @@
 // @error: use of moved variable 'c'
 // The let-else restore covers only the else block. A move inside the else is still a
 // move for the rest of that block: here `take(c)` moves it and the return reads it.
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
-fn f(c: string, o: Option<i64>): Option<string> {
+fn f(c: Vec<i64>, o: Option<i64>): Option<Vec<i64>> {
     let Option.Some(_v) = o else {
         take(c)
         return Option.Some(c)
@@ -14,6 +14,9 @@ fn f(c: string, o: Option<i64>): Option<string> {
 }
 
 pub fn main(): i32 {
-    let _a = f("x", Option.None)
+    let _a = f(Vec<i64>.filled(1, 1), Option.None)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

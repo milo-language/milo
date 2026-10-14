@@ -1,6 +1,6 @@
 // Only the path that ends in `exit` is dropped at the join: the other arm moved `s` and
 // does reach the print.
-fn take(s: string) {
+fn take(s: Vec<i64>) {
     print(s)
 }
 
@@ -9,7 +9,7 @@ fn cond(): bool {
 }
 
 pub fn main(): i32 {
-    let s = "x".clone()
+    let s = Vec<i64>.filled(3, 7)
     if cond() {
         take(s)
     } else {
@@ -19,3 +19,6 @@ pub fn main(): i32 {
     return 0
 }
 // @error: use of moved variable 's'
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

@@ -3,10 +3,14 @@
 // `m.get(k)` runs. Accepted, the lookup read an emptied key, always missed, and the
 // counter stayed at 1 with no diagnostic. Clone the key, or read the old value first.
 fn main() {
-    var m: HashMap<string, f64> = HashMap.new()
+    var m: HashMap<Key, f64> = HashMap.new()
     for i in 0..3 {
-        let k = "a"
+        let k = Key { name: "a" }
         m.insert(k, (m.get(k) ?? 0.0) + 1.0)
     }
-    print(m.get("a") ?? -1.0)
+    print(m.get(Key { name: "a" }) ?? -1.0)
 }
+
+// Key stands in for `string`: strings are values now (copy on write, shared by count where
+// the code reads them again), so the rule is held with a key type that still moves.
+struct Key { name: string }

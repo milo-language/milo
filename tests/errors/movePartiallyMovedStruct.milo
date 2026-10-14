@@ -3,19 +3,22 @@
 // silent-empty-string result as re-moving the field, one level up.
 // @error: was already moved out of it
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn take(p: Pair): i64 {
-    return p.b.len()
+    return p.b.len
 }
 
 fn main() {
     let p = Pair {
-        a: "delta", b: "papa"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let stolen = p.a
     print(stolen)
     print(take(p))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

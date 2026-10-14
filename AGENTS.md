@@ -88,20 +88,20 @@ has no home.
 ### Language Design
 
 - `let` = immutable (SSA register), `var` = mutable (alloca)
-- Move semantics: single owner, use-after-move = compile error
+- Move semantics: single owner, use-after-move = compile error. Except `string`: strings are values, copy-on-write; `.clone()` is never needed on a string (a reused string is shared by count, its last use moves; checker `stringMoveSites`)
 - Second-class references: `&T`/`&mut T` only in function params, never stored/returned
 - **Shared borrows are implicit — there is no `&x` expression.** A `&T` param is fed the value *bare* at the call site (`foo(x)`, not `foo(&x)`); the compiler auto-borrows. `&x` as an expression is a hard error (`checker.ts` UnaryOp `&`). A raw pointer comes from `v.ptr()` / `x.addrOf()` (unsafe), never `&`.
 - **A `&mut T` argument is spelled `foo(&mut x)`** (non-receiver arguments only; `v.push(1)` stays implicit). The marker is stripped by the checker before the argument is checked (`takeExplicitMutArgs`), so borrow rules and codegen never see it. The bare form is the hard error `implicit-mut-borrow` (no flag silences it); `bun scripts/explicit-mut.ts [--closure] <file>` rewrites a file from the checker's resolved signatures.
 - User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
 - No GC, no pointers in safe code. The only reference count is a heap string buffer's (atomic, copy on write; `codegen.ts` strRt), which keeps `string` a value while making copies out of a borrow cheap
 - Arenas for cyclic data via `std/arena` (`Arena<T>` + generational `Handle<T>`)
-- Strings: UTF-8 byte buffers with value semantics. Copying one out of a borrow, a global or a container element shares the buffer by count (no `.clone()` needed); `Vec` and structs keep unique ownership
+- Strings: UTF-8 byte buffers with value semantics. Copying one out of a borrow, a global or a container element, or reusing an owned one after passing or storing it, shares the buffer by count (no `.clone()` needed); `Vec` and structs keep unique ownership
 
 ### Key Rules
 
 - **Self-host never gates a `src/` change.** Blocking work in `src/` on self-host parity is a tar pit and is what got `src-milo/` parked for months. A new language/stdlib feature lands in `src/` + `bun test tests/run.test.ts`; `src-milo/` may lag it, and that is fine.
 
-  Nor a `std/` change (decided 2026-09-20: std uses whatever `src/` supports, e.g. a method's own type parameter, and milo-self lags until someone chooses to catch it up; the sweep is red meanwhile and that is accepted). It DOES gate a `src-milo/` change. `.github/workflows/selfhost.yml` runs the fixpoint, the soundness ratchet and the HIR ratchet on any commit touching `src-milo/` or the selfhost scripts, and sweeps all <!-- stat:fixtures -->975<!-- /stat --> fixtures nightly — scoped by path precisely so a `src/`-only commit never triggers it. So when you change `src-milo/`, run the gates before pushing:
+  Nor a `std/` change (decided 2026-09-20: std uses whatever `src/` supports, e.g. a method's own type parameter, and milo-self lags until someone chooses to catch it up; the sweep is red meanwhile and that is accepted). It DOES gate a `src-milo/` change. `.github/workflows/selfhost.yml` runs the fixpoint, the soundness ratchet and the HIR ratchet on any commit touching `src-milo/` or the selfhost scripts, and sweeps all <!-- stat:fixtures -->981<!-- /stat --> fixtures nightly — scoped by path precisely so a `src/`-only commit never triggers it. So when you change `src-milo/`, run the gates before pushing:
   `sh scripts/selfhost.sh`, `sh scripts/selfhost-fixpoint.sh`, `bun scripts/selfhost-rejects.ts --check`, `bun scripts/selfhost-sweep.ts --check` (the sweep is ~48 min — run it once, at the end). The fixpoint is the real one.
 
   (The memory-guard rules below still stand — they're OS-safety, not self-host.)

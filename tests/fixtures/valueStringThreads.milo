@@ -1,0 +1,29 @@
+// A string shared into several OS threads (move closures run by Promise.blocking) and
+// kept by the spawning thread: the count is atomic, and every thread sees its own value.
+from "std/runtime" import {
+    Promise
+}
+
+pub fn main(): i32 {
+    var msg = "hello"
+    msg = msg + " from heap"
+    var ts: Vec<Promise<i64>> = Vec.new()
+    for i in 0..8 {
+        ts.push(Promise<i64>.blocking(move(): i64 => {
+            var mine = msg
+            mine.pushStr("!")
+            return mine.len + i - i
+        }))
+    }
+    msg.pushStr(" (main)")
+    var total: i64 = 0
+    for t in ts {
+        total = total + t.await()!
+    }
+    print(total)
+    print(msg)
+    return 0
+}
+
+// @expect: 128
+// @expect: hello from heap (main)

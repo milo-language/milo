@@ -2,12 +2,12 @@
 // The if-statement join drops a path that ends in `break` (it does not fall through to
 // the statement after the if), but that path still reaches the code after the loop. Its
 // move used to be lost there, and `print(s)` read an emptied string.
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     var n = 0
     while n < 3 {
         n = n + 1
@@ -19,3 +19,6 @@ pub fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

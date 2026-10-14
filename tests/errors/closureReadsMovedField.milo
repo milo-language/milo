@@ -1,12 +1,15 @@
 // @error: use of moved value 'p.name'
 // The closure reads `p.name` through its by-reference capture, and the field was moved
 // out between building the closure and calling it.
-struct P { name: string, age: i64 }
-fn eat(s: string): void { print(s) }
+struct P { name: Vec<i64>, age: i64 }
+fn eat(s: Vec<i64>): void { print(s) }
 pub fn main(): i32 {
-    var p = P { name: "a heap string long enough to be on the heap for sure".clone(), age: 3 }
+    var p = P { name: Vec<i64>.filled(3, 7), age: 3 }
     let f = () => { print(p.name) }
     eat(p.name)
     f()
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

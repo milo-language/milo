@@ -82,7 +82,7 @@ Not "learn before Rust" — that requires years of pedagogical tooling.
 
 ### 1. Move semantics (default)
 
-Values have a single owner. Assignment transfers ownership; use after move is a compile error. Copyness is structural, with no opt-in: a type whose fields are all Copy (ints, floats, bool, fixed arrays of Copy) is itself Copy and never move-tracked, while anything owning heap or carrying a `Drop` impl moves. A raw pointer field makes a struct move-tracked too, unless the struct is `@copy` (it does not own the pointee); `@noCopy` opts an integer-shaped resource handle back into move tracking.
+Values have a single owner. Assignment transfers ownership; use after move is a compile error. `string` is the exception: strings are values, copy-on-write, and `.clone()` is never needed on one. A string passed, stored or bound again while the code still reads it is shared by an atomic count (the first write to a shared buffer copies it), and its last use moves, so code that never reuses a string pays nothing. Copyness is structural, with no opt-in: a type whose fields are all Copy (ints, floats, bool, fixed arrays of Copy) is itself Copy and never move-tracked, while anything owning heap or carrying a `Drop` impl moves. A raw pointer field makes a struct move-tracked too, unless the struct is `@copy` (it does not own the pointee); `@noCopy` opts an integer-shaped resource handle back into move tracking.
 
 ### 2. Second-class references (no lifetimes)
 

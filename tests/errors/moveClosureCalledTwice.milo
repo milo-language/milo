@@ -5,13 +5,16 @@
 // That used to be a double free; once captures aliased their slots it became a silent
 // wrong answer (this program printed 52 then 0), which is worse to debug than either.
 // @error: moves a captured value out of itself when it runs
-fn consume(s: string): i64 {
-    return s.len()
+fn consume(s: Vec<i64>): i64 {
+    return s.len
 }
 
 fn main(): void {
-    let s = "hello world, long enough to force a heap allocation" + "!"
+    let s = Vec<i64>.filled(3, 7)
     let f = move () => consume(s)
     print(f())
     print(f())
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

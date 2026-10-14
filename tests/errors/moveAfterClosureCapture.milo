@@ -4,7 +4,7 @@ from "std/runtime" import {
 }
 
 fn main(): i32 {
-    let s = "hello"
+    let s = Vec<i64>.filled(3, 7)
     Task.spawn(move(): void => {
         print(s)
     }
@@ -12,3 +12,6 @@ fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

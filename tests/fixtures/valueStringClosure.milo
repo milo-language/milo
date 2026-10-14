@@ -1,0 +1,18 @@
+// A string captured by a move closure is the closure's own value: mutating the binding
+// outside afterwards does not reach it, and the closure can run more than once.
+fn main() {
+    var s = ""
+    s.pushStr("before")
+    let f = move () => s.len
+    let g = move () => s
+    s.pushStr(" and after")
+    print(f())
+    print(g())
+    print(g())
+    print(s)
+}
+
+// @expect: 6
+// @expect: before
+// @expect: before
+// @expect: before and after

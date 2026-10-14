@@ -1,8 +1,11 @@
 // @error: use of moved variable 's'
 // `[s; N]` consumes `s` like `[s]` and `let t = s` do: the last slot takes it by move.
 pub fn main(): i32 {
-    let s = "x" + "y"
+    let s = Vec<i64>.filled(3, 7)
     let a = [s; 2]
-    print(a[0] + s)
+    print(a[0].len + s.len)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

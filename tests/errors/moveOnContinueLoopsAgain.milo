@@ -1,12 +1,12 @@
 // @error: cannot move 's' out of a loop
 // A path that ends in `continue` starts the next iteration, so a move on it runs again:
 // the second `take(s)` used to receive an emptied string.
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     for i in 0..3 {
         if i < 2 {
             take(s)
@@ -15,3 +15,6 @@ pub fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

@@ -1,0 +1,40 @@
+// Strings are values: passing an owned string, storing it, or binding it to another name
+// shares the buffer when the code reads the string again, so no .clone() is needed. The
+// last use still moves.
+fn take(s: string): i64 { return s.len }
+
+fn pair(a: string, b: string): string { return a + "|" + b }
+
+fn main() {
+    var s = ""
+    s.pushStr("hello")
+    print(take(s))
+    print(s)
+    print(pair(s, s))
+    let t = s
+    s.pushStr(" world")
+    print(t)
+    print(s)
+    // Moved on one path, read after the merge.
+    let flag = s.len > 3
+    if flag { print(take(s)) }
+    print(s)
+    // Moved in a loop.
+    var v: Vec<string> = Vec.new()
+    for _ in 0..3 { v.push(s) }
+    s.push(33)
+    print(v[2])
+    print(s)
+    print(take(s))
+}
+
+// @expect: 5
+// @expect: hello
+// @expect: hello|hello
+// @expect: hello
+// @expect: hello world
+// @expect: 11
+// @expect: hello world
+// @expect: hello world
+// @expect: hello world!
+// @expect: 12

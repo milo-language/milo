@@ -1,0 +1,31 @@
+// Strings stored in a Vec and a HashMap are values: the original stays usable, and writes
+// to either side are not seen by the other.
+
+fn main() {
+    var k = ""
+    k.pushStr("key")
+    var val = ""
+    val.pushStr("value")
+    var v: Vec<string> = Vec.new()
+    v.push(k)
+    v.push(k)
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert(k, val)
+    k.pushStr("2")
+    val.pushStr("2")
+    m.insert(k, val)
+    v[0].pushStr("-changed")
+    print(v[0])
+    print(v[1])
+    print(k)
+    print(m.get("key")!)
+    print(m.get("key2")!)
+    print(val)
+}
+
+// @expect: key-changed
+// @expect: key
+// @expect: key2
+// @expect: value
+// @expect: value2
+// @expect: value2

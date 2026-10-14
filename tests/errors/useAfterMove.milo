@@ -1,11 +1,14 @@
 // @error: use of moved variable 's'
 
-fn consume(s: string): void {
+fn consume(s: Vec<i64>): void {
 }
 
 fn main(): i32 {
-    let s: string = "hello"
+    let s: Vec<i64> = Vec<i64>.filled(3, 7)
     consume(s)
     consume(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

@@ -2,17 +2,20 @@
 // only when the result landed in a move position meant `(o ?? d).len` moved `d` with
 // no diagnostic, and the later read of `d` printed an empty string.
 // @error: use of moved variable 'd'
-fn maybe(i: i64): Option<string> {
+fn maybe(i: i64): Option<Vec<i64>> {
     if i > 0 {
-        return Option.Some("s")
+        return Option.Some(Vec<i64>.filled(3, 7))
     }
     return Option.None
 }
 
 fn main() {
-    var d = "default-"
-    d.pushStr("x")
+    var d = Vec<i64>.filled(3, 7)
+    d.push(4)
     let n = (maybe(0) ?? d).len
     print(n.toString())
     print(d)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

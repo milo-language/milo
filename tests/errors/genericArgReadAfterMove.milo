@@ -3,6 +3,9 @@
 // argument still moves before the next one is evaluated.
 fn keep<T>(a: T, n: i64): i64 { return n }
 fn main() {
-    let k = "abc".clone()
+    let k = Vec<i64>.filled(3, 7)
     print(keep(k, k.len))
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

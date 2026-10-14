@@ -1,0 +1,57 @@
+// Value strings through control flow: a move becomes a share only where some path reads
+// the string again (branches, loops, match arms, closures), and every copy stays its own value.
+struct Row { name: string }
+
+fn take(s: string): i64 { return s.len }
+
+fn main() {
+    var s = "abc".repeat(2)
+    // Loop condition reads what the body moved.
+    var v: Vec<string> = Vec.new()
+    while s.len < 9 {
+        v.push(s)
+        s.push(120)
+    }
+    print(v.len)
+    print(v[0])
+    print(s)
+    // Moved in one arm, reassigned in the other, read after.
+    let c = v.len > 1
+    if c { print(take(s)) } else { s = "other" }
+    print(s)
+    // Match arms.
+    let k = 2
+    let picked = match k {
+        1 => s,
+        _ => s + "?",
+    }
+    print(picked)
+    print(s)
+    // A by-reference closure reads s after s was passed on.
+    let f = () => s.len
+    print(take(s))
+    print(f())
+    // Field of an owned struct passed on, then read and the struct used whole.
+    var r = Row { name: "row".repeat(2) }
+    print(take(r.name))
+    r.name.push(33)
+    let r2 = r
+    print(r2.name)
+    // Two moves in a row: the first shares, the last moves.
+    let a = s
+    let b = s
+    print(a + b)
+}
+
+// @expect: 3
+// @expect: abcabc
+// @expect: abcabcxxx
+// @expect: 9
+// @expect: abcabcxxx
+// @expect: abcabcxxx?
+// @expect: abcabcxxx
+// @expect: 9
+// @expect: 9
+// @expect: 6
+// @expect: rowrow!
+// @expect: abcabcxxxabcabcxxx

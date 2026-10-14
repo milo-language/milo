@@ -7780,17 +7780,19 @@ export class Codegen {
             lines.push(`  ${innerPtr} = load ptr, ptr ${capAddr}`);
             const val = this.nextTemp();
             lines.push(`  ${val} = load ${capTy}, ptr ${innerPtr}`);
-            lines.push(`  store ${capTy} ${val}, ptr ${gepSlot}`);
+            lines.push(`  store ${capTy} ${cap.share ? this.emitStrShare(lines, val) : val}, ptr ${gepSlot}`);
             // A by-reference closure's capture moved into this one moves the binding it
             // points at (the checker marks that binding moved), so the owner must not
             // drop it again: zero it, as a move out of the owner's own frame does. Without
             // this, `apply(() => Promise.blocking(() => v.len))` freed `v` twice.
-            if (cap.type.tag !== "ref" && this.needsDropCg(cap.type)) lines.push(this.zeroStore(capTy, innerPtr));
+            if (cap.type.tag !== "ref" && this.needsDropCg(cap.type) && !cap.share) lines.push(this.zeroStore(capTy, innerPtr));
           } else {
             lines.push(`  ${loaded} = load ${capTy}, ptr ${capAddr}`);
-            lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);
+            // A shared string capture: the env gets its own handle, the binding stays live.
+            const stored = cap.share ? this.emitStrShare(lines, loaded) : loaded;
+            lines.push(`  store ${capTy} ${stored}, ptr ${gepSlot}`);
             // zero source so parent's drop glue won't free moved data
-            if (this.needsDropCg(cap.type)) {
+            if (this.needsDropCg(cap.type) && !cap.share) {
               lines.push(this.zeroStore(capTy, capAddr));
               const dl = this.droppableLocals.find(d => d.addr === capAddr);
               if (dl) this.ownClearAlive(lines, dl.aliveFlag, "CAPTURE");

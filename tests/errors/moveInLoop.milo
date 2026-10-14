@@ -1,10 +1,10 @@
 // @error: cannot move 's' out of a loop
 
-fn consume(s: string): void {
+fn consume(s: Vec<i64>): void {
 }
 
 fn main(): i32 {
-    let s: string = "hello"
+    let s: Vec<i64> = Vec<i64>.filled(3, 7)
     var i: i32 = 0
     while i < 3 {
         consume(s)
@@ -12,3 +12,6 @@ fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

@@ -12,12 +12,12 @@ from "std/runtime" import {
     Promise
 }
 
-fn measure(s: string): i64 {
+fn measure(s: Vec<i64>): i64 {
     return s.len
 }
 
 pub fn main(): i32 {
-    let needle: string = "milo"
+    let needle: Vec<i64> = Vec<i64>.filled(3, 7)
     var ps: Vec<Promise<i64>> = Vec.new()
     var i: i64 = 0
     while i < 3 {
@@ -32,3 +32,6 @@ pub fn main(): i32 {
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

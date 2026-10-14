@@ -1,9 +1,12 @@
 // @error: use of moved variable 'dflt'
 // `getOrDefault(k, fallback: V)` takes the default by value: a miss returns it.
 fn main() {
-    var m: HashMap<i64, string> = HashMap.new()
-    m.insert(1, "one")
-    let dflt: string = "var" + "default"
-    print("D" + m.getOrDefault(9, dflt))
+    var m: HashMap<i64, Vec<i64>> = HashMap.new()
+    m.insert(1, Vec<i64>.filled(1, 1))
+    let dflt: Vec<i64> = Vec<i64>.filled(3, 7)
+    print(m.getOrDefault(9, dflt).len)
     print(dflt)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

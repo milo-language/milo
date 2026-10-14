@@ -3,10 +3,13 @@
 // ran is a runtime fact. This used to compile and double-free: neither arm was
 // marked moved, so both slots were still dropped at scope exit.
 fn main() {
-    var a = "aaa" + ""
-    var b = "bbb" + ""
+    var a = Vec<i64>.filled(3, 7)
+    var b = Vec<i64>.filled(3, 7)
     let c = true
     let s = if c { a } else { b }
     print(s)
     print(a)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

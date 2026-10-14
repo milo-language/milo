@@ -1733,7 +1733,9 @@ class LowerCtx {
             return { name: p.name, type: resolvedType };
           }),
           body,
-          captures,
+          // A string capture the checker made a share copies a counted handle into the
+          // environment and leaves the binding live (checker's sharedStringCaptures).
+          captures: captures.map(c => this.c.sharedStringCaptures.get(expr)?.has(c.name) ? { ...c, share: true } : c),
           retType,
           type,
           isMove: (expr as any).isMove,

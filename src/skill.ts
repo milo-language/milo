@@ -281,13 +281,13 @@ from "std/path" import { Path }
 bare \`import "file"\`. A local file is imported by relative path the same way.
 
 ### Key Rules
-- Move semantics: values have a single owner. After \`let y = x\`, using \`x\` is a compile error. Use \`.clone()\` for an explicit copy.
+- Move semantics: values have a single owner. After \`let y = x\`, using \`x\` is a compile error. Use \`.clone()\` for an explicit copy. \`string\` is the exception (below).
 - References (\`&T\`, \`&mut T\`) are second-class: they appear as function parameters, are never stored in structs or collections, and free functions never return them. The one exception: a method may return a slice \`&[T]\` of its own receiver's storage.
 - Shared borrows are implicit: pass the value bare (\`greet(name)\`); there is no \`&x\` expression. A \`&mut\` argument is written \`foo(&mut x)\` (method receivers stay implicit: \`v.push(1)\`).
 - No null: use \`Option<T>\` (\`T?\`). \`null\` is sugar for \`None\`.
 - No exceptions: use \`Result<T, E>\` for fallible operations.
 - No implicit conversions: use \`expr as Type\` for casts.
-- Strings are owned UTF-8 byte buffers; a \`&string\` parameter borrows one.
+- Strings are values, copy-on-write; \`.clone()\` is never needed on a string. Passing, storing or binding a string you read again shares its buffer (a count increment); the last use moves. A \`&string\` parameter borrows one for free.
 - \`unsafe { ... }\` is required for raw pointers and FFI calls.
 - String interpolation: \`$"hello {name}, count={count}"\`
 - Statements are newline-delimited; a trailing \`;\` is allowed but \`milo fmt\` strips it.

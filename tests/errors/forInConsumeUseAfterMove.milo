@@ -2,15 +2,18 @@
 // A consuming loop's binding is an ordinary owned local: once the body moves it, the
 // rest of that iteration cannot read it.
 
-fn mk(): Vec<string> {
-    return ["a".repeat(2), "b".repeat(2)]
+fn mk(): Vec<Vec<i64>> {
+    return [Vec<i64>.filled(2, 1), Vec<i64>.filled(2, 2)]
 }
 
 fn main(): i32 {
-    var out: Vec<string> = []
+    var out: Vec<Vec<i64>> = []
     for s in mk() {
         out.push(s)
         print(s)
     }
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

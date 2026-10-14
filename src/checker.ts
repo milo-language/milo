@@ -344,7 +344,7 @@ export interface CaptureInfo {
 // A write that evaluating a call argument makes (see TypeChecker.nestedWrites). A move
 // carries its index-aware `steps` too: it conflicts with a borrow of the moved place's own
 // slot, where a plain write does not, so it needs the precise path to stay off siblings.
-interface NestedWrite { root: unknown; fields: string[] | null; what: string; moved?: boolean; steps?: string[] }
+interface NestedWrite { root: unknown; fields: string[] | null; what: string; moved?: boolean; steps?: string[]; expr?: Expr }
 // A place a call argument borrows or moves, `arg` being the argument's index.
 interface ArgUse { arg: number; root: unknown; name: string; fields: string[] | null; steps: string[]; moved: boolean; via?: string }
 
@@ -519,6 +519,7 @@ export interface CheckResult {
   movedExprs: Set<Expr>;
   borrowedExprs: Set<Expr>;
   sharedStringExprs: Set<Expr>;
+  sharedStringCaptures: Map<Expr, Set<string>>;
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
   // `[v; N]` of a type with a Clone impl: the mangled clone fn codegen calls for the N-1
@@ -801,6 +802,18 @@ export class TypeChecker {
   // reference counted, so the copy is a count increment rather than a move or an error:
   // lowering wraps each one in a StringClone, which shares the buffer.
   private sharedStringExprs = new Set<Expr>();
+  // Value strings: a string is never moved where the code reads it again. Each move of a
+  // string binding (path "") or a string field of an owned root (".f") is recorded with
+  // how to turn it into a share. A read that would be a use after move (or a move out of
+  // a loop, or a partial move) turns every recorded move of that place into a share and
+  // the place is live again; a move nothing reads after stays a move, so code that needed
+  // no clone gains no count traffic. Kept across branch snapshots, so converting is
+  // idempotent and every arm that reads the place finds its moves.
+  // A null site is a `forget`: that place can never be shared again (conservative: a later
+  // reuse of the binding, even after a reassignment, needs a real copy).
+  private stringMoveSites = new Map<VarInfo, Map<string, ((() => void) | null)[]>>();
+  // `move` closure captures of a string that share rather than move (keyed by the closure).
+  private sharedStringCaptures = new Map<Expr, Set<string>>();
   // Subjects consumed by the destructuring arm/pattern currently being checked.
   // Only drives the wording of the use-after-move error, which is otherwise
   // misleading here (the transfer point is the pattern, not an earlier stmt).
@@ -3199,9 +3212,9 @@ export class TypeChecker {
       for (const [name, info] of scope) {
         const before = leftOut ? (i++ < partialGlobals! ? PRISTINE_MOVE : undefined) : pre.get(info);
         if (!before) continue;
-        if (!before.moved && info.moved) this.error(`cannot move '${name}' out of a loop`, sp);
+        if (!before.moved && info.moved && !this.shareStringMoves(info, "")) this.error(`cannot move '${name}' out of a loop`, sp);
         for (const p of [...info.movedPlaces ?? []]) {
-          if (before.places.includes(p)) continue;
+          if (before.places.includes(p) || this.shareStringMoves(info, p)) continue;
           this.error(`cannot move '${name}${p}' out of a loop`, sp);
         }
       }
@@ -3214,6 +3227,9 @@ export class TypeChecker {
   // True while `tryMove` runs for a move that hands the source to an owner the pointer's
   // holders can still trust: `forget(v)` and `let w = v`. See `tryMoveLeaf`.
   private pointerMoveKeepsHolders = false;
+  // True while `forget(x)` moves its argument: ending ownership is the point, so a string
+  // there moves for real and a later read is still a use after move (no share).
+  private forgetting = false;
 
   // `span` is the binding site to point diagnostics at; VarInfo carries one for every
   // binding form now (params, pattern bindings, `let`/`var`, for-in), so `span` here is
@@ -3673,6 +3689,7 @@ export class TypeChecker {
       movedExprs: this.movedExprs,
       borrowedExprs: this.borrowedExprs,
       sharedStringExprs: this.sharedStringExprs,
+      sharedStringCaptures: this.sharedStringCaptures,
       autoWrappedOption: this.autoWrappedOption,
       arrayToVecCoercions: this.arrayToVecCoercions,
       arrayRepeatClones: this.arrayRepeatClones,
@@ -8076,6 +8093,19 @@ export class TypeChecker {
         this.errorMoveOutOfGlobal(expr, expr.name, expr.name);
         return;
       }
+      // An owned string binding: a move recorded for stringMoveSites. Borrowed (a live view,
+      // a closure capture), read from inside a closure that captured it (moving it out of
+      // the environment would make the closure call-once), or already turned into a share
+      // by an earlier pass over this code: it shares now. Not in a sortByKey extractor.
+      if (info && info.type.tag === "string" && this.keyExtractorDepth === 0 && !this.forgetting) {
+        let captured = false;
+        this.eachCaptureOf(expr.name, () => { captured = true; });
+        if (info.borrowed || captured || this.sharedStringExprs.has(expr)) { this.shareMovedExpr(expr); return; }
+        this.touchMoveState(info); info.moved = true;
+        this.movedExprs.add(expr);
+        this.noteStringMove(info, "", () => this.shareMovedExpr(expr));
+        return;
+      }
       if (info && !this.isCopyType(info.type)) {
         // A pointer borrow does not forbid the move (the header moves, the buffer stays),
         // but the new owner may free that buffer at any time the checker cannot see, so
@@ -8105,6 +8135,7 @@ export class TypeChecker {
         // Partial move: a field already left, so the struct sitting here is no longer
         // the whole value. Handing it on would pass a zeroed field off as real data —
         // the same silent-empty-string result as re-moving the field, one level up.
+        this.shareStringPlaces(info);
         const partial = info.movedPlaces && info.movedPlaces.size > 0
           ? [...info.movedPlaces][0]! : null;
         if (partial) {
@@ -8127,6 +8158,17 @@ export class TypeChecker {
         for (const cap of caps) {
           if (this.isCopyType(cap.type)) continue;
           const info = this.lookup(cap.name);
+          // A string capture is a move recorded for stringMoveSites, or a share right away
+          // when the binding is borrowed or an earlier pass already made it one.
+          if (info && cap.type.tag === "string" && info.type.tag === "string") {
+            const shareCap = () => {
+              let names = this.sharedStringCaptures.get(expr);
+              if (!names) this.sharedStringCaptures.set(expr, names = new Set());
+              names.add(cap.name);
+            };
+            if (info.borrowed || this.sharedStringCaptures.get(expr)?.has(cap.name)) { shareCap(); continue; }
+            this.noteStringMove(info, "", shareCap);
+          }
           if (info) {
             this.touchMoveState(info); info.moved = true;
             this.unfreeze(info);
@@ -8193,6 +8235,8 @@ export class TypeChecker {
             return;
           }
           const dropTy = this.dropTypeInPath(expr);
+          // A string field leaving a Drop type shares instead: the value stays whole.
+          if (dropTy && fieldType.tag === "string" && this.keyExtractorDepth === 0) { this.shareMovedExpr(expr); return; }
           if (dropTy) {
             this.error(`cannot move '${this.describeExpr(expr)}' out of '${dropTy}', which implements Drop`, expr.span,
               `a Drop impl runs against the whole value, so taking a field out of it would leave the destructor reading an empty one — clone the field, or consume the '${dropTy}' whole`);
@@ -8204,7 +8248,10 @@ export class TypeChecker {
           const place = this.staticFieldPath(expr);
           if (place) {
             const rootInfo = this.lookup(place.root);
+            const strField = fieldType.tag === "string" && this.keyExtractorDepth === 0;
+            if (strField && this.sharedStringExprs.has(expr)) { this.shareMovedExpr(expr); return; }
             if (rootInfo) this.markPlaceMoved(rootInfo, place.path);
+            if (rootInfo && strField) this.noteStringMove(rootInfo, place.path, () => this.shareMovedExpr(expr));
           } else if (this.errorIfFieldMovedOutOfElement(expr)) {
             return;
           }
@@ -8626,7 +8673,8 @@ export class TypeChecker {
         else (c.cap.mutatedInClosure ? muts : shared).push(use);
       }
       const borrow = this.borrowModeOf(arg);
-      const moved = !borrow && movesExclusive && this.moveRequested.has(arg) && this.isMovedPlaceArg(arg);
+      // A string argument already turned into a share is a value of its own, not a use.
+      const moved = !borrow && movesExclusive && this.moveRequested.has(arg) && this.isMovedPlaceArg(arg) && !this.sharedStringExprs.has(arg);
       const ab = borrow ?? (moved ? { mutable: true } : null);
       if (!ab) {
         // An inline `v.ptr()` / `s.cstr()` argument is a shared borrow of its source for
@@ -8665,6 +8713,7 @@ export class TypeChecker {
     for (const m of muts) {
       for (const s of shared) {
         if (m.arg !== s.arg && m.root === s.root && overlaps(m.fields, s.fields)) {
+          if (m.moved && this.shareStringArg(args[m.arg])) continue;
           if (m.moved) { this.error(`'${m.name}' is moved and borrowed in the same call`, m.span, `the callee owns the moved value and may drop or change it while reading through the '&' argument into it; clone one of them or split the call into two statements`); continue; }
           if (captured(m, s, m.name)) continue;
           this.error(`'${m.name}' is borrowed mutably and shared in the same call`, m.span,
@@ -8710,6 +8759,7 @@ export class TypeChecker {
           continue;
         }
         if (this.aliasesByContainment(a.steps, b.steps)) {
+          if ((a.moved && this.shareStringArg(args[a.arg])) || (b.moved && this.shareStringArg(args[b.arg]))) continue;
           if (a.moved || b.moved) {
             this.error(`'${a.name}' is moved and borrowed in the same call`, sp,
               `the callee owns the moved value and may drop it (freeing what the other argument points into) while still writing through that argument; clone one of them or split the call into two statements`);
@@ -8738,7 +8788,9 @@ export class TypeChecker {
     const conflicts = (w: NestedWrite, b: ArgUse) => w.root === b.root
       && (w.moved ? pathsOverlap(w.steps!, b.steps) : intoBuffer(b) && (w.fields === null || b.fields === null || pathsOverlap(w.fields, b.fields)));
     for (let j = 1; j < args.length; j++) {
-      const ws = this.nestedWrites(args[j]);
+      // A later argument moving a string an earlier one uses shares it instead.
+      const ws = this.nestedWrites(args[j]).filter(w =>
+        !(w.moved && w.expr && uses.some(b => b.arg < j && conflicts(w, b)) && this.shareStringArg(w.expr)));
       if (ws.length === 0) continue;
       const hit = uses.find(b => b.arg < j && ws.some(w => conflicts(w, b)));
       if (!hit) continue;
@@ -8786,9 +8838,9 @@ export class TypeChecker {
   private nestedWrites(arg: Expr): NestedWrite[] {
     const out: NestedWrite[] = [];
     const seen = new Set<object>();
-    const atPlace = (e: Expr, what: string, moved = false) => {
+    const atPlace = (e: Expr, what: string, moved = false, expr?: Expr) => {
       const p = this.exclusivityPlace(e);
-      if (p) out.push({ root: p.root, fields: p.fields, what, ...(moved ? { moved, steps: p.steps } : {}) });
+      if (p) out.push({ root: p.root, fields: p.fields, what, ...(moved ? { moved, steps: p.steps, expr } : {}) });
     };
     const capWrites = (cap: CaptureInfo, what: string) => {
       const base = this.capturePlace(cap);
@@ -8824,7 +8876,7 @@ export class TypeChecker {
       if (!top && (this.writtenExprs.has(e) || this.autoBorrowed.get(e)?.mutable)) atPlace(e, `a mutation of '${this.describeExpr(e)}'`);
       // A move out of a binding or a field. Moving an element is a clone, so it is no write.
       // ident-ok: movedExprs holds the moved place nodes; the kind only filters out elements
-      if (!top && (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e)) atPlace(e, `a move of '${this.describeExpr(e)}'`, true);
+      if (!top && (e.kind === "Ident" || e.kind === "FieldAccess") && this.movedExprs.has(e)) atPlace(e, `a move of '${this.describeExpr(e)}'`, true, e);
       if (kind === "Assign") {
         const t = (n as { target: Expr }).target;
         atPlace(t, `an assignment to '${this.describeExpr(t)}'`);
@@ -8873,6 +8925,10 @@ export class TypeChecker {
 
   private errorIfCaptureMoved(cap: CaptureInfo, fname: string, sp: Span | undefined) {
     const info = cap.info;
+    if (info) {
+      this.shareStringPlaces(info);
+      if (info.moved) this.shareStringMoves(info, "");
+    }
     if (info && !info.moved && info.movedPlaces && info.movedPlaces.size > 0) {
       // A field moved out since the closure was built: the body reads the emptied slot.
       // A whole-value read ("") sees every moved field; a field read sees the one under it.
@@ -9262,6 +9318,46 @@ export class TypeChecker {
       if (bare && bare.tag === "struct" && this.dropImpls.has(bare.name)) return bare.name;
     }
     return null;
+  }
+
+  private noteStringMove(info: VarInfo, path: string, share: (() => void) | null) {
+    let byPath = this.stringMoveSites.get(info);
+    if (!byPath) this.stringMoveSites.set(info, byPath = new Map());
+    let sites = byPath.get(path);
+    if (!sites) byPath.set(path, sites = []);
+    sites.push(share);
+  }
+
+  private shareMovedExpr(e: Expr) {
+    this.movedExprs.delete(e);
+    this.sharedStringExprs.add(e);
+  }
+
+  // Turns the recorded string moves of `info` at `path` into shares and makes the place
+  // live again. False when the place holds no string move (the caller reports as before).
+  private shareStringMoves(info: VarInfo, path: string): boolean {
+    const sites = this.stringMoveSites.get(info)?.get(path);
+    if (!sites || sites.length === 0 || sites.includes(null)) return false;
+    for (const share of sites) share!();
+    this.touchMoveState(info);
+    if (path === "") info.moved = false;
+    else this.clearMovedPlace(info, path);
+    return true;
+  }
+
+  private shareStringPlaces(info: VarInfo) {
+    for (const p of [...info.movedPlaces ?? []]) this.shareStringMoves(info, p);
+  }
+
+  // A string argument still moved at a call where another argument uses the same place.
+  private shareStringArg(arg: Expr): boolean {
+    if (this.exprTypes.get(arg)?.tag !== "string" || !this.movedExprs.has(arg)) return false;
+    // ident-ok: a string binding is a whole variable; its fields are handled by staticFieldPath
+    if (arg.kind === "Ident") { const info = this.lookup(arg.name); return !!info && this.shareStringMoves(info, ""); }
+    if (arg.kind !== "FieldAccess") return false;
+    const place = this.staticFieldPath(arg);
+    const rootInfo = place ? this.lookup(place.root) : null;
+    return !!place && !!rootInfo && this.shareStringMoves(rootInfo, place.path);
   }
 
   private markPlaceMoved(info: VarInfo, path: string) {
@@ -10000,6 +10096,8 @@ export class TypeChecker {
     // Anything else names the value itself: an argument, a receiver, a return, a
     // print. Handing that on shows the zeroed field as if it were data.
     if (this.placeBaseDepth === 0) this.eachCaptureOf(expr.name, cap => { (cap.readPaths ??= new Set()).add(""); });
+    if (this.placeBaseDepth === 0) this.shareStringPlaces(info);
+    if (info.moved && !this.movedByPattern.has(info)) this.shareStringMoves(info, "");
     if (this.placeBaseDepth === 0 && info.movedPlaces && info.movedPlaces.size > 0) {
       const gone = [...info.movedPlaces][0]!;
       this.error(`'${expr.name}' is incomplete: '${expr.name}${gone}' was moved out of it`, sp,
@@ -10351,7 +10449,12 @@ export class TypeChecker {
           `${this.show(t)} owns no resource, so there is no drop to suppress`);
       }
       this.pointerMoveKeepsHolders = true;
-      try { this.tryMove(expr.args[0]); } finally { this.pointerMoveKeepsHolders = false; }
+      this.forgetting = true;
+      try { this.tryMove(expr.args[0]); } finally { this.pointerMoveKeepsHolders = false; this.forgetting = false; }
+      const forgotten = expr.args[0];
+      // ident-ok: forget of a whole string binding; see stringMoveSites
+      const fInfo = forgotten.kind === "Ident" ? this.lookup(forgotten.name) : null;
+      if (fInfo?.type.tag === "string") this.noteStringMove(fInfo, "", null);
       return this.setType(expr, { tag: "void" });
     }
     // `isNull(s.field)` — the ONE test a C function-pointer field admits besides being
@@ -11394,7 +11497,7 @@ export class TypeChecker {
       if (place && rootInfo) {
         this.eachCaptureOf(place.root, cap => { (cap.readPaths ??= new Set()).add(place.path); });
         const gone = this.movedPlaceCovering(rootInfo, place.path);
-        if (gone) {
+        if (gone && !this.shareStringMoves(rootInfo, gone)) {
           this.error(`use of moved value '${place.root}${place.path}'`, sp,
             gone === place.path
               ? `ownership of '${place.root}${place.path}' was transferred earlier — the field is empty now. Clone it at the point of transfer: '${place.root}${place.path}.clone()'.`

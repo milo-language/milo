@@ -1,0 +1,30 @@
+// A string stored into a struct (twice), then the struct copied and one copy mutated: every
+// copy is its own value.
+struct Row { name: string, alias: string }
+
+fn main() {
+    var s = ""
+    s.pushStr("ada")
+    var r = Row { name: s, alias: s }
+    print(s)
+    let snapshot = r.name
+    r.name.pushStr(" lovelace")
+    print(r.name)
+    print(snapshot)
+    print(r.alias)
+    // A field moved out and the struct used whole afterwards.
+    let n = r.alias
+    let r2 = r
+    print(n)
+    print(r2.alias)
+    s.pushStr("!")
+    print(s)
+}
+
+// @expect: ada
+// @expect: ada lovelace
+// @expect: ada
+// @expect: ada
+// @expect: ada
+// @expect: ada
+// @expect: ada!

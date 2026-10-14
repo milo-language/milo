@@ -5,19 +5,22 @@
 // diagnostic. Found by scripts/fuzz-ownership.ts (the 'drop-partial' spelling).
 // @error: which implements Drop
 struct Res {
-    name: string,
+    name: Vec<i64>,
 }
 
 impl Drop for Res {
     fn drop(self: &mut Self) {
-        print("dropping " + self.name)
+        print(self.name.len)
     }
 }
 
 fn main() {
     let r = Res {
-        name: "alpha"
+        name: Vec<i64>.filled(3, 7)
     }
     let stolen = r.name
     print(stolen)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

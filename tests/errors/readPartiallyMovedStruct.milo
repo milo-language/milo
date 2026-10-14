@@ -1,19 +1,22 @@
 // A struct with a field moved out is not the whole value any more, so using it AS a whole
-// shows the emptied field as if it were data — 'Pair { a: "", b: "two" }'. Reading a
+// shows the emptied field as if it were data — 'Pair { a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7) }'. Reading a
 // different field stays fine; this is only the whole-value use. Rust: E0382, borrow of
 // partially moved value.
 // @error: is incomplete
 struct Pair {
-    a: string,
-    b: string,
+    a: Vec<i64>,
+    b: Vec<i64>,
 }
 
 fn main() {
     let p = Pair {
-        a: "one", b: "two"
+        a: Vec<i64>.filled(3, 7), b: Vec<i64>.filled(3, 7)
     }
     let x = p.a
     print(x)
     print(p.b)
     print(p)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

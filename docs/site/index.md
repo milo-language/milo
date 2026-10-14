@@ -54,11 +54,11 @@ fn main() {
 
 ```milo error
 fn main() {
-    let name = "milo"
-    let greeting = name   // `name` moves here. It is no longer yours
+    let names: Vec<string> = ["milo"]
+    let team = names      // `names` moves here. It is no longer yours
 
-    print(greeting)       // "milo"
-    print(name)           // error: use of moved variable 'name'
+    print(team)           // ["milo"]
+    print(names)          // error: use of moved variable 'names'
 }
 ```
 

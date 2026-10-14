@@ -1,12 +1,12 @@
 // @error: use of moved variable 's'
 // Same hole as moveOnBreakUsedAfterLoop, through a match arm and a nested if/else whose
 // arms both break: each break carries the move to the loop exit.
-fn take(s: string): void {
+fn take(s: Vec<i64>): void {
     print(s)
 }
 
 pub fn main(): i32 {
-    let s = "hello".clone()
+    let s = Vec<i64>.filled(3, 7)
     var o: Option<i64> = Option.Some(1)
     for i in 0..3 {
         match o {
@@ -25,3 +25,6 @@ pub fn main(): i32 {
     print(s)
     return 0
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.

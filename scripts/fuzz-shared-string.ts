@@ -104,12 +104,14 @@ function genCase(seed: number): { src: string; expect: string[] } {
     const d = int(H);
     const s = int(H);
     const kind = pick([
-      "clone", "param", "field", "payload", "index", "elemField", "global",
+      "clone", "assign", "param", "field", "payload", "index", "elemField", "global",
       "push", "push", "pushRun", "shareThenPush", "pushStr", "pushSelf", "plusEq", "concat", "pushInt", "fmt", "truncate", "clear", "setByte",
       "vecWrite", "vecSet", "rowWrite", "fresh", "print",
     ]);
     switch (kind) {
       case "clone": body.push(`    h${d} = h${s}.clone()`); h[d] = h[s]!; break;
+      // No .clone(): strings are values, so a later read of h${s} turns this move into a share.
+      case "assign": if (d === s) { op--; continue; } body.push(`    h${d} = h${s}`); h[d] = h[s]!; break;
       case "param": body.push(`    h${d} = viaParam(h${s})`); h[d] = h[s]!; break;
       case "field": { const r = int(2); body.push(`    h${d} = viaField(rows[${r}])`); h[d] = rows[r]!; break; }
       case "payload": { const r = int(2); body.push(`    h${d} = viaPayload(rows[${r}].e)`); h[d] = payload[r]!; break; }

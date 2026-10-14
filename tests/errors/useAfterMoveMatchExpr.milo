@@ -1,9 +1,12 @@
 // @error: use of moved variable 'a'
 fn main() {
-    var a = "aaa" + ""
-    var b = "bbb" + ""
+    var a = Vec<i64>.filled(3, 7)
+    var b = Vec<i64>.filled(3, 7)
     let n = 0
     let s = match n { 0 => a, _ => b }
     print(s)
     print(a)
 }
+
+// Vec<i64> stands in for `string`: strings are values now (copy on write, shared by
+// count where the code reads them again), so the rule is held with a type that still moves.
