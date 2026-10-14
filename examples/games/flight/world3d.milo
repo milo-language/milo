@@ -818,7 +818,7 @@ pub fn layRing(w: &mut World) {
         // shallow S with the horizon rolling under you, which is exactly the
         // recipe for motion sickness. The view is the thing to look at.
         heading = Math.atan2(dx, dz)
-        w.markName = w.marks[w.markIdx].name.clone()
+        w.markName = w.marks[w.markIdx].name
     }
     // Far apart: a hoop you have to line up needs room to line up in.
     let step = 300.0
@@ -1428,7 +1428,7 @@ fn updateMarkReadout(w: &mut World) {
     let dx = w.marks[w.markIdx].x - w.plane.x
     let dz = w.marks[w.markIdx].z - w.plane.z
     w.markDist = Math.sqrt(dx * dx + dz * dz)
-    w.markName = w.marks[w.markIdx].name.clone()
+    w.markName = w.marks[w.markIdx].name
 }
 
 // The next landmark on the tour that has not been found. A plain +1 would be

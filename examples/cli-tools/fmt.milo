@@ -1051,7 +1051,7 @@ pub fn formatSource(src: string): string {
         let rt = rawTokens[ri]
         if rt.kind != TokKind.Newline {
             tokens.push(Token {
-                kind: rt.kind, text: rt.text.clone(), line: rt.line
+                kind: rt.kind, text: rt.text, line: rt.line
             })
         }
     }
@@ -1338,7 +1338,7 @@ pub fn formatSource(src: string): string {
         lastWasPub = tok.kind == TokKind.Ident && tok.text == "pub" && depth == 0
         lastWasOwnLineComment = false
         prevKind = tok.kind
-        prevText = tok.text.clone()
+        prevText = tok.text
         prevWasAt = isAtToken(tok)
         // A top-level `@` opens an attribute that prefixes the next decl: hold
         // afterAttr across the attribute so no blank splits it from the decl, then
@@ -1471,12 +1471,12 @@ pub fn main(): i32 {
         src = readStdin()
     }
 
-    let formatted = formatSource(src.clone())
+    let formatted = formatSource(src)
 
     if write {
         if hasFile {
             if formatted != src {
-                let writeResult = writeFile(path.clone(), formatted)
+                let writeResult = writeFile(path, formatted)
                 if let Err(e) = writeResult {
                     eprint($"error writing {path}: {e}")
                     return 1

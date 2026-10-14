@@ -563,7 +563,7 @@ pub fn envGoLive(e: &mut LiveEnv, reach: f64): bool {
 // One line describing where the sky came from, for the HUD and the console.
 pub fn envWeatherLabel(e: &LiveEnv): string {
     if (e.cloudSource as i32) == (EnvSource.Live as i32) {
-        var s = "LIVE " + e.obs.station.clone()
+        var s = "LIVE " + e.obs.station
         // "0/8" and "nobody told us" are different statements and only one of
         // them is a measurement. Hawaii is the live case: PHNL is the nearest
         // station and an airport, and its observation currently carries no

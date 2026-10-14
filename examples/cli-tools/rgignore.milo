@@ -113,7 +113,7 @@ pub struct IgnoreSet {
 // no rule. `.lines()` already normalizes '\r\n', so there is no separate CR
 // strip here.
 fn parseLine(raw: &string): Option<IgnoreRule> {
-    var line = raw.clone()
+    var line = raw
 
     // Trailing spaces are ignored unless escaped with a backslash — stop as
     // soon as we hit an escaped one instead of trimming through it.
@@ -201,7 +201,7 @@ pub fn parseIgnore(content: &string, base: &string): IgnoreSet {
     appendRules(content, &mut rules)
     let anchored = anyAnchored(rules)
     return IgnoreSet {
-        base: base.clone(), rules: rules, hasAnchored: anchored
+        base: base, rules: rules, hasAnchored: anchored
     }
 }
 
@@ -236,7 +236,7 @@ pub fn loadIgnoreSet(dirPath: &string, useGit: bool): Option<IgnoreSet> {
     }
     let anchored = anyAnchored(rules)
     return Some(IgnoreSet {
-        base: dirPath.clone(), rules: rules, hasAnchored: anchored
+        base: dirPath, rules: rules, hasAnchored: anchored
     })
 }
 
@@ -275,7 +275,7 @@ fn relativePath(base: &string, fullPath: &string): string {
         }
         return rel
     }
-    return fullPath.clone()
+    return fullPath
 }
 
 // Does `rel` name something *inside* the directory `pattern`? git ignores every

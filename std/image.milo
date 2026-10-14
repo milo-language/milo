@@ -332,6 +332,6 @@ impl Image {
         if orientation == 8 {
             return remap(self, 3)
         }
-        return Image { width: self.width, height: self.height, channels: self.channels, pixels: self.pixels.clone() }
+        return Image { width: self.width, height: self.height, channels: self.channels, pixels: self.pixels }
     }
 }

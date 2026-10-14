@@ -71,7 +71,7 @@ impl PacketWriter {
     // JDWP string: u32 byte length + UTF-8 bytes.
     fn str(self: &mut PacketWriter, s: &string): void {
         self.u32(s.len)
-        self.buf += s.clone()
+        self.buf += s
     }
 }
 
@@ -349,11 +349,11 @@ pub fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<Jd
             ip = v
         }
         Err(_e) => {
-            return Err("cannot resolve " + host.clone())
+            return Err("cannot resolve " + host)
         }
     }
     let Ok(conn) = TcpStream.connect(ip, port) else {
-        return Err("cannot connect to JDWP agent at " + host.clone() + ":" + port.toString())
+        return Err("cannot connect to JDWP agent at " + host + ":" + port.toString())
     }
     // The reader task gets its own descriptor for the socket, so it reads off a
     // handle it owns rather than a number JdwpIo's TcpStream could close under it.
@@ -455,7 +455,7 @@ impl JdwpIo {
         head.u8(0)
         head.u8(cmdSet)
         head.u8(cmd)
-        let msg = head.buf + body.clone()
+        let msg = head.buf + body
         writeAll(self.conn, msg)?
 
         // Single outstanding request: the next reply is ours (assert anyway).

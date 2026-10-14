@@ -596,7 +596,7 @@ fn drawCostPanel(ui: &mut Ui, g: &Game, u: f64, _w: f64, _h: f64) {
 fn drawMissionHeader(ui: &mut Ui, g: &Game, u: f64, alpha: f64) {
     let x = 44.0 * u
     label(&mut ui, x, 44.0 * u, u, missionTag(g), fade(colDim(), alpha))
-    let name = g.missions[g.mi].name.clone()
+    let name = g.missions[g.mi].name
     title(&mut ui, x, 64.0 * u, 21.0 * u, name.toUpper(), fade(colInk(), alpha))
     var lines = wrapText(g.missions[g.mi].blurb, 9.0 * u, 430.0 * u)
     var y = 120.0 * u
@@ -667,11 +667,11 @@ fn drawCinematic(ui: &mut Ui, g: &Game, u: f64, h: f64) {
     let leaving = g.phase == PHASE_DEPART
     var id = g.missions[g.mi].to
     var kicker = "ARRIVING AT"
-    var note = g.missions[g.mi].toNote.clone()
+    var note = g.missions[g.mi].toNote
     if leaving {
         id = g.missions[g.mi].from
         kicker = "DEPARTING FROM"
-        note = g.missions[g.mi].fromNote.clone()
+        note = g.missions[g.mi].fromNote
     }
     let a = g.fade
     let x = 64.0 * u

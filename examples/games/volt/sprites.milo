@@ -744,9 +744,9 @@ fn birdPalette(): Vec<f64> {
 
 // Body, head and tail: the same in every frame. Only the wing moves.
 fn birdBody(v: &mut Vec<string>, wing0: &string, wing1: &string, wing2: &string) {
-    v.push(wing0.clone())
-    v.push(wing1.clone())
-    v.push(wing2.clone())
+    v.push(wing0)
+    v.push(wing1)
+    v.push(wing2)
     v.push("....0222222240")
     v.push("0330022222224450")
     v.push("0330.0222222250")
@@ -785,7 +785,7 @@ pub fn birdFrames(): Vec<Sprite> {
     d.push("..0333330")
     d.push("...0330")
     for r in d {
-        f2.push(r.clone())
+        f2.push(r)
     }
     out.push(spriteFrom(f2, pal, BIRD_W, BIRD_H))
 

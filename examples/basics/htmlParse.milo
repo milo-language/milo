@@ -72,7 +72,7 @@ pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 }
 
 pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name)
     match r {
         Some(s) => {
             return s
@@ -84,7 +84,7 @@ pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
 }
 
 pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text)
     match r {
         Some(s) => {
             return s
@@ -133,7 +133,7 @@ pub fn attrCount(dom: &Dom, h: Handle<Node>): i64 {
 }
 
 pub fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].name.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].name)
     match r {
         Some(s) => {
             return s
@@ -145,7 +145,7 @@ pub fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
 }
 
 pub fn attrValueAt(dom: &Dom, h: Handle<Node>, i: i64): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].value.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].value)
     match r {
         Some(s) => {
             return s
@@ -193,7 +193,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
         let last = childAt(dom, parent, c - 1)
         match nodeKind(dom, last) {
             NodeKind.Text => {
-                let extra = t.clone()
+                let extra = t
                 let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
                     for i in 0..extra.len() {
                         n.text.push(extra[i])
@@ -449,7 +449,7 @@ pub fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string,
     var name = String.withCapacity(8)
     var i = readName(src, pos, n, &mut name)
     closeImplied(dom, &mut stack, name)
-    let el = createElement(&mut dom, name.clone())
+    let el = createElement(&mut dom, name)
     let parent = topOf(stack)
     append(&mut dom, parent, el)
 

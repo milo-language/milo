@@ -34,7 +34,7 @@ pub fn main(): i32 {
     var lines: Vec<string> = Vec.new()
     for line in allLines {
         if line.len > 0 {
-            lines.push(line.clone())
+            lines.push(line)
         }
     }
 

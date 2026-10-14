@@ -913,7 +913,7 @@ impl Re {
             }
         }
         var p = ReParser {
-            pat: pattern.clone(), pos: 0, nodes: Vec.new(), classes: Vec.new(), groups: 0,
+            pat: pattern, pos: 0, nodes: Vec.new(), classes: Vec.new(), groups: 0,
             names: Vec.new(), nameGroups: Vec.new(), depth: 0, err: "",
         }
         let root = p.parseAlt()
@@ -952,7 +952,7 @@ impl Re {
         c.emit(RE_MATCH, 0, 0)
         var re = Re {
             prog: c.prog, classes: p.classes, groups: p.groups, names: p.names, nameGroups: p.nameGroups,
-            slotCount: c.nextReg, icase: icase, multiline: multiline, dotAll: dotAll, source: pattern.clone(),
+            slotCount: c.nextReg, icase: icase, multiline: multiline, dotAll: dotAll, source: pattern,
             firsts: Vec.new(), splitFirst: Vec.new(),
         }
         re.computeFirst()
@@ -1506,7 +1506,7 @@ impl Re {
     // Replace the first match (JS `s.replace(re, repl)`).
     fn replace(self: &Self, s: &string, repl: &string): string {
         let Option.Some(m) = self.find(s) else {
-            return s.clone()
+            return s
         }
         var out = s.substr(0, m.start)
         self.expand(s, m, repl, &mut out)

@@ -36,7 +36,7 @@ pub fn envVars(): Vec<EnvEntry> {
         var i: i64 = 0
         while i + 1 < fields.len() {
             out.push(EnvEntry {
-                name: fields[i].clone(), value: fields[i + 1].clone()
+                name: fields[i], value: fields[i + 1]
             })
             i += 2
         }

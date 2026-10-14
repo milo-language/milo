@@ -206,7 +206,7 @@ impl Multipart {
         match multipartHeaderParam(contentType, "boundary") {
             Option.Some(b) => {
                 if isLegalBoundary(b) {
-                    return Option.Some(b.clone())
+                    return Option.Some(b)
                 }
                 return Option.None
             }
@@ -233,7 +233,7 @@ impl Multipart {
             return Result.Err(MultipartError.NotMultipart)
         }
         let bound = match multipartHeaderParam(contentType, "boundary") {
-            Option.Some(b) => b.clone(),
+            Option.Some(b) => b,
             Option.None => {
                 return Result.Err(MultipartError.MissingBoundary)
             }
@@ -251,7 +251,7 @@ impl Multipart {
     fn field(parts: &Vec<Part>, name: &string): Option<string> {
         for i in 0..parts.len {
             if parts[i].name == name {
-                return Option.Some(parts[i].body.clone())
+                return Option.Some(parts[i].body)
             }
         }
         return Option.None
@@ -334,10 +334,10 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
             let hname = line[0..colon]
             let hvalue = line[colon + 1..line.len].trim()
             if eqAsciiIgnoreCase(hname, "content-disposition") {
-                disposition = hvalue.clone()
+                disposition = hvalue
                 haveDisposition = true
             } else if eqAsciiIgnoreCase(hname, "content-type") {
-                partType = hvalue.clone()
+                partType = hvalue
             }
         }
 
@@ -360,7 +360,7 @@ fn parseMultipartBody(body: &string, boundary: &string, limits: &Limits): Result
             return Result.Err(MultipartError.NotFormData(headerStart))
         }
         let fieldName = match multipartHeaderParam(disposition, "name") {
-            Option.Some(n) => n.clone(),
+            Option.Some(n) => n,
             Option.None => {
                 return Result.Err(MultipartError.MissingName(headerStart))
             }
@@ -472,7 +472,7 @@ fn multipartHeaderParam(header: &string, key: &string): Option<string> {
                 while i < header.len && header[i] != ';' {
                     i += 1
                 }
-                value = header[valStart..i].trim().clone()
+                value = header[valStart..i].trim()
             }
         }
         if eqAsciiIgnoreCase(thisKey, key) {
@@ -541,7 +541,7 @@ fn sanitizeUploadFilename(raw: &string): Option<string> {
     if isReservedDeviceName(stem) {
         return Option.None
     }
-    return Option.Some(name.clone())
+    return Option.Some(name)
 }
 
 // DOS device names still resolve in every directory on Windows, so a file named

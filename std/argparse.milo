@@ -239,7 +239,7 @@ impl ArgParser {
     // Like Python's parse_args(args=[...]).
     fn parseFrom(self: &Self, argv: Vec<string>): ParsedArgs {
         var result = ParsedArgs {
-            prog: self.name.clone(),
+            prog: self.name,
             entries: Vec.new(),
             positional: Vec.new(),
         }
@@ -247,8 +247,8 @@ impl ArgParser {
         // initialize flag entries with defaults
         for fi in 0..self.flags.len {
             result.entries.push(ArgEntry {
-                name: self.flags[fi].longName.clone(),
-                value: self.flags[fi].defaultVal.clone(),
+                name: self.flags[fi].longName,
+                value: self.flags[fi].defaultVal,
                 present: false,
             })
         }
@@ -256,7 +256,7 @@ impl ArgParser {
         // initialize positional entries
         for pi in 0..self.positionals.len {
             result.entries.push(ArgEntry {
-                name: self.positionals[pi].name.clone(),
+                name: self.positionals[pi].name,
                 value: "",
                 present: false,
             })
@@ -275,12 +275,12 @@ impl ArgParser {
             if arg == "--" {
                 i += 1
                 while i < argv.len {
-                    result.positional.push(argv[i].clone())
+                    result.positional.push(argv[i])
                     if posIdx < self.positionals.len {
                         let entryIdx = self.flags.len + posIdx
                         result.entries[entryIdx] = ArgEntry {
-                            name: self.positionals[posIdx].name.clone(),
-                            value: argv[i].clone(),
+                            name: self.positionals[posIdx].name,
+                            value: argv[i],
                             present: true,
                         }
                         posIdx += 1
@@ -307,7 +307,7 @@ impl ArgParser {
                         matched = true
                         if self.flags[fi2].isBool {
                             result.entries[fi2] = ArgEntry {
-                                name: self.flags[fi2].longName.clone(),
+                                name: self.flags[fi2].longName,
                                 value: "true",
                                 present: true,
                             }
@@ -322,8 +322,8 @@ impl ArgParser {
                                 exit(1)
                             }
                             result.entries[fi2] = ArgEntry {
-                                name: self.flags[fi2].longName.clone(),
-                                value: argv[i].clone(),
+                                name: self.flags[fi2].longName,
+                                value: argv[i],
                                 present: true,
                             }
                         }
@@ -340,12 +340,12 @@ impl ArgParser {
                     }
                 }
             } else {
-                result.positional.push(arg.clone())
+                result.positional.push(arg)
                 if posIdx < self.positionals.len {
                     let entryIdx = self.flags.len + posIdx
                     result.entries[entryIdx] = ArgEntry {
-                        name: self.positionals[posIdx].name.clone(),
-                        value: arg.clone(),
+                        name: self.positionals[posIdx].name,
+                        value: arg,
                         present: true,
                     }
                     posIdx += 1
@@ -353,7 +353,7 @@ impl ArgParser {
                 if self.trailingArgs {
                     i += 1
                     while i < argv.len {
-                        result.positional.push(argv[i].clone())
+                        result.positional.push(argv[i])
                         i += 1
                     }
                 }
@@ -441,7 +441,7 @@ impl ParsedArgs {
         while i < self.entries.len {
             if self.entries[i].name == name {
                 if self.entries[i].present || self.entries[i].value.len > 0 {
-                    return Option.Some(self.entries[i].value.clone())
+                    return Option.Some(self.entries[i].value)
                 }
                 return Option.None
             }
@@ -455,7 +455,7 @@ impl ParsedArgs {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name {
-                let val = self.entries[i].value.clone()
+                let val = self.entries[i].value
                 if !argparseIsNumeric(val) {
                     print($"error: --{name}: expected integer, got '{val}'")
                     exit(1)

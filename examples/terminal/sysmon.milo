@@ -157,17 +157,17 @@ pub fn fetchProcesses(maxProcs: i64): Vec<ProcInfo> {
                 }
                 let fields = line.splitWhitespace()
                 if fields.len >= 6 {
-                    var cmdName = fields[5].clone()
+                    var cmdName = fields[5]
                     for j in 6..fields.len {
                         cmdName.pushStr(" ")
                         cmdName.pushStr(fields[j])
                     }
                     procs.push(ProcInfo {
-                        pid: fields[0].clone(),
-                        user: fields[1].clone(),
-                        cpu: fields[2].clone(),
-                        mem: fields[3].clone(),
-                        time: fields[4].clone(),
+                        pid: fields[0],
+                        user: fields[1],
+                        cpu: fields[2],
+                        mem: fields[3],
+                        time: fields[4],
                         command: cmdName,
                     })
                 }
@@ -287,7 +287,7 @@ pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, hig
     }
 
     let pid = padLeft(proc.pid, 7, 32)
-    var user = proc.user.clone()
+    var user = proc.user
     if user.len > 10 {
         user = user.substr(0, 10)
     }
@@ -301,7 +301,7 @@ pub fn renderProcess(buf: &mut string, row: i64, cols: i64, proc: &ProcInfo, hig
     if maxCmd < 0 {
         maxCmd = 0
     }
-    var cmd = proc.command.clone()
+    var cmd = proc.command
     if cmd.len > maxCmd {
         cmd = cmd.substr(0, maxCmd)
     }

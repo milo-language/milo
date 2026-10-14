@@ -140,26 +140,26 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
     } else {
         "S" + pad2(0 - latDeg)
     }
-    let gzPath = CACHE + "/" + name.clone() + ".hgt.gz"
+    let gzPath = CACHE + "/" + name + ".hgt.gz"
     var gz = ""
     if pathExists(gzPath) {
         let Ok(b) = readFile(gzPath) else {
-            print("  cache read failed for " + name.clone())
+            print("  cache read failed for " + name)
             return -1
         }
         gz = b
     } else {
-        let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/" + latDir + "/" + name.clone() + ".hgt.gz"
-        print("  downloading " + name.clone() + " ...")
+        let url = "https://s3.amazonaws.com/elevation-tiles-prod/skadi/" + latDir + "/" + name + ".hgt.gz"
+        print("  downloading " + name + " ...")
         let Ok(resp) = fetch(url) else {
-            print("  no SRTM tile " + name.clone() + " (treated as sea)")
-            t.names.push(name.clone())
+            print("  no SRTM tile " + name + " (treated as sea)")
+            t.names.push(name)
             t.data.push("")
             return t.names.len - 1
         }
         if !resp.ok() {
-            print("  no SRTM tile " + name.clone() + " (treated as sea)")
-            t.names.push(name.clone())
+            print("  no SRTM tile " + name + " (treated as sea)")
+            t.names.push(name)
             t.data.push("")
             return t.names.len - 1
         }
@@ -167,14 +167,14 @@ fn tileFor(t: &mut Tiles, latDeg: i64, lonDeg: i64): i64 {
         let _ = writeFile(gzPath, gz)
     }
     let Ok(raw) = Inflate.gzip(gz) else {
-        print("  corrupt SRTM tile " + name.clone())
+        print("  corrupt SRTM tile " + name)
         return -1
     }
     if raw.len < SRTM_N * SRTM_N * 2 {
-        print("  short SRTM tile " + name.clone())
+        print("  short SRTM tile " + name)
         return -1
     }
-    t.names.push(name.clone())
+    t.names.push(name)
     t.data.push(raw)
     return t.names.len - 1
 }
@@ -247,7 +247,7 @@ fn overpass(query: &string, cacheKey: &string): Result<string, string> {
         let Ok(b) = readFile(path) else {
             return Err("cache read failed")
         }
-        print("  using cached " + cacheKey.clone() + " (" + (b.len / 1024).toString() + " KiB)")
+        print("  using cached " + cacheKey + " (" + (b.len / 1024).toString() + " KiB)")
         return Ok(b)
     }
     print("  querying Overpass for " + cacheKey + " ...")
@@ -264,7 +264,7 @@ fn overpass(query: &string, cacheKey: &string): Result<string, string> {
 
     var attempt = 0
     while attempt < 6 {
-        let url = mirrors[attempt % mirrors.len].clone()
+        let url = mirrors[attempt % mirrors.len]
         match fetchForm(url, encoded) {
             Ok(resp) => {
                 let body = resp.text()
@@ -534,7 +534,7 @@ pub fn bridgesEmpty(): Bridges {
 // Service roads and tracks are excluded because a city has hundreds of them and
 // they are all four-metre culverts.
 fn bridgeLanes(highway: &string, lanesTag: &string): f64 {
-    let n = leadingNum(lanesTag.clone())
+    let n = leadingNum(lanesTag)
     if n >= 1.0 {
         return n
     }
@@ -639,7 +639,7 @@ fn parseColour(v: &string): i64 {
 // roof section is positional — a shape on the wrong index is a pyramid on an
 // office block.
 fn scanBuildings(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, lat: f64, lon: f64, mPerLon: f64, bH: &mut Vec<f64>, bStart: &mut Vec<i64>, bLen: &mut Vec<i64>, bPtX: &mut Vec<f64>, bPtZ: &mut Vec<f64>, bRoof: &mut Vec<u8>, bRoofH: &mut Vec<f64>) {
-    let bQ = "[out:json][timeout:180];way[\"building\"]" + bbox.clone() + ";out tags geom;"
+    let bQ = "[out:json][timeout:180];way[\"building\"]" + bbox + ";out tags geom;"
     var tallest = 0.0
     var shaped = 0
     match overpass(bQ, cacheName("buildings", latMin, lonMin, latMax, lonMax)) {
@@ -719,7 +719,7 @@ fn scanBuildings(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f
 // pyramidal mast from 330 m up. Salesforce Tower's taper is a ring of parts.
 // Neither shape exists anywhere else in the data.
 fn scanParts(bbox: &string, latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, lat: f64, lon: f64, mPerLon: f64, pH: &mut Vec<f64>, pBase: &mut Vec<f64>, pStart: &mut Vec<i64>, pLen: &mut Vec<i64>, pPtX: &mut Vec<f64>, pPtZ: &mut Vec<f64>, pRoof: &mut Vec<u8>, pRoofH: &mut Vec<f64>) {
-    let q = "[out:json][timeout:180];way[\"building:part\"]" + bbox.clone() + ";out tags geom;"
+    let q = "[out:json][timeout:180];way[\"building:part\"]" + bbox + ";out tags geom;"
     match overpass(q, cacheName("parts", latMin, lonMin, latMax, lonMax)) {
         Ok(body) => {
             match Json.parse(body) {
@@ -996,8 +996,8 @@ fn putRoofs(buf: &mut string, bRoof: &Vec<u8>, bRoofH: &Vec<f64>, bBase: &Vec<f6
 
 fn fetchBridges(bbox: &string, lat: f64, lon: f64, mPerLon: f64, cacheKey: &string): Bridges {
     var br = bridgesEmpty()
-    let q = "[out:json][timeout:180];way[\"bridge\"][\"highway\"]" + bbox.clone() + ";out tags geom;"
-    match overpass(q, cacheKey.clone()) {
+    let q = "[out:json][timeout:180];way[\"bridge\"][\"highway\"]" + bbox + ";out tags geom;"
+    match overpass(q, cacheKey) {
         Ok(body) => {
             match Json.parse(body) {
                 Ok(doc) => {
@@ -1240,7 +1240,7 @@ fn fetchOrthoTile(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64): Option<Im
 // row order regardless.
 fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string): bool {
     if pathExists(out) {
-        print("  drape already at " + out.clone())
+        print("  drape already at " + out)
         return true
     }
     let side = ORTHO_TILES * ORTHO_TILE_PX
@@ -1283,13 +1283,13 @@ fn fetchOrtho(latMin: f64, lonMin: f64, latMax: f64, lonMax: f64, out: &string):
 
     match encodePng(pixels, side, side, 3) {
         Ok(enc) => {
-            match writeFile(out.clone(), enc) {
+            match writeFile(out, enc) {
                 Ok(n) => {
-                    print("  wrote " + out.clone() + " (" + (n / 1024).toString() + " KiB, " + side.toString() + "px)")
+                    print("  wrote " + out + " (" + (n / 1024).toString() + " KiB, " + side.toString() + "px)")
                     return true
                 }
                 Err(_e) => {
-                    print("  could not write " + out.clone())
+                    print("  could not write " + out)
                     return false
                 }
             }
@@ -1323,7 +1323,7 @@ fn updateOrtho(path: string) {
         print("cannot parse " + path)
         return
     }
-    print(c.name.clone() + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
+    print(c.name + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
     let mPerLon = M_PER_DEG_LAT * Math.cos(c.originLat * 3.14159265358979 / 180.0)
     let _ = fetchOrtho(c.originLat - c.reach / M_PER_DEG_LAT, c.originLon - c.reach / mPerLon, c.originLat + c.reach / M_PER_DEG_LAT, c.originLon + c.reach / mPerLon, orthoPathOf(path))
 }
@@ -1333,7 +1333,7 @@ fn updateOrtho(path: string) {
 fn flagOf(a: &Vec<string>, name: &string, dflt: string): string {
     for i in 0..a.len {
         if a[i] == name && i + 1 < a.len {
-            return a[i + 1].clone()
+            return a[i + 1]
         }
     }
     return dflt
@@ -1409,7 +1409,7 @@ fn main() {
     // Narrow filters, not a bare key match: `way["natural"]` over a city bbox
     // drags in every tree and rock as its own way, and the public instances
     // shed that query rather than run it.
-    let coverQ = "[out:json][timeout:180];(way[\"leisure\"~\"^(park|garden|golf_course|pitch|nature_reserve)$\"]" + bbox.clone() + ";way[\"landuse\"~\"^(forest|grass|meadow|cemetery|recreation_ground|village_green|allotments)$\"]" + bbox.clone() + ";way[\"natural\"~\"^(wood|scrub|grassland|heath|beach|sand|water|wetland)$\"]" + bbox.clone() + ";way[\"waterway\"=\"riverbank\"]" + bbox.clone() + ";);out tags geom;"
+    let coverQ = "[out:json][timeout:180];(way[\"leisure\"~\"^(park|garden|golf_course|pitch|nature_reserve)$\"]" + bbox + ";way[\"landuse\"~\"^(forest|grass|meadow|cemetery|recreation_ground|village_green|allotments)$\"]" + bbox + ";way[\"natural\"~\"^(wood|scrub|grassland|heath|beach|sand|water|wetland)$\"]" + bbox + ";way[\"waterway\"=\"riverbank\"]" + bbox + ";);out tags geom;"
     var greens = 0
     match overpass(coverQ, cacheName("cover", latMin, lonMin, latMax, lonMax)) {
         Ok(body) => {
@@ -1517,9 +1517,9 @@ fn main() {
     putBridges(&mut buf, br)
     putRoofs(&mut buf, bRoof, bRoofH, bBase)
 
-    match writeFile(out.clone(), buf) {
+    match writeFile(out, buf) {
         Ok(nbytes) => {
-            print("wrote " + out.clone() + " (" + (nbytes / 1024).toString() + " KiB)")
+            print("wrote " + out + " (" + (nbytes / 1024).toString() + " KiB)")
             let _ = fetchOrtho(latMin, lonMin, latMax, lonMax, orthoPathOf(out))
         }
         Err(_e) => {
@@ -1560,7 +1560,7 @@ fn updateParts(path: string) {
         print("cannot parse " + path)
         return
     }
-    print(c.name.clone() + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
+    print(c.name + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
 
     let _ = makeDir(".cache", 493)
     let _ = makeDir(CACHE, 493)
@@ -1641,7 +1641,7 @@ fn updateBridges(path: string) {
         print("cannot parse " + path)
         return
     }
-    print(c.name.clone() + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
+    print(c.name + ": " + fmt7(c.originLat) + ", " + fmt7(c.originLon) + "  radius " + (c.reach as i64).toString() + " m")
 
     let _ = makeDir(".cache", 493)
     let _ = makeDir(CACHE, 493)
@@ -1689,7 +1689,7 @@ fn floatOf(doc: &Json, cur: i64): f64 {
 
 fn leadingNumSigned(s: string): f64 {
     var neg = false
-    var body = s.clone()
+    var body = s
     if body.len > 0 && body[0] == '-' {
         neg = true
         var t = ""

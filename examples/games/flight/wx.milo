@@ -143,7 +143,7 @@ fn httpJson(url: &string): Option<Json> {
 // temperature, which is the marker for "this one is a river gauge, try the next".
 fn readStation(stationUrl: &string): Obs {
     var o = obsEmpty()
-    let url = stationUrl.clone() + "/observations/latest"
+    let url = stationUrl + "/observations/latest"
     // Returning a FRESH empty rather than `o` on this path: `o` is owned, so
     // handing it to the early return moves it, and every later write to it is
     // then a use-after-move the checker rejects.
@@ -353,8 +353,8 @@ fn fetchWms(base: &string, layer: &string, lat: f64, lon: f64, reach: f64, n: i6
     if transparent {
         tr = "TRUE"
     }
-    let url = base.clone()
-    + "?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=" + layer.clone()
+    let url = base
+    + "?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=" + layer
     + "&STYLES=&SRS=EPSG:4326&BBOX="
     + formatFloat(lonMin, 5) + "," + formatFloat(latMin, 5) + ","
     + formatFloat(lonMax, 5) + "," + formatFloat(latMax, 5)

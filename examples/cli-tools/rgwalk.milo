@@ -86,7 +86,7 @@ impl Walker {
             }
         }
         self.stack.push(WalkFrame {
-            dirPath: dirPath.clone(), entries: entries, idx: 0, pushedIgnore: pushed
+            dirPath: dirPath, entries: entries, idx: 0, pushedIgnore: pushed
         })
     }
 
@@ -102,13 +102,13 @@ impl Walker {
             }
             let i = self.stack[top].idx
             self.stack[top].idx = i + 1
-            let name = self.stack[top].entries[i].name.clone()
+            let name = self.stack[top].entries[i].name
             let entryIsDir = self.stack[top].entries[i].isDir
             let entryIsFile = self.stack[top].entries[i].isFile
             if !self.searchHidden && name.len > 0 && name[0] == '.' {
                 continue
             }
-            let dir = self.stack[top].dirPath.clone()
+            let dir = self.stack[top].dirPath
             let fullPath = Path.join(dir, name)
             if entryIsDir {
                 if !shouldSkipDir(name) && !stackIgnores(self.sets, fullPath, name, true) {

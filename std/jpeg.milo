@@ -1655,7 +1655,7 @@ fn encodeJpeg(img: &Image, quality: i64, subsampling: JpegSubsampling): Result<s
     // RGB -> YCbCr with jccolor.c's fixed-point tables (alpha, if any, is dropped).
     var full: Vec<string> = Vec.new()
     if ncomp == 1 {
-        full.push(img.pixels.clone())
+        full.push(img.pixels)
     } else {
         var y = String.withCapacity(w * h)
         var cb = String.withCapacity(w * h)

@@ -84,14 +84,14 @@ pub fn main(): i32 {
     var only = ""
     var i = 1
     while i < argv.len {
-        only = argv[i].clone()
+        only = argv[i]
         i += 1
     }
     let all = sources()
     var failed = 0
     var k = 0
     while k < all.len {
-        let name = all[k].name.clone()
+        let name = all[k].name
         if only == "" || only == name {
             let out = "examples/games/apsis/bodies/" + name + ".png"
             print("fetching " + name + " (" + all[k].size.toString() + "px) ...")

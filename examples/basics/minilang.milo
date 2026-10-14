@@ -75,7 +75,7 @@ pub fn cloneValue(v: &Value): Value {
             return Value.Bool(b)
         }
         Value.Str(s) => {
-            return Value.Str(s.clone())
+            return Value.Str(s)
         }
         Value.Nil => {
             return Value.Nil
@@ -95,7 +95,7 @@ pub fn valueToString(v: &Value): string {
             return "false"
         }
         Value.Str(s) => {
-            return s.clone()
+            return s
         }
         Value.Nil => {
             return "nil"
@@ -128,19 +128,19 @@ pub fn cloneExpr(e: &Expr): Expr {
             return Expr.Num(n)
         }
         Expr.StrLit(s) => {
-            return Expr.StrLit(s.clone())
+            return Expr.StrLit(s)
         }
         Expr.Var(name) => {
-            return Expr.Var(name.clone())
+            return Expr.Var(name)
         }
         Expr.Bin(op, a, b) => {
-            return Expr.Bin(op.clone(), a, b)
+            return Expr.Bin(op, a, b)
         }
         Expr.If(c, t, f) => {
             return Expr.If(c, t, f)
         }
         Expr.Let(nm, v, body) => {
-            return Expr.Let(nm.clone(), v, body)
+            return Expr.Let(nm, v, body)
         }
     }
 }
@@ -418,7 +418,7 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
         return arenaAlloc(&mut arena, Expr.Num(v))
     }
     if k == T_IDENT {
-        let name = p.toks[p.pos].text.clone()
+        let name = p.toks[p.pos].text
         p.pos += 1
         return arenaAlloc(&mut arena, Expr.Var(name))
     }
@@ -447,7 +447,7 @@ pub fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
         p.pos += 1
         var name = String.withCapacity(8)
         if peekKind(p) == T_IDENT {
-            name = p.toks[p.pos].text.clone()
+            name = p.toks[p.pos].text
             p.pos += 1
         }
         if peekKind(p) == T_EQ {

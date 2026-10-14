@@ -35,7 +35,7 @@ pub fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
 // Reads the name by borrow: `with` hands the closure a `&Node` and returns only
 // what it computes, so the node's two Vecs are never copied.
 pub fn nodeName(g: &DepGraph, h: Handle<Node>): string {
-    return g.arena.with(h, (n: &Node): string => n.name.clone()) ?? "<invalid>"
+    return g.arena.with(h, (n: &Node): string => n.name) ?? "<invalid>"
 }
 
 // Kahn's algorithm

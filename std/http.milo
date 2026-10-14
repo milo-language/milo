@@ -86,7 +86,7 @@ impl Context {
     fn param(self: &Self, name: &string): Option<string> {
         for i in 0..self.params.len {
             if self.params[i].name == name {
-                return Option.Some(self.params[i].value.clone())
+                return Option.Some(self.params[i].value)
             }
         }
         return Option.None
@@ -97,7 +97,7 @@ impl Context {
     fn query(self: &Self, name: &string): Option<string> {
         for i in 0..self.req.queryParams.len {
             if self.req.queryParams[i].name == name {
-                return Option.Some(self.req.queryParams[i].value.clone())
+                return Option.Some(self.req.queryParams[i].value)
             }
         }
         return Option.None
@@ -108,7 +108,7 @@ impl Context {
     fn header(self: &Self, name: &string): Option<string> {
         for i in 0..self.req.headers.len {
             if eqIgnoreCase(self.req.headers[i].name, name) {
-                return Option.Some(self.req.headers[i].value.clone())
+                return Option.Some(self.req.headers[i].value)
             }
         }
         return Option.None
@@ -206,7 +206,7 @@ impl Context {
     // body, for clients that show it.
     fn redirect(self: &mut Self, url: string): Response {
         self.respHeaders.push(Param {
-            name: "Location", value: url.clone()
+            name: "Location", value: url
         })
         if self.statusCode != 200 {
             return Response.Status(self.statusCode, "text/plain; charset=utf-8", url)
@@ -905,7 +905,7 @@ fn requestLineProblem(head: &string): i32 {
             return 400
         }
     }
-    let version = parts[2].clone()
+    let version = parts[2]
     if version.len != 8 || !version.startsWith("HTTP/") || version[6] != '.' || version[5] < '0' || version[5] > '9' || version[7] < '0' || version[7] > '9' {
         return 400
     }
@@ -1020,7 +1020,7 @@ fn decodeBody(req: &mut Request, codings: Vec<string>, max: i64): i32 {
         }
         if eqIgnoreCase(h.name, "Content-Length") {
             kept.push(Param {
-                name: h.name.clone(), value: req.body.len.toString()
+                name: h.name, value: req.body.len.toString()
             })
         } else {
             kept.push(h.clone())
@@ -1203,7 +1203,7 @@ fn openListener(host: &string, port: u16?): Result<TcpListener> {
             let actualPort = listener.port()
             var shown: string = "localhost"
             if host != "0.0.0.0" {
-                shown = host.clone()
+                shown = host
             }
             print($"listening on http://{shown}:{actualPort}")
             return Result.Ok(listener)
@@ -1291,9 +1291,9 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
     let mtimeSec = info.mtimeNs / 1000000000
     let lastModified = formatRfc2822(mtimeSec * 1000)
     var headers: Vec<Param> = [Param {
-        name: "ETag", value: etag.clone()
+        name: "ETag", value: etag
     }, Param {
-        name: "Last-Modified", value: lastModified.clone()
+        name: "Last-Modified", value: lastModified
     }]
     if notModified(reqHeaders, etag, mtimeSec) {
         return Option.Some(HandledResponse {
@@ -1309,13 +1309,13 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
     let range = headerValue(reqHeaders, "Range")
     if method != "GET" || range.isNone() || !ifRangeHolds(reqHeaders, etag, lastModified) {
         return Option.Some(HandledResponse {
-            response: Response.Status(200, contentType.clone(), body), headers: headers
+            response: Response.Status(200, contentType, body), headers: headers
         })
     }
     match parseRange(range ?? "", body.len) {
         RangeSpec.Whole => {
             return Option.Some(HandledResponse {
-                response: Response.Status(200, contentType.clone(), body), headers: headers
+                response: Response.Status(200, contentType, body), headers: headers
             })
         }
         RangeSpec.Unsatisfiable => {
@@ -1331,7 +1331,7 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
                 name: "Content-Range", value: $"bytes {first}-{last}/{body.len}"
             })
             return Option.Some(HandledResponse {
-                response: Response.Status(206, contentType.clone(), body.substr(first, last + 1)), headers: headers
+                response: Response.Status(206, contentType, body.substr(first, last + 1)), headers: headers
             })
         }
     }
@@ -1341,7 +1341,7 @@ pub fn fileResponse(method: &string, reqHeaders: &Vec<Param>, path: &string, con
 fn headerValue(headers: &Vec<Param>, name: &string): Option<string> {
     for h in headers {
         if eqIgnoreCase(h.name, name) {
-            return Option.Some(h.value.clone())
+            return Option.Some(h.value)
         }
     }
     return Option.None
@@ -1717,7 +1717,7 @@ impl Outbox {
         if self._gone.load() {
             return false
         }
-        if self._ch.trySend(OutMsg.Data(data.clone())) {
+        if self._ch.trySend(OutMsg.Data(data)) {
             return true
         }
         dropConnection(self)
@@ -2272,7 +2272,7 @@ fn isUpgradeRequest(req: &Request): bool {
 fn requestHeader(req: &Request, name: &string): string {
     for h in req.headers {
         if eqIgnoreCase(h.name, name) {
-            return h.value.clone()
+            return h.value
         }
     }
     return ""
@@ -2583,7 +2583,7 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         if pat.len > 0 && pat[0] == ':' {
             if paramIdx < paramNames.len {
                 params.push(Param {
-                    name: paramNames[paramIdx].clone(), value: seg.clone()
+                    name: paramNames[paramIdx], value: seg
                 })
                 paramIdx += 1
             }

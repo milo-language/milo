@@ -70,7 +70,7 @@ pub fn broadcastTo(idx: i64, msg: &string): void {
 
 pub fn reply(ctx: &mut Context, status: i32, contentType: &string, body: &string): Response {
     ctx.setHeader("Access-Control-Allow-Origin", "*")
-    return Response.Status(status, contentType.clone(), body.clone())
+    return Response.Status(status, contentType, body)
 }
 
 // True if `path` is exactly `suffix` or ends with it (e.g. "/app.js" matches
@@ -119,9 +119,9 @@ pub fn handleTerminalWs(_ctx: &mut Context, ws: &mut WebSocket): void {
     }
 
     sessions.push(Session {
-        terminalId: terminalId.clone(),
-        command: command.clone(),
-        startTime: startTime.clone(),
+        terminalId: terminalId,
+        command: command,
+        startTime: startTime,
         isPublic: isPublic,
         allowControl: allowControl,
         displayName: displayName,
@@ -247,7 +247,7 @@ pub fn handleGetTerminal(terminalId: &string): string {
 
 // Every GET that is not a WebSocket upgrade: the page, its assets and the JSON API.
 pub fn staticHandler(ctx: &mut Context): Response {
-    let path = ctx.req.path.clone()
+    let path = ctx.req.path
     if path == "/" || path == "/index.html" {
         return reply(&mut ctx, 200, "text/html; charset=utf-8", indexHtml)
     } else if pathEndsWith(path, "/app.js") {

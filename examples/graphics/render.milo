@@ -386,9 +386,9 @@ fn renderBand(w: Shard<u32>): Shard<u32> {
 pub fn main(): i32 {
     let argv = args()
     if argv.len > 3 {
-        W = parseInt(argv[1].clone()) ?? 1600
-        H = parseInt(argv[2].clone()) ?? 900
-        SPP = parseInt(argv[3].clone()) ?? 128
+        W = parseInt(argv[1]) ?? 1600
+        H = parseInt(argv[2]) ?? 900
+        SPP = parseInt(argv[3]) ?? 128
     }
     var pixels: Vec<u32> = Vec.withCapacity(W * H)
     for _ in 0..W * H {

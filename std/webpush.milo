@@ -132,9 +132,9 @@ impl VapidKeys {
 
     // The key pair for a stored base64url `privateKey`, its public half derived.
     fn fromPrivate(privateKey: &string): Result<VapidKeys, WebPushError> {
-        let raw = Base64.urlDecode(privateKey).mapErr((e) => WebPushError.BadVapidKey(e.clone()))?
+        let raw = Base64.urlDecode(privateKey).mapErr((e) => WebPushError.BadVapidKey(e))?
         let k = EcKey.fromPrivate(raw).mapErr((_e) => WebPushError.BadVapidKey("not a P-256 private key"))?
-        return Ok(VapidKeys { publicKey: Base64.urlEncode(k.publicPoint()?), privateKey: privateKey.clone() })
+        return Ok(VapidKeys { publicKey: Base64.urlEncode(k.publicPoint()?), privateKey: privateKey })
     }
 }
 
@@ -161,7 +161,7 @@ impl WebPush {
             return Err(WebPushError.CryptoFailure($"salt must be 16 bytes, got {salt.len}"))
         }
         let sender = EcKey.fromPrivate(senderPrivate).mapErr((_e) => WebPushError.CryptoFailure("sender key is not a P-256 private key"))?
-        return encryptWithKey(payload, p256dh, auth, sender, salt.clone())
+        return encryptWithKey(payload, p256dh, auth, sender, salt)
     }
 
     // The `Authorization` header value for a push to `endpoint` (RFC 8292):
@@ -170,12 +170,12 @@ impl WebPush {
     // push service operator) and `exp` is `expiresAt` in epoch seconds, which push
     // services require to be within 24 hours.
     fn vapid(endpoint: &string, subject: &string, keys: &VapidKeys, expiresAt: i64): Result<string, WebPushError> {
-        let url = Url.parse(endpoint.clone()).mapErr((e) => WebPushError.BadVapidKey("endpoint: " + e))?
+        let url = Url.parse(endpoint).mapErr((e) => WebPushError.BadVapidKey("endpoint: " + e))?
         if url.scheme != "https" || url.host.len == 0 {
             return Err(WebPushError.BadVapidKey("endpoint is not an absolute https URL"))
         }
         let aud = if url.port > 0 && url.port != 443 { $"https://{url.host}:{url.port}" } else { $"https://{url.host}" }
-        let raw = Base64.urlDecode(keys.privateKey).mapErr((e) => WebPushError.BadVapidKey(e.clone()))?
+        let raw = Base64.urlDecode(keys.privateKey).mapErr((e) => WebPushError.BadVapidKey(e))?
         let key = EcKey.fromPrivate(raw).mapErr((_e) => WebPushError.BadVapidKey("not a P-256 private key"))?
         let header = Base64.urlEncode("{\"typ\":\"JWT\",\"alg\":\"ES256\"}")
         let claims = Base64.urlEncode("{\"aud\":" + jsonStr(aud) + ",\"exp\":" + expiresAt.toString() + ",\"sub\":" + jsonStr(subject) + "}")
@@ -224,18 +224,18 @@ fn encryptWithKey(payload: &string, p256dh: &string, auth: &string, sender: EcKe
     keyInfo.pushStr(uaPublic)
     keyInfo.pushStr(asPublic)
     let prkKey = Hkdf.extractSha256(authSecret, ecdhSecret)
-    let ikm = Hkdf.expandSha256(prkKey, keyInfo, 32).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    let ikm = Hkdf.expandSha256(prkKey, keyInfo, 32).mapErr((e) => WebPushError.CryptoFailure(e))?
     let prk = Hkdf.extractSha256(salt, ikm)
     var cekInfo = "Content-Encoding: aes128gcm"
     cekInfo.push(0)
     var nonceInfo = "Content-Encoding: nonce"
     nonceInfo.push(0)
-    let cek = Hkdf.expandSha256(prk, cekInfo, 16).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
-    let nonce = Hkdf.expandSha256(prk, nonceInfo, 12).mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    let cek = Hkdf.expandSha256(prk, cekInfo, 16).mapErr((e) => WebPushError.CryptoFailure(e))?
+    let nonce = Hkdf.expandSha256(prk, nonceInfo, 12).mapErr((e) => WebPushError.CryptoFailure(e))?
     // One record, so it is the last: padding delimiter 0x02 (RFC 8188 2), no padding.
-    var plain = payload.clone()
+    var plain = payload
     plain.push(2)
-    let sealed = Crypto.aesGcm128Encrypt(cek, nonce, plain, "").mapErr((e) => WebPushError.CryptoFailure(e.clone()))?
+    let sealed = Crypto.aesGcm128Encrypt(cek, nonce, plain, "").mapErr((e) => WebPushError.CryptoFailure(e))?
     // Header (RFC 8188 2.1): salt, record size (u32 big-endian), key id length, key id.
     var out = salt
     out.push(((RECORD_SIZE >> 24) & 255) as u8)

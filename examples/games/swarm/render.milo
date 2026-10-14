@@ -166,10 +166,10 @@ fn clearColor(): FColor {
 
 fn pipe(dev: &mut Device, vs: &string, vsEntry: &string, fs: &string, fsEntry: &string, vsStorage: u32, fsSamplers: u32, format: u32, blend: i64, strip: bool): Result<Pipeline, string> {
     let d = PipelineDesc {
-        vsSource: vs.clone(),
-        vsEntry: vsEntry.clone(),
-        fsSource: fs.clone(),
-        fsEntry: fsEntry.clone(),
+        vsSource: vs,
+        vsEntry: vsEntry,
+        fsSource: fs,
+        fsEntry: fsEntry,
         vsUniformBuffers: if vsStorage > 0 { 1 } else { 0 },
         vsStorageBuffers: vsStorage,
         fsUniformBuffers: if fsSamplers > 0 { 1 } else { 0 },
@@ -184,7 +184,7 @@ fn pipe(dev: &mut Device, vs: &string, vsEntry: &string, fs: &string, fsEntry: &
 fn kernel(dev: &mut Device, entry: &string, readonly: u32): Result<ComputePipeline, string> {
     let d = ComputeDesc {
         source: PARTICLE_CS.clone(),
-        entry: entry.clone(),
+        entry: entry,
         uniformBuffers: 1,
         readonly: readonly,
         readwrite: 1,

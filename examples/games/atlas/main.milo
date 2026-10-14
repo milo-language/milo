@@ -129,7 +129,7 @@ fn shortName(s: &string): string {
     if s.startsWith("The ") {
         return s.slice(4, s.len).clone()
     }
-    return s.clone()
+    return s
 }
 
 // A 1x1 placeholder so every slot in `tex` is a real texture before its map has
@@ -392,9 +392,9 @@ fn drawInfoPanel(ui: &mut Ui, app: &App, u: f64) {
     // The blurb is wrapped before the panel is drawn, because the panel has to
     // be tall enough to hold it — measuring after drawing is how text ends up
     // sitting on the planet with no background behind it.
-    var blurb = app.worlds[app.wi].little.clone()
+    var blurb = app.worlds[app.wi].little
     if app.level == 1 {
-        blurb = app.worlds[app.wi].big.clone()
+        blurb = app.worlds[app.wi].big
     }
     var lines = wrapText(blurb, body, panelW - 44.0 * u)
     var rows = 8
@@ -448,9 +448,9 @@ fn drawLandmarkCard(ui: &mut Ui, app: &App, u: f64, w: f64) {
     let y = 30.0 * u
     let tint = app.worlds[app.wi].tint
 
-    var text = app.worlds[app.wi].landmarks[app.sel].little.clone()
+    var text = app.worlds[app.wi].landmarks[app.sel].little
     if app.level == 1 {
-        text = app.worlds[app.wi].landmarks[app.sel].big.clone()
+        text = app.worlds[app.wi].landmarks[app.sel].big
     }
     let body = 9.5 * u
     var lines = wrapText(text, body, cardW - 48.0 * u)
@@ -499,7 +499,7 @@ fn drawPins(ui: &mut Ui, app: &App, u: f64, time: f64) {
             // The name only appears once the pin is worth reading, which keeps
             // eight labels from stacking into a wall at the limb.
             if (hovered || selected) && fade > 0.35 {
-                let label = app.worlds[app.wi].landmarks[i].name.clone()
+                let label = app.worlds[app.wi].landmarks[i].name
                 let ts = 9.0 * u
                 let tw = textWidth(label, ts)
                 let lx = app.pins[i].x - tw * 0.5
@@ -683,37 +683,37 @@ fn parseOptions(): Options {
     let a = args()
     var i = 1
     while i < a.len {
-        let k = a[i].clone()
+        let k = a[i]
         var v = ""
         if i + 1 < a.len {
-            v = a[i + 1].clone()
+            v = a[i + 1]
         }
         if k == "--shot" {
-            o.shot = v.clone()
+            o.shot = v
         }
         if k == "--world" {
-            o.world = parseInt(v.clone()).unwrapOr(-1)
+            o.world = parseInt(v).unwrapOr(-1)
         }
         if k == "--landmark" {
-            o.landmark = parseInt(v.clone()).unwrapOr(-1)
+            o.landmark = parseInt(v).unwrapOr(-1)
         }
         if k == "--frames" {
-            o.frames = parseInt(v.clone()).unwrapOr(90)
+            o.frames = parseInt(v).unwrapOr(90)
         }
         if k == "--level" {
-            o.level = parseInt(v.clone()).unwrapOr(0)
+            o.level = parseInt(v).unwrapOr(0)
         }
         if k == "--gain" {
-            o.gain = parseFloat(v.clone()).unwrapOr(0.34)
+            o.gain = parseFloat(v).unwrapOr(0.34)
         }
         if k == "--atmo" {
-            o.atmo = parseFloat(v.clone()).unwrapOr(1.0)
+            o.atmo = parseFloat(v).unwrapOr(1.0)
         }
         if k == "--dist" {
-            o.dist = parseFloat(v.clone()).unwrapOr(0.0)
+            o.dist = parseFloat(v).unwrapOr(0.0)
         }
         if k == "--sky" {
-            o.sky = parseFloat(v.clone()).unwrapOr(1.0)
+            o.sky = parseFloat(v).unwrapOr(1.0)
         }
         i += 1
     }

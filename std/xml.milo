@@ -74,11 +74,11 @@ impl XmlError {
     // One-line description, ending with the byte offset.
     fn message(self: &Self): string {
         let what = match self {
-            XmlError.Syntax(_at, m) => m.clone()
+            XmlError.Syntax(_at, m) => m
             XmlError.MismatchedTag(_at, open, found) => $"end tag </{found}> does not match open element <{open}>"
             XmlError.UnknownEntity(_at, name) => $"unknown entity reference &{name};"
             XmlError.DoctypeSubset(_at) => "DOCTYPE with an internal subset is not supported (entity declarations are refused)"
-            XmlError.Encoding(_at, m) => m.clone()
+            XmlError.Encoding(_at, m) => m
             XmlError.TooDeep(_at) => $"elements nested deeper than {MAX_DEPTH}"
         }
         return $"{what} at byte {self.offset()}"
@@ -184,7 +184,7 @@ impl XmlNode {
     fn attr(self: &Self, name: &string): Option<string> {
         for a in self.attrs {
             if a.name == name {
-                return Some(a.value.clone())
+                return Some(a.value)
             }
         }
         return None
@@ -572,7 +572,7 @@ fn nextEvent(src: &string, st: &mut Scan): Result<Option<XmlEvent>, XmlError> {
         let pos = st.pos
         if pos >= src.len {
             if st.stack.len > 0 {
-                let open = st.stack[st.stack.len - 1].clone()
+                let open = st.stack[st.stack.len - 1]
                 return Err(XmlError.Syntax(pos, $"unexpected end of input: <{open}> is not closed"))
             }
             if !st.sawRoot {
@@ -685,7 +685,7 @@ fn nextEvent(src: &string, st: &mut Scan): Result<Option<XmlEvent>, XmlError> {
         } else {
             return Err(XmlError.Syntax(end, $"expected '>' or '/>' to end <{name}"))
         }
-        st.stack.push(name.clone())
+        st.stack.push(name)
         return Ok(Some(XmlEvent.StartTag(XmlStart { name: name, attrs: attrs })))
     }
     return Ok(None)

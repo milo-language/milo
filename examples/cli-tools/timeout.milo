@@ -121,7 +121,7 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
     }
 
     while opts.cmdStart < argv.len {
-        let arg = argv[opts.cmdStart].clone()
+        let arg = argv[opts.cmdStart]
 
         if arg == "-h" || arg == "--help" {
             printHelp()
@@ -137,7 +137,7 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
                 print("error: --signal requires a value")
                 exit(125)
             }
-            let sigStr = argv[opts.cmdStart].clone()
+            let sigStr = argv[opts.cmdStart]
             opts.signal = parseSignal(sigStr)
             if opts.signal < 0 {
                 print($"error: unknown signal '{sigStr}'")
@@ -152,7 +152,7 @@ pub fn parseFlags(argv: &Vec<string>): TimeoutOpts {
                 print("error: --kill-after requires a value")
                 exit(125)
             }
-            let kaStr = argv[opts.cmdStart].clone()
+            let kaStr = argv[opts.cmdStart]
             opts.killAfterMs = parseDuration(kaStr)
             opts.hasKillAfter = true
             opts.cmdStart += 1
@@ -188,7 +188,7 @@ pub fn main(): i32 {
         return 125
     }
 
-    let durStr = argv[cmdStart].clone()
+    let durStr = argv[cmdStart]
     let durMs = parseDuration(durStr)
     if durMs <= 0 {
         print("error: duration must be positive")
@@ -202,7 +202,7 @@ pub fn main(): i32 {
         if i > cmdIdx {
             cmd.pushStr(" ")
         }
-        let arg = argv[i].clone()
+        let arg = argv[i]
         cmd.pushStr("'")
         for c in arg {
             if c == '\'' {

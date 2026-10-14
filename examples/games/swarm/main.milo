@@ -110,7 +110,7 @@ fn parseOpts(): Result<Opts, string> {
     }
     var i: i64 = 1
     while i < argv.len {
-        let a = argv[i].clone()
+        let a = argv[i]
         if a == "--bot" || a == "--bench" || a == "--novsync" {
             if a == "--bot" {
                 o.bot = true
@@ -125,7 +125,7 @@ fn parseOpts(): Result<Opts, string> {
         if i + 1 >= argv.len {
             return Err("missing value after " + a)
         }
-        let v = argv[i + 1].clone()
+        let v = argv[i + 1]
         if a == "--seed" {
             o.seed = parseInt(v) ?? 1
         } else if a == "--shot" {
@@ -375,7 +375,7 @@ fn runHeadless(o: &Opts): Result<Unit, string> {
         rendered += 1
         if save {
             dev.readTexture(tex, down, &mut px)?
-            var path = o.shot.clone()
+            var path = o.shot
             if clip {
                 path = o.clip + "-" + padLeft($"{saved}", 5, 48) + ".png"
             }

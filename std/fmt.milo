@@ -10,7 +10,7 @@ pub fn fmt1(template: &string, a: &string): string {
     var i: i64 = 0
     while i < template.len {
         if !used && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
-            result += a.clone()
+            result += a
             used = true
             i += 2
         } else {
@@ -29,10 +29,10 @@ pub fn fmt2(template: &string, a: &string, b: &string): string {
     while i < template.len {
         if which < 2 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
             if which == 0 {
-                result += a.clone()
+                result += a
             }
             if which == 1 {
-                result += b.clone()
+                result += b
             }
             which += 1
             i += 2
@@ -52,13 +52,13 @@ pub fn fmt3(template: &string, a: &string, b: &string, c: &string): string {
     while i < template.len {
         if which < 3 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
             if which == 0 {
-                result += a.clone()
+                result += a
             }
             if which == 1 {
-                result += b.clone()
+                result += b
             }
             if which == 2 {
-                result += c.clone()
+                result += c
             }
             which += 1
             i += 2
@@ -78,16 +78,16 @@ pub fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): 
     while i < template.len {
         if which < 4 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
             if which == 0 {
-                result += a.clone()
+                result += a
             }
             if which == 1 {
-                result += b.clone()
+                result += b
             }
             if which == 2 {
-                result += c.clone()
+                result += c
             }
             if which == 3 {
-                result += d.clone()
+                result += d
             }
             which += 1
             i += 2
@@ -107,13 +107,13 @@ pub fn padLeft(s: &string, width: i64, ch: u8): string {
         result.push(ch)
         padding -= 1
     }
-    result += s.clone()
+    result += s
     return result
 }
 
 // Right-pad a string to a minimum width.
 pub fn padRight(s: &string, width: i64, ch: u8): string {
-    var result = s.clone()
+    var result = s
     var padding = width - s.len
     while padding > 0 {
         result.push(ch)
@@ -133,9 +133,9 @@ pub fn join(parts: &Vec<string>, sep: &string): string {
     var result = ""
     for i in 0..parts.len {
         if i > 0 {
-            result += sep.clone()
+            result += sep
         }
-        result = result + parts[i].clone()
+        result = result + parts[i]
     }
     return result
 }

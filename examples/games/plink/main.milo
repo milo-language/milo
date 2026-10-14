@@ -84,10 +84,10 @@ fn argValue(name: &string, fallback: &string): string {
     let a = args()
     for i in 0..a.len {
         if a[i] == name && i + 1 < a.len {
-            return a[i + 1].clone()
+            return a[i + 1]
         }
     }
-    return fallback.clone()
+    return fallback
 }
 
 fn argPresent(name: &string): bool {

@@ -137,7 +137,7 @@ fn logOneLine(s: &string): string {
         }
         i += 1
     }
-    return s.clone()
+    return s
 }
 
 fn logWriteLine(line: &string): void {
@@ -212,7 +212,7 @@ fn logEmit(f: &LogFields, level: LogLevel, msg: &string): void {
 
 fn logRecord(name: &string): LogFields {
     return LogFields {
-        name: name.clone(), keys: Vec.new(), vals: Vec.new(), quoted: Vec.new()
+        name: name, keys: Vec.new(), vals: Vec.new(), quoted: Vec.new()
     }
 }
 
@@ -236,8 +236,8 @@ impl LogFields {
     // bare text would be ambiguous.
     fn str(self: LogFields, key: &string, val: &string): LogFields {
         var f = self
-        f.keys.push(key.clone())
-        f.vals.push(val.clone())
+        f.keys.push(key)
+        f.vals.push(val)
         f.quoted.push(true)
         return f
     }
@@ -245,7 +245,7 @@ impl LogFields {
     // Append an integer field, rendered unquoted in both formats.
     fn int(self: LogFields, key: &string, val: i64): LogFields {
         var f = self
-        f.keys.push(key.clone())
+        f.keys.push(key)
         f.vals.push(val.toString())
         f.quoted.push(false)
         return f
@@ -255,7 +255,7 @@ impl LogFields {
     // infinite value is quoted instead, since JSON has no literal for it.
     fn float(self: LogFields, key: &string, val: f64): LogFields {
         var f = self
-        f.keys.push(key.clone())
+        f.keys.push(key)
         f.vals.push(val.toString())
         f.quoted.push(!Math.isFinite(val))
         return f
@@ -264,7 +264,7 @@ impl LogFields {
     // Append a boolean field, rendered as `true`/`false` unquoted.
     fn bool(self: LogFields, key: &string, val: bool): LogFields {
         var f = self
-        f.keys.push(key.clone())
+        f.keys.push(key)
         f.vals.push(val.toString())
         f.quoted.push(false)
         return f
@@ -303,7 +303,7 @@ impl Logger {
     // per subsystem in a global or a struct field.
     fn new(name: &string): Logger {
         return Logger {
-            name: name.clone()
+            name: name
         }
     }
 

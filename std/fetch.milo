@@ -395,7 +395,7 @@ pub struct FetchResponse {
 impl FetchResponse {
     // Return the response body as a string.
     fn text(self: &Self): string {
-        return self.body.clone()
+        return self.body
     }
 
     // Parse the response body as JSON.
@@ -508,7 +508,7 @@ fn parseBody(raw: &string): string {
         }
         i += 1
     }
-    return raw.clone()
+    return raw
 }
 
 pub fn parseResponse(raw: string): FetchResponse {
@@ -750,12 +750,12 @@ pub fn buildRequest(host: &string, path: &string, opts: &FetchOptions): string {
 // HTTP/1.1 keeps the connection open by default, and the response is read by its
 // framing rather than to EOF.
 fn requestText(host: &string, path: &string, opts: &FetchOptions, keepAlive: bool): string {
-    var req: string = opts.method.clone() + " " + path.clone() + " HTTP/1.1\r\nHost: " + host.clone() + "\r\n"
+    var req: string = opts.method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n"
     if !keepAlive && findHeader(opts.headers, "Connection").isNone() {
         req += "Connection: close\r\n"
     }
     if opts.headers.len > 0 {
-        req = req + opts.headers.clone() + "\r\n"
+        req = req + opts.headers + "\r\n"
     }
     if findHeader(opts.headers, "Accept").isNone() {
         req += "Accept: */*\r\n"
@@ -764,7 +764,7 @@ fn requestText(host: &string, path: &string, opts: &FetchOptions, keepAlive: boo
         req += "User-Agent: milo/0.1\r\n"
     }
     if opts.body.len > 0 {
-        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
+        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body
     } else {
         req += "\r\n"
     }
@@ -1049,7 +1049,7 @@ fn poolOn(): bool {
 
 fn poolKey(useTls: bool, host: &string, port: u16, pin: &Option<u32>): string {
     var k = if useTls { "https://" } else { "http://" }
-    k = k + host.clone() + ":" + (port as i64).toString()
+    k = k + host + ":" + (port as i64).toString()
     if let Option.Some(ip) = pin {
         k = k + "@" + (ip as i64).toString()
     }
@@ -1207,9 +1207,9 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
         let loc = r.header("Location") ?? ""
         if loc.len > 0 && hops < MAX_REDIRECTS {
             var redirOpts = FetchOptions {
-                method: opts.method.clone(),
-                headers: opts.headers.clone(),
-                body: opts.body.clone(),
+                method: opts.method,
+                headers: opts.headers,
+                body: opts.body,
             }
             if r.status == 301 || r.status == 302 {
                 redirOpts.method = "GET"
@@ -1246,13 +1246,13 @@ pub fn fetch(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "GET", headers: "", body: ""
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // An HTTP request with full control over method, headers and body. Redirects are
 // followed as for `fetch`; a 301 or 302 turns the retry into a GET with no body.
 pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetError> {
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // fetchWith that gives up: Err(NetError.Timeout(stage)) once `t.connectMs` passes on
@@ -1260,7 +1260,7 @@ pub fn fetchWith(url: &string, opts: FetchOptions): Result<FetchResponse, NetErr
 // stopped answering. Nothing is returned from a response cut off by the deadline.
 pub fn fetchWithTimeout(url: &string, opts: FetchOptions, t: FetchTimeouts): Result<FetchResponse, NetError> {
     let by = deadlineIn(t.totalMs)
-    return doFetchHops(url.clone(), opts, 0, t, by)
+    return doFetchHops(url, opts, 0, t, by)
 }
 
 // HTTP POST of `body` with `Content-Type: application/json`.
@@ -1268,9 +1268,9 @@ pub fn fetchPost(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/json",
-        body: body.clone(),
+        body: body,
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // POST an application/x-www-form-urlencoded body — build it with formEncode, or
@@ -1280,9 +1280,9 @@ pub fn fetchForm(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/x-www-form-urlencoded",
-        body: body.clone(),
+        body: body,
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // HTTP PUT of `body` with `Content-Type: application/json`.
@@ -1290,9 +1290,9 @@ pub fn fetchPut(url: &string, body: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "PUT",
         headers: "Content-Type: application/json",
-        body: body.clone(),
+        body: body,
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // HTTP DELETE.
@@ -1300,7 +1300,7 @@ pub fn fetchDelete(url: &string): Result<FetchResponse, NetError> {
     var opts = FetchOptions {
         method: "DELETE", headers: "", body: ""
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }
 
 // HTTP PATCH of `body` with `Content-Type: application/json`.
@@ -1308,7 +1308,7 @@ pub fn fetchPatch(url: &string, body: &string): Result<FetchResponse, NetError> 
     var opts = FetchOptions {
         method: "PATCH",
         headers: "Content-Type: application/json",
-        body: body.clone(),
+        body: body,
     }
-    return doFetch(url.clone(), opts)
+    return doFetch(url, opts)
 }

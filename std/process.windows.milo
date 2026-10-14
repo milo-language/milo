@@ -509,7 +509,7 @@ pub struct Command {
 impl Command {
     fn new(program: &string): Command {
         return Command {
-            program: program.clone(),
+            program: program,
             argv: Vec.new(),
             workDir: "",
             envChanges: Vec.new(),
@@ -522,14 +522,14 @@ impl Command {
 
     fn arg(self: Command, value: &string): Command {
         var c = self
-        c.argv.push(value.clone())
+        c.argv.push(value)
         return c
     }
 
     fn args(self: Command, values: &Vec<string>): Command {
         var c = self
         for i in 0..values.len {
-            c.argv.push(values[i].clone())
+            c.argv.push(values[i])
         }
         return c
     }
@@ -538,14 +538,14 @@ impl Command {
     // spawn() itself — CreateProcess validates it before the process exists.
     fn dir(self: Command, path: &string): Command {
         var c = self
-        c.workDir = path.clone()
+        c.workDir = path
         return c
     }
 
     fn env(self: Command, name: &string, value: &string): Command {
         var c = self
         c.envChanges.push(EnvChange {
-            name: name.clone(), value: value.clone(), remove: false
+            name: name, value: value, remove: false
         })
         return c
     }
@@ -553,7 +553,7 @@ impl Command {
     fn envRemove(self: Command, name: &string): Command {
         var c = self
         c.envChanges.push(EnvChange {
-            name: name.clone(), value: "", remove: true
+            name: name, value: "", remove: true
         })
         return c
     }
@@ -915,7 +915,7 @@ pub fn quoteArg(arg: &string): string {
         }
     }
     if !needsQuote {
-        return arg.clone()
+        return arg
     }
     var out = String.withCapacity(arg.len + 2)
     out.push('"')

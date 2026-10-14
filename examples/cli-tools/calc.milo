@@ -231,7 +231,7 @@ pub fn formatResult(n: f64): string {
     if result.len > 0 && result[result.len - 1] == '.' {
         result = result[0..result.len - 1].clone()
     }
-    return result.clone()
+    return result
 }
 
 pub fn main(): i32 {

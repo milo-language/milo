@@ -178,7 +178,7 @@ pub fn main(): i32 {
             print("")
 
             if outputFile.len > 0 {
-                match writeFile(outputFile.clone(), r.body) {
+                match writeFile(outputFile, r.body) {
                     Ok(n) => {
                         print("saved ", n, " bytes to ", outputFile)
                     }

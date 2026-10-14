@@ -64,7 +64,7 @@ fn urlParse(s: string): Result<Url> {
             let portStr = auth[colonPos + 1..auth.len]
             port = _parsePort(portStr)?
         } else {
-            host = auth.clone()
+            host = auth
         }
     }
 
@@ -104,7 +104,7 @@ fn urlParse(s: string): Result<Url> {
     return Result.Ok(Url {
         scheme: scheme, host: host, port: port,
         path: path, query: query, fragment: fragment,
-        raw: s.clone(),
+        raw: s,
     })
 }
 
@@ -383,7 +383,7 @@ fn removeDotSegments(path: &string): string {
                 let _ = segs.pop()
             }
         } else if last != "." {
-            segs.push(last.clone())
+            segs.push(last)
         }
         i = end + 1
     }
@@ -411,27 +411,27 @@ pub fn resolveUrl(base: &string, ref: &string): string {
     let r = splitUrlRef(ref)
     var t = UrlRefParts {
         scheme: "", hasAuthority: false, authority: "", path: "",
-        hasQuery: r.hasQuery, query: r.query.clone(), hasFragment: r.hasFragment, fragment: r.fragment.clone(),
+        hasQuery: r.hasQuery, query: r.query, hasFragment: r.hasFragment, fragment: r.fragment,
     }
     if r.scheme.len > 0 {
-        t.scheme = r.scheme.clone()
+        t.scheme = r.scheme
         t.hasAuthority = r.hasAuthority
-        t.authority = r.authority.clone()
+        t.authority = r.authority
         t.path = removeDotSegments(r.path)
     } else {
-        t.scheme = b.scheme.clone()
+        t.scheme = b.scheme
         if r.hasAuthority {
             t.hasAuthority = true
-            t.authority = r.authority.clone()
+            t.authority = r.authority
             t.path = removeDotSegments(r.path)
         } else {
             t.hasAuthority = b.hasAuthority
-            t.authority = b.authority.clone()
+            t.authority = b.authority
             if r.path.len == 0 {
-                t.path = b.path.clone()
+                t.path = b.path
                 if !r.hasQuery {
                     t.hasQuery = b.hasQuery
-                    t.query = b.query.clone()
+                    t.query = b.query
                 }
             } else if r.path[0] == '/' {
                 t.path = removeDotSegments(r.path)
@@ -439,13 +439,13 @@ pub fn resolveUrl(base: &string, ref: &string): string {
                 // §5.2.3 merge: an authority with an empty path merges under "/"
                 var merged = ""
                 if b.hasAuthority && b.path.len == 0 {
-                    merged = "/" + r.path.clone()
+                    merged = "/" + r.path
                 } else {
                     var slash: i64 = b.path.len - 1
                     while slash >= 0 && b.path[slash] != '/' {
                         slash -= 1
                     }
-                    merged = b.path.substr(0, slash + 1) + r.path.clone()
+                    merged = b.path.substr(0, slash + 1) + r.path
                 }
                 t.path = removeDotSegments(merged)
             }
@@ -453,7 +453,7 @@ pub fn resolveUrl(base: &string, ref: &string): string {
     }
     var out = ""
     if t.scheme.len > 0 {
-        out = t.scheme.clone() + ":"
+        out = t.scheme + ":"
     }
     if t.hasAuthority {
         out = out + "//" + t.authority

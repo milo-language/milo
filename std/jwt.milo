@@ -164,7 +164,7 @@ pub struct JwtClaims {
 impl JwtClaims {
     // The payload segment as its raw JSON text.
     fn raw(self: &Self): string {
-        return self.payload.clone()
+        return self.payload
     }
 
     // A string-valued claim, or None if absent or not a string.
@@ -324,7 +324,7 @@ impl JwtVerifier {
     // of the caller's variable on first use.
     fn new(alg: JwtAlg, secret: &string): JwtVerifier {
         return JwtVerifier {
-            secret: secret.clone(),
+            secret: secret,
             alg: alg,
             leewaySecs: JWT_DEFAULT_LEEWAY,
             nowSecs: -1,
@@ -450,7 +450,7 @@ fn jwtVerify(v: &JwtVerifier, token: &string): Result<JwtClaims, JwtError> {
     // raw MACs. Decoding the signature (rather than re-encoding ours) also rejects
     // a non-canonical base64url encoding of an otherwise valid MAC.
     let sigSegment = jwtSegment(token, lastDot + 1, token.len)
-    let presented = jwtDecodeSegment(sigSegment.clone(), "signature")?
+    let presented = jwtDecodeSegment(sigSegment, "signature")?
     let expected = jwtMac(v.alg, v.secret, jwtSegment(token, 0, lastDot))
     if !constantTimeEq(presented, expected) {
         return Result.Err(JwtError.BadSignature)
@@ -517,14 +517,14 @@ fn jwtVerify(v: &JwtVerifier, token: &string): Result<JwtClaims, JwtError> {
             return Result.Err(JwtError.MissingClaim("aud"))
         }
         if m == 0 {
-            return Result.Err(JwtError.WrongAudience(v.audience.clone()))
+            return Result.Err(JwtError.WrongAudience(v.audience))
         }
     }
     if v.issuer.len > 0 {
         match doc.str("iss") {
             Option.Some(iss) => {
                 if iss != v.issuer {
-                    return Result.Err(JwtError.WrongIssuer(v.issuer.clone()))
+                    return Result.Err(JwtError.WrongIssuer(v.issuer))
                 }
             }
             Option.None => {

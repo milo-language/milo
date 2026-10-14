@@ -72,7 +72,7 @@ requires s.pages.len() > 0
     let p = pageFor(s, key)
     let Some(slot) = slotIn(s, p, key) else { return None }
     // copy-out, never a borrow into the page
-    return Some(s.pages[p].entries[slot].value.clone())
+    return Some(s.pages[p].entries[slot].value)
 }
 
 pub fn put(s: &mut Store, key: string, value: string)
@@ -127,8 +127,8 @@ ensures c.page >= old(c.page)
     while c.page < s.pages.len() {
         if c.slot < s.pages[c.page].entries.len() {
             let e = Entry {
-                key: s.pages[c.page].entries[c.slot].key.clone(),
-                value: s.pages[c.page].entries[c.slot].value.clone(),
+                key: s.pages[c.page].entries[c.slot].key,
+                value: s.pages[c.page].entries[c.slot].value,
             }
             c.slot += 1
             return Some(e)

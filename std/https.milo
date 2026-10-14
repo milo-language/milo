@@ -22,22 +22,22 @@ from "std/net" import {
 fn netErrText(e: &NetError): string {
     match e {
         NetError.DnsFailure(m) => {
-            return m.clone()
+            return m
         }
         NetError.ConnectionFailed(m) => {
-            return m.clone()
+            return m
         }
         NetError.TlsError(m) => {
-            return m.clone()
+            return m
         }
         NetError.SendFailed(m) => {
-            return m.clone()
+            return m
         }
         NetError.Timeout(m) => {
             return "timed out: " + m
         }
         NetError.Other(m) => {
-            return m.clone()
+            return m
         }
     }
 }

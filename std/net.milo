@@ -94,7 +94,7 @@ impl NetError {
                 return "timeout: " + m
             }
             NetError.Other(m) => {
-                return m.clone()
+                return m
             }
         }
     }
@@ -741,7 +741,7 @@ pub fn resolve(hostname: &string): Result<u32, NetError> {
             }
         })
         if p == "!" {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
         var ip: u32 = 0
         for i in 0..p.len() {
@@ -762,14 +762,14 @@ fn resolveLive(hostname: &string): Result<u32, NetError> {
     if schedulerCurrent() as i64 == 0 || !replayOff() {
         return lookupV4(hostname)
     }
-    let host = hostname.clone()
+    let host = hostname
     let p = Promise<Result<u32, NetError>>.blocking(move(): Result<u32, NetError> => lookupV4(host))
     match p.await() {
         Result.Ok(r) => {
             return r
         }
         Result.Err(_) => {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
     }
 }
@@ -794,7 +794,7 @@ pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
             }
         })
         if p == "!" {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
         return Result.Ok(decodeAddrs(p))
     }
@@ -866,14 +866,14 @@ fn resolveAllLive(hostname: &string): Result<Vec<IpAddr>, NetError> {
     if schedulerCurrent() as i64 == 0 || !replayOff() {
         return lookupAll(hostname)
     }
-    let host = hostname.clone()
+    let host = hostname
     let p = Promise<Result<Vec<IpAddr>, NetError>>.blocking(move(): Result<Vec<IpAddr>, NetError> => lookupAll(host))
     match p.await() {
         Result.Ok(r) => {
             return r
         }
         Result.Err(_) => {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
     }
 }
@@ -896,7 +896,7 @@ fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
         let head = *(resBuf as *i64)
         var info = head
@@ -917,7 +917,7 @@ fn lookupAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
         freeaddrinfo(head as *u8)
     }
     if out.len == 0 {
-        return Result.Err(NetError.DnsFailure(hostname.clone()))
+        return Result.Err(NetError.DnsFailure(hostname))
     }
     return Result.Ok(out)
 }
@@ -935,7 +935,7 @@ fn lookupV4(hostname: &string): Result<u32, NetError> {
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
-            return Result.Err(NetError.DnsFailure(hostname.clone()))
+            return Result.Err(NetError.DnsFailure(hostname))
         }
         let infoPtr = *(resBuf as *i64)
         let addrPtr = *((infoPtr + addrinfoAddrOffset()) as *i64)

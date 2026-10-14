@@ -339,13 +339,13 @@ pub fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result
     var argv: Vec<string> = []
     argv.push("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=" + port.toString())
     for vm in strArray(args, "vmArgs") {
-        argv.push(vm.clone())
+        argv.push(vm)
     }
     argv.push("-cp")
     argv.push(cp)
     argv.push(mainClass)
     for a in strArray(args, "args") {
-        argv.push(a.clone())
+        argv.push(a)
     }
 
     let child = match Child.spawn(java, argv, false) {
@@ -458,7 +458,7 @@ pub fn joinPaths(v: Vec<string>): string {
         if !first {
             out.push(':' as u8)
         }
-        out += p.clone()
+        out += p
         first = false
     }
     return out
@@ -594,7 +594,7 @@ pub fn prettyTypeName(sig: &string): string {
     if sig[0] == 'V' {
         return "void"
     }
-    return sig.clone()
+    return sig
 }
 
 // Last dotted segment: com.example.Main → Main
@@ -845,8 +845,8 @@ impl Sess {
         }
         if idx < 0 {
             self.bps.push(BpFile {
-                srcPath: path.clone(), className: className.clone(),
-                signature: sig.clone(), lines: [], reqIds: [], reqLines: [],
+                srcPath: path, className: className,
+                signature: sig, lines: [], reqIds: [], reqLines: [],
                 classId: ClassId {
                     v: 0
                 }
@@ -884,7 +884,7 @@ impl Sess {
             }
             var arr = Json.arr()
             for l in lines {
-                arr = arr.raw(Json.obj().bool("verified", false).int("line", l).str("message", "class " + className.clone() + " not loaded yet").build())
+                arr = arr.raw(Json.obj().bool("verified", false).int("line", l).str("message", "class " + className + " not loaded yet").build())
             }
             results = arr.build()
         }
@@ -1080,9 +1080,9 @@ impl Sess {
         if self.lastExcCaught {
             breakMode = "always"
         }
-        var description = typeName.clone()
+        var description = typeName
         if msg.len > 0 {
-            description = typeName.clone() + ": " + msg.clone()
+            description = typeName + ": " + msg
         }
         let body = Json.obj()
             .str("exceptionId", typeName)
@@ -1102,8 +1102,8 @@ impl Sess {
                 var out: Vec<MethodInfo> = []
                 for m in self.classes[i].methods {
                     out.push(MethodInfo {
-                        methodId: m.methodId, name: m.name.clone(),
-                        signature: m.signature.clone(), modBits: m.modBits
+                        methodId: m.methodId, name: m.name,
+                        signature: m.signature, modBits: m.modBits
                     })
                 }
                 return Ok(out)
@@ -1115,8 +1115,8 @@ impl Sess {
         var stash: Vec<MethodInfo> = []
         for m in methods {
             stash.push(MethodInfo {
-                methodId: m.methodId, name: m.name.clone(),
-                signature: m.signature.clone(), modBits: m.modBits
+                methodId: m.methodId, name: m.name,
+                signature: m.signature, modBits: m.modBits
             })
         }
         self.classes.push(ClassCache {
@@ -1129,7 +1129,7 @@ impl Sess {
         var i: i64 = 0
         while i < self.classes.len {
             if self.classes[i].classId == classId {
-                return self.classes[i].signature.clone()
+                return self.classes[i].signature
             }
             i += 1
         }
@@ -1144,7 +1144,7 @@ impl Sess {
         var j: i64 = 0
         while j < self.classes.len {
             if self.classes[j].classId == classId {
-                return self.classes[j].signature.clone()
+                return self.classes[j].signature
             }
             j += 1
         }
@@ -1155,7 +1155,7 @@ impl Sess {
         if let Ok(methods) = self.classMethods(classId) {
             for m in methods {
                 if m.methodId == methodId {
-                    return m.name.clone()
+                    return m.name
                 }
             }
         }
@@ -1184,13 +1184,13 @@ impl Sess {
         var i: i64 = 0
         while i < self.bps.len {
             if self.bps[i].signature == sig {
-                return self.bps[i].srcPath.clone()
+                return self.bps[i].srcPath
             }
             i += 1
         }
         let dotted = prettyTypeName(sig)
         if self.program.len > 0 && classNameForSource(self.program) == dotted {
-            return self.program.clone()
+            return self.program
         }
         var srcName: string = ""
         match self.io.sourceFile(classId) {
@@ -1218,13 +1218,13 @@ impl Sess {
             }
         }
         for root in self.sourceRoots {
-            let cand = root.clone() + "/" + pkgPath.clone() + srcName.clone()
+            let cand = root + "/" + pkgPath + srcName
             if pathExists(cand) {
                 return cand
             }
         }
         if self.program.len > 0 {
-            let cand = dirOf(self.program) + "/" + srcName.clone()
+            let cand = dirOf(self.program) + "/" + srcName
             if pathExists(cand) {
                 return cand
             }
@@ -1381,7 +1381,7 @@ impl Sess {
                 if let Ok(cid) = self.io.objectType(v.num) {
                     elemType = prettyTypeName(self.classSignature(cid))
                 }
-                typeName = elemType.clone()
+                typeName = elemType
                 value = elemType + " (length " + len.toString() + ")"
                 if len > 0 {
                     ref = self.newVarRef(3, v.num)
@@ -1395,7 +1395,7 @@ impl Sess {
                 if let Ok(cid) = self.io.objectType(v.num) {
                     cls = prettyTypeName(self.classSignature(cid))
                 }
-                typeName = cls.clone()
+                typeName = cls
                 value = cls + "@" + v.num.toString()
                 ref = self.newVarRef(2, v.num)
             }
@@ -1433,7 +1433,7 @@ impl Sess {
                 && s.name != "this" {
                     slotIdxs.push(s.slot)
                     slotTags.push(s.signature[0] as i64)
-                    names.push(s.name.clone())
+                    names.push(s.name)
                 }
             }
             if slotIdxs.len > 0 {
@@ -1474,7 +1474,7 @@ impl Sess {
             for f in fields {
                 if (f.modBits & 8) == 0 { // ACC_STATIC
                     ids.push(f.fieldId)
-                    names.push(f.name.clone())
+                    names.push(f.name)
                 }
             }
             if ids.len > 0 {

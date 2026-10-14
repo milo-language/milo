@@ -44,7 +44,7 @@ fn round0(v: f64): string {
 }
 
 fn pad(s: &string, n: i64): string {
-    var out = s.clone()
+    var out = s
     while out.len < n {
         out.pushStr(" ")
     }

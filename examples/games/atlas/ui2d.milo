@@ -208,7 +208,7 @@ pub fn wrapText(s: &string, size: f64, maxWidth: f64): Vec<string> {
     var out: Vec<string> = Vec.new()
     let perLine = (maxWidth / size) as i64
     if perLine < 4 {
-        out.push(s.clone())
+        out.push(s)
         return out
     }
     var line = ""
@@ -222,13 +222,13 @@ pub fn wrapText(s: &string, size: f64, maxWidth: f64): Vec<string> {
         if c == 32 || i == s.len {
             if word.len > 0 {
                 if line.len == 0 {
-                    line = word.clone()
+                    line = word
                 } else {
                     if line.len + 1 + word.len <= perLine {
                         line = line + " " + word
                     } else {
-                        out.push(line.clone())
-                        line = word.clone()
+                        out.push(line)
+                        line = word
                     }
                 }
                 word = ""

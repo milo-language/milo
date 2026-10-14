@@ -77,7 +77,7 @@ pub fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 }
 
 pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name)
     match r {
         Some(s) => {
             return s
@@ -89,7 +89,7 @@ pub fn nodeName(dom: &Dom, h: Handle<Node>): string {
 }
 
 pub fn nodeText(dom: &Dom, h: Handle<Node>): string {
-    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text)
     match r {
         Some(s) => {
             return s
@@ -175,7 +175,7 @@ pub fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                 // Closures capture non-Copy values (strings) by move; clone so
                 // `t` survives for the non-coalescing path. Handles, being
                 // small Copy structs, capture fine without this.
-                let extra = t.clone()
+                let extra = t
                 let _ = arenaModifyMut(&mut dom.arena, last, (n: &mut Node): void => {
                     n.text += extra
                 })

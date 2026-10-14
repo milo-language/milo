@@ -80,7 +80,7 @@ pub fn main(): i32 {
     let argv = args()
     var windowCount: i64 = 16
     if argv.len > 1 {
-        windowCount = parseInt(argv[1].clone()) ?? 16
+        windowCount = parseInt(argv[1]) ?? 16
     }
 
     var pixels: Vec<u32> = Vec.withCapacity(width * height)

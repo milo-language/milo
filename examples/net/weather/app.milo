@@ -65,10 +65,10 @@ pub fn loadCities(): void {
             }
         }
         cities.push(City {
-            name: f[0].clone(),
-            state: f[1].clone(),
-            lat: f[2].clone(),
-            lon: f[3].clone(),
+            name: f[0],
+            state: f[1],
+            lat: f[2],
+            lon: f[3],
             key: f[0].toLower(),
             altKeys: alts,
         })
@@ -390,8 +390,8 @@ pub fn freshHit(key: &string): Option<CacheHit> {
         return None
     }
     return Some(CacheHit {
-        body: apiCache[at].body.clone(),
-        contentType: apiCache[at].contentType.clone(),
+        body: apiCache[at].body,
+        contentType: apiCache[at].contentType,
         status: apiCache[at].status,
         left: left,
     })
@@ -408,7 +408,7 @@ pub fn cacheStore(key: &string, body: string, contentType: string, status: i32, 
         return
     }
     apiCache.push(CacheEntry {
-        key: key.clone(),
+        key: key,
         body: body,
         contentType: contentType,
         status: status,
@@ -437,9 +437,9 @@ fn evictToBudget(): void {
             }
         }
         let last = apiCache.len - 1
-        apiCache[victim].key = apiCache[last].key.clone()
-        apiCache[victim].body = apiCache[last].body.clone()
-        apiCache[victim].contentType = apiCache[last].contentType.clone()
+        apiCache[victim].key = apiCache[last].key
+        apiCache[victim].body = apiCache[last].body
+        apiCache[victim].contentType = apiCache[last].contentType
         apiCache[victim].status = apiCache[last].status
         apiCache[victim].expiresMs = apiCache[last].expiresMs
         let _ = apiCache.pop()
@@ -466,13 +466,13 @@ fn inFlightHas(key: &string): bool {
 }
 
 fn inFlightAdd(key: &string): void {
-    inFlight.push(key.clone())
+    inFlight.push(key)
 }
 
 fn inFlightDrop(key: &string): void {
     for i in 0..inFlight.len {
         if inFlight[i] == key {
-            inFlight[i] = inFlight[inFlight.len - 1].clone()
+            inFlight[i] = inFlight[inFlight.len - 1]
             let _ = inFlight.pop()
             return
         }
@@ -492,11 +492,11 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         return ctx.json("{\"error\":\"bad upstream request\"}")
     }
 
-    let key = hostKey.clone() + path.clone()
+    let key = hostKey + path
     if let Some(hit) = freshHit(key) {
         ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
         ctx.setHeader("X-Cache", "hit")
-        return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
+        return Response.Status(hit.status, hit.contentType, hit.body)
     }
 
     // Someone else is already asking upstream for this. Wait for their answer
@@ -510,7 +510,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
         if let Some(hit) = freshHit(key) {
             ctx.setHeader("Cache-Control", "public, max-age=" + hit.left.toString())
             ctx.setHeader("X-Cache", "coalesced")
-            return Response.Status(hit.status, hit.contentType.clone(), hit.body.clone())
+            return Response.Status(hit.status, hit.contentType, hit.body)
         }
         // The leader failed or timed out; fall through and try it ourselves.
     }
@@ -525,14 +525,14 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     // connection while this one waits on the socket.
     var opts = FetchOptions {
         method: "GET",
-        headers: "User-Agent: " + contactUa.clone() + "\r\nAccept: application/geo+json,application/json,image/png,*/*",
+        headers: "User-Agent: " + contactUa + "\r\nAccept: application/geo+json,application/json,image/png,*/*",
         body: "",
     }
-    match fetchWith(base + path.clone(), opts) {
+    match fetchWith(base + path, opts) {
         Ok(resp) => {
             upstreamStatus = resp.status
             if resp.status >= 200 && resp.status < 300 {
-                body = resp.body.clone()
+                body = resp.body
                 contentType = findHeader(resp.headers, "Content-Type") ?? "application/json"
                 ttl = upstreamTtlSecs(resp.headers)
                 status = resp.status
@@ -546,7 +546,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     inFlightDrop(key)
 
     if status > 0 {
-        cacheStore(key, body.clone(), contentType.clone(), status, epochMillis() + ttl * 1000)
+        cacheStore(key, body, contentType, status, epochMillis() + ttl * 1000)
         ctx.setHeader("Cache-Control", "public, max-age=" + ttl.toString())
         ctx.setHeader("X-Cache", "miss")
         return Response.Status(status, contentType, body)
@@ -559,7 +559,7 @@ pub fn upstreamHandler(ctx: &mut Context): Response {
     if at >= 0 {
         ctx.setHeader("Cache-Control", "public, max-age=60")
         ctx.setHeader("X-Cache", "stale")
-        return Response.Status(apiCache[at].status, apiCache[at].contentType.clone(), apiCache[at].body.clone())
+        return Response.Status(apiCache[at].status, apiCache[at].contentType, apiCache[at].body)
     }
     ctx.setStatus(502)
     if upstreamStatus > 0 {
@@ -620,8 +620,8 @@ pub fn indexHandler(ctx: &mut Context): Response {
     var ogDesc = "Current conditions, hourly and 7-day forecast for any US city."
     if label.len > 0 {
         let safe = htmlAttrEscape(label)
-        pageTitle = safe.clone() + " Weather"
-        ogTitle = safe.clone()
+        pageTitle = safe + " Weather"
+        ogTitle = safe
         ogDesc = "Current conditions, hourly and 7-day forecast for " + safe + "."
     }
 

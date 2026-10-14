@@ -95,7 +95,7 @@ fn _firstField(text: &string): string {
     if parts.len() == 0 {
         return ""
     }
-    return parts[0].clone()
+    return parts[0]
 }
 
 // Value after the first ':' on the first line whose text starts with `key`, trimmed.

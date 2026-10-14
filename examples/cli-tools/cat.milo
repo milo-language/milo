@@ -163,7 +163,7 @@ pub fn isLineComment(lang: &string, line: &string, pos: i64): bool {
 
 pub fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>): string {
     if lang == "text" || lang == "json" || lang == "markdown" {
-        return line.clone()
+        return line
     }
 
     var result: string = ""
@@ -321,12 +321,12 @@ pub fn main(): i32 {
     // print lines
     var idx: i64 = startLine - 1
     while idx < endLine && idx < lines.len {
-        let rawLine = lines[idx].clone()
+        let rawLine = lines[idx]
 
         if plain {
             print(rawLine)
         } else {
-            var displayLine: string = rawLine.clone()
+            var displayLine: string = rawLine
             if !noColor {
                 displayLine = highlightLine(rawLine, lang, kwList)
             }

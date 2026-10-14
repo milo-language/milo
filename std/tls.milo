@@ -184,12 +184,12 @@ impl TlsListener {
                 if SSL_CTX_use_certificate_chain_file(ctx, certPath) != 1 {
                     SSL_CTX_free(ctx)
                     sysClose(fd)
-                    return Result.Err(NetError.TlsError("failed to load certificate chain: " + certPath.clone()))
+                    return Result.Err(NetError.TlsError("failed to load certificate chain: " + certPath))
                 }
                 if SSL_CTX_use_PrivateKey_file(ctx, keyPath, SSL_FILETYPE_PEM) != 1 {
                     SSL_CTX_free(ctx)
                     sysClose(fd)
-                    return Result.Err(NetError.TlsError("failed to load private key: " + keyPath.clone()))
+                    return Result.Err(NetError.TlsError("failed to load private key: " + keyPath))
                 }
                 // Cert and key load independently, so a mismatched pair gets this far. Left
                 // unchecked it surfaces only as every client's handshake failing, with

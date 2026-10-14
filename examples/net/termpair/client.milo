@@ -203,7 +203,7 @@ fn main(): i32 {
     // is still read below (resolve, the error message, the TLS handshake name).
     // The other arm concatenates, which copies, so only this one consumes.
     let authority = if (port as i64) == defaultPort {
-        host.clone()
+        host
     } else {
         host + ":" + (port as i64).toString()
     }
@@ -346,10 +346,10 @@ fn main(): i32 {
     let done3 = done.clone()
 
     // per-thread key clones — no shared mutable crypto state (read-only, no rotation)
-    let unixKeyA = unixKey.clone()
-    let bootKeyB = bootstrapKey.clone()
-    let unixKeyB = unixKey.clone()
-    let browserKeyB = browserKey.clone()
+    let unixKeyA = unixKey
+    let bootKeyB = bootstrapKey
+    let unixKeyB = unixKey
+    let browserKeyB = browserKey
     let isPublicA = isPublic
     let isPublicB = isPublic
     let allowControlB = allowControl

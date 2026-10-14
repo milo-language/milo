@@ -127,10 +127,10 @@ pub fn main(): i32 {
     var place = "sf"
     var frames = 240
     if a.len > 1 {
-        out = a[1].clone()
+        out = a[1]
     }
     if a.len > 2 {
-        place = a[2].clone()
+        place = a[2]
     }
     if a.len > 3 {
         frames = strToI64(a[3])
