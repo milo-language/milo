@@ -106,6 +106,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/selfhost-sweep.ts` | Differential sweep: run every tests/fixtures/*.milo through milo-self and bucket the failures. |
 | `scripts/selfhost.sh` | Build milo-self (the Milo compiler written in Milo) with the TS compiler. |
 | `scripts/stamp-version.ts` | Stamps the current commit into src/version.ts so a released binary can report which commit built it. |
+| `scripts/strip-string-clones.ts` | Deletes `.clone()` calls on strings: strings are values (copy on write, shared by count where the code reads them again), so every string clone is redundant and removing one changes no behaviour. |
 | `scripts/verify-contracts.baseline.ts` | Accepted (baselined) contract refutations. |
 | `scripts/verify-contracts.expected.ts` | Per-file prove-verdict ratchet. |
 | `scripts/verify-contracts.ts` | Static contract gate: run `milo prove` over every contract-bearing .milo in std/ and examples/ and FAIL if any contract is *refuted* (the solver found a counterexample proving it false). |

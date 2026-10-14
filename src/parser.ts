@@ -1651,7 +1651,7 @@ export class Parser {
             this.match(TokenKind.Comma);
           }
           this.expect(TokenKind.RParen);
-          expr = { kind: "MethodCall", object: expr, method: field, args, span: expr.span };
+          expr = { kind: "MethodCall", object: expr, method: field, args, span: expr.span, methodSpan: this.span(fieldTok) };
         } else {
           expr = { kind: "FieldAccess", object: expr, field, span: expr.span };
         }

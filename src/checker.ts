@@ -3071,7 +3071,7 @@ export class TypeChecker {
       JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
       (_key, value) => {
       if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
-      if (value && typeof value === "object" && (value.kind === "CastExpr" || (value.kind === "Call" && value.func === "forget"))) this.instanceNodes.add(value);
+      if (value && typeof value === "object" && (value.kind === "CastExpr" || value.kind === "MethodCall" || (value.kind === "Call" && value.func === "forget"))) this.instanceNodes.add(value);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
@@ -3661,6 +3661,7 @@ export class TypeChecker {
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
+    if (this.reportStringClones) this.printStringClones();
     if (this._displayNames?.size) {
       const origin = (sym: string) => {
         const files = this.declOrigins?.types.get(sym)?.files ?? this.declOrigins?.values.get(sym)?.files;
@@ -12112,6 +12113,20 @@ export class TypeChecker {
   // cast target are facts about the instance, not the generic source: `forget(v)` on a
   // `T` is required in the source even when one instantiation makes T an i64.
   private instanceNodes = new WeakSet<object>();
+  // MILO_REPORT_STRING_CLONES=1: every `.clone()` on a string outside a generic instance,
+  // printed once checking is done (scripts/strip-string-clones.ts deletes them). One that
+  // is itself mutated (an explicit `&mut` argument, a mutating receiver) is left out: its
+  // copy is what keeps the write off the original.
+  private reportStringClones = !!process.env.MILO_REPORT_STRING_CLONES;
+  private stringCloneCalls: ExprOf<"MethodCall">[] = [];
+
+  private printStringClones() {
+    for (const e of this.stringCloneCalls) {
+      const m = e.methodSpan;
+      if (!m?.file || this.explicitMutArgs.has(e) || this.autoBorrowed.get(e)?.mutable || this.writtenExprs.has(e)) continue;
+      process.stderr.write(`MILO_STRING_CLONE ${JSON.stringify({ file: m.file, line: m.line, col: m.col })}\n`);
+    }
+  }
   private lintRedundantCast(expr: ExprOf<"CastExpr">, toType: TypeKind, expected: TypeKind | null) {
     const neg = expr.operand.kind === "UnaryOp" && expr.operand.op === "-";
     const lit = neg && expr.operand.kind === "UnaryOp" ? expr.operand.operand : expr.operand;
@@ -13557,6 +13572,7 @@ export class TypeChecker {
       }
       if (expr.method === "clone") {
         if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
+        if (this.reportStringClones && !this.instanceNodes.has(expr)) this.stringCloneCalls.push(expr);
         return this.setType(expr, { tag: "string" });
       }
       // string methods delegated to std/string runtime functions

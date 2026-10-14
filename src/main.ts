@@ -491,7 +491,7 @@ function emitText(text: string, outputPath: string | null) {
 // values are not JSON-native, so serialize them explicitly rather than emit `{}`/throw.
 function dumpReplacer(includeSpans: boolean) {
   return (key: string, value: any) => {
-    if (!includeSpans && key === "span") return undefined;
+    if (!includeSpans && (key === "span" || key === "methodSpan")) return undefined;
     if (value instanceof Set) return [...value];
     if (value instanceof Map) return Object.fromEntries(value);
     if (typeof value === "bigint") return `${value}n`;
