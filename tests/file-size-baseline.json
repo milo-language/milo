@@ -9,7 +9,7 @@
   "src/cgu.ts": 605,
   "src/checker-derive.ts": 584,
   "src/checker-program-passes.ts": 2214,
-  "src/checker.ts": 14958,
+  "src/checker.ts": 14961,
   "src/cli-help.ts": 287,
   "src/codegen-dwarf.ts": 404,
   "src/codegen-map.ts": 1415,

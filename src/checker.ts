@@ -12116,7 +12116,7 @@ export class TypeChecker {
   // MILO_REPORT_STRING_CLONES=1: every `.clone()` on a string outside a generic instance,
   // printed once checking is done (scripts/strip-string-clones.ts deletes them). One that
   // is itself mutated (an explicit `&mut` argument, a mutating receiver) is left out: its
-  // copy is what keeps the write off the original.
+  // copy is what keeps the write off the original. So is one on a `&string` receiver.
   private reportStringClones = !!process.env.MILO_REPORT_STRING_CLONES;
   private stringCloneCalls: ExprOf<"MethodCall">[] = [];
 
@@ -12124,6 +12124,9 @@ export class TypeChecker {
     for (const e of this.stringCloneCalls) {
       const m = e.methodSpan;
       if (!m?.file || this.explicitMutArgs.has(e) || this.autoBorrowed.get(e)?.mutable || this.writtenExprs.has(e)) continue;
+      // An owned `string` receiver only: a `&string` one (a slice view, a borrowed binding)
+      // does not convert to an owned string where a type is demanded, so its clone stays.
+      if (this.exprTypes.get(e.object)?.tag !== "string") continue;
       process.stderr.write(`MILO_STRING_CLONE ${JSON.stringify({ file: m.file, line: m.line, col: m.col })}\n`);
     }
   }
