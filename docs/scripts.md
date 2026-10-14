@@ -59,6 +59,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/fuzz-jpeg.ts` | Crash fuzzer for std/jpeg's decoder: mutated and truncated JPEGs must come back as Ok or Err, never a trap, a hang or a runaway allocation. |
 | `scripts/fuzz-ownership.ts` | Differential falsifier for the OWNERSHIP checker. |
 | `scripts/fuzz-scan.ts` | Raw lexical splitter used by the frontend fuzzer for mutation and reduction. |
+| `scripts/fuzz-shared-string.ts` | Differential falsifier for shared (reference-counted, copy-on-write) strings. |
 | `scripts/fuzz-string.ts` | Differential falsifier for the built-in STRING methods codegen.ts emits. |
 | `scripts/fuzz-tasks.ts` | Differential falsifier for SHARED STATE ACROSS TASKS: hunts for programs with zero `unsafe` that the checker accepts and AddressSanitizer then rejects. |
 | `scripts/fuzz-vec.ts` | Differential falsifier for the built-in VEC — the growable array codegen.ts emits. |
