@@ -433,35 +433,27 @@ export function genStringSubstr(ctx: CodegenCtx, expr: HIRExpr & { kind: "String
 
   ctx.emitStringRangeCheck(lines, startVal, endVal, strVal, "substr", expr.span);
 
-  const subLen = ctx.nextTemp();
-  lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const start = val(startVal, Ty.i64);
+  const subLen = b.binop("sub", val(endVal, Ty.i64), start);
 
-  const allocLen = ctx.nextTemp();
-  lines.push(`  ${allocLen} = add i64 ${subLen}, 1`);
-  const buf = ctx.emitStrAlloc(lines, allocLen, "substr", expr.span);
+  const allocLen = b.binop("add", subLen, val("1", Ty.i64));
+  const buf = val(ctx.emitStrAlloc(lines, allocLen.ref, "substr", expr.span), Ty.ptr);
 
-  const srcPtr = ctx.nextTemp();
-  lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
-  const srcOff = ctx.nextTemp();
-  lines.push(`  ${srcOff} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
-  lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${srcOff}, i64 ${subLen})`);
+  const srcPtr = b.extractvalue(val(strVal, STRING), 0, Ty.ptr);
+  const srcOff = b.gep(Ty.i8, srcPtr, [start]);
+  b.callDiscard(Ty.ptr, "@memcpy", [buf, srcOff, subLen]);
 
-  const nullPtr = ctx.nextTemp();
-  lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${subLen}`);
-  lines.push(`  store i8 0, ptr ${nullPtr}`);
+  const nullPtr = b.gep(Ty.i8, buf, [subLen]);
+  b.store(val("0", Ty.i8), nullPtr);
 
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
+  const s = makeString(b, buf, subLen, allocLen);
 
   // substr COPIES out of its receiver, so nothing points into it afterwards and a
   // temporary receiver can go: `big(i).substr(0, 100).len` leaked the whole receiver on
   // every call. Same shape as the Vec/HashMap/StringLen receiver drops.
   ctx.dropOwnedTemp(lines, strVal, "%String", expr.str);
-  return [lines, s2, "%String"];
+  return asGen(lines, s);
 }
 
 // String.slice(start, end) — zero-copy view. Non-owning %String with cap=0.
@@ -475,22 +467,13 @@ export function genStringSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringS
 
   ctx.emitStringRangeCheck(lines, startVal, endVal, strVal, "slice", expr.span);
 
-  const subLen = ctx.nextTemp();
-  lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const subLen = b.binop("sub", val(endVal, Ty.i64), val(startVal, Ty.i64));
 
-  const srcPtr = ctx.nextTemp();
-  lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
-  const slicePtr = ctx.nextTemp();
-  lines.push(`  ${slicePtr} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
+  const srcPtr = b.extractvalue(val(strVal, STRING), 0, Ty.ptr);
+  const slicePtr = b.gep(Ty.i8, srcPtr, [val(startVal, Ty.i64)]);
 
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %String undef, ptr ${slicePtr}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
-
-  return [lines, s2, "%String"];
+  return asGen(lines, makeString(b, slicePtr, subLen, I64_0));
 }
 
 // n.toString() / x.toString(): an owned %String; ints through @milo.fmt.*, floats through @milo.fmt.f64
@@ -501,33 +484,21 @@ export function genNumberToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "Numb
   const [vLines, vVal, vTy] = ctx.genExpr(expr.value);
   lines.push(...vLines);
 
+  const b = new LlvmTextBuilder(lines, ctx);
   const vt = expr.valueType;
   if (vt.tag === "int") {
     // 24 bytes holds any 64-bit decimal (20 digits with the sign) and the NUL.
-    const buf = ctx.emitStrAlloc(lines, "24", "itos", expr.span);
-    const n = ctx.emitIntFmt(lines, buf, vVal, vTy, vt);
-    const nul = ctx.nextTemp();
-    lines.push(`  ${nul} = getelementptr i8, ptr ${buf}, i64 ${n}`);
-    lines.push(`  store i8 0, ptr ${nul}`);
-    const s0 = ctx.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = ctx.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${n}, 1`);
-    const s2 = ctx.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 24, 2`);
-    return [lines, s2, "%String"];
+    const buf = val(ctx.emitStrAlloc(lines, "24", "itos", expr.span), Ty.ptr);
+    const n = val(ctx.emitIntFmt(lines, buf.ref, vVal, vTy, vt), Ty.i64);
+    const nul = b.gep(Ty.i8, buf, [n]);
+    b.store(val("0", Ty.i8), nul);
+    return asGen(lines, makeString(b, buf, n, val("24", Ty.i64)));
   }
   // Floats don't go through snprintf directly: they need the round-trip
   // search in @milo.fmt.f64, which already writes an owned buffer we can
   // hand straight to %String.
   const { buf, len } = ctx.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines, true);
-  const f0 = ctx.nextTemp();
-  lines.push(`  ${f0} = insertvalue %String undef, ptr ${buf}, 0`);
-  const f1 = ctx.nextTemp();
-  lines.push(`  ${f1} = insertvalue %String ${f0}, i64 ${len}, 1`);
-  const f2 = ctx.nextTemp();
-  lines.push(`  ${f2} = insertvalue %String ${f1}, i64 ${F64_BUF}, 2`);
-  return [lines, f2, "%String"];
+  return asGen(lines, makeString(b, val(buf, Ty.ptr), val(len, Ty.i64), val(String(F64_BUF), Ty.i64)));
 }
 
 export function genBoolToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
@@ -536,17 +507,11 @@ export function genBoolToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "BoolTo
   lines.push(...vLines);
   const trueStr = ctx.addString("true");
   const falseStr = ctx.addString("false");
-  const ptr = ctx.nextTemp();
-  lines.push(`  ${ptr} = select i1 ${vVal}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = select i1 ${vVal}, i64 4, i64 5`);
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %String undef, ptr ${ptr}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
-  return [lines, s2, "%String"];
+  const b = new LlvmTextBuilder(lines, ctx);
+  const v = val(vVal, Ty.i1);
+  const ptr = b.select(v, val(trueStr.label, Ty.ptr), val(falseStr.label, Ty.ptr));
+  const len = b.select(v, val("4", Ty.i64), val("5", Ty.i64));
+  return asGen(lines, makeString(b, ptr, len, I64_0));
 }
 
 // s.clone() — deep copy of the underlying byte buffer; result is an owned %String
@@ -563,57 +528,53 @@ export function genStringClone(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringC
 
 export function genStringFind(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
   const enumTy = `%${expr.optionEnumName}`;
+  const enumT = Ty.of(enumTy);
   const layout = ctx.enumLayouts.get(expr.optionEnumName);
   const noneVariant = layout?.variants.get("None");
   const someVariant = layout?.variants.get("Some");
   if (!layout || !noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
 
+  const b = new LlvmTextBuilder(lines, ctx);
   const [strLines, strValue] = ctx.genExpr(expr.str);
   const [needleLines, needleValue] = ctx.genExpr(expr.needle);
   lines.push(...strLines);
-  const strPtr = `%__string_find_haystack.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${strPtr} = alloca %String`);
-  lines.push(`  store %String ${strValue}, ptr ${strPtr}`);
+  const strPtr = b.entryAlloca(`%__string_find_haystack.${ctx.scopeCounter++}.addr`, STRING);
+  b.store(val(strValue, STRING), strPtr);
   lines.push(...needleLines);
-  const needlePtr = `%__string_find_needle.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${needlePtr} = alloca %String`);
-  lines.push(`  store %String ${needleValue}, ptr ${needlePtr}`);
+  const needlePtr = b.entryAlloca(`%__string_find_needle.${ctx.scopeCounter++}.addr`, STRING);
+  b.store(val(needleValue, STRING), needlePtr);
   let fn = expr.reverse ? "strLastIndexOf" : "strIndexOf";
-  let args = `ptr ${strPtr}, ptr ${needlePtr}`;
+  const args = [strPtr, needlePtr];
   if (expr.from) {
     const [fromLines, fromValue, fromTy] = ctx.genExpr(expr.from);
     lines.push(...fromLines);
     fn = "strIndexOfFrom";
-    args += `, ${fromTy} ${fromValue}`;
+    args.push(val(fromValue, Ty.of(fromTy)));
   }
-  const index = ctx.nextTemp();
-  lines.push(`  ${index} = call i64 @${fn}(${args})`);
+  const index = b.call(Ty.i64, `@${fn}`, args);
 
-  const resultAddr = `%__string_find_result.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
-  lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
-  const found = ctx.nextTemp();
-  lines.push(`  ${found} = icmp sge i64 ${index}, 0`);
-  const someLabel = ctx.nextLabel("string.find.some");
-  const noneLabel = ctx.nextLabel("string.find.none");
-  const endLabel = ctx.nextLabel("string.find.end");
-  lines.push(`  br i1 ${found}, label %${someLabel}, label %${noneLabel}`);
-  lines.push(`${noneLabel}:`);
-  ctx.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
-  lines.push(`  br label %${endLabel}`);
-  lines.push(`${someLabel}:`);
-  ctx.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
-  const payloadPtr = ctx.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
-  lines.push(`  store i64 ${index}, ptr ${payloadPtr}`);
-  lines.push(`  br label %${endLabel}`);
-  lines.push(`${endLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+  const resultAddr = b.entryAlloca(`%__string_find_result.${ctx.scopeCounter++}.addr`, enumT);
+  b.store(val("zeroinitializer", enumT), resultAddr);
+  const found = b.icmp("sge", index, I64_0);
+  const some = b.newBlock("string.find.some");
+  const none = b.newBlock("string.find.none");
+  const end = b.newBlock("string.find.end");
+  b.condBr(found, some, none);
+  b.position(none);
+  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, noneVariant.tag);
+  b.br(end);
+  b.position(some);
+  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, someVariant.tag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, enumTy, resultAddr.ref, someVariant);
+  b.store(index, val(payloadPtr, Ty.ptr));
+  b.br(end);
+  b.position(end);
+  const result = b.load(enumT, resultAddr);
   // indexOf/indexOfFrom/lastIndexOf read both operands and answer an INDEX, so nothing
   // points into either by the time we get here and both can go now — no deferral to
   // argTempDrops needed. `s.indexOf("o" + i.toString())` leaked its needle per call, and
   // `("pre" + i.toString()).indexOf("r")` leaked the receiver as well.
   ctx.dropOwnedTemp(lines, strValue, "%String", expr.str);
   ctx.dropOwnedTemp(lines, needleValue, "%String", expr.needle);
-  return [lines, result, enumTy];
+  return asGen(lines, result);
 }
