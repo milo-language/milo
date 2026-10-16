@@ -1,6 +1,6 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest, HIRGlobal } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRContract, HIRStruct, HIRGlobal } from "./hir";
 import { LlvmTextBuilder, Ty, val, type Param } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
@@ -12,7 +12,7 @@ import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
 } from "./codegen-string";
-import { genLiteralMatch, armTailExpr, matchArmLocals } from "./codegen-match";
+import { genMatch, armTailExpr, matchArmLocals } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
@@ -124,8 +124,8 @@ interface EnumNiche {
 }
 
 
-interface LocalInfo { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }
-interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; addr: string; consumeCursor?: string }
+export interface LocalInfo { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }
+export interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; addr: string; consumeCursor?: string }
 
 // One name for codegen's return shape: the IR lines an expression emits, the SSA value it
 // leaves the result in, and that value's LLVM type.
@@ -162,7 +162,7 @@ export class Codegen {
   private strCounter = 0;
   private tempCounter = 0;
   private labelCounter = 0;
-  private locals = new Map<string, LocalInfo>();
+  public locals = new Map<string, LocalInfo>();
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[]; refAttrs?: string[] }>();
   // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
   // first param (see genStoreInto). Excludes main and exported fns (C ABI).
@@ -300,7 +300,7 @@ export class Codegen {
   // `consumeCursor`: the temporary a consuming for-in owns (genConsumedIterable). Its
   // elements before the cursor were moved into the loop binding, so dropping it destroys
   // only [cursor, len) and then frees the buffer.
-  private droppableLocals: DroppableLocal[] = [];
+  public droppableLocals: DroppableLocal[] = [];
   public readonly own = new OwnLedger({
     needsDropCg: tk => this.needsDropCg(tk),
     isOwnedTempExpr: e => this.isOwnedTempExpr(e),
@@ -322,7 +322,7 @@ export class Codegen {
   // clone of a resource shares its handle with the original, so releasing it would release
   // the original's. A TypeKind object in this set is dropped structurally wherever it is
   // dropped (scope exit, early return, break), so the mode travels with the local.
-  private structuralDropTypes = new WeakSet<TypeKind>();
+  public structuralDropTypes = new WeakSet<TypeKind>();
   public structuralDrop = false;
   private dropHelperBodies: string[][] = [];
   // Method count per interface, so a `Heap<Iface>` drop knows which itable slot holds the
@@ -654,7 +654,7 @@ export class Codegen {
   // identifiers cannot contain `.`, so this prefix cannot be reached from source.
   public nextTemp(): string { return `%t.${this.tempCounter++}`; }
   public nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
-  private localAddr(name: string): string {
+  public localAddr(name: string): string {
     // A local/param shadows a same-named global. Decide on membership in `locals`,
     // NOT on whether the entry carries an explicit `addr` — params, closure
     // captures and match-bindings register without one, and `?.addr` would then
@@ -869,7 +869,7 @@ export class Codegen {
     return `[${layout.size / a} x i${a * 8}]`;
   }
 
-  private enumVariantOf(enumTy: string, variant: EnumVariant | string | number): EnumVariant {
+  public enumVariantOf(enumTy: string, variant: EnumVariant | string | number): EnumVariant {
     if (typeof variant === "object") return variant;
     const layout = must(this.enumLayouts, enumTy.slice(1), "enum layouts");
     for (const [name, info] of layout.variants) if (name === variant || info.tag === variant) return info;
@@ -1053,7 +1053,7 @@ export class Codegen {
   // "use of undefined value". memset is never worse, so the threshold only
   // needs to sit below the first painful size.
   private static ZERO_STORE_MEMSET_THRESHOLD = 128;
-  private zeroStore(ty: string, ptr: string): string {
+  public zeroStore(ty: string, ptr: string): string {
     const size = this.typeSize(ty);
     if (size >= Codegen.ZERO_STORE_MEMSET_THRESHOLD) {
       this.needsMemsetIntrinsic = true;
@@ -1066,7 +1066,7 @@ export class Codegen {
   // a zeroinitializer (e.g. an all-zero array literal `[0 ; N]`), which is how
   // large zero-init actually reaches a `store` — the array literal returns the
   // value "zeroinitializer" and the let/assign store writes it.
-  private valStore(ty: string, val: string, ptr: string, copy: CopyDecl): string {
+  public valStore(ty: string, val: string, ptr: string, copy: CopyDecl): string {
     this.own.checkCopy(copy, val);
     if (val === "zeroinitializer") return this.zeroStore(ty, ptr);
     return `  store ${ty} ${val}, ptr ${ptr}`;
@@ -1102,7 +1102,7 @@ export class Codegen {
   // `into` says what `destPtr` is, for the ownership ledger: "slot" a frame-owned slot
   // (whoever owns the slot now holds the value's ID), "store" a field/element of some
   // aggregate (the value leaves this frame's books), "return" the sret out-pointer.
-  private genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr, into: "slot" | "store" | "return" = "slot"): void {
+  public genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr, into: "slot" | "store" | "return" = "slot"): void {
     if (!this.own.on) { this.genStoreIntoRaw(lines, destPtr, ty, expr); return; }
     const before = this.own.slots.get(destPtr);
     const v = this.genStoreIntoRaw(lines, destPtr, ty, expr);
@@ -2787,7 +2787,7 @@ export class Codegen {
     for (const line of rest) lines.push(line);
   }
 
-  private genStmt(stmt: HIRStmt): [string[], boolean] {
+  public genStmt(stmt: HIRStmt): [string[], boolean] {
     if (this.own.on && stmt.span) this.own.srcLine = stmt.span.line;
     // A statement consumes its own expressions: they are never another value's operands.
     this.pend.parents.push("stmt");
@@ -3042,7 +3042,7 @@ export class Codegen {
         return [lines, false];
       }
       case "Match":
-        return this.genMatch(stmt);
+        return genMatch(this, stmt);
       case "NullRefUnwrap":
         return this.genNullRefUnwrap(stmt);
       case "LazyGlobalInit":
@@ -4794,233 +4794,6 @@ export class Codegen {
     return [lines, false];
   }
 
-  private genMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
-    // Route by the SUBJECT's type, not just the pattern kinds. genEnumMatch reads a
-    // tag/payload out of the scrutinee via GEP, which is only valid for an enum. A
-    // scalar matched with only a wildcard (`match x { _ => ... }`) has no literal
-    // pattern, but it is NOT an enum — sending it to genEnumMatch emitted an invalid
-    // `getelementptr i64` on the scalar. Only an enum subject uses the enum path.
-    // `v[i]` counts as an owned temp because a read of it clones, and a match subject is
-    // such a read: genStoreInto clones the element into the subject slot, which no one
-    // else owns, so it goes through the temp-subject path and is freed at match exit
-    // (structurally, see genTempSubjectMatch). The clone exists because an arm may mutate
-    // the container (`v[i] = x`, a call that grows a `var` global; the checker allows
-    // both) while payload borrows point into the subject. The one exception is a place
-    // rooted at an immutable `&` binding, which genEnumMatch matches in place.
-    const inPlace = stmt.subjectIsRef && stmt.subject.type.tag === "enum" && this.placeRootedAtImmutableRef(stmt.subject);
-    if (!inPlace && this.isOwnedTempExpr(stmt.subject) && this.needsDropCg(stmt.subject.type)) {
-      return this.genTempSubjectMatch(stmt, resultSlot);
-    }
-    if (stmt.subject.type.tag === "enum") return this.genEnumMatch(stmt, resultSlot);
-    return genLiteralMatch(this, stmt, resultSlot);
-  }
-
-  // A temporary subject (`match find(k)`, `if let E.V(x) = mk().field`, `match mk().name`)
-  // has no other owner. It is bound to a hidden droppable local and matched as that
-  // local: an arm that binds the payload by value takes it and clears the alive flag
-  // (extractBindings), and every other arm (`_`, a fieldless variant, a literal, a
-  // borrowing match whose bindings point into the slot) leaves it to be dropped after
-  // the match, or by the return/break/continue drop glue when the arm leaves early.
-  // Before this, those arms leaked the subject.
-  private genTempSubjectMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
-    const lines: string[] = [];
-    const ty = this.llvmType(stmt.subject.type);
-    const name = `__matchsubj.${this.scopeCounter++}`;
-    const addr = `%${name}.addr`;
-    this.entryAllocas.push(`  ${addr} = alloca ${ty}`);
-    // genStoreInto: a big-aggregate subject comes back from genExpr as a pointer.
-    this.genStoreInto(lines, addr, ty, stmt.subject);
-    const aliveFlag = `${addr}.alive`;
-    this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-    this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    this.own.setAlive(lines, aliveFlag, addr, "match-subject");
-    this.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
-    // A `v[i]` subject is a structural clone of the element, so it is freed structurally:
-    // running the element's Drop on it would release a resource the container still owns.
-    let dropType = stmt.subject.type;
-    if (stmt.subject.kind === "IndexAccess") { dropType = { ...dropType }; this.structuralDropTypes.add(dropType); }
-    const local = { name, typeKind: dropType, aliveFlag, addr };
-    this.droppableLocals.push(local);
-    const subject: HIRExpr = { kind: "Ident", name, type: stmt.subject.type, isMove: false, span: stmt.subject.span };
-    const [ml, terminated] = this.genMatch({ ...stmt, subject }, resultSlot);
-    lines.push(...ml);
-    if (!terminated) this.emitGuardedDrop(lines, local);
-    return [lines, terminated];
-  }
-
-  // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs
-  // as-is. In value mode (match-expression) all but the tail run as stmts and
-  // the tail ExprStmt's value is stored into resultSlot — same shape as IfExpr.
-  public emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart = this.droppableLocals.length): boolean {
-    if (!resultSlot) {
-      for (const s of body) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) return true;
-      }
-      return false;
-    }
-    for (let i = 0; i < body.length - 1; i++) {
-      const [sl, t] = this.genStmt(body[i]);
-      lines.push(...sl);
-      if (t) return true;
-    }
-    if (body.length > 0) {
-      const last = body[body.length - 1];
-      if (last.kind === "ExprStmt") {
-        const [vl, gv] = this.genExpr(last.expr);
-        lines.push(...vl);
-        // A local the arm itself declared (a pattern binding, an arm `let`) is moved out
-        // by the yield below. A place from outside the arm is only read unless the
-        // checker moved it (isMove): the place keeps its value and its drop.
-        const yieldedIdx = last.expr.kind === "Ident"
-          ? this.droppableLocals.findIndex(d => d.addr === this.localAddr((last.expr as { name: string }).name)) : -1;
-        const armLocal = yieldedIdx >= armDropStart;
-        const vv = gv !== "void" && resultSlot.cloneViews && this.forkTailIsView(last.expr, armLocal)
-          ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
-        if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
-        // The non-moving yield below is a move codegen decides on its own (the HIR read
-        // was a view): the value, not the view, is what the result slot receives.
-        const yieldMoves = this.own.on && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove && armLocal;
-        if (yieldMoves && this.own.views.delete(vv)) this.own.makeVal(lines, vv, "yield-move");
-        if (vv !== "void") this.own.intoResult(lines, resultSlot.addr, vv);
-        // Yielding a droppable local out of the arm hands its heap data to the
-        // result slot — a move, not a copy. Clear the alive flag so the arm's
-        // drop does not free what the match's value now owns.
-        // Matched on the local's ADDRESS, not its name: a function can hold
-        // several droppable locals called the same thing in different scopes,
-        // and by-name lookup cleared the first entry's flag — dropping a live
-        // value belonging to an unrelated scope.
-        if (vv !== "void" && last.expr.kind === "Ident") {
-          const yielded = armLocal || (last.expr as { isMove?: boolean }).isMove ? this.droppableLocals[yieldedIdx] : undefined;
-          // A moving Ident already cleared the flag (and ended the slot's ledger ID) in
-          // genExpr; this second clear is then a no-op, not a second move.
-          if (yielded && (last.expr as { isMove?: boolean }).isMove) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
-          else if (yielded) this.own.clearAlive(lines, yielded.aliveFlag, "MOVE");
-        }
-      } else {
-        const [sl, t] = this.genStmt(last);
-        lines.push(...sl);
-        if (t) return true;
-      }
-    }
-    return false;
-  }
-
-  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
-    const lines: string[] = [];
-    let subjAddr: string;
-    let subjTy: string;
-    if (stmt.subjectIsRef && stmt.subject.kind === "Ident" && this.locals.get(stmt.subject.name)?.isRef) {
-      // `match &Enum`: read the tag/payloads through the borrow's pointer
-      // directly — nothing is copied or moved. (genExpr would auto-deref the
-      // ref to a value; we want the pointer itself.)
-      const p = this.nextTemp();
-      lines.push(`  ${p} = load ptr, ptr ${this.localAddr(stmt.subject.name)}`);
-      subjAddr = p;
-      subjTy = `%${stmt.enumName}`;
-    } else if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
-      const [heapLines, heapVal] = this.genExpr(stmt.subject.operand);
-      lines.push(...heapLines);
-      subjAddr = heapVal;
-      subjTy = this.llvmType(stmt.subject.type);
-    } else if (stmt.subject.kind === "Ident" && this.locals.has(stmt.subject.name)) {
-      const local = must(this.locals, stmt.subject.name, "locals");
-      subjAddr = this.localAddr(stmt.subject.name);
-      subjTy = local.type;
-    } else if (stmt.subjectIsRef && this.placeRootedAtImmutableRef(stmt.subject)) {
-      // Place subject (s.field / v[i]) rooted at an immutable '&' binding:
-      // match the slot in place — no clone of the enum (or its heap payloads).
-      // Sound only for an immutable root: the checker rejects '&'/'&mut'
-      // aliasing in one call and refs are second-class (never stored), so
-      // nothing in the arm's call tree can mutate the container while payload
-      // borrows are live. A mutable-rooted place keeps the clone-into-temp
-      // path (genTempSubjectMatch, which drops the clone at match exit), because
-      // the arm body may legally mutate the container (`v[i] = x`, or a call that
-      // grows a `var` global) and invalidate the matched slot.
-      const [pl, pAddr, pTy] = this.genLValue(stmt.subject);
-      lines.push(...pl);
-      subjAddr = pAddr;
-      subjTy = pTy;
-    } else {
-      // genStoreInto, not genExpr+store: a big-aggregate subject never becomes an
-      // SSA value, so genExpr hands back a POINTER for it. Storing that as if it
-      // were the aggregate emitted `store %Option_Post %ptr` — invalid IR, caught
-      // only by clang. `match replace(x, ...)` on an enum ≥128 bytes hit this.
-      subjTy = this.llvmType(stmt.subject.type);
-      subjAddr = this.nextTemp();
-      lines.push(`  ${subjAddr} = alloca ${subjTy}`);
-      this.genStoreInto(lines, subjAddr, subjTy, stmt.subject);
-    }
-
-    const tag = this.loadEnumTag(lines, subjTy, subjAddr);
-    if (stmt.arms.some(a => a.pattern.kind === "EnumPattern" && a.pattern.tests)) {
-      return this.genNestedArms(lines, stmt, subjAddr, tag, resultSlot);
-    }
-
-    const layout = must(this.enumLayouts, stmt.enumName, "enum layouts");
-    const endLabel = this.nextLabel("match.end");
-    const defaultLabel = this.nextLabel("match.default");
-
-    const armLabels: { tag: number; label: string; arm: typeof stmt.arms[0] }[] = [];
-    let wildcardArm: typeof stmt.arms[0] | null = null;
-    for (const arm of stmt.arms) {
-      if (arm.pattern.kind === "WildcardPattern") {
-        wildcardArm = arm;
-      } else if (arm.pattern.kind === "EnumPattern") {
-        const label = this.nextLabel(`match.${arm.pattern.variant}`);
-        armLabels.push({ tag: arm.pattern.tag, label, arm });
-      }
-    }
-
-    const cases = armLabels.map(a => `i32 ${a.tag}, label %${a.label}`).join(" ");
-    const defaultTarget = wildcardArm ? this.nextLabel("match.wildcard") : defaultLabel;
-    lines.push(`  switch i32 ${tag}, label %${defaultTarget} [${cases}]`);
-
-    let allArmsTerminated = true;
-    for (const { label, arm } of armLabels) {
-      lines.push(`${label}:`);
-      const armDropStart = this.droppableLocals.length;
-      if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
-        const variant = must(layout.variants, arm.pattern.variant, "variants");
-        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef, !!stmt.subjectIsMut);
-      }
-      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot, armDropStart);
-      // Drop the arm's own bindings when it falls through: the alloca is reused
-      // on the next visit, so waiting for the function epilogue would drop only
-      // the final binding and leak every earlier one (a match inside a loop).
-      // emitGuardedDrop clears the alive flag, so the epilogue's drop is a no-op.
-      if (!armTerminated) {
-        const escaping = new Set<string>();
-        if (arm.pattern.kind === "EnumPattern") {
-          for (const b of arm.pattern.bindings) if (b.escapes) escaping.add(this.localAddr(b.name));
-        }
-        for (let d = armDropStart; d < this.droppableLocals.length; d++) {
-          if (escaping.has(this.droppableLocals[d].addr)) continue;
-          this.emitGuardedDrop(lines, this.droppableLocals[d]);
-        }
-      }
-      if (!armTerminated) lines.push(`  br label %${endLabel}`);
-      if (!armTerminated) allArmsTerminated = false;
-    }
-
-    if (wildcardArm) {
-      lines.push(`${defaultTarget}:`);
-      const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
-      if (!wcTerminated) lines.push(`  br label %${endLabel}`);
-      if (!wcTerminated) allArmsTerminated = false;
-    }
-
-    if (!wildcardArm) {
-      lines.push(`${defaultLabel}:`);
-      lines.push(`  unreachable`);
-    }
-
-    lines.push(`${endLabel}:`);
-    if (allArmsTerminated) lines.push(`  unreachable`);
-    return [lines, allArmsTerminated];
-  }
-
   // The machinery behind lazy globals (see src/lazy-globals.ts for where reads are guarded).
   //
   // Per global G: a state word (0 not started, 1 initializer running, 2 done), the token
@@ -5236,223 +5009,6 @@ export class Codegen {
     L.push(`  ret void`);
     L.push(`}`);
     return L;
-  }
-
-  // The address of the payload a pattern path names, and its LLVM type.  // The address of the payload a pattern path names, and its LLVM type. Each step reads
-  // a payload of a variant the arm's tests have already confirmed, so the per-variant
-  // offsets enumFieldPtr computes are the right ones.
-  private patPathPtr(lines: string[], subjAddr: string, path: HIRPatStep[]): { ptr: string; llTy: string } {
-    let ptr = subjAddr;
-    let llTy = "";
-    for (const st of path) {
-      const enumTy = `%${st.enumName}`;
-      const v = this.enumVariantOf(enumTy, st.variant);
-      ptr = this.enumFieldPtr(lines, enumTy, ptr, v, st.index);
-      llTy = v.fieldTypes[st.index]!;
-    }
-    return { ptr, llTy };
-  }
-
-  // One sub-pattern test: does the payload at `t.path` hold that variant / equal that literal?
-  private genPatTest(lines: string[], subjAddr: string, t: HIRPatTest): string {
-    const { ptr, llTy } = this.patPathPtr(lines, subjAddr, t.path);
-    const out = this.nextTemp();
-    if (t.kind === "tag") {
-      const tag = this.loadEnumTag(lines, `%${t.enumName}`, ptr);
-      lines.push(`  ${out} = icmp eq i32 ${tag}, ${t.tag}`);
-      return out;
-    }
-    const val = this.nextTemp();
-    lines.push(`  ${val} = load ${llTy}, ptr ${ptr}`);
-    if (t.literalKind === "string") {
-      this.hasStringType = true;
-      const litStr = this.addString(String(t.value));
-      const l1 = this.nextTemp();
-      lines.push(`  ${l1} = insertvalue %String undef, ptr ${litStr.label}, 0`);
-      const l2 = this.nextTemp();
-      lines.push(`  ${l2} = insertvalue %String ${l1}, i64 ${litStr.length - 1}, 1`);
-      return genStringCmp(this, lines, val, l2, true)[1];
-    }
-    if (t.literalKind === "bool") lines.push(`  ${out} = icmp eq i1 ${val}, ${t.value ? 1 : 0}`);
-    else if (t.literalKind === "float" || t.type.tag === "float") {
-      // Also an int pattern on a float payload (`A(3)` with an f64 field): icmp on a double
-      // is invalid IR. Number() because an int pattern's value is a bigint.
-      const n = Number(t.value);
-      const f = Number.isInteger(n) ? n.toFixed(1) : String(n);
-      lines.push(`  ${out} = fcmp oeq ${llTy} ${val}, ${f}`);
-    } else lines.push(`  ${out} = icmp eq ${llTy} ${val}, ${t.value}`);
-    return out;
-  }
-
-  // A match with a nested arm. Arms are tried in order, each by its top tag and then its
-  // sub-pattern tests, and the first that passes runs; the checker has proved one does.
-  // Testing only reads the subject, so a failed test can fall through to the next arm
-  // with nothing moved. Binding happens after the choice, in the chosen arm's block, with
-  // the same move/borrow rule a flat arm uses (bindPayloads).
-  private genNestedArms(
-    lines: string[], stmt: HIRStmt & { kind: "Match" }, subjAddr: string, tag: string,
-    resultSlot?: ForkSlot,
-  ): [string[], boolean] {
-    const endLabel = this.nextLabel("match.end");
-    const bodyLabels = stmt.arms.map(() => this.nextLabel("match.arm"));
-    let testLabel = this.nextLabel("match.test");
-    lines.push(`  br label %${testLabel}`);
-    stmt.arms.forEach((arm, i) => {
-      lines.push(`${testLabel}:`);
-      const next = this.nextLabel("match.test");
-      if (arm.pattern.kind === "EnumPattern") {
-        const top = this.nextTemp();
-        lines.push(`  ${top} = icmp eq i32 ${tag}, ${arm.pattern.tag}`);
-        let ok = this.nextLabel("match.sub");
-        lines.push(`  br i1 ${top}, label %${ok}, label %${next}`);
-        for (const t of arm.pattern.tests ?? []) {
-          lines.push(`${ok}:`);
-          const c = this.genPatTest(lines, subjAddr, t);
-          ok = this.nextLabel("match.sub");
-          lines.push(`  br i1 ${c}, label %${ok}, label %${next}`);
-        }
-        lines.push(`${ok}:`);
-      }
-      lines.push(`  br label %${bodyLabels[i]}`);
-      testLabel = next;
-    });
-    lines.push(`${testLabel}:`);
-    lines.push(`  unreachable`);
-
-    let allArmsTerminated = true;
-    stmt.arms.forEach((arm, i) => {
-      lines.push(`${bodyLabels[i]}:`);
-      const armDropStart = this.droppableLocals.length;
-      const pat = arm.pattern;
-      if (pat.kind === "EnumPattern" && pat.bindings.length > 0) {
-        const items = pat.bindings.map((b, k) => {
-          const { ptr, llTy } = this.patPathPtr(lines, subjAddr, b.path ?? [{ enumName: stmt.enumName, variant: pat.variant, index: k }]);
-          return { name: b.name, llTy, fieldKind: b.type, fieldPtr: ptr };
-        });
-        const ended = this.bindPayloads(lines, subjAddr, items, !!stmt.subjectIsRef, !!stmt.subjectIsMut);
-        // The subject stops being dropped once a binding takes a payload, and every part
-        // of it a binding did not take is a matched literal or a tag. A string literal
-        // payload owns its bytes, so it is freed here rather than leaked.
-        if (ended) {
-          for (const t of pat.tests ?? []) {
-            if (t.kind !== "lit" || !this.needsDropCg(t.type)) continue;
-            this.emitDropValue(lines, this.patPathPtr(lines, subjAddr, t.path).ptr, t.type);
-          }
-        }
-      }
-      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot, armDropStart);
-      if (!armTerminated) {
-        const escaping = new Set<string>();
-        if (pat.kind === "EnumPattern") for (const b of pat.bindings) if (b.escapes) escaping.add(this.localAddr(b.name));
-        for (let d = armDropStart; d < this.droppableLocals.length; d++) {
-          if (escaping.has(this.droppableLocals[d].addr)) continue;
-          this.emitGuardedDrop(lines, this.droppableLocals[d]);
-        }
-        lines.push(`  br label %${endLabel}`);
-        allArmsTerminated = false;
-      }
-    });
-    lines.push(`${endLabel}:`);
-    if (allArmsTerminated) lines.push(`  unreachable`);
-    return [lines, allArmsTerminated];
-  }
-
-  // True when `e` is a field/index chain whose root is a local bound as an
-  // immutable reference (a '&T' param or an immutable ref binding). Such a
-  // place can be matched in place: no writer to the referent can exist while
-  // the ref is live (see comment at the call site in genEnumMatch).
-  private placeRootedAtImmutableRef(e: HIRExpr): boolean {
-    if (e.kind !== "FieldAccess" && e.kind !== "IndexAccess") return false;
-    let root: HIRExpr = e;
-    while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
-    if (root.kind !== "Ident") return false;
-    const local = this.locals.get(root.name);
-    return !!local && local.isRef && !local.mutable;
-  }
-
-  private extractBindings(
-    lines: string[], subjAddr: string, subjTy: string,
-    variant: EnumVariant,
-    pattern: HIRPattern & { kind: "EnumPattern" },
-    subjectIsRef: boolean,
-    subjectIsMut = false,
-  ) {
-    if (pattern.bindings.length === 0) return;
-    const items = pattern.bindings.map((b, i) => ({
-      name: b.name, llTy: variant.fieldTypes[i]!, fieldKind: b.type, fieldPtr: this.enumFieldPtr(lines, subjTy, subjAddr, variant, i),
-    }));
-    this.bindPayloads(lines, subjAddr, items, subjectIsRef, subjectIsMut);
-  }
-
-  // Binds each payload at `fieldPtr` to a local named `name`: a view for a borrowing
-  // match, a move (zeroing the source and ending the subject) for an owning one. Returns
-  // whether anything was moved out, i.e. whether the subject was ended.
-  private bindPayloads(
-    lines: string[], subjAddr: string,
-    items: { name: string; llTy: string; fieldKind: TypeKind; fieldPtr: string }[],
-    subjectIsRef: boolean,
-    subjectIsMut: boolean,
-  ): boolean {
-    let subjectEnded = false;
-    const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
-      // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
-      // shares one disambiguation namespace with `let`/for-loop allocas. Two
-      // counters could otherwise mint the same SSA name for same-named locals of
-      // different types → "multiple definition of local value" at link time.
-      const uid = this.scopeCounter++;
-      // Ref-match of a non-Copy payload: bind a BORROW — the local holds a
-      // pointer into the still-owned subject. No load, no zeroing, no drop, so
-      // there is no double-free with the subject's real owner. Through a `&mut`
-      // subject every payload binds this way, as a `&mut` view, so an assignment
-      // to the binding stores into the payload (the checker types it `&mut T`).
-      if (subjectIsMut || (subjectIsRef && this.needsDropCg(fieldKind))) {
-        const addr = `%${name}.${uid}.addr`;
-        lines.push(`  ${addr} = alloca ptr`);
-        lines.push(`  store ptr ${fieldPtr}, ptr ${addr}`);
-        this.locals.set(name, { type: ty, typeKind: { tag: "ref", inner: fieldKind, mutable: subjectIsMut }, mutable: subjectIsMut, isRef: true, addr });
-        return;
-      }
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
-      // Owned match consumes (moves) the payload: zero the source so the
-      // subject's drop chain doesn't free what the binding now owns. A ref-match
-      // of a Copy payload is just a value copy — nothing to zero.
-      if (!subjectIsRef && this.needsDropCg(fieldKind)) {
-        lines.push(this.zeroStore(ty, fieldPtr));
-        // The binding now owns the payload, so the SUBJECT must stop being dropped.
-        // Zeroing the payload is not enough on its own: it makes the subject's glue
-        // free a null pointer (a no-op, which is why heap payloads looked fine), but a
-        // user `Drop` impl runs regardless and gets a zeroed value. For `Socket { fd:
-        // i32 }` in std/http that is `close(0)` — closing stdin — on a socket that was
-        // already moved out. Cleared HERE, inside the consuming arm, because an arm
-        // that binds nothing leaves the subject intact and must still drop it.
-        // For the ledger the subject ends once, at its first moved-out field: the later
-        // fields' clears re-store the same 0 and are not further moves of the subject.
-        const subjLocal = this.droppableLocals.find(d => d.addr === subjAddr);
-        if (subjLocal && !subjectEnded) this.own.clearAlive(lines, subjLocal.aliveFlag, "MOVE");
-        else if (subjLocal) lines.push(`  store i1 0, ptr ${subjLocal.aliveFlag}`);
-        subjectEnded = true;
-      }
-      const addr = `%${name}.${uid}.addr`;
-      lines.push(`  ${addr} = alloca ${ty}`);
-      lines.push(this.valStore(ty, val, addr, { intent: subjectIsRef ? "view" : "move", type: fieldKind }));
-      this.locals.set(name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
-      // An owned match binding owns its payload — it was moved out of the subject
-      // (the source is zeroed above), so nothing else will free it. Without drop
-      // glue, `match f() { Ok(r) => { return r.id } }` leaked r entirely: one
-      // SSL_CTX (~1 MB) per HTTPS request in milojs.
-      if (this.needsDropCg(fieldKind)) {
-        const aliveFlag = `${addr}.alive`;
-        this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-        this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-        this.registerFieldFlags(this.entryAllocas, addr, name, fieldKind);
-        this.own.setAlive(lines, aliveFlag, addr, `match-bind:${name}`);
-        this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
-      }
-    };
-
-    for (const it of items) bind(it.name, it.llTy, it.fieldKind, it.fieldPtr);
-    return subjectEnded;
   }
 
   public genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {
@@ -7885,13 +7441,13 @@ export class Codegen {
     // arm, every arm yielding void or diverging) has no value to carry, and
     // `alloca void` is invalid IR: lower it as a plain statement match.
     if (resultTy === "void") {
-      lines.push(...this.genMatch(asStmt)[0]);
+      lines.push(...genMatch(this, asStmt)[0]);
       return [lines, "void", "void"];
     }
     const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
     if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
-    const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
+    const [ml, allTerminated] = genMatch(this, asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
     lines.push(...ml);
     // Every arm diverged (return/break) — genMatch already closed endLabel
     // with `unreachable`, so a load here would follow a terminator. The
@@ -12290,7 +11846,7 @@ export class Codegen {
 
   // An arm tail that reads a place without consuming it. `armLocal`: an Ident the arm
   // declared, which the yield moves.
-  private forkTailIsView(tail: HIRExpr, armLocal: boolean): boolean {
+  public forkTailIsView(tail: HIRExpr, armLocal: boolean): boolean {
     if (tail.kind === "StringLit" || armLocal || !this.needsDropCg(tail.type)) return false;
     if (this.isOwnedTempExpr(tail)) return false;
     if ((tail.kind === "Ident" || tail.kind === "FieldAccess" || tail.kind === "IndexAccess" || tail.kind === "HeapDeref") && tail.isMove) return false;
@@ -12298,7 +11854,7 @@ export class Codegen {
   }
 
   // A fresh copy of a value read out of a place (the place keeps its own).
-  private cloneViewValue(lines: string[], val: string, tk: TypeKind): string {
+  public cloneViewValue(lines: string[], val: string, tk: TypeKind): string {
     const lt = this.llvmType(tk);
     const slot = `%__forkclone.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${slot} = alloca ${lt}`);
@@ -12338,7 +11894,7 @@ export class Codegen {
     return this.needsDropCg(expr.type) && this.receiverIsRvalueTemp(expr);
   }
 
-  private isOwnedTempExpr(expr: HIRExpr): boolean {
+  public isOwnedTempExpr(expr: HIRExpr): boolean {
     // A discarded small-type `replace(...)` result is dropped here (SSA path). A big-agg
     // replace drops its own moved-out value inside genExpr, so it must NOT double-drop here.
     if (expr.kind === "MemReplace") return !this.isBigAgg(this.llvmType(expr.type));
@@ -13434,7 +12990,7 @@ export class Codegen {
   // Give the local at `addr` a flag for each of its moved paths. `sink` receives the
   // allocas (the entry block for a `let`, the prologue for a parameter); the flags start
   // dead and ownSetAlive arms them with the local.
-  private registerFieldFlags(sink: string[], addr: string, name: string, type: TypeKind) {
+  public registerFieldFlags(sink: string[], addr: string, name: string, type: TypeKind) {
     const paths = this.partialMovePaths.get(name);
     if (!paths || type.tag !== "struct" || this.fieldMoveFlags.has(addr)) return;
     const flags = new Map<string, string>();
@@ -13538,7 +13094,7 @@ export class Codegen {
     }
   }
 
-  private emitGuardedDrop(lines: string[], local: DroppableLocal) {
+  public emitGuardedDrop(lines: string[], local: DroppableLocal) {
     const check = this.nextTemp();
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
     const dropLabel = this.nextLabel("drop.alive");
