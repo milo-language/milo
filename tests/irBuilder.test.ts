@@ -62,6 +62,40 @@ describe("LlvmTextBuilder invariants", () => {
     expect(() => b.select(val("%c", Ty.i1), val("%a", Ty.void), val("%b", Ty.void))).toThrow("select of void");
   });
 
+  test("load align and atomic acquire load check type, pointer and alignment", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const p = val("%p", Ty.ptr);
+    b.load(Ty.i64, p, 8);
+    b.loadAcquire(Ty.i64, p, 8);
+    expect(lines).toEqual(["  %t.0 = load i64, ptr %p, align 8", "  %t.1 = load atomic i64, ptr %p acquire, align 8"]);
+    expect(() => b.load(Ty.i64, p, 3)).toThrow("not a power of two");
+    expect(() => b.load(Ty.i64, p, 0)).toThrow("not a power of two");
+    expect(() => b.loadAcquire(Ty.i64, p, 6)).toThrow("not a power of two");
+    expect(() => b.loadAcquire(Ty.i64, val("%x", Ty.i64), 8)).toThrow("non-pointer");
+    expect(() => b.loadAcquire(Ty.void, p, 8)).toThrow("atomic load of void");
+    expect(() => b.loadAcquire(Ty.of("%String"), p, 8)).toThrow("atomic load of %String");
+  });
+
+  test("unreachable terminates the block", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    b.unreachable();
+    expect(lines).toEqual(["  unreachable"]);
+    expect(() => b.unreachable()).toThrow("after terminator");
+    expect(() => b.alloca(Ty.i64)).toThrow("after terminator");
+  });
+
+  test("phi checks incoming types and can print the padded spelling", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const a = b.newBlock("a"), c = b.newBlock("c");
+    expect(() => b.phi(Ty.void, [])).toThrow("phi of void");
+    expect(() => b.phi(Ty.ptr, [[val("1", Ty.i64), a]])).toThrow("incoming 1 is i64");
+    b.phi(Ty.ptr, [[val("%x", Ty.ptr), a], [val("%y", Ty.ptr), c]], true);
+    expect(lines).toEqual(["  %t.0 = phi ptr [ %x, %a0 ], [ %y, %c1 ]"]);
+  });
+
   test("fcmp needs matching float operands", () => {
     const b = builder();
     expect(() => b.fcmp("ogt", val("%a", Ty.i64), val("%b", Ty.i64))).toThrow("non-float");

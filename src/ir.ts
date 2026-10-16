@@ -74,7 +74,10 @@ export interface Builder {
    * there too, so the slot holds it before any body code runs.
    */
   entryAlloca(name: string, ty: Ty, init?: Val): Val;
-  load(ty: Ty, ptr: Val): Val;
+  /** `align`, if given, prints as a trailing `, align N`. */
+  load(ty: Ty, ptr: Val, align?: number): Val;
+  /** `load atomic T, ptr P acquire, align N`: reads a refcount that another thread may release. */
+  loadAcquire(ty: Ty, ptr: Val, align: number): Val;
   store(v: Val, ptr: Val): void;
   gep(base: Ty, ptr: Val, idx: Val[]): Val;
   binop(op: BinOp, a: Val, b: Val): Val;
@@ -84,7 +87,8 @@ export interface Builder {
   /** The builder knows no aggregate layouts, so the caller names the element type. */
   extractvalue(agg: Val, idx: number, elt: Ty): Val;
   insertvalue(agg: Val, elt: Val, idx: number): Val;
-  phi(ty: Ty, incoming: [Val, Block][]): Val;
+  /** `padded` prints `[ v, %b ]`, the spelling a few older sites used; same IR to LLVM. */
+  phi(ty: Ty, incoming: [Val, Block][], padded?: boolean): Val;
   select(cond: Val, a: Val, b: Val, dest?: Val): Val;
   /**
    * Draw a temp name now and define it later with `select(..., dest)`. Exists only because
@@ -101,6 +105,7 @@ export interface Builder {
   position(b: Block): void;
   br(dest: Block): void;
   condBr(cond: Val, t: Block, f: Block): void;
+  unreachable(): void;
   /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
   raw(line: string): void;
 }
@@ -136,10 +141,19 @@ export class LlvmTextBuilder implements Builder {
     return { ref: name, ty: Ty.ptr };
   }
 
-  load(ty: Ty, ptr: Val): Val {
+  load(ty: Ty, ptr: Val, align?: number): Val {
     if (ty.kind === "void") this.fail("load of void");
     this.wantPtr("load", ptr);
-    return this.def(`load ${ty.ll}, ptr ${ptr.ref}`, ty);
+    if (align !== undefined) this.wantAlign("load", align);
+    return this.def(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}`, ty);
+  }
+
+  loadAcquire(ty: Ty, ptr: Val, align: number): Val {
+    // LLVM allows atomic loads of integers, pointers and floats, not of aggregates.
+    if (ty.kind === "void" || ty.kind === "agg") this.fail(`atomic load of ${ty.ll}`);
+    this.wantPtr("atomic load", ptr);
+    this.wantAlign("atomic load", align);
+    return this.def(`load atomic ${ty.ll}, ptr ${ptr.ref} acquire, align ${align}`, ty);
   }
 
   store(v: Val, ptr: Val): void {
@@ -186,10 +200,11 @@ export class LlvmTextBuilder implements Builder {
     return this.def(`insertvalue ${agg.ty.ll} ${agg.ref}, ${elt.ty.ll} ${elt.ref}, ${idx}`, agg.ty);
   }
 
-  phi(ty: Ty, incoming: [Val, Block][]): Val {
+  phi(ty: Ty, incoming: [Val, Block][], padded = false): Val {
     if (ty.kind === "void") this.fail("phi of void");
     for (const [v] of incoming) if (v.ty.ll !== ty.ll) this.fail(`phi ${ty.ll} incoming ${v.ref} is ${v.ty.ll}`);
-    return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${v.ref}, %${b.name}]`).join(", ")}`, ty);
+    const pad = padded ? " " : "";
+    return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${pad}${v.ref}, %${b.name}${pad}]`).join(", ")}`, ty);
   }
 
   select(cond: Val, a: Val, b: Val, dest?: Val): Val {
@@ -238,6 +253,10 @@ export class LlvmTextBuilder implements Builder {
     this.emit(`br i1 ${cond.ref}, label %${t.name}, label %${f.name}`);
   }
 
+  unreachable(): void {
+    this.emit("unreachable");
+  }
+
   raw(line: string): void {
     this.lines.push(line);
   }
@@ -270,6 +289,10 @@ export class LlvmTextBuilder implements Builder {
 
   private wantPtr(what: string, p: Val): void {
     if (p.ty.kind !== "ptr") this.fail(`${what} through non-pointer ${p.ref} (${p.ty.ll})`);
+  }
+
+  private wantAlign(what: string, align: number): void {
+    if (!Number.isInteger(align) || align <= 0 || (align & (align - 1)) !== 0) this.fail(`${what} align ${align} is not a power of two`);
   }
 
   private sameTy(what: string, a: Val, b: Val): void {
