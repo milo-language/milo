@@ -2,10 +2,21 @@
 
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
-import type { NameSource } from "./ir";
+import { LlvmTextBuilder, Ty, val, type NameSource, type Val } from "./ir";
 import type { StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { HM_TOMBS } from "./codegen-map";
 import { must } from "./must";
+
+const STRING = Ty.of("%String");
+const VEC = Ty.of("%Vec");
+const HASHMAP = Ty.of("%HashMap");
+// A closure and a Heap<Interface> are both a { data/fn, env/itable } pair.
+const CLOSURE = Ty.of("{ ptr, ptr }");
+const NULL = val("null", Ty.ptr);
+const I64_0 = val("0", Ty.i64);
+const I64_1 = val("1", Ty.i64);
+const I32_0 = val("0", Ty.i32);
+const I32_1 = val("1", Ty.i32);
 
 // Which helper functions have been generated, so each is emitted once per module.
 export class DropGlueSeen {
@@ -373,6 +384,8 @@ export function dropStructFieldsExcept(ctx: DropCtx, lines: string[], addr: stri
 
 // The drop glue proper for one value, after Codegen.emitDropValue has handled structural-mode re-entry and the ownership ledger.
 export function emitDropValueBody(ctx: DropCtx, lines: string[], allocaPtr: string, typeKind: TypeKind): void {
+  const b = new LlvmTextBuilder(lines, ctx);
+  const slot = val(allocaPtr, Ty.ptr);
   // An owning closure is `{ ptr fn, ptr env }`, and the drop glue lives in the FIRST
   // word of the environment rather than in a third word of the pair. That choice is
   // what keeps a closure two words wide, so nothing that passes one around — call
@@ -382,222 +395,183 @@ export function emitDropValueBody(ctx: DropCtx, lines: string[], allocaPtr: stri
   // null for a closure that captured nothing — the two null checks are what let one
   // drop path serve all three shapes.
   if (typeKind.tag === "fn" && typeKind.owning === true) {
-    const pair = ctx.nextTemp(), env = ctx.nextTemp(), isEnv = ctx.nextTemp();
-    const dropFn = ctx.nextTemp(), hasDrop = ctx.nextTemp();
-    const callLabel = ctx.nextLabel("cldrop.call");
-    const midLabel = ctx.nextLabel("cldrop.mid");
-    const doneLabel = ctx.nextLabel("cldrop.done");
-    lines.push(`  ${pair} = load { ptr, ptr }, ptr ${allocaPtr}`);
-    lines.push(`  ${env} = extractvalue { ptr, ptr } ${pair}, 1`);
-    lines.push(`  ${isEnv} = icmp ne ptr ${env}, null`);
-    lines.push(`  br i1 ${isEnv}, label %${midLabel}, label %${doneLabel}`);
-    lines.push(`${midLabel}:`);
-    lines.push(`  ${dropFn} = load ptr, ptr ${env}`);
-    lines.push(`  ${hasDrop} = icmp ne ptr ${dropFn}, null`);
-    lines.push(`  br i1 ${hasDrop}, label %${callLabel}, label %${doneLabel}`);
-    lines.push(`${callLabel}:`);
-    lines.push(`  call void ${dropFn}(ptr ${env})`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${doneLabel}:`);
+    const callLabel = b.newBlock("cldrop.call");
+    const midLabel = b.newBlock("cldrop.mid");
+    const doneLabel = b.newBlock("cldrop.done");
+    const pair = b.load(CLOSURE, slot);
+    const env = b.extractvalue(pair, 1, Ty.ptr);
+    const isEnv = b.icmp("ne", env, NULL);
+    b.condBr(isEnv, midLabel, doneLabel);
+    b.position(midLabel);
+    const dropFn = b.load(Ty.ptr, env);
+    const hasDrop = b.icmp("ne", dropFn, NULL);
+    b.condBr(hasDrop, callLabel, doneLabel);
+    b.position(callLabel);
+    b.callDiscard(Ty.void, dropFn.ref, [env]);
+    b.br(doneLabel);
+    b.position(doneLabel);
     return;
   }
   if (typeKind.tag === "string") {
     ctx.strRt();
-    const old = ctx.nextTemp();
-    lines.push(`  ${old} = load %String, ptr ${allocaPtr}`);
-    const cap = ctx.nextTemp();
-    lines.push(`  ${cap} = extractvalue %String ${old}, 2`);
-    const owned = ctx.nextTemp();
-    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-    const dropLabel = ctx.nextLabel("drop");
-    const skipLabel = ctx.nextLabel("drop.skip");
-    lines.push(`  br i1 ${owned}, label %${dropLabel}, label %${skipLabel}`);
-    lines.push(`${dropLabel}:`);
-    const ptr = ctx.nextTemp();
-    lines.push(`  ${ptr} = extractvalue %String ${old}, 0`);
+    const old = b.load(STRING, slot);
+    const cap = b.extractvalue(old, 2, Ty.i64);
+    const owned = b.icmp("ugt", cap, I64_0);
+    const dropLabel = b.newBlock("drop");
+    const skipLabel = b.newBlock("drop.skip");
+    b.condBr(owned, dropLabel, skipLabel);
+    b.position(dropLabel);
+    const ptr = b.extractvalue(old, 0, Ty.ptr);
     // One handle fewer; the buffer goes when the last one does (see strRt).
-    lines.push(`  call void @milo.str.release(ptr ${ptr})`);
-    lines.push(`  br label %${skipLabel}`);
-    lines.push(`${skipLabel}:`);
+    b.callDiscard(Ty.void, "@milo.str.release", [ptr]);
+    b.br(skipLabel);
+    b.position(skipLabel);
   }
   if (typeKind.tag === "vec") {
     ctx.needsFree = true;
-    const vecVal = ctx.nextTemp();
-    lines.push(`  ${vecVal} = load %Vec, ptr ${allocaPtr}`);
-    const dataPtr = ctx.nextTemp();
-    lines.push(`  ${dataPtr} = extractvalue %Vec ${vecVal}, 0`);
-    const isNull = ctx.nextTemp();
-    lines.push(`  ${isNull} = icmp eq ptr ${dataPtr}, null`);
-    const dropLabel = ctx.nextLabel("vec.drop");
-    const skipLabel = ctx.nextLabel("vec.skip");
-    lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-    lines.push(`${dropLabel}:`);
+    const vecVal = b.load(VEC, slot);
+    const dataPtr = b.extractvalue(vecVal, 0, Ty.ptr);
+    const isNull = b.icmp("eq", dataPtr, NULL);
+    const dropLabel = b.newBlock("vec.drop");
+    const skipLabel = b.newBlock("vec.skip");
+    b.condBr(isNull, skipLabel, dropLabel);
+    b.position(dropLabel);
     if (ctx.needsDropCg(typeKind.element)) {
       // drop each element: for i in 0..len
-      const vecLen = ctx.nextTemp();
-      lines.push(`  ${vecLen} = extractvalue %Vec ${vecVal}, 1`);
-      const elemTy = ctx.llvmType(typeKind.element);
-      const loopCond = ctx.nextLabel("vec.drop.cond");
-      const loopBody = ctx.nextLabel("vec.drop.body");
-      const loopEnd = ctx.nextLabel("vec.drop.end");
-      const iAddr = ctx.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
-      lines.push(`${loopCond}:`);
-      const iVal = ctx.nextTemp();
-      lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-      const cmp = ctx.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
-      lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${loopEnd}`);
-      lines.push(`${loopBody}:`);
-      const elemPtr = ctx.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${dataPtr}, i64 ${iVal}`);
-      ctx.emitDropValue(lines, elemPtr, typeKind.element);
-      const nextI = ctx.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
-      lines.push(`${loopEnd}:`);
+      const vecLen = b.extractvalue(vecVal, 1, Ty.i64);
+      const elemTy = Ty.of(ctx.llvmType(typeKind.element));
+      const loopCond = b.newBlock("vec.drop.cond");
+      const loopBody = b.newBlock("vec.drop.body");
+      const loopEnd = b.newBlock("vec.drop.end");
+      const iAddr = b.alloca(Ty.i64);
+      b.store(I64_0, iAddr);
+      b.br(loopCond);
+      b.position(loopCond);
+      const iVal = b.load(Ty.i64, iAddr);
+      const cmp = b.icmp("ult", iVal, vecLen);
+      b.condBr(cmp, loopBody, loopEnd);
+      b.position(loopBody);
+      const elemPtr = b.gep(elemTy, dataPtr, [iVal]);
+      ctx.emitDropValue(lines, elemPtr.ref, typeKind.element);
+      const nextI = b.binop("add", iVal, I64_1);
+      b.store(nextI, iAddr);
+      b.br(loopCond);
+      b.position(loopEnd);
     }
-    lines.push(`  call void @free(ptr ${dataPtr})`);
-    lines.push(`  br label %${skipLabel}`);
-    lines.push(`${skipLabel}:`);
+    b.callDiscard(Ty.void, "@free", [dataPtr]);
+    b.br(skipLabel);
+    b.position(skipLabel);
   }
   if (typeKind.tag === "heap") {
     ctx.needsFree = true;
-    let heapPtr: string;
+    let heapPtr: Val;
     if (typeKind.inner.tag === "interface") {
       // Heap<Interface> is { ptr, ptr } — extract data ptr from element 0
-      const fatPtr = ctx.nextTemp();
-      lines.push(`  ${fatPtr} = load { ptr, ptr }, ptr ${allocaPtr}`);
-      heapPtr = ctx.nextTemp();
-      lines.push(`  ${heapPtr} = extractvalue { ptr, ptr } ${fatPtr}, 0`);
+      const fatPtr = b.load(CLOSURE, slot);
+      heapPtr = b.extractvalue(fatPtr, 0, Ty.ptr);
     } else {
-      heapPtr = ctx.nextTemp();
-      lines.push(`  ${heapPtr} = load ptr, ptr ${allocaPtr}`);
+      heapPtr = b.load(Ty.ptr, slot);
     }
-    const isNull = ctx.nextTemp();
-    lines.push(`  ${isNull} = icmp eq ptr ${heapPtr}, null`);
-    const dropLabel = ctx.nextLabel("heap.drop");
-    const skipLabel = ctx.nextLabel("heap.skip");
-    lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-    lines.push(`${dropLabel}:`);
+    const isNull = b.icmp("eq", heapPtr, NULL);
+    const dropLabel = b.newBlock("heap.drop");
+    const skipLabel = b.newBlock("heap.skip");
+    b.condBr(isNull, skipLabel, dropLabel);
+    b.position(dropLabel);
     if (typeKind.inner.tag === "interface") {
       // The concrete type is erased here, so its destructor is reached through the
       // itable's trailing drop slot. A null slot means the concrete type has none.
       const n = ctx.ifaceMethodCounts.get(typeKind.inner.name);
       if (n !== undefined) {
-        const fat = ctx.nextTemp();
-        lines.push(`  ${fat} = load { ptr, ptr }, ptr ${allocaPtr}`);
-        const itab = ctx.nextTemp();
-        lines.push(`  ${itab} = extractvalue { ptr, ptr } ${fat}, 1`);
-        const slot = ctx.nextTemp();
-        lines.push(`  ${slot} = getelementptr ptr, ptr ${itab}, i32 ${n}`);
-        const dropFn = ctx.nextTemp();
-        lines.push(`  ${dropFn} = load ptr, ptr ${slot}`);
-        const noDrop = ctx.nextTemp();
-        lines.push(`  ${noDrop} = icmp eq ptr ${dropFn}, null`);
-        const callLbl = ctx.nextLabel("iface.drop.call");
-        const afterLbl = ctx.nextLabel("iface.drop.after");
-        lines.push(`  br i1 ${noDrop}, label %${afterLbl}, label %${callLbl}`);
-        lines.push(`${callLbl}:`);
-        lines.push(`  call void ${dropFn}(ptr ${heapPtr})`);
-        lines.push(`  br label %${afterLbl}`);
-        lines.push(`${afterLbl}:`);
+        const fat = b.load(CLOSURE, slot);
+        const itab = b.extractvalue(fat, 1, Ty.ptr);
+        const dropSlot = b.gep(Ty.ptr, itab, [val(String(n), Ty.i32)]);
+        const dropFn = b.load(Ty.ptr, dropSlot);
+        const noDrop = b.icmp("eq", dropFn, NULL);
+        const callLbl = b.newBlock("iface.drop.call");
+        const afterLbl = b.newBlock("iface.drop.after");
+        b.condBr(noDrop, afterLbl, callLbl);
+        b.position(callLbl);
+        b.callDiscard(Ty.void, dropFn.ref, [heapPtr]);
+        b.br(afterLbl);
+        b.position(afterLbl);
       }
     } else if (ctx.needsDropCg(typeKind.inner)) {
-      ctx.emitDropValue(lines, heapPtr, typeKind.inner);
+      ctx.emitDropValue(lines, heapPtr.ref, typeKind.inner);
     }
-    lines.push(`  call void @free(ptr ${heapPtr})`);
-    lines.push(`  br label %${skipLabel}`);
-    lines.push(`${skipLabel}:`);
+    b.callDiscard(Ty.void, "@free", [heapPtr]);
+    b.br(skipLabel);
+    b.position(skipLabel);
   }
   if (typeKind.tag === "hashmap") {
     ctx.needsFree = true;
-    const hmVal = ctx.nextTemp();
-    lines.push(`  ${hmVal} = load %HashMap, ptr ${allocaPtr}`);
-    const hmDataPtr = ctx.nextTemp();
-    lines.push(`  ${hmDataPtr} = extractvalue %HashMap ${hmVal}, 0`);
-    const isNull = ctx.nextTemp();
-    lines.push(`  ${isNull} = icmp eq ptr ${hmDataPtr}, null`);
-    const dropLabel = ctx.nextLabel("hm.drop");
-    const skipLabel = ctx.nextLabel("hm.skip");
-    lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-    lines.push(`${dropLabel}:`);
+    const hmVal = b.load(HASHMAP, slot);
+    const hmDataPtr = b.extractvalue(hmVal, 0, Ty.ptr);
+    const isNull = b.icmp("eq", hmDataPtr, NULL);
+    const dropLabel = b.newBlock("hm.drop");
+    const skipLabel = b.newBlock("hm.skip");
+    b.condBr(isNull, skipLabel, dropLabel);
+    b.position(dropLabel);
     if (ctx.needsDropCg(typeKind.key) || ctx.needsDropCg(typeKind.value)) {
-      const hmCap = ctx.nextTemp();
-      lines.push(`  ${hmCap} = extractvalue %HashMap ${hmVal}, 2`);
-      const entryTy = ctx.hashMapEntryType(typeKind.key, typeKind.value);
-      const loopCond = ctx.nextLabel("hm.drop.cond");
-      const loopBody = ctx.nextLabel("hm.drop.body");
-      const loopEnd = ctx.nextLabel("hm.drop.end");
-      const iAddr = ctx.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
-      lines.push(`${loopCond}:`);
-      const iVal = ctx.nextTemp();
-      lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-      const cmp = ctx.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${hmCap}`);
-      lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${loopEnd}`);
-      lines.push(`${loopBody}:`);
-      const entryPtr = ctx.nextTemp();
-      lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${hmDataPtr}, i64 ${iVal}`);
-      const state = ctx.nextTemp();
-      lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-      const isOccupied = ctx.nextTemp();
-      lines.push(`  ${isOccupied} = icmp eq i8 ${state}, 1`);
-      const dropEntryLabel = ctx.nextLabel("hm.drop.entry");
-      const skipEntryLabel = ctx.nextLabel("hm.drop.skip");
-      lines.push(`  br i1 ${isOccupied}, label %${dropEntryLabel}, label %${skipEntryLabel}`);
-      lines.push(`${dropEntryLabel}:`);
+      const hmCap = b.extractvalue(hmVal, 2, Ty.i64);
+      const entryTy = Ty.of(ctx.hashMapEntryType(typeKind.key, typeKind.value));
+      const loopCond = b.newBlock("hm.drop.cond");
+      const loopBody = b.newBlock("hm.drop.body");
+      const loopEnd = b.newBlock("hm.drop.end");
+      const iAddr = b.alloca(Ty.i64);
+      b.store(I64_0, iAddr);
+      b.br(loopCond);
+      b.position(loopCond);
+      const iVal = b.load(Ty.i64, iAddr);
+      const cmp = b.icmp("ult", iVal, hmCap);
+      b.condBr(cmp, loopBody, loopEnd);
+      b.position(loopBody);
+      const entryPtr = b.gep(entryTy, hmDataPtr, [iVal]);
+      const state = b.load(Ty.i8, entryPtr);
+      const isOccupied = b.icmp("eq", state, val("1", Ty.i8));
+      const dropEntryLabel = b.newBlock("hm.drop.entry");
+      const skipEntryLabel = b.newBlock("hm.drop.skip");
+      b.condBr(isOccupied, dropEntryLabel, skipEntryLabel);
+      b.position(dropEntryLabel);
       if (ctx.needsDropCg(typeKind.key)) {
-        const kPtr = ctx.nextTemp();
-        lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-        ctx.emitDropValue(lines, kPtr, typeKind.key);
+        const kPtr = b.gep(entryTy, entryPtr, [I32_0, I32_1]);
+        ctx.emitDropValue(lines, kPtr.ref, typeKind.key);
       }
       if (ctx.needsDropCg(typeKind.value)) {
-        const vPtr = ctx.nextTemp();
-        lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-        ctx.emitDropValue(lines, vPtr, typeKind.value);
+        const vPtr = b.gep(entryTy, entryPtr, [I32_0, val("2", Ty.i32)]);
+        ctx.emitDropValue(lines, vPtr.ref, typeKind.value);
       }
-      lines.push(`  br label %${skipEntryLabel}`);
-      lines.push(`${skipEntryLabel}:`);
-      const nextI = ctx.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
-      lines.push(`${loopEnd}:`);
+      b.br(skipEntryLabel);
+      b.position(skipEntryLabel);
+      const nextI = b.binop("add", iVal, I64_1);
+      b.store(nextI, iAddr);
+      b.br(loopCond);
+      b.position(loopEnd);
     }
-    lines.push(`  call void @free(ptr ${hmDataPtr})`);
-    lines.push(`  br label %${skipLabel}`);
-    lines.push(`${skipLabel}:`);
+    b.callDiscard(Ty.void, "@free", [hmDataPtr]);
+    b.br(skipLabel);
+    b.position(skipLabel);
   }
   if (typeKind.tag === "enum" && ctx.droppableEnums.has(typeKind.name)) {
     const helperName = `milo.${ctx.structuralDrop ? "sdrop" : "drop"}.${typeKind.name}`;
     ensureDropHelper(ctx, typeKind.name);
-    const val = ctx.nextTemp();
-    lines.push(`  ${val} = load %${typeKind.name}, ptr ${allocaPtr}`);
-    const tmp = ctx.nextTemp();
-    lines.push(`  ${tmp} = alloca %${typeKind.name}`);
-    lines.push(`  store %${typeKind.name} ${val}, ptr ${tmp}`);
-    lines.push(`  call void @${helperName}(ptr ${tmp})`);
+    const enumTy = Ty.of(`%${typeKind.name}`);
+    const loaded = b.load(enumTy, slot);
+    const tmp = b.alloca(enumTy);
+    b.store(loaded, tmp);
+    b.callDiscard(Ty.void, `@${helperName}`, [tmp]);
   }
   if (typeKind.tag === "array" && typeKind.size !== null && ctx.needsDropCg(typeKind.element)) {
     const elemTy = ctx.llvmType(typeKind.element);
     for (let i = 0; i < typeKind.size; i++) {
-      const arrTy = `[${typeKind.size} x ${elemTy}]`;
-      const elemPtr = ctx.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${arrTy}, ptr ${allocaPtr}, i32 0, i32 ${i}`);
-      ctx.emitDropValue(lines, elemPtr, typeKind.element);
+      const arrTy = Ty.of(`[${typeKind.size} x ${elemTy}]`);
+      const elemPtr = b.gep(arrTy, slot, [I32_0, val(String(i), Ty.i32)]);
+      ctx.emitDropValue(lines, elemPtr.ref, typeKind.element);
     }
   }
   if (typeKind.tag === "struct" && ctx.structNeedsDrop(typeKind.name)) {
     ensureStructDropHelper(ctx, typeKind.name);
     const helperName = `milo.${ctx.structuralDrop ? "sdrop" : "drop"}.struct.${typeKind.name}`;
-    lines.push(`  call void @${helperName}(ptr ${allocaPtr})`);
+    b.callDiscard(Ty.void, `@${helperName}`, [slot]);
   }
 }
 
