@@ -89,6 +89,11 @@ export interface Builder {
   // block would change the text, so it waits for a commit that is allowed to.
   alloca(ty: Ty): Val;
   /**
+   * Inline alloca with a caller-chosen slot name (`%x.3.addr`) instead of a temp, for locals
+   * that other code addresses by name. Draws no temp. The name must be a named local.
+   */
+  alloca(ty: Ty, name: string): Val;
+  /**
    * A named stack slot in the function's entry block, the form codegen uses for locals
    * and loop state so LLVM folds them into the fixed frame. `init`, if given, is stored
    * there too, so the slot holds it before any body code runs.
@@ -101,8 +106,9 @@ export interface Builder {
   store(v: Val, ptr: Val): void;
   gep(base: Ty, ptr: Val, idx: Val[]): Val;
   binop(op: BinOp, a: Val, b: Val): Val;
-  icmp(pred: ICmpPred, a: Val, b: Val): Val;
-  fcmp(pred: FCmpPred, a: Val, b: Val): Val;
+  /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
+  icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val;
+  fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val;
   cast(op: CastOp, v: Val, to: Ty): Val;
   /** The builder knows no aggregate layouts, so the caller names the element type. */
   extractvalue(agg: Val, idx: number, elt: Ty): Val;
@@ -175,9 +181,12 @@ export class LlvmTextBuilder implements Builder {
     this.lines.push("}");
   }
 
-  alloca(ty: Ty): Val {
+  alloca(ty: Ty, name?: string): Val {
     if (ty.kind === "void") this.fail("alloca of void");
-    return this.def(`alloca ${ty.ll}`, Ty.ptr);
+    if (name === undefined) return this.def(`alloca ${ty.ll}`, Ty.ptr);
+    if (!/^%[A-Za-z_.$][\w.$-]*$/.test(name) || /^%t\.\d+$/.test(name)) this.fail(`alloca name ${name} is not a named local`);
+    this.emit(`${name} = alloca ${ty.ll}`);
+    return { ref: name, ty: Ty.ptr };
   }
 
   entryAlloca(name: string, ty: Ty, init?: Val): Val {
@@ -229,15 +238,15 @@ export class LlvmTextBuilder implements Builder {
     return this.def(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty);
   }
 
-  icmp(pred: ICmpPred, a: Val, b: Val): Val {
+  icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val {
     this.sameTy(`icmp ${pred}`, a, b);
-    return this.def(`icmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1);
+    return this.defOrDest(`icmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1, dest);
   }
 
-  fcmp(pred: FCmpPred, a: Val, b: Val): Val {
+  fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val {
     this.sameTy(`fcmp ${pred}`, a, b);
     if (a.ty.kind !== "float") this.fail(`fcmp ${pred} on non-float ${a.ref} (${a.ty.ll})`);
-    return this.def(`fcmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1);
+    return this.defOrDest(`fcmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1, dest);
   }
 
   cast(op: CastOp, v: Val, to: Ty): Val {
@@ -349,6 +358,16 @@ export class LlvmTextBuilder implements Builder {
     const ref = this.names.nextTemp();
     this.emit(`${ref} = ${rhs}`);
     return { ref, ty };
+  }
+
+  // Like def, but into a reserveTemp name when `dest` is given (same checks as select).
+  private defOrDest(rhs: string, ty: Ty, dest?: Val): Val {
+    if (!dest) return this.def(rhs, ty);
+    if (!this.reserved.has(dest.ref)) this.fail(`${rhs.split(" ")[0]} into ${dest.ref}, which is not a reserved temp`);
+    if (dest.ty.ll !== ty.ll) this.fail(`${rhs.split(" ")[0]} into ${dest.ref} (${dest.ty.ll}) but the result is ${ty.ll}`);
+    this.reserved.delete(dest.ref);
+    this.emit(`${dest.ref} = ${rhs}`);
+    return dest;
   }
 
   private emit(inst: string): void {

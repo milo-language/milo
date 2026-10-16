@@ -173,6 +173,27 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.0 = fcmp ogt double %a, %b"]);
   });
 
+  test("named alloca prints the given slot and draws no temp; icmp/fcmp can define a reserved temp", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const a = b.alloca(Ty.ptr, "%x.3.addr");
+    expect(a).toEqual({ ref: "%x.3.addr", ty: Ty.ptr });
+    expect(() => b.alloca(Ty.void, "%y")).toThrow("alloca of void");
+    expect(() => b.alloca(Ty.i64, "x")).toThrow("not a named local");
+    expect(() => b.alloca(Ty.i64, "%t.5")).toThrow("not a named local");
+    const r = b.reserveTemp(Ty.i1);
+    const n = b.alloca(Ty.i64);
+    expect(n.ref).toBe("%t.1");
+    expect(b.icmp("eq", val("%a", Ty.i32), val("3", Ty.i32), r)).toBe(r);
+    expect(() => b.icmp("eq", val("%a", Ty.i32), val("3", Ty.i32), r)).toThrow("not a reserved temp");
+    expect(() => b.fcmp("oeq", val("%a", Ty.of("double")), val("1.0", Ty.of("double")), val("%nope", Ty.i1))).toThrow("not a reserved temp");
+    const r8 = b.reserveTemp(Ty.i8);
+    expect(() => b.icmp("eq", val("%a", Ty.i32), val("3", Ty.i32), r8)).toThrow("but the result is i1");
+    const f = b.reserveTemp(Ty.i1);
+    b.fcmp("oeq", val("%d", Ty.of("double")), val("1.0", Ty.of("double")), f);
+    expect(lines).toEqual(["  %x.3.addr = alloca ptr", "  %t.1 = alloca i64", "  %t.0 = icmp eq i32 %a, 3", `  ${f.ref} = fcmp oeq double %d, 1.0`]);
+  });
+
   test("select into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);
