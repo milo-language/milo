@@ -11,7 +11,7 @@
   "src/checker-program-passes.ts": 2214,
   "src/checker.ts": 14964,
   "src/cli-help.ts": 287,
-  "src/codegen-dwarf.ts": 404,
+  "src/codegen-dwarf.ts": 411,
   "src/codegen-map.ts": 1187,
   "src/codegen-vec.ts": 255,
   "src/codegen.ts": 15327,
