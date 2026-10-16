@@ -106,6 +106,11 @@ export interface Builder {
   br(dest: Block): void;
   condBr(cond: Val, t: Block, f: Block): void;
   unreachable(): void;
+  /**
+   * `switch T v, label %dflt [ T c, label %b ... ]`. `multiline` puts each case on its own
+   * line and the `]` on the next, the spelling the drop/clone helpers used.
+   */
+  switch(v: Val, dflt: Block, cases: [number, Block][], multiline?: boolean): void;
   /** `ret void` with no operand, else `ret T v`. */
   ret(v?: Val): void;
   /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
@@ -257,6 +262,25 @@ export class LlvmTextBuilder implements Builder {
 
   unreachable(): void {
     this.emit("unreachable");
+  }
+
+  switch(v: Val, dflt: Block, cases: [number, Block][], multiline = false): void {
+    if (v.ty.kind !== "int") this.fail(`switch on non-integer ${v.ref} (${v.ty.ll})`);
+    // LLVM rejects a duplicate case value, but only at llc time, far from the codegen at fault.
+    const seen = new Set<number>();
+    for (const [c] of cases) {
+      if (!Number.isInteger(c)) this.fail(`switch case ${c} is not an integer`);
+      if (seen.has(c)) this.fail(`switch case ${c} appears twice`);
+      seen.add(c);
+    }
+    const head = `switch ${v.ty.ll} ${v.ref}, label %${dflt.name} [`;
+    const arms = cases.map(([c, b]) => `${v.ty.ll} ${c}, label %${b.name}`);
+    if (!multiline) { this.emit(`${head}${arms.join(" ")}]`); return; }
+    this.emit(head);
+    // Continuation lines of one instruction: pushed raw, since emit() would see the `[`
+    // line as a terminator already ended.
+    for (const a of arms) this.lines.push(`    ${a}`);
+    this.lines.push("  ]");
   }
 
   ret(v?: Val): void {

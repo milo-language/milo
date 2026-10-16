@@ -2,7 +2,7 @@
 
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
-import { LlvmTextBuilder, Ty, val, type NameSource, type Val } from "./ir";
+import { LlvmTextBuilder, Ty, val, type Block, type NameSource, type Val } from "./ir";
 import type { StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { HM_TOMBS } from "./codegen-map";
 import { must } from "./must";
@@ -270,14 +270,14 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
     const tag = ctx.loadEnumTag(body, enumTy, "%src");
 
     const doneLabel = b.newBlock("clone.done");
-    const cases: string[] = [];
+    const cases: [number, Block][] = [];
     const variantBodies: string[][] = [];
 
     for (const [vName, variant] of layout.variants) {
       if (!variant.fieldTypeKinds.some(f => ctx.needsDropCg(f))) continue;
 
       const label = b.newBlock(`clone.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label.name}`);
+      cases.push([variant.tag, label]);
 
       const vLines: string[] = [];
       const vb = new LlvmTextBuilder(vLines, ctx);
@@ -295,9 +295,7 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
     }
 
     if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel.name} [`);
-      for (const c of cases) body.push(c);
-      body.push("  ]");
+      b.switch(val(tag, Ty.i32), doneLabel, cases, true);
       for (const vBody of variantBodies) body.push(...vBody);
     } else {
       b.br(doneLabel);
@@ -527,7 +525,7 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
     const tag = ctx.loadEnumTag(body, enumTy, "%self");
 
     const doneLabel = b.newBlock("drop.done");
-    const cases: string[] = [];
+    const cases: [number, Block][] = [];
     const variantBodies: string[][] = [];
 
     for (const [vName, variant] of layout.variants) {
@@ -535,7 +533,7 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
       if (!hasDroppable) continue;
 
       const label = b.newBlock(`drop.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label.name}`);
+      cases.push([variant.tag, label]);
 
       const vLines: string[] = [];
       const vb = new LlvmTextBuilder(vLines, ctx);
@@ -550,9 +548,7 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
     }
 
     if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel.name} [`);
-      for (const c of cases) body.push(c);
-      body.push("  ]");
+      b.switch(val(tag, Ty.i32), doneLabel, cases, true);
       for (const vBody of variantBodies) body.push(...vBody);
     }
 

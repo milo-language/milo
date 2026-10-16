@@ -8,6 +8,28 @@ function builder(lines: string[] = [], entryAllocas?: string[]) {
 }
 
 describe("LlvmTextBuilder invariants", () => {
+  test("switch prints both spellings, ends the block, and rejects bad scrutinees and cases", () => {
+    const one: string[] = [];
+    const b = builder(one);
+    const [d, x, y] = [b.newBlock("d"), b.newBlock("x"), b.newBlock("y")];
+    b.switch(val("%tag", Ty.i32), d, [[0, x], [2, y]]);
+    expect(one).toEqual(["  switch i32 %tag, label %d0 [i32 0, label %x1 i32 2, label %y2]"]);
+    expect(() => b.binop("add", val("1", Ty.i64), val("2", Ty.i64))).toThrow("after terminator");
+
+    const multi: string[] = [];
+    const m = builder(multi);
+    const [md, mx] = [m.newBlock("d"), m.newBlock("x")];
+    m.switch(val("%tag", Ty.i32), md, [[1, mx]], true);
+    expect(multi).toEqual(["  switch i32 %tag, label %d0 [", "    i32 1, label %x1", "  ]"]);
+    expect(() => m.br(md)).toThrow("after terminator");
+
+    const c = builder();
+    const cd = c.newBlock("d");
+    expect(() => c.switch(val("%p", Ty.ptr), cd, [])).toThrow("non-integer");
+    expect(() => c.switch(val("%t", Ty.i32), cd, [[1, cd], [1, cd]])).toThrow("appears twice");
+    expect(() => c.switch(val("%t", Ty.i32), cd, [[1.5, cd]])).toThrow("not an integer");
+  });
+
   test("entryAlloca writes to the entry block, not the body, and checks its slot", () => {
     const body: string[] = [], entry: string[] = [];
     const b = builder(body, entry);
