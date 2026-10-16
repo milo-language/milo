@@ -24,7 +24,10 @@
 //
 // Every emit runs under guardedRun (scripts/guard.ts), at most `jobs` at a time, with the
 // per-emit cap sized so jobs x cap stays within half of RAM (the guard.ts budget).
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "fs";
+//
+// Exit: 0 all identical, 1 a difference (or nothing compared), 2 aborted with no verdict
+// (one file kept getting guard-killed; MILO_IR_SAME_TIMEOUT_MS=1 forces that path).
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "fs";
 import { tmpdir, totalmem } from "os";
 import { dirname, join, relative } from "path";
 import { spawnSync } from "child_process";
@@ -34,7 +37,11 @@ const ROOT = join(import.meta.dir, "..");
 // Address space only (RLIMIT_AS, enforced on Linux): bun reserves a large sparse heap at
 // startup and dies under a tight one. RSS and footprint stay capped at MEM_MB.
 const SPARSE_VM_MB = 64 * 1024 * 1024;
-const TIMEOUT_MS = 180_000;
+// Overridable so the guard-kill path can be exercised (a 1 ms timeout kills every emit).
+const TIMEOUT_MS = Number(process.env.MILO_IR_SAME_TIMEOUT_MS || 0) || 180_000;
+// A guard kill is about the machine (memory pressure from other jobs), not the compiler, so
+// the file is re-emitted; only a file killed this many times in a row aborts the pass.
+const GUARD_TRIES = 3;
 const MAX_DETAILED = 20;
 const DIFF_LINES = 10;
 
@@ -102,10 +109,20 @@ async function emit(tree: string, rel: string): Promise<Emit> {
   // Each tree must resolve std from itself, so an inherited MILO_ROOT is dropped.
   const env = { ...process.env };
   delete env.MILO_ROOT;
-  const r = await guardedRun("bun", ["run", "src/main.ts", "emit-ir", ...flags, rel], { cwd: tree, env, memMb: MEM_MB, virtualMemMb: SPARSE_VM_MB, timeoutMs: TIMEOUT_MS });
-  // A guard kill says nothing about the compiler, so it must not read as "fails on this
-  // side" (which could match the other side's genuine failure and pass the gate).
-  if (r.guardKill) throw new Error(`guard killed emit-ir ${rel} in ${tree} (${r.guardKill})`);
+  let r;
+  for (let attempt = 1; ; attempt++) {
+    r = await guardedRun("bun", ["run", "src/main.ts", "emit-ir", ...flags, rel], { cwd: tree, env, memMb: MEM_MB, virtualMemMb: SPARSE_VM_MB, timeoutMs: TIMEOUT_MS });
+    if (!r.guardKill) break;
+    // A guard kill says nothing about the compiler, so it must not read as "fails on this
+    // side" (which could match the other side's genuine failure and pass the gate).
+    console.error(`ir-same: guard killed emit-ir ${rel} in ${tree} (${r.guardKill}), attempt ${attempt}/${GUARD_TRIES}`);
+    if (attempt === GUARD_TRIES) {
+      // Exit here, not throw: an uncaught throw out of the pool printed only a stack and
+      // Bun's banner, with no summary line saying the pass did not finish.
+      console.log(`ir-same: ABORTED, ${rel} guard-killed ${GUARD_TRIES} times (${r.guardKill}); no verdict, rerun when the machine is idle`);
+      process.exit(2);
+    }
+  }
   return r.code === 0 ? { ok: true, ir: r.stdout } : { ok: false, err: r.stderr.split("\n").find(l => l.trim()) ?? `exit ${r.code}` };
 }
 
@@ -124,8 +141,12 @@ async function emitBase(rel: string): Promise<Emit> {
   if (existsSync(fail)) return { ok: false, err: readFileSync(fail, "utf-8") };
   const e = await emit(baseTree, rel);
   mkdirSync(dirname(ll), { recursive: true });
-  if (e.ok) writeFileSync(ll, e.ir);
-  else writeFileSync(fail, e.err);
+  // Write then rename: two passes on the same base sha share this cache, and a reader must
+  // never see a half-written .ll (it would read as a spurious diff).
+  const [dest, text] = e.ok ? [ll, e.ir] : [fail, e.err];
+  const tmp = `${dest}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, dest);
   return e;
 }
 
