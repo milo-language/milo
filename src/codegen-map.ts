@@ -92,11 +92,6 @@ function probeAdvance(b: Builder, slot: Val, mask: Val, slotAddr: Val): void {
   b.store(wrapped, slotAddr);
 }
 
-function emitFnvHash(ctx: CodegenMapCtx, lines: string[], keyVal: string, keyType: TypeKind, seedReg: string): string {
-  const b = new LlvmTextBuilder(lines, ctx);
-  return fnvHash(ctx, b, val(keyVal, Ty.of(ctx.llvmType(keyType))), keyType, val(seedReg, Ty.i64)).ref;
-}
-
 function fnvHash(ctx: CodegenMapCtx, b: Builder, key: Val, keyType: TypeKind, seed: Val): Val {
   // FNV-1a: hash = offset_basis ^ seed; then fold the key's bytes in.
   const h0 = b.binop("xor", val("14695981039346656037", Ty.i64), seed);
@@ -597,24 +592,6 @@ function emitHashProbePrologue(
   return { slot, entryPtr };
 }
 
-// get/getOrDefault still pass strings; removed when they migrate.
-function emitHashProbePrologueStr(
-  ctx: CodegenMapCtx,
-  lines: string[],
-  at: { probeCond: string; probeCheck: string; probeOccupied: string; probeNext: string; emptyTarget: string; matchTarget: string },
-  map: { slotAddr: string; data: string; entryTy: string; keyTy: string; keyVal: string; keyType: TypeKind },
-): { slot: string; entryPtr: string } {
-  const keyTy = Ty.of(map.keyTy);
-  const r = emitHashProbePrologue(ctx, new LlvmTextBuilder(lines, ctx),
-    {
-      probeCond: { name: at.probeCond }, probeCheck: { name: at.probeCheck }, probeOccupied: { name: at.probeOccupied },
-      probeNext: { name: at.probeNext }, emptyTarget: { name: at.emptyTarget }, matchTarget: { name: at.matchTarget },
-    },
-    { slotAddr: val(map.slotAddr, Ty.ptr), data: val(map.data, Ty.ptr), entryTy: Ty.of(map.entryTy), keyTy, key: val(map.keyVal, keyTy), keyType: map.keyType },
-  );
-  return { slot: r.slot.ref, entryPtr: r.entryPtr.ref };
-}
-
 export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapContains" }, lines: string[]): Gen {
   ctx.hasHashMapType = true;
   const mapType = expr.map.type;
@@ -1101,119 +1078,86 @@ export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   if (mapType.tag !== "hashmap") throw new Error("HashMapGet on non-hashmap");
   const keyType = mapType.key;
   const valueType = mapType.value;
-  const keyTy = ctx.llvmType(keyType);
-  const valTy = ctx.llvmType(valueType);
-  const entryTy = ctx.hashMapEntryType(keyType, valueType);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const valTy = Ty.of(ctx.llvmType(valueType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+  const b = new LlvmTextBuilder(lines, ctx);
 
   const optionEnumName = expr.optionEnumName;
   const optionLayout = ctx.enumLayouts.get(optionEnumName);
   if (!optionLayout) throw new Error(`no enum layout for ${optionEnumName}`);
-  const optionTy = `%${optionEnumName}`;
+  const optionTy = Ty.of(`%${optionEnumName}`);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
   const [keyLines, keyVal] = ctx.genExpr(expr.key);
   lines.push(...keyLines);
+  const key = val(keyVal, keyTy);
 
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
+  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
 
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, seed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+  const probeCond = b.newBlock("hmg.probe");
+  const probeCheck = b.newBlock("hmg.check");
+  const probeOccupied = b.newBlock("hmg.occupied");
+  const foundLabel = b.newBlock("hmg.found");
+  const notFoundLabel = b.newBlock("hmg.notfound");
+  const probeNext = b.newBlock("hmg.pnext");
+  const doneLabel = b.newBlock("hmg.done");
 
-  const probeCond = ctx.nextLabel("hmg.probe");
-  const probeCheck = ctx.nextLabel("hmg.check");
-  const probeOccupied = ctx.nextLabel("hmg.occupied");
-  const foundLabel = ctx.nextLabel("hmg.found");
-  const notFoundLabel = ctx.nextLabel("hmg.notfound");
-  const probeNext = ctx.nextLabel("hmg.pnext");
-  const doneLabel = ctx.nextLabel("hmg.done");
-
-  const { slot, entryPtr } = emitHashProbePrologueStr(ctx,
-    lines,
+  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    { slotAddr, data, entryTy, keyTy, key, keyType },
   );
 
   // found — construct Some(value)
-  lines.push(`${foundLabel}:`);
-  const valPtr = ctx.nextTemp();
-  lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
+  b.position(foundLabel);
+  const valPtr = entryField(b, entryTy, entryPtr, 2);
   // Deep-clone, don't `load`: a shallow copy aliases the map's heap, and a later
   // `insert` on the same key drops the old value out from under it (the copy-back
   // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Vec indexing already does
   // this; emitDeepCloneFromPtr degrades to a plain load for Copy types.
-  const foundVal = ctx.emitDeepCloneFromPtr(lines, valPtr, valueType);
+  const foundVal = ctx.emitDeepCloneFromPtr(lines, valPtr.ref, valueType);
   // The clone can open new basic blocks (vec/enum clone loops), so the phi at
   // the bottom must name the block we actually end in, not `foundLabel`.
-  const foundEnd = ctx.nextLabel("hmg.found.end");
-  lines.push(`  br label %${foundEnd}`);
-  lines.push(`${foundEnd}:`);
+  const foundEnd = b.newBlock("hmg.found.end");
+  b.br(foundEnd);
+  b.position(foundEnd);
   // build Option::Some(val) — tag=0, payload=value
-  const someAlloca = ctx.nextTemp();
-  lines.push(`  ${someAlloca} = alloca ${optionTy}`);
+  const someAlloca = b.alloca(optionTy);
   const someTag = must(optionLayout.variants, "Some", "variants").tag;
-  ctx.storeEnumTag(lines, optionTy, someAlloca, someTag);
-  const somePayloadPtr = ctx.enumPayloadPtr(lines, optionTy, someAlloca, someTag);
-  lines.push(`  store ${valTy} ${foundVal}, ptr ${somePayloadPtr}`);
-  const someVal = ctx.nextTemp();
-  lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
-  lines.push(`  br label %${doneLabel}`);
+  ctx.storeEnumTag(lines, optionTy.ll, someAlloca.ref, someTag);
+  const somePayloadPtr = ctx.enumPayloadPtr(lines, optionTy.ll, someAlloca.ref, someTag);
+  b.store(val(foundVal, valTy), val(somePayloadPtr, Ty.ptr));
+  const someVal = b.load(optionTy, someAlloca);
+  b.br(doneLabel);
 
   // not found — construct None
-  lines.push(`${notFoundLabel}:`);
-  const noneAlloca = ctx.nextTemp();
-  lines.push(`  ${noneAlloca} = alloca ${optionTy}`);
+  b.position(notFoundLabel);
+  const noneAlloca = b.alloca(optionTy);
   // zero it first to avoid garbage in payload
   ctx.needsMemset = true;
-  const optionSize = ctx.nextTemp();
-  lines.push(`  ${optionSize} = getelementptr ${optionTy}, ptr null, i32 1`);
-  const optionSizeI = ctx.nextTemp();
-  lines.push(`  ${optionSizeI} = ptrtoint ptr ${optionSize} to i64`);
-  lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optionSizeI})`);
+  const optionSizeI = entrySizeOf(b, optionTy);
+  b.callDiscard(Ty.ptr, "@memset", [noneAlloca, i32c(0), optionSizeI]);
   const noneTag = must(optionLayout.variants, "None", "variants").tag;
-  ctx.storeEnumTag(lines, optionTy, noneAlloca, noneTag);
-  const noneVal = ctx.nextTemp();
-  lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
-  lines.push(`  br label %${doneLabel}`);
+  ctx.storeEnumTag(lines, optionTy.ll, noneAlloca.ref, noneTag);
+  const noneVal = b.load(optionTy, noneAlloca);
+  b.br(doneLabel);
 
-  lines.push(`${probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-  lines.push(`  br label %${probeCond}`);
+  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi ${optionTy} [${someVal}, %${foundEnd}], [${noneVal}, %${notFoundLabel}]`);
+  b.position(doneLabel);
+  const result = b.phi(optionTy, [[someVal, foundEnd], [noneVal, notFoundLabel]]);
   // The key was built by the CALLER and handed to a lookup that only reads it. Nothing
   // takes ownership on this path, so without a drop `m.get("k" + i.toString())` leaks
   // that string on every call — one 16-byte allocation per lookup, in about the most
   // ordinary map idiom there is. `insert` already knew this for its overwrite path;
   // the four read-only lookups did not. dropOwnedTemp no-ops unless the argument really
   // is an owned temporary, so a variable or a literal key is untouched.
-  ctx.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
+  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return [lines, result, optionTy];
+  return asGen(lines, result);
 }
 
 export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapGetOrDefault" }, lines: string[]): Gen {
@@ -1222,61 +1166,43 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrDefault on non-hashmap");
   const keyType = mapType.key;
   const valueType = mapType.value;
-  const keyTy = ctx.llvmType(keyType);
-  const valTy = ctx.llvmType(valueType);
-  const entryTy = ctx.hashMapEntryType(keyType, valueType);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const valTy = Ty.of(ctx.llvmType(valueType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+  const b = new LlvmTextBuilder(lines, ctx);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
   const [keyLines, keyVal] = ctx.genExpr(expr.key);
   lines.push(...keyLines);
-  const [defaultLines, defaultVal] = ctx.genExpr(expr.default);
+  const key = val(keyVal, keyTy);
+  const [defaultLines, defaultRef] = ctx.genExpr(expr.default);
   lines.push(...defaultLines);
+  const defaultVal = val(defaultRef, valTy);
 
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
+  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
 
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, seed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+  const probeCond = b.newBlock("hmgd.probe");
+  const probeCheck = b.newBlock("hmgd.check");
+  const probeOccupied = b.newBlock("hmgd.occupied");
+  const foundLabel = b.newBlock("hmgd.found");
+  const notFoundLabel = b.newBlock("hmgd.notfound");
+  const probeNext = b.newBlock("hmgd.pnext");
+  const doneLabel = b.newBlock("hmgd.done");
 
-  const probeCond = ctx.nextLabel("hmgd.probe");
-  const probeCheck = ctx.nextLabel("hmgd.check");
-  const probeOccupied = ctx.nextLabel("hmgd.occupied");
-  const foundLabel = ctx.nextLabel("hmgd.found");
-  const notFoundLabel = ctx.nextLabel("hmgd.notfound");
-  const probeNext = ctx.nextLabel("hmgd.pnext");
-  const doneLabel = ctx.nextLabel("hmgd.done");
-
-  const { slot, entryPtr } = emitHashProbePrologueStr(ctx,
-    lines,
+  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    { slotAddr, data, entryTy, keyTy, key, keyType },
   );
 
   // found — return the value directly (deep-cloned; see genHashMapGet)
-  lines.push(`${foundLabel}:`);
-  const valPtr = ctx.nextTemp();
-  lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-  const foundVal = ctx.emitDeepCloneFromPtr(lines, valPtr, valueType);
+  b.position(foundLabel);
+  const valPtr = entryField(b, entryTy, entryPtr, 2);
+  const foundVal = val(ctx.emitDeepCloneFromPtr(lines, valPtr.ref, valueType), valTy);
   // see genHashMapGet: the clone may have opened new blocks
-  const foundEnd = ctx.nextLabel("hmgd.found.end");
-  lines.push(`  br label %${foundEnd}`);
-  lines.push(`${foundEnd}:`);
+  const foundEnd = b.newBlock("hmgd.found.end");
+  b.br(foundEnd);
+  b.position(foundEnd);
   // The default is dead on this path (the map had the key) and the call owns it: a
   // computed one has no other owner, and a named one was moved in by the checker.
   // `m.getOrDefault(k, "dflt" + i.toString())` leaked its default on every hit.
@@ -1286,31 +1212,24 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   // Dropping a Vec or an enum opens basic blocks of its own, so the block this path
   // ENDS in is not `foundEnd` any more. Rejoin an empty one and let the phi below name
   // that, exactly as the deep clone above already has to.
-  ctx.dropConsumedArg(lines, defaultVal, valTy, expr.default);
-  const foundJoin = ctx.nextLabel("hmgd.found.join");
-  lines.push(`  br label %${foundJoin}`);
-  lines.push(`${foundJoin}:`);
-  lines.push(`  br label %${doneLabel}`);
+  ctx.dropConsumedArg(lines, defaultVal.ref, valTy.ll, expr.default);
+  const foundJoin = b.newBlock("hmgd.found.join");
+  b.br(foundJoin);
+  b.position(foundJoin);
+  b.br(doneLabel);
 
   // not found — use the default value
-  lines.push(`${notFoundLabel}:`);
-  ctx.ownEndVal(lines, defaultVal, "MOVE");
-  lines.push(`  br label %${doneLabel}`);
+  b.position(notFoundLabel);
+  ctx.ownEndVal(lines, defaultVal.ref, "MOVE");
+  b.br(doneLabel);
 
-  lines.push(`${probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-  lines.push(`  br label %${probeCond}`);
+  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi ${valTy} [${foundVal}, %${foundJoin}], [${defaultVal}, %${notFoundLabel}]`);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
+  b.position(doneLabel);
+  const result = b.phi(valTy, [[foundVal, foundJoin], [defaultVal, notFoundLabel]]);
+  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return [lines, result, valTy];
+  return asGen(lines, result);
 }
