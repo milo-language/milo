@@ -298,6 +298,9 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
   const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
   const b = new LlvmTextBuilder(lines, ctx);
   const map = val(mapPtr, Ty.ptr);
+  const key = val(keyVal, keyTy);
+  const value = val(valVal, valTy);
+
   // lazy seed init
   const seedPtr = hmField(b, map, HM_SEED);
   const seed = b.load(Ty.i64, seedPtr);
@@ -415,160 +418,115 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
   // The rehash loop above relocates occupied slots only, so the new table has none.
   b.store(i64c(0), tombsPtr);
   b.br(insertLabel);
-  emitInsertProbe(ctx, lines, {
-    insertLabel: insertLabel.name, capPtr: capPtr.ref, dataFieldPtr: dataFieldPtr.ref, seedPtr: seedPtr.ref,
-    tombsPtr: tombsPtr.ref, lenPtr: lenPtr.ref, entryTy: entryTy.ll, keyTy: keyTy.ll, valTy: valTy.ll,
-    keyVal, valVal, keyType, valueType,
-  });
-}
 
-// The insert block proper: probe for the key's slot, overwrite or place, bump len.
-function emitInsertProbe(ctx: CodegenMapCtx, lines: string[], p: {
-  insertLabel: string; capPtr: string; dataFieldPtr: string; seedPtr: string; tombsPtr: string; lenPtr: string;
-  entryTy: string; keyTy: string; valTy: string; keyVal: string; valVal: string; keyType: TypeKind; valueType: TypeKind;
-}): void {
-  const { insertLabel, capPtr, dataFieldPtr, seedPtr, tombsPtr, lenPtr, entryTy, keyTy, valTy, keyVal, valVal, keyType, valueType } = p;
   // insert block — probe for slot
-  lines.push(`${insertLabel}:`);
-  const curCap = ctx.nextTemp();
-  lines.push(`  ${curCap} = load i64, ptr ${capPtr}`);
-  const curData = ctx.nextTemp();
-  lines.push(`  ${curData} = load ptr, ptr ${dataFieldPtr}`);
-  const curSeed = ctx.nextTemp();
-  lines.push(`  ${curSeed} = load i64, ptr ${seedPtr}`);
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, curSeed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${curCap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+  b.position(insertLabel);
+  const curCap = b.load(Ty.i64, capPtr);
+  const curData = b.load(Ty.ptr, dataFieldPtr);
+  const curSeed = b.load(Ty.i64, seedPtr);
+  const hash = fnvHash(ctx, b, key, keyType, curSeed);
+  const mask = b.binop("sub", curCap, i64c(1));
+  const slotAddr = b.alloca(Ty.i64);
+  const slot0 = b.binop("and", hash, mask);
+  b.store(slot0, slotAddr);
 
-  const probeCond = ctx.nextLabel("hm.probe");
-  const probeOccupied = ctx.nextLabel("hm.occupied");
-  const probeEmpty = ctx.nextLabel("hm.empty");
-  const probeNext = ctx.nextLabel("hm.pnext");
-  const insertDone = ctx.nextLabel("hm.done");
-  const probeNotOcc = ctx.nextLabel("hm.notocc");
-  const probeTomb = ctx.nextLabel("hm.tomb");
-  const probeTombRecord = ctx.nextLabel("hm.tombrec");
+  const probeCond = b.newBlock("hm.probe");
+  const probeOccupied = b.newBlock("hm.occupied");
+  const probeEmpty = b.newBlock("hm.empty");
+  const probeNext = b.newBlock("hm.pnext");
+  const insertDone = b.newBlock("hm.done");
+  const probeNotOcc = b.newBlock("hm.notocc");
+  const probeTomb = b.newBlock("hm.tomb");
+  const probeTombRecord = b.newBlock("hm.tombrec");
 
   // Where to put the entry if the key turns out to be absent: the FIRST tombstone
   // passed on the way, or the empty slot that ends the probe. -1 = none seen yet.
   // Stopping at a tombstone instead of remembering it is what let `insert` write a
   // second copy of a key that already existed further along the chain.
-  const firstTombAddr = ctx.nextTemp();
-  lines.push(`  ${firstTombAddr} = alloca i64`);
-  lines.push(`  store i64 -1, ptr ${firstTombAddr}`);
+  const firstTombAddr = b.alloca(Ty.i64);
+  b.store(i64c(-1), firstTombAddr);
 
-  lines.push(`  br label %${probeCond}`);
-  lines.push(`${probeCond}:`);
-  const slot = ctx.nextTemp();
-  lines.push(`  ${slot} = load i64, ptr ${slotAddr}`);
-  const entryPtr = ctx.nextTemp();
-  lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${curData}, i64 ${slot}`);
-  const state = ctx.nextTemp();
-  lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
+  b.br(probeCond);
+  b.position(probeCond);
+  const slot = b.load(Ty.i64, slotAddr);
+  const entryPtr = b.gep(entryTy, curData, [slot]);
+  const state = b.load(Ty.i8, entryPtr);
   // state == 1 (occupied) -> check key
-  const stateIsOccupied = ctx.nextTemp();
-  lines.push(`  ${stateIsOccupied} = icmp eq i8 ${state}, 1`);
-  lines.push(`  br i1 ${stateIsOccupied}, label %${probeOccupied}, label %${probeNotOcc}`);
+  const stateIsOccupied = b.icmp("eq", state, i8c(1));
+  b.condBr(stateIsOccupied, probeOccupied, probeNotOcc);
 
   // not occupied: either a tombstone to remember and probe past, or the empty slot
   // that proves the key is absent.
-  lines.push(`${probeNotOcc}:`);
-  const stateIsTomb = ctx.nextTemp();
-  lines.push(`  ${stateIsTomb} = icmp eq i8 ${state}, 2`);
-  lines.push(`  br i1 ${stateIsTomb}, label %${probeTomb}, label %${probeEmpty}`);
+  b.position(probeNotOcc);
+  const stateIsTomb = b.icmp("eq", state, i8c(2));
+  b.condBr(stateIsTomb, probeTomb, probeEmpty);
 
-  lines.push(`${probeTomb}:`);
-  const seenTomb = ctx.nextTemp();
-  lines.push(`  ${seenTomb} = load i64, ptr ${firstTombAddr}`);
-  const tombUnset = ctx.nextTemp();
-  lines.push(`  ${tombUnset} = icmp eq i64 ${seenTomb}, -1`);
-  lines.push(`  br i1 ${tombUnset}, label %${probeTombRecord}, label %${probeNext}`);
+  b.position(probeTomb);
+  const seenTomb = b.load(Ty.i64, firstTombAddr);
+  const tombUnset = b.icmp("eq", seenTomb, i64c(-1));
+  b.condBr(tombUnset, probeTombRecord, probeNext);
 
-  lines.push(`${probeTombRecord}:`);
-  lines.push(`  store i64 ${slot}, ptr ${firstTombAddr}`);
-  lines.push(`  br label %${probeNext}`);
+  b.position(probeTombRecord);
+  b.store(slot, firstTombAddr);
+  b.br(probeNext);
 
   // occupied: compare keys
-  lines.push(`${probeOccupied}:`);
-  const existingKeyPtr = ctx.nextTemp();
-  lines.push(`  ${existingKeyPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-  const existingKey = ctx.nextTemp();
-  lines.push(`  ${existingKey} = load ${keyTy}, ptr ${existingKeyPtr}`);
-  const keysMatch = emitKeyCompare(ctx, lines, keyVal, existingKey, keyType);
-  const overwriteLabel = ctx.nextLabel("hm.overwrite");
-  lines.push(`  br i1 ${keysMatch}, label %${overwriteLabel}, label %${probeNext}`);
+  b.position(probeOccupied);
+  const existingKeyPtr = entryField(b, entryTy, entryPtr, 1);
+  const existingKey = b.load(keyTy, existingKeyPtr);
+  const keysMatch = keysEqual(ctx, b, key, existingKey, keyType);
+  const overwriteLabel = b.newBlock("hm.overwrite");
+  b.condBr(keysMatch, overwriteLabel, probeNext);
 
   // overwrite existing value
-  lines.push(`${overwriteLabel}:`);
-  const existingValPtr = ctx.nextTemp();
-  lines.push(`  ${existingValPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
+  b.position(overwriteLabel);
+  const existingValPtr = entryField(b, entryTy, entryPtr, 2);
   // TODO(insert-return-value): return old value as Option<V>
   if (ctx.needsDropCg(valueType)) {
-    ctx.emitDropValue(lines, existingValPtr, valueType);
+    ctx.emitDropValue(lines, existingValPtr.ref, valueType);
   }
-  lines.push(`  store ${valTy} ${valVal}, ptr ${existingValPtr}`);
+  b.store(value, existingValPtr);
   // The map keeps the key it already has, so the one just handed in has no owner:
   // the checker moved it out of the caller and this path never stores it. Without
   // this, re-inserting a `String` key leaked its buffer on every duplicate.
   if (ctx.needsDropCg(keyType)) {
-    const dupKeyAddr = ctx.nextTemp();
-    lines.push(`  ${dupKeyAddr} = alloca ${keyTy}`);
-    lines.push(`  store ${keyTy} ${keyVal}, ptr ${dupKeyAddr}`);
-    ctx.emitDropValue(lines, dupKeyAddr, keyType);
+    const dupKeyAddr = b.alloca(keyTy);
+    b.store(key, dupKeyAddr);
+    ctx.emitDropValue(lines, dupKeyAddr.ref, keyType);
   }
-  lines.push(`  br label %${insertDone}`);
+  b.br(insertDone);
 
   // Empty slot reached: the key is definitely absent, because the probe walked every
   // slot between its home and here. Reuse the first tombstone passed if there was one,
   // which keeps the chain short; otherwise take this slot.
-  lines.push(`${probeEmpty}:`);
-  const tombCandidate = ctx.nextTemp();
-  lines.push(`  ${tombCandidate} = load i64, ptr ${firstTombAddr}`);
-  const reuseTomb = ctx.nextTemp();
-  lines.push(`  ${reuseTomb} = icmp ne i64 ${tombCandidate}, -1`);
-  const writeSlot = ctx.nextTemp();
-  lines.push(`  ${writeSlot} = select i1 ${reuseTomb}, i64 ${tombCandidate}, i64 ${slot}`);
-  const writePtr = ctx.nextTemp();
-  lines.push(`  ${writePtr} = getelementptr ${entryTy}, ptr ${curData}, i64 ${writeSlot}`);
+  b.position(probeEmpty);
+  const tombCandidate = b.load(Ty.i64, firstTombAddr);
+  const reuseTomb = b.icmp("ne", tombCandidate, i64c(-1));
+  const writeSlot = b.select(reuseTomb, tombCandidate, slot);
+  const writePtr = b.gep(entryTy, curData, [writeSlot]);
   // Reusing a tombstone retires it — otherwise the count only ever grows and the table
   // rehashes on a load it does not actually carry.
-  const tombsNow = ctx.nextTemp();
-  lines.push(`  ${tombsNow} = load i64, ptr ${tombsPtr}`);
-  const tombsLess = ctx.nextTemp();
-  lines.push(`  ${tombsLess} = sub i64 ${tombsNow}, 1`);
-  const tombsAfter = ctx.nextTemp();
-  lines.push(`  ${tombsAfter} = select i1 ${reuseTomb}, i64 ${tombsLess}, i64 ${tombsNow}`);
-  lines.push(`  store i64 ${tombsAfter}, ptr ${tombsPtr}`);
-  lines.push(`  store i8 1, ptr ${writePtr}`);
-  const newKeySlotPtr = ctx.nextTemp();
-  lines.push(`  ${newKeySlotPtr} = getelementptr ${entryTy}, ptr ${writePtr}, i32 0, i32 1`);
-  lines.push(`  store ${keyTy} ${keyVal}, ptr ${newKeySlotPtr}`);
-  const newValSlotPtr = ctx.nextTemp();
-  lines.push(`  ${newValSlotPtr} = getelementptr ${entryTy}, ptr ${writePtr}, i32 0, i32 2`);
-  lines.push(`  store ${valTy} ${valVal}, ptr ${newValSlotPtr}`);
+  const tombsNow = b.load(Ty.i64, tombsPtr);
+  const tombsLess = b.binop("sub", tombsNow, i64c(1));
+  const tombsAfter = b.select(reuseTomb, tombsLess, tombsNow);
+  b.store(tombsAfter, tombsPtr);
+  b.store(i8c(1), writePtr);
+  const newKeySlotPtr = entryField(b, entryTy, writePtr, 1);
+  b.store(key, newKeySlotPtr);
+  const newValSlotPtr = entryField(b, entryTy, writePtr, 2);
+  b.store(value, newValSlotPtr);
   // increment len
-  const curLen = ctx.nextTemp();
-  lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-  const newLen = ctx.nextTemp();
-  lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
-  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-  lines.push(`  br label %${insertDone}`);
+  const curLen = b.load(Ty.i64, lenPtr);
+  const newLen = b.binop("add", curLen, i64c(1));
+  b.store(newLen, lenPtr);
+  b.br(insertDone);
 
   // probe next slot
-  lines.push(`${probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-  lines.push(`  br label %${probeCond}`);
+  b.position(probeNext);
+  probeAdvance(b, slot, mask, slotAddr);
+  b.br(probeCond);
 
-  lines.push(`${insertDone}:`);
+  b.position(insertDone);
 }
 
 // The open-addressing probe every keyed HashMap op opens with: read the slot, an empty
