@@ -12,7 +12,7 @@
   "src/checker.ts": 14964,
   "src/cli-help.ts": 287,
   "src/codegen-dwarf.ts": 404,
-  "src/codegen-map.ts": 1235,
+  "src/codegen-map.ts": 1187,
   "src/codegen-vec.ts": 286,
   "src/codegen.ts": 15327,
   "src/contract-tests.ts": 706,
