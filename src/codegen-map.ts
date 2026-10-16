@@ -5,7 +5,7 @@
 import type { HIRExpr } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
-import type { OwnEndKind } from "./own-ledger";
+import type { OwnLedger } from "./codegen-own";
 import type { Gen, StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { must } from "./must";
 import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Block, type Val } from "./ir";
@@ -50,8 +50,7 @@ export interface CodegenMapCtx {
   emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }): void;
   storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
   enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
-  ownEndVal(lines: string[], val: string, kind: OwnEndKind): void;
-  ownValToSlot(val: string, addr: string): void;
+  own: OwnLedger;
   structLayouts: Map<string, StructLayout>;
   enumLayouts: Map<string, EnumLayout>;
   hasHashMapType: boolean;
@@ -227,7 +226,7 @@ function mapReceiverPtr(ctx: CodegenMapCtx, lines: string[], mapExpr: HIRExpr): 
   const b = new LlvmTextBuilder(lines, ctx);
   const slot = b.alloca(Ty.of(exprTy));
   b.store(val(exprVal, Ty.of(exprTy)), slot);
-  ctx.ownValToSlot(exprVal, slot.ref);
+  ctx.own.valToSlot(exprVal, slot.ref);
   return { ptr: slot.ref, tempSlot: slot.ref };
 }
 
@@ -265,7 +264,7 @@ export function genHashMapInsert(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
   const [valLines, valVal] = ctx.genExpr(expr.value);
   lines.push(...valLines);
   emitHashMapInsertValues(ctx, lines, mapPtr, mapType, keyVal, valVal, expr.span);
-  ctx.ownEndVal(lines, keyVal, "STORE"); ctx.ownEndVal(lines, valVal, "STORE");
+  ctx.own.endVal(lines, keyVal, "STORE"); ctx.own.endVal(lines, valVal, "STORE");
   // Inserting into a temporary is pointless but legal, and the temporary still leaks
   // without ctx.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, mapType);
@@ -742,7 +741,7 @@ export function genHashMapGetOrInsertWith(ctx: CodegenMapCtx, expr: HIRExpr & { 
   b.position(p.notFoundLabel);
   const produced = b.call(valTy, fnPtr.ref, [envPtr]);
   emitHashMapInsertValues(ctx, lines, p.mapPtr.ref, mapType, p.key.ref, produced.ref, expr.span);
-  ctx.ownEndVal(lines, p.key.ref, "STORE");
+  ctx.own.endVal(lines, p.key.ref, "STORE");
   // The insert opened blocks of its own; the phi below needs the block we end in.
   const insertedEnd = b.newBlock("hmi.inserted");
   b.br(insertedEnd);
@@ -1172,7 +1171,7 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
 
   // not found — use the default value
   b.position(notFoundLabel);
-  ctx.ownEndVal(lines, defaultVal.ref, "MOVE");
+  ctx.own.endVal(lines, defaultVal.ref, "MOVE");
   b.br(doneLabel);
 
   emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });

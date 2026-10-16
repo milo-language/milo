@@ -29,7 +29,7 @@ import {
 } from "./codegen-drop";
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
-import { OWN_END_KINDS, type OwnEndKind, verifyOwnLedger, stripOwnLedger, formatOwnFinding, type OwnFinding } from "./own-ledger";
+import { OwnLedger, type CopyDecl } from "./codegen-own";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
@@ -137,12 +137,6 @@ interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; 
 // newtypes make it free on the other side of the port. See docs/backlog.md.
 export type Gen = [lines: string[], value: string, type: string];
 
-// What a byte copy (emitMemcpy, valStore) does to ownership, for the ledger. `move`: the
-// source gives the bytes up (its ID ends or its slot is zeroed) and the destination owns
-// them; `view`: the destination borrows and must never be dropped; `clone`: the bytes
-// are a fresh deep copy the destination owns; `plain`: the type owns nothing (checked).
-type CopyIntent = "move" | "view" | "clone" | "plain";
-interface CopyDecl { intent: CopyIntent; type: TypeKind }
 
 // Attribute-group number for the `--sanitize` marker. Emitted IR carries no other
 // attribute groups, so 0 is always free.
@@ -307,35 +301,14 @@ export class Codegen {
   // elements before the cursor were moved into the loop binding, so dropping it destroys
   // only [cursor, len) and then frees the buffer.
   private droppableLocals: DroppableLocal[] = [];
-  // Ownership ledger (src/own-ledger.ts), off unless MILO_OWN_LEDGER=1. Every marker
-  // helper below is a no-op when it is off, which is what keeps a normal build's IR
-  // byte-identical. IDs are module-unique; the three maps are per function (SSA names and
-  // slot names repeat across functions) and are swapped out around nested closure bodies.
-  // `ownVal`: SSA value -> the ID of the owned value it holds. `ownSlot`: slot address ->
-  // the ID of the owned value stored there. `ownFlag`: a droppable local's alive flag ->
-  // its slot's ID (one ID per slot, re-made each time the slot is re-armed).
-  private ownOn = process.env.MILO_OWN_LEDGER === "1";
-  private ownNextId = 1;
-  private ownVal = new Map<string, number>();
-  private ownSlot = new Map<string, number>();
-  private ownFlag = new Map<string, number>();
-  // `ownView`: SSA value -> the view ID of bytes it copied out of a place without a move
-  // (copy intent `view`). `ownViewIds` holds every view ID, module-wide.
-  private ownView = new Map<string, number>();
-  private ownViewIds = new Set<number>();
-  // SSA value -> the HIR kind that produced it, only to name an undeclared copy's source.
-  private ownProducer = new Map<string, string>();
-  // SSA values of an owning type that own nothing to free (a string literal points at
-  // static bytes with cap 0): a fresh copy, but one with no ID to end.
-  private ownStatic = new Set<string>();
-  private ownSrcLine = 0;
-  private ownInGuard = false;
-  // Result slots of `if`/`match` expressions of an owning type, and whether an arm moved
-  // an owned value (one with a ledger ID) into the slot. The arm's ID ends there; when the
-  // expression is not itself an isOwnedTempExpr producer, its result is made here instead,
-  // so a consumer that never drops it (the shape blockValueOwnsResult refuses) shows up.
-  private ownResultSlots = new Map<string, { arms: number; type: TypeKind }>();
-  public ownFindings: OwnFinding[] = [];
+  public readonly own = new OwnLedger({
+    needsDropCg: tk => this.needsDropCg(tk),
+    isOwnedTempExpr: e => this.isOwnedTempExpr(e),
+    local: name => this.locals.get(name),
+    localAddr: name => this.localAddr(name),
+    aliveFlagAt: addr => this.droppableLocals.find(d => d.addr === addr)?.aliveFlag,
+    fieldFlags: addr => this.fieldMoveFlags.get(addr),
+  });
   public droppableEnums = new Set<string>();
   public dropImpls = new Set<string>();
   public dropGlueSeen = new DropGlueSeen();
@@ -1094,7 +1067,7 @@ export class Codegen {
   // large zero-init actually reaches a `store` — the array literal returns the
   // value "zeroinitializer" and the let/assign store writes it.
   private valStore(ty: string, val: string, ptr: string, copy: CopyDecl): string {
-    this.ownCheckCopy(copy, val);
+    this.own.checkCopy(copy, val);
     if (val === "zeroinitializer") return this.zeroStore(ty, ptr);
     return `  store ${ty} ${val}, ptr ${ptr}`;
   }
@@ -1113,9 +1086,9 @@ export class Codegen {
   // what a use-after-move is checked against; `viewSrc` overrides it). `move` and `clone`
   // bookkeeping stays with the caller, which knows how the source gave its bytes up.
   private emitMemcpy(lines: string[], dst: string, src: string, ty: string, copy: CopyDecl, viewSrc?: number): void {
-    this.ownCheckCopy(copy, src);
-    if (this.ownOn && copy.intent === "view" && this.needsDropCg(copy.type)) {
-      this.ownSlot.set(dst, this.ownViewMarker(lines, viewSrc ?? this.ownSlot.get(src) ?? 0, "memcpy"));
+    this.own.checkCopy(copy, src);
+    if (this.own.on && copy.intent === "view" && this.needsDropCg(copy.type)) {
+      this.own.slots.set(dst, this.own.viewMarker(lines, viewSrc ?? this.own.slots.get(src) ?? 0, "memcpy"));
     }
     lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${dst}, ptr ${src}, i64 ${this.typeSize(ty)}, i1 false)`);
   }
@@ -1130,14 +1103,14 @@ export class Codegen {
   // (whoever owns the slot now holds the value's ID), "store" a field/element of some
   // aggregate (the value leaves this frame's books), "return" the sret out-pointer.
   private genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr, into: "slot" | "store" | "return" = "slot"): void {
-    if (!this.ownOn) { this.genStoreIntoRaw(lines, destPtr, ty, expr); return; }
-    const before = this.ownSlot.get(destPtr);
+    if (!this.own.on) { this.genStoreIntoRaw(lines, destPtr, ty, expr); return; }
+    const before = this.own.slots.get(destPtr);
     const v = this.genStoreIntoRaw(lines, destPtr, ty, expr);
-    let id = v ? this.ownIdOf(v) : undefined;
-    if (!id) { const after = this.ownSlot.get(destPtr); if (after !== before) id = after; }
+    let id = v ? this.own.idOf(v) : undefined;
+    if (!id) { const after = this.own.slots.get(destPtr); if (after !== before) id = after; }
     if (!id) return;
-    if (into === "slot") this.ownSlot.set(destPtr, id);
-    else { if (this.ownSlot.get(destPtr) === id) this.ownSlot.delete(destPtr); this.ownEnd(lines, id, into === "store" ? "STORE" : "RETURN"); }
+    if (into === "slot") this.own.slots.set(destPtr, id);
+    else { if (this.own.slots.get(destPtr) === id) this.own.slots.delete(destPtr); this.own.end(lines, id, into === "store" ? "STORE" : "RETURN"); }
   }
 
   // Returns the SSA value it stored, or null when the value was built or copied in place.
@@ -1176,7 +1149,7 @@ export class Codegen {
         }
         this.genStructUpdateBase(lines, destPtr, expr);
         this.endStored(lines, built, pendMark);
-        if (this.ownOn && this.needsDropCg(expr.type)) this.ownSlot.set(destPtr, this.ownMake(lines, "StructLit"));
+        if (this.own.on && this.needsDropCg(expr.type)) this.own.slots.set(destPtr, this.own.make(lines, "StructLit"));
         return null;
       }
       if (expr.kind === "Ident" || expr.kind === "FieldAccess" ||
@@ -1191,15 +1164,15 @@ export class Codegen {
             lines.push(...pl);
             const owned = this.needsDropCg(expr.type);
             const moves = !!expr.isMove && owned && !identLocal?.isRef;
-            const viewSrc = expr.kind === "Ident" && !identLocal?.isRef ? this.ownPlaceId(srcPtr) : 0;
+            const viewSrc = expr.kind === "Ident" && !identLocal?.isRef ? this.own.placeId(srcPtr) : 0;
             this.emitMemcpy(lines, destPtr, srcPtr, ty, { intent: !owned ? "plain" : moves ? "move" : "view", type: expr.type }, viewSrc);
             if (moves) {
               lines.push(this.zeroStore(ty, srcPtr));
               if (expr.kind === "Ident") {
                 const dl = this.droppableLocals.find(d => d.addr === srcPtr);
-                if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
+                if (dl) this.own.clearAlive(lines, dl.aliveFlag, "MOVE");
               }
-              if (this.ownOn) this.ownSlot.set(destPtr, this.ownMake(lines, `move:${expr.kind}`));
+              if (this.own.on) this.own.slots.set(destPtr, this.own.make(lines, `move:${expr.kind}`));
             }
             return null;
           }
@@ -1208,7 +1181,7 @@ export class Codegen {
     }
     const [el, v] = this.genExpr(expr);
     lines.push(...el);
-    lines.push(this.valStore(ty, v, destPtr, this.ownValIntent(v, expr.type)));
+    lines.push(this.valStore(ty, v, destPtr, this.own.valIntent(v, expr.type)));
     return v;
   }
 
@@ -2233,7 +2206,7 @@ export class Codegen {
 
     // Before any pass that rewrites call lines (debug info, sanitize, noalias): the markers
     // are verified, then stripped, so none of those passes ever sees one.
-    this.ownFinish();
+    this.output = this.own.finish(this.output);
     for (const [key, id] of this.rangeMetaIds) this.emit(`!${id} = !{${key}}`);
     if (this.noundefMetaId !== null) this.emit(`!${this.noundefMetaId} = !{}`);
     if (this.emitDebug) this.dwarf.apply(this.output);
@@ -2626,11 +2599,11 @@ export class Codegen {
     this.labelCounter = 0;
     this.locals.clear();
     this.droppableLocals = [];
-    this.ownVal.clear(); this.ownSlot.clear(); this.ownFlag.clear(); this.ownView.clear(); this.ownStatic.clear();
-    this.ownPartIds.clear();
+    this.own.vals.clear(); this.own.slots.clear(); this.own.flags.clear(); this.own.views.clear(); this.own.statics.clear();
+    this.own.partIds.clear();
     this.partialMovePaths = this.scanPartialMoves(fn.body);
     this.fieldMoveFlags = new Map();
-    this.ownSrcLine = fn.line ?? 0;
+    this.own.srcLine = fn.line ?? 0;
     this.entryAllocas = [];
     this.emittedAddrs.clear();
     this.currentFnName = fn.name;
@@ -2702,7 +2675,7 @@ export class Codegen {
           const aliveFlag = `%${p.name}.alive`;
           lines.push(`  ${aliveFlag} = alloca i1`);
           this.registerFieldFlags(lines, `%${p.name}.addr`, p.name, p.type);
-          this.ownSetAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
+          this.own.setAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
       }
@@ -2815,7 +2788,7 @@ export class Codegen {
   }
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
-    if (this.ownOn && stmt.span) this.ownSrcLine = stmt.span.line;
+    if (this.own.on && stmt.span) this.own.srcLine = stmt.span.line;
     // A statement consumes its own expressions: they are never another value's operands.
     this.pend.parents.push("stmt");
     const [lines, terminated] = this.genStmtRaw(stmt);
@@ -2904,13 +2877,13 @@ export class Codegen {
             }
           }
         }
-        if (bigTmp) { this.emitMemcpy(lines, addrName, bigTmp, declTy, { intent: "move", type: stmt.type }); this.ownMoveSlot(bigTmp, addrName); }
-        else if (!bigAgg) { lines.push(this.valStore(declTy, val, addrName, this.ownValIntent(val, stmt.type))); this.ownValToSlot(val, addrName); }
+        if (bigTmp) { this.emitMemcpy(lines, addrName, bigTmp, declTy, { intent: "move", type: stmt.type }); this.own.moveSlot(bigTmp, addrName); }
+        else if (!bigAgg) { lines.push(this.valStore(declTy, val, addrName, this.own.valIntent(val, stmt.type))); this.own.valToSlot(val, addrName); }
         // Describe the value actually stored: for `&T` locals that's the inner value.
         this.dbgDeclare(lines, stmt.name, addrName, storedTypeKind, stmt.span?.line ?? 0, 0);
         // Locals that borrow from a ref are a shallow copy — data owned elsewhere.
         if (declDroppable) {
-          this.ownSetAlive(lines, declAliveFlag, addrName, `let:${stmt.name}`);
+          this.own.setAlive(lines, declAliveFlag, addrName, `let:${stmt.name}`);
           this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag: declAliveFlag, addr: addrName });
         }
         return [lines, false];
@@ -2959,7 +2932,7 @@ export class Codegen {
             else this.emitDropValue(lines, tPtr, stmt.target.type);
           }
           this.emitMemcpy(lines, tPtr, tmp, assignLlTy, { intent: "move", type: stmt.target.type });
-          this.ownAssigned(lines, tPtr, this.ownOn ? this.ownSlot.get(tmp) : undefined);
+          this.own.assigned(lines, tPtr, this.own.on ? this.own.slots.get(tmp) : undefined);
           if (cover) this.rearmFieldFlags(lines, cover);
           this.rearmAssignedLocal(lines, stmt.target);
           return [lines, false];
@@ -2980,8 +2953,8 @@ export class Codegen {
           if (cover) this.emitDropPlace(lines, targetPtr, stmt.target.type, cover.flags, cover.path);
           else this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
-        lines.push(this.valStore(valTy, val, targetPtr, this.ownValIntent(val, stmt.target.type)));
-        this.ownAssigned(lines, targetPtr, this.ownOn ? this.ownIdOf(val) : undefined);
+        lines.push(this.valStore(valTy, val, targetPtr, this.own.valIntent(val, stmt.target.type)));
+        this.own.assigned(lines, targetPtr, this.own.on ? this.own.idOf(val) : undefined);
         if (cover) this.rearmFieldFlags(lines, cover);
         this.rearmAssignedLocal(lines, stmt.target);
         return [lines, false];
@@ -3036,7 +3009,7 @@ export class Codegen {
         this.emitDropGlue(lines);
         // A sortByKey extractor hands back a borrow of the element (the checker's one
         // exemption): returning that view transfers nothing.
-        if (!(this.ownReturnsView && this.ownView.has(val))) this.ownEndVal(lines, val, "RETURN");
+        if (!(this.own.returnsView && this.own.views.has(val))) this.own.endVal(lines, val, "RETURN");
         if (valTy === "void") lines.push("  ret void");
         else lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
@@ -4051,7 +4024,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    this.ownSetAlive(lines, aliveFlag, addr, "forin-tmp");
+    this.own.setAlive(lines, aliveFlag, addr, "forin-tmp");
     this.droppableLocals.push({ name, typeKind, aliveFlag, addr });
     return name;
   }
@@ -4077,7 +4050,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    this.ownSetAlive(lines, aliveFlag, addr, "consumed-iterable");
+    this.own.setAlive(lines, aliveFlag, addr, "consumed-iterable");
     const entry: DroppableLocal = { name: `__forin_consumed.${this.scopeCounter++}`, typeKind: iterable.type, aliveFlag, addr, consumeCursor: cursor };
     this.droppableLocals.push(entry);
     return { lines, addr, iterTy, entry };
@@ -4094,8 +4067,8 @@ export class Codegen {
       lines.push(`  ${v} = load ${binding.ty}, ptr ${elemPtr}`);
       lines.push(`  store ${binding.ty} ${v}, ptr ${binding.addr}`);
     }
-    this.ownMoveSlot(elemPtr, binding.addr);
-    if (binding.alive) this.ownSetAlive(lines, binding.alive, binding.addr, "loop-binding");
+    this.own.moveSlot(elemPtr, binding.addr);
+    if (binding.alive) this.own.setAlive(lines, binding.alive, binding.addr, "loop-binding");
     if (entry?.consumeCursor) {
       const next = this.nextTemp();
       lines.push(`  ${next} = add i64 ${idx64}, 1`);
@@ -4233,7 +4206,7 @@ export class Codegen {
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
       lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-      if (consumed && this.ownOn && this.needsDropCg(elemType)) this.ownSlot.set(elemPtr, this.ownMake(lines, "element-moved-out"));
+      if (consumed && this.own.on && this.needsDropCg(elemType)) this.own.slots.set(elemPtr, this.own.make(lines, "element-moved-out"));
       if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, tk: elemType, alive: bindAlive }, consumed.entry);
       else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
@@ -4381,7 +4354,7 @@ export class Codegen {
       lines.push(`${bodyLabel}:`);
       const elemPtr = this.nextTemp();
       lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i64 ${idx}`);
-      if (consumed && this.ownOn && this.needsDropCg(elemTypeKind3)) this.ownSlot.set(elemPtr, this.ownMake(lines, "element-moved-out"));
+      if (consumed && this.own.on && this.needsDropCg(elemTypeKind3)) this.own.slots.set(elemPtr, this.own.make(lines, "element-moved-out"));
       if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, tk: elemTypeKind3, alive: bindAlive }, consumed.entry);
       else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
 
@@ -4801,7 +4774,7 @@ export class Codegen {
     // extract payload from Some variant
     const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr, "Some");
     // next()'s Some payload is a fresh owned value in this frame; the binding takes it.
-    if (this.ownOn && this.needsDropCg(stmt.varType)) this.ownSlot.set(payloadPtr, this.ownMake(lines, "next-payload"));
+    if (this.own.on && this.needsDropCg(stmt.varType)) this.own.slots.set(payloadPtr, this.own.make(lines, "next-payload"));
     this.emitConsumeElement(lines, payloadPtr, "", { addr: varAddr, ty: elemTy, tk: stmt.varType, alive: bindAlive }, null);
 
     this.emitLoopInvariants(lines, stmt.invariants);
@@ -4860,7 +4833,7 @@ export class Codegen {
     const aliveFlag = `${addr}.alive`;
     this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
     this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
-    this.ownSetAlive(lines, aliveFlag, addr, "match-subject");
+    this.own.setAlive(lines, aliveFlag, addr, "match-subject");
     this.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
     // A `v[i]` subject is a structural clone of the element, so it is freed structurally:
     // running the element's Drop on it would release a resource the container still owns.
@@ -4908,9 +4881,9 @@ export class Codegen {
         if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
         // The non-moving yield below is a move codegen decides on its own (the HIR read
         // was a view): the value, not the view, is what the result slot receives.
-        const yieldMoves = this.ownOn && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove && armLocal;
-        if (yieldMoves && this.ownView.delete(vv)) this.ownMakeVal(lines, vv, "yield-move");
-        if (vv !== "void") this.ownIntoResult(lines, resultSlot.addr, vv);
+        const yieldMoves = this.own.on && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove && armLocal;
+        if (yieldMoves && this.own.views.delete(vv)) this.own.makeVal(lines, vv, "yield-move");
+        if (vv !== "void") this.own.intoResult(lines, resultSlot.addr, vv);
         // Yielding a droppable local out of the arm hands its heap data to the
         // result slot — a move, not a copy. Clear the alive flag so the arm's
         // drop does not free what the match's value now owns.
@@ -4923,7 +4896,7 @@ export class Codegen {
           // A moving Ident already cleared the flag (and ended the slot's ledger ID) in
           // genExpr; this second clear is then a no-op, not a second move.
           if (yielded && (last.expr as { isMove?: boolean }).isMove) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
-          else if (yielded) this.ownClearAlive(lines, yielded.aliveFlag, "MOVE");
+          else if (yielded) this.own.clearAlive(lines, yielded.aliveFlag, "MOVE");
         }
       } else {
         const [sl, t] = this.genStmt(last);
@@ -5456,7 +5429,7 @@ export class Codegen {
         // For the ledger the subject ends once, at its first moved-out field: the later
         // fields' clears re-store the same 0 and are not further moves of the subject.
         const subjLocal = this.droppableLocals.find(d => d.addr === subjAddr);
-        if (subjLocal && !subjectEnded) this.ownClearAlive(lines, subjLocal.aliveFlag, "MOVE");
+        if (subjLocal && !subjectEnded) this.own.clearAlive(lines, subjLocal.aliveFlag, "MOVE");
         else if (subjLocal) lines.push(`  store i1 0, ptr ${subjLocal.aliveFlag}`);
         subjectEnded = true;
       }
@@ -5473,7 +5446,7 @@ export class Codegen {
         this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
         this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
         this.registerFieldFlags(this.entryAllocas, addr, name, fieldKind);
-        this.ownSetAlive(lines, aliveFlag, addr, `match-bind:${name}`);
+        this.own.setAlive(lines, aliveFlag, addr, `match-bind:${name}`);
         this.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
       }
     };
@@ -5923,18 +5896,18 @@ export class Codegen {
     this.pend.parents.pop();
     this.pend.temps.length = pendMark;
     this.pendIfOperand(expr, r);
-    if (this.ownOn && this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
+    if (this.own.on && this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
       // The producers are exactly isOwnedTempExpr's list: the expressions whose value
       // nobody else owns. An sret result lives at its destination instead of a register.
       if (sretDest && r[1] === "undef") {
-        this.ownSlot.set(sretDest, this.ownMake(r[0], expr.kind));
+        this.own.slots.set(sretDest, this.own.make(r[0], expr.kind));
       } else {
-        this.ownMakeVal(r[0], r[1], expr.kind);
+        this.own.makeVal(r[0], r[1], expr.kind);
       }
-    } else if (this.ownOn && this.needsDropCg(expr.type) && r[1].startsWith("%")) {
-      this.ownDeclareRead(r[0], r[1], expr);
+    } else if (this.own.on && this.needsDropCg(expr.type) && r[1].startsWith("%")) {
+      this.own.declareRead(r[0], r[1], expr);
     }
-    if (this.ownOn) this.ownProducer.set(r[1], expr.kind);
+    if (this.own.on) this.own.producers.set(r[1], expr.kind);
     return r;
   }
 
@@ -5958,15 +5931,15 @@ export class Codegen {
   private pendStored(lines: string[], val: string | null, ptr: string, tk: TypeKind, built: string[], readdr?: (lines: string[]) => string) {
     if (!this.needsDropCg(tk)) {
       // Nothing to drop on an exit; the ledger still ends whatever ID the value carried.
-      if (val) this.ownEndVal(lines, val, "STORE");
+      if (val) this.own.endVal(lines, val, "STORE");
       else this.endStored(lines, [ptr], this.pend.temps.length);
       return;
     }
-    if (val) this.ownValToSlot(val, ptr);
+    if (val) this.own.valToSlot(val, ptr);
     built.push(ptr);
     this.pend.temps.push({ emit: l => {
       const at = readdr ? readdr(l) : ptr;
-      if (at !== ptr && this.ownOn && this.ownSlot.has(ptr)) this.ownSlot.set(at, this.ownSlot.get(ptr)!);
+      if (at !== ptr && this.own.on && this.own.slots.has(ptr)) this.own.slots.set(at, this.own.slots.get(ptr)!);
       this.emitDropValue(l, at, tk);
     } });
   }
@@ -5974,10 +5947,10 @@ export class Codegen {
   // The literal is complete: its elements now belong to it.
   private endStored(lines: string[], built: string[], pendMark: number) {
     this.pend.temps.length = pendMark;
-    if (!this.ownOn) return;
+    if (!this.own.on) return;
     for (const p of built) {
-      const id = this.ownSlot.get(p);
-      if (id) { this.ownEnd(lines, id, "STORE"); this.ownSlot.delete(p); }
+      const id = this.own.slots.get(p);
+      if (id) { this.own.end(lines, id, "STORE"); this.own.slots.delete(p); }
     }
   }
 
@@ -6000,7 +5973,7 @@ export class Codegen {
     for (let i = argTempsTo - 1; i >= argTempsFrom; i--) {
       const t = this.argTempDrops[i];
       this.emitDropValue(lines, t.addr, t.type);
-      if (t.ownVal) this.ownEndVal(lines, t.ownVal, "DROP");
+      if (t.ownVal) this.own.endVal(lines, t.ownVal, "DROP");
     }
   }
 
@@ -6083,7 +6056,7 @@ export class Codegen {
             // non-null, so with the moved field zeroed a `{ opt: Option, items: Vec }`
             // read as already moved-from and leaked `opt` with it.
             dropStructFieldsExcept(this, lines, recvTemps[0].addr, recvStruct, expr.field);
-            this.ownEnd(lines, this.ownSlot.get(recvTemps[0].addr), "MOVE");
+            this.own.end(lines, this.own.slots.get(recvTemps[0].addr), "MOVE");
           }
         } else {
           if (expr.isMove && owning) {
@@ -6198,7 +6171,7 @@ export class Codegen {
         const ptr = this.nextTemp();
         lines.push(`  ${ptr} = call ptr @malloc(i64 ${size})`);
         lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
-        this.ownEndVal(lines, valVal, "STORE");
+        this.own.endVal(lines, valVal, "STORE");
         return [lines, ptr, "ptr"];
       }
       case "HeapDeref":
@@ -6339,8 +6312,8 @@ export class Codegen {
       case "VecSortBy":
         return genVecSortBy(this, expr.object, expr.callback, expr.elementType, lines);
       case "VecSortByKey":
-        this.ownKeyExtractor = this.ownOn;
-        try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.ownKeyExtractor = false; }
+        this.own.keyExtractor = this.own.on;
+        try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }
       case "HashMapNew":
         return genHashMapNew(this, expr, lines);
       case "HashMapInsert":
@@ -6512,7 +6485,7 @@ export class Codegen {
     if (expr.isMove && this.needsDropCg(local.typeKind)) {
       lines.push(this.zeroStore(local.type, addr));
       const dl = this.droppableLocals.find(d => d.addr === addr);
-      if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
+      if (dl) this.own.clearAlive(lines, dl.aliveFlag, "MOVE");
       // Moving a capture out of a `move` closure: the environment still owns the other
       // captures, so clear this one's flag rather than the whole env's.
       const capFlag = this.captureFlagByAddr.get(addr);
@@ -6716,7 +6689,7 @@ export class Codegen {
             const slot = `%__cstrtmp.${this.scopeCounter++}.addr`;
             this.entryAllocas.push(`  ${slot} = alloca %String`);
             lines.push(`  store %String ${av}, ptr ${slot}`);
-            this.ownValToSlot(av, slot);
+            this.own.valToSlot(av, slot);
             this.argTempDrops.push({ addr: slot, type: { tag: "string" } });
             this.unpend(av);
             this.emitStrUnique(lines, slot);
@@ -6756,7 +6729,7 @@ export class Codegen {
         }
       }
     }
-    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");
+    for (const v of argEnds) this.own.endVal(lines, v, "ARG");
     this.emitAliasGuards(lines, refPtrs, expr.span);
     // extern fns passing/returning a struct by value need native-ABI lowering:
     // coerce args into registers, byval/indirect big ones, sret the return.
@@ -6840,13 +6813,13 @@ export class Codegen {
     // Ledger: the scratch copy of the base owns a value (a temporary's ID, or a fresh one
     // for a moved local), which this splits into one ID per owning field. Each field then
     // has to end exactly once: dropped when listed, stored into the literal when not.
-    const splitBase = this.ownOn && base.type.tag !== "ref" && this.needsDropCg(base.type);
-    if (splitBase) this.ownEnd(lines, this.ownSlot.get(tmp) ?? this.ownMake(lines, "update-base"), "MOVE");
+    const splitBase = this.own.on && base.type.tag !== "ref" && this.needsDropCg(base.type);
+    if (splitBase) this.own.end(lines, this.own.slots.get(tmp) ?? this.own.make(lines, "update-base"), "MOVE");
     layout.fields.forEach((lf, idx) => {
       const src = this.nextTemp();
       lines.push(`  ${src} = getelementptr ${structTy}, ptr ${tmp}, i32 0, i32 ${idx}`);
-      const fieldId = splitBase && this.needsDropCg(lf.typeKind) ? this.ownMake(lines, `update-base-field:${lf.name}`) : 0;
-      if (fieldId) this.ownSlot.set(src, fieldId);
+      const fieldId = splitBase && this.needsDropCg(lf.typeKind) ? this.own.make(lines, `update-base-field:${lf.name}`) : 0;
+      if (fieldId) this.own.slots.set(src, fieldId);
       if (expr.fields.some(f => f.name === lf.name)) {
         if (this.needsDropCg(lf.typeKind)) this.emitDropValue(lines, src, lf.typeKind);
         return;
@@ -6860,7 +6833,7 @@ export class Codegen {
         lines.push(`  ${v} = load ${lf.type}, ptr ${src}`);
         lines.push(this.valStore(lf.type, v, dst, { intent: "move", type: lf.typeKind }));
       }
-      this.ownEnd(lines, fieldId, "STORE");
+      this.own.end(lines, fieldId, "STORE");
     });
   }
 
@@ -6978,9 +6951,9 @@ export class Codegen {
         const last = this.nextTemp();
         lines.push(`  ${last} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${expr.count - 1}`);
         lines.push(`  store ${elemTy} ${vv}, ptr ${last}`);
-        this.ownEndVal(lines, vv, "MOVE");
+        this.own.endVal(lines, vv, "MOVE");
       } else {
-        this.ownValToSlot(vv, srcPtr);
+        this.own.valToSlot(vv, srcPtr);
         this.emitDropValue(lines, srcPtr, elemKind);
       }
     } else {
@@ -7098,7 +7071,7 @@ export class Codegen {
       let dest = sretDest;
       if (!dest) { dest = this.nextTemp(); this.entryAllocas.push(`  ${dest} = alloca ${placeTy}`); }
       this.emitMemcpy(lines, dest, placePtr, placeTy, { intent: "move", type: expr.type });
-      if (this.ownOn && this.needsDropCg(expr.type)) this.ownSlot.set(dest, this.ownMake(lines, "replace-old"));
+      if (this.own.on && this.needsDropCg(expr.type)) this.own.slots.set(dest, this.own.make(lines, "replace-old"));
       this.genStoreInto(lines, placePtr, placeTy, expr.value, "store");   // store new; does NOT drop old
       if (!sretDest && this.needsDropCg(expr.type)) this.emitDropValue(lines, dest, expr.type);
       return [lines, dest, placeTy];
@@ -7174,7 +7147,7 @@ export class Codegen {
       if (ptr !== "null") {
         lines.push(this.zeroStore(this.llvmType(v.type), ptr));
         const dl = this.droppableLocals.find(d => d.addr === ptr);
-        if (dl) this.ownClearAlive(lines, dl.aliveFlag, "MOVE");
+        if (dl) this.own.clearAlive(lines, dl.aliveFlag, "MOVE");
         return [lines, "", "void"];
       }
     }
@@ -7371,7 +7344,7 @@ export class Codegen {
     const savedPend = this.pend, savedArgTemps = this.argTempDrops;
     this.pend = { temps: [], parents: [], loopTemps: 0, loopArgTemps: 0 };
     this.argTempDrops = [];
-    const ownRestore = this.ownEnterFn();
+    const ownRestore = this.own.enterFn();
     const savedLoopHeader = this.loopHeader;
     const savedLoopExit = this.loopExit;
     const savedFnSret = this.currentFnSret;
@@ -7517,7 +7490,7 @@ export class Codegen {
           const aliveFlag = `%${p.name}.alive`;
           closureBody.push(`  ${aliveFlag} = alloca i1`);
           this.registerFieldFlags(closureBody, `%${p.name}.addr`, p.name, p.type);
-          this.ownSetAlive(closureBody, aliveFlag, `%${p.name}.addr`, "closure-param");
+          this.own.setAlive(closureBody, aliveFlag, `%${p.name}.addr`, "closure-param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
         }
       }
@@ -7633,7 +7606,7 @@ export class Codegen {
             if (this.needsDropCg(cap.type) && !cap.share) {
               lines.push(this.zeroStore(capTy, capAddr));
               const dl = this.droppableLocals.find(d => d.addr === capAddr);
-              if (dl) this.ownClearAlive(lines, dl.aliveFlag, "CAPTURE");
+              if (dl) this.own.clearAlive(lines, dl.aliveFlag, "CAPTURE");
               // The source may itself be a capture of the closure we are emitting inside
               // (a nested `move` closure re-capturing the outer one's value). The outer
               // environment has just handed the value over, so clear its flag too, or
@@ -7686,7 +7659,7 @@ export class Codegen {
         if (!this.isLentClosure(arg.expr)) argEnds.push(av);
       }
     }
-    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
+    for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
     const cArgsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
     const cRetTy = this.llvmType(expr.type);
     if (cRetTy === "void") {
@@ -7744,7 +7717,7 @@ export class Codegen {
         }
       }
     }
-    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
+    for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
     this.emitAliasGuards(lines, refPtrs, expr.span);
 
     const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -7815,7 +7788,7 @@ export class Codegen {
     const s1 = this.nextTemp();
     lines.push(`  ${s1} = insertvalue { ptr, ptr } ${s0}, ptr ${itableGlobal}, 1`);
     // Heap<T> -> Heap<Iface> re-labels the same allocation: the result inherits its ID.
-    if (isHeapCoerce) this.ownInherit(dataPtr, s1);
+    if (isHeapCoerce) this.own.inherit(dataPtr, s1);
     return [lines, s1, "{ ptr, ptr }"];
   }
 
@@ -7826,7 +7799,7 @@ export class Codegen {
     // to carry: no slot, and nothing to load at the end.
     const isVoid = resultTy === "void";
     if (!isVoid) this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
-    if (this.ownOn && this.needsDropCg(expr.type)) this.ownResultSlots.set(resultAddr, { arms: 0, type: expr.type });
+    if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
     const cloneViews = !isVoid && this.isOwnedTempExpr(expr);
 
     const [condLines, condVal] = this.genExpr(expr.cond);
@@ -7851,7 +7824,7 @@ export class Codegen {
         lines.push(...vl);
         const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
         if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
-        if (vv !== "void" && !isVoid) this.ownIntoResult(lines, resultAddr, vv);
+        if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
         const [sl, t] = this.genStmt(last);
         lines.push(...sl);
@@ -7874,7 +7847,7 @@ export class Codegen {
         lines.push(...vl);
         const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
         if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
-        if (vv !== "void" && !isVoid) this.ownIntoResult(lines, resultAddr, vv);
+        if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
         const [sl, t] = this.genStmt(last);
         lines.push(...sl);
@@ -7891,7 +7864,7 @@ export class Codegen {
     if (isVoid) return [lines, "void", "void"];
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
-    this.ownResultMade(lines, resultAddr, result, expr);
+    this.own.resultMade(lines, resultAddr, result, expr);
     return [lines, result, resultTy];
   }
 
@@ -7917,7 +7890,7 @@ export class Codegen {
     }
     const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
-    if (this.ownOn && this.needsDropCg(expr.type)) this.ownResultSlots.set(resultAddr, { arms: 0, type: expr.type });
+    if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
     const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
     lines.push(...ml);
     // Every arm diverged (return/break) — genMatch already closed endLabel
@@ -7926,7 +7899,7 @@ export class Codegen {
     if (allTerminated) return [lines, `poison`, resultTy];
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
-    this.ownResultMade(lines, resultAddr, result, expr);
+    this.own.resultMade(lines, resultAddr, result, expr);
     return [lines, result, resultTy];
   }
 
@@ -7978,7 +7951,7 @@ export class Codegen {
         if (!this.isLentClosure(arg.expr)) argEnds.push(av);
       }
     }
-    for (const v of argEnds) this.ownEndVal(lines, v, "ARG");   // see genCall
+    for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
     this.emitAliasGuards(lines, refPtrs, expr.span);
 
     const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -8057,7 +8030,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    this.ownEndVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -8115,7 +8088,7 @@ export class Codegen {
     // operand was already zeroed and marked dead by the move machinery, so returning its
     // payload here cannot double-free.
     lines.push(`${errLabel}:`);
-    this.ownEndVal(lines, ov, "RETURN");
+    this.own.endVal(lines, ov, "RETURN");
     this.emitPendingDrops(lines, 0, 0, argTempsBefore);
     this.emitDropGlue(lines);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
@@ -8201,7 +8174,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
-    this.ownEndVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -8243,7 +8216,7 @@ export class Codegen {
 
     // some branch — extract payload and zero the source to prevent double-free
     lines.push(`${someLabel}:`);
-    this.ownEndVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov, "MOVE");
     const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
@@ -8261,7 +8234,7 @@ export class Codegen {
     // this branch runs when the default is taken, so the Some path leaves the
     // default untouched and its normal drop still fires there.
     lines.push(`${noneLabel}:`);
-    this.ownEndVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov, "MOVE");
     const [dl, dv] = this.genExpr(expr.default);
     lines.push(...dl);
     if (this.needsDropCg(expr.type) && expr.default.kind === "Ident") {
@@ -8269,7 +8242,7 @@ export class Codegen {
       if (dstAddr) lines.push(`  store ${resultTy} zeroinitializer, ptr ${dstAddr}`);
     }
     lines.push(`  store ${resultTy} ${dv}, ptr ${resultAddr}`);
-    this.ownEndVal(lines, dv, "MOVE");
+    this.own.endVal(lines, dv, "MOVE");
     lines.push(`  br label %${doneLabel}`);
 
     lines.push(`${doneLabel}:`);
@@ -8499,7 +8472,7 @@ export class Codegen {
       const tmp = this.nextTemp();
       lines.push(`  ${tmp} = alloca ${exprTy}`);
       lines.push(`  store ${exprTy} ${exprVal}, ptr ${tmp}`);
-      this.ownValToSlot(exprVal, tmp);
+      this.own.valToSlot(exprVal, tmp);
       finalPtr = tmp;
       finalTy = exprTy;
       if (ownedTemps && this.isOwnedTempExpr(expr.object) && this.needsDropCg(expr.object.type)) {
@@ -8556,7 +8529,7 @@ export class Codegen {
     lines.push(`  ${tmp} = alloca ${et}`);
     lines.push(`  store ${et} ${ev}, ptr ${tmp}`);
     if (this.isOwnedTempExpr(expr) && this.needsDropCg(expr.type)) {
-      this.ownValToSlot(ev, tmp);
+      this.own.valToSlot(ev, tmp);
       this.argTempDrops.push({ addr: tmp, type: expr.type });
       this.unpend(ev);
     }
@@ -8584,7 +8557,7 @@ export class Codegen {
       this.needsFree = true;
       lines.push(`  call void @free(ptr ${box})`);
       // the payload left as the deref's (moved) value; the box itself ends here
-      this.ownEndVal(lines, box, "DROP");
+      this.own.endVal(lines, box, "DROP");
       return [lines, val, innerTy];
     }
     if (!this.needsDropCg(expr.type)) return null;
@@ -8687,7 +8660,7 @@ export class Codegen {
     const elemPtr = this.nextTemp();
     lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${curLen}`);
     lines.push(`  store ${valTy} ${valVal}, ptr ${elemPtr}`);
-    this.ownEndVal(lines, valVal, "STORE");
+    this.own.endVal(lines, valVal, "STORE");
     const newLen = this.nextTemp();
     lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
@@ -9194,7 +9167,7 @@ export class Codegen {
     const accAddr = `%__fold_acc.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${accAddr} = alloca ${accTy}`);
     lines.push(`  store ${accTy} ${initVal}, ptr ${accAddr}`);
-    this.ownEndVal(lines, initVal, "MOVE");
+    this.own.endVal(lines, initVal, "MOVE");
 
     const idxAddr = `%__fold_idx.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
@@ -9526,7 +9499,7 @@ export class Codegen {
     lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
     lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${dstPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
     lines.push(`  store ${valTy} ${valVal}, ptr ${srcPtr}`);
-    this.ownEndVal(lines, valVal, "STORE");
+    this.own.endVal(lines, valVal, "STORE");
     const newLen = this.nextTemp();
     lines.push(`  ${newLen} = add i64 ${len}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
@@ -10244,7 +10217,7 @@ export class Codegen {
     lines.push(`  call void @free(ptr ${srcData})`);
     lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
-    this.ownEndVal(lines, srcVal, "STORE");
+    this.own.endVal(lines, srcVal, "STORE");
     return [lines, "0", "void"];
   }
 
@@ -10583,12 +10556,12 @@ export class Codegen {
       const [vLines, val, valTy] = this.genExpr(expr.vec);
       const slot = `%__arrtmp.${this.scopeCounter++}.addr`;
       this.entryAllocas.push(`  ${slot} = alloca ${valTy}`);
-      aLines = [...vLines, this.valStore(valTy, val, slot, this.ownValIntent(val, expr.vec.type))];
+      aLines = [...vLines, this.valStore(valTy, val, slot, this.own.valIntent(val, expr.vec.type))];
       // An array of owned elements (`f([$"a{i}", "b"])`) leaked every element: nothing
       // dropped the slot. The view may outlive the statement (a slice binding), so the
       // slot is dropped at the enclosing block's exit, not after the call.
       if (this.needsDropCg(expr.vec.type)) {
-        this.ownValToSlot(val, slot);
+        this.own.valToSlot(val, slot);
         this.registerScopedTemp(aLines, slot, expr.vec.type);
       }
       arrPtr = slot;
@@ -12216,7 +12189,7 @@ export class Codegen {
     const noteAddr = this.nextTemp();
     lines.push(`  ${noteAddr} = alloca %String`);
     lines.push(`  store %String ${noteVal}, ptr ${noteAddr}`);
-    this.ownValToSlot(noteVal, noteAddr);
+    this.own.valToSlot(noteVal, noteAddr);
     this.emitDropValue(lines, noteAddr, { tag: "string" });
     if (srcOk.fieldTypes[0]) {
       const v = this.nextTemp();
@@ -12236,7 +12209,7 @@ export class Codegen {
     const ctxTy = this.llvmType(ctxType);
     const c0 = this.nextTemp();
     lines.push(`  ${c0} = insertvalue ${ctxTy} undef, %String ${noteVal}, 0`);
-    this.ownEndVal(lines, noteVal, "STORE");
+    this.own.endVal(lines, noteVal, "STORE");
     const c1 = this.nextTemp();
     lines.push(`  ${c1} = insertvalue ${ctxTy} ${c0}, { ptr, ptr } ${cause}, 1`);
     const fat = this.emitHeapFatPtr(lines, c1, ctxTy, ctxType, "ErrorContext", "Error");
@@ -12331,7 +12304,7 @@ export class Codegen {
     this.entryAllocas.push(`  ${slot} = alloca ${lt}`);
     lines.push(`  store ${lt} ${val}, ptr ${slot}`);
     const cloned = this.emitDeepCloneFromPtr(lines, slot, tk);
-    this.ownMakeVal(lines, cloned, "fork-clone");
+    this.own.makeVal(lines, cloned, "fork-clone");
     return cloned;
   }
 
@@ -12547,7 +12520,7 @@ export class Codegen {
     const tmpAddr = `%__tmpdrop.${this.scopeCounter++}.addr`;
     this.entryAllocas.push(`  ${tmpAddr} = alloca ${llTy}`);
     lines.push(this.valStore(llTy, val, tmpAddr, { intent: "move", type: expr.type }));
-    this.ownValToSlot(val, tmpAddr);
+    this.own.valToSlot(val, tmpAddr);
     this.emitDropValue(lines, tmpAddr, expr.type);
   }
 
@@ -12561,7 +12534,7 @@ export class Codegen {
     const savedTemp = this.tempCounter;
     const savedLabel = this.labelCounter;
     this.tempCounter = 0;
-    const ownRestore = this.ownEnterFn();
+    const ownRestore = this.own.enterFn();
     this.labelCounter = 0;
     const body: string[] = [];
     build(body);
@@ -12583,9 +12556,9 @@ export class Codegen {
     // A guarded drop ends its slot's ID itself. Any other drop of a droppable local's slot
     // (an assignment's overwrite) is unguarded and relies on a moved-out slot having been
     // zeroed, so it ends tolerantly (DROPZ): it may legitimately meet an ended ID.
-    if (this.ownOn && !this.ownInGuard) {
-      const id = this.ownSlot.get(allocaPtr);
-      if (id) this.ownEnd(lines, id, this.ownFlagIds.has(id) ? "DROPZ" : "DROP");
+    if (this.own.on && !this.own.inGuard) {
+      const id = this.own.slots.get(allocaPtr);
+      if (id) this.own.end(lines, id, this.own.flagIds.has(id) ? "DROPZ" : "DROP");
     }
     emitDropValueBody(this, lines, allocaPtr, typeKind);
   }
@@ -12832,15 +12805,15 @@ export class Codegen {
     const addr = this.nextTemp();
     lines.push(`  ${addr} = alloca ${enumTy}`);
     lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
-    this.ownValToSlot(vv, addr);
+    this.own.valToSlot(vv, addr);
     // A Result combinator consumes a named receiver when the payload it forwards is not
     // Copy (checker: consumeForwardedPayload); the move ended the local's ID at the read,
     // so the copy at `addr` is a value this op now owns and must end on every branch.
     // Without an ID here a branch that disposed of nothing went unreported.
     const receiverMoved = expr.value.kind === "Ident" && !!(expr.value as { isMove?: boolean }).isMove;
-    if (this.ownOn && receiverMoved && expr.op.startsWith("result") && expr.op !== "resultUnwrapOrElse"
-        && this.needsDropCg(expr.value.type) && !this.ownSlot.has(addr)) {
-      this.ownSlot.set(addr, this.ownMake(lines, "combinator-receiver"));
+    if (this.own.on && receiverMoved && expr.op.startsWith("result") && expr.op !== "resultUnwrapOrElse"
+        && this.needsDropCg(expr.value.type) && !this.own.slots.has(addr)) {
+      this.own.slots.set(addr, this.own.make(lines, "combinator-receiver"));
     }
     const tag = this.loadEnumTag(lines, enumTy, addr);
     const isSome = this.nextTemp();
@@ -12955,7 +12928,7 @@ export class Codegen {
       // Deliberately not done for orElse or the Result combinators: those forward the
       // untouched variant's payload into the result, so dropping here would double-free.
       if (this.optionOpDropsReceiver(expr)) this.emitDropValue(lines, addr, expr.value.type);
-      if (expr.op === "optionOrElse") this.ownEnd(lines, this.ownSlot.get(addr), "MOVE"); // Some forwarded verbatim
+      if (expr.op === "optionOrElse") this.own.end(lines, this.own.slots.get(addr), "MOVE"); // Some forwarded verbatim
       return [lines, out, resTy];
     }
 
@@ -12963,7 +12936,7 @@ export class Codegen {
     // callback still carries a payload, and it must be copied from the source enum into the
     // result enum — skipping it leaves the zeroinitializer, i.e. `map` over an Err would
     // silently produce a zeroed error value instead of the real one.
-    if (expr.op === "resultContext") { const r = this.genResultContext(expr, lines, addr, enumTy, isSome); this.ownEnd(r[0], this.ownSlot.get(addr), "MOVE"); return r; }
+    if (expr.op === "resultContext") { const r = this.genResultContext(expr, lines, addr, enumTy, isSome); this.own.end(r[0], this.own.slots.get(addr), "MOVE"); return r; }
     if (expr.op === "resultMap" || expr.op === "resultMapErr" || expr.op === "resultAndThen"
         || expr.op === "resultOrElse") {
       if (expr.type.tag !== "enum") throw new Error(`Result.${expr.op} result is not an enum`);
@@ -13067,7 +13040,7 @@ export class Codegen {
         storeTag(resOk.tag);
         storePayload(resOk.tag, outTy, called);
       }
-      this.ownEndResultRecv(lines, addr, expr.op === "resultMap" || expr.op === "resultAndThen", srcOk, paramIsRef, lentDropped);
+      this.own.endResultRecv(lines, addr, expr.op === "resultMap" || expr.op === "resultAndThen", srcOk, paramIsRef, lentDropped);
       lentDropped = false;
       lines.push(`  br label %${contLabel}`);
 
@@ -13090,7 +13063,7 @@ export class Codegen {
       } else {
         copyThrough(srcErr, resErr.tag);
       }
-      this.ownEndResultRecv(lines, addr, expr.op === "resultMapErr" || expr.op === "resultOrElse", srcErr, paramIsRef, lentDropped);
+      this.own.endResultRecv(lines, addr, expr.op === "resultMapErr" || expr.op === "resultOrElse", srcErr, paramIsRef, lentDropped);
       lines.push(`  br label %${contLabel}`);
 
       lines.push(`${contLabel}:`);
@@ -13399,7 +13372,7 @@ export class Codegen {
     if (!local || local.isRef) return;
     const addr = this.localAddr(target.name);
     const dl = this.droppableLocals.find(d => d.addr === addr);
-    if (dl) this.ownSetAlive(lines, dl.aliveFlag, dl.addr, "reassign");
+    if (dl) this.own.setAlive(lines, dl.aliveFlag, dl.addr, "reassign");
     const capFlag = this.captureFlagByAddr.get(addr);
     if (capFlag) lines.push(`  store i1 1, ptr ${capFlag}`);
   }
@@ -13498,18 +13471,9 @@ export class Codegen {
     if (flag) lines.push(`  store i1 0, ptr ${flag}`);
     // Ledger: the field leaves its parent's ID. A later whole drop of the parent (one that
     // does not go field by field) is then the double drop this class of bug is.
-    if (!this.ownOn) return;
-    const pid = this.ownSlot.get(addr);
-    if (pid) lines.push(`  call void @__milo_own_part(i64 ${pid}, i64 ${this.ownPartId(addr, place.path, flag)})`);
-  }
-
-  private ownPartIds = new Map<string, number>();
-  private ownPartId(addr: string, path: string, flag: string | undefined): number {
-    if (flag) return this.ownFlagId(flag);
-    const key = `${addr}\0${path}`;
-    let id = this.ownPartIds.get(key);
-    if (!id) { id = this.ownNextId++; this.ownPartIds.set(key, id); }
-    return id;
+    if (!this.own.on) return;
+    const pid = this.own.slots.get(addr);
+    if (pid) lines.push(`  call void @__milo_own_part(i64 ${pid}, i64 ${this.own.partId(addr, place.path, flag)})`);
   }
 
   // Drop the value of `type` at `ptr`, the place `prefix` of the local whose flags are
@@ -13530,18 +13494,18 @@ export class Codegen {
     };
     // The whole local dropped outside its guarded drop (an assignment's overwrite) ends
     // its ID here, as emitDropValue's DROPZ would, but without claiming the moved fields.
-    if (prefix === "" && this.ownOn && !this.ownInGuard) this.ownEnd(lines, this.ownSlot.get(ptr), "DROPZF");
+    if (prefix === "" && this.own.on && !this.own.inGuard) this.own.end(lines, this.own.slots.get(ptr), "DROPZF");
     const own = prefix === "" ? undefined : flags.get(prefix);
     if (!own) { body(); return; }
     const c = this.nextTemp();
     lines.push(`  ${c} = load i1, ptr ${own}`);
-    const fid = this.ownOn ? this.ownFlagId(own) : 0;
+    const fid = this.own.on ? this.own.flagId(own) : 0;
     if (fid) lines.push(`  call void @__milo_own_guard(i64 ${fid}, i1 ${c})`);
     const liveL = this.nextLabel("fmv.live"), skipL = this.nextLabel("fmv.skip");
     lines.push(`  br i1 ${c}, label %${liveL}, label %${skipL}`);
     lines.push(`${liveL}:`);
     body();
-    if (fid) this.ownEnd(lines, fid, "DROP");
+    if (fid) this.own.end(lines, fid, "DROP");
     lines.push(`  store i1 0, ptr ${own}`);
     lines.push(`  br label %${skipL}`);
     lines.push(`${skipL}:`);
@@ -13570,7 +13534,7 @@ export class Codegen {
     for (const [p, flag] of cover.flags) {
       if (cover.path !== "" && p !== cover.path && !p.startsWith(`${cover.path}.`)) continue;
       lines.push(`  store i1 1, ptr ${flag}`);
-      if (this.ownOn && cover.path !== "") lines.push(`  call void @__milo_own_make(i64 ${this.ownFlagId(flag)}) ; own reassign-field L${this.ownSrcLine}`);
+      if (this.own.on && cover.path !== "") lines.push(`  call void @__milo_own_make(i64 ${this.own.flagId(flag)}) ; own reassign-field L${this.own.srcLine}`);
     }
   }
 
@@ -13579,18 +13543,18 @@ export class Codegen {
     lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
     const dropLabel = this.nextLabel("drop.alive");
     const skipLabel = this.nextLabel("drop.skip");
-    const ownId = this.ownOn ? this.ownFlagId(local.aliveFlag) : 0;
+    const ownId = this.own.on ? this.own.flagId(local.aliveFlag) : 0;
     if (ownId) lines.push(`  call void @__milo_own_guard(i64 ${ownId}, i1 ${check})`);
     lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
     lines.push(`${dropLabel}:`);
-    const savedInGuard = this.ownInGuard;
-    this.ownInGuard = true;
+    const savedInGuard = this.own.inGuard;
+    this.own.inGuard = true;
     const fieldFlags = local.consumeCursor ? undefined : this.fieldMoveFlags.get(local.addr);
     if (local.consumeCursor) this.emitConsumedTailDrop(lines, local.addr, local.typeKind, local.consumeCursor);
     else if (fieldFlags) this.emitDropPlace(lines, local.addr, local.typeKind, fieldFlags, "");
     else this.emitDropValue(lines, local.addr, local.typeKind);
-    this.ownInGuard = savedInGuard;
-    if (ownId) this.ownEnd(lines, ownId, fieldFlags ? "DROPF" : "DROP");
+    this.own.inGuard = savedInGuard;
+    if (ownId) this.own.end(lines, ownId, fieldFlags ? "DROPF" : "DROP");
     // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
     // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
     // without this, the function epilogue (after break) or the next iteration's
@@ -13602,252 +13566,4 @@ export class Codegen {
     lines.push(`${skipLabel}:`);
   }
 
-  // ---- Ownership ledger markers (src/own-ledger.ts). All no-ops unless MILO_OWN_LEDGER=1.
-
-  private ownMake(lines: string[], origin: string): number {
-    if (!this.ownOn) return 0;
-    const id = this.ownNextId++;
-    lines.push(`  call void @__milo_own_make(i64 ${id}) ; own ${origin.replace(/\s/g, "_")} L${this.ownSrcLine}`);
-    return id;
-  }
-
-  private ownEnd(lines: string[], id: number | undefined, kind: OwnEndKind) {
-    if (!this.ownOn || !id) return;
-    lines.push(`  call void @__milo_own_end(i64 ${id}, i32 ${OWN_END_KINDS.indexOf(kind)})`);
-  }
-
-  // A fresh owned value now held in SSA register `val`.
-  private ownMakeVal(lines: string[], val: string, origin: string) {
-    if (!this.ownOn || !val.startsWith("%") || this.ownVal.has(val)) return;
-    this.ownVal.set(val, this.ownMake(lines, origin));
-  }
-
-  // A view is ended too: ending one is exactly the finding (drop-of-view, own-of-view).
-  public ownEndVal(lines: string[], val: string, kind: OwnEndKind) {
-    if (!this.ownOn) return;
-    this.ownEnd(lines, this.ownIdOf(val), kind);
-  }
-
-  // The owned (or viewed) value in register `val` was stored whole into the frame slot
-  // `addr`: same runtime value, same ID, now found by address (emitDropValue(addr) ends it).
-  public ownValToSlot(val: string, addr: string) {
-    if (!this.ownOn) return;
-    const id = this.ownIdOf(val);
-    if (id) this.ownSlot.set(addr, id);
-  }
-
-  // `to` holds the same owned bytes as `from` under a new SSA name (a re-labelling, not a
-  // copy): same ID, same intent.
-  private ownInherit(from: string, to: string) {
-    if (!this.ownOn) return;
-    const v = this.ownView.get(from);
-    if (v) { this.ownView.set(to, v); return; }
-    const id = this.ownVal.get(from);
-    if (id) { this.ownVal.set(to, id); return; }
-    if (this.ownStatic.has(from) || !from.startsWith("%")) this.ownStatic.add(to);
-  }
-
-  private ownIdOf(val: string): number | undefined {
-    return this.ownVal.get(val) ?? this.ownView.get(val);
-  }
-
-  private ownViewMarker(lines: string[], src: number, origin: string): number {
-    const id = this.ownNextId++;
-    this.ownViewIds.add(id);
-    lines.push(`  call void @__milo_own_view(i64 ${id}, i64 ${src}) ; own view:${origin.replace(/\s/g, "_")} L${this.ownSrcLine}`);
-    return id;
-  }
-
-  // The ID a place's bytes belong to in this frame: a droppable local's slot ID (its alive
-  // flag's), else whatever ID the slot holds, else 0 (owned outside this frame).
-  private ownPlaceId(addr: string): number {
-    if (!this.ownOn) return 0;
-    const dl = this.droppableLocals.find(d => d.addr === addr);
-    return dl ? this.ownFlagId(dl.aliveFlag) : this.ownSlot.get(addr) ?? 0;
-  }
-
-  // Copy intent of an SSA read of a place (genExpr, for any expression that is not an
-  // isOwnedTempExpr producer). A moving read (`isMove`, and a `Heap` deref, which always
-  // zeroes its source) hands the destination a fresh ID: the generator already ended the
-  // source (alive flag cleared) or zeroed it. Any other read is a view.
-  private ownDeclareRead(lines: string[], val: string, expr: HIRExpr) {
-    if (this.ownVal.has(val) || this.ownView.has(val)) return;
-    const moving = (expr.kind === "HeapDeref" && !!expr.isMove) ||
-      ((expr.kind === "Ident" || expr.kind === "FieldAccess" || expr.kind === "IndexAccess") && !!expr.isMove);
-    if (expr.kind === "Ident") {
-      const local = this.locals.get(expr.name);
-      if (local?.isRef) { this.ownView.set(val, this.ownViewMarker(lines, 0, `ref:${expr.name}`)); return; }
-      if (moving) { this.ownMakeVal(lines, val, `move:${expr.name}`); return; }
-      const src = local ? this.ownPlaceId(this.localAddr(expr.name)) : 0;
-      this.ownView.set(val, this.ownViewMarker(lines, src, expr.name));
-      return;
-    }
-    if (expr.kind === "FieldAccess" || expr.kind === "IndexAccess" || expr.kind === "HeapDeref" || expr.kind === "PtrDeref") {
-      if (moving) this.ownMakeVal(lines, val, `move:${expr.kind}`);
-      else this.ownView.set(val, this.ownViewMarker(lines, 0, expr.kind));
-      return;
-    }
-    // `opt!`/`res?` over a place that is not zeroed (unwrapMovesPayload): the place keeps
-    // the payload, so the result borrows it. Over any other operand (a combinator's
-    // result) the ok path ends the operand's ID and the payload moves out with it.
-    if (expr.kind === "Unwrap" || expr.kind === "Propagate") {
-      const place = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"].includes(expr.operand.kind);
-      if (place) this.ownView.set(val, this.ownViewMarker(lines, 0, expr.kind));
-      else this.ownMakeVal(lines, val, `${expr.kind}-payload`);
-      return;
-    }
-    if (Codegen.OWN_FRESH_KINDS.has(expr.kind)) { this.ownMakeVal(lines, val, expr.kind); return; }
-    if (Codegen.OWN_STATIC_KINDS.has(expr.kind)) this.ownStatic.add(val);
-  }
-
-  // Producers of an owning type whose value has nothing to free.
-  private static OWN_STATIC_KINDS = new Set<string>(["StringLit"]);
-  // Producers of a fresh owned value that isOwnedTempExpr leaves out (it lists only what
-  // codegen drops when discarded): the value is new, so the copy intent is a make.
-  private static OWN_FRESH_KINDS = new Set<string>(["HashMapNew", "Closure", "HeapCreate", "OptionOp", "ArrayRepeat"]);
-
-  // The copy intent of storing SSA value `val` of type `tk`. In ledger mode an owned value
-  // that no generator declared (made, moved or viewed) is a codegen error: a new path that
-  // copies owned bytes has to say which of the three it is.
-  private ownValIntent(val: string, tk: TypeKind): CopyDecl {
-    if (!this.needsDropCg(tk)) return { intent: "plain", type: tk };
-    if (!this.ownOn || !val.startsWith("%")) return { intent: "move", type: tk };
-    if (this.ownView.has(val)) return { intent: "view", type: tk };
-    if (this.ownVal.has(val)) return { intent: "move", type: tk };
-    if (this.ownStatic.has(val)) return { intent: "clone", type: tk };
-    throw new Error(`own-ledger: undeclared copy of owned ${typeName(tk)} value ${val} from ${this.ownProducer.get(val) ?? "?"} (no make, move or view declared for it)\n${this.ownCallSite()}`);
-  }
-
-  private ownCheckCopy(copy: CopyDecl, what: string) {
-    if (this.ownOn && copy.intent === "plain" && this.needsDropCg(copy.type)) {
-      throw new Error(`own-ledger: byte copy of owned ${typeName(copy.type)} (${what}) declared plain; say move, view or clone\n${this.ownCallSite()}`);
-    }
-  }
-
-  private ownCallSite(): string {
-    return (new Error().stack ?? "").split("\n").slice(3, 7).join("\n");
-  }
-
-  // An assignment stored the owned value `id` at `target`. A droppable local's slot takes
-  // it over (rearmAssignedLocal re-makes the slot right after); any other place (a field,
-  // an element, a global) takes it off this frame's books.
-  private ownAssigned(lines: string[], target: string, id: number | undefined) {
-    if (!this.ownOn || !id) return;
-    if (this.droppableLocals.some(d => d.addr === target)) this.ownSlot.set(target, id);
-    else this.ownEnd(lines, id, "STORE");
-  }
-
-  // One branch of a Result combinator consumed the receiver at `addr`: the side without a
-  // callback forwards its payload (a move); the callback side passes the payload by value
-  // (an argument) or lends it (`&T`), and codegen drops a lent owning payload after the
-  // call (dropLentPayload in genOptionOp; `lentDropped` says whether this branch did).
-  // A receiver the op only views (a named one the checker did not move in) is ended only
-  // where the branch really disposes of an owning payload, so each such end is a finding.
-  private ownEndResultRecv(lines: string[], addr: string, callbackSide: boolean, variant: EnumVariant, paramIsRef: boolean, lentDropped: boolean) {
-    if (!this.ownOn) return;
-    const id = this.ownSlot.get(addr);
-    if (!id) return;
-    const payload = variant.fieldTypeKinds[0];
-    const owning = !!payload && this.needsDropCg(payload);
-    if (this.ownViewIds.has(id) && !owning) return;
-    if (!callbackSide || !owning) this.ownEnd(lines, id, "MOVE");
-    else if (!paramIsRef) this.ownEnd(lines, id, "ARG");
-    else if (lentDropped) this.ownEnd(lines, id, "DROP");
-  }
-
-  // An arm's tail value stored into an if/match result slot: bit 1 an owned value (its ID
-  // ends here and the result is made below), bit 2 a view (the result is then a view), bit
-  // 4 a value that owns nothing. The store is a copy like any other, so it must be declared.
-  private ownIntoResult(lines: string[], slot: string, val: string) {
-    if (!this.ownOn || !this.ownResultSlots.has(slot)) return;
-    const rs = this.ownResultSlots.get(slot)!;
-    const intent = this.ownValIntent(val, rs.type).intent;
-    if (intent === "move" && this.ownVal.has(val)) {
-      this.ownEndVal(lines, val, "MOVE");
-      rs.arms |= 1;
-    } else if (intent === "view") {
-      rs.arms |= 2;
-    } else {
-      rs.arms |= 4;
-    }
-  }
-
-  private ownResultMade(lines: string[], slot: string, result: string, expr: HIRExpr) {
-    if (!this.ownOn) return;
-    const arms = this.ownResultSlots.get(slot)?.arms ?? 0;
-    if (arms & 1) {
-      if (!this.isOwnedTempExpr(expr)) this.ownMakeVal(lines, result, `${expr.kind}-moved-arm`);
-    } else if (arms & 2) {
-      this.ownView.set(result, this.ownViewMarker(lines, 0, `${expr.kind}-viewed-arm`));
-    } else {
-      this.ownStatic.add(result);
-    }
-  }
-
-  // A value copied whole from one frame slot to another (a spill through a scratch slot).
-  private ownMoveSlot(from: string, to: string) {
-    if (!this.ownOn) return;
-    const id = this.ownSlot.get(from);
-    if (id) { this.ownSlot.delete(from); this.ownSlot.set(to, id); }
-  }
-
-  private ownFlagIds = new Set<number>();
-  private ownFlagId(flag: string): number {
-    let id = this.ownFlag.get(flag);
-    if (!id) { id = this.ownNextId++; this.ownFlag.set(flag, id); this.ownFlagIds.add(id); }
-    return id;
-  }
-
-  // `store i1 1` into a droppable local's alive flag: the slot owns a value again. A value
-  // that reached `addr` with its own ID (a call result, a moved element) hands over to the
-  // slot's ID here, so the slot's guarded drop is what must end it.
-  private ownSetAlive(lines: string[], flag: string, addr: string, origin: string) {
-    lines.push(`  store i1 1, ptr ${flag}`);
-    const fieldFlags = this.fieldMoveFlags.get(addr);
-    if (fieldFlags) for (const f of fieldFlags.values()) lines.push(`  store i1 1, ptr ${f}`);
-    if (!this.ownOn) return;
-    const id = this.ownFlagId(flag);
-    const prev = this.ownSlot.get(addr);
-    if (prev && prev !== id) this.ownEnd(lines, prev, "MOVE");
-    this.ownSlot.set(addr, id);
-    lines.push(`  call void @__milo_own_make(i64 ${id}) ; own ${origin.replace(/\s/g, "_")} L${this.ownSrcLine}`);
-  }
-
-  // `store i1 0` into an alive flag outside a drop: the value left the slot.
-  private ownClearAlive(lines: string[], flag: string, kind: OwnEndKind) {
-    lines.push(`  store i1 0, ptr ${flag}`);
-    if (!this.ownOn) return;
-    this.ownEnd(lines, this.ownFlagId(flag), kind);
-  }
-
-  // Swap in fresh per-function ledger maps (a nested closure body, a synthesized helper);
-  // the returned thunk restores the enclosing function's.
-  // The first function entered while ownKeyExtractor is set is the sortByKey extractor
-  // closure itself; one nested inside it gets the flag cleared.
-  private ownEnterFn(): () => void {
-    const saved = [this.ownVal, this.ownSlot, this.ownFlag, this.ownView, this.ownStatic, this.ownSrcLine, this.ownReturnsView] as const;
-    this.ownVal = new Map(); this.ownSlot = new Map(); this.ownFlag = new Map(); this.ownView = new Map(); this.ownStatic = new Set();
-    this.ownReturnsView = this.ownKeyExtractor;
-    this.ownKeyExtractor = false;
-    return () => { [this.ownVal, this.ownSlot, this.ownFlag, this.ownView, this.ownStatic, this.ownSrcLine, this.ownReturnsView] = saved; };
-  }
-  // Set while a sortByKey's callback is generated / inside its extractor's body.
-  private ownKeyExtractor = false;
-  private ownReturnsView = false;
-
-  // Verify the finished module's markers, keep the findings, and strip them so clang sees
-  // the same IR a normal build would. MILO_OWN_LEDGER_KEEP=1 keeps them (declared) for
-  // reading the IR the findings' line numbers point into.
-  private ownFinish() {
-    if (!this.ownOn) return;
-    const flat = this.output.join("\n").split("\n");
-    this.ownFindings = verifyOwnLedger(flat);
-    for (const f of this.ownFindings) console.error(`own-ledger: ${formatOwnFinding(f)}`);
-    if (process.env.MILO_OWN_LEDGER_KEEP === "1") {
-      flat.push("declare void @__milo_own_make(i64)", "declare void @__milo_own_end(i64, i32)", "declare void @__milo_own_guard(i64, i1)", "declare void @__milo_own_view(i64, i64)");
-      this.output = flat;
-    } else {
-      this.output = stripOwnLedger(flat);
-    }
-  }
 }
