@@ -1,6 +1,6 @@
 {
   "src/codegen-dwarf.ts": 33,
   "src/codegen-map.ts": 1,
-  "src/codegen-string.ts": 300,
+  "src/codegen-string.ts": 212,
   "src/codegen.ts": 3657
 }

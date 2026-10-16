@@ -4,7 +4,7 @@ import type { HIRExpr, HIRArg } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { TargetInfo } from "./target";
-import type { NameSource } from "./ir";
+import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Val, type NameSource } from "./ir";
 import type { Gen, EnumLayout, EnumVariant } from "./codegen";
 
 // Scratch size for one formatted f64. Worst case at 17 significant digits is
@@ -50,145 +50,114 @@ interface CodegenCtx extends NameSource {
   needsBoundsCheck: boolean;
 }
 
+const STRING = Ty.of("%String");
+const I64_0 = val("0", Ty.i64);
+
+// { ptr, len, cap } as three insertvalues into undef, the %String layout every method here builds.
+function makeString(b: Builder, data: Val, len: Val, cap: Val): Val {
+  const s0 = b.insertvalue(val("undef", STRING), data, 0);
+  const s1 = b.insertvalue(s0, len, 1);
+  return b.insertvalue(s1, cap, 2);
+}
+
 export function genStringWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   const [capLines, capVal] = ctx.genExpr(expr.capacity);
   lines.push(...capLines);
   ctx.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
+  const b = new LlvmTextBuilder(lines, ctx);
   // At least one byte. A String owns its buffer exactly when cap > 0 (cap 0 marks a
   // borrowed literal, which drop skips), and malloc(0) still hands back a live block:
   // `String.withCapacity(0)` was an owned buffer recorded as borrowed, leaked on drop,
   // and orphaned by the first push (which saw cap 0 and allocated afresh).
-  const isZero = ctx.nextTemp();
-  lines.push(`  ${isZero} = icmp eq i64 ${capVal}, 0`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = select i1 ${isZero}, i64 1, i64 ${capVal}`);
-  const buf = ctx.emitStrAlloc(lines, cap, "strcap", expr.span);
-  lines.push(`  store i8 0, ptr ${buf}`);
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %String ${s0}, i64 0, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${cap}, 2`);
-  return [lines, s2, "%String"];
+  const isZero = b.icmp("eq", val(capVal, Ty.i64), I64_0);
+  const cap = b.select(isZero, val("1", Ty.i64), val(capVal, Ty.i64));
+  const buf = val(ctx.emitStrAlloc(lines, cap.ref, "strcap", expr.span), Ty.ptr);
+  b.store(val("0", Ty.i8), buf);
+  return asGen(lines, makeString(b, buf, I64_0, cap));
 }
 
 export function genStringConcat(ctx: CodegenCtx, lines: string[], lv: string, rv: string): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
-  const aData = ctx.nextTemp();
-  lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-  const aLen = ctx.nextTemp();
-  lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-  const bData = ctx.nextTemp();
-  lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
-  const bLen = ctx.nextTemp();
-  lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-  const total = ctx.nextTemp();
-  lines.push(`  ${total} = add i64 ${aLen}, ${bLen}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const l = val(lv, STRING), r = val(rv, STRING);
+  const aData = b.extractvalue(l, 0, Ty.ptr);
+  const aLen = b.extractvalue(l, 1, Ty.i64);
+  const bData = b.extractvalue(r, 0, Ty.ptr);
+  const bLen = b.extractvalue(r, 1, Ty.i64);
+  const total = b.binop("add", aLen, bLen);
   // +1 for null terminator
-  const allocSz = ctx.nextTemp();
-  lines.push(`  ${allocSz} = add i64 ${total}, 1`);
-  const buf = ctx.emitStrAlloc(lines, allocSz, "strcat");
-  lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${aData}, i64 ${aLen})`);
-  const dst = ctx.nextTemp();
-  lines.push(`  ${dst} = getelementptr i8, ptr ${buf}, i64 ${aLen}`);
-  lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${bData}, i64 ${bLen})`);
+  const allocSz = b.binop("add", total, val("1", Ty.i64));
+  const buf = val(ctx.emitStrAlloc(lines, allocSz.ref, "strcat"), Ty.ptr);
+  b.callDiscard(Ty.ptr, "@memcpy", [buf, aData, aLen]);
+  const dst = b.gep(Ty.i8, buf, [aLen]);
+  b.callDiscard(Ty.ptr, "@memcpy", [dst, bData, bLen]);
   // null terminate
-  const nullPtr = ctx.nextTemp();
-  lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${total}`);
-  lines.push(`  store i8 0, ptr ${nullPtr}`);
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${total}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
-  return [lines, s2, "%String"];
+  const nullPtr = b.gep(Ty.i8, buf, [total]);
+  b.store(val("0", Ty.i8), nullPtr);
+  return asGen(lines, makeString(b, buf, total, allocSz));
 }
 
 export function genStringCmp(ctx: CodegenCtx, lines: string[], lv: string, rv: string, isEq: boolean): Gen {
   ctx.needsMemcmp = true;
-  const aLen = ctx.nextTemp();
-  lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-  const bLen = ctx.nextTemp();
-  lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-  const lenEq = ctx.nextTemp();
-  lines.push(`  ${lenEq} = icmp eq i64 ${aLen}, ${bLen}`);
-  const cmpDataLabel = ctx.nextLabel("str.cmpdata");
-  const cmpFalseLabel = ctx.nextLabel("str.short");
-  const cmpDoneLabel = ctx.nextLabel("str.done");
-  lines.push(`  br i1 ${lenEq}, label %${cmpDataLabel}, label %${cmpFalseLabel}`);
-  lines.push(`${cmpDataLabel}:`);
-  const aData = ctx.nextTemp();
-  lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-  const bData = ctx.nextTemp();
-  lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
-  const cmpResult = ctx.nextTemp();
-  lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${aLen})`);
-  const dataEq = ctx.nextTemp();
-  lines.push(`  ${dataEq} = icmp eq i32 ${cmpResult}, 0`);
-  lines.push(`  br label %${cmpDoneLabel}`);
-  lines.push(`${cmpFalseLabel}:`);
-  lines.push(`  br label %${cmpDoneLabel}`);
-  lines.push(`${cmpDoneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi i1 [${dataEq}, %${cmpDataLabel}], [false, %${cmpFalseLabel}]`);
-  if (!isEq) {
-    const negated = ctx.nextTemp();
-    lines.push(`  ${negated} = xor i1 ${result}, 1`);
-    return [lines, negated, "i1"];
-  }
-  return [lines, result, "i1"];
+  const b = new LlvmTextBuilder(lines, ctx);
+  const l = val(lv, STRING), r = val(rv, STRING);
+  const aLen = b.extractvalue(l, 1, Ty.i64);
+  const bLen = b.extractvalue(r, 1, Ty.i64);
+  const lenEq = b.icmp("eq", aLen, bLen);
+  const cmpData = b.newBlock("str.cmpdata");
+  const cmpFalse = b.newBlock("str.short");
+  const cmpDone = b.newBlock("str.done");
+  b.condBr(lenEq, cmpData, cmpFalse);
+  b.position(cmpData);
+  const aData = b.extractvalue(l, 0, Ty.ptr);
+  const bData = b.extractvalue(r, 0, Ty.ptr);
+  const cmpResult = b.call(Ty.i32, "@memcmp", [aData, bData, aLen]);
+  const dataEq = b.icmp("eq", cmpResult, val("0", Ty.i32));
+  b.br(cmpDone);
+  b.position(cmpFalse);
+  b.br(cmpDone);
+  b.position(cmpDone);
+  const result = b.phi(Ty.i1, [[dataEq, cmpData], [val("false", Ty.i1), cmpFalse]]);
+  if (!isEq) return asGen(lines, b.binop("xor", result, val("1", Ty.i1)));
+  return asGen(lines, result);
 }
 
 // lexicographic string ordering via memcmp on common prefix, then length tiebreak
 export function genStringOrd(ctx: CodegenCtx, lines: string[], lv: string, rv: string, op: string): Gen {
   ctx.needsMemcmp = true;
-  const aLen = ctx.nextTemp();
-  lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-  const bLen = ctx.nextTemp();
-  lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-  const aData = ctx.nextTemp();
-  lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-  const bData = ctx.nextTemp();
-  lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const l = val(lv, STRING), r = val(rv, STRING);
+  const aLen = b.extractvalue(l, 1, Ty.i64);
+  const bLen = b.extractvalue(r, 1, Ty.i64);
+  const aData = b.extractvalue(l, 0, Ty.ptr);
+  const bData = b.extractvalue(r, 0, Ty.ptr);
 
-  const aLessThanB = ctx.nextTemp();
-  lines.push(`  ${aLessThanB} = icmp ult i64 ${aLen}, ${bLen}`);
-  const minLen = ctx.nextTemp();
-  lines.push(`  ${minLen} = select i1 ${aLessThanB}, i64 ${aLen}, i64 ${bLen}`);
-  const cmpResult = ctx.nextTemp();
-  lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${minLen})`);
+  const aLessThanB = b.icmp("ult", aLen, bLen);
+  const minLen = b.select(aLessThanB, aLen, bLen);
+  const cmpResult = b.call(Ty.i32, "@memcmp", [aData, bData, minLen]);
 
-  const isZero = ctx.nextTemp();
-  lines.push(`  ${isZero} = icmp eq i32 ${cmpResult}, 0`);
-  const dataCmpLabel = ctx.nextLabel("str.orddata");
-  const lenCmpLabel = ctx.nextLabel("str.ordlen");
-  const doneLabel = ctx.nextLabel("str.orddone");
-  lines.push(`  br i1 ${isZero}, label %${lenCmpLabel}, label %${dataCmpLabel}`);
+  const isZero = b.icmp("eq", cmpResult, val("0", Ty.i32));
+  const dataCmp = b.newBlock("str.orddata");
+  const lenCmp = b.newBlock("str.ordlen");
+  const done = b.newBlock("str.orddone");
+  b.condBr(isZero, lenCmp, dataCmp);
 
   // prefix differs — compare memcmp result against 0
-  lines.push(`${dataCmpLabel}:`);
-  const dataPred = op === "<" || op === "<=" ? "slt" : "sgt";
-  const dataResult = ctx.nextTemp();
-  lines.push(`  ${dataResult} = icmp ${dataPred} i32 ${cmpResult}, 0`);
-  lines.push(`  br label %${doneLabel}`);
+  b.position(dataCmp);
+  const dataResult = b.icmp(op === "<" || op === "<=" ? "slt" : "sgt", cmpResult, val("0", Ty.i32));
+  b.br(done);
 
   // prefix equal — compare lengths
-  lines.push(`${lenCmpLabel}:`);
-  const lenPred = op === "<" ? "ult" : op === ">" ? "ugt" : op === "<=" ? "ule" : "uge";
-  const lenResult = ctx.nextTemp();
-  lines.push(`  ${lenResult} = icmp ${lenPred} i64 ${aLen}, ${bLen}`);
-  lines.push(`  br label %${doneLabel}`);
+  b.position(lenCmp);
+  const lenResult = b.icmp(op === "<" ? "ult" : op === ">" ? "ugt" : op === "<=" ? "ule" : "uge", aLen, bLen);
+  b.br(done);
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi i1 [${dataResult}, %${dataCmpLabel}], [${lenResult}, %${lenCmpLabel}]`);
-  return [lines, result, "i1"];
+  b.position(done);
+  return asGen(lines, b.phi(Ty.i1, [[dataResult, dataCmp], [lenResult, lenCmp]]));
 }
 
 // String.push(u8). The fast path stays inline: room for the byte and its NUL, and a
