@@ -71,6 +71,7 @@ export interface Builder {
   extractvalue(agg: Val, idx: number, elt: Ty): Val;
   insertvalue(agg: Val, elt: Val, idx: number): Val;
   phi(ty: Ty, incoming: [Val, Block][]): Val;
+  select(cond: Val, a: Val, b: Val): Val;
   /** A call whose result is used; `ret` must not be void. */
   call(ret: Ty, callee: string, args: Val[]): Val;
   /** A call printed with no result name: void, or a result nobody reads. */
@@ -143,6 +144,13 @@ export class LlvmTextBuilder implements Builder {
     if (ty.kind === "void") this.fail("phi of void");
     for (const [v] of incoming) if (v.ty.ll !== ty.ll) this.fail(`phi ${ty.ll} incoming ${v.ref} is ${v.ty.ll}`);
     return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${v.ref}, %${b.name}]`).join(", ")}`, ty);
+  }
+
+  select(cond: Val, a: Val, b: Val): Val {
+    if (cond.ty.ll !== "i1") this.fail(`select condition ${cond.ref} is ${cond.ty.ll}, not i1`);
+    this.sameTy("select", a, b);
+    if (a.ty.kind === "void") this.fail("select of void");
+    return this.def(`select i1 ${cond.ref}, ${a.ty.ll} ${a.ref}, ${b.ty.ll} ${b.ref}`, a.ty);
   }
 
   call(ret: Ty, callee: string, args: Val[]): Val {

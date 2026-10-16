@@ -41,6 +41,9 @@ describe("LlvmTextBuilder invariants", () => {
     const b = builder();
     expect(() => b.binop("xor", val("%a", Ty.i64), val("%b", Ty.i32))).toThrow("operand types differ");
     expect(() => b.condBr(val("%c", Ty.i8), b.newBlock("t"), b.newBlock("f"))).toThrow("not i1");
+    expect(() => b.select(val("%c", Ty.i8), val("1", Ty.i64), val("2", Ty.i64))).toThrow("not i1");
+    expect(() => b.select(val("%c", Ty.i1), val("1", Ty.i64), val("2", Ty.i32))).toThrow("operand types differ");
+    expect(() => b.select(val("%c", Ty.i1), val("%a", Ty.void), val("%b", Ty.void))).toThrow("select of void");
   });
 });
 
@@ -56,6 +59,7 @@ test("prints the same text the string codegen did", () => {
   b.position(done);
   const r = b.phi(Ty.i1, [[val("true", Ty.i1), done]]);
   b.callDiscard(Ty.ptr, "@memset", [g, val("0", Ty.i32), x]);
+  b.select(r, x, val("-1", Ty.i64));
   const m = b.insertvalue(val("undef", Ty.of("%HashMap")), r, 3);
   b.extractvalue(m, 3, Ty.i1);
   expect(lines).toEqual([
@@ -68,7 +72,8 @@ test("prints the same text the string codegen did", () => {
     "done0:",
     "  %t.4 = phi i1 [true, %done0]",
     "  call ptr @memset(ptr %t.2, i32 0, i64 %t.1)",
-    "  %t.5 = insertvalue %HashMap undef, i1 %t.4, 3",
-    "  %t.6 = extractvalue %HashMap %t.5, 3",
+    "  %t.5 = select i1 %t.4, i64 %t.1, i64 -1",
+    "  %t.6 = insertvalue %HashMap undef, i1 %t.4, 3",
+    "  %t.7 = extractvalue %HashMap %t.6, 3",
   ]);
 });

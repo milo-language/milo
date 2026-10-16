@@ -64,11 +64,43 @@ export interface CodegenMapCtx {
   needsGetentropy: boolean;
 }
 
+const i64c = (n: number): Val => val(String(n), Ty.i64);
+const i32c = (n: number): Val => val(String(n), Ty.i32);
+const i8c = (n: number): Val => val(String(n), Ty.i8);
+const HASHMAP_TY = Ty.of("%HashMap");
+
+// Address of field `idx` of the %HashMap at `map`.
+function hmField(b: Builder, map: Val, idx: number): Val {
+  return b.gep(HASHMAP_TY, map, [i32c(0), i32c(idx)]);
+}
+
+// Address of field `idx` (1 = key, 2 = value; 0 is the state byte) of a map entry.
+function entryField(b: Builder, entryTy: Ty, entry: Val, idx: number): Val {
+  return b.gep(entryTy, entry, [i32c(0), i32c(idx)]);
+}
+
+// sizeof(entry) as an i64, via the null-GEP idiom.
+function entrySizeOf(b: Builder, entryTy: Ty): Val {
+  const p = b.gep(entryTy, val("null", Ty.ptr), [i32c(1)]);
+  return b.cast("ptrtoint", p, Ty.i64);
+}
+
+// slotAddr = (slot + 1) & mask
+function probeAdvance(b: Builder, slot: Val, mask: Val, slotAddr: Val): void {
+  const next = b.binop("add", slot, i64c(1));
+  const wrapped = b.binop("and", next, mask);
+  b.store(wrapped, slotAddr);
+}
+
 function emitFnvHash(ctx: CodegenMapCtx, lines: string[], keyVal: string, keyType: TypeKind, seedReg: string): string {
   const b = new LlvmTextBuilder(lines, ctx);
+  return fnvHash(ctx, b, val(keyVal, Ty.of(ctx.llvmType(keyType))), keyType, val(seedReg, Ty.i64)).ref;
+}
+
+function fnvHash(ctx: CodegenMapCtx, b: Builder, key: Val, keyType: TypeKind, seed: Val): Val {
   // FNV-1a: hash = offset_basis ^ seed; then fold the key's bytes in.
-  const h0 = b.binop("xor", val("14695981039346656037", Ty.i64), val(seedReg, Ty.i64));
-  return hashInto(ctx, b, h0, val(keyVal, Ty.of(ctx.llvmType(keyType))), keyType).ref;
+  const h0 = b.binop("xor", val("14695981039346656037", Ty.i64), seed);
+  return hashInto(ctx, b, h0, key, keyType);
 }
 
 // Fold `v`'s bytes into the running FNV-1a accumulator `acc`, returning the new
@@ -202,11 +234,11 @@ function mapReceiverPtr(ctx: CodegenMapCtx, lines: string[], mapExpr: HIRExpr): 
   if (ptr !== "null") return { ptr, tempSlot: null };
   const [exprLines, exprVal, exprTy] = ctx.genExpr(mapExpr);
   lines.push(...exprLines);
-  const slot = ctx.nextTemp();
-  lines.push(`  ${slot} = alloca ${exprTy}`);
-  lines.push(`  store ${exprTy} ${exprVal}, ptr ${slot}`);
-  ctx.ownValToSlot(exprVal, slot);
-  return { ptr: slot, tempSlot: slot };
+  const b = new LlvmTextBuilder(lines, ctx);
+  const slot = b.alloca(Ty.of(exprTy));
+  b.store(val(exprVal, Ty.of(exprTy)), slot);
+  ctx.ownValToSlot(exprVal, slot.ref);
+  return { ptr: slot.ref, tempSlot: slot.ref };
 }
 
 export function genHashMapNew(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapNew" }, lines: string[]): Gen {
@@ -261,47 +293,36 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
 
   const keyType = mapType.key;
   const valueType = mapType.value;
-  const keyTy = ctx.llvmType(keyType);
-  const valTy = ctx.llvmType(valueType);
-  const entryTy = ctx.hashMapEntryType(keyType, valueType);
-
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const valTy = Ty.of(ctx.llvmType(valueType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+  const b = new LlvmTextBuilder(lines, ctx);
+  const map = val(mapPtr, Ty.ptr);
   // lazy seed init
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const seedIsZero = ctx.nextTemp();
-  lines.push(`  ${seedIsZero} = icmp eq i64 ${seed}, 0`);
-  const initLabel = ctx.nextLabel("seed.init");
-  const haveLabel = ctx.nextLabel("seed.have");
-  const preLabel = ctx.nextLabel("seed.pre");
-  lines.push(`  br label %${preLabel}`);
-  lines.push(`${preLabel}:`);
-  lines.push(`  br i1 ${seedIsZero}, label %${initLabel}, label %${haveLabel}`);
-  lines.push(`${initLabel}:`);
-  const newSeed = ctx.nextTemp();
-  lines.push(`  ${newSeed} = call i64 @${HASH_SEED_FN}()`);
-  const isStillZero = ctx.nextTemp();
-  lines.push(`  ${isStillZero} = icmp eq i64 ${newSeed}, 0`);
-  const finalSeed = ctx.nextTemp();
-  lines.push(`  ${finalSeed} = select i1 ${isStillZero}, i64 14695981039346656037, i64 ${newSeed}`);
-  lines.push(`  store i64 ${finalSeed}, ptr ${seedPtr}`);
-  lines.push(`  br label %${haveLabel}`);
-  lines.push(`${haveLabel}:`);
-  const activeSeed = ctx.nextTemp();
-  lines.push(`  ${activeSeed} = phi i64 [${seed}, %${preLabel}], [${finalSeed}, %${initLabel}]`);
+  const seedPtr = hmField(b, map, HM_SEED);
+  const seed = b.load(Ty.i64, seedPtr);
+  const seedIsZero = b.icmp("eq", seed, i64c(0));
+  const initLabel = b.newBlock("seed.init");
+  const haveLabel = b.newBlock("seed.have");
+  const preLabel = b.newBlock("seed.pre");
+  b.br(preLabel);
+  b.position(preLabel);
+  b.condBr(seedIsZero, initLabel, haveLabel);
+  b.position(initLabel);
+  const newSeed = b.call(Ty.i64, `@${HASH_SEED_FN}`, []);
+  const isStillZero = b.icmp("eq", newSeed, i64c(0));
+  const finalSeed = b.select(isStillZero, val("14695981039346656037", Ty.i64), newSeed);
+  b.store(finalSeed, seedPtr);
+  b.br(haveLabel);
+  b.position(haveLabel);
+  const activeSeed = b.phi(Ty.i64, [[seed, preLabel], [finalSeed, initLabel]]);
 
   // load cap and len
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_LEN}`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
+  const lenPtr = hmField(b, map, HM_LEN);
+  const len = b.load(Ty.i64, lenPtr);
+  const capPtr = hmField(b, map, HM_CAP);
+  const cap = b.load(Ty.i64, capPtr);
+  const dataFieldPtr = hmField(b, map, HM_DATA);
 
   // resize check: (len + tombstones + 1) * 4 >= cap * 3
   //
@@ -310,126 +331,103 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
   // lets insert/remove churn tombstone every slot while len stays near zero, and then
   // no probe terminates. Rehashing drops tombstones, which is what makes this the fix
   // for both that and the duplicate-key bug.
-  const tombsPtr = ctx.nextTemp();
-  lines.push(`  ${tombsPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_TOMBS}`);
-  const tombs = ctx.nextTemp();
-  lines.push(`  ${tombs} = load i64, ptr ${tombsPtr}`);
-  const lenPlusTombs = ctx.nextTemp();
-  lines.push(`  ${lenPlusTombs} = add i64 ${len}, ${tombs}`);
-  const lenPlus1 = ctx.nextTemp();
-  lines.push(`  ${lenPlus1} = add i64 ${lenPlusTombs}, 1`);
-  const lhs = ctx.nextTemp();
-  lines.push(`  ${lhs} = mul i64 ${lenPlus1}, 4`);
-  const rhs = ctx.nextTemp();
-  lines.push(`  ${rhs} = mul i64 ${cap}, 3`);
-  const needResize = ctx.nextTemp();
-  lines.push(`  ${needResize} = icmp uge i64 ${lhs}, ${rhs}`);
-  const resizeLabel = ctx.nextLabel("hm.resize");
-  const insertLabel = ctx.nextLabel("hm.insert");
-  lines.push(`  br i1 ${needResize}, label %${resizeLabel}, label %${insertLabel}`);
+  const tombsPtr = hmField(b, map, HM_TOMBS);
+  const tombs = b.load(Ty.i64, tombsPtr);
+  const lenPlusTombs = b.binop("add", len, tombs);
+  const lenPlus1 = b.binop("add", lenPlusTombs, i64c(1));
+  const lhs = b.binop("mul", lenPlus1, i64c(4));
+  const rhs = b.binop("mul", cap, i64c(3));
+  const needResize = b.icmp("uge", lhs, rhs);
+  const resizeLabel = b.newBlock("hm.resize");
+  const insertLabel = b.newBlock("hm.insert");
+  b.condBr(needResize, resizeLabel, insertLabel);
 
   // resize block
-  lines.push(`${resizeLabel}:`);
-  const newCap = ctx.nextTemp();
-  lines.push(`  ${newCap} = shl i64 ${cap}, 1`); // cap * 2
-  const entrySize = ctx.nextTemp();
-  lines.push(`  ${entrySize} = getelementptr ${entryTy}, ptr null, i32 1`);
-  const entrySizeI = ctx.nextTemp();
-  lines.push(`  ${entrySizeI} = ptrtoint ptr ${entrySize} to i64`);
-  const { buf: newData, bytes: newTotalSize } = ctx.emitAllocBytes(lines, entrySizeI, newCap, "hmresize", span);
+  b.position(resizeLabel);
+  const newCap = b.binop("shl", cap, i64c(1)); // cap * 2
+  const entrySizeI = entrySizeOf(b, entryTy);
+  const { buf: newDataRef, bytes: newTotalSize } = ctx.emitAllocBytes(lines, entrySizeI.ref, newCap.ref, "hmresize", span);
+  const newData = val(newDataRef, Ty.ptr);
   ctx.needsMemset = true;
-  lines.push(`  call ptr @memset(ptr ${newData}, i32 0, i64 ${newTotalSize})`);
+  b.callDiscard(Ty.ptr, "@memset", [newData, i32c(0), val(newTotalSize, Ty.i64)]);
   // rehash all occupied entries from old data
-  const oldData = ctx.nextTemp();
-  lines.push(`  ${oldData} = load ptr, ptr ${dataFieldPtr}`);
-  const rehashCond = ctx.nextLabel("rehash.cond");
-  const rehashBody = ctx.nextLabel("rehash.body");
-  const rehashEnd = ctx.nextLabel("rehash.end");
-  const riAddr = ctx.nextTemp();
-  lines.push(`  ${riAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${riAddr}`);
-  lines.push(`  br label %${rehashCond}`);
-  lines.push(`${rehashCond}:`);
-  const ri = ctx.nextTemp();
-  lines.push(`  ${ri} = load i64, ptr ${riAddr}`);
-  const riCmp = ctx.nextTemp();
-  lines.push(`  ${riCmp} = icmp ult i64 ${ri}, ${cap}`);
-  lines.push(`  br i1 ${riCmp}, label %${rehashBody}, label %${rehashEnd}`);
-  lines.push(`${rehashBody}:`);
-  const oldEntryPtr = ctx.nextTemp();
-  lines.push(`  ${oldEntryPtr} = getelementptr ${entryTy}, ptr ${oldData}, i64 ${ri}`);
-  const oldState = ctx.nextTemp();
-  lines.push(`  ${oldState} = load i8, ptr ${oldEntryPtr}`);
-  const isOccupied = ctx.nextTemp();
-  lines.push(`  ${isOccupied} = icmp eq i8 ${oldState}, 1`);
-  const rehashInsert = ctx.nextLabel("rehash.ins");
-  const rehashNext = ctx.nextLabel("rehash.next");
-  lines.push(`  br i1 ${isOccupied}, label %${rehashInsert}, label %${rehashNext}`);
-  lines.push(`${rehashInsert}:`);
+  const oldData = b.load(Ty.ptr, dataFieldPtr);
+  const rehashCond = b.newBlock("rehash.cond");
+  const rehashBody = b.newBlock("rehash.body");
+  const rehashEnd = b.newBlock("rehash.end");
+  const riAddr = b.alloca(Ty.i64);
+  b.store(i64c(0), riAddr);
+  b.br(rehashCond);
+  b.position(rehashCond);
+  const ri = b.load(Ty.i64, riAddr);
+  const riCmp = b.icmp("ult", ri, cap);
+  b.condBr(riCmp, rehashBody, rehashEnd);
+  b.position(rehashBody);
+  const oldEntryPtr = b.gep(entryTy, oldData, [ri]);
+  const oldState = b.load(Ty.i8, oldEntryPtr);
+  const isOccupied = b.icmp("eq", oldState, i8c(1));
+  const rehashInsert = b.newBlock("rehash.ins");
+  const rehashNext = b.newBlock("rehash.next");
+  b.condBr(isOccupied, rehashInsert, rehashNext);
+  b.position(rehashInsert);
   // load key from old entry
-  const oldKeyPtr = ctx.nextTemp();
-  lines.push(`  ${oldKeyPtr} = getelementptr ${entryTy}, ptr ${oldEntryPtr}, i32 0, i32 1`);
-  const oldKey = ctx.nextTemp();
-  lines.push(`  ${oldKey} = load ${keyTy}, ptr ${oldKeyPtr}`);
+  const oldKeyPtr = entryField(b, entryTy, oldEntryPtr, 1);
+  const oldKey = b.load(keyTy, oldKeyPtr);
   // load value from old entry
-  const oldValPtr = ctx.nextTemp();
-  lines.push(`  ${oldValPtr} = getelementptr ${entryTy}, ptr ${oldEntryPtr}, i32 0, i32 2`);
-  const oldVal = ctx.nextTemp();
-  lines.push(`  ${oldVal} = load ${valTy}, ptr ${oldValPtr}`);
+  const oldValPtr = entryField(b, entryTy, oldEntryPtr, 2);
+  const oldVal = b.load(valTy, oldValPtr);
   // hash key with new mask
-  const rehashHash = emitFnvHash(ctx, lines, oldKey, keyType, activeSeed);
-  const newMask = ctx.nextTemp();
-  lines.push(`  ${newMask} = sub i64 ${newCap}, 1`);
+  const rehashHash = fnvHash(ctx, b, oldKey, keyType, activeSeed);
+  const newMask = b.binop("sub", newCap, i64c(1));
   // probe in new array
-  const rjAddr = ctx.nextTemp();
-  lines.push(`  ${rjAddr} = alloca i64`);
-  const rehashSlot0 = ctx.nextTemp();
-  lines.push(`  ${rehashSlot0} = and i64 ${rehashHash}, ${newMask}`);
-  lines.push(`  store i64 ${rehashSlot0}, ptr ${rjAddr}`);
-  const rehashProbeCond = ctx.nextLabel("rehash.probe");
-  lines.push(`  br label %${rehashProbeCond}`);
-  lines.push(`${rehashProbeCond}:`);
-  const rj = ctx.nextTemp();
-  lines.push(`  ${rj} = load i64, ptr ${rjAddr}`);
-  const newEntryPtr = ctx.nextTemp();
-  lines.push(`  ${newEntryPtr} = getelementptr ${entryTy}, ptr ${newData}, i64 ${rj}`);
-  const newState = ctx.nextTemp();
-  lines.push(`  ${newState} = load i8, ptr ${newEntryPtr}`);
-  const newEmpty = ctx.nextTemp();
-  lines.push(`  ${newEmpty} = icmp eq i8 ${newState}, 0`);
-  const rehashStore = ctx.nextLabel("rehash.store");
-  const rehashProbeNext = ctx.nextLabel("rehash.pnext");
-  lines.push(`  br i1 ${newEmpty}, label %${rehashStore}, label %${rehashProbeNext}`);
-  lines.push(`${rehashStore}:`);
-  lines.push(`  store i8 1, ptr ${newEntryPtr}`);
-  const newKeyPtr = ctx.nextTemp();
-  lines.push(`  ${newKeyPtr} = getelementptr ${entryTy}, ptr ${newEntryPtr}, i32 0, i32 1`);
-  lines.push(`  store ${keyTy} ${oldKey}, ptr ${newKeyPtr}`);
-  const newValPtr = ctx.nextTemp();
-  lines.push(`  ${newValPtr} = getelementptr ${entryTy}, ptr ${newEntryPtr}, i32 0, i32 2`);
-  lines.push(`  store ${valTy} ${oldVal}, ptr ${newValPtr}`);
-  lines.push(`  br label %${rehashNext}`);
-  lines.push(`${rehashProbeNext}:`);
-  const rjNext = ctx.nextTemp();
-  lines.push(`  ${rjNext} = add i64 ${rj}, 1`);
-  const rjWrapped = ctx.nextTemp();
-  lines.push(`  ${rjWrapped} = and i64 ${rjNext}, ${newMask}`);
-  lines.push(`  store i64 ${rjWrapped}, ptr ${rjAddr}`);
-  lines.push(`  br label %${rehashProbeCond}`);
-  lines.push(`${rehashNext}:`);
-  const riNext = ctx.nextTemp();
-  lines.push(`  ${riNext} = add i64 ${ri}, 1`);
-  lines.push(`  store i64 ${riNext}, ptr ${riAddr}`);
-  lines.push(`  br label %${rehashCond}`);
-  lines.push(`${rehashEnd}:`);
+  const rjAddr = b.alloca(Ty.i64);
+  const rehashSlot0 = b.binop("and", rehashHash, newMask);
+  b.store(rehashSlot0, rjAddr);
+  const rehashProbeCond = b.newBlock("rehash.probe");
+  b.br(rehashProbeCond);
+  b.position(rehashProbeCond);
+  const rj = b.load(Ty.i64, rjAddr);
+  const newEntryPtr = b.gep(entryTy, newData, [rj]);
+  const newState = b.load(Ty.i8, newEntryPtr);
+  const newEmpty = b.icmp("eq", newState, i8c(0));
+  const rehashStore = b.newBlock("rehash.store");
+  const rehashProbeNext = b.newBlock("rehash.pnext");
+  b.condBr(newEmpty, rehashStore, rehashProbeNext);
+  b.position(rehashStore);
+  b.store(i8c(1), newEntryPtr);
+  const newKeyPtr = entryField(b, entryTy, newEntryPtr, 1);
+  b.store(oldKey, newKeyPtr);
+  const newValPtr = entryField(b, entryTy, newEntryPtr, 2);
+  b.store(oldVal, newValPtr);
+  b.br(rehashNext);
+  b.position(rehashProbeNext);
+  probeAdvance(b, rj, newMask, rjAddr);
+  b.br(rehashProbeCond);
+  b.position(rehashNext);
+  const riNext = b.binop("add", ri, i64c(1));
+  b.store(riNext, riAddr);
+  b.br(rehashCond);
+  b.position(rehashEnd);
   // free old data, update map fields
-  lines.push(`  call void @free(ptr ${oldData})`);
-  lines.push(`  store ptr ${newData}, ptr ${dataFieldPtr}`);
-  lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
+  b.callDiscard(Ty.void, "@free", [oldData]);
+  b.store(newData, dataFieldPtr);
+  b.store(newCap, capPtr);
   // The rehash loop above relocates occupied slots only, so the new table has none.
-  lines.push(`  store i64 0, ptr ${tombsPtr}`);
-  lines.push(`  br label %${insertLabel}`);
+  b.store(i64c(0), tombsPtr);
+  b.br(insertLabel);
+  emitInsertProbe(ctx, lines, {
+    insertLabel: insertLabel.name, capPtr: capPtr.ref, dataFieldPtr: dataFieldPtr.ref, seedPtr: seedPtr.ref,
+    tombsPtr: tombsPtr.ref, lenPtr: lenPtr.ref, entryTy: entryTy.ll, keyTy: keyTy.ll, valTy: valTy.ll,
+    keyVal, valVal, keyType, valueType,
+  });
+}
 
+// The insert block proper: probe for the key's slot, overwrite or place, bump len.
+function emitInsertProbe(ctx: CodegenMapCtx, lines: string[], p: {
+  insertLabel: string; capPtr: string; dataFieldPtr: string; seedPtr: string; tombsPtr: string; lenPtr: string;
+  entryTy: string; keyTy: string; valTy: string; keyVal: string; valVal: string; keyType: TypeKind; valueType: TypeKind;
+}): void {
+  const { insertLabel, capPtr, dataFieldPtr, seedPtr, tombsPtr, lenPtr, entryTy, keyTy, valTy, keyVal, valVal, keyType, valueType } = p;
   // insert block — probe for slot
   lines.push(`${insertLabel}:`);
   const curCap = ctx.nextTemp();
