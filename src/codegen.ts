@@ -15,7 +15,7 @@ import {
 import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
-  HM_DATA, HM_CAP, HM_TOMBS, HASHMAP_FIELDS, HASH_SEED_FN,
+  HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
 import { DwarfEmitter, markDbg } from "./codegen-dwarf";
@@ -23,6 +23,9 @@ import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type 
 import { resolve, relative, isAbsolute } from "path";
 import { STDLIB_DIR } from "./stdlibBundle";
 import { must } from "./must";
+import {
+  DropGlueSeen, emitDeepCloneFromPtr, emitDropValueBody, ensureStructDropHelper, dropStructFieldsExcept,
+} from "./codegen-drop";
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
 import { OWN_END_KINDS, type OwnEndKind, verifyOwnLedger, stripOwnLedger, formatOwnFinding, type OwnFinding } from "./own-ledger";
@@ -332,27 +335,26 @@ export class Codegen {
   // so a consumer that never drops it (the shape blockValueOwnsResult refuses) shows up.
   private ownResultSlots = new Map<string, { arms: number; type: TypeKind }>();
   public ownFindings: OwnFinding[] = [];
-  private droppableEnums = new Set<string>();
-  private dropImpls = new Set<string>();
+  public droppableEnums = new Set<string>();
+  public dropImpls = new Set<string>();
+  public dropGlueSeen = new DropGlueSeen();
   private structDropCache = new Map<string, boolean>();
-  private generatedDropHelpers = new Set<string>();
   private generatedJsonEscapeHelper = false;
   private generatedF64FormatHelper = false;
   private generatedF32FormatHelper = false;
   private needsStrtof = false;
-  private generatedStructDropHelpers = new Set<string>();
   // Structural drop: free a value's heap storage without running any user Drop impl, the
   // exact inverse of emitDeepCloneFromPtr (which never runs a user Clone). A structural
   // clone of a resource shares its handle with the original, so releasing it would release
   // the original's. A TypeKind object in this set is dropped structurally wherever it is
   // dropped (scope exit, early return, break), so the mode travels with the local.
   private structuralDropTypes = new WeakSet<TypeKind>();
-  private structuralDrop = false;
+  public structuralDrop = false;
   private dropHelperBodies: string[][] = [];
   // Method count per interface, so a `Heap<Iface>` drop knows which itable slot holds the
   // concrete type's destructor. Populated before any body is generated; the itable
   // globals themselves are emitted much later, in the finalization pass.
-  private ifaceMethodCounts = new Map<string, number>();
+  public ifaceMethodCounts = new Map<string, number>();
   private helperFnBodies: string[][] = [];
   private emittedStrFind = false;
   // Inside a closure body: capture alloca name -> pointer to its liveness flag in the
@@ -831,7 +833,7 @@ export class Codegen {
   }
 
   // The tag of the enum at `addr`, as the i32 a tagged enum stores.
-  private loadEnumTag(lines: string[], enumTy: string, addr: string): string {
+  public loadEnumTag(lines: string[], enumTy: string, addr: string): string {
     const niche = this.nicheOfEnumTy(enumTy);
     const tag = this.nextTemp();
     if (!niche) {
@@ -913,7 +915,7 @@ export class Codegen {
   // payload is the enum itself. The temp is named `%enum.vp.<n>.<tag>.<k>.<enum>` (`enum`
   // is a keyword, so no local's `%name.addr` can collide) so assertEnumPayloadPacked can
   // check every use against that variant's field type.
-  private enumFieldPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number, k: number): string {
+  public enumFieldPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number, k: number): string {
     const v = this.enumVariantOf(enumTy, variant);
     if (k >= v.fieldTypes.length) throw new Error(`internal: ${enumTy} variant ${v.tag} has no field ${k}`);
     if (this.nicheOfEnumTy(enumTy)) return addr;
@@ -1386,7 +1388,7 @@ export class Codegen {
     return false;
   }
 
-  private structNeedsDrop(name: string): boolean {
+  public structNeedsDrop(name: string): boolean {
     if (this.structDropCache.has(name)) return must(this.structDropCache, name, "struct drop cache");
     // guard against recursion (recursive structs use Heap, not direct embedding)
     this.structDropCache.set(name, false);
@@ -2110,7 +2112,7 @@ export class Codegen {
       // reads the struct type.
       const slots = itable.methods.map(m => `ptr @${m}`);
       if (this.structNeedsDrop(itable.concreteType)) {
-        this.ensureStructDropHelper(itable.concreteType);
+        ensureStructDropHelper(this, itable.concreteType);
         slots.push(`ptr @milo.drop.struct.${itable.concreteType}`);
       } else {
         slots.push("ptr null");
@@ -6220,7 +6222,7 @@ export class Codegen {
             // the struct's glue: the glue decides liveness by probing heap fields for
             // non-null, so with the moved field zeroed a `{ opt: Option, items: Vec }`
             // read as already moved-from and leaked `opt` with it.
-            this.dropStructFieldsExcept(lines, recvTemps[0].addr, recvStruct, expr.field);
+            dropStructFieldsExcept(this, lines, recvTemps[0].addr, recvStruct, expr.field);
             this.ownEnd(lines, this.ownSlot.get(recvTemps[0].addr), "MOVE");
           }
         } else {
@@ -12289,332 +12291,6 @@ export class Codegen {
     ]);
   }
 
-  // emitDeepCloneFromPtr: given a pointer to a value of type `typeKind`,
-  // produce a fully-cloned value (deep copy of all heap-owned data).
-  // Used for auto-clone on Vec[i] reads so the source Vec stays intact.
-  public emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string {
-    const lt = this.llvmType(typeKind);
-
-    // Copy types: just load
-    if (!this.needsDropCg(typeKind)) {
-      const v = this.nextTemp();
-      lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-      return v;
-    }
-
-    // The one switch for every implicit string copy (`v[i]`, a field read out of a
-    // borrow, a struct or Vec clone): a heap buffer is shared by count, not copied.
-    if (typeKind.tag === "string") {
-      const orig = this.nextTemp();
-      lines.push(`  ${orig} = load %String, ptr ${srcPtr}`);
-      return this.emitStrShare(lines, orig);
-    }
-
-    if (typeKind.tag === "vec") {
-      this.hasVecType = true;
-      this.needsMalloc = true;
-      this.needsMemcpy = true;
-      const orig = this.nextTemp();
-      lines.push(`  ${orig} = load %Vec, ptr ${srcPtr}`);
-      const srcData = this.nextTemp();
-      lines.push(`  ${srcData} = extractvalue %Vec ${orig}, 0`);
-      const vecLen = this.nextTemp();
-      lines.push(`  ${vecLen} = extractvalue %Vec ${orig}, 1`);
-      const elemSize = this.typeSizeOf(typeKind.element);
-      const elemTy = this.llvmType(typeKind.element);
-
-      // result buf pointer (set conditionally below)
-      const newBufAddr = this.nextTemp();
-      lines.push(`  ${newBufAddr} = alloca ptr`);
-      lines.push(`  store ptr null, ptr ${newBufAddr}`);
-
-      const isEmpty = this.nextTemp();
-      lines.push(`  ${isEmpty} = icmp eq i64 ${vecLen}, 0`);
-      const allocLabel = this.nextLabel("vec.clone.alloc");
-      const endLabel = this.nextLabel("vec.clone.end");
-      lines.push(`  br i1 ${isEmpty}, label %${endLabel}, label %${allocLabel}`);
-
-      lines.push(`${allocLabel}:`);
-      const { buf: newBuf, bytes: bytes } = this.emitAllocBytes(lines, vecLen, elemSize, "vecclone", undefined);
-      lines.push(`  store ptr ${newBuf}, ptr ${newBufAddr}`);
-
-      if (this.needsDropCg(typeKind.element)) {
-        // deep-clone each element
-        const loopCond = this.nextLabel("vec.clone.cond");
-        const loopBody = this.nextLabel("vec.clone.body");
-        const iAddr = this.nextTemp();
-        lines.push(`  ${iAddr} = alloca i64`);
-        lines.push(`  store i64 0, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-        lines.push(`${loopCond}:`);
-        const iVal = this.nextTemp();
-        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-        const cmp = this.nextTemp();
-        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
-        lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${endLabel}`);
-        lines.push(`${loopBody}:`);
-        const srcElemPtr = this.nextTemp();
-        lines.push(`  ${srcElemPtr} = getelementptr ${elemTy}, ptr ${srcData}, i64 ${iVal}`);
-        const clonedElem = this.emitDeepCloneFromPtr(lines, srcElemPtr, typeKind.element);
-        const dstElemPtr = this.nextTemp();
-        lines.push(`  ${dstElemPtr} = getelementptr ${elemTy}, ptr ${newBuf}, i64 ${iVal}`);
-        lines.push(`  store ${elemTy} ${clonedElem}, ptr ${dstElemPtr}`);
-        const nextI = this.nextTemp();
-        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-      } else {
-        // Copy element: just memcpy
-        lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
-        lines.push(`  br label %${endLabel}`);
-      }
-
-      lines.push(`${endLabel}:`);
-      const finalPtr = this.nextTemp();
-      lines.push(`  ${finalPtr} = load ptr, ptr ${newBufAddr}`);
-      const v0 = this.nextTemp();
-      lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${finalPtr}, 0`);
-      const v1 = this.nextTemp();
-      lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${vecLen}, 1`);
-      const v2 = this.nextTemp();
-      lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${vecLen}, 2`);
-      return v2;
-    }
-
-    if (typeKind.tag === "heap") {
-      this.needsMalloc = true;
-      const inner = typeKind.inner;
-      const innerTy = this.llvmType(inner);
-      const innerSize = this.typeSizeOf(inner);
-      const origPtr = this.nextTemp();
-      lines.push(`  ${origPtr} = load ptr, ptr ${srcPtr}`);
-      const newHeap = this.nextTemp();
-      lines.push(`  ${newHeap} = call ptr @malloc(i64 ${innerSize})`);
-      const clonedInner = this.emitDeepCloneFromPtr(lines, origPtr, inner);
-      lines.push(`  store ${innerTy} ${clonedInner}, ptr ${newHeap}`);
-      return newHeap;
-    }
-
-    if (typeKind.tag === "struct") {
-      const layout = this.structLayouts.get(typeKind.name);
-      if (!layout) {
-        const v = this.nextTemp();
-        lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-        return v;
-      }
-      const structTy = `%${typeKind.name}`;
-      if (this.needsDropCg(typeKind)) {
-        this.ensureStructCloneHelper(typeKind.name);
-        const helperName = `milo.clone.struct.${typeKind.name}`;
-        const dstAlloca = this.nextTemp();
-        lines.push(`  ${dstAlloca} = alloca ${structTy}`);
-        lines.push(`  call void @${helperName}(ptr ${srcPtr}, ptr ${dstAlloca})`);
-        const result = this.nextTemp();
-        lines.push(`  ${result} = load ${structTy}, ptr ${dstAlloca}`);
-        return result;
-      }
-      const newAlloca = this.nextTemp();
-      lines.push(`  ${newAlloca} = alloca ${structTy}`);
-      for (let i = 0; i < layout.fields.length; i++) {
-        const f = layout.fields[i];
-        const srcFieldPtr = this.nextTemp();
-        lines.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr ${srcPtr}, i32 0, i32 ${i}`);
-        const clonedField = this.emitDeepCloneFromPtr(lines, srcFieldPtr, f.typeKind);
-        const dstFieldPtr = this.nextTemp();
-        lines.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr ${newAlloca}, i32 0, i32 ${i}`);
-        lines.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
-      }
-      const result = this.nextTemp();
-      lines.push(`  ${result} = load ${structTy}, ptr ${newAlloca}`);
-      return result;
-    }
-
-    if (typeKind.tag === "enum" && this.needsDropCg(typeKind) && this.enumLayouts.has(typeKind.name)) {
-      this.ensureEnumCloneHelper(typeKind.name);
-      const dstAlloca = this.nextTemp();
-      lines.push(`  ${dstAlloca} = alloca ${lt}`);
-      lines.push(`  call void @milo.clone.${typeKind.name}(ptr ${srcPtr}, ptr ${dstAlloca})`);
-      const result = this.nextTemp();
-      lines.push(`  ${result} = load ${lt}, ptr ${dstAlloca}`);
-      return result;
-    }
-
-    if (typeKind.tag === "hashmap") {
-      // A shallow load here shares the entry buffer; the clone's drop then
-      // frees it under the original, and the next probe loop walks freed
-      // memory forever (found via self-hosting: milo-self checking any enum
-      // match ran away on a cloned EnumInfo's variants map).
-      this.hasHashMapType = true;
-      this.needsMalloc = true;
-      this.needsMemcpy = true;
-      const keyType = typeKind.key;
-      const valueType = typeKind.value;
-      const entryTy = this.hashMapEntryType(keyType, valueType);
-      const orig = this.nextTemp();
-      lines.push(`  ${orig} = load %HashMap, ptr ${srcPtr}`);
-      const srcData = this.nextTemp();
-      lines.push(`  ${srcData} = extractvalue %HashMap ${orig}, 0`);
-      const len = this.nextTemp();
-      lines.push(`  ${len} = extractvalue %HashMap ${orig}, 1`);
-      const cap = this.nextTemp();
-      lines.push(`  ${cap} = extractvalue %HashMap ${orig}, 2`);
-      const seed = this.nextTemp();
-      lines.push(`  ${seed} = extractvalue %HashMap ${orig}, 3`);
-      const entrySizePtr = this.nextTemp();
-      lines.push(`  ${entrySizePtr} = getelementptr ${entryTy}, ptr null, i32 1`);
-      const entrySize = this.nextTemp();
-      lines.push(`  ${entrySize} = ptrtoint ptr ${entrySizePtr} to i64`);
-      const { buf: newBuf, bytes: bytes } = this.emitAllocBytes(lines, cap, entrySize, "hmclone", undefined);
-      lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
-
-      if (this.needsDropCg(keyType) || this.needsDropCg(valueType)) {
-        // memcpy covered states and Copy fields; re-clone owned K/V in
-        // occupied slots so the two maps share no heap data
-        const condLbl = this.nextLabel("hm.clone.cond");
-        const bodyLbl = this.nextLabel("hm.clone.body");
-        const skipLbl = this.nextLabel("hm.clone.skip");
-        const endLbl = this.nextLabel("hm.clone.end");
-        const iAddr = this.nextTemp();
-        lines.push(`  ${iAddr} = alloca i64`);
-        lines.push(`  store i64 0, ptr ${iAddr}`);
-        lines.push(`  br label %${condLbl}`);
-        lines.push(`${condLbl}:`);
-        const iVal = this.nextTemp();
-        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-        const cmp = this.nextTemp();
-        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${cap}`);
-        lines.push(`  br i1 ${cmp}, label %${bodyLbl}, label %${endLbl}`);
-        lines.push(`${bodyLbl}:`);
-        const statePtr = this.nextTemp();
-        lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 0`);
-        const state = this.nextTemp();
-        lines.push(`  ${state} = load i8, ptr ${statePtr}`);
-        const occupied = this.nextTemp();
-        lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
-        const cloneLbl = this.nextLabel("hm.clone.slot");
-        lines.push(`  br i1 ${occupied}, label %${cloneLbl}, label %${skipLbl}`);
-        lines.push(`${cloneLbl}:`);
-        if (this.needsDropCg(keyType)) {
-          const srcKeyPtr = this.nextTemp();
-          lines.push(`  ${srcKeyPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 1`);
-          const clonedKey = this.emitDeepCloneFromPtr(lines, srcKeyPtr, keyType);
-          const dstKeyPtr = this.nextTemp();
-          lines.push(`  ${dstKeyPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 1`);
-          lines.push(`  store ${this.llvmType(keyType)} ${clonedKey}, ptr ${dstKeyPtr}`);
-        }
-        if (this.needsDropCg(valueType)) {
-          const srcValPtr = this.nextTemp();
-          lines.push(`  ${srcValPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 2`);
-          const clonedVal = this.emitDeepCloneFromPtr(lines, srcValPtr, valueType);
-          const dstValPtr = this.nextTemp();
-          lines.push(`  ${dstValPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 2`);
-          lines.push(`  store ${this.llvmType(valueType)} ${clonedVal}, ptr ${dstValPtr}`);
-        }
-        lines.push(`  br label %${skipLbl}`);
-        lines.push(`${skipLbl}:`);
-        const nextI = this.nextTemp();
-        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-        lines.push(`  br label %${condLbl}`);
-        lines.push(`${endLbl}:`);
-      }
-
-      const h0 = this.nextTemp();
-      lines.push(`  ${h0} = insertvalue %HashMap undef, ptr ${newBuf}, 0`);
-      const h1 = this.nextTemp();
-      lines.push(`  ${h1} = insertvalue %HashMap ${h0}, i64 ${len}, 1`);
-      const h2 = this.nextTemp();
-      lines.push(`  ${h2} = insertvalue %HashMap ${h1}, i64 ${cap}, 2`);
-      const h3 = this.nextTemp();
-      lines.push(`  ${h3} = insertvalue %HashMap ${h2}, i64 ${seed}, 3`);
-      // The buffer is memcpy'd verbatim, tombstone slots and all, so the clone starts
-      // life with exactly the source's deleted-slot count — not zero.
-      const srcTombs = this.nextTemp();
-      lines.push(`  ${srcTombs} = extractvalue %HashMap ${orig}, ${HM_TOMBS}`);
-      const h4 = this.nextTemp();
-      lines.push(`  ${h4} = insertvalue %HashMap ${h3}, i64 ${srcTombs}, ${HM_TOMBS}`);
-      return h4;
-    }
-
-    // array — fall back to shallow load
-    const v = this.nextTemp();
-    lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-    return v;
-  }
-
-  private generatedEnumCloneHelpers = new Set<string>();
-
-  // Deep-clone an enum by tag: shallow-copy first (tag + Copy payload fields), then
-  // overwrite each droppable payload field with a deep clone. Mirrors
-  // ensureDropHelper. Recursive enums terminate because the recursion goes through
-  // `Heap`, and the memo set stops re-entrant generation.
-  private ensureEnumCloneHelper(enumName: string) {
-    if (this.generatedEnumCloneHelpers.has(enumName)) return;
-    this.generatedEnumCloneHelpers.add(enumName);
-
-    const layout = must(this.enumLayouts, enumName, "enum layouts");
-    const enumTy = `%${enumName}`;
-    const helperName = `milo.clone.${enumName}`;
-    const savedTemp = this.tempCounter;
-    const savedLabel = this.labelCounter;
-    this.tempCounter = 0;
-    const ownRestore = this.ownEnterFn();
-    this.labelCounter = 0;
-
-    const body: string[] = [];
-    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
-    body.push("entry.bb:");
-    const shallow = this.nextTemp();
-    body.push(`  ${shallow} = load ${enumTy}, ptr %src`);
-    body.push(`  store ${enumTy} ${shallow}, ptr %dst`);
-    const tag = this.loadEnumTag(body, enumTy, "%src");
-
-    const doneLabel = this.nextLabel("clone.done");
-    const cases: string[] = [];
-    const variantBodies: string[][] = [];
-
-    for (const [vName, variant] of layout.variants) {
-      if (!variant.fieldTypeKinds.some(f => this.needsDropCg(f))) continue;
-
-      const label = this.nextLabel(`clone.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label}`);
-
-      const vLines: string[] = [];
-      vLines.push(`${label}:`);
-      // Copy fields were carried over by the shallow whole-enum copy above.
-      for (let i = 0; i < variant.fieldTypes.length; i++) {
-        if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
-        const srcFieldPtr = this.enumFieldPtr(vLines, enumTy, "%src", variant, i);
-        const cloned = this.emitDeepCloneFromPtr(vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
-        const dstFieldPtr = this.enumFieldPtr(vLines, enumTy, "%dst", variant, i);
-        vLines.push(`  store ${variant.fieldTypes[i]} ${cloned}, ptr ${dstFieldPtr}`);
-      }
-      vLines.push(`  br label %${doneLabel}`);
-      variantBodies.push(vLines);
-    }
-
-    if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
-      for (const c of cases) body.push(c);
-      body.push("  ]");
-      for (const vb of variantBodies) body.push(...vb);
-    } else {
-      body.push(`  br label %${doneLabel}`);
-    }
-    body.push(`${doneLabel}:`);
-    body.push("  ret void");
-    body.push("}");
-
-    // Helper bodies bypass the normal function emitter, so hoist here: the clone
-    // of a Vec field emits its allocas inside the copy loop, and a dynamic alloca
-    // per iteration walks the stack off the end.
-    this.hoistAllocas(body, 2);
-    this.dropHelperBodies.push(body);
-    this.tempCounter = savedTemp;
-    ownRestore();
-    this.labelCounter = savedLabel;
-  }
-
   // True for expression forms that yield a freshly-owned value. Place expressions
   // (Ident/FieldAccess/IndexAccess) name storage owned by someone else, so freeing
   // their result would double-free. A call can't hand back a borrow: references are
@@ -12995,17 +12671,6 @@ export class Codegen {
     }
   }
 
-  // Drop every owning field of the struct at `addr` except `skip`, which has been moved out.
-  private dropStructFieldsExcept(lines: string[], addr: string, structName: string, skip: string) {
-    const layout = must(this.structLayouts, structName, "struct layouts");
-    layout.fields.forEach((f, i) => {
-      if (f.name === skip || !this.needsDropCg(f.typeKind)) return;
-      const fp = this.nextTemp();
-      lines.push(`  ${fp} = getelementptr %${structName}, ptr ${addr}, i32 0, i32 ${i}`);
-      this.emitDropValue(lines, fp, f.typeKind);
-    });
-  }
-
   // `.clone()` of a value nobody else owns IS that value: hand the temporary through
   // instead of copying it. Copying left the temporary with no owner, so every spelling
   // leaked it: `mk().clone()`, and `v[i].clone()` on any collection whose indexing
@@ -13043,6 +12708,29 @@ export class Codegen {
     this.emitDropValue(lines, tmpAddr, expr.type);
   }
 
+  public emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string {
+    return emitDeepCloneFromPtr(this, lines, srcPtr, typeKind);
+  }
+
+  // A synthesized module-level function (drop or clone helper) is numbered from zero and has
+  // its own ledger maps; the enclosing function's counters are restored after.
+  public emitHelperFn(hoistAt: number | undefined, build: (body: string[]) => void): void {
+    const savedTemp = this.tempCounter;
+    const savedLabel = this.labelCounter;
+    this.tempCounter = 0;
+    const ownRestore = this.ownEnterFn();
+    this.labelCounter = 0;
+    const body: string[] = [];
+    build(body);
+    // Helper bodies bypass the normal function emitter, so a Vec clone's allocas would land
+    // inside its copy loop (a dynamic alloca per iteration walks the stack off the end).
+    if (hoistAt !== undefined) this.hoistAllocas(body, hoistAt);
+    this.dropHelperBodies.push(body);
+    this.tempCounter = savedTemp;
+    ownRestore();
+    this.labelCounter = savedLabel;
+  }
+
   public emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
     if (this.structuralDropTypes.has(typeKind) && !this.structuralDrop) {
       this.structuralDrop = true;
@@ -13056,414 +12744,7 @@ export class Codegen {
       const id = this.ownSlot.get(allocaPtr);
       if (id) this.ownEnd(lines, id, this.ownFlagIds.has(id) ? "DROPZ" : "DROP");
     }
-    // An owning closure is `{ ptr fn, ptr env }`, and the drop glue lives in the FIRST
-    // word of the environment rather than in a third word of the pair. That choice is
-    // what keeps a closure two words wide, so nothing that passes one around — call
-    // sites, the Task struct, `_callClosureVoid` — has to change. The header is
-    // null for a by-reference closure (its environment is a stack slot in the frame that
-    // built it, and freeing that would corrupt the frame), and the whole environment is
-    // null for a closure that captured nothing — the two null checks are what let one
-    // drop path serve all three shapes.
-    if (typeKind.tag === "fn" && typeKind.owning === true) {
-      const pair = this.nextTemp(), env = this.nextTemp(), isEnv = this.nextTemp();
-      const dropFn = this.nextTemp(), hasDrop = this.nextTemp();
-      const callLabel = this.nextLabel("cldrop.call");
-      const midLabel = this.nextLabel("cldrop.mid");
-      const doneLabel = this.nextLabel("cldrop.done");
-      lines.push(`  ${pair} = load { ptr, ptr }, ptr ${allocaPtr}`);
-      lines.push(`  ${env} = extractvalue { ptr, ptr } ${pair}, 1`);
-      lines.push(`  ${isEnv} = icmp ne ptr ${env}, null`);
-      lines.push(`  br i1 ${isEnv}, label %${midLabel}, label %${doneLabel}`);
-      lines.push(`${midLabel}:`);
-      lines.push(`  ${dropFn} = load ptr, ptr ${env}`);
-      lines.push(`  ${hasDrop} = icmp ne ptr ${dropFn}, null`);
-      lines.push(`  br i1 ${hasDrop}, label %${callLabel}, label %${doneLabel}`);
-      lines.push(`${callLabel}:`);
-      lines.push(`  call void ${dropFn}(ptr ${env})`);
-      lines.push(`  br label %${doneLabel}`);
-      lines.push(`${doneLabel}:`);
-      return;
-    }
-    if (typeKind.tag === "string") {
-      this.strRt();
-      const old = this.nextTemp();
-      lines.push(`  ${old} = load %String, ptr ${allocaPtr}`);
-      const cap = this.nextTemp();
-      lines.push(`  ${cap} = extractvalue %String ${old}, 2`);
-      const owned = this.nextTemp();
-      lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-      const dropLabel = this.nextLabel("drop");
-      const skipLabel = this.nextLabel("drop.skip");
-      lines.push(`  br i1 ${owned}, label %${dropLabel}, label %${skipLabel}`);
-      lines.push(`${dropLabel}:`);
-      const ptr = this.nextTemp();
-      lines.push(`  ${ptr} = extractvalue %String ${old}, 0`);
-      // One handle fewer; the buffer goes when the last one does (see strRt).
-      lines.push(`  call void @milo.str.release(ptr ${ptr})`);
-      lines.push(`  br label %${skipLabel}`);
-      lines.push(`${skipLabel}:`);
-    }
-    if (typeKind.tag === "vec") {
-      this.needsFree = true;
-      const vecVal = this.nextTemp();
-      lines.push(`  ${vecVal} = load %Vec, ptr ${allocaPtr}`);
-      const dataPtr = this.nextTemp();
-      lines.push(`  ${dataPtr} = extractvalue %Vec ${vecVal}, 0`);
-      const isNull = this.nextTemp();
-      lines.push(`  ${isNull} = icmp eq ptr ${dataPtr}, null`);
-      const dropLabel = this.nextLabel("vec.drop");
-      const skipLabel = this.nextLabel("vec.skip");
-      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-      lines.push(`${dropLabel}:`);
-      if (this.needsDropCg(typeKind.element)) {
-        // drop each element: for i in 0..len
-        const vecLen = this.nextTemp();
-        lines.push(`  ${vecLen} = extractvalue %Vec ${vecVal}, 1`);
-        const elemTy = this.llvmType(typeKind.element);
-        const loopCond = this.nextLabel("vec.drop.cond");
-        const loopBody = this.nextLabel("vec.drop.body");
-        const loopEnd = this.nextLabel("vec.drop.end");
-        const iAddr = this.nextTemp();
-        lines.push(`  ${iAddr} = alloca i64`);
-        lines.push(`  store i64 0, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-        lines.push(`${loopCond}:`);
-        const iVal = this.nextTemp();
-        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-        const cmp = this.nextTemp();
-        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
-        lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${loopEnd}`);
-        lines.push(`${loopBody}:`);
-        const elemPtr = this.nextTemp();
-        lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${dataPtr}, i64 ${iVal}`);
-        this.emitDropValue(lines, elemPtr, typeKind.element);
-        const nextI = this.nextTemp();
-        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-        lines.push(`${loopEnd}:`);
-      }
-      lines.push(`  call void @free(ptr ${dataPtr})`);
-      lines.push(`  br label %${skipLabel}`);
-      lines.push(`${skipLabel}:`);
-    }
-    if (typeKind.tag === "heap") {
-      this.needsFree = true;
-      let heapPtr: string;
-      if (typeKind.inner.tag === "interface") {
-        // Heap<Interface> is { ptr, ptr } — extract data ptr from element 0
-        const fatPtr = this.nextTemp();
-        lines.push(`  ${fatPtr} = load { ptr, ptr }, ptr ${allocaPtr}`);
-        heapPtr = this.nextTemp();
-        lines.push(`  ${heapPtr} = extractvalue { ptr, ptr } ${fatPtr}, 0`);
-      } else {
-        heapPtr = this.nextTemp();
-        lines.push(`  ${heapPtr} = load ptr, ptr ${allocaPtr}`);
-      }
-      const isNull = this.nextTemp();
-      lines.push(`  ${isNull} = icmp eq ptr ${heapPtr}, null`);
-      const dropLabel = this.nextLabel("heap.drop");
-      const skipLabel = this.nextLabel("heap.skip");
-      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-      lines.push(`${dropLabel}:`);
-      if (typeKind.inner.tag === "interface") {
-        // The concrete type is erased here, so its destructor is reached through the
-        // itable's trailing drop slot. A null slot means the concrete type has none.
-        const n = this.ifaceMethodCounts.get(typeKind.inner.name);
-        if (n !== undefined) {
-          const fat = this.nextTemp();
-          lines.push(`  ${fat} = load { ptr, ptr }, ptr ${allocaPtr}`);
-          const itab = this.nextTemp();
-          lines.push(`  ${itab} = extractvalue { ptr, ptr } ${fat}, 1`);
-          const slot = this.nextTemp();
-          lines.push(`  ${slot} = getelementptr ptr, ptr ${itab}, i32 ${n}`);
-          const dropFn = this.nextTemp();
-          lines.push(`  ${dropFn} = load ptr, ptr ${slot}`);
-          const noDrop = this.nextTemp();
-          lines.push(`  ${noDrop} = icmp eq ptr ${dropFn}, null`);
-          const callLbl = this.nextLabel("iface.drop.call");
-          const afterLbl = this.nextLabel("iface.drop.after");
-          lines.push(`  br i1 ${noDrop}, label %${afterLbl}, label %${callLbl}`);
-          lines.push(`${callLbl}:`);
-          lines.push(`  call void ${dropFn}(ptr ${heapPtr})`);
-          lines.push(`  br label %${afterLbl}`);
-          lines.push(`${afterLbl}:`);
-        }
-      } else if (this.needsDropCg(typeKind.inner)) {
-        this.emitDropValue(lines, heapPtr, typeKind.inner);
-      }
-      lines.push(`  call void @free(ptr ${heapPtr})`);
-      lines.push(`  br label %${skipLabel}`);
-      lines.push(`${skipLabel}:`);
-    }
-    if (typeKind.tag === "hashmap") {
-      this.needsFree = true;
-      const hmVal = this.nextTemp();
-      lines.push(`  ${hmVal} = load %HashMap, ptr ${allocaPtr}`);
-      const hmDataPtr = this.nextTemp();
-      lines.push(`  ${hmDataPtr} = extractvalue %HashMap ${hmVal}, 0`);
-      const isNull = this.nextTemp();
-      lines.push(`  ${isNull} = icmp eq ptr ${hmDataPtr}, null`);
-      const dropLabel = this.nextLabel("hm.drop");
-      const skipLabel = this.nextLabel("hm.skip");
-      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
-      lines.push(`${dropLabel}:`);
-      if (this.needsDropCg(typeKind.key) || this.needsDropCg(typeKind.value)) {
-        const hmCap = this.nextTemp();
-        lines.push(`  ${hmCap} = extractvalue %HashMap ${hmVal}, 2`);
-        const entryTy = this.hashMapEntryType(typeKind.key, typeKind.value);
-        const loopCond = this.nextLabel("hm.drop.cond");
-        const loopBody = this.nextLabel("hm.drop.body");
-        const loopEnd = this.nextLabel("hm.drop.end");
-        const iAddr = this.nextTemp();
-        lines.push(`  ${iAddr} = alloca i64`);
-        lines.push(`  store i64 0, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-        lines.push(`${loopCond}:`);
-        const iVal = this.nextTemp();
-        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-        const cmp = this.nextTemp();
-        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${hmCap}`);
-        lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${loopEnd}`);
-        lines.push(`${loopBody}:`);
-        const entryPtr = this.nextTemp();
-        lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${hmDataPtr}, i64 ${iVal}`);
-        const state = this.nextTemp();
-        lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
-        const isOccupied = this.nextTemp();
-        lines.push(`  ${isOccupied} = icmp eq i8 ${state}, 1`);
-        const dropEntryLabel = this.nextLabel("hm.drop.entry");
-        const skipEntryLabel = this.nextLabel("hm.drop.skip");
-        lines.push(`  br i1 ${isOccupied}, label %${dropEntryLabel}, label %${skipEntryLabel}`);
-        lines.push(`${dropEntryLabel}:`);
-        if (this.needsDropCg(typeKind.key)) {
-          const kPtr = this.nextTemp();
-          lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-          this.emitDropValue(lines, kPtr, typeKind.key);
-        }
-        if (this.needsDropCg(typeKind.value)) {
-          const vPtr = this.nextTemp();
-          lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-          this.emitDropValue(lines, vPtr, typeKind.value);
-        }
-        lines.push(`  br label %${skipEntryLabel}`);
-        lines.push(`${skipEntryLabel}:`);
-        const nextI = this.nextTemp();
-        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-        lines.push(`  br label %${loopCond}`);
-        lines.push(`${loopEnd}:`);
-      }
-      lines.push(`  call void @free(ptr ${hmDataPtr})`);
-      lines.push(`  br label %${skipLabel}`);
-      lines.push(`${skipLabel}:`);
-    }
-    if (typeKind.tag === "enum" && this.droppableEnums.has(typeKind.name)) {
-      const helperName = `milo.${this.structuralDrop ? "sdrop" : "drop"}.${typeKind.name}`;
-      this.ensureDropHelper(typeKind.name);
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load %${typeKind.name}, ptr ${allocaPtr}`);
-      const tmp = this.nextTemp();
-      lines.push(`  ${tmp} = alloca %${typeKind.name}`);
-      lines.push(`  store %${typeKind.name} ${val}, ptr ${tmp}`);
-      lines.push(`  call void @${helperName}(ptr ${tmp})`);
-    }
-    if (typeKind.tag === "array" && typeKind.size !== null && this.needsDropCg(typeKind.element)) {
-      const elemTy = this.llvmType(typeKind.element);
-      for (let i = 0; i < typeKind.size; i++) {
-        const arrTy = `[${typeKind.size} x ${elemTy}]`;
-        const elemPtr = this.nextTemp();
-        lines.push(`  ${elemPtr} = getelementptr ${arrTy}, ptr ${allocaPtr}, i32 0, i32 ${i}`);
-        this.emitDropValue(lines, elemPtr, typeKind.element);
-      }
-    }
-    if (typeKind.tag === "struct" && this.structNeedsDrop(typeKind.name)) {
-      this.ensureStructDropHelper(typeKind.name);
-      const helperName = `milo.${this.structuralDrop ? "sdrop" : "drop"}.struct.${typeKind.name}`;
-      lines.push(`  call void @${helperName}(ptr ${allocaPtr})`);
-    }
-  }
-
-  private ensureDropHelper(enumName: string) {
-    const kind = this.structuralDrop ? "sdrop" : "drop";
-    if (this.generatedDropHelpers.has(`${kind}.${enumName}`)) return;
-    this.generatedDropHelpers.add(`${kind}.${enumName}`);
-
-    const layout = must(this.enumLayouts, enumName, "enum layouts");
-    const enumTy = `%${enumName}`;
-    const helperName = `milo.${kind}.${enumName}`;
-    const savedTemp = this.tempCounter;
-    const savedLabel = this.labelCounter;
-    this.tempCounter = 0;
-    const ownRestore = this.ownEnterFn();
-    this.labelCounter = 0;
-
-    const body: string[] = [];
-    body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry.bb:");
-    const tag = this.loadEnumTag(body, enumTy, "%self");
-
-    const doneLabel = this.nextLabel("drop.done");
-    const cases: string[] = [];
-    const variantBodies: string[][] = [];
-
-    for (const [vName, variant] of layout.variants) {
-      const hasDroppable = variant.fieldTypeKinds.some(f => this.needsDropCg(f));
-      if (!hasDroppable) continue;
-
-      const label = this.nextLabel(`drop.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label}`);
-
-      const vLines: string[] = [];
-      vLines.push(`${label}:`);
-      for (let i = 0; i < variant.fieldTypes.length; i++) {
-        if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
-        const fieldPtr = this.enumFieldPtr(vLines, enumTy, "%self", variant, i);
-        this.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
-      }
-      vLines.push(`  br label %${doneLabel}`);
-      variantBodies.push(vLines);
-    }
-
-    if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
-      for (const c of cases) body.push(c);
-      body.push("  ]");
-      for (const vb of variantBodies) body.push(...vb);
-    }
-
-    body.push(`${doneLabel}:`);
-    body.push("  ret void");
-    body.push("}");
-
-    this.dropHelperBodies.push(body);
-    this.tempCounter = savedTemp;
-    ownRestore();
-    this.labelCounter = savedLabel;
-  }
-
-  private generatedStructCloneHelpers = new Set<string>();
-
-  private ensureStructCloneHelper(structName: string) {
-    if (this.generatedStructCloneHelpers.has(structName)) return;
-    this.generatedStructCloneHelpers.add(structName);
-
-    const layout = must(this.structLayouts, structName, "struct layouts");
-    const structTy = `%${structName}`;
-    const helperName = `milo.clone.struct.${structName}`;
-    const savedTemp = this.tempCounter;
-    const savedLabel = this.labelCounter;
-    this.tempCounter = 0;
-    const ownRestore = this.ownEnterFn();
-    this.labelCounter = 0;
-
-    const body: string[] = [];
-    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
-    body.push("entry.bb:");
-    for (let i = 0; i < layout.fields.length; i++) {
-      const f = layout.fields[i];
-      const srcFieldPtr = this.nextTemp();
-      body.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr %src, i32 0, i32 ${i}`);
-      const clonedField = this.emitDeepCloneFromPtr(body, srcFieldPtr, f.typeKind);
-      const dstFieldPtr = this.nextTemp();
-      body.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr %dst, i32 0, i32 ${i}`);
-      body.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
-    }
-    body.push("  ret void");
-    body.push("}");
-
-    this.hoistAllocas(body, 2); // see ensureEnumCloneHelper
-    this.dropHelperBodies.push(body);
-    this.tempCounter = savedTemp;
-    ownRestore();
-    this.labelCounter = savedLabel;
-  }
-
-  private ensureStructDropHelper(structName: string) {
-    const kind = this.structuralDrop ? "sdrop" : "drop";
-    if (this.generatedStructDropHelpers.has(`${kind}.${structName}`)) return;
-    this.generatedStructDropHelpers.add(`${kind}.${structName}`);
-
-    const layout = must(this.structLayouts, structName, "struct layouts");
-    const helperName = `milo.${kind}.struct.${structName}`;
-    const savedTemp = this.tempCounter;
-    const savedLabel = this.labelCounter;
-    this.tempCounter = 0;
-    const ownRestore = this.ownEnterFn();
-    this.labelCounter = 0;
-
-    const body: string[] = [];
-    body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry.bb:");
-    // Every field is dropped unconditionally: each field's own drop already treats its
-    // zeroed (moved-from) form as empty, so a struct that was moved out of and zeroed
-    // drops to nothing field by field. Deciding liveness for the WHOLE struct by probing
-    // its heap fields for non-null was wrong for every struct whose heap fields happened
-    // to be empty: `{ response: Resp.Text(body), headers: [] }` read as moved-from and
-    // leaked `body` (std/http leaked every response body whose handler set no header).
-    //
-    // The probe survives only to gate a user `Drop` impl, which is the one thing that
-    // must not run on a zeroed struct (a moved field of a parent, or an element moved
-    // out of a container, leaves zeroed bytes behind that the parent's glue still
-    // visits). Its residual hole is unchanged: such a struct whose heap fields are all
-    // empty is indistinguishable from a moved-from one, and its Drop is skipped.
-    if (this.dropImpls.has(structName) && !this.structuralDrop) {
-      const skipLabel = this.nextLabel("struct.userdrop.skip");
-      const dropLabel = this.nextLabel("struct.userdrop");
-      const heapCandidates = layout.fields.flatMap((f, i) => {
-        const t = f.typeKind.tag;
-        return t === "string" || t === "vec" || t === "hashmap" || t === "heap" ? [{ i, ll: "ptr", zero: "null" }] : [];
-      });
-      // Scalars only AUGMENT a pointer probe; they never create one. The zeroed-ness of
-      // an integer says nothing about liveness on its own, and gating on it skipped the
-      // destructor of every `Tracked { id: 0 }` (tests/fixtures/dropAccounting.milo).
-      const scalarCandidates = heapCandidates.length > 0
-        ? layout.fields.flatMap((f, i) =>
-            f.typeKind.tag === "int" || f.typeKind.tag === "bool" ? [{ i, ll: f.type, zero: "0" }] : [])
-        : [];
-      const candidates = [...heapCandidates, ...scalarCandidates];
-      const mangledDrop = `${structName}$Drop$drop`;
-      if (candidates.length > 0) {
-        let alive: string | null = null;
-        for (const c of candidates) {
-          const fieldPtr = this.nextTemp();
-          body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${c.i}`);
-          const probe = this.nextTemp();
-          body.push(`  ${probe} = load ${c.ll}, ptr ${fieldPtr}`);
-          const nonZero = this.nextTemp();
-          body.push(`  ${nonZero} = icmp ne ${c.ll} ${probe}, ${c.zero}`);
-          if (alive === null) {
-            alive = nonZero;
-          } else {
-            const merged = this.nextTemp();
-            body.push(`  ${merged} = or i1 ${alive}, ${nonZero}`);
-            alive = merged;
-          }
-        }
-        body.push(`  br i1 ${alive}, label %${dropLabel}, label %${skipLabel}`);
-        body.push(`${dropLabel}:`);
-        body.push(`  call void @${mangledDrop}(ptr %self)`);
-        body.push(`  br label %${skipLabel}`);
-        body.push(`${skipLabel}:`);
-      } else {
-        body.push(`  call void @${mangledDrop}(ptr %self)`);
-      }
-    }
-    for (let i = layout.fields.length - 1; i >= 0; i--) {
-      const field = layout.fields[i];
-      if (this.needsDropCg(field.typeKind)) {
-        const fieldPtr = this.nextTemp();
-        body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${i}`);
-        this.emitDropValue(body, fieldPtr, field.typeKind);
-      }
-    }
-    body.push("  ret void");
-    body.push("}");
-
-    this.dropHelperBodies.push(body);
-    this.tempCounter = savedTemp;
-    ownRestore();
-    this.labelCounter = savedLabel;
+    emitDropValueBody(this, lines, allocaPtr, typeKind);
   }
 
   // x.wrappingAdd(y) — plain LLVM add/sub/mul (wraps by definition)

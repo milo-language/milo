@@ -34,6 +34,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
+| `src/codegen-drop.ts` | Drop and clone glue: per-type drop sequences, deep clone, and the generated drop/clone helper functions. |
 | `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
 | `src/codegen-map.ts` | HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable. |
 | `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, substr, find, number/bool to string), extracted to keep codegen.ts manageable. |
