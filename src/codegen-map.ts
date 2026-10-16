@@ -8,7 +8,7 @@ import type { Span } from "./ast";
 import type { OwnEndKind } from "./own-ledger";
 import type { Gen, StructLayout, EnumLayout, EnumVariant } from "./codegen";
 import { must } from "./must";
-import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Val } from "./ir";
+import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Block, type Val } from "./ir";
 
 // %HashMap field indices. The struct is { data, len, cap, seed, tombs }, and these offsets
 // appeared as bare `i32 0, i32 N` at 22 sites in codegen.ts — the only clue to which field
@@ -167,11 +167,6 @@ function hashInto(ctx: CodegenMapCtx, b: Builder, acc: Val, v: Val, type: TypeKi
   }
 
   throw new Error(`unhashable key type: ${type.tag}`);
-}
-
-function emitKeyCompare(ctx: CodegenMapCtx, lines: string[], k1: string, k2: string, keyType: TypeKind): string {
-  const ty = Ty.of(ctx.llvmType(keyType));
-  return keysEqual(ctx, new LlvmTextBuilder(lines, ctx), val(k1, ty), val(k2, ty), keyType).ref;
 }
 
 function keysEqual(ctx: CodegenMapCtx, b: Builder, k1: Val, k2: Val, keyType: TypeKind): Val {
@@ -529,6 +524,27 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
   b.position(insertDone);
 }
 
+// seed, capacity and data pointer of the map at `map`: the three loads every keyed op opens with.
+function loadSeedCapData(b: Builder, map: Val): { seed: Val; cap: Val; data: Val } {
+  const seedPtr = hmField(b, map, HM_SEED);
+  const seed = b.load(Ty.i64, seedPtr);
+  const capPtr = hmField(b, map, HM_CAP);
+  const cap = b.load(Ty.i64, capPtr);
+  const dataFieldPtr = hmField(b, map, HM_DATA);
+  const data = b.load(Ty.ptr, dataFieldPtr);
+  return { seed, cap, data };
+}
+
+// Hash the key, derive the probe mask, and spill the starting slot into a fresh slot variable.
+function hashStartSlot(ctx: CodegenMapCtx, b: Builder, key: Val, keyType: TypeKind, seed: Val, cap: Val): { mask: Val; slotAddr: Val } {
+  const hash = fnvHash(ctx, b, key, keyType, seed);
+  const mask = b.binop("sub", cap, i64c(1));
+  const slotAddr = b.alloca(Ty.i64);
+  const slot0 = b.binop("and", hash, mask);
+  b.store(slot0, slotAddr);
+  return { mask, slotAddr };
+}
+
 // The open-addressing probe every keyed HashMap op opens with: read the slot, an empty
 // state means the key is absent, a tombstone means keep probing, an occupied state
 // compares the key. contains/remove/get/getOrDefault each carried this verbatim, so a
@@ -539,53 +555,64 @@ function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: st
 // and cost the byte-identical-IR check that verifies this refactor changed nothing.
 function emitHashProbePrologue(
   ctx: CodegenMapCtx,
-  lines: string[],
+  b: Builder,
   at: {
-    probeCond: string;
-    probeCheck: string;
-    probeOccupied: string;
-    probeNext: string;
+    probeCond: Block;
+    probeCheck: Block;
+    probeOccupied: Block;
+    probeNext: Block;
     // Where an empty slot goes (key absent) and where a key match goes. Only these two
     // differ between callers: remove() jumps straight to its done/remove blocks.
-    emptyTarget: string;
-    matchTarget: string;
+    emptyTarget: Block;
+    matchTarget: Block;
   },
   map: {
-    slotAddr: string;
-    data: string;
-    entryTy: string;
-    keyTy: string;
-    keyVal: string;
+    slotAddr: Val;
+    data: Val;
+    entryTy: Ty;
+    keyTy: Ty;
+    key: Val;
     keyType: TypeKind;
   },
-): { slot: string; entryPtr: string } {
-  lines.push(`  br label %${at.probeCond}`);
-  lines.push(`${at.probeCond}:`);
-  const slot = ctx.nextTemp();
-  lines.push(`  ${slot} = load i64, ptr ${map.slotAddr}`);
-  const entryPtr = ctx.nextTemp();
-  lines.push(`  ${entryPtr} = getelementptr ${map.entryTy}, ptr ${map.data}, i64 ${slot}`);
-  const state = ctx.nextTemp();
-  lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
+): { slot: Val; entryPtr: Val } {
+  b.br(at.probeCond);
+  b.position(at.probeCond);
+  const slot = b.load(Ty.i64, map.slotAddr);
+  const entryPtr = b.gep(map.entryTy, map.data, [slot]);
+  const state = b.load(Ty.i8, entryPtr);
   // state == 0 (empty) -> the key is not in the map
-  const stateIsEmpty = ctx.nextTemp();
-  lines.push(`  ${stateIsEmpty} = icmp eq i8 ${state}, 0`);
-  lines.push(`  br i1 ${stateIsEmpty}, label %${at.emptyTarget}, label %${at.probeCheck}`);
+  const stateIsEmpty = b.icmp("eq", state, i8c(0));
+  b.condBr(stateIsEmpty, at.emptyTarget, at.probeCheck);
 
   // state == 1 (occupied) -> compare keys; state == 2 (tombstone) -> keep probing
-  lines.push(`${at.probeCheck}:`);
-  const stateIsOccupied = ctx.nextTemp();
-  lines.push(`  ${stateIsOccupied} = icmp eq i8 ${state}, 1`);
-  lines.push(`  br i1 ${stateIsOccupied}, label %${at.probeOccupied}, label %${at.probeNext}`);
+  b.position(at.probeCheck);
+  const stateIsOccupied = b.icmp("eq", state, i8c(1));
+  b.condBr(stateIsOccupied, at.probeOccupied, at.probeNext);
 
-  lines.push(`${at.probeOccupied}:`);
-  const existingKeyPtr = ctx.nextTemp();
-  lines.push(`  ${existingKeyPtr} = getelementptr ${map.entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-  const existingKey = ctx.nextTemp();
-  lines.push(`  ${existingKey} = load ${map.keyTy}, ptr ${existingKeyPtr}`);
-  const keysMatch = emitKeyCompare(ctx, lines, map.keyVal, existingKey, map.keyType);
-  lines.push(`  br i1 ${keysMatch}, label %${at.matchTarget}, label %${at.probeNext}`);
+  b.position(at.probeOccupied);
+  const existingKeyPtr = entryField(b, map.entryTy, entryPtr, 1);
+  const existingKey = b.load(map.keyTy, existingKeyPtr);
+  const keysMatch = keysEqual(ctx, b, map.key, existingKey, map.keyType);
+  b.condBr(keysMatch, at.matchTarget, at.probeNext);
   return { slot, entryPtr };
+}
+
+// get/getOrDefault still pass strings; removed when they migrate.
+function emitHashProbePrologueStr(
+  ctx: CodegenMapCtx,
+  lines: string[],
+  at: { probeCond: string; probeCheck: string; probeOccupied: string; probeNext: string; emptyTarget: string; matchTarget: string },
+  map: { slotAddr: string; data: string; entryTy: string; keyTy: string; keyVal: string; keyType: TypeKind },
+): { slot: string; entryPtr: string } {
+  const keyTy = Ty.of(map.keyTy);
+  const r = emitHashProbePrologue(ctx, new LlvmTextBuilder(lines, ctx),
+    {
+      probeCond: { name: at.probeCond }, probeCheck: { name: at.probeCheck }, probeOccupied: { name: at.probeOccupied },
+      probeNext: { name: at.probeNext }, emptyTarget: { name: at.emptyTarget }, matchTarget: { name: at.matchTarget },
+    },
+    { slotAddr: val(map.slotAddr, Ty.ptr), data: val(map.data, Ty.ptr), entryTy: Ty.of(map.entryTy), keyTy, key: val(map.keyVal, keyTy), keyType: map.keyType },
+  );
+  return { slot: r.slot.ref, entryPtr: r.entryPtr.ref };
 }
 
 export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapContains" }, lines: string[]): Gen {
@@ -594,134 +621,87 @@ export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "
   if (mapType.tag !== "hashmap") throw new Error("HashMapContains on non-hashmap");
   const keyType = mapType.key;
   const valueType = mapType.value;
-  const keyTy = ctx.llvmType(keyType);
-  const entryTy = ctx.hashMapEntryType(keyType, valueType);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+  const b = new LlvmTextBuilder(lines, ctx);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
   const [keyLines, keyVal] = ctx.genExpr(expr.key);
   lines.push(...keyLines);
+  const key = val(keyVal, keyTy);
 
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
+  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
 
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, seed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+  const probeCond = b.newBlock("hmc.probe");
+  const probeOccupied = b.newBlock("hmc.occupied");
+  const probeCheck = b.newBlock("hmc.check");
+  const foundLabel = b.newBlock("hmc.found");
+  const notFoundLabel = b.newBlock("hmc.notfound");
+  const probeNext = b.newBlock("hmc.pnext");
+  const doneLabel = b.newBlock("hmc.done");
 
-  const probeCond = ctx.nextLabel("hmc.probe");
-  const probeOccupied = ctx.nextLabel("hmc.occupied");
-  const probeCheck = ctx.nextLabel("hmc.check");
-  const foundLabel = ctx.nextLabel("hmc.found");
-  const notFoundLabel = ctx.nextLabel("hmc.notfound");
-  const probeNext = ctx.nextLabel("hmc.pnext");
-  const doneLabel = ctx.nextLabel("hmc.done");
-
-  const { slot } = emitHashProbePrologue(ctx,
-    lines,
+  const { slot } = emitHashProbePrologue(ctx, b,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    { slotAddr, data, entryTy, keyTy, key, keyType },
   );
 
-  lines.push(`${foundLabel}:`);
-  lines.push(`  br label %${doneLabel}`);
-  lines.push(`${notFoundLabel}:`);
-  lines.push(`  br label %${doneLabel}`);
-  lines.push(`${probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-  lines.push(`  br label %${probeCond}`);
+  b.position(foundLabel);
+  b.br(doneLabel);
+  b.position(notFoundLabel);
+  b.br(doneLabel);
+  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi i1 [true, %${foundLabel}], [false, %${notFoundLabel}]`);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
+  b.position(doneLabel);
+  const result = b.phi(Ty.i1, [[val("true", Ty.i1), foundLabel], [val("false", Ty.i1), notFoundLabel]]);
+  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return [lines, result, "i1"];
+  return asGen(lines, result);
 }
 
 // One keyed probe, shared by modify and getOrInsertWith: evaluates the receiver and
 // key, opens the probe, and returns the labels plus what the found block needs (the
 // entry pointer) and what the not-found block needs (the map pointer and the evaluated
 // key). The caller writes both blocks and the join.
-function beginHashMapProbe(ctx: CodegenMapCtx, lines: string[], map: HIRExpr, key: HIRExpr, prefix: string): {
-  mapPtr: string; mapTempSlot: string | null; keyVal: string; keyTy: string; keyType: TypeKind; entryPtr: string; slot: string; mask: string; slotAddr: string;
-  probeCond: string; probeNext: string; foundLabel: string; notFoundLabel: string;
+function beginHashMapProbe(ctx: CodegenMapCtx, b: Builder, lines: string[], map: HIRExpr, key: HIRExpr, prefix: string): {
+  mapPtr: Val; mapTempSlot: string | null; key: Val; keyType: TypeKind; entryPtr: Val; slot: Val; mask: Val; slotAddr: Val;
+  probeCond: Block; probeNext: Block; foundLabel: Block; notFoundLabel: Block;
 } {
   ctx.hasHashMapType = true;
   const mapType = map.type;
   if (mapType.tag !== "hashmap") throw new Error(`${prefix} on non-hashmap`);
   const keyType = mapType.key;
-  const keyTy = ctx.llvmType(keyType);
-  const entryTy = ctx.hashMapEntryType(keyType, mapType.value);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, mapType.value));
 
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, map);
-  const [keyLines, keyVal] = ctx.genExpr(key);
+  const { ptr: mapPtrRef, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, map);
+  const mapPtr = val(mapPtrRef, Ty.ptr);
+  const [keyLines, keyRef] = ctx.genExpr(key);
   lines.push(...keyLines);
+  const keyV = val(keyRef, keyTy);
 
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+  const { seed, cap, data } = loadSeedCapData(b, mapPtr);
+  const { mask, slotAddr } = hashStartSlot(ctx, b, keyV, keyType, seed, cap);
 
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, seed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
-
-  const probeCond = ctx.nextLabel(`${prefix}.probe`);
-  const probeOccupied = ctx.nextLabel(`${prefix}.occupied`);
-  const probeCheck = ctx.nextLabel(`${prefix}.check`);
-  const foundLabel = ctx.nextLabel(`${prefix}.found`);
-  const notFoundLabel = ctx.nextLabel(`${prefix}.notfound`);
-  const probeNext = ctx.nextLabel(`${prefix}.pnext`);
-  const { slot, entryPtr } = emitHashProbePrologue(ctx,
-    lines,
+  const probeCond = b.newBlock(`${prefix}.probe`);
+  const probeOccupied = b.newBlock(`${prefix}.occupied`);
+  const probeCheck = b.newBlock(`${prefix}.check`);
+  const foundLabel = b.newBlock(`${prefix}.found`);
+  const notFoundLabel = b.newBlock(`${prefix}.notfound`);
+  const probeNext = b.newBlock(`${prefix}.pnext`);
+  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    { slotAddr, data, entryTy, keyTy, key: keyV, keyType },
   );
-  return { mapPtr, mapTempSlot, keyVal, keyTy, keyType, entryPtr, slot, mask, slotAddr, probeCond, probeNext, foundLabel, notFoundLabel };
+  return { mapPtr, mapTempSlot, key: keyV, keyType, entryPtr, slot, mask, slotAddr, probeCond, probeNext, foundLabel, notFoundLabel };
 }
 
-function emitProbeNext(ctx: CodegenMapCtx, lines: string[], p: { slot: string; mask: string; slotAddr: string; probeCond: string; probeNext: string }): void {
-  lines.push(`${p.probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${p.slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${p.mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${p.slotAddr}`);
-  lines.push(`  br label %${p.probeCond}`);
+function emitProbeNext(b: Builder, p: { slot: Val; mask: Val; slotAddr: Val; probeCond: Block; probeNext: Block }): void {
+  b.position(p.probeNext);
+  probeAdvance(b, p.slot, p.mask, p.slotAddr);
+  b.br(p.probeCond);
 }
 
 // `m.modify(k, f)`: on a hit, call f with a pointer to the stored value (a `&mut V`
@@ -729,33 +709,31 @@ function emitProbeNext(ctx: CodegenMapCtx, lines: string[], p: { slot: string; m
 export function genHashMapModify(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapModify" }, lines: string[]): Gen {
   const mapType = expr.map.type;
   if (mapType.tag !== "hashmap") throw new Error("HashMapModify on non-hashmap");
-  const entryTy = ctx.hashMapEntryType(mapType.key, mapType.value);
+  const entryTy = Ty.of(ctx.hashMapEntryType(mapType.key, mapType.value));
+  const b = new LlvmTextBuilder(lines, ctx);
   // The callback first: its environment must exist before the probe branches.
   const [cl, cv] = ctx.genExpr(expr.callback);
   lines.push(...cl);
-  const fnPtr = ctx.nextTemp();
-  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-  const envPtr = ctx.nextTemp();
-  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+  const closure = val(cv, Ty.of("{ ptr, ptr }"));
+  const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
+  const envPtr = b.extractvalue(closure, 1, Ty.ptr);
 
-  const p = beginHashMapProbe(ctx, lines, expr.map, expr.key, "hmm");
-  const doneLabel = ctx.nextLabel("hmm.done");
+  const p = beginHashMapProbe(ctx, b, lines, expr.map, expr.key, "hmm");
+  const doneLabel = b.newBlock("hmm.done");
 
-  lines.push(`${p.foundLabel}:`);
-  const valPtr = ctx.nextTemp();
-  lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${p.entryPtr}, i32 0, i32 2`);
-  lines.push(`  call void ${fnPtr}(ptr ${envPtr}, ptr ${valPtr})`);
-  lines.push(`  br label %${doneLabel}`);
-  lines.push(`${p.notFoundLabel}:`);
-  lines.push(`  br label %${doneLabel}`);
-  emitProbeNext(ctx, lines, p);
+  b.position(p.foundLabel);
+  const valPtr = entryField(b, entryTy, p.entryPtr, 2);
+  b.callDiscard(Ty.void, fnPtr.ref, [envPtr, valPtr]);
+  b.br(doneLabel);
+  b.position(p.notFoundLabel);
+  b.br(doneLabel);
+  emitProbeNext(b, p);
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi i1 [true, %${p.foundLabel}], [false, %${p.notFoundLabel}]`);
-  ctx.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
+  b.position(doneLabel);
+  const result = b.phi(Ty.i1, [[val("true", Ty.i1), p.foundLabel], [val("false", Ty.i1), p.notFoundLabel]]);
+  ctx.dropOwnedTemp(lines, p.key.ref, p.key.ty.ll, expr.key);
   if (p.mapTempSlot) ctx.emitDropValue(lines, p.mapTempSlot, mapType);
-  return [lines, result, "i1"];
+  return asGen(lines, result);
 }
 
 // `m.getOrInsertWith(k, init)`: a miss calls init() and inserts the result under the
@@ -765,42 +743,40 @@ export function genHashMapModify(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
 export function genHashMapGetOrInsertWith(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapGetOrInsertWith" }, lines: string[]): Gen {
   const mapType = expr.map.type;
   if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrInsertWith on non-hashmap");
+  const b = new LlvmTextBuilder(lines, ctx);
   const [cl, cv] = ctx.genExpr(expr.init);
   lines.push(...cl);
-  const fnPtr = ctx.nextTemp();
-  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-  const envPtr = ctx.nextTemp();
-  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+  const closure = val(cv, Ty.of("{ ptr, ptr }"));
+  const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
+  const envPtr = b.extractvalue(closure, 1, Ty.ptr);
 
-  const p = beginHashMapProbe(ctx, lines, expr.map, expr.key, "hmi");
-  const doneLabel = ctx.nextLabel("hmi.done");
-  const valTy = ctx.llvmType(mapType.value);
+  const p = beginHashMapProbe(ctx, b, lines, expr.map, expr.key, "hmi");
+  const doneLabel = b.newBlock("hmi.done");
+  const valTy = Ty.of(ctx.llvmType(mapType.value));
 
-  lines.push(`${p.foundLabel}:`);
-  ctx.dropOwnedTemp(lines, p.keyVal, p.keyTy, expr.key);
+  b.position(p.foundLabel);
+  ctx.dropOwnedTemp(lines, p.key.ref, p.key.ty.ll, expr.key);
   // The drop can open blocks; the phi names the one we end in.
-  const foundEnd = ctx.nextLabel("hmi.found.end");
-  lines.push(`  br label %${foundEnd}`);
-  lines.push(`${foundEnd}:`);
-  lines.push(`  br label %${doneLabel}`);
+  const foundEnd = b.newBlock("hmi.found.end");
+  b.br(foundEnd);
+  b.position(foundEnd);
+  b.br(doneLabel);
 
-  lines.push(`${p.notFoundLabel}:`);
-  const produced = ctx.nextTemp();
-  lines.push(`  ${produced} = call ${valTy} ${fnPtr}(ptr ${envPtr})`);
-  emitHashMapInsertValues(ctx, lines, p.mapPtr, mapType, p.keyVal, produced, expr.span);
-  ctx.ownEndVal(lines, p.keyVal, "STORE");
+  b.position(p.notFoundLabel);
+  const produced = b.call(valTy, fnPtr.ref, [envPtr]);
+  emitHashMapInsertValues(ctx, lines, p.mapPtr.ref, mapType, p.key.ref, produced.ref, expr.span);
+  ctx.ownEndVal(lines, p.key.ref, "STORE");
   // The insert opened blocks of its own; the phi below needs the block we end in.
-  const insertedEnd = ctx.nextLabel("hmi.inserted");
-  lines.push(`  br label %${insertedEnd}`);
-  lines.push(`${insertedEnd}:`);
-  lines.push(`  br label %${doneLabel}`);
-  emitProbeNext(ctx, lines, p);
+  const insertedEnd = b.newBlock("hmi.inserted");
+  b.br(insertedEnd);
+  b.position(insertedEnd);
+  b.br(doneLabel);
+  emitProbeNext(b, p);
 
-  lines.push(`${doneLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = phi i1 [false, %${foundEnd}], [true, %${insertedEnd}]`);
+  b.position(doneLabel);
+  const result = b.phi(Ty.i1, [[val("false", Ty.i1), foundEnd], [val("true", Ty.i1), insertedEnd]]);
   if (p.mapTempSlot) ctx.emitDropValue(lines, p.mapTempSlot, mapType);
-  return [lines, result, "i1"];
+  return asGen(lines, result);
 }
 
 export function genHashMapRemove(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapRemove" }, lines: string[]): Gen {
@@ -809,91 +785,60 @@ export function genHashMapRemove(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
   if (mapType.tag !== "hashmap") throw new Error("HashMapRemove on non-hashmap");
   const keyType = mapType.key;
   const valueType = mapType.value;
-  const keyTy = ctx.llvmType(keyType);
-  const entryTy = ctx.hashMapEntryType(keyType, valueType);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
+  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+  const b = new LlvmTextBuilder(lines, ctx);
 
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
+  const { ptr: mapPtrRef, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
+  const map = val(mapPtrRef, Ty.ptr);
   const [keyLines, keyVal] = ctx.genExpr(expr.key);
   lines.push(...keyLines);
+  const key = val(keyVal, keyTy);
 
-  const seedPtr = ctx.nextTemp();
-  lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_SEED}`);
-  const seed = ctx.nextTemp();
-  lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_CAP}`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const dataFieldPtr = ctx.nextTemp();
-  lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_DATA}`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_LEN}`);
+  const { seed, cap, data } = loadSeedCapData(b, map);
+  const lenPtr = hmField(b, map, HM_LEN);
+  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
 
-  const hash = emitFnvHash(ctx, lines, keyVal, keyType, seed);
-  const mask = ctx.nextTemp();
-  lines.push(`  ${mask} = sub i64 ${cap}, 1`);
-  const slotAddr = ctx.nextTemp();
-  lines.push(`  ${slotAddr} = alloca i64`);
-  const slot0 = ctx.nextTemp();
-  lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
-  lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+  const probeCond = b.newBlock("hmr.probe");
+  const probeCheck = b.newBlock("hmr.check");
+  const probeOccupied = b.newBlock("hmr.occupied");
+  const removeLabel = b.newBlock("hmr.remove");
+  const probeNext = b.newBlock("hmr.pnext");
+  const doneLabel = b.newBlock("hmr.done");
 
-  const probeCond = ctx.nextLabel("hmr.probe");
-  const probeCheck = ctx.nextLabel("hmr.check");
-  const probeOccupied = ctx.nextLabel("hmr.occupied");
-  const removeLabel = ctx.nextLabel("hmr.remove");
-  const probeNext = ctx.nextLabel("hmr.pnext");
-  const doneLabel = ctx.nextLabel("hmr.done");
-
-  const { slot, entryPtr } = emitHashProbePrologue(ctx,
-    lines,
+  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: doneLabel, matchTarget: removeLabel },
-    { slotAddr, data, entryTy, keyTy, keyVal, keyType },
+    { slotAddr, data, entryTy, keyTy, key, keyType },
   );
 
-  lines.push(`${removeLabel}:`);
+  b.position(removeLabel);
   // set tombstone
-  lines.push(`  store i8 2, ptr ${entryPtr}`);
+  b.store(i8c(2), entryPtr);
   // drop key and value if needed
   if (ctx.needsDropCg(keyType)) {
-    const kPtr = ctx.nextTemp();
-    lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-    ctx.emitDropValue(lines, kPtr, keyType);
+    const kPtr = entryField(b, entryTy, entryPtr, 1);
+    ctx.emitDropValue(lines, kPtr.ref, keyType);
   }
   if (ctx.needsDropCg(valueType)) {
-    const vPtr = ctx.nextTemp();
-    lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    ctx.emitDropValue(lines, vPtr, valueType);
+    const vPtr = entryField(b, entryTy, entryPtr, 2);
+    ctx.emitDropValue(lines, vPtr.ref, valueType);
   }
   // decrement len
-  const curLen = ctx.nextTemp();
-  lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-  const newLen = ctx.nextTemp();
-  lines.push(`  ${newLen} = sub i64 ${curLen}, 1`);
-  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+  const curLen = b.load(Ty.i64, lenPtr);
+  const newLen = b.binop("sub", curLen, i64c(1));
+  b.store(newLen, lenPtr);
   // The slot just became a tombstone. Insert's resize trigger reads this, so a remove
   // that did not count itself would let tombstones accumulate past the load factor.
-  const rmTombsPtr = ctx.nextTemp();
-  lines.push(`  ${rmTombsPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 ${HM_TOMBS}`);
-  const rmTombs = ctx.nextTemp();
-  lines.push(`  ${rmTombs} = load i64, ptr ${rmTombsPtr}`);
-  const rmTombsNew = ctx.nextTemp();
-  lines.push(`  ${rmTombsNew} = add i64 ${rmTombs}, 1`);
-  lines.push(`  store i64 ${rmTombsNew}, ptr ${rmTombsPtr}`);
-  lines.push(`  br label %${doneLabel}`);
+  const rmTombsPtr = hmField(b, map, HM_TOMBS);
+  const rmTombs = b.load(Ty.i64, rmTombsPtr);
+  const rmTombsNew = b.binop("add", rmTombs, i64c(1));
+  b.store(rmTombsNew, rmTombsPtr);
+  b.br(doneLabel);
 
-  lines.push(`${probeNext}:`);
-  const nextSlot = ctx.nextTemp();
-  lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
-  const wrappedSlot = ctx.nextTemp();
-  lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
-  lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
-  lines.push(`  br label %${probeCond}`);
+  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
 
-  lines.push(`${doneLabel}:`);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy, expr.key);
+  b.position(doneLabel);
+  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
@@ -1199,7 +1144,7 @@ export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   const probeNext = ctx.nextLabel("hmg.pnext");
   const doneLabel = ctx.nextLabel("hmg.done");
 
-  const { slot, entryPtr } = emitHashProbePrologue(ctx,
+  const { slot, entryPtr } = emitHashProbePrologueStr(ctx,
     lines,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
     { slotAddr, data, entryTy, keyTy, keyVal, keyType },
@@ -1317,7 +1262,7 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   const probeNext = ctx.nextLabel("hmgd.pnext");
   const doneLabel = ctx.nextLabel("hmgd.done");
 
-  const { slot, entryPtr } = emitHashProbePrologue(ctx,
+  const { slot, entryPtr } = emitHashProbePrologueStr(ctx,
     lines,
     { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
     { slotAddr, data, entryTy, keyTy, keyVal, keyType },

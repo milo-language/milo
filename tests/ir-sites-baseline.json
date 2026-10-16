@@ -1,6 +1,6 @@
 {
   "src/codegen-dwarf.ts": 33,
-  "src/codegen-map.ts": 402,
+  "src/codegen-map.ts": 243,
   "src/codegen-vec.ts": 109,
   "src/codegen.ts": 3957
 }
