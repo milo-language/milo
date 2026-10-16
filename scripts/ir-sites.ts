@@ -28,7 +28,8 @@ const IN_SCOPE = /^codegen.*\.ts$/;
 const PATTERNS = [
   /\.push\(\s*[`"']/,
   /\.raw\(/,
-  /\bnextTemp\(\)/,
+  // A call, not a declaration (`nextTemp(): string` in a ctx interface or Codegen itself).
+  /\bnextTemp\(\)(?!:)/,
   /[`"'] {2}(\$\{[^}]+\}|%[\w.$-]+) = |[`"'] {2}(store|br|call|ret|switch|unreachable|resume) /,
 ];
 
