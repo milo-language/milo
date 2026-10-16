@@ -71,7 +71,9 @@ const sha = rev.out;
 const short = sha.slice(0, 12);
 const baseTree = join(tmpdir(), `milo-ir-same-${short}`);
 // Keyed by flags too: the same commit emits different IR under -g or another target.
-const flagKey = flags.length ? "-" + Bun.hash(flags.join(" ")).toString(16) : "";
+// The ledger env vars change the IR the same way (emit-ir inherits this env).
+const keyParts = [...flags, ...["MILO_OWN_LEDGER", "MILO_OWN_LEDGER_KEEP"].filter(k => process.env[k]).map(k => `${k}=${process.env[k]}`)];
+const flagKey = keyParts.length ? "-" + Bun.hash(keyParts.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
 
 // A base costs ~1.8GB of cache per flag set, and main moves several times a day: unpruned,
