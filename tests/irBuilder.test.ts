@@ -28,6 +28,13 @@ describe("LlvmTextBuilder invariants", () => {
     expect(() => c.switch(val("%p", Ty.ptr), cd, [])).toThrow("non-integer");
     expect(() => c.switch(val("%t", Ty.i32), cd, [[1, cd], [1, cd]])).toThrow("appears twice");
     expect(() => c.switch(val("%t", Ty.i32), cd, [[1.5, cd]])).toThrow("not an integer");
+    // bigint cases print exactly past 2^53, and 1 and 1n are the same case
+    const big: string[] = [];
+    const g = builder(big);
+    const [gd, gx] = [g.newBlock("d"), g.newBlock("x")];
+    g.switch(val("%v", Ty.i64), gd, [[9007199254740993n, gx]]);
+    expect(big).toEqual(["  switch i64 %v, label %d0 [i64 9007199254740993, label %x1]"]);
+    expect(() => c.switch(val("%t", Ty.i32), cd, [[1, cd], [1n, cd]])).toThrow("appears twice");
   });
 
   test("entryAlloca writes to the entry block, not the body, and checks its slot", () => {

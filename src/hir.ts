@@ -209,10 +209,10 @@ interface HIRMatchArm {
 export interface HIRPatStep { enumName: string; variant: string; index: number }
 export type HIRPatTest =
   | { kind: "tag"; path: HIRPatStep[]; enumName: string; tag: number }
-  | { kind: "lit"; path: HIRPatStep[]; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; type: TypeKind };
+  | { kind: "lit"; path: HIRPatStep[]; value: bigint | number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; type: TypeKind };
 export type HIRPattern =
   | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind; escapes?: boolean; path?: HIRPatStep[] }[]; tag: number; tests?: HIRPatTest[] }
-  | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool" }
+  | { kind: "LiteralPattern"; value: bigint | number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool" }
   | { kind: "WildcardPattern" };
 
 // ── Top-level ──

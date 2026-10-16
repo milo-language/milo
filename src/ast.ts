@@ -160,7 +160,7 @@ export type Pattern =
   // bound, and `bindings[i]` holds the placeholder `_`. A pattern with no `args` is the flat
   // form every pass has always handled; `patternLeafNames` lists the bindings of either.
   | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; bindingSpans?: Span[]; args?: (Pattern | null)[]; span?: Span }
-  | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; span?: Span }
+  | { kind: "LiteralPattern"; value: bigint | number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; span?: Span }
   | { kind: "WildcardPattern"; span?: Span };
 
 export function isNestedPattern(p: Pattern): boolean {

@@ -5308,8 +5308,11 @@ export class Codegen {
       return genStringCmp(this, lines, val, l2, true)[1];
     }
     if (t.literalKind === "bool") lines.push(`  ${out} = icmp eq i1 ${val}, ${t.value ? 1 : 0}`);
-    else if (t.literalKind === "float") {
-      const f = Number.isInteger(t.value as number) ? (t.value as number).toFixed(1) : String(t.value);
+    else if (t.literalKind === "float" || t.type.tag === "float") {
+      // Also an int pattern on a float payload (`A(3)` with an f64 field): icmp on a double
+      // is invalid IR. Number() because an int pattern's value is a bigint.
+      const n = Number(t.value);
+      const f = Number.isInteger(n) ? n.toFixed(1) : String(n);
       lines.push(`  ${out} = fcmp oeq ${llTy} ${val}, ${f}`);
     } else lines.push(`  ${out} = icmp eq ${llTy} ${val}, ${t.value}`);
     return out;

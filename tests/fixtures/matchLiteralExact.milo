@@ -1,0 +1,48 @@
+// Literal patterns match the exact value written, whatever its size or the subject's type.
+// Int patterns were parsed as JS numbers, so 2^53+1 rounded to 2^53 and the arm never
+// matched. An int pattern on a float subject or payload emitted `switch double` or
+// `icmp eq double` (invalid IR) instead of an fcmp.
+// @expect: 1
+// @expect: 2
+// @expect: 3
+// @expect: 4
+// @expect: 5
+// @expect: 6
+
+enum E { A(i64), F(f64), B }
+
+fn main() {
+    let x: i64 = 9007199254740993
+    match x {
+        9007199254740992 => print(0),
+        9007199254740993 => print(1),
+        _ => print(0)
+    }
+    let u: u64 = 18446744073709551615
+    match u {
+        18446744073709551615 => print(2),
+        _ => print(0)
+    }
+    let n: i64 = -9007199254740993
+    match n {
+        -9007199254740992 => print(0),
+        -9007199254740993 => print(3),
+        _ => print(0)
+    }
+    let f = 3.0
+    match f {
+        3 => print(4),
+        _ => print(0)
+    }
+    let e = E.A(9007199254740993)
+    match e {
+        E.A(9007199254740992) => print(0),
+        E.A(9007199254740993) => print(5),
+        _ => print(0)
+    }
+    let g = E.F(3.0)
+    match g {
+        E.F(3) => print(6),
+        _ => print(0)
+    }
+}

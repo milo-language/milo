@@ -12,12 +12,9 @@ export interface MatchCtx extends StringCtx {
   emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart?: number): boolean;
 }
 
-// The builder takes case values as numbers; a literal that does not survive the round trip
-// (beyond 2^53) would print differently, so it fails loudly instead of silently changing.
-function caseValue(v: number | string | boolean): number {
-  const n = Number(v);
-  if (String(n) !== String(v)) throw new Error(`ir: switch case ${String(v)} is not exactly representable`);
-  return n;
+// Int patterns arrive as bigint, chars as their code in a string ("97").
+function caseValue(v: bigint | number | string | boolean): bigint {
+  return BigInt(v);
 }
 
 export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
@@ -50,6 +47,9 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
   // bool, float, dup values) falls through to the chain below.
   const allIntCharDistinct = (() => {
     if (literalArms.length === 0) return false;
+    // An int pattern can also match a float subject (`3 => ...` on an f64), and LLVM has no
+    // switch over floats: that case takes the fcmp chain below.
+    if (subj.ty.kind !== "int") return false;
     const seen = new Set<string>();
     for (const la of literalArms) {
       const p = la.arm.pattern;
@@ -65,7 +65,7 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
     const defaultBlock = wildcardArm ? b.newBlock("match.wildcard") : b.newBlock("match.default");
     b.switch(subj, defaultBlock, literalArms.map(la => {
       const p = la.arm.pattern as HIRPattern & { kind: "LiteralPattern" };
-      return [caseValue(p.value), la.block] as [number, Block];
+      return [caseValue(p.value), la.block] as [bigint, Block];
     }));
     for (const la of literalArms) {
       b.position(la.block);
@@ -106,11 +106,13 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
       cmp = val(cmpResult, Ty.i1);
     } else if (pat.literalKind === "bool") {
       cmp = b.icmp("eq", subj, val(pat.value ? "1" : "0", Ty.i1));
-    } else if (pat.literalKind === "int" || pat.literalKind === "char") {
+    } else if ((pat.literalKind === "int" || pat.literalKind === "char") && subj.ty.kind === "int") {
       cmp = b.icmp("eq", subj, val(String(pat.value), subj.ty));
     } else {
-      // float
-      const fval = Number.isInteger(pat.value as number) ? (pat.value as number).toFixed(1) : String(pat.value);
+      // A float pattern, or an int pattern against a float subject (the checker allows
+      // `3 => ...` on an f64): compared in floating point.
+      const fnum = Number(pat.value);
+      const fval = Number.isInteger(fnum) ? fnum.toFixed(1) : String(fnum);
       cmp = b.fcmp("oeq", subj, val(fval, subj.ty));
     }
 

@@ -1411,7 +1411,9 @@ export class Parser {
     // Literal patterns: integers, floats, strings, chars, bools
     if (tok.kind === TokenKind.Int) {
       this.advance();
-      return { kind: "LiteralPattern", value: Number(tok.value), literalKind: "int", span: s };
+      // BigInt, as IntLit does: a Number silently rounds a pattern above 2^53, so the arm
+      // compared against a different value than the one written.
+      return { kind: "LiteralPattern", value: BigInt(tok.value), literalKind: "int", span: s };
     }
     if (tok.kind === TokenKind.Float) {
       this.advance();
@@ -1440,7 +1442,7 @@ export class Parser {
         this.advance(); // consume -
         const numTok = this.advance();
         const lk = numTok.kind === TokenKind.Int ? "int" as const : "float" as const;
-        return { kind: "LiteralPattern", value: -Number(numTok.value), literalKind: lk, span: s };
+        return { kind: "LiteralPattern", value: lk === "int" ? -BigInt(numTok.value) : -Number(numTok.value), literalKind: lk, span: s };
       }
     }
     // `Enum.Variant` or, when the enum is obvious from the subject, bare `Variant`.
