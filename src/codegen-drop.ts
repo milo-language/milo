@@ -62,149 +62,115 @@ export interface DropCtx extends NameSource {
 // Used for auto-clone on Vec[i] reads so the source Vec stays intact.
 export function emitDeepCloneFromPtr(ctx: DropCtx, lines: string[], srcPtr: string, typeKind: TypeKind): string {
   const lt = ctx.llvmType(typeKind);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const src = val(srcPtr, Ty.ptr);
 
   // Copy types: just load
-  if (!ctx.needsDropCg(typeKind)) {
-    const v = ctx.nextTemp();
-    lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-    return v;
-  }
+  if (!ctx.needsDropCg(typeKind)) return b.load(Ty.of(lt), src).ref;
 
   // The one switch for every implicit string copy (`v[i]`, a field read out of a
   // borrow, a struct or Vec clone): a heap buffer is shared by count, not copied.
   if (typeKind.tag === "string") {
-    const orig = ctx.nextTemp();
-    lines.push(`  ${orig} = load %String, ptr ${srcPtr}`);
-    return ctx.emitStrShare(lines, orig);
+    const orig = b.load(STRING, src);
+    return ctx.emitStrShare(lines, orig.ref);
   }
 
   if (typeKind.tag === "vec") {
     ctx.hasVecType = true;
     ctx.needsMalloc = true;
     ctx.needsMemcpy = true;
-    const orig = ctx.nextTemp();
-    lines.push(`  ${orig} = load %Vec, ptr ${srcPtr}`);
-    const srcData = ctx.nextTemp();
-    lines.push(`  ${srcData} = extractvalue %Vec ${orig}, 0`);
-    const vecLen = ctx.nextTemp();
-    lines.push(`  ${vecLen} = extractvalue %Vec ${orig}, 1`);
+    const orig = b.load(VEC, src);
+    const srcData = b.extractvalue(orig, 0, Ty.ptr);
+    const vecLen = b.extractvalue(orig, 1, Ty.i64);
     const elemSize = ctx.typeSizeOf(typeKind.element);
-    const elemTy = ctx.llvmType(typeKind.element);
+    const elemTy = Ty.of(ctx.llvmType(typeKind.element));
 
     // result buf pointer (set conditionally below)
-    const newBufAddr = ctx.nextTemp();
-    lines.push(`  ${newBufAddr} = alloca ptr`);
-    lines.push(`  store ptr null, ptr ${newBufAddr}`);
+    const newBufAddr = b.alloca(Ty.ptr);
+    b.store(NULL, newBufAddr);
 
-    const isEmpty = ctx.nextTemp();
-    lines.push(`  ${isEmpty} = icmp eq i64 ${vecLen}, 0`);
-    const allocLabel = ctx.nextLabel("vec.clone.alloc");
-    const endLabel = ctx.nextLabel("vec.clone.end");
-    lines.push(`  br i1 ${isEmpty}, label %${endLabel}, label %${allocLabel}`);
+    const isEmpty = b.icmp("eq", vecLen, I64_0);
+    const allocLabel = b.newBlock("vec.clone.alloc");
+    const endLabel = b.newBlock("vec.clone.end");
+    b.condBr(isEmpty, endLabel, allocLabel);
 
-    lines.push(`${allocLabel}:`);
-    const { buf: newBuf, bytes: bytes } = ctx.emitAllocBytes(lines, vecLen, elemSize, "vecclone", undefined);
-    lines.push(`  store ptr ${newBuf}, ptr ${newBufAddr}`);
+    b.position(allocLabel);
+    const { buf, bytes } = ctx.emitAllocBytes(lines, vecLen.ref, elemSize, "vecclone", undefined);
+    const newBuf = val(buf, Ty.ptr);
+    b.store(newBuf, newBufAddr);
 
     if (ctx.needsDropCg(typeKind.element)) {
       // deep-clone each element
-      const loopCond = ctx.nextLabel("vec.clone.cond");
-      const loopBody = ctx.nextLabel("vec.clone.body");
-      const iAddr = ctx.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
-      lines.push(`${loopCond}:`);
-      const iVal = ctx.nextTemp();
-      lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-      const cmp = ctx.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
-      lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${endLabel}`);
-      lines.push(`${loopBody}:`);
-      const srcElemPtr = ctx.nextTemp();
-      lines.push(`  ${srcElemPtr} = getelementptr ${elemTy}, ptr ${srcData}, i64 ${iVal}`);
-      const clonedElem = emitDeepCloneFromPtr(ctx, lines, srcElemPtr, typeKind.element);
-      const dstElemPtr = ctx.nextTemp();
-      lines.push(`  ${dstElemPtr} = getelementptr ${elemTy}, ptr ${newBuf}, i64 ${iVal}`);
-      lines.push(`  store ${elemTy} ${clonedElem}, ptr ${dstElemPtr}`);
-      const nextI = ctx.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${loopCond}`);
+      const loopCond = b.newBlock("vec.clone.cond");
+      const loopBody = b.newBlock("vec.clone.body");
+      const iAddr = b.alloca(Ty.i64);
+      b.store(I64_0, iAddr);
+      b.br(loopCond);
+      b.position(loopCond);
+      const iVal = b.load(Ty.i64, iAddr);
+      const cmp = b.icmp("ult", iVal, vecLen);
+      b.condBr(cmp, loopBody, endLabel);
+      b.position(loopBody);
+      const srcElemPtr = b.gep(elemTy, srcData, [iVal]);
+      const clonedElem = emitDeepCloneFromPtr(ctx, lines, srcElemPtr.ref, typeKind.element);
+      const dstElemPtr = b.gep(elemTy, newBuf, [iVal]);
+      b.store(val(clonedElem, elemTy), dstElemPtr);
+      const nextI = b.binop("add", iVal, I64_1);
+      b.store(nextI, iAddr);
+      b.br(loopCond);
     } else {
       // Copy element: just memcpy
-      lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
-      lines.push(`  br label %${endLabel}`);
+      b.callDiscard(Ty.ptr, "@memcpy", [newBuf, srcData, val(bytes, Ty.i64)]);
+      b.br(endLabel);
     }
 
-    lines.push(`${endLabel}:`);
-    const finalPtr = ctx.nextTemp();
-    lines.push(`  ${finalPtr} = load ptr, ptr ${newBufAddr}`);
-    const v0 = ctx.nextTemp();
-    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${finalPtr}, 0`);
-    const v1 = ctx.nextTemp();
-    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${vecLen}, 1`);
-    const v2 = ctx.nextTemp();
-    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${vecLen}, 2`);
-    return v2;
+    b.position(endLabel);
+    const finalPtr = b.load(Ty.ptr, newBufAddr);
+    const v0 = b.insertvalue(val("undef", VEC), finalPtr, 0);
+    const v1 = b.insertvalue(v0, vecLen, 1);
+    return b.insertvalue(v1, vecLen, 2).ref;
   }
 
   if (typeKind.tag === "heap") {
     ctx.needsMalloc = true;
     const inner = typeKind.inner;
-    const innerTy = ctx.llvmType(inner);
+    const innerTy = Ty.of(ctx.llvmType(inner));
     const innerSize = ctx.typeSizeOf(inner);
-    const origPtr = ctx.nextTemp();
-    lines.push(`  ${origPtr} = load ptr, ptr ${srcPtr}`);
-    const newHeap = ctx.nextTemp();
-    lines.push(`  ${newHeap} = call ptr @malloc(i64 ${innerSize})`);
-    const clonedInner = emitDeepCloneFromPtr(ctx, lines, origPtr, inner);
-    lines.push(`  store ${innerTy} ${clonedInner}, ptr ${newHeap}`);
-    return newHeap;
+    const origPtr = b.load(Ty.ptr, src);
+    const newHeap = b.call(Ty.ptr, "@malloc", [val(String(innerSize), Ty.i64)]);
+    const clonedInner = emitDeepCloneFromPtr(ctx, lines, origPtr.ref, inner);
+    b.store(val(clonedInner, innerTy), newHeap);
+    return newHeap.ref;
   }
 
   if (typeKind.tag === "struct") {
     const layout = ctx.structLayouts.get(typeKind.name);
-    if (!layout) {
-      const v = ctx.nextTemp();
-      lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-      return v;
-    }
-    const structTy = `%${typeKind.name}`;
+    if (!layout) return b.load(Ty.of(lt), src).ref;
+    const structTy = Ty.of(`%${typeKind.name}`);
     if (ctx.needsDropCg(typeKind)) {
       ensureStructCloneHelper(ctx, typeKind.name);
       const helperName = `milo.clone.struct.${typeKind.name}`;
-      const dstAlloca = ctx.nextTemp();
-      lines.push(`  ${dstAlloca} = alloca ${structTy}`);
-      lines.push(`  call void @${helperName}(ptr ${srcPtr}, ptr ${dstAlloca})`);
-      const result = ctx.nextTemp();
-      lines.push(`  ${result} = load ${structTy}, ptr ${dstAlloca}`);
-      return result;
+      const dstAlloca = b.alloca(structTy);
+      b.callDiscard(Ty.void, `@${helperName}`, [src, dstAlloca]);
+      return b.load(structTy, dstAlloca).ref;
     }
-    const newAlloca = ctx.nextTemp();
-    lines.push(`  ${newAlloca} = alloca ${structTy}`);
+    const newAlloca = b.alloca(structTy);
     for (let i = 0; i < layout.fields.length; i++) {
       const f = layout.fields[i];
-      const srcFieldPtr = ctx.nextTemp();
-      lines.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr ${srcPtr}, i32 0, i32 ${i}`);
-      const clonedField = emitDeepCloneFromPtr(ctx, lines, srcFieldPtr, f.typeKind);
-      const dstFieldPtr = ctx.nextTemp();
-      lines.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr ${newAlloca}, i32 0, i32 ${i}`);
-      lines.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
+      const srcFieldPtr = b.gep(structTy, src, [I32_0, val(String(i), Ty.i32)]);
+      const clonedField = emitDeepCloneFromPtr(ctx, lines, srcFieldPtr.ref, f.typeKind);
+      const dstFieldPtr = b.gep(structTy, newAlloca, [I32_0, val(String(i), Ty.i32)]);
+      b.store(val(clonedField, Ty.of(f.type)), dstFieldPtr);
     }
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = load ${structTy}, ptr ${newAlloca}`);
-    return result;
+    return b.load(structTy, newAlloca).ref;
   }
 
   if (typeKind.tag === "enum" && ctx.needsDropCg(typeKind) && ctx.enumLayouts.has(typeKind.name)) {
     ensureEnumCloneHelper(ctx, typeKind.name);
-    const dstAlloca = ctx.nextTemp();
-    lines.push(`  ${dstAlloca} = alloca ${lt}`);
-    lines.push(`  call void @milo.clone.${typeKind.name}(ptr ${srcPtr}, ptr ${dstAlloca})`);
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = load ${lt}, ptr ${dstAlloca}`);
-    return result;
+    const enumTy = Ty.of(lt);
+    const dstAlloca = b.alloca(enumTy);
+    b.callDiscard(Ty.void, `@milo.clone.${typeKind.name}`, [src, dstAlloca]);
+    return b.load(enumTy, dstAlloca).ref;
   }
 
   if (typeKind.tag === "hashmap") {
@@ -217,97 +183,71 @@ export function emitDeepCloneFromPtr(ctx: DropCtx, lines: string[], srcPtr: stri
     ctx.needsMemcpy = true;
     const keyType = typeKind.key;
     const valueType = typeKind.value;
-    const entryTy = ctx.hashMapEntryType(keyType, valueType);
-    const orig = ctx.nextTemp();
-    lines.push(`  ${orig} = load %HashMap, ptr ${srcPtr}`);
-    const srcData = ctx.nextTemp();
-    lines.push(`  ${srcData} = extractvalue %HashMap ${orig}, 0`);
-    const len = ctx.nextTemp();
-    lines.push(`  ${len} = extractvalue %HashMap ${orig}, 1`);
-    const cap = ctx.nextTemp();
-    lines.push(`  ${cap} = extractvalue %HashMap ${orig}, 2`);
-    const seed = ctx.nextTemp();
-    lines.push(`  ${seed} = extractvalue %HashMap ${orig}, 3`);
-    const entrySizePtr = ctx.nextTemp();
-    lines.push(`  ${entrySizePtr} = getelementptr ${entryTy}, ptr null, i32 1`);
-    const entrySize = ctx.nextTemp();
-    lines.push(`  ${entrySize} = ptrtoint ptr ${entrySizePtr} to i64`);
-    const { buf: newBuf, bytes: bytes } = ctx.emitAllocBytes(lines, cap, entrySize, "hmclone", undefined);
-    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
+    const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
+    const orig = b.load(HASHMAP, src);
+    const srcData = b.extractvalue(orig, 0, Ty.ptr);
+    const len = b.extractvalue(orig, 1, Ty.i64);
+    const cap = b.extractvalue(orig, 2, Ty.i64);
+    const seed = b.extractvalue(orig, 3, Ty.i64);
+    const entrySizePtr = b.gep(entryTy, NULL, [I32_1]);
+    const entrySize = b.cast("ptrtoint", entrySizePtr, Ty.i64);
+    const { buf, bytes } = ctx.emitAllocBytes(lines, cap.ref, entrySize.ref, "hmclone", undefined);
+    const newBuf = val(buf, Ty.ptr);
+    b.callDiscard(Ty.ptr, "@memcpy", [newBuf, srcData, val(bytes, Ty.i64)]);
 
     if (ctx.needsDropCg(keyType) || ctx.needsDropCg(valueType)) {
       // memcpy covered states and Copy fields; re-clone owned K/V in
       // occupied slots so the two maps share no heap data
-      const condLbl = ctx.nextLabel("hm.clone.cond");
-      const bodyLbl = ctx.nextLabel("hm.clone.body");
-      const skipLbl = ctx.nextLabel("hm.clone.skip");
-      const endLbl = ctx.nextLabel("hm.clone.end");
-      const iAddr = ctx.nextTemp();
-      lines.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${iAddr}`);
-      lines.push(`  br label %${condLbl}`);
-      lines.push(`${condLbl}:`);
-      const iVal = ctx.nextTemp();
-      lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
-      const cmp = ctx.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${cap}`);
-      lines.push(`  br i1 ${cmp}, label %${bodyLbl}, label %${endLbl}`);
-      lines.push(`${bodyLbl}:`);
-      const statePtr = ctx.nextTemp();
-      lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 0`);
-      const state = ctx.nextTemp();
-      lines.push(`  ${state} = load i8, ptr ${statePtr}`);
-      const occupied = ctx.nextTemp();
-      lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
-      const cloneLbl = ctx.nextLabel("hm.clone.slot");
-      lines.push(`  br i1 ${occupied}, label %${cloneLbl}, label %${skipLbl}`);
-      lines.push(`${cloneLbl}:`);
+      const condLbl = b.newBlock("hm.clone.cond");
+      const bodyLbl = b.newBlock("hm.clone.body");
+      const skipLbl = b.newBlock("hm.clone.skip");
+      const endLbl = b.newBlock("hm.clone.end");
+      const iAddr = b.alloca(Ty.i64);
+      b.store(I64_0, iAddr);
+      b.br(condLbl);
+      b.position(condLbl);
+      const iVal = b.load(Ty.i64, iAddr);
+      const cmp = b.icmp("ult", iVal, cap);
+      b.condBr(cmp, bodyLbl, endLbl);
+      b.position(bodyLbl);
+      const statePtr = b.gep(entryTy, newBuf, [iVal, I32_0]);
+      const state = b.load(Ty.i8, statePtr);
+      const occupied = b.icmp("eq", state, val("1", Ty.i8));
+      const cloneLbl = b.newBlock("hm.clone.slot");
+      b.condBr(occupied, cloneLbl, skipLbl);
+      b.position(cloneLbl);
       if (ctx.needsDropCg(keyType)) {
-        const srcKeyPtr = ctx.nextTemp();
-        lines.push(`  ${srcKeyPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 1`);
-        const clonedKey = emitDeepCloneFromPtr(ctx, lines, srcKeyPtr, keyType);
-        const dstKeyPtr = ctx.nextTemp();
-        lines.push(`  ${dstKeyPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 1`);
-        lines.push(`  store ${ctx.llvmType(keyType)} ${clonedKey}, ptr ${dstKeyPtr}`);
+        const srcKeyPtr = b.gep(entryTy, srcData, [iVal, I32_1]);
+        const clonedKey = emitDeepCloneFromPtr(ctx, lines, srcKeyPtr.ref, keyType);
+        const dstKeyPtr = b.gep(entryTy, newBuf, [iVal, I32_1]);
+        b.store(val(clonedKey, Ty.of(ctx.llvmType(keyType))), dstKeyPtr);
       }
       if (ctx.needsDropCg(valueType)) {
-        const srcValPtr = ctx.nextTemp();
-        lines.push(`  ${srcValPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 2`);
-        const clonedVal = emitDeepCloneFromPtr(ctx, lines, srcValPtr, valueType);
-        const dstValPtr = ctx.nextTemp();
-        lines.push(`  ${dstValPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 2`);
-        lines.push(`  store ${ctx.llvmType(valueType)} ${clonedVal}, ptr ${dstValPtr}`);
+        const srcValPtr = b.gep(entryTy, srcData, [iVal, val("2", Ty.i32)]);
+        const clonedVal = emitDeepCloneFromPtr(ctx, lines, srcValPtr.ref, valueType);
+        const dstValPtr = b.gep(entryTy, newBuf, [iVal, val("2", Ty.i32)]);
+        b.store(val(clonedVal, Ty.of(ctx.llvmType(valueType))), dstValPtr);
       }
-      lines.push(`  br label %${skipLbl}`);
-      lines.push(`${skipLbl}:`);
-      const nextI = ctx.nextTemp();
-      lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
-      lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
-      lines.push(`  br label %${condLbl}`);
-      lines.push(`${endLbl}:`);
+      b.br(skipLbl);
+      b.position(skipLbl);
+      const nextI = b.binop("add", iVal, I64_1);
+      b.store(nextI, iAddr);
+      b.br(condLbl);
+      b.position(endLbl);
     }
 
-    const h0 = ctx.nextTemp();
-    lines.push(`  ${h0} = insertvalue %HashMap undef, ptr ${newBuf}, 0`);
-    const h1 = ctx.nextTemp();
-    lines.push(`  ${h1} = insertvalue %HashMap ${h0}, i64 ${len}, 1`);
-    const h2 = ctx.nextTemp();
-    lines.push(`  ${h2} = insertvalue %HashMap ${h1}, i64 ${cap}, 2`);
-    const h3 = ctx.nextTemp();
-    lines.push(`  ${h3} = insertvalue %HashMap ${h2}, i64 ${seed}, 3`);
+    const h0 = b.insertvalue(val("undef", HASHMAP), newBuf, 0);
+    const h1 = b.insertvalue(h0, len, 1);
+    const h2 = b.insertvalue(h1, cap, 2);
+    const h3 = b.insertvalue(h2, seed, 3);
     // The buffer is memcpy'd verbatim, tombstone slots and all, so the clone starts
     // life with exactly the source's deleted-slot count — not zero.
-    const srcTombs = ctx.nextTemp();
-    lines.push(`  ${srcTombs} = extractvalue %HashMap ${orig}, ${HM_TOMBS}`);
-    const h4 = ctx.nextTemp();
-    lines.push(`  ${h4} = insertvalue %HashMap ${h3}, i64 ${srcTombs}, ${HM_TOMBS}`);
-    return h4;
+    const srcTombs = b.extractvalue(orig, HM_TOMBS, Ty.i64);
+    return b.insertvalue(h3, srcTombs, HM_TOMBS).ref;
   }
 
   // array — fall back to shallow load
-  const v = ctx.nextTemp();
-  lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
-  return v;
+  return b.load(Ty.of(lt), src).ref;
 }
 
 // Deep-clone an enum by tag: shallow-copy first (tag + Copy payload fields), then
