@@ -9,6 +9,10 @@ import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
 import {
+  F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
+  genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
+} from "./codegen-string";
+import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HM_TOMBS, HASHMAP_FIELDS, HASH_SEED_FN,
@@ -67,9 +71,6 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
 export const GLOBAL_INIT_FN = "__milo.global_init";
 
-// Scratch size for one formatted f64. Worst case at 17 significant digits is
-// "-1.2345678901234567e-308" — 24 bytes plus the NUL.
-const F64_BUF = 32;
 
 // The bounds-check message is one module-wide global, so the literal and the array length
 // in its declaration have to stay in lockstep — a mismatch is an LLVM verifier error.
@@ -157,7 +158,7 @@ export function sanitizerKind(): "address" | "thread" {
 type ForkSlot = { addr: string; ty: string; cloneViews?: boolean };
 
 export class Codegen {
-  private target: TargetInfo;
+  public target: TargetInfo;
   private output: string[] = [];
   private strings: { label: string; escaped: string; length: number }[] = [];
   private strCounter = 0;
@@ -179,7 +180,7 @@ export class Codegen {
   private cValues: CValueClaim[] = [];
   public enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
-  private needsBoundsCheck = false;
+  public needsBoundsCheck = false;
   private needsGlobalInit = false;
   private needsSchedYield = false;
   // Module globals whose initializer runs code: zeroed at load, filled on first read
@@ -641,7 +642,7 @@ export class Codegen {
   // dprintf(fd, fmt, ...) has no UCRT equivalent. stderr is not a linkable data symbol
   // on MSVC either — it is the macro `__acrt_iob_func(2)` — so eprint lowers to an
   // fprintf onto that handle.
-  private emitFdPrintf(lines: string[], fd: number, fmtLabel: string, argsStr: string): void {
+  public emitFdPrintf(lines: string[], fd: number, fmtLabel: string, argsStr: string): void {
     // Freestanding targets have one output sink — whatever printf the embedded runtime
     // provides. There are no fds to write to, so a panic goes out the same channel as
     // everything else rather than referencing a dprintf nothing defines.
@@ -775,7 +776,7 @@ export class Codegen {
     return { escaped: parts.join(""), byteLen };
   }
 
-  private addString(value: string): { label: string; length: number } {
+  public addString(value: string): { label: string; length: number } {
     const label = `@.str.${this.strCounter++}`;
     const { escaped, byteLen } = this.escapeCString(value);
     const length = byteLen + 1; // null terminator
@@ -3644,7 +3645,7 @@ export class Codegen {
   // `file:line:col` stamp baked into a runtime panic message. Prefer the span's own file
   // over the file being compiled: a panic can fire inside an imported module (a `!` in
   // std/fs), and blaming the entry file sends the reader to the wrong source line.
-  private panicAt(span?: Span): string {
+  public panicAt(span?: Span): string {
     const file = span?.file ?? this.filePath;
     return `${file ? `${this.displayPath(file)}:` : ""}${span?.line ?? 0}:${span?.col ?? 0}`;
   }
@@ -3664,7 +3665,7 @@ export class Codegen {
   }
 
   // Pointer to the interned name of the file a check lives in, for its error message.
-  private emitCheckFilePtr(lines: string[], span?: Span): string {
+  public emitCheckFilePtr(lines: string[], span?: Span): string {
     const file = this.displayPath(span?.file ?? this.filePath ?? "<unknown>");
     let global = this.checkFileConstants.get(file);
     if (!global) {
@@ -5021,7 +5022,7 @@ export class Codegen {
         lines.push(`  ${litVal} = insertvalue %String undef, ptr ${litStr.label}, 0`);
         const litVal2 = this.nextTemp();
         lines.push(`  ${litVal2} = insertvalue %String ${litVal}, i64 ${litStr.length - 1}, 1`);
-        const [, cmpResult] = this.genStringCmp(lines, subjVal, litVal2, true);
+        const [, cmpResult] = genStringCmp(this, lines, subjVal, litVal2, true);
         cmpVal = cmpResult;
       } else if (pat.literalKind === "bool") {
         const litVal = pat.value ? "1" : "0";
@@ -5438,7 +5439,7 @@ export class Codegen {
       lines.push(`  ${l1} = insertvalue %String undef, ptr ${litStr.label}, 0`);
       const l2 = this.nextTemp();
       lines.push(`  ${l2} = insertvalue %String ${l1}, i64 ${litStr.length - 1}, 1`);
-      return this.genStringCmp(lines, val, l2, true)[1];
+      return genStringCmp(this, lines, val, l2, true)[1];
     }
     if (t.literalKind === "bool") lines.push(`  ${out} = icmp eq i1 ${val}, ${t.value ? 1 : 0}`);
     else if (t.literalKind === "float") {
@@ -5619,7 +5620,7 @@ export class Codegen {
     return subjectEnded;
   }
 
-  private genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {
+  public genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {
     const out: { val: string; ty: string; expr: HIRExpr }[] = [];
     for (const arg of args) {
       const [al, av, at] = this.genExpr(arg.expr);
@@ -6174,7 +6175,7 @@ export class Codegen {
         return [lines, s2, "%String"];
       }
       case "StringWithCapacity":
-        return this.genStringWithCapacity(expr, lines);
+        return genStringWithCapacity(this, expr, lines);
       case "Ident":
         return this.genIdent(expr, lines);
       case "CharLit": {
@@ -6515,19 +6516,19 @@ export class Codegen {
         return [lines, len, "i64"];
       }
       case "StringPush":
-        return this.genStringPush(expr, lines);
+        return genStringPush(this, expr, lines);
       case "StringPushStr":
-        return this.genStringPushStr(expr, lines);
+        return genStringPushStr(this, expr, lines);
       case "StringPushInt":
-        return this.genStringPushInt(expr, lines);
+        return genStringPushInt(this, expr, lines);
       case "StringTruncate":
-        return this.genStringTruncate(expr, lines);
+        return genStringTruncate(this, expr, lines);
       case "StringSetByte":
-        return this.genStringSetByte(expr, lines);
+        return genStringSetByte(this, expr, lines);
       case "StringSubstr":
-        return this.genStringSubstr(expr, lines);
+        return genStringSubstr(this, expr, lines);
       case "StringSlice":
-        return this.genStringSlice(expr, lines);
+        return genStringSlice(this, expr, lines);
       case "VecSlice":
         return this.genVecSlice(expr, lines);
       case "RawSlice":
@@ -6535,13 +6536,13 @@ export class Codegen {
       case "Adopt":
         return this.genAdopt(expr, lines);
       case "StringFind":
-        return this.genStringFind(expr, lines);
+        return genStringFind(this, expr, lines);
       case "StringClone":
-        return this.genStringClone(expr, lines);
+        return genStringClone(this, expr, lines);
       case "NumberToString":
-        return this.genNumberToString(expr, lines);
+        return genNumberToString(this, expr, lines);
       case "BoolToString":
-        return this.genBoolToString(expr, lines);
+        return genBoolToString(this, expr, lines);
       case "WrappingArith":
         return this.genWrappingArith(expr, lines);
       case "SaturatingArith":
@@ -6574,31 +6575,6 @@ export class Codegen {
     // quietly never gets generated.
     const _exhaustive: never = expr;
     throw new Error(`genExpr: unhandled HIR kind '${(_exhaustive as { kind: string }).kind}'`);
-  }
-
-  private genStringWithCapacity(expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    this.needsMalloc = true;
-    const [capLines, capVal] = this.genExpr(expr.capacity);
-    lines.push(...capLines);
-    this.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
-    // At least one byte. A String owns its buffer exactly when cap > 0 (cap 0 marks a
-    // borrowed literal, which drop skips), and malloc(0) still hands back a live block:
-    // `String.withCapacity(0)` was an owned buffer recorded as borrowed, leaked on drop,
-    // and orphaned by the first push (which saw cap 0 and allocated afresh).
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq i64 ${capVal}, 0`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = select i1 ${isZero}, i64 1, i64 ${capVal}`);
-    const buf = this.emitStrAlloc(lines, cap, "strcap", expr.span);
-    lines.push(`  store i8 0, ptr ${buf}`);
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 0, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${cap}, 2`);
-    return [lines, s2, "%String"];
   }
 
   private genIdent(expr: HIRExpr & { kind: "Ident" }, lines: string[]): Gen {
@@ -6700,17 +6676,17 @@ export class Codegen {
         this.dropOwnedTemp(out, rv, llt, expr.right);
       };
       if (expr.op === "+") {
-        const [cl, cv, ct] = this.genStringConcat(lines, lv, rv);
+        const [cl, cv, ct] = genStringConcat(this, lines, lv, rv);
         dropOperands(cl);
         return [cl, cv, ct];
       }
       if (expr.op === "==" || expr.op === "!=") {
-        const [cl, cv, ct] = this.genStringCmp(lines, lv, rv, expr.op === "==");
+        const [cl, cv, ct] = genStringCmp(this, lines, lv, rv, expr.op === "==");
         dropOperands(cl);
         return [cl, cv, ct];
       }
       if (expr.op === "<" || expr.op === ">" || expr.op === "<=" || expr.op === ">=") {
-        const [cl, cv, ct] = this.genStringOrd(lines, lv, rv, expr.op);
+        const [cl, cv, ct] = genStringOrd(this, lines, lv, rv, expr.op);
         dropOperands(cl);
         return [cl, cv, ct];
       }
@@ -8592,122 +8568,6 @@ export class Codegen {
     this.emitAppendFormatParts(lines, tgtPtr, [{ val: rhsVal, ty: "%String", tk: { tag: "string" } }]);
   }
 
-  private genStringConcat(lines: string[], lv: string, rv: string): Gen {
-    this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsMemcpy = true;
-    const aData = this.nextTemp();
-    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-    const aLen = this.nextTemp();
-    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-    const bData = this.nextTemp();
-    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
-    const bLen = this.nextTemp();
-    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-    const total = this.nextTemp();
-    lines.push(`  ${total} = add i64 ${aLen}, ${bLen}`);
-    // +1 for null terminator
-    const allocSz = this.nextTemp();
-    lines.push(`  ${allocSz} = add i64 ${total}, 1`);
-    const buf = this.emitStrAlloc(lines, allocSz, "strcat");
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${aData}, i64 ${aLen})`);
-    const dst = this.nextTemp();
-    lines.push(`  ${dst} = getelementptr i8, ptr ${buf}, i64 ${aLen}`);
-    lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${bData}, i64 ${bLen})`);
-    // null terminate
-    const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${total}`);
-    lines.push(`  store i8 0, ptr ${nullPtr}`);
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${total}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
-    return [lines, s2, "%String"];
-  }
-
-  public genStringCmp(lines: string[], lv: string, rv: string, isEq: boolean): Gen {
-    this.needsMemcmp = true;
-    const aLen = this.nextTemp();
-    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-    const bLen = this.nextTemp();
-    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-    const lenEq = this.nextTemp();
-    lines.push(`  ${lenEq} = icmp eq i64 ${aLen}, ${bLen}`);
-    const cmpDataLabel = this.nextLabel("str.cmpdata");
-    const cmpFalseLabel = this.nextLabel("str.short");
-    const cmpDoneLabel = this.nextLabel("str.done");
-    lines.push(`  br i1 ${lenEq}, label %${cmpDataLabel}, label %${cmpFalseLabel}`);
-    lines.push(`${cmpDataLabel}:`);
-    const aData = this.nextTemp();
-    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-    const bData = this.nextTemp();
-    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
-    const cmpResult = this.nextTemp();
-    lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${aLen})`);
-    const dataEq = this.nextTemp();
-    lines.push(`  ${dataEq} = icmp eq i32 ${cmpResult}, 0`);
-    lines.push(`  br label %${cmpDoneLabel}`);
-    lines.push(`${cmpFalseLabel}:`);
-    lines.push(`  br label %${cmpDoneLabel}`);
-    lines.push(`${cmpDoneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi i1 [${dataEq}, %${cmpDataLabel}], [false, %${cmpFalseLabel}]`);
-    if (!isEq) {
-      const negated = this.nextTemp();
-      lines.push(`  ${negated} = xor i1 ${result}, 1`);
-      return [lines, negated, "i1"];
-    }
-    return [lines, result, "i1"];
-  }
-
-  // lexicographic string ordering via memcmp on common prefix, then length tiebreak
-  public genStringOrd(lines: string[], lv: string, rv: string, op: string): Gen {
-    this.needsMemcmp = true;
-    const aLen = this.nextTemp();
-    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
-    const bLen = this.nextTemp();
-    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
-    const aData = this.nextTemp();
-    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
-    const bData = this.nextTemp();
-    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
-
-    const aLessThanB = this.nextTemp();
-    lines.push(`  ${aLessThanB} = icmp ult i64 ${aLen}, ${bLen}`);
-    const minLen = this.nextTemp();
-    lines.push(`  ${minLen} = select i1 ${aLessThanB}, i64 ${aLen}, i64 ${bLen}`);
-    const cmpResult = this.nextTemp();
-    lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${minLen})`);
-
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq i32 ${cmpResult}, 0`);
-    const dataCmpLabel = this.nextLabel("str.orddata");
-    const lenCmpLabel = this.nextLabel("str.ordlen");
-    const doneLabel = this.nextLabel("str.orddone");
-    lines.push(`  br i1 ${isZero}, label %${lenCmpLabel}, label %${dataCmpLabel}`);
-
-    // prefix differs — compare memcmp result against 0
-    lines.push(`${dataCmpLabel}:`);
-    const dataPred = op === "<" || op === "<=" ? "slt" : "sgt";
-    const dataResult = this.nextTemp();
-    lines.push(`  ${dataResult} = icmp ${dataPred} i32 ${cmpResult}, 0`);
-    lines.push(`  br label %${doneLabel}`);
-
-    // prefix equal — compare lengths
-    lines.push(`${lenCmpLabel}:`);
-    const lenPred = op === "<" ? "ult" : op === ">" ? "ugt" : op === "<=" ? "ule" : "uge";
-    const lenResult = this.nextTemp();
-    lines.push(`  ${lenResult} = icmp ${lenPred} i64 ${aLen}, ${bLen}`);
-    lines.push(`  br label %${doneLabel}`);
-
-    lines.push(`${doneLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = phi i1 [${dataResult}, %${dataCmpLabel}], [${lenResult}, %${lenCmpLabel}]`);
-    return [lines, result, "i1"];
-  }
-
   private genStringIndex(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): Gen {
     this.hasStringType = true;
     this.needsBoundsCheck = true;
@@ -9918,7 +9778,7 @@ export class Codegen {
       this.needsMemcmp = true;
       const elemVal = this.nextTemp();
       lines.push(`  ${elemVal} = load %String, ptr ${elemPtr}`);
-      const [, cmpResult] = this.genStringCmp(lines, elemVal, valVal, true);
+      const [, cmpResult] = genStringCmp(this, lines, elemVal, valVal, true);
       lines.push(`  br i1 ${cmpResult}, label %${foundLabel}, label %${nextLabel}`);
     } else {
       const elemVal = this.nextTemp();
@@ -10012,7 +9872,7 @@ export class Codegen {
   private emitElemOrd(lines: string[], elemType: TypeKind, a: string, b: string, wantGreater: boolean): string {
     const lt = this.llvmType(elemType);
     if (elemType.tag === "string") {
-      const [, r] = this.genStringOrd(lines, a, b, wantGreater ? ">" : "<");
+      const [, r] = genStringOrd(this, lines, a, b, wantGreater ? ">" : "<");
       return r;
     }
     const out = this.nextTemp();
@@ -10146,7 +10006,7 @@ export class Codegen {
     lines.push(`  ${elemVal} = load ${elemTy}, ptr ${elemPtr}`);
     let eq: string;
     if (expr.elementType.tag === "string") {
-      const [, r] = this.genStringCmp(lines, elemVal, nv, true);
+      const [, r] = genStringCmp(this, lines, elemVal, nv, true);
       eq = r;
     } else {
       eq = this.nextTemp();
@@ -10339,7 +10199,7 @@ export class Codegen {
 
   // A failed malloc returned null and the memcpy that follows every one of these sites
   // wrote through it. Abort at the allocation instead of faulting with no explanation.
-  private emitAllocNullCheck(lines: string[], buf: string, tag: string, span?: Span) {
+  public emitAllocNullCheck(lines: string[], buf: string, tag: string, span?: Span) {
     this.needsOverflowCheck = true;
     const got = this.nextTemp();
     lines.push(`  ${got} = icmp ne ptr ${buf}, null`);
@@ -10659,270 +10519,10 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
-  // String.push(u8). The fast path stays inline: room for the byte and its NUL, and a
-  // count of 1 (a heap buffer this handle holds alone). Anything else (a literal, a full
-  // buffer, a shared one) goes through @milo.str.reserve, which copies or grows.
-  private genStringPush(expr: HIRExpr & { kind: "StringPush" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    this.strRt();
-
-    const [strPtrLines, strPtr] = this.genLValue(expr.str);
-    lines.push(...strPtrLines);
-    const [byteLines, byteVal] = this.genExpr(expr.byte);
-    lines.push(...byteLines);
-
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const lenPlus1 = this.nextTemp();
-    lines.push(`  ${lenPlus1} = add i64 ${len}, 1`);
-    // cap > len + 1 leaves room for the byte and the NUL, and implies a heap buffer.
-    const room = this.nextTemp();
-    lines.push(`  ${room} = icmp ult i64 ${lenPlus1}, ${cap}`);
-    const chkL = this.nextLabel("str.chk");
-    const fastL = this.nextLabel("str.fast");
-    const slowL = this.nextLabel("str.slow");
-    const storeL = this.nextLabel("str.push");
-    lines.push(`  br i1 ${room}, label %${chkL}, label %${slowL}`);
-    lines.push(`${chkL}:`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    const hdr = this.nextTemp();
-    lines.push(`  ${hdr} = getelementptr i8, ptr ${data}, i64 -8`);
-    const rc = this.nextTemp();
-    lines.push(this.target.os === "none" ? `  ${rc} = load i64, ptr ${hdr}, align 8` : `  ${rc} = load atomic i64, ptr ${hdr} acquire, align 8`);
-    const only = this.nextTemp();
-    lines.push(`  ${only} = icmp eq i64 ${rc}, 1`);
-    lines.push(`  br i1 ${only}, label %${fastL}, label %${slowL}`);
-    lines.push(`${fastL}:`);
-    lines.push(`  br label %${storeL}`);
-    lines.push(`${slowL}:`);
-    const grown = this.nextTemp();
-    lines.push(`  ${grown} = call ptr ${this.strReserveFn()}(ptr ${strPtr}, i64 1)`);
-    this.emitAllocNullCheck(lines, grown, "strgrow", expr.span);
-    const slowEnd = this.nextLabel("str.slowend");
-    lines.push(`  br label %${slowEnd}`);
-    lines.push(`${slowEnd}:`);
-    lines.push(`  br label %${storeL}`);
-    lines.push(`${storeL}:`);
-    const cur = this.nextTemp();
-    lines.push(`  ${cur} = phi ptr [ ${data}, %${fastL} ], [ ${grown}, %${slowEnd} ]`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr i8, ptr ${cur}, i64 ${len}`);
-    lines.push(`  store i8 ${byteVal}, ptr ${elemPtr}`);
-    lines.push(`  store i64 ${lenPlus1}, ptr ${lenPtr}`);
-    // null-terminate for FFI safety
-    const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${cur}, i64 ${lenPlus1}`);
-    lines.push(`  store i8 0, ptr ${nullPtr}`);
-
-    return [lines, "void", "void"];
-  }
-
-  // s.pushInt(n): n's digits written straight into s's buffer, no temporary.
-  private genStringPushInt(expr: HIRExpr & { kind: "StringPushInt" }, lines: string[]): Gen {
-    const [strPtrLines, strPtr] = this.genLValue(expr.str);
-    lines.push(...strPtrLines);
-    const [vLines, vVal, vTy] = this.genExpr(expr.value);
-    lines.push(...vLines);
-    this.emitAppendFormatParts(lines, strPtr, [{ val: vVal, ty: vTy, tk: expr.value.type }], expr.span);
-    return [lines, "void", "void"];
-  }
-
-  // s.truncate(n) / s.clear(): shorten to n bytes, keeping the buffer and its capacity.
-  // A negative n empties the string and an n at or past the end is a no-op, as for
-  // Vec.truncate. An n inside a multibyte character aborts, the check charAt makes
-  // (std/string strCharAt): cutting there would leave invalid UTF-8 behind. A cap-0
-  // string is a static literal that cannot take the NUL a shorter string needs at its
-  // new end (cstr() reads up to it), so it is copied out to an owned buffer first.
-  private genStringTruncate(expr: HIRExpr & { kind: "StringTruncate" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    const [strPtrLines, strPtr] = this.genLValue(expr.str);
-    lines.push(...strPtrLines);
-    let n = "0";
-    if (expr.length) {
-      const raw = this.genBoundI64(expr.length, lines);
-      const neg = this.nextTemp();
-      lines.push(`  ${neg} = icmp slt i64 ${raw}, 0`);
-      n = this.nextTemp();
-      lines.push(`  ${n} = select i1 ${neg}, i64 0, i64 ${raw}`);
-    }
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const noop = this.nextTemp();
-    lines.push(`  ${noop} = icmp uge i64 ${n}, ${len}`);
-    const cutL = this.nextLabel("strtrunc.cut");
-    const doneL = this.nextLabel("strtrunc.done");
-    lines.push(`  br i1 ${noop}, label %${doneL}, label %${cutL}`);
-    lines.push(`${cutL}:`);
-    // The NUL written at the new end is a write; another handle must not see it.
-    this.emitStrUnique(lines, strPtr);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    if (expr.length) {
-      const at = this.nextTemp();
-      lines.push(`  ${at} = getelementptr i8, ptr ${data}, i64 ${n}`);
-      const b = this.nextTemp();
-      lines.push(`  ${b} = load i8, ptr ${at}`);
-      const hi = this.nextTemp();
-      lines.push(`  ${hi} = and i8 ${b}, -64`);
-      const inside = this.nextTemp();
-      lines.push(`  ${inside} = icmp eq i8 ${hi}, -128`);
-      const badL = this.nextLabel("strtrunc.mid");
-      const okL = this.nextLabel("strtrunc.ok");
-      lines.push(`  br i1 ${inside}, label %${badL}, label %${okL}`);
-      lines.push(`${badL}:`);
-      const { label: errLabel, length: errLen } = this.addString(
-        `milo: truncate(%lld) lands inside a multibyte UTF-8 character; truncate takes a byte length that must end on a character boundary, at ${this.panicAt(expr.span)}\n`,
-      );
-      const errPtr = this.nextTemp();
-      lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-      this.emitFdPrintf(lines, 2, errPtr, `, i64 ${n}`);
-      this.panicAbort(lines);
-      lines.push(`  unreachable`);
-      lines.push(`${okL}:`);
-    }
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const owned = this.nextTemp();
-    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-    const inPlaceL = this.nextLabel("strtrunc.inplace");
-    const copyL = this.nextLabel("strtrunc.copy");
-    lines.push(`  br i1 ${owned}, label %${inPlaceL}, label %${copyL}`);
-    lines.push(`${inPlaceL}:`);
-    const end = this.nextTemp();
-    lines.push(`  ${end} = getelementptr i8, ptr ${data}, i64 ${n}`);
-    lines.push(`  store i8 0, ptr ${end}`);
-    lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
-    lines.push(`  br label %${doneL}`);
-    lines.push(`${copyL}:`);
-    this.needsMemcpy = true;
-    const size = this.nextTemp();
-    lines.push(`  ${size} = add i64 ${n}, 1`);
-    const buf = this.emitStrAlloc(lines, size, "strtrunc", expr.span);
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${n})`);
-    const bend = this.nextTemp();
-    lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${n}`);
-    lines.push(`  store i8 0, ptr ${bend}`);
-    lines.push(`  store ptr ${buf}, ptr ${dataPtr}`);
-    lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
-    lines.push(`  store i64 ${size}, ptr ${capPtr}`);
-    lines.push(`  br label %${doneL}`);
-    lines.push(`${doneL}:`);
-    return [lines, "void", "void"];
-  }
-
-  // `s.setByte(i, b)`: the bounds test is unsigned and 64-bit, so a negative or huge
-  // index aborts instead of wrapping. A literal (cap 0) points into read-only data, so
-  // it is copied out to an owned buffer before the write, as truncate does.
-  private genStringSetByte(expr: HIRExpr & { kind: "StringSetByte" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    this.needsBoundsCheck = true;
-    const [strPtrLines, strPtr] = this.genLValue(expr.str);
-    lines.push(...strPtrLines);
-    const idx = this.genBoundI64(expr.index, lines);
-    const [bl, bv, bt] = this.genExpr(expr.byte);
-    lines.push(...bl);
-    let byte = bv;
-    if (bt !== "i8") {
-      byte = this.nextTemp();
-      lines.push(`  ${byte} = trunc ${bt} ${bv} to i8`);
-    }
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const inRange = this.nextTemp();
-    lines.push(`  ${inRange} = icmp ult i64 ${idx}, ${len}`);
-    const okL = this.nextLabel("strsetbyte.ok");
-    const failL = this.nextLabel("strsetbyte.oob");
-    lines.push(`  br i1 ${inRange}, label %${okL}, label %${failL}`);
-    lines.push(`${failL}:`);
-    const filePtr = this.emitCheckFilePtr(lines, expr.span);
-    lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${len}, ptr ${filePtr}, i32 ${expr.span?.line ?? 0})`);
-    lines.push(`  unreachable`);
-    lines.push(`${okL}:`);
-    this.emitStrUnique(lines, strPtr);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const owned = this.nextTemp();
-    lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
-    const writeL = this.nextLabel("strsetbyte.write");
-    const copyL = this.nextLabel("strsetbyte.copy");
-    lines.push(`  br i1 ${owned}, label %${writeL}, label %${copyL}`);
-    lines.push(`${copyL}:`);
-    this.needsMemcpy = true;
-    const old = this.nextTemp();
-    lines.push(`  ${old} = load ptr, ptr ${dataPtr}`);
-    const size = this.nextTemp();
-    lines.push(`  ${size} = add i64 ${len}, 1`);
-    const buf = this.emitStrAlloc(lines, size, "strsetbyte", expr.span);
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${old}, i64 ${len})`);
-    const bend = this.nextTemp();
-    lines.push(`  ${bend} = getelementptr i8, ptr ${buf}, i64 ${len}`);
-    lines.push(`  store i8 0, ptr ${bend}`);
-    lines.push(`  store ptr ${buf}, ptr ${dataPtr}`);
-    lines.push(`  store i64 ${size}, ptr ${capPtr}`);
-    lines.push(`  br label %${writeL}`);
-    lines.push(`${writeL}:`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    const at = this.nextTemp();
-    lines.push(`  ${at} = getelementptr i8, ptr ${data}, i64 ${idx}`);
-    lines.push(`  store i8 ${byte}, ptr ${at}`);
-    return [lines, "void", "void"];
-  }
-
-  // Append a whole string in place. `s = s + t` reallocates and copies the
-  // accumulator on every concat (quadratic when building in a loop); this grows
-  // amortized like Vec.push and copies only the addition.
-  private genStringPushStr(expr: HIRExpr & { kind: "StringPushStr" }, lines: string[]): Gen {
-    this.hasStringType = true;
-
-    const [strPtrLines, strPtr] = this.genLValue(expr.str);
-    lines.push(...strPtrLines);
-    // `s.pushStr($"...")`: write the interpolation's parts straight into s rather than
-    // building the formatted temporary and copying it.
-    const o = expr.other;
-    if (o.kind === "Call" && o.func === "format" && o.args.every(a => this.fastFormatPart(a.expr.type) !== null)) {
-      const temps = this.genFormatParts(o.args, lines);
-      this.emitAppendFormatParts(lines, strPtr, temps.map(t => ({ val: t.val, ty: t.ty, tk: t.expr.type })), expr.span);
-      for (const t of temps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
-      return [lines, "void", "void"];
-    }
-    const [otherLines, otherVal] = this.genExpr(expr.other);
-    lines.push(...otherLines);
-    // One string part: the same reserve (unique first, then grow) and the same re-basing
-    // of a source that points into the receiver (`s.pushStr(s)`) as an interpolation.
-    this.emitAppendFormatParts(lines, strPtr, [{ val: otherVal, ty: "%String", tk: { tag: "string" } }], expr.span);
-
-    // pushStr copies the bytes in; a temporary source (a call result, or the
-    // clone `v[i]` produces) is dead afterwards and nothing else frees it.
-    this.dropOwnedTemp(lines, otherVal, "%String", expr.other);
-    return [lines, "void", "void"];
-  }
-
   // Validate a substr/slice range before using it: without this, an inverted
   // or out-of-range span becomes a negative length that malloc/memcpy/getelementptr
   // turn into a silent crash (or a bogus view) with no diagnostic.
-  private emitStringRangeCheck(
+  public emitStringRangeCheck(
     lines: string[],
     startVal: string,
     endVal: string,
@@ -10974,7 +10574,7 @@ export class Codegen {
     return ext;
   }
 
-  private genBoundI64(bound: HIRExpr, lines: string[]): string {
+  public genBoundI64(bound: HIRExpr, lines: string[]): string {
     const [bl, bv, bty] = this.genExpr(bound);
     lines.push(...bl);
     if (bty === "i8" || bty === "i16" || bty === "i32") {
@@ -10984,79 +10584,6 @@ export class Codegen {
       return ext;
     }
     return bv;
-  }
-
-  // String.substr(start, end) — allocate new owned string from s[start..end]
-  private genStringSubstr(expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsMemcpy = true;
-
-    const [strLines, strVal] = this.genExpr(expr.str);
-    lines.push(...strLines);
-    const startVal = this.genBoundI64(expr.start, lines);
-    const endVal = this.genBoundI64(expr.end, lines);
-
-    this.emitStringRangeCheck(lines, startVal, endVal, strVal, "substr", expr.span);
-
-    const subLen = this.nextTemp();
-    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-
-    const allocLen = this.nextTemp();
-    lines.push(`  ${allocLen} = add i64 ${subLen}, 1`);
-    const buf = this.emitStrAlloc(lines, allocLen, "substr", expr.span);
-
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
-    const srcOff = this.nextTemp();
-    lines.push(`  ${srcOff} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${srcOff}, i64 ${subLen})`);
-
-    const nullPtr = this.nextTemp();
-    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${subLen}`);
-    lines.push(`  store i8 0, ptr ${nullPtr}`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
-
-    // substr COPIES out of its receiver, so nothing points into it afterwards and a
-    // temporary receiver can go: `big(i).substr(0, 100).len` leaked the whole receiver on
-    // every call. Same shape as the Vec/HashMap/StringLen receiver drops.
-    this.dropOwnedTemp(lines, strVal, "%String", expr.str);
-    return [lines, s2, "%String"];
-  }
-
-  // String.slice(start, end) — zero-copy view. Non-owning %String with cap=0.
-  private genStringSlice(expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): Gen {
-    this.hasStringType = true;
-
-    const [strLines, strVal] = this.genExpr(expr.str);
-    lines.push(...strLines);
-    const startVal = this.genBoundI64(expr.start, lines);
-    const endVal = this.genBoundI64(expr.end, lines);
-
-    this.emitStringRangeCheck(lines, startVal, endVal, strVal, "slice", expr.span);
-
-    const subLen = this.nextTemp();
-    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
-    const slicePtr = this.nextTemp();
-    lines.push(`  ${slicePtr} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${slicePtr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
-
-    return [lines, s2, "%String"];
   }
 
   // rawSlice(p, len) builds a %Vec view over foreign memory, cap=0, exactly as
@@ -11252,131 +10779,6 @@ export class Codegen {
     return [lines, s2, "%Vec"];
   }
 
-  // n.toString() / x.toString(): an owned %String; ints through @milo.fmt.*, floats through @milo.fmt.f64
-  private genNumberToString(expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): Gen {
-    this.needsMalloc = true;
-    this.hasStringType = true;
-
-    const [vLines, vVal, vTy] = this.genExpr(expr.value);
-    lines.push(...vLines);
-
-    const vt = expr.valueType;
-    if (vt.tag === "int") {
-      // 24 bytes holds any 64-bit decimal (20 digits with the sign) and the NUL.
-      const buf = this.emitStrAlloc(lines, "24", "itos", expr.span);
-      const n = this.emitIntFmt(lines, buf, vVal, vTy, vt);
-      const nul = this.nextTemp();
-      lines.push(`  ${nul} = getelementptr i8, ptr ${buf}, i64 ${n}`);
-      lines.push(`  store i8 0, ptr ${nul}`);
-      const s0 = this.nextTemp();
-      lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-      const s1 = this.nextTemp();
-      lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${n}, 1`);
-      const s2 = this.nextTemp();
-      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 24, 2`);
-      return [lines, s2, "%String"];
-    }
-    // Floats don't go through snprintf directly: they need the round-trip
-    // search in @milo.fmt.f64, which already writes an owned buffer we can
-    // hand straight to %String.
-    const { buf, len } = this.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines, true);
-    const f0 = this.nextTemp();
-    lines.push(`  ${f0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const f1 = this.nextTemp();
-    lines.push(`  ${f1} = insertvalue %String ${f0}, i64 ${len}, 1`);
-    const f2 = this.nextTemp();
-    lines.push(`  ${f2} = insertvalue %String ${f1}, i64 ${F64_BUF}, 2`);
-    return [lines, f2, "%String"];
-  }
-
-  private genBoolToString(expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    const [vLines, vVal] = this.genExpr(expr.value);
-    lines.push(...vLines);
-    const trueStr = this.addString("true");
-    const falseStr = this.addString("false");
-    const ptr = this.nextTemp();
-    lines.push(`  ${ptr} = select i1 ${vVal}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = select i1 ${vVal}, i64 4, i64 5`);
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${ptr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
-    return [lines, s2, "%String"];
-  }
-
-  // s.clone() — deep copy of the underlying byte buffer; result is an owned %String
-  private genStringClone(expr: HIRExpr & { kind: "StringClone" }, lines: string[]): Gen {
-    this.hasStringType = true;
-    this.needsMalloc = true;
-    this.needsMemcpy = true;
-    const passed = this.cloneOfOwnedTemp(expr.str, lines);
-    if (passed) return passed;
-    const [sLines, sVal] = this.genExpr(expr.str);
-    lines.push(...sLines);
-    return [lines, this.emitStrShare(lines, sVal), "%String"];
-  }
-
-  private genStringFind(expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
-    const enumTy = `%${expr.optionEnumName}`;
-    const layout = this.enumLayouts.get(expr.optionEnumName);
-    const noneVariant = layout?.variants.get("None");
-    const someVariant = layout?.variants.get("Some");
-    if (!layout || !noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
-
-    const [strLines, strValue] = this.genExpr(expr.str);
-    const [needleLines, needleValue] = this.genExpr(expr.needle);
-    lines.push(...strLines);
-    const strPtr = `%__string_find_haystack.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${strPtr} = alloca %String`);
-    lines.push(`  store %String ${strValue}, ptr ${strPtr}`);
-    lines.push(...needleLines);
-    const needlePtr = `%__string_find_needle.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${needlePtr} = alloca %String`);
-    lines.push(`  store %String ${needleValue}, ptr ${needlePtr}`);
-    let fn = expr.reverse ? "strLastIndexOf" : "strIndexOf";
-    let args = `ptr ${strPtr}, ptr ${needlePtr}`;
-    if (expr.from) {
-      const [fromLines, fromValue, fromTy] = this.genExpr(expr.from);
-      lines.push(...fromLines);
-      fn = "strIndexOfFrom";
-      args += `, ${fromTy} ${fromValue}`;
-    }
-    const index = this.nextTemp();
-    lines.push(`  ${index} = call i64 @${fn}(${args})`);
-
-    const resultAddr = `%__string_find_result.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
-    lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
-    const found = this.nextTemp();
-    lines.push(`  ${found} = icmp sge i64 ${index}, 0`);
-    const someLabel = this.nextLabel("string.find.some");
-    const noneLabel = this.nextLabel("string.find.none");
-    const endLabel = this.nextLabel("string.find.end");
-    lines.push(`  br i1 ${found}, label %${someLabel}, label %${noneLabel}`);
-    lines.push(`${noneLabel}:`);
-    this.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
-    lines.push(`  br label %${endLabel}`);
-    lines.push(`${someLabel}:`);
-    this.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
-    const payloadPtr = this.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
-    lines.push(`  store i64 ${index}, ptr ${payloadPtr}`);
-    lines.push(`  br label %${endLabel}`);
-    lines.push(`${endLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
-    // indexOf/indexOfFrom/lastIndexOf read both operands and answer an INDEX, so nothing
-    // points into either by the time we get here and both can go now — no deferral to
-    // argTempDrops needed. `s.indexOf("o" + i.toString())` leaked its needle per call, and
-    // `("pre" + i.toString()).indexOf("r")` leaked the receiver as well.
-    this.dropOwnedTemp(lines, strValue, "%String", expr.str);
-    this.dropOwnedTemp(lines, needleValue, "%String", expr.needle);
-    return [lines, result, enumTy];
-  }
-
   // True when an enclosing `for i in 0..v.len` already proves this exact
   // subscript in range: same loop variable as the index, same container.
   private indexIsProven(expr: HIRExpr & { kind: "IndexAccess" }): boolean {
@@ -11477,7 +10879,7 @@ export class Codegen {
   // ordinary error, lets the OS drop a core dump, and makes lldb/gdb break at the fault.
   // Kept distinct from a user's exit(status) call, which stays a plain exit. Callers still
   // push their own `unreachable` after this.
-  private panicAbort(lines: string[]) {
+  public panicAbort(lines: string[]) {
     // Bare-metal/freestanding (os "none"): there is no libc, so abort()/fflush() are
     // undefined symbols. The embedded runtime provides exit (semihosting SYS_EXIT) and there
     // is no buffered stdio to flush — terminate exactly as the pre-abort panic did there.
@@ -11714,7 +11116,7 @@ export class Codegen {
   }
 
   // Write int `val` (LLVM type `llvmTy`, Milo type `tk`) at `dst`; returns the i64 byte count.
-  private emitIntFmt(lines: string[], dst: string, val: string, llvmTy: string, tk: TypeKind & { tag: "int" }): string {
+  public emitIntFmt(lines: string[], dst: string, val: string, llvmTy: string, tk: TypeKind & { tag: "int" }): string {
     this.intFmtFns();
     let wide = val;
     if (tk.bits < 64) {
@@ -11742,7 +11144,7 @@ export class Codegen {
   // thread made through its handle happens before the buffer is freed. A count read as 1
   // with acquire ordering means this handle is the only one: no other thread holds a
   // handle it could copy from, so the free (or the in-place write) cannot race.
-  private strRt(): void {
+  public strRt(): void {
     if (this.emittedStrRt) return;
     this.emittedStrRt = true;
     this.hasStringType = true;
@@ -11934,7 +11336,7 @@ export class Codegen {
   }
 
   // A fresh string buffer of `n` bytes (count 1), null-checked against `span`.
-  private emitStrAlloc(lines: string[], n: string, tag: string, span?: Span): string {
+  public emitStrAlloc(lines: string[], n: string, tag: string, span?: Span): string {
     this.strRt();
     const buf = this.nextTemp();
     lines.push(`  ${buf} = call ptr @milo.str.alloc(i64 ${n})`);
@@ -11951,7 +11353,7 @@ export class Codegen {
   }
 
   // A second owning handle to the string value `val` (see strRt).
-  private emitStrShare(lines: string[], val: string): string {
+  public emitStrShare(lines: string[], val: string): string {
     this.strRt();
     const s = this.nextTemp();
     lines.push(`  ${s} = call %String @milo.str.share(%String ${val})`);
@@ -11964,7 +11366,7 @@ export class Codegen {
   // source that is this very string (`s.pushStr(s)`) or another handle to the same buffer
   // would otherwise read the old block, which the release inside @milo.str.unique frees if
   // the last other handle went away on another thread meanwhile.
-  private emitStrUnique(lines: string[], strPtr: string, srcs: string[] = []): string[] {
+  public emitStrUnique(lines: string[], strPtr: string, srcs: string[] = []): string[] {
     this.strRt();
     let pre = "", preLen = "";
     if (srcs.length) {
@@ -11999,7 +11401,7 @@ export class Codegen {
   // its own source location). The string is made unique first (see strRt), so the
   // returned buffer is this handle's alone. A cap-0 buffer is a static literal or a view
   // this string does not own: it is copied, never handed to realloc or free.
-  private strReserveFn(): string {
+  public strReserveFn(): string {
     if (!this.emittedStrReserve) {
       this.emittedStrReserve = true;
       this.strRt();
@@ -12077,7 +11479,7 @@ export class Codegen {
   // The parts of a `format(...)` (an interpolated string) that can be written straight
   // into a string buffer, or null when one part needs the snprintf path (a struct,
   // enum, container or pointer renders through emitDisplayPart).
-  private fastFormatPart(tk: TypeKind): "string" | "int" | "bool" | "float" | null {
+  public fastFormatPart(tk: TypeKind): "string" | "int" | "bool" | "float" | null {
     while (tk.tag === "ref") tk = tk.inner;
     if (tk.tag === "string" || tk.tag === "int" || tk.tag === "bool" || tk.tag === "float") return tk.tag;
     return null;
@@ -12088,7 +11490,7 @@ export class Codegen {
   // then every part is written in place. A string part may point into the receiver's
   // own buffer (`s.pushStr($"{s}!")`), which the reserve can release, so it is
   // re-based onto the new buffer the way genStringPushStr does.
-  private emitAppendFormatParts(lines: string[], strPtr: string, parts: { val: string; ty: string; tk: TypeKind }[], span?: Span): void {
+  public emitAppendFormatParts(lines: string[], strPtr: string, parts: { val: string; ty: string; tk: TypeKind }[], span?: Span): void {
     this.hasStringType = true;
     this.needsMemcpy = true;
     this.needsFree = true;
@@ -12780,7 +12182,7 @@ export class Codegen {
   // Formats a float into a fresh malloc'd buffer and returns it. Callers own the
   // buffer — free it, or hand it to a temp-buf list that frees it.
   // `asString`: the buffer becomes a %String's, so it carries the count header (strRt).
-  private emitFloatToBuf(val: string, bits: number, lines: string[], asString = false): { buf: string; len: string } {
+  public emitFloatToBuf(val: string, bits: number, lines: string[], asString = false): { buf: string; len: string } {
     const w = bits === 32 ? 32 : 64;
     this.ensureFloatFormatHelper(w);
     this.needsMalloc = true;
