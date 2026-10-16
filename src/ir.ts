@@ -51,6 +51,12 @@ export interface Block { readonly name: string }
 export interface NameSource {
   nextTemp(): string;
   nextLabel(prefix?: string): string;
+  /**
+   * The current function's entry-block preamble, which Codegen splices in after the body
+   * is generated. Optional so a builder can exist outside a function body; `entryAlloca`
+   * throws without it.
+   */
+  entryAllocas?: string[];
 }
 
 export type BinOp = "add" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
@@ -62,6 +68,12 @@ export interface Builder {
   // Inline at the current position, as today's codegen emits it; hoisting to the entry
   // block would change the text, so it waits for a commit that is allowed to.
   alloca(ty: Ty): Val;
+  /**
+   * A named stack slot in the function's entry block, the form codegen uses for locals
+   * and loop state so LLVM folds them into the fixed frame. `init`, if given, is stored
+   * there too, so the slot holds it before any body code runs.
+   */
+  entryAlloca(name: string, ty: Ty, init?: Val): Val;
   load(ty: Ty, ptr: Val): Val;
   store(v: Val, ptr: Val): void;
   gep(base: Ty, ptr: Val, idx: Val[]): Val;
@@ -106,6 +118,22 @@ export class LlvmTextBuilder implements Builder {
   alloca(ty: Ty): Val {
     if (ty.kind === "void") this.fail("alloca of void");
     return this.def(`alloca ${ty.ll}`, Ty.ptr);
+  }
+
+  entryAlloca(name: string, ty: Ty, init?: Val): Val {
+    const entry = this.names.entryAllocas;
+    if (!entry) this.fail(`entryAlloca ${name} with no function entry block`);
+    if (ty.kind === "void") this.fail(`entryAlloca ${name} of void`);
+    // Named, never a temp: a numbered temp defined in the entry block would break the
+    // body's numbering order, which LLVM requires to be ascending.
+    if (!/^%[A-Za-z_.$][\w.$-]*$/.test(name) || /^%t\.\d+$/.test(name)) this.fail(`entryAlloca name ${name} is not a named local`);
+    const def = `  ${name} = alloca `;
+    // LLVM rejects a redefinition only at llc time, far from the codegen that caused it.
+    if (entry.some(l => l.startsWith(def))) this.fail(`entryAlloca ${name} already defined in this function`);
+    if (init && init.ty.ll !== ty.ll) this.fail(`entryAlloca ${name} (${ty.ll}) initialized with ${init.ref} (${init.ty.ll})`);
+    entry.push(`${def}${ty.ll}`);
+    if (init) entry.push(`  store ${init.ty.ll} ${init.ref}, ptr ${name}`);
+    return { ref: name, ty: Ty.ptr };
   }
 
   load(ty: Ty, ptr: Val): Val {

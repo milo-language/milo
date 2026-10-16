@@ -2,12 +2,28 @@
 import { test, expect, describe } from "bun:test";
 import { LlvmTextBuilder, Ty, val } from "../src/ir";
 
-function builder(lines: string[] = []) {
+function builder(lines: string[] = [], entryAllocas?: string[]) {
   let t = 0, l = 0;
-  return new LlvmTextBuilder(lines, { nextTemp: () => `%t.${t++}`, nextLabel: (p = "L") => `${p}${l++}` });
+  return new LlvmTextBuilder(lines, { nextTemp: () => `%t.${t++}`, nextLabel: (p = "L") => `${p}${l++}`, entryAllocas });
 }
 
 describe("LlvmTextBuilder invariants", () => {
+  test("entryAlloca writes to the entry block, not the body, and checks its slot", () => {
+    const body: string[] = [], entry: string[] = [];
+    const b = builder(body, entry);
+    const p = b.entryAlloca("%x.addr", Ty.i64);
+    expect(p).toEqual(val("%x.addr", Ty.ptr));
+    b.entryAlloca("%alive.1.addr", Ty.i1, val("0", Ty.i1));
+    expect(entry).toEqual(["  %x.addr = alloca i64", "  %alive.1.addr = alloca i1", "  store i1 0, ptr %alive.1.addr"]);
+    expect(body).toEqual([]);
+    expect(() => b.entryAlloca("%x.addr", Ty.i64)).toThrow("already defined");
+    expect(() => b.entryAlloca("%t.3", Ty.i64)).toThrow("not a named local");
+    expect(() => b.entryAlloca("x.addr", Ty.i64)).toThrow("not a named local");
+    expect(() => b.entryAlloca("%v.addr", Ty.void)).toThrow("of void");
+    expect(() => b.entryAlloca("%y.addr", Ty.i64, val("0", Ty.i1))).toThrow("initialized with");
+    expect(() => builder().entryAlloca("%z.addr", Ty.i64)).toThrow("no function entry block");
+  });
+
   test("void alloca, load and store throw", () => {
     const b = builder();
     expect(() => b.alloca(Ty.void)).toThrow("alloca of void");

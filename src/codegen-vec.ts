@@ -35,17 +35,12 @@ function sortPreamble(ctx: CodegenCtx, object: any, elementType: TypeKind, lines
   const lenPtr = b.gep(vecTy, vecPtr, [val("0", Ty.i32), val("1", Ty.i32)]);
   const len = b.load(Ty.i64, lenPtr);
 
-  // Named allocas go to the function entry block; the builder has no entry-block
-  // allocas yet, so these stay as text.
-  const tmpAddr = `%__${prefix}_tmp.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy.ll}`);
-  const iAddr = `%__${prefix}_i.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
-  b.store(val("1", Ty.i64), val(iAddr, Ty.ptr));
-  const jAddr = `%__${prefix}_j.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${jAddr} = alloca i64`);
+  const tmpAddr = b.entryAlloca(`%__${prefix}_tmp.${ctx.scopeCounter++}.addr`, elemTy);
+  const iAddr = b.entryAlloca(`%__${prefix}_i.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(val("1", Ty.i64), iAddr);
+  const jAddr = b.entryAlloca(`%__${prefix}_j.${ctx.scopeCounter++}.addr`, Ty.i64);
 
-  return { data, len, elemTy, elemSize, tmpAddr: val(tmpAddr, Ty.ptr), iAddr: val(iAddr, Ty.ptr), jAddr: val(jAddr, Ty.ptr) };
+  return { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr };
 }
 
 // shared insertion sort loop structure — calls emitCompare to get the gt condition
@@ -234,9 +229,7 @@ export function genVecSortByKey(
   const { fnPtr, envPtr } = closureParts(ctx, lines, cv);
 
   // cache the key for the element being inserted so we don't re-extract each inner iteration
-  const tmpKeyAddrName = `%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpKeyAddrName} = alloca ${keyTy.ll}`);
-  const tmpKeyAddr = val(tmpKeyAddrName, Ty.ptr);
+  const tmpKeyAddr = new LlvmTextBuilder(lines, ctx).entryAlloca(`%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`, keyTy);
 
   insertionSortLoop(
     ctx,
