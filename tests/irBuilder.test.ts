@@ -45,6 +45,31 @@ describe("LlvmTextBuilder invariants", () => {
     expect(() => b.select(val("%c", Ty.i1), val("1", Ty.i64), val("2", Ty.i32))).toThrow("operand types differ");
     expect(() => b.select(val("%c", Ty.i1), val("%a", Ty.void), val("%b", Ty.void))).toThrow("select of void");
   });
+
+  test("fcmp needs matching float operands", () => {
+    const b = builder();
+    expect(() => b.fcmp("ogt", val("%a", Ty.i64), val("%b", Ty.i64))).toThrow("non-float");
+    expect(() => b.fcmp("ogt", val("%a", Ty.of("double")), val("%b", Ty.of("float")))).toThrow("operand types differ");
+    const lines: string[] = [];
+    const r = builder(lines).fcmp("ogt", val("%a", Ty.of("double")), val("%b", Ty.of("double")));
+    expect(r.ty.ll).toBe("i1");
+    expect(lines).toEqual(["  %t.0 = fcmp ogt double %a, %b"]);
+  });
+
+  test("select into a reserved temp keeps the early name, once, with matching type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const c = val("%c", Ty.i1), x = val("%x", Ty.i64), y = val("%y", Ty.i64);
+    expect(() => b.select(c, x, y, val("%nope", Ty.i64))).toThrow("not a reserved temp");
+    expect(() => b.reserveTemp(Ty.void)).toThrow("reserveTemp of void");
+    const d = b.reserveTemp(Ty.i64);
+    const other = b.icmp("ult", x, y);
+    expect(() => b.select(c, x, y, { ref: d.ref, ty: Ty.i32 })).toThrow("operands are i64");
+    b.select(c, x, y, d);
+    expect(() => b.select(c, x, y, d)).toThrow("not a reserved temp");
+    expect(other.ref).toBe("%t.1");
+    expect(lines).toEqual(["  %t.1 = icmp ult i64 %x, %y", "  %t.0 = select i1 %c, i64 %x, i64 %y"]);
+  });
 });
 
 test("prints the same text the string codegen did", () => {

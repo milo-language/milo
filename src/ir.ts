@@ -55,6 +55,7 @@ export interface NameSource {
 
 export type BinOp = "add" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
 export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
+export type FCmpPred = "oeq" | "one" | "olt" | "ole" | "ogt" | "oge";
 export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
 
 export interface Builder {
@@ -66,12 +67,19 @@ export interface Builder {
   gep(base: Ty, ptr: Val, idx: Val[]): Val;
   binop(op: BinOp, a: Val, b: Val): Val;
   icmp(pred: ICmpPred, a: Val, b: Val): Val;
+  fcmp(pred: FCmpPred, a: Val, b: Val): Val;
   cast(op: CastOp, v: Val, to: Ty): Val;
   /** The builder knows no aggregate layouts, so the caller names the element type. */
   extractvalue(agg: Val, idx: number, elt: Ty): Val;
   insertvalue(agg: Val, elt: Val, idx: number): Val;
   phi(ty: Ty, incoming: [Val, Block][]): Val;
-  select(cond: Val, a: Val, b: Val): Val;
+  select(cond: Val, a: Val, b: Val, dest?: Val): Val;
+  /**
+   * Draw a temp name now and define it later with `select(..., dest)`. Exists only because
+   * old string codegen drew a result temp before the temps of the operands that feed it,
+   * and temp numbering is part of the byte-identical contract.
+   */
+  reserveTemp(ty: Ty): Val;
   /** A call whose result is used; `ret` must not be void. */
   call(ret: Ty, callee: string, args: Val[]): Val;
   /** A call printed with no result name: void, or a result nobody reads. */
@@ -89,6 +97,10 @@ export interface Builder {
 const TERMINATOR = /^\s+(br|ret|switch|unreachable|resume|indirectbr)\b|^\s+\]$/;
 
 export class LlvmTextBuilder implements Builder {
+  // Temps drawn by reserveTemp and not yet defined. Per builder, and a builder lives for one
+  // function body, so a reservation cannot leak into another function.
+  private readonly reserved = new Set<string>();
+
   constructor(readonly lines: string[], private readonly names: NameSource) {}
 
   alloca(ty: Ty): Val {
@@ -125,6 +137,12 @@ export class LlvmTextBuilder implements Builder {
     return this.def(`icmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1);
   }
 
+  fcmp(pred: FCmpPred, a: Val, b: Val): Val {
+    this.sameTy(`fcmp ${pred}`, a, b);
+    if (a.ty.kind !== "float") this.fail(`fcmp ${pred} on non-float ${a.ref} (${a.ty.ll})`);
+    return this.def(`fcmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1);
+  }
+
   cast(op: CastOp, v: Val, to: Ty): Val {
     if (v.ty.kind === "void" || to.kind === "void") this.fail(`${op} involving void`);
     return this.def(`${op} ${v.ty.ll} ${v.ref} to ${to.ll}`, to);
@@ -146,11 +164,24 @@ export class LlvmTextBuilder implements Builder {
     return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${v.ref}, %${b.name}]`).join(", ")}`, ty);
   }
 
-  select(cond: Val, a: Val, b: Val): Val {
+  select(cond: Val, a: Val, b: Val, dest?: Val): Val {
     if (cond.ty.ll !== "i1") this.fail(`select condition ${cond.ref} is ${cond.ty.ll}, not i1`);
     this.sameTy("select", a, b);
     if (a.ty.kind === "void") this.fail("select of void");
-    return this.def(`select i1 ${cond.ref}, ${a.ty.ll} ${a.ref}, ${b.ty.ll} ${b.ref}`, a.ty);
+    const text = `select i1 ${cond.ref}, ${a.ty.ll} ${a.ref}, ${b.ty.ll} ${b.ref}`;
+    if (!dest) return this.def(text, a.ty);
+    if (!this.reserved.has(dest.ref)) this.fail(`select into ${dest.ref}, which is not a reserved temp`);
+    if (dest.ty.ll !== a.ty.ll) this.fail(`select into ${dest.ref} (${dest.ty.ll}) but operands are ${a.ty.ll}`);
+    this.reserved.delete(dest.ref);
+    this.emit(`${dest.ref} = ${text}`);
+    return dest;
+  }
+
+  reserveTemp(ty: Ty): Val {
+    if (ty.kind === "void") this.fail("reserveTemp of void");
+    const ref = this.names.nextTemp();
+    this.reserved.add(ref);
+    return { ref, ty };
   }
 
   call(ret: Ty, callee: string, args: Val[]): Val {

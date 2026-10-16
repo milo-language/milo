@@ -1,12 +1,11 @@
 // Vec method codegen helpers — extracted to keep codegen.ts manageable.
 
 import type { TypeKind } from "./types";
+import { LlvmTextBuilder, Ty, val, type Val, type NameSource } from "./ir";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this — they are not part of its external API.
-interface CodegenCtx {
-  nextTemp(): string;
-  nextLabel(prefix: string): string;
+interface CodegenCtx extends NameSource {
   llvmType(t: TypeKind): string;
   typeSizeOf(t: TypeKind): number;
   genExpr(expr: any): [string[], string, string];
@@ -23,29 +22,30 @@ function sortPreamble(ctx: CodegenCtx, object: any, elementType: TypeKind, lines
   ctx.hasVecType = true;
   ctx.needsMemcpy = true;
   const elemSize = ctx.typeSizeOf(elementType);
-  const elemTy = ctx.llvmType(elementType);
+  const elemTy = Ty.of(ctx.llvmType(elementType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(object);
   lines.push(...vecPtrLines);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
 
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+  const vecTy = Ty.of("%Vec");
+  const dataPtr = b.gep(vecTy, vecPtr, [val("0", Ty.i32), val("0", Ty.i32)]);
+  const data = b.load(Ty.ptr, dataPtr);
+  const lenPtr = b.gep(vecTy, vecPtr, [val("0", Ty.i32), val("1", Ty.i32)]);
+  const len = b.load(Ty.i64, lenPtr);
 
+  // Named allocas go to the function entry block; the builder has no entry-block
+  // allocas yet, so these stay as text.
   const tmpAddr = `%__${prefix}_tmp.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
+  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy.ll}`);
   const iAddr = `%__${prefix}_i.${ctx.scopeCounter++}.addr`;
   ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
-  lines.push(`  store i64 1, ptr ${iAddr}`);
+  b.store(val("1", Ty.i64), val(iAddr, Ty.ptr));
   const jAddr = `%__${prefix}_j.${ctx.scopeCounter++}.addr`;
   ctx.entryAllocas.push(`  ${jAddr} = alloca i64`);
 
-  return { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr };
+  return { data, len, elemTy, elemSize, tmpAddr: val(tmpAddr, Ty.ptr), iAddr: val(iAddr, Ty.ptr), jAddr: val(jAddr, Ty.ptr) };
 }
 
 // shared insertion sort loop structure — calls emitCompare to get the gt condition
@@ -54,7 +54,7 @@ function insertionSortLoop(
   lines: string[],
   p: ReturnType<typeof sortPreamble>,
   prefix: string,
-  emitCompare: (prevPtr: string, tmpAddr: string) => string,
+  emitCompare: (prevPtr: Val, tmpAddr: Val) => Val,
   // Runs inside the outer body, right after the element is copied to the scratch slot
   // and before the inner loop starts. sortByKey extracts the key once here instead of
   // re-calling the key function on every inner iteration; the absence of this hook is
@@ -62,106 +62,84 @@ function insertionSortLoop(
   afterOuterCopy?: () => void,
 ) {
   const { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr } = p;
-  const outerCond = ctx.nextLabel(`${prefix}.outer.cond`);
-  const outerBody = ctx.nextLabel(`${prefix}.outer.body`);
-  const innerCond = ctx.nextLabel(`${prefix}.inner.cond`);
-  const innerBody = ctx.nextLabel(`${prefix}.inner.body`);
-  const innerEnd = ctx.nextLabel(`${prefix}.inner.end`);
-  const outerEnd = ctx.nextLabel(`${prefix}.outer.end`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const outerCond = b.newBlock(`${prefix}.outer.cond`);
+  const outerBody = b.newBlock(`${prefix}.outer.body`);
+  const innerCond = b.newBlock(`${prefix}.inner.cond`);
+  const innerBody = b.newBlock(`${prefix}.inner.body`);
+  const innerEnd = b.newBlock(`${prefix}.inner.end`);
+  const outerEnd = b.newBlock(`${prefix}.outer.end`);
+  const size = val(String(elemSize), Ty.i64);
+  const volatileOff = val("false", Ty.i1);
+  const memcpy = (dst: Val, src: Val) => b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [dst, src, size, volatileOff]);
 
-  lines.push(`  br label %${outerCond}`);
-  lines.push(`${outerCond}:`);
-  const i = ctx.nextTemp();
-  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-  const iCmp = ctx.nextTemp();
-  lines.push(`  ${iCmp} = icmp ult i64 ${i}, ${len}`);
-  lines.push(`  br i1 ${iCmp}, label %${outerBody}, label %${outerEnd}`);
+  b.br(outerCond);
+  b.position(outerCond);
+  const i = b.load(Ty.i64, iAddr);
+  const iCmp = b.icmp("ult", i, len);
+  b.condBr(iCmp, outerBody, outerEnd);
 
-  lines.push(`${outerBody}:`);
-  const iPtr = ctx.nextTemp();
-  lines.push(`  ${iPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${iPtr}, i64 ${elemSize}, i1 false)`);
+  b.position(outerBody);
+  const iPtr = b.gep(elemTy, data, [i]);
+  memcpy(tmpAddr, iPtr);
   afterOuterCopy?.();
-  lines.push(`  store i64 ${i}, ptr ${jAddr}`);
-  lines.push(`  br label %${innerCond}`);
+  b.store(i, jAddr);
+  b.br(innerCond);
 
-  lines.push(`${innerCond}:`);
-  const j = ctx.nextTemp();
-  lines.push(`  ${j} = load i64, ptr ${jAddr}`);
-  const jGtZero = ctx.nextTemp();
-  lines.push(`  ${jGtZero} = icmp ugt i64 ${j}, 0`);
-  const checkCmp = ctx.nextLabel(`${prefix}.checkcmp`);
-  lines.push(`  br i1 ${jGtZero}, label %${checkCmp}, label %${innerEnd}`);
+  b.position(innerCond);
+  const j = b.load(Ty.i64, jAddr);
+  const jGtZero = b.icmp("ugt", j, val("0", Ty.i64));
+  const checkCmp = b.newBlock(`${prefix}.checkcmp`);
+  b.condBr(jGtZero, checkCmp, innerEnd);
 
-  lines.push(`${checkCmp}:`);
-  const jm1 = ctx.nextTemp();
-  lines.push(`  ${jm1} = sub i64 ${j}, 1`);
-  const prevPtr = ctx.nextTemp();
-  lines.push(`  ${prevPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jm1}`);
+  b.position(checkCmp);
+  const jm1 = b.binop("sub", j, val("1", Ty.i64));
+  const prevPtr = b.gep(elemTy, data, [jm1]);
 
   const gtResult = emitCompare(prevPtr, tmpAddr);
 
-  lines.push(`  br i1 ${gtResult}, label %${innerBody}, label %${innerEnd}`);
+  b.condBr(gtResult, innerBody, innerEnd);
 
-  lines.push(`${innerBody}:`);
-  const jPtr = ctx.nextTemp();
-  lines.push(`  ${jPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${j}`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${jPtr}, ptr ${prevPtr}, i64 ${elemSize}, i1 false)`);
-  const jNext = ctx.nextTemp();
-  lines.push(`  ${jNext} = sub i64 ${j}, 1`);
-  lines.push(`  store i64 ${jNext}, ptr ${jAddr}`);
-  lines.push(`  br label %${innerCond}`);
+  b.position(innerBody);
+  const jPtr = b.gep(elemTy, data, [j]);
+  memcpy(jPtr, prevPtr);
+  const jNext = b.binop("sub", j, val("1", Ty.i64));
+  b.store(jNext, jAddr);
+  b.br(innerCond);
 
-  lines.push(`${innerEnd}:`);
-  const jFinal = ctx.nextTemp();
-  lines.push(`  ${jFinal} = load i64, ptr ${jAddr}`);
-  const destPtr = ctx.nextTemp();
-  lines.push(`  ${destPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jFinal}`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${destPtr}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
-  const iNext = ctx.nextTemp();
-  lines.push(`  ${iNext} = add i64 ${i}, 1`);
-  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
-  lines.push(`  br label %${outerCond}`);
+  b.position(innerEnd);
+  const jFinal = b.load(Ty.i64, jAddr);
+  const destPtr = b.gep(elemTy, data, [jFinal]);
+  memcpy(destPtr, tmpAddr);
+  const iNext = b.binop("add", i, val("1", Ty.i64));
+  b.store(iNext, iAddr);
+  b.br(outerCond);
 
-  lines.push(`${outerEnd}:`);
+  b.position(outerEnd);
 }
 
 // built-in > comparison for a known comparable type
-function emitBuiltinGt(ctx: CodegenCtx, lines: string[], keyType: TypeKind, keyTy: string, aVal: string, bVal: string): string {
+function emitBuiltinGt(ctx: CodegenCtx, lines: string[], keyType: TypeKind, a: Val, bv: Val): Val {
+  const b = new LlvmTextBuilder(lines, ctx);
   if (keyType.tag === "string") {
     ctx.needsMemcmp = true;
-    const pData = ctx.nextTemp();
-    lines.push(`  ${pData} = extractvalue %String ${aVal}, 0`);
-    const pLen = ctx.nextTemp();
-    lines.push(`  ${pLen} = extractvalue %String ${aVal}, 1`);
-    const tData = ctx.nextTemp();
-    lines.push(`  ${tData} = extractvalue %String ${bVal}, 0`);
-    const tLen = ctx.nextTemp();
-    lines.push(`  ${tLen} = extractvalue %String ${bVal}, 1`);
-    const minLen = ctx.nextTemp();
-    const lenCmp = ctx.nextTemp();
-    lines.push(`  ${lenCmp} = icmp ult i64 ${pLen}, ${tLen}`);
-    lines.push(`  ${minLen} = select i1 ${lenCmp}, i64 ${pLen}, i64 ${tLen}`);
-    const memcmpResult = ctx.nextTemp();
-    lines.push(`  ${memcmpResult} = call i32 @memcmp(ptr ${pData}, ptr ${tData}, i64 ${minLen})`);
-    const memcmpNonZero = ctx.nextTemp();
-    lines.push(`  ${memcmpNonZero} = icmp ne i32 ${memcmpResult}, 0`);
-    const cmpByData = ctx.nextTemp();
-    lines.push(`  ${cmpByData} = icmp sgt i32 ${memcmpResult}, 0`);
-    const cmpByLen = ctx.nextTemp();
-    lines.push(`  ${cmpByLen} = icmp ugt i64 ${pLen}, ${tLen}`);
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = select i1 ${memcmpNonZero}, i1 ${cmpByData}, i1 ${cmpByLen}`);
-    return result;
+    const pData = b.extractvalue(a, 0, Ty.ptr);
+    const pLen = b.extractvalue(a, 1, Ty.i64);
+    const tData = b.extractvalue(bv, 0, Ty.ptr);
+    const tLen = b.extractvalue(bv, 1, Ty.i64);
+    // minLen's temp is drawn before lenCmp's but defined after it, as the old text did
+    const minLen = b.reserveTemp(Ty.i64);
+    const lenCmp = b.icmp("ult", pLen, tLen);
+    b.select(lenCmp, pLen, tLen, minLen);
+    const memcmpResult = b.call(Ty.i32, "@memcmp", [pData, tData, minLen]);
+    const memcmpNonZero = b.icmp("ne", memcmpResult, val("0", Ty.i32));
+    const cmpByData = b.icmp("sgt", memcmpResult, val("0", Ty.i32));
+    const cmpByLen = b.icmp("ugt", pLen, tLen);
+    return b.select(memcmpNonZero, cmpByData, cmpByLen);
   } else if (keyType.tag === "float") {
-    const result = ctx.nextTemp();
-    lines.push(`  ${result} = fcmp ogt ${keyTy} ${aVal}, ${bVal}`);
-    return result;
+    return b.fcmp("ogt", a, bv);
   } else {
-    const result = ctx.nextTemp();
-    const cmpOp = keyType.tag === "int" && keyType.signed ? "sgt" : "ugt";
-    lines.push(`  ${result} = icmp ${cmpOp} ${keyTy} ${aVal}, ${bVal}`);
-    return result;
+    return b.icmp(keyType.tag === "int" && keyType.signed ? "sgt" : "ugt", a, bv);
   }
 }
 
@@ -175,14 +153,22 @@ export function genVecSort(
   const elemTy = p.elemTy;
 
   insertionSortLoop(ctx, lines, p, "sort", (prevPtr, tmpAddr) => {
-    const prevVal = ctx.nextTemp();
-    lines.push(`  ${prevVal} = load ${elemTy}, ptr ${prevPtr}`);
-    const tmpVal = ctx.nextTemp();
-    lines.push(`  ${tmpVal} = load ${elemTy}, ptr ${tmpAddr}`);
-    return emitBuiltinGt(ctx, lines, elementType, elemTy, prevVal, tmpVal);
+    const b = new LlvmTextBuilder(lines, ctx);
+    const prevVal = b.load(elemTy, prevPtr);
+    const tmpVal = b.load(elemTy, tmpAddr);
+    return emitBuiltinGt(ctx, lines, elementType, prevVal, tmpVal);
   });
 
   return [lines, "void", "void"];
+}
+
+// A closure value is { fn ptr, env ptr }.
+function closureParts(ctx: CodegenCtx, lines: string[], closure: string): { fnPtr: Val; envPtr: Val } {
+  const b = new LlvmTextBuilder(lines, ctx);
+  const cl = val(closure, Ty.of("{ ptr, ptr }"));
+  const fnPtr = b.extractvalue(cl, 0, Ty.ptr);
+  const envPtr = b.extractvalue(cl, 1, Ty.ptr);
+  return { fnPtr, envPtr };
 }
 
 // What to hand a sort callback for one element.
@@ -197,15 +183,13 @@ function cbElemArg(
   ctx: CodegenCtx,
   lines: string[],
   cbType: TypeKind,
-  elemPtr: string,
-  elemTy: string,
+  elemPtr: Val,
+  elemTy: Ty,
   paramIdx = 0,
-): { arg: string; argTy: string } {
+): Val {
   const prm = cbType.tag === "fn" ? cbType.params[paramIdx] : undefined;
-  if (!prm || prm.tag === "ref" || prm.tag === "unknown") return { arg: elemPtr, argTy: "ptr" };
-  const loaded = ctx.nextTemp();
-  lines.push(`  ${loaded} = load ${elemTy}, ptr ${elemPtr}`);
-  return { arg: loaded, argTy: elemTy };
+  if (!prm || prm.tag === "ref" || prm.tag === "unknown") return elemPtr;
+  return new LlvmTextBuilder(lines, ctx).load(elemTy, elemPtr);
 }
 
 export function genVecSortBy(
@@ -217,23 +201,18 @@ export function genVecSortBy(
 ): [string[], string, string] {
   const p = sortPreamble(ctx, object, elementType, lines, "sortby");
   // the checker admits any signed integer return; the sign is all that is read
-  const retTy = callback.type.tag === "fn" && callback.type.ret.tag === "int" ? ctx.llvmType(callback.type.ret) : "i32";
+  const retTy = Ty.of(callback.type.tag === "fn" && callback.type.ret.tag === "int" ? ctx.llvmType(callback.type.ret) : "i32");
 
   const [cl, cv] = ctx.genExpr(callback);
   lines.push(...cl);
-  const fnPtr = ctx.nextTemp();
-  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-  const envPtr = ctx.nextTemp();
-  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+  const { fnPtr, envPtr } = closureParts(ctx, lines, cv);
 
   insertionSortLoop(ctx, lines, p, "sortby", (prevPtr, tmpAddr) => {
     const a = cbElemArg(ctx, lines, callback.type, prevPtr, p.elemTy, 0);
-    const b = cbElemArg(ctx, lines, callback.type, tmpAddr, p.elemTy, 1);
-    const cmpResult = ctx.nextTemp();
-    lines.push(`  ${cmpResult} = call ${retTy} ${fnPtr}(ptr ${envPtr}, ${a.argTy} ${a.arg}, ${b.argTy} ${b.arg})`);
-    const shouldSwap = ctx.nextTemp();
-    lines.push(`  ${shouldSwap} = icmp sgt ${retTy} ${cmpResult}, 0`);
-    return shouldSwap;
+    const bArg = cbElemArg(ctx, lines, callback.type, tmpAddr, p.elemTy, 1);
+    const b = new LlvmTextBuilder(lines, ctx);
+    const cmpResult = b.call(retTy, fnPtr.ref, [envPtr, a, bArg]);
+    return b.icmp("sgt", cmpResult, val("0", retTy));
   });
 
   return [lines, "void", "void"];
@@ -248,18 +227,16 @@ export function genVecSortByKey(
   lines: string[],
 ): [string[], string, string] {
   const p = sortPreamble(ctx, object, elementType, lines, "sortkey");
-  const keyTy = ctx.llvmType(keyType);
+  const keyTy = Ty.of(ctx.llvmType(keyType));
 
   const [cl, cv] = ctx.genExpr(callback);
   lines.push(...cl);
-  const fnPtr = ctx.nextTemp();
-  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-  const envPtr = ctx.nextTemp();
-  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+  const { fnPtr, envPtr } = closureParts(ctx, lines, cv);
 
   // cache the key for the element being inserted so we don't re-extract each inner iteration
-  const tmpKeyAddr = `%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpKeyAddr} = alloca ${keyTy}`);
+  const tmpKeyAddrName = `%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${tmpKeyAddrName} = alloca ${keyTy.ll}`);
+  const tmpKeyAddr = val(tmpKeyAddrName, Ty.ptr);
 
   insertionSortLoop(
     ctx,
@@ -268,18 +245,17 @@ export function genVecSortByKey(
     "sortkey",
     (prevPtr, _tmpAddr) => {
       const ka = cbElemArg(ctx, lines, callback.type, prevPtr, p.elemTy);
-      const prevKey = ctx.nextTemp();
-      lines.push(`  ${prevKey} = call ${keyTy} ${fnPtr}(ptr ${envPtr}, ${ka.argTy} ${ka.arg})`);
-      const curTmpKey = ctx.nextTemp();
-      lines.push(`  ${curTmpKey} = load ${keyTy}, ptr ${tmpKeyAddr}`);
-      return emitBuiltinGt(ctx, lines, keyType, keyTy, prevKey, curTmpKey);
+      const b = new LlvmTextBuilder(lines, ctx);
+      const prevKey = b.call(keyTy, fnPtr.ref, [envPtr, ka]);
+      const curTmpKey = b.load(keyTy, tmpKeyAddr);
+      return emitBuiltinGt(ctx, lines, keyType, prevKey, curTmpKey);
     },
     () => {
       // once per outer iteration, not once per comparison
       const kb = cbElemArg(ctx, lines, callback.type, p.tmpAddr, p.elemTy);
-      const tmpKey = ctx.nextTemp();
-      lines.push(`  ${tmpKey} = call ${keyTy} ${fnPtr}(ptr ${envPtr}, ${kb.argTy} ${kb.arg})`);
-      lines.push(`  store ${keyTy} ${tmpKey}, ptr ${tmpKeyAddr}`);
+      const b = new LlvmTextBuilder(lines, ctx);
+      const tmpKey = b.call(keyTy, fnPtr.ref, [envPtr, kb]);
+      b.store(tmpKey, tmpKeyAddr);
     },
   );
   return [lines, "void", "void"];
