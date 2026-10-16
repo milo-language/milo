@@ -13,7 +13,7 @@ export const F64_BUF = 32;
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this, they are not part of its external API.
-interface CodegenCtx extends NameSource {
+export interface StringCtx extends NameSource {
   genExpr(expr: HIRExpr, sretDest?: string): Gen;
   genLValue(expr: HIRExpr): Gen;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
@@ -65,7 +65,7 @@ function stringField(b: Builder, strPtr: Val, i: number): Val {
   return b.gep(STRING, strPtr, [val("0", Ty.i32), val(String(i), Ty.i32)]);
 }
 
-export function genStringWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
+export function genStringWithCapacity(ctx: StringCtx, expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   const [capLines, capVal] = ctx.genExpr(expr.capacity);
@@ -83,7 +83,7 @@ export function genStringWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "
   return asGen(lines, makeString(b, buf, I64_0, cap));
 }
 
-export function genStringConcat(ctx: CodegenCtx, lines: string[], lv: string, rv: string): Gen {
+export function genStringConcat(ctx: StringCtx, lines: string[], lv: string, rv: string): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
@@ -106,7 +106,7 @@ export function genStringConcat(ctx: CodegenCtx, lines: string[], lv: string, rv
   return asGen(lines, makeString(b, buf, total, allocSz));
 }
 
-export function genStringCmp(ctx: CodegenCtx, lines: string[], lv: string, rv: string, isEq: boolean): Gen {
+export function genStringCmp(ctx: StringCtx, lines: string[], lv: string, rv: string, isEq: boolean): Gen {
   ctx.needsMemcmp = true;
   const b = new LlvmTextBuilder(lines, ctx);
   const l = val(lv, STRING), r = val(rv, STRING);
@@ -132,7 +132,7 @@ export function genStringCmp(ctx: CodegenCtx, lines: string[], lv: string, rv: s
 }
 
 // lexicographic string ordering via memcmp on common prefix, then length tiebreak
-export function genStringOrd(ctx: CodegenCtx, lines: string[], lv: string, rv: string, op: string): Gen {
+export function genStringOrd(ctx: StringCtx, lines: string[], lv: string, rv: string, op: string): Gen {
   ctx.needsMemcmp = true;
   const b = new LlvmTextBuilder(lines, ctx);
   const l = val(lv, STRING), r = val(rv, STRING);
@@ -168,7 +168,7 @@ export function genStringOrd(ctx: CodegenCtx, lines: string[], lv: string, rv: s
 // String.push(u8). The fast path stays inline: room for the byte and its NUL, and a
 // count of 1 (a heap buffer this handle holds alone). Anything else (a literal, a full
 // buffer, a shared one) goes through @milo.str.reserve, which copies or grows.
-export function genStringPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringPush" }, lines: string[]): Gen {
+export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPush" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.strRt();
 
@@ -220,7 +220,7 @@ export function genStringPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringPu
 }
 
 // s.pushInt(n): n's digits written straight into s's buffer, no temporary.
-export function genStringPushInt(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringPushInt" }, lines: string[]): Gen {
+export function genStringPushInt(ctx: StringCtx, expr: HIRExpr & { kind: "StringPushInt" }, lines: string[]): Gen {
   const [strPtrLines, strPtr] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
   const [vLines, vVal, vTy] = ctx.genExpr(expr.value);
@@ -235,7 +235,7 @@ export function genStringPushInt(ctx: CodegenCtx, expr: HIRExpr & { kind: "Strin
 // (std/string strCharAt): cutting there would leave invalid UTF-8 behind. A cap-0
 // string is a static literal that cannot take the NUL a shorter string needs at its
 // new end (cstr() reads up to it), so it is copied out to an owned buffer first.
-export function genStringTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringTruncate" }, lines: string[]): Gen {
+export function genStringTruncate(ctx: StringCtx, expr: HIRExpr & { kind: "StringTruncate" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
@@ -305,7 +305,7 @@ export function genStringTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "Stri
 // `s.setByte(i, b)`: the bounds test is unsigned and 64-bit, so a negative or huge
 // index aborts instead of wrapping. A literal (cap 0) points into read-only data, so
 // it is copied out to an owned buffer before the write, as truncate does.
-export function genStringSetByte(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringSetByte" }, lines: string[]): Gen {
+export function genStringSetByte(ctx: StringCtx, expr: HIRExpr & { kind: "StringSetByte" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsBoundsCheck = true;
   const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
@@ -357,7 +357,7 @@ export function genStringSetByte(ctx: CodegenCtx, expr: HIRExpr & { kind: "Strin
 // Append a whole string in place. `s = s + t` reallocates and copies the
 // accumulator on every concat (quadratic when building in a loop); this grows
 // amortized like Vec.push and copies only the addition.
-export function genStringPushStr(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringPushStr" }, lines: string[]): Gen {
+export function genStringPushStr(ctx: StringCtx, expr: HIRExpr & { kind: "StringPushStr" }, lines: string[]): Gen {
   ctx.hasStringType = true;
 
   const [strPtrLines, strPtr] = ctx.genLValue(expr.str);
@@ -384,7 +384,7 @@ export function genStringPushStr(ctx: CodegenCtx, expr: HIRExpr & { kind: "Strin
 }
 
 // String.substr(start, end) — allocate new owned string from s[start..end]
-export function genStringSubstr(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): Gen {
+export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
@@ -420,7 +420,7 @@ export function genStringSubstr(ctx: CodegenCtx, expr: HIRExpr & { kind: "String
 }
 
 // String.slice(start, end) — zero-copy view. Non-owning %String with cap=0.
-export function genStringSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): Gen {
+export function genStringSlice(ctx: StringCtx, expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): Gen {
   ctx.hasStringType = true;
 
   const [strLines, strVal] = ctx.genExpr(expr.str);
@@ -440,7 +440,7 @@ export function genStringSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringS
 }
 
 // n.toString() / x.toString(): an owned %String; ints through @milo.fmt.*, floats through @milo.fmt.f64
-export function genNumberToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): Gen {
+export function genNumberToString(ctx: StringCtx, expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): Gen {
   ctx.needsMalloc = true;
   ctx.hasStringType = true;
 
@@ -464,7 +464,7 @@ export function genNumberToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "Numb
   return asGen(lines, makeString(b, val(buf, Ty.ptr), val(len, Ty.i64), val(String(F64_BUF), Ty.i64)));
 }
 
-export function genBoolToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
+export function genBoolToString(ctx: StringCtx, expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   const [vLines, vVal] = ctx.genExpr(expr.value);
   lines.push(...vLines);
@@ -478,7 +478,7 @@ export function genBoolToString(ctx: CodegenCtx, expr: HIRExpr & { kind: "BoolTo
 }
 
 // s.clone() — deep copy of the underlying byte buffer; result is an owned %String
-export function genStringClone(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringClone" }, lines: string[]): Gen {
+export function genStringClone(ctx: StringCtx, expr: HIRExpr & { kind: "StringClone" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
@@ -489,7 +489,7 @@ export function genStringClone(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringC
   return [lines, ctx.emitStrShare(lines, sVal), "%String"];
 }
 
-export function genStringFind(ctx: CodegenCtx, expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
+export function genStringFind(ctx: StringCtx, expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
   const enumTy = `%${expr.optionEnumName}`;
   const enumT = Ty.of(enumTy);
   const layout = ctx.enumLayouts.get(expr.optionEnumName);

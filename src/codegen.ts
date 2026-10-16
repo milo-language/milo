@@ -12,6 +12,7 @@ import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
 } from "./codegen-string";
+import { genLiteralMatch, armTailExpr, matchArmLocals } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
@@ -158,7 +159,7 @@ export function sanitizerKind(): "address" | "thread" {
 // An if/match expression's result slot. `cloneViews`: the fork's value is owned
 // (blockValueOwnsResult) but some arm yields a view of a place it does not consume, so
 // that arm stores a clone and the place keeps its own value.
-type ForkSlot = { addr: string; ty: string; cloneViews?: boolean };
+export type ForkSlot = { addr: string; ty: string; cloneViews?: boolean };
 
 export class Codegen {
   public target: TargetInfo;
@@ -4845,7 +4846,7 @@ export class Codegen {
       return this.genTempSubjectMatch(stmt, resultSlot);
     }
     if (stmt.subject.type.tag === "enum") return this.genEnumMatch(stmt, resultSlot);
-    return this.genLiteralMatch(stmt, resultSlot);
+    return genLiteralMatch(this, stmt, resultSlot);
   }
 
   // A temporary subject (`match find(k)`, `if let E.V(x) = mk().field`, `match mk().name`)
@@ -4884,7 +4885,7 @@ export class Codegen {
   // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs
   // as-is. In value mode (match-expression) all but the tail run as stmts and
   // the tail ExprStmt's value is stored into resultSlot — same shape as IfExpr.
-  private emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart = this.droppableLocals.length): boolean {
+  public emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart = this.droppableLocals.length): boolean {
     if (!resultSlot) {
       for (const s of body) {
         const [sl, t] = this.genStmt(s);
@@ -4938,143 +4939,6 @@ export class Codegen {
       }
     }
     return false;
-  }
-
-  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
-    const lines: string[] = [];
-    const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
-    lines.push(...subjLines);
-
-    const endLabel = this.nextLabel("match.end");
-    let allArmsTerminated = true;
-
-    const literalArms: { label: string; nextLabel: string; arm: typeof stmt.arms[0] }[] = [];
-    let wildcardArm: typeof stmt.arms[0] | null = null;
-
-    for (const arm of stmt.arms) {
-      if (arm.pattern.kind === "WildcardPattern") {
-        wildcardArm = arm;
-      } else {
-        const label = this.nextLabel("match.arm");
-        literalArms.push({ label, nextLabel: "", arm });
-      }
-    }
-
-    // Fast path — an all-integer/char match lowers to a single LLVM `switch`
-    // rather than an icmp/br comparison chain. LLVM turns the switch into a jump
-    // table (O(1) dispatch instead of a linear scan) and, critically, the CFG
-    // stays flat: a 250-arm opcode dispatcher was becoming a 461-branch chain
-    // that -O2's superlinear passes choked on (>3 min vs seconds). Requires
-    // distinct case values (LLVM rejects duplicates); anything else (string,
-    // bool, float, dup values) falls through to the chain below.
-    const allIntCharDistinct = (() => {
-      if (literalArms.length === 0) return false;
-      const seen = new Set<string>();
-      for (const la of literalArms) {
-        const p = la.arm.pattern;
-        if (p.kind !== "LiteralPattern" || (p.literalKind !== "int" && p.literalKind !== "char")) return false;
-        const key = String(p.value);
-        if (seen.has(key)) return false;
-        seen.add(key);
-      }
-      return true;
-    })();
-
-    if (allIntCharDistinct) {
-      const defaultLabel = wildcardArm ? this.nextLabel("match.wildcard") : this.nextLabel("match.default");
-      const cases = literalArms.map(la => {
-        const p = la.arm.pattern as HIRPattern & { kind: "LiteralPattern" };
-        return `${subjTy} ${p.value}, label %${la.label}`;
-      }).join(" ");
-      lines.push(`  switch ${subjTy} ${subjVal}, label %${defaultLabel} [${cases}]`);
-      for (const la of literalArms) {
-        lines.push(`${la.label}:`);
-        const armTerminated = this.emitMatchArmBody(lines, la.arm.body, resultSlot);
-        if (!armTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
-      }
-      lines.push(`${defaultLabel}:`);
-      if (wildcardArm) {
-        const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
-        if (!wcTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
-      } else {
-        lines.push(`  unreachable`);
-      }
-      lines.push(`${endLabel}:`);
-      if (allArmsTerminated) lines.push(`  unreachable`);
-      return [lines, allArmsTerminated];
-    }
-
-    // chain: compare → arm body or fall through to next comparison
-    for (let i = 0; i < literalArms.length; i++) {
-      const next = i + 1 < literalArms.length
-        ? this.nextLabel("match.cmp")
-        : wildcardArm
-          ? this.nextLabel("match.wildcard")
-          : this.nextLabel("match.default");
-      literalArms[i].nextLabel = next;
-
-      const pat = literalArms[i].arm.pattern;
-      if (pat.kind !== "LiteralPattern") continue;
-
-      let cmpVal: string;
-      if (pat.literalKind === "string") {
-        this.hasStringType = true;
-        const litStr = this.addString(String(pat.value));
-        const litVal = this.nextTemp();
-        lines.push(`  ${litVal} = insertvalue %String undef, ptr ${litStr.label}, 0`);
-        const litVal2 = this.nextTemp();
-        lines.push(`  ${litVal2} = insertvalue %String ${litVal}, i64 ${litStr.length - 1}, 1`);
-        const [, cmpResult] = genStringCmp(this, lines, subjVal, litVal2, true);
-        cmpVal = cmpResult;
-      } else if (pat.literalKind === "bool") {
-        const litVal = pat.value ? "1" : "0";
-        cmpVal = this.nextTemp();
-        lines.push(`  ${cmpVal} = icmp eq i1 ${subjVal}, ${litVal}`);
-      } else if (pat.literalKind === "int" || pat.literalKind === "char") {
-        cmpVal = this.nextTemp();
-        lines.push(`  ${cmpVal} = icmp eq ${subjTy} ${subjVal}, ${pat.value}`);
-      } else {
-        // float
-        cmpVal = this.nextTemp();
-        const fval = Number.isInteger(pat.value as number) ? (pat.value as number).toFixed(1) : String(pat.value);
-        lines.push(`  ${cmpVal} = fcmp oeq ${subjTy} ${subjVal}, ${fval}`);
-      }
-
-      lines.push(`  br i1 ${cmpVal}, label %${literalArms[i].label}, label %${next}`);
-
-      // arm body
-      lines.push(`${literalArms[i].label}:`);
-      const armTerminated = this.emitMatchArmBody(lines, literalArms[i].arm.body, resultSlot);
-      if (!armTerminated) lines.push(`  br label %${endLabel}`);
-      if (!armTerminated) allArmsTerminated = false;
-
-      // next comparison block (or wildcard/default)
-      if (i + 1 < literalArms.length) {
-        lines.push(`${next}:`);
-      }
-    }
-
-    // wildcard or default
-    const lastNext = literalArms.length > 0 ? literalArms[literalArms.length - 1].nextLabel : this.nextLabel("match.wildcard");
-    if (wildcardArm) {
-      if (literalArms.length === 0) {
-        lines.push(`  br label %${lastNext}`);
-      }
-      lines.push(`${lastNext}:`);
-      const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
-      if (!wcTerminated) lines.push(`  br label %${endLabel}`);
-      if (!wcTerminated) allArmsTerminated = false;
-    } else {
-      if (literalArms.length === 0) {
-        lines.push(`  br label %${lastNext}`);
-      }
-      lines.push(`${lastNext}:`);
-      lines.push(`  unreachable`);
-    }
-
-    lines.push(`${endLabel}:`);
-    if (allArmsTerminated) lines.push(`  unreachable`);
-    return [lines, allArmsTerminated];
   }
 
   private genEnumMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
@@ -12395,14 +12259,6 @@ export class Codegen {
     return this.isOwnedTempExpr(expr.value);
   }
 
-  // The value a block produces, when it produces one: a block's value is its tail
-  // expression, which is how genIfExpr and the match-arm emitter already read it. Anything
-  // else there (a Return, a loop) leaves no value for this expression to own.
-  private armTailExpr(body: HIRStmt[]): HIRExpr | null {
-    const last = body[body.length - 1];
-    return last && last.kind === "ExprStmt" ? last.expr : null;
-  }
-
   // Whether an `if`/`match` used as an EXPRESSION hands back a value nobody else owns.
   //
   // It does when some arm yields an owned value: a temporary, a place the checker moved
@@ -12416,10 +12272,10 @@ export class Codegen {
     if (!this.needsDropCg(expr.type)) return false;
     const arms = expr.kind === "IfExpr"
       ? [{ body: expr.thenBody, bound: new Set<string>() }, { body: expr.elseBody, bound: new Set<string>() }]
-      : expr.arms.map(a => ({ body: a.body, bound: this.matchArmLocals(a, !!expr.subjectIsRef) }));
+      : expr.arms.map(a => ({ body: a.body, bound: matchArmLocals(a, !!expr.subjectIsRef) }));
     let owned = false;
     for (const { body, bound } of arms) {
-      const tail = this.armTailExpr(body);
+      const tail = armTailExpr(body);
       if (!tail) {
         const last = body[body.length - 1];
         if (last && (last.kind === "Return" || last.kind === "Break" || last.kind === "Continue")) continue;
@@ -12461,15 +12317,6 @@ export class Codegen {
       case "interface": case "fn": return true;
       default: return false;
     }
-  }
-
-  // The names a match arm declares itself: its pattern's bindings (owned unless the
-  // subject is matched by reference) and its top-level `let`s.
-  private matchArmLocals(arm: { pattern: HIRPattern; body: HIRStmt[] }, subjectIsRef: boolean): Set<string> {
-    const out = new Set<string>();
-    if (arm.pattern.kind === "EnumPattern" && !subjectIsRef) for (const b of arm.pattern.bindings) out.add(b.name);
-    for (const st of arm.body) if (st.kind === "Let") out.add(st.name);
-    return out;
   }
 
   // An arm tail that reads a place without consuming it. `armLocal`: an Ident the arm
