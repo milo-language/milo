@@ -262,12 +262,11 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
   const enumTy = `%${enumName}`;
   const helperName = `milo.clone.${enumName}`;
   ctx.emitHelperFn(2, (body) => {
-    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
-    body.push("entry.bb:");
     const b = new LlvmTextBuilder(body, ctx);
-    const shallow = b.load(Ty.of(enumTy), val("%src", Ty.ptr));
-    b.store(shallow, val("%dst", Ty.ptr));
-    const tag = ctx.loadEnumTag(body, enumTy, "%src");
+    const [src, dst] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "src", ty: Ty.ptr }, { name: "dst", ty: Ty.ptr }] });
+    const shallow = b.load(Ty.of(enumTy), src);
+    b.store(shallow, dst);
+    const tag = ctx.loadEnumTag(body, enumTy, src.ref);
 
     const doneLabel = b.newBlock("clone.done");
     const cases: [number, Block][] = [];
@@ -285,9 +284,9 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
       // Copy fields were carried over by the shallow whole-enum copy above.
       for (let i = 0; i < variant.fieldTypes.length; i++) {
         if (!ctx.needsDropCg(variant.fieldTypeKinds[i])) continue;
-        const srcFieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%src", variant, i);
+        const srcFieldPtr = ctx.enumFieldPtr(vLines, enumTy, src.ref, variant, i);
         const cloned = emitDeepCloneFromPtr(ctx, vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
-        const dstFieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%dst", variant, i);
+        const dstFieldPtr = ctx.enumFieldPtr(vLines, enumTy, dst.ref, variant, i);
         vb.store(val(cloned, Ty.of(variant.fieldTypes[i])), val(dstFieldPtr, Ty.ptr));
       }
       vb.br(doneLabel);
@@ -302,7 +301,7 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
     }
     b.position(doneLabel);
     b.ret();
-    body.push("}");
+    b.endFn();
   });
 }
 
@@ -519,10 +518,9 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
   const enumTy = `%${enumName}`;
   const helperName = `milo.${kind}.${enumName}`;
   ctx.emitHelperFn(undefined, (body) => {
-    body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry.bb:");
     const b = new LlvmTextBuilder(body, ctx);
-    const tag = ctx.loadEnumTag(body, enumTy, "%self");
+    const [self] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "self", ty: Ty.ptr }] });
+    const tag = ctx.loadEnumTag(body, enumTy, self.ref);
 
     const doneLabel = b.newBlock("drop.done");
     const cases: [number, Block][] = [];
@@ -540,7 +538,7 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
       vb.position(label);
       for (let i = 0; i < variant.fieldTypes.length; i++) {
         if (!ctx.needsDropCg(variant.fieldTypeKinds[i])) continue;
-        const fieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%self", variant, i);
+        const fieldPtr = ctx.enumFieldPtr(vLines, enumTy, self.ref, variant, i);
         ctx.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
       }
       vb.br(doneLabel);
@@ -554,7 +552,7 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
 
     b.position(doneLabel);
     b.ret();
-    body.push("}");
+    b.endFn();
   });
 }
 
@@ -566,10 +564,8 @@ export function ensureStructCloneHelper(ctx: DropCtx, structName: string) {
   const structTy = Ty.of(`%${structName}`);
   const helperName = `milo.clone.struct.${structName}`;
   ctx.emitHelperFn(2, (body) => {
-    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
-    body.push("entry.bb:");
     const b = new LlvmTextBuilder(body, ctx);
-    const src = val("%src", Ty.ptr), dst = val("%dst", Ty.ptr);
+    const [src, dst] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "src", ty: Ty.ptr }, { name: "dst", ty: Ty.ptr }] });
     for (let i = 0; i < layout.fields.length; i++) {
       const f = layout.fields[i];
       const srcFieldPtr = b.gep(structTy, src, [I32_0, val(String(i), Ty.i32)]);
@@ -578,7 +574,7 @@ export function ensureStructCloneHelper(ctx: DropCtx, structName: string) {
       b.store(val(clonedField, Ty.of(f.type)), dstFieldPtr);
     }
     b.ret();
-    body.push("}");
+    b.endFn();
   });
 }
 
@@ -590,10 +586,8 @@ export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
   const layout = must(ctx.structLayouts, structName, "struct layouts");
   const helperName = `milo.${kind}.struct.${structName}`;
   ctx.emitHelperFn(undefined, (body) => {
-    body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry.bb:");
     const b = new LlvmTextBuilder(body, ctx);
-    const self = val("%self", Ty.ptr);
+    const [self] = b.defineFn({ name: helperName, ret: Ty.void, params: [{ name: "self", ty: Ty.ptr }] });
     const structTy = Ty.of(`%${structName}`);
     // Every field is dropped unconditionally: each field's own drop already treats its
     // zeroed (moved-from) form as empty, so a struct that was moved out of and zeroed
@@ -649,6 +643,6 @@ export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
       }
     }
     b.ret();
-    body.push("}");
+    b.endFn();
   });
 }

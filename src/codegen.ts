@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract, HIRStruct, HIRPatStep, HIRPatTest, HIRGlobal } from "./hir";
-import { LlvmTextBuilder, Ty, val } from "./ir";
+import { LlvmTextBuilder, Ty, val, type Param } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -2636,25 +2636,25 @@ export class Codegen {
     this.currentFnName = fn.name;
     this.currentFnWrapping = !!fn.isWrapping;
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
 
-    const params = fn.params.map(p => {
-      const lt = p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type);
+    const params: Param[] = fn.params.map(p => {
+      const ty = p.isRef || p.isRefMut ? Ty.ptr : Ty.of(this.llvmType(p.type));
       const attrs = this.refParamAttrs(fn, p);
       if (attrs && p.isRefMut) {
         const c = this.noaliasCandidates.get(fn.name) ?? [];
         c.push(p.name);
         this.noaliasCandidates.set(fn.name, c);
       }
-      return `${lt}${attrs} %${p.name}`;
-    }).join(", ");
+      return { name: p.name, ty, attrs };
+    });
     // main is the process entry point: the OS reads its return register as the exit code, so it
     // must always be i32 even when the Milo signature is void (`fn main()`). A `void @main` leaves
     // garbage in the return register → nonzero exit on a program that should succeed.
     const isSret = this.sretFns.has(fn.name);
     this.currentFnSret = isSret;
     const ret = fn.name === "main" ? "i32" : isSret ? "void" : this.llvmType(fn.retType);
-    // Subprogram attaches BEFORE the `{`; DwarfEmitter.apply keys function boundaries off this.
-    const dbgAttr = this.emitDebug ? ` !dbg !${this.dwarf.diSubprogram(fn)}` : "";
+    const dbg = this.emitDebug ? this.dwarf.diSubprogram(fn) : undefined;
     if (this.emitDebug) {
       this.currentSubprogramId = this.dwarf.diSubprogram(fn);
       this.currentSubprogramFileId = this.dwarf.diFile(fn.sourceFile ?? this.filePath ?? "<unknown>");
@@ -2662,24 +2662,17 @@ export class Codegen {
     if (fn.name === "main" && this.wrapMainGreen) {
       // The entry point is the wrapper (greenMainEntry); this is just its body,
       // so argc/argv and the global-init call belong there, not here.
-      lines.push(`define internal ${ret} @${Codegen.MAIN_BODY_FN}(${params})${dbgAttr} {`);
+      b.defineFn({ name: Codegen.MAIN_BODY_FN, ret: Ty.of(ret), params, internal: true, dbg });
     } else if (fn.name === "main") {
-      const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
-      lines.push(`define ${ret} @${fn.name}(${mainParams})${dbgAttr} {`);
+      b.defineFn({ name: fn.name, ret: Ty.of(ret), params: [{ name: "_milo_argc", ty: Ty.i32 }, { name: "_milo_argv", ty: Ty.ptr }, ...params], dbg });
     } else {
       // Non-root fns are internal (like globals): each object carries its own copy.
       // linkonce_odr let the linker merge same-named fns across separately-compiled
       // objects and silently pick one body when they differed (issue #5).
-      const linkage = this.exportedFnNames.has(fn.name) ? "" : "internal ";
       // `.` can't appear in a Milo identifier, so %__sret.out never collides
-      const allParams = isSret ? (params ? `ptr %__sret.out, ${params}` : "ptr %__sret.out") : params;
-      lines.push(`define ${linkage}${ret} @${fn.name}(${allParams})${dbgAttr} {`);
+      const allParams = isSret ? [{ name: "__sret.out", ty: Ty.ptr }, ...params] : params;
+      b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg });
     }
-    // Dotted label, not bare `entry`: LLVM shares one symbol table for block
-    // labels and local values, and params are emitted as `%<name>`. A param named
-    // `entry` (a legal Milo identifier) would otherwise collide with the entry
-    // block. A `.` can't appear in a Milo identifier, so `entry.bb` never clashes.
-    lines.push("entry.bb:");
     if (fn.name === "main" && !this.wrapMainGreen) {
       lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
       lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
@@ -2771,13 +2764,13 @@ export class Codegen {
       this.emitDropGlue(lines);
       // Go exit semantics: when main returns the process exits and any
       // outstanding green tasks die. Waiting is explicit (Task.join/WaitGroup).
-      if (ret === "void") lines.push("  ret void");
-      else if (this.currentFnName === "main") lines.push("  ret i32 0");
+      if (ret === "void") b.ret();
+      else if (this.currentFnName === "main") b.ret(val("0", Ty.i32));
       // The checker rejects any other non-void fn that can fall off, so this end is
       // only reached past a `while true` with no break: a block that needs a
       // terminator and can never execute. A trap rather than bare `unreachable`, so a
       // shape the checker misses aborts instead of running past the end of the function.
-      else { lines.push("  call void @llvm.trap()"); lines.push("  unreachable"); }
+      else { b.callDiscard(Ty.void, "@llvm.trap", []); b.unreachable(); }
     }
 
     // hoist body allocas to entry block
@@ -2786,7 +2779,7 @@ export class Codegen {
     }
     this.hoistAllocas(lines, allocaInsertPoint);
 
-    lines.push("}");
+    b.endFn();
     this.currentSubprogramId = null; // scope closes with the function
     return lines;
   }

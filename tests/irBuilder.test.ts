@@ -120,6 +120,30 @@ describe("LlvmTextBuilder invariants", () => {
     expect(() => builder().ret(val("%v", Ty.void))).toThrow("ret of void");
   });
 
+  test("defineFn prints the header and entry label, endFn closes only a terminated block", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const [s, n] = b.defineFn({ name: "f", ret: Ty.i32, internal: true, dbg: 7, params: [{ name: "s", ty: Ty.ptr, attrs: " noalias" }, { name: "n", ty: Ty.i64 }] });
+    expect(s).toEqual(val("%s", Ty.ptr));
+    expect(n).toEqual(val("%n", Ty.i64));
+    expect(() => b.endFn()).toThrow("does not end in a terminator");
+    b.ret(val("0", Ty.i32));
+    b.endFn();
+    expect(lines).toEqual(["define internal i32 @f(ptr noalias %s, i64 %n) !dbg !7 {", "entry.bb:", "  ret i32 0", "}"]);
+    expect(() => b.endFn()).toThrow("no open function");
+    expect(() => b.defineFn({ name: "g", ret: Ty.void, params: [] })).toThrow("already closed its function");
+
+    // a label with nothing after it is an empty, unterminated block
+    const e = builder();
+    e.defineFn({ name: "e", ret: Ty.void, params: [] });
+    e.position(e.newBlock("x"));
+    expect(() => e.endFn()).toThrow("does not end in a terminator");
+
+    expect(() => builder().defineFn({ name: "d", ret: Ty.void, params: [{ name: "a", ty: Ty.i32 }, { name: "a", ty: Ty.i32 }] })).toThrow("appears twice");
+    expect(() => builder().defineFn({ name: "v", ret: Ty.void, params: [{ name: "a", ty: Ty.void }] })).toThrow("is void");
+    expect(() => builder().endFn()).toThrow("no open function");
+  });
+
   test("unreachable terminates the block", () => {
     const lines: string[] = [];
     const b = builder(lines);

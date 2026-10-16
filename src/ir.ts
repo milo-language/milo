@@ -47,6 +47,19 @@ export function val(ref: string, ty: Ty): Val { return { ref, ty }; }
 
 export interface Block { readonly name: string }
 
+/** `attrs` prints verbatim between type and name, leading space included (` noalias`). */
+export interface Param { readonly name: string; readonly ty: Ty; readonly attrs?: string }
+
+export interface FnSig {
+  /** Printed after `@` as given, so a name that needs quoting arrives quoted. */
+  readonly name: string;
+  readonly ret: Ty;
+  readonly params: readonly Param[];
+  readonly internal?: boolean;
+  /** DISubprogram id. Printed before the `{`, which is where DwarfEmitter finds function boundaries. */
+  readonly dbg?: number;
+}
+
 /** Codegen's name counters. Injected so builder-made names interleave with string-made ones. */
 export interface NameSource {
   nextTemp(): string;
@@ -65,6 +78,13 @@ export type FCmpPred = "oeq" | "one" | "olt" | "ole" | "ogt" | "oge";
 export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
 
 export interface Builder {
+  /**
+   * `define ... {` and the `entry.bb:` label; returns the params as values. Once per
+   * builder: a builder's checks (reserved temps, the open function) are per function.
+   */
+  defineFn(sig: FnSig): Val[];
+  /** The closing `}`. Fails unless the last block ends in a terminator. */
+  endFn(): void;
   // Inline at the current position, as today's codegen emits it; hoisting to the entry
   // block would change the text, so it waits for a commit that is allowed to.
   alloca(ty: Ty): Val;
@@ -124,8 +144,36 @@ export class LlvmTextBuilder implements Builder {
   // Temps drawn by reserveTemp and not yet defined. Per builder, and a builder lives for one
   // function body, so a reservation cannot leak into another function.
   private readonly reserved = new Set<string>();
+  private fn: "none" | "open" | "closed" = "none";
 
   constructor(readonly lines: string[], private readonly names: NameSource) {}
+
+  defineFn(sig: FnSig): Val[] {
+    if (this.fn !== "none") this.fail(`defineFn @${sig.name}: this builder already ${this.fn === "open" ? "has an open function" : "closed its function"}`);
+    const seen = new Set<string>();
+    for (const p of sig.params) {
+      if (p.ty.kind === "void") this.fail(`defineFn @${sig.name}: param %${p.name} is void`);
+      if (seen.has(p.name)) this.fail(`defineFn @${sig.name}: param %${p.name} appears twice`);
+      seen.add(p.name);
+    }
+    this.fn = "open";
+    const params = sig.params.map(p => `${p.ty.ll}${p.attrs ?? ""} %${p.name}`).join(", ");
+    const dbg = sig.dbg === undefined ? "" : ` !dbg !${sig.dbg}`;
+    this.lines.push(`define ${sig.internal ? "internal " : ""}${sig.ret.ll} @${sig.name}(${params})${dbg} {`);
+    // Dotted, not bare `entry`: block labels and values share one LLVM namespace, params
+    // print as `%<name>`, and `.` cannot appear in a Milo identifier.
+    this.lines.push("entry.bb:");
+    return sig.params.map(p => ({ ref: `%${p.name}`, ty: p.ty }));
+  }
+
+  endFn(): void {
+    if (this.fn !== "open") this.fail("endFn with no open function");
+    // llc would reject an unterminated block too, but far from the codegen that left it.
+    const last = this.lastInstruction();
+    if (last === undefined || !TERMINATOR.test(last)) this.fail(`endFn: last block does not end in a terminator (last line '${last?.trim()}')`);
+    this.fn = "closed";
+    this.lines.push("}");
+  }
 
   alloca(ty: Ty): Val {
     if (ty.kind === "void") this.fail("alloca of void");
