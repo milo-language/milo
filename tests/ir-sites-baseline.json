@@ -2,6 +2,5 @@
   "src/codegen-drop.ts": 12,
   "src/codegen-dwarf.ts": 33,
   "src/codegen-map.ts": 1,
-  "src/codegen-match.ts": 30,
   "src/codegen.ts": 3293
 }

@@ -14,7 +14,7 @@
   "src/codegen-drop.ts": 654,
   "src/codegen-dwarf.ts": 411,
   "src/codegen-map.ts": 1187,
-  "src/codegen-match.ts": 164,
+  "src/codegen-match.ts": 169,
   "src/codegen-string.ts": 543,
   "src/codegen-vec.ts": 255,
   "src/codegen.ts": 13857,

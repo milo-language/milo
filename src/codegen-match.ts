@@ -2,30 +2,42 @@
 
 import type { HIRStmt, HIRExpr, HIRPattern } from "./hir";
 import { genStringCmp, type StringCtx } from "./codegen-string";
+import { LlvmTextBuilder, Ty, val, type Block, type Val } from "./ir";
 import type { ForkSlot } from "./codegen";
+
+const STRING = Ty.of("%String");
 
 // Codegen's matching members are public solely to satisfy this, they are not part of its external API.
 export interface MatchCtx extends StringCtx {
   emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart?: number): boolean;
 }
 
+// The builder takes case values as numbers; a literal that does not survive the round trip
+// (beyond 2^53) would print differently, so it fails loudly instead of silently changing.
+function caseValue(v: number | string | boolean): number {
+  const n = Number(v);
+  if (String(n) !== String(v)) throw new Error(`ir: switch case ${String(v)} is not exactly representable`);
+  return n;
+}
+
 export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
   const lines: string[] = [];
   const [subjLines, subjVal, subjTy] = ctx.genExpr(stmt.subject);
   lines.push(...subjLines);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const subj = val(subjVal, Ty.of(subjTy));
 
-  const endLabel = ctx.nextLabel("match.end");
+  const endBlock = b.newBlock("match.end");
   let allArmsTerminated = true;
 
-  const literalArms: { label: string; nextLabel: string; arm: typeof stmt.arms[0] }[] = [];
+  const literalArms: { block: Block; nextBlock: Block | null; arm: typeof stmt.arms[0] }[] = [];
   let wildcardArm: typeof stmt.arms[0] | null = null;
 
   for (const arm of stmt.arms) {
     if (arm.pattern.kind === "WildcardPattern") {
       wildcardArm = arm;
     } else {
-      const label = ctx.nextLabel("match.arm");
-      literalArms.push({ label, nextLabel: "", arm });
+      literalArms.push({ block: b.newBlock("match.arm"), nextBlock: null, arm });
     }
   }
 
@@ -50,99 +62,92 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
   })();
 
   if (allIntCharDistinct) {
-    const defaultLabel = wildcardArm ? ctx.nextLabel("match.wildcard") : ctx.nextLabel("match.default");
-    const cases = literalArms.map(la => {
+    const defaultBlock = wildcardArm ? b.newBlock("match.wildcard") : b.newBlock("match.default");
+    b.switch(subj, defaultBlock, literalArms.map(la => {
       const p = la.arm.pattern as HIRPattern & { kind: "LiteralPattern" };
-      return `${subjTy} ${p.value}, label %${la.label}`;
-    }).join(" ");
-    lines.push(`  switch ${subjTy} ${subjVal}, label %${defaultLabel} [${cases}]`);
+      return [caseValue(p.value), la.block] as [number, Block];
+    }));
     for (const la of literalArms) {
-      lines.push(`${la.label}:`);
+      b.position(la.block);
       const armTerminated = ctx.emitMatchArmBody(lines, la.arm.body, resultSlot);
-      if (!armTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
+      if (!armTerminated) { b.br(endBlock); allArmsTerminated = false; }
     }
-    lines.push(`${defaultLabel}:`);
+    b.position(defaultBlock);
     if (wildcardArm) {
       const wcTerminated = ctx.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
-      if (!wcTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
+      if (!wcTerminated) { b.br(endBlock); allArmsTerminated = false; }
     } else {
-      lines.push(`  unreachable`);
+      b.unreachable();
     }
-    lines.push(`${endLabel}:`);
-    if (allArmsTerminated) lines.push(`  unreachable`);
+    b.position(endBlock);
+    if (allArmsTerminated) b.unreachable();
     return [lines, allArmsTerminated];
   }
 
   // chain: compare → arm body or fall through to next comparison
   for (let i = 0; i < literalArms.length; i++) {
     const next = i + 1 < literalArms.length
-      ? ctx.nextLabel("match.cmp")
+      ? b.newBlock("match.cmp")
       : wildcardArm
-        ? ctx.nextLabel("match.wildcard")
-        : ctx.nextLabel("match.default");
-    literalArms[i].nextLabel = next;
+        ? b.newBlock("match.wildcard")
+        : b.newBlock("match.default");
+    literalArms[i].nextBlock = next;
 
     const pat = literalArms[i].arm.pattern;
     if (pat.kind !== "LiteralPattern") continue;
 
-    let cmpVal: string;
+    let cmp: Val;
     if (pat.literalKind === "string") {
       ctx.hasStringType = true;
       const litStr = ctx.addString(String(pat.value));
-      const litVal = ctx.nextTemp();
-      lines.push(`  ${litVal} = insertvalue %String undef, ptr ${litStr.label}, 0`);
-      const litVal2 = ctx.nextTemp();
-      lines.push(`  ${litVal2} = insertvalue %String ${litVal}, i64 ${litStr.length - 1}, 1`);
-      const [, cmpResult] = genStringCmp(ctx, lines, subjVal, litVal2, true);
-      cmpVal = cmpResult;
+      const lit0 = b.insertvalue(val("undef", STRING), val(litStr.label, Ty.ptr), 0);
+      const lit = b.insertvalue(lit0, val(String(litStr.length - 1), Ty.i64), 1);
+      const [, cmpResult] = genStringCmp(ctx, lines, subjVal, lit.ref, true);
+      cmp = val(cmpResult, Ty.i1);
     } else if (pat.literalKind === "bool") {
-      const litVal = pat.value ? "1" : "0";
-      cmpVal = ctx.nextTemp();
-      lines.push(`  ${cmpVal} = icmp eq i1 ${subjVal}, ${litVal}`);
+      cmp = b.icmp("eq", subj, val(pat.value ? "1" : "0", Ty.i1));
     } else if (pat.literalKind === "int" || pat.literalKind === "char") {
-      cmpVal = ctx.nextTemp();
-      lines.push(`  ${cmpVal} = icmp eq ${subjTy} ${subjVal}, ${pat.value}`);
+      cmp = b.icmp("eq", subj, val(String(pat.value), subj.ty));
     } else {
       // float
-      cmpVal = ctx.nextTemp();
       const fval = Number.isInteger(pat.value as number) ? (pat.value as number).toFixed(1) : String(pat.value);
-      lines.push(`  ${cmpVal} = fcmp oeq ${subjTy} ${subjVal}, ${fval}`);
+      cmp = b.fcmp("oeq", subj, val(fval, subj.ty));
     }
 
-    lines.push(`  br i1 ${cmpVal}, label %${literalArms[i].label}, label %${next}`);
+    b.condBr(cmp, literalArms[i].block, next);
 
     // arm body
-    lines.push(`${literalArms[i].label}:`);
+    b.position(literalArms[i].block);
     const armTerminated = ctx.emitMatchArmBody(lines, literalArms[i].arm.body, resultSlot);
-    if (!armTerminated) lines.push(`  br label %${endLabel}`);
+    if (!armTerminated) b.br(endBlock);
     if (!armTerminated) allArmsTerminated = false;
 
     // next comparison block (or wildcard/default)
     if (i + 1 < literalArms.length) {
-      lines.push(`${next}:`);
+      b.position(next);
     }
   }
 
   // wildcard or default
-  const lastNext = literalArms.length > 0 ? literalArms[literalArms.length - 1].nextLabel : ctx.nextLabel("match.wildcard");
+  const lastNext = literalArms.length > 0 ? literalArms[literalArms.length - 1].nextBlock! : b.newBlock("match.wildcard");
   if (wildcardArm) {
     if (literalArms.length === 0) {
-      lines.push(`  br label %${lastNext}`);
+      b.br(lastNext);
     }
-    lines.push(`${lastNext}:`);
+    b.position(lastNext);
     const wcTerminated = ctx.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
-    if (!wcTerminated) lines.push(`  br label %${endLabel}`);
+    if (!wcTerminated) b.br(endBlock);
     if (!wcTerminated) allArmsTerminated = false;
   } else {
     if (literalArms.length === 0) {
-      lines.push(`  br label %${lastNext}`);
+      b.br(lastNext);
     }
-    lines.push(`${lastNext}:`);
-    lines.push(`  unreachable`);
+    b.position(lastNext);
+    b.unreachable();
   }
 
-  lines.push(`${endLabel}:`);
-  if (allArmsTerminated) lines.push(`  unreachable`);
+  b.position(endBlock);
+  if (allArmsTerminated) b.unreachable();
   return [lines, allArmsTerminated];
 }
 
