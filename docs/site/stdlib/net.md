@@ -369,4 +369,7 @@ activation from the one place. Only the first listener of the process gets the
 socket: the variables are gone afterwards. Skipped under record/replay (descriptors are
 synthetic there) and on targets with no inheritance (Windows).
 
+@unsafe: the caller takes ownership of the returned number and must wrap it in exactly
+one handle (TcpListener, TlsListener) that closes it.
+
 <!-- /generated:api -->
