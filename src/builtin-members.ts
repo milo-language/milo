@@ -155,6 +155,7 @@ export const BUILTIN_MEMBERS: Record<BuiltinReceiver, BuiltinMember[]> = {
     { name: "map", sig: "(f: (&T) => U): Option<U>" },
     { name: "andThen", sig: "(f: (&T) => Option<U>): Option<U>" },
     { name: "orElse", sig: "(f: () => Option<T>): Option<T>", note: "consumes a non-Copy receiver" },
+    { name: "take", sig: "(): Option<T>", note: "moves the value out of a mutable place, leaving None" },
   ],
 
   result: [

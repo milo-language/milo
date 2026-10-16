@@ -12486,6 +12486,28 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
         return this.setType(expr, { tag: "bool" });
       }
+      // take(): `replace(place, None)` spelled as a method, and lowered to exactly that
+      // MemReplace. It is what moves a non-Copy (or @noCopy) payload out from behind a
+      // `&mut`, where a `match` that binds by value is rejected as a move out of a borrow.
+      // The receiver is a place that stays valid (now None), so it is never moved here;
+      // it takes the checks replace's place argument takes.
+      if (expr.method === "take") {
+        if (expr.args.length !== 0) { this.error(`'take' takes no arguments`, sp); }
+        const o = expr.object;
+        const isPlace = o.kind === "Ident" || o.kind === "FieldAccess" || o.kind === "IndexAccess"
+          || (o.kind === "UnaryOp" && o.op === "*");
+        // resolveAssignTarget re-types a `&mut Option<T>` name as its pointee, the shape
+        // MemReplace's lvalue codegen expects (same as replace's first argument).
+        const place = isPlace ? this.resolveAssignTarget(o) : null;
+        if (!place?.mutable) {
+          this.error(`take() needs a mutable place: '${this.describeExpr(o)}' is not one`, sp,
+            isPlace ? `declare it with 'var', or take a '&mut' parameter` : `bind the Option to a 'var' first, or match on it to move the value out`);
+        } else {
+          this.markPlaceRead(o);
+          this.checkPlaceArgWrite(o, "take", sp);
+        }
+        return this.setType(expr, objType);
+      }
       if (expr.method === "unwrapOr") {
         if (expr.args.length !== 1) { this.error(`'unwrapOr' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const inner = this.unwrapableInner(objType);

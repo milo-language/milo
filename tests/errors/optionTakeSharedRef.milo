@@ -1,0 +1,10 @@
+// @error: take() needs a mutable place
+// A shared `&Option<T>` cannot be written, so take() is rejected through it.
+fn steal(o: &Option<string>): Option<string> {
+    return o.take()
+}
+
+fn main() {
+    let a: Option<string> = Option.Some("x")
+    print(steal(a) ?? "none")
+}

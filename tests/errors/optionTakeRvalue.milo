@@ -1,0 +1,9 @@
+// @error: take() needs a mutable place
+// A call result is not a place: there is nowhere to leave None.
+fn make(): Option<string> {
+    return Option.Some("x")
+}
+
+fn main() {
+    print(make().take() ?? "none")
+}

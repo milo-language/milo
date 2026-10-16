@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 553 distinct messages across 713 programs the compiler must reject.
+Every error message the test suite pins: 554 distinct messages across 716 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -487,6 +487,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`struct update base has type T, but the literal builds S`](#struct-update-base-has-type-t-but-the-literal-builds-s)
 - [`swap: operands have different ranges i32(1..9) and i32`](#swap-operands-have-different-ranges-i32-1-9-and-i32)
 - [`swap: operands have different types`](#swap-operands-have-different-types)
+- [`take() needs a mutable place`](#take-needs-a-mutable-place)
 - [`takes 'f: move (i64) => i64'`](#takes-f-move-i64-i64)
 - [`takes 2 parameters, the Milo declaration takes 3`](#takes-2-parameters-the-milo-declaration-takes-3)
 - [`takes string by value, but each passes &string`](#takes-string-by-value-but-each-passes-string)
@@ -12049,6 +12050,49 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/swapTypeMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/swapTypeMismatch.milo)</sub>
+
+## `take() needs a mutable place` {#take-needs-a-mutable-place}
+
+A `let` binding is immutable, so take() cannot leave None behind in it.
+
+```milo skip
+fn main() {
+    let a: Option<string> = Option.Some("x")
+    let b = a.take()
+    print(b ?? "none")
+}
+```
+
+<sub>[tests/errors/optionTakeLet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/optionTakeLet.milo)</sub>
+
+A call result is not a place: there is nowhere to leave None.
+
+```milo skip
+fn make(): Option<string> {
+    return Option.Some("x")
+}
+
+fn main() {
+    print(make().take() ?? "none")
+}
+```
+
+<sub>[tests/errors/optionTakeRvalue.milo](https://github.com/milo-language/milo/blob/main/tests/errors/optionTakeRvalue.milo)</sub>
+
+A shared `&Option<T>` cannot be written, so take() is rejected through it.
+
+```milo skip
+fn steal(o: &Option<string>): Option<string> {
+    return o.take()
+}
+
+fn main() {
+    let a: Option<string> = Option.Some("x")
+    print(steal(a) ?? "none")
+}
+```
+
+<sub>[tests/errors/optionTakeSharedRef.milo](https://github.com/milo-language/milo/blob/main/tests/errors/optionTakeSharedRef.milo)</sub>
 
 ## `takes 'f: move (i64) => i64'` {#takes-f-move-i64-i64}
 

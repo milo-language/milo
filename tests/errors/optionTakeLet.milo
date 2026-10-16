@@ -1,0 +1,7 @@
+// @error: take() needs a mutable place
+// A `let` binding is immutable, so take() cannot leave None behind in it.
+fn main() {
+    let a: Option<string> = Option.Some("x")
+    let b = a.take()
+    print(b ?? "none")
+}

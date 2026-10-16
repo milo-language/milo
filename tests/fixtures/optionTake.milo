@@ -1,0 +1,128 @@
+// @expect: some 5
+// @expect: none
+// @expect: none
+// @expect: hi
+// @expect: none
+// @expect: some 9
+// @expect: none
+// @expect: owner
+// @expect: none
+// @expect: close 3
+// @expect: drop 3
+// @expect: already closed
+// @expect: drop 4
+// @expect: after discard
+// @expect: holding true
+// @expect: drop 5
+// @expect: e none true
+// @expect: len 3
+// @expect: v none true
+// @expect: w2 some true
+// @expect: end
+// @expect: drop 6
+// Option.take(): moves the value out of a mutable place and leaves None behind. The
+// drop counts prove the payload is dropped exactly once and the None left in the place
+// never runs a destructor.
+
+@noCopy
+struct Fd {
+    n: i64,
+}
+
+impl Drop for Fd {
+    fn drop(self: &mut Self): void {
+        print("drop ", self.n)
+    }
+}
+
+struct Owner {
+    fd: Option<Fd>,
+    name: Option<string>,
+}
+
+impl Owner {
+    fn takeName(self: &mut Self): Option<string> {
+        return self.name.take()
+    }
+}
+
+fn close(f: Fd) {
+    print("close ", f.n)
+}
+
+fn release(o: &mut Owner) {
+    match o.fd.take() {
+        Option.Some(f) => close(f),
+        Option.None => print("already closed"),
+    }
+}
+
+fn takeSlot(slot: &mut Option<i64>): Option<i64> {
+    return slot.take()
+}
+
+fn show(o: Option<i64>) {
+    match o {
+        Option.Some(v) => print("some ", v),
+        Option.None => print("none"),
+    }
+}
+
+fn hold(e: &mut Option<Fd>) {
+    let kept = e.take()
+    print("holding ", kept.isSome())
+}
+
+fn main() {
+    // var local, Copy payload; second take sees None
+    var a: Option<i64> = Option.Some(5)
+    show(a.take())
+    show(a.take())
+    show(a)
+
+    // owned string payload
+    var s: Option<string> = Option.Some("hi")
+    let t = s.take()
+    print(t ?? "none")
+    print(s ?? "none")
+
+    // through a &mut Option<T> param
+    var slot: Option<i64> = Option.Some(9)
+    show(takeSlot(&mut slot))
+    show(takeSlot(&mut slot))
+
+    // through self.field with self: &mut Self
+    var o = Owner { fd: Option.Some(Fd { n: 3 }), name: Option.Some("owner") }
+    print(o.takeName() ?? "none")
+    print(o.takeName() ?? "none")
+
+    // explicit close then finalizer: closes once, the None left behind never drops
+    release(&mut o)
+    release(&mut o)
+
+    // a taken @noCopy value discarded as a statement is dropped exactly once, right there
+    var d: Option<Fd> = Option.Some(Fd { n: 4 })
+    d.take()
+    print("after discard")
+    // `let _` holds it to the end of main (drop 6 is the last line)
+    var d6: Option<Fd> = Option.Some(Fd { n: 6 })
+    let _ = d6.take()
+
+    // a taken value bound to a name is dropped at that name's scope end
+    var e: Option<Fd> = Option.Some(Fd { n: 5 })
+    hold(&mut e)
+    print("e none ", e.isNone())
+
+    // heap-owning payload
+    var v: Option<Vec<i64>> = Option.Some([1, 2, 3])
+    let w = v.take()
+    match w {
+        Option.Some(xs) => print("len ", xs.len()),
+        Option.None => print("none"),
+    }
+    print("v none ", v.isNone())
+    v = Option.Some([4, 5])
+    let w2 = v.take()
+    print("w2 some ", w2.isSome())
+    print("end")
+}

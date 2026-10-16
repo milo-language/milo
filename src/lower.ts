@@ -1256,6 +1256,12 @@ class LowerCtx {
         if (objType?.tag === "bool" && expr.method === "toString") {
           return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
         }
+        // take() is replace(place, None): the checker vetted the place as replace's.
+        if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
+            && expr.method === "take") {
+          const none: HIRExpr = { kind: "EnumLit", enumName: objType.name, variant: "None", args: [], type: objType, span: expr.span };
+          return { kind: "MemReplace", place: this.lowerExpr(expr.object), value: none, type, span: expr.span };
+        }
         if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
             && (expr.method === "isSome" || expr.method === "isNone" || expr.method === "unwrapOr"
                 || expr.method === "unwrapOrElse" || expr.method === "map"

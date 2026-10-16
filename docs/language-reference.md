@@ -1542,6 +1542,10 @@ fn combinators(opt: i32?): void {
     print(opt.andThen((n) => half(n))!)       // Option<U> — f returns an Option; None short-circuits
     print(opt.orElse(() => Option.Some(1))!)  // Option<T> — f runs ONLY if None
 }
+
+fn takes(slot: &mut Option<string>): void {
+    print(slot.take() ?? "none")              // Option<T> — moves the value out of a mutable place, leaving None
+}
 ```
 
 `unwrapOr` and `??` are the same operation; `??` is the terse form, and unlike `unwrapOr`
@@ -1564,7 +1568,7 @@ fn name(doc: &Json): string {
 `None`, and it returns a whole `Option`, so alternatives chain left to right and the first
 `Some` wins. Use `??` instead when you want to leave `Option` and land on a value.
 
-Three rules worth knowing, all consequences of how the payload is reached:
+Four rules worth knowing, all consequences of how the payload is reached:
 
 - **`unwrapOr`/`unwrapOrElse` require a Copy inner.** They load the payload out, so for an
   owned type (`string`, `Vec<T>`) that would produce a second owner and a double free. The
@@ -1582,6 +1586,10 @@ match s { Option.Some(v) => { print(v) } Option.None => {} }   // still owns "he
   payload into the result, so for an owned `T` both would own one buffer; the receiver is
   moved instead, and using it afterwards is a use-after-move error. Clone at the call site
   to keep it. This is the same rule the Result combinators use for their forwarded side.
+- **`take` needs a mutable place** (a `var`, a field reached through one or through a
+  `&mut`, a `&mut Option<T>` parameter). It is `replace(place, Option.None)`: any `T`,
+  `@noCopy` and Drop types included, moves out from behind a `&mut`, and the `None` left
+  behind drops nothing. A `let`, a `&` parameter or a call result is rejected.
 
 `map`'s result type is independent of `T` — `Option<i64>.map((n) => n > 5)` is
 `Option<bool>`. `andThen`'s is whatever `Option` the callback returns; `orElse`'s is always
