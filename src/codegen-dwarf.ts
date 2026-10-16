@@ -5,6 +5,7 @@ import { resolve, dirname, basename } from "path";
 import type { HIRFunction } from "./hir";
 import type { TypeKind } from "./types";
 import type { StructLayout, EnumLayout } from "./codegen";
+import { HASHMAP_FIELDS } from "./codegen-map";
 
 export interface DwarfHost {
   displayName(s: string): string;
@@ -156,6 +157,10 @@ export class DwarfEmitter {
   // `placed` overrides that math with explicit byte offsets and size (an enum variant).
   private diComposite(name: string, fieldLlvm: string[], fieldNames: string[], fieldKinds: TypeKind[], key: string,
     placed?: { offsets: number[]; size: number }): number {
+    // A field list that drifts from the real layout must fail here, by name, not as a
+    // TypeError deep in diType (the HashMap list once lost its last kind this way).
+    if (fieldNames.length !== fieldLlvm.length || fieldKinds.length !== fieldLlvm.length)
+      throw new Error(`dwarf: ${name} has ${fieldLlvm.length} fields, ${fieldNames.length} names, ${fieldKinds.length} kinds`);
     const id = this.metaCounter++;
     this.diTypes.set(key, id); // reserve before recursing into members (breaks self-reference cycles)
     const memberIds: number[] = [];
@@ -305,10 +310,12 @@ export class DwarfEmitter {
           [{ tag: "ptr", inner: t.element }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }], key);
         break;
       }
-      case "hashmap":
-        id = this.diComposite("HashMap", ["ptr", "i64", "i64", "i64", "i64"], ["data", "len", "cap", "seed", "tombstones"],
-          [{ tag: "ptr", inner: { tag: "unknown" } }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }], key);
+      case "hashmap": {
+        const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+        id = this.diComposite("HashMap", ["ptr", ...Array(HASHMAP_FIELDS - 1).fill("i64")], ["data", "len", "cap", "seed", "tombstones"],
+          [{ tag: "ptr", inner: { tag: "unknown" } }, ...Array(HASHMAP_FIELDS - 1).fill(i64)], key);
         break;
+      }
       case "struct": {
         const layout = this.host.structLayouts.get(t.name);
         if (!layout) return null;

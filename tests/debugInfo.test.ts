@@ -154,6 +154,31 @@ test("enums emit an enumerated tag and a per-variant payload union", () => {
   }
 });
 
+// A HashMap local used to crash -g in diTypeKey: its DWARF field list named five fields but
+// gave only four kinds, so the fifth member's type was undefined.
+test("HashMap locals describe all five fields", () => {
+  const f = join(tmpdir(), "milo_dbg_hashmap.milo");
+  writeFileSync(f, `fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    m.insert(1, 2)
+    print(m.len())
+}
+`);
+  try {
+    const ir = emitIr(f, true);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "HashMap", size: 320/);
+    expect(ir).toMatch(/DW_TAG_member, name: "tombstones", baseType: ![0-9]+, size: 64, offset: 256/);
+    if (have("llvm-as")) {
+      const ll = join(tmpdir(), "milo_dbg_hashmap.ll");
+      writeFileSync(ll, ir);
+      execSync(`llvm-as ${ll} -o /dev/null`, { stdio: ["pipe", "pipe", "pipe"] });
+      unlinkSync(ll);
+    }
+  } finally {
+    unlinkSync(f);
+  }
+});
+
 const PACKED_SRC = `enum Pair { Two(i32, i32), Small(u8), Nil }
 fn main() {
     let p = Pair.Two(3, 4)
