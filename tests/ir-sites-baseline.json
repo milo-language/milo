@@ -1,5 +1,5 @@
 {
-  "src/codegen-drop.ts": 56,
+  "src/codegen-drop.ts": 18,
   "src/codegen-dwarf.ts": 33,
   "src/codegen-map.ts": 1,
   "src/codegen.ts": 3323

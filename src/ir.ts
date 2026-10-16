@@ -106,6 +106,8 @@ export interface Builder {
   br(dest: Block): void;
   condBr(cond: Val, t: Block, f: Block): void;
   unreachable(): void;
+  /** `ret void` with no operand, else `ret T v`. */
+  ret(v?: Val): void;
   /** Escape hatch for text the builder cannot express yet. Bypasses every check. */
   raw(line: string): void;
 }
@@ -255,6 +257,12 @@ export class LlvmTextBuilder implements Builder {
 
   unreachable(): void {
     this.emit("unreachable");
+  }
+
+  ret(v?: Val): void {
+    if (v === undefined) { this.emit("ret void"); return; }
+    if (v.ty.kind === "void") this.fail(`ret of void value ${v.ref}; use ret()`);
+    this.emit(`ret ${v.ty.ll} ${v.ref}`);
   }
 
   raw(line: string): void {

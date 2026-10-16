@@ -77,6 +77,20 @@ describe("LlvmTextBuilder invariants", () => {
     expect(() => b.loadAcquire(Ty.of("%String"), p, 8)).toThrow("atomic load of %String");
   });
 
+  test("ret prints its operand, rejects a void value, and terminates the block", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    b.ret();
+    expect(lines).toEqual(["  ret void"]);
+    expect(() => b.ret()).toThrow("after terminator");
+    expect(() => b.alloca(Ty.i64)).toThrow("after terminator");
+    const l2: string[] = [];
+    const b2 = builder(l2);
+    b2.ret(val("%t.0", Ty.i32));
+    expect(l2).toEqual(["  ret i32 %t.0"]);
+    expect(() => builder().ret(val("%v", Ty.void))).toThrow("ret of void");
+  });
+
   test("unreachable terminates the block", () => {
     const lines: string[] = [];
     const b = builder(lines);

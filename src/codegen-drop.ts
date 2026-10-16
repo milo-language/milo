@@ -264,61 +264,58 @@ export function ensureEnumCloneHelper(ctx: DropCtx, enumName: string) {
   ctx.emitHelperFn(2, (body) => {
     body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
     body.push("entry.bb:");
-    const shallow = ctx.nextTemp();
-    body.push(`  ${shallow} = load ${enumTy}, ptr %src`);
-    body.push(`  store ${enumTy} ${shallow}, ptr %dst`);
+    const b = new LlvmTextBuilder(body, ctx);
+    const shallow = b.load(Ty.of(enumTy), val("%src", Ty.ptr));
+    b.store(shallow, val("%dst", Ty.ptr));
     const tag = ctx.loadEnumTag(body, enumTy, "%src");
 
-    const doneLabel = ctx.nextLabel("clone.done");
+    const doneLabel = b.newBlock("clone.done");
     const cases: string[] = [];
     const variantBodies: string[][] = [];
 
     for (const [vName, variant] of layout.variants) {
       if (!variant.fieldTypeKinds.some(f => ctx.needsDropCg(f))) continue;
 
-      const label = ctx.nextLabel(`clone.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label}`);
+      const label = b.newBlock(`clone.${vName}`);
+      cases.push(`    i32 ${variant.tag}, label %${label.name}`);
 
       const vLines: string[] = [];
-      vLines.push(`${label}:`);
+      const vb = new LlvmTextBuilder(vLines, ctx);
+      vb.position(label);
       // Copy fields were carried over by the shallow whole-enum copy above.
       for (let i = 0; i < variant.fieldTypes.length; i++) {
         if (!ctx.needsDropCg(variant.fieldTypeKinds[i])) continue;
         const srcFieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%src", variant, i);
         const cloned = emitDeepCloneFromPtr(ctx, vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
         const dstFieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%dst", variant, i);
-        vLines.push(`  store ${variant.fieldTypes[i]} ${cloned}, ptr ${dstFieldPtr}`);
+        vb.store(val(cloned, Ty.of(variant.fieldTypes[i])), val(dstFieldPtr, Ty.ptr));
       }
-      vLines.push(`  br label %${doneLabel}`);
+      vb.br(doneLabel);
       variantBodies.push(vLines);
     }
 
     if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
+      body.push(`  switch i32 ${tag}, label %${doneLabel.name} [`);
       for (const c of cases) body.push(c);
       body.push("  ]");
-      for (const vb of variantBodies) body.push(...vb);
+      for (const vBody of variantBodies) body.push(...vBody);
     } else {
-      body.push(`  br label %${doneLabel}`);
+      b.br(doneLabel);
     }
-    body.push(`${doneLabel}:`);
-    body.push("  ret void");
+    b.position(doneLabel);
+    b.ret();
     body.push("}");
-
-    // Helper bodies bypass the normal function emitter, so hoist here: the clone
-    // of a Vec field emits its allocas inside the copy loop, and a dynamic alloca
-    // per iteration walks the stack off the end.
   });
 }
 
 // Drop every owning field of the struct at `addr` except `skip`, which has been moved out.
 export function dropStructFieldsExcept(ctx: DropCtx, lines: string[], addr: string, structName: string, skip: string) {
   const layout = must(ctx.structLayouts, structName, "struct layouts");
+  const b = new LlvmTextBuilder(lines, ctx);
   layout.fields.forEach((f, i) => {
     if (f.name === skip || !ctx.needsDropCg(f.typeKind)) return;
-    const fp = ctx.nextTemp();
-    lines.push(`  ${fp} = getelementptr %${structName}, ptr ${addr}, i32 0, i32 ${i}`);
-    ctx.emitDropValue(lines, fp, f.typeKind);
+    const fp = b.gep(Ty.of(`%${structName}`), val(addr, Ty.ptr), [I32_0, val(String(i), Ty.i32)]);
+    ctx.emitDropValue(lines, fp.ref, f.typeKind);
   });
 }
 
@@ -526,9 +523,10 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
   ctx.emitHelperFn(undefined, (body) => {
     body.push(`define void @${helperName}(ptr %self) {`);
     body.push("entry.bb:");
+    const b = new LlvmTextBuilder(body, ctx);
     const tag = ctx.loadEnumTag(body, enumTy, "%self");
 
-    const doneLabel = ctx.nextLabel("drop.done");
+    const doneLabel = b.newBlock("drop.done");
     const cases: string[] = [];
     const variantBodies: string[][] = [];
 
@@ -536,29 +534,30 @@ export function ensureDropHelper(ctx: DropCtx, enumName: string) {
       const hasDroppable = variant.fieldTypeKinds.some(f => ctx.needsDropCg(f));
       if (!hasDroppable) continue;
 
-      const label = ctx.nextLabel(`drop.${vName}`);
-      cases.push(`    i32 ${variant.tag}, label %${label}`);
+      const label = b.newBlock(`drop.${vName}`);
+      cases.push(`    i32 ${variant.tag}, label %${label.name}`);
 
       const vLines: string[] = [];
-      vLines.push(`${label}:`);
+      const vb = new LlvmTextBuilder(vLines, ctx);
+      vb.position(label);
       for (let i = 0; i < variant.fieldTypes.length; i++) {
         if (!ctx.needsDropCg(variant.fieldTypeKinds[i])) continue;
         const fieldPtr = ctx.enumFieldPtr(vLines, enumTy, "%self", variant, i);
         ctx.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
       }
-      vLines.push(`  br label %${doneLabel}`);
+      vb.br(doneLabel);
       variantBodies.push(vLines);
     }
 
     if (cases.length > 0) {
-      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
+      body.push(`  switch i32 ${tag}, label %${doneLabel.name} [`);
       for (const c of cases) body.push(c);
       body.push("  ]");
-      for (const vb of variantBodies) body.push(...vb);
+      for (const vBody of variantBodies) body.push(...vBody);
     }
 
-    body.push(`${doneLabel}:`);
-    body.push("  ret void");
+    b.position(doneLabel);
+    b.ret();
     body.push("}");
   });
 }
@@ -568,21 +567,21 @@ export function ensureStructCloneHelper(ctx: DropCtx, structName: string) {
   ctx.dropGlueSeen.structClone.add(structName);
 
   const layout = must(ctx.structLayouts, structName, "struct layouts");
-  const structTy = `%${structName}`;
+  const structTy = Ty.of(`%${structName}`);
   const helperName = `milo.clone.struct.${structName}`;
   ctx.emitHelperFn(2, (body) => {
     body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
     body.push("entry.bb:");
+    const b = new LlvmTextBuilder(body, ctx);
+    const src = val("%src", Ty.ptr), dst = val("%dst", Ty.ptr);
     for (let i = 0; i < layout.fields.length; i++) {
       const f = layout.fields[i];
-      const srcFieldPtr = ctx.nextTemp();
-      body.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr %src, i32 0, i32 ${i}`);
-      const clonedField = emitDeepCloneFromPtr(ctx, body, srcFieldPtr, f.typeKind);
-      const dstFieldPtr = ctx.nextTemp();
-      body.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr %dst, i32 0, i32 ${i}`);
-      body.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
+      const srcFieldPtr = b.gep(structTy, src, [I32_0, val(String(i), Ty.i32)]);
+      const clonedField = emitDeepCloneFromPtr(ctx, body, srcFieldPtr.ref, f.typeKind);
+      const dstFieldPtr = b.gep(structTy, dst, [I32_0, val(String(i), Ty.i32)]);
+      b.store(val(clonedField, Ty.of(f.type)), dstFieldPtr);
     }
-    body.push("  ret void");
+    b.ret();
     body.push("}");
   });
 }
@@ -597,6 +596,9 @@ export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
   ctx.emitHelperFn(undefined, (body) => {
     body.push(`define void @${helperName}(ptr %self) {`);
     body.push("entry.bb:");
+    const b = new LlvmTextBuilder(body, ctx);
+    const self = val("%self", Ty.ptr);
+    const structTy = Ty.of(`%${structName}`);
     // Every field is dropped unconditionally: each field's own drop already treats its
     // zeroed (moved-from) form as empty, so a struct that was moved out of and zeroed
     // drops to nothing field by field. Deciding liveness for the WHOLE struct by probing
@@ -610,8 +612,8 @@ export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
     // visits). Its residual hole is unchanged: such a struct whose heap fields are all
     // empty is indistinguishable from a moved-from one, and its Drop is skipped.
     if (ctx.dropImpls.has(structName) && !ctx.structuralDrop) {
-      const skipLabel = ctx.nextLabel("struct.userdrop.skip");
-      const dropLabel = ctx.nextLabel("struct.userdrop");
+      const skipLabel = b.newBlock("struct.userdrop.skip");
+      const dropLabel = b.newBlock("struct.userdrop");
       const heapCandidates = layout.fields.flatMap((f, i) => {
         const t = f.typeKind.tag;
         return t === "string" || t === "vec" || t === "hashmap" || t === "heap" ? [{ i, ll: "ptr", zero: "null" }] : [];
@@ -626,40 +628,31 @@ export function ensureStructDropHelper(ctx: DropCtx, structName: string) {
       const candidates = [...heapCandidates, ...scalarCandidates];
       const mangledDrop = `${structName}$Drop$drop`;
       if (candidates.length > 0) {
-        let alive: string | null = null;
+        let alive: Val | null = null;
         for (const c of candidates) {
-          const fieldPtr = ctx.nextTemp();
-          body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${c.i}`);
-          const probe = ctx.nextTemp();
-          body.push(`  ${probe} = load ${c.ll}, ptr ${fieldPtr}`);
-          const nonZero = ctx.nextTemp();
-          body.push(`  ${nonZero} = icmp ne ${c.ll} ${probe}, ${c.zero}`);
-          if (alive === null) {
-            alive = nonZero;
-          } else {
-            const merged = ctx.nextTemp();
-            body.push(`  ${merged} = or i1 ${alive}, ${nonZero}`);
-            alive = merged;
-          }
+          const fieldPtr = b.gep(structTy, self, [I32_0, val(String(c.i), Ty.i32)]);
+          const probeTy = Ty.of(c.ll);
+          const probe = b.load(probeTy, fieldPtr);
+          const nonZero = b.icmp("ne", probe, val(c.zero, probeTy));
+          alive = alive === null ? nonZero : b.binop("or", alive, nonZero);
         }
-        body.push(`  br i1 ${alive}, label %${dropLabel}, label %${skipLabel}`);
-        body.push(`${dropLabel}:`);
-        body.push(`  call void @${mangledDrop}(ptr %self)`);
-        body.push(`  br label %${skipLabel}`);
-        body.push(`${skipLabel}:`);
+        b.condBr(alive!, dropLabel, skipLabel);
+        b.position(dropLabel);
+        b.callDiscard(Ty.void, `@${mangledDrop}`, [self]);
+        b.br(skipLabel);
+        b.position(skipLabel);
       } else {
-        body.push(`  call void @${mangledDrop}(ptr %self)`);
+        b.callDiscard(Ty.void, `@${mangledDrop}`, [self]);
       }
     }
     for (let i = layout.fields.length - 1; i >= 0; i--) {
       const field = layout.fields[i];
       if (ctx.needsDropCg(field.typeKind)) {
-        const fieldPtr = ctx.nextTemp();
-        body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${i}`);
-        ctx.emitDropValue(body, fieldPtr, field.typeKind);
+        const fieldPtr = b.gep(structTy, self, [I32_0, val(String(i), Ty.i32)]);
+        ctx.emitDropValue(body, fieldPtr.ref, field.typeKind);
       }
     }
-    body.push("  ret void");
+    b.ret();
     body.push("}");
   });
 }
