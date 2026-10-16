@@ -27,7 +27,7 @@
 //
 // Exit: 0 all identical, 1 a difference (or nothing compared), 2 aborted with no verdict
 // (one file kept getting guard-killed; MILO_IR_SAME_TIMEOUT_MS=1 forces that path).
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir, totalmem } from "os";
 import { dirname, join, relative } from "path";
 import { spawnSync } from "child_process";
@@ -73,6 +73,31 @@ const baseTree = join(tmpdir(), `milo-ir-same-${short}`);
 // Keyed by flags too: the same commit emits different IR under -g or another target.
 const flagKey = flags.length ? "-" + Bun.hash(flags.join(" ")).toString(16) : "";
 const cacheDir = join(tmpdir(), `milo-ir-same-cache-${sha}${flagKey}`);
+
+// A base costs ~1.8GB of cache per flag set, and main moves several times a day: unpruned,
+// tmp reached 35GB in one day and a pass died with ENOSPC. Keep the current base plus the
+// most recently used others, so another session gating against an older base keeps its cache.
+const KEEP_OTHER_BASES = 2;
+
+function pruneOldBases(): void {
+  const dir = tmpdir();
+  const entries = readdirSync(dir).flatMap(name => {
+    const m = /^milo-ir-same-(?:cache-)?([0-9a-f]{12})/.exec(name);
+    return m ? [{ name, short: m[1], mtime: statSync(join(dir, name)).mtimeMs }] : [];
+  });
+  const lastUsed = new Map<string, number>();
+  for (const e of entries) lastUsed.set(e.short, Math.max(lastUsed.get(e.short) ?? 0, e.mtime));
+  lastUsed.delete(short);
+  const keep = new Set([short, ...[...lastUsed].sort((a, b) => b[1] - a[1]).slice(0, KEEP_OTHER_BASES).map(([s]) => s)]);
+  for (const e of entries) {
+    if (keep.has(e.short)) continue;
+    const p = join(dir, e.name);
+    // Base trees are worktrees of this repo: remove through git so its metadata goes too.
+    if (!e.name.includes("-cache-") && git(["worktree", "remove", "--force", p]).ok) continue;
+    rmSync(p, { recursive: true, force: true });
+  }
+  git(["worktree", "prune"]);
+}
 
 function ensureBaseTree(): void {
   if (existsSync(baseTree) && git(["rev-parse", "HEAD"], baseTree).out === sha) return;
@@ -167,6 +192,7 @@ function firstDiff(a: string, b: string): string {
   return out.join("\n");
 }
 
+pruneOldBases();
 ensureBaseTree();
 const work = corpus(ROOT);
 const base = corpus(baseTree);
