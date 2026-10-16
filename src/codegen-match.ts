@@ -224,15 +224,15 @@ export function genMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resul
 // Before this, those arms leaked the subject.
 function genTempSubjectMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
   const lines: string[] = [];
+  const b = new LlvmTextBuilder(lines, ctx);
   const ty = ctx.llvmType(stmt.subject.type);
   const name = `__matchsubj.${ctx.scopeCounter++}`;
   const addr = `%${name}.addr`;
-  ctx.entryAllocas.push(`  ${addr} = alloca ${ty}`);
+  b.entryAlloca(addr, Ty.of(ty));
   // genStoreInto: a big-aggregate subject comes back from genExpr as a pointer.
   ctx.genStoreInto(lines, addr, ty, stmt.subject);
   const aliveFlag = `${addr}.alive`;
-  ctx.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-  ctx.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+  b.entryAlloca(aliveFlag, Ty.i1, val("0", Ty.i1));
   ctx.own.setAlive(lines, aliveFlag, addr, "match-subject");
   ctx.locals.set(name, { type: ty, typeKind: stmt.subject.type, mutable: false, isRef: false, addr });
   // A `v[i]` subject is a structural clone of the element, so it is freed structurally:
@@ -252,6 +252,7 @@ function genTempSubjectMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, r
 // as-is. In value mode (match-expression) all but the tail run as stmts and
 // the tail ExprStmt's value is stored into resultSlot — same shape as IfExpr.
 function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resultSlot?: ForkSlot, armDropStart = ctx.droppableLocals.length): boolean {
+  const b = new LlvmTextBuilder(lines, ctx);
   if (!resultSlot) {
     for (const s of body) {
       const [sl, t] = ctx.genStmt(s);
@@ -278,7 +279,7 @@ function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resul
       const armLocal = yieldedIdx >= armDropStart;
       const vv = gv !== "void" && resultSlot.cloneViews && ctx.forkTailIsView(last.expr, armLocal)
         ? ctx.cloneViewValue(lines, gv, last.expr.type) : gv;
-      if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
+      if (vv !== "void") b.store(val(vv, Ty.of(resultSlot.ty)), val(resultSlot.addr, Ty.ptr));
       // The non-moving yield below is a move codegen decides on its own (the HIR read
       // was a view): the value, not the view, is what the result slot receives.
       const yieldMoves = ctx.own.on && vv !== "void" && last.expr.kind === "Ident" && !last.expr.isMove && armLocal;
@@ -295,7 +296,7 @@ function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resul
         const yielded = armLocal || (last.expr as { isMove?: boolean }).isMove ? ctx.droppableLocals[yieldedIdx] : undefined;
         // A moving Ident already cleared the flag (and ended the slot's ledger ID) in
         // genExpr; this second clear is then a no-op, not a second move.
-        if (yielded && (last.expr as { isMove?: boolean }).isMove) lines.push(`  store i1 0, ptr ${yielded.aliveFlag}`);
+        if (yielded && (last.expr as { isMove?: boolean }).isMove) b.store(val("0", Ty.i1), val(yielded.aliveFlag, Ty.ptr));
         else if (yielded) ctx.own.clearAlive(lines, yielded.aliveFlag, "MOVE");
       }
     } else {
@@ -307,17 +308,25 @@ function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resul
   return false;
 }
 
+// The branch that closes a fallthrough arm. An arm whose last statement is a nested match with
+// every arm diverging reports "not terminated" yet ends in `unreachable`, so this `br` lands
+// after a terminator (dead code, never executed). Pre-existing quirk (see matchVoidNested);
+// kept so IR stays byte-identical, hence raw: b.br() rejects an instruction after a terminator.
+function brToEnd(b: LlvmTextBuilder, end: Block): void {
+  b.raw(`  br label %${end.name}`);
+}
+
 function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
   const lines: string[] = [];
+  const b = new LlvmTextBuilder(lines, ctx);
   let subjAddr: string;
   let subjTy: string;
   if (stmt.subjectIsRef && stmt.subject.kind === "Ident" && ctx.locals.get(stmt.subject.name)?.isRef) {
     // `match &Enum`: read the tag/payloads through the borrow's pointer
     // directly — nothing is copied or moved. (genExpr would auto-deref the
     // ref to a value; we want the pointer itself.)
-    const p = ctx.nextTemp();
-    lines.push(`  ${p} = load ptr, ptr ${ctx.localAddr(stmt.subject.name)}`);
-    subjAddr = p;
+    const p = b.load(Ty.ptr, val(ctx.localAddr(stmt.subject.name), Ty.ptr));
+    subjAddr = p.ref;
     subjTy = `%${stmt.enumName}`;
   } else if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
     const [heapLines, heapVal] = ctx.genExpr(stmt.subject.operand);
@@ -348,8 +357,7 @@ function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSl
     // were the aggregate emitted `store %Option_Post %ptr` — invalid IR, caught
     // only by clang. `match replace(x, ...)` on an enum ≥128 bytes hit ctx.
     subjTy = ctx.llvmType(stmt.subject.type);
-    subjAddr = ctx.nextTemp();
-    lines.push(`  ${subjAddr} = alloca ${subjTy}`);
+    subjAddr = b.alloca(Ty.of(subjTy)).ref;
     ctx.genStoreInto(lines, subjAddr, subjTy, stmt.subject);
   }
 
@@ -359,27 +367,26 @@ function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSl
   }
 
   const layout = must(ctx.enumLayouts, stmt.enumName, "enum layouts");
-  const endLabel = ctx.nextLabel("match.end");
-  const defaultLabel = ctx.nextLabel("match.default");
+  const endLabel = b.newBlock("match.end");
+  const defaultLabel = b.newBlock("match.default");
 
-  const armLabels: { tag: number; label: string; arm: typeof stmt.arms[0] }[] = [];
+  const armLabels: { tag: number; label: Block; arm: typeof stmt.arms[0] }[] = [];
   let wildcardArm: typeof stmt.arms[0] | null = null;
   for (const arm of stmt.arms) {
     if (arm.pattern.kind === "WildcardPattern") {
       wildcardArm = arm;
     } else if (arm.pattern.kind === "EnumPattern") {
-      const label = ctx.nextLabel(`match.${arm.pattern.variant}`);
+      const label = b.newBlock(`match.${arm.pattern.variant}`);
       armLabels.push({ tag: arm.pattern.tag, label, arm });
     }
   }
 
-  const cases = armLabels.map(a => `i32 ${a.tag}, label %${a.label}`).join(" ");
-  const defaultTarget = wildcardArm ? ctx.nextLabel("match.wildcard") : defaultLabel;
-  lines.push(`  switch i32 ${tag}, label %${defaultTarget} [${cases}]`);
+  const defaultTarget = wildcardArm ? b.newBlock("match.wildcard") : defaultLabel;
+  b.switch(val(tag, Ty.i32), defaultTarget, armLabels.map(a => [a.tag, a.label] as [number, Block]));
 
   let allArmsTerminated = true;
   for (const { label, arm } of armLabels) {
-    lines.push(`${label}:`);
+    b.position(label);
     const armDropStart = ctx.droppableLocals.length;
     if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
       const variant = must(layout.variants, arm.pattern.variant, "variants");
@@ -400,24 +407,24 @@ function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSl
         ctx.emitGuardedDrop(lines, ctx.droppableLocals[d]);
       }
     }
-    if (!armTerminated) lines.push(`  br label %${endLabel}`);
+    if (!armTerminated) brToEnd(b, endLabel);
     if (!armTerminated) allArmsTerminated = false;
   }
 
   if (wildcardArm) {
-    lines.push(`${defaultTarget}:`);
+    b.position(defaultTarget);
     const wcTerminated = emitMatchArmBody(ctx, lines, wildcardArm.body, resultSlot);
-    if (!wcTerminated) lines.push(`  br label %${endLabel}`);
+    if (!wcTerminated) brToEnd(b, endLabel);
     if (!wcTerminated) allArmsTerminated = false;
   }
 
   if (!wildcardArm) {
-    lines.push(`${defaultLabel}:`);
-    lines.push(`  unreachable`);
+    b.position(defaultLabel);
+    b.unreachable();
   }
 
-  lines.push(`${endLabel}:`);
-  if (allArmsTerminated) lines.push(`  unreachable`);
+  b.position(endLabel);
+  if (allArmsTerminated) b.unreachable();
   return [lines, allArmsTerminated];
 }
 
@@ -438,33 +445,31 @@ function patPathPtr(ctx: MatchCtx, lines: string[], subjAddr: string, path: HIRP
 
 // One sub-pattern test: does the payload at `t.path` hold that variant / equal that literal?
 function genPatTest(ctx: MatchCtx, lines: string[], subjAddr: string, t: HIRPatTest): string {
+  const b = new LlvmTextBuilder(lines, ctx);
   const { ptr, llTy } = patPathPtr(ctx, lines, subjAddr, t.path);
-  const out = ctx.nextTemp();
+  // Drawn before the tag/payload loads, as the string code did; defined by the compare below.
+  const out = b.reserveTemp(Ty.i1);
   if (t.kind === "tag") {
     const tag = ctx.loadEnumTag(lines, `%${t.enumName}`, ptr);
-    lines.push(`  ${out} = icmp eq i32 ${tag}, ${t.tag}`);
-    return out;
+    return b.icmp("eq", val(tag, Ty.i32), val(String(t.tag), Ty.i32), out).ref;
   }
-  const val = ctx.nextTemp();
-  lines.push(`  ${val} = load ${llTy}, ptr ${ptr}`);
+  const loaded = b.load(Ty.of(llTy), val(ptr, Ty.ptr));
   if (t.literalKind === "string") {
     ctx.hasStringType = true;
     const litStr = ctx.addString(String(t.value));
-    const l1 = ctx.nextTemp();
-    lines.push(`  ${l1} = insertvalue %String undef, ptr ${litStr.label}, 0`);
-    const l2 = ctx.nextTemp();
-    lines.push(`  ${l2} = insertvalue %String ${l1}, i64 ${litStr.length - 1}, 1`);
-    return genStringCmp(ctx, lines, val, l2, true)[1];
+    const l1 = b.insertvalue(val("undef", STRING), val(litStr.label, Ty.ptr), 0);
+    const l2 = b.insertvalue(l1, val(String(litStr.length - 1), Ty.i64), 1);
+    return genStringCmp(ctx, lines, loaded.ref, l2.ref, true)[1];
   }
-  if (t.literalKind === "bool") lines.push(`  ${out} = icmp eq i1 ${val}, ${t.value ? 1 : 0}`);
+  if (t.literalKind === "bool") b.icmp("eq", loaded, val(t.value ? "1" : "0", Ty.i1), out);
   else if (t.literalKind === "float" || t.type.tag === "float") {
     // Also an int pattern on a float payload (`A(3)` with an f64 field): icmp on a double
     // is invalid IR. Number() because an int pattern's value is a bigint.
     const n = Number(t.value);
     const f = Number.isInteger(n) ? n.toFixed(1) : String(n);
-    lines.push(`  ${out} = fcmp oeq ${llTy} ${val}, ${f}`);
-  } else lines.push(`  ${out} = icmp eq ${llTy} ${val}, ${t.value}`);
-  return out;
+    b.fcmp("oeq", loaded, val(f, loaded.ty), out);
+  } else b.icmp("eq", loaded, val(String(t.value), loaded.ty), out);
+  return out.ref;
 }
 
 // A match with a nested arm. Arms are tried in order, each by its top tag and then its
@@ -476,35 +481,35 @@ function genNestedArms(
   ctx: MatchCtx, lines: string[], stmt: HIRStmt & { kind: "Match" }, subjAddr: string, tag: string,
   resultSlot?: ForkSlot,
 ): [string[], boolean] {
-  const endLabel = ctx.nextLabel("match.end");
-  const bodyLabels = stmt.arms.map(() => ctx.nextLabel("match.arm"));
-  let testLabel = ctx.nextLabel("match.test");
-  lines.push(`  br label %${testLabel}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const endLabel = b.newBlock("match.end");
+  const bodyLabels = stmt.arms.map(() => b.newBlock("match.arm"));
+  let testLabel = b.newBlock("match.test");
+  b.br(testLabel);
   stmt.arms.forEach((arm, i) => {
-    lines.push(`${testLabel}:`);
-    const next = ctx.nextLabel("match.test");
+    b.position(testLabel);
+    const next = b.newBlock("match.test");
     if (arm.pattern.kind === "EnumPattern") {
-      const top = ctx.nextTemp();
-      lines.push(`  ${top} = icmp eq i32 ${tag}, ${arm.pattern.tag}`);
-      let ok = ctx.nextLabel("match.sub");
-      lines.push(`  br i1 ${top}, label %${ok}, label %${next}`);
+      const top = b.icmp("eq", val(tag, Ty.i32), val(String(arm.pattern.tag), Ty.i32));
+      let ok = b.newBlock("match.sub");
+      b.condBr(top, ok, next);
       for (const t of arm.pattern.tests ?? []) {
-        lines.push(`${ok}:`);
+        b.position(ok);
         const c = genPatTest(ctx, lines, subjAddr, t);
-        ok = ctx.nextLabel("match.sub");
-        lines.push(`  br i1 ${c}, label %${ok}, label %${next}`);
+        ok = b.newBlock("match.sub");
+        b.condBr(val(c, Ty.i1), ok, next);
       }
-      lines.push(`${ok}:`);
+      b.position(ok);
     }
-    lines.push(`  br label %${bodyLabels[i]}`);
+    b.br(bodyLabels[i]);
     testLabel = next;
   });
-  lines.push(`${testLabel}:`);
-  lines.push(`  unreachable`);
+  b.position(testLabel);
+  b.unreachable();
 
   let allArmsTerminated = true;
   stmt.arms.forEach((arm, i) => {
-    lines.push(`${bodyLabels[i]}:`);
+    b.position(bodyLabels[i]);
     const armDropStart = ctx.droppableLocals.length;
     const pat = arm.pattern;
     if (pat.kind === "EnumPattern" && pat.bindings.length > 0) {
@@ -531,12 +536,12 @@ function genNestedArms(
         if (escaping.has(ctx.droppableLocals[d].addr)) continue;
         ctx.emitGuardedDrop(lines, ctx.droppableLocals[d]);
       }
-      lines.push(`  br label %${endLabel}`);
+      brToEnd(b, endLabel);
       allArmsTerminated = false;
     }
   });
-  lines.push(`${endLabel}:`);
-  if (allArmsTerminated) lines.push(`  unreachable`);
+  b.position(endLabel);
+  if (allArmsTerminated) b.unreachable();
   return [lines, allArmsTerminated];
 }
 
@@ -577,6 +582,7 @@ function bindPayloads(
   subjectIsMut: boolean,
 ): boolean {
   let subjectEnded = false;
+  const b = new LlvmTextBuilder(lines, ctx);
   const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
     // Use scopeCounter (not labelCounter) so a match-binding's `%name.N.addr`
     // shares one disambiguation namespace with `let`/for-loop allocas. Two
@@ -590,13 +596,12 @@ function bindPayloads(
     // to the binding stores into the payload (the checker types it `&mut T`).
     if (subjectIsMut || (subjectIsRef && ctx.needsDropCg(fieldKind))) {
       const addr = `%${name}.${uid}.addr`;
-      lines.push(`  ${addr} = alloca ptr`);
-      lines.push(`  store ptr ${fieldPtr}, ptr ${addr}`);
+      const slot = b.alloca(Ty.ptr, addr);
+      b.store(val(fieldPtr, Ty.ptr), slot);
       ctx.locals.set(name, { type: ty, typeKind: { tag: "ref", inner: fieldKind, mutable: subjectIsMut }, mutable: subjectIsMut, isRef: true, addr });
       return;
     }
-    const val = ctx.nextTemp();
-    lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
+    const loaded = b.load(Ty.of(ty), val(fieldPtr, Ty.ptr));
     // Owned match consumes (moves) the payload: zero the source so the
     // subject's drop chain doesn't free what the binding now owns. A ref-match
     // of a Copy payload is just a value copy — nothing to zero.
@@ -613,12 +618,12 @@ function bindPayloads(
       // fields' clears re-store the same 0 and are not further moves of the subject.
       const subjLocal = ctx.droppableLocals.find(d => d.addr === subjAddr);
       if (subjLocal && !subjectEnded) ctx.own.clearAlive(lines, subjLocal.aliveFlag, "MOVE");
-      else if (subjLocal) lines.push(`  store i1 0, ptr ${subjLocal.aliveFlag}`);
+      else if (subjLocal) b.store(val("0", Ty.i1), val(subjLocal.aliveFlag, Ty.ptr));
       subjectEnded = true;
     }
     const addr = `%${name}.${uid}.addr`;
-    lines.push(`  ${addr} = alloca ${ty}`);
-    lines.push(ctx.valStore(ty, val, addr, { intent: subjectIsRef ? "view" : "move", type: fieldKind }));
+    b.alloca(Ty.of(ty), addr);
+    lines.push(ctx.valStore(ty, loaded.ref, addr, { intent: subjectIsRef ? "view" : "move", type: fieldKind }));
     ctx.locals.set(name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
     // An owned match binding owns its payload — it was moved out of the subject
     // (the source is zeroed above), so nothing else will free it. Without drop
@@ -626,8 +631,7 @@ function bindPayloads(
     // SSL_CTX (~1 MB) per HTTPS request in milojs.
     if (ctx.needsDropCg(fieldKind)) {
       const aliveFlag = `${addr}.alive`;
-      ctx.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-      ctx.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+      b.entryAlloca(aliveFlag, Ty.i1, val("0", Ty.i1));
       ctx.registerFieldFlags(ctx.entryAllocas, addr, name, fieldKind);
       ctx.own.setAlive(lines, aliveFlag, addr, `match-bind:${name}`);
       ctx.droppableLocals.push({ name, typeKind: fieldKind, aliveFlag, addr });
