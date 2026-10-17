@@ -139,6 +139,9 @@ describe("LlvmTextBuilder invariants", () => {
     e.position(e.newBlock("x"));
     expect(() => e.endFn()).toThrow("does not end in a terminator");
 
+    const a: string[] = [];
+    builder(a).defineFn({ name: "fail", ret: Ty.void, internal: true, attrs: " noreturn cold noinline", dbg: 3, params: [{ name: "line", ty: Ty.i32 }] });
+    expect(a[0]).toBe("define internal void @fail(i32 %line) noreturn cold noinline !dbg !3 {");
     expect(() => builder().defineFn({ name: "d", ret: Ty.void, params: [{ name: "a", ty: Ty.i32 }, { name: "a", ty: Ty.i32 }] })).toThrow("appears twice");
     expect(() => builder().defineFn({ name: "v", ret: Ty.void, params: [{ name: "a", ty: Ty.void }] })).toThrow("is void");
     expect(() => builder().endFn()).toThrow("no open function");

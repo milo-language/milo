@@ -56,6 +56,8 @@ export interface FnSig {
   readonly ret: Ty;
   readonly params: readonly Param[];
   readonly internal?: boolean;
+  /** Function attributes, printed verbatim after the params, leading space included (` noreturn cold noinline`). */
+  readonly attrs?: string;
   /** DISubprogram id. Printed before the `{`, which is where DwarfEmitter finds function boundaries. */
   readonly dbg?: number;
 }
@@ -165,7 +167,7 @@ export class LlvmTextBuilder implements Builder {
     this.fn = "open";
     const params = sig.params.map(p => `${p.ty.ll}${p.attrs ?? ""} %${p.name}`).join(", ");
     const dbg = sig.dbg === undefined ? "" : ` !dbg !${sig.dbg}`;
-    this.lines.push(`define ${sig.internal ? "internal " : ""}${sig.ret.ll} @${sig.name}(${params})${dbg} {`);
+    this.lines.push(`define ${sig.internal ? "internal " : ""}${sig.ret.ll} @${sig.name}(${params})${sig.attrs ?? ""}${dbg} {`);
     // Dotted, not bare `entry`: block labels and values share one LLVM namespace, params
     // print as `%<name>`, and `.` cannot appear in a Milo identifier.
     this.lines.push("entry.bb:");
