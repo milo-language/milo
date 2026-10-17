@@ -5,11 +5,13 @@ import type { Gen } from "./codegen";
 import type { Span } from "./ast";
 import type { HIRExpr } from "./hir";
 import type { OwnLedger } from "./codegen-own";
-import { LlvmTextBuilder, Ty, val, type Val, type NameSource } from "./ir";
+import type { EnumLayout, EnumVariant } from "./codegen";
+import { genStringCmp, genStringOrd, type StringCtx } from "./codegen-string";
+import { LlvmTextBuilder, Ty, val, type Val } from "./ir";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this — they are not part of its external API.
-interface CodegenCtx extends NameSource {
+interface CodegenCtx extends StringCtx {
   llvmType(t: TypeKind): string;
   typeSizeOf(t: TypeKind): number;
   genExpr(expr: any): [string[], string, string];
@@ -25,6 +27,9 @@ interface CodegenCtx extends NameSource {
   callbackElemArg(lines: string[], cbType: TypeKind, elemPtr: string, elemTy: string, paramIdx?: number): { arg: string; argTy: string };
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
+  enumLayouts: Map<string, EnumLayout>;
+  storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
+  enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
 }
 
 // shared preamble: get vec data ptr, len, and set up insertion sort scaffolding
@@ -639,4 +644,401 @@ export function genVecReverse(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRever
 
   b.position(endLabel);
   return [lines, "void", "void"];
+}
+
+// pop(): Option<T> — Some(last) when non-empty, None when empty. The popped
+// slot's ownership transfers into the Some payload (len-- makes the slot dead),
+// so the value moves out with no clone. No panic path: `!` handles that.
+export function genVecPop(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPop" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+
+  const vecType = expr.vec.type;
+  if (vecType.tag !== "vec") throw new Error("VecPop on non-vec type");
+  const elemTy = ctx.llvmType(vecType.element);
+
+  const enumTy = `%${expr.optionEnumName}`;
+  const enumLayout = ctx.enumLayouts.get(expr.optionEnumName);
+  if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
+  const noneVariant = enumLayout.variants.get("None");
+  const someVariant = enumLayout.variants.get("Some");
+  if (!noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
+
+  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.vec);
+  lines.push(...vecPtrLines);
+
+  // load len
+  const lenPtr = ctx.nextTemp();
+  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+  // result Option, defaulted to None
+  const resultAddr = `%__pop_result.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
+  lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
+  ctx.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
+
+  const isEmpty = ctx.nextTemp();
+  lines.push(`  ${isEmpty} = icmp eq i64 ${len}, 0`);
+  const someLabel = ctx.nextLabel("vec.pop.some");
+  const endLabel = ctx.nextLabel("vec.pop.end");
+  lines.push(`  br i1 ${isEmpty}, label %${endLabel}, label %${someLabel}`);
+
+  // some: len--, move value out of data[new_len] into Some payload
+  lines.push(`${someLabel}:`);
+  const newLen = ctx.nextTemp();
+  lines.push(`  ${newLen} = sub i64 ${len}, 1`);
+  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+  const dataPtr = ctx.nextTemp();
+  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${newLen}`);
+  const val = ctx.nextTemp();
+  lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
+
+  ctx.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
+  lines.push(`  store ${elemTy} ${val}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${endLabel}`);
+
+  lines.push(`${endLabel}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+  return [lines, result, enumTy];
+}
+
+export function genVecFind(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFind" }, lines: string[]): Gen {
+  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const enumTy = `%${expr.optionEnumName}`;
+  const enumLayout = ctx.enumLayouts.get(expr.optionEnumName);
+  if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
+
+  const noneVariant = enumLayout.variants.get("None");
+  const someVariant = enumLayout.variants.get("Some");
+  if (!noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
+
+  const resultAddr = `%__find_result.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
+  lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
+  ctx.storeEnumTag(lines, enumTy, resultAddr, noneVariant.tag);
+
+  const idxAddr = `%__find_idx.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+  const condLabel = ctx.nextLabel("find.cond");
+  const bodyLabel = ctx.nextLabel("find.body");
+  const foundLabel = ctx.nextLabel("find.found");
+  const nextLabel = ctx.nextLabel("find.next");
+  const endLabel = ctx.nextLabel("find.end");
+
+  lines.push(`  br label %${condLabel}`);
+  lines.push(`${condLabel}:`);
+  const idx = ctx.nextTemp();
+  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+  const cmp = ctx.nextTemp();
+  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+
+  lines.push(`${bodyLabel}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+  const match = ctx.nextTemp();
+  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
+  lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
+  lines.push(`  br i1 ${match}, label %${foundLabel}, label %${nextLabel}`);
+
+  lines.push(`${foundLabel}:`);
+  const cloned = ctx.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
+  ctx.storeEnumTag(lines, enumTy, resultAddr, someVariant.tag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, enumTy, resultAddr, someVariant);
+  lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${endLabel}`);
+
+  lines.push(`${nextLabel}:`);
+  const nextIdx = ctx.nextTemp();
+  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+  lines.push(`  br label %${condLabel}`);
+
+  lines.push(`${endLabel}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+  release();
+  return [lines, result, enumTy];
+}
+
+// Set up an `alloca Option<…>` pre-filled with None; callers branch to a "some"
+// block that overwrites the tag and payload. Shared by get/min/max/indexOf/position.
+function optionResultSlot(ctx: CodegenCtx, optionEnumName: string, label: string, lines: string[]): {
+  enumTy: string; addr: string; someTag: number;
+} {
+  const enumTy = `%${optionEnumName}`;
+  const layout = ctx.enumLayouts.get(optionEnumName);
+  if (!layout) throw new Error(`enum layout not found for ${optionEnumName}`);
+  const none = layout.variants.get("None");
+  const some = layout.variants.get("Some");
+  if (!none || !some) throw new Error("Option enum missing Some/None variants");
+  const addr = `%__${label}.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${addr} = alloca ${enumTy}`);
+  lines.push(`  store ${enumTy} zeroinitializer, ptr ${addr}`);
+  ctx.storeEnumTag(lines, enumTy, addr, none.tag);
+  return { enumTy, addr, someTag: some.tag };
+}
+
+// v.get(i) / v.first() / v.last(): the total read. A negative index becomes a huge
+// unsigned value, so the single `ult` test rejects both ends without a second compare.
+export function genVecGetOpt(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecGetOpt" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const elemTy = ctx.llvmType(expr.elementType);
+  const [vl, vv] = ctx.genExpr(expr.object);
+  lines.push(...vl);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+  const [il, iv] = ctx.genExpr(expr.index);
+  lines.push(...il);
+
+  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecget", lines);
+  const inBounds = ctx.nextTemp();
+  lines.push(`  ${inBounds} = icmp ult i64 ${iv}, ${len}`);
+  const someLabel = ctx.nextLabel("vecget.some");
+  const endLabel = ctx.nextLabel("vecget.end");
+  lines.push(`  br i1 ${inBounds}, label %${someLabel}, label %${endLabel}`);
+  lines.push(`${someLabel}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${iv}`);
+  const cloned = ctx.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
+  ctx.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
+  lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${endLabel}`);
+  lines.push(`${endLabel}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+  // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.object);
+  return [lines, result, slot.enumTy];
+}
+
+// `a <op> b` for the comparable element types min/max/sort accept.
+function emitElemOrd(ctx: CodegenCtx, lines: string[], elemType: TypeKind, a: string, b: string, wantGreater: boolean): string {
+  const lt = ctx.llvmType(elemType);
+  if (elemType.tag === "string") {
+    const [, r] = genStringOrd(ctx, lines, a, b, wantGreater ? ">" : "<");
+    return r;
+  }
+  const out = ctx.nextTemp();
+  if (elemType.tag === "float") {
+    lines.push(`  ${out} = fcmp ${wantGreater ? "ogt" : "olt"} ${lt} ${a}, ${b}`);
+    return out;
+  }
+  // bool is i1: unsigned ordering makes false < true
+  const signed = elemType.tag === "int" && elemType.signed;
+  const pred = wantGreater ? (signed ? "sgt" : "ugt") : (signed ? "slt" : "ult");
+  lines.push(`  ${out} = icmp ${pred} ${lt} ${a}, ${b}`);
+  return out;
+}
+
+export function genVecMinMax(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMinMax" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const elemTy = ctx.llvmType(expr.elementType);
+  const [vl, vv] = ctx.genExpr(expr.object);
+  lines.push(...vl);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+
+  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecminmax", lines);
+  const empty = ctx.nextTemp();
+  lines.push(`  ${empty} = icmp eq i64 ${len}, 0`);
+  const scanLabel = ctx.nextLabel("vecmm.scan");
+  const endLabel = ctx.nextLabel("vecmm.end");
+  lines.push(`  br i1 ${empty}, label %${endLabel}, label %${scanLabel}`);
+  lines.push(`${scanLabel}:`);
+
+  // Track the winning index, not the value: a String winner is cloned once, at
+  // the end, instead of on every improvement.
+  const bestAddr = ctx.nextTemp();
+  lines.push(`  ${bestAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${bestAddr}`);
+  const iAddr = ctx.nextTemp();
+  lines.push(`  ${iAddr} = alloca i64`);
+  lines.push(`  store i64 1, ptr ${iAddr}`);
+  const cond = ctx.nextLabel("vecmm.cond");
+  const body = ctx.nextLabel("vecmm.body");
+  const better = ctx.nextLabel("vecmm.better");
+  const step = ctx.nextLabel("vecmm.step");
+  const done = ctx.nextLabel("vecmm.done");
+  lines.push(`  br label %${cond}`);
+  lines.push(`${cond}:`);
+  const i = ctx.nextTemp();
+  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+  const more = ctx.nextTemp();
+  lines.push(`  ${more} = icmp ult i64 ${i}, ${len}`);
+  lines.push(`  br i1 ${more}, label %${body}, label %${done}`);
+  lines.push(`${body}:`);
+  const curPtr = ctx.nextTemp();
+  lines.push(`  ${curPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
+  const cur = ctx.nextTemp();
+  lines.push(`  ${cur} = load ${elemTy}, ptr ${curPtr}`);
+  const bestIdx = ctx.nextTemp();
+  lines.push(`  ${bestIdx} = load i64, ptr ${bestAddr}`);
+  const bestPtr = ctx.nextTemp();
+  lines.push(`  ${bestPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${bestIdx}`);
+  const best = ctx.nextTemp();
+  lines.push(`  ${best} = load ${elemTy}, ptr ${bestPtr}`);
+  const wins = emitElemOrd(ctx, lines, expr.elementType, cur, best, expr.isMax);
+  const winsLabel = ctx.nextLabel("vecmm.cmpdone");
+  lines.push(`  br label %${winsLabel}`);
+  lines.push(`${winsLabel}:`);
+  lines.push(`  br i1 ${wins}, label %${better}, label %${step}`);
+  lines.push(`${better}:`);
+  const iNow = ctx.nextTemp();
+  lines.push(`  ${iNow} = load i64, ptr ${iAddr}`);
+  lines.push(`  store i64 ${iNow}, ptr ${bestAddr}`);
+  lines.push(`  br label %${step}`);
+  lines.push(`${step}:`);
+  const iCur = ctx.nextTemp();
+  lines.push(`  ${iCur} = load i64, ptr ${iAddr}`);
+  const iNext = ctx.nextTemp();
+  lines.push(`  ${iNext} = add i64 ${iCur}, 1`);
+  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
+  lines.push(`  br label %${cond}`);
+  lines.push(`${done}:`);
+  const winIdx = ctx.nextTemp();
+  lines.push(`  ${winIdx} = load i64, ptr ${bestAddr}`);
+  const winPtr = ctx.nextTemp();
+  lines.push(`  ${winPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${winIdx}`);
+  const cloned = ctx.emitDeepCloneFromPtr(lines, winPtr, expr.elementType);
+  ctx.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
+  lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${endLabel}`);
+  lines.push(`${endLabel}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+  // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.object);
+  return [lines, result, slot.enumTy];
+}
+
+export function genVecIndexOf(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecIndexOf" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const elemTy = ctx.llvmType(expr.elementType);
+  const [vl, vv] = ctx.genExpr(expr.vec);
+  lines.push(...vl);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+  const [nl, nv] = ctx.genExpr(expr.value);
+  lines.push(...nl);
+
+  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecidx", lines);
+  const iAddr = ctx.nextTemp();
+  lines.push(`  ${iAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${iAddr}`);
+  const cond = ctx.nextLabel("vecidx.cond");
+  const body = ctx.nextLabel("vecidx.body");
+  const found = ctx.nextLabel("vecidx.found");
+  const step = ctx.nextLabel("vecidx.step");
+  const end = ctx.nextLabel("vecidx.end");
+  lines.push(`  br label %${cond}`);
+  lines.push(`${cond}:`);
+  const i = ctx.nextTemp();
+  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+  const more = ctx.nextTemp();
+  lines.push(`  ${more} = icmp ult i64 ${i}, ${len}`);
+  lines.push(`  br i1 ${more}, label %${body}, label %${end}`);
+  lines.push(`${body}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
+  const elemVal = ctx.nextTemp();
+  lines.push(`  ${elemVal} = load ${elemTy}, ptr ${elemPtr}`);
+  let eq: string;
+  if (expr.elementType.tag === "string") {
+    const [, r] = genStringCmp(ctx, lines, elemVal, nv, true);
+    eq = r;
+  } else {
+    eq = ctx.nextTemp();
+    lines.push(`  ${eq} = ${expr.elementType.tag === "float" ? "fcmp oeq" : "icmp eq"} ${elemTy} ${elemVal}, ${nv}`);
+  }
+  // the string compare above may have opened blocks; land in a fresh one so the
+  // index load below is reachable from a single predecessor
+  const testLabel = ctx.nextLabel("vecidx.test");
+  lines.push(`  br label %${testLabel}`);
+  lines.push(`${testLabel}:`);
+  lines.push(`  br i1 ${eq}, label %${found}, label %${step}`);
+  lines.push(`${found}:`);
+  const hitIdx = ctx.nextTemp();
+  lines.push(`  ${hitIdx} = load i64, ptr ${iAddr}`);
+  ctx.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
+  lines.push(`  store i64 ${hitIdx}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${end}`);
+  lines.push(`${step}:`);
+  const iCur = ctx.nextTemp();
+  lines.push(`  ${iCur} = load i64, ptr ${iAddr}`);
+  const iNext = ctx.nextTemp();
+  lines.push(`  ${iNext} = add i64 ${iCur}, 1`);
+  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
+  lines.push(`  br label %${cond}`);
+  lines.push(`${end}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+  // Same as the map lookups: the needle is the caller's, and a read-only search takes
+  // no ownership of it. `v.contains("s" + i.toString())` leaked the needle per call.
+  ctx.dropOwnedTemp(lines, nv, elemTy, expr.value);
+  // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
+  // container. A search keeps no pointer into it once the answer is a scalar.
+  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
+  return [lines, result, slot.enumTy];
+}
+
+export function genVecPosition(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPosition" }, lines: string[]): Gen {
+  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecpos", lines);
+  const iAddr = ctx.nextTemp();
+  lines.push(`  ${iAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${iAddr}`);
+  const cond = ctx.nextLabel("vecpos.cond");
+  const body = ctx.nextLabel("vecpos.body");
+  const found = ctx.nextLabel("vecpos.found");
+  const step = ctx.nextLabel("vecpos.step");
+  const end = ctx.nextLabel("vecpos.end");
+  lines.push(`  br label %${cond}`);
+  lines.push(`${cond}:`);
+  const i = ctx.nextTemp();
+  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+  const more = ctx.nextTemp();
+  lines.push(`  ${more} = icmp ult i64 ${i}, ${len}`);
+  lines.push(`  br i1 ${more}, label %${body}, label %${end}`);
+  lines.push(`${body}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
+  const hit = ctx.nextTemp();
+  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
+  lines.push(`  ${hit} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
+  lines.push(`  br i1 ${hit}, label %${found}, label %${step}`);
+  lines.push(`${found}:`);
+  ctx.storeEnumTag(lines, slot.enumTy, slot.addr, slot.someTag);
+  const payloadPtr = ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr, slot.someTag);
+  lines.push(`  store i64 ${i}, ptr ${payloadPtr}`);
+  lines.push(`  br label %${end}`);
+  lines.push(`${step}:`);
+  const iNext = ctx.nextTemp();
+  lines.push(`  ${iNext} = add i64 ${i}, 1`);
+  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
+  lines.push(`  br label %${cond}`);
+  lines.push(`${end}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${slot.enumTy}, ptr ${slot.addr}`);
+  release();
+  return [lines, result, slot.enumTy];
 }
