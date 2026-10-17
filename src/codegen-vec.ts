@@ -42,6 +42,10 @@ interface CodegenCtx extends StringCtx {
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   enumLayouts: Map<string, EnumLayout>;
   storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
+  trapOnOverflow: boolean;
+  currentFnWrapping: boolean;
+  isUnsigned(t: TypeKind): boolean;
+  emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, span: Span | undefined): string;
   enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
 }
 
@@ -1750,5 +1754,142 @@ export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReser
   // hand is almost always how many they are about to push, not the final total.
   const need = b.binop("add", len, val(nRaw, Ty.i64));
   emitVecEnsureCapacity(ctx, lines, vecPtr, need, elemSize, "vecrsv", expr.span);
+  return [lines, "0", "void"];
+}
+
+// v.sum() — accumulate all elements. Integer addition follows the enclosing function's
+// normal checked/wrapping policy; floats use fadd. Empty vec sums to 0.
+export function genVecSum(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSum" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const [vl, vv] = ctx.genExpr(expr.vec);
+  lines.push(...vl);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+  const elemTy = ctx.llvmType(expr.elementType);
+  const isFloat = expr.elementType.tag === "float";
+  const accAddr = `%__sum_acc.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${accAddr} = alloca ${elemTy}`);
+  lines.push(`  store ${elemTy} ${isFloat ? "0.0" : "0"}, ptr ${accAddr}`);
+  const idxAddr = `%__sum_idx.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+  const condLabel = ctx.nextLabel("sum.cond");
+  const bodyLabel = ctx.nextLabel("sum.body");
+  const endLabel = ctx.nextLabel("sum.end");
+  lines.push(`  br label %${condLabel}`);
+  lines.push(`${condLabel}:`);
+  const idx = ctx.nextTemp();
+  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+  const cmp = ctx.nextTemp();
+  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+  lines.push(`${bodyLabel}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+  const elem = ctx.nextTemp();
+  lines.push(`  ${elem} = load ${elemTy}, ptr ${elemPtr}`);
+  const acc = ctx.nextTemp();
+  lines.push(`  ${acc} = load ${elemTy}, ptr ${accAddr}`);
+  let newAcc: string;
+  if (!isFloat && ctx.trapOnOverflow && !ctx.currentFnWrapping) {
+    newAcc = ctx.emitCheckedArith(lines, "add", ctx.isUnsigned(expr.elementType), elemTy, acc, elem, expr.span);
+  } else {
+    newAcc = ctx.nextTemp();
+    lines.push(`  ${newAcc} = ${isFloat ? "fadd" : "add"} ${elemTy} ${acc}, ${elem}`);
+  }
+  lines.push(`  store ${elemTy} ${newAcc}, ptr ${accAddr}`);
+  const nextIdx = ctx.nextTemp();
+  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+  lines.push(`  br label %${condLabel}`);
+  lines.push(`${endLabel}:`);
+  const result = ctx.nextTemp();
+  lines.push(`  ${result} = load ${elemTy}, ptr ${accAddr}`);
+  // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
+  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
+  return [lines, result, elemTy];
+}
+
+// v.retain(pred): one pass, compacting keepers toward the front and dropping the
+// rest where they sit. No second buffer — that is the whole point next to filter.
+export function genVecRetain(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRetain" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const elemTy = ctx.llvmType(expr.elementType);
+  const [vecLines, vecPtr] = ctx.genLValue(expr.object);
+  lines.push(...vecLines);
+  const [cl, cv] = ctx.genExpr(expr.callback);
+  lines.push(...cl);
+  const fnPtr = ctx.nextTemp();
+  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+  const envPtr = ctx.nextTemp();
+  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+  const dataFieldPtr = ctx.nextTemp();
+  lines.push(`  ${dataFieldPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+  const lenPtr = ctx.nextTemp();
+  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+  const iAddr = ctx.nextTemp();
+  lines.push(`  ${iAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${iAddr}`);
+  const keptAddr = ctx.nextTemp();
+  lines.push(`  ${keptAddr} = alloca i64`);
+  lines.push(`  store i64 0, ptr ${keptAddr}`);
+
+  const cond = ctx.nextLabel("vecret.cond");
+  const body = ctx.nextLabel("vecret.body");
+  const keep = ctx.nextLabel("vecret.keep");
+  const dropIt = ctx.nextLabel("vecret.drop");
+  const step = ctx.nextLabel("vecret.step");
+  const end = ctx.nextLabel("vecret.end");
+  lines.push(`  br label %${cond}`);
+  lines.push(`${cond}:`);
+  const i = ctx.nextTemp();
+  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+  const more = ctx.nextTemp();
+  lines.push(`  ${more} = icmp ult i64 ${i}, ${len}`);
+  lines.push(`  br i1 ${more}, label %${body}, label %${end}`);
+  lines.push(`${body}:`);
+  const elemPtr = ctx.nextTemp();
+  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
+  const hit = ctx.nextTemp();
+  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
+  lines.push(`  ${hit} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
+  lines.push(`  br i1 ${hit}, label %${keep}, label %${dropIt}`);
+  lines.push(`${keep}:`);
+  const kept = ctx.nextTemp();
+  lines.push(`  ${kept} = load i64, ptr ${keptAddr}`);
+  const dstSlot = ctx.nextTemp();
+  lines.push(`  ${dstSlot} = getelementptr ${elemTy}, ptr ${data}, i64 ${kept}`);
+  const val = ctx.nextTemp();
+  lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
+  lines.push(`  store ${elemTy} ${val}, ptr ${dstSlot}`);
+  const keptNext = ctx.nextTemp();
+  lines.push(`  ${keptNext} = add i64 ${kept}, 1`);
+  lines.push(`  store i64 ${keptNext}, ptr ${keptAddr}`);
+  lines.push(`  br label %${step}`);
+  lines.push(`${dropIt}:`);
+  if (ctx.needsDropCg(expr.elementType)) {
+    ctx.emitDropValue(lines, elemPtr, expr.elementType);
+  }
+  lines.push(`  br label %${step}`);
+  lines.push(`${step}:`);
+  const iCur = ctx.nextTemp();
+  lines.push(`  ${iCur} = load i64, ptr ${iAddr}`);
+  const iNext = ctx.nextTemp();
+  lines.push(`  ${iNext} = add i64 ${iCur}, 1`);
+  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
+  lines.push(`  br label %${cond}`);
+  lines.push(`${end}:`);
+  const finalLen = ctx.nextTemp();
+  lines.push(`  ${finalLen} = load i64, ptr ${keptAddr}`);
+  lines.push(`  store i64 ${finalLen}, ptr ${lenPtr}`);
   return [lines, "0", "void"];
 }

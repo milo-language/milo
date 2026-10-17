@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -187,7 +187,7 @@ export class Codegen {
   private needsContractCheck = false;
   // ensures clauses of the function being generated; checked at every return site
   private currentEnsures: HIRContract[] = [];
-  private trapOnOverflow = false;
+  public trapOnOverflow = false;
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -369,7 +369,7 @@ export class Codegen {
   private currentFnName = "";
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
   // use defined modular arithmetic instead of trapping. Div-by-zero, bounds, ranged still trap.
-  private currentFnWrapping = false;
+  public currentFnWrapping = false;
   private itableLayouts = new Map<string, { globalName: string; methodCount: number }>();
 
   private filePath?: string;
@@ -703,7 +703,7 @@ export class Codegen {
     }
   }
 
-  private isUnsigned(t: TypeKind): boolean {
+  public isUnsigned(t: TypeKind): boolean {
     return t.tag === "int" && !t.signed;
   }
 
@@ -3649,7 +3649,7 @@ export class Codegen {
     return ptr;
   }
 
-  private emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, span: Span | undefined): string {
+  public emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, span: Span | undefined): string {
     this.needsOverflowCheck = true;
     this.needsPrintf = true;
     this.needsExit = true;
@@ -5768,7 +5768,7 @@ export class Codegen {
       case "VecAny":
         return genVecAny(this, expr, lines);
       case "VecSum":
-        return this.genVecSum(expr, lines);
+        return genVecSum(this, expr, lines);
       case "VecAll":
         return genVecAll(this, expr, lines);
       case "VecFold":
@@ -5810,7 +5810,7 @@ export class Codegen {
       case "VecExtend":
         return genVecExtend(this, expr, lines);
       case "VecRetain":
-        return this.genVecRetain(expr, lines);
+        return genVecRetain(this, expr, lines);
       case "VecReserve":
         return genVecReserve(this, expr, lines);
       case "VecCapacity": {
@@ -8028,62 +8028,6 @@ export class Codegen {
     return { arg: loaded, argTy: elemTy };
   }
 
-  // v.sum() — accumulate all elements. Integer addition follows the enclosing function's
-  // normal checked/wrapping policy; floats use fadd. Empty vec sums to 0.
-  private genVecSum(expr: HIRExpr & { kind: "VecSum" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const [vl, vv] = this.genExpr(expr.vec);
-    lines.push(...vl);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
-    const elemTy = this.llvmType(expr.elementType);
-    const isFloat = expr.elementType.tag === "float";
-    const accAddr = `%__sum_acc.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${accAddr} = alloca ${elemTy}`);
-    lines.push(`  store ${elemTy} ${isFloat ? "0.0" : "0"}, ptr ${accAddr}`);
-    const idxAddr = `%__sum_idx.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${idxAddr}`);
-
-    const condLabel = this.nextLabel("sum.cond");
-    const bodyLabel = this.nextLabel("sum.body");
-    const endLabel = this.nextLabel("sum.end");
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const idx = this.nextTemp();
-    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-    const cmp = this.nextTemp();
-    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-    lines.push(`${bodyLabel}:`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-    const elem = this.nextTemp();
-    lines.push(`  ${elem} = load ${elemTy}, ptr ${elemPtr}`);
-    const acc = this.nextTemp();
-    lines.push(`  ${acc} = load ${elemTy}, ptr ${accAddr}`);
-    let newAcc: string;
-    if (!isFloat && this.trapOnOverflow && !this.currentFnWrapping) {
-      newAcc = this.emitCheckedArith(lines, "add", this.isUnsigned(expr.elementType), elemTy, acc, elem, expr.span);
-    } else {
-      newAcc = this.nextTemp();
-      lines.push(`  ${newAcc} = ${isFloat ? "fadd" : "add"} ${elemTy} ${acc}, ${elem}`);
-    }
-    lines.push(`  store ${elemTy} ${newAcc}, ptr ${accAddr}`);
-    const nextIdx = this.nextTemp();
-    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${endLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load ${elemTy}, ptr ${accAddr}`);
-    // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-    this.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
-    return [lines, result, elemTy];
-  }
-
   // The one place a heap buffer is sized and allocated. `count * elemSize` was written
   // longhand at 15 sites and not one of them checked the product, so any site reachable
   // with a user-controlled count under-allocated on overflow (malloc got the wrapped byte
@@ -8215,87 +8159,6 @@ export class Codegen {
   // implement realloc; every other target's allocator has one (wasm's runtime.c, libc,
   // std/replay's heap).
   public get hasRealloc(): boolean { return this.target.os !== "none"; }
-
-  // v.retain(pred): one pass, compacting keepers toward the front and dropping the
-  // rest where they sit. No second buffer — that is the whole point next to filter.
-  private genVecRetain(expr: HIRExpr & { kind: "VecRetain" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const elemTy = this.llvmType(expr.elementType);
-    const [vecLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecLines);
-    const [cl, cv] = this.genExpr(expr.callback);
-    lines.push(...cl);
-    const fnPtr = this.nextTemp();
-    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-    const envPtr = this.nextTemp();
-    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
-
-    const dataFieldPtr = this.nextTemp();
-    lines.push(`  ${dataFieldPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-
-    const iAddr = this.nextTemp();
-    lines.push(`  ${iAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${iAddr}`);
-    const keptAddr = this.nextTemp();
-    lines.push(`  ${keptAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${keptAddr}`);
-
-    const cond = this.nextLabel("vecret.cond");
-    const body = this.nextLabel("vecret.body");
-    const keep = this.nextLabel("vecret.keep");
-    const dropIt = this.nextLabel("vecret.drop");
-    const step = this.nextLabel("vecret.step");
-    const end = this.nextLabel("vecret.end");
-    lines.push(`  br label %${cond}`);
-    lines.push(`${cond}:`);
-    const i = this.nextTemp();
-    lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-    const more = this.nextTemp();
-    lines.push(`  ${more} = icmp ult i64 ${i}, ${len}`);
-    lines.push(`  br i1 ${more}, label %${body}, label %${end}`);
-    lines.push(`${body}:`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
-    const hit = this.nextTemp();
-    const cbArg = this.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
-    lines.push(`  ${hit} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
-    lines.push(`  br i1 ${hit}, label %${keep}, label %${dropIt}`);
-    lines.push(`${keep}:`);
-    const kept = this.nextTemp();
-    lines.push(`  ${kept} = load i64, ptr ${keptAddr}`);
-    const dstSlot = this.nextTemp();
-    lines.push(`  ${dstSlot} = getelementptr ${elemTy}, ptr ${data}, i64 ${kept}`);
-    const val = this.nextTemp();
-    lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
-    lines.push(`  store ${elemTy} ${val}, ptr ${dstSlot}`);
-    const keptNext = this.nextTemp();
-    lines.push(`  ${keptNext} = add i64 ${kept}, 1`);
-    lines.push(`  store i64 ${keptNext}, ptr ${keptAddr}`);
-    lines.push(`  br label %${step}`);
-    lines.push(`${dropIt}:`);
-    if (this.needsDropCg(expr.elementType)) {
-      this.emitDropValue(lines, elemPtr, expr.elementType);
-    }
-    lines.push(`  br label %${step}`);
-    lines.push(`${step}:`);
-    const iCur = this.nextTemp();
-    lines.push(`  ${iCur} = load i64, ptr ${iAddr}`);
-    const iNext = this.nextTemp();
-    lines.push(`  ${iNext} = add i64 ${iCur}, 1`);
-    lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
-    lines.push(`  br label %${cond}`);
-    lines.push(`${end}:`);
-    const finalLen = this.nextTemp();
-    lines.push(`  ${finalLen} = load i64, ptr ${keptAddr}`);
-    lines.push(`  store i64 ${finalLen}, ptr ${lenPtr}`);
-    return [lines, "0", "void"];
-  }
 
   // Validate a substr/slice range before using it: without this, an inverted
   // or out-of-range span becomes a negative length that malloc/memcpy/getelementptr
