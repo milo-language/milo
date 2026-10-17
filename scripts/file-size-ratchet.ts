@@ -21,7 +21,9 @@ export const RATCHET_SLACK = 200;
 
 export function measure(): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const name of readdirSync(join(ROOT, "src")).filter(f => f.endsWith(".ts")).sort()) {
+  // Gitignored files are generated (src/stdlib-bundle.ts) and exist only in some checkouts.
+  const ignored = new Set(Bun.spawnSync(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "src"], { cwd: ROOT }).stdout.toString().split("\n"));
+  for (const name of readdirSync(join(ROOT, "src")).filter(f => f.endsWith(".ts") && !ignored.has(`src/${f}`)).sort()) {
     const text = readFileSync(join(ROOT, "src", name), "utf-8");
     // Same count as `wc -l`, so the numbers in a failure match what a person checks by hand.
     let n = 0;
