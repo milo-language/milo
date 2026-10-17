@@ -16,6 +16,7 @@ const MAIN = join(ROOT, "src", "main.ts");
 const PORT_SERVE = 18441;
 const PORT_ROUTER = 18442;
 const PORT_LIMITED = 18443;
+const PORT_STALL = 18444;
 let dir = "";
 // Probed at module load, not in beforeAll: test.skipIf() is evaluated when the file is
 // read, so a flag set later would always read as "openssl present" and the cases would
@@ -129,6 +130,24 @@ fn main() {
 }
 `;
 
+// A short read timeout, so a stalled client is given up on within the test's patience.
+const STALL_SRC = `from "std/https" import { serveRouterTlsWith }
+from "std/http" import { Context, Router, ServeOptions }
+
+fn main() {
+    var router = Router.new()
+    router.get("/ping", (c: &mut Context) => {
+        return c.text("pong")
+    })
+    let r = serveRouterTlsWith(Option.Some(${PORT_STALL} as u16), "srv.pem", "srv.key", router, ServeOptions {
+        readTimeoutMs: 300
+    })
+    if let Result.Err(m) = r {
+        print("server error: " + m)
+    }
+}
+`;
+
 let clientTrusting = "";
 let clientUntrusting = "";
 
@@ -149,6 +168,7 @@ beforeAll(async () => {
   await startServer(build("serve", SERVE_SRC));
   await startServer(build("router", ROUTER_SRC));
   await startServer(build("limited", LIMITED_SRC));
+  await startServer(build("stall", STALL_SRC));
   writeFileSync(join(dir, "big.bin"), "abcdefgh".repeat(12500));
   writeFileSync(join(dir, "mid.bin"), "chunk me".repeat(4000));
   writeFileSync(join(dir, "mid.gz"), Bun.gzipSync(Buffer.from("zipped!!".repeat(5000))));
@@ -324,4 +344,41 @@ test.skipIf(!haveOpenssl)("serveRouterTls refuses what std/http refuses: 413, 43
     .toBe("HTTP/1.1 431 Request Header Fields Too Large");
   expect(await rawTls(PORT_LIMITED, "GET / HTTP/2.0\r\nHost: x\r\n\r\n"))
     .toBe("HTTP/1.1 505 HTTP Version Not Supported");
+}, 120000);
+
+// std/https serves one connection at a time, so a client that stalls holds up everyone
+// behind it until readTimeoutMs gives up on it. Each case opens the stalled connection
+// first, then needs curl answered: without the deadline curl's --max-time fires instead.
+// Resolves with how long the server took to close the stalled socket.
+async function stalledThenCurl(open: () => Promise<{ closed: Promise<number> }>) {
+  const { closed } = await open();
+  const body = curl(["--cacert", "ca.pem", "--max-time", "5", `https://localhost:${PORT_STALL}/ping`]);
+  return { body, closedAfterMs: await closed };
+}
+
+test.skipIf(!haveOpenssl)("serveRouterTlsWith drops a client that connects and never starts the handshake", async () => {
+  const net = await import("node:net");
+  const r = await stalledThenCurl(() => new Promise(resolve => {
+    const t0 = Date.now();
+    const sock = net.connect(PORT_STALL, "127.0.0.1", () => {
+      resolve({ closed: new Promise(done => sock.on("close", () => done(Date.now() - t0))) });
+    });
+    sock.on("error", () => {});
+  }));
+  expect(r.body).toBe("pong");
+  expect(r.closedAfterMs).toBeLessThan(3000);
+}, 120000);
+
+test.skipIf(!haveOpenssl)("serveRouterTlsWith drops a client that stalls mid-request after the handshake", async () => {
+  const tls = await import("node:tls");
+  const r = await stalledThenCurl(() => new Promise(resolve => {
+    const t0 = Date.now();
+    const sock = tls.connect({ host: "127.0.0.1", port: PORT_STALL, servername: "localhost", ca: readFileSync(join(dir, "ca.pem")) }, () => {
+      sock.write("GET /ping HT");
+      resolve({ closed: new Promise(done => sock.on("close", () => done(Date.now() - t0))) });
+    });
+    sock.on("error", () => {});
+  }));
+  expect(r.body).toBe("pong");
+  expect(r.closedAfterMs).toBeLessThan(3000);
 }, 120000);

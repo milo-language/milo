@@ -330,6 +330,31 @@ pub fn sslConnectFdWait(ssl: *u8, fd: i32, wait: (bool) => bool): i32 {
     return -1
 }
 
+// sslAcceptFd through `wait`: the server handshake bounded the way sslConnectFdWait
+// bounds the client's. 1 on success, SSL_GAVE_UP, or SSL_accept's failure.
+@replayHooked
+@unsafe
+pub fn sslAcceptFdWait(ssl: *u8, fd: i32, wait: (bool) => bool): i32 {
+    while true {
+        let st = sslStep("tls.accept", fd.toString(), ssl, 1, (): i32 => {
+            unsafe {
+                return SSL_accept(ssl)
+            }
+        })
+        if st.r == 1 {
+            return 1
+        }
+        let w = sslWaitFor(st.e, wait)
+        if w == SSL_GAVE_UP {
+            return w
+        }
+        if w == 0 {
+            return st.r
+        }
+    }
+    return -1
+}
+
 // sslReadFd through `wait`: bytes read (> 0), 0 or -1 on close or error, SSL_GAVE_UP.
 @unsafe
 pub fn sslReadFdWait(ssl: *u8, fd: i32, buf: *u8, len: i32, wait: (bool) => bool): i32 {

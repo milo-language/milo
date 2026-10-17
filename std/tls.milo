@@ -12,7 +12,10 @@
 // std/fetch is what pulls SSL_* in.
 
 from "std/net" import {
-    NetError, ignoreSigpipe, takeInheritedListenFd
+    NetError, ignoreSigpipe, takeInheritedListenFd, waitIo, deadlineIn
+}
+from "std/event" import {
+    setNonblocking
 }
 from "std/os" import {
     acceptFd,
@@ -25,8 +28,8 @@ from "std/os" import {
 }
 from "std/openssl" import {
     SSL_CTX_check_private_key, SSL_CTX_free, SSL_CTX_new, SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_free,
-    SSL_new, SSL_set_fd, SSL_shutdown, TLS_server_method, sslAcceptFd, sslReadFd,
-    sslWriteAllFd
+    SSL_new, SSL_set_fd, SSL_shutdown, TLS_server_method, sslAcceptFd, sslAcceptFdWait, sslReadFd,
+    sslReadFdWait, sslWriteAllFd, sslWriteAllFdWait, SSL_GAVE_UP
 }
 from "std/platform" import {
     makeSockaddr,
@@ -94,6 +97,46 @@ impl TlsConn {
             }
         }
         return result
+    }
+
+    // recvOnce that gives up at `by` (epoch ms, 0 = never), appending to `raw`: the byte
+    // count, 0 once the peer has closed or the read failed, -1 at the deadline. That is
+    // std/http's request-reader contract (see readMoreBy there), so a TLS client that
+    // stalls mid-request is dropped like a plaintext one. Needs the fd nonblocking, which
+    // acceptWithin leaves it.
+    fn readMoreBy(self: &Self, raw: &mut string, by: i64): i64 {
+        var buf: [u8; 8192] = [0; 8192]
+        let fd = self._fd
+        unsafe {
+            let n = sslReadFdWait(self._ssl as *u8, fd, buf as *u8, 8192, (forRead: bool): bool => waitIo(fd, forRead, by))
+            if n == SSL_GAVE_UP {
+                return -1
+            }
+            if n <= 0 {
+                return 0
+            }
+            for i in 0..n as i64 {
+                raw.push(buf[i])
+            }
+            return n as i64
+        }
+    }
+
+    // send that stops waiting on a peer that is not reading once `ms` has passed (0 = no
+    // limit).
+    fn sendWithin(self: &Self, data: &string, ms: i64): Result<i64, NetError> {
+        let by = deadlineIn(ms)
+        let fd = self._fd
+        unsafe {
+            let n = sslWriteAllFdWait(self._ssl as *u8, fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
+            if n == SSL_GAVE_UP as i64 {
+                return Result.Err(NetError.Timeout("TLS write"))
+            }
+            if n < 0 || (n == 0 && data.len > 0) {
+                return Result.Err(NetError.SendFailed("SSL_write failed"))
+            }
+            return Result.Ok(n)
+        }
     }
 
     // Read to EOF, as one string. For a request framed by the peer closing its write
@@ -230,6 +273,42 @@ impl TlsListener {
                 }
                 return Result.Ok(TlsConn { _fd: clientFd, _ssl: sslAddr })
             }
+        }
+    }
+
+    // accept() whose handshake must finish within `ms` of the TCP accept (0 = no limit).
+    // Without it a client that connects and sends nothing parks the handshake forever,
+    // and a server accepting one connection at a time (std/https) stops answering
+    // everyone. The connection comes back nonblocking, for readMoreBy and sendWithin;
+    // recvOnce/recv/send assume a blocking fd outside a green task, so use those on a
+    // connection from accept().
+    fn acceptWithin(self: &Self, ms: i64): Result<TlsConn, NetError> {
+        unsafe {
+            let clientFd = acceptFd(self._fd)
+            if clientFd < 0 {
+                return Result.Err(NetError.ConnectionFailed("accept() failed"))
+            }
+            // Counted from here, not from the call: the wait for a client to arrive is not
+            // the client's to spend.
+            let by = deadlineIn(ms)
+            setNonblocking(clientFd)
+            let ssl = SSL_new(self._ctx as *u8)
+            let sslAddr = ssl as i64
+            if sslAddr == 0 {
+                sysClose(clientFd)
+                return Result.Err(NetError.TlsError("SSL_new failed"))
+            }
+            SSL_set_fd(ssl, clientFd)
+            let r = sslAcceptFdWait(ssl, clientFd, (forRead: bool): bool => waitIo(clientFd, forRead, by))
+            if r != 1 {
+                SSL_free(ssl)
+                sysClose(clientFd)
+                if r == SSL_GAVE_UP {
+                    return Result.Err(NetError.Timeout("TLS handshake"))
+                }
+                return Result.Err(NetError.TlsError("SSL_accept failed"))
+            }
+            return Result.Ok(TlsConn { _fd: clientFd, _ssl: sslAddr })
         }
     }
 

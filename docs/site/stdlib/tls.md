@@ -28,6 +28,18 @@ LIFETIME: `ctx` is deliberately absent. The SSL_CTX comes from the TlsListener a
 shared by every connection it accepts, so freeing it here would pull it out from under
 the next accept(). The listener must outlive the connections it hands out.
 
+#### `TlsConn.readMoreBy`
+
+```milo
+fn TlsConn.readMoreBy(self: &TlsConn, raw: &mut string, by: i64): i64
+```
+
+recvOnce that gives up at `by` (epoch ms, 0 = never), appending to `raw`: the byte
+count, 0 once the peer has closed or the read failed, -1 at the deadline. That is
+std/http's request-reader contract (see readMoreBy there), so a TLS client that
+stalls mid-request is dropped like a plaintext one. Needs the fd nonblocking, which
+acceptWithin leaves it.
+
 #### `TlsConn.recv`
 
 ```milo
@@ -55,6 +67,15 @@ fn TlsConn.send(self: &TlsConn, data: &string): Result<i64, NetError>
 
 Write `data` through the TLS record layer. Returns the byte count OpenSSL accepted.
 
+#### `TlsConn.sendWithin`
+
+```milo
+fn TlsConn.sendWithin(self: &TlsConn, data: &string, ms: i64): Result<i64, NetError>
+```
+
+send that stops waiting on a peer that is not reading once `ms` has passed (0 = no
+limit).
+
 ### `TlsListener`
 
 ```milo
@@ -71,6 +92,19 @@ fn TlsListener.accept(self: &TlsListener): Result<TlsConn, NetError>
 ```
 
 Accept one connection and run the server handshake on it.
+
+#### `TlsListener.acceptWithin`
+
+```milo
+fn TlsListener.acceptWithin(self: &TlsListener, ms: i64): Result<TlsConn, NetError>
+```
+
+accept() whose handshake must finish within `ms` of the TCP accept (0 = no limit).
+Without it a client that connects and sends nothing parks the handshake forever,
+and a server accepting one connection at a time (std/https) stops answering
+everyone. The connection comes back nonblocking, for readMoreBy and sendWithin;
+recvOnce/recv/send assume a blocking fd outside a green task, so use those on a
+connection from accept().
 
 #### `TlsListener.bind`
 
