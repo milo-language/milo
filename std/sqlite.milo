@@ -118,6 +118,13 @@ impl Statement {
 }
 
 // Open or create the database at `path`. `":memory:"` opens an in-memory database.
+//
+// Also sets the pragmas a small service wants, so every caller does not have to:
+// `busy_timeout=5000` (a writer behind another waits up to 5 s instead of failing with
+// SQLITE_BUSY), `journal_mode=WAL` (readers keep running during a write; skipped for
+// `":memory:"` and `""`, which have no journal file), `synchronous=NORMAL` (safe under
+// WAL: a crash can lose the last commits but never corrupts) and `foreign_keys=ON`
+// (sqlite leaves them unenforced by default). Errs naming the pragma that failed.
 pub fn dbOpen(path: string): Result<Database> {
     unsafe {
         var handle: *u8 = 0 as *u8
@@ -128,7 +135,23 @@ pub fn dbOpen(path: string): Result<Database> {
             }
             return Result.Err("sqlite3_open failed")
         }
-        return Result.Ok(Database { _handle: handle })
+        let db = Database { _handle: handle }
+        var pragmas: Vec<string> = ["PRAGMA busy_timeout=5000"]
+        if path != ":memory:" && path != "" {
+            pragmas.push("PRAGMA journal_mode=WAL")
+        }
+        pragmas.push("PRAGMA synchronous=NORMAL")
+        pragmas.push("PRAGMA foreign_keys=ON")
+        for p in pragmas {
+            // db drops (closes) on the early return
+            match dbExec(db, p) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Result.Err("sqlite " + p + " failed: " + e)
+                }
+            }
+        }
+        return Result.Ok(db)
     }
 }
 

@@ -1,0 +1,42 @@
+// @skip-os: win32
+// dbOpen applies service-friendly pragmas: WAL, foreign keys enforced, 5 s busy timeout,
+// synchronous NORMAL (=1). ":memory:" skips WAL (it keeps "memory").
+// @expect: journal_mode wal
+// @expect: foreign_keys 1
+// @expect: busy_timeout 5000
+// @expect: synchronous 1
+// @expect: fk violation rejected
+// @expect: memory journal_mode memory
+from "std/sqlite" import { Database, dbOpen, dbExec, dbQuery, dbStep, dbColumnText, dbClose }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+fn pragma(db: &Database, name: string): string {
+    let q = dbQuery(db, "PRAGMA " + name)!
+    if dbStep(q) {
+        return dbColumnText(q, 0)
+    }
+    return "?"
+}
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-sqlite-defaults")!
+    let path = dir + "/t.db"
+    let db = dbOpen(path)!
+    for name in ["journal_mode", "foreign_keys", "busy_timeout", "synchronous"] {
+        print($"{name} {pragma(db, name)}")
+    }
+    dbExec(db, "create table p(id integer primary key)")!
+    dbExec(db, "create table c(pid integer references p(id))")!
+    match dbExec(db, "insert into c values (42)") {
+        Ok(_) => print("fk violation accepted")
+        Err(_) => print("fk violation rejected")
+    }
+    dbClose(db)
+    let _ = removeFile(path)
+    let _ = removeFile(path + "-wal")
+    let _ = removeFile(path + "-shm")
+    let _ = removeDir(dir)
+    let mem = dbOpen(":memory:")!
+    print($"memory journal_mode {pragma(mem, "journal_mode")}")
+    return 0
+}
