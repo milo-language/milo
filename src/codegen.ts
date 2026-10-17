@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRContract, HIRStruct, HIRGlobal } from "./hir";
-import { LlvmTextBuilder, Ty, val, type Param } from "./ir";
+import { LlvmTextBuilder, Ty, val, type LoadMeta, type Param } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -128,6 +128,8 @@ interface EnumNiche {
 export interface LocalInfo { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }
 export interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; addr: string; consumeCursor?: string }
 
+const STRING_TY = Ty.of("%String");
+const VEC_TY = Ty.of("%Vec");
 // One name for codegen's return shape: the IR lines an expression emits, the SSA value it
 // leaves the result in, and that value's LLVM type.
 //
@@ -1383,18 +1385,22 @@ export class Codegen {
   // still holds an in-range, defined value. Memory safe code reads is never uninitialized
   // (literals write every field, a Vec is read only below its len), hence `!noundef`.
   private rangeMetaFor(t: TypeKind, loadTy: string): string {
-    if (t.tag !== "int" || loadTy !== `i${t.bits}` || t.min === undefined || t.max === undefined) return "";
-    if (!Number.isSafeInteger(t.min) || !Number.isSafeInteger(t.max) || t.min > 0 || t.max < 0) return "";
+    const m = this.rangeMeta(t, loadTy);
+    return m ? `, !range !${m.range}, !noundef !${m.noundef}` : "";
+  }
+  private rangeMeta(t: TypeKind, loadTy: string): LoadMeta | undefined {
+    if (t.tag !== "int" || loadTy !== `i${t.bits}` || t.min === undefined || t.max === undefined) return undefined;
+    if (!Number.isSafeInteger(t.min) || !Number.isSafeInteger(t.max) || t.min > 0 || t.max < 0) return undefined;
     const bits = BigInt(t.bits);
     const lo = BigInt(t.min), hiExcl = BigInt(t.max) + 1n;
-    if (hiExcl - lo >= 1n << bits) return ""; // the full set is not a valid !range
+    if (hiExcl - lo >= 1n << bits) return undefined; // the full set is not a valid !range
     // wrap to the width's signed spelling, which the IR parser accepts for any iN
     const wrap = (v: bigint) => BigInt.asIntN(t.bits, v);
     const key = `i${t.bits} ${wrap(lo)}, i${t.bits} ${wrap(hiExcl)}`;
     let id = this.rangeMetaIds.get(key);
     if (id === undefined) { id = this.dwarf.mintId(); this.rangeMetaIds.set(key, id); }
     if (this.noundefMetaId === null) this.noundefMetaId = this.dwarf.mintId();
-    return `, !range !${id}, !noundef !${this.noundefMetaId}`;
+    return { range: id, noundef: this.noundefMetaId };
   }
   private rangeMetaIds = new Map<string, number>();
   private noundefMetaId: number | null = null;
@@ -5515,6 +5521,7 @@ export class Codegen {
 
   private genExprRaw(expr: HIRExpr, sretDest?: string): Gen {
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
     const lt = this.llvmType(expr.type);
 
     switch (expr.kind) {
@@ -5535,15 +5542,11 @@ export class Codegen {
         this.hasStringType = true;
         const { label, length } = this.addString(expr.value);
         const strLen = length - 1; // exclude null terminator
-        const ptr = this.nextTemp();
-        lines.push(`  ${ptr} = getelementptr [${length} x i8], ptr ${label}, i32 0, i32 0`);
-        const s0 = this.nextTemp();
-        lines.push(`  ${s0} = insertvalue %String undef, ptr ${ptr}, 0`);
-        const s1 = this.nextTemp();
-        lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${strLen}, 1`);
-        const s2 = this.nextTemp();
-        lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
-        return [lines, s2, "%String"];
+        const ptr = b.gep(Ty.of(`[${length} x i8]`), val(label, Ty.ptr), [val("0", Ty.i32), val("0", Ty.i32)]);
+        const s0 = b.insertvalue(val("undef", STRING_TY), ptr, 0);
+        const s1 = b.insertvalue(s0, val(String(strLen), Ty.i64), 1);
+        const s2 = b.insertvalue(s1, val("0", Ty.i64), 2);
+        return [lines, s2.ref, "%String"];
       }
       case "StringWithCapacity":
         return genStringWithCapacity(this, expr, lines);
@@ -5572,11 +5575,10 @@ export class Codegen {
         const fieldTempMark = this.argTempDrops.length;
         const [ptrLines, ptr, fieldTy] = this.genFieldPtr(expr, recvTemps);
         lines.push(...ptrLines);
-        const val = this.nextTemp();
-        lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}${this.rangeMetaFor(expr.type, fieldTy)}`);
+        const loaded = b.load(Ty.of(fieldTy), val(ptr, Ty.ptr), undefined, this.rangeMeta(expr.type, fieldTy));
         const owning = this.needsDropCg(expr.type);
         const recvStruct = this.getStructName(this.llvmType(expr.object.type)) ?? "";
-        let result = val;
+        let result = loaded.ref;
         if (recvTemps.length > 0 && owning && (expr.isMove || this.fieldOfOwnedTemp(expr))) {
           // An owning field of a temporary receiver (`mk().name.len`, `f(mk().name)`,
           // `v.push(mk().name)`) leaves with the value: whoever consumes the FieldAccess
@@ -5616,8 +5618,7 @@ export class Codegen {
       case "StringLen": {
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const len = this.nextTemp();
-        lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
+        const len = b.extractvalue(val(ov, STRING_TY), 1, Ty.i64).ref;
         // `n.toString().len` reads a length out of a string nobody owns.
         this.dropOwnedTemp(lines, ov, "%String", expr.object);
         return [lines, len, "i64"];
@@ -5626,8 +5627,7 @@ export class Codegen {
         this.emitCStrUniquePlace(expr.object, lines);
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const dataPtr = this.nextTemp();
-        lines.push(`  ${dataPtr} = extractvalue %String ${ov}, 0`);
+        const dataPtr = b.extractvalue(val(ov, STRING_TY), 0, Ty.ptr).ref;
         return [lines, dataPtr, "ptr"];
       }
       case "HeapPtr": {
@@ -5642,8 +5642,7 @@ export class Codegen {
         // v.ptr(): the Vec's backing data pointer (field 0 of {ptr,len,cap}).
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const dataPtr = this.nextTemp();
-        lines.push(`  ${dataPtr} = extractvalue %Vec ${ov}, 0`);
+        const dataPtr = b.extractvalue(val(ov, VEC_TY), 0, Ty.ptr).ref;
         return [lines, dataPtr, "ptr"];
       }
       case "ArrayLit":
@@ -5692,8 +5691,7 @@ export class Codegen {
         const [ol, ov, ot] = this.genExpr(expr.operand);
         lines.push(...ol);
         const tagVal = this.enumValueTag(lines, ot, ov);
-        const cmp = this.nextTemp();
-        lines.push(`  ${cmp} = icmp eq i32 ${tagVal}, ${expr.tag}`);
+        const cmp = b.icmp("eq", val(tagVal, Ty.i32), val(String(expr.tag), Ty.i32)).ref;
         // A tag test keeps nothing of its operand, so a temporary one dies here:
         // `if mk() is Option.Some(_)` and `mk() == Option.None` leaked the payload.
         this.dropOwnedTemp(lines, ov, ot, expr.operand);
@@ -5704,11 +5702,10 @@ export class Codegen {
         const [valLines, valVal, valTy] = this.genExpr(expr.value);
         lines.push(...valLines);
         const size = this.typeSizeOf(expr.value.type);
-        const ptr = this.nextTemp();
-        lines.push(`  ${ptr} = call ptr @malloc(i64 ${size})`);
-        lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
+        const ptr = b.call(Ty.ptr, "@malloc", [val(String(size), Ty.i64)]);
+        b.store(val(valVal, Ty.of(valTy)), ptr);
         this.own.endVal(lines, valVal, "STORE");
-        return [lines, ptr, "ptr"];
+        return [lines, ptr.ref, "ptr"];
       }
       case "HeapDeref":
       case "PtrDeref": {
@@ -5719,24 +5716,20 @@ export class Codegen {
         const [ptrLines, ptrVal] = this.genExpr(expr.operand);
         lines.push(...ptrLines);
         const innerTy = this.llvmType(expr.type);
-        const val = this.nextTemp();
-        lines.push(`  ${val} = load ${innerTy}, ptr ${ptrVal}`);
+        const loaded = b.load(Ty.of(innerTy), val(ptrVal, Ty.ptr)).ref;
         // A moving deref zeroes the heap slot after loading to prevent a double free: the
         // loaded value now owns any inner heap pointers. A read leaves the box intact.
         if (expr.kind === "HeapDeref" && expr.isMove && this.needsDropCg(expr.type)) {
           lines.push(this.zeroStore(innerTy, ptrVal));
         }
-        return [lines, val, innerTy];
+        return [lines, loaded, innerTy];
       }
       case "VecNew": {
         this.hasVecType = true;
-        const s0 = this.nextTemp();
-        lines.push(`  ${s0} = insertvalue %Vec undef, ptr null, 0`);
-        const s1 = this.nextTemp();
-        lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 0, 1`);
-        const s2 = this.nextTemp();
-        lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
-        return [lines, s2, "%Vec"];
+        const s0 = b.insertvalue(val("undef", VEC_TY), val("null", Ty.ptr), 0);
+        const s1 = b.insertvalue(s0, val("0", Ty.i64), 1);
+        const s2 = b.insertvalue(s1, val("0", Ty.i64), 2);
+        return [lines, s2.ref, "%Vec"];
       }
       case "VecWithCapacity":
         return this.genVecWithCapacity(expr, lines);
@@ -5750,8 +5743,7 @@ export class Codegen {
         this.hasVecType = true;
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const len = this.nextTemp();
-        lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
+        const len = b.extractvalue(val(ov, VEC_TY), 1, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
@@ -5767,10 +5759,9 @@ export class Codegen {
         // emitDeepCloneFromPtr reads through a pointer, so spill the loaded %Vec
         // into a scratch slot first. The spill is a shallow copy that is never
         // dropped — only the clone it produces is owned by the caller.
-        const slot = this.nextTemp();
-        lines.push(`  ${slot} = alloca %Vec`);
-        lines.push(`  store %Vec ${ov}, ptr ${slot}`);
-        const cloned = this.emitDeepCloneFromPtr(lines, slot, { tag: "vec", element: expr.elementType });
+        const slot = b.alloca(VEC_TY);
+        b.store(val(ov, VEC_TY), slot);
+        const cloned = this.emitDeepCloneFromPtr(lines, slot.ref, { tag: "vec", element: expr.elementType });
         return [lines, cloned, "%Vec"];
       }
       case "VecMap":
@@ -5793,10 +5784,8 @@ export class Codegen {
         this.hasVecType = true;
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const len = this.nextTemp();
-        lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
-        const result = this.nextTemp();
-        lines.push(`  ${result} = icmp eq i64 ${len}, 0`);
+        const len = b.extractvalue(val(ov, VEC_TY), 1, Ty.i64).ref;
+        const result = b.icmp("eq", val(len, Ty.i64), val("0", Ty.i64)).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
@@ -5835,8 +5824,7 @@ export class Codegen {
         this.hasVecType = true;
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const cap = this.nextTemp();
-        lines.push(`  ${cap} = extractvalue %Vec ${ov}, 2`);
+        const cap = b.extractvalue(val(ov, VEC_TY), 2, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
@@ -5878,8 +5866,7 @@ export class Codegen {
         this.hasHashMapType = true;
         const [ol, ov] = this.genExpr(expr.object);
         lines.push(...ol);
-        const len = this.nextTemp();
-        lines.push(`  ${len} = extractvalue %HashMap ${ov}, 1`);
+        const len = b.extractvalue(val(ov, Ty.of("%HashMap")), 1, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.

@@ -79,6 +79,9 @@ export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sl
 export type FCmpPred = "oeq" | "one" | "olt" | "ole" | "ogt" | "oge";
 export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
 
+/** `!range` and `!noundef` metadata ids for a load of a ranged int (`i32(0..100)`). */
+export interface LoadMeta { readonly range: number; readonly noundef: number }
+
 export interface Builder {
   /**
    * `define ... {` and the `entry.bb:` label; returns the params as values. Once per
@@ -101,8 +104,8 @@ export interface Builder {
    * there too, so the slot holds it before any body code runs.
    */
   entryAlloca(name: string, ty: Ty, init?: Val): Val;
-  /** `align`, if given, prints as a trailing `, align N`. */
-  load(ty: Ty, ptr: Val, align?: number): Val;
+  /** `align`, if given, prints as a trailing `, align N`; `meta` (int loads only) follows it. */
+  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta): Val;
   /** `load atomic T, ptr P acquire, align N`: reads a refcount that another thread may release. */
   loadAcquire(ty: Ty, ptr: Val, align: number): Val;
   store(v: Val, ptr: Val): void;
@@ -207,11 +210,13 @@ export class LlvmTextBuilder implements Builder {
     return { ref: name, ty: Ty.ptr };
   }
 
-  load(ty: Ty, ptr: Val, align?: number): Val {
+  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta): Val {
     if (ty.kind === "void") this.fail("load of void");
     this.wantPtr("load", ptr);
     if (align !== undefined) this.wantAlign("load", align);
-    return this.def(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}`, ty);
+    if (meta && ty.kind !== "int") this.fail(`load of ${ty.ll} with range metadata; only integer loads take it`);
+    const m = meta ? `, !range !${meta.range}, !noundef !${meta.noundef}` : "";
+    return this.def(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}${m}`, ty);
   }
 
   loadAcquire(ty: Ty, ptr: Val, align: number): Val {

@@ -243,3 +243,14 @@ test("prints the same text the string codegen did", () => {
     "  %t.7 = extractvalue %HashMap %t.6, 3",
   ]);
 });
+
+test("load prints range metadata after align, and only for integer loads", () => {
+  const lines: string[] = [];
+  const b = builder(lines);
+  const p = val("%p", Ty.ptr);
+  b.load(Ty.i8, p, undefined, { range: 4, noundef: 5 });
+  b.load(Ty.i32, p, 4, { range: 6, noundef: 7 });
+  expect(lines).toEqual(["  %t.0 = load i8, ptr %p, !range !4, !noundef !5", "  %t.1 = load i32, ptr %p, align 4, !range !6, !noundef !7"]);
+  expect(() => b.load(Ty.ptr, p, undefined, { range: 1, noundef: 2 })).toThrow("only integer loads");
+  expect(() => b.load(Ty.of("%String"), p, undefined, { range: 1, noundef: 2 })).toThrow("only integer loads");
+});
