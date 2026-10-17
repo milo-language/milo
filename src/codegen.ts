@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -50,13 +50,6 @@ import { OwnLedger, type CopyDecl } from "./codegen-own";
 export function noaliasEnabled(): boolean {
   return process.env.MILO_NOALIAS !== "0";
 }
-
-// Below this many live bytes a grow is malloc + memcpy + free rather than realloc. A
-// small block cannot be remapped, so realloc saves no memory there, and macOS's realloc
-// first looks the pointer's zone and size up: respond's string building (buffers of a
-// few hundred bytes) ran 13% slower on realloc than on the copy. At a page and above
-// the remap is what keeps peak RSS at the new size (vec_grow: 132 MB -> 68 MB).
-const REALLOC_MIN_BYTES = 4096;
 
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
@@ -212,7 +205,7 @@ export class Codegen {
   public needsExit = false;
   public needsMalloc = false;
   public needsFree = false;
-  private needsRealloc = false;
+  public needsRealloc = false;
   private emittedBufAppend = false;
   private emittedIntFmt = false;
   private emittedStrReserve = false;
@@ -5732,11 +5725,11 @@ export class Codegen {
         return [lines, s2.ref, "%Vec"];
       }
       case "VecWithCapacity":
-        return this.genVecWithCapacity(expr, lines);
+        return genVecWithCapacity(this, expr, lines);
       case "VecFilled":
-        return this.genVecFilled(expr, lines);
+        return genVecFilled(this, expr, lines);
       case "VecPush":
-        return this.genVecPush(expr, lines);
+        return genVecPush(this, expr, lines);
       case "VecPop":
         return genVecPop(this, expr, lines);
       case "VecLen": {
@@ -5797,7 +5790,7 @@ export class Codegen {
       case "VecSwap":
         return genVecSwap(this, expr, lines);
       case "VecInsert":
-        return this.genVecInsert(expr, lines);
+        return genVecInsert(this, expr, lines);
       case "VecRemove":
         return genVecRemove(this, expr, lines);
       case "VecTruncate":
@@ -5815,11 +5808,11 @@ export class Codegen {
       case "VecPosition":
         return genVecPosition(this, expr, lines);
       case "VecExtend":
-        return this.genVecExtend(expr, lines);
+        return genVecExtend(this, expr, lines);
       case "VecRetain":
         return this.genVecRetain(expr, lines);
       case "VecReserve":
-        return this.genVecReserve(expr, lines);
+        return genVecReserve(this, expr, lines);
       case "VecCapacity": {
         this.hasVecType = true;
         const [ol, ov] = this.genExpr(expr.object);
@@ -6708,69 +6701,6 @@ export class Codegen {
     lines.push(this.valStore(aTy, tb, aPtr, { intent: "move", type: expr.a.type }));
     lines.push(this.valStore(aTy, ta, bPtr, { intent: "move", type: expr.a.type }));
     return [lines, "", "void"];
-  }
-
-  private genVecWithCapacity(expr: HIRExpr & { kind: "VecWithCapacity" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsMalloc = true;
-    const elemSize = this.typeSizeOf(expr.elementType);
-    const [capLines, capVal] = this.genExpr(expr.capacity);
-    lines.push(...capLines);
-    this.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
-    // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
-    // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
-    // the "buffer or null" invariant push checks (null only when cap==0).
-    const { buf } = this.emitAllocBytes(lines, capVal, elemSize, "veccap", expr.span);
-    const v0 = this.nextTemp();
-    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-    const v1 = this.nextTemp();
-    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 0, 1`);
-    const v2 = this.nextTemp();
-    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${capVal}, 2`);
-    return [lines, v2, "%Vec"];
-  }
-
-  private genVecFilled(expr: HIRExpr & { kind: "VecFilled" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsMalloc = true;
-    const elemSize = this.typeSizeOf(expr.elementType);
-    const elemTy = this.llvmType(expr.elementType);
-    const [cntLines, cntVal] = this.genExpr(expr.count);
-    lines.push(...cntLines);
-    this.emitNonNegativeCheck(lines, cntVal, "length", expr.span);
-    const [valLines, valVal] = this.genExpr(expr.value);
-    lines.push(...valLines);
-    const { buf } = this.emitAllocBytes(lines, cntVal, elemSize, "vecrep", expr.span);
-    // fill loop: for i in 0..count { buf[i] = value }
-    const idxSlot = this.nextTemp();
-    lines.push(`  ${idxSlot} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${idxSlot}`);
-    const condL = this.nextLabel("vecfill.cond");
-    const bodyL = this.nextLabel("vecfill.body");
-    const endL = this.nextLabel("vecfill.end");
-    lines.push(`  br label %${condL}`);
-    lines.push(`${condL}:`);
-    const iv = this.nextTemp();
-    lines.push(`  ${iv} = load i64, ptr ${idxSlot}`);
-    const more = this.nextTemp();
-    lines.push(`  ${more} = icmp ult i64 ${iv}, ${cntVal}`);
-    lines.push(`  br i1 ${more}, label %${bodyL}, label %${endL}`);
-    lines.push(`${bodyL}:`);
-    const slot = this.nextTemp();
-    lines.push(`  ${slot} = getelementptr ${elemTy}, ptr ${buf}, i64 ${iv}`);
-    lines.push(`  store ${elemTy} ${valVal}, ptr ${slot}`);
-    const inc = this.nextTemp();
-    lines.push(`  ${inc} = add i64 ${iv}, 1`);
-    lines.push(`  store i64 ${inc}, ptr ${idxSlot}`);
-    lines.push(`  br label %${condL}`);
-    lines.push(`${endL}:`);
-    const v0 = this.nextTemp();
-    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-    const v1 = this.nextTemp();
-    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${cntVal}, 1`);
-    const v2 = this.nextTemp();
-    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${cntVal}, 2`);
-    return [lines, v2, "%Vec"];
   }
 
   // The destructor for one move closure's environment: drop every capture that owns
@@ -8070,94 +8000,6 @@ export class Codegen {
     return [lines, val, innerTy];
   }
 
-  private vecInitialCap(elemSize: number): number { return Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize)))); }
-
-  private genVecPush(expr: HIRExpr & { kind: "VecPush" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
-
-    const vecType = expr.vec.type;
-    if (vecType.tag !== "vec") throw new Error("VecPush on non-vec type");
-    const elemSize = this.typeSizeOf(vecType.element);
-    const elemTy = this.llvmType(vecType.element);
-
-    // get pointer to the vec struct
-    const [vecPtrLines, vecPtr] = this.genLValue(expr.vec);
-    lines.push(...vecPtrLines);
-
-    // generate the value to push
-    const [valLines, valVal, valTy] = this.genExpr(expr.value);
-    lines.push(...valLines);
-
-    // load len and cap
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-
-    // check if len >= cap (need to grow)
-    const needsGrow = this.nextTemp();
-    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
-    const growLabel = this.nextLabel("vec.grow");
-    const pushLabel = this.nextLabel("vec.push");
-    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
-
-    // grow: new_cap = cap == 0 ? initialCap : cap * 2
-    // The first allocation is sized in BYTES, not elements: a flat 8 elements
-    // costs 64 bytes for a Vec<i64> but 1 KB for a Vec of 128-byte structs, and
-    // an object with one property paid that full kilobyte (milojs: ~1 KB per
-    // property, measured). Cap the first allocation near 64 bytes instead.
-    const initialCap = this.vecInitialCap(elemSize);
-    lines.push(`${growLabel}:`);
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
-    const newCap = this.nextTemp();
-    const doubled = this.nextTemp();
-    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-    lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${initialCap}, i64 ${doubled}`);
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const oldBuf = this.nextTemp();
-    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const keepBytes = this.nextTemp();
-    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
-    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow", expr.span);
-    const storeLabel = this.nextLabel("vec.store");
-    lines.push(`  br label %${storeLabel}`);
-
-    // store new buf, cap
-    lines.push(`${storeLabel}:`);
-    const dataPtr2 = this.nextTemp();
-    lines.push(`  ${dataPtr2} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr2}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    lines.push(`  br label %${pushLabel}`);
-
-    // push: store value at data[len], len++
-    lines.push(`${pushLabel}:`);
-    const curDataPtr = this.nextTemp();
-    lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const curData = this.nextTemp();
-    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
-    const curLen = this.nextTemp();
-    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${curLen}`);
-    lines.push(`  store ${valTy} ${valVal}, ptr ${elemPtr}`);
-    this.own.endVal(lines, valVal, "STORE");
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-
-    return [lines, "void", "void"];
-  }
-
   // What to hand a Vec combinator's callback for one element.
   //
   // Every combinator hints `&T`, but the checker deliberately lets a closure declare a
@@ -8240,104 +8082,6 @@ export class Codegen {
     // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
     this.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
     return [lines, result, elemTy];
-  }
-
-  private genVecInsert(expr: HIRExpr & { kind: "VecInsert" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
-    this.needsDprintf = true;
-    this.needsExit = true;
-
-    const elemSize = this.typeSizeOf(expr.elementType);
-    const elemTy = this.llvmType(expr.elementType);
-
-    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecPtrLines);
-    const [idxLines, idxVal] = this.genExpr(expr.index);
-    lines.push(...idxLines);
-    const [valLines, valVal, valTy] = this.genExpr(expr.value);
-    lines.push(...valLines);
-
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-
-    // bounds: index must be <= len (== len means append)
-    const oob = this.nextTemp();
-    lines.push(`  ${oob} = icmp ugt i64 ${idxVal}, ${len}`);
-    const panicLabel = this.nextLabel("vec.insert.panic");
-    const growCheck = this.nextLabel("vec.insert.growcheck");
-    lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${growCheck}`);
-
-    lines.push(`${panicLabel}:`);
-    const span = expr.span;
-    const { label: errLabel, length: errLen } = this.addString(`insert index out of bounds at ${this.panicAt(span)}\n`);
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, "");
-    this.panicAbort(lines);
-    lines.push(`  unreachable`);
-
-    // grow if len >= cap (we are adding one element) — identical policy to push
-    lines.push(`${growCheck}:`);
-    const needsGrow = this.nextTemp();
-    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
-    const growLabel = this.nextLabel("vec.insert.grow");
-    const shiftLabel = this.nextLabel("vec.insert.shift");
-    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${shiftLabel}`);
-
-    lines.push(`${growLabel}:`);
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
-    const doubled = this.nextTemp();
-    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${this.vecInitialCap(elemSize)}, i64 ${doubled}`);
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const oldBuf = this.nextTemp();
-    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const keepBytes = this.nextTemp();
-    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
-    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow2", expr.span);
-    const storeLabel = this.nextLabel("vec.insert.store");
-    lines.push(`  br label %${storeLabel}`);
-    lines.push(`${storeLabel}:`);
-    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    lines.push(`  br label %${shiftLabel}`);
-
-    // shift [index, len) right by one, then store value at index, len++
-    lines.push(`${shiftLabel}:`);
-    const curDataPtr = this.nextTemp();
-    lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const curData = this.nextTemp();
-    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxVal}`);
-    const idxPlus1 = this.nextTemp();
-    lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
-    const dstPtr = this.nextTemp();
-    lines.push(`  ${dstPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxPlus1}`);
-    const tailCount = this.nextTemp();
-    lines.push(`  ${tailCount} = sub i64 ${len}, ${idxVal}`);
-    const tailBytes = this.nextTemp();
-    lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
-    lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${dstPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
-    lines.push(`  store ${valTy} ${valVal}, ptr ${srcPtr}`);
-    this.own.endVal(lines, valVal, "STORE");
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = add i64 ${len}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-
-    return [lines, "void", "void"];
   }
 
   // The one place a heap buffer is sized and allocated. `count * elemSize` was written
@@ -8424,7 +8168,7 @@ export class Codegen {
   }
 
   // count * elemSize, aborting on overflow rather than allocating a wrapped size.
-  private emitByteCount(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): string {
+  public emitByteCount(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): string {
     const bothConst = /^\d+$/.test(String(count)) && /^\d+$/.test(String(elemSize));
     if (bothConst) {
       // A product of two literals is folded here; it cannot overflow at runtime.
@@ -8470,175 +8214,7 @@ export class Codegen {
   // Cortex-M's bump heap (tools/cortex-m/startup.c) has no block headers, so it cannot
   // implement realloc; every other target's allocator has one (wasm's runtime.c, libc,
   // std/replay's heap).
-  private get hasRealloc(): boolean { return this.target.os !== "none"; }
-
-  // Grow a heap buffer to `count * elemSize` bytes, keeping its first `keepBytes`, and
-  // return the new pointer (the old one is dead afterwards). A buffer holding at least
-  // REALLOC_MIN_BYTES goes through realloc, so it grows in place or by page remap: peak
-  // memory stays near the new size instead of old + new, and nothing is copied when the
-  // block can extend. A smaller one is malloc + memcpy + free (see REALLOC_MIN_BYTES).
-  // Vec buffers only: a string's carries a count header and grows in @milo.str.reserve.
-  private emitGrowBytes(lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span): string {
-    if (!this.hasRealloc || elemSize === 0) {
-      // Zero-size elements stay on malloc: realloc(p, 0) may free p and return null.
-      this.needsFree = true;
-      this.needsMemcpy = true;
-      const { buf } = this.emitAllocBytes(lines, count, elemSize, tag, span);
-      const hasData = this.nextTemp();
-      lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-      const copyL = this.nextLabel(`${tag}.copy`);
-      const freeL = this.nextLabel(`${tag}.free`);
-      const doneL = this.nextLabel(`${tag}.copied`);
-      lines.push(`  br i1 ${hasData}, label %${copyL}, label %${doneL}`);
-      lines.push(`${copyL}:`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${oldBuf}, i64 ${keepBytes})`);
-      lines.push(`  br label %${freeL}`);
-      lines.push(`${freeL}:`);
-      lines.push(`  call void @free(ptr ${oldBuf})`);
-      lines.push(`  br label %${doneL}`);
-      lines.push(`${doneL}:`);
-      return buf;
-    }
-    this.needsRealloc = true;
-    this.needsMalloc = true;
-    this.needsMemcpy = true;
-    this.needsFree = true;
-    const bytes = this.emitByteCount(lines, count, elemSize, tag, span);
-    const big = this.nextTemp();
-    lines.push(`  ${big} = icmp uge i64 ${keepBytes}, ${REALLOC_MIN_BYTES}`);
-    const useRe = big;
-    const reL = this.nextLabel(`${tag}.realloc`);
-    const freshL = this.nextLabel(`${tag}.fresh`);
-    const joinL = this.nextLabel(`${tag}.grown`);
-    lines.push(`  br i1 ${useRe}, label %${reL}, label %${freshL}`);
-    lines.push(`${reL}:`);
-    const re = this.nextTemp();
-    lines.push(`  ${re} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
-    lines.push(`  br label %${joinL}`);
-    lines.push(`${freshL}:`);
-    const fresh = this.nextTemp();
-    lines.push(`  ${fresh} = call ptr @malloc(i64 ${bytes})`);
-    // A null fresh block is caught after the join (the old one is left alone); the copy
-    // is skipped for it and for a null source.
-    const both = this.nextTemp();
-    const srcOk = this.nextTemp();
-    const dstOk = this.nextTemp();
-    lines.push(`  ${srcOk} = icmp ne ptr ${oldBuf}, null`);
-    lines.push(`  ${dstOk} = icmp ne ptr ${fresh}, null`);
-    lines.push(`  ${both} = and i1 ${srcOk}, ${dstOk}`);
-    const cpL = this.nextLabel(`${tag}.cp`);
-    const freeL = this.nextLabel(`${tag}.free`);
-    const freshDoneL = this.nextLabel(`${tag}.freshdone`);
-    lines.push(`  br i1 ${both}, label %${cpL}, label %${freshDoneL}`);
-    lines.push(`${cpL}:`);
-    lines.push(`  call ptr @memcpy(ptr ${fresh}, ptr ${oldBuf}, i64 ${keepBytes})`);
-    lines.push(`  br label %${freeL}`);
-    lines.push(`${freeL}:`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
-    lines.push(`  br label %${freshDoneL}`);
-    lines.push(`${freshDoneL}:`);
-    lines.push(`  br label %${joinL}`);
-    lines.push(`${joinL}:`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = phi ptr [ ${re}, %${reL} ], [ ${fresh}, %${freshDoneL} ]`);
-    this.emitAllocNullCheck(lines, buf, tag, span);
-    return buf;
-  }
-
-  // Grow `vecPtr`'s buffer so it holds at least `needCap` elements. Leaves the
-  // %Vec's data/cap fields updated; len is the caller's business.
-  private emitVecEnsureCapacity(lines: string[], vecPtr: string, needCap: string, elemSize: number, tag: string, span?: Span) {
-    this.needsMalloc = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const capPtr = this.nextTemp();
-    lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-    const cap = this.nextTemp();
-    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-    const enough = this.nextTemp();
-    lines.push(`  ${enough} = icmp uge i64 ${cap}, ${needCap}`);
-    const growLabel = this.nextLabel(`${tag}.grow`);
-    const doneLabel = this.nextLabel(`${tag}.gdone`);
-    lines.push(`  br i1 ${enough}, label %${doneLabel}, label %${growLabel}`);
-    lines.push(`${growLabel}:`);
-    // Geometric growth on top of the exact request, so repeated extends stay amortized.
-    const dbl = this.nextTemp();
-    lines.push(`  ${dbl} = shl i64 ${cap}, 1`);
-    const useDbl = this.nextTemp();
-    lines.push(`  ${useDbl} = icmp ugt i64 ${dbl}, ${needCap}`);
-    const newCap = this.nextTemp();
-    lines.push(`  ${newCap} = select i1 ${useDbl}, i64 ${dbl}, i64 ${needCap}`);
-    const oldBuf = this.nextTemp();
-    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    const keepBytes = this.nextTemp();
-    lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
-    const newBuf = this.emitGrowBytes(lines, oldBuf, keepBytes, newCap, elemSize, tag, span);
-    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
-    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${doneLabel}:`);
-  }
-
-  // v.extend(other): the elements move across bitwise, so nothing is cloned and
-  // nothing is dropped. Only `other`'s spine is freed — its elements now live in
-  // the destination, and the checker has marked `other` moved so it never drops.
-  private genVecExtend(expr: HIRExpr & { kind: "VecExtend" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsFree = true;
-    this.needsMemcpy = true;
-    const elemSize = this.typeSizeOf(expr.elementType);
-
-    const [dstLines, dstPtr] = this.genLValue(expr.object);
-    lines.push(...dstLines);
-    const [srcLines, srcVal] = this.genExpr(expr.other);
-    lines.push(...srcLines);
-    const srcData = this.nextTemp();
-    lines.push(`  ${srcData} = extractvalue %Vec ${srcVal}, 0`);
-    const srcLen = this.nextTemp();
-    lines.push(`  ${srcLen} = extractvalue %Vec ${srcVal}, 1`);
-    const srcCap = this.nextTemp();
-    lines.push(`  ${srcCap} = extractvalue %Vec ${srcVal}, 2`);
-
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${dstPtr}, i32 0, i32 1`);
-    const dstLen = this.nextTemp();
-    lines.push(`  ${dstLen} = load i64, ptr ${lenPtr}`);
-    const need = this.nextTemp();
-    lines.push(`  ${need} = add i64 ${dstLen}, ${srcLen}`);
-    this.emitVecEnsureCapacity(lines, dstPtr, need, elemSize, "vecext", expr.span);
-
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${dstPtr}, i32 0, i32 0`);
-    const dstData = this.nextTemp();
-    lines.push(`  ${dstData} = load ptr, ptr ${dataPtr}`);
-    const offBytes = this.nextTemp();
-    lines.push(`  ${offBytes} = mul i64 ${dstLen}, ${elemSize}`);
-    const tail = this.nextTemp();
-    lines.push(`  ${tail} = getelementptr i8, ptr ${dstData}, i64 ${offBytes}`);
-    const copyBytes = this.nextTemp();
-    lines.push(`  ${copyBytes} = mul i64 ${srcLen}, ${elemSize}`);
-    lines.push(`  call ptr @memcpy(ptr ${tail}, ptr ${srcData}, i64 ${copyBytes})`);
-    lines.push(`  store i64 ${need}, ptr ${lenPtr}`);
-
-    // A slice (cap 0) never owns its buffer, and a zero-cap Vec has none.
-    const owns = this.nextTemp();
-    lines.push(`  ${owns} = icmp ugt i64 ${srcCap}, 0`);
-    const freeLabel = this.nextLabel("vecext.free");
-    const endLabel = this.nextLabel("vecext.end");
-    lines.push(`  br i1 ${owns}, label %${freeLabel}, label %${endLabel}`);
-    lines.push(`${freeLabel}:`);
-    lines.push(`  call void @free(ptr ${srcData})`);
-    lines.push(`  br label %${endLabel}`);
-    lines.push(`${endLabel}:`);
-    this.own.endVal(lines, srcVal, "STORE");
-    return [lines, "0", "void"];
-  }
+  public get hasRealloc(): boolean { return this.target.os !== "none"; }
 
   // v.retain(pred): one pass, compacting keepers toward the front and dropping the
   // rest where they sit. No second buffer — that is the whole point next to filter.
@@ -8718,26 +8294,6 @@ export class Codegen {
     const finalLen = this.nextTemp();
     lines.push(`  ${finalLen} = load i64, ptr ${keptAddr}`);
     lines.push(`  store i64 ${finalLen}, ptr ${lenPtr}`);
-    return [lines, "0", "void"];
-  }
-
-  private genVecReserve(expr: HIRExpr & { kind: "VecReserve" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const elemSize = this.typeSizeOf(expr.elementType);
-    const [vecLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecLines);
-    const [nLines, nRaw] = this.genExpr(expr.additional);
-    lines.push(...nLines);
-    this.emitNonNegativeCheck(lines, nRaw, "capacity", expr.span);
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-    // reserve(n) is "room for n MORE", matching Rust — the count a writer has in
-    // hand is almost always how many they are about to push, not the final total.
-    const need = this.nextTemp();
-    lines.push(`  ${need} = add i64 ${len}, ${nRaw}`);
-    this.emitVecEnsureCapacity(lines, vecPtr, need, elemSize, "vecrsv", expr.span);
     return [lines, "0", "void"];
   }
 
