@@ -244,6 +244,7 @@ export class LlvmTextBuilder implements Builder {
   binop(op: BinOp, a: Val, b: Val, dest?: Val): Val {
     this.sameTy(op, a, b);
     if (op === "fadd" && a.ty.kind !== "float") this.fail(`fadd on non-float ${a.ref} (${a.ty.ll})`);
+    if (op !== "fadd" && a.ty.kind !== "int") this.fail(`${op} on non-integer ${a.ref} (${a.ty.ll})`);
     return this.defOrDest(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty, dest);
   }
 

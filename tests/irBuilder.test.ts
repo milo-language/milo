@@ -221,6 +221,13 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.0 = fadd double %a, %b"]);
   });
 
+  test("integer binops take integer operands only", () => {
+    const b = builder([]);
+    const d = Ty.of("double");
+    expect(() => b.binop("add", val("%a", d), val("%b", d))).toThrow("add on non-integer");
+    expect(() => b.binop("mul", val("%a", Ty.ptr), val("%b", Ty.ptr))).toThrow("mul on non-integer");
+  });
+
   test("binop into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);
