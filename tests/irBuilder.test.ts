@@ -197,6 +197,20 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %x.3.addr = alloca ptr", "  %t.1 = alloca i64", "  %t.0 = icmp eq i32 %a, 3", `  ${f.ref} = fcmp oeq double %d, 1.0`]);
   });
 
+  test("call into a reserved temp keeps the early name, once, with matching type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const env = val("%env", Ty.ptr);
+    expect(() => b.call(Ty.i1, "%f", [env], val("%nope", Ty.i1))).toThrow("not a reserved temp");
+    const d = b.reserveTemp(Ty.i1);
+    expect(() => b.call(Ty.i64, "%f", [env], d)).toThrow("but the result is i64");
+    const load = b.load(Ty.i64, val("%p", Ty.ptr));
+    b.call(Ty.i1, "%f", [env, load], d);
+    expect(() => b.call(Ty.i1, "%f", [env], d)).toThrow("not a reserved temp");
+    expect(() => b.call(Ty.void, "%f", [env], d)).toThrow("returns void");
+    expect(lines).toEqual(["  %t.1 = load i64, ptr %p", "  %t.0 = call i1 %f(ptr %env, i64 %t.1)"]);
+  });
+
   test("select into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);

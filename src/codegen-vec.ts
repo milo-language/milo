@@ -264,321 +264,293 @@ export function genVecSortByKey(
   return [lines, "void", "void"];
 }
 
-// shared helper: extract closure fn/env and vec data/len for functional methods
-// `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
-// after the loop: every combinator reads elements in place or deep-clones them out, so
-// once it has finished nothing points into the receiver and nothing else will free it.
-export function genVecMethodPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
-  fnPtr: string; envPtr: string; data: string; len: string; elemTy: string; release: () => void;
+const VEC_TY = Ty.of("%Vec");
+const CLOSURE_TY = Ty.of("{ ptr, ptr }");
+const I64_0 = val("0", Ty.i64);
+const I64_1 = val("1", Ty.i64);
+
+// Same as genVecMethodPreamble but hands back typed values for builder-based callers.
+function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
+  fnPtr: Val; envPtr: Val; data: Val; len: Val; elemTy: Ty; release: () => void;
 } {
   ctx.hasVecType = true;
   const [vl, vv] = ctx.genExpr(vecExpr);
   lines.push(...vl);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const vec = val(vv, VEC_TY);
+  const data = b.extractvalue(vec, 0, Ty.ptr);
+  const len = b.extractvalue(vec, 1, Ty.i64);
   const [cl, cv] = ctx.genExpr(cbExpr);
   lines.push(...cl);
-  const fnPtr = ctx.nextTemp();
-  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-  const envPtr = ctx.nextTemp();
-  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+  const cb = val(cv, CLOSURE_TY);
+  const fnPtr = b.extractvalue(cb, 0, Ty.ptr);
+  const envPtr = b.extractvalue(cb, 1, Ty.ptr);
   const release = () => ctx.dropOwnedTemp(lines, vv, "%Vec", vecExpr);
-  return { fnPtr, envPtr, data, len, elemTy: ctx.llvmType(elemType), release };
+  return { fnPtr, envPtr, data, len, elemTy: Ty.of(ctx.llvmType(elemType)), release };
+}
+
+// shared helper: extract closure fn/env and vec data/len for functional methods
+// `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
+// after the loop: every combinator reads elements in place or deep-clones them out, so
+// once it has finished nothing points into the receiver and nothing else will free it.
+// String-valued for the callers still in codegen.ts.
+export function genVecMethodPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
+  fnPtr: string; envPtr: string; data: string; len: string; elemTy: string; release: () => void;
+} {
+  const p = vecPreamble(ctx, vecExpr, cbExpr, elemType, lines);
+  return { fnPtr: p.fnPtr.ref, envPtr: p.envPtr.ref, data: p.data.ref, len: p.len.ref, elemTy: p.elemTy.ll, release: p.release };
+}
+
+// What callbackElemArg (codegen.ts) hands the callback, as a typed value.
+function cbArgVal(arg: { arg: string; argTy: string }): Val {
+  return val(arg.arg, Ty.of(arg.argTy));
 }
 
 export function genVecMap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMap" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
-  const resultElemTy = ctx.llvmType(expr.resultElementType);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const resultElemTy = Ty.of(ctx.llvmType(expr.resultElementType));
   const resultElemSize = ctx.typeSizeOf(expr.resultElementType);
   ctx.needsMalloc = true;
 
   // allocate result buffer: malloc(len * elemSize)
-  const { buf } = ctx.emitAllocBytes(lines, len, resultElemSize, "vecmap", expr.span);
+  const { buf: bufRef } = ctx.emitAllocBytes(lines, len.ref, resultElemSize, "vecmap", expr.span);
+  const buf = val(bufRef, Ty.ptr);
 
-  const idxAddr = `%__map_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const idxAddr = b.entryAlloca(`%__map_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("map.cond");
-  const bodyLabel = ctx.nextLabel("map.body");
-  const endLabel = ctx.nextLabel("map.end");
+  const condLabel = b.newBlock("map.cond");
+  const bodyLabel = b.newBlock("map.body");
+  const endLabel = b.newBlock("map.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
   // check if callback takes element by value or by ref
   const cbType = expr.callback.type;
   const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
-  let callArg: string;
-  let callArgTy: string;
-  if (paramIsRef) {
-    callArg = elemPtr;
-    callArgTy = "ptr";
-  } else {
-    const loadedElem = ctx.nextTemp();
-    lines.push(`  ${loadedElem} = load ${elemTy}, ptr ${elemPtr}`);
-    callArg = loadedElem;
-    callArgTy = elemTy;
-  }
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = call ${resultElemTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
-  const destPtr = ctx.nextTemp();
-  lines.push(`  ${destPtr} = getelementptr ${resultElemTy}, ptr ${buf}, i64 ${idx}`);
-  lines.push(`  store ${resultElemTy} ${result}, ptr ${destPtr}`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${endLabel}:`);
+  const callArg = paramIsRef ? elemPtr : b.load(elemTy, elemPtr);
+  const result = b.call(resultElemTy, fnPtr.ref, [envPtr, callArg]);
+  const destPtr = b.gep(resultElemTy, buf, [idx]);
+  b.store(result, destPtr);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
+  b.position(endLabel);
 
   // build result Vec { buf, len, len }
-  const v0 = ctx.nextTemp();
-  lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-  const v1 = ctx.nextTemp();
-  lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${len}, 1`);
-  const v2 = ctx.nextTemp();
-  lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+  const v0 = b.insertvalue(val("undef", VEC_TY), buf, 0);
+  const v1 = b.insertvalue(v0, len, 1);
+  const v2 = b.insertvalue(v1, len, 2);
   release();
-  return [lines, v2, "%Vec"];
+  return [lines, v2.ref, "%Vec"];
 }
 
 export function genVecFilter(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilter" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
   const elemSize = ctx.typeSizeOf(expr.elementType);
   ctx.needsMalloc = true;
 
   // allocate result buffer with capacity = source len (worst case all match)
-  const { buf } = ctx.emitAllocBytes(lines, len, elemSize, "vecfilt", expr.span);
+  const { buf: bufRef } = ctx.emitAllocBytes(lines, len.ref, elemSize, "vecfilt", expr.span);
+  const buf = val(bufRef, Ty.ptr);
 
+  const b = new LlvmTextBuilder(lines, ctx);
   const idxAddr = `%__filter_idx.${ctx.scopeCounter++}.addr`;
   const outIdxAddr = `%__filter_out.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  ctx.entryAllocas.push(`  ${outIdxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
-  lines.push(`  store i64 0, ptr ${outIdxAddr}`);
+  const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+  const outIdxSlot = b.entryAlloca(outIdxAddr, Ty.i64);
+  b.store(I64_0, idxSlot);
+  b.store(I64_0, outIdxSlot);
 
-  const condLabel = ctx.nextLabel("filter.cond");
-  const bodyLabel = ctx.nextLabel("filter.body");
-  const copyLabel = ctx.nextLabel("filter.copy");
-  const nextLabel = ctx.nextLabel("filter.next");
-  const endLabel = ctx.nextLabel("filter.end");
+  const condLabel = b.newBlock("filter.cond");
+  const bodyLabel = b.newBlock("filter.body");
+  const copyLabel = b.newBlock("filter.copy");
+  const nextLabel = b.newBlock("filter.next");
+  const endLabel = b.newBlock("filter.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxSlot);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
 
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const keep = ctx.nextTemp();
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
-  lines.push(`  ${keep} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
-  lines.push(`  br i1 ${keep}, label %${copyLabel}, label %${nextLabel}`);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  // keep's temp is drawn before callbackElemArg's load but defined after it
+  const keep = b.reserveTemp(Ty.i1);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll));
+  b.call(Ty.i1, fnPtr.ref, [envPtr, cbArg], keep);
+  b.condBr(keep, copyLabel, nextLabel);
 
-  lines.push(`${copyLabel}:`);
-  const cloned = ctx.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
-  const outIdx = ctx.nextTemp();
-  lines.push(`  ${outIdx} = load i64, ptr ${outIdxAddr}`);
-  const destPtr = ctx.nextTemp();
-  lines.push(`  ${destPtr} = getelementptr ${elemTy}, ptr ${buf}, i64 ${outIdx}`);
-  lines.push(`  store ${elemTy} ${cloned}, ptr ${destPtr}`);
-  const nextOut = ctx.nextTemp();
-  lines.push(`  ${nextOut} = add i64 ${outIdx}, 1`);
-  lines.push(`  store i64 ${nextOut}, ptr ${outIdxAddr}`);
-  lines.push(`  br label %${nextLabel}`);
+  b.position(copyLabel);
+  const cloned = val(ctx.emitDeepCloneFromPtr(lines, elemPtr.ref, expr.elementType), elemTy);
+  const outIdx = b.load(Ty.i64, outIdxSlot);
+  const destPtr = b.gep(elemTy, buf, [outIdx]);
+  b.store(cloned, destPtr);
+  const nextOut = b.binop("add", outIdx, I64_1);
+  b.store(nextOut, outIdxSlot);
+  b.br(nextLabel);
 
-  lines.push(`${nextLabel}:`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
+  b.position(nextLabel);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxSlot);
+  b.br(condLabel);
 
-  lines.push(`${endLabel}:`);
-  const finalLen = ctx.nextTemp();
-  lines.push(`  ${finalLen} = load i64, ptr ${outIdxAddr}`);
-  const v0 = ctx.nextTemp();
-  lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-  const v1 = ctx.nextTemp();
-  lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${finalLen}, 1`);
-  const v2 = ctx.nextTemp();
-  lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+  b.position(endLabel);
+  const finalLen = b.load(Ty.i64, outIdxSlot);
+  const v0 = b.insertvalue(val("undef", VEC_TY), buf, 0);
+  const v1 = b.insertvalue(v0, finalLen, 1);
+  const v2 = b.insertvalue(v1, len, 2);
   release();
-  return [lines, v2, "%Vec"];
+  return [lines, v2.ref, "%Vec"];
 }
 
 export function genVecEach(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecEach" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
-  const idxAddr = `%__each_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const idxAddr = b.entryAlloca(`%__each_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("each.cond");
-  const bodyLabel = ctx.nextLabel("each.body");
-  const endLabel = ctx.nextLabel("each.end");
+  const condLabel = b.newBlock("each.cond");
+  const bodyLabel = b.newBlock("each.body");
+  const endLabel = b.newBlock("each.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
-  lines.push(`  call void ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${endLabel}:`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll));
+  b.callDiscard(Ty.void, fnPtr.ref, [envPtr, cbArg]);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
+  b.position(endLabel);
   release();
   return [lines, "void", "void"];
 }
 
 export function genVecAny(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecAny" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
-  const resultAddr = `%__any_result.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${resultAddr} = alloca i1`);
-  lines.push(`  store i1 false, ptr ${resultAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const resultAddr = b.entryAlloca(`%__any_result.${ctx.scopeCounter++}.addr`, Ty.i1);
+  b.store(val("false", Ty.i1), resultAddr);
 
-  const idxAddr = `%__any_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const idxAddr = b.entryAlloca(`%__any_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("any.cond");
-  const bodyLabel = ctx.nextLabel("any.body");
-  const endLabel = ctx.nextLabel("any.end");
+  const condLabel = b.newBlock("any.cond");
+  const bodyLabel = b.newBlock("any.body");
+  const endLabel = b.newBlock("any.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const match = ctx.nextTemp();
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
-  lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
-  const foundLabel = ctx.nextLabel("any.found");
-  const nextLabel = ctx.nextLabel("any.next");
-  lines.push(`  br i1 ${match}, label %${foundLabel}, label %${nextLabel}`);
-  lines.push(`${foundLabel}:`);
-  lines.push(`  store i1 true, ptr ${resultAddr}`);
-  lines.push(`  br label %${endLabel}`);
-  lines.push(`${nextLabel}:`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${endLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  const match = b.reserveTemp(Ty.i1);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll));
+  b.call(Ty.i1, fnPtr.ref, [envPtr, cbArg], match);
+  const foundLabel = b.newBlock("any.found");
+  const nextLabel = b.newBlock("any.next");
+  b.condBr(match, foundLabel, nextLabel);
+  b.position(foundLabel);
+  b.store(val("true", Ty.i1), resultAddr);
+  b.br(endLabel);
+  b.position(nextLabel);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
+  b.position(endLabel);
+  const result = b.load(Ty.i1, resultAddr);
   release();
-  return [lines, result, "i1"];
+  return [lines, result.ref, "i1"];
 }
 
 export function genVecAll(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecAll" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
-  const resultAddr = `%__all_result.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${resultAddr} = alloca i1`);
-  lines.push(`  store i1 true, ptr ${resultAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const resultAddr = b.entryAlloca(`%__all_result.${ctx.scopeCounter++}.addr`, Ty.i1);
+  b.store(val("true", Ty.i1), resultAddr);
 
-  const idxAddr = `%__all_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const idxAddr = b.entryAlloca(`%__all_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("all.cond");
-  const bodyLabel = ctx.nextLabel("all.body");
-  const endLabel = ctx.nextLabel("all.end");
+  const condLabel = b.newBlock("all.cond");
+  const bodyLabel = b.newBlock("all.body");
+  const endLabel = b.newBlock("all.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const match = ctx.nextTemp();
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy);
-  lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ${cbArg.argTy} ${cbArg.arg})`);
-  const failLabel = ctx.nextLabel("all.fail");
-  const nextLabel = ctx.nextLabel("all.next");
-  lines.push(`  br i1 ${match}, label %${nextLabel}, label %${failLabel}`);
-  lines.push(`${failLabel}:`);
-  lines.push(`  store i1 false, ptr ${resultAddr}`);
-  lines.push(`  br label %${endLabel}`);
-  lines.push(`${nextLabel}:`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${endLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  const match = b.reserveTemp(Ty.i1);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll));
+  b.call(Ty.i1, fnPtr.ref, [envPtr, cbArg], match);
+  const failLabel = b.newBlock("all.fail");
+  const nextLabel = b.newBlock("all.next");
+  b.condBr(match, nextLabel, failLabel);
+  b.position(failLabel);
+  b.store(val("false", Ty.i1), resultAddr);
+  b.br(endLabel);
+  b.position(nextLabel);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
+  b.position(endLabel);
+  const result = b.load(Ty.i1, resultAddr);
   release();
-  return [lines, result, "i1"];
+  return [lines, result.ref, "i1"];
 }
 
 // acc = cb(acc, &elem) over every element. The accumulator lives in an alloca so
 // the loop body can write it without a phi, matching how the other Vec callbacks
 // carry state across iterations.
 export function genVecFold(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFold" }, lines: string[]): Gen {
-  const [initLines, initVal, accTy] = ctx.genExpr(expr.init);
+  const [initLines, initVal, accTyName] = ctx.genExpr(expr.init);
   lines.push(...initLines);
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
-  const accAddr = `%__fold_acc.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${accAddr} = alloca ${accTy}`);
-  lines.push(`  store ${accTy} ${initVal}, ptr ${accAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const accTy = Ty.of(accTyName);
+  const accAddr = b.entryAlloca(`%__fold_acc.${ctx.scopeCounter++}.addr`, accTy);
+  b.store(val(initVal, accTy), accAddr);
   ctx.own.endVal(lines, initVal, "MOVE");
 
-  const idxAddr = `%__fold_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const idxAddr = b.entryAlloca(`%__fold_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("fold.cond");
-  const bodyLabel = ctx.nextLabel("fold.body");
-  const endLabel = ctx.nextLabel("fold.end");
+  const condLabel = b.newBlock("fold.cond");
+  const bodyLabel = b.newBlock("fold.body");
+  const endLabel = b.newBlock("fold.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
 
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const acc = ctx.nextTemp();
-  lines.push(`  ${acc} = load ${accTy}, ptr ${accAddr}`);
-  const next = ctx.nextTemp();
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy, 1);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  const acc = b.load(accTy, accAddr);
+  const next = b.reserveTemp(accTy);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll, 1));
   // KNOWN LEAK when accTy owns heap (a String accumulator): the value in `acc` is owned
   // by nobody once this call returns.
   //
@@ -602,18 +574,16 @@ export function genVecFold(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFold" },
   // without checking who else already does. A closure called with a temporary has that
   // temporary dropped by the CALLER today, so a callee-side drop would double free —
   // which is backlog #18's missing contract again.
-  lines.push(`  ${next} = call ${accTy} ${fnPtr}(ptr ${envPtr}, ${accTy} ${acc}, ${cbArg.argTy} ${cbArg.arg})`);
-  lines.push(`  store ${accTy} ${next}, ptr ${accAddr}`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
+  b.call(accTy, fnPtr.ref, [envPtr, acc, cbArg], next);
+  b.store(next, accAddr);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
 
-  lines.push(`${endLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = load ${accTy}, ptr ${accAddr}`);
+  b.position(endLabel);
+  const result = b.load(accTy, accAddr);
   release();
-  return [lines, result, accTy];
+  return [lines, result.ref, accTyName];
 }
 
 export function genVecReverse(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReverse" }, lines: string[]): Gen {
@@ -621,62 +591,52 @@ export function genVecReverse(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRever
   ctx.needsMemcpy = true;
   const elemType = expr.elementType;
   const elemSize = ctx.typeSizeOf(elemType);
-  const elemTy = ctx.llvmType(elemType);
+  const elemTy = Ty.of(ctx.llvmType(elemType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
 
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [val("0", Ty.i32), val("0", Ty.i32)]);
+  const data = b.load(Ty.ptr, dataPtr);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [val("0", Ty.i32), val("1", Ty.i32)]);
+  const len = b.load(Ty.i64, lenPtr);
 
-  const tmpAddr = `%__rev_tmp.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
+  const tmpAddr = b.entryAlloca(`%__rev_tmp.${ctx.scopeCounter++}.addr`, elemTy);
 
-  const loAddr = `%__rev_lo.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${loAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${loAddr}`);
-  const hiAddr = `%__rev_hi.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${hiAddr} = alloca i64`);
-  const hiInit = ctx.nextTemp();
-  lines.push(`  ${hiInit} = sub i64 ${len}, 1`);
-  lines.push(`  store i64 ${hiInit}, ptr ${hiAddr}`);
+  const loAddr = b.entryAlloca(`%__rev_lo.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, loAddr);
+  const hiAddr = b.entryAlloca(`%__rev_hi.${ctx.scopeCounter++}.addr`, Ty.i64);
+  const hiInit = b.binop("sub", len, I64_1);
+  b.store(hiInit, hiAddr);
 
-  const condLabel = ctx.nextLabel("rev.cond");
-  const bodyLabel = ctx.nextLabel("rev.body");
-  const endLabel = ctx.nextLabel("rev.end");
+  const condLabel = b.newBlock("rev.cond");
+  const bodyLabel = b.newBlock("rev.body");
+  const endLabel = b.newBlock("rev.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const lo = ctx.nextTemp();
-  lines.push(`  ${lo} = load i64, ptr ${loAddr}`);
-  const hi = ctx.nextTemp();
-  lines.push(`  ${hi} = load i64, ptr ${hiAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp slt i64 ${lo}, ${hi}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const lo = b.load(Ty.i64, loAddr);
+  const hi = b.load(Ty.i64, hiAddr);
+  const cmp = b.icmp("slt", lo, hi);
+  b.condBr(cmp, bodyLabel, endLabel);
 
-  lines.push(`${bodyLabel}:`);
-  const loPtr = ctx.nextTemp();
-  lines.push(`  ${loPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${lo}`);
-  const hiPtr = ctx.nextTemp();
-  lines.push(`  ${hiPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${hi}`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${loPtr}, i64 ${elemSize}, i1 false)`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${loPtr}, ptr ${hiPtr}, i64 ${elemSize}, i1 false)`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${hiPtr}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
-  const nextLo = ctx.nextTemp();
-  lines.push(`  ${nextLo} = add i64 ${lo}, 1`);
-  lines.push(`  store i64 ${nextLo}, ptr ${loAddr}`);
-  const nextHi = ctx.nextTemp();
-  lines.push(`  ${nextHi} = sub i64 ${hi}, 1`);
-  lines.push(`  store i64 ${nextHi}, ptr ${hiAddr}`);
-  lines.push(`  br label %${condLabel}`);
+  b.position(bodyLabel);
+  const loPtr = b.gep(elemTy, data, [lo]);
+  const hiPtr = b.gep(elemTy, data, [hi]);
+  const size = val(String(elemSize), Ty.i64);
+  const volatileOff = val("false", Ty.i1);
+  const memcpy = (dst: Val, src: Val) => b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [dst, src, size, volatileOff]);
+  memcpy(tmpAddr, loPtr);
+  memcpy(loPtr, hiPtr);
+  memcpy(hiPtr, tmpAddr);
+  const nextLo = b.binop("add", lo, I64_1);
+  b.store(nextLo, loAddr);
+  const nextHi = b.binop("sub", hi, I64_1);
+  b.store(nextHi, hiAddr);
+  b.br(condLabel);
 
-  lines.push(`${endLabel}:`);
+  b.position(endLabel);
   return [lines, "void", "void"];
 }

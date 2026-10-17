@@ -127,8 +127,8 @@ export interface Builder {
    * and temp numbering is part of the byte-identical contract.
    */
   reserveTemp(ty: Ty): Val;
-  /** A call whose result is used; `ret` must not be void. */
-  call(ret: Ty, callee: string, args: Val[]): Val;
+  /** A call whose result is used; `ret` must not be void. `dest` is a `reserveTemp` name to define (see `select`). */
+  call(ret: Ty, callee: string, args: Val[], dest?: Val): Val;
   /** A call printed with no result name: void, or a result nobody reads. */
   callDiscard(ret: Ty, callee: string, args: Val[]): void;
   newBlock(prefix: string): Block;
@@ -298,9 +298,9 @@ export class LlvmTextBuilder implements Builder {
     return { ref, ty };
   }
 
-  call(ret: Ty, callee: string, args: Val[]): Val {
+  call(ret: Ty, callee: string, args: Val[], dest?: Val): Val {
     if (ret.kind === "void") this.fail(`call ${callee} returns void; use callDiscard`);
-    return this.def(callText(ret, callee, args), ret);
+    return this.defOrDest(callText(ret, callee, args), ret, dest);
   }
 
   callDiscard(ret: Ty, callee: string, args: Val[]): void {
