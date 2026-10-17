@@ -1110,7 +1110,7 @@ fn closeFd(fd: i32): void {
 // ── Graceful drain (SIGTERM) ──
 //
 // SIGTERM stops the server accepting, lets requests in flight finish, then exits 0 after
-// at most ServeOptions.drainMs. The handler is a C signal handler, so it can only touch
+// at most ServeOptions.drainMs (exit 1, with a line on stderr, if some are still open then). The handler is a C signal handler, so it can only touch
 // plain globals and write(2) one byte to a pipe: the byte is what wakes the accept loop
 // and every connection parked in waitConn. The pipe is never read, so it stays readable
 // and reaches tasks that start waiting after the signal too.
@@ -1171,7 +1171,7 @@ pub struct ServeOptions {
     // backpressure note on acceptLoop).
     maxConn: i64 = 512,
     // After SIGTERM: how long requests in flight may keep running before the process
-    // exits anyway.
+    // exits anyway, with status 1 (a clean drain exits 0).
     drainMs: i64 = 10000,
     // How long a client has to send its whole request (headers and body), counted from
     // when the connection's task starts. Without it a client that sends half a request
@@ -2500,8 +2500,10 @@ fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, 
         let deadline = unrecordedEpochMillis() + drainMs
         while s.live() > 0 {
             if unrecordedEpochMillis() >= deadline {
-                print("drain timeout: exiting with connections still open")
-                exit(0)
+                // Exit 1: a supervisor must be able to tell a drain that cut requests off
+                // from a clean one.
+                eprint($"drain timeout: exiting with {s.live()} connections still open")
+                exit(1)
             }
             sleepMs(5)
         }

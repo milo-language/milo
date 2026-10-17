@@ -246,7 +246,8 @@ serve function adopts the socket systemd passes in (`LISTEN_FDS` / `LISTEN_PID`,
 Linux and macOS) instead of binding its own, and announces the port from `getsockname`.
 On `SIGTERM` it stops accepting, lets requests in flight finish, closes long-lived
 streams and websockets at once (a websocket gets close code 1001), and exits 0, at most
-`drainMs` (default 10000) after the signal. systemd keeps its copy of the socket open,
+`drainMs` (default 10000) after the signal. If connections are still open then, it
+prints their count to stderr and exits 1. systemd keeps its copy of the socket open,
 so connections that arrive during the restart wait in the kernel backlog for the next
 process.
 

@@ -194,7 +194,7 @@ def mode_cap(binary):
 
 
 def mode_drain(binary):
-    # drainMs=1000, a handler that sleeps 8 s: the process must leave at the cap.
+    # drainMs=1000, a handler that sleeps 8 s: the process must leave at the cap, exit 1.
     L = Launcher(binary, {"DRAINMS": "1000", "SLOWMS": "8000"})
     L.spawn()
     wait_listening(L.port)
@@ -207,7 +207,7 @@ def mode_drain(binary):
     t.join()
     code, secs = exits[0]
     problems = []
-    check(code == 0, f"exit code {code}", problems)
+    check(code == 1, f"exit code {code}, a drain cut at the cap exits 1", problems)
     check(0.8 <= secs <= 3.0, f"exited {secs:.2f}s after SIGTERM, drainMs is 1s (handler needs 8s)", problems)
     print(f"drain: exit_code={code} seconds_after_sigterm={secs:.2f} slow_result={res[0]}")
     # control: an idle server drains at once
