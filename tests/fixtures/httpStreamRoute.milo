@@ -5,14 +5,14 @@
 // other requests meanwhile, the stream task must end once the client hangs up, and an
 // outbox whose client has gone must refuse a send instead of writing anywhere.
 // @expect: listening on http://127.0.0.1:47393
-// @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n
-// @expect: poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 1
+// @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n
+// @expect: poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 1
 // @expect: frame: e\r\ndata: room-7\n\n\r\n
 // @expect: stream for room-7 ended
-// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 0
+// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 0
 // @expect: subscribers left: 0
-// @expect: unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
-// @expect: post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
+// @expect: unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found
+// @expect: post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found
 from "std/http" import {
     Context, Outbox, Param, Response, Router, Stream, serveRouterOn
 }
@@ -35,7 +35,22 @@ struct Subscriber {
 
 var subscribers: Vec<Subscriber> = []
 
-fn show(label: string, s: &string): void {
+// The Date header carries the current time, so its fixed-width IMF-fixdate value
+// (`Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes) is masked; a malformed one stays visible.
+fn maskDate(s: &string): string {
+    let at = s.indexOf("Date: ") ?? -1
+    if at < 0 {
+        return s
+    }
+    let v = at + 6
+    if s.len < v + 29 || s[v + 3] != ',' || s.substr(v + 25, v + 29) != " GMT" {
+        return s
+    }
+    return s.substr(0, v) + "<date>" + s.substr(v + 29, s.len)
+}
+
+fn show(label: string, raw: &string): void {
+    let s = maskDate(raw)
     var out: string = label + ": "
     for i in 0..s.len {
         if s[i] == '\r' {

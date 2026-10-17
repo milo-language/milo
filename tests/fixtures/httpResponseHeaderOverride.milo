@@ -2,20 +2,35 @@
 // A handler's Content-Type used to go out next to the default one (two Content-Type
 // headers, which clients resolve differently), its Content-Length or Connection
 // contradicted the framing the renderer writes, and 204/304 carried a body and a
-// Content-Length. Now: Content-Type and Server are defaults a handler header of the
+// Content-Length. Now: Content-Type and Date are defaults a handler header of the
 // same name (any case) replaces; framing headers are the renderer's; 1xx/204/304 are
 // bodyless.
-// @expect: override: HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-type: application/vnd.api+json\r\nConnection: close\r\nServer: milo\r\n\r\n{}
-// @expect: framing: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nX-Keep: yes\r\nServer: edge\r\nConnection: close\r\n\r\nok
-// @expect: 204: HTTP/1.1 204 No Content\r\nX-Id: 7\r\nConnection: close\r\nServer: milo\r\n\r\n
-// @expect: 304: HTTP/1.1 304 Not Modified\r\nETag: "v1"\r\nConnection: close\r\nServer: milo\r\n\r\n
-// @expect: 101: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\nServer: milo\r\n\r\n
+// @expect: override: HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-type: application/vnd.api+json\r\nConnection: close\r\nDate: <date>\r\n\r\n{}
+// @expect: framing: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nX-Keep: yes\r\nServer: edge\r\nConnection: close\r\nDate: <date>\r\n\r\nok
+// @expect: 204: HTTP/1.1 204 No Content\r\nX-Id: 7\r\nConnection: close\r\nDate: <date>\r\n\r\n
+// @expect: 304: HTTP/1.1 304 Not Modified\r\nETag: "v1"\r\nConnection: close\r\nDate: <date>\r\n\r\n
+// @expect: 101: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\nDate: <date>\r\n\r\n
 // @expect: 413 Content Too Large|415 Unsupported Media Type|417 Expectation Failed|429 Too Many Requests|431 Request Header Fields Too Large|451 Unavailable For Legal Reasons|501 Not Implemented|503 Service Unavailable|422 Unprocessable Content|599 Server Error
 from "std/http" import {
     Context, Request, Response, Router, Param, renderResponse, statusText
 }
 
-fn show(label: string, s: &string): void {
+// The Date header carries the current time, so its fixed-width IMF-fixdate value
+// (`Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes) is masked; a malformed one stays visible.
+fn maskDate(s: &string): string {
+    let at = s.indexOf("Date: ") ?? -1
+    if at < 0 {
+        return s
+    }
+    let v = at + 6
+    if s.len < v + 29 || s[v + 3] != ',' || s.substr(v + 25, v + 29) != " GMT" {
+        return s
+    }
+    return s.substr(0, v) + "<date>" + s.substr(v + 29, s.len)
+}
+
+fn show(label: string, raw: &string): void {
+    let s = maskDate(raw)
     var out: string = label + ": "
     for i in 0..s.len {
         if s[i] == '\r' {

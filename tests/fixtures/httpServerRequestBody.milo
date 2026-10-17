@@ -7,13 +7,13 @@
 // park too (a blocking read there would hang the whole scheduler).
 // Also pins serveRouterOn: bound to 127.0.0.1 and reached through it.
 // @expect: listening on http://127.0.0.1:47391
-// @expect: split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello world
-// @expect: continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nServer: milo\r\n\r\n5 bytes: abcde
-// @expect: too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n413 Content Too Large
-// @expect: chunked: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello mi lo
-// @expect: huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nServer: milo\r\n\r\n431 Request Header Fields Too Large
+// @expect: split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello world
+// @expect: continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nDate: <date>\r\n\r\n5 bytes: abcde
+// @expect: too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n413 Content Too Large
+// @expect: chunked: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello mi lo
+// @expect: huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nDate: <date>\r\n\r\n431 Request Header Fields Too Large
 // @expect: hung up mid-request: (no response)
-// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nServer: milo\r\n\r\n2 bytes: ok
+// @expect: after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nDate: <date>\r\n\r\n2 bytes: ok
 from "std/http" import {
     Context, Response, Router, serveRouterOn
 }
@@ -29,7 +29,22 @@ from "std/time" import {
 
 let PORT: u16 = 47391
 
-fn show(label: string, s: &string): void {
+// The Date header carries the current time, so its fixed-width IMF-fixdate value
+// (`Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes) is masked; a malformed one stays visible.
+fn maskDate(s: &string): string {
+    let at = s.indexOf("Date: ") ?? -1
+    if at < 0 {
+        return s
+    }
+    let v = at + 6
+    if s.len < v + 29 || s[v + 3] != ',' || s.substr(v + 25, v + 29) != " GMT" {
+        return s
+    }
+    return s.substr(0, v) + "<date>" + s.substr(v + 29, s.len)
+}
+
+fn show(label: string, raw: &string): void {
+    let s = maskDate(raw)
     var out: string = label + ": "
     if s.len == 0 {
         out.pushStr("(no response)")

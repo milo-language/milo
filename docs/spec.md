@@ -13277,9 +13277,9 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nLocation: /login\r\nConnection: close\r\nServer: milo\r\n\r\n/login`
-- `HTTP/1.1 301 Moved Permanently\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nLocation: https://example.com/\r\nConnection: close\r\nServer: milo\r\n\r\nhttps://example.com/`
-- `HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nX-Note: a  Set-Cookie: session=stolen\r\nLocation: /x    <script>\r\nConnection: close\r\nServer: milo\r\n\r\n/x\r\n\r\n<script>`
+- `HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nLocation: /login\r\nConnection: close\r\nDate: <date>\r\n\r\n/login`
+- `HTTP/1.1 301 Moved Permanently\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nLocation: https://example.com/\r\nConnection: close\r\nDate: <date>\r\n\r\nhttps://example.com/`
+- `HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nX-Note: a  Set-Cookie: session=stolen\r\nLocation: /x    <script>\r\nConnection: close\r\nDate: <date>\r\n\r\n/x\r\n\r\n<script>`
 
 **Rationale.** Context.redirect sets a Location header, and no header can smuggle a CR or LF onto the wire. redirect used to answer 302 with the URL as the body and no Location header, so a browser showed the URL as text instead of following it. And renderRaw wrote header values as given: a redirect URL taken from a query string with "\r\n" in it ended the header block early and injected its own (response splitting). Both are pinned here through the real path, Context -> Response -> wire bytes.
 
@@ -13289,10 +13289,10 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nConnection: close\r\nServer: milo\r\n\r\nhi`
-- `HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found`
-- `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\nServer: milo\r\n\r\n{}`
-- `HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 3\r\nX-Trace: abc\r\nConnection: close\r\nServer: milo\r\n\r\n<b>`
+- `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nConnection: close\r\nDate: <date>\r\n\r\nhi`
+- `HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found`
+- `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\nDate: <date>\r\n\r\n{}`
+- `HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 3\r\nX-Trace: abc\r\nConnection: close\r\nDate: <date>\r\n\r\n<b>`
 
 **Rationale.** std/http's response wire format, pinned byte for byte. renderRaw/renderResponse were split out of sendRaw/sendResponse so std/https could write the same bytes through SSL_write. Nothing else asserts what those bytes are — the other http fixtures build a Context and never touch a socket — so a refactor of the builder could reorder or drop a header with every test still green.
 
@@ -13335,14 +13335,14 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `override: HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-type: application/vnd.api+json\r\nConnection: close\r\nServer: milo\r\n\r\n{}`
-- `framing: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nX-Keep: yes\r\nServer: edge\r\nConnection: close\r\n\r\nok`
-- `204: HTTP/1.1 204 No Content\r\nX-Id: 7\r\nConnection: close\r\nServer: milo\r\n\r\n`
-- `304: HTTP/1.1 304 Not Modified\r\nETag: "v1"\r\nConnection: close\r\nServer: milo\r\n\r\n`
-- `101: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\nServer: milo\r\n\r\n`
+- `override: HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-type: application/vnd.api+json\r\nConnection: close\r\nDate: <date>\r\n\r\n{}`
+- `framing: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nX-Keep: yes\r\nServer: edge\r\nConnection: close\r\nDate: <date>\r\n\r\nok`
+- `204: HTTP/1.1 204 No Content\r\nX-Id: 7\r\nConnection: close\r\nDate: <date>\r\n\r\n`
+- `304: HTTP/1.1 304 Not Modified\r\nETag: "v1"\r\nConnection: close\r\nDate: <date>\r\n\r\n`
+- `101: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\nDate: <date>\r\n\r\n`
 - `413 Content Too Large|415 Unsupported Media Type|417 Expectation Failed|429 Too Many Requests|431 Request Header Fields Too Large|451 Unavailable For Legal Reasons|501 Not Implemented|503 Service Unavailable|422 Unprocessable Content|599 Server Error`
 
-**Rationale.** Response header semantics, through the real path Router -> Context -> wire bytes. A handler's Content-Type used to go out next to the default one (two Content-Type headers, which clients resolve differently), its Content-Length or Connection contradicted the framing the renderer writes, and 204/304 carried a body and a Content-Length. Now: Content-Type and Server are defaults a handler header of the same name (any case) replaces; framing headers are the renderer's; 1xx/204/304 are bodyless.
+**Rationale.** Response header semantics, through the real path Router -> Context -> wire bytes. A handler's Content-Type used to go out next to the default one (two Content-Type headers, which clients resolve differently), its Content-Length or Connection contradicted the framing the renderer writes, and 204/304 carried a body and a Content-Length. Now: Content-Type and Date are defaults a handler header of the same name (any case) replaces; framing headers are the renderer's; 1xx/204/304 are bodyless.
 
 *Program:* [`tests/fixtures/httpResponseHeaderOverride.milo`](../tests/fixtures/httpResponseHeaderOverride.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -13387,13 +13387,13 @@ A conforming implementation shall accept this program, and running it shall writ
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
 - `listening on http://127.0.0.1:47391`
-- `split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello world`
-- `continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nServer: milo\r\n\r\n5 bytes: abcde`
-- `too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n413 Content Too Large`
-- `chunked: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nServer: milo\r\n\r\n11 bytes: hello mi lo`
-- `huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nServer: milo\r\n\r\n431 Request Header Fields Too Large`
+- `split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello world`
+- `continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nDate: <date>\r\n\r\n5 bytes: abcde`
+- `too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n413 Content Too Large`
+- `chunked: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello mi lo`
+- `huge headers: HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\nDate: <date>\r\n\r\n431 Request Header Fields Too Large`
 - `hung up mid-request: (no response)`
-- `after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nServer: milo\r\n\r\n2 bytes: ok`
+- `after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nDate: <date>\r\n\r\n2 bytes: ok`
 
 **Rationale.** The concurrent server reads a whole request, not one read's worth. It used to read once into an 8 KB buffer, so a body that arrived in a later segment reached the handler empty or cut short, Expect: 100-continue clients got no 100, and nothing capped a body. Each case is a raw client on a green task next to the server; the client's sleeps are parks, so the server task reading a half-sent request has to park too (a blocking read there would hang the whole scheduler). Also pins serveRouterOn: bound to 127.0.0.1 and reached through it.
 
@@ -13424,7 +13424,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `if-range stale: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz`
 - `head ignores range: 200 len=26 etag="1a-de0b6b3a7640000" lm=Sun, 09 Sep 2001 01:46:40 GMT ar=bytes cr=- body=abcdefghijklmnopqrstuvwxyz`
 - `missing: none`
-- `ctx.file wire: HTTP/1.1 304 Not Modified|Cache-Control: no-cache|ETag: "1a-de0b6b3a7640000"|Last-Modified: Sun, 09 Sep 2001 01:46:40 GMT|Connection: close|Server: milo||`
+- `ctx.file wire: HTTP/1.1 304 Not Modified|Cache-Control: no-cache|ETag: "1a-de0b6b3a7640000"|Last-Modified: Sun, 09 Sep 2001 01:46:40 GMT|Connection: close|Date: <date>||`
 - `ctx.file type: text/plain; charset=utf-8`
 - `ctx.file missing: 404`
 
@@ -13437,14 +13437,14 @@ A conforming implementation shall accept this program, and running it shall writ
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
 - `listening on http://127.0.0.1:47393`
-- `open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n`
-- `poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 1`
+- `open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n`
+- `poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 1`
 - `frame: e\r\ndata: room-7\n\n\r\n`
 - `stream for room-7 ended`
-- `after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nServer: milo\r\n\r\nsent 0`
+- `after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 0`
 - `subscribers left: 0`
-- `unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found`
-- `post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found`
+- `unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found`
+- `post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found`
 
 **Rationale.** Router.stream: a GET route that keeps its connection (server-sent events). The handler opens the stream, files an Outbox for its room, and parks in waitClosed while an ordinary route pushes frames through the outboxes. The server must keep answering other requests meanwhile, the stream task must end once the client hangs up, and an outbox whose client has gone must refuse a send instead of writing anywhere.
 

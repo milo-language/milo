@@ -8,7 +8,22 @@ from "std/http" import {
     Param, Response, renderRaw, renderResponse
 }
 
-pub fn show(s: &string): void {
+// The Date header carries the current time, so its fixed-width IMF-fixdate value
+// (`Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes) is masked; a malformed one stays visible.
+fn maskDate(s: &string): string {
+    let at = s.indexOf("Date: ") ?? -1
+    if at < 0 {
+        return s
+    }
+    let v = at + 6
+    if s.len < v + 29 || s[v + 3] != ',' || s.substr(v + 25, v + 29) != " GMT" {
+        return s
+    }
+    return s.substr(0, v) + "<date>" + s.substr(v + 29, s.len)
+}
+
+pub fn show(raw: &string): void {
+    let s = maskDate(raw)
     var out: string = ""
     for i in 0..s.len {
         if s[i] == '\r' {
@@ -36,7 +51,7 @@ pub fn main(): i32 {
     return 0
 }
 
-// @expect: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nConnection: close\r\nServer: milo\r\n\r\nhi
-// @expect: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
-// @expect: HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\nServer: milo\r\n\r\n{}
-// @expect: HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 3\r\nX-Trace: abc\r\nConnection: close\r\nServer: milo\r\n\r\n<b>
+// @expect: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\nConnection: close\r\nDate: <date>\r\n\r\nhi
+// @expect: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nDate: <date>\r\n\r\n404 Not Found
+// @expect: HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\nDate: <date>\r\n\r\n{}
+// @expect: HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 3\r\nX-Trace: abc\r\nConnection: close\r\nDate: <date>\r\n\r\n<b>

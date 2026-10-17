@@ -27,7 +27,22 @@ pub fn mkCtx(): Context {
     }
 }
 
-pub fn show(s: &string): void {
+// The Date header carries the current time, so its fixed-width IMF-fixdate value
+// (`Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes) is masked; a malformed one stays visible.
+fn maskDate(s: &string): string {
+    let at = s.indexOf("Date: ") ?? -1
+    if at < 0 {
+        return s
+    }
+    let v = at + 6
+    if s.len < v + 29 || s[v + 3] != ',' || s.substr(v + 25, v + 29) != " GMT" {
+        return s
+    }
+    return s.substr(0, v) + "<date>" + s.substr(v + 29, s.len)
+}
+
+pub fn show(raw: &string): void {
+    let s = maskDate(raw)
     var out: string = ""
     for i in 0..s.len {
         if s[i] == '\r' {
@@ -58,6 +73,6 @@ pub fn main(): i32 {
     return 0
 }
 
-// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nLocation: /login\r\nConnection: close\r\nServer: milo\r\n\r\n/login
-// @expect: HTTP/1.1 301 Moved Permanently\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nLocation: https://example.com/\r\nConnection: close\r\nServer: milo\r\n\r\nhttps://example.com/
-// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nX-Note: a  Set-Cookie: session=stolen\r\nLocation: /x    <script>\r\nConnection: close\r\nServer: milo\r\n\r\n/x\r\n\r\n<script>
+// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nLocation: /login\r\nConnection: close\r\nDate: <date>\r\n\r\n/login
+// @expect: HTTP/1.1 301 Moved Permanently\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 20\r\nLocation: https://example.com/\r\nConnection: close\r\nDate: <date>\r\n\r\nhttps://example.com/
+// @expect: HTTP/1.1 302 Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nX-Note: a  Set-Cookie: session=stolen\r\nLocation: /x    <script>\r\nConnection: close\r\nDate: <date>\r\n\r\n/x\r\n\r\n<script>

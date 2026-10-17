@@ -620,10 +620,12 @@ fn headerSafe(s: &string): string {
 // instead of reimplementing it. std/http itself stays OpenSSL-free; that separation is
 // why TLS lives in another module.
 //
-// Header rules: Content-Type and Server are defaults a handler header of the same
-// name (case-insensitive) replaces; an empty `contentType` writes no Content-Type. Content-Length, Connection and Transfer-Encoding
-// describe the framing this function writes, so a handler's copy would contradict
-// the bytes on the wire and is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
+// Header rules: Content-Type and Date (the current time, IMF-fixdate, RFC 9110 6.6.1)
+// are defaults a handler header of the same name (case-insensitive) replaces; no Server
+// header is sent, so the stack is not advertised. An empty `contentType` writes no
+// Content-Type. Content-Length, Connection and Transfer-Encoding describe the framing
+// this function writes, so a handler's copy would contradict the bytes on the wire and
+// is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
 // 6.4.1): those go out with no body, no Content-Length and no Content-Type.
 pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders: &Vec<Param>): string {
     let bodyless = (status >= 100 && status < 200) || status == 204 || status == 304
@@ -643,8 +645,8 @@ pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders:
         resp.pushStr("\r\n" + headerSafe(h.name) + ": " + headerSafe(h.value))
     }
     resp += "\r\nConnection: close"
-    if !hasHeader(extraHeaders, "Server") {
-        resp += "\r\nServer: milo"
+    if !hasHeader(extraHeaders, "Date") {
+        resp += "\r\nDate: " + formatRfc2822(unrecordedEpochMillis())
     }
     resp += "\r\n\r\n"
     if !bodyless {
@@ -1957,6 +1959,9 @@ impl Stream {
             if !isFramingHeader(h.name) {
                 head.pushStr("\r\n" + headerSafe(h.name) + ": " + headerSafe(h.value))
             }
+        }
+        if !hasHeader(headers, "Date") {
+            head.pushStr("\r\nDate: " + formatRfc2822(unrecordedEpochMillis()))
         }
         head.pushStr("\r\nTransfer-Encoding: chunked\r\n\r\n")
         self._head = head
