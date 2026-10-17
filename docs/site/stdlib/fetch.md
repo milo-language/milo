@@ -31,7 +31,13 @@ print(posted.status)
 the connection and then goes quiet hangs the caller. `fetchWithTimeout` bounds the
 connect (with its TLS handshake) and the whole request, redirects included, and answers
 `NetError.Timeout(stage)` instead. `0` leaves either limit off. It works the same on a
-green task and on a plain `main`.
+green task and on a plain `main`. A DNS lookup counts toward the connect limit.
+
+## Response size
+
+A fetch reads at most `FetchOptions.maxBodyBytes` response bytes (64 MiB by default; `0`
+for no limit) and answers `NetError.TooLarge` past that, never a body cut short. `fetchAt`
+takes its own `maxBytes` and truncates instead.
 
 ```milo
 let limits = FetchTimeouts { connectMs: 5000, totalMs: 20000 }
@@ -110,6 +116,7 @@ Fields:
 - `method: string`
 - `headers: string`
 - `body: string`: A `Connection: close` header here opts this request out of the connection pool (see the pool notes in std/fetch); without one, the connection is reused.
+- `maxBodyBytes: i64 = 67108864`: Most response body bytes a fetch reads before giving up with Err(NetError.TooLarge); 0 for no limit. Without a cap a server that never stops sending grows the caller's memory until it is killed. Chunked framing counts toward the limit. (`fetchAt` takes its own `maxBytes`, which truncates instead.)
 
 ### `FetchResponse`
 
@@ -167,8 +174,9 @@ pub struct FetchTimeouts
 
 Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
 connect together with its TLS handshake; `totalMs` bounds the whole call from the
-first connect to the last body byte, redirects included. DNS is not covered: a lookup
-is bounded only by the system resolver's own timeout.
+first connect to the last body byte, redirects included. A DNS lookup is bounded by
+the sooner of the two; the resolver thread itself cannot be cancelled and is left to
+finish on its own.
 
 Separate from FetchOptions because it predates field defaults, when a new field broke
 every FetchOptions literal. Folding it in now (`connectMs: i64 = 0` on FetchOptions)

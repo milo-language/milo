@@ -241,9 +241,11 @@ Send records to stdout.
 fn Log.setTimestamps(enabled: bool): void
 ```
 
-Prepend an ISO-8601 UTC timestamp to every record. On by default; turn it
-off when the sink already stamps lines (journald, a container runtime) or
-when output must be byte-for-byte reproducible.
+Prepend an ISO-8601 UTC timestamp to every record. On by default, except when
+JOURNAL_STREAM is set (systemd sets it when stderr goes to the journal, which
+stamps lines itself); calling this overrides that either way. Turn it off for
+a container runtime that also stamps lines, or when output must be
+byte-for-byte reproducible.
 
 #### `Log.str`
 

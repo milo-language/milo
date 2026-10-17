@@ -23,6 +23,11 @@ one IPv4 address instead (`serveRouterSerialOn` for the serial server): pass
 `"127.0.0.1"` (or `"localhost"`) for an app that only a local reverse proxy should
 reach. The host must be a dotted quad or `"localhost"`; anything else fails at startup.
 
+Like Go's `net/http` and Node's `listen`, the default is every interface, so a service
+behind a reverse proxy (nginx, Caddy) is reachable around it unless a firewall says
+otherwise. Behind a proxy on the same host, use `serveRouterOn("127.0.0.1", ...)` so
+only the proxy can connect.
+
 ### Request limits
 
 The server reads a whole request before calling the handler: the headers up to the
@@ -78,8 +83,10 @@ refuse `..` segments itself.
 
 `ctx.setHeader` adds a header, and these rules apply when the response is written:
 
-- `Content-Type` and `Server` are defaults: a handler header of the same name (any
-  case) replaces the default rather than adding a second one.
+- `Content-Type` and `Date` are defaults: a handler header of the same name (any
+  case) replaces the default rather than adding a second one. `Date` is the current
+  time in IMF-fixdate form (`Sun, 06 Nov 1994 08:49:37 GMT`). No `Server` header is
+  sent.
 - `Content-Length`, `Connection` and `Transfer-Encoding` are written by the server to
   match the bytes it sends, so a handler's copy is dropped. Every response is
   `Connection: close`.
@@ -661,7 +668,7 @@ Knobs for the router server (serveRouterWith).
 Fields:
 
 - `maxConn: i64 = 512`: Most connections served at once. At the cap the server stops calling accept() until one finishes, so the excess waits in the kernel's listen backlog (see the backpressure note on acceptLoop).
-- `drainMs: i64 = 10000`: After SIGTERM: how long requests in flight may keep running before the process exits anyway.
+- `drainMs: i64 = 10000`: After SIGTERM: how long requests in flight may keep running before the process exits anyway, with status 1 (a clean drain exits 0).
 - `readTimeoutMs: i64 = 30000`: How long a client has to send its whole request (headers and body), counted from when the connection's task starts. Without it a client that sends half a request and stalls holds a connection slot forever, and maxConn of them stop the server (slowloris). Not applied to stream or websocket routes once they take over the connection: they have their own timeouts. 0 = no limit.
 - `writeTimeoutMs: i64 = 30000`: How long one response write may wait on a peer that has stopped reading. 0 = no limit.
 
@@ -858,10 +865,12 @@ is not a bare fd — std/https writes through SSL_write — reuses the exact wir
 instead of reimplementing it. std/http itself stays OpenSSL-free; that separation is
 why TLS lives in another module.
 
-Header rules: Content-Type and Server are defaults a handler header of the same
-name (case-insensitive) replaces; an empty `contentType` writes no Content-Type. Content-Length, Connection and Transfer-Encoding
-describe the framing this function writes, so a handler's copy would contradict
-the bytes on the wire and is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
+Header rules: Content-Type and Date (the current time, IMF-fixdate, RFC 9110 6.6.1)
+are defaults a handler header of the same name (case-insensitive) replaces; no Server
+header is sent, so the stack is not advertised. An empty `contentType` writes no
+Content-Type. Content-Length, Connection and Transfer-Encoding describe the framing
+this function writes, so a handler's copy would contradict the bytes on the wire and
+is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
 6.4.1): those go out with no body, no Content-Length and no Content-Type.
 
 #### `renderResponse`

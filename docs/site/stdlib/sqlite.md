@@ -296,6 +296,13 @@ pub fn dbOpen(path: string): Result<Database>
 
 Open or create the database at `path`. `":memory:"` opens an in-memory database.
 
+Also sets the pragmas a small service wants, so every caller does not have to:
+`busy_timeout=5000` (a writer behind another waits up to 5 s instead of failing with
+SQLITE_BUSY), `journal_mode=WAL` (readers keep running during a write; skipped for
+`":memory:"` and `""`, which have no journal file), `synchronous=NORMAL` (safe under
+WAL: a crash can lose the last commits but never corrupts) and `foreign_keys=ON`
+(sqlite leaves them unenforced by default). Errs naming the pragma that failed.
+
 #### `dbQuery`
 
 ```milo

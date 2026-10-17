@@ -71,6 +71,7 @@ Variants:
 - `TlsError(string)`
 - `SendFailed(string)`
 - `Timeout(string)`: A deadline passed; the payload names the stage that was waiting (std/fetch's fetchWithTimeout: "connect", "tls handshake", "send", "response").
+- `TooLarge(string)`: A response body past the cap (std/fetch's FetchOptions.maxBodyBytes); the payload says which limit was hit. The body is dropped, never returned cut short.
 - `Other(string)`
 
 #### `NetError.message`
@@ -360,6 +361,18 @@ returns them. That order is RFC 6724's (which family and which address to try fi
 for this host's routes), so a client connects by trying them front to back, as
 `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
 Recorded as net.resolveall. Off the scheduler thread on a green task, as `resolve` is.
+
+#### `resolveAllBy`
+
+```milo
+pub fn resolveAllBy(hostname: &string, by: i64): Result<Vec<IpAddr>, NetError>
+```
+
+resolveAll that stops waiting at `by` (epoch ms; 0 waits as long as it takes) with
+Err(Timeout("dns")). getaddrinfo cannot be cancelled, so a lookup past its deadline
+is abandoned: its thread finishes on its own and the result is dropped. The bound
+applies on a green task, where the lookup runs on a worker; off one (and under
+record/replay) the call is the plain blocking lookup.
 
 #### `takeInheritedListenFd`
 
