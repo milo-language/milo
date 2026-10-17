@@ -37,10 +37,18 @@ class Launcher:
 
     def spawn(self):
         env = dict(self.env)
-        # sh moves the socket to fd 3 and closes the spare; $$ is the pid exec keeps, which
-        # is what LISTEN_PID has to name.
-        script = f'exec 3<&{self.fd} {self.fd}<&-; LISTEN_PID=$$ LISTEN_FDS=1 exec "$0"'
-        p = subprocess.Popen(["/bin/sh", "-c", script, self.binary], env=env, pass_fds=(self.fd,),
+        # The socket goes onto fd 3 here, in the child before exec, not in the shell: dash
+        # (Ubuntu's /bin/sh) rejects a redirect naming an fd above 9 ("Bad fd number"), so
+        # `exec 3<&10` never started the server on Linux. dup2's copy is inheritable and
+        # pass_fds keeps it past close_fds. sh is left only for $$, the pid exec keeps,
+        # which is what LISTEN_PID has to name.
+        src = self.fd
+
+        def to_fd3():
+            os.dup2(src, 3)
+
+        p = subprocess.Popen(["/bin/sh", "-c", 'LISTEN_PID=$$ LISTEN_FDS=1 exec "$0"', self.binary], env=env,
+                             pass_fds=(3,), preexec_fn=to_fd3,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.current = p
         return p
