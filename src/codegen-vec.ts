@@ -285,7 +285,10 @@ const I64_1 = val("1", Ty.i64);
 const I32_0 = val("0", Ty.i32);
 const I32_1 = val("1", Ty.i32);
 
-// Same as genVecMethodPreamble but hands back typed values for builder-based callers.
+// Extract closure fn/env and vec data/len for functional methods.
+// `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
+// after the loop: every combinator reads elements in place or deep-clones them out, so
+// once it has finished nothing points into the receiver and nothing else will free it.
 function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
   fnPtr: Val; envPtr: Val; data: Val; len: Val; elemTy: Ty; release: () => void;
 } {
@@ -303,18 +306,6 @@ function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemTyp
   const envPtr = b.extractvalue(cb, 1, Ty.ptr);
   const release = () => ctx.dropOwnedTemp(lines, vv, "%Vec", vecExpr);
   return { fnPtr, envPtr, data, len, elemTy: Ty.of(ctx.llvmType(elemType)), release };
-}
-
-// shared helper: extract closure fn/env and vec data/len for functional methods
-// `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
-// after the loop: every combinator reads elements in place or deep-clones them out, so
-// once it has finished nothing points into the receiver and nothing else will free it.
-// String-valued for the callers still in codegen.ts.
-export function genVecMethodPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
-  fnPtr: string; envPtr: string; data: string; len: string; elemTy: string; release: () => void;
-} {
-  const p = vecPreamble(ctx, vecExpr, cbExpr, elemType, lines);
-  return { fnPtr: p.fnPtr.ref, envPtr: p.envPtr.ref, data: p.data.ref, len: p.len.ref, elemTy: p.elemTy.ll, release: p.release };
 }
 
 // What callbackElemArg (codegen.ts) hands the callback, as a typed value.
@@ -1015,69 +1006,58 @@ export function genVecPosition(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPosi
 export function genVecTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecTruncate" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemType = expr.elementType;
-  const elemTy = ctx.llvmType(elemType);
+  const elemTy = Ty.of(ctx.llvmType(elemType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
   const [nLines, nRaw] = ctx.genExpr(expr.length);
   lines.push(...nLines);
 
+  const b = new LlvmTextBuilder(lines, ctx);
   // A negative length means empty; a length past the end is a no-op, never a grow.
-  const isNeg = ctx.nextTemp();
-  lines.push(`  ${isNeg} = icmp slt i64 ${nRaw}, 0`);
-  const n = ctx.nextTemp();
-  lines.push(`  ${n} = select i1 ${isNeg}, i64 0, i64 ${nRaw}`);
+  const isNeg = b.icmp("slt", val(nRaw, Ty.i64), I64_0);
+  const n = b.select(isNeg, I64_0, val(nRaw, Ty.i64));
 
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const len = b.load(Ty.i64, lenPtr);
 
-  const doneLabel = ctx.nextLabel("vec.trunc.done");
-  const startLabel = ctx.nextLabel("vec.trunc.start");
-  const noop = ctx.nextTemp();
-  lines.push(`  ${noop} = icmp uge i64 ${n}, ${len}`);
-  lines.push(`  br i1 ${noop}, label %${doneLabel}, label %${startLabel}`);
-  lines.push(`${startLabel}:`);
+  const doneLabel = b.newBlock("vec.trunc.done");
+  const startLabel = b.newBlock("vec.trunc.start");
+  const noop = b.icmp("uge", n, len);
+  b.condBr(noop, doneLabel, startLabel);
+  b.position(startLabel);
 
   if (ctx.needsDropCg(elemType)) {
-    const dataPtr = ctx.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const data = ctx.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+    const data = b.load(Ty.ptr, dataPtr);
 
-    const iAddr = `%__trunc_i.${ctx.scopeCounter++}.addr`;
-    ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
-    lines.push(`  store i64 ${n}, ptr ${iAddr}`);
+    const iAddr = b.entryAlloca(`%__trunc_i.${ctx.scopeCounter++}.addr`, Ty.i64);
+    b.store(n, iAddr);
 
-    const condLabel = ctx.nextLabel("vec.trunc.cond");
-    const bodyLabel = ctx.nextLabel("vec.trunc.body");
-    const finLabel = ctx.nextLabel("vec.trunc.fin");
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const i = ctx.nextTemp();
-    lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-    const cont = ctx.nextTemp();
-    lines.push(`  ${cont} = icmp ult i64 ${i}, ${len}`);
-    lines.push(`  br i1 ${cont}, label %${bodyLabel}, label %${finLabel}`);
+    const condLabel = b.newBlock("vec.trunc.cond");
+    const bodyLabel = b.newBlock("vec.trunc.body");
+    const finLabel = b.newBlock("vec.trunc.fin");
+    b.br(condLabel);
+    b.position(condLabel);
+    const i = b.load(Ty.i64, iAddr);
+    const cont = b.icmp("ult", i, len);
+    b.condBr(cont, bodyLabel, finLabel);
 
-    lines.push(`${bodyLabel}:`);
-    const elemPtr = ctx.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
-    ctx.emitDropValue(lines, elemPtr, elemType);
-    const iNow = ctx.nextTemp();
-    lines.push(`  ${iNow} = load i64, ptr ${iAddr}`);
-    const iNext = ctx.nextTemp();
-    lines.push(`  ${iNext} = add i64 ${iNow}, 1`);
-    lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
-    lines.push(`  br label %${condLabel}`);
+    b.position(bodyLabel);
+    const elemPtr = b.gep(elemTy, data, [i]);
+    ctx.emitDropValue(lines, elemPtr.ref, elemType);
+    const iNow = b.load(Ty.i64, iAddr);
+    const iNext = b.binop("add", iNow, I64_1);
+    b.store(iNext, iAddr);
+    b.br(condLabel);
 
-    lines.push(`${finLabel}:`);
+    b.position(finLabel);
   }
 
-  lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
-  lines.push(`  br label %${doneLabel}`);
-  lines.push(`${doneLabel}:`);
+  b.store(n, lenPtr);
+  b.br(doneLabel);
+  b.position(doneLabel);
   return [lines, "void", "void"];
 }
 
@@ -1085,40 +1065,36 @@ export function genVecSwap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSwap" },
   ctx.hasVecType = true;
   ctx.needsMemcpy = true;
   const elemType = expr.elementType;
-  const elemSize = ctx.typeSizeOf(elemType);
-  const elemTy = ctx.llvmType(elemType);
+  const elemSize = val(String(ctx.typeSizeOf(elemType)), Ty.i64);
+  const elemTy = Ty.of(ctx.llvmType(elemType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
 
-  const aVal = ctx.genBoundI64(expr.indexA, lines);
-  const bVal = ctx.genBoundI64(expr.indexB, lines);
+  const aVal = val(ctx.genBoundI64(expr.indexA, lines), Ty.i64);
+  const bVal = val(ctx.genBoundI64(expr.indexB, lines), Ty.i64);
 
+  const b = new LlvmTextBuilder(lines, ctx);
   // Both indices are bounds-checked. This GEP'd straight into the buffer and memcpy'd
   // three times with no length load at all, so `v.swap(0, 999999)` was an out-of-bounds
   // read AND write from safe code that exited 0. Every other indexed Vec operation
   // checks; this one was simply missed.
-  const lenPtrB = ctx.nextTemp();
-  lines.push(`  ${lenPtrB} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const lenB = ctx.nextTemp();
-  lines.push(`  ${lenB} = load i64, ptr ${lenPtrB}`);
-  for (const idx of [aVal, bVal]) ctx.emitBoundsCheck(lines, idx, lenB, expr.span);
+  const lenPtrB = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const lenB = b.load(Ty.i64, lenPtrB);
+  for (const idx of [aVal, bVal]) ctx.emitBoundsCheck(lines, idx.ref, lenB.ref, expr.span);
 
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const data = b.load(Ty.ptr, dataPtr);
 
-  const ptrA = ctx.nextTemp();
-  lines.push(`  ${ptrA} = getelementptr ${elemTy}, ptr ${data}, i64 ${aVal}`);
-  const ptrB = ctx.nextTemp();
-  lines.push(`  ${ptrB} = getelementptr ${elemTy}, ptr ${data}, i64 ${bVal}`);
+  const ptrA = b.gep(elemTy, data, [aVal]);
+  const ptrB = b.gep(elemTy, data, [bVal]);
 
-  const tmpAddr = `%__swap_tmp.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${ptrA}, i64 ${elemSize}, i1 false)`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrA}, ptr ${ptrB}, i64 ${elemSize}, i1 false)`);
-  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrB}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
+  const tmpAddr = b.entryAlloca(`%__swap_tmp.${ctx.scopeCounter++}.addr`, elemTy);
+  const noVolatile = val("false", Ty.i1);
+  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [tmpAddr, ptrA, elemSize, noVolatile]);
+  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [ptrA, ptrB, elemSize, noVolatile]);
+  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [ptrB, tmpAddr, elemSize, noVolatile]);
 
   return [lines, "void", "void"];
 }
@@ -1128,180 +1104,170 @@ export function genVecRemove(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRemove
   ctx.needsDprintf = true;
   ctx.needsExit = true;
 
-  const elemSize = ctx.typeSizeOf(expr.elementType);
-  const elemTy = ctx.llvmType(expr.elementType);
+  const elemSize = val(String(ctx.typeSizeOf(expr.elementType)), Ty.i64);
+  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
-  const [idxLines, idxVal] = ctx.genExpr(expr.index);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
+  const [idxLines, idxRef] = ctx.genExpr(expr.index);
   lines.push(...idxLines);
+  const idxVal = val(idxRef, Ty.i64);
 
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const len = b.load(Ty.i64, lenPtr);
 
   // bounds: index must be < len
-  const oob = ctx.nextTemp();
-  lines.push(`  ${oob} = icmp uge i64 ${idxVal}, ${len}`);
-  const panicLabel = ctx.nextLabel("vec.remove.panic");
-  const okLabel = ctx.nextLabel("vec.remove.ok");
-  lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${okLabel}`);
+  const oob = b.icmp("uge", idxVal, len);
+  const panicLabel = b.newBlock("vec.remove.panic");
+  const okLabel = b.newBlock("vec.remove.ok");
+  b.condBr(oob, panicLabel, okLabel);
 
-  lines.push(`${panicLabel}:`);
+  b.position(panicLabel);
   const span = expr.span;
   const { label: errLabel, length: errLen } = ctx.addString(`remove index out of bounds at ${ctx.panicAt(span)}\n`);
-  const errPtr = ctx.nextTemp();
-  lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-  ctx.emitFdPrintf(lines, 2, errPtr, "");
+  const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [I32_0, I32_0]);
+  ctx.emitFdPrintf(lines, 2, errPtr.ref, "");
   ctx.panicAbort(lines);
-  lines.push(`  unreachable`);
+  b.unreachable();
 
-  lines.push(`${okLabel}:`);
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxVal}`);
-  const val = ctx.nextTemp();
-  lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
+  b.position(okLabel);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const data = b.load(Ty.ptr, dataPtr);
+  const elemPtr = b.gep(elemTy, data, [idxVal]);
+  const elem = b.load(elemTy, elemPtr);
 
   // shift [index+1, len) left by one
-  const idxPlus1 = ctx.nextTemp();
-  lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
-  const srcPtr = ctx.nextTemp();
-  lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxPlus1}`);
-  const tailCount = ctx.nextTemp();
-  lines.push(`  ${tailCount} = sub i64 ${len}, ${idxPlus1}`);
-  const tailBytes = ctx.nextTemp();
-  lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
-  lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${elemPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
-  const newLen = ctx.nextTemp();
-  lines.push(`  ${newLen} = sub i64 ${len}, 1`);
-  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+  const idxPlus1 = b.binop("add", idxVal, I64_1);
+  const srcPtr = b.gep(elemTy, data, [idxPlus1]);
+  const tailCount = b.binop("sub", len, idxPlus1);
+  const tailBytes = b.binop("mul", tailCount, elemSize);
+  b.callDiscard(Ty.void, "@llvm.memmove.p0.p0.i64", [elemPtr, srcPtr, tailBytes, val("false", Ty.i1)]);
+  const newLen = b.binop("sub", len, I64_1);
+  b.store(newLen, lenPtr);
 
-  return [lines, val, elemTy];
+  return [lines, elem.ref, elemTy.ll];
 }
 
 export function genVecContains(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecContains" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemType = expr.elementType;
-  const elemTy = ctx.llvmType(elemType);
+  const elemTy = Ty.of(ctx.llvmType(elemType));
 
-  const [vecLines, vecVal] = ctx.genExpr(expr.vec);
+  const [vecLines, vecRef] = ctx.genExpr(expr.vec);
   lines.push(...vecLines);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = extractvalue %Vec ${vecVal}, 0`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = extractvalue %Vec ${vecVal}, 1`);
+  const vecVal = val(vecRef, VEC_TY);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const data = b.extractvalue(vecVal, 0, Ty.ptr);
+  const len = b.extractvalue(vecVal, 1, Ty.i64);
 
-  const [valLines, valVal, valLt] = ctx.genExpr(expr.value);
+  const [valLines, valRef, valLt] = ctx.genExpr(expr.value);
   lines.push(...valLines);
+  const needle = val(valRef, Ty.of(valLt));
 
-  const resultAddr = `%__contains_result.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${resultAddr} = alloca i1`);
-  lines.push(`  store i1 false, ptr ${resultAddr}`);
+  const resultAddr = b.entryAlloca(`%__contains_result.${ctx.scopeCounter++}.addr`, Ty.i1);
+  b.store(val("false", Ty.i1), resultAddr);
 
-  const idxAddr = `%__contains_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const idxAddr = b.entryAlloca(`%__contains_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("contains.cond");
-  const bodyLabel = ctx.nextLabel("contains.body");
-  const foundLabel = ctx.nextLabel("contains.found");
-  const nextLabel = ctx.nextLabel("contains.next");
-  const endLabel = ctx.nextLabel("contains.end");
+  const condLabel = b.newBlock("contains.cond");
+  const bodyLabel = b.newBlock("contains.body");
+  const foundLabel = b.newBlock("contains.found");
+  const nextLabel = b.newBlock("contains.next");
+  const endLabel = b.newBlock("contains.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
 
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
 
   if (elemType.tag === "string") {
     ctx.needsMemcmp = true;
-    const elemVal = ctx.nextTemp();
-    lines.push(`  ${elemVal} = load %String, ptr ${elemPtr}`);
-    const [, cmpResult] = genStringCmp(ctx, lines, elemVal, valVal, true);
-    lines.push(`  br i1 ${cmpResult}, label %${foundLabel}, label %${nextLabel}`);
+    const elemVal = b.load(Ty.of("%String"), elemPtr);
+    const [, cmpResult] = genStringCmp(ctx, lines, elemVal.ref, needle.ref, true);
+    b.condBr(val(cmpResult, Ty.i1), foundLabel, nextLabel);
   } else {
-    const elemVal = ctx.nextTemp();
-    lines.push(`  ${elemVal} = load ${valLt}, ptr ${elemPtr}`);
-    const eq = ctx.nextTemp();
-    if (elemType.tag === "float") {
-      lines.push(`  ${eq} = fcmp oeq ${valLt} ${elemVal}, ${valVal}`);
-    } else {
-      lines.push(`  ${eq} = icmp eq ${valLt} ${elemVal}, ${valVal}`);
-    }
-    lines.push(`  br i1 ${eq}, label %${foundLabel}, label %${nextLabel}`);
+    const elemVal = b.load(needle.ty, elemPtr);
+    const eq = elemType.tag === "float" ? b.fcmp("oeq", elemVal, needle) : b.icmp("eq", elemVal, needle);
+    b.condBr(eq, foundLabel, nextLabel);
   }
 
-  lines.push(`${foundLabel}:`);
-  lines.push(`  store i1 true, ptr ${resultAddr}`);
-  lines.push(`  br label %${endLabel}`);
+  b.position(foundLabel);
+  b.store(val("true", Ty.i1), resultAddr);
+  b.br(endLabel);
 
-  lines.push(`${nextLabel}:`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
+  b.position(nextLabel);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
 
-  lines.push(`${endLabel}:`);
-  const result = ctx.nextTemp();
-  lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+  b.position(endLabel);
+  const result = b.load(Ty.i1, resultAddr);
   // Same as the map lookups: the needle is the caller's, and a read-only search takes
   // no ownership of it. `v.contains("s" + i.toString())` leaked the needle per call.
-  ctx.dropOwnedTemp(lines, valVal, valLt, expr.value);
+  ctx.dropOwnedTemp(lines, needle.ref, valLt, expr.value);
   // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
   // container. A search keeps no pointer into it once the answer is a scalar.
-  ctx.dropOwnedTemp(lines, vecVal, "%Vec", expr.vec);
-  return [lines, result, "i1"];
+  ctx.dropOwnedTemp(lines, vecVal.ref, "%Vec", expr.vec);
+  return [lines, result.ref, "i1"];
 }
 
 export function genVecEnumerate(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecEnumerate" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
+  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
-  const idxAddr = `%__enum_idx.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxAddr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const idxAddr = b.entryAlloca(`%__enum_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
+  b.store(I64_0, idxAddr);
 
-  const condLabel = ctx.nextLabel("enum.cond");
-  const bodyLabel = ctx.nextLabel("enum.body");
-  const endLabel = ctx.nextLabel("enum.end");
+  const condLabel = b.newBlock("enum.cond");
+  const bodyLabel = b.newBlock("enum.body");
+  const endLabel = b.newBlock("enum.end");
 
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${condLabel}:`);
-  const idx = ctx.nextTemp();
-  lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-  const cmp = ctx.nextTemp();
-  lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-  lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-  lines.push(`${bodyLabel}:`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-  const cbArg = ctx.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy, 1);
-  lines.push(`  call void ${fnPtr}(ptr ${envPtr}, i64 ${idx}, ${cbArg.argTy} ${cbArg.arg})`);
-  const nextIdx = ctx.nextTemp();
-  lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-  lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-  lines.push(`  br label %${condLabel}`);
-  lines.push(`${endLabel}:`);
+  b.br(condLabel);
+  b.position(condLabel);
+  const idx = b.load(Ty.i64, idxAddr);
+  const cmp = b.icmp("ult", idx, len);
+  b.condBr(cmp, bodyLabel, endLabel);
+  b.position(bodyLabel);
+  const elemPtr = b.gep(elemTy, data, [idx]);
+  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll, 1));
+  b.callDiscard(Ty.void, fnPtr.ref, [envPtr, idx, cbArg]);
+  const nextIdx = b.binop("add", idx, I64_1);
+  b.store(nextIdx, idxAddr);
+  b.br(condLabel);
+  b.position(endLabel);
   release();
   return [lines, "void", "void"];
+}
+
+// The `bad` condition shared by the Vec and array slice range checks: start < 0, end < start,
+// or end > len.
+function sliceRangeBad(b: LlvmTextBuilder, start: Val, end: Val, len: Val): Val {
+  const badStart = b.icmp("slt", start, I64_0);
+  const badOrder = b.icmp("slt", end, start);
+  const badEnd = b.icmp("sgt", end, len);
+  const bad0 = b.binop("or", badStart, badOrder);
+  return b.binop("or", bad0, badEnd);
+}
+
+// Builds the non-owning %Vec view { ptr, len, cap = 0 }.
+function sliceView(b: LlvmTextBuilder, ptr: Val, len: Val): Val {
+  const s0 = b.insertvalue(val("undef", VEC_TY), ptr, 0);
+  const s1 = b.insertvalue(s0, len, 1);
+  return b.insertvalue(s1, I64_0, 2);
 }
 
 // v.slice(a, b) / v[a..b] — non-owning view: same %Vec rep with adjusted ptr/len
 // and cap=0, so drop glue skips free (the source still owns the buffer).
 export function genVecSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): Gen {
   ctx.hasVecType = true;
-  const elemTy = ctx.llvmType(expr.elementType);
+  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
 
   // fixed-size array source: the view points into the array's own storage, and
   // the length bound is the static extent N (there is no %Vec len field to read)
@@ -1309,55 +1275,36 @@ export function genVecSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" 
     return genArraySlice(ctx, expr, lines);
   }
 
-  const [vLines, vVal] = ctx.genExpr(expr.vec);
+  const [vLines, vRef] = ctx.genExpr(expr.vec);
   lines.push(...vLines);
-  const startVal = ctx.genBoundI64(expr.start, lines);
-  const endVal = ctx.genBoundI64(expr.end, lines);
+  const vVal = val(vRef, VEC_TY);
+  const startVal = val(ctx.genBoundI64(expr.start, lines), Ty.i64);
+  const endVal = val(ctx.genBoundI64(expr.end, lines), Ty.i64);
 
   // bounds check against the source Vec's len (field 1), mirroring string slices
   ctx.needsPrintf = true;
   ctx.needsExit = true;
-  const lenVal = ctx.nextTemp();
-  lines.push(`  ${lenVal} = extractvalue %Vec ${vVal}, 1`);
-  const badStart = ctx.nextTemp();
-  lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
-  const badOrder = ctx.nextTemp();
-  lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
-  const badEnd = ctx.nextTemp();
-  lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${lenVal}`);
-  const bad0 = ctx.nextTemp();
-  lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
-  const bad = ctx.nextTemp();
-  lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
-  const panicLabel = ctx.nextLabel("vecslice.panic");
-  const okLabel = ctx.nextLabel("vecslice.ok");
-  lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
-  lines.push(`${panicLabel}:`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const lenVal = b.extractvalue(vVal, 1, Ty.i64);
+  const bad = sliceRangeBad(b, startVal, endVal, lenVal);
+  const panicLabel = b.newBlock("vecslice.panic");
+  const okLabel = b.newBlock("vecslice.ok");
+  b.condBr(bad, panicLabel, okLabel);
+  b.position(panicLabel);
   const { label: errLabel, length: errLen } = ctx.addString(
     `milo: slice range out of bounds: %lld..%lld (len %lld) at ${ctx.panicAt(expr.span)}\n`,
   );
-  const errPtr = ctx.nextTemp();
-  lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-  ctx.emitFdPrintf(lines, 2, errPtr, `, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal}`);
+  const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [I32_0, I32_0]);
+  ctx.emitFdPrintf(lines, 2, errPtr.ref, `, i64 ${startVal.ref}, i64 ${endVal.ref}, i64 ${lenVal.ref}`);
   ctx.panicAbort(lines);
-  lines.push(`  unreachable`);
-  lines.push(`${okLabel}:`);
+  b.unreachable();
+  b.position(okLabel);
 
-  const subLen = ctx.nextTemp();
-  lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-  const srcPtr = ctx.nextTemp();
-  lines.push(`  ${srcPtr} = extractvalue %Vec ${vVal}, 0`);
-  const slicePtr = ctx.nextTemp();
-  lines.push(`  ${slicePtr} = getelementptr ${elemTy}, ptr ${srcPtr}, i64 ${startVal}`);
+  const subLen = b.binop("sub", endVal, startVal);
+  const srcPtr = b.extractvalue(vVal, 0, Ty.ptr);
+  const slicePtr = b.gep(elemTy, srcPtr, [startVal]);
 
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
-
-  return [lines, s2, "%Vec"];
+  return [lines, sliceView(b, slicePtr, subLen).ref, "%Vec"];
 }
 
 // Slice a fixed-size array into a non-owning %Vec view (cap=0) pointing at the
@@ -1367,63 +1314,45 @@ function genArraySlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" }, li
   // Not a place (`mk().sum()` on a returned [T; N]): genLValue has no address for it,
   // so the value goes to a frame slot of its own and the view points there.
   if (arrPtr === "null") {
-    const [vLines, val, valTy] = ctx.genExpr(expr.vec);
-    const slot = `%__arrtmp.${ctx.scopeCounter++}.addr`;
-    ctx.entryAllocas.push(`  ${slot} = alloca ${valTy}`);
-    aLines = [...vLines, ctx.valStore(valTy, val, slot, ctx.own.valIntent(val, expr.vec.type))];
+    const [vLines, valRef, valTy] = ctx.genExpr(expr.vec);
+    const slot = new LlvmTextBuilder(lines, ctx).entryAlloca(`%__arrtmp.${ctx.scopeCounter++}.addr`, Ty.of(valTy));
+    aLines = [...vLines, ctx.valStore(valTy, valRef, slot.ref, ctx.own.valIntent(valRef, expr.vec.type))];
     // An array of owned elements (`f([$"a{i}", "b"])`) leaked every element: nothing
     // dropped the slot. The view may outlive the statement (a slice binding), so the
     // slot is dropped at the enclosing block's exit, not after the call.
     if (ctx.needsDropCg(expr.vec.type)) {
-      ctx.own.valToSlot(val, slot);
-      ctx.registerScopedTemp(aLines, slot, expr.vec.type);
+      ctx.own.valToSlot(valRef, slot.ref);
+      ctx.registerScopedTemp(aLines, slot.ref, expr.vec.type);
     }
-    arrPtr = slot;
+    arrPtr = slot.ref;
     arrTy = valTy;
   }
   lines.push(...aLines);
-  const startVal = ctx.genBoundI64(expr.start, lines);
-  const endVal = ctx.genBoundI64(expr.end, lines);
+  const startVal = val(ctx.genBoundI64(expr.start, lines), Ty.i64);
+  const endVal = val(ctx.genBoundI64(expr.end, lines), Ty.i64);
 
   const match = arrTy.match(/\[(\d+) x .+\]/);
   const size = match ? parseInt(match[1]) : 0;
 
   ctx.needsPrintf = true;
   ctx.needsExit = true;
-  const badStart = ctx.nextTemp();
-  lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
-  const badOrder = ctx.nextTemp();
-  lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
-  const badEnd = ctx.nextTemp();
-  lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${size}`);
-  const bad0 = ctx.nextTemp();
-  lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
-  const bad = ctx.nextTemp();
-  lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
-  const panicLabel = ctx.nextLabel("arrslice.panic");
-  const okLabel = ctx.nextLabel("arrslice.ok");
-  lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
-  lines.push(`${panicLabel}:`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const bad = sliceRangeBad(b, startVal, endVal, val(String(size), Ty.i64));
+  const panicLabel = b.newBlock("arrslice.panic");
+  const okLabel = b.newBlock("arrslice.ok");
+  b.condBr(bad, panicLabel, okLabel);
+  b.position(panicLabel);
   const { label: errLabel, length: errLen } = ctx.addString(
     `milo: slice range out of bounds: %lld..%lld (len ${size}) at ${ctx.panicAt(expr.span)}\n`,
   );
-  const errPtr = ctx.nextTemp();
-  lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-  ctx.emitFdPrintf(lines, 2, errPtr, `, i64 ${startVal}, i64 ${endVal}`);
+  const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [I32_0, I32_0]);
+  ctx.emitFdPrintf(lines, 2, errPtr.ref, `, i64 ${startVal.ref}, i64 ${endVal.ref}`);
   ctx.panicAbort(lines);
-  lines.push(`  unreachable`);
-  lines.push(`${okLabel}:`);
+  b.unreachable();
+  b.position(okLabel);
 
   ctx.hasVecType = true;
-  const subLen = ctx.nextTemp();
-  lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-  const slicePtr = ctx.nextTemp();
-  lines.push(`  ${slicePtr} = getelementptr ${arrTy}, ptr ${arrPtr}, i64 0, i64 ${startVal}`);
-  const s0 = ctx.nextTemp();
-  lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
-  const s1 = ctx.nextTemp();
-  lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
-  const s2 = ctx.nextTemp();
-  lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
-  return [lines, s2, "%Vec"];
+  const subLen = b.binop("sub", endVal, startVal);
+  const slicePtr = b.gep(Ty.of(arrTy), val(arrPtr, Ty.ptr), [I64_0, startVal]);
+  return [lines, sliceView(b, slicePtr, subLen).ref, "%Vec"];
 }
