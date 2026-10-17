@@ -10,6 +10,9 @@
 // at another type just loses). std/os declares them raw against `*SockAddr` and exposes a
 // typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, whose
 // only unsafe is vouching that it still owns the descriptor it hands them.
+from "std/net" import {
+    ignoreSigpipe
+}
 from "std/os" import {
     acceptFd,
     readFd,
@@ -67,6 +70,7 @@ impl UnixStream {
             if path.len > sockAddrUnMaxPath() {
                 return Result.Err("unix socket path too long")
             }
+            ignoreSigpipe()
             var fd: i32 = 0
             unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
             if fd < 0 {
@@ -164,6 +168,7 @@ impl UnixListener {
                 return Result.Err("unix socket path too long")
             }
             unsafe { unlink(path) }
+            ignoreSigpipe()
             var fd: i32 = 0
             unsafe { fd = sysSocket(AF_UNIX, SOCK_STREAM_UNIX, 0) }
             if fd < 0 {

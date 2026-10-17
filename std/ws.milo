@@ -30,7 +30,8 @@ from "std/seal" import {
     Sealed, Shared, sealedWith, sharedWith
 }
 from "std/net" import {
-    TcpStream
+    TcpStream,
+    ignoreSigpipe
 }
 from "std/io" import {
     AsFd
@@ -422,6 +423,7 @@ pub fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
 
+        ignoreSigpipe()
         var fd: i32 = 0
         unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
         if fd < 0 {
@@ -490,6 +492,7 @@ pub fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Resul
     let SOCK_STREAM: i32 = 1
 
     unsafe {
+        ignoreSigpipe()
         let fd = sysSocket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
             return Result.Err("sysSocket() failed")

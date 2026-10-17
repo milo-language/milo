@@ -664,9 +664,9 @@ impl TcpListener {
     // or all-zero for the v6 wildcard "::").
     fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
         unsafe {
+            ignoreSigpipe()
             let inherited = takeInheritedListenFd()
             if inherited >= 0 {
-                ignoreSigpipe()
                 return Result.Ok(TcpListener {
                     _fd: inherited
                 })
