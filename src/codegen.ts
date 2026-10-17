@@ -4490,156 +4490,121 @@ export class Codegen {
   // which the checker has frozen for the whole loop.
   private genForStrView(stmt: HIRStmt & { kind: "ForStrView" }): [string[], boolean] {
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
     this.hasStringType = true;
 
     const [srcLines, srcAddr] = this.genForEachIterableAddr(stmt.src);
     lines.push(...srcLines);
-    const dataPtr = this.nextTemp();
-    const data = this.nextTemp();
-    const lenPtr = this.nextTemp();
-    const len = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${srcAddr}, i32 0, i32 0`);
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${srcAddr}, i32 0, i32 1`);
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const dataPtr = b.gep(STRING_TY, val(srcAddr, Ty.ptr), [i32c(0), i32c(0)]);
+    const data = b.load(Ty.ptr, dataPtr);
+    const lenPtr = b.gep(STRING_TY, val(srcAddr, Ty.ptr), [i32c(0), i32c(1)]);
+    const len = b.load(Ty.i64, lenPtr);
 
     // the separator: an explicit argument for splitView, a literal newline for lines
-    let sepPtr: string;
-    let sepLen: string;
+    let sepPtr: Val;
+    let sepLen: Val;
     if (stmt.mode === "split" && stmt.sep) {
       const [sepLines, sepVal] = this.genExpr(stmt.sep);
       lines.push(...sepLines);
-      sepPtr = this.nextTemp();
-      sepLen = this.nextTemp();
-      lines.push(`  ${sepPtr} = extractvalue %String ${sepVal}, 0`);
-      lines.push(`  ${sepLen} = extractvalue %String ${sepVal}, 1`);
+      sepPtr = b.extractvalue(val(sepVal, STRING_TY), 0, Ty.ptr);
+      sepLen = b.extractvalue(val(sepVal, STRING_TY), 1, Ty.i64);
     } else {
       const { label, length } = this.addString("\n");
-      sepPtr = this.nextTemp();
-      lines.push(`  ${sepPtr} = getelementptr [${length} x i8], ptr ${label}, i32 0, i32 0`);
-      sepLen = "1";
+      sepPtr = b.gep(Ty.of(`[${length} x i8]`), val(label, Ty.ptr), [i32c(0), i32c(0)]);
+      sepLen = i64c(1);
     }
     const findFn = this.strFindFn();
 
     const posAddr = `%__strview_pos.${this.scopeCounter++}.addr`;
     const nextAddr = `%__strview_next.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${posAddr} = alloca i64`);
-    this.entryAllocas.push(`  ${nextAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${posAddr}`);
+    const posSlot = b.entryAlloca(posAddr, Ty.i64);
+    const nextSlot = b.entryAlloca(nextAddr, Ty.i64);
+    b.store(i64c(0), posSlot);
 
     // enumerate form: `for i, line in text.lines()` binds the piece to the second name
     const viewName = stmt.varName2 ?? stmt.varName;
     const varAddr = this.allocaName(viewName);
-    this.entryAllocas.push(`  ${varAddr} = alloca %String`);
+    const varSlot = b.entryAlloca(varAddr, STRING_TY);
     const savedLoopLocals = [this.bindLoopLocal(viewName, { type: "%String", typeKind: stmt.varType, mutable: false, isRef: false, addr: varAddr })];
-    let idxAddr: string | null = null;
+    let idxSlot: Val | null = null;
     if (stmt.varName2) {
-      idxAddr = `%__strview_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
+      const idxAddr = `%__strview_idx.${this.scopeCounter++}.addr`;
+      idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+      b.store(i64c(0), idxSlot);
       savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
     }
 
-    const condLabel = this.nextLabel("strview.cond");
-    const bodyLabel = this.nextLabel("strview.body");
-    const incrLabel = this.nextLabel("strview.incr");
-    const endLabel = this.nextLabel("strview.end");
+    const condBlock = b.newBlock("strview.cond");
+    const bodyBlock = b.newBlock("strview.body");
+    const incrBlock = b.newBlock("strview.incr");
+    const endBlock = b.newBlock("strview.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
     const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-    this.loopHeader = incrLabel;
-    this.loopExit = endLabel;
+    this.loopHeader = incrBlock.name;
+    this.loopExit = endBlock.name;
     this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const pos = this.nextTemp();
-    lines.push(`  ${pos} = load i64, ptr ${posAddr}`);
-    const more = this.nextTemp();
+    b.br(condBlock);
+    b.position(condBlock);
+    const pos = b.load(Ty.i64, posSlot);
+    // Drawn before the temps that feed it, as the string codegen did.
+    const more = b.reserveTemp(Ty.i1);
     if (stmt.mode === "lines") {
       // a trailing newline ends the last line, it does not start an empty one
-      lines.push(`  ${more} = icmp slt i64 ${pos}, ${len}`);
+      b.icmp("slt", pos, len, more);
     } else {
       // `pos == len` still yields the piece after a trailing separator ("a," -> "a", "")
-      const inRange = this.nextTemp();
-      const sepEmpty = this.nextTemp();
-      const emptyDone = this.nextTemp();
-      const notEmptyDone = this.nextTemp();
-      lines.push(`  ${inRange} = icmp sle i64 ${pos}, ${len}`);
+      const inRange = b.icmp("sle", pos, len);
       // an empty separator splits into single bytes, which run out one step earlier
-      lines.push(`  ${sepEmpty} = icmp eq i64 ${sepLen}, 0`);
-      lines.push(`  ${emptyDone} = icmp sge i64 ${pos}, ${len}`);
-      lines.push(`  ${notEmptyDone} = xor i1 ${emptyDone}, true`);
-      const okEmpty = this.nextTemp();
-      lines.push(`  ${okEmpty} = select i1 ${sepEmpty}, i1 ${notEmptyDone}, i1 true`);
-      lines.push(`  ${more} = and i1 ${inRange}, ${okEmpty}`);
+      const sepEmpty = b.icmp("eq", sepLen, i64c(0));
+      const emptyDone = b.icmp("sge", pos, len);
+      const notEmptyDone = b.binop("xor", emptyDone, val("true", Ty.i1));
+      const okEmpty = b.select(sepEmpty, notEmptyDone, val("true", Ty.i1));
+      b.binop("and", inRange, okEmpty, more);
     }
-    lines.push(`  br i1 ${more}, label %${bodyLabel}, label %${endLabel}`);
+    b.condBr(more, bodyBlock, endBlock);
 
-    lines.push(`${bodyLabel}:`);
-    const found = this.nextTemp();
-    lines.push(`  ${found} = call i64 ${findFn}(ptr ${data}, i64 ${len}, ptr ${sepPtr}, i64 ${sepLen}, i64 ${pos})`);
+    b.position(bodyBlock);
+    const found = b.call(Ty.i64, findFn, [data, len, sepPtr, sepLen, pos]);
     let sepIdx = found;
     if (stmt.mode === "split") {
       // an empty needle matches at `pos` and would never advance; treat the next byte
       // boundary as the separator instead, which is what strSplit("") yields
-      const sepEmpty2 = this.nextTemp();
-      const posPlus1 = this.nextTemp();
-      const chosen = this.nextTemp();
-      lines.push(`  ${sepEmpty2} = icmp eq i64 ${sepLen}, 0`);
-      lines.push(`  ${posPlus1} = add i64 ${pos}, 1`);
-      lines.push(`  ${chosen} = select i1 ${sepEmpty2}, i64 ${posPlus1}, i64 ${found}`);
-      sepIdx = chosen;
+      const sepEmpty2 = b.icmp("eq", sepLen, i64c(0));
+      const posPlus1 = b.binop("add", pos, i64c(1));
+      sepIdx = b.select(sepEmpty2, posPlus1, found);
     }
-    const hasSep = this.nextTemp();
-    const pieceEnd = this.nextTemp();
-    lines.push(`  ${hasSep} = icmp sge i64 ${sepIdx}, 0`);
-    lines.push(`  ${pieceEnd} = select i1 ${hasSep}, i64 ${sepIdx}, i64 ${len}`);
+    const hasSep = b.icmp("sge", sepIdx, i64c(0));
+    const pieceEnd = b.select(hasSep, sepIdx, len);
 
     let viewEnd = pieceEnd;
     if (stmt.mode === "lines") {
       // CRLF: the '\r' belongs to the line ending, not to the line
-      const nonEmpty = this.nextTemp();
-      const prevIdx = this.nextTemp();
-      const probeIdx = this.nextTemp();
-      const probePtr = this.nextTemp();
-      const probe = this.nextTemp();
-      const isCR = this.nextTemp();
-      const strip = this.nextTemp();
-      const stripped = this.nextTemp();
-      lines.push(`  ${nonEmpty} = icmp sgt i64 ${pieceEnd}, ${pos}`);
-      lines.push(`  ${prevIdx} = sub i64 ${pieceEnd}, 1`);
+      const nonEmpty = b.icmp("sgt", pieceEnd, pos);
+      const prevIdx = b.binop("sub", pieceEnd, i64c(1));
       // clamped so the load stays inside the buffer when the line is empty
-      lines.push(`  ${probeIdx} = select i1 ${nonEmpty}, i64 ${prevIdx}, i64 ${pos}`);
-      lines.push(`  ${probePtr} = getelementptr i8, ptr ${data}, i64 ${probeIdx}`);
-      lines.push(`  ${probe} = load i8, ptr ${probePtr}`);
-      lines.push(`  ${isCR} = icmp eq i8 ${probe}, 13`);
-      lines.push(`  ${strip} = and i1 ${nonEmpty}, ${isCR}`);
-      lines.push(`  ${stripped} = select i1 ${strip}, i64 ${prevIdx}, i64 ${pieceEnd}`);
-      viewEnd = stripped;
+      const probeIdx = b.select(nonEmpty, prevIdx, pos);
+      const probePtr = b.gep(Ty.i8, data, [probeIdx]);
+      const probe = b.load(Ty.i8, probePtr);
+      const isCR = b.icmp("eq", probe, val("13", Ty.i8));
+      const strip = b.binop("and", nonEmpty, isCR);
+      viewEnd = b.select(strip, prevIdx, pieceEnd);
     }
 
-    const viewPtr = this.nextTemp();
-    const viewLen = this.nextTemp();
-    lines.push(`  ${viewPtr} = getelementptr i8, ptr ${data}, i64 ${pos}`);
-    lines.push(`  ${viewLen} = sub i64 ${viewEnd}, ${pos}`);
-    const v0 = this.nextTemp();
-    const v1 = this.nextTemp();
-    const v2 = this.nextTemp();
-    lines.push(`  ${v0} = insertvalue %String undef, ptr ${viewPtr}, 0`);
-    lines.push(`  ${v1} = insertvalue %String ${v0}, i64 ${viewLen}, 1`);
-    lines.push(`  ${v2} = insertvalue %String ${v1}, i64 0, 2`);
-    lines.push(`  store %String ${v2}, ptr ${varAddr}`);
+    const viewPtr = b.gep(Ty.i8, data, [pos]);
+    const viewLen = b.binop("sub", viewEnd, pos);
+    const v0 = b.insertvalue(val("undef", STRING_TY), viewPtr, 0);
+    const v1 = b.insertvalue(v0, viewLen, 1);
+    const v2 = b.insertvalue(v1, i64c(0), 2);
+    b.store(v2, varSlot);
 
     // Computed here, where the search result is live, and read back in the increment
     // block — which `continue` can also reach, from blocks that do not see these values.
-    const afterSep = this.nextTemp();
-    const past = this.nextTemp();
-    const nextPos = this.nextTemp();
-    lines.push(`  ${afterSep} = add i64 ${pieceEnd}, ${sepLen}`);
-    lines.push(`  ${past} = add i64 ${len}, 1`);
-    lines.push(`  ${nextPos} = select i1 ${hasSep}, i64 ${afterSep}, i64 ${past}`);
-    lines.push(`  store i64 ${nextPos}, ptr ${nextAddr}`);
+    const afterSep = b.binop("add", pieceEnd, sepLen);
+    const past = b.binop("add", len, i64c(1));
+    const nextPos = b.select(hasSep, afterSep, past);
+    b.store(nextPos, nextSlot);
 
     this.emitLoopInvariants(lines, stmt.invariants);
 
@@ -4649,22 +4614,19 @@ export class Codegen {
       lines.push(...sl);
       if (t) { bodyTerminated = true; break; }
     }
-    if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${incrLabel}`); }
+    if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(incrBlock); }
 
-    lines.push(`${incrLabel}:`);
-    const advanced = this.nextTemp();
-    lines.push(`  ${advanced} = load i64, ptr ${nextAddr}`);
-    lines.push(`  store i64 ${advanced}, ptr ${posAddr}`);
-    if (idxAddr) {
-      const curIdx = this.nextTemp();
-      const nextIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
-      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    b.position(incrBlock);
+    const advanced = b.load(Ty.i64, nextSlot);
+    b.store(advanced, posSlot);
+    if (idxSlot) {
+      const curIdx = b.load(Ty.i64, idxSlot);
+      const nextIdx = b.binop("add", curIdx, i64c(1));
+      b.store(nextIdx, idxSlot);
     }
-    lines.push(`  br label %${condLabel}`);
+    b.br(condBlock);
 
-    lines.push(`${endLabel}:`);
+    b.position(endBlock);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
     this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
