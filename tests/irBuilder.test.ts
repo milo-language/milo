@@ -211,6 +211,16 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.1 = load i64, ptr %p", "  %t.0 = call i1 %f(ptr %env, i64 %t.1)"]);
   });
 
+  test("fadd takes float operands only, of one type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const d = Ty.of("double");
+    expect(() => b.binop("fadd", val("%a", Ty.i64), val("%b", Ty.i64))).toThrow("fadd on non-float");
+    expect(() => b.binop("fadd", val("%a", d), val("%b", Ty.of("float")))).toThrow("operand types differ");
+    b.binop("fadd", val("%a", d), val("%b", d));
+    expect(lines).toEqual(["  %t.0 = fadd double %a, %b"]);
+  });
+
   test("binop into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);

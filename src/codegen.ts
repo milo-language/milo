@@ -8345,6 +8345,9 @@ export class Codegen {
     const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
     lines.push(...idxLines);
     const idx64 = this.indexToI64(lines, idxVal, idxTy, expr.index.type);
+    const b = new LlvmTextBuilder(lines, this);
+    const vecPtrV = val(vecPtr, Ty.ptr);
+    const vecTy = Ty.of("%Vec");
 
     // The check, unless an enclosing loop already proved this index in range —
     // in which case the length load goes too, which is most of the cost.
@@ -8352,23 +8355,18 @@ export class Codegen {
       this.needsBoundsCheck = true;
       let len = this.hoistedLenFor(expr.object);
       if (len === null) {
-        const lenPtr = this.nextTemp();
-        lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-        len = this.nextTemp();
-        lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+        const lenPtr = b.gep(vecTy, vecPtrV, [val("0", Ty.i32), val("1", Ty.i32)]);
+        len = b.load(Ty.i64, lenPtr).ref;
       }
       this.emitBoundsCheck(lines, idx64, len, expr.span);
     }
 
     // load data pointer and GEP to element
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    const ptr = this.nextTemp();
-    lines.push(`  ${ptr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx64}`);
+    const dataPtr = b.gep(vecTy, vecPtrV, [val("0", Ty.i32), val("0", Ty.i32)]);
+    const data = b.load(Ty.ptr, dataPtr);
+    const ptr = b.gep(Ty.of(elemTy), data, [val(idx64, Ty.i64)]);
 
-    return [lines, ptr, elemTy];
+    return [lines, ptr.ref, elemTy];
   }
 
   // ── HashMap codegen (the lowering itself lives in codegen-map.ts) ──

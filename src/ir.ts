@@ -74,7 +74,7 @@ export interface NameSource {
   entryAllocas?: string[];
 }
 
-export type BinOp = "add" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
+export type BinOp = "add" | "fadd" | "sub" | "mul" | "udiv" | "sdiv" | "urem" | "srem" | "and" | "or" | "xor" | "shl" | "lshr" | "ashr";
 export type ICmpPred = "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge";
 export type FCmpPred = "oeq" | "one" | "olt" | "ole" | "ogt" | "oge";
 export type CastOp = "zext" | "sext" | "trunc" | "ptrtoint" | "inttoptr" | "bitcast";
@@ -243,6 +243,7 @@ export class LlvmTextBuilder implements Builder {
 
   binop(op: BinOp, a: Val, b: Val, dest?: Val): Val {
     this.sameTy(op, a, b);
+    if (op === "fadd" && a.ty.kind !== "float") this.fail(`fadd on non-float ${a.ref} (${a.ty.ll})`);
     return this.defOrDest(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty, dest);
   }
 
