@@ -25,6 +25,11 @@ const isHelperDecl = (l: string) => /^\s+(?:private |public )?emitAllocBytes\(/.
 // is not reachable — but it is an exception, so it is named here rather than tolerated by a
 // loose pattern.
 const ALLOWED_RAW_IR = ["%buf = call ptr @malloc(i64 %cap)"];
+// Both spellings of each half: IR still emitted as text, and the same instruction through the
+// typed builder (src/ir.ts). Matching only the text form let every migrated site drop out of
+// the scan while the test stayed green.
+const MALLOC = /call ptr @malloc|"@malloc"/;
+const MUL = /= mul i64|binop\("mul"/;
 
 describe("allocation choke point", () => {
   const src = readFileSync(SRC, "utf8");
@@ -40,12 +45,12 @@ describe("allocation choke point", () => {
       const helperStart = fl.findIndex(isHelperDecl);
       const helperEnd = helperStart < 0 ? -1 : helperStart + 60;
       fl.forEach((line, i) => {
-        if (!line.includes("call ptr @malloc")) return;
+        if (!MALLOC.test(line)) return;
         if (i >= helperStart && i <= helperEnd) return;
         if (ALLOWED_RAW_IR.some(a => line.includes(a))) return;
         // A multiply within the preceding window is what produced a byte count.
         const window = fl.slice(Math.max(0, i - 10), i).join("\n");
-        if (/= mul i64/.test(window)) {
+        if (MUL.test(window)) {
           offenders.push(`${file}:${i + 1}: ${line.trim()}`);
         }
       });
