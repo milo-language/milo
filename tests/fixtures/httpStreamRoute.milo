@@ -14,7 +14,7 @@
 // @expect: unknown room: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
 // @expect: post to stream path: HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\nConnection: close\r\nServer: milo\r\n\r\n404 Not Found
 from "std/http" import {
-    Context, Outbox, Param, Response, Router, Stream, serveRouterConcurrentOn
+    Context, Outbox, Param, Response, Router, Stream, serveRouterOn
 }
 from "std/net" import {
     TcpStream, ip4
@@ -104,6 +104,6 @@ pub fn main(): i32 {
     Task.spawn(move(): void => {
         clients()
     })
-    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    serveRouterOn("127.0.0.1", PORT, r)!
     return 1
 }

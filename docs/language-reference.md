@@ -4768,8 +4768,7 @@ Milo includes a Hono-inspired HTTP server in `std/http` with a router, context o
 
 The server reads the whole request (headers, then the body, framed by `Content-Length` or
 chunked, gzip/deflate decoded) before a handler runs; static files with ETags and ranges
-(`ctx.file`), request limits, binding one address (`serveRouterOn`,
-`serveRouterConcurrentOn`) and the response-header rules are on the
+(`ctx.file`), request limits, binding one address (`serveRouterOn`) and the response-header rules are on the
 [std/http page](site/stdlib/http.md).
 
 ### Basic Server

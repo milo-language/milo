@@ -30,7 +30,7 @@
 // @expect: uri too long: 414
 // @expect: still serving: 200 [0 bytes: ; ce=-; cl=-]
 from "std/http" import {
-    Context, Response, Router, serveRouterConcurrentOn
+    Context, Response, Router, serveRouterOn
 }
 from "std/net" import {
     TcpStream, ip4
@@ -137,6 +137,6 @@ pub fn main(): i32 {
     Task.spawn(move(): void => {
         clients()
     })
-    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    serveRouterOn("127.0.0.1", PORT, r)!
     return 1
 }

@@ -8,7 +8,7 @@
 // @expect: closed within bound: true
 // @expect: normal request after: 200
 from "std/http" import {
-    Context, Response, Router, ServeOptions, serveRouterConcurrentWith
+    Context, Response, Router, ServeOptions, serveRouterWith
 }
 from "std/net" import {
     TcpStream, ip4
@@ -85,7 +85,7 @@ pub fn main(): i32 {
         print("watchdog: server never closed the stalled connection")
         exit(1)
     })
-    serveRouterConcurrentWith("127.0.0.1", PORT, r, ServeOptions {
+    serveRouterWith("127.0.0.1", PORT, r, ServeOptions {
         readTimeoutMs: 300
     })!
     return 1

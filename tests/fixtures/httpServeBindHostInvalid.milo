@@ -1,21 +1,21 @@
 // @skip-os: win32
-// serveRouterOn / serveRouterConcurrentOn take the address to bind. A host that is not
+// serveRouterOn / serveRouterSerialOn take the address to bind. A host that is not
 // a dotted quad (or "localhost") fails at startup with the reason, instead of being
 // resolved or silently widened to every interface. The 127.0.0.1 success path is
 // pinned by httpServerRequestBody.
 // @expect: Err: bind() failed: 'example.com' is not an IPv4 address
 // @expect: Err: bind() failed: '127.0.0.256' is not an IPv4 address
 from "std/http" import {
-    Router, serveRouterOn, serveRouterConcurrentOn
+    Router, serveRouterOn, serveRouterSerialOn
 }
 
 pub fn main(): i32 {
     let r = Router.new()
-    match serveRouterOn("example.com", 47392, r) {
+    match serveRouterSerialOn("example.com", 47392, r) {
         Result.Ok(_) => print("Ok")
         Result.Err(e) => print("Err: " + e)
     }
-    match serveRouterConcurrentOn("127.0.0.256", 47392, Router.new()) {
+    match serveRouterOn("127.0.0.256", 47392, Router.new()) {
         Result.Ok(_) => print("Ok")
         Result.Err(e) => print("Err: " + e)
     }

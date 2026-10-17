@@ -1079,7 +1079,7 @@ pub fn serveHandlerExchange(read: (&mut string) => i64, write: (&string) => void
 }
 
 // @internal
-// One request routed through `router` with its body limits, as `serveRouter` answers
+// One request routed through `router` with its body limits, as `serveRouterSerial` answers
 // it, over any transport. std/https's serveRouterTls drives it over TLS.
 pub fn serveRouterExchange(read: (&mut string) => i64, write: (&string) => void, router: &Router): void {
     serveExchange(read, write, router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
@@ -1576,7 +1576,7 @@ impl Router {
     // either `open`s the stream and `send`s chunks for as long as it likes, or answers
     // with an ordinary `respond`. Other tasks reach the client through `conn.outbox()`.
     // The server owns the socket and closes it when the handler returns. Middleware does
-    // not run, and only serveRouterConcurrent honours these routes, since one long-lived
+    // not run, and serveRouterSerial does not honour these routes, since one long-lived
     // stream would stall a server that answers one connection at a time.
     fn stream(self: &mut Self, pattern: string, h: move (&mut Context, &mut Stream) => void): void {
         let paramNames = extractParamNames(pattern)
@@ -1592,8 +1592,8 @@ impl Router {
     // connection as a `WebSocket`; a GET that does not ask falls through to the other
     // routes. Ping, pong and the close handshake are the server's, and so is a heartbeat:
     // a peer silent for a whole 30 s ping interval is dropped. The socket is closed (after
-    // a close frame, if none went out) when the handler returns. As with `stream`, only
-    // serveRouterConcurrent honours these routes.
+    // a close frame, if none went out) when the handler returns. As with `stream`,
+    // serveRouterSerial does not honour these routes.
     fn ws(self: &mut Self, pattern: string, h: move (&mut Context, &mut WebSocket) => void): void {
         let paramNames = extractParamNames(pattern)
         self.sockets.push(WsRoute {
@@ -1683,15 +1683,16 @@ impl Router {
     }
 }
 
-// Start an HTTP server using a Router (headers from Context are sent on the wire),
-// on every interface. Answers one connection at a time.
-pub fn serveRouter(port: u16?, router: &Router): Result<Unit> {
-    return serveRouterOn("0.0.0.0", port, router)
+// serveRouter answering one connection at a time on this thread, on every interface. Pick
+// it for a single-threaded, deterministic test, or a program with no green runtime. In a
+// real server prefer serveRouter: here one stalled client delays all the others and a
+// handler panic aborts the process. Stream and websocket routes are not served.
+pub fn serveRouterSerial(port: u16?, router: &Router): Result<Unit> {
+    return serveRouterSerialOn("0.0.0.0", port, router)
 }
 
-// serveRouter bound to one IPv4 address: "127.0.0.1" (or "localhost") for a server
-// that only a local reverse proxy should reach, "0.0.0.0" for every interface.
-pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
+// serveRouterSerial bound to one IPv4 address (see serveRouterOn).
+pub fn serveRouterSerialOn(host: &string, port: u16?, router: &Router): Result<Unit> {
     let sock = openListener(host, port)?
     let listenFd = listenerFd(sock)
     installDrain(false)
@@ -2517,30 +2518,30 @@ fn armDrain(sel: &mut Select): void {
     }
 }
 
-// Like serveRouter, but each connection is handled in its own green task.
-//
-// serveRouter answers one connection at a time, which is fine while every
-// handler is pure computation over embedded data. It stops being fine the
-// moment a handler talks to the network: one slow upstream then stalls every
-// other client for the whole round trip. Handlers that fetch need this loop.
+// Start an HTTP server using a Router (headers from Context are sent on the wire), on
+// every interface, with each connection handled in its own green task: a slow or stalled
+// client, or a handler that panics (the client gets a 500), does not take the others with
+// it. Stream and websocket routes are served too. See ServeOptions for the connection
+// cap, the request read and response write deadlines, and the SIGTERM drain.
 //
 // Never returns once listening, except by exiting the process 0 after a SIGTERM drain
-// (ServeOptions); a listener that cannot be opened is an Err. The
-// scheduler drives the accept task, the handlers it spawns and any task the caller
-// spawned earlier, exactly as a green-threaded server's main is supposed to.
-pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit> {
-    return serveRouterConcurrentOn("0.0.0.0", port, router)
+// (ServeOptions); a listener that cannot be opened is an Err. The scheduler drives the
+// accept task, the handlers it spawns and any task the caller spawned earlier, exactly
+// as a green-threaded server's main is supposed to.
+pub fn serveRouter(port: u16?, router: Router): Result<Unit> {
+    return serveRouterOn("0.0.0.0", port, router)
 }
 
-// serveRouterConcurrent bound to one IPv4 address (see serveRouterOn).
-pub fn serveRouterConcurrentOn(host: &string, port: u16?, router: Router): Result<Unit> {
-    return serveRouterConcurrentWith(host, port, router, ServeOptions {
+// serveRouter bound to one IPv4 address: "127.0.0.1" (or "localhost") for a server
+// that only a local reverse proxy should reach, "0.0.0.0" for every interface.
+pub fn serveRouterOn(host: &string, port: u16?, router: Router): Result<Unit> {
+    return serveRouterWith(host, port, router, ServeOptions {
     })
 }
 
-// serveRouterConcurrentOn with its limits spelled out: the connection cap and the SIGTERM
+// serveRouterOn with its limits spelled out: the connection cap and the SIGTERM
 // drain deadline (ServeOptions).
-pub fn serveRouterConcurrentWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit> {
+pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit> {
     let sock = openListener(host, port)?
     let listenFd = listenerFd(sock)
     // acceptLoop owns the descriptor from here: it closes it when draining, and a

@@ -2,7 +2,7 @@
 // Env: MAXCONN (default 512), DRAINMS (default 10000), SLOWMS (default 2000), PORT (own bind).
 // /events is a stream parked in waitClosed. / answers "ok"; /slow sleeps SLOWMS then answers "slow"; /max reports the highest
 // concurrency the handlers saw.
-from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterConcurrentWith }
+from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterWith }
 from "std/env" import { Env }
 from "std/time" import { sleepMs }
 from "std/strconv" import { parseInt }
@@ -51,7 +51,7 @@ fn main(): i32 {
     if port > 0 {
         p = Option.Some(port as u16)
     }
-    let r = serveRouterConcurrentWith("127.0.0.1", p, router, opts)
+    let r = serveRouterWith("127.0.0.1", p, router, opts)
     if let Result.Err(m) = r {
         print("server error: " + m)
         return 1

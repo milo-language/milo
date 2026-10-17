@@ -12,11 +12,14 @@ The context lookups (`ctx.param`, `ctx.query`, `ctx.header`, `ctx.cookie`) retur
 distinction does not matter (`ctx.query("q") ?? ""`), and bind with `let ... else` when
 it does.
 
-`serveRouter` answers one connection at a time; `serveRouterConcurrent` gives each
-connection its own green task, which handlers that call the network need.
+`serveRouter` gives each connection its own green task, so a slow client or a handler
+that calls the network does not stall the others, and a handler panic answers that client
+500 instead of aborting the process. `serveRouterSerial` answers one connection at a time
+on the calling thread: for single-threaded deterministic tests, or a program with no green
+runtime (it does not serve stream or websocket routes).
 
-Both bind every interface (0.0.0.0). `serveRouterOn(host, port, router)` and
-`serveRouterConcurrentOn(host, port, router)` bind one IPv4 address instead: pass
+`serveRouter` binds every interface (0.0.0.0). `serveRouterOn(host, port, router)` binds
+one IPv4 address instead (`serveRouterSerialOn` for the serial server): pass
 `"127.0.0.1"` (or `"localhost"`) for an app that only a local reverse proxy should
 reach. The host must be a dotted quad or `"localhost"`; anything else fails at startup.
 
@@ -42,8 +45,12 @@ before the body is read. Requests the server refuses without running a handler:
 | a transfer coding other than `chunked` (and `identity`) | 501 |
 | an HTTP version other than 1.x | 505 |
 
-There is no read timeout yet: a client that stops sending mid-request holds its
-connection (and, under `serveRouter`, the whole server) until it closes.
+A client has `readTimeoutMs` (default 30 s) to send its whole request, headers and body;
+past it the connection is closed without a response, so half-sent requests cannot hold
+connection slots (slowloris). `writeTimeoutMs` (30 s) bounds one response write to a peer
+that has stopped reading. 0 turns either off. Stream and websocket routes are not bound by
+them once they take over the connection. Both are `ServeOptions` fields, passed to
+`serveRouterWith`; `serveRouterSerial` uses the defaults.
 
 ### Static files
 
@@ -149,7 +156,7 @@ fn profileHandler(ctx: &mut Context): Response {
 
 ### Server-sent events and websockets
 
-`r.stream` and `r.ws` routes keep their connection, under `serveRouterConcurrent`. The
+`r.stream` and `r.ws` routes keep their connection, under `serveRouter`. The
 server owns the socket: the handler gets a `Stream` or `WebSocket` to talk through, and
 the socket is closed when the handler returns. Another task (a broadcast, a timer) never
 touches the socket either. It keeps an `Outbox` from `conn.outbox()` or `ws.outbox()`:
@@ -163,7 +170,7 @@ A stream sends its body chunked (`Transfer-Encoding: chunked`), one chunk per `s
 unknown feed.
 
 ```milo
-from "std/http" import { Context, Outbox, Param, Response, Router, Stream, serveRouterConcurrent }
+from "std/http" import { Context, Outbox, Param, Response, Router, Stream, serveRouter }
 
 var feeds: Vec<Outbox> = []
 
@@ -190,7 +197,7 @@ fn main(): i32 {
     var r = Router.new()
     r.stream("/events", events)
     r.post("/publish", publish)
-    serveRouterConcurrent(8080, r)!
+    serveRouter(8080, r)!
     return 0
 }
 ```
@@ -202,7 +209,7 @@ heartbeat that drops a silent peer are handled by the server. `setMaxMessageSize
 bounds what `recv` accepts (default 1 MiB, close 1009 past it).
 
 ```milo
-from "std/http" import { Context, Outbox, Router, WebSocket, serveRouterConcurrent }
+from "std/http" import { Context, Outbox, Router, WebSocket, serveRouter }
 
 var room: Vec<Outbox> = []
 
@@ -227,7 +234,7 @@ fn chat(_ctx: &mut Context, ws: &mut WebSocket): void {
 fn main(): i32 {
     var r = Router.new()
     r.ws("/chat", chat)
-    serveRouterConcurrent(8080, r)!
+    serveRouter(8080, r)!
     return 0
 }
 ```
@@ -264,12 +271,12 @@ TimeoutStopSec=15
 `systemctl restart app` then starts the new binary on the same socket while the old one
 drains. Keep `TimeoutStopSec` above `drainMs`.
 
-`serveRouterConcurrentWith(host, port, router, ServeOptions { maxConn: 512, drainMs: 10000 })`
+`serveRouterWith(host, port, router, ServeOptions { maxConn: 512, drainMs: 10000 })`
 sets the limits. At `maxConn` connections in flight the server stops calling `accept()`
 until one finishes, so the excess waits in the kernel's listen backlog (1024, capped by
 `somaxconn`) and past that the kernel drops SYNs and clients retransmit. Memory is
 bounded by `maxConn`, and a reverse proxy in front times out the wait instead of the
-server running out of memory. `serve` and `serveRouterOn` answer one connection at a time
+server running out of memory. `serve` and `serveRouterSerialOn` answer one connection at a time
 and finish the current request before exiting on `SIGTERM`.
 
 <!-- generated:api -->
@@ -616,7 +623,7 @@ The handler gets the request's context and the connection as a `Stream`: it
 either `open`s the stream and `send`s chunks for as long as it likes, or answers
 with an ordinary `respond`. Other tasks reach the client through `conn.outbox()`.
 The server owns the socket and closes it when the handler returns. Middleware does
-not run, and only serveRouterConcurrent honours these routes, since one long-lived
+not run, and serveRouterSerial does not honour these routes, since one long-lived
 stream would stall a server that answers one connection at a time.
 
 #### `Router.use`
@@ -639,8 +646,8 @@ websocket`) is answered 101 by the server, which then hands the handler the
 connection as a `WebSocket`; a GET that does not ask falls through to the other
 routes. Ping, pong and the close handshake are the server's, and so is a heartbeat:
 a peer silent for a whole 30 s ping interval is dropped. The socket is closed (after
-a close frame, if none went out) when the handler returns. As with `stream`, only
-serveRouterConcurrent honours these routes.
+a close frame, if none went out) when the handler returns. As with `stream`,
+serveRouterSerial does not honour these routes.
 
 ### `ServeOptions`
 
@@ -876,55 +883,56 @@ or a single-handler app. Answers one connection at a time, on every interface.
 #### `serveRouter`
 
 ```milo
-pub fn serveRouter(port: u16?, router: &Router): Result<Unit>
+pub fn serveRouter(port: u16?, router: Router): Result<Unit>
 ```
 
-Start an HTTP server using a Router (headers from Context are sent on the wire),
-on every interface. Answers one connection at a time.
-
-#### `serveRouterConcurrent`
-
-```milo
-pub fn serveRouterConcurrent(port: u16?, router: Router): Result<Unit>
-```
-
-Like serveRouter, but each connection is handled in its own green task.
-
-serveRouter answers one connection at a time, which is fine while every
-handler is pure computation over embedded data. It stops being fine the
-moment a handler talks to the network: one slow upstream then stalls every
-other client for the whole round trip. Handlers that fetch need this loop.
+Start an HTTP server using a Router (headers from Context are sent on the wire), on
+every interface, with each connection handled in its own green task: a slow or stalled
+client, or a handler that panics (the client gets a 500), does not take the others with
+it. Stream and websocket routes are served too. See ServeOptions for the connection
+cap, the request read and response write deadlines, and the SIGTERM drain.
 
 Never returns once listening, except by exiting the process 0 after a SIGTERM drain
-(ServeOptions); a listener that cannot be opened is an Err. The
-scheduler drives the accept task, the handlers it spawns and any task the caller
-spawned earlier, exactly as a green-threaded server's main is supposed to.
-
-#### `serveRouterConcurrentOn`
-
-```milo
-pub fn serveRouterConcurrentOn(host: &string, port: u16?, router: Router): Result<Unit>
-```
-
-serveRouterConcurrent bound to one IPv4 address (see serveRouterOn).
-
-#### `serveRouterConcurrentWith`
-
-```milo
-pub fn serveRouterConcurrentWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit>
-```
-
-serveRouterConcurrentOn with its limits spelled out: the connection cap and the SIGTERM
-drain deadline (ServeOptions).
+(ServeOptions); a listener that cannot be opened is an Err. The scheduler drives the
+accept task, the handlers it spawns and any task the caller spawned earlier, exactly
+as a green-threaded server's main is supposed to.
 
 #### `serveRouterOn`
 
 ```milo
-pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit>
+pub fn serveRouterOn(host: &string, port: u16?, router: Router): Result<Unit>
 ```
 
 serveRouter bound to one IPv4 address: "127.0.0.1" (or "localhost") for a server
 that only a local reverse proxy should reach, "0.0.0.0" for every interface.
+
+#### `serveRouterSerial`
+
+```milo
+pub fn serveRouterSerial(port: u16?, router: &Router): Result<Unit>
+```
+
+serveRouter answering one connection at a time on this thread, on every interface. Pick
+it for a single-threaded, deterministic test, or a program with no green runtime. In a
+real server prefer serveRouter: here one stalled client delays all the others and a
+handler panic aborts the process. Stream and websocket routes are not served.
+
+#### `serveRouterSerialOn`
+
+```milo
+pub fn serveRouterSerialOn(host: &string, port: u16?, router: &Router): Result<Unit>
+```
+
+serveRouterSerial bound to one IPv4 address (see serveRouterOn).
+
+#### `serveRouterWith`
+
+```milo
+pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit>
+```
+
+serveRouterOn with its limits spelled out: the connection cap and the SIGTERM
+drain deadline (ServeOptions).
 
 #### `statusText`
 

@@ -13364,7 +13364,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `Err: bind() failed: 'example.com' is not an IPv4 address`
 - `Err: bind() failed: '127.0.0.256' is not an IPv4 address`
 
-**Rationale.** serveRouterOn / serveRouterConcurrentOn take the address to bind. A host that is not a dotted quad (or "localhost") fails at startup with the reason, instead of being resolved or silently widened to every interface. The 127.0.0.1 success path is pinned by httpServerRequestBody.
+**Rationale.** serveRouterOn / serveRouterSerialOn take the address to bind. A host that is not a dotted quad (or "localhost") fails at startup with the reason, instead of being resolved or silently widened to every interface. The 127.0.0.1 success path is pinned by httpServerRequestBody.
 
 *Program:* [`tests/fixtures/httpServeBindHostInvalid.milo`](../tests/fixtures/httpServeBindHostInvalid.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
@@ -13381,7 +13381,7 @@ A conforming implementation shall accept this program, and running it shall writ
 - `hung up mid-request: (no response)`
 - `after: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\nServer: milo\r\n\r\n2 bytes: ok`
 
-**Rationale.** The concurrent server reads a whole request, not one read's worth. It used to read once into an 8 KB buffer, so a body that arrived in a later segment reached the handler empty or cut short, Expect: 100-continue clients got no 100, and nothing capped a body. Each case is a raw client on a green task next to the server; the client's sleeps are parks, so the server task reading a half-sent request has to park too (a blocking read there would hang the whole scheduler). Also pins serveRouterConcurrentOn: bound to 127.0.0.1 and reached through it.
+**Rationale.** The concurrent server reads a whole request, not one read's worth. It used to read once into an 8 KB buffer, so a body that arrived in a later segment reached the handler empty or cut short, Expect: 100-continue clients got no 100, and nothing capped a body. Each case is a raw client on a green task next to the server; the client's sleeps are parks, so the server task reading a half-sent request has to park too (a blocking read there would hang the whole scheduler). Also pins serveRouterOn: bound to 127.0.0.1 and reached through it.
 
 *Program:* [`tests/fixtures/httpServerRequestBody.milo`](../tests/fixtures/httpServerRequestBody.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 

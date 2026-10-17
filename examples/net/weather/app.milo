@@ -2,7 +2,7 @@
 // Assets and the US place-name index are compiled in with embedFile, so the
 // deploy artifact is one file with no adjacent data directory to keep in sync.
 from "std/http" import {
-    Context, Response, Router, serveRouterConcurrent
+    Context, Response, Router, serveRouter
 }
 from "std/argparse" import {
     ArgParser
@@ -755,10 +755,9 @@ pub fn main(): i32 {
     r.get("/icons/apple-touch-icon.png", appleIconHandler)
     r.get("/healthz", healthHandler)
 
-    // Concurrent, not serveRouter: /api/up talks to the network inside the
-    // handler, and on the serial loop one slow upstream stalled every other
-    // client for the whole round trip.
-    if let Err(msg) = serveRouterConcurrent(port, r) {
+    // /api/up talks to the network inside the handler; serveRouter gives each
+    // connection its own task, so one slow upstream does not stall every other client.
+    if let Err(msg) = serveRouter(port, r) {
         print($"error: {msg}")
         return 1
     }

@@ -9,7 +9,7 @@
 // @expect: live outboxes after churn: 0
 // @expect: descriptors grew by: 0
 from "std/http" import {
-    Context, Outbox, Param, Router, Stream, WebSocket, serveRouterConcurrentOn
+    Context, Outbox, Param, Router, Stream, WebSocket, serveRouterOn
 }
 from "std/net" import {
     TcpStream, ip4
@@ -107,6 +107,6 @@ pub fn main(): i32 {
     Task.spawn(move(): void => {
         clients()
     })
-    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    serveRouterOn("127.0.0.1", PORT, r)!
     return 1
 }

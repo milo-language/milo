@@ -1,7 +1,7 @@
 // termpair server — WebSocket relay for terminal sharing
 
 from "std/http" import {
-    Context, Outbox, Response, Router, WebSocket, serveRouterConcurrent
+    Context, Outbox, Response, Router, WebSocket, serveRouter
 }
 from "std/argparse" import {
     ArgParser
@@ -291,7 +291,7 @@ pub fn main(): i32 {
     r.ws("/connect_browser_to_terminal", handleBrowserWs)
     r.get("/*", staticHandler)
     // Each connection is its own green task; std/http owns every socket.
-    if let Result.Err(e) = serveRouterConcurrent(port, r) {
+    if let Result.Err(e) = serveRouter(port, r) {
         print($"error: {e}")
         return 1
     }

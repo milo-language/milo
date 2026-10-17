@@ -23,7 +23,7 @@
 // @expect: a closed by server: true
 // @expect: c over the limit: true
 from "std/http" import {
-    Context, Outbox, Response, Router, WebSocket, serveRouterConcurrentOn
+    Context, Outbox, Response, Router, WebSocket, serveRouterOn
 }
 from "std/net" import {
     TcpStream, ip4
@@ -131,6 +131,6 @@ pub fn main(): i32 {
     Task.spawn(move(): void => {
         clients()
     })
-    serveRouterConcurrentOn("127.0.0.1", PORT, r)!
+    serveRouterOn("127.0.0.1", PORT, r)!
     return 1
 }
