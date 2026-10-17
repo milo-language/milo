@@ -20,6 +20,9 @@
 from "std/datetime" import {
     DateTime
 }
+from "std/env" import {
+    Env
+}
 from "std/fmt" import {
     padRight,
     zeroPad
@@ -69,11 +72,22 @@ pub enum LogFormat: i32 {
 // Process-wide configuration. See the header note on concurrent reconfiguration.
 var gMinLevel: LogLevel = LogLevel.Info
 var gFormat: LogFormat = LogFormat.Text
-var gTimestamps: bool = true
+// -1 until `setTimestamps` or the first record decides it (see logTimestampsOn).
+var gTimestamps: i32 = -1
 var gSinkFd: i32 = 2
 // True only when this module opened the sink and must close it on replacement.
 // A caller-supplied fd stays the caller's to close.
 var gSinkOwned: bool = false
+
+// Timestamps are on unless `setTimestamps` said otherwise or JOURNAL_STREAM is set:
+// systemd sets it when stderr is the journal, which stamps every line itself, so ours
+// would be a second, redundant time on each record.
+fn logTimestampsOn(): bool {
+    if gTimestamps < 0 {
+        gTimestamps = if Env.get("JOURNAL_STREAM").isSome() { 0 } else { 1 }
+    }
+    return gTimestamps == 1
+}
 
 fn logLevelName(level: LogLevel): string {
     match level {
@@ -152,7 +166,7 @@ fn logWriteLine(line: &string): void {
 
 fn logRenderText(f: &LogFields, level: LogLevel, msg: &string): string {
     var line: string = ""
-    if gTimestamps {
+    if logTimestampsOn() {
         line = line + logTimestamp() + " "
     }
     line = line + padRight(logLevelName(level), 5, ' ')
@@ -175,7 +189,7 @@ fn logRenderText(f: &LogFields, level: LogLevel, msg: &string): string {
 
 fn logRenderJson(f: &LogFields, level: LogLevel, msg: &string): string {
     var line: string = "{"
-    if gTimestamps {
+    if logTimestampsOn() {
         line = line + "\"time\":\"" + logTimestamp() + "\","
     }
     line = line + "\"level\":\"" + logLevelName(level) + "\""
@@ -392,11 +406,13 @@ impl Log {
         return gFormat
     }
 
-    // Prepend an ISO-8601 UTC timestamp to every record. On by default; turn it
-    // off when the sink already stamps lines (journald, a container runtime) or
-    // when output must be byte-for-byte reproducible.
+    // Prepend an ISO-8601 UTC timestamp to every record. On by default, except when
+    // JOURNAL_STREAM is set (systemd sets it when stderr goes to the journal, which
+    // stamps lines itself); calling this overrides that either way. Turn it off for
+    // a container runtime that also stamps lines, or when output must be
+    // byte-for-byte reproducible.
     fn setTimestamps(enabled: bool): void {
-        gTimestamps = enabled
+        gTimestamps = if enabled { 1 } else { 0 }
     }
 
     // Send records to stderr (the default).
