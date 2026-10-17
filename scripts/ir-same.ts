@@ -6,7 +6,7 @@
 //   bun scripts/ir-same.ts --base HEAD~1         # vs any git ref
 //   bun scripts/ir-same.ts --filter hashmap      # only paths containing the substring
 //   bun scripts/ir-same.ts --jobs 2              # concurrency (default 4)
-//   bun scripts/ir-same.ts --flags "-g --target x86_64-pc-windows-msvc"   # extra emit-ir args
+//   bun scripts/ir-same.ts --flags "-g --target windows-x64"   # extra emit-ir args
 //
 // emit-ir's defaults never reach the codegen behind -g, --sanitize, --contract-checks,
 // --no-overflow-checks or a non-host target, so a full gate is one default pass plus the
