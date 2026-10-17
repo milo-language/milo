@@ -1,5 +1,6 @@
 {
   "src/codegen-dwarf.ts": 33,
   "src/codegen-own.ts": 8,
-  "src/codegen.ts": 2923
+  "src/codegen-vec.ts": 219,
+  "src/codegen.ts": 2704
 }
