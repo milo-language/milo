@@ -1,6 +1,5 @@
 {
   "src/codegen-dwarf.ts": 33,
-  "src/codegen-match.ts": 1,
   "src/codegen-own.ts": 8,
   "src/codegen.ts": 3224
 }

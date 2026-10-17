@@ -12,7 +12,7 @@ import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
 } from "./codegen-string";
-import { genMatch, armTailExpr, matchArmLocals } from "./codegen-match";
+import { genMatch, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
@@ -3031,6 +3031,9 @@ export class Codegen {
         }
         return [lines, true];
       case "ExprStmt": {
+        // A void match whose arms all diverge ends in `unreachable`: report it terminated,
+        // or an enclosing match arm appends a dead `br` after it.
+        if (stmt.expr.kind === "MatchExpr" && this.llvmType(stmt.expr.type) === "void") return genMatch(this, matchExprAsStmt(stmt.expr));
         const [exprLines, exprVal, exprLLTy] = this.genExpr(stmt.expr);
         lines.push(...exprLines);
         // A call in statement position still returns an owned value; with nobody
@@ -7428,15 +7431,7 @@ export class Codegen {
     const resultTy = this.llvmType(expr.type);
     // Reuse the statement match generator; a result slot (when there is one)
     // makes each arm's tail value be stored instead of discarded.
-    const asStmt = {
-      kind: "Match" as const,
-      subject: expr.subject,
-      arms: expr.arms,
-      enumName: expr.enumName,
-      subjectIsRef: expr.subjectIsRef,
-      subjectIsMut: expr.subjectIsMut,
-      span: expr.span,
-    };
+    const asStmt = matchExprAsStmt(expr);
     // A void- or never-typed match expression (e.g. a match that is itself a match
     // arm, every arm yielding void or diverging) has no value to carry, and
     // `alloca void` is invalid IR: lower it as a plain statement match.

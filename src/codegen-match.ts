@@ -180,6 +180,19 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
 // The value a block produces, when it produces one: a block's value is its tail
 // expression, which is how genIfExpr and the match-arm emitter already read it. Anything
 // else there (a Return, a loop) leaves no value for this expression to own.
+// A match expression lowered through the statement generator (genMatch).
+export function matchExprAsStmt(expr: HIRExpr & { kind: "MatchExpr" }): HIRStmt & { kind: "Match" } {
+  return {
+    kind: "Match",
+    subject: expr.subject,
+    arms: expr.arms,
+    enumName: expr.enumName,
+    subjectIsRef: expr.subjectIsRef,
+    subjectIsMut: expr.subjectIsMut,
+    span: expr.span,
+  };
+}
+
 export function armTailExpr(body: HIRStmt[]): HIRExpr | null {
   const last = body[body.length - 1];
   return last && last.kind === "ExprStmt" ? last.expr : null;
@@ -308,14 +321,6 @@ function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resul
   return false;
 }
 
-// The branch that closes a fallthrough arm. An arm whose last statement is a nested match with
-// every arm diverging reports "not terminated" yet ends in `unreachable`, so this `br` lands
-// after a terminator (dead code, never executed). Pre-existing quirk (see matchVoidNested);
-// kept so IR stays byte-identical, hence raw: b.br() rejects an instruction after a terminator.
-function brToEnd(b: LlvmTextBuilder, end: Block): void {
-  b.raw(`  br label %${end.name}`);
-}
-
 function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
   const lines: string[] = [];
   const b = new LlvmTextBuilder(lines, ctx);
@@ -407,14 +412,14 @@ function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSl
         ctx.emitGuardedDrop(lines, ctx.droppableLocals[d]);
       }
     }
-    if (!armTerminated) brToEnd(b, endLabel);
+    if (!armTerminated) b.br(endLabel);
     if (!armTerminated) allArmsTerminated = false;
   }
 
   if (wildcardArm) {
     b.position(defaultTarget);
     const wcTerminated = emitMatchArmBody(ctx, lines, wildcardArm.body, resultSlot);
-    if (!wcTerminated) brToEnd(b, endLabel);
+    if (!wcTerminated) b.br(endLabel);
     if (!wcTerminated) allArmsTerminated = false;
   }
 
@@ -536,7 +541,7 @@ function genNestedArms(
         if (escaping.has(ctx.droppableLocals[d].addr)) continue;
         ctx.emitGuardedDrop(lines, ctx.droppableLocals[d]);
       }
-      brToEnd(b, endLabel);
+      b.br(endLabel);
       allArmsTerminated = false;
     }
   });
