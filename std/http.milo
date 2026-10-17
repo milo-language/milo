@@ -6,13 +6,16 @@ from "std/os" import {
     sysAccept,
     recvFd,
     sendFd,
+    recvFdWait,
+    sendFdWait,
+    IO_GAVE_UP,
     signal as osSignal
 }
 from "std/platform" import {
     pipe as osPipe, write as osWrite, exitNow
 }
 from "std/net" import {
-    TcpListener, ip4
+    TcpListener, ip4, waitIo, deadlineIn
 }
 from "std/runtime" import {
     Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote
@@ -751,6 +754,24 @@ fn readMore(fd: i32, raw: &mut string): i64 {
     return n
 }
 
+// readMore that gives up at `by` (epoch ms, 0 = never): a client that sends half a
+// request and goes quiet would otherwise hold its connection task, and one of the
+// maxConn slots, forever (slowloris). A deadline returns -1, which readRequest treats
+// like EOF: it drops the connection without writing a response a stalled peer would
+// not read anyway.
+fn readMoreBy(fd: i32, raw: &mut string, by: i64): i64 {
+    var chunk: [u8; 8192] = [0; 8192]
+    var n: i64 = 0
+    unsafe { n = recvFdWait(fd, chunk, 8192, (forRead: bool): bool => waitIo(fd, forRead, by)) }
+    if n == IO_GAVE_UP {
+        return -1
+    }
+    for i in 0..n {
+        raw.push(chunk[i])
+    }
+    return n
+}
+
 // Read one whole request: headers up to the blank line, then the body however many reads
 // it takes, framed by Content-Length or by Transfer-Encoding: chunked (decoded here), and
 // decompressed when it carries Content-Encoding: gzip or deflate. A request this server
@@ -1071,8 +1092,14 @@ pub fn serveRouterExchange(read: (&mut string) => i64, write: (&string) => void,
     })
 }
 
-fn fdWrite(fd: i32, data: &string): void {
-    let _sent = sendAll(fd, data)
+// fdWrite that stops waiting on a peer that is not reading once `ms` has passed (0 = no
+// limit). The deadline is per call, so one slow-to-drain response cannot be starved by
+// an earlier one on the same connection.
+fn fdWriteBy(fd: i32, data: &string, ms: i64): void {
+    let by = deadlineIn(ms)
+    unsafe {
+        let _sent = sendFdWait(fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
+    }
 }
 
 // Close an accepted connection once its exchange is over.
@@ -1137,7 +1164,7 @@ fn terminated(): bool {
     unsafe { return gTerm == 1 }
 }
 
-// Knobs for the concurrent servers (serveRouterConcurrentWith).
+// Knobs for the router server (serveRouterWith).
 pub struct ServeOptions {
     // Most connections served at once. At the cap the server stops calling accept() until
     // one finishes, so the excess waits in the kernel's listen backlog (see the
@@ -1146,6 +1173,14 @@ pub struct ServeOptions {
     // After SIGTERM: how long requests in flight may keep running before the process
     // exits anyway.
     drainMs: i64 = 10000,
+    // How long a client has to send its whole request (headers and body), counted from
+    // when the connection's task starts. Without it a client that sends half a request
+    // and stalls holds a connection slot forever, and maxConn of them stop the server
+    // (slowloris). Not applied to stream or websocket routes once they take over the
+    // connection: they have their own timeouts. 0 = no limit.
+    readTimeoutMs: i64 = 30000,
+    // How long one response write may wait on a peer that has stopped reading. 0 = no limit.
+    writeTimeoutMs: i64 = 30000,
 }
 
 // ── Public API ──
@@ -1249,12 +1284,15 @@ pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
     let sock = openListener("0.0.0.0", port)?
     let listenFd = listenerFd(sock)
     installDrain(false)
+    let defaults = ServeOptions {
+    }
     while true {
         let clientFd = acceptIdle(listenFd)
         if clientFd < 0 {
             continue
         }
-        serveHandlerExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), handler)
+        let by = deadlineIn(defaults.readTimeoutMs)
+        serveHandlerExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, defaults.writeTimeoutMs), handler)
         closeFd(clientFd)
         if terminated() {
             exit(0)
@@ -1657,12 +1695,15 @@ pub fn serveRouterOn(host: &string, port: u16?, router: &Router): Result<Unit> {
     let sock = openListener(host, port)?
     let listenFd = listenerFd(sock)
     installDrain(false)
+    let defaults = ServeOptions {
+    }
     while true {
         let clientFd = acceptIdle(listenFd)
         if clientFd < 0 {
             continue
         }
-        serveRouterExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router)
+        let by = deadlineIn(defaults.readTimeoutMs)
+        serveRouterExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, defaults.writeTimeoutMs), router)
         closeFd(clientFd)
         if terminated() {
             exit(0)
@@ -2365,9 +2406,12 @@ fn requestLine(req: &Request): string {
 // a failed assert): an answer instead of a reset, while the server keeps running.
 let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\n500 Internal Server Error"
 
-fn handleConn(clientFd: i32, router: &Router): void {
+fn handleConn(clientFd: i32, router: &Router, readMs: i64, writeMs: i64): void {
     unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
-    serveExchange((raw: &mut string): i64 => readMore(clientFd, &mut raw), (data: &string): void => fdWrite(clientFd, data), router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
+    // Fixed once for the connection: the whole request, not each read, is what the
+    // deadline bounds, so a client dribbling a byte at a time still runs out.
+    let by = deadlineIn(readMs)
+    serveExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, writeMs), router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
         taskOnPanicNote(requestLine(req))
         // A stream or ws route has already written everything it will; nothing more to send.
         if runLongRoute(req, clientFd, router) {
@@ -2387,10 +2431,10 @@ fn handleConn(clientFd: i32, router: &Router): void {
 // channel because a scoped task may borrow only what outlives the scope body, and
 // each fd is a body local (a by-reference capture would see the next accept's fd).
 // `done` tells a capped accept loop that a slot has opened.
-fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>): void {
+fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>, readMs: i64, writeMs: i64): void {
     match fds.recv() {
         Result.Ok(clientFd) => {
-            handleConn(clientFd, router)
+            handleConn(clientFd, router, readMs, writeMs)
             // Full means a wake-up is already pending, which is all one is for.
             let _ = done.trySend(0)
         }
@@ -2414,7 +2458,7 @@ fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>): void
 // On SIGTERM (see "Graceful drain") it closes this process's copy of the listener,
 // waits for the connections in flight, and exits. Under socket activation the service
 // manager still holds the socket, so new connections queue for the next process.
-fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, drainMs: i64): void {
+fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, drainMs: i64, readMs: i64, writeMs: i64): void {
     let done = Channel<i32>.new(1)!
     Task.scope((s) => {
         while !terminated() {
@@ -2444,7 +2488,7 @@ fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, 
             }
             // clientFd was just accepted; nothing else holds it until the send below.
             unsafe { setNonblocking(clientFd) }
-            s.spawn(() => serveNextConn(fds, router, done))
+            s.spawn(() => serveNextConn(fds, router, done, readMs, writeMs))
             // Parks only while the buffer holds 64 fds whose tasks have not run yet.
             // It cannot fail: only a closed channel refuses, and nothing closes this one.
             fds.send(clientFd)!
@@ -2513,11 +2557,13 @@ pub fn serveRouterConcurrentWith(host: &string, port: u16?, router: Router, opts
         maxConn = 1
     }
     let drainMs = opts.drainMs
+    let readMs = opts.readTimeoutMs
+    let writeMs = opts.writeTimeoutMs
     // The accept loop is a scoped task rather than this body, so it is a green task
     // (and schedulerWaitRead parks it) even when the caller is not; the join below
     // then drives the scheduler for good, as schedulerRunToCompletion used to.
     Task.scope((s) => {
-        s.spawn(() => acceptLoop(listenFd, fds, router, maxConn, drainMs))
+        s.spawn(() => acceptLoop(listenFd, fds, router, maxConn, drainMs, readMs, writeMs))
     })
     if terminated() {
         exit(0)

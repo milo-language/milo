@@ -305,6 +305,15 @@ closes it on drop, and the number is the caller's to close exactly once.
 
 ### Functions
 
+#### `deadlineIn`
+
+```milo
+pub fn deadlineIn(ms: i64): i64
+```
+
+A deadline `ms` from now as waitIo wants it: epoch ms, 0 for no limit. The clock is the
+unrecorded one for the same replay reason as in waitIo.
+
 #### `ignoreSigpipe`
 
 ```milo
@@ -371,5 +380,20 @@ synthetic there) and on targets with no inheritance (Windows).
 
 @unsafe: the caller takes ownership of the returned number and must wrap it in exactly
 one handle (TcpListener, TlsListener) that closes it.
+
+#### `waitIo`
+
+```milo
+pub fn waitIo(fd: i32, forRead: bool, by: i64): bool
+```
+
+Wait for `fd` to be readable (or writable) until `by` (epoch ms; 0 waits as long as
+it takes). False when `by` came first.
+
+Not a trace record of its own: the wait parks on a Select, and the scheduler poll
+that ends it is already one (sched.pick says whether the fd arm or the timer arm
+fired), so a replay times out exactly where the recording did, without waiting. A
+record wrapped around the wait came out AFTER the sched records written inside it,
+and the replay, asking for the wrapper first, diverged at the first wait.
 
 <!-- /generated:api -->

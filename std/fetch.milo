@@ -4,7 +4,7 @@
 // bare TCP program cross-link for Windows, where the xwin sysroot ships no OpenSSL.
 
 from "std/net" import {
-    TcpStream, NetError, IpAddr, resolveAll
+    TcpStream, NetError, IpAddr, resolveAll, waitIo, deadlineIn
 }
 from "std/os" import {
     connectFdIn,
@@ -29,17 +29,11 @@ from "std/platform" import {
 from "std/replay" import {
     replayRet, replayOff
 }
-from "std/select" import {
-    Select
-}
 from "std/url" import {
     resolveUrl
 }
 from "std/time" import {
-    ensureTimersLive, unrecordedEpochMillis
-}
-from "std/io" import {
-    AsFd
+    unrecordedEpochMillis
 }
 from "std/chunked" import {
     ChunkScan, chunkMalformed, decodeChunked
@@ -673,17 +667,6 @@ pub struct FetchTimeouts {
     totalMs: i64,
 }
 
-// A raw descriptor lent to a Select for one wait.
-struct FetchWaitFd {
-    fd: i32,
-}
-
-impl AsFd for FetchWaitFd {
-    fn rawFd(self: &Self): i32 {
-        return self.fd
-    }
-}
-
 // The earlier of two deadlines (epoch ms), where 0 is none.
 fn sooner(a: i64, b: i64): i64 {
     if a == 0 {
@@ -693,45 +676,6 @@ fn sooner(a: i64, b: i64): i64 {
         return a
     }
     return b
-}
-
-fn deadlineIn(ms: i64): i64 {
-    if ms <= 0 {
-        return 0
-    }
-    return unrecordedEpochMillis() + ms
-}
-
-// Wait for `fd` to be readable (or writable) until `by` (epoch ms; 0 waits as long as
-// it takes). False when `by` came first.
-//
-// Not a trace record of its own: the wait parks on a Select, and the scheduler poll
-// that ends it is already one (sched.pick says whether the fd arm or the timer arm
-// fired), so a replay times out exactly where the recording did, without waiting. A
-// record wrapped around the wait came out AFTER the sched records written inside it,
-// and the replay, asking for the wrapper first, diverged at the first wait.
-fn waitIo(fd: i32, forRead: bool, by: i64): bool {
-    // Select's fd and timer arms are inert without a scheduler, which a plain main
-    // that never spawned a task does not have.
-    ensureTimersLive()
-    var sel = Select.new()
-    let h = FetchWaitFd { fd: fd }
-    if forRead {
-        sel.onRead(h)
-    } else {
-        sel.onWrite(h)
-    }
-    if by > 0 {
-        // A deadline already past still arms the timer (at 0) rather than returning
-        // false here: that decision would read the unrecorded clock, so a replay,
-        // running faster, would make it differently.
-        var left = by - unrecordedEpochMillis()
-        if left < 0 {
-            left = 0
-        }
-        sel.onTimeout(left)
-    }
-    return sel.wait() == 0
 }
 
 // ── HTTP client ──

@@ -1,0 +1,92 @@
+// @skip-os: win32
+// A client that sends half a request line and then goes quiet must not hold a connection
+// slot forever (slowloris): with readTimeoutMs set the server drops it, and a normal
+// request on another connection is answered while the stalled one is still open.
+// @expect: listening on http://127.0.0.1:47396
+// @expect: normal request while stalled: 200
+// @expect: stalled closed by server: true
+// @expect: closed within bound: true
+// @expect: normal request after: 200
+from "std/http" import {
+    Context, Response, Router, ServeOptions, serveRouterConcurrentWith
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    unrecordedEpochMillis, sleepMs
+}
+
+let PORT: u16 = 47396
+
+fn status(wire: &string): string {
+    return wire.substr(9, 12)
+}
+
+fn clients(): void {
+    // Opened first, so the normal request below is served while this one is stalled.
+    let stalled = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    stalled.send("GET /ping HT")!
+    let t0 = unrecordedEpochMillis()
+
+    let ok = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    ok.send("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n")!
+    var wire: string = ""
+    while true {
+        let chunk = ok.recv() ?? ""
+        if chunk.len == 0 {
+            break
+        }
+        wire.pushStr(chunk)
+    }
+    print($"normal request while stalled: {status(wire)}")
+
+    // 408 or a bare close are both acceptable; what matters is that the read ends.
+    var got: string = ""
+    while true {
+        let chunk = stalled.recv() ?? ""
+        if chunk.len == 0 {
+            break
+        }
+        got.pushStr(chunk)
+    }
+    let took = unrecordedEpochMillis() - t0
+    print($"stalled closed by server: {got.len == 0 || status(got) == "408"}")
+    print($"closed within bound: {took >= 250 && took < 3000}")
+
+    let again = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    again.send("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n")!
+    var wire2: string = ""
+    while true {
+        let chunk = again.recv() ?? ""
+        if chunk.len == 0 {
+            break
+        }
+        wire2.pushStr(chunk)
+    }
+    print($"normal request after: {status(wire2)}")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.get("/ping", (ctx: &mut Context): Response => {
+        return ctx.text("pong")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    // Without the deadline the stalled recv never returns; fail loudly instead of hanging.
+    Task.spawn(move(): void => {
+        sleepMs(8000)
+        print("watchdog: server never closed the stalled connection")
+        exit(1)
+    })
+    serveRouterConcurrentWith("127.0.0.1", PORT, r, ServeOptions {
+        readTimeoutMs: 300
+    })!
+    return 1
+}

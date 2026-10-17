@@ -648,12 +648,14 @@ serveRouterConcurrent honours these routes.
 pub struct ServeOptions
 ```
 
-Knobs for the concurrent servers (serveRouterConcurrentWith).
+Knobs for the router server (serveRouterWith).
 
 Fields:
 
 - `maxConn: i64 = 512`: Most connections served at once. At the cap the server stops calling accept() until one finishes, so the excess waits in the kernel's listen backlog (see the backpressure note on acceptLoop).
 - `drainMs: i64 = 10000`: After SIGTERM: how long requests in flight may keep running before the process exits anyway.
+- `readTimeoutMs: i64 = 30000`: How long a client has to send its whole request (headers and body), counted from when the connection's task starts. Without it a client that sends half a request and stalls holds a connection slot forever, and maxConn of them stop the server (slowloris). Not applied to stream or websocket routes once they take over the connection: they have their own timeouts. 0 = no limit.
+- `writeTimeoutMs: i64 = 30000`: How long one response write may wait on a peer that has stopped reading. 0 = no limit.
 
 ### `Stream`
 
