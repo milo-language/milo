@@ -523,12 +523,12 @@ export class Codegen {
 
   private rrHashInitFn(): string[] {
     const lines: string[] = [];
-    lines.push(`define internal void @${Codegen.RR_HASH_INIT_FN}() {`);
-    lines.push("entry.bb:");
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: Codegen.RR_HASH_INIT_FN, ret: Ty.void, params: [], internal: true });
     // A program with no HashMap has no seed to fix; keep its startup to a bare call.
     if (!this.needsGetentropy) {
       lines.push("  ret void");
-      lines.push("}");
+      b.endFn();
       return lines;
     }
     lines.push(`  br label %rr.check0`);
@@ -551,7 +551,7 @@ export class Codegen {
     lines.push("  br label %rr.done");
     lines.push("rr.done:");
     lines.push("  ret void");
-    lines.push("}");
+    b.endFn();
     vars.forEach((name, i) => {
       lines.push(`@.milo_rr_env${i} = private unnamed_addr constant [${name.length + 1} x i8] c"${name}\\00"`);
     });
@@ -561,8 +561,8 @@ export class Codegen {
   private hashSeedFn(): string[] {
     const lines: string[] = [];
     lines.push(`@${Codegen.RR_HASH_SEED_GLOBAL} = internal global i64 0`);
-    lines.push(`define internal i64 @${HASH_SEED_FN}() {`);
-    lines.push("entry.bb:");
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: HASH_SEED_FN, ret: Ty.i64, params: [], internal: true });
     lines.push("  %buf = alloca i64");
     lines.push(`  %det = load i64, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
     lines.push("  %isDet = icmp ne i64 %det, 0");
@@ -582,7 +582,7 @@ export class Codegen {
     else lines.push(`  call i32 @getentropy(ptr %buf, i64 8)`);
     lines.push("  %v = load i64, ptr %buf");
     lines.push("  ret i64 %v");
-    lines.push("}");
+    b.endFn();
     return lines;
   }
 
@@ -599,8 +599,8 @@ export class Codegen {
     // MSVC maps _IOLBF onto _IOFBF, so line buffering there does nothing; _IONBF (4) is
     // the mode that actually reaches the fd per write.
     const mode = this.isWindows ? 4 : 1;
-    lines.push(`define internal void @${Codegen.LINE_BUF_INIT_FN}() {`);
-    lines.push("entry.bb:");
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: Codegen.LINE_BUF_INIT_FN, ret: Ty.void, params: [], internal: true });
     lines.push(`  ${env} = call ptr @getenv(ptr @.milo_line_buf_env)`);
     lines.push(`  ${isSet} = icmp ne ptr ${env}, null`);
     lines.push(`  br i1 ${isSet}, label %linebuf.set, label %linebuf.done`);
@@ -611,7 +611,7 @@ export class Codegen {
     lines.push("  br label %linebuf.done");
     lines.push("linebuf.done:");
     lines.push("  ret void");
-    lines.push("}");
+    b.endFn();
     return lines;
   }
 
@@ -1708,8 +1708,8 @@ export class Codegen {
   // body to the scheduler, and returns whatever exit code the body produced.
   private greenMainEntry(): string[] {
     const lines: string[] = [];
-    lines.push(`define i32 @main(i32 %_milo_argc, ptr %_milo_argv) {`);
-    lines.push("entry.bb:");
+    const bMain = new LlvmTextBuilder(lines, this);
+    bMain.defineFn({ name: "main", ret: Ty.i32, params: [{ name: "_milo_argc", ty: Ty.i32 }, { name: "_milo_argv", ty: Ty.ptr }] });
     lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
     lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
     // before global init: an initializer can print, and setvbuf must precede any I/O
@@ -1718,16 +1718,16 @@ export class Codegen {
     lines.push(`  call void @${Codegen.GREEN_RUN_MAIN_FN}(ptr @${Codegen.MAIN_TASK_FN})`);
     lines.push(`  %exit = load i32, ptr @${Codegen.MAIN_EXIT_GLOBAL}`);
     lines.push("  ret i32 %exit");
-    lines.push("}");
+    bMain.endFn();
     lines.push("");
     // spawnWithStack calls this through the closure ABI, which passes an env
     // pointer this entry has no use for.
-    lines.push(`define internal void @${Codegen.MAIN_TASK_FN}(ptr %__env) {`);
-    lines.push("entry.bb:");
+    const bTask = new LlvmTextBuilder(lines, this);
+    bTask.defineFn({ name: Codegen.MAIN_TASK_FN, ret: Ty.void, params: [{ name: "__env", ty: Ty.ptr }], internal: true });
     lines.push(`  %code = call i32 @${Codegen.MAIN_BODY_FN}()`);
     lines.push(`  store i32 %code, ptr @${Codegen.MAIN_EXIT_GLOBAL}`);
     lines.push("  ret void");
-    lines.push("}");
+    bTask.endFn();
     return lines;
   }
 
@@ -3206,13 +3206,13 @@ export class Codegen {
 
   private overflowFailHelper(): string[] {
     const lines: string[] = [];
-    lines.push(`define internal void @__milo_overflow_fail(ptr %file, i32 %line) noreturn cold noinline {`);
-    lines.push(`entry.bb:`);
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: "__milo_overflow_fail", ret: Ty.void, params: [{ name: "file", ty: Ty.ptr }, { name: "line", ty: Ty.i32 }], internal: true, attrs: " noreturn cold noinline" });
     lines.push(`  %fmt = getelementptr [46 x i8], ptr @.overflow_err, i32 0, i32 0`);
     this.emitFdPrintf(lines, 2, "%fmt", `, ptr %file, i32 %line`);
     this.panicAbort(lines);
     lines.push(`  unreachable`);
-    lines.push(`}`);
+    b.endFn();
     return lines;
   }
 
@@ -3452,13 +3452,13 @@ export class Codegen {
   // Body of the out-of-line handler above. Emitted once per module.
   private boundsFailHelper(): string[] {
     const lines: string[] = [];
-    lines.push(`define internal void @__milo_bounds_fail(i64 %idx, i64 %len, ptr %file, i32 %line) noreturn cold noinline {`);
-    lines.push(`entry.bb:`);
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: "__milo_bounds_fail", ret: Ty.void, params: [{ name: "idx", ty: Ty.i64 }, { name: "len", ty: Ty.i64 }, { name: "file", ty: Ty.ptr }, { name: "line", ty: Ty.i32 }], internal: true, attrs: " noreturn cold noinline" });
     lines.push(`  %fmt = getelementptr [${BOUNDS_ERR_LEN} x i8], ptr @.bounds_err, i32 0, i32 0`);
     this.emitFdPrintf(lines, 2, "%fmt", `, i64 %idx, i64 %len, ptr %file, i32 %line`);
     this.panicAbort(lines);
     lines.push(`  unreachable`);
-    lines.push(`}`);
+    b.endFn();
     return lines;
   }
 
@@ -4836,8 +4836,8 @@ export class Codegen {
       L.push(`@"${name}.lazy" = internal ${gtls}global i64 0`);
       L.push(`@"${name}.lazyown" = internal ${gtls}global i64 0`);
       L.push(`@"${name}.lazythr" = internal ${gtls}global i64 0`);
-      L.push(`define internal void @"${LAZY_GUARD_PREFIX}${name}"() {`);
-      L.push(`entry.bb:`);
+      const bGuard = new LlvmTextBuilder(L, this);
+      bGuard.defineFn({ name: `"${LAZY_GUARD_PREFIX}${name}"`, ret: Ty.void, params: [], internal: true });
       L.push(bare ? `  %s = load i64, ptr @"${name}.lazy", align 8` : `  %s = load atomic i64, ptr @"${name}.lazy" acquire, align 8`);
       L.push(`  %d = icmp eq i64 %s, 2`);
       L.push(`  br i1 %d, label %done, label %slow`);
@@ -4846,11 +4846,11 @@ export class Codegen {
       L.push(`  br label %done`);
       L.push(`done:`);
       L.push(`  ret void`);
-      L.push(`}`);
+      bGuard.endFn();
     }
 
-    L.push(`define internal i64 @__milo_lazy_token() {`);
-    L.push(`entry.bb:`);
+    const bTok = new LlvmTextBuilder(L, this);
+    bTok.defineFn({ name: "__milo_lazy_token", ret: Ty.i64, params: [], internal: true });
     if (green) {
       L.push(`  %t = call ptr @schedulerCurrent()`);
       L.push(`  %n = icmp eq ptr %t, null`);
@@ -4862,13 +4862,13 @@ export class Codegen {
     }
     L.push(`  %a = call i64 @__milo_lazy_thread()`);
     L.push(`  ret i64 %a`);
-    L.push(`}`);
-    L.push(`define internal i64 @__milo_lazy_thread() {`);
-    L.push(`entry.bb:`);
+    bTok.endFn();
+    const bThr = new LlvmTextBuilder(L, this);
+    bThr.defineFn({ name: "__milo_lazy_thread", ret: Ty.i64, params: [], internal: true });
     L.push(`  %a = ptrtoint ptr @__milo_lazy_tid to i64`);
     L.push(`  %a1 = or i64 %a, 1`);
     L.push(`  ret i64 %a1`);
-    L.push(`}`);
+    bThr.endFn();
 
     // Waiting for an initializer another task on THIS thread is running: that task is
     // parked (it could not have let us run otherwise), so this one has to let the
@@ -4878,8 +4878,8 @@ export class Codegen {
     // yields the CPU and never lets another green task in: a read of a global whose
     // initializer does not park must never park.
     if (!bare) {
-      L.push(`define internal void @__milo_lazy_wait(i1 %here) {`);
-      L.push(`entry.bb:`);
+      const bWait = new LlvmTextBuilder(L, this);
+      bWait.defineFn({ name: "__milo_lazy_wait", ret: Ty.void, params: [{ name: "here", ty: Ty.i1 }], internal: true });
       L.push(`  br i1 %here, label %sched, label %os`);
       L.push(`sched:`);
       if (green) {
@@ -4904,14 +4904,14 @@ export class Codegen {
         L.push(`  call i32 @sched_yield()`);
       }
       L.push(`  ret void`);
-      L.push(`}`);
+      bWait.endFn();
     }
 
     const cycleFmt = this.addString("error: initialization cycle: global '%s' is read while its own initializer is running\n");
     const byFmt = this.addString("  (read by the initializer of '%s')\n");
     const noteFmt = this.addString("note: this panic happened while initializing global '%s' (it is initialized on first read)\n");
-    L.push(`define internal void @__milo_lazy_slow(ptr %st, ptr %own, ptr %thr, ptr %name, ptr %init) noinline {`);
-    L.push(`entry.bb:`);
+    const bSlow = new LlvmTextBuilder(L, this);
+    bSlow.defineFn({ name: "__milo_lazy_slow", ret: Ty.void, params: [{ name: "st", ty: Ty.ptr }, { name: "own", ty: Ty.ptr }, { name: "thr", ty: Ty.ptr }, { name: "name", ty: Ty.ptr }, { name: "init", ty: Ty.ptr }], internal: true, attrs: " noinline" });
     L.push(`  %tok = call i64 @__milo_lazy_token()`);
     L.push(`  %me = call i64 @__milo_lazy_thread()`);
     L.push(`  br label %try`);
@@ -4982,10 +4982,10 @@ export class Codegen {
     L.push(`  unreachable`);
     L.push(`out:`);
     L.push(`  ret void`);
-    L.push(`}`);
+    bSlow.endFn();
 
-    L.push(`define internal void @__milo_lazy_panic_note() {`);
-    L.push(`entry.bb:`);
+    const bNote = new LlvmTextBuilder(L, this);
+    bNote.defineFn({ name: "__milo_lazy_panic_note", ret: Ty.void, params: [], internal: true });
     L.push(`  %cn = load ptr, ptr @__milo_lazy_cur_name`);
     L.push(`  %cnn = icmp ne ptr %cn, null`);
     L.push(`  br i1 %cnn, label %check, label %out`);
@@ -5010,7 +5010,7 @@ export class Codegen {
     L.push(`  unreachable`);
     L.push(`out:`);
     L.push(`  ret void`);
-    L.push(`}`);
+    bNote.endFn();
     return L;
   }
 
@@ -5980,11 +5980,11 @@ export class Codegen {
         const trampolineName = `__trampoline_${expr.name}`;
         if (!this.fnSigs.has(trampolineName)) {
           const paramNames = sig.paramTypes.map((_, i) => `p${i}`);
-          const trampolineParams = [`ptr %env`, ...sig.paramTypes.map((t, i) => `${t} %${paramNames[i]}`)].join(", ");
+          const trampolineParams: Param[] = [{ name: "env", ty: Ty.ptr }, ...sig.paramTypes.map((t, i) => ({ name: paramNames[i], ty: Ty.of(t) }))];
           const fwdArgs = sig.paramTypes.map((t, i) => `${t} %${paramNames[i]}`).join(", ");
           const body: string[] = [];
-          body.push(`define ${sig.retType} @${trampolineName}(${trampolineParams}) {`);
-          body.push("entry.bb:");
+          const bTramp = new LlvmTextBuilder(body, this);
+          bTramp.defineFn({ name: trampolineName, ret: Ty.of(sig.retType), params: trampolineParams });
           if (this.sretFns.has(expr.name)) {
             // callee is sret-lowered; trampoline keeps the closure convention
             // (returns the aggregate) and bridges via a local slot
@@ -5999,7 +5999,7 @@ export class Codegen {
             body.push(`  %r = call ${sig.retType} @${expr.name}(${fwdArgs})`);
             body.push(`  ret ${sig.retType} %r`);
           }
-          body.push("}");
+          bTramp.endFn();
           this.closureBodies.push(body);
           this.fnSigs.set(trampolineName, sig);
         }
@@ -6820,8 +6820,8 @@ export class Codegen {
   private emitClosureEnvDrop(closureName: string, envStructTy: string, captures: { name: string; type: TypeKind }[], capFlagSlot: (i: number) => number | null): string {
     const name = `${closureName}_envdrop`;
     const body: string[] = [];
-    body.push(`define internal void @${name}(ptr %env) {`);
-    body.push("entry.bb:");
+    const b = new LlvmTextBuilder(body, this);
+    b.defineFn({ name, ret: Ty.void, params: [{ name: "env", ty: Ty.ptr }], internal: true });
     for (let i = 0; i < captures.length; i++) {
       if (!this.needsDropCg(captures[i].type)) continue;
       const slot = this.nextTemp();
@@ -6849,7 +6849,7 @@ export class Codegen {
     this.needsFree = true;
     body.push("  call void @free(ptr %env)");
     body.push("  ret void");
-    body.push("}");
+    b.endFn();
     this.closureBodies.push(body);
     return name;
   }
@@ -6943,13 +6943,13 @@ export class Codegen {
     const closureParamTy = (t: TypeKind) =>
       t.tag === "ref" && (t.inner.tag === "string" || (t.inner.tag === "array" && t.inner.size === null))
         ? "ptr" : this.llvmType(t);
-    const closureParams = [`ptr %env`, ...expr.params.map(p => `${closureParamTy(p.type)} %${p.name}`)].join(", ");
+    const closureParams: Param[] = [{ name: "env", ty: Ty.ptr }, ...expr.params.map(p => ({ name: p.name, ty: Ty.of(closureParamTy(p.type)) }))];
     // Internal, like every other Milo fn: an external closure outlives its dead enclosing
     // fn (globaldce cannot drop it), so a std fn never called on Windows still linked its
     // closure's POSIX calls (std/fs's `lstat`, `opendir`...) and failed the link. cgu.ts
     // promotes one that another codegen unit references.
-    closureBody.push(`define internal ${retTy} @${closureName}(${closureParams}) {`);
-    closureBody.push("entry.bb:");
+    const bClo = new LlvmTextBuilder(closureBody, this);
+    bClo.defineFn({ name: closureName, ret: Ty.of(retTy), params: closureParams, internal: true });
 
     // load captures from env struct
     for (let i = 0; i < captures.length; i++) {
@@ -7075,7 +7075,7 @@ export class Codegen {
       closureBody.splice(closureAllocaInsertPoint, 0, ...this.entryAllocas);
     }
     this.hoistAllocas(closureBody, closureAllocaInsertPoint);
-    closureBody.push("}");
+    bClo.endFn();
     this.closureBodies.push(closureBody);
 
     // restore codegen state
