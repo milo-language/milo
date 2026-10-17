@@ -31,7 +31,9 @@ function hirExprKinds(): string[] {
 
 function classified(): { owned: Set<string>; neutral: Set<string> } {
   const src = readFileSync(join(ROOT, "src", "codegen.ts"), "utf8");
-  const start = src.indexOf("private isOwnedTempExpr");
+  // Anchored on the signature, not a visibility keyword: the method went public when
+  // codegen-match.ts started calling it, and a "private ..." anchor then matched nothing.
+  const start = src.indexOf("isOwnedTempExpr(expr: HIRExpr): boolean {");
   if (start < 0) throw new Error("could not find isOwnedTempExpr in src/codegen.ts");
   // Brace-matched to the method's real end rather than sliced at a fixed width. The
   // window was 4200 characters against a body already 3834 long: the first case label
