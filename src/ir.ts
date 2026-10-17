@@ -105,11 +105,12 @@ export interface Builder {
    */
   entryAlloca(name: string, ty: Ty, init?: Val): Val;
   /** `align`, if given, prints as a trailing `, align N`; `meta` (int loads only) follows it. */
-  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta): Val;
+  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta, dest?: Val): Val;
   /** `load atomic T, ptr P acquire, align N`: reads a refcount that another thread may release. */
   loadAcquire(ty: Ty, ptr: Val, align: number): Val;
   store(v: Val, ptr: Val): void;
-  gep(base: Ty, ptr: Val, idx: Val[]): Val;
+  /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
+  gep(base: Ty, ptr: Val, idx: Val[], dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   binop(op: BinOp, a: Val, b: Val, dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
@@ -211,13 +212,13 @@ export class LlvmTextBuilder implements Builder {
     return { ref: name, ty: Ty.ptr };
   }
 
-  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta): Val {
+  load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta, dest?: Val): Val {
     if (ty.kind === "void") this.fail("load of void");
     this.wantPtr("load", ptr);
     if (align !== undefined) this.wantAlign("load", align);
     if (meta && ty.kind !== "int") this.fail(`load of ${ty.ll} with range metadata; only integer loads take it`);
     const m = meta ? `, !range !${meta.range}, !noundef !${meta.noundef}` : "";
-    return this.def(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}${m}`, ty);
+    return this.defOrDest(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}${m}`, ty, dest);
   }
 
   loadAcquire(ty: Ty, ptr: Val, align: number): Val {
@@ -234,11 +235,11 @@ export class LlvmTextBuilder implements Builder {
     this.emit(`store ${v.ty.ll} ${v.ref}, ptr ${ptr.ref}`);
   }
 
-  gep(base: Ty, ptr: Val, idx: Val[]): Val {
+  gep(base: Ty, ptr: Val, idx: Val[], dest?: Val): Val {
     if (base.kind === "void") this.fail("getelementptr over void");
     this.wantPtr("getelementptr", ptr);
     for (const i of idx) if (i.ty.kind !== "int") this.fail(`getelementptr index ${i.ref} is ${i.ty.ll}, not an integer`);
-    return this.def(`getelementptr ${base.ll}, ptr ${ptr.ref}, ${idx.map(i => `${i.ty.ll} ${i.ref}`).join(", ")}`, Ty.ptr);
+    return this.defOrDest(`getelementptr ${base.ll}, ptr ${ptr.ref}, ${idx.map(i => `${i.ty.ll} ${i.ref}`).join(", ")}`, Ty.ptr, dest);
   }
 
   binop(op: BinOp, a: Val, b: Val, dest?: Val): Val {

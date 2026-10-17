@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRContract, HIRStruct, HIRGlobal } from "./hir";
-import { LlvmTextBuilder, Ty, val, type LoadMeta, type Param } from "./ir";
+import { LlvmTextBuilder, Ty, val, type LoadMeta, type Param, type Val } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -123,6 +123,9 @@ export interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: s
 
 const STRING_TY = Ty.of("%String");
 const VEC_TY = Ty.of("%Vec");
+const HASHMAP_TY = Ty.of("%HashMap");
+const i64c = (n: number | string) => val(String(n), Ty.i64);
+const i32c = (n: number | string) => val(String(n), Ty.i32);
 // One name for codegen's return shape: the IR lines an expression emits, the SSA value it
 // leaves the result in, and that value's LLVM type.
 //
@@ -4042,19 +4045,18 @@ export class Codegen {
   // never touch it.
   private genConsumedIterable(iterable: HIRExpr): { lines: string[]; addr: string; iterTy: string; entry: DroppableLocal | null } {
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
     const iterTy = this.llvmType(iterable.type);
+    // A temp-named slot, which entryAlloca refuses (it takes named locals only).
     const addr = this.nextTemp();
     this.entryAllocas.push(`  ${addr} = alloca ${iterTy}`);
     this.genStoreInto(lines, addr, iterTy, iterable);
     if (!this.needsDropCg(iterable.type)) return { lines, addr, iterTy, entry: null };
-    const cursor = `${addr}.cursor`;
-    this.entryAllocas.push(`  ${cursor} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${cursor}`);
-    const aliveFlag = `${addr}.alive`;
-    this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
-    this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+    const cursor = b.entryAlloca(`${addr}.cursor`, Ty.i64);
+    b.store(i64c(0), cursor);
+    const aliveFlag = b.entryAlloca(`${addr}.alive`, Ty.i1, val("0", Ty.i1)).ref;
     this.own.setAlive(lines, aliveFlag, addr, "consumed-iterable");
-    const entry: DroppableLocal = { name: `__forin_consumed.${this.scopeCounter++}`, typeKind: iterable.type, aliveFlag, addr, consumeCursor: cursor };
+    const entry: DroppableLocal = { name: `__forin_consumed.${this.scopeCounter++}`, typeKind: iterable.type, aliveFlag, addr, consumeCursor: cursor.ref };
     this.droppableLocals.push(entry);
     return { lines, addr, iterTy, entry };
   }
@@ -4063,19 +4065,18 @@ export class Codegen {
   // container's cursor past it. Both happen before any body code, so no exit can observe
   // the element owned twice or by nobody.
   private emitConsumeElement(lines: string[], elemPtr: string, idx64: string, binding: { addr: string; ty: string; tk: TypeKind; alive: string | null }, entry: DroppableLocal | null) {
+    const b = new LlvmTextBuilder(lines, this);
     if (this.isBigAgg(binding.ty)) {
       this.emitMemcpy(lines, binding.addr, elemPtr, binding.ty, { intent: "move", type: binding.tk });
     } else {
-      const v = this.nextTemp();
-      lines.push(`  ${v} = load ${binding.ty}, ptr ${elemPtr}`);
-      lines.push(`  store ${binding.ty} ${v}, ptr ${binding.addr}`);
+      const v = b.load(Ty.of(binding.ty), val(elemPtr, Ty.ptr));
+      b.store(v, val(binding.addr, Ty.ptr));
     }
     this.own.moveSlot(elemPtr, binding.addr);
     if (binding.alive) this.own.setAlive(lines, binding.alive, binding.addr, "loop-binding");
     if (entry?.consumeCursor) {
-      const next = this.nextTemp();
-      lines.push(`  ${next} = add i64 ${idx64}, 1`);
-      lines.push(`  store i64 ${next}, ptr ${entry.consumeCursor}`);
+      const next = b.binop("add", val(idx64, Ty.i64), i64c(1));
+      b.store(next, val(entry.consumeCursor, Ty.ptr));
     }
   }
 
@@ -4084,9 +4085,7 @@ export class Codegen {
   // the body moved it, which clears the flag exactly as for any local.
   private registerConsumedBinding(name: string, addr: string, typeKind: TypeKind): string | null {
     if (!this.needsDropCg(typeKind)) return null;
-    const alive = `${addr}.alive`;
-    this.entryAllocas.push(`  ${alive} = alloca i1`);
-    this.entryAllocas.push(`  store i1 0, ptr ${alive}`);
+    const alive = new LlvmTextBuilder([], this).entryAlloca(`${addr}.alive`, Ty.i1, val("0", Ty.i1)).ref;
     this.registerFieldFlags(this.entryAllocas, addr, name, typeKind);
     this.droppableLocals.push({ name, typeKind, aliveFlag: alive, addr });
     return alive;
@@ -4154,24 +4153,27 @@ export class Codegen {
 
   private genForEach(stmt: HIRStmt & { kind: "ForEach" }): [string[], boolean] {
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
+    const ptr = (ref: string) => val(ref, Ty.ptr);
 
     if (stmt.iterableKind === "vec") {
       // get pointer to the vec so we can extract data ptr and len
       const consumed = stmt.consume ? this.genConsumedIterable(stmt.iterable) : null;
       const [iterLines, iterAddr] = consumed ? [consumed.lines, consumed.addr] : this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
-      const dataPtr = this.nextTemp();
-      const lenPtr = this.nextTemp();
-      const data = this.nextTemp();
-      const len = this.nextTemp();
-      lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${iterAddr}, i32 0, i32 0`);
-      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-      lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${iterAddr}, i32 0, i32 1`);
-      lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+      // Temps are numbered in declaration order but defined interleaved, so draw them first.
+      const dataPtr = b.reserveTemp(Ty.ptr);
+      const lenPtr = b.reserveTemp(Ty.ptr);
+      const data = b.reserveTemp(Ty.ptr);
+      const len = b.reserveTemp(Ty.i64);
+      b.gep(VEC_TY, ptr(iterAddr), [i32c(0), i32c(0)], dataPtr);
+      b.load(Ty.ptr, dataPtr, undefined, undefined, data);
+      b.gep(VEC_TY, ptr(iterAddr), [i32c(0), i32c(1)], lenPtr);
+      b.load(Ty.i64, lenPtr, undefined, undefined, len);
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
+      const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+      b.store(i64c(0), idxSlot);
 
       // enumerate: varName=index, varName2=element; else varName=element
       const elemTypeKind = stmt.varName2 ? stmt.varType2! : stmt.varType;
@@ -4179,7 +4181,7 @@ export class Codegen {
       const elemType = elemTypeKind.tag === "ref" ? elemTypeKind.inner : elemTypeKind;
       const elemTy = this.llvmType(elemType);
       const varAddr = this.allocaName(elemName);
-      this.entryAllocas.push(`  ${varAddr} = alloca ${consumed ? elemTy : "ptr"}`);
+      b.entryAlloca(varAddr, Ty.of(consumed ? elemTy : "ptr"));
       const savedLoopLocals = [this.bindLoopLocal(elemName, consumed
         ? { type: elemTy, typeKind: elemType, mutable: false, isRef: false, addr: varAddr }
         : { type: elemTy, typeKind: elemTypeKind, mutable: elemTypeKind.tag === "ref" && elemTypeKind.mutable, isRef: true, addr: varAddr })];
@@ -4187,31 +4189,28 @@ export class Codegen {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
 
-      const condLabel = this.nextLabel("for.cond");
-      const bodyLabel = this.nextLabel("for.body");
-      const incrLabel = this.nextLabel("for.incr");
-      const endLabel = this.nextLabel("for.end");
+      const condBlock = b.newBlock("for.cond");
+      const bodyBlock = b.newBlock("for.body");
+      const incrBlock = b.newBlock("for.incr");
+      const endBlock = b.newBlock("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
       const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-      this.loopHeader = incrLabel;
-      this.loopExit = endLabel;
+      this.loopHeader = incrBlock.name;
+      this.loopExit = endBlock.name;
       this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
       const bindAlive = consumed ? this.registerConsumedBinding(elemName, varAddr, elemType) : null;
 
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const idx = this.nextTemp();
-      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-      const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-      lines.push(`${bodyLabel}:`);
-      const elemPtr = this.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-      if (consumed && this.own.on && this.needsDropCg(elemType)) this.own.slots.set(elemPtr, this.own.make(lines, "element-moved-out"));
-      if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, tk: elemType, alive: bindAlive }, consumed.entry);
-      else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+      b.br(condBlock);
+      b.position(condBlock);
+      const idx = b.load(Ty.i64, idxSlot);
+      const cmp = b.icmp("ult", idx, len);
+      b.condBr(cmp, bodyBlock, endBlock);
+      b.position(bodyBlock);
+      const elemPtr = b.gep(Ty.of(elemTy), data, [idx]);
+      if (consumed && this.own.on && this.needsDropCg(elemType)) this.own.slots.set(elemPtr.ref, this.own.make(lines, "element-moved-out"));
+      if (consumed) this.emitConsumeElement(lines, elemPtr.ref, idx.ref, { addr: varAddr, ty: elemTy, tk: elemType, alive: bindAlive }, consumed.entry);
+      else b.store(elemPtr, ptr(varAddr));
 
       this.emitLoopInvariants(lines, stmt.invariants);
       let bodyTerminated = false;
@@ -4220,17 +4219,16 @@ export class Codegen {
         lines.push(...sl);
         if (t) { bodyTerminated = true; break; }
       }
-      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${incrLabel}`); }
+      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(incrBlock); }
 
-      lines.push(`${incrLabel}:`);
-      const nextIdx = this.nextTemp();
-      const curIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
-      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-      lines.push(`  br label %${condLabel}`);
+      b.position(incrBlock);
+      const nextIdx = b.reserveTemp(Ty.i64);
+      const curIdx = b.load(Ty.i64, idxSlot);
+      b.binop("add", curIdx, i64c(1), nextIdx);
+      b.store(nextIdx, idxSlot);
+      b.br(condBlock);
 
-      lines.push(`${endLabel}:`);
+      b.position(endBlock);
       if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
@@ -4241,51 +4239,47 @@ export class Codegen {
     } else if (stmt.iterableKind === "string") {
       const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
-      const dataPtr = this.nextTemp();
-      const lenPtr = this.nextTemp();
-      const data = this.nextTemp();
-      const len = this.nextTemp();
-      lines.push(`  ${dataPtr} = getelementptr %String, ptr ${iterAddr}, i32 0, i32 0`);
-      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-      lines.push(`  ${lenPtr} = getelementptr %String, ptr ${iterAddr}, i32 0, i32 1`);
-      lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+      const dataPtr = b.reserveTemp(Ty.ptr);
+      const lenPtr = b.reserveTemp(Ty.ptr);
+      const data = b.reserveTemp(Ty.ptr);
+      const len = b.reserveTemp(Ty.i64);
+      b.gep(STRING_TY, ptr(iterAddr), [i32c(0), i32c(0)], dataPtr);
+      b.load(Ty.ptr, dataPtr, undefined, undefined, data);
+      b.gep(STRING_TY, ptr(iterAddr), [i32c(0), i32c(1)], lenPtr);
+      b.load(Ty.i64, lenPtr, undefined, undefined, len);
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
+      const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+      b.store(i64c(0), idxSlot);
 
       const elemName2 = stmt.varName2 ?? stmt.varName;
       const varAddr = this.allocaName(elemName2);
-      this.entryAllocas.push(`  ${varAddr} = alloca i8`);
+      const varSlot = b.entryAlloca(varAddr, Ty.i8);
       const savedLoopLocals = [this.bindLoopLocal(elemName2, { type: "i8", typeKind: { tag: "int", bits: 8, signed: false }, mutable: false, isRef: false, addr: varAddr })];
       if (stmt.varName2) {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
 
-      const condLabel = this.nextLabel("for.cond");
-      const bodyLabel = this.nextLabel("for.body");
-      const incrLabel = this.nextLabel("for.incr");
-      const endLabel = this.nextLabel("for.end");
+      const condBlock = b.newBlock("for.cond");
+      const bodyBlock = b.newBlock("for.body");
+      const incrBlock = b.newBlock("for.incr");
+      const endBlock = b.newBlock("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
       const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-      this.loopHeader = incrLabel;
-      this.loopExit = endLabel;
+      this.loopHeader = incrBlock.name;
+      this.loopExit = endBlock.name;
       this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const idx = this.nextTemp();
-      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-      const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-      lines.push(`${bodyLabel}:`);
-      const bytePtr = this.nextTemp();
-      lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idx}`);
-      const byte = this.nextTemp();
-      lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
-      lines.push(`  store i8 ${byte}, ptr ${varAddr}`);
+      b.br(condBlock);
+      b.position(condBlock);
+      const idx = b.load(Ty.i64, idxSlot);
+      const cmp = b.icmp("ult", idx, len);
+      b.condBr(cmp, bodyBlock, endBlock);
+      b.position(bodyBlock);
+      const bytePtr = b.gep(Ty.i8, data, [idx]);
+      const byte = b.load(Ty.i8, bytePtr);
+      b.store(byte, varSlot);
 
       this.emitLoopInvariants(lines, stmt.invariants);
       let bodyTerminated = false;
@@ -4294,17 +4288,16 @@ export class Codegen {
         lines.push(...sl);
         if (t) { bodyTerminated = true; break; }
       }
-      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${incrLabel}`); }
+      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(incrBlock); }
 
-      lines.push(`${incrLabel}:`);
-      const nextIdx = this.nextTemp();
-      const curIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
-      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-      lines.push(`  br label %${condLabel}`);
+      b.position(incrBlock);
+      const nextIdx = b.reserveTemp(Ty.i64);
+      const curIdx = b.load(Ty.i64, idxSlot);
+      b.binop("add", curIdx, i64c(1), nextIdx);
+      b.store(nextIdx, idxSlot);
+      b.br(condBlock);
 
-      lines.push(`${endLabel}:`);
+      b.position(endBlock);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
       this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
@@ -4322,12 +4315,12 @@ export class Codegen {
       const elemTypeKind3 = stmt.varName2 ? stmt.varType2! : stmt.varType;
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
+      const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+      b.store(i64c(0), idxSlot);
 
       const elemName3 = stmt.varName2 ?? stmt.varName;
       const varAddr = this.allocaName(elemName3);
-      this.entryAllocas.push(`  ${varAddr} = alloca ${consumed ? elemTy : "ptr"}`);
+      b.entryAlloca(varAddr, Ty.of(consumed ? elemTy : "ptr"));
       const savedLoopLocals = [this.bindLoopLocal(elemName3, consumed
         ? { type: elemTy, typeKind: elemTypeKind3, mutable: false, isRef: false, addr: varAddr }
         : { type: elemTy, typeKind: elemTypeKind3, mutable: elemTypeKind3.tag === "ref" && elemTypeKind3.mutable, isRef: true, addr: varAddr })];
@@ -4335,31 +4328,28 @@ export class Codegen {
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr }));
       }
 
-      const condLabel = this.nextLabel("for.cond");
-      const bodyLabel = this.nextLabel("for.body");
-      const incrLabel = this.nextLabel("for.incr");
-      const endLabel = this.nextLabel("for.end");
+      const condBlock = b.newBlock("for.cond");
+      const bodyBlock = b.newBlock("for.body");
+      const incrBlock = b.newBlock("for.incr");
+      const endBlock = b.newBlock("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
       const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-      this.loopHeader = incrLabel;
-      this.loopExit = endLabel;
+      this.loopHeader = incrBlock.name;
+      this.loopExit = endBlock.name;
       this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
       const bindAlive = consumed ? this.registerConsumedBinding(elemName3, varAddr, elemTypeKind3) : null;
 
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const idx = this.nextTemp();
-      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-      const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${arrSize}`);
-      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-      lines.push(`${bodyLabel}:`);
-      const elemPtr = this.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i64 ${idx}`);
-      if (consumed && this.own.on && this.needsDropCg(elemTypeKind3)) this.own.slots.set(elemPtr, this.own.make(lines, "element-moved-out"));
-      if (consumed) this.emitConsumeElement(lines, elemPtr, idx, { addr: varAddr, ty: elemTy, tk: elemTypeKind3, alive: bindAlive }, consumed.entry);
-      else lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+      b.br(condBlock);
+      b.position(condBlock);
+      const idx = b.load(Ty.i64, idxSlot);
+      const cmp = b.icmp("ult", idx, i64c(arrSize));
+      b.condBr(cmp, bodyBlock, endBlock);
+      b.position(bodyBlock);
+      const elemPtr = b.gep(Ty.of(iterTy), ptr(iterAddr), [i32c(0), idx]);
+      if (consumed && this.own.on && this.needsDropCg(elemTypeKind3)) this.own.slots.set(elemPtr.ref, this.own.make(lines, "element-moved-out"));
+      if (consumed) this.emitConsumeElement(lines, elemPtr.ref, idx.ref, { addr: varAddr, ty: elemTy, tk: elemTypeKind3, alive: bindAlive }, consumed.entry);
+      else b.store(elemPtr, ptr(varAddr));
 
       this.emitLoopInvariants(lines, stmt.invariants);
       let bodyTerminated = false;
@@ -4368,17 +4358,15 @@ export class Codegen {
         lines.push(...sl);
         if (t) { bodyTerminated = true; break; }
       }
-      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${incrLabel}`); }
+      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(incrBlock); }
 
-      lines.push(`${incrLabel}:`);
-      const curIdx = this.nextTemp();
-      const nextIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
-      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-      lines.push(`  br label %${condLabel}`);
+      b.position(incrBlock);
+      const curIdx = b.load(Ty.i64, idxSlot);
+      const nextIdx = b.binop("add", curIdx, i64c(1));
+      b.store(nextIdx, idxSlot);
+      b.br(condBlock);
 
-      lines.push(`${endLabel}:`);
+      b.position(endBlock);
       if (consumed?.entry) this.emitGuardedDrop(lines, consumed.entry);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
@@ -4390,14 +4378,14 @@ export class Codegen {
       // hashmap iteration
       const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
-      const dataPtr = this.nextTemp();
-      const capPtr = this.nextTemp();
-      const data = this.nextTemp();
-      const cap = this.nextTemp();
-      lines.push(`  ${dataPtr} = getelementptr %HashMap, ptr ${iterAddr}, i32 0, i32 ${HM_DATA}`);
-      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-      lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${iterAddr}, i32 0, i32 ${HM_CAP}`);
-      lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+      const dataPtr = b.reserveTemp(Ty.ptr);
+      const capPtr = b.reserveTemp(Ty.ptr);
+      const data = b.reserveTemp(Ty.ptr);
+      const cap = b.reserveTemp(Ty.i64);
+      b.gep(HASHMAP_TY, ptr(iterAddr), [i32c(0), i32c(HM_DATA)], dataPtr);
+      b.load(Ty.ptr, dataPtr, undefined, undefined, data);
+      b.gep(HASHMAP_TY, ptr(iterAddr), [i32c(0), i32c(HM_CAP)], capPtr);
+      b.load(Ty.i64, capPtr, undefined, undefined, cap);
 
       const keyType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
       const valType = stmt.varType2?.tag === "ref" ? stmt.varType2.inner : (stmt.varType2 ?? { tag: "void" as const });
@@ -4406,65 +4394,57 @@ export class Codegen {
       const valTy = this.llvmType(valType);
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
+      const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
+      b.store(i64c(0), idxSlot);
 
       // A shadowing binding needs its OWN alloca, or the loop writes through to
       // the outer variable's storage — the same `.N.addr` fallback the vec and
       // array branches use.
       const keyVarAddr = this.allocaName(stmt.varName);
-      this.entryAllocas.push(`  ${keyVarAddr} = alloca ptr`);
+      const keyVarSlot = b.entryAlloca(keyVarAddr, Ty.ptr);
       const savedLoopLocals = [this.bindLoopLocal(stmt.varName, { type: keyTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: keyVarAddr })];
 
-      let valVarAddr = "";
+      let valVarSlot: Val | null = null;
       if (stmt.varName2 && stmt.varType2) {
-        valVarAddr = this.allocaName(stmt.varName2);
-        this.entryAllocas.push(`  ${valVarAddr} = alloca ptr`);
+        const valVarAddr = this.allocaName(stmt.varName2);
+        valVarSlot = b.entryAlloca(valVarAddr, Ty.ptr);
         savedLoopLocals.push(this.bindLoopLocal(stmt.varName2, { type: valTy, typeKind: stmt.varType2, mutable: false, isRef: true, addr: valVarAddr }));
       }
 
-      const condLabel = this.nextLabel("for.cond");
-      const checkLabel = this.nextLabel("for.check");
-      const bodyLabel = this.nextLabel("for.body");
-      const nextLabel = this.nextLabel("for.next");
-      const endLabel = this.nextLabel("for.end");
+      const condBlock = b.newBlock("for.cond");
+      const checkBlock = b.newBlock("for.check");
+      const bodyBlock = b.newBlock("for.body");
+      const nextBlock = b.newBlock("for.next");
+      const endBlock = b.newBlock("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
       const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-      this.loopHeader = nextLabel;
-      this.loopExit = endLabel;
+      this.loopHeader = nextBlock.name;
+      this.loopExit = endBlock.name;
       this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
 
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const idx = this.nextTemp();
-      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-      const cmp = this.nextTemp();
-      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${cap}`);
-      lines.push(`  br i1 ${cmp}, label %${checkLabel}, label %${endLabel}`);
+      b.br(condBlock);
+      b.position(condBlock);
+      const idx = b.load(Ty.i64, idxSlot);
+      const cmp = b.icmp("ult", idx, cap);
+      b.condBr(cmp, checkBlock, endBlock);
 
-      lines.push(`${checkLabel}:`);
-      const entryPtr = this.nextTemp();
-      lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${idx}`);
-      const statePtr = this.nextTemp();
-      lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 0`);
-      const state = this.nextTemp();
-      lines.push(`  ${state} = load i8, ptr ${statePtr}`);
-      const isOccupied = this.nextTemp();
-      lines.push(`  ${isOccupied} = icmp eq i8 ${state}, 1`);
-      lines.push(`  br i1 ${isOccupied}, label %${bodyLabel}, label %${nextLabel}`);
+      b.position(checkBlock);
+      const entryPtr = b.gep(Ty.of(entryTy), data, [idx]);
+      const statePtr = b.gep(Ty.of(entryTy), entryPtr, [i32c(0), i32c(0)]);
+      const state = b.load(Ty.i8, statePtr);
+      const isOccupied = b.icmp("eq", state, val("1", Ty.i8));
+      b.condBr(isOccupied, bodyBlock, nextBlock);
 
-      lines.push(`${bodyLabel}:`);
-      const keyPtr = this.nextTemp();
-      lines.push(`  ${keyPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-      lines.push(`  store ptr ${keyPtr}, ptr ${keyVarAddr}`);
+      b.position(bodyBlock);
+      const keyPtr = b.gep(Ty.of(entryTy), entryPtr, [i32c(0), i32c(1)]);
+      b.store(keyPtr, keyVarSlot);
       if (stmt.varName2) {
-        const valPtr = this.nextTemp();
-        lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
+        const valPtr = b.gep(Ty.of(entryTy), entryPtr, [i32c(0), i32c(2)]);
         // Must be the uniqued alloca, not `%<name>.addr` — a second `for k, v in map`
         // in the same function gets `%v.N.addr`, and spelling the plain name here wrote
         // the value into the FIRST loop's slot while reads came from an unwritten one.
-        lines.push(`  store ptr ${valPtr}, ptr ${valVarAddr}`);
+        b.store(valPtr, valVarSlot!);
       }
 
       this.emitLoopInvariants(lines, stmt.invariants);
@@ -4474,17 +4454,16 @@ export class Codegen {
         lines.push(...sl);
         if (t) { bodyTerminated = true; break; }
       }
-      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${nextLabel}`); }
+      if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(nextBlock); }
 
-      lines.push(`${nextLabel}:`);
-      const nextIdx = this.nextTemp();
-      const curIdx = this.nextTemp();
-      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
-      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
-      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-      lines.push(`  br label %${condLabel}`);
+      b.position(nextBlock);
+      const nextIdx = b.reserveTemp(Ty.i64);
+      const curIdx = b.load(Ty.i64, idxSlot);
+      b.binop("add", curIdx, i64c(1), nextIdx);
+      b.store(nextIdx, idxSlot);
+      b.br(condBlock);
 
-      lines.push(`${endLabel}:`);
+      b.position(endBlock);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
       this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;

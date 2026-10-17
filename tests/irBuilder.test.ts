@@ -241,6 +241,23 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.0 = and i1 %x, %y"]);
   });
 
+  test("load and gep into a reserved temp keep the early name, once, with matching type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const p = val("%p", Ty.ptr);
+    expect(() => b.load(Ty.i64, p, undefined, undefined, val("%nope", Ty.i64))).toThrow("not a reserved temp");
+    expect(() => b.gep(Ty.i8, p, [val("0", Ty.i64)], val("%nope", Ty.ptr))).toThrow("not a reserved temp");
+    const l = b.reserveTemp(Ty.i64);
+    const g = b.reserveTemp(Ty.ptr);
+    expect(() => b.load(Ty.i32, p, undefined, undefined, l)).toThrow("but the result is i32");
+    expect(() => b.gep(Ty.i8, p, [val("0", Ty.i64)], { ref: g.ref, ty: Ty.i64 })).toThrow("but the result is ptr");
+    b.gep(Ty.i8, p, [val("0", Ty.i64)], g);
+    b.load(Ty.i64, g, undefined, undefined, l);
+    expect(() => b.load(Ty.i64, p, undefined, undefined, l)).toThrow("not a reserved temp");
+    expect(() => b.gep(Ty.i8, p, [val("0", Ty.i64)], g)).toThrow("not a reserved temp");
+    expect(lines).toEqual(["  %t.1 = getelementptr i8, ptr %p, i64 0", "  %t.0 = load i64, ptr %t.1"]);
+  });
+
   test("select into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);
