@@ -12,7 +12,7 @@ import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
 } from "./codegen-string";
-import { genMatch, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
+import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
@@ -5960,7 +5960,7 @@ export class Codegen {
       case "IfExpr":
         return this.genIfExpr(expr, lines);
       case "MatchExpr":
-        return this.genMatchExpr(expr, lines);
+        return genMatchExpr(this, expr, lines);
       case "InterfaceMethodCall":
         return this.genInterfaceMethodCall(expr, lines);
     }
@@ -7427,32 +7427,7 @@ export class Codegen {
     return [lines, result, resultTy];
   }
 
-  private genMatchExpr(expr: HIRExpr & { kind: "MatchExpr" }, lines: string[]): Gen {
-    const resultTy = this.llvmType(expr.type);
-    // Reuse the statement match generator; a result slot (when there is one)
-    // makes each arm's tail value be stored instead of discarded.
-    const asStmt = matchExprAsStmt(expr);
-    // A void- or never-typed match expression (e.g. a match that is itself a match
-    // arm, every arm yielding void or diverging) has no value to carry, and
-    // `alloca void` is invalid IR: lower it as a plain statement match.
-    if (resultTy === "void") {
-      lines.push(...genMatch(this, asStmt)[0]);
-      return [lines, "void", "void"];
-    }
-    const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
-    if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
-    const [ml, allTerminated] = genMatch(this, asStmt, { addr: resultAddr, ty: resultTy, cloneViews: this.isOwnedTempExpr(expr) });
-    lines.push(...ml);
-    // Every arm diverged (return/break) — genMatch already closed endLabel
-    // with `unreachable`, so a load here would follow a terminator. The
-    // value is never observed; hand back a poison of the right type.
-    if (allTerminated) return [lines, `poison`, resultTy];
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
-    this.own.resultMade(lines, resultAddr, result, expr);
-    return [lines, result, resultTy];
-  }
+
 
   private genInterfaceMethodCall(expr: HIRExpr & { kind: "InterfaceMethodCall" }, lines: string[]): Gen {
     // object is { ptr data, ptr itable } — either directly or loaded from alloca

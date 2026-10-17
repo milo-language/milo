@@ -4,7 +4,7 @@ import type { HIRStmt, HIRExpr, HIRPattern, HIRPatStep, HIRPatTest } from "./hir
 import type { TypeKind } from "./types";
 import { genStringCmp, type StringCtx } from "./codegen-string";
 import { LlvmTextBuilder, Ty, val, type Block, type Val } from "./ir";
-import type { ForkSlot, EnumVariant, LocalInfo, DroppableLocal } from "./codegen";
+import type { ForkSlot, EnumVariant, LocalInfo, DroppableLocal, Gen } from "./codegen";
 import type { OwnLedger, CopyDecl } from "./codegen-own";
 import { must } from "./must";
 
@@ -191,6 +191,33 @@ export function matchExprAsStmt(expr: HIRExpr & { kind: "MatchExpr" }): HIRStmt 
     subjectIsMut: expr.subjectIsMut,
     span: expr.span,
   };
+}
+
+// A match used as a value: each arm's tail is stored into a result slot (when the type
+// has one) and loaded after the join.
+export function genMatchExpr(ctx: MatchCtx, expr: HIRExpr & { kind: "MatchExpr" }, lines: string[]): Gen {
+  const resultTy = ctx.llvmType(expr.type);
+  const asStmt = matchExprAsStmt(expr);
+  // A void- or never-typed match expression (e.g. a match that is itself a match
+  // arm, every arm yielding void or diverging) has no value to carry, and
+  // `alloca void` is invalid IR: lower it as a plain statement match.
+  if (resultTy === "void") {
+    lines.push(...genMatch(ctx, asStmt)[0]);
+    return [lines, "void", "void"];
+  }
+  const b = new LlvmTextBuilder(lines, ctx);
+  const ty = Ty.of(resultTy);
+  const resultAddr = b.entryAlloca(`%__matchexpr.${ctx.scopeCounter++}.addr`, ty).ref;
+  if (ctx.own.on && ctx.needsDropCg(expr.type)) ctx.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
+  const [ml, allTerminated] = genMatch(ctx, asStmt, { addr: resultAddr, ty: resultTy, cloneViews: ctx.isOwnedTempExpr(expr) });
+  lines.push(...ml);
+  // Every arm diverged (return/break): genMatch already closed endLabel with
+  // `unreachable`, so a load here would follow a terminator. The value is never
+  // observed; hand back a poison of the right type.
+  if (allTerminated) return [lines, `poison`, resultTy];
+  const result = b.load(ty, val(resultAddr, Ty.ptr)).ref;
+  ctx.own.resultMade(lines, resultAddr, result, expr);
+  return [lines, result, resultTy];
 }
 
 export function armTailExpr(body: HIRStmt[]): HIRExpr | null {
