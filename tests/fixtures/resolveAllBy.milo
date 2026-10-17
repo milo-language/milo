@@ -2,8 +2,7 @@
 // resolveAllBy waits for the lookup only until its deadline. A generous deadline returns
 // the addresses; one already past returns Err(Timeout("dns")) or the addresses if the
 // worker beat the timer (a race the API leaves open), but never hangs or crashes.
-// getaddrinfo cannot be cancelled, so a hung resolver is only observable with a black-hole
-// DNS server; that path is the same Select arm the past-deadline case takes.
+// A resolver that never answers is lookupAllByHung's case.
 // @expect: generous: ok
 // @expect: past: settled
 // @expect: no deadline: ok

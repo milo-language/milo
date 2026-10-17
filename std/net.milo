@@ -891,8 +891,16 @@ fn resolveAllLive(hostname: &string, by: i64): Result<Vec<IpAddr>, NetError> {
     if schedulerCurrent() as i64 == 0 || !replayOff() {
         return lookupAll(hostname)
     }
+    return lookupAllBy(hostname, by, lookupAll)
+}
+
+// @internal
+// resolveAllLive's deadline with the lookup passed in. `pub` only so a fixture can hand it
+// a lookup that never returns: a real resolver cannot be made to hang on demand, and a
+// test against one passes whether or not the deadline is there.
+pub fn lookupAllBy(hostname: &string, by: i64, lookup: move (&string) => Result<Vec<IpAddr>, NetError>): Result<Vec<IpAddr>, NetError> {
     let host = hostname
-    let p = Promise<Result<Vec<IpAddr>, NetError>>.blocking(move(): Result<Vec<IpAddr>, NetError> => lookupAll(host))
+    let p = Promise<Result<Vec<IpAddr>, NetError>>.blocking(move(): Result<Vec<IpAddr>, NetError> => lookup(host))
     if by > 0 {
         ensureTimersLive()
         var sel = Select.new()

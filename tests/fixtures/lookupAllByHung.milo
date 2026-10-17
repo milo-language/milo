@@ -1,0 +1,48 @@
+// @skip-os: win32
+// A DNS lookup that never answers is given up on at the deadline: Err(Timeout("dns"))
+// within a bounded time, not a hang. The lookup is a stand-in that sleeps far past the
+// deadline, because a real resolver cannot be made to hang on demand and a test against
+// one passes with or without the deadline. Its worker thread is abandoned, as a hung
+// getaddrinfo's would be, and the process exits without waiting for it.
+// @expect: hung: timeout: dns
+// @expect: within bound: true
+// @expect: answered: 1
+from "std/net" import { lookupAllBy, IpAddr, NetError, ip4 }
+from "std/runtime" import { Promise }
+from "std/time" import { unrecordedEpochMillis, sleepMs }
+
+fn hang(_host: &string): Result<Vec<IpAddr>, NetError> {
+    sleepMs(60000)
+    let none: Vec<IpAddr> = []
+    return Result.Ok(none)
+}
+
+fn answer(_host: &string): Result<Vec<IpAddr>, NetError> {
+    var out: Vec<IpAddr> = []
+    out.push(IpAddr.V4(ip4(127, 0, 0, 1)))
+    return Result.Ok(out)
+}
+
+fn text(r: Result<Vec<IpAddr>, NetError>): string {
+    match r {
+        Result.Ok(a) => {
+            return a.len.toString()
+        }
+        Result.Err(e) => {
+            return e.message()
+        }
+    }
+}
+
+pub fn main(): void {
+    let p = Promise<i64>.run(move(): i64 => {
+        let t0 = unrecordedEpochMillis()
+        print("hung: " + text(lookupAllBy("example.invalid", t0 + 200, hang)))
+        let took = unrecordedEpochMillis() - t0
+        print($"within bound: {took >= 150 && took < 3000}")
+        print("answered: " + text(lookupAllBy("example.invalid", unrecordedEpochMillis() + 10000, answer)))
+        return 0
+    })
+    let _ = p.await()!
+    exit(0)
+}
