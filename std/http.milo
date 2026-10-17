@@ -2410,15 +2410,25 @@ fn requestLine(req: &Request): string {
 
 // What a client gets if its request's handler panics (index out of bounds, overflow,
 // a failed assert): an answer instead of a reset, while the server keeps running.
-let PANIC_REPLY = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\n500 Internal Server Error"
+// Rendered by renderRaw like every other response, so it carries the same headers (a
+// fixed string here once went out without Date). The runtime sends it from the panic
+// path, which cannot build a response, so it is rendered ahead of time: once when the
+// connection starts and again when the request arrives, so its Date is the handler's
+// start rather than up to readTimeoutMs earlier.
+fn armPanicReply(clientFd: i32): void {
+    let noHeaders: Vec<Param> = []
+    let reply = renderRaw(500, "text/plain; charset=utf-8", statusText(500), noHeaders)
+    unsafe { taskOnPanicReply(clientFd, reply) }
+}
 
 fn handleConn(clientFd: i32, router: &Router, readMs: i64, writeMs: i64): void {
-    unsafe { taskOnPanicReply(clientFd, PANIC_REPLY) }
+    armPanicReply(clientFd)
     // Fixed once for the connection: the whole request, not each read, is what the
     // deadline bounds, so a client dribbling a byte at a time still runs out.
     let by = deadlineIn(readMs)
     serveExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, writeMs), router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
         taskOnPanicNote(requestLine(req))
+        armPanicReply(clientFd)
         // A stream or ws route has already written everything it will; nothing more to send.
         if runLongRoute(req, clientFd, router) {
             return ""
