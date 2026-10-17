@@ -110,7 +110,8 @@ export interface Builder {
   loadAcquire(ty: Ty, ptr: Val, align: number): Val;
   store(v: Val, ptr: Val): void;
   gep(base: Ty, ptr: Val, idx: Val[]): Val;
-  binop(op: BinOp, a: Val, b: Val): Val;
+  /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
+  binop(op: BinOp, a: Val, b: Val, dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val;
   fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val;
@@ -240,9 +241,9 @@ export class LlvmTextBuilder implements Builder {
     return this.def(`getelementptr ${base.ll}, ptr ${ptr.ref}, ${idx.map(i => `${i.ty.ll} ${i.ref}`).join(", ")}`, Ty.ptr);
   }
 
-  binop(op: BinOp, a: Val, b: Val): Val {
+  binop(op: BinOp, a: Val, b: Val, dest?: Val): Val {
     this.sameTy(op, a, b);
-    return this.def(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty);
+    return this.defOrDest(`${op} ${a.ty.ll} ${a.ref}, ${b.ref}`, a.ty, dest);
   }
 
   icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val {

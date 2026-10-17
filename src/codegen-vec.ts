@@ -7,7 +7,7 @@ import type { HIRExpr } from "./hir";
 import type { OwnLedger, CopyDecl } from "./codegen-own";
 import type { EnumLayout, EnumVariant } from "./codegen";
 import { genStringCmp, genStringOrd, type StringCtx } from "./codegen-string";
-import { LlvmTextBuilder, Ty, val, type Val } from "./ir";
+import { LlvmTextBuilder, Ty, val, asGen, type Val, type Builder } from "./ir";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this — they are not part of its external API.
@@ -1369,67 +1369,64 @@ function genArraySlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" }, li
 export const REALLOC_MIN_BYTES = 4096;
 
 
+const I32_2 = val("2", Ty.i32);
+
+// { ptr, len, cap } as three insertvalues into undef, the %Vec layout.
+function makeVec(b: Builder, data: Val, len: Val, cap: Val): Val {
+  const v0 = b.insertvalue(val("undef", VEC_TY), data, 0);
+  const v1 = b.insertvalue(v0, len, 1);
+  return b.insertvalue(v1, cap, 2);
+}
+
 export function genVecWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecWithCapacity" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   ctx.needsMalloc = true;
   const elemSize = ctx.typeSizeOf(expr.elementType);
-  const [capLines, capVal] = ctx.genExpr(expr.capacity);
+  const [capLines, capRef] = ctx.genExpr(expr.capacity);
   lines.push(...capLines);
-  ctx.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
+  ctx.emitNonNegativeCheck(lines, capRef, "capacity", expr.span);
   // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
   // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
   // the "buffer or null" invariant push checks (null only when cap==0).
-  const { buf } = ctx.emitAllocBytes(lines, capVal, elemSize, "veccap", expr.span);
-  const v0 = ctx.nextTemp();
-  lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-  const v1 = ctx.nextTemp();
-  lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 0, 1`);
-  const v2 = ctx.nextTemp();
-  lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${capVal}, 2`);
-  return [lines, v2, "%Vec"];
+  const { buf } = ctx.emitAllocBytes(lines, capRef, elemSize, "veccap", expr.span);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const vec = makeVec(b, val(buf, Ty.ptr), I64_0, val(capRef, Ty.i64));
+  return asGen(lines, vec);
 }
 
 export function genVecFilled(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilled" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   ctx.needsMalloc = true;
   const elemSize = ctx.typeSizeOf(expr.elementType);
-  const elemTy = ctx.llvmType(expr.elementType);
-  const [cntLines, cntVal] = ctx.genExpr(expr.count);
+  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
+  const [cntLines, cntRef] = ctx.genExpr(expr.count);
   lines.push(...cntLines);
-  ctx.emitNonNegativeCheck(lines, cntVal, "length", expr.span);
-  const [valLines, valVal] = ctx.genExpr(expr.value);
+  ctx.emitNonNegativeCheck(lines, cntRef, "length", expr.span);
+  const [valLines, valRef] = ctx.genExpr(expr.value);
   lines.push(...valLines);
-  const { buf } = ctx.emitAllocBytes(lines, cntVal, elemSize, "vecrep", expr.span);
+  const { buf: bufRef } = ctx.emitAllocBytes(lines, cntRef, elemSize, "vecrep", expr.span);
+  const buf = val(bufRef, Ty.ptr);
+  const cnt = val(cntRef, Ty.i64);
   // fill loop: for i in 0..count { buf[i] = value }
-  const idxSlot = ctx.nextTemp();
-  lines.push(`  ${idxSlot} = alloca i64`);
-  lines.push(`  store i64 0, ptr ${idxSlot}`);
-  const condL = ctx.nextLabel("vecfill.cond");
-  const bodyL = ctx.nextLabel("vecfill.body");
-  const endL = ctx.nextLabel("vecfill.end");
-  lines.push(`  br label %${condL}`);
-  lines.push(`${condL}:`);
-  const iv = ctx.nextTemp();
-  lines.push(`  ${iv} = load i64, ptr ${idxSlot}`);
-  const more = ctx.nextTemp();
-  lines.push(`  ${more} = icmp ult i64 ${iv}, ${cntVal}`);
-  lines.push(`  br i1 ${more}, label %${bodyL}, label %${endL}`);
-  lines.push(`${bodyL}:`);
-  const slot = ctx.nextTemp();
-  lines.push(`  ${slot} = getelementptr ${elemTy}, ptr ${buf}, i64 ${iv}`);
-  lines.push(`  store ${elemTy} ${valVal}, ptr ${slot}`);
-  const inc = ctx.nextTemp();
-  lines.push(`  ${inc} = add i64 ${iv}, 1`);
-  lines.push(`  store i64 ${inc}, ptr ${idxSlot}`);
-  lines.push(`  br label %${condL}`);
-  lines.push(`${endL}:`);
-  const v0 = ctx.nextTemp();
-  lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
-  const v1 = ctx.nextTemp();
-  lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${cntVal}, 1`);
-  const v2 = ctx.nextTemp();
-  lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${cntVal}, 2`);
-  return [lines, v2, "%Vec"];
+  const b = new LlvmTextBuilder(lines, ctx);
+  const idxSlot = b.alloca(Ty.i64);
+  b.store(I64_0, idxSlot);
+  const condL = b.newBlock("vecfill.cond");
+  const bodyL = b.newBlock("vecfill.body");
+  const endL = b.newBlock("vecfill.end");
+  b.br(condL);
+  b.position(condL);
+  const iv = b.load(Ty.i64, idxSlot);
+  const more = b.icmp("ult", iv, cnt);
+  b.condBr(more, bodyL, endL);
+  b.position(bodyL);
+  const slot = b.gep(elemTy, buf, [iv]);
+  b.store(val(valRef, elemTy), slot);
+  const inc = b.binop("add", iv, I64_1);
+  b.store(inc, idxSlot);
+  b.br(condL);
+  b.position(endL);
+  return asGen(lines, makeVec(b, buf, cnt, cnt));
 }
 
 function vecInitialCap(elemSize: number): number { return Math.max(1, Math.min(8, Math.floor(64 / Math.max(1, elemSize)))); }
@@ -1443,32 +1440,30 @@ export function genVecPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPush" },
   const vecType = expr.vec.type;
   if (vecType.tag !== "vec") throw new Error("VecPush on non-vec type");
   const elemSize = ctx.typeSizeOf(vecType.element);
-  const elemTy = ctx.llvmType(vecType.element);
+  const elemTy = Ty.of(ctx.llvmType(vecType.element));
 
   // get pointer to the vec struct
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.vec);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.vec);
   lines.push(...vecPtrLines);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
 
   // generate the value to push
-  const [valLines, valVal, valTy] = ctx.genExpr(expr.value);
+  const [valLines, valRef, valTy] = ctx.genExpr(expr.value);
   lines.push(...valLines);
+  const value = val(valRef, Ty.of(valTy));
 
+  const b = new LlvmTextBuilder(lines, ctx);
   // load len and cap
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const len = b.load(Ty.i64, lenPtr);
+  const capPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_2]);
+  const cap = b.load(Ty.i64, capPtr);
 
   // check if len >= cap (need to grow)
-  const needsGrow = ctx.nextTemp();
-  lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
-  const growLabel = ctx.nextLabel("vec.grow");
-  const pushLabel = ctx.nextLabel("vec.push");
-  lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
+  const needsGrow = b.icmp("uge", len, cap);
+  const growLabel = b.newBlock("vec.grow");
+  const pushLabel = b.newBlock("vec.push");
+  b.condBr(needsGrow, growLabel, pushLabel);
 
   // grow: new_cap = cap == 0 ? initialCap : cap * 2
   // The first allocation is sized in BYTES, not elements: a flat 8 elements
@@ -1476,46 +1471,36 @@ export function genVecPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPush" },
   // an object with one property paid that full kilobyte (milojs: ~1 KB per
   // property, measured). Cap the first allocation near 64 bytes instead.
   const initialCap = vecInitialCap(elemSize);
-  lines.push(`${growLabel}:`);
-  const isZero = ctx.nextTemp();
-  lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
-  const newCap = ctx.nextTemp();
-  const doubled = ctx.nextTemp();
-  lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-  lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${initialCap}, i64 ${doubled}`);
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const oldBuf = ctx.nextTemp();
-  lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-  const keepBytes = ctx.nextTemp();
-  lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+  b.position(growLabel);
+  const isZero = b.icmp("eq", cap, I64_0);
+  // newCap's name is drawn before doubled's, as the string code did.
+  const newCap = b.reserveTemp(Ty.i64);
+  const doubled = b.binop("mul", cap, val("2", Ty.i64));
+  b.select(isZero, val(String(initialCap), Ty.i64), doubled, newCap);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const oldBuf = b.load(Ty.ptr, dataPtr);
+  const keepBytes = b.binop("mul", len, val(String(elemSize), Ty.i64));
   const newBuf = emitGrowBytes(ctx, lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow", expr.span);
-  const storeLabel = ctx.nextLabel("vec.store");
-  lines.push(`  br label %${storeLabel}`);
+  const storeLabel = b.newBlock("vec.store");
+  b.br(storeLabel);
 
   // store new buf, cap
-  lines.push(`${storeLabel}:`);
-  const dataPtr2 = ctx.nextTemp();
-  lines.push(`  ${dataPtr2} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  lines.push(`  store ptr ${newBuf}, ptr ${dataPtr2}`);
-  lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-  lines.push(`  br label %${pushLabel}`);
+  b.position(storeLabel);
+  const dataPtr2 = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  b.store(newBuf, dataPtr2);
+  b.store(newCap, capPtr);
+  b.br(pushLabel);
 
   // push: store value at data[len], len++
-  lines.push(`${pushLabel}:`);
-  const curDataPtr = ctx.nextTemp();
-  lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const curData = ctx.nextTemp();
-  lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
-  const curLen = ctx.nextTemp();
-  lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
-  const elemPtr = ctx.nextTemp();
-  lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${curLen}`);
-  lines.push(`  store ${valTy} ${valVal}, ptr ${elemPtr}`);
-  ctx.own.endVal(lines, valVal, "STORE");
-  const newLen = ctx.nextTemp();
-  lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
-  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+  b.position(pushLabel);
+  const curDataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const curData = b.load(Ty.ptr, curDataPtr);
+  const curLen = b.load(Ty.i64, lenPtr);
+  const elemPtr = b.gep(elemTy, curData, [curLen]);
+  b.store(value, elemPtr);
+  ctx.own.endVal(lines, valRef, "STORE");
+  const newLen = b.binop("add", curLen, I64_1);
+  b.store(newLen, lenPtr);
 
   return [lines, "void", "void"];
 }
@@ -1529,91 +1514,74 @@ export function genVecInsert(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecInsert
   ctx.needsExit = true;
 
   const elemSize = ctx.typeSizeOf(expr.elementType);
-  const elemTy = ctx.llvmType(expr.elementType);
+  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
-  const [idxLines, idxVal] = ctx.genExpr(expr.index);
+  const vecPtr = val(vecPtrRef, Ty.ptr);
+  const [idxLines, idxRef] = ctx.genExpr(expr.index);
   lines.push(...idxLines);
-  const [valLines, valVal, valTy] = ctx.genExpr(expr.value);
+  const idxVal = val(idxRef, Ty.i64);
+  const [valLines, valRef, valTy] = ctx.genExpr(expr.value);
   lines.push(...valLines);
+  const value = val(valRef, Ty.of(valTy));
 
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const len = b.load(Ty.i64, lenPtr);
+  const capPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_2]);
+  const cap = b.load(Ty.i64, capPtr);
 
   // bounds: index must be <= len (== len means append)
-  const oob = ctx.nextTemp();
-  lines.push(`  ${oob} = icmp ugt i64 ${idxVal}, ${len}`);
-  const panicLabel = ctx.nextLabel("vec.insert.panic");
-  const growCheck = ctx.nextLabel("vec.insert.growcheck");
-  lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${growCheck}`);
+  const oob = b.icmp("ugt", idxVal, len);
+  const panicLabel = b.newBlock("vec.insert.panic");
+  const growCheck = b.newBlock("vec.insert.growcheck");
+  b.condBr(oob, panicLabel, growCheck);
 
-  lines.push(`${panicLabel}:`);
+  b.position(panicLabel);
   const span = expr.span;
   const { label: errLabel, length: errLen } = ctx.addString(`insert index out of bounds at ${ctx.panicAt(span)}\n`);
-  const errPtr = ctx.nextTemp();
-  lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-  ctx.emitFdPrintf(lines, 2, errPtr, "");
+  const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [I32_0, I32_0]);
+  ctx.emitFdPrintf(lines, 2, errPtr.ref, "");
   ctx.panicAbort(lines);
-  lines.push(`  unreachable`);
+  b.unreachable();
 
   // grow if len >= cap (we are adding one element) — identical policy to push
-  lines.push(`${growCheck}:`);
-  const needsGrow = ctx.nextTemp();
-  lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
-  const growLabel = ctx.nextLabel("vec.insert.grow");
-  const shiftLabel = ctx.nextLabel("vec.insert.shift");
-  lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${shiftLabel}`);
+  b.position(growCheck);
+  const needsGrow = b.icmp("uge", len, cap);
+  const growLabel = b.newBlock("vec.insert.grow");
+  const shiftLabel = b.newBlock("vec.insert.shift");
+  b.condBr(needsGrow, growLabel, shiftLabel);
 
-  lines.push(`${growLabel}:`);
-  const isZero = ctx.nextTemp();
-  lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
-  const doubled = ctx.nextTemp();
-  lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
-  const newCap = ctx.nextTemp();
-  lines.push(`  ${newCap} = select i1 ${isZero}, i64 ${vecInitialCap(elemSize)}, i64 ${doubled}`);
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const oldBuf = ctx.nextTemp();
-  lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-  const keepBytes = ctx.nextTemp();
-  lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+  b.position(growLabel);
+  const isZero = b.icmp("eq", cap, I64_0);
+  const doubled = b.binop("mul", cap, val("2", Ty.i64));
+  const newCap = b.select(isZero, val(String(vecInitialCap(elemSize)), Ty.i64), doubled);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const oldBuf = b.load(Ty.ptr, dataPtr);
+  const keepBytes = b.binop("mul", len, val(String(elemSize), Ty.i64));
   const newBuf = emitGrowBytes(ctx, lines, oldBuf, keepBytes, newCap, elemSize, "vecgrow2", expr.span);
-  const storeLabel = ctx.nextLabel("vec.insert.store");
-  lines.push(`  br label %${storeLabel}`);
-  lines.push(`${storeLabel}:`);
-  lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
-  lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-  lines.push(`  br label %${shiftLabel}`);
+  const storeLabel = b.newBlock("vec.insert.store");
+  b.br(storeLabel);
+  b.position(storeLabel);
+  b.store(newBuf, dataPtr);
+  b.store(newCap, capPtr);
+  b.br(shiftLabel);
 
   // shift [index, len) right by one, then store value at index, len++
-  lines.push(`${shiftLabel}:`);
-  const curDataPtr = ctx.nextTemp();
-  lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const curData = ctx.nextTemp();
-  lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
-  const srcPtr = ctx.nextTemp();
-  lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxVal}`);
-  const idxPlus1 = ctx.nextTemp();
-  lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
-  const dstPtr = ctx.nextTemp();
-  lines.push(`  ${dstPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxPlus1}`);
-  const tailCount = ctx.nextTemp();
-  lines.push(`  ${tailCount} = sub i64 ${len}, ${idxVal}`);
-  const tailBytes = ctx.nextTemp();
-  lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
-  lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${dstPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
-  lines.push(`  store ${valTy} ${valVal}, ptr ${srcPtr}`);
-  ctx.own.endVal(lines, valVal, "STORE");
-  const newLen = ctx.nextTemp();
-  lines.push(`  ${newLen} = add i64 ${len}, 1`);
-  lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+  b.position(shiftLabel);
+  const curDataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const curData = b.load(Ty.ptr, curDataPtr);
+  const srcPtr = b.gep(elemTy, curData, [idxVal]);
+  const idxPlus1 = b.binop("add", idxVal, I64_1);
+  const dstPtr = b.gep(elemTy, curData, [idxPlus1]);
+  const tailCount = b.binop("sub", len, idxVal);
+  const tailBytes = b.binop("mul", tailCount, val(String(elemSize), Ty.i64));
+  b.callDiscard(Ty.void, "@llvm.memmove.p0.p0.i64", [dstPtr, srcPtr, tailBytes, val("false", Ty.i1)]);
+  b.store(value, srcPtr);
+  ctx.own.endVal(lines, valRef, "STORE");
+  const newLen = b.binop("add", len, I64_1);
+  b.store(newLen, lenPtr);
 
   return [lines, "void", "void"];
 }
@@ -1624,111 +1592,99 @@ export function genVecInsert(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecInsert
 // memory stays near the new size instead of old + new, and nothing is copied when the
 // block can extend. A smaller one is malloc + memcpy + free (see REALLOC_MIN_BYTES).
 // Vec buffers only: a string's carries a count header and grows in @milo.str.reserve.
-function emitGrowBytes(ctx: CodegenCtx, lines: string[], oldBuf: string, keepBytes: string, count: string, elemSize: number, tag: string, span?: Span): string {
+function emitGrowBytes(ctx: CodegenCtx, lines: string[], oldBuf: Val, keepBytes: Val, count: Val, elemSize: number, tag: string, span?: Span): Val {
+  const b = new LlvmTextBuilder(lines, ctx);
+  const nullPtr = val("null", Ty.ptr);
   if (!ctx.hasRealloc || elemSize === 0) {
     // Zero-size elements stay on malloc: realloc(p, 0) may free p and return null.
     ctx.needsFree = true;
     ctx.needsMemcpy = true;
-    const { buf } = ctx.emitAllocBytes(lines, count, elemSize, tag, span);
-    const hasData = ctx.nextTemp();
-    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
-    const copyL = ctx.nextLabel(`${tag}.copy`);
-    const freeL = ctx.nextLabel(`${tag}.free`);
-    const doneL = ctx.nextLabel(`${tag}.copied`);
-    lines.push(`  br i1 ${hasData}, label %${copyL}, label %${doneL}`);
-    lines.push(`${copyL}:`);
-    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${oldBuf}, i64 ${keepBytes})`);
-    lines.push(`  br label %${freeL}`);
-    lines.push(`${freeL}:`);
-    lines.push(`  call void @free(ptr ${oldBuf})`);
-    lines.push(`  br label %${doneL}`);
-    lines.push(`${doneL}:`);
+    const { buf: bufRef } = ctx.emitAllocBytes(lines, count.ref, elemSize, tag, span);
+    const buf = val(bufRef, Ty.ptr);
+    const hasData = b.icmp("ne", oldBuf, nullPtr);
+    const copyL = b.newBlock(`${tag}.copy`);
+    const freeL = b.newBlock(`${tag}.free`);
+    const doneL = b.newBlock(`${tag}.copied`);
+    b.condBr(hasData, copyL, doneL);
+    b.position(copyL);
+    b.callDiscard(Ty.ptr, "@memcpy", [buf, oldBuf, keepBytes]);
+    b.br(freeL);
+    b.position(freeL);
+    b.callDiscard(Ty.void, "@free", [oldBuf]);
+    b.br(doneL);
+    b.position(doneL);
     return buf;
   }
   ctx.needsRealloc = true;
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
   ctx.needsFree = true;
-  const bytes = ctx.emitByteCount(lines, count, elemSize, tag, span);
-  const big = ctx.nextTemp();
-  lines.push(`  ${big} = icmp uge i64 ${keepBytes}, ${REALLOC_MIN_BYTES}`);
-  const useRe = big;
-  const reL = ctx.nextLabel(`${tag}.realloc`);
-  const freshL = ctx.nextLabel(`${tag}.fresh`);
-  const joinL = ctx.nextLabel(`${tag}.grown`);
-  lines.push(`  br i1 ${useRe}, label %${reL}, label %${freshL}`);
-  lines.push(`${reL}:`);
-  const re = ctx.nextTemp();
-  lines.push(`  ${re} = call ptr @realloc(ptr ${oldBuf}, i64 ${bytes})`);
-  lines.push(`  br label %${joinL}`);
-  lines.push(`${freshL}:`);
-  const fresh = ctx.nextTemp();
-  lines.push(`  ${fresh} = call ptr @malloc(i64 ${bytes})`);
+  const bytes = val(ctx.emitByteCount(lines, count.ref, elemSize, tag, span), Ty.i64);
+  const useRe = b.icmp("uge", keepBytes, val(String(REALLOC_MIN_BYTES), Ty.i64));
+  const reL = b.newBlock(`${tag}.realloc`);
+  const freshL = b.newBlock(`${tag}.fresh`);
+  const joinL = b.newBlock(`${tag}.grown`);
+  b.condBr(useRe, reL, freshL);
+  b.position(reL);
+  const re = b.call(Ty.ptr, "@realloc", [oldBuf, bytes]);
+  b.br(joinL);
+  b.position(freshL);
+  const fresh = b.call(Ty.ptr, "@malloc", [bytes]);
   // A null fresh block is caught after the join (the old one is left alone); the copy
-  // is skipped for it and for a null source.
-  const both = ctx.nextTemp();
-  const srcOk = ctx.nextTemp();
-  const dstOk = ctx.nextTemp();
-  lines.push(`  ${srcOk} = icmp ne ptr ${oldBuf}, null`);
-  lines.push(`  ${dstOk} = icmp ne ptr ${fresh}, null`);
-  lines.push(`  ${both} = and i1 ${srcOk}, ${dstOk}`);
-  const cpL = ctx.nextLabel(`${tag}.cp`);
-  const freeL = ctx.nextLabel(`${tag}.free`);
-  const freshDoneL = ctx.nextLabel(`${tag}.freshdone`);
-  lines.push(`  br i1 ${both}, label %${cpL}, label %${freshDoneL}`);
-  lines.push(`${cpL}:`);
-  lines.push(`  call ptr @memcpy(ptr ${fresh}, ptr ${oldBuf}, i64 ${keepBytes})`);
-  lines.push(`  br label %${freeL}`);
-  lines.push(`${freeL}:`);
-  lines.push(`  call void @free(ptr ${oldBuf})`);
-  lines.push(`  br label %${freshDoneL}`);
-  lines.push(`${freshDoneL}:`);
-  lines.push(`  br label %${joinL}`);
-  lines.push(`${joinL}:`);
-  const buf = ctx.nextTemp();
-  lines.push(`  ${buf} = phi ptr [ ${re}, %${reL} ], [ ${fresh}, %${freshDoneL} ]`);
-  ctx.emitAllocNullCheck(lines, buf, tag, span);
+  // is skipped for it and for a null source. The three names are drawn in the order
+  // both, srcOk, dstOk but defined srcOk, dstOk, both, as the string code did.
+  const both = b.reserveTemp(Ty.i1);
+  const srcOk = b.reserveTemp(Ty.i1);
+  const dstOk = b.reserveTemp(Ty.i1);
+  b.icmp("ne", oldBuf, nullPtr, srcOk);
+  b.icmp("ne", fresh, nullPtr, dstOk);
+  b.binop("and", srcOk, dstOk, both);
+  const cpL = b.newBlock(`${tag}.cp`);
+  const freeL = b.newBlock(`${tag}.free`);
+  const freshDoneL = b.newBlock(`${tag}.freshdone`);
+  b.condBr(both, cpL, freshDoneL);
+  b.position(cpL);
+  b.callDiscard(Ty.ptr, "@memcpy", [fresh, oldBuf, keepBytes]);
+  b.br(freeL);
+  b.position(freeL);
+  b.callDiscard(Ty.void, "@free", [oldBuf]);
+  b.br(freshDoneL);
+  b.position(freshDoneL);
+  b.br(joinL);
+  b.position(joinL);
+  const buf = b.phi(Ty.ptr, [[re, reL], [fresh, freshDoneL]], true);
+  ctx.emitAllocNullCheck(lines, buf.ref, tag, span);
   return buf;
 }
 
 // Grow `vecPtr`'s buffer so it holds at least `needCap` elements. Leaves the
 // %Vec's data/cap fields updated; len is the caller's business.
-function emitVecEnsureCapacity(ctx: CodegenCtx, lines: string[], vecPtr: string, needCap: string, elemSize: number, tag: string, span?: Span) {
+function emitVecEnsureCapacity(ctx: CodegenCtx, lines: string[], vecPtr: Val, needCap: Val, elemSize: number, tag: string, span?: Span) {
   ctx.needsMalloc = true;
   ctx.needsFree = true;
   ctx.needsMemcpy = true;
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const capPtr = ctx.nextTemp();
-  lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
-  const cap = ctx.nextTemp();
-  lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
-  const enough = ctx.nextTemp();
-  lines.push(`  ${enough} = icmp uge i64 ${cap}, ${needCap}`);
-  const growLabel = ctx.nextLabel(`${tag}.grow`);
-  const doneLabel = ctx.nextLabel(`${tag}.gdone`);
-  lines.push(`  br i1 ${enough}, label %${doneLabel}, label %${growLabel}`);
-  lines.push(`${growLabel}:`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const capPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_2]);
+  const cap = b.load(Ty.i64, capPtr);
+  const enough = b.icmp("uge", cap, needCap);
+  const growLabel = b.newBlock(`${tag}.grow`);
+  const doneLabel = b.newBlock(`${tag}.gdone`);
+  b.condBr(enough, doneLabel, growLabel);
+  b.position(growLabel);
   // Geometric growth on top of the exact request, so repeated extends stay amortized.
-  const dbl = ctx.nextTemp();
-  lines.push(`  ${dbl} = shl i64 ${cap}, 1`);
-  const useDbl = ctx.nextTemp();
-  lines.push(`  ${useDbl} = icmp ugt i64 ${dbl}, ${needCap}`);
-  const newCap = ctx.nextTemp();
-  lines.push(`  ${newCap} = select i1 ${useDbl}, i64 ${dbl}, i64 ${needCap}`);
-  const oldBuf = ctx.nextTemp();
-  lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-  const keepBytes = ctx.nextTemp();
-  lines.push(`  ${keepBytes} = mul i64 ${len}, ${elemSize}`);
+  const dbl = b.binop("shl", cap, I64_1);
+  const useDbl = b.icmp("ugt", dbl, needCap);
+  const newCap = b.select(useDbl, dbl, needCap);
+  const oldBuf = b.load(Ty.ptr, dataPtr);
+  const len = b.load(Ty.i64, lenPtr);
+  const keepBytes = b.binop("mul", len, val(String(elemSize), Ty.i64));
   const newBuf = emitGrowBytes(ctx, lines, oldBuf, keepBytes, newCap, elemSize, tag, span);
-  lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
-  lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
-  lines.push(`  br label %${doneLabel}`);
-  lines.push(`${doneLabel}:`);
+  b.store(newBuf, dataPtr);
+  b.store(newCap, capPtr);
+  b.br(doneLabel);
+  b.position(doneLabel);
 }
 
 // v.extend(other): the elements move across bitwise, so nothing is cloned and
@@ -1738,70 +1694,61 @@ export function genVecExtend(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecExtend
   ctx.hasVecType = true;
   ctx.needsFree = true;
   ctx.needsMemcpy = true;
-  const elemSize = ctx.typeSizeOf(expr.elementType);
+  const elemBytes = ctx.typeSizeOf(expr.elementType);
+  const elemSize = val(String(elemBytes), Ty.i64);
 
-  const [dstLines, dstPtr] = ctx.genLValue(expr.object);
+  const [dstLines, dstRef] = ctx.genLValue(expr.object);
   lines.push(...dstLines);
-  const [srcLines, srcVal] = ctx.genExpr(expr.other);
+  const dstPtr = val(dstRef, Ty.ptr);
+  const [srcLines, srcRef] = ctx.genExpr(expr.other);
   lines.push(...srcLines);
-  const srcData = ctx.nextTemp();
-  lines.push(`  ${srcData} = extractvalue %Vec ${srcVal}, 0`);
-  const srcLen = ctx.nextTemp();
-  lines.push(`  ${srcLen} = extractvalue %Vec ${srcVal}, 1`);
-  const srcCap = ctx.nextTemp();
-  lines.push(`  ${srcCap} = extractvalue %Vec ${srcVal}, 2`);
+  const srcVal = val(srcRef, VEC_TY);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const srcData = b.extractvalue(srcVal, 0, Ty.ptr);
+  const srcLen = b.extractvalue(srcVal, 1, Ty.i64);
+  const srcCap = b.extractvalue(srcVal, 2, Ty.i64);
 
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${dstPtr}, i32 0, i32 1`);
-  const dstLen = ctx.nextTemp();
-  lines.push(`  ${dstLen} = load i64, ptr ${lenPtr}`);
-  const need = ctx.nextTemp();
-  lines.push(`  ${need} = add i64 ${dstLen}, ${srcLen}`);
-  emitVecEnsureCapacity(ctx, lines, dstPtr, need, elemSize, "vecext", expr.span);
+  const lenPtr = b.gep(VEC_TY, dstPtr, [I32_0, I32_1]);
+  const dstLen = b.load(Ty.i64, lenPtr);
+  const need = b.binop("add", dstLen, srcLen);
+  emitVecEnsureCapacity(ctx, lines, dstPtr, need, elemBytes, "vecext", expr.span);
 
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${dstPtr}, i32 0, i32 0`);
-  const dstData = ctx.nextTemp();
-  lines.push(`  ${dstData} = load ptr, ptr ${dataPtr}`);
-  const offBytes = ctx.nextTemp();
-  lines.push(`  ${offBytes} = mul i64 ${dstLen}, ${elemSize}`);
-  const tail = ctx.nextTemp();
-  lines.push(`  ${tail} = getelementptr i8, ptr ${dstData}, i64 ${offBytes}`);
-  const copyBytes = ctx.nextTemp();
-  lines.push(`  ${copyBytes} = mul i64 ${srcLen}, ${elemSize}`);
-  lines.push(`  call ptr @memcpy(ptr ${tail}, ptr ${srcData}, i64 ${copyBytes})`);
-  lines.push(`  store i64 ${need}, ptr ${lenPtr}`);
+  const dataPtr = b.gep(VEC_TY, dstPtr, [I32_0, I32_0]);
+  const dstData = b.load(Ty.ptr, dataPtr);
+  const offBytes = b.binop("mul", dstLen, elemSize);
+  const tail = b.gep(Ty.i8, dstData, [offBytes]);
+  const copyBytes = b.binop("mul", srcLen, elemSize);
+  b.callDiscard(Ty.ptr, "@memcpy", [tail, srcData, copyBytes]);
+  b.store(need, lenPtr);
 
   // A slice (cap 0) never owns its buffer, and a zero-cap Vec has none.
-  const owns = ctx.nextTemp();
-  lines.push(`  ${owns} = icmp ugt i64 ${srcCap}, 0`);
-  const freeLabel = ctx.nextLabel("vecext.free");
-  const endLabel = ctx.nextLabel("vecext.end");
-  lines.push(`  br i1 ${owns}, label %${freeLabel}, label %${endLabel}`);
-  lines.push(`${freeLabel}:`);
-  lines.push(`  call void @free(ptr ${srcData})`);
-  lines.push(`  br label %${endLabel}`);
-  lines.push(`${endLabel}:`);
-  ctx.own.endVal(lines, srcVal, "STORE");
+  const owns = b.icmp("ugt", srcCap, I64_0);
+  const freeLabel = b.newBlock("vecext.free");
+  const endLabel = b.newBlock("vecext.end");
+  b.condBr(owns, freeLabel, endLabel);
+  b.position(freeLabel);
+  b.callDiscard(Ty.void, "@free", [srcData]);
+  b.br(endLabel);
+  b.position(endLabel);
+  ctx.own.endVal(lines, srcRef, "STORE");
   return [lines, "0", "void"];
 }
 
 export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReserve" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemSize = ctx.typeSizeOf(expr.elementType);
-  const [vecLines, vecPtr] = ctx.genLValue(expr.object);
+  const [vecLines, vecRef] = ctx.genLValue(expr.object);
   lines.push(...vecLines);
+  const vecPtr = val(vecRef, Ty.ptr);
   const [nLines, nRaw] = ctx.genExpr(expr.additional);
   lines.push(...nLines);
   ctx.emitNonNegativeCheck(lines, nRaw, "capacity", expr.span);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
+  const len = b.load(Ty.i64, lenPtr);
   // reserve(n) is "room for n MORE", matching Rust — the count a writer has in
   // hand is almost always how many they are about to push, not the final total.
-  const need = ctx.nextTemp();
-  lines.push(`  ${need} = add i64 ${len}, ${nRaw}`);
+  const need = b.binop("add", len, val(nRaw, Ty.i64));
   emitVecEnsureCapacity(ctx, lines, vecPtr, need, elemSize, "vecrsv", expr.span);
   return [lines, "0", "void"];
 }

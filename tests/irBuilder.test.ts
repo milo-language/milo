@@ -211,6 +211,19 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.1 = load i64, ptr %p", "  %t.0 = call i1 %f(ptr %env, i64 %t.1)"]);
   });
 
+  test("binop into a reserved temp keeps the early name, once, with matching type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const x = val("%x", Ty.i1), y = val("%y", Ty.i1);
+    expect(() => b.binop("and", x, y, val("%nope", Ty.i1))).toThrow("not a reserved temp");
+    const d = b.reserveTemp(Ty.i1);
+    expect(() => b.binop("and", x, y, { ref: d.ref, ty: Ty.i8 })).toThrow("but the result is i1");
+    b.binop("and", x, y, d);
+    expect(() => b.binop("and", x, y, d)).toThrow("not a reserved temp");
+    expect(() => b.binop("and", x, val("%z", Ty.i8))).toThrow("operand types differ");
+    expect(lines).toEqual(["  %t.0 = and i1 %x, %y"]);
+  });
+
   test("select into a reserved temp keeps the early name, once, with matching type", () => {
     const lines: string[] = [];
     const b = builder(lines);
