@@ -16,6 +16,24 @@ group of entries that release shipped; a package that wants to stay on the previ
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
 
+## `serveRouter` is the concurrent server; the one-at-a-time one is `serveRouterSerial` (2026-10-17)
+
+The concurrent server (a task per connection, the connection cap, read and write
+deadlines, the SIGTERM drain) is what a deployed app wants, so it takes the short name.
+`serveRouterConcurrent`, `serveRouterConcurrentOn` and `serveRouterConcurrentWith` are
+gone; the serial server that used to be `serveRouter` is `serveRouterSerial`. No alias:
+one name cannot mean both. An existing `serveRouter(port, router)` call keeps compiling
+and now gets the concurrent server, which moves the `Router` in; a program that relied on
+one request at a time (shared state with no lock) renames the call to `serveRouterSerial`.
+
+| was | now |
+|---|---|
+| `serveRouterConcurrent(port, router)` | `serveRouter(port, router)` |
+| `serveRouterConcurrentOn(host, port, router)` | `serveRouterOn(host, port, router)` |
+| `serveRouterConcurrentWith(host, port, router, opts)` | `serveRouterWith(host, port, router, opts)` |
+| `serveRouter(port, &router)` (serial) | `serveRouterSerial(port, &router)` |
+| `serveRouterOn(host, port, &router)` (serial) | `serveRouterSerialOn(host, port, &router)` |
+
 ## `std/png`'s `PngImage` is now `std/image`'s `Image` (2026-10-12)
 
 `Png.decode` returns the `Image` type that `std/jpeg` also decodes to and that

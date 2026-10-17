@@ -33,6 +33,9 @@ const ALLOWED: Record<string, string> = {
   // platform.linux.milo: the epoll_event layout event.linux fills in; plain data with no
   // methods or Drop, so a forged value does nothing until passed to an @unsafe call.
   "EpollEvent.dataFd": "epoll_event layout mirror, built by std/event.linux in another file",
+  // net.milo: a one-shot readiness wait. It never reads, writes or closes the descriptor,
+  // so a wrong or recycled number costs at worst a spurious or missed wake-up.
+  "waitIo": "readiness wait only; no read, write or close on the descriptor",
 };
 
 // `wakeupId`: the event loop's wakeup handle, an eventfd on Linux.
