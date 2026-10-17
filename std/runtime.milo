@@ -825,6 +825,7 @@ impl TaskScope {
     // as finished (it is reaped like any other). A server caps its connections on it.
     // @internal
     fn live(self: &Self): i64 {
+        // _block is the malloc'd scope record shared with the scheduler, which updates the count as tasks finish.
         unsafe { return rtLoadI64(self._block, 0) }
     }
 

@@ -764,6 +764,7 @@ fn readMore(fd: i32, raw: &mut string): i64 {
 fn readMoreBy(fd: i32, raw: &mut string, by: i64): i64 {
     var chunk: [u8; 8192] = [0; 8192]
     var n: i64 = 0
+    // recvFdWait fills a raw buffer from a bare descriptor; the connection task owns `fd` until closeFd.
     unsafe { n = recvFdWait(fd, chunk, 8192, (forRead: bool): bool => waitIo(fd, forRead, by)) }
     if n == IO_GAVE_UP {
         return -1
@@ -1099,6 +1100,7 @@ pub fn serveRouterExchange(read: (&mut string) => i64, write: (&string) => void,
 // an earlier one on the same connection.
 fn fdWriteBy(fd: i32, data: &string, ms: i64): void {
     let by = deadlineIn(ms)
+    // sendFdWait writes from a raw pointer to a bare descriptor; the connection task owns `fd` until closeFd.
     unsafe {
         let _sent = sendFdWait(fd, data, data.len, (forRead: bool): bool => waitIo(fd, forRead, by))
     }
@@ -1142,6 +1144,7 @@ fn termHandler(_sig: i32): void {
 
 // The descriptor that becomes readable when draining starts; -1 when none.
 fn drainWatchFd(): i32 {
+    // gDrainR is one of the globals the SIGTERM handler (a C signal handler) writes; a handler cannot hold a Milo reference, so they are plain statics.
     unsafe { return gDrainR }
 }
 
@@ -1163,6 +1166,7 @@ fn installDrain(broadcast: bool): void {
 }
 
 fn terminated(): bool {
+    // gTerm is one of the globals the SIGTERM handler (a C signal handler) writes; a handler cannot hold a Milo reference, so they are plain statics.
     unsafe { return gTerm == 1 }
 }
 
@@ -1267,6 +1271,7 @@ fn acceptPeer(listenFd: i32): i32 {
 // accept(); a signal in the few instructions between accept() returning and the flag
 // dropping would lose that one connection to a reset, which a client retries.
 fn acceptIdle(listenFd: i32): i32 {
+    // gIdleAccept and gTerm are globals the SIGTERM handler (a C signal handler) writes; a handler cannot hold a Milo reference, so they are plain statics.
     unsafe {
         gIdleAccept = 1
         // Raised first, then checked: a SIGTERM before the flag is seen here, one after it
@@ -1276,6 +1281,7 @@ fn acceptIdle(listenFd: i32): i32 {
         }
     }
     let fd = acceptPeer(listenFd)
+    // gIdleAccept is one of the globals the SIGTERM handler (a C signal handler) writes; a handler cannot hold a Milo reference, so they are plain statics.
     unsafe { gIdleAccept = 0 }
     return fd
 }
