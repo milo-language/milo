@@ -796,11 +796,20 @@ fn resolveLive(hostname: &string): Result<u32, NetError> {
 // `TcpStream.connectHost` does. Never an empty list: no address is Err(DnsFailure).
 // Recorded as net.resolveall. Off the scheduler thread on a green task, as `resolve` is.
 pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
+    return resolveAllBy(hostname, 0)
+}
+
+// resolveAll that stops waiting at `by` (epoch ms; 0 waits as long as it takes) with
+// Err(Timeout("dns")). getaddrinfo cannot be cancelled, so a lookup past its deadline
+// is abandoned: its thread finishes on its own and the result is dropped. The bound
+// applies on a green task, where the lookup runs on a worker; off one (and under
+// record/replay) the call is the plain blocking lookup.
+pub fn resolveAllBy(hostname: &string, by: i64): Result<Vec<IpAddr>, NetError> {
     if !replayOff() {
         // A record kind of its own rather than a new payload for net.resolve, so a trace
         // recorded before resolveAll existed still replays its resolve() calls.
         let p = replayBlob("net.resolveall", hostname, (): string => {
-            match resolveAllLive(hostname) {
+            match resolveAllLive(hostname, by) {
                 Result.Ok(addrs) => {
                     return encodeAddrs(addrs)
                 }
@@ -814,7 +823,7 @@ pub fn resolveAll(hostname: &string): Result<Vec<IpAddr>, NetError> {
         }
         return Result.Ok(decodeAddrs(p))
     }
-    return resolveAllLive(hostname)
+    return resolveAllLive(hostname, by)
 }
 
 // Trace payload: space-separated `4:<u32>` or `6:<32 hex digits>:<scope>`.
@@ -878,12 +887,25 @@ fn decodeAddrs(p: &string): Vec<IpAddr> {
 
 // Off the scheduler thread for the same reason as resolveLive.
 @replayHooked
-fn resolveAllLive(hostname: &string): Result<Vec<IpAddr>, NetError> {
+fn resolveAllLive(hostname: &string, by: i64): Result<Vec<IpAddr>, NetError> {
     if schedulerCurrent() as i64 == 0 || !replayOff() {
         return lookupAll(hostname)
     }
     let host = hostname
     let p = Promise<Result<Vec<IpAddr>, NetError>>.blocking(move(): Result<Vec<IpAddr>, NetError> => lookupAll(host))
+    if by > 0 {
+        ensureTimersLive()
+        var sel = Select.new()
+        sel.onRecv(p.channel())
+        var left = by - unrecordedEpochMillis()
+        if left < 0 {
+            left = 0
+        }
+        sel.onTimeout(left)
+        if sel.wait() != 0 {
+            return Result.Err(NetError.Timeout("dns"))
+        }
+    }
     match p.await() {
         Result.Ok(r) => {
             return r

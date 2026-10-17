@@ -4,7 +4,7 @@
 // bare TCP program cross-link for Windows, where the xwin sysroot ships no OpenSSL.
 
 from "std/net" import {
-    TcpStream, NetError, IpAddr, resolveAll, waitIo, deadlineIn
+    TcpStream, NetError, IpAddr, resolveAllBy, waitIo, deadlineIn
 }
 from "std/os" import {
     connectFdIn,
@@ -661,8 +661,9 @@ pub struct FetchOptions {
 
 // Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
 // connect together with its TLS handshake; `totalMs` bounds the whole call from the
-// first connect to the last body byte, redirects included. DNS is not covered: a lookup
-// is bounded only by the system resolver's own timeout.
+// first connect to the last body byte, redirects included. A DNS lookup is bounded by
+// the sooner of the two; the resolver thread itself cannot be cancelled and is left to
+// finish on its own.
 //
 // Separate from FetchOptions because it predates field defaults, when a new field broke
 // every FetchOptions literal. Folding it in now (`connectMs: i64 = 0` on FetchOptions)
@@ -1121,7 +1122,7 @@ fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64
     if let Option.Some(ip) = pin {
         addrs.push(IpAddr.V4(ip))
     } else {
-        addrs = resolveAll(host)?
+        addrs = resolveAllBy(host, sooner(connectBy, overallBy))?
         if overallBy > 0 && unrecordedEpochMillis() >= overallBy {
             return Result.Err(NetError.Timeout("dns"))
         }

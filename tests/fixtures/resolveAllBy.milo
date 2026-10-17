@@ -1,0 +1,34 @@
+// @skip-os: win32
+// resolveAllBy waits for the lookup only until its deadline. A generous deadline returns
+// the addresses; one already past returns Err(Timeout("dns")) or the addresses if the
+// worker beat the timer (a race the API leaves open), but never hangs or crashes.
+// getaddrinfo cannot be cancelled, so a hung resolver is only observable with a black-hole
+// DNS server; that path is the same Select arm the past-deadline case takes.
+// @expect: generous: ok
+// @expect: past: settled
+// @expect: no deadline: ok
+from "std/net" import { resolveAllBy, NetError }
+from "std/runtime" import { Promise }
+from "std/time" import { unrecordedEpochMillis }
+
+fn run(by: i64): string {
+    match resolveAllBy("localhost", by) {
+        Result.Ok(a) => {
+            return if a.len > 0 { "ok" } else { "empty" }
+        }
+        Result.Err(e) => {
+            return e.message()
+        }
+    }
+}
+
+pub fn main(): void {
+    let p = Promise<i64>.run(move(): i64 => {
+        print("generous: " + run(unrecordedEpochMillis() + 10000))
+        let r = run(1)
+        print("past: " + (if r == "ok" || r == "timeout: dns" { "settled" } else { r }))
+        print("no deadline: " + run(0))
+        return 0
+    })
+    let _ = p.await()!
+}
