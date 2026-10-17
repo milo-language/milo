@@ -378,6 +378,22 @@ function calcSunTimes(lat, lon, date, timeZone) {
   };
 }
 
+// The condition class lives on <html> so the sky gradient, overscroll area,
+// loading state and browser chrome (theme-color) all follow it. Remembered so
+// the next cold start paints the last sky before any fetch (see index.html).
+function applySky(cls) {
+  var root = document.documentElement;
+  root.className = cls;
+  var top = getComputedStyle(root).getPropertyValue("--sky-top").trim();
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && top) meta.setAttribute("content", top);
+  try {
+    localStorage.setItem("weatherSky", cls + "|" + top);
+  } catch (err) {
+    /* private mode */
+  }
+}
+
 // Maps a weather.gov shortForecast onto one of the gradient card's backdrops.
 function conditionClass(forecast, isDaytime) {
   var f = forecast.toLowerCase();
@@ -2004,6 +2020,9 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var nowHourIdx = hrs.length > 0 ? hourlyIndexAt(hrs, nowMs) : 0;
   var currentTemp =
     hrs.length > 0 ? fmtTemp(tempAt(hrs, nowMs)) : String(now.temperature);
+  // DELIBERATE: the hero shows the live interpolated temperature with decimals
+  // ("67.558°") so the number visibly moves. Do not round it; every other
+  // temperature on the page is rounded on purpose.
   var heroTempStr =
     hrs.length > 0 ? tempAt(hrs, nowMs).toFixed(3) : String(now.temperature) + ".000";
   var heroTempInt = heroTempStr.slice(0, heroTempStr.indexOf("."));
@@ -2041,7 +2060,7 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   var topBar =
     '<div class="top-bar">' +
     '<div class="top-place">' +
-    '<div class="top-city">' + esc(city) + "</div>" +
+    '<div class="top-city" role="button" tabindex="0" title="Search or choose a place">' + esc(city) + "</div>" +
     '<div class="top-updated">Updated ' + esc(fmtTimeInTz(new Date(), timeZone)) + "</div>" +
     "</div>" +
     // labelled, not icon-only: a bare magnifier beside the star read as
@@ -2484,8 +2503,10 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   }
   dHtml += "</div></div>";
 
+  var skyCls = conditionClass(now.shortForecast, now.isDaytime);
+  applySky(skyCls);
   heroEl.innerHTML =
-    '<div class="wx-card ' + conditionClass(now.shortForecast, now.isDaytime) + '">' +
+    '<div class="wx-card ' + skyCls + '">' +
     '<div class="wispy-clouds">' +
     '<div class="wisp wisp-1"></div><div class="wisp wisp-2"></div>' +
     '<div class="wisp wisp-3"></div><div class="wisp wisp-4"></div>' +
@@ -2538,6 +2559,8 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 
   var placeBtn = document.getElementById("placeBtn");
   if (placeBtn) placeBtn.addEventListener("click", openSheet);
+  var cityEl = heroEl.querySelector(".top-city");
+  if (cityEl) cityEl.addEventListener("click", openSheet);
 
   renderSaved();
   renderRadar();
@@ -2548,26 +2571,44 @@ function render(city, forecast, hourlyData, grid, timeZone) {
 // locate, share) and nothing you need after. It opens from the top bar's search
 // tile, which is why the first screen can spend its top 80px on the answer.
 
+// On phones the sheet is as tall as the visual viewport (the on-screen keyboard
+// shrinks it, the layout viewport does not), pinned to its top. It is sized on
+// open and when the viewport changes, never on input, so typing cannot move it.
+function fitSheet() {
+  var vv = window.visualViewport;
+  sheetEl.style.setProperty("--vvh", (vv ? vv.height : window.innerHeight) + "px");
+  sheetEl.style.setProperty("--vvt", (vv ? vv.offsetTop : 0) + "px");
+}
+
 function openSheet() {
   if (!sheetEl) return;
   sheetEl.hidden = false;
   sheetScrimEl.hidden = false;
   document.body.classList.add("sheet-open");
   zipInput.value = "";
-  // focus() on a phone raises the keyboard over the list the sheet just opened
-  // to show, so only a fine pointer gets the cursor placed for it.
-  var fine = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
-  if (fine) zipInput.focus();
+  fitSheet();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", fitSheet);
+    window.visualViewport.addEventListener("scroll", fitSheet);
+  }
   showDefaultSuggestions();
+  // The sheet is sized to the visual viewport, so the keyboard cannot cover
+  // the list and it is safe to raise it on every device.
+  zipInput.focus();
 }
 
 function closeSheet() {
   if (!sheetEl || sheetEl.hidden) return;
+  cancelLookup();
   closeSuggestions();
   zipInput.blur();
   sheetEl.hidden = true;
   sheetScrimEl.hidden = true;
   document.body.classList.remove("sheet-open");
+  if (window.visualViewport) {
+    window.visualViewport.removeEventListener("resize", fitSheet);
+    window.visualViewport.removeEventListener("scroll", fitSheet);
+  }
 }
 
 // ── Search / typeahead ──
@@ -2578,6 +2619,7 @@ var locateBtn = document.getElementById("locateBtn");
 var searchTimer = null;
 var sugItems = [];
 var sugIndex = -1;
+var sugTouched = false; // arrowed onto a row, as opposed to the default first row
 
 function loadJson(key) {
   try {
@@ -2939,12 +2981,6 @@ function highlightSuggestion(idx) {
 }
 
 function pickSuggestion(item) {
-  if (item.kind === "locate") {
-    closeSuggestions();
-    zipInput.blur();
-    locateBtn.click();
-    return;
-  }
   zipInput.value = item.label;
   zipInput.blur();
   closeSheet();
@@ -2997,23 +3033,29 @@ function markMatch(label, query) {
   return out + esc(label.slice(pos));
 }
 
+// items may carry non-selectable rows: {kind:"head"} section labels and
+// {kind:"note"} status text. Only the rest count for arrows and Enter.
 function renderSuggestions(items, query) {
   sugEl.innerHTML = "";
-  // "Use my location" used to be a synthetic first row here. It is now a real
-  // pinned row in the sheet, above the list, so it stays reachable without
-  // having to clear whatever you've already typed — and without being the row
-  // Enter would land on.
-  sugItems = (items || []).slice();
+  sugItems = [];
   sugIndex = -1;
-  sugItems.forEach(function (item, i) {
+  sugTouched = false;
+  (items || []).forEach(function (item) {
+    if (item.kind === "head" || item.kind === "note") {
+      var meta = document.createElement("div");
+      meta.className = item.kind === "head" ? "sug-head" : "sug-note";
+      meta.textContent = item.label;
+      sugEl.appendChild(meta);
+      return;
+    }
+    var i = sugItems.length;
+    sugItems.push(item);
     var div = document.createElement("div");
     div.className = "suggestion-item" + (item.kind ? " " + item.kind : "");
     div.id = "sug-opt-" + i;
     div.setAttribute("role", "option");
     var icon = "";
-    if (item.kind === "locate") {
-      icon = iconSvg("locate", "sug-icon");
-    } else if (item.kind === "fav") {
+    if (item.kind === "fav") {
       icon = starSvg(true);
     } else if (item.kind === "recent") {
       icon = iconSvg("clock", "sug-icon");
@@ -3023,8 +3065,7 @@ function renderSuggestions(items, query) {
       icon +
       // one span: markMatch splits the name into a bold run and plain text, and
       // as bare children of the flex .sug-city each piece got the icon gap
-      '<span class="sug-name">' +
-      (item.kind === "locate" ? esc(item.label) : markMatch(item.label, query)) +
+      '<span class="sug-name">' + markMatch(item.label, query) +
       '</span></span><span class="sug-region">' +
       esc(item.sub || "") +
       "</span>";
@@ -3040,7 +3081,7 @@ function renderSuggestions(items, query) {
     });
     sugEl.appendChild(div);
   });
-  sugEl.classList.toggle("active", sugItems.length > 0);
+  sugEl.scrollTop = 0;
   zipInput.setAttribute("aria-expanded", sugItems.length > 0 ? "true" : "false");
 }
 
@@ -3098,56 +3139,80 @@ function nominatimToItems(results, query) {
   items.sort(function (a, b) {
     return a.rank - b.rank;
   });
-  return items.slice(0, 5);
+  return items.slice(0, 8);
 }
 
-function fetchSuggestions(q) {
+// ── Lookup state ──
+// The sheet never changes height, so results can arrive late without moving
+// anything. A newer keystroke aborts the older request; netItems stays on
+// screen until the new answer lands so the list does not flicker per key.
+var netCtl = null;
+var netItems = [];
+var netState = "idle"; // idle | pending | done
+var lookupQ = "";
+var enterPending = false;
+
+function cancelLookup() {
+  clearTimeout(searchTimer);
+  if (netCtl) netCtl.abort();
+  netCtl = null;
+  netItems = [];
+  netState = "idle";
+  lookupQ = "";
+  enterPending = false;
+}
+
+function runLookup(q) {
   // Place names come from our own /api/cities index. Nominatim is a geocoder,
   // not a search index — it can't prefix-match, so "red" never reached Redwood
   // City. ZIPs still go to Nominatim, which handles postalcode lookups fine.
+  if (netCtl) netCtl.abort();
+  var ctl = new AbortController();
+  netCtl = ctl;
+  lookupQ = q;
+  netState = "pending";
   var isZip = /^\d{3,5}$/.test(q);
-  if (!isZip) {
-    fetch("api/cities?q=" + encodeURIComponent(q))
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (data) {
-        if (zipInput.value.trim() !== q) return;
-        renderSuggestions(cityApiToItems(data), q);
-      })
-      .catch(function () {});
-    return;
-  }
-
-  var url =
-    "https://nominatim.openstreetmap.org/search?postalcode=" +
-    encodeURIComponent(q) +
-    "&country=US&format=json&limit=5&addressdetails=1";
-  fetch(url, { headers: { Accept: "application/json" } })
-    .then(function (r) {
-      return r.json();
-    })
-    .then(function (data) {
-      if (zipInput.value.trim() !== q) return;
-      renderSuggestions(nominatimToItems(data, ""));
-    })
-    .catch(function () {});
+  var p = isZip
+    ? fetch(
+        "https://nominatim.openstreetmap.org/search?postalcode=" +
+          encodeURIComponent(q) +
+          "&country=US&format=json&limit=8&addressdetails=1",
+        { signal: ctl.signal, headers: { Accept: "application/json" } },
+      )
+        .then(function (r) { return r.json(); })
+        .then(function (d) { return nominatimToItems(d, ""); })
+    : fetch("api/cities?q=" + encodeURIComponent(q), { signal: ctl.signal })
+        .then(function (r) { return r.json(); })
+        .then(cityApiToItems);
+  p.catch(function (err) {
+    if (err && err.name === "AbortError") throw err;
+    return [];
+  }).then(
+    function (items) {
+      if (ctl !== netCtl) return;
+      netItems = items;
+      netState = "done";
+      renderTyped(q);
+      if (enterPending) {
+        enterPending = false;
+        if (sugItems.length) pickSuggestion(sugItems[0]);
+        else {
+          closeSheet();
+          geocodeAndFetch(q);
+        }
+      }
+    },
+    function () {},
+  );
 }
 
-function showDefaultSuggestions() {
-  // the locate row is prepended by renderSuggestions for every list
+function savedPlaces() {
   var items = [];
   var favs = loadFavorites();
   var seen = {};
   for (var f = 0; f < favs.length; f++) {
     seen[favs[f].label] = 1;
-    items.push({
-      kind: "fav",
-      label: favs[f].label,
-      sub: "",
-      lat: favs[f].lat,
-      lon: favs[f].lon,
-    });
+    items.push({ kind: "fav", label: favs[f].label, sub: "", lat: favs[f].lat, lon: favs[f].lon });
   }
   var rec = loadJson("weatherRecents") || [];
   for (var i = 0; i < rec.length; i++) {
@@ -3155,74 +3220,91 @@ function showDefaultSuggestions() {
     if (seen[rec[i].label]) continue;
     items.push({ kind: "recent", label: rec[i].label, sub: "", lat: rec[i].lat, lon: rec[i].lon });
   }
-  renderSuggestions(items);
+  return items;
+}
+
+function showDefaultSuggestions() {
+  cancelLookup();
+  renderSuggestions(savedPlaces());
+}
+
+// Typed state: lookup results first, then saved places that match the query.
+function renderTyped(q) {
+  var lq = q.toLowerCase();
+  var seen = {};
+  var rows = netItems.slice(0, 8);
+  rows.forEach(function (r) { seen[r.label] = 1; });
+  var saved = savedPlaces().filter(function (p) {
+    return !seen[p.label] && p.label.toLowerCase().indexOf(lq) !== -1;
+  });
+  if (saved.length) rows = rows.concat([{ kind: "head", label: "Saved places" }], saved);
+  if (!rows.length) {
+    rows = [{ kind: "note", label: netState === "pending" ? "Searching\u2026" : "No matches" }];
+  }
+  renderSuggestions(rows, q);
+  if (sugItems.length) highlightSuggestion(0);
 }
 
 function doSearch() {
   var z = zipInput.value.trim();
-  if (z && sugItems.length > 0) {
-    // index 0 is the pinned locate row — Enter should take the top *place*
-    // unless the user explicitly arrowed onto something.
-    var firstPlace = -1;
-    for (var si = 0; si < sugItems.length; si++) {
-      if (!sugItems[si].kind) {
-        firstPlace = si;
-        break;
-      }
-    }
-    var pick = sugIndex >= 0 ? sugIndex : firstPlace;
-    if (pick >= 0) {
-      pickSuggestion(sugItems[pick]);
-      return;
-    }
+  if (!z) {
+    if (sugTouched && sugIndex >= 0) pickSuggestion(sugItems[sugIndex]);
+    else closeSheet();
+    return;
+  }
+  if (sugTouched && sugIndex >= 0) {
+    pickSuggestion(sugItems[sugIndex]);
+    return;
+  }
+  // Enter before the debounce fired: ask now and let the answer pick row one.
+  if (netState !== "done" || lookupQ !== z) {
+    clearTimeout(searchTimer);
+    enterPending = true;
+    if (lookupQ !== z || netState !== "pending") runLookup(z);
+    return;
+  }
+  if (sugItems.length) {
+    pickSuggestion(sugItems[0]);
+    return;
   }
   closeSheet();
-  if (z) geocodeAndFetch(z);
+  geocodeAndFetch(z);
 }
 
 zipInput.addEventListener("input", function () {
   clearTimeout(searchTimer);
+  enterPending = false;
   var q = zipInput.value.trim();
   if (q.length === 0) {
     showDefaultSuggestions();
     return;
   }
-  // City names hit our own /api/cities (sub-millisecond, no rate limit), so
-  // fire on every keystroke from the first character. Only ZIPs, which still go
-  // out to Nominatim, need the debounce.
-  if (/^\d{3,5}$/.test(q)) {
-    searchTimer = setTimeout(function () {
-      fetchSuggestions(q);
-    }, 400);
-    return;
-  }
-  fetchSuggestions(q);
+  netState = "pending";
+  renderTyped(q);
+  searchTimer = setTimeout(function () {
+    runLookup(q);
+  }, 150);
 });
 
 zipInput.addEventListener("focus", function () {
-  if (!zipInput.value.trim()) showDefaultSuggestions();
+  if (!zipInput.value.trim() && !sugItems.length) showDefaultSuggestions();
 });
 
+// Escape is handled once, on document, and closes the whole sheet.
 zipInput.addEventListener("keydown", function (e) {
   var open = sugItems.length > 0;
   if (e.key === "ArrowDown") {
     e.preventDefault();
-    if (!open) {
-      if (!zipInput.value.trim()) showDefaultSuggestions();
-      return;
-    }
+    if (!open) return;
+    sugTouched = true;
     highlightSuggestion((sugIndex + 1) % sugItems.length);
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
-    if (open) highlightSuggestion((sugIndex - 1 + sugItems.length) % sugItems.length);
-  } else if (e.key === "Escape") {
-    closeSuggestions();
+    if (!open) return;
+    sugTouched = true;
+    highlightSuggestion((sugIndex - 1 + sugItems.length) % sugItems.length);
   } else if (e.key === "Enter") {
     e.preventDefault();
-    if (open && sugIndex >= 0) {
-      pickSuggestion(sugItems[sugIndex]);
-      return;
-    }
     doSearch();
   }
 });

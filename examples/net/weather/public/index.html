@@ -2,8 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f2f2f2" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1e5fb4" />
+    <meta name="color-scheme" content="dark" />
+    <!-- Paints the last sky and tints the browser chrome before the stylesheet's
+         first frame; app.js applySky keeps both in step afterwards. -->
+    <script>
+      try {
+        var sky = (localStorage.getItem("weatherSky") || "").split("|");
+        if (sky[0]) document.documentElement.className = sky[0];
+        if (sky[1]) document.querySelector('meta[name="theme-color"]').content = sky[1];
+      } catch (e) {}
+    </script>
     <title>__PAGE_TITLE__</title>
     <!-- A link unfurler (iMessage, Slack, a search crawler) does not run the
          page's JS, so the place a shared link points at has to be in the bytes
@@ -26,7 +36,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Weather" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -293,6 +303,9 @@
         </button>
       </div>
       <div class="search-bar">
+        <button class="locate-btn" id="locateBtn" type="button" aria-label="Use my location" title="Use my location">
+          <svg class="ico" aria-hidden="true"><use href="#locate"></use></svg>
+        </button>
         <div class="search-wrap">
           <input
             type="text"
@@ -307,13 +320,6 @@
           />
         </div>
       </div>
-      <!-- Pinned above the list, not synthesised as its first row: it stays
-           reachable whatever you have typed, and it is never the row Enter
-           lands on. -->
-      <button class="sheet-row" id="locateBtn" type="button" aria-label="Use my location">
-        <span class="ico-tile"><svg class="ico" aria-hidden="true"><use href="#locate"></use></svg></span>
-        <span>Use my location</span>
-      </button>
       <!-- Favorites and recents when the input is empty, typeahead results when
            it is not — showDefaultSuggestions and renderSuggestions both fill this. -->
       <div class="suggestions" id="suggestions" role="listbox"></div>
