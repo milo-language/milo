@@ -12,6 +12,7 @@ bin/
 src/stdlib-bundle.ts
 *.o
 *.ll
+!src/runtime/*.ll
 hello
 fizzbuzz
 tests/fixtures/*

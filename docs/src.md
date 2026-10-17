@@ -39,6 +39,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-map.ts` | HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable. |
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
 | `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
+| `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting), kept as IR text in src/runtime/str.ll. |
 | `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, substr, find, number/bool to string), extracted to keep codegen.ts manageable. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
@@ -73,6 +74,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/prove-milo.ts` | Milo-native proof engine: discharge verification conditions with std/smt (a QF_LIA decision procedure written in Milo) instead of z3. |
 | `src/replay-externs.ts` | Compiler-driven record/replay of extern calls (docs/record-replay.md §Extern calls). |
 | `src/resolver.ts` | resolves import declarations by recursively parsing imported files and merging all declarations into a single program |
+| `src/runtime.d.ts` | Bun's `with { type: "text" }` import of the IR runtime (src/codegen-runtime.ts). |
 | `src/safety.ts` | Compiler-enforced safety profiles for domain-specific certification standards |
 | `src/skill.ts` | `milo skill`: the agent guide. |
 | `src/stdlibBundle.ts` | Shared read-through access to the stdlib: disk first, embedded bundle as a fallback. |
