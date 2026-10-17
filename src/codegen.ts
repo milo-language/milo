@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecMethodPreamble, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -200,8 +200,8 @@ export class Codegen {
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
   private contractChecks = false;
   private usedOverflowIntrinsics = new Set<string>();
-  private needsPrintf = false;
-  private needsDprintf = false;
+  public needsPrintf = false;
+  public needsDprintf = false;
   private needsFflush = false;
   private needsWrite = false;
   private needsPutchar = false;
@@ -209,7 +209,7 @@ export class Codegen {
   private needsIob = false;
   private needsStderrSym = false;
   private needsSetvbuf = false;
-  private needsExit = false;
+  public needsExit = false;
   public needsMalloc = false;
   public needsFree = false;
   private needsRealloc = false;
@@ -3193,7 +3193,7 @@ export class Codegen {
   // `idx` and `size` are i64. The compare must see the same index the access uses: a
   // compare on truncated i32 values let `v[-4294967295]` pass (it truncates to 1) and
   // then write through the full 64-bit offset.
-  private emitBoundsCheck(lines: string[], idx: string, size: string, span?: Span) {
+  public emitBoundsCheck(lines: string[], idx: string, size: string, span?: Span) {
     this.needsBoundsCheck = true;
     const cmpTmp = this.nextTemp();
     const okLabel = this.nextLabel("bounds.ok");
@@ -4028,7 +4028,7 @@ export class Codegen {
 
   // Register before the caller sets loopDropStart so this temp is scoped to the block
   // enclosing the loop (dropped at its exit / early return), not to the loop body.
-  private registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind): string {
+  public registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind): string {
     const name = `__forin_tmp.${this.scopeCounter++}`;
     this.locals.set(name, { type: this.llvmType(typeKind), typeKind, mutable: false, isRef: false, addr });
     const aliveFlag = `${addr}.alive`;
@@ -5795,17 +5795,17 @@ export class Codegen {
       case "VecReverse":
         return genVecReverse(this, expr, lines);
       case "VecSwap":
-        return this.genVecSwap(expr, lines);
+        return genVecSwap(this, expr, lines);
       case "VecInsert":
         return this.genVecInsert(expr, lines);
       case "VecRemove":
-        return this.genVecRemove(expr, lines);
+        return genVecRemove(this, expr, lines);
       case "VecTruncate":
-        return this.genVecTruncate(expr, lines);
+        return genVecTruncate(this, expr, lines);
       case "VecContains":
-        return this.genVecContains(expr, lines);
+        return genVecContains(this, expr, lines);
       case "VecEnumerate":
-        return this.genVecEnumerate(expr, lines);
+        return genVecEnumerate(this, expr, lines);
       case "VecGetOpt":
         return genVecGetOpt(this, expr, lines);
       case "VecMinMax":
@@ -5888,7 +5888,7 @@ export class Codegen {
       case "StringSlice":
         return genStringSlice(this, expr, lines);
       case "VecSlice":
-        return this.genVecSlice(expr, lines);
+        return genVecSlice(this, expr, lines);
       case "RawSlice":
         return this.genRawSlice(expr, lines);
       case "Adopt":
@@ -8242,121 +8242,6 @@ export class Codegen {
     return [lines, result, elemTy];
   }
 
-  // `v.truncate(n)` / `v.clear()`. Elements at index >= n are OWNED by the Vec, so
-  // shortening the length without running their drop glue would leak every string,
-  // nested Vec or Drop-implementing struct above the cut. The counter lives in an
-  // alloca rather than a phi because emitDropValue splits the block.
-  private genVecTruncate(expr: HIRExpr & { kind: "VecTruncate" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const elemType = expr.elementType;
-    const elemTy = this.llvmType(elemType);
-
-    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecPtrLines);
-    const [nLines, nRaw] = this.genExpr(expr.length);
-    lines.push(...nLines);
-
-    // A negative length means empty; a length past the end is a no-op, never a grow.
-    const isNeg = this.nextTemp();
-    lines.push(`  ${isNeg} = icmp slt i64 ${nRaw}, 0`);
-    const n = this.nextTemp();
-    lines.push(`  ${n} = select i1 ${isNeg}, i64 0, i64 ${nRaw}`);
-
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-
-    const doneLabel = this.nextLabel("vec.trunc.done");
-    const startLabel = this.nextLabel("vec.trunc.start");
-    const noop = this.nextTemp();
-    lines.push(`  ${noop} = icmp uge i64 ${n}, ${len}`);
-    lines.push(`  br i1 ${noop}, label %${doneLabel}, label %${startLabel}`);
-    lines.push(`${startLabel}:`);
-
-    if (this.needsDropCg(elemType)) {
-      const dataPtr = this.nextTemp();
-      lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-      const data = this.nextTemp();
-      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-
-      const iAddr = `%__trunc_i.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${iAddr} = alloca i64`);
-      lines.push(`  store i64 ${n}, ptr ${iAddr}`);
-
-      const condLabel = this.nextLabel("vec.trunc.cond");
-      const bodyLabel = this.nextLabel("vec.trunc.body");
-      const finLabel = this.nextLabel("vec.trunc.fin");
-      lines.push(`  br label %${condLabel}`);
-      lines.push(`${condLabel}:`);
-      const i = this.nextTemp();
-      lines.push(`  ${i} = load i64, ptr ${iAddr}`);
-      const cont = this.nextTemp();
-      lines.push(`  ${cont} = icmp ult i64 ${i}, ${len}`);
-      lines.push(`  br i1 ${cont}, label %${bodyLabel}, label %${finLabel}`);
-
-      lines.push(`${bodyLabel}:`);
-      const elemPtr = this.nextTemp();
-      lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
-      this.emitDropValue(lines, elemPtr, elemType);
-      const iNow = this.nextTemp();
-      lines.push(`  ${iNow} = load i64, ptr ${iAddr}`);
-      const iNext = this.nextTemp();
-      lines.push(`  ${iNext} = add i64 ${iNow}, 1`);
-      lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
-      lines.push(`  br label %${condLabel}`);
-
-      lines.push(`${finLabel}:`);
-    }
-
-    lines.push(`  store i64 ${n}, ptr ${lenPtr}`);
-    lines.push(`  br label %${doneLabel}`);
-    lines.push(`${doneLabel}:`);
-    return [lines, "void", "void"];
-  }
-
-  private genVecSwap(expr: HIRExpr & { kind: "VecSwap" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsMemcpy = true;
-    const elemType = expr.elementType;
-    const elemSize = this.typeSizeOf(elemType);
-    const elemTy = this.llvmType(elemType);
-
-    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecPtrLines);
-
-    const aVal = this.genBoundI64(expr.indexA, lines);
-    const bVal = this.genBoundI64(expr.indexB, lines);
-
-    // Both indices are bounds-checked. This GEP'd straight into the buffer and memcpy'd
-    // three times with no length load at all, so `v.swap(0, 999999)` was an out-of-bounds
-    // read AND write from safe code that exited 0. Every other indexed Vec operation
-    // checks; this one was simply missed.
-    const lenPtrB = this.nextTemp();
-    lines.push(`  ${lenPtrB} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const lenB = this.nextTemp();
-    lines.push(`  ${lenB} = load i64, ptr ${lenPtrB}`);
-    for (const idx of [aVal, bVal]) this.emitBoundsCheck(lines, idx, lenB, expr.span);
-
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-
-    const ptrA = this.nextTemp();
-    lines.push(`  ${ptrA} = getelementptr ${elemTy}, ptr ${data}, i64 ${aVal}`);
-    const ptrB = this.nextTemp();
-    lines.push(`  ${ptrB} = getelementptr ${elemTy}, ptr ${data}, i64 ${bVal}`);
-
-    const tmpAddr = `%__swap_tmp.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
-    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${ptrA}, i64 ${elemSize}, i1 false)`);
-    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrA}, ptr ${ptrB}, i64 ${elemSize}, i1 false)`);
-    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrB}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
-
-    return [lines, "void", "void"];
-  }
-
   private genVecInsert(expr: HIRExpr & { kind: "VecInsert" }, lines: string[]): Gen {
     this.hasVecType = true;
     this.needsMalloc = true;
@@ -8453,148 +8338,6 @@ export class Codegen {
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
 
     return [lines, "void", "void"];
-  }
-
-  private genVecRemove(expr: HIRExpr & { kind: "VecRemove" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    this.needsDprintf = true;
-    this.needsExit = true;
-
-    const elemSize = this.typeSizeOf(expr.elementType);
-    const elemTy = this.llvmType(expr.elementType);
-
-    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
-    lines.push(...vecPtrLines);
-    const [idxLines, idxVal] = this.genExpr(expr.index);
-    lines.push(...idxLines);
-
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-
-    // bounds: index must be < len
-    const oob = this.nextTemp();
-    lines.push(`  ${oob} = icmp uge i64 ${idxVal}, ${len}`);
-    const panicLabel = this.nextLabel("vec.remove.panic");
-    const okLabel = this.nextLabel("vec.remove.ok");
-    lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${okLabel}`);
-
-    lines.push(`${panicLabel}:`);
-    const span = expr.span;
-    const { label: errLabel, length: errLen } = this.addString(`remove index out of bounds at ${this.panicAt(span)}\n`);
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, "");
-    this.panicAbort(lines);
-    lines.push(`  unreachable`);
-
-    lines.push(`${okLabel}:`);
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxVal}`);
-    const val = this.nextTemp();
-    lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
-
-    // shift [index+1, len) left by one
-    const idxPlus1 = this.nextTemp();
-    lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxPlus1}`);
-    const tailCount = this.nextTemp();
-    lines.push(`  ${tailCount} = sub i64 ${len}, ${idxPlus1}`);
-    const tailBytes = this.nextTemp();
-    lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
-    lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${elemPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
-    const newLen = this.nextTemp();
-    lines.push(`  ${newLen} = sub i64 ${len}, 1`);
-    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
-
-    return [lines, val, elemTy];
-  }
-
-  private genVecContains(expr: HIRExpr & { kind: "VecContains" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const elemType = expr.elementType;
-    const elemTy = this.llvmType(elemType);
-
-    const [vecLines, vecVal] = this.genExpr(expr.vec);
-    lines.push(...vecLines);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = extractvalue %Vec ${vecVal}, 0`);
-    const len = this.nextTemp();
-    lines.push(`  ${len} = extractvalue %Vec ${vecVal}, 1`);
-
-    const [valLines, valVal, valLt] = this.genExpr(expr.value);
-    lines.push(...valLines);
-
-    const resultAddr = `%__contains_result.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
-    lines.push(`  store i1 false, ptr ${resultAddr}`);
-
-    const idxAddr = `%__contains_idx.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${idxAddr}`);
-
-    const condLabel = this.nextLabel("contains.cond");
-    const bodyLabel = this.nextLabel("contains.body");
-    const foundLabel = this.nextLabel("contains.found");
-    const nextLabel = this.nextLabel("contains.next");
-    const endLabel = this.nextLabel("contains.end");
-
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const idx = this.nextTemp();
-    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-    const cmp = this.nextTemp();
-    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-
-    lines.push(`${bodyLabel}:`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-
-    if (elemType.tag === "string") {
-      this.needsMemcmp = true;
-      const elemVal = this.nextTemp();
-      lines.push(`  ${elemVal} = load %String, ptr ${elemPtr}`);
-      const [, cmpResult] = genStringCmp(this, lines, elemVal, valVal, true);
-      lines.push(`  br i1 ${cmpResult}, label %${foundLabel}, label %${nextLabel}`);
-    } else {
-      const elemVal = this.nextTemp();
-      lines.push(`  ${elemVal} = load ${valLt}, ptr ${elemPtr}`);
-      const eq = this.nextTemp();
-      if (elemType.tag === "float") {
-        lines.push(`  ${eq} = fcmp oeq ${valLt} ${elemVal}, ${valVal}`);
-      } else {
-        lines.push(`  ${eq} = icmp eq ${valLt} ${elemVal}, ${valVal}`);
-      }
-      lines.push(`  br i1 ${eq}, label %${foundLabel}, label %${nextLabel}`);
-    }
-
-    lines.push(`${foundLabel}:`);
-    lines.push(`  store i1 true, ptr ${resultAddr}`);
-    lines.push(`  br label %${endLabel}`);
-
-    lines.push(`${nextLabel}:`);
-    const nextIdx = this.nextTemp();
-    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-    lines.push(`  br label %${condLabel}`);
-
-    lines.push(`${endLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
-    // Same as the map lookups: the needle is the caller's, and a read-only search takes
-    // no ownership of it. `v.contains("s" + i.toString())` leaked the needle per call.
-    this.dropOwnedTemp(lines, valVal, valLt, expr.value);
-    // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
-    // container. A search keeps no pointer into it once the answer is a scalar.
-    this.dropOwnedTemp(lines, vecVal, "%Vec", expr.vec);
-    return [lines, result, "i1"];
   }
 
   // The one place a heap buffer is sized and allocated. `count * elemSize` was written
@@ -8998,38 +8741,6 @@ export class Codegen {
     return [lines, "0", "void"];
   }
 
-  private genVecEnumerate(expr: HIRExpr & { kind: "VecEnumerate" }, lines: string[]): Gen {
-    const { fnPtr, envPtr, data, len, elemTy, release } = genVecMethodPreamble(this, expr.vec, expr.callback, expr.elementType, lines);
-
-    const idxAddr = `%__enum_idx.${this.scopeCounter++}.addr`;
-    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${idxAddr}`);
-
-    const condLabel = this.nextLabel("enum.cond");
-    const bodyLabel = this.nextLabel("enum.body");
-    const endLabel = this.nextLabel("enum.end");
-
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
-    const idx = this.nextTemp();
-    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
-    const cmp = this.nextTemp();
-    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
-    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
-    lines.push(`${bodyLabel}:`);
-    const elemPtr = this.nextTemp();
-    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
-    const cbArg = this.callbackElemArg(lines, expr.callback.type, elemPtr, elemTy, 1);
-    lines.push(`  call void ${fnPtr}(ptr ${envPtr}, i64 ${idx}, ${cbArg.argTy} ${cbArg.arg})`);
-    const nextIdx = this.nextTemp();
-    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
-    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${endLabel}:`);
-    release();
-    return [lines, "void", "void"];
-  }
-
   // Validate a substr/slice range before using it: without this, an inverted
   // or out-of-range span becomes a negative length that malloc/memcpy/getelementptr
   // turn into a silent crash (or a bogus view) with no diagnostic.
@@ -9156,137 +8867,6 @@ export class Codegen {
     lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${lVal}, 1`);
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 ${lVal}, 2`);
-    return [lines, s2, "%Vec"];
-  }
-
-  // v.slice(a, b) / v[a..b] — non-owning view: same %Vec rep with adjusted ptr/len
-  // and cap=0, so drop glue skips free (the source still owns the buffer).
-  private genVecSlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): Gen {
-    this.hasVecType = true;
-    const elemTy = this.llvmType(expr.elementType);
-
-    // fixed-size array source: the view points into the array's own storage, and
-    // the length bound is the static extent N (there is no %Vec len field to read)
-    if (expr.vec.type.tag === "array" && expr.vec.type.size !== null) {
-      return this.genArraySlice(expr, lines);
-    }
-
-    const [vLines, vVal] = this.genExpr(expr.vec);
-    lines.push(...vLines);
-    const startVal = this.genBoundI64(expr.start, lines);
-    const endVal = this.genBoundI64(expr.end, lines);
-
-    // bounds check against the source Vec's len (field 1), mirroring string slices
-    this.needsPrintf = true;
-    this.needsExit = true;
-    const lenVal = this.nextTemp();
-    lines.push(`  ${lenVal} = extractvalue %Vec ${vVal}, 1`);
-    const badStart = this.nextTemp();
-    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
-    const badOrder = this.nextTemp();
-    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
-    const badEnd = this.nextTemp();
-    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${lenVal}`);
-    const bad0 = this.nextTemp();
-    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
-    const bad = this.nextTemp();
-    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
-    const panicLabel = this.nextLabel("vecslice.panic");
-    const okLabel = this.nextLabel("vecslice.ok");
-    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
-    lines.push(`${panicLabel}:`);
-    const { label: errLabel, length: errLen } = this.addString(
-      `milo: slice range out of bounds: %lld..%lld (len %lld) at ${this.panicAt(expr.span)}\n`,
-    );
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, `, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal}`);
-    this.panicAbort(lines);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
-
-    const subLen = this.nextTemp();
-    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-    const srcPtr = this.nextTemp();
-    lines.push(`  ${srcPtr} = extractvalue %Vec ${vVal}, 0`);
-    const slicePtr = this.nextTemp();
-    lines.push(`  ${slicePtr} = getelementptr ${elemTy}, ptr ${srcPtr}, i64 ${startVal}`);
-
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
-
-    return [lines, s2, "%Vec"];
-  }
-
-  // Slice a fixed-size array into a non-owning %Vec view (cap=0) pointing at the
-  // array's own storage. Bound is the static extent N parsed from its [N x T] type.
-  private genArraySlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): Gen {
-    let [aLines, arrPtr, arrTy] = this.genLValue(expr.vec);
-    // Not a place (`mk().sum()` on a returned [T; N]): genLValue has no address for it,
-    // so the value goes to a frame slot of its own and the view points there.
-    if (arrPtr === "null") {
-      const [vLines, val, valTy] = this.genExpr(expr.vec);
-      const slot = `%__arrtmp.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${slot} = alloca ${valTy}`);
-      aLines = [...vLines, this.valStore(valTy, val, slot, this.own.valIntent(val, expr.vec.type))];
-      // An array of owned elements (`f([$"a{i}", "b"])`) leaked every element: nothing
-      // dropped the slot. The view may outlive the statement (a slice binding), so the
-      // slot is dropped at the enclosing block's exit, not after the call.
-      if (this.needsDropCg(expr.vec.type)) {
-        this.own.valToSlot(val, slot);
-        this.registerScopedTemp(aLines, slot, expr.vec.type);
-      }
-      arrPtr = slot;
-      arrTy = valTy;
-    }
-    lines.push(...aLines);
-    const startVal = this.genBoundI64(expr.start, lines);
-    const endVal = this.genBoundI64(expr.end, lines);
-
-    const match = arrTy.match(/\[(\d+) x .+\]/);
-    const size = match ? parseInt(match[1]) : 0;
-
-    this.needsPrintf = true;
-    this.needsExit = true;
-    const badStart = this.nextTemp();
-    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
-    const badOrder = this.nextTemp();
-    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
-    const badEnd = this.nextTemp();
-    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${size}`);
-    const bad0 = this.nextTemp();
-    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
-    const bad = this.nextTemp();
-    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
-    const panicLabel = this.nextLabel("arrslice.panic");
-    const okLabel = this.nextLabel("arrslice.ok");
-    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
-    lines.push(`${panicLabel}:`);
-    const { label: errLabel, length: errLen } = this.addString(
-      `milo: slice range out of bounds: %lld..%lld (len ${size}) at ${this.panicAt(expr.span)}\n`,
-    );
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, `, i64 ${startVal}, i64 ${endVal}`);
-    this.panicAbort(lines);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
-
-    this.hasVecType = true;
-    const subLen = this.nextTemp();
-    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
-    const slicePtr = this.nextTemp();
-    lines.push(`  ${slicePtr} = getelementptr ${arrTy}, ptr ${arrPtr}, i64 0, i64 ${startVal}`);
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
     return [lines, s2, "%Vec"];
   }
 
