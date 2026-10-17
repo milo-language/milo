@@ -652,6 +652,11 @@ pub struct FetchOptions {
     // A `Connection: close` header here opts this request out of the connection pool
     // (see the pool notes in std/fetch); without one, the connection is reused.
     body: string,
+    // Most response body bytes a fetch reads before giving up with
+    // Err(NetError.TooLarge); 0 for no limit. Without a cap a server that never stops
+    // sending grows the caller's memory until it is killed. Chunked framing counts
+    // toward the limit. (`fetchAt` takes its own `maxBytes`, which truncates instead.)
+    maxBodyBytes: i64 = 67108864,
 }
 
 // Limits on one fetch, in milliseconds; 0 means no limit. `connectMs` bounds each TCP
@@ -839,7 +844,7 @@ struct Reply {
 // never comes. A response with neither length nor chunked framing is read to EOF, as
 // HTTP/1.1 says, and its connection is spent. `got` is set once any response byte
 // arrives: a failure before that on a reused connection means the server had closed it.
-fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, got: &mut bool): Result<Reply, NetError> {
+fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, maxBody: i64, got: &mut bool): Result<Reply, NetError> {
     connSend(c, req, by)?
     var raw: string = ""
     // 16 KiB is a whole TLS record, so SSL_read never leaves part of one buffered in the
@@ -875,6 +880,11 @@ fn exchange(c: &TlsStream, req: &string, isHead: bool, by: i64, maxBytes: i64, g
             break
         }
         got = true
+        // Checked on what has arrived, not only on a declared Content-Length, so a
+        // chunked or unframed body (and a header block that never ends) is cut off too.
+        if maxBody > 0 && raw.len + n - (if headEnd > 0 { headEnd } else { 0 }) > maxBody {
+            return Result.Err(NetError.TooLarge("response body over " + maxBody.toString() + " bytes"))
+        }
         let scanFrom = if raw.len > 3 { raw.len - 3 } else { 0 }
         for i in 0..n {
             raw.push(buf[i])
@@ -1072,8 +1082,9 @@ fn idempotent(method: &string): bool {
 // One request for `url`, on a pooled connection when one is idle and on a fresh one
 // otherwise. `pin` is fetchAt's address; without it the host is resolved, and only when
 // a fresh connection is needed. Bounded by `connectBy` and `overallBy` (epoch ms; 0 for
-// none); `maxBytes` caps the bytes read (0 for none).
-fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64, overallBy: i64, maxBytes: i64): Result<FetchResponse, NetError> {
+// none); `maxBytes` caps the bytes read, truncating (0 for none); `maxBody` errs past that many
+// body bytes (0 for none).
+fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64, overallBy: i64, maxBytes: i64, maxBody: i64): Result<FetchResponse, NetError> {
     let useTls = isHttps(url)
     let host = parseHost(url)
     let port = parsePort(url)
@@ -1086,7 +1097,7 @@ fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64
     if keepAlive {
         if let Option.Some(c) = checkout(key) {
             var got = false
-            match exchange(c, req, isHead, overallBy, maxBytes, &mut got) {
+            match exchange(c, req, isHead, overallBy, maxBytes, maxBody, &mut got) {
                 Result.Ok(reply) => {
                     if reply.reusable {
                         checkin(key, c)
@@ -1117,7 +1128,7 @@ fn fetchOnce(url: &string, opts: &FetchOptions, pin: Option<u32>, connectBy: i64
     }
     let c = openConn(useTls, host, addrs, port, sooner(connectBy, overallBy))?
     var got = false
-    let reply = exchange(c, req, isHead, overallBy, maxBytes, &mut got)?
+    let reply = exchange(c, req, isHead, overallBy, maxBytes, maxBody, &mut got)?
     if keepAlive && reply.reusable {
         checkin(key, c)
     }
@@ -1143,7 +1154,7 @@ fn doFetch(url: string, opts: FetchOptions): Result<FetchResponse, NetError> {
 // `overallBy` is the totalMs deadline as epoch ms, fixed at the first hop so redirects
 // share it.
 fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, overallBy: i64): Result<FetchResponse, NetError> {
-    let r = fetchOnce(url, opts, Option.None, deadlineIn(t.connectMs), overallBy, 0)?
+    let r = fetchOnce(url, opts, Option.None, deadlineIn(t.connectMs), overallBy, 0, opts.maxBodyBytes)?
 
     // follow redirects (301, 302, 307, 308)
     if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
@@ -1154,6 +1165,7 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
                 method: opts.method,
                 headers: opts.headers,
                 body: opts.body,
+                maxBodyBytes: opts.maxBodyBytes,
             }
             if r.status == 301 || r.status == 302 {
                 redirOpts.method = "GET"
@@ -1181,7 +1193,7 @@ fn doFetchHops(url: string, opts: FetchOptions, hops: i64, t: FetchTimeouts, ove
 // limit), and the response is parsed from what arrived, so a cut-off body comes back
 // short rather than as an error. `t` bounds the request as in fetchWithTimeout.
 pub fn fetchAt(ip: u32, url: &string, opts: FetchOptions, t: FetchTimeouts, maxBytes: i64): Result<FetchResponse, NetError> {
-    return fetchOnce(url, opts, Option.Some(ip), deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes)
+    return fetchOnce(url, opts, Option.Some(ip), deadlineIn(t.connectMs), deadlineIn(t.totalMs), maxBytes, 0)
 }
 
 // HTTP GET. Resolves the host, uses TLS for an https URL, and follows 301/302/307/308

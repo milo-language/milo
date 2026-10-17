@@ -1,0 +1,52 @@
+// @skip-os: win32
+// Importing std/fetch links OpenSSL, which the xwin sysroot does not ship.
+//
+// FetchOptions.maxBodyBytes: a response body past the cap is Err(TooLarge), never a
+// silently short body, whether the server declares Content-Length or just sends until it
+// closes. Under the cap, and with 0 (no limit), the body arrives whole.
+// @expect: over cap, length: too large: response body over 1000 bytes
+// @expect: over cap, unframed: too large: response body over 1000 bytes
+// @expect: under cap: ok 500
+// @expect: no cap: ok 5000
+// @expect: default cap: 67108864
+from "std/fetch" import { fetchWith, FetchOptions }
+from "std/net" import { TcpListener }
+from "std/runtime" import { Task }
+
+fn serve(size: i64, framed: bool): i64 {
+    let l = TcpListener.bind(0)!
+    let port = l.port()
+    Task.spawn(move(): void => {
+        let conn = l.accept()!
+        let _ = conn.recvOnce()
+        let body = "x".repeat(size)
+        if framed {
+            let _ = conn.send($"HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n{body}")
+        } else {
+            let _ = conn.send($"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}")
+        }
+    })
+    return port as i64
+}
+
+fn get(size: i64, framed: bool, cap: i64): string {
+    let port = serve(size, framed)
+    let opts = FetchOptions { method: "GET", headers: "", body: "", maxBodyBytes: cap }
+    match fetchWith($"http://127.0.0.1:{port}/", opts) {
+        Result.Ok(resp) => {
+            return $"ok {resp.body.len}"
+        }
+        Result.Err(e) => {
+            return e.message()
+        }
+    }
+}
+
+pub fn main(): void {
+    print("over cap, length: " + get(5000, true, 1000))
+    print("over cap, unframed: " + get(5000, false, 1000))
+    print("under cap: " + get(500, true, 1000))
+    print("no cap: " + get(5000, true, 0))
+    let d = FetchOptions { method: "GET", headers: "", body: "" }
+    print($"default cap: {d.maxBodyBytes}")
+}

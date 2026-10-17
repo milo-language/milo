@@ -76,6 +76,9 @@ pub enum NetError {
     // A deadline passed; the payload names the stage that was waiting (std/fetch's
     // fetchWithTimeout: "connect", "tls handshake", "send", "response").
     Timeout(string),
+    // A response body past the cap (std/fetch's FetchOptions.maxBodyBytes); the payload
+    // says which limit was hit. The body is dropped, never returned cut short.
+    TooLarge(string),
     Other(string),
 }
 
@@ -98,6 +101,9 @@ impl NetError {
             }
             NetError.Timeout(m) => {
                 return "timeout: " + m
+            }
+            NetError.TooLarge(m) => {
+                return "too large: " + m
             }
             NetError.Other(m) => {
                 return m

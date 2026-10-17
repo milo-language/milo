@@ -36,6 +36,9 @@ fn netErrText(e: &NetError): string {
         NetError.Timeout(m) => {
             return "timed out: " + m
         }
+        NetError.TooLarge(m) => {
+            return "too large: " + m
+        }
         NetError.Other(m) => {
             return m
         }

@@ -64,6 +64,7 @@ fn main() {
                 NetError.SendFailed(m) => { print("SEND " + m) }
                 NetError.Other(m) => { print("OTHER " + m) }
                 NetError.Timeout(m) => { print("TIMEOUT " + m) }
+                NetError.TooLarge(m) => { print("TOOLARGE " + m) }
             }
         }
     }
