@@ -115,6 +115,19 @@ fn TlsListener.bind(port: u16, certPath: &string, keyPath: &string): Result<TlsL
 Bind 0.0.0.0:port and serve `certPath` (PEM chain, leaf first) with `keyPath`.
 Port 0 lets the OS pick — recover it with port().
 
+#### `TlsListener.handshakeWithin`
+
+```milo
+fn TlsListener.handshakeWithin(self: &TlsListener, clientFd: i32, ms: i64): Result<TlsConn, NetError>
+```
+
+The server handshake on `clientFd`, an accepted TCP connection this call takes over
+(closed on failure, owned by the TlsConn on success), finishing within `ms` (0 = no
+limit). acceptWithin's second half, apart so a concurrent server can accept on one
+task and handshake on the connection's own: a handshake on the accept task is one
+stalled client stopping every other accept. `@unsafe`: the caller vouches that
+`clientFd` is an accepted socket it owns and hands over here.
+
 #### `TlsListener.port`
 
 ```milo
@@ -124,5 +137,15 @@ fn TlsListener.port(self: &TlsListener): i32
 The bound port — how to learn what the OS picked after bind(0).
 -1 if getsockname fails, mirroring getSockPort rather than reporting a
 plausible-looking port number.
+
+#### `TlsListener.releaseFd`
+
+```milo
+fn TlsListener.releaseFd(self: &mut TlsListener): i32
+```
+
+Hand the listening fd to a caller that will close it (std/https's accept loop does
+when draining); this listener then only frees the SSL_CTX on drop. `@unsafe`: the
+number is the caller's to close exactly once.
 
 <!-- /generated:api -->

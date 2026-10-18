@@ -76,6 +76,10 @@ fn main() {
     router.get("/greet/:name", (c: &mut Context) => {
         return c.text("hi " + (c.param("name") ?? "?"))
     })
+    router.get("/boom", (c: &mut Context) => {
+        let v: Vec<i32> = []
+        return c.text($"{v[(c.query("i") ?? "").len]}")
+    })
     let r = serveRouterTls(Option.Some(${PORT_ROUTER} as u16), "srv.pem", "srv.key", router)
     if let Result.Err(m) = r {
         print("server error: " + m)
@@ -381,4 +385,44 @@ test.skipIf(!haveOpenssl)("serveRouterTlsWith drops a client that stalls mid-req
   }));
   expect(r.body).toBe("pong");
   expect(r.closedAfterMs).toBeLessThan(3000);
+}, 120000);
+
+// PORT_ROUTER runs ServeOptions' defaults, so a stalled client is held for the full 30 s
+// read timeout. Each connection on its own task means the others are answered meanwhile;
+// a server that handshakes or reads on the accept loop answers nothing until then.
+test.skipIf(!haveOpenssl)("serveRouterTls answers others while clients stall the handshake and the request", async () => {
+  const net = await import("node:net");
+  const tls = await import("node:tls");
+  const held: { destroy(): void }[] = [];
+  await new Promise<void>(resolve => {
+    const sock = net.connect(PORT_ROUTER, "127.0.0.1", () => resolve());
+    sock.on("error", () => {});
+    held.push(sock);
+  });
+  await new Promise<void>(resolve => {
+    const sock = tls.connect({ host: "127.0.0.1", port: PORT_ROUTER, servername: "localhost", ca: readFileSync(join(dir, "ca.pem")) }, () => {
+      sock.write("GET /greet/x HT");
+      resolve();
+    });
+    sock.on("error", () => {});
+    held.push(sock);
+  });
+  try {
+    const t0 = Date.now();
+    const body = curl(["--cacert", "ca.pem", "--max-time", "5", `https://localhost:${PORT_ROUTER}/greet/ok`]);
+    expect(body).toBe("hi ok");
+    expect(Date.now() - t0).toBeLessThan(2000);
+  } finally {
+    for (const h of held) h.destroy();
+  }
+}, 120000);
+
+// A handler that panics loses its own connection (closed, no plaintext 500 written into
+// the TLS stream) and nothing else: the next request is served.
+test.skipIf(!haveOpenssl)("serveRouterTls survives a handler panic", () => {
+  let failed = false;
+  try { curl(["--cacert", "ca.pem", "--max-time", "5", `https://localhost:${PORT_ROUTER}/boom`]); }
+  catch { failed = true; }
+  expect(failed).toBe(true);
+  expect(curl(["--cacert", "ca.pem", "--max-time", "5", `https://localhost:${PORT_ROUTER}/greet/after`])).toBe("hi after");
 }, 120000);

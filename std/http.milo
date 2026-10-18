@@ -2453,10 +2453,10 @@ fn handleConn(clientFd: i32, router: &Router, readMs: i64, writeMs: i64): void {
 // channel because a scoped task may borrow only what outlives the scope body, and
 // each fd is a body local (a by-reference capture would see the next accept's fd).
 // `done` tells a capped accept loop that a slot has opened.
-fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>, readMs: i64, writeMs: i64): void {
+fn serveNextConn(fds: &Channel<i32>, serve: (i32) => void, done: &Channel<i32>): void {
     match fds.recv() {
         Result.Ok(clientFd) => {
-            handleConn(clientFd, router, readMs, writeMs)
+            serve(clientFd)
             // Full means a wake-up is already pending, which is all one is for.
             let _ = done.trySend(0)
         }
@@ -2480,7 +2480,7 @@ fn serveNextConn(fds: &Channel<i32>, router: &Router, done: &Channel<i32>, readM
 // On SIGTERM (see "Graceful drain") it closes this process's copy of the listener,
 // waits for the connections in flight, and exits. Under socket activation the service
 // manager still holds the socket, so new connections queue for the next process.
-fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, drainMs: i64, readMs: i64, writeMs: i64): void {
+fn acceptLoop(listenFd: i32, fds: &Channel<i32>, serve: (i32) => void, maxConn: i64, drainMs: i64): void {
     let done = Channel<i32>.new(1)!
     Task.scope((s) => {
         while !terminated() {
@@ -2510,7 +2510,7 @@ fn acceptLoop(listenFd: i32, fds: &Channel<i32>, router: &Router, maxConn: i64, 
             }
             // clientFd was just accepted; nothing else holds it until the send below.
             unsafe { setNonblocking(clientFd) }
-            s.spawn(() => serveNextConn(fds, router, done, readMs, writeMs))
+            s.spawn(() => serveNextConn(fds, serve, done))
             // Parks only while the buffer holds 64 fds whose tasks have not run yet.
             // It cannot fail: only a closed channel refuses, and nothing closes this one.
             fds.send(clientFd)!
@@ -2570,6 +2570,25 @@ pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOp
     // acceptLoop owns the descriptor from here: it closes it when draining, and a
     // second close from the listener's drop could hit a descriptor reused since.
     forget(sock)
+    let readMs = opts.readTimeoutMs
+    let writeMs = opts.writeTimeoutMs
+    // listenFd came out of the listener just above, which no longer owns it (forget).
+    unsafe {
+        return serveConns(listenFd, opts, (clientFd: i32): void => handleConn(clientFd, router, readMs, writeMs))
+    }
+}
+
+// The concurrent server's engine, shared by serveRouterWith and std/https: accept on
+// `listenFd` and run `serve` on each accepted connection in its own green task, with
+// opts' connection cap and SIGTERM drain. `serve` gets a nonblocking fd it owns and must
+// close (the runtime closes it instead if the task panics, see taskOnPanicReply).
+// Takes ownership of `listenFd`: acceptLoop closes it when draining. One loop for both
+// transports so a backpressure or drain fix cannot land in only one of them.
+// `@unsafe`: the caller vouches that it owns `listenFd` and nothing else will close it.
+// `pub` only because std/https is another module.
+// @internal
+@unsafe
+pub fn serveConns(listenFd: i32, opts: &ServeOptions, serve: (i32) => void): Result<Unit> {
     let fds = Channel<i32>.new(64)?
     // accept() has no green-aware wrapper: on a blocking listener it parks the
     // OS thread and no other task ever runs. Non-blocking plus an explicit
@@ -2581,13 +2600,11 @@ pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOp
         maxConn = 1
     }
     let drainMs = opts.drainMs
-    let readMs = opts.readTimeoutMs
-    let writeMs = opts.writeTimeoutMs
     // The accept loop is a scoped task rather than this body, so it is a green task
     // (and schedulerWaitRead parks it) even when the caller is not; the join below
     // then drives the scheduler for good, as schedulerRunToCompletion used to.
     Task.scope((s) => {
-        s.spawn(() => acceptLoop(listenFd, fds, router, maxConn, drainMs, readMs, writeMs))
+        s.spawn(() => acceptLoop(listenFd, fds, serve, maxConn, drainMs))
     })
     if terminated() {
         exit(0)

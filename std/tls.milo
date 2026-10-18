@@ -288,8 +288,21 @@ impl TlsListener {
             if clientFd < 0 {
                 return Result.Err(NetError.ConnectionFailed("accept() failed"))
             }
-            // Counted from here, not from the call: the wait for a client to arrive is not
-            // the client's to spend.
+            return self.handshakeWithin(clientFd, ms)
+        }
+    }
+
+    // The server handshake on `clientFd`, an accepted TCP connection this call takes over
+    // (closed on failure, owned by the TlsConn on success), finishing within `ms` (0 = no
+    // limit). acceptWithin's second half, apart so a concurrent server can accept on one
+    // task and handshake on the connection's own: a handshake on the accept task is one
+    // stalled client stopping every other accept. `@unsafe`: the caller vouches that
+    // `clientFd` is an accepted socket it owns and hands over here.
+    @unsafe
+    fn handshakeWithin(self: &Self, clientFd: i32, ms: i64): Result<TlsConn, NetError> {
+        unsafe {
+            // Counted from here, not from the accept wait: the wait for a client to arrive
+            // is not the client's to spend.
             let by = deadlineIn(ms)
             setNonblocking(clientFd)
             let ssl = SSL_new(self._ctx as *u8)
@@ -310,6 +323,16 @@ impl TlsListener {
             }
             return Result.Ok(TlsConn { _fd: clientFd, _ssl: sslAddr })
         }
+    }
+
+    // Hand the listening fd to a caller that will close it (std/https's accept loop does
+    // when draining); this listener then only frees the SSL_CTX on drop. `@unsafe`: the
+    // number is the caller's to close exactly once.
+    @unsafe
+    fn releaseFd(self: &mut Self): i32 {
+        let fd = self._fd
+        self._fd = -1
+        return fd
     }
 
     // The bound port — how to learn what the OS picked after bind(0).

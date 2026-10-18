@@ -8,13 +8,16 @@
 // client half and is not needed here.
 
 from "std/http" import {
-    Request, Response, Router, ServeOptions, serveHandlerExchange, serveRouterExchange
+    Request, Response, Router, ServeOptions, serveConns, serveHandlerExchange, serveRouterExchange
 }
 from "std/tls" import {
     TlsConn, TlsListener
 }
 from "std/net" import {
     NetError, deadlineIn
+}
+from "std/runtime" import {
+    taskOnPanicReply
 }
 
 // NetError's payload is already the message; this just erases the variant so the
@@ -51,19 +54,42 @@ fn tlsWrite(stream: &TlsConn, data: &string, ms: i64): void {
     let _sent = stream.sendWithin(data, ms)
 }
 
-// The next connection whose handshake finished within the read timeout. One client
-// failing the handshake (wrong protocol, an untrusting client hanging up mid-flight, a
-// port scanner, one that connects and sends nothing) must not be fatal.
-fn acceptNext(listener: &TlsListener, opts: &ServeOptions): TlsConn {
-    while true {
-        match listener.acceptWithin(opts.readTimeoutMs) {
+// The handshake for one accepted connection, run on that connection's own task so a
+// client that stalls it (one that connects and sends nothing, a port scanner, a slow
+// network) holds only its own slot. A failed handshake is that client's problem, never
+// the server's: it is dropped and None comes back.
+fn tlsHandshake(listener: &TlsListener, clientFd: i32, readMs: i64): Option<TlsConn> {
+    // A panicking handler's task is retired by the runtime, which then closes this fd.
+    // The reply is empty: std/http's plaintext 500 written under TLS would be garbage to
+    // the client, and the panic path cannot run SSL_write. The client sees the connection
+    // close; the SSL object is not freed (a panic is a bug to fix, not a steady state).
+    // clientFd is the accepted connection serveConns handed this task, which owns it.
+    unsafe {
+        taskOnPanicReply(clientFd, "")
+        match listener.handshakeWithin(clientFd, readMs) {
             Result.Err(_e) => {
-                continue
+                return Option.None
             }
             Result.Ok(stream) => {
-                return stream
+                return Option.Some(stream)
             }
         }
+    }
+}
+
+// The listening fd, moved out of the listener (which then keeps only the SSL_CTX every
+// handshake shares) for serveListener, whose accept loop closes it when draining.
+fn takeListenFd(listener: &mut TlsListener): i32 {
+    // releaseFd gives up the listener's ownership, so the accept loop's close is the only one.
+    unsafe {
+        return listener.releaseFd()
+    }
+}
+
+fn serveListener(listenFd: i32, opts: &ServeOptions, serve: (i32) => void): Result<Unit> {
+    // listenFd came from takeListenFd, so nothing else owns or closes it.
+    unsafe {
+        return serveConns(listenFd, opts, serve)
     }
 }
 
@@ -90,21 +116,26 @@ fn bindTls(port: u16?, certPath: &string, keyPath: &string): Result<TlsListener>
 // Serve HTTPS on `port` (None = OS-chosen) with the PEM cert chain and private key at
 // `certPath`/`keyPath`. One request per connection, closed after the response, read with
 // std/http's own reader (chunked and gzip/deflate bodies, the 1 MiB body cap and the
-// 400/413/414/431/501/505 refusals) and ServeOptions' default read and write timeouts:
-// the same contract as http.serve. Only returns on a fatal bind/listen error.
+// 400/413/414/431/501/505 refusals). Each connection, handshake included, runs in its own
+// green task under ServeOptions' defaults (connection cap, read and write timeouts,
+// SIGTERM drain): the same contract as http.serveRouter. Only returns on a fatal
+// bind/listen error.
 pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Request) => Response): Result<Unit> {
-    let listener = bindTls(port, certPath, keyPath)?
+    var listener = bindTls(port, certPath, keyPath)?
     let opts = ServeOptions {
     }
-    while true {
-        let stream = acceptNext(listener, opts)
-        // The handshake had its own readTimeoutMs; the request gets a fresh one, fixed for
-        // the whole request so a client dribbling a byte at a time still runs out.
-        let by = deadlineIn(opts.readTimeoutMs)
-        serveHandlerExchange((raw: &mut string): i64 => stream.readMoreBy(&mut raw, by), (data: &string): void => tlsWrite(stream, data, opts.writeTimeoutMs), handler)
+    let readMs = opts.readTimeoutMs
+    let writeMs = opts.writeTimeoutMs
+    let listenFd = takeListenFd(&mut listener)
+    return serveListener(listenFd, opts, (clientFd: i32): void => {
+        if let Option.Some(stream) = tlsHandshake(listener, clientFd, readMs) {
+            // The handshake had its own readTimeoutMs; the request gets a fresh one, fixed
+            // for the whole request so a client dribbling a byte at a time still runs out.
+            let by = deadlineIn(readMs)
+            serveHandlerExchange((raw: &mut string): i64 => stream.readMoreBy(&mut raw, by), (data: &string): void => tlsWrite(stream, data, writeMs), handler)
+        }
         // stream drops here: close_notify, SSL_free, close(fd)
-    }
-    return Result.Err("server exited")
+    })
 }
 
 // serveRouter over TLS: routes, Context-set headers and the router's body limits behave
@@ -114,16 +145,18 @@ pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &
     })
 }
 
-// serveRouterTls with the read and write timeouts spelled out (ServeOptions). Connections
-// are served one at a time, so maxConn and drainMs do not apply; a client that stalls
-// the handshake or the request is what readTimeoutMs bounds, and it stops everyone else
-// until then.
+// serveRouterTls with its limits spelled out (ServeOptions): the connection cap, the
+// read timeout (applied to the handshake, then afresh to the request), the write timeout
+// and the SIGTERM drain, all as in http.serveRouterWith.
 pub fn serveRouterTlsWith(port: u16?, certPath: &string, keyPath: &string, router: &Router, opts: &ServeOptions): Result<Unit> {
-    let listener = bindTls(port, certPath, keyPath)?
-    while true {
-        let stream = acceptNext(listener, opts)
-        let by = deadlineIn(opts.readTimeoutMs)
-        serveRouterExchange((raw: &mut string): i64 => stream.readMoreBy(&mut raw, by), (data: &string): void => tlsWrite(stream, data, opts.writeTimeoutMs), router)
-    }
-    return Result.Err("server exited")
+    var listener = bindTls(port, certPath, keyPath)?
+    let readMs = opts.readTimeoutMs
+    let writeMs = opts.writeTimeoutMs
+    let listenFd = takeListenFd(&mut listener)
+    return serveListener(listenFd, opts, (clientFd: i32): void => {
+        if let Option.Some(stream) = tlsHandshake(listener, clientFd, readMs) {
+            let by = deadlineIn(readMs)
+            serveRouterExchange((raw: &mut string): i64 => stream.readMoreBy(&mut raw, by), (data: &string): void => tlsWrite(stream, data, writeMs), router)
+        }
+    })
 }

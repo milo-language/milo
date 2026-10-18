@@ -28,10 +28,9 @@ exactly as in std/http.
 pub fn serveRouterTlsWith(port: u16?, certPath: &string, keyPath: &string, router: &Router, opts: &ServeOptions): Result<Unit>
 ```
 
-serveRouterTls with the read and write timeouts spelled out (ServeOptions). Connections
-are served one at a time, so maxConn and drainMs do not apply; a client that stalls
-the handshake or the request is what readTimeoutMs bounds, and it stops everyone else
-until then.
+serveRouterTls with its limits spelled out (ServeOptions): the connection cap, the
+read timeout (applied to the handshake, then afresh to the request), the write timeout
+and the SIGTERM drain, all as in http.serveRouterWith.
 
 ### `serveTls`
 
@@ -42,7 +41,9 @@ pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Requ
 Serve HTTPS on `port` (None = OS-chosen) with the PEM cert chain and private key at
 `certPath`/`keyPath`. One request per connection, closed after the response, read with
 std/http's own reader (chunked and gzip/deflate bodies, the 1 MiB body cap and the
-400/413/414/431/501/505 refusals) and ServeOptions' default read and write timeouts:
-the same contract as http.serve. Only returns on a fatal bind/listen error.
+400/413/414/431/501/505 refusals). Each connection, handshake included, runs in its own
+green task under ServeOptions' defaults (connection cap, read and write timeouts,
+SIGTERM drain): the same contract as http.serveRouter. Only returns on a fatal
+bind/listen error.
 
 <!-- /generated:api -->
