@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRContract, HIRStruct, HIRGlobal } from "./hir";
-import { LlvmTextBuilder, Ty, val, type LoadMeta, type Param, type Val } from "./ir";
+import { LlvmTextBuilder, asGen, Ty, val, type LoadMeta, type Param, type Val } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -122,6 +122,7 @@ export interface LocalInfo { type: string; typeKind: TypeKind; mutable: boolean;
 export interface DroppableLocal { name: string; typeKind: TypeKind; aliveFlag: string; addr: string; consumeCursor?: string }
 
 const STRING_TY = Ty.of("%String");
+const CLOSURE_TY = Ty.of("{ ptr, ptr }");
 const VEC_TY = Ty.of("%Vec");
 const HASHMAP_TY = Ty.of("%HashMap");
 const i64c = (n: number | string) => val(String(n), Ty.i64);
@@ -10104,12 +10105,14 @@ export class Codegen {
   // Some payload vs the default; the checker restricts it to Copy inner types so the
   // payload load can't alias an owned heap buffer.
   private genOptionOp(expr: HIRExpr & { kind: "OptionOp" }, lines: string[]): Gen {
+    const b = new LlvmTextBuilder(lines, this);
     const [vl, vv] = this.genExpr(expr.value);
     lines.push(...vl);
     const enumTy = `%${expr.enumName}`;
-    const addr = this.nextTemp();
-    lines.push(`  ${addr} = alloca ${enumTy}`);
-    lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
+    const enumT = Ty.of(enumTy);
+    const addrV = b.alloca(enumT);
+    const addr = addrV.ref;
+    b.store(val(vv, enumT), addrV);
     this.own.valToSlot(vv, addr);
     // A Result combinator consumes a named receiver when the payload it forwards is not
     // Copy (checker: consumeForwardedPayload); the move ended the local's ID at the read,
@@ -10121,8 +10124,8 @@ export class Codegen {
       this.own.slots.set(addr, this.own.make(lines, "combinator-receiver"));
     }
     const tag = this.loadEnumTag(lines, enumTy, addr);
-    const isSome = this.nextTemp();
-    lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
+    const isSomeV = b.icmp("eq", val(tag, Ty.i32), i32c(0));
+    const isSome = isSomeV.ref;
     // isSome/isNone/isOk/isErr and unwrapOr(Else) keep only a tag or a Copy payload (the
     // checker rejects them on a non-Copy one), so a temporary receiver is dead once they
     // have read it: `if find(k).isNone()` leaked the Some payload on every call. A named
@@ -10134,13 +10137,12 @@ export class Codegen {
     };
     if (expr.op === "isSome") {
       releaseTempReceiver();
-      return [lines, isSome, "i1"];
+      return asGen(lines, isSomeV);
     }
     if (expr.op === "isNone") {
-      const r = this.nextTemp();
-      lines.push(`  ${r} = xor i1 ${isSome}, true`);
+      const r = b.binop("xor", isSomeV, val("true", Ty.i1));
       releaseTempReceiver();
-      return [lines, r, "i1"];
+      return asGen(lines, r);
     }
     // map/andThen/orElse: Option in, Option out. Handled before the payload load below,
     // because for these `expr.type` is the RESULT enum, not the payload type.
@@ -10163,68 +10165,58 @@ export class Codegen {
       // CALL is conditional.
       const [cl, cv] = this.genExpr(expr.default!);
       lines.push(...cl);
-      const fnPtr = this.nextTemp();
-      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-      const envPtr = this.nextTemp();
-      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
 
-      const resAddr = `%__optmap.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${resAddr} = alloca ${resTy}`);
-      lines.push(`  store ${resTy} zeroinitializer, ptr ${resAddr}`);
+      const resT = Ty.of(resTy);
+      const resSlot = b.entryAlloca(`%__optmap.${this.scopeCounter++}.addr`, resT);
+      const resAddr = resSlot.ref;
+      b.store(val("zeroinitializer", resT), resSlot);
 
-      const someLabel = this.nextLabel("optmap.some");
-      const noneLabel = this.nextLabel("optmap.none");
-      const contLabel = this.nextLabel("optmap.cont");
-      lines.push(`  br i1 ${isSome}, label %${someLabel}, label %${noneLabel}`);
+      const someBlock = b.newBlock("optmap.some");
+      const noneBlock = b.newBlock("optmap.none");
+      const contBlock = b.newBlock("optmap.cont");
+      b.condBr(isSomeV, someBlock, noneBlock);
 
-      lines.push(`${someLabel}:`);
+      b.position(someBlock);
       if (expr.op === "optionOrElse") {
         // Result type == receiver type here, so forwarding Some is a whole-enum copy.
-        lines.push(`  store ${resTy} ${vv}, ptr ${resAddr}`);
+        b.store(val(vv, resT), resSlot);
       } else {
         const srcPayloadPtr = this.enumPayloadPtr(lines, enumTy, addr, srcSome);
         // The checker types the callback param as &T, so the payload is passed by pointer —
         // that is what keeps a non-Copy inner from being moved out of the receiver.
         const cbType = expr.default!.type;
         const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
-        let callArg = srcPayloadPtr;
-        let callArgTy = "ptr";
+        let callArg = val(srcPayloadPtr, Ty.ptr);
         if (!paramIsRef) {
-          const srcTy = srcSome.fieldTypes[0] ?? "i64";
-          const loaded = this.nextTemp();
-          lines.push(`  ${loaded} = load ${srcTy}, ptr ${srcPayloadPtr}`);
-          callArg = loaded;
-          callArgTy = srcTy;
+          callArg = b.load(Ty.of(srcSome.fieldTypes[0] ?? "i64"), callArg);
         }
         if (expr.op === "optionAndThen") {
           // the callback already returns the whole Option — store it wholesale, no re-tagging
-          const called = this.nextTemp();
-          lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
-          lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
+          const called = b.call(resT, fnPtr.ref, [envPtr, callArg]);
+          b.store(called, resSlot);
         } else {
           const resPayloadTy = resSome.fieldTypes[0] ?? "i64";
-          const called = this.nextTemp();
-          lines.push(`  ${called} = call ${resPayloadTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
+          const called = b.call(Ty.of(resPayloadTy), fnPtr.ref, [envPtr, callArg]);
           this.storeEnumTag(lines, resTy, resAddr, resSome.tag);
           const resPayloadPtr = this.enumPayloadPtr(lines, resTy, resAddr, resSome);
-          lines.push(`  store ${resPayloadTy} ${called}, ptr ${resPayloadPtr}`);
+          b.store(called, val(resPayloadPtr, Ty.ptr));
         }
       }
-      lines.push(`  br label %${contLabel}`);
+      b.br(contBlock);
 
-      lines.push(`${noneLabel}:`);
+      b.position(noneBlock);
       if (expr.op === "optionOrElse") {
-        const called = this.nextTemp();
-        lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr})`);
-        lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
+        const called = b.call(resT, fnPtr.ref, [envPtr]);
+        b.store(called, resSlot);
       } else {
         this.storeEnumTag(lines, resTy, resAddr, resNone.tag);
       }
-      lines.push(`  br label %${contLabel}`);
+      b.br(contBlock);
 
-      lines.push(`${contLabel}:`);
-      const out = this.nextTemp();
-      lines.push(`  ${out} = load ${resTy}, ptr ${resAddr}`);
+      b.position(contBlock);
+      const out = b.load(resT, resSlot);
       // After map/andThen the receiver's payload is dead: the callback only borrowed it
       // (the checker types the param as &T, so it cannot have been moved out) and None
       // carries nothing to forward, so the result shares no buffer with it. A NAMED
@@ -10234,7 +10226,7 @@ export class Codegen {
       // untouched variant's payload into the result, so dropping here would double-free.
       if (this.optionOpDropsReceiver(expr)) this.emitDropValue(lines, addr, expr.value.type);
       if (expr.op === "optionOrElse") this.own.end(lines, this.own.slots.get(addr), "MOVE"); // Some forwarded verbatim
-      return [lines, out, resTy];
+      return asGen(lines, out);
     }
 
     // Result map/mapErr/andThen/orElse. Unlike Option.map, the branch that does NOT run the
@@ -10260,31 +10252,27 @@ export class Codegen {
       // conditional, so a side-effecting callback runs on exactly one branch.
       const [cl, cv] = this.genExpr(expr.default!);
       lines.push(...cl);
-      const fnPtr = this.nextTemp();
-      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-      const envPtr = this.nextTemp();
-      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
 
-      const resAddr = `%__resmap.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${resAddr} = alloca ${resTy}`);
-      lines.push(`  store ${resTy} zeroinitializer, ptr ${resAddr}`);
+      const resT = Ty.of(resTy);
+      const resSlot = b.entryAlloca(`%__resmap.${this.scopeCounter++}.addr`, resT);
+      const resAddr = resSlot.ref;
+      b.store(val("zeroinitializer", resT), resSlot);
 
-      const okLabel = this.nextLabel("resmap.ok");
-      const errLabel = this.nextLabel("resmap.err");
-      const contLabel = this.nextLabel("resmap.cont");
-      lines.push(`  br i1 ${isSome}, label %${okLabel}, label %${errLabel}`);
+      const okBlock = b.newBlock("resmap.ok");
+      const errBlock = b.newBlock("resmap.err");
+      const contBlock = b.newBlock("resmap.cont");
+      b.condBr(isSomeV, okBlock, errBlock);
 
       // the checker types the callback param as &X, so the payload goes by pointer — that is
       // what keeps a non-Copy payload from being moved out of the receiver
       const cbType = expr.default!.type;
       const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
       const srcPayload = (variant: EnumVariant): string => this.enumPayloadPtr(lines, enumTy, addr, variant);
-      const callArgOf = (variant: EnumVariant, srcFieldTy: string): [string, string] => {
-        const p = srcPayload(variant);
-        if (paramIsRef) return [p, "ptr"];
-        const loaded = this.nextTemp();
-        lines.push(`  ${loaded} = load ${srcFieldTy}, ptr ${p}`);
-        return [loaded, srcFieldTy];
+      const callArgOf = (variant: EnumVariant, srcFieldTy: string): Val => {
+        const p = val(srcPayload(variant), Ty.ptr);
+        return paramIsRef ? p : b.load(Ty.of(srcFieldTy), p);
       };
       // The callback only BORROWED the payload it was handed (`&T`/`&E`), the combinator
       // consumed the receiver, and nothing forwards that payload into the result, so after
@@ -10299,17 +10287,17 @@ export class Codegen {
       // Set by the branch that just ran, so the ledger ends the receiver as DROP exactly
       // when a drop was emitted rather than when one was expected.
       let lentDropped = false;
-      const dropLentPayload = (arg: string) => {
+      const dropLentPayload = (arg: Val) => {
         if (!ownsReceiver || !paramIsRef || cbType.tag !== "fn") return;
         const first = cbType.params[0];
-        if (first.tag === "ref" && this.needsDropCg(first.inner)) { this.emitDropValue(lines, arg, first.inner); lentDropped = true; }
+        if (first.tag === "ref" && this.needsDropCg(first.inner)) { this.emitDropValue(lines, arg.ref, first.inner); lentDropped = true; }
       };
       const storeTag = (tag: number) => {
         this.storeEnumTag(lines, resTy, resAddr, tag);
       };
-      const storePayload = (tag: number, ty: string, val: string) => {
+      const storePayload = (tag: number, v: Val) => {
         const pp = this.enumPayloadPtr(lines, resTy, resAddr, tag);
-        lines.push(`  store ${ty} ${val}, ptr ${pp}`);
+        b.store(v, val(pp, Ty.ptr));
       };
       // forward the untouched side's payload verbatim; the result variant's slot is at least
       // as wide because that side's type is unchanged
@@ -10318,90 +10306,81 @@ export class Codegen {
         const srcFieldTy = src.fieldTypes[0];
         if (!srcFieldTy) return;
         const p = srcPayload(src);
-        const v = this.nextTemp();
-        lines.push(`  ${v} = load ${srcFieldTy}, ptr ${p}`);
-        storePayload(tag, srcFieldTy, v);
+        storePayload(tag, b.load(Ty.of(srcFieldTy), val(p, Ty.ptr)));
       };
 
-      lines.push(`${okLabel}:`);
+      b.position(okBlock);
       if (expr.op === "resultMapErr" || expr.op === "resultOrElse") {
         copyThrough(srcOk, resOk.tag);
       } else if (expr.op === "resultAndThen") {
         // the callback already returns the whole Result — store it wholesale, no re-tagging
-        const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
-        const called = this.nextTemp();
-        lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        const arg = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
+        const called = b.call(resT, fnPtr.ref, [envPtr, arg]);
         dropLentPayload(arg);
-        lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
+        b.store(called, resSlot);
       } else {
-        const [arg, argTy] = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
+        const arg = callArgOf(srcOk, srcOk.fieldTypes[0] ?? "i64");
         const outTy = resOk.fieldTypes[0] ?? "i64";
-        const called = this.nextTemp();
-        lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        const called = b.call(Ty.of(outTy), fnPtr.ref, [envPtr, arg]);
         // `Result<string,_>.map(v => v.len)` leaked its string every time. It stayed
         // invisible because the leak gate measures at -O2, where LLVM deletes an allocation
         // nothing observes; at -O0 it was always there.
         dropLentPayload(arg);
         storeTag(resOk.tag);
-        storePayload(resOk.tag, outTy, called);
+        storePayload(resOk.tag, called);
       }
       this.own.endResultRecv(lines, addr, expr.op === "resultMap" || expr.op === "resultAndThen", srcOk, paramIsRef, lentDropped);
       lentDropped = false;
-      lines.push(`  br label %${contLabel}`);
+      b.br(contBlock);
 
-      lines.push(`${errLabel}:`);
+      b.position(errBlock);
       if (expr.op === "resultMapErr") {
-        const [arg, argTy] = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
+        const arg = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
         const outTy = resErr.fieldTypes[0] ?? "i64";
-        const called = this.nextTemp();
-        lines.push(`  ${called} = call ${outTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        const called = b.call(Ty.of(outTy), fnPtr.ref, [envPtr, arg]);
         dropLentPayload(arg);
         storeTag(resErr.tag);
-        storePayload(resErr.tag, outTy, called);
+        storePayload(resErr.tag, called);
       } else if (expr.op === "resultOrElse") {
         // mirror of andThen on the other side: the callback returns the whole Result
-        const [arg, argTy] = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
-        const called = this.nextTemp();
-        lines.push(`  ${called} = call ${resTy} ${fnPtr}(ptr ${envPtr}, ${argTy} ${arg})`);
+        const arg = callArgOf(srcErr, srcErr.fieldTypes[0] ?? "i64");
+        const called = b.call(resT, fnPtr.ref, [envPtr, arg]);
         dropLentPayload(arg);
-        lines.push(`  store ${resTy} ${called}, ptr ${resAddr}`);
+        b.store(called, resSlot);
       } else {
         copyThrough(srcErr, resErr.tag);
       }
       this.own.endResultRecv(lines, addr, expr.op === "resultMapErr" || expr.op === "resultOrElse", srcErr, paramIsRef, lentDropped);
-      lines.push(`  br label %${contLabel}`);
+      b.br(contBlock);
 
-      lines.push(`${contLabel}:`);
-      const out = this.nextTemp();
-      lines.push(`  ${out} = load ${resTy}, ptr ${resAddr}`);
-      return [lines, out, resTy];
+      b.position(contBlock);
+      const out = b.load(resT, resSlot);
+      return asGen(lines, out);
     }
 
     // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
     const payloadPtr = this.enumPayloadPtr(lines, enumTy, addr, 0);
-    const payload = this.nextTemp();
-    lines.push(`  ${payload} = load ${payloadTy}, ptr ${payloadPtr}`);
+    const payloadT = Ty.of(payloadTy);
+    const payload = b.load(payloadT, val(payloadPtr, Ty.ptr));
 
     // unwrapOrElse must BRANCH, not select: select evaluates both arms, which would call
     // the closure even when Some — the exact thing the caller chose unwrapOrElse to avoid.
     if (expr.op === "unwrapOrElse" || expr.op === "resultUnwrapOrElse") {
-      const someLabel = this.nextLabel("uoe.some");
-      const noneLabel = this.nextLabel("uoe.none");
-      const contLabel = this.nextLabel("uoe.cont");
-      lines.push(`  br i1 ${isSome}, label %${someLabel}, label %${noneLabel}`);
-      lines.push(`${someLabel}:`);
-      lines.push(`  br label %${contLabel}`);
-      lines.push(`${noneLabel}:`);
+      const someBlock = b.newBlock("uoe.some");
+      const noneBlock = b.newBlock("uoe.none");
+      const contBlock = b.newBlock("uoe.cont");
+      b.condBr(isSomeV, someBlock, noneBlock);
+      b.position(someBlock);
+      b.br(contBlock);
+      b.position(noneBlock);
       const [cl, cv] = this.genExpr(expr.default!);
       lines.push(...cl);
-      const fnPtr = this.nextTemp();
-      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
-      const envPtr = this.nextTemp();
-      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
       // Result's version is handed the error, read from the Err variant's own payload
       // offset (not the Ok one loaded above) — by pointer when the param is `&E`.
-      let errArgs = "";
+      const errArgs: Val[] = [];
       // A by-value error param is handed the Err payload itself, so the receiver no longer
       // owns it and must not be dropped after the call.
       let errMoved = false;
@@ -10411,36 +10390,30 @@ export class Codegen {
         const cbType = expr.default!.type;
         const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
         if (paramIsRef) {
-          errArgs = `, ptr ${errPtr}`;
+          errArgs.push(val(errPtr, Ty.ptr));
         } else {
-          const srcErrTy = srcErr.fieldTypes[0];
-          const loaded = this.nextTemp();
-          lines.push(`  ${loaded} = load ${srcErrTy}, ptr ${errPtr}`);
-          errArgs = `, ${srcErrTy} ${loaded}`;
+          errArgs.push(b.load(Ty.of(srcErr.fieldTypes[0]), val(errPtr, Ty.ptr)));
           errMoved = true;
         }
       }
-      const called = this.nextTemp();
-      lines.push(`  ${called} = call ${payloadTy} ${fnPtr}(ptr ${envPtr}${errArgs})`);
+      const called = b.call(payloadT, fnPtr.ref, [envPtr, ...errArgs]);
       // The closure body may itself branch, so the incoming block for the phi is
       // wherever control actually ended up — not noneLabel.
-      const noneEnd = this.nextLabel("uoe.none.end");
-      lines.push(`  br label %${noneEnd}`);
-      lines.push(`${noneEnd}:`);
-      lines.push(`  br label %${contLabel}`);
-      lines.push(`${contLabel}:`);
-      const r = this.nextTemp();
-      lines.push(`  ${r} = phi ${payloadTy} [ ${payload}, %${someLabel} ], [ ${called}, %${noneEnd} ]`);
+      const noneEnd = b.newBlock("uoe.none.end");
+      b.br(noneEnd);
+      b.position(noneEnd);
+      b.br(contBlock);
+      b.position(contBlock);
+      const r = b.phi(payloadT, [[payload, someBlock], [called, noneEnd]], true);
       if (!errMoved) releaseTempReceiver();
-      return [lines, r, payloadTy];
+      return asGen(lines, r);
     }
 
     const [dl, dv] = this.genExpr(expr.default!);
     lines.push(...dl);
-    const r = this.nextTemp();
-    lines.push(`  ${r} = select i1 ${isSome}, ${payloadTy} ${payload}, ${payloadTy} ${dv}`);
+    const r = b.select(isSomeV, payload, val(dv, payloadT));
     releaseTempReceiver();
-    return [lines, r, payloadTy];
+    return asGen(lines, r);
   }
 
   private usedSatIntrinsics?: Set<string>;
