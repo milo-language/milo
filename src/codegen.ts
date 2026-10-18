@@ -6,6 +6,7 @@ import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-gl
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
+import { MIR_MODE, tryMir } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
@@ -163,10 +164,10 @@ export class Codegen {
   private tempCounter = 0;
   private labelCounter = 0;
   public locals = new Map<string, LocalInfo>();
-  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[]; refAttrs?: string[] }>();
+  public fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[]; refAttrs?: string[] }>();
   // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
   // first param (see genStoreInto). Excludes main and exported fns (C ABI).
-  private sretFns = new Set<string>();
+  public sretFns = new Set<string>();
   private currentFnSret = false;
   // extern fns that pass/return a struct by value need native-ABI lowering (byval/sret/coerce)
   private externAbi = new Map<string, ExternAbiInfo>();
@@ -290,7 +291,7 @@ export class Codegen {
   private hoistedLens: Map<string, { len: string; decl?: LocalInfo }>[] = [];
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
-  private exportedFnNames = new Set<string>();
+  public exportedFnNames = new Set<string>();
   // Mangled symbol -> as-written name (src/mangle.ts). Codegen emits two things a human
   // reads: the `Name { .. }` text behind `print`/`$"…"`, and DWARF names.
   private displayNames?: Map<string, string>;
@@ -387,7 +388,7 @@ export class Codegen {
 
   // DWARF metadata for -g (src/codegen-dwarf.ts). Scope is resolved lazily in its final
   // text pass rather than threaded through the recursive emitters.
-  private emitDebug = false;
+  public emitDebug = false;
   private dwarf = new DwarfEmitter({
     displayName: s => display(this.displayNames, s),
     filePath: () => this.filePath,
@@ -652,6 +653,8 @@ export class Codegen {
   // `%t0` (see the param prologue), so a bare `%t${n}` counter collides with it
   // and LLVM rejects the module with "multiple definition of local value". Milo
   // identifiers cannot contain `.`, so this prefix cannot be reached from source.
+  /** A builtin the program has not shadowed with its own fn of the same name. */
+  public isBuiltinName(name: string): boolean { return Codegen.BUILTINS.has(name) && !this.userDeclaredFns.has(name); }
   public nextTemp(): string { return `%t.${this.tempCounter++}`; }
   public nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
   public localAddr(name: string): string {
@@ -2612,6 +2615,8 @@ export class Codegen {
     this.emittedAddrs.clear();
     this.currentFnName = fn.name;
     this.currentFnWrapping = !!fn.isWrapping;
+    const mir = MIR_MODE ? tryMir(this, fn) : null;
+    if (mir) return mir;
     const lines: string[] = [];
     const b = new LlvmTextBuilder(lines, this);
 
@@ -5993,10 +5998,16 @@ export class Codegen {
       lines.push(`  ${cmp} = icmp ${expr.op === "==" ? "eq" : "ne"} i32 ${lTag}, ${rTag}`);
       return [lines, cmp, "i1"];
     }
+    return this.emitScalarBinOp(lines, expr.op, expr.left.type, llt, lv, rv, expr.span);
+  }
 
+  // A numeric or bool binary op on evaluated operands, with milo's traps: overflow (unless
+  // @wrapping or --no-overflow-checks), division by zero and INT_MIN / -1, and out-of-range
+  // shifts. Shared by HIR codegen and MIR emission, so both trap identically.
+  public emitScalarBinOp(lines: string[], op: string, leftType: TypeKind, llt: string, lv: string, rv: string, span: Span | undefined): Gen {
     const tmp = this.nextTemp();
     const isFloat = llt === "float" || llt === "double";
-    const unsigned = !isFloat && this.isUnsigned(expr.left.type);
+    const unsigned = !isFloat && this.isUnsigned(leftType);
     const intOps: Record<string, string> = unsigned
       ? { "+": "add", "-": "sub", "*": "mul", "/": "udiv", "%": "urem", "&": "and", "|": "or", "^": "xor", "<<": "shl", ">>": "lshr" }
       : { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem", "&": "and", "|": "or", "^": "xor", "<<": "shl", ">>": "ashr" };
@@ -6007,49 +6018,49 @@ export class Codegen {
     // "!=" must be `une` (unordered-or-not-equal), not `one`: for NaN operands
     // `one` is false, which would make both `x == x` and `x != x` false.
     const floatCmps: Record<string, string> = { "==": "oeq", "!=": "une", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
-    if (expr.op in intOps) {
-      const op = isFloat ? floatOps[expr.op] : intOps[expr.op];
+    if (op in intOps) {
+      const llOp = isFloat ? floatOps[op] : intOps[op];
       const checkedOps: Record<string, string> = { "+": "add", "-": "sub", "*": "mul" };
       // A @wrapping fn skips the overflow trap and takes the plain (defined, two's-
       // complement) op below. Everything else — div-by-zero, bounds — still traps.
-      if (this.trapOnOverflow && !this.currentFnWrapping && !isFloat && expr.op in checkedOps && expr.span) {
-        const val = this.emitCheckedArith(lines, checkedOps[expr.op], unsigned, llt, lv, rv, expr.span);
+      if (this.trapOnOverflow && !this.currentFnWrapping && !isFloat && op in checkedOps && span) {
+        const val = this.emitCheckedArith(lines, checkedOps[op], unsigned, llt, lv, rv, span);
         return [lines, val, llt];
       }
       // Integer division/remainder by zero (and signed INT_MIN / -1) is UB — trap it in
       // every mode. Under @wrapping the INT_MIN/-1 overflow wraps (→ INT_MIN, rem 0), but
       // division by zero still traps: there is no modular value for x/0.
-      if (!isFloat && (expr.op === "/" || expr.op === "%")) {
+      if (!isFloat && (op === "/" || op === "%")) {
         const signed = !unsigned;
-        const bits = expr.left.type.tag === "int" ? expr.left.type.bits : 32;
+        const bits = leftType.tag === "int" ? leftType.bits : 32;
         if (this.currentFnWrapping && signed) {
-          const val = this.emitWrappingSignedDivRem(lines, expr.op, lv, rv, llt, bits, expr.span);
+          const val = this.emitWrappingSignedDivRem(lines, op, lv, rv, llt, bits, span);
           return [lines, val, llt];
         }
-        this.emitDivByZeroCheck(lines, rv, lv, llt, signed, bits, expr.span);
+        this.emitDivByZeroCheck(lines, rv, lv, llt, signed, bits, span);
       }
       // A shift by >= the operand's bit width (or a negative amount, huge as unsigned) is
       // LLVM poison. Default: trap. @wrapping: mask the amount to [0,width) — defined,
       // matches Rust `wrapping_shl` / C.
-      if (!isFloat && (expr.op === "<<" || expr.op === ">>")) {
-        const bits = expr.left.type.tag === "int" ? expr.left.type.bits : 32;
+      if (!isFloat && (op === "<<" || op === ">>")) {
+        const bits = leftType.tag === "int" ? leftType.bits : 32;
         if (this.currentFnWrapping) {
           const masked = this.nextTemp();
           lines.push(`  ${masked} = and ${llt} ${rv}, ${bits - 1}`);
-          lines.push(`  ${tmp} = ${op} ${llt} ${lv}, ${masked}`);
+          lines.push(`  ${tmp} = ${llOp} ${llt} ${lv}, ${masked}`);
           return [lines, tmp, llt];
         }
-        this.emitShiftCheck(lines, rv, llt, bits, expr.span);
+        this.emitShiftCheck(lines, rv, llt, bits, span);
       }
-      lines.push(`  ${tmp} = ${op} ${llt} ${lv}, ${rv}`);
+      lines.push(`  ${tmp} = ${llOp} ${llt} ${lv}, ${rv}`);
       return [lines, tmp, llt];
     }
-    if (expr.op in intCmps) {
-      if (isFloat) lines.push(`  ${tmp} = fcmp ${floatCmps[expr.op]} ${llt} ${lv}, ${rv}`);
-      else lines.push(`  ${tmp} = icmp ${intCmps[expr.op]} ${llt} ${lv}, ${rv}`);
+    if (op in intCmps) {
+      if (isFloat) lines.push(`  ${tmp} = fcmp ${floatCmps[op]} ${llt} ${lv}, ${rv}`);
+      else lines.push(`  ${tmp} = icmp ${intCmps[op]} ${llt} ${lv}, ${rv}`);
       return [lines, tmp, "i1"];
     }
-    console.error(`error[codegen]: unknown binary op '${expr.op}'`); process.exit(1);
+    console.error(`error[codegen]: unknown binary op '${op}'`); process.exit(1);
   }
 
   private genUnaryOp(expr: HIRExpr & { kind: "UnaryOp" }, lines: string[]): Gen {
@@ -6068,23 +6079,29 @@ export class Codegen {
     }
     const [ol, ov, ot] = this.genExpr(expr.operand);
     lines.push(...ol);
+    return this.emitScalarUnOp(lines, expr.op, expr.operand.type, ot, ov, expr.span);
+  }
+
+  // `-`, `!` and `~` on an evaluated scalar operand; integer negation traps on overflow
+  // like emitScalarBinOp's subtraction. Shared by HIR codegen and MIR emission.
+  public emitScalarUnOp(lines: string[], op: string, operandType: TypeKind, ot: string, ov: string, span: Span | undefined): Gen {
     const tmp = this.nextTemp();
-    if (expr.op === "-") {
+    if (op === "-") {
       if (ot === "float" || ot === "double") lines.push(`  ${tmp} = fneg ${ot} ${ov}`);
-      else if (this.trapOnOverflow && !this.currentFnWrapping && expr.span) {
-        const unsigned = this.isUnsigned(expr.operand.type);
-        const val = this.emitCheckedArith(lines, "sub", unsigned, ot, "0", ov, expr.span);
+      else if (this.trapOnOverflow && !this.currentFnWrapping && span) {
+        const unsigned = this.isUnsigned(operandType);
+        const val = this.emitCheckedArith(lines, "sub", unsigned, ot, "0", ov, span);
         return [lines, val, ot];
       } else lines.push(`  ${tmp} = sub ${ot} 0, ${ov}`);
       return [lines, tmp, ot];
     }
-    if (expr.op === "!") { lines.push(`  ${tmp} = xor i1 ${ov}, 1`); return [lines, tmp, "i1"]; }
-    if (expr.op === "~") { lines.push(`  ${tmp} = xor ${ot} ${ov}, -1`); return [lines, tmp, ot]; }
-    console.error(`error[codegen]: unknown unary op '${expr.op}'`); process.exit(1);
+    if (op === "!") { lines.push(`  ${tmp} = xor i1 ${ov}, 1`); return [lines, tmp, "i1"]; }
+    if (op === "~") { lines.push(`  ${tmp} = xor ${ot} ${ov}, -1`); return [lines, tmp, ot]; }
+    console.error(`error[codegen]: unknown unary op '${op}'`); process.exit(1);
   }
 
   private genCall(expr: HIRExpr & { kind: "Call" }, lines: string[], sretDest?: string): Gen {
-    if (Codegen.BUILTINS.has(expr.func) && !this.userDeclaredFns.has(expr.func)) {
+    if (this.isBuiltinName(expr.func)) {
       return this.genBuiltinCall(expr, lines);
     }
     const sig = this.fnSigs.get(expr.func);
@@ -7698,6 +7715,12 @@ export class Codegen {
     }
     const [ol, ov, fromTy] = this.genExpr(expr.operand);
     lines.push(...ol);
+    return this.emitScalarCast(lines, fromKind, toKind, fromTy, toTy, ov);
+  }
+
+  // `as` between numeric, bool and pointer types on an evaluated operand. Float to int
+  // saturates (NaN is 0), as Rust's `as` does. Shared by HIR codegen and MIR emission.
+  public emitScalarCast(lines: string[], fromKind: TypeKind, toKind: TypeKind, fromTy: string, toTy: string, ov: string): Gen {
     if (fromTy === toTy) return [lines, ov, toTy];
     const tmp = this.nextTemp();
     const fromFloat = fromKind.tag === "float";
@@ -10423,7 +10446,7 @@ export class Codegen {
   // single precision. Emitting the double bits of 0.1 for an f32 field is a hard
   // LLVM error ("floating point constant invalid for type"), so round through
   // f32 first when that is the operand type.
-  private formatFloatBits(v: number, llvmTy = "double"): string {
+  public formatFloatBits(v: number, llvmTy = "double"): string {
     const buf = new ArrayBuffer(8);
     new Float64Array(buf)[0] = llvmTy === "float" ? Math.fround(v) : v;
     const bits = new BigUint64Array(buf)[0];

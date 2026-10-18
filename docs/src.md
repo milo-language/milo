@@ -38,6 +38,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
 | `src/codegen-map.ts` | HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable. |
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
+| `src/codegen-mir.ts` | MIR -> LLVM text through the typed builder (docs/plans/codegen-ir-2026-10.md, phase 2). |
 | `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
 | `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting), kept as IR text in src/runtime/str.ll. |
 | `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, substr, find, number/bool to string), extracted to keep codegen.ts manageable. |
@@ -65,6 +66,8 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/main.ts` | CLI driver: subcommand dispatch for build/run/emit-*/test/fmt/lsp and the rest of the surface described in src/cli-help.ts. |
 | `src/mangle.ts` | Per-package name mangling. |
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
+| `src/mir-build.ts` | HIR -> MIR lowering (docs/plans/codegen-ir-2026-10.md, phase 2). |
+| `src/mir.ts` | MIR: a control-flow-graph IR between HIR and the LLVM builder (docs/plans/codegen-ir-2026-10.md, phase 2). |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/own-ledger.ts` | Ownership ledger verifier: checks codegen's drop bookkeeping against itself on the textual IR (MILO_OWN_LEDGER=1). |

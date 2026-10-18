@@ -88,6 +88,7 @@ To change an entry, change that line — this table is a projection of it.
 | `scripts/lint.ts` | Repo linter: deterministic smell checks with auto-fix. |
 | `scripts/lsp-probe.ts` | Differential + crash-safety probe for the Milo language server. |
 | `scripts/mascot.ts` | The Milo mascot as a char grid — the single source for every rendering of it (docs/site/scripts/gen-logo.ts → logo.svg, scripts/gen-vscode-icon.ts → the extension's icon.png). |
+| `scripts/mir-same.ts` | Differential gate for MIR (docs/plans/codegen-ir-2026-10.md, phase 2): every fixture is built with MILO_MIR=1 and without, both binaries run, and stdout, stderr and the exit status must match. |
 | `scripts/napi-probe.ts` | Generate a Milo host that can load a Node-API (.node) addon, and trace which napi_* entry points the addon actually calls. |
 | `scripts/own-ledger.ts` | Ownership-ledger census: emit IR for every fixture with MILO_OWN_LEDGER=1 and report codegen's drop-bookkeeping findings (src/own-ledger.ts). |
 | `scripts/prove-soundness-fuzz.ts` | Differential falsifier for `milo prove`. |
