@@ -315,3 +315,58 @@ test("load prints range metadata after align, and only for integer loads", () =>
   expect(() => b.load(Ty.ptr, p, undefined, { range: 1, noundef: 2 })).toThrow("only integer loads");
   expect(() => b.load(Ty.of("%String"), p, undefined, { range: 1, noundef: 2 })).toThrow("only integer loads");
 });
+
+describe("named locals and atomics", () => {
+  test("reserveNamed draws no temp, defines a fixed name once, and rejects temp-shaped or repeated names", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const p = val("%p", Ty.ptr);
+    const old = b.load(Ty.i64, p, 8, undefined, b.reserveNamed("%old", Ty.i64));
+    expect(old.ref).toBe("%old");
+    expect(b.load(Ty.i64, p).ref).toBe("%t.0");
+    expect(lines).toEqual(["  %old = load i64, ptr %p, align 8", "  %t.0 = load i64, ptr %p"]);
+    expect(() => b.reserveNamed("%old", Ty.i64)).toThrow("already reserved");
+    expect(() => b.reserveNamed("%t.5", Ty.i64)).toThrow("not a named local");
+    expect(() => b.reserveNamed("old", Ty.i64)).toThrow("not a named local");
+    expect(() => b.reserveNamed("%v", Ty.void)).toThrow("of void");
+    const r = b.reserveNamed("%wrong", Ty.i32);
+    expect(() => b.load(Ty.i64, p, 8, undefined, r)).toThrow("but the result is i64");
+  });
+
+  test("cast and extractvalue define into a reserved name", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const a = b.cast("ptrtoint", val("@g", Ty.ptr), Ty.i64, b.reserveNamed("%a", Ty.i64));
+    const w = b.extractvalue(val("%pair", Ty.of("{ i64, i1 }")), 1, Ty.i1, b.reserveNamed("%won", Ty.i1));
+    expect([a.ref, w.ref]).toEqual(["%a", "%won"]);
+    expect(lines).toEqual(["  %a = ptrtoint ptr @g to i64", "  %won = extractvalue { i64, i1 } %pair, 1"]);
+    expect(() => b.cast("zext", val("%x", Ty.i1), Ty.i64, val("%t.9", Ty.i64))).toThrow("not a reserved temp");
+  });
+
+  test("store align, release store and cmpxchg print atomic spellings and check operands", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const p = val("%p", Ty.ptr);
+    const [z, one] = [val("0", Ty.i64), val("1", Ty.i64)];
+    b.store(one, p, 8);
+    b.storeRelease(one, p, 8);
+    const pair = b.cmpxchg(p, z, one, 8, b.reserveNamed("%pair", Ty.of("{ i64, i1 }")));
+    expect(pair.ty.ll).toBe("{ i64, i1 }");
+    b.loadAcquire(Ty.i64, p, 8, b.reserveNamed("%o", Ty.i64));
+    expect(lines).toEqual([
+      "  store i64 1, ptr %p, align 8",
+      "  store atomic i64 1, ptr %p release, align 8",
+      "  %pair = cmpxchg ptr %p, i64 0, i64 1 acq_rel acquire, align 8",
+      "  %o = load atomic i64, ptr %p acquire, align 8",
+    ]);
+    expect(() => b.store(one, p, 3)).toThrow("not a power of two");
+    expect(() => b.storeRelease(one, p, 6)).toThrow("not a power of two");
+    expect(() => b.storeRelease(one, one, 8)).toThrow("non-pointer");
+    expect(() => b.storeRelease(val("%s", Ty.of("%String")), p, 8)).toThrow("atomic store of %String");
+    expect(() => b.storeRelease(val("%v", Ty.void), p, 8)).toThrow("atomic store of void");
+    expect(() => b.cmpxchg(one, z, one, 8)).toThrow("non-pointer");
+    expect(() => b.cmpxchg(p, z, one, 3)).toThrow("not a power of two");
+    expect(() => b.cmpxchg(p, z, val("1", Ty.i32), 8)).toThrow("operand types differ");
+    expect(() => b.cmpxchg(p, val("%s", Ty.of("%String")), val("%u", Ty.of("%String")), 8)).toThrow("cmpxchg of %String");
+  });
+});

@@ -107,8 +107,16 @@ export interface Builder {
   /** `align`, if given, prints as a trailing `, align N`; `meta` (int loads only) follows it. */
   load(ty: Ty, ptr: Val, align?: number, meta?: LoadMeta, dest?: Val): Val;
   /** `load atomic T, ptr P acquire, align N`: reads a refcount that another thread may release. */
-  loadAcquire(ty: Ty, ptr: Val, align: number): Val;
-  store(v: Val, ptr: Val): void;
+  loadAcquire(ty: Ty, ptr: Val, align: number, dest?: Val): Val;
+  /** `align`, if given, prints as a trailing `, align N`. */
+  store(v: Val, ptr: Val, align?: number): void;
+  /** `store atomic T v, ptr P release, align N`: publishes a value another thread reads with an acquire load. */
+  storeRelease(v: Val, ptr: Val, align: number): void;
+  /**
+   * `cmpxchg ptr P, T e, T d acq_rel acquire, align N`, yielding `{ T, i1 }` (old value, then
+   * whether the swap happened). `dest` is a `reserveNamed` or `reserveTemp` name to define.
+   */
+  cmpxchg(ptr: Val, expected: Val, desired: Val, align: number, dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   gep(base: Ty, ptr: Val, idx: Val[], dest?: Val): Val;
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
@@ -116,9 +124,10 @@ export interface Builder {
   /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
   icmp(pred: ICmpPred, a: Val, b: Val, dest?: Val): Val;
   fcmp(pred: FCmpPred, a: Val, b: Val, dest?: Val): Val;
-  cast(op: CastOp, v: Val, to: Ty): Val;
-  /** The builder knows no aggregate layouts, so the caller names the element type. */
-  extractvalue(agg: Val, idx: number, elt: Ty): Val;
+  /** `dest`, if given, is a `reserveTemp` name to define (see `select`). */
+  cast(op: CastOp, v: Val, to: Ty, dest?: Val): Val;
+  /** The builder knows no aggregate layouts, so the caller names the element type. `dest` as in `cast`. */
+  extractvalue(agg: Val, idx: number, elt: Ty, dest?: Val): Val;
   insertvalue(agg: Val, elt: Val, idx: number): Val;
   /** `padded` prints `[ v, %b ]`, the spelling a few older sites used; same IR to LLVM. */
   phi(ty: Ty, incoming: [Val, Block][], padded?: boolean): Val;
@@ -129,6 +138,12 @@ export interface Builder {
    * and temp numbering is part of the byte-identical contract.
    */
   reserveTemp(ty: Ty): Val;
+  /**
+   * Like `reserveTemp` but for a fixed local name (`%old`) that the old string code printed
+   * by hand in a helper function. Draws no temp. The name must be a named local (not `%t.N`)
+   * and unused so far in this builder's function.
+   */
+  reserveNamed(name: string, ty: Ty): Val;
   /** A call whose result is used; `ret` must not be void. `dest` is a `reserveTemp` name to define (see `select`). */
   call(ret: Ty, callee: string, args: Val[], dest?: Val): Val;
   /** A call printed with no result name: void, or a result nobody reads. */
@@ -157,6 +172,7 @@ export class LlvmTextBuilder implements Builder {
   // Temps drawn by reserveTemp and not yet defined. Per builder, and a builder lives for one
   // function body, so a reservation cannot leak into another function.
   private readonly reserved = new Set<string>();
+  private readonly namedLocals = new Set<string>();
   private fn: "none" | "open" | "closed" = "none";
 
   constructor(readonly lines: string[], private readonly names: NameSource) {}
@@ -221,18 +237,34 @@ export class LlvmTextBuilder implements Builder {
     return this.defOrDest(`load ${ty.ll}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}${m}`, ty, dest);
   }
 
-  loadAcquire(ty: Ty, ptr: Val, align: number): Val {
+  loadAcquire(ty: Ty, ptr: Val, align: number, dest?: Val): Val {
     // LLVM allows atomic loads of integers, pointers and floats, not of aggregates.
     if (ty.kind === "void" || ty.kind === "agg") this.fail(`atomic load of ${ty.ll}`);
     this.wantPtr("atomic load", ptr);
     this.wantAlign("atomic load", align);
-    return this.def(`load atomic ${ty.ll}, ptr ${ptr.ref} acquire, align ${align}`, ty);
+    return this.defOrDest(`load atomic ${ty.ll}, ptr ${ptr.ref} acquire, align ${align}`, ty, dest);
   }
 
-  store(v: Val, ptr: Val): void {
+  store(v: Val, ptr: Val, align?: number): void {
     if (v.ty.kind === "void") this.fail(`store of void value ${v.ref}`);
     this.wantPtr("store", ptr);
-    this.emit(`store ${v.ty.ll} ${v.ref}, ptr ${ptr.ref}`);
+    if (align !== undefined) this.wantAlign("store", align);
+    this.emit(`store ${v.ty.ll} ${v.ref}, ptr ${ptr.ref}${align === undefined ? "" : `, align ${align}`}`);
+  }
+
+  storeRelease(v: Val, ptr: Val, align: number): void {
+    if (v.ty.kind === "void" || v.ty.kind === "agg") this.fail(`atomic store of ${v.ty.ll} value ${v.ref}`);
+    this.wantPtr("atomic store", ptr);
+    this.wantAlign("atomic store", align);
+    this.emit(`store atomic ${v.ty.ll} ${v.ref}, ptr ${ptr.ref} release, align ${align}`);
+  }
+
+  cmpxchg(ptr: Val, expected: Val, desired: Val, align: number, dest?: Val): Val {
+    this.wantPtr("cmpxchg", ptr);
+    this.wantAlign("cmpxchg", align);
+    this.sameTy("cmpxchg", expected, desired);
+    if (expected.ty.kind !== "int" && expected.ty.kind !== "ptr") this.fail(`cmpxchg of ${expected.ty.ll}`);
+    return this.defOrDest(`cmpxchg ptr ${ptr.ref}, ${expected.ty.ll} ${expected.ref}, ${desired.ty.ll} ${desired.ref} acq_rel acquire, align ${align}`, Ty.of(`{ ${expected.ty.ll}, i1 }`), dest);
   }
 
   gep(base: Ty, ptr: Val, idx: Val[], dest?: Val): Val {
@@ -260,14 +292,14 @@ export class LlvmTextBuilder implements Builder {
     return this.defOrDest(`fcmp ${pred} ${a.ty.ll} ${a.ref}, ${b.ref}`, Ty.i1, dest);
   }
 
-  cast(op: CastOp, v: Val, to: Ty): Val {
+  cast(op: CastOp, v: Val, to: Ty, dest?: Val): Val {
     if (v.ty.kind === "void" || to.kind === "void") this.fail(`${op} involving void`);
-    return this.def(`${op} ${v.ty.ll} ${v.ref} to ${to.ll}`, to);
+    return this.defOrDest(`${op} ${v.ty.ll} ${v.ref} to ${to.ll}`, to, dest);
   }
 
-  extractvalue(agg: Val, idx: number, elt: Ty): Val {
+  extractvalue(agg: Val, idx: number, elt: Ty, dest?: Val): Val {
     if (agg.ty.kind !== "agg") this.fail(`extractvalue from non-aggregate ${agg.ty.ll}`);
-    return this.def(`extractvalue ${agg.ty.ll} ${agg.ref}, ${idx}`, elt);
+    return this.defOrDest(`extractvalue ${agg.ty.ll} ${agg.ref}, ${idx}`, elt, dest);
   }
 
   insertvalue(agg: Val, elt: Val, idx: number): Val {
@@ -300,6 +332,15 @@ export class LlvmTextBuilder implements Builder {
     const ref = this.names.nextTemp();
     this.reserved.add(ref);
     return { ref, ty };
+  }
+
+  reserveNamed(name: string, ty: Ty): Val {
+    if (ty.kind === "void") this.fail(`reserveNamed ${name} of void`);
+    if (!/^%[A-Za-z_.$][\w.$-]*$/.test(name) || /^%t\.\d+$/.test(name)) this.fail(`reserveNamed name ${name} is not a named local`);
+    if (this.namedLocals.has(name)) this.fail(`reserveNamed ${name} already reserved in this function`);
+    this.namedLocals.add(name);
+    this.reserved.add(name);
+    return { ref: name, ty };
   }
 
   call(ret: Ty, callee: string, args: Val[], dest?: Val): Val {

@@ -1,7 +1,7 @@
 // HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target
 // calling conventions. IR uses opaque `ptr` (LLVM 15+), never `i8*`.
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRContract, HIRStruct, HIRGlobal } from "./hir";
-import { LlvmTextBuilder, asGen, Ty, val, type LoadMeta, type Param, type Val } from "./ir";
+import { LlvmTextBuilder, asGen, Ty, val, type Block, type LoadMeta, type Param, type Val } from "./ir";
 import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-globals";
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
@@ -4745,6 +4745,7 @@ export class Codegen {
     // 64-bit compare-and-swap to lower an atomic to), and no thread-local storage.
     const bare = !!this.target.bareMetal;
     const tls = bare ? "" : "thread_local ";
+    const blk = (name: string): Block => ({ name });
     const has = (n: string) => functions.some(f => f.name === n && !f.isExtern);
     const green = !bare && has("schedulerCurrent") && has("schedulerYield") && has("schedulerExists") && has("schedulerPollMain");
     L.push(`@__milo_lazy_tid = internal ${tls}global i8 0`);
@@ -4761,36 +4762,38 @@ export class Codegen {
       L.push(`@"${name}.lazythr" = internal ${gtls}global i64 0`);
       const bGuard = new LlvmTextBuilder(L, this);
       bGuard.defineFn({ name: `"${LAZY_GUARD_PREFIX}${name}"`, ret: Ty.void, params: [], internal: true });
-      L.push(bare ? `  %s = load i64, ptr @"${name}.lazy", align 8` : `  %s = load atomic i64, ptr @"${name}.lazy" acquire, align 8`);
-      L.push(`  %d = icmp eq i64 %s, 2`);
-      L.push(`  br i1 %d, label %done, label %slow`);
-      L.push(`slow:`);
-      L.push(`  call void @__milo_lazy_slow(ptr @"${name}.lazy", ptr @"${name}.lazyown", ptr @"${name}.lazythr", ptr ${shown.label}, ptr @"${LAZY_INIT_PREFIX}${name}")`);
-      L.push(`  br label %done`);
-      L.push(`done:`);
-      L.push(`  ret void`);
+      const lazy = val(`@"${name}.lazy"`, Ty.ptr);
+      const gs = bGuard.reserveNamed("%s", Ty.i64);
+      if (bare) bGuard.load(Ty.i64, lazy, 8, undefined, gs);
+      else bGuard.loadAcquire(Ty.i64, lazy, 8, gs);
+      const gd = bGuard.icmp("eq", gs, val("2", Ty.i64), bGuard.reserveNamed("%d", Ty.i1));
+      const [gSlow, gDone] = [blk("slow"), blk("done")];
+      bGuard.condBr(gd, gDone, gSlow);
+      bGuard.position(gSlow);
+      bGuard.callDiscard(Ty.void, "@__milo_lazy_slow", [lazy, val(`@"${name}.lazyown"`, Ty.ptr), val(`@"${name}.lazythr"`, Ty.ptr), val(shown.label, Ty.ptr), val(`@"${LAZY_INIT_PREFIX}${name}"`, Ty.ptr)]);
+      bGuard.br(gDone);
+      bGuard.position(gDone);
+      bGuard.ret();
       bGuard.endFn();
     }
 
     const bTok = new LlvmTextBuilder(L, this);
     bTok.defineFn({ name: "__milo_lazy_token", ret: Ty.i64, params: [], internal: true });
     if (green) {
-      L.push(`  %t = call ptr @schedulerCurrent()`);
-      L.push(`  %n = icmp eq ptr %t, null`);
-      L.push(`  br i1 %n, label %thread, label %task`);
-      L.push(`task:`);
-      L.push(`  %ti = ptrtoint ptr %t to i64`);
-      L.push(`  ret i64 %ti`);
-      L.push(`thread:`);
+      const t = bTok.call(Ty.ptr, "@schedulerCurrent", [], bTok.reserveNamed("%t", Ty.ptr));
+      const n = bTok.icmp("eq", t, val("null", Ty.ptr), bTok.reserveNamed("%n", Ty.i1));
+      const [thread, task] = [blk("thread"), blk("task")];
+      bTok.condBr(n, thread, task);
+      bTok.position(task);
+      bTok.ret(bTok.cast("ptrtoint", t, Ty.i64, bTok.reserveNamed("%ti", Ty.i64)));
+      bTok.position(thread);
     }
-    L.push(`  %a = call i64 @__milo_lazy_thread()`);
-    L.push(`  ret i64 %a`);
+    bTok.ret(bTok.call(Ty.i64, "@__milo_lazy_thread", [], bTok.reserveNamed("%a", Ty.i64)));
     bTok.endFn();
     const bThr = new LlvmTextBuilder(L, this);
     bThr.defineFn({ name: "__milo_lazy_thread", ret: Ty.i64, params: [], internal: true });
-    L.push(`  %a = ptrtoint ptr @__milo_lazy_tid to i64`);
-    L.push(`  %a1 = or i64 %a, 1`);
-    L.push(`  ret i64 %a1`);
+    const ta = bThr.cast("ptrtoint", val("@__milo_lazy_tid", Ty.ptr), Ty.i64, bThr.reserveNamed("%a", Ty.i64));
+    bThr.ret(bThr.binop("or", ta, val("1", Ty.i64), bThr.reserveNamed("%a1", Ty.i64)));
     bThr.endFn();
 
     // Waiting for an initializer another task on THIS thread is running: that task is
@@ -4802,31 +4805,33 @@ export class Codegen {
     // initializer does not park must never park.
     if (!bare) {
       const bWait = new LlvmTextBuilder(L, this);
-      bWait.defineFn({ name: "__milo_lazy_wait", ret: Ty.void, params: [{ name: "here", ty: Ty.i1 }], internal: true });
-      L.push(`  br i1 %here, label %sched, label %os`);
-      L.push(`sched:`);
+      const [here] = bWait.defineFn({ name: "__milo_lazy_wait", ret: Ty.void, params: [{ name: "here", ty: Ty.i1 }], internal: true });
+      const [sched, os] = [blk("sched"), blk("os")];
+      bWait.condBr(here, sched, os);
+      bWait.position(sched);
       if (green) {
-        L.push(`  %t = call ptr @schedulerCurrent()`);
-        L.push(`  %n = icmp eq ptr %t, null`);
-        L.push(`  br i1 %n, label %nottask, label %task`);
-        L.push(`task:`);
-        L.push(`  call void @schedulerYield()`);
-        L.push(`  ret void`);
-        L.push(`nottask:`);
-        L.push(`  %e = call i1 @schedulerExists()`);
-        L.push(`  br i1 %e, label %drive, label %os`);
-        L.push(`drive:`);
-        L.push(`  call void @schedulerPollMain()`);
-        L.push(`  ret void`);
+        const t = bWait.call(Ty.ptr, "@schedulerCurrent", [], bWait.reserveNamed("%t", Ty.ptr));
+        const n = bWait.icmp("eq", t, val("null", Ty.ptr), bWait.reserveNamed("%n", Ty.i1));
+        const [nottask, task, drive] = [blk("nottask"), blk("task"), blk("drive")];
+        bWait.condBr(n, nottask, task);
+        bWait.position(task);
+        bWait.callDiscard(Ty.void, "@schedulerYield", []);
+        bWait.ret();
+        bWait.position(nottask);
+        const e = bWait.call(Ty.i1, "@schedulerExists", [], bWait.reserveNamed("%e", Ty.i1));
+        bWait.condBr(e, drive, os);
+        bWait.position(drive);
+        bWait.callDiscard(Ty.void, "@schedulerPollMain", []);
+        bWait.ret();
       } else {
-        L.push(`  br label %os`);
+        bWait.br(os);
       }
-      L.push(`os:`);
+      bWait.position(os);
       if (!this.isWindows) {
         this.needsSchedYield = true;
-        L.push(`  call i32 @sched_yield()`);
+        bWait.callDiscard(Ty.i32, "@sched_yield", []);
       }
-      L.push(`  ret void`);
+      bWait.ret();
       bWait.endFn();
     }
 
@@ -4834,105 +4839,111 @@ export class Codegen {
     const byFmt = this.addString("  (read by the initializer of '%s')\n");
     const noteFmt = this.addString("note: this panic happened while initializing global '%s' (it is initialized on first read)\n");
     const bSlow = new LlvmTextBuilder(L, this);
-    bSlow.defineFn({ name: "__milo_lazy_slow", ret: Ty.void, params: [{ name: "st", ty: Ty.ptr }, { name: "own", ty: Ty.ptr }, { name: "thr", ty: Ty.ptr }, { name: "name", ty: Ty.ptr }, { name: "init", ty: Ty.ptr }], internal: true, attrs: " noinline" });
-    L.push(`  %tok = call i64 @__milo_lazy_token()`);
-    L.push(`  %me = call i64 @__milo_lazy_thread()`);
-    L.push(`  br label %try`);
-    L.push(`try:`);
+    const [st, own, thr, nm, init] = bSlow.defineFn({ name: "__milo_lazy_slow", ret: Ty.void, params: [{ name: "st", ty: Ty.ptr }, { name: "own", ty: Ty.ptr }, { name: "thr", ty: Ty.ptr }, { name: "name", ty: Ty.ptr }, { name: "init", ty: Ty.ptr }], internal: true, attrs: " noinline" });
+    const curName = val("@__milo_lazy_cur_name", Ty.ptr);
+    const curTok = val("@__milo_lazy_cur_tok", Ty.ptr);
+    const i64c = (n: number) => val(String(n), Ty.i64);
+    const tok = bSlow.call(Ty.i64, "@__milo_lazy_token", [], bSlow.reserveNamed("%tok", Ty.i64));
+    const me = bSlow.call(Ty.i64, "@__milo_lazy_thread", [], bSlow.reserveNamed("%me", Ty.i64));
+    const [bTry, run, lost, out, cycle, by, die] = ["try", "run", "lost", "out", "cycle", "by", "die"].map(blk);
+    bSlow.br(bTry);
+    bSlow.position(bTry);
+    let old: Val;
     if (bare) {
-      L.push(`  %old = load i64, ptr %st, align 8`);
-      L.push(`  %won = icmp eq i64 %old, 0`);
-      L.push(`  br i1 %won, label %claim, label %lost`);
-      L.push(`claim:`);
-      L.push(`  store i64 1, ptr %st, align 8`);
-      L.push(`  br label %run`);
+      old = bSlow.load(Ty.i64, st, 8, undefined, bSlow.reserveNamed("%old", Ty.i64));
+      const won = bSlow.icmp("eq", old, i64c(0), bSlow.reserveNamed("%won", Ty.i1));
+      const claim = blk("claim");
+      bSlow.condBr(won, claim, lost);
+      bSlow.position(claim);
+      bSlow.store(i64c(1), st, 8);
+      bSlow.br(run);
     } else {
-      L.push(`  %pair = cmpxchg ptr %st, i64 0, i64 1 acq_rel acquire, align 8`);
-      L.push(`  %won = extractvalue { i64, i1 } %pair, 1`);
-      L.push(`  %old = extractvalue { i64, i1 } %pair, 0`);
-      L.push(`  br i1 %won, label %run, label %lost`);
+      const pair = bSlow.cmpxchg(st, i64c(0), i64c(1), 8, bSlow.reserveNamed("%pair", Ty.of("{ i64, i1 }")));
+      const won = bSlow.extractvalue(pair, 1, Ty.i1, bSlow.reserveNamed("%won", Ty.i1));
+      old = bSlow.extractvalue(pair, 0, Ty.i64, bSlow.reserveNamed("%old", Ty.i64));
+      bSlow.condBr(won, run, lost);
     }
-    L.push(`run:`);
-    L.push(bare ? `  store i64 %tok, ptr %own, align 8` : `  store atomic i64 %tok, ptr %own release, align 8`);
-    L.push(bare ? `  store i64 %me, ptr %thr, align 8` : `  store atomic i64 %me, ptr %thr release, align 8`);
-    L.push(`  %pn = load ptr, ptr @__milo_lazy_cur_name`);
-    L.push(`  %pt = load i64, ptr @__milo_lazy_cur_tok`);
-    L.push(`  store ptr %name, ptr @__milo_lazy_cur_name`);
-    L.push(`  store i64 %tok, ptr @__milo_lazy_cur_tok`);
-    L.push(`  call void %init()`);
-    L.push(`  store ptr %pn, ptr @__milo_lazy_cur_name`);
-    L.push(`  store i64 %pt, ptr @__milo_lazy_cur_tok`);
-    L.push(bare ? `  store i64 2, ptr %st, align 8` : `  store atomic i64 2, ptr %st release, align 8`);
-    L.push(`  ret void`);
-    L.push(`lost:`);
-    L.push(`  %fin = icmp eq i64 %old, 2`);
+    bSlow.position(run);
+    if (bare) {
+      bSlow.store(tok, own, 8);
+      bSlow.store(me, thr, 8);
+    } else {
+      bSlow.storeRelease(tok, own, 8);
+      bSlow.storeRelease(me, thr, 8);
+    }
+    const pn = bSlow.load(Ty.ptr, curName, undefined, undefined, bSlow.reserveNamed("%pn", Ty.ptr));
+    const pt = bSlow.load(Ty.i64, curTok, undefined, undefined, bSlow.reserveNamed("%pt", Ty.i64));
+    bSlow.store(nm, curName);
+    bSlow.store(tok, curTok);
+    bSlow.callDiscard(Ty.void, init.ref, []);
+    bSlow.store(pn, curName);
+    bSlow.store(pt, curTok);
+    if (bare) bSlow.store(i64c(2), st, 8);
+    else bSlow.storeRelease(i64c(2), st, 8);
+    bSlow.ret();
+    bSlow.position(lost);
+    const fin = bSlow.icmp("eq", old, i64c(2), bSlow.reserveNamed("%fin", Ty.i1));
     // On a target with no threads and no scheduler, nobody else can be running it.
-    L.push(`  br i1 %fin, label %out, label %${bare ? "cycle" : "busy"}`);
+    bSlow.condBr(fin, out, blk(bare ? "cycle" : "busy"));
     if (!bare) {
-      L.push(`busy:`);
-      L.push(`  %o = load atomic i64, ptr %own acquire, align 8`);
-      L.push(`  %mine = icmp eq i64 %o, %tok`);
-      L.push(`  br i1 %mine, label %cycle, label %wait`);
-      L.push(`wait:`);
-      L.push(`  %ot = load atomic i64, ptr %thr acquire, align 8`);
-      L.push(`  %here = icmp eq i64 %ot, %me`);
-      L.push(`  call void @__milo_lazy_wait(i1 %here)`);
-      L.push(`  br label %try`);
+      const [busy, wait] = [blk("busy"), blk("wait")];
+      bSlow.position(busy);
+      const o = bSlow.loadAcquire(Ty.i64, own, 8, bSlow.reserveNamed("%o", Ty.i64));
+      const mine = bSlow.icmp("eq", o, tok, bSlow.reserveNamed("%mine", Ty.i1));
+      bSlow.condBr(mine, cycle, wait);
+      bSlow.position(wait);
+      const ot = bSlow.loadAcquire(Ty.i64, thr, 8, bSlow.reserveNamed("%ot", Ty.i64));
+      const here = bSlow.icmp("eq", ot, me, bSlow.reserveNamed("%here", Ty.i1));
+      bSlow.callDiscard(Ty.void, "@__milo_lazy_wait", [here]);
+      bSlow.br(bTry);
     }
-    L.push(`cycle:`);
-    const cyc: string[] = [];
-    this.emitFdPrintf(cyc, 2, cycleFmt.label, `, ptr %name`);
-    L.push(...cyc);
-    L.push(`  %cn = load ptr, ptr @__milo_lazy_cur_name`);
-    L.push(`  %ct = load i64, ptr @__milo_lazy_cur_tok`);
-    L.push(`  %cnn = icmp ne ptr %cn, null`);
-    L.push(`  %cself = icmp eq i64 %ct, %tok`);
-    L.push(`  %cother = icmp ne ptr %cn, %name`);
-    L.push(`  %c1 = and i1 %cnn, %cself`);
-    L.push(`  %c2 = and i1 %c1, %cother`);
-    L.push(`  br i1 %c2, label %by, label %die`);
-    L.push(`by:`);
-    const by: string[] = [];
-    this.emitFdPrintf(by, 2, byFmt.label, `, ptr %cn`);
-    L.push(...by);
-    L.push(`  br label %die`);
-    L.push(`die:`);
+    bSlow.position(cycle);
+    this.emitFdPrintf(L, 2, cycleFmt.label, `, ptr %name`);
+    const cn = bSlow.load(Ty.ptr, curName, undefined, undefined, bSlow.reserveNamed("%cn", Ty.ptr));
+    const ct = bSlow.load(Ty.i64, curTok, undefined, undefined, bSlow.reserveNamed("%ct", Ty.i64));
+    const cnn = bSlow.icmp("ne", cn, val("null", Ty.ptr), bSlow.reserveNamed("%cnn", Ty.i1));
+    const cself = bSlow.icmp("eq", ct, tok, bSlow.reserveNamed("%cself", Ty.i1));
+    const cother = bSlow.icmp("ne", cn, nm, bSlow.reserveNamed("%cother", Ty.i1));
+    const c1 = bSlow.binop("and", cnn, cself, bSlow.reserveNamed("%c1", Ty.i1));
+    const c2 = bSlow.binop("and", c1, cother, bSlow.reserveNamed("%c2", Ty.i1));
+    bSlow.condBr(c2, by, die);
+    bSlow.position(by);
+    this.emitFdPrintf(L, 2, byFmt.label, `, ptr %cn`);
+    bSlow.br(die);
+    bSlow.position(die);
     // The note would repeat what was just said.
-    L.push(`  store ptr null, ptr @__milo_lazy_cur_name`);
-    const die: string[] = [];
-    this.panicAbort(die);
-    L.push(...die);
-    L.push(`  unreachable`);
-    L.push(`out:`);
-    L.push(`  ret void`);
+    bSlow.store(val("null", Ty.ptr), curName);
+    this.panicAbort(L);
+    bSlow.unreachable();
+    bSlow.position(out);
+    bSlow.ret();
     bSlow.endFn();
 
     const bNote = new LlvmTextBuilder(L, this);
     bNote.defineFn({ name: "__milo_lazy_panic_note", ret: Ty.void, params: [], internal: true });
-    L.push(`  %cn = load ptr, ptr @__milo_lazy_cur_name`);
-    L.push(`  %cnn = icmp ne ptr %cn, null`);
-    L.push(`  br i1 %cnn, label %check, label %out`);
-    L.push(`check:`);
-    L.push(`  %ct = load i64, ptr @__milo_lazy_cur_tok`);
-    L.push(`  %tok = call i64 @__milo_lazy_token()`);
-    L.push(`  %same = icmp eq i64 %ct, %tok`);
-    L.push(`  br i1 %same, label %note, label %out`);
-    L.push(`note:`);
-    const note: string[] = [];
-    this.emitFdPrintf(note, 2, noteFmt.label, `, ptr %cn`);
-    L.push(...note);
+    const ncn = bNote.load(Ty.ptr, curName, undefined, undefined, bNote.reserveNamed("%cn", Ty.ptr));
+    const ncnn = bNote.icmp("ne", ncn, val("null", Ty.ptr), bNote.reserveNamed("%cnn", Ty.i1));
+    const [check, note, nout] = [blk("check"), blk("note"), blk("out")];
+    bNote.condBr(ncnn, check, nout);
+    bNote.position(check);
+    const nct = bNote.load(Ty.i64, curTok, undefined, undefined, bNote.reserveNamed("%ct", Ty.i64));
+    const ntok = bNote.call(Ty.i64, "@__milo_lazy_token", [], bNote.reserveNamed("%tok", Ty.i64));
+    const same = bNote.icmp("eq", nct, ntok, bNote.reserveNamed("%same", Ty.i1));
+    bNote.condBr(same, note, nout);
+    bNote.position(note);
+    this.emitFdPrintf(L, 2, noteFmt.label, `, ptr %cn`);
     if (this.target.os !== "none") {
       this.needsFflush = true;
       this.needsAbort = true;
-      L.push(`  call i32 @fflush(ptr null)`);
-      L.push(`  call void @abort()`);
+      bNote.callDiscard(Ty.i32, "@fflush", [val("null", Ty.ptr)]);
+      bNote.callDiscard(Ty.void, "@abort", []);
     } else {
       this.needsExit = true;
-      L.push(`  call void @exit(i32 1)`);
+      bNote.callDiscard(Ty.void, "@exit", [val("1", Ty.i32)]);
     }
-    L.push(`  unreachable`);
-    L.push(`out:`);
-    L.push(`  ret void`);
+    bNote.unreachable();
+    bNote.position(nout);
+    bNote.ret();
     bNote.endFn();
     return L;
   }
