@@ -4959,6 +4959,8 @@ export class Codegen {
   }
 
   private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): Gen {
+    const b = new LlvmTextBuilder(lines, this);
+    const ptrV = (v: string) => val(v, Ty.ptr);
     if (expr.func === "print" || expr.func === "format") {
       this.needsFree = true;
       const isFormat = expr.func === "format";
@@ -4970,13 +4972,11 @@ export class Codegen {
         // Every part is text, an int, a bool or a float: build the string in place.
         const acc = `%__fmt.${this.scopeCounter++}.addr`;
         this.entryAllocas.push(`  ${acc} = alloca %String`);
-        lines.push(`  store %String { ptr null, i64 0, i64 0 }, ptr ${acc}`);
+        b.store(val("{ ptr null, i64 0, i64 0 }", STRING_TY), ptrV(acc));
         const temps = this.genFormatParts(expr.args, lines);
         this.emitAppendFormatParts(lines, acc, temps.map(t => ({ val: t.val, ty: t.ty, tk: t.expr.type })), expr.span);
         for (const t of temps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
-        const out = this.nextTemp();
-        lines.push(`  ${out} = load %String, ptr ${acc}`);
-        return [lines, out, "%String"];
+        return asGen(lines, b.load(STRING_TY, ptrV(acc)));
       }
       if (isFormat) {
         this.needsPrintf = true;
@@ -5000,21 +5000,15 @@ export class Codegen {
         const lenResult = this.nextTemp();
         lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
         this.emitFormatLenCheck(lines, lenResult);
-        const len64 = this.nextTemp();
-        lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
-        const bufSize = this.nextTemp();
-        lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
+        const len64 = b.cast("sext", val(lenResult, Ty.i32), Ty.i64).ref;
+        const bufSize = b.binop("add", val(len64, Ty.i64), i64c(1)).ref;
         const buf = this.emitStrAlloc(lines, bufSize, "fmt", expr.span);
         lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmtStr.label}${argsStr})`);
-        for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+        for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
         for (const t of fmtTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
-        const s0 = this.nextTemp();
-        lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-        const s1 = this.nextTemp();
-        lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
-        const s2 = this.nextTemp();
-        lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
-        return [lines, s2, "%String"];
+        const s0 = b.insertvalue(val("undef", STRING_TY), ptrV(buf), 0);
+        const s1 = b.insertvalue(s0, val(len64, Ty.i64), 1);
+        return asGen(lines, b.insertvalue(s1, val(bufSize, Ty.i64), 2));
       }
 
       // print(): NUL-safe. Milo strings are length-counted, so a string arg is written
@@ -5049,13 +5043,11 @@ export class Codegen {
         if (dt && dt.tag === "string") {
           this.hasStringType = true;
           flushBatch();
-          const dataPtr = this.nextTemp();
-          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
-          const lenVal = this.nextTemp();
-          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
+          const dataPtr = b.extractvalue(val(av, STRING_TY), 0, Ty.ptr).ref;
+          const lenVal = b.extractvalue(val(av, STRING_TY), 1, Ty.i64).ref;
           if (this.target.os === "none") {
             // Freestanding: no stdio, so no shared buffer to write into.
-            lines.push(`  call i32 @fflush(ptr null)`);
+            b.callDiscard(Ty.i32, "@fflush", [ptrV("null")]);
             this.emitFdWrite(lines, 1, dataPtr, lenVal);
           } else {
             this.emitStdoutWrite(lines, dataPtr, lenVal);
@@ -5067,8 +5059,8 @@ export class Codegen {
         }
       }
       flushBatch();
-      lines.push(`  call i32 @putchar(i32 10)`);
-      for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+      b.callDiscard(Ty.i32, "@putchar", [i32c(10)]);
+      for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
       for (const t of printTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
       return [lines, "void", "void"];
     }
@@ -5098,10 +5090,8 @@ export class Codegen {
         if (dt.tag === "string" && this.target.os !== "none") {
           this.hasStringType = true;
           flushBatch();
-          const dataPtr = this.nextTemp();
-          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
-          const lenVal = this.nextTemp();
-          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
+          const dataPtr = b.extractvalue(val(av, STRING_TY), 0, Ty.ptr).ref;
+          const lenVal = b.extractvalue(val(av, STRING_TY), 1, Ty.i64).ref;
           this.emitStderrWrite(lines, dataPtr, lenVal);
         } else {
           const bufMark = tempBufs.length;
@@ -5111,20 +5101,20 @@ export class Codegen {
       }
       partFmts.push("\n");
       flushBatch();
-      for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+      for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
       for (const t of eprintTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
       return [lines, "void", "void"];
     }
     if (expr.func === "flush") {
       this.needsFflush = true;
-      lines.push(`  call i32 @fflush(ptr null)`);
+      b.callDiscard(Ty.i32, "@fflush", [ptrV("null")]);
       return [lines, "void", "void"];
     }
     if (expr.func === "exit") {
       this.needsExit = true;
       const [al, av] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      lines.push(`  call void @exit(i32 ${av})`);
+      b.callDiscard(Ty.void, "@exit", [val(av, Ty.i32)]);
       return [lines, "void", "void"];
     }
     if (expr.func === "todo") {
@@ -5136,8 +5126,7 @@ export class Codegen {
       if (expr.args.length === 1) {
         const [ml, msgVal] = this.genExpr(expr.args[0].expr);
         lines.push(...ml);
-        const msgPtr = this.nextTemp();
-        lines.push(`  ${msgPtr} = extractvalue %String ${msgVal}, 0`);
+        const msgPtr = b.extractvalue(val(msgVal, STRING_TY), 0, Ty.ptr).ref;
         const fmtStr = this.addString(`todo: '${who}' is not implemented (${at}): %s\n`);
         this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
       } else {
@@ -5145,9 +5134,9 @@ export class Codegen {
         this.emitFdPrintf(lines, 2, fmtStr.label, "");
       }
       this.panicAbort(lines);
-      lines.push(`  unreachable`);
+      b.unreachable();
       // The block after an abort still needs a label for whatever follows in the IR.
-      lines.push(`${this.nextLabel("todo.after")}:`);
+      b.position(b.newBlock("todo.after"));
       return [lines, "void", "void"];
     }
     if (expr.func === "assert") {
@@ -5155,16 +5144,15 @@ export class Codegen {
       this.needsExit = true;
       const [al, condVal] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const okLabel = this.nextLabel("assert.ok");
-      const failLabel = this.nextLabel("assert.fail");
-      lines.push(`  br i1 ${condVal}, label %${okLabel}, label %${failLabel}`);
-      lines.push(`${failLabel}:`);
+      const okBlk = b.newBlock("assert.ok");
+      const failBlk = b.newBlock("assert.fail");
+      b.condBr(val(condVal, Ty.i1), okBlk, failBlk);
+      b.position(failBlk);
       const at = this.panicAt(expr.span);
       if (expr.args.length >= 2) {
         const [al2, msgVal] = this.genExpr(expr.args[1].expr);
         lines.push(...al2);
-        const msgPtr = this.nextTemp();
-        lines.push(`  ${msgPtr} = extractvalue %String ${msgVal}, 0`);
+        const msgPtr = b.extractvalue(val(msgVal, STRING_TY), 0, Ty.ptr).ref;
         const fmtStr = this.addString(`assertion failed at ${at}: %s\n`);
         this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
       } else {
@@ -5172,8 +5160,8 @@ export class Codegen {
         this.emitFdPrintf(lines, 2, fmtStr.label, "");
       }
       this.panicAbort(lines);
-      lines.push(`  unreachable`);
-      lines.push(`${okLabel}:`);
+      b.unreachable();
+      b.position(okBlk);
       return [lines, "void", "void"];
     }
     if (expr.func === "max" || expr.func === "min") {
@@ -5181,26 +5169,24 @@ export class Codegen {
       lines.push(...al1);
       const [al2, av2] = this.genExpr(expr.args[1].expr);
       lines.push(...al2);
-      const cmp = this.nextTemp();
-      const result = this.nextTemp();
+      const ty1 = Ty.of(at1);
+      const x = val(av1, ty1);
+      const y = val(av2, ty1);
       const isFloat = at1 === "double" || at1 === "float";
       const isUnsigned = expr.args[0].expr.type.tag === "int" && !expr.args[0].expr.type.signed;
+      let cmp: Val;
       if (isFloat) {
-        const pred = expr.func === "max" ? "ogt" : "olt";
-        lines.push(`  ${cmp} = fcmp ${pred} ${at1} ${av1}, ${av2}`);
+        const pred = expr.func === "max" ? "ogt" as const : "olt" as const;
+        cmp = b.fcmp(pred, x, y);
       } else {
-        const pred = expr.func === "max" ? (isUnsigned ? "ugt" : "sgt") : (isUnsigned ? "ult" : "slt");
-        lines.push(`  ${cmp} = icmp ${pred} ${at1} ${av1}, ${av2}`);
+        const pred = expr.func === "max" ? (isUnsigned ? "ugt" as const : "sgt" as const) : (isUnsigned ? "ult" as const : "slt" as const);
+        cmp = b.icmp(pred, x, y);
       }
-      lines.push(`  ${result} = select i1 ${cmp}, ${at1} ${av1}, ${at1} ${av2}`);
-      return [lines, result, at1];
+      return asGen(lines, b.select(cmp, x, y));
     }
     if (expr.func === "_miloArgCount") {
-      const raw = this.nextTemp();
-      lines.push(`  ${raw} = load i32, ptr @_milo_argc_global`);
-      const ext = this.nextTemp();
-      lines.push(`  ${ext} = sext i32 ${raw} to i64`);
-      return [lines, ext, "i64"];
+      const raw = b.load(Ty.i32, ptrV("@_milo_argc_global"));
+      return asGen(lines, b.cast("sext", raw, Ty.i64));
     }
     if (expr.func === "_callClosureVoid") {
       // _callClosureVoid(fnPtr: *u8, envPtr: *u8) — indirect call to closure function
@@ -5208,27 +5194,25 @@ export class Codegen {
       lines.push(...al1);
       const [al2, envPtrVal] = this.genExpr(expr.args[1].expr);
       lines.push(...al2);
-      lines.push(`  call void ${fnPtrVal}(ptr ${envPtrVal})`);
+      b.callDiscard(Ty.void, fnPtrVal, [ptrV(envPtrVal)]);
       return [lines, "0", "void"];
     }
     if (expr.func === "_schedulerGet") {
       this.usesSchedulerGlobal = true;
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load ptr, ptr @_milo_scheduler`);
-      return [lines, val, "ptr"];
+      return asGen(lines, b.load(Ty.ptr, ptrV("@_milo_scheduler")));
     }
     if (expr.func === "_panicHookSet") {
       this.usesPanicHook = true;
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      lines.push(`  store ptr ${pv}, ptr @_milo_panic_hook`);
+      b.store(ptrV(pv), ptrV("@_milo_panic_hook"));
       return [lines, "0", "void"];
     }
     if (expr.func === "_schedulerSet") {
       this.usesSchedulerGlobal = true;
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      lines.push(`  store ptr ${pv}, ptr @_milo_scheduler`);
+      b.store(ptrV(pv), ptrV("@_milo_scheduler"));
       return [lines, "0", "void"];
     }
     if (expr.func === "_putByte") {
@@ -5237,24 +5221,19 @@ export class Codegen {
       this.needsPutchar = true;
       const [al, bv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const ext = this.nextTemp();
-      lines.push(`  ${ext} = zext i8 ${bv} to i32`);
-      lines.push(`  call i32 @putchar(i32 ${ext})`);
+      const ext = b.cast("zext", val(bv, Ty.i8), Ty.i32);
+      b.callDiscard(Ty.i32, "@putchar", [ext]);
       return [lines, "void", "void"];
     }
     if (expr.func === "_loadU8") {
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load i8, ptr ${pv}`);
-      return [lines, val, "i8"];
+      return asGen(lines, b.load(Ty.i8, ptrV(pv)));
     }
     if (expr.func === "_loadI32") {
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load i32, ptr ${pv}`);
-      return [lines, val, "i32"];
+      return asGen(lines, b.load(Ty.i32, ptrV(pv)));
     }
     if (expr.func === "_bytesToString") {
       this.needsMalloc = true;
@@ -5275,8 +5254,7 @@ export class Codegen {
       this.hasStringType = true;
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const len = this.nextTemp();
-      lines.push(`  ${len} = call i64 @strlen(ptr ${pv})`);
+      const len = b.call(Ty.i64, "@strlen", [ptrV(pv)]).ref;
       // Allocate len+1 and write trailing NUL so the Milo string can be passed to
       // C functions (open, printf, etc.) without re-copying. cap stays at len+1.
       return [lines, this.emitStrFrom(lines, pv, len), "%String"];
@@ -5291,15 +5269,14 @@ export class Codegen {
       // this on it failed to compile.
       const [al, pv, ty] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const dataPtr = this.nextTemp();
+      const dataPtr = b.reserveTemp(Ty.ptr);
       if (ty === "%String") {
-        lines.push(`  ${dataPtr} = extractvalue %String ${pv}, 0`);
+        b.extractvalue(val(pv, STRING_TY), 0, Ty.ptr, dataPtr);
       } else {
-        const dataGep = this.nextTemp();
-        lines.push(`  ${dataGep} = getelementptr %String, ptr ${pv}, i32 0, i32 0`);
-        lines.push(`  ${dataPtr} = load ptr, ptr ${dataGep}`);
+        const dataGep = b.gep(STRING_TY, ptrV(pv), [i32c(0), i32c(0)]);
+        b.load(Ty.ptr, dataGep, undefined, undefined, dataPtr);
       }
-      return [lines, dataPtr, "ptr"];
+      return asGen(lines, dataPtr);
     }
     // ── Atomic intrinsics ──
     const atomicSpec = Codegen.ATOMIC_INTRINSICS[expr.func];
@@ -5311,14 +5288,10 @@ export class Codegen {
       this.hasStringType = true;
       const [al, iv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
-      const argv = this.nextTemp();
-      lines.push(`  ${argv} = load ptr, ptr @_milo_argv_global`);
-      const argPtr = this.nextTemp();
-      lines.push(`  ${argPtr} = getelementptr ptr, ptr ${argv}, i64 ${iv}`);
-      const cstr = this.nextTemp();
-      lines.push(`  ${cstr} = load ptr, ptr ${argPtr}`);
-      const len = this.nextTemp();
-      lines.push(`  ${len} = call i64 @strlen(ptr ${cstr})`);
+      const argv = b.load(Ty.ptr, ptrV("@_milo_argv_global"));
+      const argPtr = b.gep(Ty.ptr, argv, [val(iv, Ty.i64)]);
+      const cstr = b.load(Ty.ptr, argPtr).ref;
+      const len = b.call(Ty.i64, "@strlen", [ptrV(cstr)]).ref;
       // Allocate len+1 and NUL-terminate so the arg string can be passed to
       // C functions (open, etc.) directly without re-copying.
       return [lines, this.emitStrFrom(lines, cstr, len), "%String"];
