@@ -530,30 +530,33 @@ export class Codegen {
     b.defineFn({ name: Codegen.RR_HASH_INIT_FN, ret: Ty.void, params: [], internal: true });
     // A program with no HashMap has no seed to fix; keep its startup to a bare call.
     if (!this.needsGetentropy) {
-      lines.push("  ret void");
+      b.ret();
       b.endFn();
       return lines;
     }
-    lines.push(`  br label %rr.check0`);
+    // Fixed block and value names (not nextLabel/nextTemp draws): the body is a constant shape.
+    const blk = (name: string): Block => ({ name });
+    const named = (name: string, ty: Ty) => b.reserveNamed(name, ty);
+    b.br(blk("rr.check0"));
     // Set and non-empty, matching std/replay, which treats an empty value as unset.
     const vars = ["MILO_RECORD", "MILO_REPLAY"];
     vars.forEach((_, i) => {
-      const next = i + 1 < vars.length ? `rr.check${i + 1}` : "rr.done";
-      lines.push(`rr.check${i}:`);
-      lines.push(`  %v${i} = call ptr @getenv(ptr @.milo_rr_env${i})`);
-      lines.push(`  %null${i} = icmp eq ptr %v${i}, null`);
-      lines.push(`  br i1 %null${i}, label %${next}, label %rr.byte${i}`);
-      lines.push(`rr.byte${i}:`);
-      lines.push(`  %b${i} = load i8, ptr %v${i}`);
-      lines.push(`  %empty${i} = icmp eq i8 %b${i}, 0`);
-      lines.push(`  br i1 %empty${i}, label %${next}, label %rr.det`);
+      const next = blk(i + 1 < vars.length ? `rr.check${i + 1}` : "rr.done");
+      b.position(blk(`rr.check${i}`));
+      const v = b.call(Ty.ptr, "@getenv", [V(`@.milo_rr_env${i}`, Ty.ptr)], named(`%v${i}`, Ty.ptr));
+      const isNull = b.icmp("eq", v, V("null", Ty.ptr), named(`%null${i}`, Ty.i1));
+      b.condBr(isNull, next, blk(`rr.byte${i}`));
+      b.position(blk(`rr.byte${i}`));
+      const first = b.load(Ty.i8, v, undefined, undefined, named(`%b${i}`, Ty.i8));
+      const isEmpty = b.icmp("eq", first, V("0", Ty.i8), named(`%empty${i}`, Ty.i1));
+      b.condBr(isEmpty, next, blk("rr.det"));
     });
-    lines.push("rr.det:");
+    b.position(blk("rr.det"));
     // Any nonzero start works; this one spells "milorr".
-    lines.push(`  store i64 120364506550898, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
-    lines.push("  br label %rr.done");
-    lines.push("rr.done:");
-    lines.push("  ret void");
+    b.store(i64c("120364506550898"), V(`@${Codegen.RR_HASH_SEED_GLOBAL}`, Ty.ptr));
+    b.br(blk("rr.done"));
+    b.position(blk("rr.done"));
+    b.ret();
     b.endFn();
     vars.forEach((name, i) => {
       lines.push(`@.milo_rr_env${i} = private unnamed_addr constant [${name.length + 1} x i8] c"${name}\\00"`);
@@ -565,26 +568,28 @@ export class Codegen {
     const lines: string[] = [];
     lines.push(`@${Codegen.RR_HASH_SEED_GLOBAL} = internal global i64 0`);
     const b = new LlvmTextBuilder(lines, this);
+    const blk = (name: string): Block => ({ name });
+    const named = (name: string, ty: Ty) => b.reserveNamed(name, ty);
+    const seed = V(`@${Codegen.RR_HASH_SEED_GLOBAL}`, Ty.ptr);
     b.defineFn({ name: HASH_SEED_FN, ret: Ty.i64, params: [], internal: true });
-    lines.push("  %buf = alloca i64");
-    lines.push(`  %det = load i64, ptr @${Codegen.RR_HASH_SEED_GLOBAL}`);
-    lines.push("  %isDet = icmp ne i64 %det, 0");
-    lines.push("  br i1 %isDet, label %seed.det, label %seed.os");
-    lines.push("seed.det:");
+    const buf = b.alloca(Ty.i64, "%buf");
+    const det = b.load(Ty.i64, seed, undefined, undefined, named("%det", Ty.i64));
+    const isDet = b.icmp("ne", det, i64c(0), named("%isDet", Ty.i1));
+    b.condBr(isDet, blk("seed.det"), blk("seed.os"));
+    b.position(blk("seed.det"));
     // Golden-ratio step (0x9E3779B97F4A7C15): consecutive maps get well-spread seeds.
     // Atomic because maps can be built on Promise.blocking threads too; the sequence
     // is only reproducible for maps built in a reproducible order, which is the main
-    // thread's.
+    // thread's. atomicrmw is not a builder op, so it stays text.
     lines.push(`  %old = atomicrmw add ptr @${Codegen.RR_HASH_SEED_GLOBAL}, i64 -7046029254386353131 monotonic`);
-    lines.push("  %next = add i64 %old, -7046029254386353131");
-    lines.push("  ret i64 %next");
-    lines.push("seed.os:");
+    const next = b.binop("add", V("%old", Ty.i64), i64c("-7046029254386353131"), named("%next", Ty.i64));
+    b.ret(next);
+    b.position(blk("seed.os"));
     // 2 = BCRYPT_USE_SYSTEM_PREFERRED_RNG, which is what permits the NULL algorithm
     // handle; the length is a 32-bit ULONG here, not getentropy's size_t.
-    if (this.isWindows) lines.push(`  call i32 @BCryptGenRandom(ptr null, ptr %buf, i32 8, i32 2)`);
-    else lines.push(`  call i32 @getentropy(ptr %buf, i64 8)`);
-    lines.push("  %v = load i64, ptr %buf");
-    lines.push("  ret i64 %v");
+    if (this.isWindows) b.callDiscard(Ty.i32, "@BCryptGenRandom", [V("null", Ty.ptr), buf, i32c(8), i32c(2)]);
+    else b.callDiscard(Ty.i32, "@getentropy", [buf, i64c(8)]);
+    b.ret(b.load(Ty.i64, buf, undefined, undefined, named("%v", Ty.i64)));
     b.endFn();
     return lines;
   }
@@ -598,22 +603,23 @@ export class Codegen {
   // binary at startup while POSIX shrugged it off.
   private lineBufferInitFn(): string[] {
     const lines: string[] = [];
-    const env = this.nextTemp(), isSet = this.nextTemp(), handle = this.nextTemp();
+    const b = new LlvmTextBuilder(lines, this);
+    const env = b.reserveTemp(Ty.ptr), isSet = b.reserveTemp(Ty.i1), handle = b.reserveTemp(Ty.ptr);
     // MSVC maps _IOLBF onto _IOFBF, so line buffering there does nothing; _IONBF (4) is
     // the mode that actually reaches the fd per write.
     const mode = this.isWindows ? 4 : 1;
-    const b = new LlvmTextBuilder(lines, this);
     b.defineFn({ name: Codegen.LINE_BUF_INIT_FN, ret: Ty.void, params: [], internal: true });
-    lines.push(`  ${env} = call ptr @getenv(ptr @.milo_line_buf_env)`);
-    lines.push(`  ${isSet} = icmp ne ptr ${env}, null`);
-    lines.push(`  br i1 ${isSet}, label %linebuf.set, label %linebuf.done`);
-    lines.push("linebuf.set:");
-    if (this.isWindows) lines.push(`  ${handle} = call ptr @__acrt_iob_func(i32 1)`);
-    else lines.push(`  ${handle} = load ptr, ptr @${this.stdoutSymbol}`);
-    lines.push(`  call i32 @setvbuf(ptr ${handle}, ptr null, i32 ${mode}, i64 0)`);
-    lines.push("  br label %linebuf.done");
-    lines.push("linebuf.done:");
-    lines.push("  ret void");
+    const setB: Block = { name: "linebuf.set" }, doneB: Block = { name: "linebuf.done" };
+    b.call(Ty.ptr, "@getenv", [V("@.milo_line_buf_env", Ty.ptr)], env);
+    b.icmp("ne", env, V("null", Ty.ptr), isSet);
+    b.condBr(isSet, setB, doneB);
+    b.position(setB);
+    if (this.isWindows) b.call(Ty.ptr, "@__acrt_iob_func", [i32c(1)], handle);
+    else b.load(Ty.ptr, V(`@${this.stdoutSymbol}`, Ty.ptr), undefined, undefined, handle);
+    b.callDiscard(Ty.i32, "@setvbuf", [handle, V("null", Ty.ptr), i32c(mode), i64c(0)]);
+    b.br(doneB);
+    b.position(doneB);
+    b.ret();
     b.endFn();
     return lines;
   }
@@ -849,23 +855,22 @@ export class Codegen {
   // tag to write (its payload store is the whole value), so only the fieldless one writes.
   public storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string) {
     const niche = this.nicheOfEnumTy(enumTy);
+    const b = new LlvmTextBuilder(lines, this);
+    const at = V(addr, Ty.ptr);
     if (!niche) {
-      const tagPtr = this.nextTemp();
-      lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
-      lines.push(`  store i32 ${tag}, ptr ${tagPtr}`);
+      const tagPtr = b.gep(Ty.of(enumTy), at, [i32c(0), i32c(0)]);
+      b.store(V(String(tag), Ty.i32), tagPtr);
       return;
     }
+    const intT = Ty.of(niche.intTy);
     if (typeof tag === "number") {
-      if (tag === niche.noneTag) lines.push(`  store ${niche.intTy} ${niche.value}, ptr ${addr}`);
+      if (tag === niche.noneTag) b.store(V(String(niche.value), intT), at);
       return;
     }
-    const isNone = this.nextTemp();
-    const cur = this.nextTemp();
-    const next = this.nextTemp();
-    lines.push(`  ${isNone} = icmp eq i32 ${tag}, ${niche.noneTag}`);
-    lines.push(`  ${cur} = load ${niche.intTy}, ptr ${addr}`);
-    lines.push(`  ${next} = select i1 ${isNone}, ${niche.intTy} ${niche.value}, ${niche.intTy} ${cur}`);
-    lines.push(`  store ${niche.intTy} ${next}, ptr ${addr}`);
+    const isNone = b.icmp("eq", V(tag, Ty.i32), i32c(niche.noneTag));
+    const cur = b.load(intT, at);
+    const next = b.select(isNone, V(String(niche.value), intT), cur);
+    b.store(next, at);
   }
 
   // The padding-free array a tagged enum is stored as (see EnumLayout.size).
@@ -1712,24 +1717,23 @@ export class Codegen {
   private greenMainEntry(): string[] {
     const lines: string[] = [];
     const bMain = new LlvmTextBuilder(lines, this);
-    bMain.defineFn({ name: "main", ret: Ty.i32, params: [{ name: "_milo_argc", ty: Ty.i32 }, { name: "_milo_argv", ty: Ty.ptr }] });
-    lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
-    lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
+    const [argc, argv] = bMain.defineFn({ name: "main", ret: Ty.i32, params: [{ name: "_milo_argc", ty: Ty.i32 }, { name: "_milo_argv", ty: Ty.ptr }] });
+    bMain.store(argc, V("@_milo_argc_global", Ty.ptr));
+    bMain.store(argv, V("@_milo_argv_global", Ty.ptr));
     // before global init: an initializer can print, and setvbuf must precede any I/O
     this.emitStdoutBufferingOptIn(lines);
-    if (this.needsGlobalInit) lines.push(`  call void @${GLOBAL_INIT_FN}()`);
-    lines.push(`  call void @${Codegen.GREEN_RUN_MAIN_FN}(ptr @${Codegen.MAIN_TASK_FN})`);
-    lines.push(`  %exit = load i32, ptr @${Codegen.MAIN_EXIT_GLOBAL}`);
-    lines.push("  ret i32 %exit");
+    if (this.needsGlobalInit) bMain.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
+    bMain.callDiscard(Ty.void, `@${Codegen.GREEN_RUN_MAIN_FN}`, [V(`@${Codegen.MAIN_TASK_FN}`, Ty.ptr)]);
+    bMain.ret(bMain.load(Ty.i32, V(`@${Codegen.MAIN_EXIT_GLOBAL}`, Ty.ptr), undefined, undefined, bMain.reserveNamed("%exit", Ty.i32)));
     bMain.endFn();
     lines.push("");
     // spawnWithStack calls this through the closure ABI, which passes an env
     // pointer this entry has no use for.
     const bTask = new LlvmTextBuilder(lines, this);
     bTask.defineFn({ name: Codegen.MAIN_TASK_FN, ret: Ty.void, params: [{ name: "__env", ty: Ty.ptr }], internal: true });
-    lines.push(`  %code = call i32 @${Codegen.MAIN_BODY_FN}()`);
-    lines.push(`  store i32 %code, ptr @${Codegen.MAIN_EXIT_GLOBAL}`);
-    lines.push("  ret void");
+    const code = bTask.call(Ty.i32, `@${Codegen.MAIN_BODY_FN}`, [], bTask.reserveNamed("%code", Ty.i32));
+    bTask.store(code, V(`@${Codegen.MAIN_EXIT_GLOBAL}`, Ty.ptr));
+    bTask.ret();
     bTask.endFn();
     return lines;
   }
@@ -2558,39 +2562,45 @@ export class Codegen {
   private replayEngineScope(fn: HIRFunction, lines: string[]): string[] {
     if (!fn.replayEngine || !this.globalVars.has("replay$rrDepth") || !this.globalVars.has("replay$rrHeapOn")) return lines;
     const out: string[] = [];
+    // This pass rewrites finished lines, so its blocks and values carry fixed names derived
+    // from a counter rather than the nextLabel/nextTemp draws, which would renumber the body.
+    const b = new LlvmTextBuilder(out, this);
+    const blk = (name: string): Block => ({ name });
+    const depth = V("@replay$rrDepth", Ty.ptr);
+    const named = (name: string, ty: Ty) => b.reserveNamed(name, ty);
     let n = 0;
     const on = () => {
       const id = n++;
-      out.push(`  %rre.on.${id} = load i64, ptr @replay$rrHeapOn`);
-      out.push(`  %rre.c.${id} = icmp ne i64 %rre.on.${id}, 0`);
-      return id;
+      const heapOn = b.load(Ty.i64, V("@replay$rrHeapOn", Ty.ptr), undefined, undefined, named(`%rre.on.${id}`, Ty.i64));
+      const c = b.icmp("ne", heapOn, i64c(0), named(`%rre.c.${id}`, Ty.i1));
+      return { id, c };
     };
     let entered = false;
     for (const l of lines) {
       if (!entered && l === "entry.bb:") {
         out.push(l);
-        const id = on();
-        out.push(`  br i1 %rre.c.${id}, label %rre.in.${id}, label %rre.go.${id}`);
-        out.push(`rre.in.${id}:`);
-        out.push(`  %rre.d.${id} = load i64, ptr @replay$rrDepth`);
-        out.push(`  %rre.d1.${id} = add i64 %rre.d.${id}, 1`);
-        out.push(`  store i64 %rre.d1.${id}, ptr @replay$rrDepth`);
-        out.push(`  br label %rre.go.${id}`);
-        out.push(`rre.go.${id}:`);
+        const { id, c } = on();
+        b.condBr(c, blk(`rre.in.${id}`), blk(`rre.go.${id}`));
+        b.position(blk(`rre.in.${id}`));
+        const d = b.load(Ty.i64, depth, undefined, undefined, named(`%rre.d.${id}`, Ty.i64));
+        const d1 = b.binop("add", d, i64c(1), named(`%rre.d1.${id}`, Ty.i64));
+        b.store(d1, depth);
+        b.br(blk(`rre.go.${id}`));
+        b.position(blk(`rre.go.${id}`));
         entered = true;
         continue;
       }
       if (entered && /^\s+ret\b/.test(l)) {
-        const id = on();
-        out.push(`  %rre.d.${id} = load i64, ptr @replay$rrDepth`);
-        out.push(`  %rre.pos.${id} = icmp sgt i64 %rre.d.${id}, 0`);
-        out.push(`  %rre.both.${id} = and i1 %rre.c.${id}, %rre.pos.${id}`);
-        out.push(`  br i1 %rre.both.${id}, label %rre.out.${id}, label %rre.ret.${id}`);
-        out.push(`rre.out.${id}:`);
-        out.push(`  %rre.d1.${id} = sub i64 %rre.d.${id}, 1`);
-        out.push(`  store i64 %rre.d1.${id}, ptr @replay$rrDepth`);
-        out.push(`  br label %rre.ret.${id}`);
-        out.push(`rre.ret.${id}:`);
+        const { id, c } = on();
+        const d = b.load(Ty.i64, depth, undefined, undefined, named(`%rre.d.${id}`, Ty.i64));
+        const pos = b.icmp("sgt", d, i64c(0), named(`%rre.pos.${id}`, Ty.i1));
+        const both = b.binop("and", c, pos, named(`%rre.both.${id}`, Ty.i1));
+        b.condBr(both, blk(`rre.out.${id}`), blk(`rre.ret.${id}`));
+        b.position(blk(`rre.out.${id}`));
+        const d1 = b.binop("sub", d, i64c(1), named(`%rre.d1.${id}`, Ty.i64));
+        b.store(d1, depth);
+        b.br(blk(`rre.ret.${id}`));
+        b.position(blk(`rre.ret.${id}`));
       }
       out.push(l);
     }
@@ -2652,12 +2662,12 @@ export class Codegen {
       b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg });
     }
     if (fn.name === "main" && !this.wrapMainGreen) {
-      lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
-      lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
+      b.store(V("%_milo_argc", Ty.i32), V("@_milo_argc_global", Ty.ptr));
+      b.store(V("%_milo_argv", Ty.ptr), V("@_milo_argv_global", Ty.ptr));
       // before global init: an initializer can print, and setvbuf must precede any I/O
       this.emitStdoutBufferingOptIn(lines);
       // after argc/argv: a global initializer may read them (argparse-style defaults)
-      if (this.needsGlobalInit) lines.push(`  call void @${GLOBAL_INIT_FN}()`);
+      if (this.needsGlobalInit) b.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
     }
 
     const paramSpillStart = lines.length;
@@ -2665,20 +2675,20 @@ export class Codegen {
       const p = fn.params[pi];
       if (p.isRef || p.isRefMut) {
         const innerTy = this.llvmType(p.type);
-        lines.push(`  %${p.name}.addr = alloca ptr`);
-        lines.push(`  store ptr %${p.name}, ptr %${p.name}.addr`);
+        const slot = b.alloca(Ty.ptr, `%${p.name}.addr`);
+        b.store(V(`%${p.name}`, Ty.ptr), slot);
         this.locals.set(p.name, { type: innerTy, typeKind: p.type, mutable: p.isRefMut, isRef: true });
         // .addr holds a pointer to the pointee → describe the param as ptr-to-T
         this.dbgDeclare(lines, p.name, `%${p.name}.addr`, { tag: "ptr", inner: p.type }, fn.line ?? 0, pi + 1);
       } else {
         const lt = this.llvmType(p.type);
-        lines.push(`  %${p.name}.addr = alloca ${lt}`);
-        lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
+        const slot = b.alloca(Ty.of(lt), `%${p.name}.addr`);
+        b.store(V(`%${p.name}`, Ty.of(lt)), slot);
         this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
         this.dbgDeclare(lines, p.name, `%${p.name}.addr`, p.type, fn.line ?? 0, pi + 1);
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
-          lines.push(`  ${aliveFlag} = alloca i1`);
+          b.alloca(Ty.i1, aliveFlag);
           this.registerFieldFlags(lines, `%${p.name}.addr`, p.name, p.type);
           this.own.setAlive(lines, aliveFlag, `%${p.name}.addr`, "param");
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag, addr: `%${p.name}.addr` });
@@ -2700,7 +2710,7 @@ export class Codegen {
     const allocaInsertPoint = lines.length;
 
     this.currentEnsures = [];
-    for (const g of fn.entryGuards ?? []) lines.push(`  call void @"${LAZY_GUARD_PREFIX}${g}"()`);
+    for (const g of fn.entryGuards ?? []) b.callDiscard(Ty.void, `@"${LAZY_GUARD_PREFIX}${g}"`, []);
     if (this.contractChecks && fn.oldSnapshots) {
       // Before any `requires` runs, and certainly before the body: `old(e)` names the value
       // at entry, so the snapshot must be taken while that state is still the current one.
@@ -2715,7 +2725,7 @@ export class Codegen {
         this.currentEnsures = ensures;
         // return-value slot for `result` in ensures clauses; hoisted to entry
         if (this.llvmType(fn.retType) !== "void") {
-          this.entryAllocas.push(`  %__contract_result.addr = alloca ${this.llvmType(fn.retType)}`);
+          b.entryAlloca("%__contract_result.addr", Ty.of(this.llvmType(fn.retType)));
         }
       }
       for (const c of fn.contracts) {
@@ -2806,6 +2816,7 @@ export class Codegen {
 
   private genStmtRaw(stmt: HIRStmt): [string[], boolean] {
     const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
 
     switch (stmt.kind) {
       case "Let": {
@@ -2815,8 +2826,8 @@ export class Codegen {
           const [pl, ptr] = this.genLValue(stmt.value);
           lines.push(...pl);
           const addr = this.allocaName(stmt.name);
-          this.entryAllocas.push(`  ${addr} = alloca ptr`);
-          lines.push(`  store ptr ${ptr}, ptr ${addr}`);
+          const slot = b.entryAlloca(addr, Ty.ptr);
+          b.store(V(ptr, Ty.ptr), slot);
           this.locals.set(stmt.name, { type: this.llvmType(stmt.type), typeKind: stmt.type, mutable: false, isRef: true, addr });
           return [lines, false];
         }
@@ -2837,8 +2848,7 @@ export class Codegen {
           // slot, then write) — the RHS may read the previous iteration's value —
           // so spill through a temp. Otherwise write the destination directly.
           if (this.needsDropCg(stmt.type) && this.loopHeader !== null) {
-            bigTmp = this.nextTemp();
-            lines.push(`  ${bigTmp} = alloca ${declTy}`);
+            bigTmp = b.alloca(Ty.of(declTy)).ref;
             this.genStoreInto(lines, bigTmp, declTy, stmt.value);
           } else {
             this.genStoreInto(lines, addrName, declTy, stmt.value);
@@ -2849,7 +2859,7 @@ export class Codegen {
           val = v;
         }
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
-        this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
+        b.entryAlloca(addrName, Ty.of(declTy));
         // Zero-init droppable allocas so a drop-glue pass over a never-initialized
         // branch-local (e.g. `let s` inside an `if` that wasn't taken) reads cap=0 and skips free.
         // Alive flag is allocated up front so the loop's overwrite-drop below can
@@ -2862,8 +2872,7 @@ export class Codegen {
         const declDroppable = !isRefLocal && this.needsDropCg(stmt.type) &&
           !(stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed && !this.indexAccessClones(stmt.value));
         if (declDroppable) {
-          this.entryAllocas.push(`  ${declAliveFlag} = alloca i1`);
-          this.entryAllocas.push(`  store i1 0, ptr ${declAliveFlag}`);
+          b.entryAlloca(declAliveFlag, Ty.i1, V("0", Ty.i1));
           // before the loop overwrite-drop below, which must go field by field too
           this.registerFieldFlags(this.entryAllocas, addrName, stmt.name, stmt.type);
         }
@@ -2923,8 +2932,7 @@ export class Codegen {
         if (this.isBigAgg(assignLlTy)) {
           // Materialize the RHS fully before touching the target (it may read the
           // old value), matching the small-type eval→drop→store order, then copy.
-          const tmp = this.nextTemp();
-          lines.push(`  ${tmp} = alloca ${assignLlTy}`);
+          const tmp = b.alloca(Ty.of(assignLlTy)).ref;
           this.genStoreInto(lines, tmp, assignLlTy, stmt.value);
           const [tl, tPtr] = this.genLValue(stmt.target);
           lines.push(...tl);
@@ -2971,9 +2979,9 @@ export class Codegen {
           this.emitDropGlue(lines);
           if (this.currentFnName === "main") {
             // main is forced to i32 (see genFn); a bare `return` must still yield a 0 exit code.
-            lines.push("  ret i32 0");
+            b.ret(V("0", Ty.i32));
           } else {
-            lines.push("  ret void");
+            b.ret();
           }
           return [lines, true];
         }
@@ -2994,14 +3002,14 @@ export class Codegen {
           }
           this.emitPendingDrops(lines, 0, 0);
           this.emitDropGlue(lines);
-          lines.push("  ret void");
+          b.ret();
           return [lines, true];
         }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
         if (this.currentEnsures.length > 0 && valTy !== "void") {
           // bind `result` to the return value; shadow any user local of the same name
-          lines.push(`  store ${valTy} ${val}, ptr %__contract_result.addr`);
+          b.store(V(val, Ty.of(valTy)), V("%__contract_result.addr", Ty.ptr));
           const savedResult = this.locals.get("result");
           this.locals.set("result", { type: valTy, typeKind: stmt.retType, mutable: false, isRef: false, addr: "%__contract_result.addr" });
           this.emitEnsuresChecks(lines);
@@ -3015,8 +3023,8 @@ export class Codegen {
         // A sortByKey extractor hands back a borrow of the element (the checker's one
         // exemption): returning that view transfers nothing.
         if (!(this.own.returnsView && this.own.views.has(val))) this.own.endVal(lines, val, "RETURN");
-        if (valTy === "void") lines.push("  ret void");
-        else lines.push(`  ret ${valTy} ${val}`);
+        if (valTy === "void") b.ret();
+        else b.ret(V(val, Ty.of(valTy)));
         return [lines, true];
       }
       case "If": return this.genIf(stmt);
@@ -3025,14 +3033,14 @@ export class Codegen {
         if (this.loopExit) {
           this.emitPendingDrops(lines, this.pend.loopTemps, this.pend.loopArgTemps);
           this.emitLoopDropGlue(lines);
-          lines.push(`  br label %${this.loopExit}`);
+          b.br({ name: this.loopExit });
         }
         return [lines, true];
       case "Continue":
         if (this.loopHeader) {
           this.emitPendingDrops(lines, this.pend.loopTemps, this.pend.loopArgTemps);
           this.emitLoopDropGlue(lines);
-          lines.push(`  br label %${this.loopHeader}`);
+          b.br({ name: this.loopHeader });
         }
         return [lines, true];
       case "ExprStmt": {
@@ -3054,7 +3062,7 @@ export class Codegen {
       case "NullRefUnwrap":
         return this.genNullRefUnwrap(stmt);
       case "LazyGlobalInit":
-        lines.push(`  call void @"${LAZY_GUARD_PREFIX}${stmt.name}"()`);
+        b.callDiscard(Ty.void, `@"${LAZY_GUARD_PREFIX}${stmt.name}"`, []);
         return [lines, false];
       case "UnsafeBlock": case "Block": {
         let terminated = false;
@@ -3510,23 +3518,21 @@ export class Codegen {
   public emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }) {
     this.needsPrintf = true;
     this.needsExit = true;
-    const neg = this.nextTemp();
-    const okLabel = this.nextLabel("neglen.ok");
-    const failLabel = this.nextLabel("neglen.fail");
-    lines.push(`  ${neg} = icmp slt i64 ${val}, 0`);
-    lines.push(`  br i1 ${neg}, label %${failLabel}, label %${okLabel}`);
-    lines.push(`${failLabel}:`);
+    const b = new LlvmTextBuilder(lines, this);
+    const neg = b.icmp("slt", V(val, Ty.i64), i64c(0));
+    const okB = b.newBlock("neglen.ok");
+    const failB = b.newBlock("neglen.fail");
+    b.condBr(neg, failB, okB);
+    b.position(failB);
     const { label: errLabel, length: errLen } = this.addString(`milo: negative ${what} at ${this.panicAt(span)}: `);
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, "");
+    const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), V(errLabel, Ty.ptr), [i32c(0), i32c(0)]);
+    this.emitFdPrintf(lines, 2, errPtr.ref, "");
     const nfmt = this.addString("%lld\n");
-    const nfmtPtr = this.nextTemp();
-    lines.push(`  ${nfmtPtr} = getelementptr [${nfmt.length} x i8], ptr ${nfmt.label}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, nfmtPtr, `, i64 ${val}`);
+    const nfmtPtr = b.gep(Ty.of(`[${nfmt.length} x i8]`), V(nfmt.label, Ty.ptr), [i32c(0), i32c(0)]);
+    this.emitFdPrintf(lines, 2, nfmtPtr.ref, `, i64 ${val}`);
     this.panicAbort(lines);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
+    b.unreachable();
+    b.position(okB);
   }
 
   // Integer `/` and `%` by zero are LLVM UB (unlike `+ - *`, which wrap): sdiv/udiv
@@ -3537,42 +3543,39 @@ export class Codegen {
     this.needsPrintf = true;
     this.needsExit = true;
     const at = this.panicAt(span);
-    const okLabel = this.nextLabel("divz.ok");
-    const zeroFail = this.nextLabel("divz.zero");
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(llType);
+    const okB = b.newBlock("divz.ok");
+    const zeroB = b.newBlock("divz.zero");
 
     // The two causes get their own messages. Reporting the overflow as "division by zero"
     // sends the reader hunting for a zero divisor that isn't there — the divisor is -1.
-    const abort = (label: string, msg: string) => {
-      lines.push(`${label}:`);
+    const abort = (blk: Block, msg: string) => {
+      b.position(blk);
       const s = this.addString(`${msg}\n`);
-      const errPtr = this.nextTemp();
-      lines.push(`  ${errPtr} = getelementptr [${s.length} x i8], ptr ${s.label}, i32 0, i32 0`);
-      this.emitFdPrintf(lines, 2, errPtr, "");
+      const errPtr = b.gep(Ty.of(`[${s.length} x i8]`), V(s.label, Ty.ptr), [i32c(0), i32c(0)]);
+      this.emitFdPrintf(lines, 2, errPtr.ref, "");
       this.panicAbort(lines);
-      lines.push(`  unreachable`);
+      b.unreachable();
     };
 
-    const isZero = this.nextTemp();
-    lines.push(`  ${isZero} = icmp eq ${llType} ${divisor}, 0`);
+    const isZero = b.icmp("eq", V(divisor, T), V("0", T));
     if (signed) {
-      const ovfCheck = this.nextLabel("divz.chkovf");
-      const ovfFail = this.nextLabel("divz.ovf");
-      lines.push(`  br i1 ${isZero}, label %${zeroFail}, label %${ovfCheck}`);
-      lines.push(`${ovfCheck}:`);
+      const ovfCheckB = b.newBlock("divz.chkovf");
+      const ovfFailB = b.newBlock("divz.ovf");
+      b.condBr(isZero, zeroB, ovfCheckB);
+      b.position(ovfCheckB);
       const minVal = (-(BigInt(2) ** BigInt(bits - 1))).toString();
-      const isMin = this.nextTemp();
-      lines.push(`  ${isMin} = icmp eq ${llType} ${dividend}, ${minVal}`);
-      const isNeg1 = this.nextTemp();
-      lines.push(`  ${isNeg1} = icmp eq ${llType} ${divisor}, -1`);
-      const ovf = this.nextTemp();
-      lines.push(`  ${ovf} = and i1 ${isMin}, ${isNeg1}`);
-      lines.push(`  br i1 ${ovf}, label %${ovfFail}, label %${okLabel}`);
-      abort(ovfFail, `milo: division overflow (i${bits}::MIN / -1) at ${at}`);
+      const isMin = b.icmp("eq", V(dividend, T), V(minVal, T));
+      const isNeg1 = b.icmp("eq", V(divisor, T), V("-1", T));
+      const ovf = b.binop("and", isMin, isNeg1);
+      b.condBr(ovf, ovfFailB, okB);
+      abort(ovfFailB, `milo: division overflow (i${bits}::MIN / -1) at ${at}`);
     } else {
-      lines.push(`  br i1 ${isZero}, label %${zeroFail}, label %${okLabel}`);
+      b.condBr(isZero, zeroB, okB);
     }
-    abort(zeroFail, `milo: division by zero at ${at}`);
-    lines.push(`${okLabel}:`);
+    abort(zeroB, `milo: division by zero at ${at}`);
+    b.position(okB);
   }
 
   private emitShiftCheck(lines: string[], amount: string, llType: string, bits: number, span?: { line: number; col: number }) {
@@ -3601,22 +3604,18 @@ export class Codegen {
   private emitWrappingSignedDivRem(lines: string[], op: string, lv: string, rv: string, llType: string, bits: number, span?: { line: number; col: number }): string {
     // zero-only trap: pass signed=false so emitDivByZeroCheck skips its INT_MIN/-1 branch.
     this.emitDivByZeroCheck(lines, rv, lv, llType, false, bits, span);
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(llType);
+    const L = V(lv, T), R = V(rv, T);
     const minVal = (-(BigInt(2) ** BigInt(bits - 1))).toString();
-    const isMin = this.nextTemp();
-    lines.push(`  ${isMin} = icmp eq ${llType} ${lv}, ${minVal}`);
-    const isNeg1 = this.nextTemp();
-    lines.push(`  ${isNeg1} = icmp eq ${llType} ${rv}, -1`);
-    const isOvf = this.nextTemp();
-    lines.push(`  ${isOvf} = and i1 ${isMin}, ${isNeg1}`);
+    const isMin = b.icmp("eq", L, V(minVal, T));
+    const isNeg1 = b.icmp("eq", R, V("-1", T));
+    const isOvf = b.binop("and", isMin, isNeg1);
     // Divide by 1 in the overflow case so the instruction never sees the poison (MIN, -1).
-    const safeDivisor = this.nextTemp();
-    lines.push(`  ${safeDivisor} = select i1 ${isOvf}, ${llType} 1, ${llType} ${rv}`);
-    const raw = this.nextTemp();
-    lines.push(`  ${raw} = ${op === "/" ? "sdiv" : "srem"} ${llType} ${lv}, ${safeDivisor}`);
+    const safeDivisor = b.select(isOvf, V("1", T), R);
+    const raw = b.binop(op === "/" ? "sdiv" : "srem", L, safeDivisor);
     const wrapped = op === "/" ? minVal : "0";
-    const res = this.nextTemp();
-    lines.push(`  ${res} = select i1 ${isOvf}, ${llType} ${wrapped}, ${llType} ${raw}`);
-    return res;
+    return b.select(isOvf, V(wrapped, T), raw).ref;
   }
 
   // `file:line:col` stamp baked into a runtime panic message. Prefer the span's own file
@@ -3661,49 +3660,45 @@ export class Codegen {
     const prefix = unsigned ? "u" : "s";
     const intrinsic = `@llvm.${prefix}${op}.with.overflow.${llType}`;
     this.usedOverflowIntrinsics.add(`declare {${llType}, i1} ${intrinsic}(${llType}, ${llType})`);
-    const result = this.nextTemp();
-    const val = this.nextTemp();
-    const flag = this.nextTemp();
-    const okLabel = this.nextLabel("overflow.ok");
-    const failLabel = this.nextLabel("overflow.fail");
-    lines.push(`  ${result} = call {${llType}, i1} ${intrinsic}(${llType} ${lv}, ${llType} ${rv})`);
-    lines.push(`  ${val} = extractvalue {${llType}, i1} ${result}, 0`);
-    lines.push(`  ${flag} = extractvalue {${llType}, i1} ${result}, 1`);
-    lines.push(`  br i1 ${flag}, label %${failLabel}, label %${okLabel}`);
-    lines.push(`${failLabel}:`);
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(llType);
+    const result = b.call(Ty.of(`{${llType}, i1}`), intrinsic, [V(lv, T), V(rv, T)]);
+    const value = b.extractvalue(result, 0, T);
+    const flag = b.extractvalue(result, 1, Ty.i1);
+    const okB = b.newBlock("overflow.ok");
+    const failB = b.newBlock("overflow.fail");
+    b.condBr(flag, failB, okB);
+    b.position(failB);
     // Same reasoning as emitBoundsCheck: one cold out-of-line call, not three
     // inline ones. Index arithmetic is checked too, so these land in the same hot
     // loops the subscripts do.
     const filePtr = this.emitCheckFilePtr(lines, span);
-    lines.push(`  call void @__milo_overflow_fail(ptr ${filePtr}, i32 ${span?.line ?? 0})`);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
-    return val;
+    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(filePtr, Ty.ptr), i32c(span?.line ?? 0)]);
+    b.unreachable();
+    b.position(okB);
+    return value.ref;
   }
 
   private emitRangeCheck(lines: string[], val: string, llType: string, signed: boolean, min: number, max: number, span: Span | undefined) {
     this.needsRangeCheck = true;
     this.needsPrintf = true;
     this.needsExit = true;
-    const cmpLo = signed ? "slt" : "ult";
-    const cmpHi = signed ? "sgt" : "ugt";
-    const tooLow = this.nextTemp();
-    const tooHigh = this.nextTemp();
-    const outOfRange = this.nextTemp();
-    const failLabel = this.nextLabel("range.fail");
-    const okLabel = this.nextLabel("range.ok");
-    lines.push(`  ${tooLow} = icmp ${cmpLo} ${llType} ${val}, ${min}`);
-    lines.push(`  ${tooHigh} = icmp ${cmpHi} ${llType} ${val}, ${max}`);
-    lines.push(`  ${outOfRange} = or i1 ${tooLow}, ${tooHigh}`);
-    lines.push(`  br i1 ${outOfRange}, label %${failLabel}, label %${okLabel}`);
-    lines.push(`${failLabel}:`);
-    const fmtPtr = this.nextTemp();
-    lines.push(`  ${fmtPtr} = getelementptr [44 x i8], ptr @.range_err, i32 0, i32 0`);
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(llType);
+    const v = V(val, T);
+    const tooLow = b.icmp(signed ? "slt" : "ult", v, V(String(min), T));
+    const tooHigh = b.icmp(signed ? "sgt" : "ugt", v, V(String(max), T));
+    const outOfRange = b.binop("or", tooLow, tooHigh);
+    const failB = b.newBlock("range.fail");
+    const okB = b.newBlock("range.ok");
+    b.condBr(outOfRange, failB, okB);
+    b.position(failB);
+    const fmtPtr = b.gep(Ty.of("[44 x i8]"), V("@.range_err", Ty.ptr), [i32c(0), i32c(0)]);
     const filePtr = this.emitCheckFilePtr(lines, span);
-    this.emitFdPrintf(lines, 2, fmtPtr, `, ptr ${filePtr}, i32 ${span?.line ?? 0}`);
+    this.emitFdPrintf(lines, 2, fmtPtr.ref, `, ptr ${filePtr}, i32 ${span?.line ?? 0}`);
     this.panicAbort(lines);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
+    b.unreachable();
+    b.position(okB);
   }
 
   private emitEnsuresChecks(lines: string[]) {
@@ -4644,43 +4639,45 @@ export class Codegen {
     const elemTy = this.llvmType(stmt.varType);
 
     const varAddr = this.allocaName(stmt.varName);
-    this.entryAllocas.push(`  ${varAddr} = alloca ${elemTy}`);
+    const b = new LlvmTextBuilder(lines, this);
+    b.entryAlloca(varAddr, Ty.of(elemTy));
     const savedLoopLocals = [this.bindLoopLocal(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: varAddr })];
 
-    const condLabel = this.nextLabel("iter.cond");
-    const bodyLabel = this.nextLabel("iter.body");
-    const endLabel = this.nextLabel("iter.end");
+    const condB = b.newBlock("iter.cond");
+    const bodyB = b.newBlock("iter.body");
+    const endB = b.newBlock("iter.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
     const prevDropStart = this.loopDropStart, prevPend = { ...this.pend };
-    this.loopHeader = condLabel;
-    this.loopExit = endLabel;
+    this.loopHeader = condB.name;
+    this.loopExit = endB.name;
     this.loopDropStart = this.droppableLocals.length; this.enterLoopBodyPending();
     // next() hands each element out by value, so the binding owns it exactly as a
     // consuming Vec loop's binding does: loop-scoped, dropped unless the body moves it.
     const bindAlive = this.registerConsumedBinding(stmt.varName, varAddr, stmt.varType);
 
-    lines.push(`  br label %${condLabel}`);
-    lines.push(`${condLabel}:`);
+    b.br(condB);
+    b.position(condB);
 
     // call next(&mut self); stage the Option enum in memory to extract the tag
-    const stagePtr = this.nextTemp();
+    // A numbered temp in the entry block: entryAlloca takes only named slots, so this stays text.
+    const stage = b.reserveTemp(Ty.ptr);
+    const stagePtr = stage.ref;
     this.entryAllocas.push(`  ${stagePtr} = alloca ${retTy}`);
+    const iter = V(iterAddr, Ty.ptr);
     if (this.sretFns.has(stmt.nextMethod)) {
-      lines.push(`  call void @${stmt.nextMethod}(ptr ${stagePtr}, ptr ${iterAddr})`);
+      b.callDiscard(Ty.void, `@${stmt.nextMethod}`, [stage, iter]);
     } else {
-      const result = this.nextTemp();
-      lines.push(`  ${result} = call ${retTy} @${stmt.nextMethod}(ptr ${iterAddr})`);
-      lines.push(`  store ${retTy} ${result}, ptr ${stagePtr}`);
+      const result = b.call(Ty.of(retTy), `@${stmt.nextMethod}`, [iter]);
+      b.store(result, stage);
     }
     const tag = this.loadEnumTag(lines, retTy, stagePtr);
 
     // branch: Some → body, None → end
-    const cmp = this.nextTemp();
-    lines.push(`  ${cmp} = icmp eq i32 ${tag}, ${noneVariant.tag}`);
-    lines.push(`  br i1 ${cmp}, label %${endLabel}, label %${bodyLabel}`);
+    const cmp = b.icmp("eq", V(tag, Ty.i32), i32c(noneVariant.tag));
+    b.condBr(cmp, endB, bodyB);
 
-    lines.push(`${bodyLabel}:`);
+    b.position(bodyB);
     // extract payload from Some variant
     const payloadPtr = this.enumPayloadPtr(lines, retTy, stagePtr, "Some");
     // next()'s Some payload is a fresh owned value in this frame; the binding takes it.
@@ -4694,9 +4691,9 @@ export class Codegen {
       lines.push(...sl);
       if (t) { bodyTerminated = true; break; }
     }
-    if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); lines.push(`  br label %${condLabel}`); }
+    if (!bodyTerminated) { this.emitScopeDrops(lines, this.loopDropStart); b.br(condB); }
 
-    lines.push(`${endLabel}:`);
+    b.position(endB);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
     this.loopDropStart = prevDropStart; this.pend.loopTemps = prevPend.loopTemps; this.pend.loopArgTemps = prevPend.loopArgTemps;
@@ -5292,24 +5289,24 @@ export class Codegen {
     const { ty, align, isBool } = spec;
     const [pl, pv] = this.genExpr(expr.args[0].expr);
     lines.push(...pl);
+    const b = new LlvmTextBuilder(lines, this);
+    // The atomic ops below stay text: the builder has no seq_cst load/store/atomicrmw/cmpxchg,
+    // so each draws its temp with reserveTemp and writes the line itself.
+    const T = Ty.of(ty);
     // an i1 argument has to be widened to the byte it actually occupies in memory
     const argAt = (i: number): string => {
       const [al, v] = this.genExpr(expr.args[i].expr);
       lines.push(...al);
       if (!isBool) return v;
-      const ext = this.nextTemp();
-      lines.push(`  ${ext} = zext i1 ${v} to i8`);
-      return ext;
+      return b.cast("zext", V(v, Ty.i1), Ty.i8).ref;
     };
     const narrow = (v: string): Gen => {
       if (!isBool) return [lines, v, ty];
-      const b = this.nextTemp();
-      lines.push(`  ${b} = trunc i8 ${v} to i1`);
-      return [lines, b, "i1"];
+      return asGen(lines, b.cast("trunc", V(v, Ty.i8), Ty.i1));
     };
     switch (spec.kind) {
       case "load": {
-        const raw = this.nextTemp();
+        const raw = b.reserveTemp(T).ref;
         lines.push(`  ${raw} = load atomic ${ty}, ptr ${pv} seq_cst, align ${align}`);
         return narrow(raw);
       }
@@ -5320,18 +5317,16 @@ export class Codegen {
       }
       case "rmw": {
         const v = argAt(1);
-        const old = this.nextTemp();
+        const old = b.reserveTemp(T).ref;
         lines.push(`  ${old} = atomicrmw ${spec.rmwOp} ptr ${pv}, ${ty} ${v} seq_cst, align ${align}`);
         return narrow(old);
       }
       case "cas": {
         const ev = argAt(1);
         const dv = argAt(2);
-        const pair = this.nextTemp();
-        lines.push(`  ${pair} = cmpxchg ptr ${pv}, ${ty} ${ev}, ${ty} ${dv} seq_cst seq_cst, align ${align}`);
-        const old = this.nextTemp();
-        lines.push(`  ${old} = extractvalue { ${ty}, i1 } ${pair}, 0`);
-        return narrow(old);
+        const pairV = b.reserveTemp(Ty.of(`{ ${ty}, i1 }`));
+        lines.push(`  ${pairV.ref} = cmpxchg ptr ${pv}, ${ty} ${ev}, ${ty} ${dv} seq_cst seq_cst, align ${align}`);
+        return narrow(b.extractvalue(pairV, 0, T).ref);
       }
     }
   }
@@ -6575,27 +6570,27 @@ export class Codegen {
     lines.push(...al);
     const [bl, bPtr] = this.genLValue(expr.b);
     lines.push(...bl);
+    const b = new LlvmTextBuilder(lines, this);
     if (this.isBigAgg(aTy)) {
-      const tmp = this.nextTemp();
+      // A numbered temp in the entry block: entryAlloca takes only named slots, so this stays text.
+      const tmpSlot = b.reserveTemp(Ty.ptr);
+      const tmp = tmpSlot.ref;
       this.entryAllocas.push(`  ${tmp} = alloca ${aTy}`);
-      const same = this.nextTemp();
-      const swapLabel = this.nextLabel("swap.copy");
-      const doneLabel = this.nextLabel("swap.done");
-      lines.push(`  ${same} = icmp eq ptr ${aPtr}, ${bPtr}`);
-      lines.push(`  br i1 ${same}, label %${doneLabel}, label %${swapLabel}`);
-      lines.push(`${swapLabel}:`);
+      const same = b.icmp("eq", V(aPtr, Ty.ptr), V(bPtr, Ty.ptr));
+      const swapB = b.newBlock("swap.copy");
+      const doneB = b.newBlock("swap.done");
+      b.condBr(same, doneB, swapB);
+      b.position(swapB);
       this.emitMemcpy(lines, tmp, aPtr, aTy, { intent: "move", type: expr.a.type });
       this.emitMemcpy(lines, aPtr, bPtr, aTy, { intent: "move", type: expr.a.type });
       this.emitMemcpy(lines, bPtr, tmp, aTy, { intent: "move", type: expr.a.type });
-      lines.push(`  br label %${doneLabel}`);
-      lines.push(`${doneLabel}:`);
+      b.br(doneB);
+      b.position(doneB);
       return [lines, "", "void"];
     }
     // Load both before storing either — the places may alias (swap(v[i], v[j])).
-    const ta = this.nextTemp();
-    lines.push(`  ${ta} = load ${aTy}, ptr ${aPtr}`);
-    const tb = this.nextTemp();
-    lines.push(`  ${tb} = load ${aTy}, ptr ${bPtr}`);
+    const ta = b.load(Ty.of(aTy), V(aPtr, Ty.ptr)).ref;
+    const tb = b.load(Ty.of(aTy), V(bPtr, Ty.ptr)).ref;
     lines.push(this.valStore(aTy, tb, aPtr, { intent: "move", type: expr.a.type }));
     lines.push(this.valStore(aTy, ta, bPtr, { intent: "move", type: expr.a.type }));
     return [lines, "", "void"];
@@ -6613,11 +6608,11 @@ export class Codegen {
     const name = `${closureName}_envdrop`;
     const body: string[] = [];
     const b = new LlvmTextBuilder(body, this);
-    b.defineFn({ name, ret: Ty.void, params: [{ name: "env", ty: Ty.ptr }], internal: true });
+    const [env] = b.defineFn({ name, ret: Ty.void, params: [{ name: "env", ty: Ty.ptr }], internal: true });
+    const envT = Ty.of(envStructTy);
     for (let i = 0; i < captures.length; i++) {
       if (!this.needsDropCg(captures[i].type)) continue;
-      const slot = this.nextTemp();
-      body.push(`  ${slot} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 ${i + 1}`);
+      const slot = b.gep(envT, env, [i32c(0), i32c(i + 1)]);
       // Drop only what the body still owns. A `move` body can hand a capture to a
       // callee by value, and the glue must not free what it gave away — so each
       // droppable capture carries a liveness flag in the environment, set here at
@@ -6628,19 +6623,18 @@ export class Codegen {
       // zero-valued capture as moved-from, and `Res { id: 0 }` then never runs its
       // destructor at all — silently, since nothing leaks when the struct owns no heap.
       const flagIdx = capFlagSlot(i);
-      const liveL = this.nextLabel("envdrop.live"), skipL = this.nextLabel("envdrop.skip");
-      const flagPtr = this.nextTemp(), flag = this.nextTemp();
-      body.push(`  ${flagPtr} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 ${flagIdx}`);
-      body.push(`  ${flag} = load i1, ptr ${flagPtr}`);
-      body.push(`  br i1 ${flag}, label %${liveL}, label %${skipL}`);
-      body.push(`${liveL}:`);
-      this.emitDropValue(body, slot, captures[i].type);
-      body.push(`  br label %${skipL}`);
-      body.push(`${skipL}:`);
+      const liveB = b.newBlock("envdrop.live"), skipB = b.newBlock("envdrop.skip");
+      const flagPtr = b.gep(envT, env, [i32c(0), i32c(String(flagIdx))]);
+      const flag = b.load(Ty.i1, flagPtr);
+      b.condBr(flag, liveB, skipB);
+      b.position(liveB);
+      this.emitDropValue(body, slot.ref, captures[i].type);
+      b.br(skipB);
+      b.position(skipB);
     }
     this.needsFree = true;
-    body.push("  call void @free(ptr %env)");
-    body.push("  ret void");
+    b.callDiscard(Ty.void, "@free", [env]);
+    b.ret();
     b.endFn();
     this.closureBodies.push(body);
     return name;
@@ -7142,19 +7136,22 @@ export class Codegen {
     // A void-typed if-expression (a redirected void extern call, lower.ts) has no value
     // to carry: no slot, and nothing to load at the end.
     const isVoid = resultTy === "void";
-    if (!isVoid) this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
+    const b = new LlvmTextBuilder(lines, this);
+    const resultT = Ty.of(resultTy);
+    const resultSlot = V(resultAddr, Ty.ptr);
+    if (!isVoid) b.entryAlloca(resultAddr, resultT);
     if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
     const cloneViews = !isVoid && this.isOwnedTempExpr(expr);
 
     const [condLines, condVal] = this.genExpr(expr.cond);
     lines.push(...condLines);
 
-    const thenLabel = this.nextLabel("ife.then");
-    const elseLabel = this.nextLabel("ife.else");
-    const endLabel = this.nextLabel("ife.end");
-    lines.push(`  br i1 ${condVal}, label %${thenLabel}, label %${elseLabel}`);
+    const thenB = b.newBlock("ife.then");
+    const elseB = b.newBlock("ife.else");
+    const endB = b.newBlock("ife.end");
+    b.condBr(V(condVal, Ty.i1), thenB, elseB);
 
-    lines.push(`${thenLabel}:`);
+    b.position(thenB);
     let thenTerminated = false;
     for (let i = 0; i < expr.thenBody.length - 1; i++) {
       const [sl, t] = this.genStmt(expr.thenBody[i]);
@@ -7167,7 +7164,7 @@ export class Codegen {
         const [vl, gv] = this.genExpr(last.expr);
         lines.push(...vl);
         const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
-        if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+        if (vv !== "void" && !isVoid) b.store(V(vv, resultT), resultSlot);
         if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
         const [sl, t] = this.genStmt(last);
@@ -7175,9 +7172,9 @@ export class Codegen {
         if (t) thenTerminated = true;
       }
     }
-    if (!thenTerminated) lines.push(`  br label %${endLabel}`);
+    if (!thenTerminated) b.br(endB);
 
-    lines.push(`${elseLabel}:`);
+    b.position(elseB);
     let elseTerminated = false;
     for (let i = 0; i < expr.elseBody.length - 1; i++) {
       const [sl, t] = this.genStmt(expr.elseBody[i]);
@@ -7190,7 +7187,7 @@ export class Codegen {
         const [vl, gv] = this.genExpr(last.expr);
         lines.push(...vl);
         const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
-        if (vv !== "void" && !isVoid) lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+        if (vv !== "void" && !isVoid) b.store(V(vv, resultT), resultSlot);
         if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
         const [sl, t] = this.genStmt(last);
@@ -7198,25 +7195,25 @@ export class Codegen {
         if (t) elseTerminated = true;
       }
     }
-    if (!elseTerminated) lines.push(`  br label %${endLabel}`);
+    if (!elseTerminated) b.br(endB);
 
-    lines.push(`${endLabel}:`);
+    b.position(endB);
     if (thenTerminated && elseTerminated) {
-      lines.push(`  unreachable`);
+      b.unreachable();
       return [lines, "void", "void"];
     }
     if (isVoid) return [lines, "void", "void"];
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
-    this.own.resultMade(lines, resultAddr, result, expr);
-    return [lines, result, resultTy];
+    const result = b.load(resultT, resultSlot);
+    this.own.resultMade(lines, resultAddr, result.ref, expr);
+    return asGen(lines, result);
   }
 
 
 
   private genInterfaceMethodCall(expr: HIRExpr & { kind: "InterfaceMethodCall" }, lines: string[]): Gen {
     // object is { ptr data, ptr itable } — either directly or loaded from alloca
-    let objVal: string;
+    const b = new LlvmTextBuilder(lines, this);
+    let objVal: Val;
     const recv = expr.object;
     if (recv.kind === "IndexAccess" && recv.object.type.tag === "vec") {
       // Borrow the fat pointer straight from the Vec slot. Dispatch only
@@ -7224,25 +7221,20 @@ export class Codegen {
       // value can't be cloned (the itable carries no clone slot), and
       // cloning it as a thin Heap mis-handles the fat pointer.
       const [, slotPtr] = this.genVecBoundsCheckedPtr(recv, lines);
-      objVal = this.nextTemp();
-      lines.push(`  ${objVal} = load { ptr, ptr }, ptr ${slotPtr}`);
+      objVal = b.load(CLOSURE_TY, V(slotPtr, Ty.ptr));
     } else {
       const [objLines, ov] = this.genExpr(recv);
       lines.push(...objLines);
-      objVal = ov;
+      objVal = V(ov, CLOSURE_TY);
     }
 
     // extract data ptr and itable ptr
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = extractvalue { ptr, ptr } ${objVal}, 0`);
-    const itablePtr = this.nextTemp();
-    lines.push(`  ${itablePtr} = extractvalue { ptr, ptr } ${objVal}, 1`);
+    const dataPtr = b.extractvalue(objVal, 0, Ty.ptr).ref;
+    const itablePtr = b.extractvalue(objVal, 1, Ty.ptr);
 
     // load fn ptr from itable slot — GEP with ptr element type strides by 8 bytes
-    const fnSlot = this.nextTemp();
-    lines.push(`  ${fnSlot} = getelementptr ptr, ptr ${itablePtr}, i32 ${expr.methodIndex}`);
-    const fnPtr = this.nextTemp();
-    lines.push(`  ${fnPtr} = load ptr, ptr ${fnSlot}`);
+    const fnSlot = b.gep(Ty.ptr, itablePtr, [i32c(expr.methodIndex)]);
+    const fnPtr = b.load(Ty.ptr, fnSlot).ref;
 
     // build args: data ptr as self, then user args
     const imTempMark = this.argTempDrops.length;
@@ -7265,17 +7257,16 @@ export class Codegen {
     for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
     this.emitAliasGuards(lines, refPtrs, expr.span);
 
-    const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+    const callArgs = argVals.map(a => V(a.val, Ty.of(a.type)));
     const retTy = this.llvmType(expr.type);
     if (retTy === "void") {
-      lines.push(`  call void ${fnPtr}(${argsStr})`);
+      b.callDiscard(Ty.void, fnPtr, callArgs);
       this.flushArgTempDrops(lines, imTempMark);
       return [lines, "void", "void"];
     }
-    const result = this.nextTemp();
-    lines.push(`  ${result} = call ${retTy} ${fnPtr}(${argsStr})`);
+    const result = b.call(Ty.of(retTy), fnPtr, callArgs);
     this.flushArgTempDrops(lines, imTempMark);
-    return [lines, result, retTy];
+    return asGen(lines, result);
   }
 
   private genUnwrap(expr: HIRExpr & { kind: "Unwrap" }, lines: string[]): Gen {
@@ -7551,28 +7542,26 @@ export class Codegen {
 
   private genShortCircuit(expr: HIRExpr & { kind: "BinOp" }, lines: string[]): Gen {
     const isAnd = expr.op === "&&";
-    const resultAddr = this.nextTemp();
+    const b = new LlvmTextBuilder(lines, this);
     // Hoist to entry block — alloca in loop body grows stack each iteration → overflow.
-    this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
+    // A numbered temp in the entry block: entryAlloca takes only named slots, so this stays text.
+    const slot = b.reserveTemp(Ty.ptr);
+    this.entryAllocas.push(`  ${slot.ref} = alloca i1`);
     const [ll, lv] = this.genExpr(expr.left);
     lines.push(...ll);
-    lines.push(`  store i1 ${lv}, ptr ${resultAddr}`);
-    const rhsLabel = this.nextLabel(isAnd ? "and.rhs" : "or.rhs");
-    const endLabel = this.nextLabel(isAnd ? "and.end" : "or.end");
-    if (isAnd) {
-      lines.push(`  br i1 ${lv}, label %${rhsLabel}, label %${endLabel}`);
-    } else {
-      lines.push(`  br i1 ${lv}, label %${endLabel}, label %${rhsLabel}`);
-    }
-    lines.push(`${rhsLabel}:`);
+    const left = V(lv, Ty.i1);
+    b.store(left, slot);
+    const rhsB = b.newBlock(isAnd ? "and.rhs" : "or.rhs");
+    const endB = b.newBlock(isAnd ? "and.end" : "or.end");
+    if (isAnd) b.condBr(left, rhsB, endB);
+    else b.condBr(left, endB, rhsB);
+    b.position(rhsB);
     const [rl, rv] = this.genExpr(expr.right);
     lines.push(...rl);
-    lines.push(`  store i1 ${rv}, ptr ${resultAddr}`);
-    lines.push(`  br label %${endLabel}`);
-    lines.push(`${endLabel}:`);
-    const result = this.nextTemp();
-    lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
-    return [lines, result, "i1"];
+    b.store(V(rv, Ty.i1), slot);
+    b.br(endB);
+    b.position(endB);
+    return asGen(lines, b.load(Ty.i1, slot));
   }
 
   private genCast(expr: HIRExpr & { kind: "Cast" }, lines: string[]): Gen {
@@ -7590,14 +7579,11 @@ export class Codegen {
       this.hasStringType = true;
       const [ol, ov] = this.genExpr(expr.operand);
       lines.push(...ol);
-      const addr = this.nextTemp();
-      lines.push(`  ${addr} = alloca %String`);
-      lines.push(`  store %String ${ov}, ptr ${addr}`);
-      const gep = this.nextTemp();
-      lines.push(`  ${gep} = getelementptr %String, ptr ${addr}, i32 0, i32 0`);
-      const dataPtr = this.nextTemp();
-      lines.push(`  ${dataPtr} = load ptr, ptr ${gep}`);
-      return [lines, dataPtr, "ptr"];
+      const b = new LlvmTextBuilder(lines, this);
+      const addr = b.alloca(STRING_TY);
+      b.store(V(ov, STRING_TY), addr);
+      const gep = b.gep(STRING_TY, addr, [i32c(0), i32c(0)]);
+      return asGen(lines, b.load(Ty.ptr, gep));
     }
     // fn → ptr: get raw function pointer (bypass closure trampoline for known functions)
     if (fromKind.tag === "fn" && toKind.tag === "ptr") {
@@ -7610,21 +7596,18 @@ export class Codegen {
       // parameter or closure: extract fn ptr from closure tuple
       const [ol, ov] = this.genExpr(expr.operand);
       lines.push(...ol);
-      const tmp = this.nextTemp();
-      lines.push(`  ${tmp} = extractvalue { ptr, ptr } ${ov}, 0`);
-      return [lines, tmp, "ptr"];
+      const b = new LlvmTextBuilder(lines, this);
+      return asGen(lines, b.extractvalue(V(ov, CLOSURE_TY), 0, Ty.ptr));
     }
     // repr'd enum → integer: the value is its discriminant, held in the tag field.
     if (fromKind.tag === "enum" && toKind.tag === "int") {
       const [ol, ov] = this.genExpr(expr.operand);
       lines.push(...ol);
-      const tag = this.nextTemp();
-      lines.push(`  ${tag} = extractvalue ${this.llvmType(fromKind)} ${ov}, 0`);
-      if (toKind.bits === 32) return [lines, tag, "i32"];
-      const out = this.nextTemp();
+      const b = new LlvmTextBuilder(lines, this);
+      const tag = b.extractvalue(V(ov, Ty.of(this.llvmType(fromKind))), 0, Ty.i32);
+      if (toKind.bits === 32) return asGen(lines, tag);
       // tag is a signed i32 — sext to a wider target (carries negative discriminants), trunc to a narrower one.
-      lines.push(`  ${out} = ${toKind.bits > 32 ? "sext" : "trunc"} i32 ${tag} to ${toTy}`);
-      return [lines, out, toTy];
+      return asGen(lines, b.cast(toKind.bits > 32 ? "sext" : "trunc", tag, Ty.of(toTy)));
     }
     // aggregate types (arrays, structs) can't participate in scalar casts
     if (fromKind.tag === "array" || fromKind.tag === "struct") {
@@ -7641,30 +7624,30 @@ export class Codegen {
   // saturates (NaN is 0), as Rust's `as` does. Shared by HIR codegen and MIR emission.
   public emitScalarCast(lines: string[], fromKind: TypeKind, toKind: TypeKind, fromTy: string, toTy: string, ov: string): Gen {
     if (fromTy === toTy) return [lines, ov, toTy];
-    const tmp = this.nextTemp();
+    const b = new LlvmTextBuilder(lines, this);
+    // Drawn before the widening temp below, as the string code did.
+    const tmp = b.reserveTemp(Ty.of(toTy));
+    const fromT = Ty.of(fromTy), toT = Ty.of(toTy);
+    const src = V(ov, fromT);
     const fromFloat = fromKind.tag === "float";
     const toFloat = toKind.tag === "float";
     // `cfn` is a bare code pointer, so it converts to an integer the same way a data
     // pointer does. This is the path `isNull(s.field)` lowers to.
     if ((fromKind.tag === "ptr" || fromKind.tag === "cfn") && (toKind.tag === "int" || toKind.tag === "bool")) {
-      lines.push(`  ${tmp} = ptrtoint ${fromTy} ${ov} to ${toTy}`);
+      b.cast("ptrtoint", src, toT, tmp);
     } else if ((fromKind.tag === "int" || fromKind.tag === "bool") && toKind.tag === "ptr") {
       // Pointers are 64-bit; inttoptr from a narrower int (e.g. `0 as *u8` where
       // the literal defaults to i32) crashes AArch64 ISel. Widen to i64 first.
       const fromBits = this.bitWidth(fromKind);
-      let intVal = ov;
-      let intTy = fromTy;
+      let intVal = src;
       if (fromBits < 64) {
-        const wide = this.nextTemp();
-        const ext = fromKind.tag === "int" && fromKind.signed ? "sext" : "zext";
-        lines.push(`  ${wide} = ${ext} ${fromTy} ${ov} to i64`);
-        intVal = wide;
-        intTy = "i64";
+        intVal = b.cast(fromKind.tag === "int" && fromKind.signed ? "sext" : "zext", src, Ty.i64);
       }
-      lines.push(`  ${tmp} = inttoptr ${intTy} ${intVal} to ${toTy}`);
+      b.cast("inttoptr", intVal, toT, tmp);
     } else if (fromFloat && toFloat) {
+      // fpext/fptrunc are not builder ops, so the float conversions stay text.
       const op = this.bitWidth(toKind) > this.bitWidth(fromKind) ? "fpext" : "fptrunc";
-      lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+      lines.push(`  ${tmp.ref} = ${op} ${fromTy} ${ov} to ${toTy}`);
     } else if (fromFloat) {
       // Raw fptosi/fptoui is poison (UB) when the value doesn't fit the target or is NaN.
       // Use LLVM's saturating variants instead: out-of-range clamps to the target's
@@ -7674,21 +7657,21 @@ export class Codegen {
       const fpSuffix = fromTy === "double" ? "f64" : "f32";
       const intrinsic = `@llvm.${op}.sat.${toTy}.${fpSuffix}`;
       this.fpSatIntrinsics.add(`declare ${toTy} ${intrinsic}(${fromTy})`);
-      lines.push(`  ${tmp} = call ${toTy} ${intrinsic}(${fromTy} ${ov})`);
+      b.call(toT, intrinsic, [src], tmp);
     } else if (toFloat) {
       const op = fromKind.tag === "int" && !fromKind.signed ? "uitofp" : "sitofp";
-      lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+      lines.push(`  ${tmp.ref} = ${op} ${fromTy} ${ov} to ${toTy}`);
     } else {
       const fromBits = this.bitWidth(fromKind);
       const toBits = this.bitWidth(toKind);
       if (toBits > fromBits) {
         const op = fromKind.tag === "bool" || (fromKind.tag === "int" && !fromKind.signed) ? "zext" : "sext";
-        lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+        b.cast(op, src, toT, tmp);
       } else {
-        lines.push(`  ${tmp} = trunc ${fromTy} ${ov} to ${toTy}`);
+        b.cast("trunc", src, toT, tmp);
       }
     }
-    return [lines, tmp, toTy];
+    return [lines, tmp.ref, toTy];
   }
 
   private bitWidth(t: TypeKind): number {
@@ -8001,21 +7984,19 @@ export class Codegen {
     this.needsOverflowCheck = true;
     const intrinsic = "@llvm.umul.with.overflow.i64";
     this.usedOverflowIntrinsics.add(`declare {i64, i1} ${intrinsic}(i64, i64)`);
-    const res = this.nextTemp();
-    lines.push(`  ${res} = call {i64, i1} ${intrinsic}(i64 ${count}, i64 ${elemSize})`);
-    const prod = this.nextTemp();
-    lines.push(`  ${prod} = extractvalue {i64, i1} ${res}, 0`);
-    const ovf = this.nextTemp();
-    lines.push(`  ${ovf} = extractvalue {i64, i1} ${res}, 1`);
-    const ok = this.nextLabel(`${tag}.szok`);
-    const bad = this.nextLabel(`${tag}.szovf`);
-    lines.push(`  br i1 ${ovf}, label %${bad}, label %${ok}`);
-    lines.push(`${bad}:`);
+    const b = new LlvmTextBuilder(lines, this);
+    const res = b.call(Ty.of("{i64, i1}"), intrinsic, [i64c(count), i64c(elemSize)]);
+    const prod = b.extractvalue(res, 0, Ty.i64);
+    const ovf = b.extractvalue(res, 1, Ty.i1);
+    const okB = b.newBlock(`${tag}.szok`);
+    const badB = b.newBlock(`${tag}.szovf`);
+    b.condBr(ovf, badB, okB);
+    b.position(badB);
     const fp = this.emitCheckFilePtr(lines, span);
-    lines.push(`  call void @__milo_overflow_fail(ptr ${fp}, i32 ${span?.line ?? 0})`);
-    lines.push(`  unreachable`);
-    lines.push(`${ok}:`);
-    return prod;
+    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(fp, Ty.ptr), i32c(span?.line ?? 0)]);
+    b.unreachable();
+    b.position(okB);
+    return prod.ref;
   }
 
   // A failed malloc returned null and the memcpy that follows every one of these sites
@@ -8052,31 +8033,26 @@ export class Codegen {
   ): void {
     this.needsPrintf = true;
     this.needsExit = true;
-    const lenVal = this.nextTemp();
-    lines.push(`  ${lenVal} = extractvalue %String ${strVal}, 1`);
-    const badStart = this.nextTemp();
-    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
-    const badOrder = this.nextTemp();
-    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
-    const badEnd = this.nextTemp();
-    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${lenVal}`);
-    const bad0 = this.nextTemp();
-    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
-    const bad = this.nextTemp();
-    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
-    const panicLabel = this.nextLabel(`${what}.panic`);
-    const okLabel = this.nextLabel(`${what}.ok`);
-    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
-    lines.push(`${panicLabel}:`);
+    const b = new LlvmTextBuilder(lines, this);
+    const start = V(startVal, Ty.i64), end = V(endVal, Ty.i64);
+    const lenVal = b.extractvalue(V(strVal, STRING_TY), 1, Ty.i64);
+    const badStart = b.icmp("slt", start, i64c(0));
+    const badOrder = b.icmp("slt", end, start);
+    const badEnd = b.icmp("sgt", end, lenVal);
+    const bad0 = b.binop("or", badStart, badOrder);
+    const bad = b.binop("or", bad0, badEnd);
+    const panicB = b.newBlock(`${what}.panic`);
+    const okB = b.newBlock(`${what}.ok`);
+    b.condBr(bad, panicB, okB);
+    b.position(panicB);
     const { label: errLabel, length: errLen } = this.addString(
       `milo: ${what} range out of bounds: %lld..%lld (len %lld) at ${this.panicAt(span)}\n`,
     );
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    this.emitFdPrintf(lines, 2, errPtr, `, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal}`);
+    const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), V(errLabel, Ty.ptr), [i32c(0), i32c(0)]);
+    this.emitFdPrintf(lines, 2, errPtr.ref, `, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal.ref}`);
     this.panicAbort(lines);
-    lines.push(`  unreachable`);
-    lines.push(`${okLabel}:`);
+    b.unreachable();
+    b.position(okB);
   }
 
   // Slice/substr bounds are range-checked and used as GEP offsets in i64. A bound
@@ -8267,41 +8243,41 @@ export class Codegen {
   // Kept distinct from a user's exit(status) call, which stays a plain exit. Callers still
   // push their own `unreachable` after this.
   public panicAbort(lines: string[]) {
+    const b = new LlvmTextBuilder(lines, this);
     // Bare-metal/freestanding (os "none"): there is no libc, so abort()/fflush() are
     // undefined symbols. The embedded runtime provides exit (semihosting SYS_EXIT) and there
     // is no buffered stdio to flush — terminate exactly as the pre-abort panic did there.
     if (this.target.os === "none") {
       this.needsExit = true;
-      lines.push(`  call void @exit(i32 1)`);
+      b.callDiscard(Ty.void, "@exit", [i32c(1)]);
       return;
     }
     this.needsAbort = true;
     // A panic inside a lazy global's initializer names the global, and ends the process
     // even on a green task: retiring just the task would leave the global marked as being
     // initialized, and every later reader would wait for it forever.
-    if (this.lazyGlobals.size > 0) lines.push(`  call void @__milo_lazy_panic_note()`);
+    if (this.lazyGlobals.size > 0) b.callDiscard(Ty.void, "@__milo_lazy_panic_note", []);
     // abort() raises SIGABRT immediately WITHOUT flushing stdio — unlike exit(), which does.
     // The panic message was just printf'd (block-buffered on a piped stdout, e.g. Linux under
     // a test harness), so flush it first or it's lost with the process. fflush(NULL) flushes
     // every open stream.
     this.needsFflush = true;
-    lines.push(`  call i32 @fflush(ptr null)`);
+    b.callDiscard(Ty.i32, "@fflush", [V("null", Ty.ptr)]);
     // The panic hook (std/runtime sets it when a scheduler starts) retires the panicking
     // green task and never returns, so one task's panic costs that task, not the process.
     // It returns when there is no task to retire, and the panic aborts as before.
     this.usesPanicHook = true;
-    const hook = this.nextTemp();
-    const noHook = this.nextTemp();
-    const callL = this.nextLabel("panic.hook");
-    const abortL = this.nextLabel("panic.abort");
-    lines.push(`  ${hook} = load ptr, ptr @_milo_panic_hook`);
-    lines.push(`  ${noHook} = icmp eq ptr ${hook}, null`);
-    lines.push(`  br i1 ${noHook}, label %${abortL}, label %${callL}`);
-    lines.push(`${callL}:`);
-    lines.push(`  call void ${hook}()`);
-    lines.push(`  br label %${abortL}`);
-    lines.push(`${abortL}:`);
-    lines.push(`  call void @abort()`);
+    // The hook and noHook temps are drawn before the labels, as the string code did.
+    const hook = b.load(Ty.ptr, V("@_milo_panic_hook", Ty.ptr));
+    const noHook = b.icmp("eq", hook, V("null", Ty.ptr));
+    const callB = b.newBlock("panic.hook");
+    const abortB = b.newBlock("panic.abort");
+    b.condBr(noHook, abortB, callB);
+    b.position(callB);
+    b.callDiscard(Ty.void, hook.ref, []);
+    b.br(abortB);
+    b.position(abortB);
+    b.callDiscard(Ty.void, "@abort", []);
   }
 
   // Append printf-style format fragments for a value of type `tk`. `val` is the loaded
@@ -8351,7 +8327,7 @@ export class Codegen {
       // Digits into a per-site stack slot, handed to printf as text: the conversion is
       // @milo.fmt.*, not printf's. One slot per site because a batch can carry several.
       const slot = `%__ifmt.${this.scopeCounter++}.addr`;
-      this.entryAllocas.push(`  ${slot} = alloca [20 x i8]`);
+      b.entryAlloca(slot, Ty.of("[20 x i8]"));
       const n = this.emitIntFmt(lines, slot, val, llvmTy, tk);
       const n32 = b.cast("trunc", V(n, Ty.i64), Ty.i32).ref;
       partFmts.push("%.*s");
@@ -8532,30 +8508,30 @@ export class Codegen {
   // the last other handle went away on another thread meanwhile.
   public emitStrUnique(lines: string[], strPtr: string, srcs: string[] = []): string[] {
     this.strRt();
-    let pre = "", preLen = "";
+    const b = new LlvmTextBuilder(lines, this);
+    const str = V(strPtr, Ty.ptr);
+    let pre: Val | null = null, preLen: Val | null = null;
     if (srcs.length) {
-      const dp = this.nextTemp(), lp = this.nextTemp();
-      pre = this.nextTemp(); preLen = this.nextTemp();
-      lines.push(`  ${dp} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-      lines.push(`  ${pre} = load ptr, ptr ${dp}`);
-      lines.push(`  ${lp} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-      lines.push(`  ${preLen} = load i64, ptr ${lp}`);
+      // All four temps are drawn before any line is emitted, as the string code did.
+      const dp = b.reserveTemp(Ty.ptr), lp = b.reserveTemp(Ty.ptr);
+      const preR = b.reserveTemp(Ty.ptr), preLenR = b.reserveTemp(Ty.i64);
+      b.gep(STRING_TY, str, [i32c(0), i32c(0)], dp);
+      pre = b.load(Ty.ptr, dp, undefined, undefined, preR);
+      b.gep(STRING_TY, str, [i32c(0), i32c(1)], lp);
+      preLen = b.load(Ty.i64, lp, undefined, undefined, preLenR);
     }
-    lines.push(`  call void @milo.str.unique(ptr ${strPtr})`);
+    b.callDiscard(Ty.void, "@milo.str.unique", [str]);
     if (!srcs.length) return [];
-    const dp2 = this.nextTemp(), cur = this.nextTemp();
-    lines.push(`  ${dp2} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    lines.push(`  ${cur} = load ptr, ptr ${dp2}`);
-    const preI = this.nextTemp();
-    lines.push(`  ${preI} = ptrtoint ptr ${pre} to i64`);
+    const dp2 = b.gep(STRING_TY, str, [i32c(0), i32c(0)]);
+    const cur = b.load(Ty.ptr, dp2);
+    const preI = b.cast("ptrtoint", pre!, Ty.i64);
     return srcs.map(src => {
-      const si = this.nextTemp(), off = this.nextTemp(), inside = this.nextTemp(), moved = this.nextTemp(), sel = this.nextTemp();
-      lines.push(`  ${si} = ptrtoint ptr ${src} to i64`);
-      lines.push(`  ${off} = sub i64 ${si}, ${preI}`);
-      lines.push(`  ${inside} = icmp ult i64 ${off}, ${preLen}`);
-      lines.push(`  ${moved} = getelementptr i8, ptr ${cur}, i64 ${off}`);
-      lines.push(`  ${sel} = select i1 ${inside}, ptr ${moved}, ptr ${src}`);
-      return sel;
+      const s = V(src, Ty.ptr);
+      const si = b.cast("ptrtoint", s, Ty.i64);
+      const off = b.binop("sub", si, preI);
+      const inside = b.icmp("ult", off, preLen!);
+      const moved = b.gep(Ty.i8, cur, [off]);
+      return b.select(inside, moved, s).ref;
     });
   }
 
@@ -8859,9 +8835,10 @@ export class Codegen {
     this.needsMalloc = true;
     const layout = must(this.structLayouts, structName, "struct layouts");
     // Stage the struct value into an alloca so we can GEP each field.
-    const stagePtr = this.nextTemp();
-    lines.push(`  ${stagePtr} = alloca %${structName}`);
-    lines.push(`  store %${structName} ${structVal}, ptr ${stagePtr}`);
+    const b = new LlvmTextBuilder(lines, this);
+    const structT = Ty.of(`%${structName}`);
+    const stage = b.alloca(structT);
+    b.store(V(structVal, structT), stage);
     // The written name, never the mangled symbol: this string is program OUTPUT.
     const formatParts: string[] = [`${display(this.displayNames, structName)} { `];
     const snprintfArgs: { val: string; type: string }[] = [];
@@ -8870,10 +8847,8 @@ export class Codegen {
       const field = layout.fields[i];
       if (i > 0) formatParts.push(", ");
       formatParts.push(`${field.name}: `);
-      const fieldPtr = this.nextTemp();
-      lines.push(`  ${fieldPtr} = getelementptr %${structName}, ptr ${stagePtr}, i32 0, i32 ${i}`);
-      const fieldVal = this.nextTemp();
-      lines.push(`  ${fieldVal} = load ${field.type}, ptr ${fieldPtr}`);
+      const fieldPtr = b.gep(structT, stage, [i32c(0), i32c(i)]);
+      const fieldVal = b.load(Ty.of(field.type), fieldPtr).ref;
       // strings get extra quotes so output is unambiguous
       if (field.typeKind.tag === "string") {
         formatParts.push(`"`);
@@ -9783,18 +9758,18 @@ export class Codegen {
     const intrinsic = `@llvm.${prefix}mul.with.overflow.${lt}`;
     this.usedOverflowIntrinsics.add(`declare {${lt}, i1} ${intrinsic}(${lt}, ${lt})`);
 
-    const callResult = this.nextTemp();
-    const val = this.nextTemp();
-    const flag = this.nextTemp();
-    lines.push(`  ${callResult} = call {${lt}, i1} ${intrinsic}(${lt} ${lv}, ${lt} ${rv})`);
-    lines.push(`  ${val} = extractvalue {${lt}, i1} ${callResult}, 0`);
-    lines.push(`  ${flag} = extractvalue {${lt}, i1} ${callResult}, 1`);
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(lt);
+    const L = V(lv, T);
+    const callResult = b.call(Ty.of(`{${lt}, i1}`), intrinsic, [L, V(rv, T)]);
+    const product = b.extractvalue(callResult, 0, T);
+    const flag = b.extractvalue(callResult, 1, Ty.i1);
 
     const bits = ty.tag === "int" ? ty.bits : 32;
-    let clampVal: string;
+    let clampVal: Val;
     if (!signed) {
       // Unsigned multiply can only overflow upward.
-      clampVal = String(BigInt(2) ** BigInt(bits) - BigInt(1));
+      clampVal = V(String(BigInt(2) ** BigInt(bits) - BigInt(1)), T);
     } else {
       // Signed multiply overflows in whichever direction the true product points, and this
       // used to clamp to MAX either way behind a comment calling it a simplification. It
@@ -9805,20 +9780,13 @@ export class Codegen {
       // on this path, since a multiply involving zero does not overflow.
       const maxV = String(BigInt(2) ** BigInt(bits - 1) - BigInt(1));
       const minV = String(-(BigInt(2) ** BigInt(bits - 1)));
-      const lNeg = this.nextTemp();
-      lines.push(`  ${lNeg} = icmp slt ${lt} ${lv}, 0`);
-      const rNeg = this.nextTemp();
-      lines.push(`  ${rNeg} = icmp slt ${lt} ${rv}, 0`);
-      const negProduct = this.nextTemp();
-      lines.push(`  ${negProduct} = xor i1 ${lNeg}, ${rNeg}`);
-      const bound = this.nextTemp();
-      lines.push(`  ${bound} = select i1 ${negProduct}, ${lt} ${minV}, ${lt} ${maxV}`);
-      clampVal = bound;
+      const lNeg = b.icmp("slt", L, V("0", T));
+      const rNeg = b.icmp("slt", V(rv, T), V("0", T));
+      const negProduct = b.binop("xor", lNeg, rNeg);
+      clampVal = b.select(negProduct, V(minV, T), V(maxV, T));
     }
 
-    const result = this.nextTemp();
-    lines.push(`  ${result} = select i1 ${flag}, ${lt} ${clampVal}, ${lt} ${val}`);
-    return [lines, result, lt];
+    return asGen(lines, b.select(flag, clampVal, product));
   }
 
   // x.checkedAdd(y) — returns Option<T>, None on overflow
@@ -9905,30 +9873,25 @@ export class Codegen {
     const signed = expr.left.type.tag === "int" && expr.left.type.signed;
     const bits = expr.left.type.tag === "int" ? expr.left.type.bits : 32;
 
-    const zeroCmp = this.nextTemp();
-    lines.push(`  ${zeroCmp} = icmp eq ${lt} ${rv}, 0`);
+    const b = new LlvmTextBuilder(lines, this);
+    const T = Ty.of(lt);
+    const L = V(lv, T), R = V(rv, T);
+    const zeroCmp = b.icmp("eq", R, V("0", T));
     let flag = zeroCmp;
     if (signed) {
       // signed overflow: INT_MIN / -1 has no representable result
       const minVal = (-(BigInt(2) ** BigInt(bits - 1))).toString();
-      const isMin = this.nextTemp();
-      lines.push(`  ${isMin} = icmp eq ${lt} ${lv}, ${minVal}`);
-      const isNeg1 = this.nextTemp();
-      lines.push(`  ${isNeg1} = icmp eq ${lt} ${rv}, -1`);
-      const ovf = this.nextTemp();
-      lines.push(`  ${ovf} = and i1 ${isMin}, ${isNeg1}`);
-      const combined = this.nextTemp();
-      lines.push(`  ${combined} = or i1 ${zeroCmp}, ${ovf}`);
-      flag = combined;
+      const isMin = b.icmp("eq", L, V(minVal, T));
+      const isNeg1 = b.icmp("eq", R, V("-1", T));
+      const ovf = b.binop("and", isMin, isNeg1);
+      flag = b.binop("or", zeroCmp, ovf);
     }
 
     // sdiv/udiv trap on a zero divisor, so unlike every other checked op the operation
     // itself is emitted inside the ok block rather than before the branch.
-    return this.emitCheckedOptionTail(lines, expr.optionEnumName, flag, lt, () => {
-      const llvmOp = (signed ? "s" : "u") + expr.op; // sdiv/udiv/srem/urem
-      const val = this.nextTemp();
-      lines.push(`  ${val} = ${llvmOp} ${lt} ${lv}, ${rv}`);
-      return val;
+    return this.emitCheckedOptionTail(lines, expr.optionEnumName, flag.ref, lt, () => {
+      const llvmOp = (signed ? "s" : "u") + expr.op as "sdiv" | "udiv" | "srem" | "urem";
+      return b.binop(llvmOp, L, R).ref;
     });
   }
 
