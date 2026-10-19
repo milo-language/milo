@@ -166,6 +166,22 @@ describe("LlvmTextBuilder invariants", () => {
     expect(lines).toEqual(["  %t.0 = phi ptr [ %x, %a0 ], [ %y, %c1 ]"]);
   });
 
+  test("phi and insertvalue define a reserved name and check its type", () => {
+    const lines: string[] = [];
+    const b = builder(lines);
+    const a = b.newBlock("a");
+    const i = b.reserveNamed("%i", Ty.i64);
+    b.phi(Ty.i64, [[val("0", Ty.i64), a], [i, a]], false, i);
+    const s = b.reserveTemp(Ty.of("%String"));
+    b.insertvalue(val("undef", Ty.of("%String")), val("null", Ty.ptr), 0, s);
+    expect(lines).toEqual([
+      "  %i = phi i64 [0, %a0], [%i, %a0]",
+      "  %t.0 = insertvalue %String undef, ptr null, 0",
+    ]);
+    expect(() => b.phi(Ty.i64, [], false, b.reserveNamed("%j", Ty.i32))).toThrow("but the result is i64");
+    expect(() => b.insertvalue(val("undef", Ty.of("%String")), val("null", Ty.ptr), 0, val("%t.9", Ty.of("%String")))).toThrow("not a reserved temp");
+  });
+
   test("fcmp needs matching float operands", () => {
     const b = builder();
     expect(() => b.fcmp("ogt", val("%a", Ty.i64), val("%b", Ty.i64))).toThrow("non-float");

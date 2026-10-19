@@ -128,9 +128,13 @@ export interface Builder {
   cast(op: CastOp, v: Val, to: Ty, dest?: Val): Val;
   /** The builder knows no aggregate layouts, so the caller names the element type. `dest` as in `cast`. */
   extractvalue(agg: Val, idx: number, elt: Ty, dest?: Val): Val;
-  insertvalue(agg: Val, elt: Val, idx: number): Val;
-  /** `padded` prints `[ v, %b ]`, the spelling a few older sites used; same IR to LLVM. */
-  phi(ty: Ty, incoming: [Val, Block][], padded?: boolean): Val;
+  /** `dest` as in `cast`. */
+  insertvalue(agg: Val, elt: Val, idx: number, dest?: Val): Val;
+  /**
+   * `padded` prints `[ v, %b ]`, the spelling a few older sites used; same IR to LLVM.
+   * `dest` as in `cast`; a loop header phi names itself before its back-edge value exists.
+   */
+  phi(ty: Ty, incoming: [Val, Block][], padded?: boolean, dest?: Val): Val;
   select(cond: Val, a: Val, b: Val, dest?: Val): Val;
   /**
    * Draw a temp name now and define it later with `select(..., dest)`. Exists only because
@@ -302,16 +306,16 @@ export class LlvmTextBuilder implements Builder {
     return this.defOrDest(`extractvalue ${agg.ty.ll} ${agg.ref}, ${idx}`, elt, dest);
   }
 
-  insertvalue(agg: Val, elt: Val, idx: number): Val {
+  insertvalue(agg: Val, elt: Val, idx: number, dest?: Val): Val {
     if (agg.ty.kind !== "agg") this.fail(`insertvalue into non-aggregate ${agg.ty.ll}`);
-    return this.def(`insertvalue ${agg.ty.ll} ${agg.ref}, ${elt.ty.ll} ${elt.ref}, ${idx}`, agg.ty);
+    return this.defOrDest(`insertvalue ${agg.ty.ll} ${agg.ref}, ${elt.ty.ll} ${elt.ref}, ${idx}`, agg.ty, dest);
   }
 
-  phi(ty: Ty, incoming: [Val, Block][], padded = false): Val {
+  phi(ty: Ty, incoming: [Val, Block][], padded = false, dest?: Val): Val {
     if (ty.kind === "void") this.fail("phi of void");
     for (const [v] of incoming) if (v.ty.ll !== ty.ll) this.fail(`phi ${ty.ll} incoming ${v.ref} is ${v.ty.ll}`);
     const pad = padded ? " " : "";
-    return this.def(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${pad}${v.ref}, %${b.name}${pad}]`).join(", ")}`, ty);
+    return this.defOrDest(`phi ${ty.ll} ${incoming.map(([v, b]) => `[${pad}${v.ref}, %${b.name}${pad}]`).join(", ")}`, ty, dest);
   }
 
   select(cond: Val, a: Val, b: Val, dest?: Val): Val {
