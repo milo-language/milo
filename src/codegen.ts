@@ -6,7 +6,7 @@ import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-gl
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
-import { MIR_MODE, tryMir } from "./codegen-mir";
+import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecContains, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
@@ -2618,8 +2618,6 @@ export class Codegen {
     this.emittedAddrs.clear();
     this.currentFnName = fn.name;
     this.currentFnWrapping = !!fn.isWrapping;
-    const mir = MIR_MODE ? tryMir(this, fn) : null;
-    if (mir) return mir;
     const lines: string[] = [];
     const b = new LlvmTextBuilder(lines, this);
 
@@ -2733,7 +2731,12 @@ export class Codegen {
     }
 
     let hasTerminator = false;
-    for (const stmt of fn.body) {
+    const mir = MIR_MODE ? tryMirBody(this, fn) : null;
+    if (mir) {
+      emitMirBody(this, mir, lines);
+      hasTerminator = true;
+    }
+    for (const stmt of mir ? [] : fn.body) {
       const [stmtLines, terminated] = this.genStmt(stmt);
       lines.push(...stmtLines);
       // Anything past a terminator would land in an already-closed block and make

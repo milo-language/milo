@@ -59,6 +59,9 @@ type Verdict = "same" | "differ" | "nondeterministic" | "build-differ" | "no-bui
 const results: { name: string; verdict: Verdict; detail?: string }[] = [];
 const fnTotal = { ok: 0, all: 0 };
 const reasons = new Map<string, number>();
+// Within lowered functions: MIR's own statements and terminators vs opaque ones, by reason.
+const stmtTotal = { mir: 0, opaque: 0 };
+const opaqueReasons = new Map<string, number>();
 
 async function build(name: string, mir: boolean): Promise<{ bin: string; res: RunResult; lowered: number }> {
   const bin = join(tmp, `${name}.${mir ? "mir" : "hir"}`);
@@ -74,9 +77,17 @@ async function build(name: string, mir: boolean): Promise<{ bin: string; res: Ru
   if (mir && existsSync(log)) {
     for (const line of readFileSync(log, "utf-8").split("\n")) {
       if (!line) continue;
-      const reason = line.slice(line.indexOf("\t") + 1);
+      const [, reason, mirCount, opaque] = line.split("\t");
       fnTotal.all++;
-      if (reason === "ok") { fnTotal.ok++; lowered++; } else reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+      if (reason === "ok") {
+        fnTotal.ok++;
+        lowered++;
+        stmtTotal.mir += Number(mirCount ?? 0);
+        for (const r of opaque ? opaque.split("|") : []) {
+          stmtTotal.opaque++;
+          opaqueReasons.set(r, (opaqueReasons.get(r) ?? 0) + 1);
+        }
+      } else reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
     }
   }
   return { bin, res, lowered };
@@ -121,6 +132,10 @@ const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 console.log(`fallback reasons: ${top.map(([r, n]) => `${r} ${n}`).join(", ")}`);
 const pct = fnTotal.all ? (100 * fnTotal.ok / fnTotal.all).toFixed(1) : "0";
 console.log(`mir coverage: ${fnTotal.ok}/${fnTotal.all} functions (${pct}%)`);
+const topOpaque = [...opaqueReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
+console.log(`opaque reasons: ${topOpaque.map(([r, n]) => `${r} ${n}`).join(", ")}`);
+const own = stmtTotal.mir + stmtTotal.opaque;
+console.log(`mir statements: ${stmtTotal.mir}/${own} lowered by MIR (${own ? (100 * stmtTotal.mir / own).toFixed(1) : "0"}%), ${stmtTotal.opaque} opaque`);
 const compared = count("same") + count("differ") + count("build-differ");
 console.log(`mir-same: ${count("same")}/${compared} same, ${count("differ") + count("build-differ")} differ, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither, ${count("unlowered")} with nothing lowered`);
 if (compared === 0) { console.error("mir-same: nothing compared"); process.exit(1); }

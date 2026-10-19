@@ -12,6 +12,7 @@
 
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
+import type { HIRStmt } from "./hir";
 
 export type LocalId = number;
 export type BlockId = number;
@@ -50,8 +51,17 @@ export type Rvalue =
   | { kind: "unop"; op: MirUnOp; operand: Operand; ty: TypeKind; checked: boolean; span?: Span }
   | { kind: "cast"; operand: Operand; from: TypeKind; to: TypeKind; span?: Span };
 
+/**
+ * A name an opaque statement can see: a MIR local, or a local that an earlier opaque `let`
+ * declared (`cg` is that statement's `binds` key; HIR codegen owns its slot and drop).
+ */
+export type Binding = { name: string; local: LocalId } | { name: string; cg: number };
+
 export type Stmt =
-  | { kind: "assign"; place: Place; rvalue: Rvalue; span?: Span };
+  | { kind: "assign"; place: Place; rvalue: Rvalue; span?: Span }
+  // A HIR statement MIR does not lower yet, emitted in place by HIR codegen. `scope` is every
+  // binding visible to it; `binds` keys the `names` it binds for the statements after it.
+  | { kind: "opaque"; hir: HIRStmt; scope: Binding[]; binds?: number; names?: string[]; span?: Span };
 
 export type Term =
   | { kind: "goto"; target: BlockId }
@@ -77,16 +87,20 @@ export interface MirBody {
   retTy: TypeKind;
   locals: Local[];
   blocks: BasicBlock[];
+  /** Why each opaque statement is opaque: the coverage report's to-do list. */
+  opaqueReasons: string[];
 }
 
 // ── Construction ──
+
+export interface Mark { cur: BlockId; stmts: number; blocks: number; locals: number }
 
 export class MirBuilder {
   readonly body: MirBody;
   cur: BlockId;
 
   constructor(name: string, retTy: TypeKind) {
-    this.body = { name, params: [], ret: null, retTy, locals: [], blocks: [] };
+    this.body = { name, params: [], ret: null, retTy, locals: [], blocks: [], opaqueReasons: [] };
     this.cur = this.newBlock();
   }
 
@@ -107,9 +121,29 @@ export class MirBuilder {
   get terminated(): boolean { return this.body.blocks[this.cur].term !== null; }
 
   assign(place: Place, rvalue: Rvalue, span?: Span): void {
+    this.push({ kind: "assign", place, rvalue, span });
+  }
+
+  push(stmt: Stmt): void {
     const b = this.body.blocks[this.cur];
-    if (b.term) throw new Error(`mir: assign after terminator in bb${b.id}`);
-    b.stmts.push({ kind: "assign", place, rvalue, span });
+    if (b.term) throw new Error(`mir: ${stmt.kind} after terminator in bb${b.id}`);
+    b.stmts.push(stmt);
+  }
+
+  /** A point to roll back to when lowering a statement or expression turns out unsupported. */
+  mark(): Mark {
+    const b = this.body.blocks[this.cur];
+    return { cur: this.cur, stmts: b.stmts.length, blocks: this.body.blocks.length, locals: this.body.locals.length };
+  }
+
+  /** Undo everything since `m`: lowering only appends blocks and locals and ends the current block. */
+  rollback(m: Mark): void {
+    this.body.blocks.length = m.blocks;
+    this.body.locals.length = m.locals;
+    this.cur = m.cur;
+    const b = this.body.blocks[m.cur];
+    b.stmts.length = m.stmts;
+    b.term = null;
   }
 
   terminate(term: Term): void {
@@ -137,6 +171,10 @@ export function validateMir(body: MirBody): void {
   for (const b of body.blocks) {
     if (!b.term) throw new Error(`mir ${where(b)}: block has no terminator`);
     for (const s of b.stmts) {
+      if (s.kind === "opaque") {
+        for (const bd of s.scope) if ("local" in bd && (bd.local < 0 || bd.local >= nLocals)) throw new Error(`mir ${where(b)}: opaque sees unknown local _${bd.local}`);
+        continue;
+      }
       place(s.place, b);
       const r = s.rvalue;
       if (r.kind === "use") operand(r.op, b);
@@ -180,6 +218,10 @@ export function printMir(body: MirBody): string {
   for (const b of body.blocks) {
     out.push(`  bb${b.id}: {`);
     for (const s of b.stmts) {
+      if (s.kind === "opaque") {
+        out.push(`    opaque ${s.hir.kind}${s.names?.length ? ` binds ${s.names.join(", ")}` : ""};`);
+        continue;
+      }
       const r = s.rvalue;
       let rv: string;
       if (r.kind === "use") rv = opStr(r.op);

@@ -1,21 +1,25 @@
 // MIR -> LLVM text through the typed builder (docs/plans/codegen-ir-2026-10.md, phase 2).
 //
-// Every local is an entry-block stack slot: a read is a load, an assignment a store, and
-// LLVM's mem2reg turns the slots into SSA. The arithmetic itself goes through the same
-// Codegen helpers HIR codegen uses, so a function lowered either way traps identically.
+// A MIR body replaces only the statement loop of genFunction: the prologue (parameter spill,
+// main's argc/argv and global init, contracts) and every return's epilogue (ensures, drop glue)
+// stay HIR codegen's, and so do opaque statements. Every local is a stack slot: a read is a
+// load, an assignment a store, and LLVM's mem2reg turns the slots into SSA. The arithmetic goes
+// through the same Codegen helpers HIR codegen uses, so a function lowered either way traps
+// identically.
 
 import type { TypeKind } from "./types";
-import type { HIRFunction } from "./hir";
+import type { HIRExpr, HIRFunction, HIRStmt } from "./hir";
 import { appendFileSync } from "fs";
-import { lowerToMir, Unsupported } from "./mir-build";
+import { lowerToMir, mirLocalName, Unsupported } from "./mir-build";
 import type { Span } from "./ast";
-import type { Gen } from "./codegen";
+import type { Gen, LocalInfo } from "./codegen";
 import { LlvmTextBuilder, Ty, val, type Block, type NameSource, type Val } from "./ir";
-import type { MirBody, Operand, Place } from "./mir";
+import type { Binding, MirBody, Operand, Place } from "./mir";
 
 // MILO_MIR=1 routes each function the MIR lowering supports through it; the rest take the HIR
-// path. MILO_MIR_LOG=<file> appends one line per function, "ok" or the reason it fell back,
-// which is where scripts/mir-same.ts gets the coverage number.
+// path. MILO_MIR_LOG=<file> appends one line per function: its name, "ok" or the reason it fell
+// back, and for "ok" the count of MIR-lowered statements and terminators and the reason for
+// each opaque one. scripts/mir-same.ts turns these into the coverage numbers.
 export const MIR_MODE = process.env.MILO_MIR === "1";
 const MIR_LOG = process.env.MILO_MIR_LOG;
 
@@ -25,7 +29,8 @@ export interface MirEmitCtx extends NameSource {
   trapOnOverflow: boolean;
   currentFnWrapping: boolean;
   sretFns: Set<string>;
-  exportedFnNames: Set<string>;
+  locals: Map<string, LocalInfo>;
+  genStmt(stmt: HIRStmt): [string[], boolean];
   fnSigs: Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>;
   isBuiltinName(name: string): boolean;
   llvmType(t: TypeKind): string;
@@ -36,18 +41,19 @@ export interface MirEmitCtx extends NameSource {
 }
 
 /**
- * `fn` through MIR, or null to take the HIR path. main (argc/argv, global init, the green
- * wrapper), sret returns and -g builds are not handled by the MIR emitter yet.
+ * The MIR body for `fn`, or null to run HIR codegen's statement loop. -g builds are not
+ * handled yet: opaque statements would carry locations and MIR's own instructions none.
  */
-export function tryMir(cx: MirEmitCtx, fn: HIRFunction): string[] | null {
-  let mir: ReturnType<typeof lowerToMir>;
-  if (fn.name === "main") mir = new Unsupported("main");
-  else if (cx.emitDebug) mir = new Unsupported("debug info");
-  else if (cx.sretFns.has(fn.name)) mir = new Unsupported("sret return");
-  else mir = lowerToMir(fn, { checked: cx.trapOnOverflow && !cx.currentFnWrapping, calleeOk: (n, a, r) => calleeOk(cx, n, a, r) });
-  if (MIR_LOG) appendFileSync(MIR_LOG, `${fn.name}\t${mir instanceof Unsupported ? mir.reason : "ok"}\n`);
-  if (mir instanceof Unsupported) return null;
-  return emitMirFn(cx, mir, !cx.exportedFnNames.has(fn.name));
+export function tryMirBody(cx: MirEmitCtx, fn: HIRFunction): MirBody | null {
+  const mir = cx.emitDebug
+    ? new Unsupported("debug info")
+    : lowerToMir(fn, { checked: cx.trapOnOverflow && !cx.currentFnWrapping, calleeOk: (n, a, r) => calleeOk(cx, n, a, r) });
+  if (MIR_LOG) {
+    const detail = mir instanceof Unsupported ? mir.reason
+      : `ok\t${mir.blocks.reduce((n, bb) => n + 1 + bb.stmts.filter(s => s.kind !== "opaque").length, 0)}\t${mir.opaqueReasons.join("|")}`;
+    appendFileSync(MIR_LOG, `${fn.name}\t${detail}\n`);
+  }
+  return mir instanceof Unsupported ? null : mir;
 }
 
 // A call MIR can emit as a bare `call`: a declared, non-builtin, non-variadic, non-sret
@@ -60,21 +66,42 @@ function calleeOk(cx: MirEmitCtx, name: string, argTypes: TypeKind[], retType: T
   return argTypes.every((t, i) => sig.paramTypes[i] === cx.llvmType(t));
 }
 
-/** The function's full text, `define` through `}`. `internal` as genFunction decides it. */
-export function emitMirFn(cx: MirEmitCtx, body: MirBody, internal: boolean): string[] {
-  const lines: string[] = [];
+/**
+ * Emit `body` into `lines`, after genFunction's prologue and in place of its statement loop.
+ * Every path ends in a terminator, so the caller adds no fall-off return.
+ */
+export function emitMirBody(cx: MirEmitCtx, body: MirBody, lines: string[]): void {
   const b = new LlvmTextBuilder(lines, cx);
   const tyOf = (t: TypeKind) => Ty.of(cx.llvmType(t));
-  // `.` cannot appear in a Milo identifier, so these never collide with a parameter's `%name`.
-  const slots: Val[] = body.locals.map(l => val(`%mir.${l.id}`, Ty.ptr));
-  const params = b.defineFn({
-    name: body.name,
-    ret: tyOf(body.retTy),
-    params: body.params.map(id => ({ name: body.locals[id].name!, ty: tyOf(body.locals[id].ty) })),
-    internal,
-  });
-  for (const l of body.locals) b.alloca(tyOf(l.ty), slots[l.id].ref);
-  body.params.forEach((id, i) => b.store(params[i], slots[id]));
+  // A parameter lives in the `%name.addr` slot the prologue spilled it to; every other local
+  // gets its own. `.` cannot appear in a Milo identifier, so `%mir.N` never collides.
+  const slots: Val[] = body.locals.map(l => val(body.params.includes(l.id) ? `%${l.name}.addr` : `%${mirLocalName(l.id)}`, Ty.ptr));
+  for (const l of body.locals) if (!body.params.includes(l.id)) b.alloca(tyOf(l.ty), slots[l.id].ref);
+
+  // HIR codegen resolves a name through `cx.locals`. Before each opaque statement it is reset
+  // to what the prologue registered, plus that statement's own view of the scope, so a name
+  // MIR shadowed or let go out of scope resolves as it would in HIR codegen.
+  const base = new Map(cx.locals);
+  const opaqueLets = new Map<string, LocalInfo>();
+  const enter = (scope: Binding[]) => {
+    cx.locals.clear();
+    for (const [k, v] of base) cx.locals.set(k, v);
+    for (const bd of scope) {
+      if ("local" in bd) {
+        const l = body.locals[bd.local];
+        cx.locals.set(bd.name, { type: cx.llvmType(l.ty), typeKind: l.ty, mutable: true, isRef: false, addr: slots[bd.local].ref });
+      } else {
+        const info = opaqueLets.get(`${bd.cg}:${bd.name}`);
+        if (info) cx.locals.set(bd.name, info);
+      }
+    }
+  };
+  const hir = (stmt: HIRStmt, scope: Binding[]): boolean => {
+    enter(scope);
+    const [sl, terminated] = cx.genStmt(stmt);
+    lines.push(...sl);
+    return terminated;
+  };
 
   const read = (o: Operand): Val => {
     if (o.kind === "const") {
@@ -99,6 +126,17 @@ export function emitMirFn(cx: MirEmitCtx, body: MirBody, internal: boolean): str
   for (const bb of body.blocks) {
     if (bb.id !== 0) b.position(labels[bb.id]!);
     for (const s of bb.stmts) {
+      if (s.kind === "opaque") {
+        // A statement that diverges (a match whose arms all return) leaves the block ended;
+        // whatever MIR placed after it is dead, so it goes in a fresh unreachable block.
+        if (hir(s.hir, s.scope)) b.position(b.newBlock("mir.dead"));
+        for (const name of s.names ?? []) {
+          const info = cx.locals.get(name);
+          if (!info) throw new Error(`mir ${body.name}: opaque ${s.hir.kind} did not bind ${name}`);
+          opaqueLets.set(`${s.binds}:${name}`, info);
+        }
+        continue;
+      }
       const r = s.rvalue;
       const destTy = tyOf(body.locals[s.place.local].ty);
       let out: Val;
@@ -119,10 +157,13 @@ export function emitMirFn(cx: MirEmitCtx, body: MirBody, internal: boolean): str
     switch (t.kind) {
       case "goto": b.br(target(t.target)); break;
       case "if": b.condBr(read(t.cond), target(t.then), target(t.else)); break;
-      case "return":
-        if (body.ret === null) b.ret();
-        else b.ret(read({ kind: "copy", place: { local: body.ret } }));
+      case "return": {
+        // HIR codegen's own return, for ensures checks, drop glue and main's `ret i32 0`.
+        const name = body.ret === null ? null : mirLocalName(body.ret);
+        const value: HIRExpr | null = name === null ? null : { kind: "Ident", name, type: body.retTy };
+        hir({ kind: "Return", value, retType: body.retTy }, name === null ? [] : [{ name, local: body.ret! }]);
         break;
+      }
       case "unreachable":
         // A trap rather than bare `unreachable`, as genFunction does: a shape the checker
         // misses aborts instead of running past the end of the function.
@@ -138,6 +179,4 @@ export function emitMirFn(cx: MirEmitCtx, body: MirBody, internal: boolean): str
       }
     }
   }
-  b.endFn();
-  return lines;
 }

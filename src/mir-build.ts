@@ -1,11 +1,13 @@
-// HIR -> MIR lowering (docs/plans/codegen-ir-2026-10.md, phase 2). Covers a growing subset of
-// HIR; a function that reaches anything outside it is not lowered at all and codegen takes its
-// usual path. Per-function fallback is what lets the subset grow one node group per commit.
+// HIR -> MIR lowering (docs/plans/codegen-ir-2026-10.md, phase 2). MIR owns the function's
+// control flow, scalar locals and scalar arithmetic. A statement or scalar expression outside
+// that subset becomes an `opaque` statement that HIR codegen emits in place, so the subset can
+// grow one node group per commit without a function falling back whole. A function still falls
+// back when an unsupported piece cannot be made opaque (see `opaqueOk`).
 
 import type { HIRExpr, HIRFunction, HIRStmt } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
-import { MirBuilder, validateMir, type BlockId, type LocalId, type MirBinOp, type MirBody, type Operand } from "./mir";
+import { MirBuilder, validateMir, type Binding, type BlockId, type LocalId, type MirBinOp, type MirBody, type Operand } from "./mir";
 
 export interface MirLowerCtx {
   /** Overflow traps on, and the function is not @wrapping. */
@@ -29,10 +31,61 @@ const BOOL: TypeKind = { tag: "bool" };
 
 interface Loop { brk: BlockId; cont: BlockId }
 
+const LOOPS = new Set(["While", "ForRange", "ForEach", "ForIterator", "ForStrView"]);
+
+/**
+ * Whether HIR codegen can emit `node` on its own inside a MIR body: no `break`/`continue`
+ * that leaves it (codegen would branch to its own loop labels, which a MIR loop never sets).
+ * A jump inside a loop or closure that the node itself contains stays inside it.
+ */
+function opaqueOk(node: unknown): boolean {
+  const walk = (n: unknown, inLoop: boolean): boolean => {
+    if (Array.isArray(n)) return n.every(x => walk(x, inLoop));
+    if (n === null || typeof n !== "object") return true;
+    const kind = (n as { kind?: unknown }).kind;
+    if ((kind === "Break" || kind === "Continue") && !inLoop) return false;
+    const inner = inLoop || (typeof kind === "string" && (LOOPS.has(kind) || kind === "Closure"));
+    for (const [k, v] of Object.entries(n)) {
+      // Types and spans hold no statements.
+      if (k === "type" || k === "span" || k === "retType" || k === "targetType") continue;
+      if (!walk(v, inner)) return false;
+    }
+    return true;
+  };
+  return walk(node, false);
+}
+
+/**
+ * Names `s` binds for the statements after it: a `let`, a null-ref unwrap, and pattern
+ * bindings marked `escapes` (let-else desugars to a match whose bindings outlive it).
+ */
+function bindsPast(s: HIRStmt): string[] {
+  const out: string[] = [];
+  if (s.kind === "Let" || s.kind === "NullRefUnwrap") out.push(s.name);
+  return out.concat(escapingBindings(s));
+}
+
+function escapingBindings(node: unknown): string[] {
+  const out: string[] = [];
+  const walk = (n: unknown): void => {
+    if (Array.isArray(n)) { n.forEach(walk); return; }
+    if (n === null || typeof n !== "object") return;
+    const o = n as { escapes?: unknown; name?: unknown };
+    if (o.escapes === true && typeof o.name === "string") out.push(o.name);
+    for (const [k, v] of Object.entries(n)) if (k !== "type" && k !== "span") walk(v);
+  };
+  walk(node);
+  return out;
+}
+
+/** The codegen-visible name of MIR local `id`; `.` cannot appear in a Milo identifier. */
+export function mirLocalName(id: LocalId): string { return `mir.${id}`; }
+
 class Lower {
   readonly b: MirBuilder;
-  private scopes: Map<string, LocalId>[] = [new Map()];
+  private scopes: Map<string, Binding>[] = [new Map()];
   private loops: Loop[] = [];
+  private opaqueLets = 0;
 
   constructor(private fn: HIRFunction, private ctx: MirLowerCtx) {
     this.b = new MirBuilder(fn.name, fn.retType);
@@ -40,17 +93,16 @@ class Lower {
 
   run(): MirBody {
     const fn = this.fn;
+    // A by-value scalar parameter is a MIR local living in the slot genFunction's prologue
+    // spilled it to; any other parameter is reachable only from opaque statements.
     for (const p of fn.params) {
-      if (p.isRef || p.isRefMut) throw new Unsupported("ref param");
-      this.scalar(p.type, "param");
+      if (p.isRef || p.isRefMut || !isMirScalar(p.type)) continue;
       const id = this.b.local(p.type, p.name);
       this.b.body.params.push(id);
-      this.bind(p.name, id);
+      this.bind(p.name, { name: p.name, local: id });
     }
-    if (fn.retType.tag !== "void") {
-      this.scalar(fn.retType, "return type");
-      this.b.body.ret = this.b.local(fn.retType);
-    }
+    // A non-scalar result is returned by opaque `return` statements only.
+    if (isMirScalar(fn.retType)) this.b.body.ret = this.b.local(fn.retType);
     this.stmts(fn.body);
     // Falling off the end: only a void fn gets here live (the checker rejects the rest), and
     // for anything else the block is unreachable past a `while true`.
@@ -63,28 +115,71 @@ class Lower {
     if (!isMirScalar(t)) throw new Unsupported(`${what} of type ${t.tag}`);
   }
 
-  private bind(name: string, id: LocalId): void { this.scopes[this.scopes.length - 1].set(name, id); }
+  private bind(name: string, bd: Binding): void { this.scopes[this.scopes.length - 1].set(name, bd); }
 
+  /** The MIR local `name` refers to; anything else (a global, an opaque let) is opaque-only. */
   private lookup(name: string): LocalId {
     for (let i = this.scopes.length - 1; i >= 0; i--) {
-      const id = this.scopes[i].get(name);
-      if (id !== undefined) return id;
+      const bd = this.scopes[i].get(name);
+      if (bd !== undefined) {
+        if ("local" in bd) return bd.local;
+        throw new Unsupported("local declared by an opaque let");
+      }
     }
     throw new Unsupported("global or unknown ident");
   }
 
+  /** Every binding visible here, innermost first wins. */
+  private visible(): Binding[] {
+    const m = new Map<string, Binding>();
+    for (const sc of this.scopes) for (const [k, v] of sc) m.set(k, v);
+    return [...m.values()];
+  }
+
+  private opaque(hir: HIRStmt, extra: Binding[] = [], binds?: number, names?: string[]): void {
+    this.b.push({ kind: "opaque", hir, scope: [...this.visible(), ...extra], binds, names, span: hir.span });
+  }
+
   private scoped(body: HIRStmt[]): void {
     this.scopes.push(new Map());
-    this.stmts(body);
-    this.scopes.pop();
+    try { this.stmts(body); } finally { this.scopes.pop(); }
   }
 
   private stmts(body: HIRStmt[]): void {
     for (const s of body) {
       // The checker rejects unreachable code; a terminated block here means the rest is dead.
       if (this.b.terminated) return;
-      this.stmt(s);
+      const m = this.b.mark();
+      const depth = this.scopes.length, loops = this.loops.length;
+      try {
+        this.stmt(s);
+      } catch (err) {
+        // A statement that binds past itself can be opaque only at top level, where the
+        // function's drop glue on return drops what it bound.
+        if (!(err instanceof Unsupported) || !opaqueOk(s) || (bindsPast(s).length > 0 && !this.topLevel())) throw err;
+        this.b.rollback(m);
+        this.scopes.length = depth;
+        this.loops.length = loops;
+        this.b.body.opaqueReasons.push(err.reason);
+        this.opaqueStmt(s);
+      }
     }
+  }
+
+  /** Function scope, outside any MIR loop: where HIR codegen drops a local at return. */
+  private topLevel(): boolean { return this.scopes.length === 1 && this.loops.length === 0; }
+
+  private opaqueStmt(s: HIRStmt): void {
+    const names = bindsPast(s);
+    if (names.length > 0) {
+      const key = this.opaqueLets++;
+      this.opaque(s, [], key, names);
+      for (const name of names) this.bind(name, { name, cg: key });
+      return;
+    }
+    this.opaque(s);
+    // An opaque `return` ends the block; HIR codegen emitted the `ret`.
+    if (s.kind === "Return") this.b.terminate({ kind: "unreachable" });
   }
 
   private stmt(s: HIRStmt): void {
@@ -95,7 +190,7 @@ class Lower {
         const v = this.operand(s.value);
         const id = this.b.local(s.type, s.name, s.mutable, s.span);
         this.b.assign({ local: id }, { kind: "use", op: v }, s.span);
-        this.bind(s.name, id);
+        this.bind(s.name, { name: s.name, local: id });
         return;
       }
       case "Assign": {
@@ -108,6 +203,7 @@ class Lower {
       }
       case "Return": {
         if (s.value) {
+          if (this.b.body.ret === null) throw new Unsupported("non-scalar return value");
           const v = this.operand(s.value);
           this.b.assign({ local: this.b.body.ret! }, { kind: "use", op: v }, s.span);
         }
@@ -157,6 +253,7 @@ class Lower {
         return;
       }
       case "Block":
+        // A Block opens no scope, so a `let` in it binds in the enclosing one.
         this.stmts(s.body);
         return;
       case "UnsafeBlock":
@@ -175,8 +272,29 @@ class Lower {
 
   private temp(t: TypeKind, span?: Span): LocalId { return this.b.local(t, undefined, false, span); }
 
-  /** Lower `e` to an operand; anything that is not a constant or a local read goes through a temp. */
+  /**
+   * Lower `e` to an operand; anything that is not a constant or a local read goes through a
+   * temp. A scalar expression MIR cannot lower is assigned to a temp by an opaque statement.
+   */
   private operand(e: HIRExpr): Operand {
+    const m = this.b.mark();
+    try {
+      return this.operandRaw(e);
+    } catch (err) {
+      // An expression whose bindings escape it (a let-else match) must go opaque with its
+      // whole statement, which records what it binds.
+      if (!(err instanceof Unsupported) || !isMirScalar(e.type) || !opaqueOk(e) || escapingBindings(e).length > 0) throw err;
+      this.b.rollback(m);
+      this.b.body.opaqueReasons.push(err.reason);
+      const t = this.temp(e.type, e.span);
+      const name = mirLocalName(t);
+      const target: HIRExpr = { kind: "Ident", name, type: e.type, span: e.span };
+      this.opaque({ kind: "Assign", target, value: e, span: e.span }, [{ name, local: t }]);
+      return { kind: "copy", place: { local: t } };
+    }
+  }
+
+  private operandRaw(e: HIRExpr): Operand {
     switch (e.kind) {
       case "IntLit":
       case "CharLit":
@@ -266,7 +384,6 @@ class Lower {
 export function lowerToMir(fn: HIRFunction, ctx: MirLowerCtx): MirBody | Unsupported {
   if (fn.isExtern) return new Unsupported("extern fn");
   if (fn.isVariadic) return new Unsupported("variadic fn");
-  if (fn.contracts?.length || fn.oldSnapshots?.length || fn.entryGuards?.length) return new Unsupported("contracts or entry guards");
   try {
     return new Lower(fn, ctx).run();
   } catch (err) {
