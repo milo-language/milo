@@ -128,6 +128,8 @@ const VEC_TY = Ty.of("%Vec");
 const HASHMAP_TY = Ty.of("%HashMap");
 const i64c = (n: number | string) => val(String(n), Ty.i64);
 const i32c = (n: number | string) => val(String(n), Ty.i32);
+// For methods whose `val: string` parameter shadows the `val` import.
+const V = val;
 // One name for codegen's return shape: the IR lines an expression emits, the SSA value it
 // leaves the result in, and that value's LLVM type.
 //
@@ -8393,21 +8395,17 @@ export class Codegen {
       this.emitDisplayPart(tk.inner, val, this.llvmType(tk.inner), lines, partFmts, partArgs, tempBufs);
       return;
     }
+    const b = new LlvmTextBuilder(lines, this);
     if (tk.tag === "string") {
-      const dataPtr = this.nextTemp();
-      lines.push(`  ${dataPtr} = extractvalue %String ${val}, 0`);
-      const lenVal = this.nextTemp();
-      lines.push(`  ${lenVal} = extractvalue %String ${val}, 1`);
+      const dataPtr = b.extractvalue(V(val, STRING_TY), 0, Ty.ptr).ref;
+      const lenVal = b.extractvalue(V(val, STRING_TY), 1, Ty.i64);
       // printf's precision is a C int. A plain trunc wrapped a length over 2 GiB
       // negative, which printf reads as "no precision" and then scans for a NUL past
       // the string's end. Clamped, the part is cut at 2 GiB instead; print and eprint
       // write their top-level strings by length and never come through here.
-      const big = this.nextTemp();
-      lines.push(`  ${big} = icmp sgt i64 ${lenVal}, 2147483647`);
-      const clamped = this.nextTemp();
-      lines.push(`  ${clamped} = select i1 ${big}, i64 2147483647, i64 ${lenVal}`);
-      const lenI32 = this.nextTemp();
-      lines.push(`  ${lenI32} = trunc i64 ${clamped} to i32`);
+      const big = b.icmp("sgt", lenVal, i64c(2147483647));
+      const clamped = b.select(big, i64c(2147483647), lenVal);
+      const lenI32 = b.cast("trunc", clamped, Ty.i32).ref;
       partFmts.push("%.*s");
       partArgs.push({ val: lenI32, type: "i32" });
       partArgs.push({ val: dataPtr, type: "ptr" });
@@ -8416,8 +8414,7 @@ export class Codegen {
     if (tk.tag === "bool") {
       const trueStr = this.addString("true");
       const falseStr = this.addString("false");
-      const boolStr = this.nextTemp();
-      lines.push(`  ${boolStr} = select i1 ${val}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+      const boolStr = b.select(V(val, Ty.i1), V(trueStr.label, Ty.ptr), V(falseStr.label, Ty.ptr)).ref;
       partFmts.push("%s");
       partArgs.push({ val: boolStr, type: "ptr" });
       return;
@@ -8428,8 +8425,7 @@ export class Codegen {
       const slot = `%__ifmt.${this.scopeCounter++}.addr`;
       this.entryAllocas.push(`  ${slot} = alloca [20 x i8]`);
       const n = this.emitIntFmt(lines, slot, val, llvmTy, tk);
-      const n32 = this.nextTemp();
-      lines.push(`  ${n32} = trunc i64 ${n} to i32`);
+      const n32 = b.cast("trunc", V(n, Ty.i64), Ty.i32).ref;
       partFmts.push("%.*s");
       partArgs.push({ val: n32, type: "i32" });
       partArgs.push({ val: slot, type: "ptr" });
@@ -8670,15 +8666,16 @@ export class Codegen {
     this.hasStringType = true;
     this.needsMemcpy = true;
     this.needsFree = true;
+    const b = new LlvmTextBuilder(lines, this);
+    const ptrV = (v: string) => val(v, Ty.ptr);
+    const i64V = (v: string) => val(v, Ty.i64);
     type P = { kind: "string" | "int" | "bool" | "float"; ptr?: string; len?: string; val: string; ty: string; tk: TypeKind };
     const ps: P[] = [];
     const tempBufs: string[] = [];
     let total = "0";
     const add = (n: string) => {
       if (total === "0") { total = n; return; }
-      const t = this.nextTemp();
-      lines.push(`  ${t} = add i64 ${total}, ${n}`);
-      total = t;
+      total = b.binop("add", i64V(total), i64V(n)).ref;
     };
     for (const part of parts) {
       let tk = part.tk;
@@ -8686,17 +8683,14 @@ export class Codegen {
       const kind = this.fastFormatPart(tk)!;
       const p: P = { kind, val: part.val, ty: kind === "int" ? this.llvmType(tk) : part.ty, tk };
       if (kind === "string") {
-        p.ptr = this.nextTemp();
-        lines.push(`  ${p.ptr} = extractvalue %String ${part.val}, 0`);
-        p.len = this.nextTemp();
-        lines.push(`  ${p.len} = extractvalue %String ${part.val}, 1`);
+        p.ptr = b.extractvalue(val(part.val, STRING_TY), 0, Ty.ptr).ref;
+        p.len = b.extractvalue(val(part.val, STRING_TY), 1, Ty.i64).ref;
         add(p.len);
       } else if (kind === "bool") {
         const t = this.addString("true"), f = this.addString("false");
-        p.ptr = this.nextTemp();
-        lines.push(`  ${p.ptr} = select i1 ${part.val}, ptr ${t.label}, ptr ${f.label}`);
-        p.len = this.nextTemp();
-        lines.push(`  ${p.len} = select i1 ${part.val}, i64 4, i64 5`);
+        const cond = val(part.val, Ty.i1);
+        p.ptr = b.select(cond, ptrV(t.label), ptrV(f.label)).ref;
+        p.len = b.select(cond, i64c(4), i64c(5)).ref;
         add(p.len);
       } else if (kind === "float") {
         const { buf, len } = this.emitFloatToBuf(part.val, tk.tag === "float" ? tk.bits : 64, lines);
@@ -8709,53 +8703,38 @@ export class Codegen {
       }
       ps.push(p);
     }
-    const lenPtr = this.nextTemp();
-    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
-    const oldLen = this.nextTemp();
-    lines.push(`  ${oldLen} = load i64, ptr ${lenPtr}`);
-    const dataPtr = this.nextTemp();
-    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
-    const oldData = this.nextTemp();
-    lines.push(`  ${oldData} = load ptr, ptr ${dataPtr}`);
-    const oldI = this.nextTemp();
-    lines.push(`  ${oldI} = ptrtoint ptr ${oldData} to i64`);
-    const data = this.nextTemp();
-    lines.push(`  ${data} = call ptr ${this.strReserveFn()}(ptr ${strPtr}, i64 ${total})`);
-    this.emitAllocNullCheck(lines, data, "fmtapp", span);
+    const sp = ptrV(strPtr);
+    const lenPtr = b.gep(STRING_TY, sp, [i32c(0), i32c(1)]);
+    const oldLen = b.load(Ty.i64, lenPtr);
+    const dataPtr = b.gep(STRING_TY, sp, [i32c(0), i32c(0)]);
+    const oldData = b.load(Ty.ptr, dataPtr);
+    const oldI = b.cast("ptrtoint", oldData, Ty.i64);
+    const data = b.call(Ty.ptr, this.strReserveFn(), [sp, i64V(total)]);
+    this.emitAllocNullCheck(lines, data.ref, "fmtapp", span);
     let pos = oldLen;
     for (const p of ps) {
-      const dst = this.nextTemp();
-      lines.push(`  ${dst} = getelementptr i8, ptr ${data}, i64 ${pos}`);
+      const dst = b.gep(Ty.i8, data, [pos]);
       let n: string;
       if (p.kind === "int") {
-        n = this.emitIntFmt(lines, dst, p.val, p.ty, p.tk as TypeKind & { tag: "int" });
+        n = this.emitIntFmt(lines, dst.ref, p.val, p.ty, p.tk as TypeKind & { tag: "int" });
       } else {
-        let src = p.ptr!;
+        let src = ptrV(p.ptr!);
         if (p.kind === "string") {
-          const ai = this.nextTemp();
-          lines.push(`  ${ai} = ptrtoint ptr ${src} to i64`);
-          const off = this.nextTemp();
-          lines.push(`  ${off} = sub i64 ${ai}, ${oldI}`);
-          const inside = this.nextTemp();
-          lines.push(`  ${inside} = icmp ult i64 ${off}, ${oldLen}`);
-          const moved = this.nextTemp();
-          lines.push(`  ${moved} = getelementptr i8, ptr ${data}, i64 ${off}`);
-          const sel = this.nextTemp();
-          lines.push(`  ${sel} = select i1 ${inside}, ptr ${moved}, ptr ${src}`);
-          src = sel;
+          const ai = b.cast("ptrtoint", src, Ty.i64);
+          const off = b.binop("sub", ai, oldI);
+          const inside = b.icmp("ult", off, oldLen);
+          const moved = b.gep(Ty.i8, data, [off]);
+          src = b.select(inside, moved, src);
         }
-        lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${src}, i64 ${p.len})`);
+        b.callDiscard(Ty.ptr, "@memcpy", [dst, src, i64V(p.len!)]);
         n = p.len!;
       }
-      const np = this.nextTemp();
-      lines.push(`  ${np} = add i64 ${pos}, ${n}`);
-      pos = np;
+      pos = b.binop("add", pos, i64V(n));
     }
-    lines.push(`  store i64 ${pos}, ptr ${lenPtr}`);
-    const nul = this.nextTemp();
-    lines.push(`  ${nul} = getelementptr i8, ptr ${data}, i64 ${pos}`);
-    lines.push(`  store i8 0, ptr ${nul}`);
-    for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+    b.store(pos, lenPtr);
+    const nul = b.gep(Ty.i8, data, [pos]);
+    b.store(val("0", Ty.i8), nul);
+    for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
   }
 
   // Append `n` bytes of `src` to a buffer held in three caller allocas
@@ -8779,22 +8758,22 @@ export class Codegen {
     const buf = `%__disp_buf.${n}.addr`;
     const len = `%__disp_len.${n}.addr`;
     const cap = `%__disp_cap.${n}.addr`;
-    this.entryAllocas.push(`  ${buf} = alloca ptr`);
-    this.entryAllocas.push(`  ${len} = alloca i64`);
-    this.entryAllocas.push(`  ${cap} = alloca i64`);
-    const initial = this.nextTemp();
-    lines.push(`  ${initial} = call ptr @malloc(i64 64)`);
-    lines.push(`  store i8 0, ptr ${initial}`);
-    lines.push(`  store ptr ${initial}, ptr ${buf}`);
-    lines.push(`  store i64 0, ptr ${len}`);
-    lines.push(`  store i64 64, ptr ${cap}`);
+    const b = new LlvmTextBuilder(lines, this);
+    const bufV = b.entryAlloca(buf, Ty.ptr);
+    const lenV = b.entryAlloca(len, Ty.i64);
+    const capV = b.entryAlloca(cap, Ty.i64);
+    const initial = b.call(Ty.ptr, "@malloc", [i64c(64)]);
+    b.store(val("0", Ty.i8), initial);
+    b.store(initial, bufV);
+    b.store(i64c(0), lenV);
+    b.store(i64c(64), capV);
     return { buf, len, cap };
   }
 
   private appendLiteral(slots: { buf: string; len: string; cap: string }, text: string, lines: string[]): void {
     if (text.length === 0) return;
     const s = this.addString(text);
-    lines.push(`  call void ${this.bufAppendFn()}(ptr ${slots.buf}, ptr ${slots.len}, ptr ${slots.cap}, ptr ${s.label}, i64 ${text.length})`);
+    new LlvmTextBuilder(lines, this).callDiscard(Ty.void, this.bufAppendFn(), [slots.buf, slots.len, slots.cap, s.label].map(r => val(r, Ty.ptr)).concat(i64c(text.length)));
   }
 
   // Render one element and append it. `quoteStrings` matches emitStructDisplay:
@@ -8815,164 +8794,134 @@ export class Codegen {
     this.emitDisplayPart(tk, val, this.llvmType(tk), lines, fmts, args, temps);
     if (quote) fmts.push(`"`);
     const rendered = this.emitSnprintfToBuf(fmts.join(""), args, temps, lines);
-    const n = this.nextTemp();
-    lines.push(`  ${n} = call i64 @strlen(ptr ${rendered})`);
-    lines.push(`  call void ${this.bufAppendFn()}(ptr ${slots.buf}, ptr ${slots.len}, ptr ${slots.cap}, ptr ${rendered}, i64 ${n})`);
-    lines.push(`  call void @free(ptr ${rendered})`);
+    const b = new LlvmTextBuilder(lines, this);
+    const n = b.call(Ty.i64, "@strlen", [V(rendered, Ty.ptr)]);
+    b.callDiscard(Ty.void, this.bufAppendFn(), [slots.buf, slots.len, slots.cap, rendered].map(r => V(r, Ty.ptr)).concat(n));
+    b.callDiscard(Ty.void, "@free", [V(rendered, Ty.ptr)]);
   }
 
   // `[a, b, c]` for a Vec (runtime length) or a fixed array (unrolled — the length
   // is a compile-time constant, so a loop would only cost IR).
   private emitSeqDisplay(tk: TypeKind & { tag: "vec" | "array" }, val: string, lines: string[]): string {
+    const b = new LlvmTextBuilder(lines, this);
     const elem = tk.tag === "vec" ? tk.element : tk.element;
     const slots = this.newDisplayBuf(lines);
     this.appendLiteral(slots, "[", lines);
 
     if (tk.tag === "array" && tk.size !== null) {
       const elemTy = this.llvmType(elem);
+      const arrTy = Ty.of(`[${tk.size} x ${elemTy}]`);
       for (let i = 0; i < tk.size; i++) {
         if (i > 0) this.appendLiteral(slots, ", ", lines);
-        const e = this.nextTemp();
-        lines.push(`  ${e} = extractvalue [${tk.size} x ${elemTy}] ${val}, ${i}`);
-        this.appendElement(elem, e, slots, lines);
+        const e = b.extractvalue(V(val, arrTy), i, Ty.of(elemTy));
+        this.appendElement(elem, e.ref, slots, lines);
       }
     } else {
-      const data = this.nextTemp();
-      const len = this.nextTemp();
-      lines.push(`  ${data} = extractvalue %Vec ${val}, 0`);
-      lines.push(`  ${len} = extractvalue %Vec ${val}, 1`);
+      const data = b.extractvalue(V(val, VEC_TY), 0, Ty.ptr);
+      const len = b.extractvalue(V(val, VEC_TY), 1, Ty.i64);
       const elemTy = this.llvmType(elem);
       const n = this.scopeCounter++;
-      const idxAddr = `%__disp_i.${n}.addr`;
-      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-      lines.push(`  store i64 0, ptr ${idxAddr}`);
-      const cond = this.nextLabel("disp.cond");
-      const body = this.nextLabel("disp.body");
-      const end = this.nextLabel("disp.end");
-      const sep = this.nextLabel("disp.sep");
-      lines.push(`  br label %${cond}`);
-      lines.push(`${cond}:`);
-      const i = this.nextTemp();
-      lines.push(`  ${i} = load i64, ptr ${idxAddr}`);
-      const more = this.nextTemp();
-      lines.push(`  ${more} = icmp slt i64 ${i}, ${len}`);
-      lines.push(`  br i1 ${more}, label %${sep}, label %${end}`);
-      lines.push(`${sep}:`);
-      const first = this.nextTemp();
-      lines.push(`  ${first} = icmp eq i64 ${i}, 0`);
-      const sepDone = this.nextLabel("disp.sepdone");
-      const sepDo = this.nextLabel("disp.sepdo");
-      lines.push(`  br i1 ${first}, label %${sepDone}, label %${sepDo}`);
-      lines.push(`${sepDo}:`);
+      const idxAddr = b.entryAlloca(`%__disp_i.${n}.addr`, Ty.i64);
+      b.store(i64c(0), idxAddr);
+      const cond = b.newBlock("disp.cond");
+      const body = b.newBlock("disp.body");
+      const end = b.newBlock("disp.end");
+      const sep = b.newBlock("disp.sep");
+      b.br(cond);
+      b.position(cond);
+      const i = b.load(Ty.i64, idxAddr);
+      const more = b.icmp("slt", i, len);
+      b.condBr(more, sep, end);
+      b.position(sep);
+      const first = b.icmp("eq", i, i64c(0));
+      const sepDone = b.newBlock("disp.sepdone");
+      const sepDo = b.newBlock("disp.sepdo");
+      b.condBr(first, sepDone, sepDo);
+      b.position(sepDo);
       this.appendLiteral(slots, ", ", lines);
-      lines.push(`  br label %${sepDone}`);
-      lines.push(`${sepDone}:`);
-      lines.push(`  br label %${body}`);
-      lines.push(`${body}:`);
-      const ePtr = this.nextTemp();
-      lines.push(`  ${ePtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
-      const e = this.nextTemp();
-      lines.push(`  ${e} = load ${elemTy}, ptr ${ePtr}`);
-      this.appendElement(elem, e, slots, lines);
-      const next = this.nextTemp();
-      lines.push(`  ${next} = add i64 ${i}, 1`);
-      lines.push(`  store i64 ${next}, ptr ${idxAddr}`);
-      lines.push(`  br label %${cond}`);
-      lines.push(`${end}:`);
+      b.br(sepDone);
+      b.position(sepDone);
+      b.br(body);
+      b.position(body);
+      const ePtr = b.gep(Ty.of(elemTy), data, [i]);
+      const e = b.load(Ty.of(elemTy), ePtr);
+      this.appendElement(elem, e.ref, slots, lines);
+      const next = b.binop("add", i, i64c(1));
+      b.store(next, idxAddr);
+      b.br(cond);
+      b.position(end);
     }
     this.appendLiteral(slots, "]", lines);
-    const out = this.nextTemp();
-    lines.push(`  ${out} = load ptr, ptr ${slots.buf}`);
-    return out;
+    return b.load(Ty.ptr, V(slots.buf, Ty.ptr)).ref;
   }
 
   // `{k: v, k: v}` over the open-addressed table, skipping unoccupied slots —
   // same state==1 test the `for k, v in map` lowering uses.
   private emitMapDisplay(tk: TypeKind & { tag: "hashmap" }, val: string, lines: string[]): string {
+    const b = new LlvmTextBuilder(lines, this);
     const slots = this.newDisplayBuf(lines);
     this.appendLiteral(slots, "{", lines);
 
-    const data = this.nextTemp();
-    const cap = this.nextTemp();
-    lines.push(`  ${data} = extractvalue %HashMap ${val}, 0`);
-    lines.push(`  ${cap} = extractvalue %HashMap ${val}, 2`);
-    const entryTy = this.hashMapEntryType(tk.key, tk.value);
-    const keyTy = this.llvmType(tk.key);
-    const valTy = this.llvmType(tk.value);
+    const data = b.extractvalue(V(val, HASHMAP_TY), 0, Ty.ptr);
+    const cap = b.extractvalue(V(val, HASHMAP_TY), 2, Ty.i64);
+    const entryTy = Ty.of(this.hashMapEntryType(tk.key, tk.value));
+    const keyTy = Ty.of(this.llvmType(tk.key));
+    const valTy = Ty.of(this.llvmType(tk.value));
 
     const n = this.scopeCounter++;
-    const idxAddr = `%__dispm_i.${n}.addr`;
-    const seenAddr = `%__dispm_seen.${n}.addr`;
-    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
-    this.entryAllocas.push(`  ${seenAddr} = alloca i64`);
-    lines.push(`  store i64 0, ptr ${idxAddr}`);
-    lines.push(`  store i64 0, ptr ${seenAddr}`);
+    const idxAddr = b.entryAlloca(`%__dispm_i.${n}.addr`, Ty.i64);
+    const seenAddr = b.entryAlloca(`%__dispm_seen.${n}.addr`, Ty.i64);
+    b.store(i64c(0), idxAddr);
+    b.store(i64c(0), seenAddr);
 
-    const cond = this.nextLabel("dispm.cond");
-    const check = this.nextLabel("dispm.check");
-    const body = this.nextLabel("dispm.body");
-    const step = this.nextLabel("dispm.next");
-    const end = this.nextLabel("dispm.end");
-    lines.push(`  br label %${cond}`);
-    lines.push(`${cond}:`);
-    const i = this.nextTemp();
-    lines.push(`  ${i} = load i64, ptr ${idxAddr}`);
-    const more = this.nextTemp();
-    lines.push(`  ${more} = icmp ult i64 ${i}, ${cap}`);
-    lines.push(`  br i1 ${more}, label %${check}, label %${end}`);
+    const cond = b.newBlock("dispm.cond");
+    const check = b.newBlock("dispm.check");
+    const body = b.newBlock("dispm.body");
+    const step = b.newBlock("dispm.next");
+    const end = b.newBlock("dispm.end");
+    b.br(cond);
+    b.position(cond);
+    const i = b.load(Ty.i64, idxAddr);
+    const more = b.icmp("ult", i, cap);
+    b.condBr(more, check, end);
 
-    lines.push(`${check}:`);
-    const entryPtr = this.nextTemp();
-    lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${i}`);
-    const statePtr = this.nextTemp();
-    lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 0`);
-    const state = this.nextTemp();
-    lines.push(`  ${state} = load i8, ptr ${statePtr}`);
-    const occupied = this.nextTemp();
-    lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
-    lines.push(`  br i1 ${occupied}, label %${body}, label %${step}`);
+    b.position(check);
+    const entryPtr = b.gep(entryTy, data, [i]);
+    const statePtr = b.gep(entryTy, entryPtr, [i32c(0), i32c(0)]);
+    const state = b.load(Ty.i8, statePtr);
+    const occupied = b.icmp("eq", state, V("1", Ty.i8));
+    b.condBr(occupied, body, step);
 
-    lines.push(`${body}:`);
-    const seen = this.nextTemp();
-    lines.push(`  ${seen} = load i64, ptr ${seenAddr}`);
-    const isFirst = this.nextTemp();
-    lines.push(`  ${isFirst} = icmp eq i64 ${seen}, 0`);
-    const sepDone = this.nextLabel("dispm.sepdone");
-    const sepDo = this.nextLabel("dispm.sepdo");
-    lines.push(`  br i1 ${isFirst}, label %${sepDone}, label %${sepDo}`);
-    lines.push(`${sepDo}:`);
+    b.position(body);
+    const seen = b.load(Ty.i64, seenAddr);
+    const isFirst = b.icmp("eq", seen, i64c(0));
+    const sepDone = b.newBlock("dispm.sepdone");
+    const sepDo = b.newBlock("dispm.sepdo");
+    b.condBr(isFirst, sepDone, sepDo);
+    b.position(sepDo);
     this.appendLiteral(slots, ", ", lines);
-    lines.push(`  br label %${sepDone}`);
-    lines.push(`${sepDone}:`);
-    const seenNext = this.nextTemp();
-    lines.push(`  ${seenNext} = add i64 ${seen}, 1`);
-    lines.push(`  store i64 ${seenNext}, ptr ${seenAddr}`);
-    const kPtr = this.nextTemp();
-    lines.push(`  ${kPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
-    const k = this.nextTemp();
-    lines.push(`  ${k} = load ${keyTy}, ptr ${kPtr}`);
-    this.appendElement(tk.key, k, slots, lines);
+    b.br(sepDone);
+    b.position(sepDone);
+    const seenNext = b.binop("add", seen, i64c(1));
+    b.store(seenNext, seenAddr);
+    const kPtr = b.gep(entryTy, entryPtr, [i32c(0), i32c(1)]);
+    const k = b.load(keyTy, kPtr);
+    this.appendElement(tk.key, k.ref, slots, lines);
     this.appendLiteral(slots, ": ", lines);
-    const vPtr = this.nextTemp();
-    lines.push(`  ${vPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    const v = this.nextTemp();
-    lines.push(`  ${v} = load ${valTy}, ptr ${vPtr}`);
-    this.appendElement(tk.value, v, slots, lines);
-    lines.push(`  br label %${step}`);
+    const vPtr = b.gep(entryTy, entryPtr, [i32c(0), i32c(2)]);
+    const v = b.load(valTy, vPtr);
+    this.appendElement(tk.value, v.ref, slots, lines);
+    b.br(step);
 
-    lines.push(`${step}:`);
-    const iNow = this.nextTemp();
-    lines.push(`  ${iNow} = load i64, ptr ${idxAddr}`);
-    const iNext = this.nextTemp();
-    lines.push(`  ${iNext} = add i64 ${iNow}, 1`);
-    lines.push(`  store i64 ${iNext}, ptr ${idxAddr}`);
-    lines.push(`  br label %${cond}`);
-    lines.push(`${end}:`);
+    b.position(step);
+    const iNow = b.load(Ty.i64, idxAddr);
+    const iNext = b.binop("add", iNow, i64c(1));
+    b.store(iNext, idxAddr);
+    b.br(cond);
+    b.position(end);
 
     this.appendLiteral(slots, "}", lines);
-    const out = this.nextTemp();
-    lines.push(`  ${out} = load ptr, ptr ${slots.buf}`);
-    return out;
+    return b.load(Ty.ptr, V(slots.buf, Ty.ptr)).ref;
   }
 
   // snprintf a struct into a malloc'd buffer formatted as `Name { f1: v1, f2: v2 }`.
@@ -9015,6 +8964,7 @@ export class Codegen {
   private emitEnumDisplay(enumName: string, enumVal: string, lines: string[]): string {
     this.needsSnprintf = true;
     this.needsMalloc = true;
+    const b = new LlvmTextBuilder(lines, this);
     const layout = this.enumLayouts.get(enumName);
     if (!layout) {
       // generic monomorphization may not have registered yet — fall back to "<enum>"
@@ -9022,38 +8972,28 @@ export class Codegen {
       // alloc a buf with a copy of the literal so caller can free uniformly
       this.needsStrlen = true;
       this.needsMemcpy = true;
-      const len = this.nextTemp();
-      lines.push(`  ${len} = call i64 @strlen(ptr ${fb.label})`);
-      const sz = this.nextTemp();
-      lines.push(`  ${sz} = add i64 ${len}, 1`);
-      const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${sz})`);
-      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${fb.label}, i64 ${sz})`);
-      return buf;
+      return this.emitCopyLiteral(b, fb.label).ref;
     }
     // Stage enum value into alloca so we can read tag + payload by GEP.
-    const stagePtr = this.nextTemp();
-    lines.push(`  ${stagePtr} = alloca %${enumName}`);
-    lines.push(`  store %${enumName} ${enumVal}, ptr ${stagePtr}`);
-    const tag = this.loadEnumTag(lines, `%${enumName}`, stagePtr);
+    const stagePtr = b.alloca(Ty.of(`%${enumName}`));
+    b.store(val(enumVal, Ty.of(`%${enumName}`)), stagePtr);
+    const tag = this.loadEnumTag(lines, `%${enumName}`, stagePtr.ref);
 
     // Allocate result ptr slot — each arm stores its own buf into it then we phi/load.
-    const resPtr = this.nextTemp();
-    lines.push(`  ${resPtr} = alloca ptr`);
+    const resPtr = b.alloca(Ty.ptr);
 
-    const endLabel = this.nextLabel("enum.disp.end");
+    const endBlk = b.newBlock("enum.disp.end");
     const variants = Array.from(layout.variants.entries());
-    const caseLabels: { tag: number; label: string }[] = [];
+    const caseBlks: [number, Block][] = [];
     for (const [, info] of variants) {
-      caseLabels.push({ tag: info.tag, label: this.nextLabel("enum.disp.case") });
+      caseBlks.push([info.tag, b.newBlock("enum.disp.case")]);
     }
-    const defaultLabel = this.nextLabel("enum.disp.default");
-    const switchCases = caseLabels.map((c) => `i32 ${c.tag}, label %${c.label}`).join(" ");
-    lines.push(`  switch i32 ${tag}, label %${defaultLabel} [${switchCases}]`);
+    const defaultBlk = b.newBlock("enum.disp.default");
+    b.switch(val(tag, Ty.i32), defaultBlk, caseBlks);
 
     for (let vi = 0; vi < variants.length; vi++) {
       const [variantName, info] = variants[vi];
-      lines.push(`${caseLabels[vi].label}:`);
+      b.position(caseBlks[vi][1]);
       const formatParts: string[] = [variantName];
       const snprintfArgs: { val: string; type: string }[] = [];
       const tempBufs: string[] = [];
@@ -9063,9 +9003,8 @@ export class Codegen {
           if (fi > 0) formatParts.push(", ");
           const fk = info.fieldTypeKinds[fi];
           const ft = info.fieldTypes[fi];
-          const fieldPtr = this.enumFieldPtr(lines, `%${enumName}`, stagePtr, info, fi);
-          const fieldVal = this.nextTemp();
-          lines.push(`  ${fieldVal} = load ${ft}, ptr ${fieldPtr}`);
+          const fieldPtr = this.enumFieldPtr(lines, `%${enumName}`, stagePtr.ref, info, fi);
+          const fieldVal = b.load(Ty.of(ft), val(fieldPtr, Ty.ptr)).ref;
           if (fk.tag === "string") {
             formatParts.push(`"`);
             this.emitDisplayPart(fk, fieldVal, ft, lines, formatParts, snprintfArgs, tempBufs);
@@ -9077,28 +9016,31 @@ export class Codegen {
         formatParts.push(")");
       }
       const buf = this.emitSnprintfToBuf(formatParts.join(""), snprintfArgs, tempBufs, lines);
-      lines.push(`  store ptr ${buf}, ptr ${resPtr}`);
-      lines.push(`  br label %${endLabel}`);
+      b.store(val(buf, Ty.ptr), resPtr);
+      b.br(endBlk);
     }
 
-    lines.push(`${defaultLabel}:`);
+    b.position(defaultBlk);
     const unkFmt = this.addString(`<${display(this.displayNames, enumName)}.?>`);
     this.needsStrlen = true;
     this.needsMemcpy = true;
-    const unkLen = this.nextTemp();
-    lines.push(`  ${unkLen} = call i64 @strlen(ptr ${unkFmt.label})`);
-    const unkSz = this.nextTemp();
-    lines.push(`  ${unkSz} = add i64 ${unkLen}, 1`);
-    const unkBuf = this.nextTemp();
-    lines.push(`  ${unkBuf} = call ptr @malloc(i64 ${unkSz})`);
-    lines.push(`  call ptr @memcpy(ptr ${unkBuf}, ptr ${unkFmt.label}, i64 ${unkSz})`);
-    lines.push(`  store ptr ${unkBuf}, ptr ${resPtr}`);
-    lines.push(`  br label %${endLabel}`);
+    const unkBuf = this.emitCopyLiteral(b, unkFmt.label);
+    b.store(unkBuf, resPtr);
+    b.br(endBlk);
 
-    lines.push(`${endLabel}:`);
-    const out = this.nextTemp();
-    lines.push(`  ${out} = load ptr, ptr ${resPtr}`);
-    return out;
+    b.position(endBlk);
+    return b.load(Ty.ptr, resPtr).ref;
+  }
+
+  // A malloc'd NUL-terminated copy of the string literal at `label`, so a caller can free it
+  // like any other rendered buffer.
+  private emitCopyLiteral(b: LlvmTextBuilder, label: string): Val {
+    const src = val(label, Ty.ptr);
+    const len = b.call(Ty.i64, "@strlen", [src]);
+    const sz = b.binop("add", len, i64c(1));
+    const buf = b.call(Ty.ptr, "@malloc", [sz]);
+    b.callDiscard(Ty.ptr, "@memcpy", [buf, src, sz]);
+    return buf;
   }
 
   // snprintf into a freshly malloc'd buffer; return ptr to it. Frees any temp bufs
@@ -9135,14 +9077,12 @@ export class Codegen {
     const len = this.nextTemp();
     lines.push(`  ${len} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
     this.emitFormatLenCheck(lines, len);
-    const len64 = this.nextTemp();
-    lines.push(`  ${len64} = sext i32 ${len} to i64`);
-    const sz = this.nextTemp();
-    lines.push(`  ${sz} = add i64 ${len64}, 1`);
-    const buf = this.nextTemp();
-    lines.push(`  ${buf} = call ptr @malloc(i64 ${sz})`);
-    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${sz}, ptr ${fmtStr.label}${argsStr})`);
-    for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+    const b = new LlvmTextBuilder(lines, this);
+    const len64 = b.cast("sext", val(len, Ty.i32), Ty.i64);
+    const sz = b.binop("add", len64, i64c(1));
+    const buf = b.call(Ty.ptr, "@malloc", [sz]).ref;
+    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${sz.ref}, ptr ${fmtStr.label}${argsStr})`);
+    for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [val(tb, Ty.ptr)]);
     return buf;
   }
 
@@ -9160,6 +9100,7 @@ export class Codegen {
     const [ptrLines, structPtr] = this.genLValueForArg(expr.value);
     lines.push(...ptrLines);
 
+    const b = new LlvmTextBuilder(lines, this);
     const formatParts: string[] = ["{"];
     const snprintfArgs: { val: string; type: string }[] = [];
     const escapeBufs: string[] = [];
@@ -9169,10 +9110,8 @@ export class Codegen {
       const fk = field.typeKind;
       if (i > 0) formatParts.push(",");
 
-      const fieldPtr = this.nextTemp();
-      lines.push(`  ${fieldPtr} = getelementptr %${valueType.name}, ptr ${structPtr}, i32 0, i32 ${i}`);
-      const fieldVal = this.nextTemp();
-      lines.push(`  ${fieldVal} = load ${field.type}, ptr ${fieldPtr}`);
+      const fieldPtr = b.gep(Ty.of(`%${valueType.name}`), val(structPtr, Ty.ptr), [i32c(0), i32c(i)]);
+      const fieldVal = b.load(Ty.of(field.type), fieldPtr).ref;
 
       formatParts.push(`"${field.name}":`);
 
@@ -9180,31 +9119,24 @@ export class Codegen {
         // escape before snprintf — raw %s of user data produced invalid JSON
         // for quotes/backslashes/newlines
         this.ensureJsonEscapeHelper();
-        const dataPtr = this.nextTemp();
-        lines.push(`  ${dataPtr} = extractvalue %String ${fieldVal}, 0`);
-        const strLen = this.nextTemp();
-        lines.push(`  ${strLen} = extractvalue %String ${fieldVal}, 1`);
-        const escaped = this.nextTemp();
-        lines.push(`  ${escaped} = call %String @milo.json.escape(ptr ${dataPtr}, i64 ${strLen})`);
-        const escPtr = this.nextTemp();
-        lines.push(`  ${escPtr} = extractvalue %String ${escaped}, 0`);
+        const dataPtr = b.extractvalue(val(fieldVal, STRING_TY), 0, Ty.ptr);
+        const strLen = b.extractvalue(val(fieldVal, STRING_TY), 1, Ty.i64);
+        const escaped = b.call(STRING_TY, "@milo.json.escape", [dataPtr, strLen]);
+        const escPtr = b.extractvalue(escaped, 0, Ty.ptr).ref;
         escapeBufs.push(escPtr);
         formatParts.push(`"%s"`);
         snprintfArgs.push({ val: escPtr, type: "ptr" });
       } else if (fk.tag === "bool") {
         const trueStr = this.addString("true");
         const falseStr = this.addString("false");
-        const boolStr = this.nextTemp();
-        lines.push(`  ${boolStr} = select i1 ${fieldVal}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+        const boolStr = b.select(val(fieldVal, Ty.i1), val(trueStr.label, Ty.ptr), val(falseStr.label, Ty.ptr)).ref;
         formatParts.push("%s");
         snprintfArgs.push({ val: boolStr, type: "ptr" });
       } else if (fk.tag === "int") {
         let passVal = fieldVal;
         let passType = field.type;
         if (fk.bits < 32) {
-          const widened = this.nextTemp();
-          lines.push(`  ${widened} = ${fk.signed ? "sext" : "zext"} ${field.type} ${fieldVal} to i32`);
-          passVal = widened;
+          passVal = b.cast(fk.signed ? "sext" : "zext", val(fieldVal, Ty.of(field.type)), Ty.i32).ref;
           passType = "i32";
         }
         formatParts.push(fk.bits <= 32 ? (fk.signed ? "%d" : "%u") : (fk.signed ? "%lld" : "%llu"));
@@ -9224,27 +9156,21 @@ export class Codegen {
     // snprintf(null, 0, fmt, ...) to measure
     const lenResult = this.nextTemp();
     lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmt.label}${argsStr})`);
-    const len64 = this.nextTemp();
-    lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
-    const bufSize = this.nextTemp();
-    lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
-    const buf = this.emitStrAlloc(lines, bufSize, "jsonstr", expr.span);
+    const len64 = b.cast("sext", val(lenResult, Ty.i32), Ty.i64);
+    const bufSize = b.binop("add", len64, i64c(1));
+    const buf = this.emitStrAlloc(lines, bufSize.ref, "jsonstr", expr.span);
 
     // snprintf(buf, size, fmt, ...) to write
-    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}${argsStr})`);
+    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize.ref}, ptr ${fmt.label}${argsStr})`);
 
     if (escapeBufs.length > 0) {
       this.needsFree = true;
-      for (const eb of escapeBufs) lines.push(`  call void @free(ptr ${eb})`);
+      for (const eb of escapeBufs) b.callDiscard(Ty.void, "@free", [val(eb, Ty.ptr)]);
     }
 
-    const s0 = this.nextTemp();
-    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
-    const s1 = this.nextTemp();
-    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
-    const s2 = this.nextTemp();
-    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
-    return [lines, s2, "%String"];
+    const s0 = b.insertvalue(val("undef", STRING_TY), val(buf, Ty.ptr), 0);
+    const s1 = b.insertvalue(s0, len64, 1);
+    return asGen(lines, b.insertvalue(s1, bufSize, 2));
   }
 
   // milo.json.escape(src, len) -> %String: RFC 8259 escaping, mirroring
@@ -9284,47 +9210,58 @@ export class Codegen {
     const ty = bits === 32 ? "float" : "double";
     const parse = bits === 32 ? "@strtof" : "@strtod";
     // The digit walk and snprintf both want a double; f32 is promoted once.
-    const widen = bits === 32
-      ? [`  %d = fpext float %v to double`]
+    const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
+    // Fixed local names, as the hand-written helper had them.
+    const R = (name: string, t: Ty) => b.reserveNamed(`%${name}`, t);
+    const blk = (name: string): Block => ({ name });
+    const fty = Ty.of(ty);
+    const dbl = Ty.of("double");
+    // `define private`, not defineFn's `internal`.
+    lines.push(`define private i64 @milo.fmt.f${bits}(${ty} %v, ptr %buf) {`, `entry.bb:`);
+    const v = val("%v", fty);
+    const buf = val("%buf", Ty.ptr);
+    let d: Val;
+    if (bits === 32) {
+      lines.push(`  %d = fpext float %v to double`);
+      d = val("%d", dbl);
+    } else {
       // `x + -0.0` is the identity for every x; `x + 0.0` turned -0.0 into +0.0, and
       // print(-0.0) said "0".
-      : [`  %d = fadd double %v, -0.000000e+00`];
-    this.dropHelperBodies.push([
-      `define private i64 @milo.fmt.f${bits}(${ty} %v, ptr %buf) {`,
-      `entry.bb:`,
-      ...widen,
-      `  %isneg = fcmp olt double %d, 0.000000e+00`,
-      `  %negd = fneg double %d`,
-      `  %av = select i1 %isneg, double %negd, double %d`,
-      `  br label %dloop`,
-      `dloop:`,
-      `  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]`,
-      `  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]`,
-      `  %room = icmp slt i32 %dig, ${cap}`,
-      `  %over = fcmp oge double %av, %pow`,
-      `  %grow = and i1 %room, %over`,
-      `  br i1 %grow, label %dnext, label %ploop`,
-      `dnext:`,
-      `  %dignext = add i32 %dig, 1`,
-      `  %pownext = fmul double %pow, 1.000000e+01`,
-      `  br label %dloop`,
-      `ploop:`,
-      `  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]`,
-      `  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 ${F64_BUF}, ptr ${fmt.label}, i32 %p, double %d)`,
-      `  %back = call ${ty} ${parse}(ptr %buf, ptr null)`,
-      `  %exact = fcmp oeq ${ty} %back, %v`,
-      `  %last = icmp sge i32 %p, ${cap}`,
-      `  %stop = or i1 %exact, %last`,
-      `  br i1 %stop, label %fin, label %again`,
-      `again:`,
-      `  %pnext = add i32 %p, 1`,
-      `  br label %ploop`,
-      `fin:`,
-      `  %n64 = sext i32 %n to i64`,
-      `  ret i64 %n64`,
-      `}`,
-      ``,
-    ]);
+      d = b.binop("fadd", v, val("-0.000000e+00", dbl), R("d", dbl));
+    }
+    const isneg = b.fcmp("olt", d, val("0.000000e+00", dbl), R("isneg", Ty.i1));
+    lines.push(`  %negd = fneg double %d`);
+    const av = b.select(isneg, val("%negd", dbl), d, R("av", dbl));
+    b.br(blk("dloop"));
+    b.position(blk("dloop"));
+    lines.push(`  %dig = phi i32 [ 1, %entry.bb ], [ %dignext, %dnext ]`);
+    lines.push(`  %pow = phi double [ 1.000000e+01, %entry.bb ], [ %pownext, %dnext ]`);
+    const dig = val("%dig", Ty.i32);
+    const room = b.icmp("slt", dig, i32c(cap), R("room", Ty.i1));
+    const over = b.fcmp("oge", av, val("%pow", dbl), R("over", Ty.i1));
+    const grow = b.binop("and", room, over, R("grow", Ty.i1));
+    b.condBr(grow, blk("dnext"), blk("ploop"));
+    b.position(blk("dnext"));
+    b.binop("add", dig, i32c(1), R("dignext", Ty.i32));
+    lines.push(`  %pownext = fmul double %pow, 1.000000e+01`);
+    b.br(blk("dloop"));
+    b.position(blk("ploop"));
+    lines.push(`  %p = phi i32 [ %dig, %dloop ], [ %pnext, %again ]`);
+    const p = val("%p", Ty.i32);
+    lines.push(`  %n = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 ${F64_BUF}, ptr ${fmt.label}, i32 %p, double %d)`);
+    const back = b.call(fty, parse, [buf, val("null", Ty.ptr)], R("back", fty));
+    const exact = b.fcmp("oeq", back, v, R("exact", Ty.i1));
+    const last = b.icmp("sge", p, i32c(cap), R("last", Ty.i1));
+    const stop = b.binop("or", exact, last, R("stop", Ty.i1));
+    b.condBr(stop, blk("fin"), blk("again"));
+    b.position(blk("again"));
+    b.binop("add", p, i32c(1), R("pnext", Ty.i32));
+    b.br(blk("ploop"));
+    b.position(blk("fin"));
+    b.ret(b.cast("sext", val("%n", Ty.i32), Ty.i64, R("n64", Ty.i64)));
+    lines.push(`}`, ``);
+    this.dropHelperBodies.push(lines);
   }
 
   // Formats a float into a fresh malloc'd buffer and returns it. Callers own the
@@ -9334,15 +9271,14 @@ export class Codegen {
     const w = bits === 32 ? 32 : 64;
     this.ensureFloatFormatHelper(w);
     this.needsMalloc = true;
+    const b = new LlvmTextBuilder(lines, this);
     let buf: string;
     if (asString) {
       buf = this.emitStrAlloc(lines, String(F64_BUF), "ftos");
     } else {
-      buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${F64_BUF})`);
+      buf = b.call(Ty.ptr, "@malloc", [i64c(F64_BUF)]).ref;
     }
-    const len = this.nextTemp();
-    lines.push(`  ${len} = call i64 @milo.fmt.f${w}(${w === 32 ? "float" : "double"} ${val}, ptr ${buf})`);
+    const len = b.call(Ty.i64, `@milo.fmt.f${w}`, [V(val, Ty.of(w === 32 ? "float" : "double")), V(buf, Ty.ptr)]).ref;
     return { buf, len };
   }
 
@@ -9350,91 +9286,100 @@ export class Codegen {
     if (this.generatedJsonEscapeHelper) return;
     this.generatedJsonEscapeHelper = true;
     this.needsMalloc = true;
-    this.dropHelperBodies.push([
-      `define private %String @milo.json.escape(ptr %src, i64 %len) {`,
-      `entry.bb:`,
-      `  %cap0 = mul i64 %len, 6`,
-      `  %cap = add i64 %cap0, 1`,
-      `  %buf = call ptr @malloc(i64 %cap)`,
-      `  br label %loop`,
-      `loop:`,
-      `  %i = phi i64 [ 0, %entry.bb ], [ %inext, %cont ]`,
-      `  %o = phi i64 [ 0, %entry.bb ], [ %onext, %cont ]`,
-      `  %done = icmp sge i64 %i, %len`,
-      `  br i1 %done, label %fin, label %body`,
-      `body:`,
-      `  %cp = getelementptr i8, ptr %src, i64 %i`,
-      `  %c = load i8, ptr %cp`,
-      `  %isq = icmp eq i8 %c, 34`,
-      `  %isb = icmp eq i8 %c, 92`,
-      `  %isn = icmp eq i8 %c, 10`,
-      `  %ist = icmp eq i8 %c, 9`,
-      `  %isr = icmp eq i8 %c, 13`,
-      `  %e1 = or i1 %isq, %isb`,
-      `  %e2 = or i1 %e1, %isn`,
-      `  %e3 = or i1 %e2, %ist`,
-      `  %esc = or i1 %e3, %isr`,
-      `  %s1 = select i1 %isn, i8 110, i8 %c`,
-      `  %s2 = select i1 %ist, i8 116, i8 %s1`,
-      `  %s3 = select i1 %isr, i8 114, i8 %s2`,
-      `  br i1 %esc, label %escblk, label %notnamed`,
-      `notnamed:`,
-      `  %isctl = icmp ult i8 %c, 32`,
-      `  br i1 %isctl, label %ctlblk, label %plain`,
-      `escblk:`,
-      `  %ep0 = getelementptr i8, ptr %buf, i64 %o`,
-      `  store i8 92, ptr %ep0`,
-      `  %eo1 = add i64 %o, 1`,
-      `  %ep1 = getelementptr i8, ptr %buf, i64 %eo1`,
-      `  store i8 %s3, ptr %ep1`,
-      `  %eo2 = add i64 %o, 2`,
-      `  br label %cont`,
-      `ctlblk:`,
-      // \u00XX — c < 32 so the high nibble is 0 or 1, always a digit
-      `  %cp0 = getelementptr i8, ptr %buf, i64 %o`,
-      `  store i8 92, ptr %cp0`,
-      `  %co1 = add i64 %o, 1`,
-      `  %cp1 = getelementptr i8, ptr %buf, i64 %co1`,
-      `  store i8 117, ptr %cp1`,
-      `  %co2 = add i64 %o, 2`,
-      `  %cp2 = getelementptr i8, ptr %buf, i64 %co2`,
-      `  store i8 48, ptr %cp2`,
-      `  %co3 = add i64 %o, 3`,
-      `  %cp3 = getelementptr i8, ptr %buf, i64 %co3`,
-      `  store i8 48, ptr %cp3`,
-      `  %hi = lshr i8 %c, 4`,
-      `  %hid = add i8 %hi, 48`,
-      `  %co4 = add i64 %o, 4`,
-      `  %cp4 = getelementptr i8, ptr %buf, i64 %co4`,
-      `  store i8 %hid, ptr %cp4`,
-      `  %lo = and i8 %c, 15`,
-      `  %lodig = add i8 %lo, 48`,
-      `  %loalpha = add i8 %lo, 87`,
-      `  %lolt = icmp ult i8 %lo, 10`,
-      `  %lod = select i1 %lolt, i8 %lodig, i8 %loalpha`,
-      `  %co5 = add i64 %o, 5`,
-      `  %cp5 = getelementptr i8, ptr %buf, i64 %co5`,
-      `  store i8 %lod, ptr %cp5`,
-      `  %co6 = add i64 %o, 6`,
-      `  br label %cont`,
-      `plain:`,
-      `  %pp = getelementptr i8, ptr %buf, i64 %o`,
-      `  store i8 %c, ptr %pp`,
-      `  %po = add i64 %o, 1`,
-      `  br label %cont`,
-      `cont:`,
-      `  %onext = phi i64 [ %eo2, %escblk ], [ %co6, %ctlblk ], [ %po, %plain ]`,
-      `  %inext = add i64 %i, 1`,
-      `  br label %loop`,
-      `fin:`,
-      `  %np = getelementptr i8, ptr %buf, i64 %o`,
-      `  store i8 0, ptr %np`,
-      `  %r0 = insertvalue %String undef, ptr %buf, 0`,
-      `  %r1 = insertvalue %String %r0, i64 %o, 1`,
-      `  %r2 = insertvalue %String %r1, i64 %cap, 2`,
-      `  ret %String %r2`,
-      `}`,
-    ]);
+    const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
+    // Fixed local names, as the hand-written helper had them.
+    const R = (name: string, t: Ty) => b.reserveNamed(`%${name}`, t);
+    const blk = (name: string): Block => ({ name });
+    const i8c = (n: number) => val(String(n), Ty.i8);
+    // `define private`, not defineFn's `internal`.
+    lines.push(`define private %String @milo.json.escape(ptr %src, i64 %len) {`, `entry.bb:`);
+    const src = val("%src", Ty.ptr);
+    const len = val("%len", Ty.i64);
+    const cap0 = b.binop("mul", len, i64c(6), R("cap0", Ty.i64));
+    const cap = b.binop("add", cap0, i64c(1), R("cap", Ty.i64));
+    const buf = b.call(Ty.ptr, "@malloc", [cap], R("buf", Ty.ptr));
+    b.br(blk("loop"));
+    b.position(blk("loop"));
+    lines.push(`  %i = phi i64 [ 0, %entry.bb ], [ %inext, %cont ]`);
+    lines.push(`  %o = phi i64 [ 0, %entry.bb ], [ %onext, %cont ]`);
+    const i = val("%i", Ty.i64);
+    const o = val("%o", Ty.i64);
+    const done = b.icmp("sge", i, len, R("done", Ty.i1));
+    b.condBr(done, blk("fin"), blk("body"));
+    b.position(blk("body"));
+    const cp = b.gep(Ty.i8, src, [i], R("cp", Ty.ptr));
+    const c = b.load(Ty.i8, cp, undefined, undefined, R("c", Ty.i8));
+    const isq = b.icmp("eq", c, i8c(34), R("isq", Ty.i1));
+    const isb = b.icmp("eq", c, i8c(92), R("isb", Ty.i1));
+    const isn = b.icmp("eq", c, i8c(10), R("isn", Ty.i1));
+    const ist = b.icmp("eq", c, i8c(9), R("ist", Ty.i1));
+    const isr = b.icmp("eq", c, i8c(13), R("isr", Ty.i1));
+    const e1 = b.binop("or", isq, isb, R("e1", Ty.i1));
+    const e2 = b.binop("or", e1, isn, R("e2", Ty.i1));
+    const e3 = b.binop("or", e2, ist, R("e3", Ty.i1));
+    const esc = b.binop("or", e3, isr, R("esc", Ty.i1));
+    const s1 = b.select(isn, i8c(110), c, R("s1", Ty.i8));
+    const s2 = b.select(ist, i8c(116), s1, R("s2", Ty.i8));
+    const s3 = b.select(isr, i8c(114), s2, R("s3", Ty.i8));
+    b.condBr(esc, blk("escblk"), blk("notnamed"));
+    b.position(blk("notnamed"));
+    const isctl = b.icmp("ult", c, i8c(32), R("isctl", Ty.i1));
+    b.condBr(isctl, blk("ctlblk"), blk("plain"));
+    b.position(blk("escblk"));
+    const ep0 = b.gep(Ty.i8, buf, [o], R("ep0", Ty.ptr));
+    b.store(i8c(92), ep0);
+    const eo1 = b.binop("add", o, i64c(1), R("eo1", Ty.i64));
+    const ep1 = b.gep(Ty.i8, buf, [eo1], R("ep1", Ty.ptr));
+    b.store(s3, ep1);
+    b.binop("add", o, i64c(2), R("eo2", Ty.i64));
+    b.br(blk("cont"));
+    b.position(blk("ctlblk"));
+    // \u00XX: c < 32 so the high nibble is 0 or 1, always a digit
+    const cp0 = b.gep(Ty.i8, buf, [o], R("cp0", Ty.ptr));
+    b.store(i8c(92), cp0);
+    const co1 = b.binop("add", o, i64c(1), R("co1", Ty.i64));
+    const cp1 = b.gep(Ty.i8, buf, [co1], R("cp1", Ty.ptr));
+    b.store(i8c(117), cp1);
+    const co2 = b.binop("add", o, i64c(2), R("co2", Ty.i64));
+    const cp2 = b.gep(Ty.i8, buf, [co2], R("cp2", Ty.ptr));
+    b.store(i8c(48), cp2);
+    const co3 = b.binop("add", o, i64c(3), R("co3", Ty.i64));
+    const cp3 = b.gep(Ty.i8, buf, [co3], R("cp3", Ty.ptr));
+    b.store(i8c(48), cp3);
+    const hi = b.binop("lshr", c, i8c(4), R("hi", Ty.i8));
+    const hid = b.binop("add", hi, i8c(48), R("hid", Ty.i8));
+    const co4 = b.binop("add", o, i64c(4), R("co4", Ty.i64));
+    const cp4 = b.gep(Ty.i8, buf, [co4], R("cp4", Ty.ptr));
+    b.store(hid, cp4);
+    const lo = b.binop("and", c, i8c(15), R("lo", Ty.i8));
+    const lodig = b.binop("add", lo, i8c(48), R("lodig", Ty.i8));
+    const loalpha = b.binop("add", lo, i8c(87), R("loalpha", Ty.i8));
+    const lolt = b.icmp("ult", lo, i8c(10), R("lolt", Ty.i1));
+    const lod = b.select(lolt, lodig, loalpha, R("lod", Ty.i8));
+    const co5 = b.binop("add", o, i64c(5), R("co5", Ty.i64));
+    const cp5 = b.gep(Ty.i8, buf, [co5], R("cp5", Ty.ptr));
+    b.store(lod, cp5);
+    b.binop("add", o, i64c(6), R("co6", Ty.i64));
+    b.br(blk("cont"));
+    b.position(blk("plain"));
+    const pp = b.gep(Ty.i8, buf, [o], R("pp", Ty.ptr));
+    b.store(c, pp);
+    b.binop("add", o, i64c(1), R("po", Ty.i64));
+    b.br(blk("cont"));
+    b.position(blk("cont"));
+    lines.push(`  %onext = phi i64 [ %eo2, %escblk ], [ %co6, %ctlblk ], [ %po, %plain ]`);
+    b.binop("add", i, i64c(1), R("inext", Ty.i64));
+    b.br(blk("loop"));
+    b.position(blk("fin"));
+    const np = b.gep(Ty.i8, buf, [o], R("np", Ty.ptr));
+    b.store(i8c(0), np);
+    lines.push(`  %r0 = insertvalue %String undef, ptr %buf, 0`);
+    lines.push(`  %r1 = insertvalue %String %r0, i64 %o, 1`);
+    lines.push(`  %r2 = insertvalue %String %r1, i64 %cap, 2`);
+    b.ret(val("%r2", STRING_TY));
+    lines.push(`}`);
+    this.dropHelperBodies.push(lines);
   }
 
   // True for expression forms that yield a freshly-owned value. Place expressions
