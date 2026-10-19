@@ -43,10 +43,9 @@ function caseValue(v: bigint | number | string | boolean): bigint {
 
 export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSlot?: ForkSlot): [string[], boolean] {
   const lines: string[] = [];
-  const [subjLines, subjVal, subjTy] = ctx.genExpr(stmt.subject);
-  lines.push(...subjLines);
+  const subjVal = ctx.genVal(stmt.subject, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const subj = val(subjVal, Ty.of(subjTy));
+  const subj = subjVal;
 
   const endBlock = b.newBlock("match.end");
   let allArmsTerminated = true;
@@ -126,7 +125,7 @@ export function genLiteralMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }
       const litStr = ctx.addString(String(pat.value));
       const lit0 = b.insertvalue(val("undef", STRING), val(litStr.label, Ty.ptr), 0);
       const lit = b.insertvalue(lit0, val(String(litStr.length - 1), Ty.i64), 1);
-      const [, cmpResult] = genStringCmp(ctx, lines, subjVal, lit.ref, true);
+      const [, cmpResult] = genStringCmp(ctx, lines, subjVal.ref, lit.ref, true);
       cmp = val(cmpResult, Ty.i1);
     } else if (pat.literalKind === "bool") {
       cmp = b.icmp("eq", subj, val(pat.value ? "1" : "0", Ty.i1));
@@ -309,16 +308,15 @@ function emitMatchArmBody(ctx: MatchCtx, lines: string[], body: HIRStmt[], resul
   if (body.length > 0) {
     const last = body[body.length - 1];
     if (last.kind === "ExprStmt") {
-      const [vl, gv] = ctx.genExpr(last.expr);
-      lines.push(...vl);
+      const gv = ctx.genVal(last.expr, lines);
       // A local the arm itself declared (a pattern binding, an arm `let`) is moved out
       // by the yield below. A place from outside the arm is only read unless the
       // checker moved it (isMove): the place keeps its value and its drop.
       const yieldedIdx = last.expr.kind === "Ident"
         ? ctx.droppableLocals.findIndex(d => d.addr === ctx.localAddr((last.expr as { name: string }).name)) : -1;
       const armLocal = yieldedIdx >= armDropStart;
-      const vv = gv !== "void" && resultSlot.cloneViews && ctx.forkTailIsView(last.expr, armLocal)
-        ? ctx.cloneViewValue(lines, gv, last.expr.type) : gv;
+      const vv = gv.ref !== "void" && resultSlot.cloneViews && ctx.forkTailIsView(last.expr, armLocal)
+        ? ctx.cloneViewValue(lines, gv.ref, last.expr.type) : gv.ref;
       if (vv !== "void") b.store(val(vv, Ty.of(resultSlot.ty)), val(resultSlot.addr, Ty.ptr));
       // The non-moving yield below is a move codegen decides on its own (the HIR read
       // was a view): the value, not the view, is what the result slot receives.
@@ -361,9 +359,8 @@ function genEnumMatch(ctx: MatchCtx, stmt: HIRStmt & { kind: "Match" }, resultSl
     subjAddr = p.ref;
     subjTy = `%${stmt.enumName}`;
   } else if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
-    const [heapLines, heapVal] = ctx.genExpr(stmt.subject.operand);
-    lines.push(...heapLines);
-    subjAddr = heapVal;
+    const heapVal = ctx.genVal(stmt.subject.operand, lines);
+    subjAddr = heapVal.ref;
     subjTy = ctx.llvmType(stmt.subject.type);
   } else if (stmt.subject.kind === "Ident" && ctx.locals.has(stmt.subject.name)) {
     const local = must(ctx.locals, stmt.subject.name, "locals");

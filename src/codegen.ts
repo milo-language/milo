@@ -1135,15 +1135,13 @@ export class Codegen {
     }
     if (this.isBigAgg(ty)) {
       if (expr.kind === "Call" && this.sretFns.has(expr.func)) {
-        const [cl] = this.genExpr(expr, destPtr);
-        lines.push(...cl);
+        this.genVal(expr, lines, destPtr);
         return null;
       }
       // A big-agg replace writes its moved-out old value straight into destPtr, same as
       // an sret call — routed here so the old value never becomes an SSA aggregate.
       if (expr.kind === "MemReplace") {
-        const [cl] = this.genExpr(expr, destPtr);
-        lines.push(...cl);
+        this.genVal(expr, lines, destPtr);
         return null;
       }
       if (expr.kind === "StructLit" && this.structLayouts.has(expr.name)) {
@@ -1189,10 +1187,9 @@ export class Codegen {
         }
       }
     }
-    const [el, v] = this.genExpr(expr);
-    lines.push(...el);
-    lines.push(this.valStore(ty, v, destPtr, this.own.valIntent(v, expr.type)));
-    return v;
+    const v = this.genVal(expr, lines);
+    lines.push(this.valStore(ty, v.ref, destPtr, this.own.valIntent(v.ref, expr.type)));
+    return v.ref;
   }
 
   // Structural equality of two lvalue expressions, restricted to Ident and
@@ -2730,9 +2727,8 @@ export class Codegen {
       }
       for (const c of fn.contracts) {
         if (c.kind !== "requires") continue;
-        const [condLines, condVal] = this.genExpr(c.expr);
-        lines.push(...condLines);
-        this.emitContractCheck(lines, condVal, "requires", c.span);
+        const condVal = this.genVal(c.expr, lines);
+        this.emitContractCheck(lines, condVal.ref, "requires", c.span);
       }
     }
 
@@ -2854,9 +2850,8 @@ export class Codegen {
             this.genStoreInto(lines, addrName, declTy, stmt.value);
           }
         } else {
-          const [exprLines, v] = this.genExpr(stmt.value);
-          lines.push(...exprLines);
-          val = v;
+          const v = this.genVal(stmt.value, lines);
+          val = v.ref;
         }
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
         b.entryAlloca(addrName, Ty.of(declTy));
@@ -2916,16 +2911,15 @@ export class Codegen {
           // Bail on `x = x + x` — overlapping memcpy is unsafe; let the slow path handle it.
           !this.lvalueMatches(stmt.value.right, stmt.target)
         ) {
-          const [rhsLines, rhsVal] = this.genExpr(stmt.value.right);
-          lines.push(...rhsLines);
+          const rhsVal = this.genVal(stmt.value.right, lines);
           const [tgtLines, tgtPtr] = this.genLValue(stmt.target);
           lines.push(...tgtLines);
-          this.emitStringAppendInPlace(lines, tgtPtr, rhsVal);
+          this.emitStringAppendInPlace(lines, tgtPtr, rhsVal.ref);
           // The append copies the bytes out of the rhs; an rhs that was a
           // temporary (a call result, or the clone `v[i]` produces) has no owner
           // afterwards. The generic concat path drops its operands — this fast
           // path has to as well, or `r = r + v[i]` leaks a copy per iteration.
-          this.dropOwnedTemp(lines, rhsVal, "%String", stmt.value.right);
+          this.dropOwnedTemp(lines, rhsVal.ref, "%String", stmt.value.right);
           return [lines, false];
         }
         const assignLlTy = this.llvmType(stmt.target.type);
@@ -2950,8 +2944,7 @@ export class Codegen {
           this.rearmAssignedLocal(lines, stmt.target);
           return [lines, false];
         }
-        const [valLines, val, valTy] = this.genExpr(stmt.value);
-        lines.push(...valLines);
+        const val = this.genVal(stmt.value, lines);
         const [targetLines, targetPtr] = this.genLValue(stmt.target);
         lines.push(...targetLines);
         // Drop the old value at the target slot before overwriting it — for ANY
@@ -2966,8 +2959,8 @@ export class Codegen {
           if (cover) this.emitDropPlace(lines, targetPtr, stmt.target.type, cover.flags, cover.path);
           else this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
-        lines.push(this.valStore(valTy, val, targetPtr, this.own.valIntent(val, stmt.target.type)));
-        this.own.assigned(lines, targetPtr, this.own.on ? this.own.idOf(val) : undefined);
+        lines.push(this.valStore(val.ty.ll, val.ref, targetPtr, this.own.valIntent(val.ref, stmt.target.type)));
+        this.own.assigned(lines, targetPtr, this.own.on ? this.own.idOf(val.ref) : undefined);
         if (cover) this.rearmFieldFlags(lines, cover);
         this.rearmAssignedLocal(lines, stmt.target);
         return [lines, false];
@@ -3005,13 +2998,12 @@ export class Codegen {
           b.ret();
           return [lines, true];
         }
-        const [exprLines, val, valTy] = this.genExpr(stmt.value);
-        lines.push(...exprLines);
-        if (this.currentEnsures.length > 0 && valTy !== "void") {
+        const val = this.genVal(stmt.value, lines);
+        if (this.currentEnsures.length > 0 && val.ty.ll !== "void") {
           // bind `result` to the return value; shadow any user local of the same name
-          b.store(V(val, Ty.of(valTy)), V("%__contract_result.addr", Ty.ptr));
+          b.store(V(val.ref, Ty.of(val.ty.ll)), V("%__contract_result.addr", Ty.ptr));
           const savedResult = this.locals.get("result");
-          this.locals.set("result", { type: valTy, typeKind: stmt.retType, mutable: false, isRef: false, addr: "%__contract_result.addr" });
+          this.locals.set("result", { type: val.ty.ll, typeKind: stmt.retType, mutable: false, isRef: false, addr: "%__contract_result.addr" });
           this.emitEnsuresChecks(lines);
           if (savedResult) this.locals.set("result", savedResult);
           else this.locals.delete("result");
@@ -3022,9 +3014,9 @@ export class Codegen {
         this.emitDropGlue(lines);
         // A sortByKey extractor hands back a borrow of the element (the checker's one
         // exemption): returning that view transfers nothing.
-        if (!(this.own.returnsView && this.own.views.has(val))) this.own.endVal(lines, val, "RETURN");
-        if (valTy === "void") b.ret();
-        else b.ret(V(val, Ty.of(valTy)));
+        if (!(this.own.returnsView && this.own.views.has(val.ref))) this.own.endVal(lines, val.ref, "RETURN");
+        if (val.ty.ll === "void") b.ret();
+        else b.ret(V(val.ref, Ty.of(val.ty.ll)));
         return [lines, true];
       }
       case "If": return this.genIf(stmt);
@@ -3047,14 +3039,13 @@ export class Codegen {
         // A void match whose arms all diverge ends in `unreachable`: report it terminated,
         // or an enclosing match arm appends a dead `br` after it.
         if (stmt.expr.kind === "MatchExpr" && this.llvmType(stmt.expr.type) === "void") return genMatch(this, matchExprAsStmt(stmt.expr));
-        const [exprLines, exprVal, exprLLTy] = this.genExpr(stmt.expr);
-        lines.push(...exprLines);
+        const exprVal = this.genVal(stmt.expr, lines);
         // A call in statement position still returns an owned value; with nobody
         // to bind it, nothing else will ever free it. Only call forms qualify —
         // place expressions (Ident/FieldAccess/IndexAccess) name storage someone
         // else owns, and dropping those would double-free. Returned `&T` can't
         // occur: references are second-class and never leave a function.
-        this.dropOwnedTemp(lines, exprVal, exprLLTy, stmt.expr);
+        this.dropOwnedTemp(lines, exprVal.ref, exprVal.ty.ll, stmt.expr);
         return [lines, false];
       }
       case "Match":
@@ -3151,18 +3142,16 @@ export class Codegen {
       return this.genBoundsCheckedPtr(expr, lines);
     }
     if (expr.kind === "PtrDeref") {
-      const [ptrLines, ptrVal] = this.genExpr(expr.operand);
-      lines.push(...ptrLines);
+      const ptrVal = this.genVal(expr.operand, lines);
       const innerTy = this.llvmType(expr.type);
-      return [lines, ptrVal, innerTy];
+      return [lines, ptrVal.ref, innerTy];
     }
     // A temporary box is an rvalue: its payload is moved out and the box freed
     // (genHeapMoveOut), so the caller materializes the value like any owned temporary.
     if (expr.kind === "HeapDeref" && !this.isTempBoxDeref(expr)) {
-      const [ptrLines, ptrVal] = this.genExpr(expr.operand);
-      lines.push(...ptrLines);
+      const ptrVal = this.genVal(expr.operand, lines);
       const innerTy = this.llvmType(expr.type);
-      return [lines, ptrVal, innerTy];
+      return [lines, ptrVal.ref, innerTy];
     }
     return [lines, "null", "i32"];
   }
@@ -3170,8 +3159,7 @@ export class Codegen {
   private genBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): Gen {
     const objPtr = this.genIndexObjectPtr(expr.object, lines);
     const objTy = this.llvmType(expr.object.type.tag === "ref" ? expr.object.type.inner : expr.object.type);
-    const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
-    lines.push(...idxLines);
+    const idxVal = this.genVal(expr.index, lines);
 
     const match = objTy.match(/\[(\d+) x (.+)\]/);
     if (match) {
@@ -3179,7 +3167,7 @@ export class Codegen {
       const elemTy = match[2];
       // The check and the GEP both use the full i64 index. This used to truncate to
       // i32 first, so `a[2^32 + 1]` passed the check AND addressed `a[1]`.
-      const idx64 = this.indexToI64(lines, idxVal, idxTy, expr.index.type);
+      const idx64 = this.indexToI64(lines, idxVal.ref, idxVal.ty.ll, expr.index.type);
       this.emitBoundsCheck(lines, idx64, String(size), expr.span);
       const ptr = this.nextTemp();
       lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i64 0, i64 ${idx64}`);
@@ -3703,9 +3691,8 @@ export class Codegen {
 
   private emitEnsuresChecks(lines: string[]) {
     for (const c of this.currentEnsures) {
-      const [condLines, condVal] = this.genExpr(c.expr);
-      lines.push(...condLines);
-      this.emitContractCheck(lines, condVal, "ensures", c.span);
+      const condVal = this.genVal(c.expr, lines);
+      this.emitContractCheck(lines, condVal.ref, "ensures", c.span);
     }
   }
 
@@ -3716,9 +3703,8 @@ export class Codegen {
   private emitLoopInvariants(lines: string[], invariants: HIRContract[] | undefined) {
     if (!this.contractChecks || !invariants) return;
     for (const inv of invariants) {
-      const [invLines, invVal] = this.genExpr(inv.expr);
-      lines.push(...invLines);
-      this.emitContractCheck(lines, invVal, "invariant", inv.span);
+      const invVal = this.genVal(inv.expr, lines);
+      this.emitContractCheck(lines, invVal.ref, "invariant", inv.span);
     }
   }
 
@@ -3821,9 +3807,8 @@ export class Codegen {
     // invariant must hold before every condition eval: loop entry, each back-edge, and exit
     if (this.contractChecks && stmt.invariants) {
       for (const inv of stmt.invariants) {
-        const [invLines, invVal] = this.genExpr(inv.expr);
-        lines.push(...invLines);
-        this.emitContractCheck(lines, invVal, "invariant", inv.span);
+        const invVal = this.genVal(inv.expr, lines);
+        this.emitContractCheck(lines, invVal.ref, "invariant", inv.span);
       }
     }
     const [condLines, condVal] = this.genExpr(stmt.cond);
@@ -3892,19 +3877,17 @@ export class Codegen {
     const slot = b.entryAlloca(addrName, varT);
     const savedLoopLocals = [this.bindLoopLocal(stmt.varName, { type: varTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: addrName })];
 
-    const [startLines, startVal, startLLTy] = this.genExpr(stmt.start);
-    lines.push(...startLines);
-    let finalStart = V(startVal, Ty.of(startLLTy));
-    if (startLLTy !== varTy && startLLTy !== "void") {
+    const startVal = this.genVal(stmt.start, lines);
+    let finalStart = V(startVal.ref, Ty.of(startVal.ty.ll));
+    if (startVal.ty.ll !== varTy && startVal.ty.ll !== "void") {
       const signed = stmt.varType.tag === "int" && stmt.varType.signed;
       finalStart = b.cast(signed ? "sext" : "zext", finalStart, varT);
     }
     b.store(V(finalStart.ref, varT), slot);
 
-    const [endLines, endVal, endLLTy] = this.genExpr(stmt.end);
-    lines.push(...endLines);
-    let finalEnd = V(endVal, Ty.of(endLLTy));
-    if (endLLTy !== varTy && endLLTy !== "void") {
+    const endVal = this.genVal(stmt.end, lines);
+    let finalEnd = V(endVal.ref, Ty.of(endVal.ty.ll));
+    if (endVal.ty.ll !== varTy && endVal.ty.ll !== "void") {
       const signed = stmt.varType.tag === "int" && stmt.varType.signed;
       finalEnd = b.cast(signed ? "sext" : "zext", finalEnd, varT);
     }
@@ -4489,10 +4472,9 @@ export class Codegen {
     let sepPtr: Val;
     let sepLen: Val;
     if (stmt.mode === "split" && stmt.sep) {
-      const [sepLines, sepVal] = this.genExpr(stmt.sep);
-      lines.push(...sepLines);
-      sepPtr = b.extractvalue(val(sepVal, STRING_TY), 0, Ty.ptr);
-      sepLen = b.extractvalue(val(sepVal, STRING_TY), 1, Ty.i64);
+      const sepVal = this.genVal(stmt.sep, lines);
+      sepPtr = b.extractvalue(val(sepVal.ref, STRING_TY), 0, Ty.ptr);
+      sepLen = b.extractvalue(val(sepVal.ref, STRING_TY), 1, Ty.i64);
     } else {
       const { label, length } = this.addString("\n");
       sepPtr = b.gep(Ty.of(`[${length} x i8]`), val(label, Ty.ptr), [i32c(0), i32c(0)]);
@@ -4932,9 +4914,8 @@ export class Codegen {
   public genFormatParts(args: HIRArg[], lines: string[]): { val: string; ty: string; expr: HIRExpr }[] {
     const out: { val: string; ty: string; expr: HIRExpr }[] = [];
     for (const arg of args) {
-      const [al, av, at] = this.genExpr(arg.expr);
-      lines.push(...al);
-      out.push({ val: av, ty: at, expr: arg.expr });
+      const av = this.genVal(arg.expr, lines);
+      out.push({ val: av.ref, ty: av.ty.ll, expr: arg.expr });
     }
     return out;
   }
@@ -4966,11 +4947,10 @@ export class Codegen {
         const tempBufs: string[] = [];
         const fmtTemps: { val: string; ty: string; expr: HIRExpr }[] = [];
         for (const arg of expr.args) {
-          const [al, av, at] = this.genExpr(arg.expr);
-          lines.push(...al);
-          fmtTemps.push({ val: av, ty: at, expr: arg.expr });
+          const av = this.genVal(arg.expr, lines);
+          fmtTemps.push({ val: av.ref, ty: av.ty.ll, expr: arg.expr });
           const bufMark = tempBufs.length;
-          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.emitDisplayPart(arg.expr.type, av.ref, av.ty.ll, lines, partFmts, partArgs, tempBufs);
           this.pendBufs(tempBufs, bufMark);
         }
         const fmtStr = this.addString(partFmts.join(""));
@@ -5016,16 +4996,15 @@ export class Codegen {
       // once it has been written, so free it after the batch is flushed.
       const printTemps: { val: string; ty: string; expr: HIRExpr }[] = [];
       for (const arg of expr.args) {
-        const [al, av, at] = this.genExpr(arg.expr);
-        lines.push(...al);
-        printTemps.push({ val: av, ty: at, expr: arg.expr });
+        const av = this.genVal(arg.expr, lines);
+        printTemps.push({ val: av.ref, ty: av.ty.ll, expr: arg.expr });
         let dt: any = arg.expr.type;
         while (dt && dt.tag === "ref") dt = dt.inner;
         if (dt && dt.tag === "string") {
           this.hasStringType = true;
           flushBatch();
-          const dataPtr = b.extractvalue(val(av, STRING_TY), 0, Ty.ptr).ref;
-          const lenVal = b.extractvalue(val(av, STRING_TY), 1, Ty.i64).ref;
+          const dataPtr = b.extractvalue(val(av.ref, STRING_TY), 0, Ty.ptr).ref;
+          const lenVal = b.extractvalue(val(av.ref, STRING_TY), 1, Ty.i64).ref;
           if (this.target.os === "none") {
             // Freestanding: no stdio, so no shared buffer to write into.
             b.callDiscard(Ty.i32, "@fflush", [ptrV("null")]);
@@ -5035,7 +5014,7 @@ export class Codegen {
           }
         } else {
           const bufMark = tempBufs.length;
-          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.emitDisplayPart(arg.expr.type, av.ref, av.ty.ll, lines, partFmts, partArgs, tempBufs);
           this.pendBufs(tempBufs, bufMark);
         }
       }
@@ -5061,9 +5040,8 @@ export class Codegen {
         partArgs = [];
       };
       for (const arg of expr.args) {
-        const [al, av, at] = this.genExpr(arg.expr);
-        lines.push(...al);
-        eprintTemps.push({ val: av, ty: at, expr: arg.expr });
+        const av = this.genVal(arg.expr, lines);
+        eprintTemps.push({ val: av.ref, ty: av.ty.ll, expr: arg.expr });
         let dt: TypeKind = arg.expr.type;
         while (dt.tag === "ref") dt = dt.inner;
         // Freestanding has no stderr stream; its single printf sink keeps the
@@ -5071,12 +5049,12 @@ export class Codegen {
         if (dt.tag === "string" && this.target.os !== "none") {
           this.hasStringType = true;
           flushBatch();
-          const dataPtr = b.extractvalue(val(av, STRING_TY), 0, Ty.ptr).ref;
-          const lenVal = b.extractvalue(val(av, STRING_TY), 1, Ty.i64).ref;
+          const dataPtr = b.extractvalue(val(av.ref, STRING_TY), 0, Ty.ptr).ref;
+          const lenVal = b.extractvalue(val(av.ref, STRING_TY), 1, Ty.i64).ref;
           this.emitStderrWrite(lines, dataPtr, lenVal);
         } else {
           const bufMark = tempBufs.length;
-          this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+          this.emitDisplayPart(arg.expr.type, av.ref, av.ty.ll, lines, partFmts, partArgs, tempBufs);
           this.pendBufs(tempBufs, bufMark);
         }
       }
@@ -5093,9 +5071,8 @@ export class Codegen {
     }
     if (expr.func === "exit") {
       this.needsExit = true;
-      const [al, av] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      b.callDiscard(Ty.void, "@exit", [val(av, Ty.i32)]);
+      const av = this.genVal(expr.args[0].expr, lines);
+      b.callDiscard(Ty.void, "@exit", [val(av.ref, Ty.i32)]);
       return [lines, "void", "void"];
     }
     if (expr.func === "todo") {
@@ -5105,9 +5082,8 @@ export class Codegen {
       const at = this.panicAt(expr.span);
       const who = this.currentFnName.slice(this.currentFnName.lastIndexOf("$") + 1);
       if (expr.args.length === 1) {
-        const [ml, msgVal] = this.genExpr(expr.args[0].expr);
-        lines.push(...ml);
-        const msgPtr = b.extractvalue(val(msgVal, STRING_TY), 0, Ty.ptr).ref;
+        const msgVal = this.genVal(expr.args[0].expr, lines);
+        const msgPtr = b.extractvalue(val(msgVal.ref, STRING_TY), 0, Ty.ptr).ref;
         const fmtStr = this.addString(`todo: '${who}' is not implemented (${at}): %s\n`);
         this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
       } else {
@@ -5123,17 +5099,15 @@ export class Codegen {
     if (expr.func === "assert") {
       this.needsDprintf = true;
       this.needsExit = true;
-      const [al, condVal] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
+      const condVal = this.genVal(expr.args[0].expr, lines);
       const okBlk = b.newBlock("assert.ok");
       const failBlk = b.newBlock("assert.fail");
-      b.condBr(val(condVal, Ty.i1), okBlk, failBlk);
+      b.condBr(val(condVal.ref, Ty.i1), okBlk, failBlk);
       b.position(failBlk);
       const at = this.panicAt(expr.span);
       if (expr.args.length >= 2) {
-        const [al2, msgVal] = this.genExpr(expr.args[1].expr);
-        lines.push(...al2);
-        const msgPtr = b.extractvalue(val(msgVal, STRING_TY), 0, Ty.ptr).ref;
+        const msgVal = this.genVal(expr.args[1].expr, lines);
+        const msgPtr = b.extractvalue(val(msgVal.ref, STRING_TY), 0, Ty.ptr).ref;
         const fmtStr = this.addString(`assertion failed at ${at}: %s\n`);
         this.emitFdPrintf(lines, 2, fmtStr.label, `, ptr ${msgPtr}`);
       } else {
@@ -5146,14 +5120,12 @@ export class Codegen {
       return [lines, "void", "void"];
     }
     if (expr.func === "max" || expr.func === "min") {
-      const [al1, av1, at1] = this.genExpr(expr.args[0].expr);
-      lines.push(...al1);
-      const [al2, av2] = this.genExpr(expr.args[1].expr);
-      lines.push(...al2);
-      const ty1 = Ty.of(at1);
-      const x = val(av1, ty1);
-      const y = val(av2, ty1);
-      const isFloat = at1 === "double" || at1 === "float";
+      const av1 = this.genVal(expr.args[0].expr, lines);
+      const av2 = this.genVal(expr.args[1].expr, lines);
+      const ty1 = Ty.of(av1.ty.ll);
+      const x = val(av1.ref, ty1);
+      const y = val(av2.ref, ty1);
+      const isFloat = av1.ty.ll === "double" || av1.ty.ll === "float";
       const isUnsigned = expr.args[0].expr.type.tag === "int" && !expr.args[0].expr.type.signed;
       let cmp: Val;
       if (isFloat) {
@@ -5171,11 +5143,9 @@ export class Codegen {
     }
     if (expr.func === "_callClosureVoid") {
       // _callClosureVoid(fnPtr: *u8, envPtr: *u8) — indirect call to closure function
-      const [al1, fnPtrVal] = this.genExpr(expr.args[0].expr);
-      lines.push(...al1);
-      const [al2, envPtrVal] = this.genExpr(expr.args[1].expr);
-      lines.push(...al2);
-      b.callDiscard(Ty.void, fnPtrVal, [ptrV(envPtrVal)]);
+      const fnPtrVal = this.genVal(expr.args[0].expr, lines);
+      const envPtrVal = this.genVal(expr.args[1].expr, lines);
+      b.callDiscard(Ty.void, fnPtrVal.ref, [ptrV(envPtrVal.ref)]);
       return [lines, "0", "void"];
     }
     if (expr.func === "_schedulerGet") {
@@ -5184,61 +5154,53 @@ export class Codegen {
     }
     if (expr.func === "_panicHookSet") {
       this.usesPanicHook = true;
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      b.store(ptrV(pv), ptrV("@_milo_panic_hook"));
+      const pv = this.genVal(expr.args[0].expr, lines);
+      b.store(ptrV(pv.ref), ptrV("@_milo_panic_hook"));
       return [lines, "0", "void"];
     }
     if (expr.func === "_schedulerSet") {
       this.usesSchedulerGlobal = true;
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      b.store(ptrV(pv), ptrV("@_milo_scheduler"));
+      const pv = this.genVal(expr.args[0].expr, lines);
+      b.store(ptrV(pv.ref), ptrV("@_milo_scheduler"));
       return [lines, "0", "void"];
     }
     if (expr.func === "_putByte") {
       // Bare metal has no stdio; there putchar is whatever the freestanding runtime
       // provides, and the declare below covers both.
       this.needsPutchar = true;
-      const [al, bv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      const ext = b.cast("zext", val(bv, Ty.i8), Ty.i32);
+      const bv = this.genVal(expr.args[0].expr, lines);
+      const ext = b.cast("zext", val(bv.ref, Ty.i8), Ty.i32);
       b.callDiscard(Ty.i32, "@putchar", [ext]);
       return [lines, "void", "void"];
     }
     if (expr.func === "_loadU8") {
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      return asGen(lines, b.load(Ty.i8, ptrV(pv)));
+      const pv = this.genVal(expr.args[0].expr, lines);
+      return asGen(lines, b.load(Ty.i8, ptrV(pv.ref)));
     }
     if (expr.func === "_loadI32") {
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      return asGen(lines, b.load(Ty.i32, ptrV(pv)));
+      const pv = this.genVal(expr.args[0].expr, lines);
+      return asGen(lines, b.load(Ty.i32, ptrV(pv.ref)));
     }
     if (expr.func === "_bytesToString") {
       this.needsMalloc = true;
       this.needsMemcpy = true;
       this.hasStringType = true;
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      const [ll, lv] = this.genExpr(expr.args[1].expr);
-      lines.push(...ll);
+      const pv = this.genVal(expr.args[0].expr, lines);
+      const lv = this.genVal(expr.args[1].expr, lines);
       // len+1 with a trailing NUL, matching _cstrToString's layout so the result
       // can still be handed to C without another copy.
-      return [lines, this.emitStrFrom(lines, pv, lv), "%String"];
+      return [lines, this.emitStrFrom(lines, pv.ref, lv.ref), "%String"];
     }
     if (expr.func === "_cstrToString") {
       this.needsMalloc = true;
       this.needsMemcpy = true;
       this.needsStrlen = true;
       this.hasStringType = true;
-      const [al, pv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
-      const len = b.call(Ty.i64, "@strlen", [ptrV(pv)]).ref;
+      const pv = this.genVal(expr.args[0].expr, lines);
+      const len = b.call(Ty.i64, "@strlen", [ptrV(pv.ref)]).ref;
       // Allocate len+1 and write trailing NUL so the Milo string can be passed to
       // C functions (open, printf, etc.) without re-copying. cap stays at len+1.
-      return [lines, this.emitStrFrom(lines, pv, len), "%String"];
+      return [lines, this.emitStrFrom(lines, pv.ref, len), "%String"];
     }
     if (expr.func === "_strDataPtr") {
       // Extract the data pointer (field 0) from a &string. The argument reaches
@@ -5248,13 +5210,12 @@ export class Codegen {
       // `getelementptr %String, ptr %t` against an SSA value of type %String,
       // which LLVM rejects — so any function that took `s: &string` and called
       // this on it failed to compile.
-      const [al, pv, ty] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
+      const pv = this.genVal(expr.args[0].expr, lines);
       const dataPtr = b.reserveTemp(Ty.ptr);
-      if (ty === "%String") {
-        b.extractvalue(val(pv, STRING_TY), 0, Ty.ptr, dataPtr);
+      if (pv.ty.ll === "%String") {
+        b.extractvalue(val(pv.ref, STRING_TY), 0, Ty.ptr, dataPtr);
       } else {
-        const dataGep = b.gep(STRING_TY, ptrV(pv), [i32c(0), i32c(0)]);
+        const dataGep = b.gep(STRING_TY, ptrV(pv.ref), [i32c(0), i32c(0)]);
         b.load(Ty.ptr, dataGep, undefined, undefined, dataPtr);
       }
       return asGen(lines, dataPtr);
@@ -5267,10 +5228,9 @@ export class Codegen {
       this.needsMemcpy = true;
       this.needsStrlen = true;
       this.hasStringType = true;
-      const [al, iv] = this.genExpr(expr.args[0].expr);
-      lines.push(...al);
+      const iv = this.genVal(expr.args[0].expr, lines);
       const argv = b.load(Ty.ptr, ptrV("@_milo_argv_global"));
-      const argPtr = b.gep(Ty.ptr, argv, [val(iv, Ty.i64)]);
+      const argPtr = b.gep(Ty.ptr, argv, [val(iv.ref, Ty.i64)]);
       const cstr = b.load(Ty.ptr, argPtr).ref;
       const len = b.call(Ty.i64, "@strlen", [ptrV(cstr)]).ref;
       // Allocate len+1 and NUL-terminate so the arg string can be passed to
@@ -5295,10 +5255,9 @@ export class Codegen {
     const T = Ty.of(ty);
     // an i1 argument has to be widened to the byte it actually occupies in memory
     const argAt = (i: number): string => {
-      const [al, v] = this.genExpr(expr.args[i].expr);
-      lines.push(...al);
-      if (!isBool) return v;
-      return b.cast("zext", V(v, Ty.i1), Ty.i8).ref;
+      const v = this.genVal(expr.args[i].expr, lines);
+      if (!isBool) return v.ref;
+      return b.cast("zext", V(v.ref, Ty.i1), Ty.i8).ref;
     };
     const narrow = (v: string): Gen => {
       if (!isBool) return [lines, v, ty];
@@ -5329,6 +5288,13 @@ export class Codegen {
         return narrow(b.extractvalue(pairV, 0, T).ref);
       }
     }
+  }
+
+  /** Emit `expr` into `lines` and return its value; the typed form of genExpr. */
+  public genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val {
+    const [el, v, t] = this.genExpr(expr, sretDest);
+    lines.push(...el);
+    return val(v, Ty.of(t));
   }
 
   // sretDest: only honored when `expr` itself is a direct call to an
@@ -5429,11 +5395,10 @@ export class Codegen {
 
     switch (expr.kind) {
       case "RangeCheck": {
-        const [vl, val, vt] = this.genExpr(expr.value);
-        lines.push(...vl);
+        const val = this.genVal(expr.value, lines);
         const signed = expr.type.tag === "int" && expr.type.signed;
-        this.emitRangeCheck(lines, val, vt, signed, expr.min, expr.max, expr.span);
-        return [lines, val, vt];
+        this.emitRangeCheck(lines, val.ref, val.ty.ll, signed, expr.min, expr.max, expr.span);
+        return [lines, val.ref, val.ty.ll];
       }
       case "IntLit":
         return [lines, String(expr.value), lt];
@@ -5519,33 +5484,29 @@ export class Codegen {
       case "ArrayLen":
         return this.genArrayLen(expr, lines);
       case "StringLen": {
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const len = b.extractvalue(val(ov, STRING_TY), 1, Ty.i64).ref;
+        const ov = this.genVal(expr.object, lines);
+        const len = b.extractvalue(val(ov.ref, STRING_TY), 1, Ty.i64).ref;
         // `n.toString().len` reads a length out of a string nobody owns.
-        this.dropOwnedTemp(lines, ov, "%String", expr.object);
+        this.dropOwnedTemp(lines, ov.ref, "%String", expr.object);
         return [lines, len, "i64"];
       }
       case "StringCstr": {
         this.emitCStrUniquePlace(expr.object, lines);
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const dataPtr = b.extractvalue(val(ov, STRING_TY), 0, Ty.ptr).ref;
+        const ov = this.genVal(expr.object, lines);
+        const dataPtr = b.extractvalue(val(ov.ref, STRING_TY), 0, Ty.ptr).ref;
         return [lines, dataPtr, "ptr"];
       }
       case "HeapPtr": {
         // A `Heap<T>` IS the malloc'd pointer, so the give leg is a re-labelling: no
         // load, no extractvalue. What changes is the type — the result is a `*T` the
         // caller may hand to C, and (after `forget`) to C's `free`.
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        return [lines, ov, "ptr"];
+        const ov = this.genVal(expr.object, lines);
+        return [lines, ov.ref, "ptr"];
       }
       case "VecPtr": {
         // v.ptr(): the Vec's backing data pointer (field 0 of {ptr,len,cap}).
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const dataPtr = b.extractvalue(val(ov, VEC_TY), 0, Ty.ptr).ref;
+        const ov = this.genVal(expr.object, lines);
+        const dataPtr = b.extractvalue(val(ov.ref, VEC_TY), 0, Ty.ptr).ref;
         return [lines, dataPtr, "ptr"];
       }
       case "ArrayLit":
@@ -5591,23 +5552,21 @@ export class Codegen {
       case "Cast":
         return this.genCast(expr, lines);
       case "IsCheck": {
-        const [ol, ov, ot] = this.genExpr(expr.operand);
-        lines.push(...ol);
-        const tagVal = this.enumValueTag(lines, ot, ov);
+        const ov = this.genVal(expr.operand, lines);
+        const tagVal = this.enumValueTag(lines, ov.ty.ll, ov.ref);
         const cmp = b.icmp("eq", val(tagVal, Ty.i32), val(String(expr.tag), Ty.i32)).ref;
         // A tag test keeps nothing of its operand, so a temporary one dies here:
         // `if mk() is Option.Some(_)` and `mk() == Option.None` leaked the payload.
-        this.dropOwnedTemp(lines, ov, ot, expr.operand);
+        this.dropOwnedTemp(lines, ov.ref, ov.ty.ll, expr.operand);
         return [lines, cmp, "i1"];
       }
       case "HeapCreate": {
         this.needsMalloc = true;
-        const [valLines, valVal, valTy] = this.genExpr(expr.value);
-        lines.push(...valLines);
+        const valVal = this.genVal(expr.value, lines);
         const size = this.typeSizeOf(expr.value.type);
         const ptr = b.call(Ty.ptr, "@malloc", [val(String(size), Ty.i64)]);
-        b.store(val(valVal, Ty.of(valTy)), ptr);
-        this.own.endVal(lines, valVal, "STORE");
+        b.store(val(valVal.ref, Ty.of(valVal.ty.ll)), ptr);
+        this.own.endVal(lines, valVal.ref, "STORE");
         return [lines, ptr.ref, "ptr"];
       }
       case "HeapDeref":
@@ -5616,14 +5575,13 @@ export class Codegen {
           const emptied = this.genHeapMoveOut(expr, lines);
           if (emptied) return emptied;
         }
-        const [ptrLines, ptrVal] = this.genExpr(expr.operand);
-        lines.push(...ptrLines);
+        const ptrVal = this.genVal(expr.operand, lines);
         const innerTy = this.llvmType(expr.type);
-        const loaded = b.load(Ty.of(innerTy), val(ptrVal, Ty.ptr)).ref;
+        const loaded = b.load(Ty.of(innerTy), val(ptrVal.ref, Ty.ptr)).ref;
         // A moving deref zeroes the heap slot after loading to prevent a double free: the
         // loaded value now owns any inner heap pointers. A read leaves the box intact.
         if (expr.kind === "HeapDeref" && expr.isMove && this.needsDropCg(expr.type)) {
-          lines.push(this.zeroStore(innerTy, ptrVal));
+          lines.push(this.zeroStore(innerTy, ptrVal.ref));
         }
         return [lines, loaded, innerTy];
       }
@@ -5644,26 +5602,24 @@ export class Codegen {
         return genVecPop(this, expr, lines);
       case "VecLen": {
         this.hasVecType = true;
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const len = b.extractvalue(val(ov, VEC_TY), 1, Ty.i64).ref;
+        const ov = this.genVal(expr.object, lines);
+        const len = b.extractvalue(val(ov.ref, VEC_TY), 1, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
-        this.dropOwnedTemp(lines, ov, "%Vec", expr.object);
+        this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, len, "i64"];
       }
       case "VecClone": {
         this.hasVecType = true;
         const passed = this.cloneOfOwnedTemp(expr.object, lines);
         if (passed) return passed;
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
+        const ov = this.genVal(expr.object, lines);
         // emitDeepCloneFromPtr reads through a pointer, so spill the loaded %Vec
         // into a scratch slot first. The spill is a shallow copy that is never
         // dropped — only the clone it produces is owned by the caller.
         const slot = b.alloca(VEC_TY);
-        b.store(val(ov, VEC_TY), slot);
+        b.store(val(ov.ref, VEC_TY), slot);
         const cloned = this.emitDeepCloneFromPtr(lines, slot.ref, { tag: "vec", element: expr.elementType });
         return [lines, cloned, "%Vec"];
       }
@@ -5685,14 +5641,13 @@ export class Codegen {
         return genVecFold(this, expr, lines);
       case "VecIsEmpty": {
         this.hasVecType = true;
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const len = b.extractvalue(val(ov, VEC_TY), 1, Ty.i64).ref;
+        const ov = this.genVal(expr.object, lines);
+        const len = b.extractvalue(val(ov.ref, VEC_TY), 1, Ty.i64).ref;
         const result = b.icmp("eq", val(len, Ty.i64), val("0", Ty.i64)).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
-        this.dropOwnedTemp(lines, ov, "%Vec", expr.object);
+        this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, result, "i1"];
       }
       case "VecReverse":
@@ -5725,13 +5680,12 @@ export class Codegen {
         return genVecReserve(this, expr, lines);
       case "VecCapacity": {
         this.hasVecType = true;
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const cap = b.extractvalue(val(ov, VEC_TY), 2, Ty.i64).ref;
+        const ov = this.genVal(expr.object, lines);
+        const cap = b.extractvalue(val(ov.ref, VEC_TY), 2, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
-        this.dropOwnedTemp(lines, ov, "%Vec", expr.object);
+        this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, cap, "i64"];
       }
       case "VecSort":
@@ -5767,13 +5721,12 @@ export class Codegen {
         return genHashMapEntries(this, expr, lines);
       case "HashMapLen": {
         this.hasHashMapType = true;
-        const [ol, ov] = this.genExpr(expr.object);
-        lines.push(...ol);
-        const len = b.extractvalue(val(ov, Ty.of("%HashMap")), 1, Ty.i64).ref;
+        const ov = this.genVal(expr.object, lines);
+        const len = b.extractvalue(val(ov.ref, Ty.of("%HashMap")), 1, Ty.i64).ref;
         // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
         // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
         // not. Reading a scalar keeps no pointer into the container, so it can go now.
-        this.dropOwnedTemp(lines, ov, "%HashMap", expr.object);
+        this.dropOwnedTemp(lines, ov.ref, "%HashMap", expr.object);
         return [lines, len, "i64"];
       }
       case "StringPush":
@@ -6033,9 +5986,8 @@ export class Codegen {
         && expr.operand.type.tag === "int" && expr.operand.type.signed) {
       return [lines, (-(expr.operand.value as bigint)).toString(), this.llvmType(expr.operand.type)];
     }
-    const [ol, ov, ot] = this.genExpr(expr.operand);
-    lines.push(...ol);
-    return this.emitScalarUnOp(lines, expr.op, expr.operand.type, ot, ov, expr.span);
+    const ov = this.genVal(expr.operand, lines);
+    return this.emitScalarUnOp(lines, expr.op, expr.operand.type, ov.ty.ll, ov.ref, expr.span);
   }
 
   // `-`, `!` and `~` on an evaluated scalar operand; integer negation traps on overflow
@@ -6232,9 +6184,8 @@ export class Codegen {
     if (base.type.tag === "ref") {
       // Only a Copy struct reaches here behind a `&` (the checker refuses to move a
       // non-Copy one out of a borrow), so a byte copy of the pointee is the whole story.
-      const [bl, bv] = this.genExpr(base);
-      lines.push(...bl);
-      this.emitMemcpy(lines, tmp, bv, structTy, { intent: "plain", type: base.type.tag === "ref" ? base.type.inner : base.type });
+      const bv = this.genVal(base, lines);
+      this.emitMemcpy(lines, tmp, bv.ref, structTy, { intent: "plain", type: base.type.tag === "ref" ? base.type.inner : base.type });
     } else {
       this.genStoreInto(lines, tmp, structTy, base);
     }
@@ -6302,11 +6253,10 @@ export class Codegen {
       const pendMark = this.pend.temps.length, built: string[] = [];
       this.pend.temps.push({ emit: l => new LlvmTextBuilder(l, this).callDiscard(Ty.void, "@free", [buf]) });
       for (let i = 0; i < n; i++) {
-        const [el, ev] = this.genExpr(expr.elements[i]);
-        lines.push(...el);
+        const ev = this.genVal(expr.elements[i], lines);
         const pi = b.gep(vecElemT, buf, [i64c(i)]);
-        b.store(V(ev, vecElemT), pi);
-        this.pendStored(lines, ev, pi.ref, expr.type.element, built);
+        b.store(V(ev.ref, vecElemT), pi);
+        this.pendStored(lines, ev.ref, pi.ref, expr.type.element, built);
       }
       this.endStored(lines, built, pendMark);
       const v0 = b.insertvalue(emptyVec, buf, 0);
@@ -6317,22 +6267,20 @@ export class Codegen {
     const b = new LlvmTextBuilder(lines, this);
     const elemTy = expr.type.tag === "array" ? this.llvmType(expr.type.element) : "i32";
     const elemT = Ty.of(elemTy);
-    const [firstLines, firstVal] = this.genExpr(expr.elements[0]);
-    lines.push(...firstLines);
+    const firstVal = this.genVal(expr.elements[0], lines);
     const arrTy = `[${expr.elements.length} x ${elemTy}]`;
     const arrT = Ty.of(arrTy);
     const alloca = b.alloca(arrT);
     const ptr0 = b.gep(arrT, alloca, [i32c(0), i32c(0)]);
-    b.store(V(firstVal, elemT), ptr0);
+    b.store(V(firstVal.ref, elemT), ptr0);
     const elemTk: TypeKind = expr.type.tag === "array" ? expr.type.element : { tag: "int", bits: 32, signed: true };
     const pendMark = this.pend.temps.length, built: string[] = [];
-    this.pendStored(lines, firstVal, ptr0.ref, elemTk, built);
+    this.pendStored(lines, firstVal.ref, ptr0.ref, elemTk, built);
     for (let i = 1; i < expr.elements.length; i++) {
-      const [el, ev] = this.genExpr(expr.elements[i]);
-      lines.push(...el);
+      const ev = this.genVal(expr.elements[i], lines);
       const pi = b.gep(arrT, alloca, [i32c(0), i32c(i)]);
-      b.store(V(ev, elemT), pi);
-      this.pendStored(lines, ev, pi.ref, elemTk, built);
+      b.store(V(ev.ref, elemT), pi);
+      this.pendStored(lines, ev.ref, pi.ref, elemTk, built);
     }
     this.endStored(lines, built, pendMark);
     return asGen(lines, b.load(arrT, alloca));
@@ -6342,9 +6290,8 @@ export class Codegen {
     const elemKind = expr.type.tag === "array" ? expr.type.element : { tag: "int" as const, bits: 32, signed: true };
     const elemTy = this.llvmType(elemKind);
     const arrTy = `[${expr.count} x ${elemTy}]`;
-    const [vl, vv] = this.genExpr(expr.value);
-    lines.push(...vl);
-    if (vv === "0" || vv === "0.0" || vv === "false") {
+    const vv = this.genVal(expr.value, lines);
+    if (vv.ref === "0" || vv.ref === "0.0" || vv.ref === "false") {
       return [lines, "zeroinitializer", arrTy];
     }
     const b = new LlvmTextBuilder(lines, this);
@@ -6358,7 +6305,7 @@ export class Codegen {
       // type's Clone when the checker found one (`cloneFn`), else it is the structural
       // deep clone, which only a type with no Drop anywhere in it can reach.
       const srcPtr = b.alloca(elemT);
-      b.store(V(vv, elemT), srcPtr);
+      b.store(V(vv.ref, elemT), srcPtr);
       for (let i = 0; i < expr.count - 1; i++) {
         const pi = b.gep(arrT, alloca, [i32c(0), i32c(i)]);
         const cloned = expr.cloneFn
@@ -6368,16 +6315,16 @@ export class Codegen {
       }
       if (expr.count > 0) {
         const last = b.gep(arrT, alloca, [i32c(0), i32c(expr.count - 1)]);
-        b.store(V(vv, elemT), last);
-        this.own.endVal(lines, vv, "MOVE");
+        b.store(V(vv.ref, elemT), last);
+        this.own.endVal(lines, vv.ref, "MOVE");
       } else {
-        this.own.valToSlot(vv, srcPtr.ref);
+        this.own.valToSlot(vv.ref, srcPtr.ref);
         this.emitDropValue(lines, srcPtr.ref, elemKind);
       }
     } else {
       for (let i = 0; i < expr.count; i++) {
         const pi = b.gep(arrT, alloca, [i32c(0), i32c(i)]);
-        b.store(V(vv, elemT), pi);
+        b.store(V(vv.ref, elemT), pi);
       }
     }
     return asGen(lines, b.load(arrT, alloca));
@@ -6498,13 +6445,12 @@ export class Codegen {
   }
 
   private genEnumTryFrom(expr: HIRExpr & { kind: "EnumTryFrom" }, lines: string[]): Gen {
-    const [vl, nv, nTy] = this.genExpr(expr.value);
-    lines.push(...vl);
+    const nv = this.genVal(expr.value, lines);
     // Compare in i64 (every discriminant fits). Sign-extend a signed source, zero-extend
     // an unsigned one, so e.g. a u8 200 matches discriminant 200 instead of wrapping.
     const b = new LlvmTextBuilder(lines, this);
-    let n64 = V(nv, Ty.of(nTy));
-    if (nTy !== "i64") {
+    let n64 = V(nv.ref, Ty.of(nv.ty.ll));
+    if (nv.ty.ll !== "i64") {
       const signed = expr.value.type.tag === "int" ? expr.value.type.signed : true;
       n64 = b.cast(signed ? "sext" : "zext", n64, Ty.i64);
     }
@@ -6560,8 +6506,7 @@ export class Codegen {
         return [lines, "", "void"];
       }
     }
-    const [el] = this.genExpr(v);
-    lines.push(...el);
+    this.genVal(v, lines);
     return [lines, "", "void"];
   }
 
@@ -6991,10 +6936,9 @@ export class Codegen {
         lines.push(...al);
         argVals.push({ val: aPtr, type: "ptr" });
       } else {
-        const [al, av, at] = this.genExpr(arg.expr);
-        lines.push(...al);
-        argVals.push({ val: av, type: at });
-        if (!this.isLentClosure(arg.expr)) argEnds.push(av);
+        const av = this.genVal(arg.expr, lines);
+        argVals.push({ val: av.ref, type: av.ty.ll });
+        if (!this.isLentClosure(arg.expr)) argEnds.push(av.ref);
       }
     }
     for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
@@ -7109,9 +7053,8 @@ export class Codegen {
     let dataPtr: string;
     if (isHeapCoerce) {
       // Heap<T> → Heap<Interface>: data ptr is the heap pointer value
-      const [valLines, valVal] = this.genExpr(expr.value);
-      lines.push(...valLines);
-      dataPtr = valVal;
+      const valVal = this.genVal(expr.value, lines);
+      dataPtr = valVal.ref;
     } else {
       // &T → &Interface: data ptr is address of the concrete value
       const [addrLines, addrVal] = this.genLValueForArg(expr.value);
@@ -7143,13 +7086,12 @@ export class Codegen {
     if (this.own.on && this.needsDropCg(expr.type)) this.own.resultSlots.set(resultAddr, { arms: 0, type: expr.type });
     const cloneViews = !isVoid && this.isOwnedTempExpr(expr);
 
-    const [condLines, condVal] = this.genExpr(expr.cond);
-    lines.push(...condLines);
+    const condVal = this.genVal(expr.cond, lines);
 
     const thenB = b.newBlock("ife.then");
     const elseB = b.newBlock("ife.else");
     const endB = b.newBlock("ife.end");
-    b.condBr(V(condVal, Ty.i1), thenB, elseB);
+    b.condBr(V(condVal.ref, Ty.i1), thenB, elseB);
 
     b.position(thenB);
     let thenTerminated = false;
@@ -7161,9 +7103,8 @@ export class Codegen {
     if (!thenTerminated && expr.thenBody.length > 0) {
       const last = expr.thenBody[expr.thenBody.length - 1];
       if (last.kind === "ExprStmt") {
-        const [vl, gv] = this.genExpr(last.expr);
-        lines.push(...vl);
-        const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
+        const gv = this.genVal(last.expr, lines);
+        const vv = gv.ref !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv.ref, last.expr.type) : gv.ref;
         if (vv !== "void" && !isVoid) b.store(V(vv, resultT), resultSlot);
         if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
@@ -7184,9 +7125,8 @@ export class Codegen {
     if (!elseTerminated && expr.elseBody.length > 0) {
       const last = expr.elseBody[expr.elseBody.length - 1];
       if (last.kind === "ExprStmt") {
-        const [vl, gv] = this.genExpr(last.expr);
-        lines.push(...vl);
-        const vv = gv !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv, last.expr.type) : gv;
+        const gv = this.genVal(last.expr, lines);
+        const vv = gv.ref !== "void" && cloneViews && this.forkTailIsView(last.expr, false) ? this.cloneViewValue(lines, gv.ref, last.expr.type) : gv.ref;
         if (vv !== "void" && !isVoid) b.store(V(vv, resultT), resultSlot);
         if (vv !== "void" && !isVoid) this.own.intoResult(lines, resultAddr, vv);
       } else {
@@ -7223,9 +7163,8 @@ export class Codegen {
       const [, slotPtr] = this.genVecBoundsCheckedPtr(recv, lines);
       objVal = b.load(CLOSURE_TY, V(slotPtr, Ty.ptr));
     } else {
-      const [objLines, ov] = this.genExpr(recv);
-      lines.push(...objLines);
-      objVal = V(ov, CLOSURE_TY);
+      const ov = this.genVal(recv, lines);
+      objVal = V(ov.ref, CLOSURE_TY);
     }
 
     // extract data ptr and itable ptr
@@ -7248,10 +7187,9 @@ export class Codegen {
         argVals.push({ val: aPtr, type: "ptr" });
         refPtrs.push({ ptr: aPtr, mut: arg.refMut });
       } else {
-        const [al, av, at] = this.genExpr(arg.expr);
-        lines.push(...al);
-        argVals.push({ val: av, type: at });
-        if (!this.isLentClosure(arg.expr)) argEnds.push(av);
+        const av = this.genVal(arg.expr, lines);
+        argVals.push({ val: av.ref, type: av.ty.ll });
+        if (!this.isLentClosure(arg.expr)) argEnds.push(av.ref);
       }
     }
     for (const v of argEnds) this.own.endVal(lines, v, "ARG");   // see genCall
@@ -7272,8 +7210,7 @@ export class Codegen {
   private genUnwrap(expr: HIRExpr & { kind: "Unwrap" }, lines: string[]): Gen {
     this.needsPrintf = true;
     this.needsExit = true;
-    const [ol, ov] = this.genExpr(expr.operand);
-    lines.push(...ol);
+    const ov = this.genVal(expr.operand, lines);
 
     const layout = must(this.enumLayouts, expr.enumName, "enum layouts");
     const enumTy = `%${expr.enumName}`;
@@ -7285,7 +7222,7 @@ export class Codegen {
     const enumT = Ty.of(enumTy);
     const enumAddrV = b.alloca(enumT);
     const enumAddr = enumAddrV.ref;
-    b.store(V(ov, enumT), enumAddrV);
+    b.store(V(ov.ref, enumT), enumAddrV);
     const tag = this.loadEnumTag(lines, enumTy, enumAddr);
 
     // Some/Ok is always tag 0
@@ -7331,7 +7268,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     b.position(okB);
-    this.own.endVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov.ref, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -7350,8 +7287,7 @@ export class Codegen {
     // ok path, and the Err payload may still point into one, so the error exit leaves
     // them alone; everything queued before the operand is pending and dropped.
     const argTempsBefore = this.argTempDrops.length;
-    const [ol, ov] = this.genExpr(expr.operand);
-    lines.push(...ol);
+    const ov = this.genVal(expr.operand, lines);
 
     const layout = must(this.enumLayouts, expr.enumName, "enum layouts");
     const enumTy = `%${expr.enumName}`;
@@ -7363,7 +7299,7 @@ export class Codegen {
     const ptr = (ref: string) => val(ref, Ty.ptr);
     const enumT = Ty.of(enumTy);
     const enumAddr = b.alloca(enumT);
-    b.store(V(ov, enumT), enumAddr);
+    b.store(V(ov.ref, enumT), enumAddr);
     const tag = this.loadEnumTag(lines, enumTy, enumAddr.ref);
 
     // Some/Ok is tag 0
@@ -7389,7 +7325,7 @@ export class Codegen {
     // operand was already zeroed and marked dead by the move machinery, so returning its
     // payload here cannot double-free.
     b.position(errB);
-    this.own.endVal(lines, ov, "RETURN");
+    this.own.endVal(lines, ov.ref, "RETURN");
     this.emitPendingDrops(lines, 0, 0, argTempsBefore);
     this.emitDropGlue(lines);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
@@ -7399,10 +7335,10 @@ export class Codegen {
       // so this early `?`-return must write the result buffer and `ret void`
       // rather than `ret <value>` (which mismatches the void result type).
       if (this.currentFnSret) {
-        b.store(V(ov, Ty.of(retTy)), ptr("%__sret.out"));
+        b.store(V(ov.ref, Ty.of(retTy)), ptr("%__sret.out"));
         b.ret();
       } else {
-        b.ret(V(ov, Ty.of(retTy)));
+        b.ret(V(ov.ref, Ty.of(retTy)));
       }
     } else {
       // extract source Err payload
@@ -7462,7 +7398,7 @@ export class Codegen {
 
     // ok branch — extract payload and zero source to prevent double-free
     b.position(okB);
-    this.own.endVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov.ref, "MOVE");
     // `Result<void, E>` has no payload to extract, and LLVM rejects `load void` outright
     // ("void type only allowed for function results"), so a `Promise<void>` failed to
     // compile at the link step rather than anywhere a diagnostic could point at.
@@ -7477,8 +7413,7 @@ export class Codegen {
   }
 
   private genDefaultValue(expr: HIRExpr & { kind: "DefaultValue" }, lines: string[]): Gen {
-    const [ol, ov] = this.genExpr(expr.operand);
-    lines.push(...ol);
+    const ov = this.genVal(expr.operand, lines);
 
     const enumTy = `%${expr.enumName}`;
     const resultTy = this.llvmType(expr.type);
@@ -7497,7 +7432,7 @@ export class Codegen {
     this.entryAllocas.push(`  ${enumAddr} = alloca ${enumTy}`);
     const resultAddr = b.reserveTemp(Ty.ptr);
     this.entryAllocas.push(`  ${resultAddr.ref} = alloca ${resultTy}`);
-    b.store(V(ov, enumT), enumAddrV);
+    b.store(V(ov.ref, enumT), enumAddrV);
     const tag = this.loadEnumTag(lines, enumTy, enumAddr);
 
     const someB = b.newBlock("default.some");
@@ -7508,7 +7443,7 @@ export class Codegen {
 
     // some branch — extract payload and zero the source to prevent double-free
     b.position(someB);
-    this.own.endVal(lines, ov, "MOVE");
+    this.own.endVal(lines, ov.ref, "MOVE");
     const payloadPtr = this.enumPayloadPtr(lines, enumTy, enumAddr, 0);
     const someVal = b.load(resultT, ptr(payloadPtr));
     // Zero the source variable's enum so drop glue won't free the moved payload
@@ -7525,15 +7460,14 @@ export class Codegen {
     // this branch runs when the default is taken, so the Some path leaves the
     // default untouched and its normal drop still fires there.
     b.position(noneB);
-    this.own.endVal(lines, ov, "MOVE");
-    const [dl, dv] = this.genExpr(expr.default);
-    lines.push(...dl);
+    this.own.endVal(lines, ov.ref, "MOVE");
+    const dv = this.genVal(expr.default, lines);
     if (this.needsDropCg(expr.type) && expr.default.kind === "Ident") {
       const dstAddr = this.localAddr(expr.default.name);
       if (dstAddr) b.store(V("zeroinitializer", resultT), ptr(dstAddr));
     }
-    b.store(V(dv, resultT), resultAddr);
-    this.own.endVal(lines, dv, "MOVE");
+    b.store(V(dv.ref, resultT), resultAddr);
+    this.own.endVal(lines, dv.ref, "MOVE");
     b.br(doneB);
 
     b.position(doneB);
@@ -7547,18 +7481,16 @@ export class Codegen {
     // A numbered temp in the entry block: entryAlloca takes only named slots, so this stays text.
     const slot = b.reserveTemp(Ty.ptr);
     this.entryAllocas.push(`  ${slot.ref} = alloca i1`);
-    const [ll, lv] = this.genExpr(expr.left);
-    lines.push(...ll);
-    const left = V(lv, Ty.i1);
+    const lv = this.genVal(expr.left, lines);
+    const left = V(lv.ref, Ty.i1);
     b.store(left, slot);
     const rhsB = b.newBlock(isAnd ? "and.rhs" : "or.rhs");
     const endB = b.newBlock(isAnd ? "and.end" : "or.end");
     if (isAnd) b.condBr(left, rhsB, endB);
     else b.condBr(left, endB, rhsB);
     b.position(rhsB);
-    const [rl, rv] = this.genExpr(expr.right);
-    lines.push(...rl);
-    b.store(V(rv, Ty.i1), slot);
+    const rv = this.genVal(expr.right, lines);
+    b.store(V(rv.ref, Ty.i1), slot);
     b.br(endB);
     b.position(endB);
     return asGen(lines, b.load(Ty.i1, slot));
@@ -7577,11 +7509,10 @@ export class Codegen {
     // string → ptr: extract data pointer from String struct
     if (fromKind.tag === "string" && toKind.tag === "ptr") {
       this.hasStringType = true;
-      const [ol, ov] = this.genExpr(expr.operand);
-      lines.push(...ol);
+      const ov = this.genVal(expr.operand, lines);
       const b = new LlvmTextBuilder(lines, this);
       const addr = b.alloca(STRING_TY);
-      b.store(V(ov, STRING_TY), addr);
+      b.store(V(ov.ref, STRING_TY), addr);
       const gep = b.gep(STRING_TY, addr, [i32c(0), i32c(0)]);
       return asGen(lines, b.load(Ty.ptr, gep));
     }
@@ -7594,30 +7525,26 @@ export class Codegen {
         }
       }
       // parameter or closure: extract fn ptr from closure tuple
-      const [ol, ov] = this.genExpr(expr.operand);
-      lines.push(...ol);
+      const ov = this.genVal(expr.operand, lines);
       const b = new LlvmTextBuilder(lines, this);
-      return asGen(lines, b.extractvalue(V(ov, CLOSURE_TY), 0, Ty.ptr));
+      return asGen(lines, b.extractvalue(V(ov.ref, CLOSURE_TY), 0, Ty.ptr));
     }
     // repr'd enum → integer: the value is its discriminant, held in the tag field.
     if (fromKind.tag === "enum" && toKind.tag === "int") {
-      const [ol, ov] = this.genExpr(expr.operand);
-      lines.push(...ol);
+      const ov = this.genVal(expr.operand, lines);
       const b = new LlvmTextBuilder(lines, this);
-      const tag = b.extractvalue(V(ov, Ty.of(this.llvmType(fromKind))), 0, Ty.i32);
+      const tag = b.extractvalue(V(ov.ref, Ty.of(this.llvmType(fromKind))), 0, Ty.i32);
       if (toKind.bits === 32) return asGen(lines, tag);
       // tag is a signed i32 — sext to a wider target (carries negative discriminants), trunc to a narrower one.
       return asGen(lines, b.cast(toKind.bits > 32 ? "sext" : "trunc", tag, Ty.of(toTy)));
     }
     // aggregate types (arrays, structs) can't participate in scalar casts
     if (fromKind.tag === "array" || fromKind.tag === "struct") {
-      const [ol, ov, fromTy] = this.genExpr(expr.operand);
-      lines.push(...ol);
-      return [lines, ov, fromTy];
+      const ov = this.genVal(expr.operand, lines);
+      return [lines, ov.ref, ov.ty.ll];
     }
-    const [ol, ov, fromTy] = this.genExpr(expr.operand);
-    lines.push(...ol);
-    return this.emitScalarCast(lines, fromKind, toKind, fromTy, toTy, ov);
+    const ov = this.genVal(expr.operand, lines);
+    return this.emitScalarCast(lines, fromKind, toKind, ov.ty.ll, toTy, ov.ref);
   }
 
   // `as` between numeric, bool and pointer types on an evaluated operand. Float to int
@@ -7708,15 +7635,13 @@ export class Codegen {
       ov = this.nextTemp();
       lines.push(`  ${ov} = load %String, ptr ${elemPtr}`);
     } else {
-      const [ol, objVal] = this.genExpr(expr.object);
-      lines.push(...ol);
-      ov = objVal;
+      const objVal = this.genVal(expr.object, lines);
+      ov = objVal.ref;
     }
-    const [il, iv, idxTy] = this.genExpr(expr.index);
-    lines.push(...il);
+    const iv = this.genVal(expr.index, lines);
     const len = this.nextTemp();
     lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
-    const idx64 = this.indexToI64(lines, iv, idxTy, expr.index.type);
+    const idx64 = this.indexToI64(lines, iv.ref, iv.ty.ll, expr.index.type);
     this.emitBoundsCheck(lines, idx64, len, expr.span);
     const data = this.nextTemp();
     lines.push(`  ${data} = extractvalue %String ${ov}, 0`);
@@ -8197,9 +8122,8 @@ export class Codegen {
     const elemTy = this.llvmType(vecType.element);
 
     const vecPtr = this.genIndexObjectPtr(expr.object, lines);
-    const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
-    lines.push(...idxLines);
-    const idx64 = this.indexToI64(lines, idxVal, idxTy, expr.index.type);
+    const idxVal = this.genVal(expr.index, lines);
+    const idx64 = this.indexToI64(lines, idxVal.ref, idxVal.ty.ll, expr.index.type);
     const b = new LlvmTextBuilder(lines, this);
     const vecPtrV = val(vecPtr, Ty.ptr);
     const vecTy = Ty.of("%Vec");
@@ -9325,8 +9249,7 @@ export class Codegen {
     const srcOk = must(srcLayout.variants, "Ok", "Result variants");
     const srcErr = must(srcLayout.variants, "Err", "Result variants");
     // the note is evaluated first, unconditionally, like any argument
-    const [nl, noteVal] = this.genExpr(expr.default!);
-    lines.push(...nl);
+    const noteVal = this.genVal(expr.default!, lines);
     const b = new LlvmTextBuilder(lines, this);
     const ptr = (ref: string) => val(ref, Ty.ptr);
     const resT = Ty.of(resTy);
@@ -9347,8 +9270,8 @@ export class Codegen {
     b.position(okB);
     // the note is unused on this path and is owned here (emitDropValue takes an address)
     const noteAddr = b.alloca(STRING_TY);
-    b.store(V(noteVal, STRING_TY), noteAddr);
-    this.own.valToSlot(noteVal, noteAddr.ref);
+    b.store(V(noteVal.ref, STRING_TY), noteAddr);
+    this.own.valToSlot(noteVal.ref, noteAddr.ref);
     this.emitDropValue(lines, noteAddr.ref, { tag: "string" });
     if (srcOk.fieldTypes[0]) {
       const okT = Ty.of(srcOk.fieldTypes[0]);
@@ -9369,8 +9292,8 @@ export class Codegen {
     const cause = expr.boxConversion ? this.emitBoxAsIface(lines, errVal.ref, errTy, expr.boxConversion) : errVal.ref;
     const ctxType: TypeKind = { tag: "struct", name: "ErrorContext" };
     const ctxTy = this.llvmType(ctxType);
-    const c0 = b.insertvalue(V("undef", Ty.of(ctxTy)), V(noteVal, STRING_TY), 0);
-    this.own.endVal(lines, noteVal, "STORE");
+    const c0 = b.insertvalue(V("undef", Ty.of(ctxTy)), V(noteVal.ref, STRING_TY), 0);
+    this.own.endVal(lines, noteVal.ref, "STORE");
     const c1 = b.insertvalue(c0, V(cause, Ty.of("{ ptr, ptr }")), 1);
     const fat = this.emitHeapFatPtr(lines, c1.ref, ctxTy, ctxType, "ErrorContext", "Error");
     store(resErr.tag, V(fat, Ty.of("{ ptr, ptr }")));
@@ -9652,9 +9575,8 @@ export class Codegen {
   // evaluation. Null when `src` is a place, which really does need the copy.
   public cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null {
     if (!this.isOwnedTempExpr(src) || !this.needsDropCg(src.type)) return null;
-    const [sl, sv, st] = this.genExpr(src);
-    lines.push(...sl);
-    return [lines, sv, st];
+    const sv = this.genVal(src, lines);
+    return [lines, sv.ref, sv.ty.ll];
   }
 
   // Free a value that was produced by a call and then consumed in-place by an
@@ -9940,14 +9862,13 @@ export class Codegen {
   // payload load can't alias an owned heap buffer.
   private genOptionOp(expr: HIRExpr & { kind: "OptionOp" }, lines: string[]): Gen {
     const b = new LlvmTextBuilder(lines, this);
-    const [vl, vv] = this.genExpr(expr.value);
-    lines.push(...vl);
+    const vv = this.genVal(expr.value, lines);
     const enumTy = `%${expr.enumName}`;
     const enumT = Ty.of(enumTy);
     const addrV = b.alloca(enumT);
     const addr = addrV.ref;
-    b.store(val(vv, enumT), addrV);
-    this.own.valToSlot(vv, addr);
+    b.store(val(vv.ref, enumT), addrV);
+    this.own.valToSlot(vv.ref, addr);
     // A Result combinator consumes a named receiver when the payload it forwards is not
     // Copy (checker: consumeForwardedPayload); the move ended the local's ID at the read,
     // so the copy at `addr` is a value this op now owns and must end on every branch.
@@ -9997,10 +9918,9 @@ export class Codegen {
 
       // The closure value is built unconditionally (it is just a {fn,env} pair); only the
       // CALL is conditional.
-      const [cl, cv] = this.genExpr(expr.default!);
-      lines.push(...cl);
-      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
-      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
+      const cv = this.genVal(expr.default!, lines);
+      const fnPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 1, Ty.ptr);
 
       const resT = Ty.of(resTy);
       const resSlot = b.entryAlloca(`%__optmap.${this.scopeCounter++}.addr`, resT);
@@ -10015,7 +9935,7 @@ export class Codegen {
       b.position(someBlock);
       if (expr.op === "optionOrElse") {
         // Result type == receiver type here, so forwarding Some is a whole-enum copy.
-        b.store(val(vv, resT), resSlot);
+        b.store(val(vv.ref, resT), resSlot);
       } else {
         const srcPayloadPtr = this.enumPayloadPtr(lines, enumTy, addr, srcSome);
         // The checker types the callback param as &T, so the payload is passed by pointer —
@@ -10084,10 +10004,9 @@ export class Codegen {
 
       // The closure value is built unconditionally (just a {fn,env} pair); only the CALL is
       // conditional, so a side-effecting callback runs on exactly one branch.
-      const [cl, cv] = this.genExpr(expr.default!);
-      lines.push(...cl);
-      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
-      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
+      const cv = this.genVal(expr.default!, lines);
+      const fnPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 1, Ty.ptr);
 
       const resT = Ty.of(resTy);
       const resSlot = b.entryAlloca(`%__resmap.${this.scopeCounter++}.addr`, resT);
@@ -10208,10 +10127,9 @@ export class Codegen {
       b.position(someBlock);
       b.br(contBlock);
       b.position(noneBlock);
-      const [cl, cv] = this.genExpr(expr.default!);
-      lines.push(...cl);
-      const fnPtr = b.extractvalue(val(cv, CLOSURE_TY), 0, Ty.ptr);
-      const envPtr = b.extractvalue(val(cv, CLOSURE_TY), 1, Ty.ptr);
+      const cv = this.genVal(expr.default!, lines);
+      const fnPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 0, Ty.ptr);
+      const envPtr = b.extractvalue(val(cv.ref, CLOSURE_TY), 1, Ty.ptr);
       // Result's version is handed the error, read from the Err variant's own payload
       // offset (not the Ok one loaded above) — by pointer when the param is `&E`.
       const errArgs: Val[] = [];
@@ -10243,9 +10161,8 @@ export class Codegen {
       return asGen(lines, r);
     }
 
-    const [dl, dv] = this.genExpr(expr.default!);
-    lines.push(...dl);
-    const r = b.select(isSomeV, payload, val(dv, payloadT));
+    const dv = this.genVal(expr.default!, lines);
+    const r = b.select(isSomeV, payload, val(dv.ref, payloadT));
     releaseTempReceiver();
     return asGen(lines, r);
   }

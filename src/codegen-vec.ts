@@ -15,6 +15,7 @@ interface CodegenCtx extends StringCtx {
   llvmType(t: TypeKind): string;
   typeSizeOf(t: TypeKind): number;
   genExpr(expr: any): [string[], string, string];
+  genVal(expr: any, lines: string[], sretDest?: string): Val;
   genLValue(expr: any): [string[], string, string];
   entryAllocas: string[];
   scopeCounter: number;
@@ -230,9 +231,8 @@ export function genVecSortBy(
   // the checker admits any signed integer return; the sign is all that is read
   const retTy = Ty.of(callback.type.tag === "fn" && callback.type.ret.tag === "int" ? ctx.llvmType(callback.type.ret) : "i32");
 
-  const [cl, cv] = ctx.genExpr(callback);
-  lines.push(...cl);
-  const { fnPtr, envPtr } = closureParts(ctx, lines, cv);
+  const cv = ctx.genVal(callback, lines);
+  const { fnPtr, envPtr } = closureParts(ctx, lines, cv.ref);
 
   insertionSortLoop(ctx, lines, p, "sortby", (prevPtr, tmpAddr) => {
     const a = cbElemArg(ctx, lines, callback.type, prevPtr, p.elemTy, 0);
@@ -256,9 +256,8 @@ export function genVecSortByKey(
   const p = sortPreamble(ctx, object, elementType, lines, "sortkey");
   const keyTy = Ty.of(ctx.llvmType(keyType));
 
-  const [cl, cv] = ctx.genExpr(callback);
-  lines.push(...cl);
-  const { fnPtr, envPtr } = closureParts(ctx, lines, cv);
+  const cv = ctx.genVal(callback, lines);
+  const { fnPtr, envPtr } = closureParts(ctx, lines, cv.ref);
 
   // cache the key for the element being inserted so we don't re-extract each inner iteration
   const tmpKeyAddr = new LlvmTextBuilder(lines, ctx).entryAlloca(`%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`, keyTy);
@@ -301,18 +300,16 @@ function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemTyp
   fnPtr: Val; envPtr: Val; data: Val; len: Val; elemTy: Ty; release: () => void;
 } {
   ctx.hasVecType = true;
-  const [vl, vv] = ctx.genExpr(vecExpr);
-  lines.push(...vl);
+  const vv = ctx.genVal(vecExpr, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv, VEC_TY);
+  const vec = val(vv.ref, VEC_TY);
   const data = b.extractvalue(vec, 0, Ty.ptr);
   const len = b.extractvalue(vec, 1, Ty.i64);
-  const [cl, cv] = ctx.genExpr(cbExpr);
-  lines.push(...cl);
-  const cb = val(cv, CLOSURE_TY);
+  const cv = ctx.genVal(cbExpr, lines);
+  const cb = val(cv.ref, CLOSURE_TY);
   const fnPtr = b.extractvalue(cb, 0, Ty.ptr);
   const envPtr = b.extractvalue(cb, 1, Ty.ptr);
-  const release = () => ctx.dropOwnedTemp(lines, vv, "%Vec", vecExpr);
+  const release = () => ctx.dropOwnedTemp(lines, vv.ref, "%Vec", vecExpr);
   return { fnPtr, envPtr, data, len, elemTy: Ty.of(ctx.llvmType(elemType)), release };
 }
 
@@ -538,15 +535,14 @@ export function genVecAll(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecAll" }, l
 // the loop body can write it without a phi, matching how the other Vec callbacks
 // carry state across iterations.
 export function genVecFold(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFold" }, lines: string[]): Gen {
-  const [initLines, initVal, accTyName] = ctx.genExpr(expr.init);
-  lines.push(...initLines);
+  const initVal = ctx.genVal(expr.init, lines);
   const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
 
   const b = new LlvmTextBuilder(lines, ctx);
-  const accTy = Ty.of(accTyName);
+  const accTy = Ty.of(initVal.ty.ll);
   const accAddr = b.entryAlloca(`%__fold_acc.${ctx.scopeCounter++}.addr`, accTy);
-  b.store(val(initVal, accTy), accAddr);
-  ctx.own.endVal(lines, initVal, "MOVE");
+  b.store(val(initVal.ref, accTy), accAddr);
+  ctx.own.endVal(lines, initVal.ref, "MOVE");
 
   const idxAddr = b.entryAlloca(`%__fold_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
   b.store(I64_0, idxAddr);
@@ -598,7 +594,7 @@ export function genVecFold(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFold" },
   b.position(endLabel);
   const result = b.load(accTy, accAddr);
   release();
-  return [lines, result.ref, accTyName];
+  return [lines, result.ref, initVal.ty.ll];
 }
 
 export function genVecReverse(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReverse" }, lines: string[]): Gen {
@@ -793,15 +789,13 @@ function optionResultSlot(ctx: CodegenCtx, optionEnumName: string, label: string
 export function genVecGetOpt(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecGetOpt" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const [vl, vv] = ctx.genExpr(expr.object);
-  lines.push(...vl);
+  const vv = ctx.genVal(expr.object, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv, VEC_TY);
+  const vec = val(vv.ref, VEC_TY);
   const data = b.extractvalue(vec, 0, Ty.ptr);
   const len = b.extractvalue(vec, 1, Ty.i64);
-  const [il, iv] = ctx.genExpr(expr.index);
-  lines.push(...il);
-  const index = val(iv, Ty.i64);
+  const iv = ctx.genVal(expr.index, lines);
+  const index = val(iv.ref, Ty.i64);
 
   const slot = optionResultSlot(ctx, expr.optionEnumName, "vecget", lines);
   const inBounds = b.icmp("ult", index, len);
@@ -818,7 +812,7 @@ export function genVecGetOpt(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecGetOpt
   b.position(endLabel);
   const result = b.load(slot.enumT, slot.addr);
   // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.object);
+  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.object);
   return [lines, result.ref, slot.enumTy];
 }
 
@@ -838,10 +832,9 @@ function emitElemOrd(ctx: CodegenCtx, lines: string[], elemType: TypeKind, a: Va
 export function genVecMinMax(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMinMax" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const [vl, vv] = ctx.genExpr(expr.object);
-  lines.push(...vl);
+  const vv = ctx.genVal(expr.object, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv, VEC_TY);
+  const vec = val(vv.ref, VEC_TY);
   const data = b.extractvalue(vec, 0, Ty.ptr);
   const len = b.extractvalue(vec, 1, Ty.i64);
 
@@ -899,22 +892,20 @@ export function genVecMinMax(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMinMax
   b.position(endLabel);
   const result = b.load(slot.enumT, slot.addr);
   // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.object);
+  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.object);
   return [lines, result.ref, slot.enumTy];
 }
 
 export function genVecIndexOf(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecIndexOf" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const [vl, vv] = ctx.genExpr(expr.vec);
-  lines.push(...vl);
+  const vv = ctx.genVal(expr.vec, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv, VEC_TY);
+  const vec = val(vv.ref, VEC_TY);
   const data = b.extractvalue(vec, 0, Ty.ptr);
   const len = b.extractvalue(vec, 1, Ty.i64);
-  const [nl, nvRef] = ctx.genExpr(expr.value);
-  lines.push(...nl);
-  const nv = val(nvRef, elemTy);
+  const nvRef = ctx.genVal(expr.value, lines);
+  const nv = val(nvRef.ref, elemTy);
 
   const slot = optionResultSlot(ctx, expr.optionEnumName, "vecidx", lines);
   const iAddr = b.alloca(Ty.i64);
@@ -965,7 +956,7 @@ export function genVecIndexOf(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecIndex
   ctx.dropOwnedTemp(lines, nv.ref, elemTy.ll, expr.value);
   // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
   // container. A search keeps no pointer into it once the answer is a scalar.
-  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
+  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.vec);
   return [lines, result.ref, slot.enumTy];
 }
 
@@ -1019,13 +1010,12 @@ export function genVecTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecTrun
   const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
   const vecPtr = val(vecPtrRef, Ty.ptr);
-  const [nLines, nRaw] = ctx.genExpr(expr.length);
-  lines.push(...nLines);
+  const nRaw = ctx.genVal(expr.length, lines);
 
   const b = new LlvmTextBuilder(lines, ctx);
   // A negative length means empty; a length past the end is a no-op, never a grow.
-  const isNeg = b.icmp("slt", val(nRaw, Ty.i64), I64_0);
-  const n = b.select(isNeg, I64_0, val(nRaw, Ty.i64));
+  const isNeg = b.icmp("slt", val(nRaw.ref, Ty.i64), I64_0);
+  const n = b.select(isNeg, I64_0, val(nRaw.ref, Ty.i64));
 
   const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
   const len = b.load(Ty.i64, lenPtr);
@@ -1118,9 +1108,8 @@ export function genVecRemove(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRemove
   const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
   const vecPtr = val(vecPtrRef, Ty.ptr);
-  const [idxLines, idxRef] = ctx.genExpr(expr.index);
-  lines.push(...idxLines);
-  const idxVal = val(idxRef, Ty.i64);
+  const idxRef = ctx.genVal(expr.index, lines);
+  const idxVal = val(idxRef.ref, Ty.i64);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
@@ -1163,16 +1152,14 @@ export function genVecContains(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecCont
   const elemType = expr.elementType;
   const elemTy = Ty.of(ctx.llvmType(elemType));
 
-  const [vecLines, vecRef] = ctx.genExpr(expr.vec);
-  lines.push(...vecLines);
-  const vecVal = val(vecRef, VEC_TY);
+  const vecRef = ctx.genVal(expr.vec, lines);
+  const vecVal = val(vecRef.ref, VEC_TY);
   const b = new LlvmTextBuilder(lines, ctx);
   const data = b.extractvalue(vecVal, 0, Ty.ptr);
   const len = b.extractvalue(vecVal, 1, Ty.i64);
 
-  const [valLines, valRef, valLt] = ctx.genExpr(expr.value);
-  lines.push(...valLines);
-  const needle = val(valRef, Ty.of(valLt));
+  const valRef = ctx.genVal(expr.value, lines);
+  const needle = valRef;
 
   const resultAddr = b.entryAlloca(`%__contains_result.${ctx.scopeCounter++}.addr`, Ty.i1);
   b.store(val("false", Ty.i1), resultAddr);
@@ -1219,7 +1206,7 @@ export function genVecContains(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecCont
   const result = b.load(Ty.i1, resultAddr);
   // Same as the map lookups: the needle is the caller's, and a read-only search takes
   // no ownership of it. `v.contains("s" + i.toString())` leaked the needle per call.
-  ctx.dropOwnedTemp(lines, needle.ref, valLt, expr.value);
+  ctx.dropOwnedTemp(lines, needle.ref, valRef.ty.ll, expr.value);
   // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
   // container. A search keeps no pointer into it once the answer is a scalar.
   ctx.dropOwnedTemp(lines, vecVal.ref, "%Vec", expr.vec);
@@ -1283,9 +1270,8 @@ export function genVecSlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" 
     return genArraySlice(ctx, expr, lines);
   }
 
-  const [vLines, vRef] = ctx.genExpr(expr.vec);
-  lines.push(...vLines);
-  const vVal = val(vRef, VEC_TY);
+  const vRef = ctx.genVal(expr.vec, lines);
+  const vVal = val(vRef.ref, VEC_TY);
   const startVal = val(ctx.genBoundI64(expr.start, lines), Ty.i64);
   const endVal = val(ctx.genBoundI64(expr.end, lines), Ty.i64);
 
@@ -1386,15 +1372,14 @@ export function genVecWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "Vec
   ctx.hasVecType = true;
   ctx.needsMalloc = true;
   const elemSize = ctx.typeSizeOf(expr.elementType);
-  const [capLines, capRef] = ctx.genExpr(expr.capacity);
-  lines.push(...capLines);
-  ctx.emitNonNegativeCheck(lines, capRef, "capacity", expr.span);
+  const capRef = ctx.genVal(expr.capacity, lines);
+  ctx.emitNonNegativeCheck(lines, capRef.ref, "capacity", expr.span);
   // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
   // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
   // the "buffer or null" invariant push checks (null only when cap==0).
-  const { buf } = ctx.emitAllocBytes(lines, capRef, elemSize, "veccap", expr.span);
+  const { buf } = ctx.emitAllocBytes(lines, capRef.ref, elemSize, "veccap", expr.span);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = makeVec(b, val(buf, Ty.ptr), I64_0, val(capRef, Ty.i64));
+  const vec = makeVec(b, val(buf, Ty.ptr), I64_0, val(capRef.ref, Ty.i64));
   return asGen(lines, vec);
 }
 
@@ -1403,14 +1388,12 @@ export function genVecFilled(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilled
   ctx.needsMalloc = true;
   const elemSize = ctx.typeSizeOf(expr.elementType);
   const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const [cntLines, cntRef] = ctx.genExpr(expr.count);
-  lines.push(...cntLines);
-  ctx.emitNonNegativeCheck(lines, cntRef, "length", expr.span);
-  const [valLines, valRef] = ctx.genExpr(expr.value);
-  lines.push(...valLines);
-  const { buf: bufRef } = ctx.emitAllocBytes(lines, cntRef, elemSize, "vecrep", expr.span);
+  const cntRef = ctx.genVal(expr.count, lines);
+  ctx.emitNonNegativeCheck(lines, cntRef.ref, "length", expr.span);
+  const valRef = ctx.genVal(expr.value, lines);
+  const { buf: bufRef } = ctx.emitAllocBytes(lines, cntRef.ref, elemSize, "vecrep", expr.span);
   const buf = val(bufRef, Ty.ptr);
-  const cnt = val(cntRef, Ty.i64);
+  const cnt = val(cntRef.ref, Ty.i64);
   // fill loop: for i in 0..count { buf[i] = value }
   const b = new LlvmTextBuilder(lines, ctx);
   const idxSlot = b.alloca(Ty.i64);
@@ -1425,7 +1408,7 @@ export function genVecFilled(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilled
   b.condBr(more, bodyL, endL);
   b.position(bodyL);
   const slot = b.gep(elemTy, buf, [iv]);
-  b.store(val(valRef, elemTy), slot);
+  b.store(val(valRef.ref, elemTy), slot);
   const inc = b.binop("add", iv, I64_1);
   b.store(inc, idxSlot);
   b.br(condL);
@@ -1452,9 +1435,8 @@ export function genVecPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPush" },
   const vecPtr = val(vecPtrRef, Ty.ptr);
 
   // generate the value to push
-  const [valLines, valRef, valTy] = ctx.genExpr(expr.value);
-  lines.push(...valLines);
-  const value = val(valRef, Ty.of(valTy));
+  const valRef = ctx.genVal(expr.value, lines);
+  const value = valRef;
 
   const b = new LlvmTextBuilder(lines, ctx);
   // load len and cap
@@ -1502,7 +1484,7 @@ export function genVecPush(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPush" },
   const curLen = b.load(Ty.i64, lenPtr);
   const elemPtr = b.gep(elemTy, curData, [curLen]);
   b.store(value, elemPtr);
-  ctx.own.endVal(lines, valRef, "STORE");
+  ctx.own.endVal(lines, valRef.ref, "STORE");
   const newLen = b.binop("add", curLen, I64_1);
   b.store(newLen, lenPtr);
 
@@ -1523,12 +1505,10 @@ export function genVecInsert(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecInsert
   const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecPtrLines);
   const vecPtr = val(vecPtrRef, Ty.ptr);
-  const [idxLines, idxRef] = ctx.genExpr(expr.index);
-  lines.push(...idxLines);
-  const idxVal = val(idxRef, Ty.i64);
-  const [valLines, valRef, valTy] = ctx.genExpr(expr.value);
-  lines.push(...valLines);
-  const value = val(valRef, Ty.of(valTy));
+  const idxRef = ctx.genVal(expr.index, lines);
+  const idxVal = val(idxRef.ref, Ty.i64);
+  const valRef = ctx.genVal(expr.value, lines);
+  const value = valRef;
 
   const b = new LlvmTextBuilder(lines, ctx);
   const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
@@ -1583,7 +1563,7 @@ export function genVecInsert(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecInsert
   const tailBytes = b.binop("mul", tailCount, val(String(elemSize), Ty.i64));
   b.callDiscard(Ty.void, "@llvm.memmove.p0.p0.i64", [dstPtr, srcPtr, tailBytes, val("false", Ty.i1)]);
   b.store(value, srcPtr);
-  ctx.own.endVal(lines, valRef, "STORE");
+  ctx.own.endVal(lines, valRef.ref, "STORE");
   const newLen = b.binop("add", len, I64_1);
   b.store(newLen, lenPtr);
 
@@ -1704,9 +1684,8 @@ export function genVecExtend(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecExtend
   const [dstLines, dstRef] = ctx.genLValue(expr.object);
   lines.push(...dstLines);
   const dstPtr = val(dstRef, Ty.ptr);
-  const [srcLines, srcRef] = ctx.genExpr(expr.other);
-  lines.push(...srcLines);
-  const srcVal = val(srcRef, VEC_TY);
+  const srcRef = ctx.genVal(expr.other, lines);
+  const srcVal = val(srcRef.ref, VEC_TY);
   const b = new LlvmTextBuilder(lines, ctx);
   const srcData = b.extractvalue(srcVal, 0, Ty.ptr);
   const srcLen = b.extractvalue(srcVal, 1, Ty.i64);
@@ -1734,7 +1713,7 @@ export function genVecExtend(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecExtend
   b.callDiscard(Ty.void, "@free", [srcData]);
   b.br(endLabel);
   b.position(endLabel);
-  ctx.own.endVal(lines, srcRef, "STORE");
+  ctx.own.endVal(lines, srcRef.ref, "STORE");
   return [lines, "0", "void"];
 }
 
@@ -1744,15 +1723,14 @@ export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReser
   const [vecLines, vecRef] = ctx.genLValue(expr.object);
   lines.push(...vecLines);
   const vecPtr = val(vecRef, Ty.ptr);
-  const [nLines, nRaw] = ctx.genExpr(expr.additional);
-  lines.push(...nLines);
-  ctx.emitNonNegativeCheck(lines, nRaw, "capacity", expr.span);
+  const nRaw = ctx.genVal(expr.additional, lines);
+  ctx.emitNonNegativeCheck(lines, nRaw.ref, "capacity", expr.span);
   const b = new LlvmTextBuilder(lines, ctx);
   const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
   const len = b.load(Ty.i64, lenPtr);
   // reserve(n) is "room for n MORE", matching Rust — the count a writer has in
   // hand is almost always how many they are about to push, not the final total.
-  const need = b.binop("add", len, val(nRaw, Ty.i64));
+  const need = b.binop("add", len, val(nRaw.ref, Ty.i64));
   emitVecEnsureCapacity(ctx, lines, vecPtr, need, elemSize, "vecrsv", expr.span);
   return [lines, "0", "void"];
 }
@@ -1761,10 +1739,9 @@ export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReser
 // normal checked/wrapping policy; floats use fadd. Empty vec sums to 0.
 export function genVecSum(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSum" }, lines: string[]): Gen {
   ctx.hasVecType = true;
-  const [vl, vv] = ctx.genExpr(expr.vec);
-  lines.push(...vl);
+  const vv = ctx.genVal(expr.vec, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv, Ty.of("%Vec"));
+  const vec = val(vv.ref, Ty.of("%Vec"));
   const data = b.extractvalue(vec, 0, Ty.ptr);
   const len = b.extractvalue(vec, 1, Ty.i64);
   const elemTyStr = ctx.llvmType(expr.elementType);
@@ -1800,7 +1777,7 @@ export function genVecSum(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSum" }, l
   b.position(endL);
   const result = b.load(elemTy, accAddr);
   // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-  ctx.dropOwnedTemp(lines, vv, "%Vec", expr.vec);
+  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.vec);
   return [lines, result.ref, elemTyStr];
 }
 
@@ -1812,11 +1789,10 @@ export function genVecRetain(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRetain
   const elemTy = Ty.of(elemTyStr);
   const [vecLines, vecPtrRef] = ctx.genLValue(expr.object);
   lines.push(...vecLines);
-  const [cl, cv] = ctx.genExpr(expr.callback);
-  lines.push(...cl);
+  const cv = ctx.genVal(expr.callback, lines);
   const b = new LlvmTextBuilder(lines, ctx);
   const vecPtr = val(vecPtrRef, Ty.ptr);
-  const closure = val(cv, Ty.of("{ ptr, ptr }"));
+  const closure = val(cv.ref, Ty.of("{ ptr, ptr }"));
   const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
   const envPtr = b.extractvalue(closure, 1, Ty.ptr);
 

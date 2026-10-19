@@ -38,6 +38,7 @@ export interface CodegenMapCtx {
   llvmType(t: TypeKind): string;
   typeSizeOf(t: TypeKind): number;
   genExpr(expr: HIRExpr, sretDest?: string): Gen;
+  genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val;
   genLValue(expr: HIRExpr): Gen;
   hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string;
   needsDropCg(t: TypeKind): boolean;
@@ -221,12 +222,11 @@ function mapReceiverPtr(ctx: CodegenMapCtx, lines: string[], mapExpr: HIRExpr): 
   const [ptrLines, ptr] = ctx.genLValue(mapExpr);
   lines.push(...ptrLines);
   if (ptr !== "null") return { ptr, tempSlot: null };
-  const [exprLines, exprVal, exprTy] = ctx.genExpr(mapExpr);
-  lines.push(...exprLines);
+  const exprVal = ctx.genVal(mapExpr, lines);
   const b = new LlvmTextBuilder(lines, ctx);
-  const slot = b.alloca(Ty.of(exprTy));
-  b.store(val(exprVal, Ty.of(exprTy)), slot);
-  ctx.own.valToSlot(exprVal, slot.ref);
+  const slot = b.alloca(Ty.of(exprVal.ty.ll));
+  b.store(exprVal, slot);
+  ctx.own.valToSlot(exprVal.ref, slot.ref);
   return { ptr: slot.ref, tempSlot: slot.ref };
 }
 
@@ -259,12 +259,10 @@ export function genHashMapInsert(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
 
   // eval key and value
-  const [keyLines, keyVal] = ctx.genExpr(expr.key);
-  lines.push(...keyLines);
-  const [valLines, valVal] = ctx.genExpr(expr.value);
-  lines.push(...valLines);
-  emitHashMapInsertValues(ctx, lines, mapPtr, mapType, keyVal, valVal, expr.span);
-  ctx.own.endVal(lines, keyVal, "STORE"); ctx.own.endVal(lines, valVal, "STORE");
+  const keyVal = ctx.genVal(expr.key, lines);
+  const valVal = ctx.genVal(expr.value, lines);
+  emitHashMapInsertValues(ctx, lines, mapPtr, mapType, keyVal.ref, valVal.ref, expr.span);
+  ctx.own.endVal(lines, keyVal.ref, "STORE"); ctx.own.endVal(lines, valVal.ref, "STORE");
   // Inserting into a temporary is pointless but legal, and the temporary still leaks
   // without ctx.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, mapType);
@@ -602,9 +600,8 @@ export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "
   const b = new LlvmTextBuilder(lines, ctx);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const [keyLines, keyVal] = ctx.genExpr(expr.key);
-  lines.push(...keyLines);
-  const key = val(keyVal, keyTy);
+  const keyVal = ctx.genVal(expr.key, lines);
+  const key = val(keyVal.ref, keyTy);
 
   const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
   const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
@@ -630,7 +627,7 @@ export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "
 
   b.position(doneLabel);
   const result = b.phi(Ty.i1, [[val("true", Ty.i1), foundLabel], [val("false", Ty.i1), notFoundLabel]]);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
+  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
@@ -654,9 +651,8 @@ function beginHashMapProbe(ctx: CodegenMapCtx, b: Builder, lines: string[], map:
 
   const { ptr: mapPtrRef, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, map);
   const mapPtr = val(mapPtrRef, Ty.ptr);
-  const [keyLines, keyRef] = ctx.genExpr(key);
-  lines.push(...keyLines);
-  const keyV = val(keyRef, keyTy);
+  const keyRef = ctx.genVal(key, lines);
+  const keyV = val(keyRef.ref, keyTy);
 
   const { seed, cap, data } = loadSeedCapData(b, mapPtr);
   const { mask, slotAddr } = hashStartSlot(ctx, b, keyV, keyType, seed, cap);
@@ -688,9 +684,8 @@ export function genHashMapModify(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
   const entryTy = Ty.of(ctx.hashMapEntryType(mapType.key, mapType.value));
   const b = new LlvmTextBuilder(lines, ctx);
   // The callback first: its environment must exist before the probe branches.
-  const [cl, cv] = ctx.genExpr(expr.callback);
-  lines.push(...cl);
-  const closure = val(cv, Ty.of("{ ptr, ptr }"));
+  const cv = ctx.genVal(expr.callback, lines);
+  const closure = val(cv.ref, Ty.of("{ ptr, ptr }"));
   const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
   const envPtr = b.extractvalue(closure, 1, Ty.ptr);
 
@@ -720,9 +715,8 @@ export function genHashMapGetOrInsertWith(ctx: CodegenMapCtx, expr: HIRExpr & { 
   const mapType = expr.map.type;
   if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrInsertWith on non-hashmap");
   const b = new LlvmTextBuilder(lines, ctx);
-  const [cl, cv] = ctx.genExpr(expr.init);
-  lines.push(...cl);
-  const closure = val(cv, Ty.of("{ ptr, ptr }"));
+  const cv = ctx.genVal(expr.init, lines);
+  const closure = val(cv.ref, Ty.of("{ ptr, ptr }"));
   const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
   const envPtr = b.extractvalue(closure, 1, Ty.ptr);
 
@@ -767,9 +761,8 @@ export function genHashMapRemove(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
 
   const { ptr: mapPtrRef, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
   const map = val(mapPtrRef, Ty.ptr);
-  const [keyLines, keyVal] = ctx.genExpr(expr.key);
-  lines.push(...keyLines);
-  const key = val(keyVal, keyTy);
+  const keyVal = ctx.genVal(expr.key, lines);
+  const key = val(keyVal.ref, keyTy);
 
   const { seed, cap, data } = loadSeedCapData(b, map);
   const lenPtr = hmField(b, map, HM_LEN);
@@ -814,7 +807,7 @@ export function genHashMapRemove(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Ha
   emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
 
   b.position(doneLabel);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
+  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
@@ -830,10 +823,9 @@ export function genHashMapWithCapacity(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   ctx.needsMemset = true;
   const entryTy = Ty.of(ctx.hashMapEntryType(expr.keyType, expr.valueType));
   const b = new LlvmTextBuilder(lines, ctx);
-  const [capLines, nRef] = ctx.genExpr(expr.capacity);
-  lines.push(...capLines);
-  ctx.emitNonNegativeCheck(lines, nRef, "capacity", expr.span);
-  const nVal = val(nRef, Ty.i64);
+  const nRef = ctx.genVal(expr.capacity, lines);
+  ctx.emitNonNegativeCheck(lines, nRef.ref, "capacity", expr.span);
+  const nVal = val(nRef.ref, Ty.i64);
 
   const nPlus1 = b.binop("add", nVal, i64c(1));
   const scaled = b.binop("mul", nPlus1, i64c(4));
@@ -874,12 +866,11 @@ export function genHashMapClone(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "Has
   const passed = ctx.cloneOfOwnedTemp(expr.object, lines);
   if (passed) return passed;
   const b = new LlvmTextBuilder(lines, ctx);
-  const [ol, ov] = ctx.genExpr(expr.object);
-  lines.push(...ol);
+  const ov = ctx.genVal(expr.object, lines);
   // emitDeepCloneFromPtr reads through a pointer; the spill is a shallow copy
   // that is never dropped — only the clone it produces is owned by the caller.
   const slot = b.alloca(HASHMAP_TY);
-  b.store(val(ov, HASHMAP_TY), slot);
+  b.store(val(ov.ref, HASHMAP_TY), slot);
   const cloned = ctx.emitDeepCloneFromPtr(lines, slot.ref, expr.object.type);
   return [lines, cloned, "%HashMap"];
 }
@@ -971,9 +962,8 @@ export function genHashMapEntries(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "H
   const elemSize = ctx.typeSizeOf(elemType);
   const b = new LlvmTextBuilder(lines, ctx);
 
-  const [ol, ov] = ctx.genExpr(expr.object);
-  lines.push(...ol);
-  const obj = val(ov, HASHMAP_TY);
+  const ov = ctx.genVal(expr.object, lines);
+  const obj = val(ov.ref, HASHMAP_TY);
   const data = b.extractvalue(obj, HM_DATA, Ty.ptr);
   const len = b.extractvalue(obj, HM_LEN, Ty.i64);
   const cap = b.extractvalue(obj, HM_CAP, Ty.i64);
@@ -1019,7 +1009,7 @@ export function genHashMapEntries(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "H
   // keys()/values() build a fresh Vec of deep clones, so nothing points into the map
   // afterwards and a temporary receiver can go: `mkMap().keys().len` leaked the map,
   // its keys and its values on every call.
-  ctx.dropOwnedTemp(lines, ov, "%HashMap", expr.object);
+  ctx.dropOwnedTemp(lines, ov.ref, "%HashMap", expr.object);
   return asGen(lines, v);
 }
 
@@ -1040,9 +1030,8 @@ export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   const optionTy = Ty.of(`%${optionEnumName}`);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const [keyLines, keyVal] = ctx.genExpr(expr.key);
-  lines.push(...keyLines);
-  const key = val(keyVal, keyTy);
+  const keyVal = ctx.genVal(expr.key, lines);
+  const key = val(keyVal.ref, keyTy);
 
   const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
   const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
@@ -1104,7 +1093,7 @@ export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   // ordinary map idiom there is. `insert` already knew this for its overwrite path;
   // the four read-only lookups did not. dropOwnedTemp no-ops unless the argument really
   // is an owned temporary, so a variable or a literal key is untouched.
-  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
+  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
@@ -1123,12 +1112,10 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   const b = new LlvmTextBuilder(lines, ctx);
 
   const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const [keyLines, keyVal] = ctx.genExpr(expr.key);
-  lines.push(...keyLines);
-  const key = val(keyVal, keyTy);
-  const [defaultLines, defaultRef] = ctx.genExpr(expr.default);
-  lines.push(...defaultLines);
-  const defaultVal = val(defaultRef, valTy);
+  const keyVal = ctx.genVal(expr.key, lines);
+  const key = val(keyVal.ref, keyTy);
+  const defaultRef = ctx.genVal(expr.default, lines);
+  const defaultVal = val(defaultRef.ref, valTy);
 
   const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
   const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
@@ -1178,7 +1165,7 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
 
   b.position(doneLabel);
   const result = b.phi(valTy, [[foundVal, foundJoin], [defaultVal, notFoundLabel]]);
-  ctx.dropOwnedTemp(lines, keyVal, keyTy.ll, expr.key);
+  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
   // A materialized receiver is an owned temporary nobody else will free. This runs after
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);

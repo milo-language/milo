@@ -15,6 +15,7 @@ export const F64_BUF = 32;
 // public solely to satisfy this, they are not part of its external API.
 export interface StringCtx extends NameSource {
   genExpr(expr: HIRExpr, sretDest?: string): Gen;
+  genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val;
   genLValue(expr: HIRExpr): Gen;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
   cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null;
@@ -68,16 +69,15 @@ function stringField(b: Builder, strPtr: Val, i: number): Val {
 export function genStringWithCapacity(ctx: StringCtx, expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;
-  const [capLines, capVal] = ctx.genExpr(expr.capacity);
-  lines.push(...capLines);
-  ctx.emitNonNegativeCheck(lines, capVal, "capacity", expr.span);
+  const capVal = ctx.genVal(expr.capacity, lines);
+  ctx.emitNonNegativeCheck(lines, capVal.ref, "capacity", expr.span);
   const b = new LlvmTextBuilder(lines, ctx);
   // At least one byte. A String owns its buffer exactly when cap > 0 (cap 0 marks a
   // borrowed literal, which drop skips), and malloc(0) still hands back a live block:
   // `String.withCapacity(0)` was an owned buffer recorded as borrowed, leaked on drop,
   // and orphaned by the first push (which saw cap 0 and allocated afresh).
-  const isZero = b.icmp("eq", val(capVal, Ty.i64), I64_0);
-  const cap = b.select(isZero, val("1", Ty.i64), val(capVal, Ty.i64));
+  const isZero = b.icmp("eq", val(capVal.ref, Ty.i64), I64_0);
+  const cap = b.select(isZero, val("1", Ty.i64), val(capVal.ref, Ty.i64));
   const buf = val(ctx.emitStrAlloc(lines, cap.ref, "strcap", expr.span), Ty.ptr);
   b.store(val("0", Ty.i8), buf);
   return asGen(lines, makeString(b, buf, I64_0, cap));
@@ -174,8 +174,7 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
 
   const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
-  const [byteLines, byteVal] = ctx.genExpr(expr.byte);
-  lines.push(...byteLines);
+  const byteVal = ctx.genVal(expr.byte, lines);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const strPtr = val(strPtrRef, Ty.ptr);
@@ -210,7 +209,7 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
   b.position(store);
   const cur = b.phi(Ty.ptr, [[data, fast], [grown, slowEnd]], true);
   const elemPtr = b.gep(Ty.i8, cur, [len]);
-  b.store(val(byteVal, Ty.i8), elemPtr);
+  b.store(val(byteVal.ref, Ty.i8), elemPtr);
   b.store(lenPlus1, lenPtr);
   // null-terminate for FFI safety
   const nullPtr = b.gep(Ty.i8, cur, [lenPlus1]);
@@ -223,9 +222,8 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
 export function genStringPushInt(ctx: StringCtx, expr: HIRExpr & { kind: "StringPushInt" }, lines: string[]): Gen {
   const [strPtrLines, strPtr] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
-  const [vLines, vVal, vTy] = ctx.genExpr(expr.value);
-  lines.push(...vLines);
-  ctx.emitAppendFormatParts(lines, strPtr, [{ val: vVal, ty: vTy, tk: expr.value.type }], expr.span);
+  const vVal = ctx.genVal(expr.value, lines);
+  ctx.emitAppendFormatParts(lines, strPtr, [{ val: vVal.ref, ty: vVal.ty.ll, tk: expr.value.type }], expr.span);
   return [lines, "void", "void"];
 }
 
@@ -311,12 +309,11 @@ export function genStringSetByte(ctx: StringCtx, expr: HIRExpr & { kind: "String
   const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
   const idx = val(ctx.genBoundI64(expr.index, lines), Ty.i64);
-  const [bl, bv, bt] = ctx.genExpr(expr.byte);
-  lines.push(...bl);
+  const bv = ctx.genVal(expr.byte, lines);
   const b = new LlvmTextBuilder(lines, ctx);
   const strPtr = val(strPtrRef, Ty.ptr);
-  let byte = val(bv, Ty.of(bt));
-  if (bt !== "i8") byte = b.cast("trunc", byte, Ty.i8);
+  let byte = bv;
+  if (bv.ty.ll !== "i8") byte = b.cast("trunc", byte, Ty.i8);
   const dataPtr = stringField(b, strPtr, 0);
   const lenPtr = stringField(b, strPtr, 1);
   const capPtr = stringField(b, strPtr, 2);
@@ -371,15 +368,14 @@ export function genStringPushStr(ctx: StringCtx, expr: HIRExpr & { kind: "String
     for (const t of temps) ctx.dropOwnedTemp(lines, t.val, t.ty, t.expr);
     return [lines, "void", "void"];
   }
-  const [otherLines, otherVal] = ctx.genExpr(expr.other);
-  lines.push(...otherLines);
+  const otherVal = ctx.genVal(expr.other, lines);
   // One string part: the same reserve (unique first, then grow) and the same re-basing
   // of a source that points into the receiver (`s.pushStr(s)`) as an interpolation.
-  ctx.emitAppendFormatParts(lines, strPtr, [{ val: otherVal, ty: "%String", tk: { tag: "string" } }], expr.span);
+  ctx.emitAppendFormatParts(lines, strPtr, [{ val: otherVal.ref, ty: "%String", tk: { tag: "string" } }], expr.span);
 
   // pushStr copies the bytes in; a temporary source (a call result, or the
   // clone `v[i]` produces) is dead afterwards and nothing else frees it.
-  ctx.dropOwnedTemp(lines, otherVal, "%String", expr.other);
+  ctx.dropOwnedTemp(lines, otherVal.ref, "%String", expr.other);
   return [lines, "void", "void"];
 }
 
@@ -389,12 +385,11 @@ export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringS
   ctx.needsMalloc = true;
   ctx.needsMemcpy = true;
 
-  const [strLines, strVal] = ctx.genExpr(expr.str);
-  lines.push(...strLines);
+  const strVal = ctx.genVal(expr.str, lines);
   const startVal = ctx.genBoundI64(expr.start, lines);
   const endVal = ctx.genBoundI64(expr.end, lines);
 
-  ctx.emitStringRangeCheck(lines, startVal, endVal, strVal, "substr", expr.span);
+  ctx.emitStringRangeCheck(lines, startVal, endVal, strVal.ref, "substr", expr.span);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const start = val(startVal, Ty.i64);
@@ -403,7 +398,7 @@ export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringS
   const allocLen = b.binop("add", subLen, val("1", Ty.i64));
   const buf = val(ctx.emitStrAlloc(lines, allocLen.ref, "substr", expr.span), Ty.ptr);
 
-  const srcPtr = b.extractvalue(val(strVal, STRING), 0, Ty.ptr);
+  const srcPtr = b.extractvalue(val(strVal.ref, STRING), 0, Ty.ptr);
   const srcOff = b.gep(Ty.i8, srcPtr, [start]);
   b.callDiscard(Ty.ptr, "@memcpy", [buf, srcOff, subLen]);
 
@@ -415,7 +410,7 @@ export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringS
   // substr COPIES out of its receiver, so nothing points into it afterwards and a
   // temporary receiver can go: `big(i).substr(0, 100).len` leaked the whole receiver on
   // every call. Same shape as the Vec/HashMap/StringLen receiver drops.
-  ctx.dropOwnedTemp(lines, strVal, "%String", expr.str);
+  ctx.dropOwnedTemp(lines, strVal.ref, "%String", expr.str);
   return asGen(lines, s);
 }
 
@@ -423,17 +418,16 @@ export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringS
 export function genStringSlice(ctx: StringCtx, expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): Gen {
   ctx.hasStringType = true;
 
-  const [strLines, strVal] = ctx.genExpr(expr.str);
-  lines.push(...strLines);
+  const strVal = ctx.genVal(expr.str, lines);
   const startVal = ctx.genBoundI64(expr.start, lines);
   const endVal = ctx.genBoundI64(expr.end, lines);
 
-  ctx.emitStringRangeCheck(lines, startVal, endVal, strVal, "slice", expr.span);
+  ctx.emitStringRangeCheck(lines, startVal, endVal, strVal.ref, "slice", expr.span);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const subLen = b.binop("sub", val(endVal, Ty.i64), val(startVal, Ty.i64));
 
-  const srcPtr = b.extractvalue(val(strVal, STRING), 0, Ty.ptr);
+  const srcPtr = b.extractvalue(val(strVal.ref, STRING), 0, Ty.ptr);
   const slicePtr = b.gep(Ty.i8, srcPtr, [val(startVal, Ty.i64)]);
 
   return asGen(lines, makeString(b, slicePtr, subLen, I64_0));
@@ -444,15 +438,14 @@ export function genNumberToString(ctx: StringCtx, expr: HIRExpr & { kind: "Numbe
   ctx.needsMalloc = true;
   ctx.hasStringType = true;
 
-  const [vLines, vVal, vTy] = ctx.genExpr(expr.value);
-  lines.push(...vLines);
+  const vVal = ctx.genVal(expr.value, lines);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const vt = expr.valueType;
   if (vt.tag === "int") {
     // 24 bytes holds any 64-bit decimal (20 digits with the sign) and the NUL.
     const buf = val(ctx.emitStrAlloc(lines, "24", "itos", expr.span), Ty.ptr);
-    const n = val(ctx.emitIntFmt(lines, buf.ref, vVal, vTy, vt), Ty.i64);
+    const n = val(ctx.emitIntFmt(lines, buf.ref, vVal.ref, vVal.ty.ll, vt), Ty.i64);
     const nul = b.gep(Ty.i8, buf, [n]);
     b.store(val("0", Ty.i8), nul);
     return asGen(lines, makeString(b, buf, n, val("24", Ty.i64)));
@@ -460,18 +453,17 @@ export function genNumberToString(ctx: StringCtx, expr: HIRExpr & { kind: "Numbe
   // Floats don't go through snprintf directly: they need the round-trip
   // search in @milo.fmt.f64, which already writes an owned buffer we can
   // hand straight to %String.
-  const { buf, len } = ctx.emitFloatToBuf(vVal, vt.tag === "float" ? vt.bits : 64, lines, true);
+  const { buf, len } = ctx.emitFloatToBuf(vVal.ref, vt.tag === "float" ? vt.bits : 64, lines, true);
   return asGen(lines, makeString(b, val(buf, Ty.ptr), val(len, Ty.i64), val(String(F64_BUF), Ty.i64)));
 }
 
 export function genBoolToString(ctx: StringCtx, expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
   ctx.hasStringType = true;
-  const [vLines, vVal] = ctx.genExpr(expr.value);
-  lines.push(...vLines);
+  const vVal = ctx.genVal(expr.value, lines);
   const trueStr = ctx.addString("true");
   const falseStr = ctx.addString("false");
   const b = new LlvmTextBuilder(lines, ctx);
-  const v = val(vVal, Ty.i1);
+  const v = val(vVal.ref, Ty.i1);
   const ptr = b.select(v, val(trueStr.label, Ty.ptr), val(falseStr.label, Ty.ptr));
   const len = b.select(v, val("4", Ty.i64), val("5", Ty.i64));
   return asGen(lines, makeString(b, ptr, len, I64_0));
@@ -484,9 +476,8 @@ export function genStringClone(ctx: StringCtx, expr: HIRExpr & { kind: "StringCl
   ctx.needsMemcpy = true;
   const passed = ctx.cloneOfOwnedTemp(expr.str, lines);
   if (passed) return passed;
-  const [sLines, sVal] = ctx.genExpr(expr.str);
-  lines.push(...sLines);
-  return [lines, ctx.emitStrShare(lines, sVal), "%String"];
+  const sVal = ctx.genVal(expr.str, lines);
+  return [lines, ctx.emitStrShare(lines, sVal.ref), "%String"];
 }
 
 export function genStringFind(ctx: StringCtx, expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
@@ -509,10 +500,9 @@ export function genStringFind(ctx: StringCtx, expr: HIRExpr & { kind: "StringFin
   let fn = expr.reverse ? "strLastIndexOf" : "strIndexOf";
   const args = [strPtr, needlePtr];
   if (expr.from) {
-    const [fromLines, fromValue, fromTy] = ctx.genExpr(expr.from);
-    lines.push(...fromLines);
+    const fromValue = ctx.genVal(expr.from, lines);
     fn = "strIndexOfFrom";
-    args.push(val(fromValue, Ty.of(fromTy)));
+    args.push(fromValue);
   }
   const index = b.call(Ty.i64, `@${fn}`, args);
 
