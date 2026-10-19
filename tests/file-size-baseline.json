@@ -43,7 +43,7 @@
   "src/main.ts": 2360,
   "src/mangle.ts": 597,
   "src/match-usefulness.ts": 93,
-  "src/mir-build.ts": 393,
+  "src/mir-build.ts": 405,
   "src/mir.ts": 247,
   "src/must.ts": 15,
   "src/objcache.ts": 153,

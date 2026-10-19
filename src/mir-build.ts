@@ -26,6 +26,14 @@ export function isMirScalar(t: TypeKind): boolean {
   return (t.tag === "int" && t.min === undefined && t.max === undefined) || t.tag === "float" || t.tag === "bool";
 }
 
+/**
+ * What a MIR local can hold: a scalar, or a raw pointer. A pointer owns nothing, so MIR can
+ * copy it freely; arithmetic, casts and compares on it are still opaque.
+ */
+export function isMirValue(t: TypeKind): boolean {
+  return isMirScalar(t) || t.tag === "ptr";
+}
+
 const BINOPS = new Set<string>(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "==", "!=", "<", "<=", ">", ">="]);
 const BOOL: TypeKind = { tag: "bool" };
 
@@ -96,13 +104,13 @@ class Lower {
     // A by-value scalar parameter is a MIR local living in the slot genFunction's prologue
     // spilled it to; any other parameter is reachable only from opaque statements.
     for (const p of fn.params) {
-      if (p.isRef || p.isRefMut || !isMirScalar(p.type)) continue;
+      if (p.isRef || p.isRefMut || !isMirValue(p.type)) continue;
       const id = this.b.local(p.type, p.name);
       this.b.body.params.push(id);
       this.bind(p.name, { name: p.name, local: id });
     }
     // A non-scalar result is returned by opaque `return` statements only.
-    if (isMirScalar(fn.retType)) this.b.body.ret = this.b.local(fn.retType);
+    if (isMirValue(fn.retType)) this.b.body.ret = this.b.local(fn.retType);
     this.stmts(fn.body);
     // Falling off the end: only a void fn gets here live (the checker rejects the rest), and
     // for anything else the block is unreachable past a `while true`.
@@ -113,6 +121,10 @@ class Lower {
 
   private scalar(t: TypeKind, what: string): void {
     if (!isMirScalar(t)) throw new Unsupported(`${what} of type ${t.tag}`);
+  }
+
+  private value(t: TypeKind, what: string): void {
+    if (!isMirValue(t)) throw new Unsupported(`${what} of type ${t.tag}`);
   }
 
   private bind(name: string, bd: Binding): void { this.scopes[this.scopes.length - 1].set(name, bd); }
@@ -186,7 +198,7 @@ class Lower {
     switch (s.kind) {
       case "Let": {
         if (s.viewBind) throw new Unsupported("view let");
-        this.scalar(s.type, "let");
+        this.value(s.type, "let");
         const v = this.operand(s.value);
         const id = this.b.local(s.type, s.name, s.mutable, s.span);
         this.b.assign({ local: id }, { kind: "use", op: v }, s.span);
@@ -283,7 +295,7 @@ class Lower {
     } catch (err) {
       // An expression whose bindings escape it (a let-else match) must go opaque with its
       // whole statement, which records what it binds.
-      if (!(err instanceof Unsupported) || !isMirScalar(e.type) || !opaqueOk(e) || escapingBindings(e).length > 0) throw err;
+      if (!(err instanceof Unsupported) || !isMirValue(e.type) || !opaqueOk(e) || escapingBindings(e).length > 0) throw err;
       this.b.rollback(m);
       this.b.body.opaqueReasons.push(err.reason);
       const t = this.temp(e.type, e.span);
@@ -353,9 +365,9 @@ class Lower {
     if (e.variadic) throw new Unsupported("variadic call");
     for (const a of e.args) {
       if (a.passByRef) throw new Unsupported("by-ref arg");
-      this.scalar(a.expr.type, "call arg");
+      this.value(a.expr.type, "call arg");
     }
-    if (e.type.tag !== "void") this.scalar(e.type, "call result");
+    if (e.type.tag !== "void") this.value(e.type, "call result");
     if (!this.ctx.calleeOk(e.func, e.args.map(a => a.expr.type), e.type)) throw new Unsupported("callee");
     const args = e.args.map(a => this.operand(a.expr));
     const next = this.b.newBlock();
