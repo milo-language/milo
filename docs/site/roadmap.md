@@ -50,11 +50,11 @@ One model — green tasks — with a single OS-thread escape hatch. No async/awa
 - **Go exit semantics**: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly, or drive with `schedulerRunToCompletion()`
 - **`main` is itself a green task** in any program that can reach `spawn`, so a blocking call in `main` no longer starves the tasks that would satisfy it
 
-### Standard Library (<!-- stat:std-modules -->95<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->96<!-- /stat --> modules)
 
 I/O & system: io, fs, path, env, environ, args, process, signal, dl, sysinfo, mem, os, platform, term, pty, keys, ansi
 Networking: net, unix, fetch, tls, https, http, httpmw, ws, wsframe, chunked, url
-Data: json, csv, base64, base32, hex, sqlite, arena, set, pool, png
+Data: json, csv, base64, base32, hex, sqlite, migrate, arena, set, pool, png
 Compression: deflate, inflate, zip, zstd
 Crypto & auth: crypto, sha256, sha1, hmac, jwt, totp, checksum, xxhash
 Concurrency: runtime, sync, select, event
@@ -83,7 +83,7 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **Formatter**: `milo fmt`, written in Milo
 - **Package manager**: `milo pkg add`/`install`/`publish` plus `milo pkg tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
 - **Docs from source**: `milo doc` generates reference markdown from doc-comments; `milo api` searches the standard library
-- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->991<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->717<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
+- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->992<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->717<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level
 - **CI**: build and test on macOS, Linux, and Windows, plus a release pipeline with static linking
 

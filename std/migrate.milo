@@ -1,0 +1,346 @@
+// std/migrate: versioned, ordered SQLite schema migrations
+//
+//   let migrations = [
+//       Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)"),
+//       Migration.sql(2, "users.email", "ALTER TABLE users ADD COLUMN email TEXT"),
+//       Migration.func(3, "backfill email", backfillEmail),
+//   ]
+//   let db = dbOpen("app.db")!
+//   let report = dbMigrate(db, migrations)!
+//
+// The history lives in a `schema_migrations` table (version, name, checksum, applied_at),
+// written in the same transaction as the migration it records. A table rather than
+// `PRAGMA user_version` because a single integer cannot tell three failures apart that a
+// row per migration can: a shipped migration whose SQL was edited afterwards (checksum
+// mismatch), a migration a branch merge slotted in BELOW the newest applied one (it would
+// be skipped forever), and a database migrated by a newer build (a row this code does not
+// know).
+//
+// Each migration runs in its own `BEGIN IMMEDIATE` transaction with foreign keys off and
+// `PRAGMA foreign_key_check` before commit, the procedure SQLite documents for schema
+// changes (a table rebuild cannot run with enforcement on, and `PRAGMA foreign_keys`
+// is a no-op inside a transaction). IMMEDIATE takes the write lock first and the history
+// is re-read under it, so two processes starting together apply each migration once.
+//
+// Migration SQL must not contain BEGIN/COMMIT, and must never change once shipped: add a
+// new migration instead.
+from "std/sqlite" import { Database, Statement, dbOpen, dbExec, dbQuery, dbNext, dbColumnText, dbColumnInt64, dbColumnIsNull, dbBindInt64, dbBindText, dbBeginImmediate }
+from "std/sha256" import { Sha256 }
+from "std/time" import { epochMillis }
+
+let HISTORY_TABLE = "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)"
+
+// One schema change: SQL text, or a Milo function for what SQL cannot say (a backfill
+// that parses JSON, a data fix-up computed in code).
+pub struct Migration {
+    version: i64,
+    name: string,
+    sql: string,
+    run: move (&Database) => Result<Unit>,
+    isFunc: bool,
+    // May be marked applied, without running, on a database that predates migrations.
+    baseline: bool,
+}
+
+fn noStep(_db: &Database): Result<Unit> {
+    return Result.Ok(Unit {})
+}
+
+impl Migration {
+    // A migration that runs `sql` (one or more statements). `version` orders it and is
+    // never reused; `name` is for messages and the history table.
+    fn sql(version: i64, name: string, sql: string): Migration {
+        return Migration { version: version, name: name, sql: sql, run: noStep, isFunc: false, baseline: false }
+    }
+
+    // A migration that calls `run` inside its transaction. Keep schema changes in SQL
+    // migrations, so the list alone says what the schema is.
+    fn func(version: i64, name: string, run: move (&Database) => Result<Unit>): Migration {
+        return Migration { version: version, name: name, sql: "", run: run, isFunc: true, baseline: false }
+    }
+
+    // The first migration of a program whose database was created before it used
+    // migrations. On a fresh database it runs like `Migration.sql`. On a database that
+    // has tables but no migration history, `dbMigrate` compares that database with what
+    // `sql` builds on an empty one (`dbSchemaDiff`) and, when they match, records it as
+    // applied without running it. When they differ it refuses and lists the differences.
+    fn baseline(version: i64, name: string, sql: string): Migration {
+        return Migration { version: version, name: name, sql: sql, run: noStep, isFunc: false, baseline: true }
+    }
+}
+
+// What `dbMigrate` did. `from` and `to` are the newest applied version before and after
+// (0 for none); `applied` lists the versions it ran, in order; `adopted` is true when it
+// marked a baseline applied on an existing database instead of running it.
+pub struct MigrateReport {
+    from: i64,
+    to: i64,
+    applied: Vec<i64>,
+    adopted: bool,
+}
+
+struct Applied {
+    version: i64,
+    name: string,
+    checksum: string,
+}
+
+fn checksumOf(m: &Migration): string {
+    if m.isFunc {
+        // A function's body is not visible here; its name stands in, so renaming a
+        // shipped function migration is the change this catches.
+        return "fn:" + m.name
+    }
+    return Sha256.hash(m.sql)
+}
+
+fn validate(migrations: &Vec<Migration>): Result<Unit> {
+    var prev: i64 = 0
+    var i: i64 = 0
+    for m in migrations {
+        if m.version <= 0 {
+            return Result.Err($"migration '{m.name}': version {m.version} must be positive")
+        }
+        if m.version <= prev {
+            return Result.Err($"migration {m.version} '{m.name}' comes after version {prev}: versions must be listed in increasing order, each used once")
+        }
+        if m.baseline && i > 0 {
+            return Result.Err($"migration {m.version} '{m.name}': only the first migration can be a baseline")
+        }
+        prev = m.version
+        i += 1
+    }
+    return Result.Ok(Unit {})
+}
+
+fn history(db: &Database): Result<Vec<Applied>> {
+    var out: Vec<Applied> = []
+    let st = dbQuery(db, "SELECT version, name, checksum FROM schema_migrations ORDER BY version")?
+    while dbNext(st)? {
+        out.push(Applied { version: dbColumnInt64(st, 0), name: dbColumnText(st, 1), checksum: dbColumnText(st, 2) })
+    }
+    return Result.Ok(out)
+}
+
+fn isApplied(db: &Database, version: i64): Result<bool> {
+    let st = dbQuery(db, "SELECT 1 FROM schema_migrations WHERE version = ?")?
+    dbBindInt64(st, 1, version)?
+    return dbNext(st)
+}
+
+fn record(db: &Database, m: &Migration): Result<Unit> {
+    let st = dbQuery(db, "INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)")?
+    dbBindInt64(st, 1, m.version)?
+    dbBindText(st, 2, m.name)?
+    dbBindText(st, 3, checksumOf(m))?
+    dbBindInt64(st, 4, epochMillis())?
+    dbNext(st)?
+    return Result.Ok(Unit {})
+}
+
+fn hasUserTables(db: &Database): Result<bool> {
+    let st = dbQuery(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' LIMIT 1")?
+    return dbNext(st)
+}
+
+fn foreignKeysOn(db: &Database): Result<bool> {
+    let st = dbQuery(db, "PRAGMA foreign_keys")?
+    if !dbNext(st)? {
+        return Result.Ok(false)
+    }
+    return Result.Ok(dbColumnInt64(st, 0) != 0)
+}
+
+fn checkForeignKeys(db: &Database, m: &Migration): Result<Unit> {
+    let st = dbQuery(db, "PRAGMA foreign_key_check")?
+    if dbNext(st)? {
+        let table = dbColumnText(st, 0)
+        let parent = dbColumnText(st, 2)
+        return Result.Err($"migration {m.version} '{m.name}' left a row in '{table}' whose foreign key names no row of '{parent}'")
+    }
+    return Result.Ok(Unit {})
+}
+
+// Run one migration in its own transaction. Ok(false) when another process applied it
+// first (seen under the write lock).
+fn applyOne(db: &Database, m: &Migration): Result<bool> {
+    let tx = dbBeginImmediate(db)?
+    // Every `?` below drops `tx`, which rolls the migration back.
+    if isApplied(db, m.version)? {
+        tx.rollback()?
+        return Result.Ok(false)
+    }
+    if m.isFunc {
+        match m.run(db) {
+            Ok(_) => {}
+            Err(e) => {
+                return Result.Err($"migration {m.version} '{m.name}' failed: {e}")
+            }
+        }
+    } else {
+        match dbExec(db, m.sql) {
+            Ok(_) => {}
+            Err(e) => {
+                return Result.Err($"migration {m.version} '{m.name}' failed: {e}")
+            }
+        }
+    }
+    checkForeignKeys(db, m)?
+    record(db, m)?
+    tx.commit()?
+    return Result.Ok(true)
+}
+
+fn adopt(db: &Database, m: &Migration): Result<Unit> {
+    let diff = dbSchemaDiff(db, m.sql)?
+    if diff.len > 0 {
+        var msg = $"database has tables but no migration history, and its schema differs from baseline {m.version} '{m.name}':"
+        for d in diff {
+            msg.pushStr("\n  ")
+            msg.pushStr(d)
+        }
+        return Result.Err(msg)
+    }
+    let tx = dbBeginImmediate(db)?
+    if !isApplied(db, m.version)? {
+        record(db, m)?
+    }
+    tx.commit()?
+    return Result.Ok(Unit {})
+}
+
+fn migrateAll(db: &Database, migrations: &Vec<Migration>): Result<MigrateReport> {
+    let done = history(db)?
+    var newest: i64 = 0
+    for a in done {
+        newest = a.version
+        var known = false
+        for m in migrations {
+            if m.version == a.version {
+                known = true
+                if checksumOf(m) != a.checksum {
+                    return Result.Err($"migration {m.version} '{m.name}' was changed after it was applied to this database; add a new migration instead of editing a shipped one")
+                }
+            }
+        }
+        if !known {
+            return Result.Err($"database has migration {a.version} '{a.name}', which this program does not know: it was migrated by a newer build. Refusing to run")
+        }
+    }
+    var report = MigrateReport { from: newest, to: newest, applied: [], adopted: false }
+    if done.len == 0 && migrations.len > 0 && hasUserTables(db)? {
+        if !migrations[0].baseline {
+            return Result.Err("database has tables but no migration history; make the first migration a Migration.baseline whose SQL is the existing schema to adopt it")
+        }
+        adopt(db, migrations[0])?
+        report.adopted = true
+        report.to = migrations[0].version
+        newest = migrations[0].version
+    }
+    for m in migrations {
+        if m.version <= report.to && report.adopted {
+            continue
+        }
+        var applied = false
+        for a in done {
+            if a.version == m.version {
+                applied = true
+            }
+        }
+        if applied {
+            continue
+        }
+        if m.version < newest {
+            return Result.Err($"migration {m.version} '{m.name}' was never applied but is older than applied migration {newest}; give it a version above {newest}")
+        }
+        if applyOne(db, m)? {
+            report.applied.push(m.version)
+        }
+        report.to = m.version
+        newest = m.version
+    }
+    return Result.Ok(report)
+}
+
+// Bring `db` up to the newest of `migrations`, which must be listed in increasing version
+// order. Already-applied migrations are skipped, so a second run is a no-op. Errs, having
+// changed nothing beyond the migrations that completed before the failure, when: a
+// migration fails (it is rolled back), an applied migration's SQL has changed since, the
+// database holds a migration this list does not (a newer build migrated it), or a pending
+// migration's version is below the newest applied one.
+pub fn dbMigrate(db: &Database, migrations: &Vec<Migration>): Result<MigrateReport> {
+    validate(migrations)?
+    dbExec(db, HISTORY_TABLE)?
+    // Enforcement goes off for the run and comes back whatever happened: a table rebuild
+    // inside a migration fails with it on, and each migration checks its own result.
+    let fk = foreignKeysOn(db)?
+    if fk {
+        dbExec(db, "PRAGMA foreign_keys = OFF")?
+    }
+    let result = migrateAll(db, migrations)
+    if fk {
+        dbExec(db, "PRAGMA foreign_keys = ON")?
+    }
+    return result
+}
+
+// One schema object as a comparable line. Tables compare by columns (name, declared
+// type, NOT NULL, default, primary-key position) rather than by their CREATE text,
+// because ALTER TABLE ADD COLUMN rewrites that text and an adopted database was usually
+// built by exactly such ALTERs. Column ORDER is ignored for the same reason. Indexes,
+// triggers and views compare by their SQL with whitespace collapsed (sqlite stores it as
+// written, minus IF NOT EXISTS).
+fn schemaLines(db: &Database): Result<Vec<string>> {
+    var out: Vec<string> = []
+    let cols = dbQuery(db, "SELECT m.name, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk FROM sqlite_master m JOIN pragma_table_info(m.name) p " + "WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name <> 'schema_migrations' ORDER BY m.name, p.name")?
+    while dbNext(cols)? {
+        let dflt = if dbColumnIsNull(cols, 4) { "none" } else { dbColumnText(cols, 4) }
+        let notNull = if dbColumnInt64(cols, 3) != 0 { " NOT NULL" } else { "" }
+        out.push($"table {dbColumnText(cols, 0)}: column {dbColumnText(cols, 1)} {dbColumnText(cols, 2)}{notNull} default {dflt} pk {dbColumnInt64(cols, 5)}")
+    }
+    let objs = dbQuery(db, "SELECT type, name, sql FROM sqlite_master WHERE type IN ('index', 'trigger', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY type, name")?
+    while dbNext(objs)? {
+        // An index sqlite made for a UNIQUE/PRIMARY KEY constraint has no SQL; its table
+        // line already covers it.
+        if dbColumnIsNull(objs, 2) {
+            continue
+        }
+        out.push($"{dbColumnText(objs, 0)} {dbColumnText(objs, 1)}: {dbColumnText(objs, 2).splitWhitespace().join(" ")}")
+    }
+    out.sort()
+    return Result.Ok(out)
+}
+
+// The differences between `db`'s schema and the one `sql` builds on an empty database,
+// one line each, prefixed `missing:` (what `sql` creates and `db` lacks) or
+// `unexpected:` (what `db` has and `sql` does not). Empty when they match. This is the
+// test `Migration.baseline` applies, public so a program can print it before adopting.
+pub fn dbSchemaDiff(db: &Database, sql: &string): Result<Vec<string>> {
+    let fresh = dbOpen(":memory:")?
+    dbExec(fresh, sql)?
+    let want = schemaLines(fresh)?
+    let have = schemaLines(db)?
+    var out: Vec<string> = []
+    for w in want {
+        if !have.contains(w) {
+            out.push("missing: " + w)
+        }
+    }
+    for h in have {
+        if !want.contains(h) {
+            out.push("unexpected: " + h)
+        }
+    }
+    return Result.Ok(out)
+}
+
+// Write a consistent copy of `db` to a new file at `path` (`VACUUM INTO`), safe on a
+// live database: readers and WAL writers carry on, and the copy is one transaction's
+// view. Errs if `path` already exists. Call it before `dbMigrate` on a database worth
+// keeping.
+pub fn dbBackup(db: &Database, path: &string): Result<Unit> {
+    // VACUUM INTO takes its target as an expression; a bound parameter would do but
+    // dbExec has none, and doubling quotes is the SQL string-literal escape.
+    dbExec(db, "VACUUM INTO '" + path.replace("'", "''") + "'")?
+    return Result.Ok(Unit {})
+}

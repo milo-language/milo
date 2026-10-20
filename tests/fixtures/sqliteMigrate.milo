@@ -1,0 +1,128 @@
+// std/migrate: ordered migrations with a checksummed history, idempotent re-runs, per-migration
+// rollback, refusal on edited/unknown/out-of-order history, adoption of a pre-migration database.
+// @expect: fresh: 0 -> 3 applied [1, 2, 3] adopted false
+// @expect: rows 2 emails 2
+// @expect: again: 3 -> 3 applied []
+// @expect: edited: changed after it was applied
+// @expect: newer: which this program does not know
+// @expect: failed: no such table: nope
+// @expect: rolled back: t4 0 history 3
+// @expect: fk: foreign key names no row of 'users'
+// @expect: gap: older than applied migration 3
+// @expect: adopt: 0 -> 2 applied [2] adopted true
+// @expect: adopted columns: email,id,login,nick
+// @expect: mismatch: missing: table users: column bio TEXT default none pk 0
+// @expect: unknown db: no migration history
+// @expect: backup rows 2
+// @expect: backup again: already exists
+from "std/sqlite" import { Database, dbOpen, dbClose, dbExec, dbQuery, dbNext, dbColumnInt64, dbColumnText }
+from "std/migrate" import { Migration, MigrateReport, dbMigrate, dbSchemaDiff, dbBackup }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+fn backfill(db: &Database): Result<Unit> {
+    dbExec(db, "UPDATE users SET email = login || '@example.com' WHERE email IS NULL")?
+    return Result.Ok(Unit {})
+}
+
+fn base(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL); INSERT INTO users (login) VALUES ('ada'), ('bob')"), Migration.sql(2, "users.email", "ALTER TABLE users ADD COLUMN email TEXT"), Migration.func(3, "backfill email", backfill)]
+}
+
+fn count(db: &Database, sql: string): i64 {
+    let st = dbQuery(db, sql)!
+    dbNext(st)!
+    return dbColumnInt64(st, 0)
+}
+
+fn show(label: string, r: &MigrateReport): void {
+    var vs: Vec<string> = []
+    for v in r.applied {
+        vs.push(v.toString())
+    }
+    print($"{label}: {r.from} -> {r.to} applied [{vs.join(", ")}] adopted {r.adopted}")
+}
+
+fn errOf(r: Result<MigrateReport>): string {
+    match r {
+        Ok(_) => {
+            return "unexpected success"
+        }
+        Err(e) => {
+            return e
+        }
+    }
+}
+
+fn tail(e: string, needle: string): string {
+    if e.contains(needle) {
+        return needle
+    }
+    return e
+}
+
+pub fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    let r = dbMigrate(db, base())!
+    show("fresh", r)
+    print($"rows {count(db, "SELECT count(*) FROM users")} emails {count(db, "SELECT count(*) FROM users WHERE email LIKE '%@example.com'")}")
+    let again = dbMigrate(db, base())!
+    print($"again: {again.from} -> {again.to} applied []")
+
+    var edited = base()
+    edited[1] = Migration.sql(2, "users.email", "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    print($"edited: {tail(errOf(dbMigrate(db, edited)), "changed after it was applied")}")
+
+    var older = base()
+    older.truncate(2)
+    print($"newer: {tail(errOf(dbMigrate(db, older)), "which this program does not know")}")
+
+    var failing = base()
+    failing.push(Migration.sql(4, "broken", "CREATE TABLE t4 (x INTEGER); INSERT INTO nope VALUES (1)"))
+    print($"failed: {tail(errOf(dbMigrate(db, failing)), "no such table: nope")}")
+    print($"rolled back: t4 {count(db, "SELECT count(*) FROM sqlite_master WHERE name = 't4'")} history {count(db, "SELECT count(*) FROM schema_migrations")}")
+
+    var fk = base()
+    fk.push(Migration.sql(4, "orphan", "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id)); INSERT INTO posts (user_id) VALUES (99)"))
+    print($"fk: {tail(errOf(dbMigrate(db, fk)), "foreign key names no row of 'users'")}")
+
+    // A branch merge slots migration 2 in below the already-applied 3: applying it now
+    // would run it out of order, so it is refused rather than run or skipped forever.
+    let gapDb = dbOpen(":memory:")!
+    var gap: Vec<Migration> = [Migration.sql(1, "a", "CREATE TABLE a (x INTEGER)"), Migration.sql(3, "c", "CREATE TABLE c (x INTEGER)")]
+    dbMigrate(gapDb, gap)!
+    gap.insert(1, Migration.sql(2, "b", "CREATE TABLE b (x INTEGER)"))
+    print($"gap: {tail(errOf(dbMigrate(gapDb, gap)), "older than applied migration 3")}")
+
+    // A database the old ad hoc code built: CREATE TABLE, then a column added by ALTER.
+    let legacy = dbOpen(":memory:")!
+    dbExec(legacy, "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL); CREATE INDEX idx_login ON users(login)")!
+    dbExec(legacy, "ALTER TABLE users ADD COLUMN email TEXT")!
+    let baseline = "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL, email TEXT);\n  CREATE INDEX idx_login ON users(login)"
+    let adoptList: Vec<Migration> = [Migration.baseline(1, "baseline", baseline), Migration.sql(2, "users.nick", "ALTER TABLE users ADD COLUMN nick TEXT")]
+    show("adopt", dbMigrate(legacy, adoptList)!)
+    let cols = dbQuery(legacy, "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_table_info('users') ORDER BY name)")!
+    dbNext(cols)!
+    print($"adopted columns: {dbColumnText(cols, 0)}")
+
+    let drifted = dbOpen(":memory:")!
+    dbExec(drifted, "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")!
+    let wanted: Vec<Migration> = [Migration.baseline(1, "baseline", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL, bio TEXT)")]
+    let diff = dbSchemaDiff(drifted, wanted[0].sql)!
+    print($"mismatch: {diff.join("; ")}")
+    let plain: Vec<Migration> = [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")]
+    print($"unknown db: {tail(errOf(dbMigrate(drifted, plain)), "no migration history")}")
+
+    let dir = makeTempDir("/tmp/milo-migrate-")!
+    let copy = dir + "/backup.db"
+    dbBackup(db, copy)!
+    let restored = dbOpen(copy)!
+    print($"backup rows {count(restored, "SELECT count(*) FROM users")}")
+    match dbBackup(db, copy) {
+        Ok(_) => print("backup again: overwrote")
+        Err(e) => print($"backup again: {tail(e, "already exists")}")
+    }
+    dbClose(restored)
+    removeFile(copy)!
+    removeDir(dir)!
+    return 0
+}
