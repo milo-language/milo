@@ -32,6 +32,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cgu.ts` | Split one emitted LLVM module into N codegen units so clang can optimize them in parallel processes. |
 | `src/checker-derive.ts` | Derive synthesis: the Clone, Eq and Json impls `@derive` (and Eq's auto-derive) generates, and the expansion of user `derive <Trait> { ... |
 | `src/checker-program-passes.ts` | Whole-program passes that run after every function body is checked and read only the recorded results. |
+| `src/checker-sql.ts` | Compile-time checked SQL: every `@sql(param[, args])` call site is prepared against the schema the program's own migrations build, at compile time, with bun:sqlite. |
 | `src/checker.ts` | Type checking, move checking and scope validation over the merged AST, producing the CheckResult that lowering reads. |
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/codegen-drop.ts` | Drop and clone glue: per-type drop sequences, deep clone, and the generated drop/clone helper functions. |

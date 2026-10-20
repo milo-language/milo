@@ -96,7 +96,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/sqlite`](sqlite) | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements |
+| [`std/sqlite`](sqlite) | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements; compile-time checked `dbPrepare`/`dbRun`/`dbScalar` |
 | [`std/migrate`](migrate) | Versioned SQLite migrations — `Migration`, `dbMigrate`, adopting a pre-migration database, `dbBackup` |
 | [`std/url`](url) | URL parsing — `Url.parse`, then `u.queryGet`, `u.toString` |
 

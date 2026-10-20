@@ -59,6 +59,18 @@ _Goes on: `fn`, `method`._
 
 This generic compares a `T` with `<`, which exists only on integers, floats and strings. On a generic struct the method is absent from an instantiation with any other `T` (calling it names this reason), and a generic fn is rejected at the call, so `BinaryHeap<Task>` keeps its comparator constructor and loses only the natural-order one, instead of failing inside std on a `<` the caller never wrote. Bare, it constrains every type parameter; `@ordered(K)` names the ones it compares.
 
+### `@sql(…)`
+
+_Goes on: `fn`, `method`._
+
+The named string parameter is SQL checked at compile time: at every call the argument must be a compile-time constant (or `uncheckedSql(...)`, or the caller's own `@sql` parameter), and it is prepared against the schema the program's migrations build, so a syntax error, an unknown table or column, or a wrong count of bind arguments is a compile error at the literal. `@sql(sql, args)` also names the `Vec<SqlArg>` parameter whose array-literal length must match the query's `?`s.
+
+### `@sqlSchema(…)`
+
+_Goes on: `fn`, `method`._
+
+`@sqlSchema(version, sql)`: each call is a migration whose constant SQL the compiler applies, in version order, to an empty database to learn the schema `@sql` queries are checked against. Carried by std/migrate's `Migration.sql` and `Migration.baseline`.
+
 ### `@cLayout(…)`
 
 _Goes on: `struct`._

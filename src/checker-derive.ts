@@ -6,7 +6,7 @@ import type { Program, Function, Expr, MiloType, Span, StructDecl, EnumDecl, Imp
 import { simpleType } from "./ast";
 import { type TypeKind, typeName } from "./types";
 import type { StructInfo, EnumInfo, ImplInfo } from "./checker";
-import { deriveRowSource, ROW_SUPPORTED, type RowFieldPlan, type RowKind } from "./derive-row";
+import { deriveRowSource, ROW_SUPPORTED, ROW_METHODS, type RowFieldPlan, type RowKind } from "./derive-row";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
 import { Lexer } from "./lexer";
@@ -41,6 +41,8 @@ export interface DeriveHost {
   isCopyType(t: TypeKind): boolean;
   typeImplementsTrait(tName: string, traitName: string): boolean;
   optionInnerType(t: TypeKind): TypeKind | null;
+  // @derive(Row) structs and their columns, for checked SQL's result-column check.
+  rowPlans: Map<string, RowFieldPlan[]>;
 }
 
 export class DeriveSynth {
@@ -414,27 +416,37 @@ export class DeriveSynth {
     return null;
   }
 
-  deriveRow(s: StructDecl): ImplDecl | null {
-    if (s.isExtern || s.isOpaque) {
-      this.host.error(`cannot derive Row for '${s.name}': it is a foreign type`, s.span);
-      return null;
-    }
-    if (this.host.jsonUserMethods.has(`${s.name}.fromRow`)) {
-      this.host.error(`cannot derive Row for '${s.name}': it already defines 'fromRow'`, s.span);
-      return null;
-    }
+  // Each field's column kind, or null (reported) when one has no sqlite column form.
+  private rowPlan(s: StructDecl, what: string): RowFieldPlan[] | null {
     const fields: RowFieldPlan[] = [];
     for (const f of s.fields) {
       const t = this.host.resolve(f.type);
       const inner = t.tag === "enum" ? this.host.optionInnerType(t) : null;
       const kind = this.rowKindFor(inner ?? t);
       if (!kind) {
-        this.host.error(`cannot derive Row for '${s.name}': field '${f.name}' has type '${this.host.show(t)}', which has no sqlite column form`, s.span,
+        this.host.error(`cannot derive ${what} for '${s.name}': field '${f.name}' has type '${this.host.show(t)}', which has no sqlite column form`, s.span,
           `supported field types: ${ROW_SUPPORTED}`);
         return null;
       }
       fields.push({ field: f.name, kind, optional: inner !== null });
     }
+    return fields;
+  }
+
+  deriveRow(s: StructDecl): ImplDecl | null {
+    if (s.isExtern || s.isOpaque) {
+      this.host.error(`cannot derive Row for '${s.name}': it is a foreign type`, s.span);
+      return null;
+    }
+    for (const m of ROW_METHODS) {
+      if (this.host.jsonUserMethods.has(`${s.name}.${m}`)) {
+        this.host.error(`cannot derive Row for '${s.name}': it already defines '${m}'`, s.span);
+        return null;
+      }
+    }
+    const fields = this.rowPlan(s, "Row");
+    if (!fields) return null;
+    this.host.rowPlans.set(s.name, fields);
     const src = deriveRowSource(s.name, fields);
     if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Row)\n${src}\n`);
     let parsed: Program;

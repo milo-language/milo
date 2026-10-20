@@ -1,0 +1,16 @@
+// @error: the SQL passed to 'dbPrepare' must be a compile-time constant string
+// SQL built at run time must say so with uncheckedSql(...); a runtime value is not prepared.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    var table = "users"
+    table.pushStr("")
+    let _st = dbPrepare(db, "SELECT id FROM " + table, [])!
+}

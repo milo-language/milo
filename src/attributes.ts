@@ -85,6 +85,27 @@ export const ATTRIBUTES: AttrInfo[] = [
     takesArgs: true,
   },
   {
+    name: "sql",
+    targets: ["fn", "method"],
+    doc:
+      "The named string parameter is SQL checked at compile time: at every call the " +
+      "argument must be a compile-time constant (or `uncheckedSql(...)`, or the caller's " +
+      "own `@sql` parameter), and it is prepared against the schema the program's " +
+      "migrations build, so a syntax error, an unknown table or column, or a wrong count of " +
+      "bind arguments is a compile error at the literal. `@sql(sql, args)` also names the " +
+      "`Vec<SqlArg>` parameter whose array-literal length must match the query's `?`s.",
+    takesArgs: true,
+  },
+  {
+    name: "sqlSchema",
+    targets: ["fn", "method"],
+    doc:
+      "`@sqlSchema(version, sql)`: each call is a migration whose constant SQL the compiler " +
+      "applies, in version order, to an empty database to learn the schema `@sql` queries " +
+      "are checked against. Carried by std/migrate's `Migration.sql` and `Migration.baseline`.",
+    takesArgs: true,
+  },
+  {
     name: "cLayout",
     targets: ["struct"],
     takesArgs: true,

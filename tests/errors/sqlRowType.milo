@@ -1,0 +1,20 @@
+// @error: User.login is i64 but column 'login' is declared TEXT
+// A field whose type cannot hold the column's declared type is caught at compile time.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@derive(Row)
+struct User {
+    id: i64,
+    login: i64,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _u = User.fetchOne(db, "SELECT id, login FROM users WHERE id = ?", [SqlArg.Int(1)])!
+}

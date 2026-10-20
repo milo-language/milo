@@ -531,3 +531,111 @@ pub fn dbRowOptStr(st: &Statement, name: &string, what: &string): Result<string?
     }
     return Result.Ok(Some(dbColumnText(st, c)))
 }
+
+// ── Checked SQL ──
+//
+// `dbPrepare`, `dbRun` and `dbScalar` take their SQL through `@sql`: at compile time the
+// compiler prepares it against the schema the program's migrations (std/migrate) build,
+// and rejects a syntax error, an unknown table or column, or a count of `args` that does
+// not match the query's `?`s, at the literal. The SQL must be a compile-time constant
+// (literals, `+`, `$"..."` over constants, immutable `let`s holding one); SQL assembled at
+// run time goes through `uncheckedSql(...)`, which says so at the call. A program with no
+// migrations gets the constant rule but no schema check. Put `@sql(sql, args)` on a
+// wrapper of your own and its callers are checked the same way.
+//
+//   let st = dbPrepare(db, "SELECT id, login FROM users WHERE login = ?", [SqlArg.Text(name)])?
+//   let n = dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", [SqlArg.Text(bio), SqlArg.Int(id)])?
+//   let rows = dbPrepare(db, uncheckedSql("SELECT * FROM " + table), [])?
+
+// One bound parameter, in `?` order.
+pub enum SqlArg {
+    Int(i64),
+    Float(f64),
+    Text(string),
+    Null,
+}
+
+// `SqlArg.Int(v)` for Some, `SqlArg.Null` for None.
+pub fn sqlOptInt(v: Option<i64>): SqlArg {
+    let Some(x) = v else {
+        return SqlArg.Null
+    }
+    return SqlArg.Int(x)
+}
+
+// `SqlArg.Text(v)` for Some, `SqlArg.Null` for None.
+pub fn sqlOptText(v: &Option<string>): SqlArg {
+    let Some(x) = v else {
+        return SqlArg.Null
+    }
+    return SqlArg.Text(x)
+}
+
+// `sql`, unchanged: the explicit opt-out from compile-time checking for SQL built at run
+// time. The checker accepts any string inside it, so grep for it to find every query the
+// compiler did not see.
+pub fn uncheckedSql(sql: string): string {
+    return sql
+}
+
+fn bindArgs(st: &Statement, args: Vec<SqlArg>): Result<i32> {
+    var i: i32 = 1
+    for a in args {
+        match a {
+            SqlArg.Int(v) => {
+                dbBindInt64(st, i, v)?
+            }
+            SqlArg.Float(v) => {
+                dbBindFloat(st, i, v)?
+            }
+            SqlArg.Text(v) => {
+                dbBindText(st, i, v)?
+            }
+            SqlArg.Null => {
+                dbBindNull(st, i)?
+            }
+        }
+        i += 1
+    }
+    return Result.Ok(0)
+}
+
+// Prepare `sql` (checked at compile time) and bind `args` to its `?`s in order.
+@sql(sql, args)
+pub fn dbPrepare(db: &Database, sql: string, args: Vec<SqlArg>): Result<Statement> {
+    let st = dbQuery(db, sql)?
+    bindArgs(st, args)?
+    return Result.Ok(st)
+}
+
+// Run `sql` (checked at compile time) to completion with `args` bound; the number of rows
+// it inserted, updated or deleted.
+@sql(sql, args)
+pub fn dbRun(db: &Database, sql: string, args: Vec<SqlArg>): Result<i64> {
+    let st = dbPrepare(db, sql, args)?
+    while dbNext(st)? {
+    }
+    unsafe { return Result.Ok(sqlite3_changes(db._handle) as i64) }
+}
+
+// The first column of the first row of `sql` (checked at compile time) as an i64: None
+// when there is no row or the value is NULL. For `SELECT count(*) ...` and `SELECT 1 ...
+// LIMIT 1` existence probes.
+@sql(sql, args)
+pub fn dbScalar(db: &Database, sql: string, args: Vec<SqlArg>): Result<Option<i64>> {
+    let st = dbPrepare(db, sql, args)?
+    if !dbNext(st)? || dbColumnIsNull(st, 0) {
+        return Result.Ok(None)
+    }
+    return Result.Ok(Some(dbColumnInt64(st, 0)))
+}
+
+// Run DDL the program creates at run time instead of in a migration, typically a TEMP
+// table a job fills and joins against. Like `dbExec`, but `sql` must be a compile-time
+// constant, and the compiler adds it, after the migrations, to the schema checked SQL is
+// prepared against, so queries over the temp table are checked too. Use `CREATE TEMP
+// TABLE IF NOT EXISTS` when it can run twice on one connection.
+@sqlSchema(sql)
+pub fn dbExecDdl(db: &Database, sql: string): Result<i32> {
+    return dbExec(db, sql)
+}

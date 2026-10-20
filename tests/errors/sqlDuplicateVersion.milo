@@ -1,0 +1,18 @@
+// @error: two migrations claim version 1
+// Checked SQL builds one schema per program, so two migrations may not share a version.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn other(): Vec<Migration> {
+    return [Migration.sql(1, "again", "CREATE TABLE posts (id INTEGER PRIMARY KEY)")]
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT id FROM users", [])!
+}

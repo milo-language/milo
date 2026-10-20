@@ -1,0 +1,19 @@
+// @error: '@sql(query)' on 'q': 'query' is not one of its parameters
+// The attribute names the parameter that carries the SQL; a name the fn lacks is rejected.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@sql(query)
+fn q(db: &Database, sql: string): Result<i64> {
+    return dbRun(db, sql, [])
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _n = q(db, "DELETE FROM users")!
+}

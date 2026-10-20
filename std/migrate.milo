@@ -14,7 +14,9 @@
 // row per migration can: a shipped migration whose SQL was edited afterwards (checksum
 // mismatch), a migration a branch merge slotted in BELOW the newest applied one (it would
 // be skipped forever), and a database migrated by a newer build (a row this code does not
-// know).
+// know). The first matters twice over here: the compiler checks SQL against the schema
+// these migrations build, so an edited migration would make that check describe a
+// database production does not have.
 //
 // Each migration runs in its own `BEGIN IMMEDIATE` transaction with foreign keys off and
 // `PRAGMA foreign_key_check` before commit, the procedure SQLite documents for schema
@@ -49,12 +51,14 @@ fn noStep(_db: &Database): Result<Unit> {
 impl Migration {
     // A migration that runs `sql` (one or more statements). `version` orders it and is
     // never reused; `name` is for messages and the history table.
+    @sqlSchema(version, sql)
     fn sql(version: i64, name: string, sql: string): Migration {
         return Migration { version: version, name: name, sql: sql, run: noStep, isFunc: false, baseline: false }
     }
 
     // A migration that calls `run` inside its transaction. Keep schema changes in SQL
-    // migrations, so the list alone says what the schema is.
+    // migrations: the compiler builds its view of the schema from those, and cannot run
+    // a function.
     fn func(version: i64, name: string, run: move (&Database) => Result<Unit>): Migration {
         return Migration { version: version, name: name, sql: "", run: run, isFunc: true, baseline: false }
     }
@@ -64,6 +68,7 @@ impl Migration {
     // has tables but no migration history, `dbMigrate` compares that database with what
     // `sql` builds on an empty one (`dbSchemaDiff`) and, when they match, records it as
     // applied without running it. When they differ it refuses and lists the differences.
+    @sqlSchema(version, sql)
     fn baseline(version: i64, name: string, sql: string): Migration {
         return Migration { version: version, name: name, sql: sql, run: noStep, isFunc: false, baseline: true }
     }

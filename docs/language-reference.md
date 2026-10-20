@@ -5751,6 +5751,22 @@ and extra columns are ignored. Field types: `i64`, `i32`, `f64`, `bool` (`!= 0`)
 `Err` naming the struct and field; any other field type is a compile error. Names are resolved on
 every call (fields x columns string compares).
 
+The derive also adds `fetchAll(db, sql, args)` and `fetchOne(db, sql, args)`, whose SQL is
+checked at compile time like `dbPrepare`'s, and whose result columns are matched against the
+fields (a field with no column, or a type that cannot hold the column's declared type, is a
+compile error).
+
+### Checked SQL
+
+A fn whose SQL parameter is marked `@sql(sql, args)` (std/sqlite's `dbPrepare`, `dbRun`,
+`dbScalar`, the derived fetches, or a wrapper of your own) has that argument prepared at
+compile time against the schema the program's migrations (std/migrate) build: syntax errors,
+unknown tables and columns, and a bind-argument count that does not match the `?`s are compile
+errors at the literal. The argument must be a compile-time constant (literals, `+`, `$"..."`
+over constants, immutable `let`s holding one); SQL built at run time is passed as
+`uncheckedSql(s)`. See [std/sqlite](site/stdlib/sqlite.md#checked-sql) and
+[std/migrate](site/stdlib/migrate.md).
+
 ```milo
 from "std/sqlite" import { dbOpen, dbExec, dbQuery, dbNext }
 

@@ -1,0 +1,18 @@
+// @error: migration 2 does not apply: no such table: posts
+// The compiler applies every SQL migration to an empty database; one that fails is reported there.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn more(): Vec<Migration> {
+    return [Migration.sql(2, "bad", "ALTER TABLE posts ADD COLUMN x TEXT")]
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT id FROM users", [])!
+}

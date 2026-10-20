@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 555 distinct messages across 717 programs the compiler must reject.
+Every error message the test suite pins: 566 distinct messages across 728 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -34,6 +34,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'@mustUse' takes no arguments`](#mustuse-takes-no-arguments)
 - [`'@ordered' on 'smallest': it has no type parameters to constrain`](#ordered-on-smallest-it-has-no-type-parameters-to-constrain)
 - [`'@pure' takes no arguments`](#pure-takes-no-arguments)
+- [`'@sql(query)' on 'q': 'query' is not one of its parameters`](#sql-query-on-q-query-is-not-one-of-its-parameters)
 - [`'@wrapping' on extern fn`](#wrapping-on-extern-fn)
 - [`'@wrapping' takes no arguments`](#wrapping-takes-no-arguments-2)
 - [`'&mut' is implicit on a method receiver; write 'v.push(1)'`](#mut-is-implicit-on-a-method-receiver-write-v-push-1)
@@ -341,6 +342,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`did you mean 'clampF64' or 'clampI64'?`](#did-you-mean-clampf64-or-clampi64)
 - [`did you mean 'Point'?`](#did-you-mean-point)
 - [`did you mean 'toUpper'?`](#did-you-mean-toupper)
+- [`did you mean 'users'?`](#did-you-mean-users)
 - [`discriminant 2147483648 is out of range for i32`](#discriminant-2147483648-is-out-of-range-for-i32)
 - [`does not implement trait 'HasValue'`](#does-not-implement-trait-hasvalue)
 - [`does not implement trait 'HasValue', required by 'Wrap<T: HasValue>'`](#does-not-implement-trait-hasvalue-required-by-wrap-t-hasvalue)
@@ -374,6 +376,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`field 'tags' has type 'Vec<i64>', which has no sqlite column form`](#field-tags-has-type-vec-i64-which-has-no-sqlite-column-form)
 - [`for range start must be an integer`](#for-range-start-must-be-an-integer)
 - [`from "std/json" import { Json }`](#from-std-json-import-json)
+- [`has 2 bound parameters but 1 argument is passed`](#has-2-bound-parameters-but-1-argument-is-passed)
 - [`has more than one @iter field`](#has-more-than-one-iter-field)
 - [`has no static method 'knew'`](#has-no-static-method-knew)
 - [`has signature extern (*u8, i64) => i32, expected extern (*u8, i32) => i32`](#has-signature-extern-u8-i64-i32-expected-extern-u8-i32-i32)
@@ -414,6 +417,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`manual 'Send' implementation for 'Handle' must be unsafe`](#manual-send-implementation-for-handle-must-be-unsafe)
 - [`mark 'Conn' @copy if it does not own what the pointer points at`](#mark-conn-copy-if-it-does-not-own-what-the-pointer-points-at)
 - [`MathException.kind (C 'type'): Milo says 8 bytes, C header disagrees`](#mathexception-kind-c-type-milo-says-8-bytes-c-header-disagrees)
+- [`migration 2 does not apply: no such table: posts`](#migration-2-does-not-apply-no-such-table-posts)
 - [`Milo declares a 4-byte return`](#milo-declares-a-4-byte-return)
 - [`Milo declares i64 (8 bytes)`](#milo-declares-i64-8-bytes)
 - [`Milo has no '++' — write 'i += 1'`](#milo-has-no-write-i-1)
@@ -426,6 +430,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`moves a captured value out of itself when it runs`](#moves-a-captured-value-out-of-itself-when-it-runs)
 - [`must be an integer literal`](#must-be-an-integer-literal)
 - [`must diverge (return/break/continue) — it runs when C passed null`](#must-diverge-return-break-continue-it-runs-when-c-passed-null)
+- [`near "SELEC": syntax error`](#near-selec-syntax-error)
 - [`no definition here to give linkage to`](#no-definition-here-to-give-linkage-to)
 - [`no entry point`](#no-entry-point)
 - [`no whitespace allowed between '@' and attribute name`](#no-whitespace-allowed-between-and-attribute-name)
@@ -477,6 +482,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`requires numeric type`](#requires-numeric-type)
 - [`shadows a standard-library function`](#shadows-a-standard-library-function)
 - [`shadows an outer binding`](#shadows-an-outer-binding)
+- [`SQL error in the query passed to 'dbPrepare': no such column: logn`](#sql-error-in-the-query-passed-to-dbprepare-no-such-column-logn)
+- [`SQL error in the query passed to 'exists': no such column: nme`](#sql-error-in-the-query-passed-to-exists-no-such-column-nme)
 - [`string.push: expected u8, got i64`](#string-push-expected-u8-got-i64)
 - [`string.pushInt: expected an integer, got f64`](#string-pushint-expected-an-integer-got-f64)
 - [`struct 'Child' has no field 'pid'`](#struct-child-has-no-field-pid)
@@ -499,10 +506,12 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`the first read of 'G' (it runs that global's initializer) writes the global 'H', which is being iterated here`](#the-first-read-of-g-it-runs-that-global-s-initializer-writes-the-global-h-which-is-being-iterated-here)
 - [`the implicit 'D.drop' writes the global 'G', which is being iterated here`](#the-implicit-d-drop-writes-the-global-g-which-is-being-iterated-here)
 - [`the ranges 0..2 and 1..3 overlap`](#the-ranges-0-2-and-1-3-overlap)
+- [`the SQL passed to 'dbPrepare' must be a compile-time constant string`](#the-sql-passed-to-dbprepare-must-be-a-compile-time-constant-string)
 - [`the struct does not derive Json`](#the-struct-does-not-derive-json)
 - [`the task scope 's' can only be used as 's.spawn(...)'`](#the-task-scope-s-can-only-be-used-as-s-spawn)
 - [`this closure is passed to a 'move' parameter, so it owns its captures`](#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures)
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
+- [`two migrations claim version 1`](#two-migrations-claim-version-1)
 - [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
 - [`type 'i64' does not implement trait 'AsFd'`](#type-i64-does-not-implement-trait-asfd)
@@ -564,6 +573,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`use of moved variable 'value'`](#use-of-moved-variable-value)
 - [`use of moved variable 'w'`](#use-of-moved-variable-w)
 - [`use of moved variable 'x'`](#use-of-moved-variable-x)
+- [`User.githubId has no column in the result of this query (columns: id, github_id, login)`](#user-githubid-has-no-column-in-the-result-of-this-query-columns-id-github-id-login)
+- [`User.login is i64 but column 'login' is declared TEXT`](#user-login-is-i64-but-column-login-is-declared-text)
 - [`value -1 is out of range`](#value-1-is-out-of-range)
 - [`value 100000 is out of range for i64(0..3)`](#value-100000-is-out-of-range-for-i64-0-3)
 - [`value 60000 is out of range`](#value-60000-is-out-of-range)
@@ -871,6 +882,32 @@ pub fn main() {
 ```
 
 <sub>[tests/errors/pureWithArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pureWithArgs.milo)</sub>
+
+## `'@sql(query)' on 'q': 'query' is not one of its parameters` {#sql-query-on-q-query-is-not-one-of-its-parameters}
+
+The attribute names the parameter that carries the SQL; a name the fn lacks is rejected.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@sql(query)
+fn q(db: &Database, sql: string): Result<i64> {
+    return dbRun(db, sql, [])
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _n = q(db, "DELETE FROM users")!
+}
+```
+
+<sub>[tests/errors/sqlAttrBadParam.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlAttrBadParam.milo)</sub>
 
 ## `'@wrapping' on extern fn` {#wrapping-on-extern-fn}
 
@@ -9090,6 +9127,27 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/methodNameSuggestion.milo](https://github.com/milo-language/milo/blob/main/tests/errors/methodNameSuggestion.milo)</sub>
 
+## `did you mean 'users'?` {#did-you-mean-users}
+
+An unknown table names the closest one the migrations created.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT id FROM user", [])!
+}
+```
+
+<sub>[tests/errors/sqlUnknownTable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlUnknownTable.milo)</sub>
+
 ## `discriminant 2147483648 is out of range for i32` {#discriminant-2147483648-is-out-of-range-for-i32}
 
 Reject before codegen can truncate the tag and silently construct another value.
@@ -9752,6 +9810,27 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/unknownTypeMissingImport.milo](https://github.com/milo-language/milo/blob/main/tests/errors/unknownTypeMissingImport.milo)</sub>
+
+## `has 2 bound parameters but 1 argument is passed` {#has-2-bound-parameters-but-1-argument-is-passed}
+
+The array literal of bind arguments must match the query's placeholders.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _n = dbRun(db, "UPDATE users SET login = ? WHERE id = ?", [SqlArg.Text("ada")])!
+}
+```
+
+<sub>[tests/errors/sqlParamCount.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlParamCount.milo)</sub>
 
 ## `has more than one @iter field` {#has-more-than-one-iter-field}
 
@@ -10557,6 +10636,31 @@ pub fn main() {
 
 <sub>[tests/errors/cNameFieldMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameFieldMismatch.milo)</sub>
 
+## `migration 2 does not apply: no such table: posts` {#migration-2-does-not-apply-no-such-table-posts}
+
+The compiler applies every SQL migration to an empty database; one that fails is reported there.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn more(): Vec<Migration> {
+    return [Migration.sql(2, "bad", "ALTER TABLE posts ADD COLUMN x TEXT")]
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT id FROM users", [])!
+}
+```
+
+<sub>[tests/errors/sqlMigrationBroken.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlMigrationBroken.milo)</sub>
+
 ## `Milo declares a 4-byte return` {#milo-declares-a-4-byte-return}
 
 asserts on a diagnostic that quotes unistd.h; the MSVC CRT has no such header, so the compile fails for a different reason and proves nothing. The C signature is right, but the Milo declaration disagrees with it: `long` is 8 bytes, i32 is 4. This is the Milo\<-\>C mapping check — the half that a header-only comparison can't catch.
@@ -10788,6 +10892,27 @@ fn main() {
 ```
 
 <sub>[tests/errors/nullableRefElseFallsThrough.milo](https://github.com/milo-language/milo/blob/main/tests/errors/nullableRefElseFallsThrough.milo)</sub>
+
+## `near "SELEC": syntax error` {#near-selec-syntax-error}
+
+sqlite's own parse error, reported at the call that passes the SQL.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELEC id FROM users", [])!
+}
+```
+
+<sub>[tests/errors/sqlSyntaxError.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlSyntaxError.milo)</sub>
 
 ## `no definition here to give linkage to` {#no-definition-here-to-give-linkage-to}
 
@@ -11873,6 +11998,54 @@ fn main(): i32 {
 
 <sub>[tests/errors/loopVarShadow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/loopVarShadow.milo)</sub>
 
+## `SQL error in the query passed to 'dbPrepare': no such column: logn` {#sql-error-in-the-query-passed-to-dbprepare-no-such-column-logn}
+
+A column the schema does not have is a compile error at the literal, with the nearest name.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT logn FROM users", [])!
+}
+```
+
+<sub>[tests/errors/sqlUnknownColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlUnknownColumn.milo)</sub>
+
+## `SQL error in the query passed to 'exists': no such column: nme` {#sql-error-in-the-query-passed-to-exists-no-such-column-nme}
+
+A wrapper marked @sql passes its own parameter through unchecked and is checked where it is called.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, dbNext, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@sql(sql, args)
+fn exists(db: &Database, sql: string, args: Vec<SqlArg>): Result<bool> {
+    let st = dbPrepare(db, sql, args)?
+    return dbNext(st)
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _e = exists(db, "SELECT 1 FROM users WHERE nme = ?", [SqlArg.Text("x")])!
+}
+```
+
+<sub>[tests/errors/sqlWrapperCallSite.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlWrapperCallSite.milo)</sub>
+
 ## `string.push: expected u8, got i64` {#string-push-expected-u8-got-i64}
 
 Hinting string.push's arg with u8 lets an int LITERAL coerce (s.push(65)), but must not start accepting an actual i64 value — that would be a silent truncation, which is the opposite of what the papercut fix was for.
@@ -12316,6 +12489,29 @@ fn main(): i32 {
 
 <sub>[tests/errors/mutSliceOverlapArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mutSliceOverlapArgs.milo)</sub>
 
+## `the SQL passed to 'dbPrepare' must be a compile-time constant string` {#the-sql-passed-to-dbprepare-must-be-a-compile-time-constant-string}
+
+SQL built at run time must say so with uncheckedSql(...); a runtime value is not prepared.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    var table = "users"
+    table.pushStr("")
+    let _st = dbPrepare(db, "SELECT id FROM " + table, [])!
+}
+```
+
+<sub>[tests/errors/sqlNotConstant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlNotConstant.milo)</sub>
+
 ## `the struct does not derive Json` {#the-struct-does-not-derive-json}
 
 @json only means something to the derived codec. Accepted silently, a rename on a hand-written serializer would read as applied when nothing consumes it.
@@ -12405,6 +12601,31 @@ fn main() {
 ```
 
 <sub>[tests/errors/deriveJsonDuplicateKey.milo](https://github.com/milo-language/milo/blob/main/tests/errors/deriveJsonDuplicateKey.milo)</sub>
+
+## `two migrations claim version 1` {#two-migrations-claim-version-1}
+
+Checked SQL builds one schema per program, so two migrations may not share a version.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn other(): Vec<Migration> {
+    return [Migration.sql(1, "again", "CREATE TABLE posts (id INTEGER PRIMARY KEY)")]
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT id FROM users", [])!
+}
+```
+
+<sub>[tests/errors/sqlDuplicateVersion.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlDuplicateVersion.milo)</sub>
 
 ## `type '[i64]' has no method 'push'` {#type-i64-has-no-method-push}
 
@@ -14356,6 +14577,61 @@ fn main() {
 ```
 
 <sub>[tests/errors/matchSubjectReadInArm.milo](https://github.com/milo-language/milo/blob/main/tests/errors/matchSubjectReadInArm.milo)</sub>
+
+## `User.githubId has no column in the result of this query (columns: id, github_id, login)` {#user-githubid-has-no-column-in-the-result-of-this-query-columns-id-github-id-login}
+
+fetchAll reads fields by column name; the hint says to alias github\_id AS githubId.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@derive(Row)
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _us = User.fetchAll(db, "SELECT id, github_id, login FROM users", [])!
+}
+```
+
+<sub>[tests/errors/sqlRowMissingColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlRowMissingColumn.milo)</sub>
+
+## `User.login is i64 but column 'login' is declared TEXT` {#user-login-is-i64-but-column-login-is-declared-text}
+
+A field whose type cannot hold the column's declared type is caught at compile time.
+
+```milo skip
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@derive(Row)
+struct User {
+    id: i64,
+    login: i64,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _u = User.fetchOne(db, "SELECT id, login FROM users WHERE id = ?", [SqlArg.Int(1)])!
+}
+```
+
+<sub>[tests/errors/sqlRowType.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlRowType.milo)</sub>
 
 ## `value -1 is out of range` {#value-1-is-out-of-range}
 

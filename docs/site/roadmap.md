@@ -64,6 +64,8 @@ CLI: argparse, color, log
 Time: time, datetime, uuid
 Testing: testing
 
+SQL passed to `std/sqlite`'s checked APIs is prepared at compile time against the schema the program's own `std/migrate` migrations build: an unknown table or column, a syntax error, a wrong bind-argument count, or a `@derive(Row)` field the query does not return is a compile error at the literal.
+
 TLS clients verify certificates and bind hostnames, and `std/https` serves HTTPS over the same binding. JSON parsing is RFC 8259-strict, with a lenient JSONC mode and a streaming pull tokenizer.
 
 Formats with credible competitors and clients that track someone else's release cycle live as [packages](/packages) rather than in `std`, so a fix ships the same day on its own tag instead of waiting for a compiler release. TOML moved out for exactly that reason.
@@ -83,7 +85,7 @@ macOS and Linux are fully supported on both aarch64 and x86_64. Windows is a par
 - **Formatter**: `milo fmt`, written in Milo
 - **Package manager**: `milo pkg add`/`install`/`publish` plus `milo pkg tool install`, with a lockfile, a git-based cache, and GitHub repositories as the registry — built into the one `milo` binary. [Published packages](/packages) cover PostgreSQL, Redis, markdown, TOML, YAML, JSON-RPC, OpenGL and SDL.
 - **Docs from source**: `milo doc` generates reference markdown from doc-comments; `milo api` searches the standard library
-- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->992<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->717<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
+- **Test framework**: `@expect:`/`@error:` annotations and a `milo test` runner over <!-- stat:fixtures -->993<!-- /stat --> fixtures, plus <!-- stat:error-fixtures -->728<!-- /stat --> that must fail to compile and <!-- stat:prove-fixtures -->38<!-- /stat --> that must be proved
 - **Debugging**: `-g` emits DWARF that composes with any optimization level
 - **CI**: build and test on macOS, Linux, and Windows, plus a release pipeline with static linking
 

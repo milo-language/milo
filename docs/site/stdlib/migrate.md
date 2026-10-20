@@ -2,7 +2,9 @@
 
 Versioned, ordered SQLite schema migrations. Each migration runs once, in its own
 transaction, and is recorded in a `schema_migrations` table in the same transaction; a
-second `dbMigrate` is a no-op.
+second `dbMigrate` is a no-op. The same list is the schema the compiler checks SQL against
+(see [Checked SQL](sqlite#checked-sql)), so the program's queries and its database cannot
+drift apart.
 
 ```milo
 from "std/migrate" import { Migration, MigrateReport, dbMigrate, dbSchemaDiff, dbBackup }
@@ -62,7 +64,8 @@ those three refusals apart: an edited or skipped migration would pass silently.
 `Migration.sql(version, name, sql)` runs one or more statements. `Migration.func(version,
 name, f)` calls `f(db)` inside the migration's transaction, for what SQL cannot say: a
 backfill that parses JSON, a data fix-up computed in code. Keep schema changes in SQL
-migrations, so the migration list alone says what the schema is.
+migrations, and keep their SQL compile-time constant: the compiler builds the schema it
+checks queries against by running the SQL migrations, and it cannot run a function.
 
 ## Adopting a database that predates migrations
 
@@ -152,7 +155,8 @@ fn Migration.func(version: i64, name: string, run: move (&Database) => Result<Un
 ```
 
 A migration that calls `run` inside its transaction. Keep schema changes in SQL
-migrations, so the list alone says what the schema is.
+migrations: the compiler builds its view of the schema from those, and cannot run
+a function.
 
 #### `Migration.sql`
 

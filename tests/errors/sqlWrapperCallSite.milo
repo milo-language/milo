@@ -1,0 +1,20 @@
+// @error: SQL error in the query passed to 'exists': no such column: nme
+// A wrapper marked @sql passes its own parameter through unchecked and is checked where it is called.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, dbNext, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@sql(sql, args)
+fn exists(db: &Database, sql: string, args: Vec<SqlArg>): Result<bool> {
+    let st = dbPrepare(db, sql, args)?
+    return dbNext(st)
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _e = exists(db, "SELECT 1 FROM users WHERE nme = ?", [SqlArg.Text("x")])!
+}

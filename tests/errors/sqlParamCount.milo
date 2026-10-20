@@ -1,0 +1,14 @@
+// @error: has 2 bound parameters but 1 argument is passed
+// The array literal of bind arguments must match the query's placeholders.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _n = dbRun(db, "UPDATE users SET login = ? WHERE id = ?", [SqlArg.Text("ada")])!
+}

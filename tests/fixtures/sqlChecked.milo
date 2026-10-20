@@ -1,0 +1,68 @@
+// Checked SQL: constants, $"..." over module constants, immutable lets, an @sql wrapper,
+// Row fetches checked against the result columns, uncheckedSql for run-time SQL, and a
+// TEMP table declared with dbExecDdl.
+// @expect: inserted 2
+// @expect: ada 7 none
+// @expect: bob 9 hi
+// @expect: count Some(2) missing None
+// @expect: exists true
+// @expect: unchecked bob
+// @expect: temp 9
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, dbScalar, dbNext, dbColumnText, SqlArg, sqlOptInt, sqlOptText, uncheckedSql, dbExecDdl }
+from "std/migrate" import { Migration, dbMigrate }
+
+let USER_COLS = "id, github_id AS githubId, login, bio"
+let BY_LOGIN = " WHERE login = ?"
+
+@derive(Row)
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+    bio: Option<string>,
+}
+
+fn migrations(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)"), Migration.sql(2, "users.bio", "ALTER TABLE users ADD COLUMN bio TEXT")]
+}
+
+// A wrapper of the app's own: callers' SQL is checked, its own pass-through is not.
+@sql(sql, args)
+fn exists(db: &Database, sql: string, args: Vec<SqlArg>): Result<bool> {
+    let st = dbPrepare(db, sql, args)?
+    return dbNext(st)
+}
+
+fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    dbMigrate(db, migrations())!
+    let insert = "INSERT INTO users (github_id, login, bio) VALUES (?, ?, ?)"
+    var n = dbRun(db, insert, [SqlArg.Int(7), SqlArg.Text("ada"), sqlOptText(None)])!
+    let bio: Option<string> = Some("hi")
+    n += dbRun(db, insert, [sqlOptInt(Some(9)), SqlArg.Text("bob"), sqlOptText(bio)])!
+    print($"inserted {n}")
+    let users = User.fetchAll(db, $"SELECT {USER_COLS} FROM users ORDER BY id", [])!
+    for u in users {
+        print($"{u.login} {u.githubId} {u.bio.clone() ?? "none"}")
+    }
+    let missing = User.fetchOne(db, $"SELECT {USER_COLS} FROM users" + BY_LOGIN, [SqlArg.Text("eve")])!
+    print($"count {dbScalar(db, "SELECT count(*) FROM users", [])!} missing {dbScalar(db, "SELECT id FROM users WHERE login = 'eve'", [])!}")
+    if missing.isSome() {
+        return 1
+    }
+    print($"exists {exists(db, "SELECT 1 FROM users" + BY_LOGIN, [SqlArg.Text("ada")])!}")
+    var table = "users"
+    table.pushStr("")
+    let st = dbPrepare(db, uncheckedSql($"SELECT login FROM {table} ORDER BY id DESC"), [])!
+    dbNext(st)!
+    print($"unchecked {dbColumnText(st, 0)}")
+    print($"temp {tempJoin(db)!}")
+    return 0
+}
+
+// A TEMP table built at run time joins like any other once dbExecDdl declares it.
+fn tempJoin(db: &Database): Result<i64> {
+    dbExecDdl(db, "CREATE TEMP TABLE IF NOT EXISTS picked (user_id INTEGER PRIMARY KEY)")?
+    dbRun(db, "INSERT INTO temp.picked (user_id) SELECT id FROM users WHERE login = ?", [SqlArg.Text("bob")])?
+    return Result.Ok(dbScalar(db, "SELECT u.github_id FROM temp.picked p JOIN users u ON u.id = p.user_id", [])? ?? 0)
+}

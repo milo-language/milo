@@ -105,6 +105,20 @@ const SHADOW_SRC = `fn asciiIsDigit(ch: u8, extra: i64): bool {
 }
 `;
 const SHADOW_URI = "file:///tmp/milo-lsp-shadow.milo";
+
+// Checked SQL runs at the end of the check, after every migration is seen; its errors must
+// still reach the editor, on the literal.
+const SQL_SRC = `from "std/sqlite" import { dbOpen, dbPrepare }
+from "std/migrate" import { Migration }
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")]
+}
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT logn FROM users", [])!
+}
+`;
+const SQL_URI = "file:///tmp/milo-lsp-sql.milo";
 const BORROW_URI = "file:///tmp/milo-lsp-borrow.milo";
 const BORROW_SRC = `fn main(): void {
     var xs: Vec<i64> = [1, 2]
@@ -418,7 +432,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC], [UPDATE_URI, UPDATE_SRC], [FORIN_URI, FORIN_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC], [SHADOW_URI, SHADOW_SRC], [SQL_URI, SQL_SRC], [BORROW_URI, BORROW_SRC], [ARRAY_URI, ARRAY_SRC], [EMBED_URI, EMBED_SRC], [MEMBER_URI, MEMBER_SRC], [INT_MEMBER_URI, INT_MEMBER_SRC], [NS_URI, NS_SRC], [KEYWORD_URI, KEYWORD_SRC], [LINTS_URI, LINTS_SRC], [NULLREF_URI, NULLREF_SRC], [CFNFIELD_URI, CFNFIELD_SRC], [PARKS_URI, PARKS_SRC], [INLAY_URI, INLAY_SRC], [UPDATE_URI, UPDATE_SRC], [FORIN_URI, FORIN_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -496,6 +510,20 @@ test("hover on builtin Vec type and Vec.new constructor", async () => {
   // `new` in `Vec.new()` (line 1, char 27).
   const onCtor = await req(23, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 27 } });
   expect(onCtor?.contents?.value).toContain("Vec.new");
+});
+
+test("a checked-SQL error is a diagnostic on the literal", async () => {
+  const deadline = Date.now() + 4000;
+  let diags: any[] | undefined;
+  while (Date.now() < deadline) {
+    diags = diagnosticsByUri.get(SQL_URI);
+    if (diags && diags.length) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  const d = diags?.find(x => /no such column: logn/.test(x.message));
+  expect(d).toBeTruthy();
+  expect(d.range.start.line).toBe(7);
+  expect(d.range.start.character).toBe(28);
 });
 
 test("shadowing a stdlib fn with a different signature is a squiggled diagnostic", async () => {

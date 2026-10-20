@@ -1,0 +1,14 @@
+// @error: SQL error in the query passed to 'dbPrepare': no such column: logn
+// A column the schema does not have is a compile error at the literal, with the nearest name.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _st = dbPrepare(db, "SELECT logn FROM users", [])!
+}

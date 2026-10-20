@@ -1,0 +1,21 @@
+// @error: User.githubId has no column in the result of this query (columns: id, github_id, login)
+// fetchAll reads fields by column name; the hint says to alias github_id AS githubId.
+from "std/sqlite" import { Database, dbOpen, dbPrepare, dbRun, SqlArg }
+from "std/migrate" import { Migration }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL)")]
+}
+
+
+@derive(Row)
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    let _us = User.fetchAll(db, "SELECT id, github_id, login FROM users", [])!
+}

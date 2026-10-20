@@ -22,6 +22,7 @@ import { MUTATING_COLLECTION_METHODS } from "./builtin-members";
 import { checkPurity, checkEscapingClosures, checkNonEscapingParams, checkTaskScopes, checkThreadBoundary, checkConcurrentClosureArgs, checkGlobalBorrowInvalidation, checkPointerParamEscape, checkMutParamBundle, lazyInitFnName, type ProgramView, type ProgramPassHost } from "./checker-program-passes";
 import { memberHint, suggestions, didYouMean, importHint, stdExportNames, VEC_MEMBERS, HASHMAP_MEMBERS, STRING_MEMBERS, OPTION_MEMBERS, RESULT_MEMBERS, INT_MEMBERS, FLOAT_MEMBERS, BOOL_MEMBERS } from "./suggest";
 import { DeriveSynth, CONDITIONAL_CLONE_BASES } from "./checker-derive";
+import { SqlChecker, sqlAttrOf, validateSqlAttribute, type ConstResolver } from "./checker-sql";
 import { formatMiloType } from "./derive-template";
 import { display, displayQualified } from "./mangle";
 import { basename, dirname, relative, resolve as resolvePath, sep } from "path";
@@ -253,6 +254,9 @@ interface VarInfo {
   copyBind?: boolean;
   // Holds a `move` closure whose body moves a capture out, so calling it consumes it.
   callsOnce?: boolean;
+  // An immutable string `let` whose initializer folds to a constant, folded at the
+  // declaration (so a later shadowing name cannot change it); checked SQL reads it.
+  constStr?: string;
   // Holds a closure: the literals it may have been bound or assigned from, so passing
   // the binding to a call is checked for exclusivity like passing those literals.
   closureSources?: Expr[];
@@ -3658,6 +3662,7 @@ export class TypeChecker {
     try {
       this.checkProgram(program);
       this.reportStrandedCFnReads();
+      this.sql.run();
     } catch (e) {
       if (!(e instanceof CheckAbort)) throw e;
     }
@@ -4206,6 +4211,10 @@ export class TypeChecker {
               this.error(`'@pure' takes no arguments`, undefined, `write '@pure fn ${fn.name}(...)'`);
             }
           }
+          else if (attr.name === "sql" || attr.name === "sqlSchema") {
+            const bad = validateSqlAttribute(attr, fn.name, fn.params);
+            if (bad) this.error(bad, fn.span);
+          }
           else if (attr.name === "copyOnly") this.validateCopyOnly(fn.name, attr, fn.typeParams.map(t => t.name), undefined);
           // Bare only: it constrains every type parameter, since the copy is of whatever
           // the container holds and a routine copying out one parameter and not another
@@ -4310,8 +4319,9 @@ export class TypeChecker {
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern, ...mustUseOf(fn) });
       // The call site needs the declaration for contracts and for `@unsafe`; recording it
       // only for contracts meant an `@unsafe fn` with no `requires` clause was declared
-      // unsafe and called freely. A `@pure` extern is recorded for the extern-call rule.
-      if ((fn.contracts && fn.contracts.length > 0) || fn.attributes?.some(a => a.name === "unsafe" || (fn.isExtern && a.name === "pure"))) {
+      // unsafe and called freely. A `@pure` extern is recorded for the extern-call rule, and
+      // an `@sql` fn for checked SQL.
+      if ((fn.contracts && fn.contracts.length > 0) || fn.attributes?.some(a => a.name === "unsafe" || a.name === "sql" || a.name === "sqlSchema" || (fn.isExtern && a.name === "pure"))) {
         this.fnDecls.set(fn.name, fn);
       }
     }
@@ -4355,6 +4365,8 @@ export class TypeChecker {
     // list (a `var g: Arena<T> = arenaNew<T>()` reaches std/arena's `nextArenaId`),
     // and checking them strictly in order reported that as an undefined variable
     // inside a std file. Unannotated globals still wait for their inferred type.
+    for (const g of program.globals) this.globalDeclsByName.set(g.name, g);
+    for (const f of program.functions) this.fnDeclsByName.set(f.name, f);
     for (const g of program.globals) {
       if (!g.type) continue;
       const t = this.resolve(g.type);
@@ -4714,7 +4726,13 @@ export class TypeChecker {
   private jsonUserMethods = new Set<string>();
 
   // The impl generators (src/checker-derive.ts). What they may reach is this list.
+  private sql = new SqlChecker({ error: (msg, span, hint) => this.error(msg, span, hint) });
+  private globalDeclsByName = new Map<string, import("./ast").GlobalDecl>();
+  private globalConstCache = new Map<string, string | null>();
+  private fnDeclsByName = new Map<string, Function>();
+  private templateDepth = 0;
   private derive = new DeriveSynth({
+    rowPlans: this.sql.rowPlans,
     structs: this.structs,
     enums: this.enums,
     dropImpls: this.dropImpls,
@@ -5645,6 +5663,9 @@ export class TypeChecker {
         if (!attributesFor("method").includes(attr.name)) {
           this.error(`'@${attr.name}' is not supported on methods — '${typeName}.${m.name}'`, m.span ?? impl.span,
             `only ${attributesFor("method").map(a => `'@${a}'`).join(", ")} apply to a method`);
+        } else if (attr.name === "sql" || attr.name === "sqlSchema") {
+          const bad = validateSqlAttribute(attr, `${typeName}.${m.name}`, m.params);
+          if (bad) this.error(bad, m.span ?? impl.span);
         } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);
@@ -5809,6 +5830,7 @@ export class TypeChecker {
           const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
           if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
+          if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
           this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
           existing.methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
           this.monomorphizedFns.push(concreteFn);
@@ -5834,6 +5856,7 @@ export class TypeChecker {
           }
           const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
+          if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
           this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
           methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
           this.monomorphizedFns.push(concreteFn);
@@ -6610,6 +6633,10 @@ export class TypeChecker {
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) this.unfreeze(vi);
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(stmt.value && this.onceClosures.has(stmt.value) && { callsOnce: true }), ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         const letInfo = this.lookup(stmt.name);
+        if (letInfo && bindingType.tag === "string") {
+          const c = this.sqlConstOf(stmt.value);
+          if (c !== null) letInfo.constStr = c;
+        }
         if (bindingType.tag === "ref") this.attributeBorrows(newlyFrozen, stmt.name, letInfo);
         if (letInfo) this.bindPointerViews(stmt.name, letInfo, stmt.value);
         if (letInfo) this.noteClosureSources(letInfo, stmt.value);
@@ -10317,6 +10344,84 @@ export class TypeChecker {
     return false;
   }
 
+  // An `@sql` / `@sqlSchema` call. Folding happens here because only the checker can
+  // resolve a name to the constant it holds; checker-sql.ts checks the rest once the
+  // whole program (and so every migration) has been seen.
+  private noteSqlCall(callee: string, attrs: Attribute[], params: { name: string }[], args: Expr[], row: string | null, ret: TypeKind, sp: Span | undefined): void {
+    const schema = sqlAttrOf(attrs, params, "sqlSchema");
+    if (schema) {
+      const v = schema.argsIndex === null ? undefined : args[schema.argsIndex];
+      const vs = v ? this.sqlConstOf(v) : null;
+      const version = vs !== null && /^\d+$/.test(vs) ? BigInt(vs) : null;
+      const sqlArg = args[schema.sqlIndex];
+      this.sql.noteSchema(callee, schema, args, version, sqlArg ? this.sqlConstOf(sqlArg) : null, sp);
+      return;
+    }
+    const q = sqlAttrOf(attrs, params, "sql");
+    const a = q ? args[q.sqlIndex] : undefined;
+    if (!q || !a) return;
+    let value: string | "unchecked" | "passthrough" | null = null;
+    if (a.kind === "Call" && a.func === "uncheckedSql") value = "unchecked";
+    else value = this.sqlConstOf(a) ?? (this.isOwnSqlParam(a) ? "passthrough" : null);
+    // A fn handing back a Statement may be bound later (prepare once, rebind per row), so
+    // an empty `[]` there is not a count to check; one that runs the query has no later.
+    const prepares = /\bStatement\b/.test(this.show(ret));
+    this.sql.noteQuery(callee, q, args, value, row, prepares, sp);
+  }
+
+  // The enclosing fn's own `@sql` parameter, not a local that shadows it.
+  private isOwnSqlParam(a: Expr): boolean {
+    const fn = this.currentFnDecl;
+    if (a.kind !== "Ident" || !fn) return false;
+    const own = sqlAttrOf(fn.attributes, fn.params, "sql");
+    // A malformed @sql on the enclosing fn is already an error at its declaration;
+    // rejecting every query inside it too would only repeat that.
+    if (!own && fn.attributes?.some(x => x.name === "sql")) return true;
+    const p = own ? fn.params[own.sqlIndex] : undefined;
+    return !!p && p.name === a.name && this.lookup(a.name)?.span === p.span;
+  }
+
+  private sqlConstOf(e: Expr): string | null {
+    return SqlChecker.constString(e, this.sqlResolver((name) => {
+      const info = this.lookup(name);
+      if (!info) return null;
+      if (info.constStr !== undefined) return info.constStr;
+      return info.isGlobal && !info.mutable ? this.globalConst(name) : null;
+    }));
+  }
+
+  private sqlResolver(ident: (name: string) => string | null): ConstResolver {
+    return { ident, call: (fn, args) => this.templateCall(fn, args) };
+  }
+
+  // A call to a template function: non-generic, every parameter a string, and a body that
+  // is one `return` of a foldable expression. Its parameters bind to the folded
+  // arguments; any other name resolves to a module constant only.
+  private templateCall(name: string, args: string[]): string | null {
+    const f = this.fnDeclsByName.get(name);
+    if (!f || f.isExtern || f.typeParams.length > 0 || f.params.length !== args.length || this.templateDepth > 16) return null;
+    const ret = f.body?.length === 1 ? f.body[0] : undefined;
+    if (!ret || ret.kind !== "Return" || !ret.value) return null;
+    const bound = new Map(f.params.map((p, i) => [p.name, args[i]!] as const));
+    this.templateDepth++;
+    try {
+      return SqlChecker.constString(ret.value, this.sqlResolver(n => bound.get(n) ?? this.globalConst(n)));
+    } finally {
+      this.templateDepth--;
+    }
+  }
+
+  // A module constant's folded value. Names inside its initializer resolve to other
+  // globals only: the initializer runs at module scope, whatever locals the caller has.
+  private globalConst(name: string): string | null {
+    if (this.globalConstCache.has(name)) return this.globalConstCache.get(name)!;
+    const g = this.globalDeclsByName.get(name);
+    this.globalConstCache.set(name, null); // a cycle folds to "not constant"
+    const v = g && !g.mutable ? SqlChecker.constString(g.value, this.sqlResolver(n => this.globalConst(n))) : null;
+    this.globalConstCache.set(name, v);
+    return v;
+  }
+
   private checkUnaryOpExpr(expr: ExprOf<"UnaryOp">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     // `-1 as i64` parses as `-(1 as i64)`; the cast is the operand, and in a signed slot
@@ -11068,6 +11173,7 @@ export class TypeChecker {
     // check requires contracts at call site
     const fnDecl = this.fnDecls.get(expr.func);
     if (fnDecl) this.checkCallSiteContracts(fnDecl, expr.args, sp);
+    if (fnDecl?.attributes) this.noteSqlCall(expr.func, fnDecl.attributes, fnDecl.params, expr.args, null, sig.ret, sp);
     this.requireUnsafeCall(fnDecl, expr.func, sp);
     if (sig && this.rawPtrBuiltinSigs.has(sig) && !this.inStdFile(sp)) {
       this.requireUnsafe(`calling '${expr.func}' requires an unsafe block`, sp,
@@ -11917,6 +12023,8 @@ export class TypeChecker {
           // static methods have no self param — check args directly
           const paramOffset = this.checkStaticCallArgs(sig, expr, sp);
           this.staticCalls.set(expr, mangled);
+          const sqlAttrs = paramOffset === 0 ? this.sql.methodAttrs.get(mangled) : undefined;
+          if (sqlAttrs) this.noteSqlCall(`${expr.enumName}.${expr.variant}`, sqlAttrs, sig.params, expr.args, expr.enumName, sig.ret, sp);
           this.requireUnsafeMethod(mangled, `${expr.enumName}.${expr.variant}`, sp);
           // Precondition checking on a static method call (Math.sqrt(-1.0) etc).
           // Only when there is no `self` param, so args align 1:1 with the sig's
