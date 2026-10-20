@@ -13387,7 +13387,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47395`
+- `listening on http://127.0.0.1:47395 (bound)`
 - `streams: 200 opened, 200 answered`
 - `sockets: 200 opened, 200 echoed`
 - `live outboxes after churn: 0`
@@ -13435,7 +13435,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47396`
+- `listening on http://127.0.0.1:47396 (bound)`
 - `normal request while stalled: 200`
 - `stalled closed by server: true`
 - `closed within bound: true`
@@ -13474,7 +13474,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47393`
+- `listening on http://127.0.0.1:47393 (bound)`
 - `chunked: 200 [11 bytes: hello world; ce=-; cl=-]`
 - `chunked with ext+trailer: 200 [3 bytes: abc; ce=-; cl=-]`
 - `chunked over limit: 413`
@@ -13558,7 +13558,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47391`
+- `listening on http://127.0.0.1:47391 (bound)`
 - `split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello world`
 - `continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nDate: <date>\r\n\r\n5 bytes: abcde`
 - `too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n413 Content Too Large`
@@ -13608,7 +13608,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47393`
+- `listening on http://127.0.0.1:47393 (bound)`
 - `open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n`
 - `poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 1`
 - `frame: e\r\ndata: room-7\n\n\r\n`
@@ -13626,7 +13626,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47394`
+- `listening on http://127.0.0.1:47394 (bound)`
 - `a got: echo: hi`
 - `a got: a says hi`
 - `b got: a says hi`
@@ -19460,7 +19460,7 @@ A conforming implementation shall accept this program, and running it shall writ
 
 A conforming implementation shall accept this program, and running it shall write exactly the lines below to standard output.
 
-- `listening on http://127.0.0.1:47395`
+- `listening on http://127.0.0.1:47395 (bound)`
 - `boom: HTTP/1.1 500 Internal Server Error`
 - `boom has Date: true`
 - `ok after boom: HTTP/1.1 200 OK`

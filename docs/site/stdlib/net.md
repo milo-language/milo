@@ -113,6 +113,14 @@ pending, Err otherwise. For callers that multiplex accept with other
 event sources — accept() parks the calling task on the listener, which
 stalls everything else that task drives until a client connects.
 
+#### `TcpListener.addr4`
+
+```milo
+fn TcpListener.addr4(self: &TcpListener): Option<u32>
+```
+
+The bound IPv4 address, or None for an IPv6 socket (or a failed getsockname).
+
 #### `TcpListener.bind`
 
 ```milo
@@ -142,8 +150,28 @@ Bind to one IPv4 address (see `ip4`). `bindAddr(ip4(127, 0, 0, 1), port)`
 is the loopback-only listener a local dev server wants: `bind` takes every
 interface, so anything it serves is reachable from the network.
 
-Started under systemd socket activation (LISTEN_FDS/LISTEN_PID), this adopts the
-passed socket instead and `addr` and `port` are ignored: the unit file chose them.
+Binds exactly `addr`:`port`. Started under systemd socket activation for this
+process, it errs naming `inheritedOr`, the constructor that adopts the passed socket.
+
+#### `TcpListener.inheritedOr`
+
+```milo
+fn TcpListener.inheritedOr(addr: u32, port: u16): Result<TcpListener, NetError>
+```
+
+The socket systemd socket activation passed this process (LISTEN_FDS/LISTEN_PID,
+the first descriptor), or, when it was not started that way, a fresh bind of
+`addr`:`port` like bindAddr. The opt-in a socket-activated service writes at the call
+site; `isInherited()` says which happened, and the unit file, not `addr`/`port`,
+decides where an inherited socket listens.
+
+#### `TcpListener.isInherited`
+
+```milo
+fn TcpListener.isInherited(self: &TcpListener): bool
+```
+
+Whether this listener came from socket activation (inheritedOr) rather than a bind.
 
 #### `TcpListener.port`
 
@@ -306,6 +334,26 @@ closes it on drop, and the number is the caller's to close exactly once.
 
 ### Functions
 
+#### `activationPending`
+
+```milo
+pub fn activationPending(): bool
+```
+
+Whether systemd socket activation addressed THIS process: LISTEN_PID is our pid and
+LISTEN_FDS is at least 1, on a target that inherits descriptors, outside replay. Reads
+without consuming, so a plain bind can refuse instead of silently binding a second
+socket beside the one the unit file configured (the old behaviour, the reverse mistake,
+was to adopt it and ignore the address the caller passed).
+
+#### `activationRefusal`
+
+```milo
+pub fn activationRefusal(what: &string): NetError
+```
+
+The error a plain bind returns while activation is pending, naming the opt-in.
+
 #### `deadlineIn`
 
 ```milo
@@ -386,10 +434,12 @@ LISTEN_PID must name THIS process (the variables also reach children, which must
 claim a socket meant for their parent). The variables are removed once read, as systemd
 asks, so a child we spawn never mistakes them for its own.
 
-Every listener constructor asks this first, so each serve variant gets socket
-activation from the one place. Only the first listener of the process gets the
-socket: the variables are gone afterwards. Skipped under record/replay (descriptors are
-synthetic there) and on targets with no inheritance (Windows).
+Only the opt-in constructors call this (TcpListener.inheritedOr, TlsListener.inheritedOr,
+and the serve variants through ServeOptions.socketActivation): a plain bind binds what it
+is told, and refuses to start while an activation meant for this process is pending
+(activationPending). Only the first listener of the process gets the socket: the
+variables are gone afterwards. Skipped under record/replay (descriptors are synthetic
+there) and on targets with no inheritance (Windows).
 
 @unsafe: the caller takes ownership of the returned number and must wrap it in exactly
 one handle (TcpListener, TlsListener) that closes it.

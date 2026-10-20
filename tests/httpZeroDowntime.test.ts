@@ -1,4 +1,4 @@
-// Zero-downtime restarts for std/http: socket activation (LISTEN_FDS), SIGTERM drain and the
+// Zero-downtime restarts for std/http: opt-in socket activation (LISTEN_FDS), SIGTERM drain and the
 // connection cap. tests/http-zero-downtime/harness.py plays systemd (owns the listening
 // socket, hands it over as fd 3, restarts the server under load); each mode exits non-zero
 // on any failed request or missed deadline and prints its totals.
@@ -37,4 +37,5 @@ describe.skipIf(!havePython || !posix)("std/http zero-downtime", () => {
   test("a handler longer than drainMs is cut at the cap", () => mode("drain"), 30_000);
   test("a long-lived stream is closed when the drain starts", () => mode("stream"), 30_000);
   test("without LISTEN_FDS the server binds itself", () => mode("plain"), 30_000);
+  test("activation is opt-in: announced when taken, refused when not asked for", () => mode("explicit"), 30_000);
 });

@@ -3,7 +3,7 @@
 // must leave nothing behind: its descriptor closed by the server (counted in /dev/fd,
 // which is /proc/self/fd on Linux), its outbox refusing sends, its task finished.
 // (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
-// @expect: listening on http://127.0.0.1:47395
+// @expect: listening on http://127.0.0.1:47395 (bound)
 // @expect: streams: 200 opened, 200 answered
 // @expect: sockets: 200 opened, 200 echoed
 // @expect: live outboxes after churn: 0

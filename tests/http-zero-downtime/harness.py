@@ -5,7 +5,7 @@ Acts as systemd: binds 127.0.0.1:<free port> with listen(1024), hands the socket
 server as fd 3 with LISTEN_FDS=1 / LISTEN_PID=<server pid>, and restarts it on demand
 (SIGTERM the current child, spawn the next one on the same socket at once).
 
-usage: harness.py <restart|cap|drain|stream|plain> <server-binary>
+usage: harness.py <restart|cap|drain|stream|plain|explicit> <server-binary>
 Each mode prints its totals and exits 0 only if every assertion held.
 """
 import fcntl
@@ -35,7 +35,7 @@ class Launcher:
         self.current = None
         self.retired = []  # [proc, sigterm time, seconds until exit (set by a watcher)]
 
-    def spawn(self):
+    def spawn(self, capture=False):
         env = dict(self.env)
         # The socket goes onto fd 3 here, in the child before exec, not in the shell: dash
         # (Ubuntu's /bin/sh) rejects a redirect naming an fd above 9 ("Bad fd number"), so
@@ -49,7 +49,8 @@ class Launcher:
 
         p = subprocess.Popen(["/bin/sh", "-c", 'LISTEN_PID=$$ LISTEN_FDS=1 exec "$0"', self.binary], env=env,
                              pass_fds=(3,), preexec_fn=to_fd3,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+                             stderr=subprocess.PIPE if capture else subprocess.DEVNULL)
         self.current = p
         return p
 
@@ -295,8 +296,40 @@ def mode_plain(binary):
     finish("plain", problems)
 
 
+def mode_explicit(binary):
+    # Socket activation is opt-in (ServeOptions.socketActivation). Opted in, the server
+    # says it is serving the inherited socket, and warns that it is not the fallback port it
+    # names. Not opted in, an activated start refuses, naming the opt-in, rather than bind a
+    # second socket or quietly ignore the address it was given.
+    problems = []
+    probe = socket.socket()
+    probe.bind((HOST, 0))
+    fallback = probe.getsockname()[1]
+    probe.close()
+    on = Launcher(binary, {"PORT": str(fallback)})
+    p = on.spawn(capture=True)
+    try:
+        wait_listening(on.port)
+        body, err = get(on.port, "/")
+        check(body == "ok", f"opted in: / -> {body!r} {err}", problems)
+    finally:
+        p.send_signal(signal.SIGTERM)
+        out, errs = p.communicate(timeout=15)
+    line = f"listening on http://127.0.0.1:{on.port} (inherited fd 3, systemd socket activation)"
+    check(line in out.decode(), f"opted in: no {line!r} in {out!r}", problems)
+    check(f"not the fallback 127.0.0.1:{fallback}" in errs.decode(), f"opted in: no fallback warning in {errs!r}", problems)
+    off = Launcher(binary, {"NOACTIVATION": "1"})
+    p2 = off.spawn(capture=True)
+    out2, errs2 = p2.communicate(timeout=15)
+    check(p2.returncode != 0, f"not opted in: exit code {p2.returncode}, expected a refusal", problems)
+    check("socketActivation: true" in errs2.decode(), f"not opted in: refusal does not name the opt-in: {errs2!r}", problems)
+    print(f"explicit: refused={p2.returncode != 0}")
+    finish("explicit", problems)
+
+
 if __name__ == "__main__":
-    modes = {"restart": mode_restart, "cap": mode_cap, "drain": mode_drain, "stream": mode_stream, "plain": mode_plain}
+    modes = {"restart": mode_restart, "cap": mode_cap, "drain": mode_drain, "stream": mode_stream, "plain": mode_plain,
+             "explicit": mode_explicit}
     if len(sys.argv) != 3 or sys.argv[1] not in modes:
         sys.exit(__doc__)
     modes[sys.argv[1]](os.path.abspath(sys.argv[2]))

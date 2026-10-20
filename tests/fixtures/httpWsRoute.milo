@@ -5,7 +5,7 @@
 // descriptor), so the broadcaster prunes it. A GET without an upgrade falls through to
 // the ordinary routes; an upgrade with no key is refused.
 // (std/ws, the client used here, binds OpenSSL, which Windows does not have.)
-// @expect: listening on http://127.0.0.1:47394
+// @expect: listening on http://127.0.0.1:47394 (bound)
 // @expect: a got: echo: hi
 // @expect: a got: a says hi
 // @expect: b got: a says hi

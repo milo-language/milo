@@ -8,7 +8,7 @@
 // client half and is not needed here.
 
 from "std/http" import {
-    Request, Response, Router, ServeOptions, serveConns, serveHandlerExchange, serveRouterExchange
+    Request, Response, Router, ServeOptions, serveConns, serveHandlerExchange, serveRouterExchange, announce
 }
 from "std/tls" import {
     TlsConn, TlsListener
@@ -96,18 +96,19 @@ fn serveListener(listenFd: i32, opts: &ServeOptions, serve: (i32) => void): Resu
 // Bind, load the cert chain and announce. Shared by serveTls() and serveRouterTls():
 // the plaintext pair in std/http had drifted the same way, and a cert-loading fix that
 // lands in only one of two copies is a server that quietly keeps serving the old chain.
-fn bindTls(port: u16?, certPath: &string, keyPath: &string): Result<TlsListener> {
+fn bindTls(port: u16?, certPath: &string, keyPath: &string, activation: bool): Result<TlsListener> {
     var bindPort: u16 = 0
     if let Option.Some(p) = port {
         bindPort = p
     }
 
-    match TlsListener.bind(bindPort, certPath, keyPath) {
+    let opened = if activation { TlsListener.inheritedOr(bindPort, certPath, keyPath) } else { TlsListener.bind(bindPort, certPath, keyPath) }
+    match opened {
         Result.Err(e) => {
             return Result.Err(netErrText(e))
         }
         Result.Ok(listener) => {
-            print($"listening on https://localhost:{listener.port()}")
+            announce("https", "0.0.0.0", port, 0, listener.port(), listener.addr4(), listener.isInherited())
             return Result.Ok(listener)
         }
     }
@@ -121,7 +122,7 @@ fn bindTls(port: u16?, certPath: &string, keyPath: &string): Result<TlsListener>
 // SIGTERM drain): the same contract as http.serveRouter. Only returns on a fatal
 // bind/listen error.
 pub fn serveTls(port: u16?, certPath: &string, keyPath: &string, handler: (&Request) => Response): Result<Unit> {
-    var listener = bindTls(port, certPath, keyPath)?
+    var listener = bindTls(port, certPath, keyPath, false)?
     let opts = ServeOptions {
     }
     let readMs = opts.readTimeoutMs
@@ -149,7 +150,7 @@ pub fn serveRouterTls(port: u16?, certPath: &string, keyPath: &string, router: &
 // read timeout (applied to the handshake, then afresh to the request), the write timeout
 // and the SIGTERM drain, all as in http.serveRouterWith.
 pub fn serveRouterTlsWith(port: u16?, certPath: &string, keyPath: &string, router: &Router, opts: &ServeOptions): Result<Unit> {
-    var listener = bindTls(port, certPath, keyPath)?
+    var listener = bindTls(port, certPath, keyPath, opts.socketActivation)?
     let readMs = opts.readTimeoutMs
     let writeMs = opts.writeTimeoutMs
     let listenFd = takeListenFd(&mut listener)

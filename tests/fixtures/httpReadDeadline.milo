@@ -2,7 +2,7 @@
 // A client that sends half a request line and then goes quiet must not hold a connection
 // slot forever (slowloris): with readTimeoutMs set the server drops it, and a normal
 // request on another connection is answered while the stalled one is still open.
-// @expect: listening on http://127.0.0.1:47396
+// @expect: listening on http://127.0.0.1:47396 (bound)
 // @expect: normal request while stalled: 200
 // @expect: stalled closed by server: true
 // @expect: closed within bound: true

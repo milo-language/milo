@@ -6,7 +6,7 @@
 // client's sleeps are parks, so the server task reading a half-sent request has to
 // park too (a blocking read there would hang the whole scheduler).
 // Also pins serveRouterOn: bound to 127.0.0.1 and reached through it.
-// @expect: listening on http://127.0.0.1:47391
+// @expect: listening on http://127.0.0.1:47391 (bound)
 // @expect: split: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n11 bytes: hello world
 // @expect: continue: HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nConnection: close\r\nDate: <date>\r\n\r\n5 bytes: abcde
 // @expect: too big: HTTP/1.1 413 Content Too Large\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\nDate: <date>\r\n\r\n413 Content Too Large

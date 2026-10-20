@@ -153,6 +153,27 @@ fn getSockPortLive(fd: i32): i32 {
     }
 }
 
+// The bound IPv4 address of `fd` in network order (as `ip4` builds it), or -1 when it is
+// not an IPv4 socket or getsockname fails. The family is read from the length the kernel
+// reports (a sockaddr_in is 16 bytes) because the family field sits at a different
+// offset on darwin (sin_len first) and linux. -1 under replay, where descriptors are
+// synthetic; callers use it only for diagnostics.
+@unsafe
+pub fn getSockAddr4(fd: i32): i64 {
+    if !replayOff() {
+        return -1
+    }
+    unsafe {
+        var st = makeZeroedSockaddrStorage()
+        var len: u32 = sockAddrStorageLen()
+        if getsockname(fd, &mut st, &mut len) < 0 || len != 16 {
+            return -1
+        }
+        let addrPtr = (st.addrOf() as i64 + 4) as *u32
+        return (*addrPtr) as i64
+    }
+}
+
 @unsafe
 pub fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
     unsafe {

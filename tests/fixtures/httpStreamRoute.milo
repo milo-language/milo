@@ -4,7 +4,7 @@
 // an ordinary route pushes frames through the outboxes. The server must keep answering
 // other requests meanwhile, the stream task must end once the client hangs up, and an
 // outbox whose client has gone must refuse a send instead of writing anywhere.
-// @expect: listening on http://127.0.0.1:47393
+// @expect: listening on http://127.0.0.1:47393 (bound)
 // @expect: open: HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nretry: 3000\n\n\r\n
 // @expect: poke: HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 6\r\nConnection: close\r\nDate: <date>\r\n\r\nsent 1
 // @expect: frame: e\r\ndata: room-7\n\n\r\n

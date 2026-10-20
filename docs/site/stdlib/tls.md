@@ -106,6 +106,14 @@ everyone. The connection comes back nonblocking, for readMoreBy and sendWithin;
 recvOnce/recv/send assume a blocking fd outside a green task, so use those on a
 connection from accept().
 
+#### `TlsListener.addr4`
+
+```milo
+fn TlsListener.addr4(self: &TlsListener): Option<u32>
+```
+
+The bound IPv4 address, or None for an IPv6 socket (or a failed getsockname).
+
 #### `TlsListener.bind`
 
 ```milo
@@ -113,7 +121,8 @@ fn TlsListener.bind(port: u16, certPath: &string, keyPath: &string): Result<TlsL
 ```
 
 Bind 0.0.0.0:port and serve `certPath` (PEM chain, leaf first) with `keyPath`.
-Port 0 lets the OS pick — recover it with port().
+Port 0 lets the OS pick — recover it with port(). Binds exactly that; started
+under systemd socket activation for this process it errs naming `inheritedOr`.
 
 #### `TlsListener.handshakeWithin`
 
@@ -127,6 +136,33 @@ limit). acceptWithin's second half, apart so a concurrent server can accept on o
 task and handshake on the connection's own: a handshake on the accept task is one
 stalled client stopping every other accept. `@unsafe`: the caller vouches that
 `clientFd` is an accepted socket it owns and hands over here.
+
+#### `TlsListener.inheritedOr`
+
+```milo
+fn TlsListener.inheritedOr(port: u16, certPath: &string, keyPath: &string): Result<TlsListener, NetError>
+```
+
+The socket systemd socket activation passed this process, serving `certPath` with
+`keyPath`; or, when it was not started that way, a fresh bind of 0.0.0.0:port like
+bind. The TLS twin of TcpListener.inheritedOr; `isInherited()` says which happened.
+
+#### `TlsListener.isInherited`
+
+```milo
+fn TlsListener.isInherited(self: &TlsListener): bool
+```
+
+Whether this listener came from socket activation (inheritedOr) rather than a bind.
+
+#### `TlsListener.open`
+
+```milo
+fn TlsListener.open(port: u16, certPath: &string, keyPath: &string, inherit: bool): Result<TlsListener, NetError>
+```
+
+bind and inheritedOr: the inherited socket when `inherit` and there is one, else a
+fresh bind of 0.0.0.0:port; then the certificate chain and key. Use those two.
 
 #### `TlsListener.port`
 

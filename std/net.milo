@@ -13,6 +13,7 @@ from "std/os" import {
     bind,
     freeaddrinfo,
     getSockPort,
+    getSockAddr4,
     getaddrinfo,
     listen,
     readFd,
@@ -503,6 +504,8 @@ impl AsFd for TcpListener {
 // Server counterpart to TcpStream.connect — no raw syscalls required in user code.
 pub struct TcpListener {
     _fd: i32,
+    // Adopted from systemd socket activation (TcpListener.inheritedOr) rather than bound here.
+    _inherited: bool = false,
 }
 
 impl Drop for TcpListener {
@@ -551,10 +554,12 @@ pub fn ignoreSigpipe(): void {
 // claim a socket meant for their parent). The variables are removed once read, as systemd
 // asks, so a child we spawn never mistakes them for its own.
 //
-// Every listener constructor asks this first, so each serve variant gets socket
-// activation from the one place. Only the first listener of the process gets the
-// socket: the variables are gone afterwards. Skipped under record/replay (descriptors are
-// synthetic there) and on targets with no inheritance (Windows).
+// Only the opt-in constructors call this (TcpListener.inheritedOr, TlsListener.inheritedOr,
+// and the serve variants through ServeOptions.socketActivation): a plain bind binds what it
+// is told, and refuses to start while an activation meant for this process is pending
+// (activationPending). Only the first listener of the process gets the socket: the
+// variables are gone afterwards. Skipped under record/replay (descriptors are synthetic
+// there) and on targets with no inheritance (Windows).
 //
 // @unsafe: the caller takes ownership of the returned number and must wrap it in exactly
 // one handle (TcpListener, TlsListener) that closes it.
@@ -593,6 +598,25 @@ pub fn takeInheritedListenFd(): i32 {
     return first
 }
 
+// Whether systemd socket activation addressed THIS process: LISTEN_PID is our pid and
+// LISTEN_FDS is at least 1, on a target that inherits descriptors, outside replay. Reads
+// without consuming, so a plain bind can refuse instead of silently binding a second
+// socket beside the one the unit file configured (the old behaviour, the reverse mistake,
+// was to adopt it and ignore the address the caller passed).
+pub fn activationPending(): bool {
+    if listenFdsStart() < 0 || !replayOff() {
+        return false
+    }
+    let fds = Env.get("LISTEN_FDS") ?? ""
+    let pid = Env.get("LISTEN_PID") ?? ""
+    unsafe { return digitsValue(fds) >= 1 && digitsValue(pid) == getpid() as i64 }
+}
+
+// The error a plain bind returns while activation is pending, naming the opt-in.
+pub fn activationRefusal(what: &string): NetError {
+    return NetError.Other($"{what}: this process was started by systemd socket activation (LISTEN_FDS/LISTEN_PID), " + "but asked to bind its own socket. Opt in to serve the inherited one: TcpListener.inheritedOr(addr, port), " + "TlsListener.inheritedOr(port, cert, key), or ServeOptions { socketActivation: true } for the serve functions; " + "or drop the .socket unit")
+}
+
 // The value of a string of ASCII digits; -1 for anything else (including empty).
 fn digitsValue(text: &string): i64 {
     if text.len == 0 || text.len > 18 {
@@ -621,17 +645,14 @@ impl TcpListener {
     // is the loopback-only listener a local dev server wants: `bind` takes every
     // interface, so anything it serves is reachable from the network.
     //
-    // Started under systemd socket activation (LISTEN_FDS/LISTEN_PID), this adopts the
-    // passed socket instead and `addr` and `port` are ignored: the unit file chose them.
+    // Binds exactly `addr`:`port`. Started under systemd socket activation for this
+    // process, it errs naming `inheritedOr`, the constructor that adopts the passed socket.
     fn bindAddr(addr: u32, port: u16): Result<TcpListener, NetError> {
+        if activationPending() {
+            return Result.Err(activationRefusal("TcpListener.bindAddr"))
+        }
         unsafe {
             ignoreSigpipe()
-            let inherited = takeInheritedListenFd()
-            if inherited >= 0 {
-                return Result.Ok(TcpListener {
-                    _fd: inherited
-                })
-            }
             let AF_INET: i32 = 2
             let SOCK_STREAM: i32 = 1
 
@@ -663,14 +684,11 @@ impl TcpListener {
     // Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
     // or all-zero for the v6 wildcard "::").
     fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
+        if activationPending() {
+            return Result.Err(activationRefusal("TcpListener.bind6"))
+        }
         unsafe {
             ignoreSigpipe()
-            let inherited = takeInheritedListenFd()
-            if inherited >= 0 {
-                return Result.Ok(TcpListener {
-                    _fd: inherited
-                })
-            }
             ensureNetInit()
             var fd: i32 = 0
             fd = sysSocket(afInet6(), 1, 0)
@@ -691,6 +709,38 @@ impl TcpListener {
             return Result.Ok(TcpListener {
                 _fd: fd
             })
+        }
+    }
+
+    // The socket systemd socket activation passed this process (LISTEN_FDS/LISTEN_PID,
+    // the first descriptor), or, when it was not started that way, a fresh bind of
+    // `addr`:`port` like bindAddr. The opt-in a socket-activated service writes at the call
+    // site; `isInherited()` says which happened, and the unit file, not `addr`/`port`,
+    // decides where an inherited socket listens.
+    fn inheritedOr(addr: u32, port: u16): Result<TcpListener, NetError> {
+        unsafe {
+            ignoreSigpipe()
+            let fd = takeInheritedListenFd()
+            if fd >= 0 {
+                return Result.Ok(TcpListener { _fd: fd, _inherited: true })
+            }
+        }
+        return TcpListener.bindAddr(addr, port)
+    }
+
+    // Whether this listener came from socket activation (inheritedOr) rather than a bind.
+    fn isInherited(self: &Self): bool {
+        return self._inherited
+    }
+
+    // The bound IPv4 address, or None for an IPv6 socket (or a failed getsockname).
+    fn addr4(self: &Self): Option<u32> {
+        unsafe {
+            let a = getSockAddr4(self._fd)
+            if a < 0 {
+                return None
+            }
+            return Some(a as u32)
         }
     }
 

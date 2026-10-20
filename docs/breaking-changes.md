@@ -1,7 +1,7 @@
 <!-- doc-meta
 system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
-key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo, std/png.milo, std/image.milo
+key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/https.milo, std/net.milo, std/tls.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo, std/png.milo, std/image.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
 last-verified: 2026-10-12
 -->
@@ -15,6 +15,24 @@ Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker op
 group of entries that release shipped; a package that wants to stay on the previous
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
+
+## Socket activation is opt-in (2026-10-19)
+
+Every listener used to adopt a socket systemd passed in (`LISTEN_FDS`/`LISTEN_PID`) and
+ignore the address and port it was given, so `serveRouterOn("127.0.0.1", 3011, r)` read as
+binding that address while it served whatever the `.socket` unit chose. Now a bind binds
+what it is told, and a process systemd did socket-activate refuses to start unless the call
+site opts in: `ServeOptions { socketActivation: true }` for the serve functions,
+`TcpListener.inheritedOr(addr, port)` / `TlsListener.inheritedOr(port, cert, key)` at the
+socket level. Programs that do not use socket activation change nothing. The startup line
+now ends in `(bound)` or `(inherited fd N, systemd socket activation)`.
+
+| was | now |
+|---|---|
+| `serveRouterOn(host, port, router)` under a `.socket` unit | `serveRouterWith(host, port, router, ServeOptions { socketActivation: true })` |
+| `serveRouterTlsWith(port, cert, key, router, opts)` under a `.socket` unit | the same, with `socketActivation: true` in `opts` |
+| `TcpListener.bindAddr(addr, port)` adopting an inherited socket | `TcpListener.inheritedOr(addr, port)` |
+| `TlsListener.bind(port, cert, key)` adopting an inherited socket | `TlsListener.inheritedOr(port, cert, key)` |
 
 ## `serveRouter` is the concurrent server; the one-at-a-time one is `serveRouterSerial` (2026-10-17)
 

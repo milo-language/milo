@@ -87,6 +87,18 @@ connect(2) that waits through `wait`. 0 on success, -1 on failure, IO_GAVE_UP.
 pub fn connectFdUn(fd: i32, addr: &SockAddrUn): i32
 ```
 
+### `getSockAddr4`
+
+```milo
+pub fn getSockAddr4(fd: i32): i64
+```
+
+The bound IPv4 address of `fd` in network order (as `ip4` builds it), or -1 when it is
+not an IPv4 socket or getsockname fails. The family is read from the length the kernel
+reports (a sockaddr_in is 16 bytes) because the family field sits at a different
+offset on darwin (sin_len first) and linux. -1 under replay, where descriptors are
+synthetic; callers use it only for diagnostics.
+
 ### `getSockPort`
 
 ```milo

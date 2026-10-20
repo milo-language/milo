@@ -12,7 +12,7 @@
 // std/fetch is what pulls SSL_* in.
 
 from "std/net" import {
-    NetError, ignoreSigpipe, takeInheritedListenFd, waitIo, deadlineIn
+    NetError, ignoreSigpipe, takeInheritedListenFd, activationPending, activationRefusal, waitIo, deadlineIn
 }
 from "std/event" import {
     setNonblocking
@@ -21,6 +21,7 @@ from "std/os" import {
     acceptFd,
     bindIn,
     getSockPort,
+    getSockAddr4,
     setsockopt,
     sysClose,
     sysSocket,
@@ -166,6 +167,8 @@ impl TlsConn {
 pub struct TlsListener {
     _fd: i32,
     _ctx: i64,
+    // Adopted from systemd socket activation (TlsListener.inheritedOr) rather than bound here.
+    _inherited: bool = false,
 }
 
 impl Drop for TlsListener {
@@ -184,8 +187,41 @@ impl Drop for TlsListener {
 
 impl TlsListener {
     // Bind 0.0.0.0:port and serve `certPath` (PEM chain, leaf first) with `keyPath`.
-    // Port 0 lets the OS pick — recover it with port().
+    // Port 0 lets the OS pick — recover it with port(). Binds exactly that; started
+    // under systemd socket activation for this process it errs naming `inheritedOr`.
     fn bind(port: u16, certPath: &string, keyPath: &string): Result<TlsListener, NetError> {
+        if activationPending() {
+            return Result.Err(activationRefusal("TlsListener.bind"))
+        }
+        return TlsListener.open(port, certPath, keyPath, false)
+    }
+
+    // The socket systemd socket activation passed this process, serving `certPath` with
+    // `keyPath`; or, when it was not started that way, a fresh bind of 0.0.0.0:port like
+    // bind. The TLS twin of TcpListener.inheritedOr; `isInherited()` says which happened.
+    fn inheritedOr(port: u16, certPath: &string, keyPath: &string): Result<TlsListener, NetError> {
+        return TlsListener.open(port, certPath, keyPath, true)
+    }
+
+    // Whether this listener came from socket activation (inheritedOr) rather than a bind.
+    fn isInherited(self: &Self): bool {
+        return self._inherited
+    }
+
+    // The bound IPv4 address, or None for an IPv6 socket (or a failed getsockname).
+    fn addr4(self: &Self): Option<u32> {
+        unsafe {
+            let a = getSockAddr4(self._fd)
+            if a < 0 {
+                return None
+            }
+            return Some(a as u32)
+        }
+    }
+
+    // bind and inheritedOr: the inherited socket when `inherit` and there is one, else a
+    // fresh bind of 0.0.0.0:port; then the certificate chain and key. Use those two.
+    fn open(port: u16, certPath: &string, keyPath: &string, inherit: bool): Result<TlsListener, NetError> {
         unsafe {
             let AF_INET: i32 = 2
             let SOCK_STREAM: i32 = 1
@@ -194,7 +230,8 @@ impl TlsListener {
             ignoreSigpipe()
             ensureNetInit()
             // Socket activation hands over an already-listening socket (see std/net).
-            var fd: i32 = takeInheritedListenFd()
+            var fd: i32 = if inherit { takeInheritedListenFd() } else { -1 }
+            let inherited = fd >= 0
             if fd < 0 {
                 unsafe { fd = sysSocket(AF_INET, SOCK_STREAM, 0) }
                 if fd < 0 {
@@ -242,7 +279,7 @@ impl TlsListener {
                     sysClose(fd)
                     return Result.Err(NetError.TlsError("private key does not match certificate"))
                 }
-                return Result.Ok(TlsListener { _fd: fd, _ctx: ctxAddr })
+                return Result.Ok(TlsListener { _fd: fd, _ctx: ctxAddr, _inherited: inherited })
             }
         }
     }

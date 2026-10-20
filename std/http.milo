@@ -12,10 +12,10 @@ from "std/os" import {
     signal as osSignal
 }
 from "std/platform" import {
-    pipe as osPipe, write as osWrite, exitNow
+    pipe as osPipe, write as osWrite, exitNow, listenFdsStart
 }
 from "std/net" import {
-    TcpListener, ip4, waitIo, deadlineIn
+    TcpListener, IpAddr, ip4, waitIo, deadlineIn
 }
 from "std/runtime" import {
     Task, schedulerWaitRead, taskOnPanicReply, taskOnPanicNote
@@ -1187,6 +1187,11 @@ pub struct ServeOptions {
     readTimeoutMs: i64 = 30000,
     // How long one response write may wait on a peer that has stopped reading. 0 = no limit.
     writeTimeoutMs: i64 = 30000,
+    // Serve the socket systemd socket activation passes in (LISTEN_FDS/LISTEN_PID), and
+    // bind host:port only when there is none (TcpListener.inheritedOr). Off, the server
+    // binds exactly host:port, and refuses to start if it was socket-activated: an
+    // activated service says so here rather than having its address silently ignored.
+    socketActivation: bool = false,
 }
 
 // ── Public API ──
@@ -1220,7 +1225,7 @@ fn parseBindHost(host: &string): Option<u32> {
 // socket/bind/listen prologue is how one of them ends up with a setsockopt or an
 // address-family fix the other never got. TcpListener.bindAddr is that one copy
 // (SO_REUSEADDR, SIGPIPE ignored, Winsock init).
-fn openListener(host: &string, port: u16?): Result<TcpListener> {
+fn openListener(host: &string, port: u16?, activation: bool): Result<TcpListener> {
     var addr: u32 = 0
     if host != "0.0.0.0" {
         match parseBindHost(host) {
@@ -1236,20 +1241,50 @@ fn openListener(host: &string, port: u16?): Result<TcpListener> {
     if let Option.Some(p) = port {
         bindPort = p
     }
-    match TcpListener.bindAddr(addr, bindPort) {
-        Result.Err(_e) => {
-            return Result.Err("bind() failed")
+    let opened = if activation { TcpListener.inheritedOr(addr, bindPort) } else { TcpListener.bindAddr(addr, bindPort) }
+    match opened {
+        Result.Err(e) => {
+            return Result.Err(e.message())
         }
         Result.Ok(listener) => {
-            let actualPort = listener.port()
-            var shown: string = "localhost"
-            if host != "0.0.0.0" {
-                shown = host
-            }
-            print($"listening on http://{shown}:{actualPort}")
+            announce("http", host, port, addr, listener.port(), listener.addr4(), listener.isInherited())
             return Result.Ok(listener)
         }
     }
+}
+
+// The one startup line every server prints: where it listens and how it got the socket,
+// "(bound)" or "(inherited fd 3, systemd socket activation)". An inherited socket
+// listens where the unit file says; when that is not the host:port the caller passed as
+// the fallback, a warning on stderr shows both, since the code no longer says where the
+// service is reachable. `pub` only for std/https.
+// @internal
+pub fn announce(scheme: &string, host: &string, port: u16?, addr: u32, actualPort: i32, actualAddr: Option<u32>, inherited: bool): void {
+    var shown: string = "localhost"
+    if host != "0.0.0.0" {
+        shown = host
+    }
+    if inherited {
+        if let Some(a) = actualAddr {
+            shown = IpAddr.V4(a).toString()
+        }
+        // The inherited listener is always the first activation descriptor (takeInheritedListenFd).
+        print($"listening on {scheme}://{shown}:{actualPort} (inherited fd {listenFdsStart()}, systemd socket activation)")
+        var differs = false
+        var fallbackPort = "any"
+        if let Some(p) = port {
+            fallbackPort = p.toString()
+            differs = p as i32 != actualPort
+        }
+        if let Some(a) = actualAddr {
+            differs = differs || a != addr
+        }
+        if differs {
+            eprint($"warning: the inherited socket listens on {shown}:{actualPort}, not the fallback {host}:{fallbackPort} this program names; the .socket unit decides")
+        }
+        return
+    }
+    print($"listening on {scheme}://{shown}:{actualPort} (bound)")
 }
 
 // The listener's descriptor, for the accept loops. The listener keeps owning it.
@@ -1289,7 +1324,7 @@ fn acceptIdle(listenFd: i32): i32 {
 // The simplest server: every request goes to `handler`. Good for a static file server
 // or a single-handler app. Answers one connection at a time, on every interface.
 pub fn serve(port: u16?, handler: (&Request) => Response): Result<Unit> {
-    let sock = openListener("0.0.0.0", port)?
+    let sock = openListener("0.0.0.0", port, false)?
     let listenFd = listenerFd(sock)
     installDrain(false)
     let defaults = ServeOptions {
@@ -1701,7 +1736,7 @@ pub fn serveRouterSerial(port: u16?, router: &Router): Result<Unit> {
 
 // serveRouterSerial bound to one IPv4 address (see serveRouterOn).
 pub fn serveRouterSerialOn(host: &string, port: u16?, router: &Router): Result<Unit> {
-    let sock = openListener(host, port)?
+    let sock = openListener(host, port, false)?
     let listenFd = listenerFd(sock)
     installDrain(false)
     let defaults = ServeOptions {
@@ -2565,7 +2600,7 @@ pub fn serveRouterOn(host: &string, port: u16?, router: Router): Result<Unit> {
 // serveRouterOn with its limits spelled out: the connection cap and the SIGTERM
 // drain deadline (ServeOptions).
 pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOptions): Result<Unit> {
-    let sock = openListener(host, port)?
+    let sock = openListener(host, port, opts.socketActivation)?
     let listenFd = listenerFd(sock)
     // acceptLoop owns the descriptor from here: it closes it when draining, and a
     // second close from the listener's drop could hit a descriptor reused since.

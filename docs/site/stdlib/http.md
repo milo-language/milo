@@ -248,9 +248,38 @@ fn main(): i32 {
 
 ## Zero-downtime restarts
 
-A server restarts without dropping a request when systemd owns its listening socket. Every
-serve function adopts the socket systemd passes in (`LISTEN_FDS` / `LISTEN_PID`, fd 3, on
-Linux and macOS) instead of binding its own, and announces the port from `getsockname`.
+A server restarts without dropping a request when systemd owns its listening socket. The
+server opts in at the call site, with `ServeOptions { socketActivation: true }`: it then
+serves the socket systemd passes in (`LISTEN_FDS` / `LISTEN_PID`, fd 3, on Linux and
+macOS), and binds `host`:`port` itself only when it was started without one.
+
+```milo
+from "std/http" import { Context, Router, ServeOptions, serveRouterWith }
+
+fn main(): i32 {
+    var r = Router.new()
+    r.get("/", (c: &mut Context) => c.text("ok"))
+    serveRouterWith("127.0.0.1", 3011, r, ServeOptions { socketActivation: true })!
+    return 0
+}
+```
+
+It prints which happened, from `getsockname`:
+
+```text
+listening on http://127.0.0.1:3011 (inherited fd 3, systemd socket activation)
+listening on http://127.0.0.1:3011 (bound)
+```
+
+and warns on stderr when the inherited socket is not the `host`:`port` the code names,
+since the `.socket` unit, not the code, decides where an activated service listens.
+Without the opt-in, every serve function binds exactly what it is told, and a process that
+systemd did socket-activate refuses to start with an error naming `socketActivation`
+(rather than silently ignoring the address, or binding a second socket next to the one the
+unit configured). `serveRouterTlsWith` takes the same option; at the socket level the
+opt-in is `TcpListener.inheritedOr(addr, port)` / `TlsListener.inheritedOr(port, cert, key)`.
+
+
 On `SIGTERM` it stops accepting, lets requests in flight finish, closes long-lived
 streams and websockets at once (a websocket gets close code 1001), and exits 0, at most
 `drainMs` (default 10000) after the signal. If connections are still open then, it
@@ -671,6 +700,7 @@ Fields:
 - `drainMs: i64 = 10000`: After SIGTERM: how long requests in flight may keep running before the process exits anyway, with status 1 (a clean drain exits 0).
 - `readTimeoutMs: i64 = 30000`: How long a client has to send its whole request (headers and body), counted from when the connection's task starts. Without it a client that sends half a request and stalls holds a connection slot forever, and maxConn of them stop the server (slowloris). Not applied to stream or websocket routes once they take over the connection: they have their own timeouts. 0 = no limit.
 - `writeTimeoutMs: i64 = 30000`: How long one response write may wait on a peer that has stopped reading. 0 = no limit.
+- `socketActivation: bool = false`: Serve the socket systemd socket activation passes in (LISTEN_FDS/LISTEN_PID), and bind host:port only when there is none (TcpListener.inheritedOr). Off, the server binds exactly host:port, and refuses to start if it was socket-activated: an activated service says so here rather than having its address silently ignored.
 
 ### `Stream`
 
