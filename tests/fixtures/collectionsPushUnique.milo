@@ -1,0 +1,29 @@
+// pushUnique keeps first-seen order, reports whether it pushed, and works on Eq structs.
+// @expect: true false true
+// @expect: go,rust,zig
+// @expect: 2
+from "std/collections" import { pushUnique }
+
+@derive(Eq)
+struct Tag {
+    kind: string,
+    key: string,
+}
+
+pub fn main(): i32 {
+    var langs: Vec<string> = []
+    let a = pushUnique(&mut langs, "go")
+    let b = pushUnique(&mut langs, "go")
+    let c = pushUnique(&mut langs, "rust")
+    print($"{a} {b} {c}")
+    for l in ["zig", "rust", "go"] {
+        pushUnique(&mut langs, l)
+    }
+    print(langs.join(","))
+    var tags: Vec<Tag> = []
+    pushUnique(&mut tags, Tag { kind: "lang", key: "go" })
+    pushUnique(&mut tags, Tag { kind: "topic", key: "go" })
+    pushUnique(&mut tags, Tag { kind: "lang", key: "go" })
+    print(tags.len)
+    return 0
+}

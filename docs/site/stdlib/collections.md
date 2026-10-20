@@ -3,7 +3,7 @@
 Containers beyond `Vec` and `HashMap`: a priority queue, a double-ended queue, a sorted map, an insertion-ordered map, a counter, and binary search over a sorted `Vec`.
 
 ```milo
-from "std/collections" import { BinaryHeap, Deque, SortedMap, OrderedMap, Counter, MapEntry, bisectLeft, bisectRight, insertSorted, nsmallest, nlargest }
+from "std/collections" import { BinaryHeap, Deque, SortedMap, OrderedMap, Counter, MapEntry, bisectLeft, bisectRight, insertSorted, nsmallest, nlargest, pushUnique }
 ```
 
 | Type | What it is | Main operations | Cost |
@@ -152,6 +152,23 @@ fn main(): i32 {
     print(bisectRight(v, 3))                // 3
     insertSorted(&mut v, 5)                 // [1, 3, 3, 5, 7]
     print(nlargest(v, 2))                   // [7, 5]
+    return 0
+}
+```
+
+## pushUnique
+
+`pushUnique(&mut v, x)` pushes `x` unless an element `==` to it is already there and returns whether it pushed: an ordered set in a `Vec`, first-seen order kept. It is O(n) per call, so keep a `HashSet` beside the Vec once it holds more than a few hundred elements. It works for any `T` with `==`, including an Eq struct, which `v.contains(x)` (scalars only) does not.
+
+```milo
+from "std/collections" import { pushUnique }
+
+fn main(): i32 {
+    var tags: Vec<string> = []
+    for t in ["rust", "go", "rust"] {
+        pushUnique(&mut tags, t)
+    }
+    print(tags.join(","))                  // rust,go
     return 0
 }
 ```
@@ -841,5 +858,18 @@ pub fn nsmallest<T>(items: &Vec<T>, n: i64): Vec<T>
 
 The `n` smallest elements of `items`, ascending (Python's heapq.nsmallest).
 Copies the elements; `items` is untouched. O(m + n log m) for m items.
+
+#### `pushUnique`
+
+```milo
+pub fn pushUnique<T>(v: &mut Vec<T>, x: T): bool
+```
+
+Push `x` unless an element `==` to it is already there: a small ordered set that keeps
+first-seen order. True when `x` was pushed. O(n) per call, so for more than a few
+hundred elements keep a HashSet beside the Vec.
+
+Unlike `v.contains(x)`, which compares scalars only, this works for any `T` with `==`,
+including a struct that implements Eq.
 
 <!-- /generated:api -->

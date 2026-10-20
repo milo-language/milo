@@ -441,6 +441,22 @@ pub fn insertSorted<T>(v: &mut Vec<T>, x: T): void {
     v.insert(at, x)
 }
 
+// Push `x` unless an element `==` to it is already there: a small ordered set that keeps
+// first-seen order. True when `x` was pushed. O(n) per call, so for more than a few
+// hundred elements keep a HashSet beside the Vec.
+//
+// Unlike `v.contains(x)`, which compares scalars only, this works for any `T` with `==`,
+// including a struct that implements Eq.
+pub fn pushUnique<T>(v: &mut Vec<T>, x: T): bool {
+    for e in v {
+        if e == x {
+            return false
+        }
+    }
+    v.push(x)
+    return true
+}
+
 // ── SortedMap ───────────────────────────────────────────────────────────────
 
 // A key and its value, as `OrderedMap.popFirst` and `Counter.mostCommon` hand them out.

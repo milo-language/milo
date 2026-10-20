@@ -10307,6 +10307,16 @@ export class TypeChecker {
     return this.setType(expr, { tag: "unknown" });
   }
 
+  // `contains`/`indexOf` compare elements inline in codegen (icmp/fcmp/string compare), so
+  // only those element types are searchable. `contains` used to skip this check and a
+  // Vec<Struct> reached codegen as an `icmp` on an aggregate, which clang rejected.
+  private vecSearchComparable(el: TypeKind, method: string, alt: string, sp: Span | undefined): boolean {
+    if (el.tag === "int" || el.tag === "float" || el.tag === "string" || el.tag === "bool" || el.tag === "unknown") return true;
+    this.error(`'${method}' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
+      `use '${alt}' with a predicate instead, e.g. v.${alt}((e) => e == x) for a type that implements Eq`);
+    return false;
+  }
+
   private checkUnaryOpExpr(expr: ExprOf<"UnaryOp">, expected: TypeKind | null): TypeKind {
     const sp = expr.span;
     // `-1 as i64` parses as `-(1 as i64)`; the cast is the operand, and in a signed slot
@@ -13111,6 +13121,7 @@ export class TypeChecker {
       }
       if (expr.method === "contains") {
         if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument`, sp); return this.setType(expr, { tag: "bool" }); }
+        if (!this.vecSearchComparable(objType.element, "contains", "any", sp)) return this.setType(expr, { tag: "bool" });
         const argType = this.checkExpr(expr.args[0], objType.element);
         if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
           this.error(`'contains': expected ${this.show(objType.element)}, got ${this.show(argType)}`, sp);
@@ -13265,11 +13276,7 @@ export class TypeChecker {
       if (expr.method === "indexOf") {
         if (expr.args.length !== 1) { this.error(`'indexOf' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const el = objType.element;
-        if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
-          this.error(`'indexOf' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
-            `use 'position' with a predicate instead`);
-          return this.setType(expr, { tag: "unknown" });
-        }
+        if (!this.vecSearchComparable(el, "indexOf", "position", sp)) return this.setType(expr, { tag: "unknown" });
         const argType = this.checkExpr(expr.args[0], el);
         if (!typeEq(el, argType) && argType.tag !== "unknown") {
           this.error(`'indexOf': expected ${this.show(el)}, got ${this.show(argType)}`, sp);

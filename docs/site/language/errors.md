@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 554 distinct messages across 716 programs the compiler must reject.
+Every error message the test suite pins: 555 distinct messages across 717 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -59,6 +59,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'bx' is moved and borrowed in the same call`](#bx-is-moved-and-borrowed-in-the-same-call)
 - [`'Cells<Vec<i64>>' is not allowed: 'Cells' is @copyOnly and 'Vec<i64>' is not a Copy type (it owns heap memory)`](#cells-vec-i64-is-not-allowed-cells-is-copyonly-and-vec-i64-is-not-a-copy-type-it-owns-heap-memory)
 - [`'clone' would copy 'Res' out of the Vec: it carries Drop`](#clone-would-copy-res-out-of-the-vec-it-carries-drop)
+- [`'contains' requires a Vec of a comparable type (int, float, string, bool), got Vec<Point>`](#contains-requires-a-vec-of-a-comparable-type-int-float-string-bool-got-vec-point)
 - [`'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))`](#context-error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self)
 - [`'continue' outside of loop`](#continue-outside-of-loop)
 - [`'dangle' cannot return a reference`](#dangle-cannot-return-a-reference)
@@ -1481,6 +1482,23 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/dropElementVecClone.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropElementVecClone.milo)</sub>
+
+## `'contains' requires a Vec of a comparable type (int, float, string, bool), got Vec<Point>` {#contains-requires-a-vec-of-a-comparable-type-int-float-string-bool-got-vec-point}
+
+contains compares elements inline (icmp/fcmp/string compare). A struct element used to pass the checker and reach codegen as an icmp on an aggregate, which clang rejected.
+
+```milo skip
+struct Point {
+    x: i64,
+}
+
+fn main(): void {
+    let v: Vec<Point> = [Point { x: 1 }]
+    print(v.contains(Point { x: 1 }))
+}
+```
+
+<sub>[tests/errors/vecContainsStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/vecContainsStruct.milo)</sub>
 
 ## `'context' error type mismatch: 'Silent' cannot be boxed as 'Heap<Error>' because it does not satisfy interface 'Error' (needs message(self: &Self))` {#context-error-type-mismatch-silent-cannot-be-boxed-as-heap-error-because-it-does-not-satisfy-interface-error-needs-message-self-self}
 

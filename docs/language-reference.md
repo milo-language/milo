@@ -2015,8 +2015,9 @@ v.position((n: &i64) => n > 3)   // Some(2) — the predicate form
 v.find((n: &i64) => n > 3)       // Some(4) — the value, not the index
 ```
 
-`min`/`max`/`indexOf` take the same comparable elements `sort` does — int, float,
-string, bool. There is no ordering on a struct (equality and hashing are derived
+`min`/`max`/`indexOf`/`contains` take the same comparable elements `sort` does — int, float,
+string, bool. For a struct that implements Eq, search with `v.any((e) => e == x)`, or keep a
+set with `pushUnique` from std/collections. There is no ordering on a struct (equality and hashing are derived
 facts; ordering is an opinion), so use `sortByKey` then `first`, or `fold`.
 
 There is no `binarySearch` method: its contract is "the Vec is already sorted", which the

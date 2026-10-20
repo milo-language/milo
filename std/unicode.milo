@@ -468,6 +468,166 @@ pub fn truncateToWidth(s: &string, maxCols: i64): i64 {
     return s.len
 }
 
+// Byte offset just past the first `n` code points of `s` (`s.len` when it has fewer).
+// `s.substr(0, truncateToCodepoints(s, n))` is an excerpt that never splits a character.
+pub fn truncateToCodepoints(s: &string, n: i64): i64 {
+    var i: i64 = 0
+    var count: i64 = 0
+    while i < s.len && count < n {
+        i = nextCodepointBoundary(s, i)
+        count += 1
+    }
+    return i
+}
+
+// Byte offset just past the longest prefix of `s` that is at most `maxBytes` bytes and
+// ends on a code point boundary, for a byte budget (a column width in a database, a
+// header limit) that must not leave half a character behind.
+pub fn truncateToBytes(s: &string, maxBytes: i64): i64 {
+    if s.len <= maxBytes {
+        return s.len
+    }
+    var i: i64 = 0
+    while i < s.len {
+        let next = nextCodepointBoundary(s, i)
+        if next > maxBytes {
+            return i
+        }
+        i = next
+    }
+    return i
+}
+
+// Length of `s` in UTF-16 code units: what JavaScript's `.length` reports, so a limit
+// a browser enforces can be enforced the same way on the server. A malformed byte
+// counts as one unit (it decodes as U+FFFD).
+pub fn utf16Length(s: &string): i64 {
+    var units: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = decodeCodepoint(s, i)
+        units += utf16UnitCount(c.value)
+        i += c.size
+    }
+    return units
+}
+
+// Byte offset just past the longest prefix of `s` that is at most `maxUnits` UTF-16
+// code units. A character outside the BMP (two units) that would straddle the limit is
+// excluded whole, never cut into half a surrogate pair.
+pub fn truncateToUtf16(s: &string, maxUnits: i64): i64 {
+    var units: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = decodeCodepoint(s, i)
+        let w = utf16UnitCount(c.value)
+        if units + w > maxUnits {
+            return i
+        }
+        units += w
+        i += c.size
+    }
+    return s.len
+}
+
+// Whether `s` is well-formed UTF-8: no stray continuation byte, truncated sequence,
+// overlong form, surrogate, or value past U+10FFFF. Bytes off the wire (a request body,
+// a file, a socket) carry no such guarantee; a `string` built from literals does.
+pub fn isValidUtf8(s: &string): bool {
+    var i: i64 = 0
+    while i < s.len {
+        if s[i] < 128 {
+            i += 1
+            continue
+        }
+        // decodeCodepoint reports every malformed sequence as size 1, and a well-formed
+        // non-ASCII one is never size 1, so the size alone separates them.
+        let c = decodeCodepoint(s, i)
+        if c.size == 1 {
+            return false
+        }
+        i += c.size
+    }
+    return true
+}
+
+// `s` with every maximal ill-formed subsequence replaced by one U+FFFD, the
+// substitution the WHATWG Encoding standard (and so `TextDecoder` and every browser)
+// makes. Returns `s` unchanged, without copying, when it is already valid.
+//
+// This differs from decodeCodepoint's one-U+FFFD-per-byte on a truncated sequence:
+// `E2 82` (a 3-byte form cut short) is ONE replacement here, so the server and a
+// browser agree on the repaired text and its length.
+pub fn repairUtf8(s: &string): string {
+    if isValidUtf8(s) {
+        return s
+    }
+    var out: string = ""
+    var i: i64 = 0
+    let n = s.len
+    while i < n {
+        let b = s[i]
+        if b < 128 {
+            out.push(b)
+            i += 1
+            continue
+        }
+        // The legal range of the FIRST continuation byte depends on the lead: that is
+        // where overlongs (E0, F0), surrogates (ED) and values past U+10FFFF (F4) are
+        // ruled out. Later continuation bytes are always 80..BF.
+        var need: i64 = 0
+        var lo: u8 = 128
+        var hi: u8 = 191
+        if b >= 194 && b <= 223 {
+            need = 1
+        } else if b >= 224 && b <= 239 {
+            need = 2
+            if b == 224 {
+                lo = 160
+            } else if b == 237 {
+                hi = 159
+            }
+        } else if b >= 240 && b <= 244 {
+            need = 3
+            if b == 240 {
+                lo = 144
+            } else if b == 244 {
+                hi = 143
+            }
+        } else {
+            encodeCodepoint(&mut out, REPLACEMENT_CHAR)
+            i += 1
+            continue
+        }
+        var j = i + 1
+        var good = true
+        while j <= i + need {
+            if j >= n {
+                good = false
+                break
+            }
+            let c = s[j]
+            let l: u8 = if j == i + 1 { lo } else { 128 }
+            let h: u8 = if j == i + 1 { hi } else { 191 }
+            if c < l || c > h {
+                good = false
+                break
+            }
+            j += 1
+        }
+        if good {
+            out.pushStr(s.slice(i, i + need + 1))
+            i += need + 1
+        } else {
+            // j stops at the first byte that cannot continue the sequence, so the
+            // lead plus every valid continuation before it is one maximal subpart.
+            encodeCodepoint(&mut out, REPLACEMENT_CHAR)
+            i = j
+        }
+    }
+    return out
+}
+
 // ── Case mapping ──
 
 // The simple lowercase mapping of code point `cp` (UnicodeData.txt field 13), or `cp`

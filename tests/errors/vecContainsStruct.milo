@@ -1,0 +1,11 @@
+// @error: 'contains' requires a Vec of a comparable type (int, float, string, bool), got Vec<Point>
+// contains compares elements inline (icmp/fcmp/string compare). A struct element used to
+// pass the checker and reach codegen as an icmp on an aggregate, which clang rejected.
+struct Point {
+    x: i64,
+}
+
+fn main(): void {
+    let v: Vec<Point> = [Point { x: 1 }]
+    print(v.contains(Point { x: 1 }))
+}

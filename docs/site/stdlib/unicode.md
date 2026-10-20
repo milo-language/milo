@@ -14,6 +14,9 @@ from "std/unicode" import { codepoints, displayWidth, isAlphaStr, isNumeric }
 - `nextCodepointBoundary(s, at)` returns a byte offset.
 - `displayWidth(s)` returns terminal columns.
 - `truncateToWidth(s, maxCols)` returns a byte offset that fits the column limit.
+- `truncateToCodepoints(s, n)`, `truncateToBytes(s, maxBytes)` and `truncateToUtf16(s, maxUnits)` return the byte offset of the longest prefix within that budget, always on a character boundary: `s.substr(0, truncateToBytes(s, 255))`.
+- `utf16Length(s)` is JavaScript's `.length`, for limits a browser also enforces.
+- `isValidUtf8(s)` checks bytes off the wire; `repairUtf8(s)` replaces each ill-formed subsequence with one U+FFFD exactly as a browser's `TextDecoder` does, and returns a valid string untouched.
 - `isAlphaStr(s)` and `isNumeric(s)` classify ASCII-only strings.
 
 ## Code points
@@ -208,6 +211,16 @@ UTF-16 code units, encoded as a surrogate pair — so a byte- or
 codepoint-oriented count is not a UTF-16 index. Needed by anything crossing a
 UTF-16 boundary (Windows wide-char APIs, JVM strings).
 
+#### `isValidUtf8`
+
+```milo
+pub fn isValidUtf8(s: &string): bool
+```
+
+Whether `s` is well-formed UTF-8: no stray continuation byte, truncated sequence,
+overlong form, surrogate, or value past U+10FFFF. Bytes off the wire (a request body,
+a file, a socket) carry no such guarantee; a `string` built from literals does.
+
 #### `isWide`
 
 ```milo
@@ -247,6 +260,49 @@ pub fn nextCodepointBoundary(s: &string, at: i64): i64
 ```
 
 Byte offset of the next codepoint boundary at or after `at`.
+
+#### `repairUtf8`
+
+```milo
+pub fn repairUtf8(s: &string): string
+```
+
+`s` with every maximal ill-formed subsequence replaced by one U+FFFD, the
+substitution the WHATWG Encoding standard (and so `TextDecoder` and every browser)
+makes. Returns `s` unchanged, without copying, when it is already valid.
+
+This differs from decodeCodepoint's one-U+FFFD-per-byte on a truncated sequence:
+`E2 82` (a 3-byte form cut short) is ONE replacement here, so the server and a
+browser agree on the repaired text and its length.
+
+#### `truncateToBytes`
+
+```milo
+pub fn truncateToBytes(s: &string, maxBytes: i64): i64
+```
+
+Byte offset just past the longest prefix of `s` that is at most `maxBytes` bytes and
+ends on a code point boundary, for a byte budget (a column width in a database, a
+header limit) that must not leave half a character behind.
+
+#### `truncateToCodepoints`
+
+```milo
+pub fn truncateToCodepoints(s: &string, n: i64): i64
+```
+
+Byte offset just past the first `n` code points of `s` (`s.len` when it has fewer).
+`s.substr(0, truncateToCodepoints(s, n))` is an excerpt that never splits a character.
+
+#### `truncateToUtf16`
+
+```milo
+pub fn truncateToUtf16(s: &string, maxUnits: i64): i64
+```
+
+Byte offset just past the longest prefix of `s` that is at most `maxUnits` UTF-16
+code units. A character outside the BMP (two units) that would straddle the limit is
+excluded whole, never cut into half a surrogate pair.
 
 #### `truncateToWidth`
 
@@ -289,6 +345,16 @@ pub fn upperCodepoint(cp: i32): i32
 The simple uppercase mapping of code point `cp` (UnicodeData.txt field 12), or `cp`
 itself when it has none. `ß` stays `ß`: its uppercase "SS" is a full mapping, two code
 points, which a per-code-point map cannot produce.
+
+#### `utf16Length`
+
+```milo
+pub fn utf16Length(s: &string): i64
+```
+
+Length of `s` in UTF-16 code units: what JavaScript's `.length` reports, so a limit
+a browser enforces can be enforced the same way on the server. A malformed byte
+counts as one unit (it decodes as U+FFFD).
 
 #### `utf16UnitCount`
 

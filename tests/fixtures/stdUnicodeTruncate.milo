@@ -1,0 +1,49 @@
+// std/unicode truncation, UTF-16 length and UTF-8 validation/repair (WHATWG maximal subparts).
+// @expect: 3 6 3
+// @expect: 1 3 5
+// @expect: 4 6
+// @expect: 1 5 1
+// @expect: true true false false false false
+// @expect: a\u{FFFD}b|\u{FFFD}|\u{FFFD}\u{FFFD}|ok
+// @expect: 3 9 true
+from "std/unicode" import { truncateToCodepoints, truncateToBytes, utf16Length, truncateToUtf16, isValidUtf8, repairUtf8 }
+
+fn hexLess(s: &string): string {
+    // print the replacement char in an ASCII form so the expectation stays readable
+    return s.replace("\u{FFFD}", "\\u{FFFD}")
+}
+
+pub fn main(): i32 {
+    let s = "aéb"
+    print($"{truncateToCodepoints(s, 2)} {truncateToCodepoints("héllo", 5)} {truncateToCodepoints(s, 0) + 3}")
+    // é is two bytes: a budget of 2 keeps only "a", 3 keeps "aé"
+    print($"{truncateToBytes(s, 2)} {truncateToBytes(s, 3)} {truncateToBytes("aaaaa", 9)}")
+    // 😀 is one code point, two UTF-16 units, four bytes
+    let e = "a😀b"
+    print($"{utf16Length(e)} {e.len}")
+    print($"{truncateToUtf16(e, 2)} {truncateToUtf16(e, 3)} {truncateToUtf16(e, 1)}")
+    var bad = "a"
+    bad.push(0xE2)
+    bad.push(0x82)
+    bad.push('b')
+    var lone = ""
+    lone.push(0x80)
+    var over = ""
+    over.push(0xC0)
+    over.push(0x80)
+    var surrogate = ""
+    surrogate.push(0xED)
+    surrogate.push(0xA0)
+    surrogate.push(0x80)
+    print($"{isValidUtf8(s)} {isValidUtf8(e)} {isValidUtf8(bad)} {isValidUtf8(lone)} {isValidUtf8(over)} {isValidUtf8(surrogate)}")
+    // E2 82 is one truncated sequence: one replacement, not two. C0 80 is two (C0 is
+    // never a lead). A valid string comes back as it was.
+    print($"{hexLess(repairUtf8(bad))}|{hexLess(repairUtf8(lone))}|{hexLess(repairUtf8(over))}|{repairUtf8("ok")}")
+    let fixed = repairUtf8(surrogate)
+    print($"{codeUnits(fixed)} {fixed.len} {isValidUtf8(fixed)}")
+    return 0
+}
+
+fn codeUnits(s: &string): i64 {
+    return utf16Length(s)
+}
