@@ -5765,7 +5765,10 @@ compile time against the schema the program's migrations (std/migrate) build: sy
 unknown tables and columns, and a bind-argument count that does not match the `?`s are compile
 errors at the literal. The argument must be a compile-time constant (literals, `+`, `$"..."`
 over constants, immutable `let`s holding one); SQL built at run time is passed as
-`uncheckedSql(s)`. See [std/sqlite](site/stdlib/sqlite.md#checked-sql) and
+`uncheckedSql(s)`. The schema comes from calls to fns marked `@sqlSchema(version, sql)`
+(std/migrate's `Migration.sql` and `Migration.baseline`), applied in version order to an empty
+database; `@sqlSchema(sql)` with no version (std/sqlite's `dbExecDdl`) adds run-time DDL such as
+a TEMP table after them. See [std/sqlite](site/stdlib/sqlite.md#checked-sql) and
 [std/migrate](site/stdlib/migrate.md).
 
 ```milo
