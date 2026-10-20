@@ -65,6 +65,12 @@ _Goes on: `fn`, `method`._
 
 The named string parameter is SQL checked at compile time: at every call the argument must be a compile-time constant (or `uncheckedSql(...)`, or the caller's own `@sql` parameter), and it is prepared against the schema the program's migrations build, so a syntax error, an unknown table or column, or a wrong count of bind arguments is a compile error at the literal. `@sql(sql, args)` also names the `Vec<SqlArg>` parameter whose array-literal length must match the query's `?`s.
 
+### `@table(…)`
+
+_Goes on: `struct`._
+
+The SQL table a `@derive(Table)` struct maps: `@table("users")`. A plain identifier; it is pasted into the generated SQL.
+
 ### `@sqlSchema(…)`
 
 _Goes on: `fn`, `method`._

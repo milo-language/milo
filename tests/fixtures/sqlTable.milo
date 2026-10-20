@@ -1,0 +1,37 @@
+// @derive(Table): insert assigns the id, update by primary key, get, delete, and columns()
+// folding into checked SQL; every generated statement is checked against the migrations.
+// @expect: true
+// @expect: hi
+// @expect: 1
+// @expect: true
+// @expect: true
+
+from "std/sqlite" import { dbOpen, SqlArg }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+@table("users")
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+    bio: Option<string>,
+    score: f64,
+    banned: bool,
+}
+
+fn main(): i32 {
+    let db = dbOpen(":memory:")!
+    dbMigrate(db, [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL, login TEXT NOT NULL, bio TEXT, score REAL NOT NULL DEFAULT 0, banned INTEGER NOT NULL DEFAULT 0)")])!
+    var u = User { id: 0, githubId: 7, login: "ada", bio: None, score: 1.5, banned: false }
+    u.id = User.insert(db, u)!
+    u.bio = Some("hi")
+    print(User.update(db, u)!)
+    let got = User.get(db, u.id)!
+    print(got!.bio!)
+    let some = User.fetchAll(db, $"SELECT {User.columns()} FROM users WHERE login = ?", [SqlArg.Text("ada")])!
+    print(some.len)
+    print(User.delete(db, u.id)!)
+    print(User.get(db, u.id)!.isNone())
+    return 0
+}

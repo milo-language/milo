@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 566 distinct messages across 728 programs the compiler must reject.
+Every error message the test suite pins: 570 distinct messages across 732 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -158,6 +158,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'yieldNow' can park this task while the loop variable is a reference into 'g's buffer`](#yieldnow-can-park-this-task-while-the-loop-variable-is-a-reference-into-g-s-buffer)
 - [`(via 'work' → 'record')`](#via-work-record)
 - [`@cName on 'Point.kind': only an 'extern struct' field has a C name`](#cname-on-point-kind-only-an-extern-struct-field-has-a-c-name)
+- [`@derive(Table) on 'User': its generated SQL does not match the schema: table users has no column named github_id`](#derive-table-on-user-its-generated-sql-does-not-match-the-schema-table-users-has-no-column-named-github-id)
 - [`a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here`](#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here)
 - [`a call through a function value writes the global 'G', which is being iterated here`](#a-call-through-a-function-value-writes-the-global-g-which-is-being-iterated-here)
 - [`a declaration does not match the C header it claims to describe`](#a-declaration-does-not-match-the-c-header-it-claims-to-describe)
@@ -239,6 +240,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot derive Clone for 'Handle': it implements Drop`](#cannot-derive-clone-for-handle-it-implements-drop)
 - [`cannot derive Clone for 'Q': field 'f' of type 'Option<move (i32) => i32>' has no clone`](#cannot-derive-clone-for-q-field-f-of-type-option-move-i32-i32-has-no-clone)
 - [`cannot derive Clone for 'Q': field 'h' of type 'H' has no clone`](#cannot-derive-clone-for-q-field-h-of-type-h-has-no-clone)
+- [`cannot derive Table for 'User': it has no 'id: i64' field`](#cannot-derive-table-for-user-it-has-no-id-i64-field)
+- [`cannot derive Table for 'User': it has no @table("name")`](#cannot-derive-table-for-user-it-has-no-table-name)
+- [`cannot derive Table for 'User': it needs @derive(Row) as well`](#cannot-derive-table-for-user-it-needs-derive-row-as-well)
 - [`cannot have type 'void'`](#cannot-have-type-void)
 - [`cannot infer 'R' for 'Holder.make'`](#cannot-infer-r-for-holder-make)
 - [`cannot infer 'T' for 'Mk.empty'`](#cannot-infer-t-for-mk-empty)
@@ -4237,6 +4241,31 @@ fn main() {
 
 <sub>[tests/errors/cNameNotExtern.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cNameNotExtern.milo)</sub>
 
+## `@derive(Table) on 'User': its generated SQL does not match the schema: table users has no column named github_id` {#derive-table-on-user-its-generated-sql-does-not-match-the-schema-table-users-has-no-column-named-github-id}
+
+The generated statements are checked against the migrations, and a mismatch is reported at the struct.
+
+```milo skip
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+@table("users")
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    dbMigrate(db, [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")])!
+    let _u = User.get(db, 1)!
+}
+```
+
+<sub>[tests/errors/tableMissingColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/tableMissingColumn.milo)</sub>
+
 ## `a call through a function value may run this closure again, which writes the capture 'log', which is being iterated here` {#a-call-through-a-function-value-may-run-this-closure-again-which-writes-the-capture-log-which-is-being-iterated-here}
 
 One task, no park: the closure reaches itself through the struct it is stored in and re-enters while its loop over `log` is live. The inner run's push reallocates `log`, and the outer loop variable dangles (heap-use-after-free under ASan before the rule).
@@ -5879,6 +5908,65 @@ fn main() {
 ```
 
 <sub>[tests/errors/cloneDeriveExplicitNoCopyField.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cloneDeriveExplicitNoCopyField.milo)</sub>
+
+## `cannot derive Table for 'User': it has no 'id: i64' field` {#cannot-derive-table-for-user-it-has-no-id-i64-field}
+
+The primary key is the field named id, assigned by sqlite on insert.
+
+```milo skip
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+@table("users")
+struct User {
+    key: i64,
+    login: string,
+}
+
+fn main(): void {
+}
+```
+
+<sub>[tests/errors/tableNeedsId.milo](https://github.com/milo-language/milo/blob/main/tests/errors/tableNeedsId.milo)</sub>
+
+## `cannot derive Table for 'User': it has no @table("name")` {#cannot-derive-table-for-user-it-has-no-table-name}
+
+The table a struct maps is always written down; no pluralizing guesswork.
+
+```milo skip
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+struct User {
+    id: i64,
+    login: string,
+}
+
+fn main(): void {
+}
+```
+
+<sub>[tests/errors/tableNeedsName.milo](https://github.com/milo-language/milo/blob/main/tests/errors/tableNeedsName.milo)</sub>
+
+## `cannot derive Table for 'User': it needs @derive(Row) as well` {#cannot-derive-table-for-user-it-needs-derive-row-as-well}
+
+get() reads the row back through fromRow, so Table builds on Row rather than adding it silently.
+
+```milo skip
+@derive(Table)
+@table("users")
+struct User {
+    id: i64,
+    login: string,
+}
+
+fn main(): void {
+}
+```
+
+<sub>[tests/errors/tableNeedsRow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/tableNeedsRow.milo)</sub>
 
 ## `cannot have type 'void'` {#cannot-have-type-void}
 

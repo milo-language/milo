@@ -5754,7 +5754,8 @@ every call (fields x columns string compares).
 The derive also adds `fetchAll(db, sql, args)` and `fetchOne(db, sql, args)`, whose SQL is
 checked at compile time like `dbPrepare`'s, and whose result columns are matched against the
 fields (a field with no column, or a type that cannot hold the column's declared type, is a
-compile error).
+compile error). `@derive(Row, Table)` with `@table("name")` adds `insert`/`get`/`update`/`delete`
+by the `id` field.
 
 ### Checked SQL
 

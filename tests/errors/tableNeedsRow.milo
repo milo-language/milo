@@ -1,0 +1,12 @@
+// @error: cannot derive Table for 'User': it needs @derive(Row) as well
+// get() reads the row back through fromRow, so Table builds on Row rather than adding it silently.
+
+@derive(Table)
+@table("users")
+struct User {
+    id: i64,
+    login: string,
+}
+
+fn main(): void {
+}

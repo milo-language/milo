@@ -41,6 +41,7 @@ interface Piece { version: bigint | null; ddl: boolean; sql: string | null; span
 
 export interface ConstResolver {
   ident(name: string): string | null;
+  staticCall(type: string, method: string): string | null;
   call(fn: string, args: string[]): string | null;
 }
 
@@ -98,18 +99,29 @@ export class SqlChecker {
   readonly methodAttrs = new Map<string, Attribute[]>();
   // Structs with @derive(Row), whose generated fetchAll/fetchOne read a result into them.
   readonly rowPlans = new Map<string, RowFieldPlan[]>();
+  // @derive(Table) structs: `T.columns()` folds to this select list.
+  readonly tableColumns = new Map<string, string>();
+  // Where each @derive(Table) struct is declared: its generated statements sit there.
+  readonly tableSites = new Map<string, string>();
+  noteTable(name: string, span?: Span): void {
+    if (span) this.tableSites.set(spanText(span), name);
+  }
+  readonly staticConst = (type: string, method: string): string | null =>
+    method === "columns" ? this.tableColumns.get(type) ?? null : null;
 
   constructor(private host: SqlHost) {}
 
   // A constant-folded string, or null when `e` is not a compile-time constant. The
-  // resolver supplies what only the checker knows: the constant a name holds, and a call
-  // to a template function (one whose body is a single `return` of a foldable expression
-  // in its parameters).
+  // resolver supplies what only the checker knows: the constant a name holds, a derived
+  // `T.columns()`, and a call to a template function (one whose body is a single
+  // `return` of a foldable expression in its parameters).
   static constString(e: Expr, r: ConstResolver): string | null {
     switch (e.kind) {
       case "StringLit": return e.value;
       case "IntLit": return e.value.toString();
       case "Ident": return r.ident(e.name);
+      // A zero-argument static call the resolver knows the value of (`User.columns()`).
+      case "EnumLit": return e.args.length === 0 ? r.staticCall(e.enumName, e.variant) : null;
       case "BinOp": {
         if (e.op !== "+") return null;
         const l = SqlChecker.constString(e.left, r);
@@ -237,15 +249,18 @@ export class SqlChecker {
     return r;
   }
 
-  // `reported`: locations that already have a prepare error, so one cause is reported once
-  // per location.
+  // `reported`: locations that already have a prepare error. @derive(Table) puts all of a
+  // struct's statements at the struct, and one missing column would otherwise be
+  // reported once per generated statement.
   private checkSite(db: Database, key: string, s: Site, reported: Set<string>): void {
     const r = this.prepare(db, key, s.sql);
     if (!r.ok) {
       const at = spanText(s.span);
       if (s.span && reported.has(at)) return;
       reported.add(at);
-      this.host.error(`SQL error in the query passed to '${s.callee}': ${r.error}`, s.span, this.hintFor(db, r.error) ?? `the query is checked against the schema the program's migrations build`);
+      const table = this.tableSites.get(at);
+      const msg = table ? `@derive(Table) on '${table}': its generated SQL does not match the schema: ${r.error}` : `SQL error in the query passed to '${s.callee}': ${r.error}`;
+      this.host.error(msg, s.span, table ? `the statements are built from the fields (snake_case columns); add the column in a migration, or rename the field` : this.hintFor(db, r.error) ?? `the query is checked against the schema the program's migrations build`);
       return;
     }
     if (s.argCount !== null && s.argCount !== r.params) {

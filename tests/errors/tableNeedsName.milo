@@ -1,0 +1,13 @@
+// @error: cannot derive Table for 'User': it has no @table("name")
+// The table a struct maps is always written down; no pluralizing guesswork.
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+struct User {
+    id: i64,
+    login: string,
+}
+
+fn main(): void {
+}

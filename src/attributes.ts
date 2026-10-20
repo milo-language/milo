@@ -97,6 +97,12 @@ export const ATTRIBUTES: AttrInfo[] = [
     takesArgs: true,
   },
   {
+    name: "table",
+    targets: ["struct"],
+    takesArgs: true,
+    doc: "The SQL table a `@derive(Table)` struct maps: `@table(\"users\")`. A plain identifier; it is pasted into the generated SQL.",
+  },
+  {
     name: "sqlSchema",
     targets: ["fn", "method"],
     doc:

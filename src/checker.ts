@@ -4540,7 +4540,7 @@ export class TypeChecker {
       // A template may not take a built-in's name. Silently losing to `Eq` would make a
       // package's derive a no-op that still type-checks, which is the worst failure a
       // plugin point can have.
-      if (tpl.name === "Eq" || tpl.name === "Json" || tpl.name === "Row") {
+      if (tpl.name === "Eq" || tpl.name === "Json" || tpl.name === "Row" || tpl.name === "Table") {
         this.error(`'derive ${tpl.name}' collides with the built-in @derive(${tpl.name})`, tpl.span,
           `rename the template — a user derive cannot replace a built-in one`);
         continue;
@@ -4733,6 +4733,8 @@ export class TypeChecker {
   private templateDepth = 0;
   private derive = new DeriveSynth({
     rowPlans: this.sql.rowPlans,
+    tableColumns: this.sql.tableColumns,
+    noteTable: (n, sp) => this.sql.noteTable(n, sp),
     structs: this.structs,
     enums: this.enums,
     dropImpls: this.dropImpls,
@@ -10391,7 +10393,7 @@ export class TypeChecker {
   }
 
   private sqlResolver(ident: (name: string) => string | null): ConstResolver {
-    return { ident, call: (fn, args) => this.templateCall(fn, args) };
+    return { ident, staticCall: this.sql.staticConst, call: (fn, args) => this.templateCall(fn, args) };
   }
 
   // A call to a template function: non-generic, every parameter a string, and a body that

@@ -7,6 +7,7 @@ import { simpleType } from "./ast";
 import { type TypeKind, typeName } from "./types";
 import type { StructInfo, EnumInfo, ImplInfo } from "./checker";
 import { deriveRowSource, ROW_SUPPORTED, ROW_METHODS, type RowFieldPlan, type RowKind } from "./derive-row";
+import { deriveTableSource, selectList, TABLE_METHODS } from "./derive-table";
 import { deriveJsonSource, type JsonPlan, type JsonFieldPlan } from "./derive-json";
 import { expandDeriveTemplate, dumpTokens, DeriveTemplateError } from "./derive-template";
 import { Lexer } from "./lexer";
@@ -43,6 +44,9 @@ export interface DeriveHost {
   optionInnerType(t: TypeKind): TypeKind | null;
   // @derive(Row) structs and their columns, for checked SQL's result-column check.
   rowPlans: Map<string, RowFieldPlan[]>;
+  // @derive(Table) structs' `columns()` text, which checked SQL folds as a constant.
+  tableColumns: Map<string, string>;
+  noteTable(name: string, span?: Span): void;
 }
 
 export class DeriveSynth {
@@ -220,6 +224,7 @@ export class DeriveSynth {
     if (traitName === "Clone") return this.deriveClone(s);
     if (traitName === "Json") return this.deriveJson(s);
     if (traitName === "Row") return this.deriveRow(s);
+    if (traitName === "Table") return this.deriveTable(s);
     const tpl = this.host.deriveTemplates.get(traitName);
     if (tpl) {
       // Same one-bit visibility every other declaration has. Without it a template that a
@@ -232,7 +237,7 @@ export class DeriveSynth {
       }
       return this.expandUserDerive(s, tpl);
     }
-    const known = ["Eq", "Json", "Row", ...this.host.deriveTemplates.keys()];
+    const known = ["Eq", "Json", "Row", "Table", ...this.host.deriveTemplates.keys()];
     this.host.error(`cannot derive '${traitName}' — no built-in derive and no 'derive ${traitName} { … }' template is in scope`, s.span,
       `available: ${known.map(k => `'${k}'`).join(", ")}. A user-defined derive is a top-level 'derive ${traitName} { … }' block; import the module that declares it`);
     return null;
@@ -433,6 +438,48 @@ export class DeriveSynth {
     return fields;
   }
 
+  deriveTable(s: StructDecl): ImplDecl | null {
+    const fail = (msg: string, hint?: string) => { this.host.error(`cannot derive Table for '${s.name}': ${msg}`, s.span, hint); return null; };
+    if (s.isExtern || s.isOpaque) return fail("it is a foreign type");
+    // get() reads through fromRow/fetchOne, so the Row half is a prerequisite rather than
+    // something Table quietly adds: the struct's methods stay visible in its attribute.
+    if (!s.attributes?.some(a => a.name === "derive" && a.args.includes("Row"))) {
+      return fail("it needs @derive(Row) as well", `write @derive(Row, Table): get() reads the row back through ${s.name}.fromRow`);
+    }
+    const tableAttr = s.attributes?.find(a => a.name === "table");
+    const table = tableAttr?.args[0];
+    if (!table) return fail("it has no @table(\"name\")", `name the table it maps: @table("users")`);
+    // Pasted into SQL text, so held to an identifier: no quoting rules to get wrong.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) return fail(`'${table}' is not a plain SQL identifier`);
+    const id = s.fields.find(f => f.name === "id");
+    const idType = id ? this.host.resolve(id.type) : null;
+    if (!idType || idType.tag !== "int" || idType.bits !== 64 || !idType.signed) {
+      return fail("it has no 'id: i64' field", `the primary key is the field named 'id', an INTEGER PRIMARY KEY that sqlite assigns on insert`);
+    }
+    for (const m of TABLE_METHODS) {
+      if (this.host.jsonUserMethods.has(`${s.name}.${m}`)) return fail(`it already defines '${m}'`);
+    }
+    const fields = this.rowPlan(s, "Table");
+    if (!fields) return null;
+    this.host.tableColumns.set(s.name, selectList(fields));
+    this.host.noteTable(s.name, s.span);
+    const src = deriveTableSource(s.name, table, fields);
+    if (process.env.MILO_DUMP_DERIVES) process.stderr.write(`// ${s.name}: @derive(Table)\n${src}\n`);
+    let parsed: Program;
+    try {
+      parsed = new Parser(new Lexer(src, true).tokenize(), src, `<derive Table for ${s.name}>`).parse();
+    } catch (e) {
+      return fail(`internal error: generated helpers did not parse: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const impl = parsed.impls[0];
+    if (!impl) return fail("internal error: generated helpers produced no impl");
+    // The generated SQL is checked against the schema like any other; a mismatch (a field
+    // with no column, a missing table) is the struct's to fix, so it is reported there.
+    restampSpans(impl, s.span);
+    for (const m of impl.methods) m.sourceFile = s.span?.file;
+    return this.stampOrigin(impl, s);
+  }
+
   deriveRow(s: StructDecl): ImplDecl | null {
     if (s.isExtern || s.isOpaque) {
       this.host.error(`cannot derive Row for '${s.name}': it is a foreign type`, s.span);
@@ -593,4 +640,12 @@ export class DeriveSynth {
       methods: [eqFn],
     }, s);
   }
+}
+
+function restampSpans(node: unknown, span: Span | undefined): void {
+  if (Array.isArray(node)) { for (const c of node) restampSpans(c, span); return; }
+  if (!node || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  if ("span" in rec || typeof rec.kind === "string") rec.span = span;
+  for (const k of Object.keys(rec)) if (k !== "span") restampSpans(rec[k], span);
 }

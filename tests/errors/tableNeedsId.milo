@@ -1,0 +1,14 @@
+// @error: cannot derive Table for 'User': it has no 'id: i64' field
+// The primary key is the field named id, assigned by sqlite on insert.
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+@table("users")
+struct User {
+    key: i64,
+    login: string,
+}
+
+fn main(): void {
+}

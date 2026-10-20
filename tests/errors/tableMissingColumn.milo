@@ -1,0 +1,18 @@
+// @error: @derive(Table) on 'User': its generated SQL does not match the schema: table users has no column named github_id
+// The generated statements are checked against the migrations, and a mismatch is reported at the struct.
+from "std/sqlite" import { dbOpen }
+from "std/migrate" import { Migration, dbMigrate }
+
+@derive(Row, Table)
+@table("users")
+struct User {
+    id: i64,
+    githubId: i64,
+    login: string,
+}
+
+fn main(): void {
+    let db = dbOpen(":memory:")!
+    dbMigrate(db, [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")])!
+    let _u = User.get(db, 1)!
+}

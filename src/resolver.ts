@@ -2,6 +2,7 @@
 // and merging all declarations into a single program
 
 import { ROW_IMPORT_NAMES } from "./derive-row";
+import { TABLE_IMPORT_NAMES } from "./derive-table";
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname, sep } from "path";
 import { depDirForSpec } from "./pkg";
@@ -341,6 +342,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     // imports std/sqlite itself, since its import list names only what the user wrote.
     if (prog.structs.some(s => s.attributes?.some(a => a.name === "derive" && a.args.includes("Row")))) {
       synthetic.push({ kind: "ImportDecl", path: "std/sqlite", names: ROW_IMPORT_NAMES });
+    }
+    if (prog.structs.some(s => s.attributes?.some(a => a.name === "derive" && a.args.includes("Table")))) {
+      synthetic.push({ kind: "ImportDecl", path: "std/sqlite", names: TABLE_IMPORT_NAMES });
     }
     let admitted = fileImports.get(unit.file);
     if (!admitted) { admitted = { names: new Set(), wholeFiles: new Set() }; fileImports.set(unit.file, admitted); }
