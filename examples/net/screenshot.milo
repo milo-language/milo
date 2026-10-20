@@ -1,0 +1,31 @@
+// Screenshot a page at phone and desktop width with headless Chrome (std/browser).
+//   milo run examples/net/screenshot.milo -- https://example.com out [dark]
+// Writes out-phone.png (390x844 at 2x, mobile) and out-desktop.png (1280x900).
+from "std/args" import { args }
+from "std/browser" import { Browser, findChrome }
+
+fn main(): i32 {
+    let a = args()
+    if a.len < 3 {
+        eprint("usage: screenshot <url> <out-prefix> [light|dark]")
+        return 2
+    }
+    let url = a[1]
+    let out = a[2]
+    let scheme = if a.len > 3 { a[3] } else { "light" }
+    let Some(chrome) = findChrome() else {
+        eprint("no Chrome found; set CHROME to its path")
+        return 1
+    }
+    var b = Browser.launch(chrome, 9333)!
+    b.setColorScheme(scheme)!
+    b.setViewport(390, 844, 2.0, true)!
+    b.navigate(url)!
+    b.screenshot(out + "-phone.png")!
+    b.setViewport(1280, 900, 1.0, false)!
+    b.navigate(url)!
+    b.screenshot(out + "-desktop.png")!
+    print($"title: {b.evaluate("document.title")!}")
+    b.close()
+    return 0
+}

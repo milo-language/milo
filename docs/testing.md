@@ -214,6 +214,7 @@ When you add or change an example, add a `// @run:` if it can run deterministica
 | `header.test.ts` | generated C header correctness |
 | `embedded.test.ts` | embedded/no-runtime target |
 | `fileSizeRatchet.test.ts` | no `src/*.ts` grows past `file-size-baseline.json`; new files cap at 1500 lines; rebaseline with `bun scripts/file-size-ratchet.ts --update` |
+| `browser.test.ts` | std/browser against a real headless Chrome (viewport, color scheme, evaluate, PNG size); skipped, with the reason printed, when no Chrome is installed |
 
 Keep this table current — it's the map reviewers and the sweep skill use to reason about coverage.
 

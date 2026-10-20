@@ -1,0 +1,257 @@
+// std/browser: drive headless Chrome over the DevTools protocol (navigate, viewport, theme, evaluate, screenshot)
+//
+//   let chrome = findChrome() ?? "google-chrome"
+//   var b = Browser.launch(chrome, 9333)!
+//   b.setViewport(390, 844, 2.0, true)!
+//   b.setColorScheme("dark")!
+//   b.navigate("http://127.0.0.1:3000/")!
+//   b.screenshot("home.png")!
+//   b.close()
+//
+// The protocol is JSON over a WebSocket (std/ws): each command carries an id and its reply
+// carries the same one, with events interleaved between them. `call` sends one command and
+// reads until its reply, keeping events it passes in a short log that `waitEvent` checks
+// first, so an event that lands before the caller asks for it is not lost. One page target,
+// one command in flight: a screenshot tool needs nothing more, and a single reader keeps
+// the reply matching trivial.
+from "std/process" import { Child, Command, Stdio }
+from "std/ws" import { WsConn, wsConnect }
+from "std/net" import { ip4 }
+from "std/fetch" import { fetch }
+from "std/json" import { Json }
+from "std/base64" import { Base64 }
+from "std/fs" import { writeFile, isFile, removeAll, makeTempDir }
+from "std/time" import { sleepMs, epochMillis }
+from "std/env" import { Env }
+
+// A headless Chrome and the DevTools connection to its first page. Closing it (or
+// dropping it) ends the browser and removes its temporary profile.
+pub struct Browser {
+    child: Child,
+    ws: WsConn,
+    profile: string,
+    nextId: i64,
+    // Events read while waiting for a reply, oldest first; capped so a chatty page
+    // cannot grow it without bound.
+    events: Vec<string>,
+    closed: bool,
+}
+
+impl Drop for Browser {
+    fn drop(self: &mut Self): void {
+        self.shutdown()
+    }
+}
+
+// The Chrome executable: `$CHROME` when set, else the first standard install location that
+// exists (macOS app bundle, then the usual Linux names). None when there is none.
+pub fn findChrome(): Option<string> {
+    let env = Env.get("CHROME") ?? ""
+    if env.len > 0 {
+        return Some(env)
+    }
+    let candidates: Vec<string> = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
+    for c in candidates {
+        if isFile(c) {
+            return Some(c)
+        }
+    }
+    return None
+}
+
+// The path part of a DevTools `ws://host:port/devtools/page/ID` URL.
+fn wsPath(url: &string): Option<string> {
+    let Some(scheme) = url.indexOf("://") else {
+        return None
+    }
+    let rest = url.substr(scheme + 3, url.len)
+    let Some(slash) = rest.indexOf("/") else {
+        return None
+    }
+    return Some(rest.substr(slash, rest.len))
+}
+
+// The first page target's WebSocket path, once Chrome's DevTools HTTP endpoint answers.
+fn pageTarget(port: u16): Option<string> {
+    let Ok(r) = fetch($"http://127.0.0.1:{port}/json/list") else {
+        return None
+    }
+    let Ok(doc) = Json.parse(r.text()) else {
+        return None
+    }
+    var i: i64 = 0
+    while i < doc.len() {
+        if let Some(t) = doc.at(i) {
+            if (t.str("type") ?? "") == "page" {
+                return wsPath(t.str("webSocketDebuggerUrl") ?? "")
+            }
+        }
+        i += 1
+    }
+    return None
+}
+
+impl Browser {
+    // Start `chrome` headless with DevTools on `port` (loopback only) and a fresh temporary
+    // profile, and connect to its page. Waits up to 10 s for the browser to come up.
+    fn launch(chrome: &string, port: u16): Result<Browser> {
+        let profile = match makeTempDir("/tmp/milo-browser-") {
+            Ok(p) => p
+            Err(_) => {
+                return Result.Err("cannot create a temporary Chrome profile")
+            }
+        }
+        let args: Vec<string> = ["--headless=new", $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "--disable-gpu", $"--user-data-dir={profile}", "about:blank"]
+        // Chrome logs freely to both streams; a pipe nobody reads would fill and stall it.
+        let child = Command.new(chrome).args(args).stdin(Stdio.Null).stdout(Stdio.Null).stderr(Stdio.Null).spawn()?
+        let deadline = epochMillis() + 10000
+        var path: Option<string> = None
+        while path.isNone() && epochMillis() < deadline {
+            sleepMs(100)
+            path = pageTarget(port)
+        }
+        let Some(p) = path else {
+            let _ = child.signal(15)
+            let _ = child.wait()
+            let _ = removeAll(profile)
+            return Result.Err($"Chrome at '{chrome}' did not open DevTools on port {port} within 10 s")
+        }
+        let ws = match wsConnect(ip4(127, 0, 0, 1), port, p) {
+            Ok(w) => w
+            Err(e) => {
+                let _ = child.signal(15)
+                let _ = child.wait()
+                let _ = removeAll(profile)
+                return Result.Err($"DevTools WebSocket: {e}")
+            }
+        }
+        var b = Browser { child: child, ws: ws, profile: profile, nextId: 0, events: [], closed: false }
+        b.call("Page.enable", "{}")?
+        return Result.Ok(b)
+    }
+
+    // Send DevTools command `method` with `params` (a JSON object, "{}" for none) and
+    // return its reply's `result` object. Errs with the protocol's error message.
+    fn call(self: &mut Self, method: &string, params: &string): Result<Json> {
+        self.nextId += 1
+        let id = self.nextId
+        let msg = Json.obj().int("id", id).str("method", method).raw("params", params).build()
+        self.ws.sendText(msg)?
+        while true {
+            let m = self.ws.recv()?
+            let doc = Json.parse(m.payload)?
+            if (doc.i64("id") ?? 0) == id {
+                if let Some(err) = doc.get("error") {
+                    return Result.Err($"{method}: {err.str("message") ?? "error"}")
+                }
+                return Result.Ok(doc.get("result") ?? Json.parse("{}")?)
+            }
+            if doc.str("method").isSome() {
+                if self.events.len >= 256 {
+                    self.events.remove(0)
+                }
+                self.events.push(m.payload)
+            }
+        }
+        return Result.Err("unreachable")
+    }
+
+    // Wait up to `timeoutMs` for event `method` (an event already logged counts) and
+    // return its params. Clears the log up to and including it.
+    fn waitEvent(self: &mut Self, method: &string, timeoutMs: i64): Result<Json> {
+        let deadline = epochMillis() + timeoutMs
+        while true {
+            var i: i64 = 0
+            while i < self.events.len {
+                let doc = Json.parse(self.events[i])?
+                if (doc.str("method") ?? "") == method {
+                    self.events.truncate(0)
+                    return Result.Ok(doc.get("params") ?? Json.parse("{}")?)
+                }
+                i += 1
+            }
+            self.events.truncate(0)
+            if epochMillis() >= deadline {
+                return Result.Err($"timed out after {timeoutMs} ms waiting for {method}")
+            }
+            // A cheap command whose reply flushes whatever events arrived before it.
+            self.call("Runtime.evaluate", "{\"expression\":\"0\"}")?
+            sleepMs(20)
+        }
+        return Result.Err("unreachable")
+    }
+
+    // Load `url` and wait (up to 30 s) for its load event.
+    fn navigate(self: &mut Self, url: &string): Result<Unit> {
+        self.events.truncate(0)
+        let r = self.call("Page.navigate", Json.obj().str("url", url).build())?
+        if let Some(e) = r.str("errorText") {
+            return Result.Err($"navigate {url}: {e}")
+        }
+        self.waitEvent("Page.loadEventFired", 30000)?
+        return Result.Ok(Unit {})
+    }
+
+    // Emulate a viewport: CSS pixels, device pixel ratio, and whether it is a mobile
+    // device (touch, meta viewport). Applies to the next layout; navigate afterwards.
+    fn setViewport(self: &mut Self, width: i64, height: i64, scale: f64, mobile: bool): Result<Unit> {
+        self.call("Emulation.setDeviceMetricsOverride", Json.obj().int("width", width).int("height", height).float("deviceScaleFactor", scale).bool("mobile", mobile).build())?
+        return Result.Ok(Unit {})
+    }
+
+    // Answer `prefers-color-scheme` with `scheme` ("light" or "dark"; "" restores the default).
+    fn setColorScheme(self: &mut Self, scheme: &string): Result<Unit> {
+        let feature = Json.obj().str("name", "prefers-color-scheme").str("value", scheme).build()
+        self.call("Emulation.setEmulatedMedia", "{\"features\":[" + feature + "]}")?
+        return Result.Ok(Unit {})
+    }
+
+    // Evaluate `js` in the page, awaiting a returned promise, and return the result as JSON
+    // text ("null" for undefined). A thrown exception is an Err with its description.
+    fn evaluate(self: &mut Self, js: &string): Result<string> {
+        let r = self.call("Runtime.evaluate", Json.obj().str("expression", js).bool("returnByValue", true).bool("awaitPromise", true).build())?
+        if let Some(ex) = r.get("exceptionDetails") {
+            return Result.Err($"evaluate: {ex.strPath("exception.description") ?? (ex.str("text") ?? "exception")}")
+        }
+        let Some(v) = r.path("result.value") else {
+            return Result.Ok("null")
+        }
+        return Result.Ok(v.rawStr())
+    }
+
+    // Capture the viewport as PNG bytes; `fullPage` captures the whole scrollable page.
+    fn capture(self: &mut Self, fullPage: bool): Result<string> {
+        let r = self.call("Page.captureScreenshot", Json.obj().str("format", "png").bool("captureBeyondViewport", fullPage).build())?
+        let data = r.str("data") ?? ""
+        return Base64.decode(data)
+    }
+
+    // Capture the viewport as a PNG file at `path`.
+    fn screenshot(self: &mut Self, path: &string): Result<Unit> {
+        let png = self.capture(false)?
+        match writeFile(path, png) {
+            Ok(_) => {}
+            Err(_) => {
+                return Result.Err($"cannot write {path}")
+            }
+        }
+        return Result.Ok(Unit {})
+    }
+
+    // End the browser and remove its profile. Also what dropping it does.
+    fn close(self: Self): void {
+        var b = self
+        b.shutdown()
+    }
+
+    fn shutdown(self: &mut Self): void {
+        if self.closed {
+            return
+        }
+        self.closed = true
+        let _ = self.call("Browser.close", "{}")
+        let _ = self.child.signal(15)
+        let _ = self.child.wait()
+        let _ = removeAll(self.profile)
+    }
+}

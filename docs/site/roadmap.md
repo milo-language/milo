@@ -50,10 +50,10 @@ One model — green tasks — with a single OS-thread escape hatch. No async/awa
 - **Go exit semantics**: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly, or drive with `schedulerRunToCompletion()`
 - **`main` is itself a green task** in any program that can reach `spawn`, so a blocking call in `main` no longer starves the tasks that would satisfy it
 
-### Standard Library (<!-- stat:std-modules -->96<!-- /stat --> modules)
+### Standard Library (<!-- stat:std-modules -->97<!-- /stat --> modules)
 
 I/O & system: io, fs, path, env, environ, args, process, signal, dl, sysinfo, mem, os, platform, term, pty, keys, ansi
-Networking: net, unix, fetch, tls, https, http, httpmw, ws, wsframe, chunked, url
+Networking: net, unix, fetch, tls, https, http, httpmw, ws, wsframe, chunked, url, browser
 Data: json, csv, base64, base32, hex, sqlite, migrate, arena, set, pool, png
 Compression: deflate, inflate, zip, zstd
 Crypto & auth: crypto, sha256, sha1, hmac, jwt, totp, checksum, xxhash
@@ -64,7 +64,7 @@ CLI: argparse, color, log
 Time: time, datetime, uuid
 Testing: testing
 
-SQL passed to `std/sqlite`'s checked APIs is prepared at compile time against the schema the program's own `std/migrate` migrations build: an unknown table or column, a syntax error, a wrong bind-argument count, or a `@derive(Row)` field the query does not return is a compile error at the literal. `@derive(Table)` adds typed insert/get/update/delete over the same check.
+SQL passed to `std/sqlite`'s checked APIs is prepared at compile time against the schema the program's own `std/migrate` migrations build: an unknown table or column, a syntax error, a wrong bind-argument count, or a `@derive(Row)` field the query does not return is a compile error at the literal. `@derive(Table)` adds typed insert/get/update/delete over the same check, and `std/browser` drives headless Chrome for screenshots.
 
 TLS clients verify certificates and bind hostnames, and `std/https` serves HTTPS over the same binding. JSON parsing is RFC 8259-strict, with a lenient JSONC mode and a streaming pull tokenizer.
 
