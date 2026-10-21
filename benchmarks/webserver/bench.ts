@@ -71,7 +71,8 @@ async function drainPorts() {
 }
 
 function ohaArgs(path: string, c: number, n: number) {
-  // std/http always answers Connection: close, so by default no server gets connection reuse.
+  // Off by default: every request is a new TCP connection, which measures accept and
+  // close as well as the request. All servers (std/http included) honour keep-alive.
   const ka = keepalive ? [] : ["--disable-keepalive"];
   return [oha!, "--no-tui", "--output-format", "json", ...ka, "-n", String(n), "-c", String(c), base + path];
 }
@@ -174,7 +175,7 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
 }
 
 async function main() {
-  console.log(`keep-alive: ${keepalive ? "ON (oha reuses connections; milo still closes each one)" : "OFF (oha --disable-keepalive for all servers)"}`);
+  console.log(`keep-alive: ${keepalive ? "ON (oha reuses connections for all servers)" : "OFF (oha --disable-keepalive for all servers)"}`);
   const bins: Partial<Record<Kind, string>> = {};
   if (kinds.includes("milo")) bins.milo = buildMilo();
   if (kinds.some((k) => k !== "milo")) {

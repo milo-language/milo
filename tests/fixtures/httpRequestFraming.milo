@@ -47,6 +47,7 @@ from "std/deflate" import {
 
 let PORT: u16 = 47393
 
+// recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
 fn exchange(req: &string): string {
     let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
     conn.send(req)!
@@ -73,7 +74,7 @@ fn show(label: string, wire: string): void {
 }
 
 fn post(label: string, headers: &string, body: &string): void {
-    show(label, exchange("POST /echo HTTP/1.1\r\nHost: x\r\n" + headers + "\r\n" + body))
+    show(label, exchange("POST /echo HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" + headers + "\r\n" + body))
 }
 
 fn withLength(headers: &string, body: &string): string {

@@ -36,7 +36,7 @@ from "std/time" import {
     unrecordedEpochMillis, sleepMs
 }
 from "std/chunked" import {
-    ChunkScan, chunkMalformed, decodeChunked
+    ChunkScan, chunkIncomplete, chunkMalformed, decodeChunked
 }
 from "std/inflate" import {
     Inflate, INFLATE_TOO_BIG
@@ -626,8 +626,15 @@ fn headerSafe(s: &string): string {
 // Content-Type. Content-Length, Connection and Transfer-Encoding describe the framing
 // this function writes, so a handler's copy would contradict the bytes on the wire and
 // is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
-// 6.4.1): those go out with no body, no Content-Length and no Content-Type.
+// 6.4.1): those go out with no body, no Content-Length and no Content-Type. Always says
+// Connection: close; only the keep-alive loop in handleConn renders anything else.
 pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders: &Vec<Param>): string {
+    return renderRawAs(status, contentType, body, extraHeaders, "close")
+}
+
+// renderRaw with the Connection header's value chosen by the caller: "close", "" for none
+// (an HTTP/1.1 connection that stays open) or "keep-alive" (an HTTP/1.0 one that asked).
+fn renderRawAs(status: i32, contentType: &string, body: &string, extraHeaders: &Vec<Param>, connection: &string): string {
     let bodyless = (status >= 100 && status < 200) || status == 204 || status == 304
     var resp: string = "HTTP/1.1 " + statusText(status)
     if !bodyless {
@@ -644,7 +651,9 @@ pub fn renderRaw(status: i32, contentType: &string, body: &string, extraHeaders:
         }
         resp.pushStr("\r\n" + headerSafe(h.name) + ": " + headerSafe(h.value))
     }
-    resp += "\r\nConnection: close"
+    if connection.len > 0 {
+        resp += "\r\nConnection: " + connection
+    }
     if !hasHeader(extraHeaders, "Date") {
         resp += "\r\nDate: " + formatRfc2822(unrecordedEpochMillis())
     }
@@ -688,21 +697,26 @@ pub fn headOnly(wire: string): string {
 
 // Wire bytes for a Response, including the status line and headers.
 pub fn renderResponse(response: &Response, extraHeaders: &Vec<Param>): string {
+    return renderResponseAs(response, extraHeaders, "close")
+}
+
+// renderResponse with the Connection header renderRawAs takes.
+fn renderResponseAs(response: &Response, extraHeaders: &Vec<Param>, connection: &string): string {
     match response {
         Response.Text(body) => {
-            return renderRaw(200, "text/plain; charset=utf-8", body, extraHeaders)
+            return renderRawAs(200, "text/plain; charset=utf-8", body, extraHeaders, connection)
         }
         Response.Html(body) => {
-            return renderRaw(200, "text/html; charset=utf-8", body, extraHeaders)
+            return renderRawAs(200, "text/html; charset=utf-8", body, extraHeaders, connection)
         }
         Response.Json(body) => {
-            return renderRaw(200, "application/json", body, extraHeaders)
+            return renderRawAs(200, "application/json", body, extraHeaders, connection)
         }
         Response.NotFound => {
-            return renderRaw(404, "text/plain; charset=utf-8", "404 Not Found", extraHeaders)
+            return renderRawAs(404, "text/plain; charset=utf-8", "404 Not Found", extraHeaders, connection)
         }
         Response.Status(code, ct, body) => {
-            return renderRaw(code, ct, body, extraHeaders)
+            return renderRawAs(code, ct, body, extraHeaders, connection)
         }
     }
 }
@@ -717,7 +731,11 @@ let maxHeaderBytes: i64 = 16384
 let defaultMaxBodyBytes: i64 = 1048576
 
 enum ReadOutcome {
-    Got(Request),
+    // A whole request, and the Connection header its response should carry if the server
+    // has no reason of its own to close: "close" when the request rules out another one
+    // on this connection, "" for HTTP/1.1's default, "keep-alive" for an HTTP/1.0 client
+    // that asked for it (RFC 9112 9.3).
+    Got(Request, string),
     // Answer with this status and close: the request was refused before any handler ran.
     Reject(i32),
     // The peer closed or the read failed before a whole request arrived. Nothing to answer.
@@ -786,9 +804,11 @@ fn readMoreBy(fd: i32, raw: &mut string, by: i64): i64 {
 // `read` appends one read's worth of bytes to its argument and returns the count (<= 0
 // at EOF or on error); `write` sends all of its argument. Taking the transport as two
 // closures is what lets std/https read requests through TLS with this same code.
-fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i64, maxInflated: i64): ReadOutcome {
-    var raw: string = ""
-    var end: i64 = -1
+//
+// `raw` is the connection's buffer: it may already hold bytes read past the previous
+// request (a pipelined client), and on Got it is left holding whatever follows this one.
+fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i64, maxInflated: i64, raw: &mut string): ReadOutcome {
+    var end = headerEnd(raw, 0)
     while end < 0 {
         var scanFrom: i64 = 0
         if raw.len > 3 {
@@ -849,6 +869,14 @@ fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i6
             expectContinue = true
         }
     }
+    var connection = ""
+    if headerHasToken(req.headers, "Connection", "close") || (chunked && sawLength) {
+        // Transfer-Encoding with Content-Length is a smuggling shape: whichever length
+        // a front proxy believed, the bytes after this body are not trusted as a request.
+        connection = "close"
+    } else if isHttp10(headText) {
+        connection = if headerHasToken(req.headers, "Connection", "keep-alive") { "keep-alive" } else { "close" }
+    }
     // Content-Encoding is checked before the body is read: a coding this server cannot
     // undo is 415 whatever the body holds.
     let Option.Some(encodings) = contentCodings(req.headers) else {
@@ -864,11 +892,13 @@ fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i6
         write("HTTP/1.1 100 Continue\r\n\r\n")
     }
     if chunked {
-        // Transfer-Encoding wins over Content-Length (RFC 9112 6.3); the connection closes
-        // after the response, so no byte of a smuggled second request is ever read.
+        // Transfer-Encoding wins over Content-Length (RFC 9112 6.3); with both, the
+        // connection closes after the response (see `connection` above), so no byte of a
+        // smuggled second request is ever read.
         var scan = ChunkScan.new(end)
+        var stop: i64 = chunkIncomplete
         while true {
-            let stop = scan.step(raw)
+            stop = scan.step(raw)
             if stop >= 0 {
                 break
             }
@@ -888,6 +918,7 @@ fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i6
             }
         }
         req.body = decodeChunked(raw, end)
+        raw = raw.substr(stop, raw.len)
     } else {
         let want = end + contentLength
         while raw.len < want {
@@ -896,6 +927,7 @@ fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i6
             }
         }
         req.body = raw.substr(end, want)
+        raw = raw.substr(want, raw.len)
     }
     if encodings.len > 0 {
         let status = decodeBody(&mut req, encodings, maxInflated)
@@ -903,7 +935,28 @@ fn readRequest(read: (&mut string) => i64, write: (&string) => void, maxBody: i6
             return ReadOutcome.Reject(status)
         }
     }
-    return ReadOutcome.Got(req)
+    return ReadOutcome.Got(req, connection)
+}
+
+// Whether the request line of `head` (already checked by requestLineProblem) says HTTP/1.0.
+fn isHttp10(head: &string): bool {
+    let lineEnd = head.indexOf("\n") ?? head.len
+    let line = head.substr(0, lineEnd).trim()
+    return line.endsWith(" HTTP/1.0")
+}
+
+// Whether any `name` header lists `token` in its comma-separated value, ignoring case.
+fn headerHasToken(headers: &Vec<Param>, name: &string, token: &string): bool {
+    for h in headers {
+        if eqIgnoreCase(h.name, name) {
+            for part in h.value.split(",") {
+                if eqIgnoreCase(part.trim(), token) {
+                    return true
+                }
+            }
+        }
+    }
+    return false
 }
 
 // 414 when the request line alone is past the header limit (the URI is what is long),
@@ -1059,8 +1112,9 @@ fn decodeBody(req: &mut Request, codings: Vec<string>, max: i64): i32 {
 // every server shares, the plaintext ones here and std/https's over TLS. Closing the
 // transport is the caller's.
 fn serveExchange(read: (&mut string) => i64, write: (&string) => void, maxBody: i64, maxInflated: i64, respond: (Request) => string): void {
-    match readRequest(read, write, maxBody, maxInflated) {
-        ReadOutcome.Got(req) => {
+    var raw: string = ""
+    match readRequest(read, write, maxBody, maxInflated, &mut raw) {
+        ReadOutcome.Got(req, _connection) => {
             write(respond(req))
         }
         ReadOutcome.Reject(code) => {
@@ -1187,6 +1241,27 @@ pub struct ServeOptions {
     readTimeoutMs: i64 = 30000,
     // How long one response write may wait on a peer that has stopped reading. 0 = no limit.
     writeTimeoutMs: i64 = 30000,
+    // Serve more than one request per connection (HTTP/1.1 persistent connections, RFC
+    // 9112 9.3), pipelined requests answered in order. The connection still closes after
+    // a response when the client asks (Connection: close, or HTTP/1.0 without
+    // Connection: keep-alive), after a request that was refused or carried both
+    // Transfer-Encoding and Content-Length, after a stream or websocket route, during a
+    // SIGTERM drain, and at maxRequestsPerConn; that response says Connection: close.
+    // False: one request per connection, every response Connection: close. std/https
+    // ignores this and always serves one request per connection.
+    keepAlive: bool = true,
+    // How long a kept connection may sit between requests waiting for the first byte of
+    // the next one; it is then closed without a response. Once that byte arrives the
+    // request has readTimeoutMs. An idle connection holds one of the maxConn slots, and
+    // a SIGTERM drain waits for it, so keep this well below drainMs. A reverse proxy
+    // reusing upstream connections (nginx `keepalive_timeout` in an upstream block)
+    // should time them out sooner than this, so the proxy closes an idle connection
+    // rather than racing the server's close with a new request. 0 = no limit.
+    idleTimeoutMs: i64 = 5000,
+    // Requests served on one connection before the server closes it, like nginx's
+    // keepalive_requests: it bounds how long one client can pin a connection task and
+    // its memory. 0 = no limit.
+    maxRequestsPerConn: i64 = 1000,
     // Serve the socket systemd socket activation passes in (LISTEN_FDS/LISTEN_PID), and
     // bind host:port only when there is none (TcpListener.inheritedOr). Off, the server
     // binds exactly host:port, and refuses to start if it was socket-activated: an
@@ -2462,25 +2537,55 @@ fn armPanicReply(clientFd: i32): void {
     unsafe { taskOnPanicReply(clientFd, reply) }
 }
 
-fn handleConn(clientFd: i32, router: &Router, readMs: i64, writeMs: i64): void {
+// The plaintext router server's connection: requests served one after another until one
+// of the reasons in ServeOptions.keepAlive closes it. Not serveExchange, which std/https
+// shares and which answers exactly one request.
+fn handleConn(clientFd: i32, router: &Router, readMs: i64, writeMs: i64, keepAlive: bool, idleMs: i64, maxRequests: i64): void {
     armPanicReply(clientFd)
-    // Fixed once for the connection: the whole request, not each read, is what the
-    // deadline bounds, so a client dribbling a byte at a time still runs out.
-    let by = deadlineIn(readMs)
-    serveExchange((raw: &mut string): i64 => readMoreBy(clientFd, &mut raw, by), (data: &string): void => fdWriteBy(clientFd, data, writeMs), router.maxBodyBytes, inflatedLimit(router), (req: Request): string => {
-        taskOnPanicNote(requestLine(req))
-        armPanicReply(clientFd)
-        // A stream or ws route has already written everything it will; nothing more to send.
-        if runLongRoute(req, clientFd, router) {
-            return ""
+    // Persists across requests: a pipelining client's next request may already be in it.
+    var raw: string = ""
+    var served: i64 = 0
+    var open = true
+    while open {
+        open = false
+        if served > 0 && raw.len == 0 {
+            // Nothing is owed to a client between requests, so an idle one is closed silently.
+            if readMoreBy(clientFd, &mut raw, deadlineIn(idleMs)) <= 0 {
+                break
+            }
         }
-        let head = req.method == "HEAD"
-        let handled = router.handle(req)
-        if head {
-            return headOnly(renderResponse(handled.response, handled.headers))
+        // Fixed once per request, from its first byte (from the connection's start for
+        // the first): the whole request, not each read, is what the deadline bounds, so a
+        // client dribbling a byte at a time still runs out.
+        let by = deadlineIn(readMs)
+        served += 1
+        match readRequest((buf: &mut string): i64 => readMoreBy(clientFd, &mut buf, by), (data: &string): void => fdWriteBy(clientFd, data, writeMs), router.maxBodyBytes, inflatedLimit(router), &mut raw) {
+            ReadOutcome.Got(req, asked) => {
+                taskOnPanicNote(requestLine(req))
+                armPanicReply(clientFd)
+                // A stream or ws route has written everything it will and owns the
+                // connection's end; nothing more to send.
+                if !runLongRoute(req, clientFd, router) {
+                    let head = req.method == "HEAD"
+                    let handled = router.handle(req)
+                    // Checked after the handler, so a request that finishes during a drain
+                    // tells its client the connection is going away.
+                    open = keepAlive && asked != "close" && !terminated() && (maxRequests <= 0 || served < maxRequests)
+                    let connection = if open { asked } else { "close" }
+                    var wire = renderResponseAs(handled.response, handled.headers, connection)
+                    if head {
+                        wire = headOnly(wire)
+                    }
+                    fdWriteBy(clientFd, wire, writeMs)
+                }
+            }
+            ReadOutcome.Reject(code) => {
+                let noHeaders: Vec<Param> = []
+                fdWriteBy(clientFd, renderRaw(code, "text/plain; charset=utf-8", statusText(code), noHeaders), writeMs)
+            }
+            ReadOutcome.Gone => {}
         }
-        return renderResponse(handled.response, handled.headers)
-    })
+    }
     closeFd(clientFd)
 }
 
@@ -2607,9 +2712,12 @@ pub fn serveRouterWith(host: &string, port: u16?, router: Router, opts: &ServeOp
     forget(sock)
     let readMs = opts.readTimeoutMs
     let writeMs = opts.writeTimeoutMs
+    let keepAlive = opts.keepAlive
+    let idleMs = opts.idleTimeoutMs
+    let maxRequests = opts.maxRequestsPerConn
     // listenFd came out of the listener just above, which no longer owns it (forget).
     unsafe {
-        return serveConns(listenFd, opts, (clientFd: i32): void => handleConn(clientFd, router, readMs, writeMs))
+        return serveConns(listenFd, opts, (clientFd: i32): void => handleConn(clientFd, router, readMs, writeMs, keepAlive, idleMs, maxRequests))
     }
 }
 

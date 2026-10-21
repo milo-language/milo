@@ -95,7 +95,9 @@ def get(port, path, timeout=30):
     """(body or None, error or None). Anything but a complete 200 with the expected length is an error."""
     try:
         c = http.client.HTTPConnection(HOST, port, timeout=timeout)
-        c.request("GET", path)
+        # One request per connection, closed by the server: a client-side close would
+        # leave TIME_WAIT here instead, and the restart load runs out of ephemeral ports.
+        c.request("GET", path, headers={"Connection": "close"})
         r = c.getresponse()
         body = r.read()  # IncompleteRead on a truncated body
         c.close()
@@ -327,9 +329,64 @@ def mode_explicit(binary):
     finish("explicit", problems)
 
 
+def read_response(s):
+    """(head, body) of one Content-Length framed response, or (None, None) at EOF."""
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        d = s.recv(4096)
+        if not d:
+            return None, None
+        buf += d
+    head, _, body = buf.partition(b"\r\n\r\n")
+    length = 0
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length":
+            length = int(value)
+    while len(body) < length:
+        d = s.recv(4096)
+        if not d:
+            return None, None
+        body += d
+    return head.decode(), body.decode()
+
+
+def mode_keepalive(binary):
+    # During a drain, a request in flight on a kept-alive connection is answered with
+    # Connection: close, and an idle kept-alive connection expires at idleTimeoutMs, so
+    # the drain ends well before drainMs (10 s).
+    L = Launcher(binary, {"SLOWMS": "1000", "IDLEMS": "1500"})
+    L.spawn()
+    wait_listening(L.port)
+    idle = socket.create_connection((HOST, L.port))
+    idle.settimeout(8)
+    idle.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+    idle_head, _ = read_response(idle)
+    busy = socket.create_connection((HOST, L.port))
+    busy.settimeout(8)
+    busy.sendall(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
+    time.sleep(0.3)
+    L.stop()
+    head, body = read_response(busy)
+    busy_eof = busy.recv(4096) == b""
+    try:
+        idle_eof = idle.recv(4096) == b""
+    except (socket.timeout, ConnectionError):
+        idle_eof = False
+    code, secs = L.reap()[0]
+    problems = []
+    check(idle_head is not None and "connection:" not in idle_head.lower(), f"first response not kept alive: {idle_head!r}", problems)
+    check(body == "slow" and "connection: close" in (head or "").lower(), f"in-flight response during drain: {head!r} {body!r}", problems)
+    check(busy_eof, "connection not closed after the drain-time response", problems)
+    check(idle_eof, "idle kept-alive connection was not closed", problems)
+    check(code == 0 and secs < 4.0, f"exit code {code} after {secs:.2f}s (idleTimeoutMs 1.5s, drainMs 10s)", problems)
+    print(f"keepalive: exit_code={code} exit_after_sigterm_s={secs:.2f}")
+    finish("keepalive", problems)
+
+
 if __name__ == "__main__":
     modes = {"restart": mode_restart, "cap": mode_cap, "drain": mode_drain, "stream": mode_stream, "plain": mode_plain,
-             "explicit": mode_explicit}
+             "explicit": mode_explicit, "keepalive": mode_keepalive}
     if len(sys.argv) != 3 or sys.argv[1] not in modes:
         sys.exit(__doc__)
     modes[sys.argv[1]](os.path.abspath(sys.argv[2]))

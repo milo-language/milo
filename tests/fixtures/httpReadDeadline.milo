@@ -32,8 +32,9 @@ fn clients(): void {
     stalled.send("GET /ping HT")!
     let t0 = unrecordedEpochMillis()
 
+    // recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
     let ok = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
-    ok.send("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n")!
+    ok.send("GET /ping HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")!
     var wire: string = ""
     while true {
         let chunk = ok.recv() ?? ""
@@ -58,7 +59,7 @@ fn clients(): void {
     print($"closed within bound: {took >= 250 && took < 3000}")
 
     let again = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
-    again.send("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n")!
+    again.send("GET /ping HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")!
     var wire2: string = ""
     while true {
         let chunk = again.recv() ?? ""

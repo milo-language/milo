@@ -62,7 +62,7 @@ fn show(label: string, raw: &string): void {
 }
 
 // Send each part with a pause before the next, then read the reply until the server
-// closes.
+// closes (requests the server would otherwise keep open say Connection: close).
 fn exchange(parts: Vec<string>): string {
     let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
     for i in 0..parts.len {
@@ -75,12 +75,12 @@ fn exchange(parts: Vec<string>): string {
 }
 
 fn clients(): void {
-    show("split", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhel", "lo world"]))
-    show("continue", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n", "abcde"]))
+    show("split", exchange(["POST /echo HTTP/1.1\r\nConnection: close\r\nHost: x\r\nContent-Length: 11\r\n\r\nhel", "lo world"]))
+    show("continue", exchange(["POST /echo HTTP/1.1\r\nConnection: close\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n", "abcde"]))
     // Headers only: the server refuses before reading a body, and unread bytes in
     // its receive buffer at close would turn the reply into a reset.
     show("too big", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 2000000\r\n\r\n"]))
-    show("chunked", exchange(["POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n", "5\r\nmi lo\r\n0\r\n\r\n"]))
+    show("chunked", exchange(["POST /echo HTTP/1.1\r\nConnection: close\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n", "5\r\nmi lo\r\n0\r\n\r\n"]))
     var big: string = "GET /echo HTTP/1.1\r\nX-Pad: "
     while big.len < 16400 {
         big.push('a')
@@ -93,7 +93,7 @@ fn clients(): void {
     gone.close()
     sleepMs(50)
     show("hung up mid-request", "")
-    show("after", exchange(["POST /echo HTTP/1.1\r\nContent-Length: 2\r\n\r\nok"]))
+    show("after", exchange(["POST /echo HTTP/1.1\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"]))
     exit(0)
 }
 

@@ -1,0 +1,216 @@
+// @skip-os: win32
+// Importing std/fetch links OpenSSL, which the xwin sysroot does not ship.
+//
+// HTTP/1.1 persistent connections on the router server (RFC 9112 9.3): several requests
+// on one connection, pipelined ones answered in order, and a close, announced with
+// Connection: close on the last response, whenever the client asks for one (HTTP/1.0
+// counts as asking unless it says keep-alive), a request was refused or framed
+// ambiguously, the per-connection request cap is reached, or the connection idles past
+// idleTimeoutMs (silently: no request, no response). std/fetch's pool reuses the
+// connection: with maxRequestsPerConn 3, its third response is the one that says close.
+// @expect: listening on http://127.0.0.1:47398 (bound)
+// @expect: reuse: 200 a conn=- | 200 b conn=-
+// @expect: pipelined: 200 a | 200 b | 200 a
+// @expect: close asked: 200 conn=close eof=true
+// @expect: http/1.0: 200 conn=close eof=true
+// @expect: http/1.0 keep-alive: 200 conn=keep-alive | 200 conn=keep-alive
+// @expect: cap: conn=- | conn=- | conn=close eof=true
+// @expect: too big: 413 conn=close eof=true
+// @expect: te+cl: 200 conn=close eof=true
+// @expect: chunked kept: 200 echo 5 conn=- | 200 a conn=-
+// @expect: idle: eof=true within bound=true
+// @expect: fetch: 200 a conn=- | 200 a conn=- | 200 a conn=close | 200 a conn=-
+// @expect: fetch after idle: 200 a
+from "std/http" import {
+    Context, Response, Router, ServeOptions, serveRouterWith
+}
+from "std/fetch" import {
+    fetch, findHeader
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/strconv" import {
+    parseInt
+}
+from "std/time" import {
+    unrecordedEpochMillis, sleepMs
+}
+
+let PORT: u16 = 47398
+
+fn connect(): TcpStream {
+    return TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+}
+
+// One response off `conn`, framed by Content-Length; bytes past it stay in `buf` for the
+// next call. "" when the server closed first.
+fn readResponse(conn: &TcpStream, buf: &mut string): string {
+    while true {
+        if let Option.Some(at) = buf.indexOf("\r\n\r\n") {
+            let head = buf.substr(0, at + 4)
+            var length: i64 = 0
+            if let Option.Some(v) = findHeader(head, "Content-Length") {
+                length = parseInt(v.trim()) ?? 0
+            }
+            let end = at + 4 + length
+            if buf.len >= end {
+                let resp = buf.substr(0, end)
+                buf = buf.substr(end, buf.len)
+                return resp
+            }
+        }
+        let chunk = conn.recvOnce()
+        if chunk.len == 0 {
+            return ""
+        }
+        buf.pushStr(chunk)
+    }
+    return ""
+}
+
+// Whether the server closes `conn` with nothing more to send.
+fn atEof(conn: &TcpStream, buf: &string): bool {
+    return buf.len == 0 && conn.recvOnce().len == 0
+}
+
+fn code(resp: &string): string {
+    return if resp.len >= 12 { resp.substr(9, 12) } else { "(none)" }
+}
+
+fn body(resp: &string): string {
+    return resp.substr((resp.indexOf("\r\n\r\n") ?? resp.len) + 4, resp.len)
+}
+
+fn conn(resp: &string): string {
+    let at = resp.indexOf("\r\n\r\n") ?? resp.len
+    return findHeader(resp.substr(0, at + 2), "Connection") ?? "-"
+}
+
+fn get(path: &string): string {
+    return $"GET {path} HTTP/1.1\r\nHost: x\r\n\r\n"
+}
+
+fn clients(): void {
+    // Two requests, the second sent only after the first is answered.
+    var buf: string = ""
+    let c1 = connect()
+    c1.send(get("/a"))!
+    let r1 = readResponse(c1, &mut buf)
+    c1.send(get("/b"))!
+    let r2 = readResponse(c1, &mut buf)
+    print($"reuse: {code(r1)} {body(r1)} conn={conn(r1)} | {code(r2)} {body(r2)} conn={conn(r2)}")
+
+    // Three requests in one write: the bytes past the first are the next requests.
+    buf = ""
+    let c2 = connect()
+    c2.send(get("/a") + get("/b") + get("/a"))!
+    let p1 = readResponse(c2, &mut buf)
+    let p2 = readResponse(c2, &mut buf)
+    let p3 = readResponse(c2, &mut buf)
+    print($"pipelined: {code(p1)} {body(p1)} | {code(p2)} {body(p2)} | {code(p3)} {body(p3)}")
+
+    buf = ""
+    let c3 = connect()
+    c3.send("GET /a HTTP/1.1\r\nHost: x\r\nConnection: Keep-Alive, CLOSE\r\n\r\n")!
+    let r3 = readResponse(c3, &mut buf)
+    print($"close asked: {code(r3)} conn={conn(r3)} eof={atEof(c3, buf)}")
+
+    buf = ""
+    let c4 = connect()
+    c4.send("GET /a HTTP/1.0\r\n\r\n")!
+    let r4 = readResponse(c4, &mut buf)
+    print($"http/1.0: {code(r4)} conn={conn(r4)} eof={atEof(c4, buf)}")
+
+    buf = ""
+    let c5 = connect()
+    c5.send("GET /a HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")!
+    let r5 = readResponse(c5, &mut buf)
+    c5.send("GET /b HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")!
+    let r6 = readResponse(c5, &mut buf)
+    print($"http/1.0 keep-alive: {code(r5)} conn={conn(r5)} | {code(r6)} conn={conn(r6)}")
+
+    // maxRequestsPerConn is 3.
+    buf = ""
+    let c6 = connect()
+    c6.send(get("/a"))!
+    let m1 = readResponse(c6, &mut buf)
+    c6.send(get("/a"))!
+    let m2 = readResponse(c6, &mut buf)
+    c6.send(get("/a"))!
+    let m3 = readResponse(c6, &mut buf)
+    print($"cap: conn={conn(m1)} | conn={conn(m2)} | conn={conn(m3)} eof={atEof(c6, buf)}")
+
+    // Headers only: unread body bytes at the server's close would turn the reply into a reset.
+    buf = ""
+    let c7 = connect()
+    c7.send("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n")!
+    let r7 = readResponse(c7, &mut buf)
+    print($"too big: {code(r7)} conn={conn(r7)} eof={atEof(c7, buf)}")
+
+    buf = ""
+    let c8 = connect()
+    c8.send("POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n3\r\nabc\r\n0\r\n\r\n")!
+    let r8 = readResponse(c8, &mut buf)
+    print($"te+cl: {code(r8)} conn={conn(r8)} eof={atEof(c8, buf)}")
+
+    // A chunked body alone frames itself, so the request pipelined behind it is served.
+    buf = ""
+    let c9 = connect()
+    c9.send("POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n" + get("/a"))!
+    let r9 = readResponse(c9, &mut buf)
+    let r10 = readResponse(c9, &mut buf)
+    print($"chunked kept: {code(r9)} {body(r9)} conn={conn(r9)} | {code(r10)} {body(r10)} conn={conn(r10)}")
+
+    // idleTimeoutMs is 300.
+    buf = ""
+    let c10 = connect()
+    c10.send(get("/a"))!
+    let _r11 = readResponse(c10, &mut buf)
+    let t0 = unrecordedEpochMillis()
+    let idleEof = atEof(c10, buf)
+    let took = unrecordedEpochMillis() - t0
+    print($"idle: eof={idleEof} within bound={took >= 200 && took < 3000}")
+
+    var line: string = "fetch:"
+    for i in 0..4 {
+        let r = fetch($"http://127.0.0.1:{PORT}/a")!
+        let sep = if i == 0 { " " } else { " | " }
+        line.pushStr($"{sep}{r.status} {r.body} conn={findHeader(r.headers, "Connection") ?? "-"}")
+    }
+    print(line)
+    // The pooled connection is closed by the server meanwhile; fetch must notice, not fail.
+    sleepMs(500)
+    let late = fetch($"http://127.0.0.1:{PORT}/a")!
+    print($"fetch after idle: {late.status} {late.body}")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.setMaxBodySize(100)
+    r.get("/a", (ctx: &mut Context): Response => {
+        return ctx.text("a")
+    })
+    r.get("/b", (ctx: &mut Context): Response => {
+        return ctx.text("b")
+    })
+    r.post("/echo", (ctx: &mut Context): Response => {
+        return ctx.text($"echo {ctx.req.body.len}")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    Task.spawn(move(): void => {
+        sleepMs(15000)
+        print("watchdog: a keep-alive exchange hung")
+        exit(1)
+    })
+    serveRouterWith("127.0.0.1", PORT, r, ServeOptions {
+        idleTimeoutMs: 300, maxRequestsPerConn: 3
+    })!
+    return 1
+}

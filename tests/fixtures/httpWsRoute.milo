@@ -74,8 +74,9 @@ fn clients(): void {
     print($"a got: {a.recv()!.payload}")
     print($"peers: {peers.len}")
 
+    // recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
     let plain = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
-    plain.send("GET /chat/a HTTP/1.1\r\nHost: x\r\n\r\n")!
+    plain.send("GET /chat/a HTTP/1.1\r\nConnection: close\r\nHost: x\r\n\r\n")!
     let body = plain.recv()!
     print($"plain get: {body.substr(body.len - 5, body.len)}")
 

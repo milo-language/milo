@@ -22,7 +22,7 @@ HOL uses fib(32) rather than fib(27): at 0.5 ms a fib(27) is too short to show q
 
 ## macOS port caveat
 
-The server answers `Connection: close`, so every request is a fresh TCP connection. macOS has about 16k ephemeral ports, each held about 30 s in TIME_WAIT, so long or back-to-back runs exhaust them and the numbers become garbage. Hence fixed request counts (`-n`, scaled by `--scale`) and a wait before each scenario until fewer than 3000 sockets are in TIME_WAIT (prints `draining ports...` once). Do not raise `--scale` much without expecting long drains.
+By default oha runs with `--disable-keepalive`, so every request is a fresh TCP connection. macOS has about 16k ephemeral ports, each held about 30 s in TIME_WAIT, so long or back-to-back runs exhaust them and the numbers become garbage. Hence fixed request counts (`-n`, scaled by `--scale`) and a wait before each scenario until fewer than 3000 sockets are in TIME_WAIT (prints `draining ports...` once). Do not raise `--scale` much without expecting long drains. `--keepalive` runs reuse connections and do not have this problem.
 
 ## Baseline
 
@@ -42,6 +42,24 @@ hol hello c=4 (+fib32 c=16)       288     0.28    80.29    81.93       0       0
 hol p99 = 80.29 ms (125.7x baseline)
 ```
 
+### Keep-alive
+
+std/http serves persistent connections (`ServeOptions.keepAlive`, on by default). 2026-10-21, git 036c7e23 (plus the keep-alive change), Apple M4, `Darwin arm64`, 10 cpus, release build, 0 errors, 0 non-2xx. `bun benchmarks/webserver/bench.ts --server milo` (off) and `... --keepalive` (on):
+
+```
+scenario                       off rps   on rps    off p99   on p99
+hello c=1                        11910    25175       0.18     0.08
+hello c=64                       45415   118519       4.63     0.85
+fib27 c=1                         1587     2192       0.90     0.56
+fib27 c=64                        2189     2178      31.95    44.42
+db c=1                             658      662       1.63     1.64
+db c=64                            683      681      95.50   138.76
+hol-baseline hello c=4           30770    67229       0.37     0.09
+hol hello c=4 (+fib32 c=16)        288      277      80.98   149.04
+```
+
+Per-request overhead drops by more than half (hello c=64 2.6x). Under CPU-bound load the tail gets worse: p99 rises on fib27 c=64, db c=64 and hol (about 2x the p50 where it was about 1.1x). Without keep-alive every request queues through the one accept loop; with it each connection's next request is woken from its own fd, and the order the scheduler wakes ready fds in decides who waits. Single-threaded Rust shows the same direction on db c=64 (90 to 112 ms) but not as far on hol (54 to 58 ms), so part of this is the scheduler's wake order, not inherent.
+
 ## Rust comparison
 
 `rust/` is an axum 0.8 server (`bench-server-rust`) with the same three routes, so Milo's distance from an idiomatic fast Rust server is a number. `--server milo|rust1|rustmt|all` picks what runs (default `all`, one server at a time, each on its own port: `PORT`, `PORT+1`, `PORT+2`). The Rust build is `cargo build --release` (no-op when up to date).
@@ -50,7 +68,7 @@ hol p99 = 80.29 ms (125.7x baseline)
 - `rustmt`: `RUST_THREADS=0`, tokio `multi_thread` with the default worker count (one per core). What a Rust author gets by default.
 - `/db` uses one `rusqlite` connection per runtime thread (`thread_local!`, WAL, `prepare_cached`) rather than a shared `Mutex<Connection>`: a mutex would serialize the multi-thread runtime on the db and understate Rust. Queries and fib run inline in the handler (no `spawn_blocking`), as in Milo. Milo prints floats differently (bytes differ), both return 200 with 15 lines.
 
-Keep-alive policy: `std/http` always answers `Connection: close`, so by default every server is driven with `oha --disable-keepalive` (a new TCP connection per request) to keep the comparison apples to apples. `--keepalive` lets oha reuse connections; Rust gains from that, Milo cannot yet. The mode is printed at the start of each run.
+Keep-alive policy: by default every server is driven with `oha --disable-keepalive` (a new TCP connection per request). `--keepalive` lets oha reuse connections, which all three servers support. The mode is printed at the start of each run.
 
 2026-10-21, git 94302311 (plus this change), `Darwin arm64`, 10 cpus, keep-alive off, 0 errors, 0 non-2xx for all servers:
 
@@ -72,12 +90,22 @@ hol p99 [rustmt] =  5.95 ms (24.1x baseline)
 
 Reading it: single-threaded Rust is ~1.3x Milo on fib (the pure-CPU gap, no folding: `n` comes from the request), ~1.1x on db (SQLite dominates), and 3x on hello c=64 (per-request overhead). rust1 HOL is still 54 ms, so a single-threaded design cannot fix head-of-line blocking; only `rustmt` does.
 
-With keep-alive (Rust only), `--keepalive --server rustmt`:
+With keep-alive, `--keepalive --server all`, 2026-10-21, git 036c7e23 (plus the keep-alive change), Apple M4, 10 cpus, 0 errors, 0 non-2xx:
 
 ```
-hello c=1                       30066     0.03     0.08     0.30       0       0
-hello c=64                     201451     0.30     0.52     0.95       0       0
-hol-baseline hello c=4          67956     0.06     0.10     0.30       0       0
-hol hello c=4 (+fib32 c=16)      4217     0.06     6.34     8.08       0       0
-(columns: rps, p50 ms, p99 ms, max ms, non2xx, errors)
+scenario                       milo rps   rust1 rps  rustmt rps    milo p99   rust1 p99  rustmt p99
+hello c=1                         25187       30020       29950        0.08        0.08        0.08
+hello c=64                       121276      208760      197554        0.81        0.38        0.58
+fib27 c=1                          2098        2935        2901        0.57        0.39        0.40
+fib27 c=64                         2152        3056       19997       45.01       22.07        5.78
+db c=1                              649         732         738        1.65        1.46        1.44
+db c=64                             678         743        3666      138.80      112.21       33.25
+hol-baseline hello c=4            67964       65962       69924        0.10        0.09        0.10
+hol hello c=4 (+fib32 c=16)         277         403        4084      152.10       57.51        6.38
+
+hol p99 [milo]   = 152.10 ms (1574.1x baseline)
+hol p99 [rust1]  =  57.51 ms (666.5x baseline)
+hol p99 [rustmt] =   6.38 ms (66.4x baseline)
 ```
+
+With connection setup out of the way, rust1 is 1.7x Milo on hello c=64, and rustmt is no faster than rust1 there.

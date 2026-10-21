@@ -1,6 +1,6 @@
 // Test server for the zero-downtime restart gate (tests/httpZeroDowntime.test.ts).
 // Env: MAXCONN (default 512), DRAINMS (default 10000), SLOWMS (default 2000), PORT (own bind),
-// NOACTIVATION=1 (do not opt in to socket activation: an activated start must then refuse).
+// IDLEMS (idleTimeoutMs, default 5000), NOACTIVATION=1 (do not opt in to socket activation: an activated start must then refuse).
 // /events is a stream parked in waitClosed. / answers "ok"; /slow sleeps SLOWMS then answers "slow"; /max reports the highest
 // concurrency the handlers saw.
 from "std/http" import { Context, Param, Router, ServeOptions, Stream, serveRouterWith }
@@ -21,7 +21,7 @@ fn envInt(name: string, dflt: i64): i64 {
 
 fn main(): i32 {
     let slowMs = envInt("SLOWMS", 2000)
-    let opts = ServeOptions { maxConn: envInt("MAXCONN", 512), drainMs: envInt("DRAINMS", 10000), socketActivation: envInt("NOACTIVATION", 0) == 0 }
+    let opts = ServeOptions { maxConn: envInt("MAXCONN", 512), drainMs: envInt("DRAINMS", 10000), idleTimeoutMs: envInt("IDLEMS", 5000), socketActivation: envInt("NOACTIVATION", 0) == 0 }
     var router = Router.new()
     router.get("/", (c: &mut Context) => {
         return c.text("ok")

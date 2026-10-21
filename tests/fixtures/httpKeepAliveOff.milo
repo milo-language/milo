@@ -1,0 +1,54 @@
+// @skip-os: win32
+// ServeOptions.keepAlive false restores one request per connection: the first of two
+// pipelined requests is answered with Connection: close and the second is never read.
+// @expect: listening on http://127.0.0.1:47399 (bound)
+// @expect: responses: 1
+// @expect: first: HTTP/1.1 200 OK conn=close body=a
+from "std/http" import {
+    Context, Response, Router, ServeOptions, serveRouterWith
+}
+from "std/fetch" import {
+    findHeader
+}
+from "std/net" import {
+    TcpStream, ip4
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+let PORT: u16 = 47399
+
+fn clients(): void {
+    let c = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
+    c.send("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /a HTTP/1.1\r\nHost: x\r\n\r\n")!
+    // recv() reads to EOF: the server closing after one response is what ends it.
+    let wire = c.recv()!
+    print($"responses: {wire.split("HTTP/1.1 ").len - 1}")
+    let at = wire.indexOf("\r\n\r\n") ?? wire.len
+    let status = wire.substr(0, wire.indexOf("\r\n") ?? 0)
+    print($"first: {status} conn={findHeader(wire.substr(0, at + 2), "Connection") ?? "-"} body={wire.substr(at + 4, wire.len)}")
+    exit(0)
+}
+
+pub fn main(): i32 {
+    var r = Router.new()
+    r.get("/a", (ctx: &mut Context): Response => {
+        return ctx.text("a")
+    })
+    Task.spawn(move(): void => {
+        clients()
+    })
+    Task.spawn(move(): void => {
+        sleepMs(8000)
+        print("watchdog: the server kept the connection open")
+        exit(1)
+    })
+    serveRouterWith("127.0.0.1", PORT, r, ServeOptions {
+        keepAlive: false
+    })!
+    return 1
+}

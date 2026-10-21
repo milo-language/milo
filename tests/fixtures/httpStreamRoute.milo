@@ -64,6 +64,7 @@ fn show(label: string, raw: &string): void {
     print(out)
 }
 
+// recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
 fn exchange(req: string): string {
     let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
     conn.send(req)!
@@ -74,14 +75,14 @@ fn clients(): void {
     var stream = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
     stream.send("GET /events/room-7 HTTP/1.1\r\nHost: x\r\n\r\n")!
     show("open", stream.recvOnce())
-    show("poke", exchange("POST /poke HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    show("poke", exchange("POST /poke HTTP/1.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"))
     show("frame", stream.recvOnce())
     stream.close()
     sleepMs(50)
-    show("after", exchange("POST /poke HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    show("after", exchange("POST /poke HTTP/1.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"))
     print($"subscribers left: {subscribers.len}")
     show("unknown room", exchange("GET /events/nope HTTP/1.1\r\nHost: x\r\n\r\n"))
-    show("post to stream path", exchange("POST /events/room-7 HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    show("post to stream path", exchange("POST /events/room-7 HTTP/1.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"))
     exit(0)
 }
 

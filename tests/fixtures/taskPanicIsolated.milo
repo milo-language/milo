@@ -23,6 +23,7 @@ from "std/runtime" import {
 
 let PORT: u16 = 47395
 
+// recv() reads to EOF, so a request the server would otherwise keep open says Connection: close.
 fn statusLine(req: string): string {
     let conn = TcpStream.connect(ip4(127, 0, 0, 1), PORT)!
     conn.send(req)!
@@ -51,14 +52,14 @@ fn overflow(n: i64): i64 {
 fn clients(): void {
     print("boom: " + statusLine("GET /boom HTTP/1.1\r\nHost: x\r\n\r\n"))
     print($"boom has Date: {hasDate("GET /boom HTTP/1.1\r\nHost: x\r\n\r\n")}")
-    print("ok after boom: " + statusLine("GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"))
+    print("ok after boom: " + statusLine("GET /ok HTTP/1.1\r\nConnection: close\r\nHost: x\r\n\r\n"))
     let t = Task.spawn(move(): void => {
         print($"unreachable {overflow(100)}")
     })
     t.join()
     print("overflow task joined")
     print("boom again: " + statusLine("GET /boom HTTP/1.1\r\nHost: x\r\n\r\n"))
-    print("still serving: " + statusLine("GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"))
+    print("still serving: " + statusLine("GET /ok HTTP/1.1\r\nConnection: close\r\nHost: x\r\n\r\n"))
     exit(0)
 }
 

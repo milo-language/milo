@@ -57,6 +57,20 @@ that has stopped reading. 0 turns either off. Stream and websocket routes are no
 them once they take over the connection. Both are `ServeOptions` fields, passed to
 `serveRouterWith`; `serveRouterSerial` uses the defaults.
 
+### Persistent connections
+
+The router server (`serveRouter`, `serveRouterOn`, `serveRouterWith`) keeps a connection
+open for further requests (HTTP/1.1 keep-alive) and answers pipelined requests in order.
+It closes the connection after a response, which then says `Connection: close`, when the
+request said `Connection: close` or was HTTP/1.0 without `Connection: keep-alive`, when
+the request was refused (any status in the table above) or carried both
+`Transfer-Encoding` and `Content-Length`, after a stream or websocket route, during a
+SIGTERM drain, and after `maxRequestsPerConn` requests (default 1000). A connection idle
+between requests for `idleTimeoutMs` (default 5 s) is closed without a response; once the
+next request's first byte arrives it has `readTimeoutMs`. `keepAlive: false` serves one
+request per connection. std/https and `serveRouterSerial` serve one request per
+connection.
+
 ### Static files
 
 `ctx.file(path)` answers with the file at `path` (404 when it is not a readable regular
@@ -88,8 +102,8 @@ refuse `..` segments itself.
   time in IMF-fixdate form (`Sun, 06 Nov 1994 08:49:37 GMT`). No `Server` header is
   sent.
 - `Content-Length`, `Connection` and `Transfer-Encoding` are written by the server to
-  match the bytes it sends, so a handler's copy is dropped. Every response is
-  `Connection: close`.
+  match the bytes it sends, so a handler's copy is dropped. A response on a connection
+  the server is about to close says `Connection: close` (see Persistent connections).
 - 1xx, 204 and 304 responses have no body, no `Content-Length` and no `Content-Type`,
   whatever the handler returned.
 
@@ -700,6 +714,9 @@ Fields:
 - `drainMs: i64 = 10000`: After SIGTERM: how long requests in flight may keep running before the process exits anyway, with status 1 (a clean drain exits 0).
 - `readTimeoutMs: i64 = 30000`: How long a client has to send its whole request (headers and body), counted from when the connection's task starts. Without it a client that sends half a request and stalls holds a connection slot forever, and maxConn of them stop the server (slowloris). Not applied to stream or websocket routes once they take over the connection: they have their own timeouts. 0 = no limit.
 - `writeTimeoutMs: i64 = 30000`: How long one response write may wait on a peer that has stopped reading. 0 = no limit.
+- `keepAlive: bool = true`: Serve more than one request per connection (HTTP/1.1 persistent connections, RFC 9112 9.3), pipelined requests answered in order. The connection still closes after a response when the client asks (Connection: close, or HTTP/1.0 without Connection: keep-alive), after a request that was refused or carried both Transfer-Encoding and Content-Length, after a stream or websocket route, during a SIGTERM drain, and at maxRequestsPerConn; that response says Connection: close. False: one request per connection, every response Connection: close. std/https ignores this and always serves one request per connection.
+- `idleTimeoutMs: i64 = 5000`: How long a kept connection may sit between requests waiting for the first byte of the next one; it is then closed without a response. Once that byte arrives the request has readTimeoutMs. An idle connection holds one of the maxConn slots, and a SIGTERM drain waits for it, so keep this well below drainMs. A reverse proxy reusing upstream connections (nginx `keepalive_timeout` in an upstream block) should time them out sooner than this, so the proxy closes an idle connection rather than racing the server's close with a new request. 0 = no limit.
+- `maxRequestsPerConn: i64 = 1000`: Requests served on one connection before the server closes it, like nginx's keepalive_requests: it bounds how long one client can pin a connection task and its memory. 0 = no limit.
 - `socketActivation: bool = false`: Serve the socket systemd socket activation passes in (LISTEN_FDS/LISTEN_PID), and bind host:port only when there is none (TcpListener.inheritedOr). Off, the server binds exactly host:port, and refuses to start if it was socket-activated: an activated service says so here rather than having its address silently ignored.
 
 ### `Stream`
@@ -901,7 +918,8 @@ header is sent, so the stack is not advertised. An empty `contentType` writes no
 Content-Type. Content-Length, Connection and Transfer-Encoding describe the framing
 this function writes, so a handler's copy would contradict the bytes on the wire and
 is dropped. 1xx, 204 and 304 never carry a body (RFC 9110
-6.4.1): those go out with no body, no Content-Length and no Content-Type.
+6.4.1): those go out with no body, no Content-Length and no Content-Type. Always says
+Connection: close; only the keep-alive loop in handleConn renders anything else.
 
 #### `renderResponse`
 

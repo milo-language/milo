@@ -36,6 +36,7 @@ describe.skipIf(!havePython || !posix)("std/http zero-downtime", () => {
   test("maxConn bounds concurrency; the excess queues in the kernel", () => mode("cap"), 30_000);
   test("a handler longer than drainMs is cut at the cap", () => mode("drain"), 30_000);
   test("a long-lived stream is closed when the drain starts", () => mode("stream"), 30_000);
+  test("a drain closes kept-alive connections: in flight after the response, idle at idleTimeoutMs", () => mode("keepalive"), 30_000);
   test("without LISTEN_FDS the server binds itself", () => mode("plain"), 30_000);
   test("activation is opt-in: announced when taken, refused when not asked for", () => mode("explicit"), 30_000);
 });
