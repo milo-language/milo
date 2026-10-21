@@ -1,0 +1,82 @@
+// @skip-os: win32
+// the green scheduler's event loop is kqueue/epoll readiness-based; Windows
+// needs the IOCP completion port rewrite (docs/roadmap.md).
+
+// @expect: reader got x
+// @expect: writer done 1048576
+// @expect: drained 1048576
+
+// A read waiter and a write waiter parked on the same fd (one end of a socketpair)
+// share one chain in the scheduler's fd waiter table, and both must wake. On kqueue the
+// read and write filters fire as two events for the same fd in one poll, so this also
+// feeds the wake a duplicate fd. A lost waiter hangs the fixture.
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    readFd,
+    writeFd,
+    malloc,
+    free
+}
+from "std/platform" import {
+    close
+}
+
+@cSig("sys/socket.h", "int socketpair(int, int, int, int *)")
+extern fn socketpair(domain: i32, kind: i32, protocol: i32, fds: *i32): i32
+
+pub fn main(): i32 {
+    let total: i64 = 1048576
+    var fds: [i32; 2] = [-1; 2]
+    unsafe {
+        // AF_UNIX = 1 and SOCK_STREAM = 1 on darwin and linux.
+        socketpair(1, 1, 0, fds as *i32)
+    }
+    let a = fds[0]
+    let b = fds[1]
+
+    // Parks reading `a`: nothing arrives until the driver writes one byte to `b`.
+    Task.spawn(move(): void => {
+        var buf: [u8; 1] = [0; 1]
+        unsafe {
+            readFd(a, buf, 1)
+        }
+        var s = ""
+        s.push(buf[0])
+        print("reader got ", s)
+    })
+
+    // Parks writing `a` once the socket buffer is full, more than once.
+    Task.spawn(move(): void => {
+        unsafe {
+            let big = malloc(total)
+            let n = writeFd(a, big, total)
+            free(big)
+            print("writer done ", n)
+        }
+    })
+
+    // Runs after both have parked on `a`.
+    Task.spawn(move(): void => {
+        unsafe {
+            writeFd(b, "x", 1)
+            let buf = malloc(65536)
+            var got: i64 = 0
+            while got < total {
+                let n = readFd(b, buf, 65536)
+                if n <= 0 {
+                    break
+                }
+                got += n
+            }
+            free(buf)
+            print("drained ", got)
+            close(a)
+            close(b)
+        }
+    })
+
+    schedulerRunToCompletion()
+    return 0
+}

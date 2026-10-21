@@ -3,7 +3,7 @@ system: breaking-changes
 purpose: source-level breaks users have to act on, with the migration and the reason a compat shim was impossible
 key-files: src/checker-program-passes.ts, std/sync.milo, std/replay.milo, std/signal.milo, std/event.*.milo, std/random.*.milo, std/pty.*.milo, std/pool.milo, std/http.milo, std/https.milo, std/net.milo, std/tls.milo, std/runtime.milo, std/shard.milo, std/arena.milo, std/set.milo, std/platform.*.milo, std/mem.milo, std/os.milo, std/string.milo, std/strconv.milo, std/uuid.milo, std/ws.milo, std/wsframe.milo, std/fetch.milo, std/zstd.milo, std/base64.milo, std/base32.milo, std/hex.milo, std/csv.milo, std/cstr.milo, std/sqlite.milo, std/dl.milo, std/select.milo, std/process.milo, std/testing.milo, std/png.milo, std/image.milo
 update-when: a public stdlib name moves, is renamed, or changes signature, or a language rule rejects a spelling that used to compile
-last-verified: 2026-10-12
+last-verified: 2026-10-21
 -->
 
 # Breaking changes
@@ -15,6 +15,14 @@ Below 1.0 the MINOR is the breaking position. A `# Released in vX.Y.Z` marker op
 group of entries that release shipped; a package that wants to stay on the previous
 surface pins the earlier minor (e.g. `"milo": "^0.2.0"`) in its `milo.json`. A marker is
 added here each time a version is cut.
+
+## `sWaitHead` is gone from std/runtime (2026-10-21)
+
+The scheduler no longer keeps one list of every task parked on an fd; it keeps a table
+indexed by fd, so a poll costs what became ready rather than what is parked. `sWaitHead`
+was the offset of that list's head inside the scheduler struct. Nothing outside
+std/runtime read it, and the slot now holds the table, a private detail. No migration:
+park on an fd with `schedulerWaitRead`/`schedulerWaitWrite` as before.
 
 ## Socket activation is opt-in (2026-10-19)
 

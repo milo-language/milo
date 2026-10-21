@@ -1,0 +1,119 @@
+// Ping-pong round trips between two green tasks while N other tasks sit parked on
+// fds that never become ready (idle keep-alive connections, in server terms). The
+// rate should not depend on N: a poll should cost what is ready, not what is parked.
+// Each idle task holds a pipe, so N idle tasks use 2N fds; check `ulimit -n`.
+//
+//   ./milo build benchmarks/runtime/idle_waiters.milo --release -o benchmarks/runtime/idle_waiters
+//   benchmarks/runtime/idle_waiters 10000 100000   # N idle tasks, round trips
+
+from "std/platform" import {
+    pipe,
+    close
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    readFd,
+    writeFd
+}
+from "std/time" import {
+    epochMillis
+}
+from "std/args" import {
+    args
+}
+from "std/strconv" import {
+    parseInt
+}
+
+fn argOr(i: i64, dflt: i64): i64 {
+    let a = args()
+    if a.len() > i {
+        return parseInt(a[i]) ?? dflt
+    }
+    return dflt
+}
+
+struct Pipe {
+    r: i32,
+    w: i32,
+}
+
+fn makePipe(): Pipe {
+    var fds: [i32; 2] = [-1; 2]
+    unsafe {
+        pipe(fds as *i32)
+    }
+    return Pipe { r: fds[0], w: fds[1] }
+}
+
+pub fn main(): i32 {
+    let idle = argOr(1, 10000)
+    let rounds = argOr(2, 100000)
+
+    var idleWriters: Vec<i32> = Vec.new()
+    for _ in 0..idle {
+        let p = makePipe()
+        if p.r < 0 {
+            print("pipe failed; raise ulimit -n")
+            return 1
+        }
+        let rfd = p.r
+        idleWriters.push(p.w)
+        Task.spawn(move(): void => {
+            var buf: [u8; 1] = [0; 1]
+            // Parks until the driver closes the write end at the end of the run.
+            unsafe {
+                readFd(rfd, buf, 1)
+                close(rfd)
+            }
+        })
+    }
+
+    let ping = makePipe()
+    let pong = makePipe()
+    let pingR = ping.r
+    let pingW = ping.w
+    let pongR = pong.r
+    let pongW = pong.w
+
+    Task.spawn(move(): void => {
+        var buf: [u8; 1] = [0; 1]
+        unsafe {
+            for _ in 0..rounds {
+                readFd(pingR, buf, 1)
+                writeFd(pongW, buf, 1)
+            }
+        }
+    })
+
+    // Spawned last, so every idle task has parked before the clock starts.
+    Task.spawn(move(): void => {
+        var buf: [u8; 1] = [120]
+        let t0 = epochMillis()
+        unsafe {
+            for _ in 0..rounds {
+                writeFd(pingW, buf, 1)
+                readFd(pongR, buf, 1)
+            }
+        }
+        var ms = epochMillis() - t0
+        if ms == 0 {
+            ms = 1
+        }
+        print("idle=", idle, " rounds=", rounds, " ms=", ms, " round_trips_per_sec=", rounds * 1000 / ms)
+        unsafe {
+            for w in idleWriters {
+                close(w)
+            }
+            close(pingR)
+            close(pingW)
+            close(pongR)
+            close(pongW)
+        }
+    })
+
+    schedulerRunToCompletion()
+    return 0
+}

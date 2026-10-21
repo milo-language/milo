@@ -19,11 +19,12 @@
 //       handle holds the other ref. Joiner is still registered before completion
 //       (cooperative), but a late/double join is now memory-safe, not a UAF.
 //
-// Scheduler layout (104 bytes):
+// Scheduler layout (112 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
 //  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32)  44: wakeupId (i32)
-//  48: waitHead (*u8)     56: xferMutex (*u8)   64: xferHead (*u8)    72: selFdHead (*u8)
+//  48: fdWaiters (*u8)    56: xferMutex (*u8)   64: xferHead (*u8)    72: selFdHead (*u8)
 //  80: drainWaiter (*u8)  88: stackCache (*u8)  96: stackCacheLen (i64)
+// 104: fdWaitersCap (i64)
 //
 // selFdHead: intrusive list of select fd/timer waiter Nodes (see below). Read
 // arms register their fd with the event loop; the poll loop claims the owning
@@ -32,7 +33,7 @@
 @!replayHooked
 
 from "std/os" import {
-    malloc, free, memcpy, memset
+    malloc, free, realloc, memcpy, memset
 }
 from "std/platform" import {
     getcontext, makecontext, swapcontext, write, close,
@@ -162,7 +163,7 @@ fn tPanicMsgLen(): i64 {
 }
 
 pub fn schedStructSize(): i64 {
-    return 104
+    return 112
 }
 
 // task field offsets
@@ -243,8 +244,10 @@ pub fn sWakeupId(): i64 {
     return 44
 }
 
-// waiting list head (tasks blocked on I/O)
-pub fn sWaitHead(): i64 {
+// Tasks blocked on I/O, indexed by fd: an array of fdWaitersCap chain heads, each
+// chain linked through tNext (a read waiter and a write waiter can share one fd).
+// Null until the first wait; see fdWaitersPush.
+fn sFdWaiters(): i64 {
     return 48
 }
 
@@ -277,6 +280,10 @@ fn sStackCache(): i64 {
 
 fn sStackCacheLen(): i64 {
     return 96
+}
+
+fn sFdWaitersCap(): i64 {
+    return 104
 }
 
 // ── select waiter node (48 bytes) ──
@@ -1261,8 +1268,7 @@ pub fn schedulerWaitRead(fd: i32): void {
             eventRegisterRead(el, fd)
         }
 
-        // move task to waiting list
-        enqueueWait(sched, task)
+        fdWaitersPush(sched, task, fd)
 
         // Each context keeps its own record/replay engine depth (std/replay §addresses).
         let rrDepth3 = replayHeapDepthOut()
@@ -1299,7 +1305,7 @@ pub fn schedulerWaitWrite(fd: i32): void {
             var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
             eventRegisterWrite(el, fd)
         }
-        enqueueWait(sched, task)
+        fdWaitersPush(sched, task, fd)
 
         // Each context keeps its own record/replay engine depth (std/replay §addresses).
         let rrDepth4 = replayHeapDepthOut()
@@ -1714,7 +1720,7 @@ fn pollAndWake(sched: *u8, timeoutMs: i32): void {
 // tasks a foreign OS thread unparked. Recording writes each poll's outcome as one
 // token list, `f<fd>` per ready fd, `t<i>` per due timer node (its position in the
 // select list), `x<n>` for n cross-thread unparks, and acts on that same list; replay
-// reads the list instead of polling. Everything else (the run queue, the wait list,
+// reads the list instead of polling. Everything else (the run queue, the fd waiters,
 // the batch limit) follows from those, so tasks interleave as they did when recorded,
 // and a sleep under replay takes no time: its timer fires at the recorded poll.
 
@@ -1908,59 +1914,75 @@ fn dequeueRun(sched: *u8): *u8 {
     return head
 }
 
-fn enqueueWait(sched: *u8, task: *u8): void {
-    let head = rtReadPtr(sched, sWaitHead())
-    rtStorePtr(task, tNext(), head)
-    rtStorePtr(sched, sWaitHead(), task)
+// The table is indexed by fd number, which stays small because POSIX hands out the
+// lowest free fd, so it grows to about the highest fd ever waited on. On Windows the
+// ids are SOCKET handle values (std/event.windows.milo reports them as fds): kernel
+// handles, multiples of 4 in the low thousands in practice, so direct indexing costs
+// a few tens of KB there; fine while that arm is capped at 62 sockets anyway.
+// A negative fd can never be reported ready, so its task is left parked, unindexed.
+fn fdWaitersPush(sched: *u8, task: *u8, fd: i32): void {
+    if fd < 0 {
+        return
+    }
+    unsafe {
+        var table = rtReadPtr(sched, sFdWaiters())
+        let cap = rtLoadI64(sched, sFdWaitersCap())
+        let idx = fd as i64
+        if idx >= cap {
+            var newCap = cap
+            if newCap == 0 {
+                newCap = 64
+            }
+            while newCap <= idx {
+                newCap = newCap * 2
+            }
+            table = realloc(table, newCap * 8)
+            memset((table as i64 + cap * 8) as *u8, 0, (newCap - cap) * 8)
+            rtStorePtr(sched, sFdWaiters(), table)
+            rtStoreI64(sched, sFdWaitersCap(), newCap)
+        }
+        let slot = (table as i64 + idx * 8) as *u8
+        rtStorePtr(task, tNext(), rtReadPtr(slot, 0))
+        rtStorePtr(slot, 0, task)
+    }
 }
 
-// wake waiting tasks whose fd is in the ready set
+// Wake the tasks waiting on each ready fd. Order: ready-set order, and within one fd
+// the most recent waiter first; both are fixed by the ready set and the program, which
+// replay needs. Each chain is detached before it is walked, so a duplicate fd in the
+// set finds an empty slot. Fds past the table or with no waiter (the wakeup ident,
+// select arms) are ignored.
 fn wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
     unsafe {
-        var prev: *u8 = 0 as *u8
-        var cur = rtReadPtr(sched, sWaitHead())
-
-        while cur as i64 != 0 {
-            let next = rtReadPtr(cur, tNext())
-            let waitFd = rtReadI32(cur, tWaitFd())
-
-            var woken = false
-            var i: i32 = 0
-            while i < count {
-                if readyFds[i as i64] == waitFd {
-                    woken = true
-                }
-                i += 1
+        let table = rtReadPtr(sched, sFdWaiters())
+        let cap = rtLoadI64(sched, sFdWaitersCap())
+        var i: i32 = 0
+        while i < count {
+            let fd = readyFds[i as i64]
+            i += 1
+            if fd < 0 || fd as i64 >= cap {
+                continue
             }
-
-            if woken {
+            let slot = (table as i64 + (fd as i64) * 8) as *u8
+            var cur = rtReadPtr(slot, 0)
+            rtStorePtr(slot, 0, 0 as *u8)
+            while cur as i64 != 0 {
+                let next = rtReadPtr(cur, tNext())
                 // deregister from event loop using correct filter
                 var isWrite: u8 = 0
                 memcpy((isWrite.addrOf()) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
                 if !replayActive() {
                     var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
-                    eventDeregister(el, waitFd, isWrite != 0)
+                    eventDeregister(el, fd, isWrite != 0)
                 }
-                // reset waitWrite flag
                 var zero: u8 = 0
                 memcpy((cur as i64 + tWaitWrite()) as *u8, (zero.addrOf()) as *u8, 1)
 
-                // remove from waiting list
-                if prev as i64 == 0 {
-                    rtStorePtr(sched, sWaitHead(), next)
-                } else {
-                    rtStorePtr(prev, tNext(), next)
-                }
-
-                // move to run queue
                 rtWriteI32(cur, tState(), taskReady())
                 rtWriteI32(cur, tWaitFd(), -1)
                 enqueueRun(sched, cur)
-            } else {
-                prev = cur
+                cur = next
             }
-
-            cur = next
         }
     }
 }
@@ -2183,7 +2205,8 @@ pub fn schedulerRunToCompletion(): void {
 }
 
 // Release the scheduler itself: its context, its event loop (and the wakeup fd
-// registered on it), the cross-thread transfer mutex, and the idle cached stacks.
+// registered on it), the cross-thread transfer mutex, the idle cached stacks, and the
+// fd waiter table.
 //
 // Exactly one caller runs this per program. For a `main` that is not a green
 // task that is schedulerRunToCompletion, as it always was. For one that is, the
@@ -2205,7 +2228,10 @@ fn schedulerShutdown(): void {
                 free(rtReadPtr(slot, 8))
             }
         }
-        unsafe { free(cache) }
+        unsafe {
+            free(cache)
+            free(rtReadPtr(sched, sFdWaiters()))
+        }
         var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
         eventLoopClose(el)

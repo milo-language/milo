@@ -706,14 +706,6 @@ pub fn ssParked(): i64
 pub fn ssTask(): i64
 ```
 
-#### `sWaitHead`
-
-```milo
-pub fn sWaitHead(): i64
-```
-
-waiting list head (tasks blocked on I/O)
-
 #### `sWakeupId`
 
 ```milo

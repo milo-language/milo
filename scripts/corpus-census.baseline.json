@@ -1,9 +1,9 @@
 {
-  "(outside std)": 52,
+  "(outside std)": 53,
   "std": 202,
   "examples": 15,
   "src-milo": 13,
-  "fixtures": 22,
+  "fixtures": 23,
   "aws": 0,
   "dapweb": 0,
   "emulators": 0,
