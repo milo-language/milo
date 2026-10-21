@@ -18,7 +18,7 @@
 // the migrations may live in a file checked later than the query. The schema database is
 // memoized per process by its migration text, and each prepare by (schema, sql), so the LSP
 // and `milo check` re-check without rebuilding either.
-import { Database } from "bun:sqlite";
+import { Database, type Statement } from "bun:sqlite";
 import { existsSync, readFileSync, statSync } from "fs";
 import { dirname, resolve } from "path";
 import type { Attribute, Expr, Span } from "./ast";
@@ -240,7 +240,7 @@ export class SqlChecker {
     let r: PrepareResult;
     try {
       const st = db.prepare(sql);
-      r = { ok: true, params: st.paramsCount, columns: [...st.columnNames], declTypes: [...((st as unknown as { declaredTypes?: (string | null)[] }).declaredTypes ?? [])] };
+      r = { ok: true, params: st.paramsCount, columns: [...st.columnNames], declTypes: declaredTypesOf(db, st) };
       st.finalize();
     } catch (e) {
       r = { ok: false, error: sqliteMessage(e) };
@@ -318,6 +318,27 @@ function embeddedText(e: Expr & { kind: "Call" }): string | null {
   const path = resolve(dirname(e.span.file), arg.value);
   if (!existsSync(path) || statSync(path).isDirectory()) return null;
   return readFileSync(path, "utf-8");
+}
+
+// Bun 1.4 refuses declaredTypes until the statement has run once (1.3 read sqlite's
+// decltype straight after prepare). So run it, every parameter NULL, inside a savepoint
+// rolled back at once: the schema db is cached and shared by every later site. A run that
+// fails (a NULL into NOT NULL) leaves the types unknown, and checkRow skips unknown types.
+function declaredTypesOf(db: Database, st: Statement): (string | null)[] {
+  const read = () => [...((st as unknown as { declaredTypes?: (string | null)[] }).declaredTypes ?? [])];
+  try {
+    return read();
+  } catch {}
+  db.run("SAVEPOINT milo_decltypes");
+  try {
+    st.get(...(Array(st.paramsCount).fill(null) as null[]));
+    return read();
+  } catch {
+    return [];
+  } finally {
+    db.run("ROLLBACK TO milo_decltypes");
+    db.run("RELEASE milo_decltypes");
+  }
 }
 
 function sqliteMessage(e: unknown): string {

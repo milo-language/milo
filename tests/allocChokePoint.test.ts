@@ -23,8 +23,8 @@ const isHelperDecl = (l: string) => /^\s+(?:private |public )?emitAllocBytes\(/.
 // `define` emitted as a string array, so there is no `lines` array to hand the helper.
 // `len * 6 + 1` for a JSON-escaped string can only overflow past 2^60 bytes of input, which
 // is not reachable — but it is an exception, so it is named here rather than tolerated by a
-// loose pattern.
-const ALLOWED_RAW_IR = ["%buf = call ptr @malloc(i64 %cap)"];
+// loose pattern. Spelled as the typed builder call since 779d0e03 moved the template onto it.
+const ALLOWED_RAW_IR = [`b.call(Ty.ptr, "@malloc", [cap], R("buf", Ty.ptr))`];
 // Both spellings of each half: IR still emitted as text, and the same instruction through the
 // typed builder (src/ir.ts). Matching only the text form let every migrated site drop out of
 // the scan while the test stayed green.
