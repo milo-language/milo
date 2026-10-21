@@ -425,6 +425,12 @@ pub fn uctxLinkOffset(): i64 {
     return 8
 }
 
+// makecontext runs the context on the stack the caller supplies and keeps all its state
+// in the context and the top of that stack, so std/runtime may reuse both.
+pub fn uctxOnCallerStack(): bool {
+    return true
+}
+
 // ── mmap constants ──
 
 pub fn protRead(): i32 {

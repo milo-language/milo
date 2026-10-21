@@ -344,6 +344,17 @@ pub fn replayHeapMap(len: i64): *u8
 Page-granular memory (a green task's stack) from the fixed heap, or null when the
 heap is off or this is the engine's own: the caller then maps it itself.
 
+#### `replayHeapOff`
+
+```milo
+pub fn replayHeapOff(): bool
+```
+
+True when no fixed heap is running, so replayHeapMap would hand out nothing and a green
+task's stack may come from anywhere (std/runtime's stack cache). Named "Heap" so a
+caller is not counted as engine code (src/lower.ts isReplayEngine), which would raise
+rrDepth around it and send its allocations to libc.
+
 #### `replayHeapRealloc`
 
 ```milo

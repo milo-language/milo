@@ -465,6 +465,11 @@ pub fn uctxLinkOffset(): i64 {
     return 32
 }
 
+// False: there are no stackful coroutines here (see getcontext).
+pub fn uctxOnCallerStack(): bool {
+    return false
+}
+
 // ── mmap constants ──
 // The flag/prot values below are inert on this target (nothing calls a real mmap),
 // kept only so the two callers that reference them (std/mem's virtual-alloc path,

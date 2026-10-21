@@ -1,6 +1,6 @@
 // std/runtime — green thread scheduler using ucontext for stackful coroutines
 //
-// Task layout (128 bytes, 8-byte aligned):
+// Task layout (152 bytes, 8-byte aligned):
 //   0: context (*u8)      8: stack (*u8)       16: totalStackSize (i64)
 //  24: state (i32)        28: waitFd (i32)      32: waitWrite (u8) + 7 pad
 //  40: next (*u8)         48: closureFn (*u8)   56: closureEnv (*u8)
@@ -11,16 +11,19 @@
 //       taskOnPanicReply); isMain marks the task `main` runs on (schedulerRunMainRaw)
 // 112: panicNote (*u8)  120: panicNoteLen (i64) — what the task was doing, logged with
 //       a panic (see taskOnPanicNote)
+// 128: scope (*u8)  136: scopesOpen (i64)  144: stackCached (i64) — 1 when stack and
+//       context came from, and go back to, the scheduler's stack cache (see stackCacheCap)
 //  80: joinCell (*u8) — the shared done-signal cell (see taskCellNew), allocated
 //       at spawn and set to done=1 on completion. It lives OUTSIDE this struct so
 //       a late join can read "done" after the struct is reaped/freed — the Task
 //       handle holds the other ref. Joiner is still registered before completion
 //       (cooperative), but a late/double join is now memory-safe, not a UAF.
 //
-// Scheduler layout (80 bytes):
+// Scheduler layout (104 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
 //  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32)  44: wakeupId (i32)
 //  48: waitHead (*u8)     56: xferMutex (*u8)   64: xferHead (*u8)    72: selFdHead (*u8)
+//  80: drainWaiter (*u8)  88: stackCache (*u8)  96: stackCacheLen (i64)
 //
 // selFdHead: intrusive list of select fd/timer waiter Nodes (see below). Read
 // arms register their fd with the event loop; the poll loop claims the owning
@@ -33,7 +36,7 @@ from "std/os" import {
 }
 from "std/platform" import {
     getcontext, makecontext, swapcontext, write, close,
-    uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset,
+    uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset, uctxOnCallerStack,
     protRead, protWrite, protNone, mapPrivate, mapAnon,
     pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_cond_destroy, pthread_create, pthread_detach,
     mmap, munmap, mprotect
@@ -48,7 +51,7 @@ from "std/time" import {
     unrecordedEpochMillis
 }
 from "std/replay" import {
-    replayOff, replayActive, replaySchedPut, replaySchedTake, replayThreadSpawn, replayThreadStart, replayThreadExit, replayHeapMap, replayHeapUnmap, replayHeapDepthOut, replayHeapDepthIn
+    replayOff, replayActive, replayHeapOff, replaySchedPut, replaySchedTake, replayThreadSpawn, replayThreadStart, replayThreadExit, replayHeapMap, replayHeapUnmap, replayHeapDepthOut, replayHeapDepthIn
 }
 
 // ── constants ──
@@ -83,6 +86,30 @@ pub fn guardPageSize(): i64 {
     return 4096
 }
 
+// How many idle default-size stacks a scheduler keeps for reuse. A server spawns a
+// task per connection, and a fresh stack costs an mmap, an mprotect, a munmap and the
+// faults on its new pages: about a fifth of a /hello request's CPU on darwin. The price
+// is resident memory: an idle cached stack keeps the pages earlier tasks touched (64 KB
+// or so for a typical task, see makecontextWindow), so a burst of cap concurrent tasks
+// leaves a few MB resident per scheduler. madvise on reap would hand that back, but
+// darwin needs MADV_FREE_REUSABLE plus MADV_FREE_REUSE on reuse to move the footprint,
+// and that pair cost a third of /hello c=64 throughput.
+fn stackCacheCap(): i64 {
+    return 64
+}
+
+// The top of a fresh stack as makecontext left it. glibc stores its start trampoline's
+// state there (darwin keeps everything in the context), and a reused stack restores it
+// with the context instead of calling makecontext again.
+fn stackTopSaveBytes(): i64 {
+    return 256
+}
+
+// What spawnRaw lets makecontext see of a new stack (see there).
+fn makecontextWindow(): i64 {
+    return 65536
+}
+
 // The main task's stack. `main` keeps running the same code once it becomes a
 // green task, and the OS main thread it used to run on gets 8 MB on darwin and
 // linux — so the 1 MB default green stack would fault a recursive-descent
@@ -92,6 +119,10 @@ pub fn mainTaskStackSize(): i64 {
 }
 
 pub fn taskStructSize(): i64 {
+    return 152
+}
+
+fn tStackCached(): i64 {
     return 144
 }
 
@@ -131,7 +162,7 @@ fn tPanicMsgLen(): i64 {
 }
 
 pub fn schedStructSize(): i64 {
-    return 88
+    return 104
 }
 
 // task field offsets
@@ -236,6 +267,16 @@ pub fn sSelFdHead(): i64 {
 // not an event the poll can observe.
 pub fn sDrainWaiter(): i64 {
     return 80
+}
+
+// Idle default-size stacks: an array of stackCacheCap() (stack, context) pointer pairs,
+// touched only by the scheduler's own thread (spawn and reap both run there).
+fn sStackCache(): i64 {
+    return 88
+}
+
+fn sStackCacheLen(): i64 {
+    return 96
 }
 
 // ── select waiter node (48 bytes) ──
@@ -473,6 +514,8 @@ pub fn schedulerEnsureInit(): void {
         pthread_mutex_init(xmtx, 0 as *u8)
         rtStorePtr(sched, sXferMutex(), xmtx)
 
+        rtStorePtr(sched, sStackCache(), malloc(stackCacheCap() * 16))
+
         setSched(sched)
     }
 }
@@ -676,29 +719,72 @@ impl Task {
             rtStorePtr(task, tJoinCell(), cell)
 
             let total = guardPageSize() + stackBytes
-            // Under record/replay a stack comes from the fixed-address heap, so a local's
-            // address in a task replays too (std/replay §addresses).
-            var stackMem = replayHeapMap(total)
-            if stackMem as i64 == 0 {
-                stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0)
+            // Record/replay bypasses the cache: its stacks must come from the replay heap.
+            // Not replayOff(): calling into std/replay would make this an engine fn.
+            let cacheable = stackBytes == defaultStackSize() && replayHeapOff() && uctxOnCallerStack()
+            let cached = rtLoadI64(sched, sStackCacheLen())
+            var stackMem: *u8 = 0 as *u8
+            var ctx: *u8 = 0 as *u8
+            if cacheable && cached > 0 {
+                // A cached context is followed by its pristine copy (as makecontext left
+                // it, linked to this scheduler) and the saved stack top; restoring both
+                // replaces getcontext + makecontext + mprotect, and the guard page is
+                // still PROT_NONE from the first spawn.
+                let slot = (rtReadPtr(sched, sStackCache()) as i64 + (cached - 1) * 16) as *u8
+                stackMem = rtReadPtr(slot, 0)
+                ctx = rtReadPtr(slot, 8)
+                rtStoreI64(sched, sStackCacheLen(), cached - 1)
+                memcpy(ctx, (ctx as i64 + uctxSize()) as *u8, uctxSize())
+                let top = (stackMem as i64 + total - stackTopSaveBytes()) as *u8
+                memcpy(top, (ctx as i64 + 2 * uctxSize()) as *u8, stackTopSaveBytes())
+            } else {
+                // Under record/replay a stack comes from the fixed-address heap, so a local's
+                // address in a task replays too (std/replay §addresses).
+                stackMem = replayHeapMap(total)
+                if stackMem as i64 == 0 {
+                    stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0)
+                }
+
+                var ctxBytes = uctxSize()
+                if cacheable {
+                    ctxBytes = 2 * uctxSize() + stackTopSaveBytes()
+                }
+                ctx = malloc(ctxBytes)
+                memset(ctx, 0, uctxSize())
+                getcontext(ctx)
+
+                let usable = (stackMem as i64 + guardPageSize()) as *u8
+                // darwin's makecontext zeroes all of [ss_sp, ss_sp + ss_size), faulting in
+                // every page of a stack most tasks barely touch (1 MB per spawn, 8 MB for
+                // main). The entry sp comes from the top either way, so hand it only the top
+                // window, then put the real bounds back for anything that reads them later.
+                var window = stackBytes
+                if uctxOnCallerStack() && window > makecontextWindow() {
+                    window = makecontextWindow()
+                }
+                rtStorePtr(ctx, uctxStackPtrOffset(), (usable as i64 + stackBytes - window) as *u8)
+                rtStoreI64(ctx, uctxStackSizeOffset(), window)
+
+                let schedCtx = rtReadPtr(sched, sCtx())
+                rtStorePtr(ctx, uctxLinkOffset(), schedCtx)
+
+                makecontext(ctx, taskEntry as *u8, 0)
+                rtStorePtr(ctx, uctxStackPtrOffset(), usable)
+                rtStoreI64(ctx, uctxStackSizeOffset(), stackBytes)
+
+                mprotect(stackMem, guardPageSize(), protNone())
+
+                if cacheable {
+                    memcpy((ctx as i64 + uctxSize()) as *u8, ctx, uctxSize())
+                    let top = (stackMem as i64 + total - stackTopSaveBytes()) as *u8
+                    memcpy((ctx as i64 + 2 * uctxSize()) as *u8, top, stackTopSaveBytes())
+                }
             }
             rtStorePtr(task, tStack(), stackMem)
             rtStoreI64(task, tStackSize(), total)
-
-            let ctx = malloc(uctxSize())
-            memset(ctx, 0, uctxSize())
-            getcontext(ctx)
-
-            let usable = (stackMem as i64 + guardPageSize()) as *u8
-            rtStorePtr(ctx, uctxStackPtrOffset(), usable)
-            rtStoreI64(ctx, uctxStackSizeOffset(), stackBytes)
-
-            let schedCtx = rtReadPtr(sched, sCtx())
-            rtStorePtr(ctx, uctxLinkOffset(), schedCtx)
-
-            makecontext(ctx, taskEntry as *u8, 0)
-
-            mprotect(stackMem, guardPageSize(), protNone())
+            if cacheable {
+                rtStoreI64(task, tStackCached(), 1)
+            }
 
             rtStorePtr(task, tCtx(), ctx)
 
@@ -1883,10 +1969,21 @@ fn reapTask(sched: *u8, task: *u8): void {
     let cell = rtReadPtr(task, tJoinCell())
     let scope = rtReadPtr(task, tScope())
     unsafe {
-        if !replayHeapUnmap(rtReadPtr(task, tStack()), rtLoadI64(task, tStackSize())) {
-            munmap(rtReadPtr(task, tStack()), rtLoadI64(task, tStackSize()))
+        let stack = rtReadPtr(task, tStack())
+        let cached = rtLoadI64(sched, sStackCacheLen())
+        // The pristine context links to the home scheduler, so only it may reuse the stack.
+        let home = rtReadPtr(task, tSched()) as i64 == sched as i64
+        if rtLoadI64(task, tStackCached()) != 0 && home && cached < stackCacheCap() {
+            let slot = (rtReadPtr(sched, sStackCache()) as i64 + cached * 16) as *u8
+            rtStorePtr(slot, 0, stack)
+            rtStorePtr(slot, 8, rtReadPtr(task, tCtx()))
+            rtStoreI64(sched, sStackCacheLen(), cached + 1)
+        } else {
+            if !replayHeapUnmap(stack, rtLoadI64(task, tStackSize())) {
+                munmap(stack, rtLoadI64(task, tStackSize()))
+            }
+            free(rtReadPtr(task, tCtx()))
         }
-        free(rtReadPtr(task, tCtx()))
     }
     // Release the task's closure environment: slot 0 holds its drop glue, which drops
     // every capture the body did not consume and frees the block. Null glue means a
@@ -2082,7 +2179,7 @@ pub fn schedulerRunToCompletion(): void {
 }
 
 // Release the scheduler itself: its context, its event loop (and the wakeup fd
-// registered on it), and the cross-thread transfer mutex.
+// registered on it), the cross-thread transfer mutex, and the idle cached stacks.
 //
 // Exactly one caller runs this per program. For a `main` that is not a green
 // task that is schedulerRunToCompletion, as it always was. For one that is, the
@@ -2096,6 +2193,15 @@ fn schedulerShutdown(): void {
             return
         }
         unsafe { free(rtReadPtr(sched, sCtx())) }
+        let cache = rtReadPtr(sched, sStackCache())
+        for i in 0..rtLoadI64(sched, sStackCacheLen()) {
+            let slot = (cache as i64 + i * 16) as *u8
+            unsafe {
+                munmap(rtReadPtr(slot, 0), guardPageSize() + defaultStackSize())
+                free(rtReadPtr(slot, 8))
+            }
+        }
+        unsafe { free(cache) }
         var el = eventLoopFromFd(rtReadI32(sched, sElFd()))
         eventLoopCloseWakeup(el, rtReadI32(sched, sWakeupId()))
         eventLoopClose(el)

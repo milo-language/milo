@@ -488,6 +488,12 @@ pub fn uctxLinkOffset(): i64 {
     return 24
 }
 
+// False: makecontext creates a fiber with a stack of its own, so the context is single
+// use and the stack std/runtime maps is never run on.
+pub fn uctxOnCallerStack(): bool {
+    return false
+}
+
 // ── mmap family over VirtualAlloc ──
 //
 // Only the anonymous-private mapping std/runtime and std/mem actually use is supported:
