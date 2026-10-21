@@ -1,3 +1,4 @@
+// @skip-os: win32
 // @derive(Table): insert assigns the id, update by primary key, get, delete, and columns()
 // folding into checked SQL; every generated statement is checked against the migrations.
 // @expect: true

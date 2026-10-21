@@ -1,3 +1,4 @@
+// @skip-os: win32
 // Checked SQL: constants, $"..." over module constants, immutable lets, an @sql wrapper,
 // Row fetches checked against the result columns, uncheckedSql for run-time SQL, and a
 // TEMP table declared with dbExecDdl.

@@ -1,3 +1,4 @@
+// @skip-os: win32
 // std/migrate: ordered migrations with a checksummed history, idempotent re-runs, per-migration
 // rollback, refusal on edited/unknown/out-of-order history, adoption of a pre-migration database.
 // @expect: fresh: 0 -> 3 applied [1, 2, 3] adopted false
