@@ -240,8 +240,9 @@ function adviceItems(ctx) {
       rank: 2,
       symbol: "showers",
       text:
-        "Rain " + from + " to " + to + ", " + wet.peak +
-        "% at its worst. Take the umbrella.",
+        // wet.peak is the highest hourly chance of rain in the run, not an amount.
+        "Rain likely " + from + " to " + to + ", up to a " + wet.peak +
+        "% chance. Take the umbrella.",
     });
   }
 

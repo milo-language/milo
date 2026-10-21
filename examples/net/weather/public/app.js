@@ -1662,9 +1662,12 @@ var ALERT_SEVERITY_RANK = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknow
 function loadAlerts(lat, lon) {
   var seq = ++alertsSeq;
   alertsData = null;
-  jsonOrNull(up("nws", "/alerts/active?point=" + lat + "," + lon)).then(function (d) {
+  // NWS sends tests and exercises down the same feed: on 2026-10-21 a "TEST
+  // Tsunami Warning" (status Test, severity Extreme) showed here for the Bay Area.
+  // Only status Actual is shown; the query asks for it and the filter re-checks.
+  jsonOrNull(up("nws", "/alerts/active?status=actual&point=" + lat + "," + lon)).then(function (d) {
     if (seq !== alertsSeq) return;
-    alertsData = d && d.features ? d.features : [];
+    alertsData = d && d.features ? d.features.filter(function (f) { return f.properties && f.properties.status === "Actual"; }) : [];
     renderAlerts();
   });
 }
