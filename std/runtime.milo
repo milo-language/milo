@@ -564,6 +564,10 @@ fn onRuntimePanic(): void {
             close(fdPlus - 1)
         }
         freePanicReply(task)
+        // The panicking frames are abandoned, not returned through, so their ASan redzones
+        // stay poisoned in the stack's shadow; a cached stack would hand them to the next
+        // task. Unmap this one instead (panics are rare, so the cache loses nothing).
+        rtStoreI64(task, tStackCached(), 0)
         rtWriteI32(task, tState(), taskDone())
         swapcontext(rtReadPtr(task, tCtx()), rtReadPtr(sched, sCtx()))
     }
