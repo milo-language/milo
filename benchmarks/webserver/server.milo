@@ -1,0 +1,84 @@
+// Fixture server for benchmarks/webserver/bench.ts: one cheap route, one CPU route, one SQLite route.
+from "std/http" import { Context, Response, Router, ServeOptions, serveRouterWith }
+from "std/sqlite" import { Database, dbOpen, dbExec, dbQuery, dbNext, dbBindInt64, dbColumnInt64, dbColumnFloat, uncheckedSql }
+from "std/env" import { Env }
+from "std/fs" import { pathExists, removeFile }
+from "std/strconv" import { parseInt }
+
+// Module scope only takes constant initializers, so the handle rides in a one-element Vec.
+var dbs: Vec<Database> = []
+var counter: i64 = 0
+
+fn fib(n: i64): i64 {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn helloHandler(ctx: &mut Context): Response {
+    return ctx.text("hello")
+}
+
+fn fibHandler(ctx: &mut Context): Response {
+    let n = parseInt(ctx.param("n") ?? "") ?? 20
+    return ctx.text(fib(n).toString())
+}
+
+// The parameter varies per request so the query is never a repeat of the last one.
+fn dbHandler(ctx: &mut Context): Response {
+    counter += 1
+    let Ok(st) = dbQuery(dbs[0], "SELECT grp, count(*), sum(val) FROM t WHERE grp % 7 = ? GROUP BY grp") else {
+        ctx.setStatus(500)
+        return ctx.text("query failed")
+    }
+    let _ = dbBindInt64(st, 1, counter % 7)
+    var out: string = ""
+    while dbNext(st) ?? false {
+        out.pushStr(dbColumnInt64(st, 0).toString())
+        out.pushStr(" ")
+        out.pushStr(dbColumnInt64(st, 1).toString())
+        out.pushStr(" ")
+        out.pushStr(dbColumnFloat(st, 2).toString())
+        out.pushStr("\n")
+    }
+    return ctx.text(out)
+}
+
+fn setupDb(path: string): bool {
+    if pathExists(path) {
+        let _ = removeFile(path)
+    }
+    let Ok(db) = dbOpen(path) else {
+        return false
+    }
+    let _ = dbExec(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, grp INTEGER NOT NULL, val REAL NOT NULL)")
+    let _ = dbExec(db, "BEGIN")
+    var i: i64 = 0
+    while i < 50000 {
+        let _ = dbExec(db, "INSERT INTO t (grp, val) VALUES (" + (i % 100).toString() + ", " + ((i * 37) % 1000).toString() + ".5)")
+        i += 1
+    }
+    let _ = dbExec(db, "COMMIT")
+    dbs.push(db)
+    return true
+}
+
+pub fn main(): i32 {
+    let port = parseInt(Env.getOr("PORT", "8090")) ?? 8090
+    if !setupDb(Env.getOr("DB_PATH", "/tmp/milo-bench.db")) {
+        print("db setup failed")
+        return 1
+    }
+    var r: Router = Router.new()
+    r.get("/hello", helloHandler)
+    r.get("/fib/:n", fibHandler)
+    r.get("/db", dbHandler)
+    let opts = ServeOptions {}
+    let result = serveRouterWith("127.0.0.1", port as u16, r, opts)
+    if let Err(msg) = result {
+        print("server error: ", msg)
+        return 1
+    }
+    return 0
+}
