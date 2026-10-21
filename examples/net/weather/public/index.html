@@ -291,17 +291,11 @@
 
     <!-- Search, saved places and the once-a-month actions live one tap away.
          The first screen answers "what is it doing outside"; the controls that
-         got you there cost 80px above that answer, so a 44px tile in the card's
-         top bar opens this sheet instead. The typeahead commits on Enter or a
+         got you there cost 80px above that answer, so the top bar's search pill
+         grows into this sheet instead. The typeahead commits on Enter or a
          tap, which is why there is no Search button. -->
     <div class="sheet-scrim" id="sheetScrim" hidden></div>
     <div class="sheet" id="placeSheet" role="dialog" aria-modal="true" aria-label="Places" hidden>
-      <div class="sheet-head">
-        <div class="sheet-title">Places</div>
-        <button class="sheet-close" id="sheetClose" type="button" aria-label="Close">
-          <svg class="ico" aria-hidden="true"><use href="#close"></use></svg>
-        </button>
-      </div>
       <div class="search-bar">
         <button class="locate-btn" id="locateBtn" type="button" aria-label="Use my location" title="Use my location">
           <svg class="ico" aria-hidden="true"><use href="#locate"></use></svg>
@@ -319,6 +313,9 @@
             aria-controls="suggestions"
           />
         </div>
+        <button class="sheet-close" id="sheetClose" type="button" aria-label="Close">
+          <svg class="ico" aria-hidden="true"><use href="#close"></use></svg>
+        </button>
       </div>
       <!-- Favorites and recents when the input is empty, typeahead results when
            it is not — showDefaultSuggestions and renderSuggestions both fill this. -->

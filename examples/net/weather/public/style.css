@@ -423,19 +423,6 @@ body.sheet-open {
   }
 }
 
-.sheet-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.sheet-title {
-  font-size: var(--fs-title);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
 .sheet-close {
   width: var(--tap-primary);
   height: var(--tap-primary);
@@ -500,6 +487,7 @@ body.sheet-open {
 .search-bar {
   display: flex;
   flex: none;
+  align-items: center;
   gap: var(--sp-2);
 }
 
@@ -780,8 +768,8 @@ body.sheet-open {
 
 /* ── Top bar ──
    Left-aligned: the city is a label for the answer under it, not a title over a
-   poster. Two 44px tiles on the right, both --panel pills so nothing bare sits
-   under the sun glow. */
+   poster. The star rides on the name it saves; the search pill on the right is
+   a --panel pill so it does not sit bare under the sun glow. */
 
 .top-bar {
   display: flex;
@@ -795,7 +783,14 @@ body.sheet-open {
   min-width: 0;
 }
 
+.top-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .top-city {
+  min-width: 0;
   cursor: pointer;
   font-size: var(--fs-title);
   font-weight: 600;
@@ -862,6 +857,23 @@ body.sheet-open {
 
 /* filled = saved; the star-filled symbol paints itself with currentColor, so
    the accent token is the only thing this rule has to say */
+/* 44px to tap, drawn as a bare star hugging the name: a panel tile there
+   would read as a second control competing with search. */
+.fav-btn {
+  flex: 0 0 auto;
+  width: var(--tap-primary);
+  height: var(--tap-primary);
+  margin: calc(var(--sp-2) * -1) 0;
+  display: grid;
+  place-items: center;
+  font-family: inherit;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-full);
+  cursor: pointer;
+}
+
 .fav-btn.on {
   color: var(--accent);
 }

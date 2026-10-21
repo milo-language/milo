@@ -2058,25 +2058,27 @@ function render(city, forecast, hourlyData, grid, timeZone) {
   };
 
   // A left-aligned bar, not a centred uppercase title with two corner pills:
-  // the city is a label for the answer below it, and the only control the first
-  // screen needs is the star. Search and share live in the place sheet.
+  // the city is a label for the answer below it. The star sits on the name it
+  // saves; the search pill on the right grows into the place sheet when tapped.
   var topBar =
     '<div class="top-bar">' +
     '<div class="top-place">' +
+    '<div class="top-name">' +
     '<div class="top-city" role="button" tabindex="0" title="Search or choose a place">' + esc(city) + "</div>" +
-    '<div class="top-updated">Updated ' + esc(fmtTimeInTz(new Date(), timeZone)) + "</div>" +
-    "</div>" +
-    // labelled, not icon-only: a bare magnifier beside the star read as
-    // decoration and people did not find search at all
-    '<button class="top-btn search-pill" id="placeBtn" type="button" ' +
-    'title="Search or choose a place" aria-label="Search or choose a place">' +
-    iconSvg("search") + "<span>Search</span></button>" +
-    '<button class="top-btn fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
+    '<button class="fav-btn' + (isFavorite(city) ? " on" : "") + '" id="favBtn" ' +
     'type="button" data-city="' + esc(city) + '" ' +
     'title="' + (isFavorite(city) ? "Remove from favorites" : "Save to favorites") + '" ' +
     'aria-pressed="' + (isFavorite(city) ? "true" : "false") + '">' +
     starSvg(isFavorite(city)) +
     "</button>" +
+    "</div>" +
+    '<div class="top-updated">Updated ' + esc(fmtTimeInTz(new Date(), timeZone)) + "</div>" +
+    "</div>" +
+    // labelled, not icon-only: a bare magnifier read as decoration and people
+    // did not find search at all
+    '<button class="top-btn search-pill" id="placeBtn" type="button" ' +
+    'title="Search or choose a place" aria-label="Search or choose a place">' +
+    iconSvg("search") + "<span>Search</span></button>" +
     "</div>";
 
   adviceCtx = {
@@ -2595,9 +2597,28 @@ function openSheet() {
     window.visualViewport.addEventListener("scroll", fitSheet);
   }
   showDefaultSuggestions();
+  growSheetFromPill();
   // The sheet is sized to the visual viewport, so the keyboard cannot cover
   // the list and it is safe to raise it on every device.
   zipInput.focus();
+}
+
+// On a phone the sheet opens out from a clip of the search pill's box, so the
+// pill reads as growing into the search row at the sheet's top. The wide
+// layout is a centred dialog with nothing to line up with.
+function growSheetFromPill() {
+  var pill = document.getElementById("placeBtn");
+  if (!pill || !sheetEl.animate) return;
+  if (window.matchMedia("(min-width: 640px), (prefers-reduced-motion: reduce)").matches) return;
+  var p = pill.getBoundingClientRect();
+  var s = sheetEl.getBoundingClientRect();
+  var from =
+    "inset(" + Math.max(0, p.top - s.top) + "px " + Math.max(0, s.right - p.right) + "px " +
+    Math.max(0, s.bottom - p.bottom) + "px " + Math.max(0, p.left - s.left) + "px round " + p.height / 2 + "px)";
+  sheetEl.animate([{ clipPath: from }, { clipPath: "inset(0 round 0px)" }], {
+    duration: 260,
+    easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  });
 }
 
 function closeSheet() {
