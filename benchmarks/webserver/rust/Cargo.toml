@@ -1,0 +1,19 @@
+[package]
+name = "bench-server-rust"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bench-server-rust"
+path = "src/main.rs"
+
+[dependencies]
+axum = "=0.8.4"
+tokio = { version = "=1.47.1", features = ["rt", "rt-multi-thread", "macros", "net"] }
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -135,3 +135,6 @@ examples/games/apsis/bodies/*.png
 a.out
 m.txt
 benchmarks/shard/shard_balance
+
+# rust comparison server build output
+benchmarks/webserver/rust/target/

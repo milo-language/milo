@@ -12,8 +12,19 @@ const opt = (name: string) => {
 };
 const scale = Number(opt("--scale") ?? 1);
 const jsonPath = opt("--json");
-const port = Number(process.env.PORT ?? 8090);
-const base = `http://127.0.0.1:${port}`;
+const basePort = Number(process.env.PORT ?? 8090);
+const keepalive = argv.includes("--keepalive");
+const serverOpt = opt("--server") ?? "all";
+type Kind = "milo" | "rust1" | "rustmt";
+const ALL: Kind[] = ["milo", "rust1", "rustmt"];
+if (serverOpt !== "all" && !ALL.includes(serverOpt as Kind)) {
+  console.error("--server must be milo|rust1|rustmt|all");
+  process.exit(1);
+}
+const kinds: Kind[] = serverOpt === "all" ? ALL : [serverOpt as Kind];
+// Each server gets its own port so a lingering socket from the previous one cannot interfere.
+const portOf = (k: Kind) => basePort + ALL.indexOf(k);
+let base = "";
 
 const oha = Bun.which("oha");
 if (!oha) {
@@ -60,7 +71,9 @@ async function drainPorts() {
 }
 
 function ohaArgs(path: string, c: number, n: number) {
-  return [oha!, "--no-tui", "--output-format", "json", "-n", String(n), "-c", String(c), base + path];
+  // std/http always answers Connection: close, so by default no server gets connection reuse.
+  const ka = keepalive ? [] : ["--disable-keepalive"];
+  return [oha!, "--no-tui", "--output-format", "json", ...ka, "-n", String(n), "-c", String(c), base + path];
 }
 
 function toRow(name: string, out: string): Row {
@@ -93,22 +106,41 @@ async function runOha(name: string, path: string, c: number, n: number): Promise
 const HOL_FIB = 32;
 const cnt = (n: number) => Math.max(1, Math.round(n * scale));
 
-async function main() {
-  const bin = join(tmp, "bench-server");
-  console.log("building server...");
-  const b = spawnSync([join(root, "milo"), "build", join(root, "benchmarks/webserver/server.milo"), "-o", bin, "--release"], { cwd: root, stdout: "inherit", stderr: "inherit" });
-  if (b.exitCode !== 0) throw new Error("server build failed");
+interface Result {
+  rows: Row[];
+  hol: Row;
+  baseP99: number;
+}
 
-  server = spawn([bin], {
-    env: { ...process.env, PORT: String(port), DB_PATH: join(tmp, "bench.db") },
-    stdout: "ignore",
-    stderr: "inherit",
-  });
+function buildMilo(): string {
+  const bin = join(tmp, "bench-server");
+  console.log("building milo server...");
+  const b = spawnSync([join(root, "milo"), "build", join(root, "benchmarks/webserver/server.milo"), "-o", bin, "--release"], { cwd: root, stdout: "inherit", stderr: "inherit" });
+  if (b.exitCode !== 0) throw new Error("milo server build failed");
+  return bin;
+}
+
+function buildRust(): string {
+  if (!Bun.which("cargo")) throw new Error("cargo not found on PATH; install Rust (https://rustup.rs) to run the rust servers");
+  const manifest = join(root, "benchmarks/webserver/rust/Cargo.toml");
+  const b = spawnSync(["cargo", "build", "--release", "--manifest-path", manifest], { cwd: root });
+  if (b.exitCode !== 0) throw new Error("rust server build failed:\n" + b.stderr.toString());
+  return join(root, "benchmarks/webserver/rust/target/release/bench-server-rust");
+}
+
+async function runServer(kind: Kind, bin: string): Promise<Result> {
+  const port = portOf(kind);
+  base = `http://127.0.0.1:${port}`;
+  console.log(`\n== ${kind} (port ${port}) ==`);
+  const env: Record<string, string | undefined> = { ...process.env, PORT: String(port), DB_PATH: join(tmp, `${kind}.db`) };
+  if (kind === "rust1") env.RUST_THREADS = "1";
+  if (kind === "rustmt") env.RUST_THREADS = "0";
+  server = spawn([bin], { env, stdout: "ignore", stderr: "inherit" });
   let up = false;
   for (let i = 0; i < 100 && !up; i++) {
     try { up = (await fetch(base + "/hello")).ok; } catch { await Bun.sleep(200); }
   }
-  if (!up) throw new Error("server did not answer /hello");
+  if (!up) throw new Error(`${kind} server did not answer /hello`);
 
   const rows: Row[] = [];
   const add = (r: Row) => { rows.push(r); console.log(`  ${r.name}: ${r.rps.toFixed(0)} rps, p99 ${r.p99.toFixed(2)} ms`); };
@@ -135,27 +167,61 @@ async function main() {
   bg = undefined;
   add(hol);
 
-  const base99 = rows.find((r) => r.name.startsWith("hol-baseline"))!.p99;
-  const factor = hol.p99 / base99;
+  server.kill(9);
+  await server.exited;
+  server = undefined;
+  return { rows, hol, baseP99: rows.find((r) => r.name.startsWith("hol-baseline"))!.p99 };
+}
 
-  const w = Math.max(...rows.map((r) => r.name.length));
-  const f = (x: number) => x.toFixed(2).padStart(9);
-  console.log("\n" + "scenario".padEnd(w) + "       rps    p50 ms    p99 ms    max ms  non2xx  errors");
-  for (const r of rows) {
-    console.log(r.name.padEnd(w) + r.rps.toFixed(0).padStart(10) + f(r.p50) + f(r.p99) + f(r.max) + String(r.non2xx).padStart(8) + String(r.errors).padStart(8));
+async function main() {
+  console.log(`keep-alive: ${keepalive ? "ON (oha reuses connections; milo still closes each one)" : "OFF (oha --disable-keepalive for all servers)"}`);
+  const bins: Partial<Record<Kind, string>> = {};
+  if (kinds.includes("milo")) bins.milo = buildMilo();
+  if (kinds.some((k) => k !== "milo")) {
+    const r = buildRust();
+    for (const k of kinds) if (k !== "milo") bins[k] = r;
   }
-  console.log(`\nhol p99 = ${hol.p99.toFixed(2)} ms (${factor.toFixed(1)}x baseline)`);
+
+  const results: Partial<Record<Kind, Result>> = {};
+  for (const k of kinds) results[k] = await runServer(k, bins[k]!);
+
+  const f = (x: number) => x.toFixed(2).padStart(9);
+  for (const k of kinds) {
+    const { rows, hol, baseP99 } = results[k]!;
+    const w = Math.max(...rows.map((r) => r.name.length));
+    console.log(`\n[${k}]\n` + "scenario".padEnd(w) + "       rps    p50 ms    p99 ms    max ms  non2xx  errors");
+    for (const r of rows) {
+      console.log(r.name.padEnd(w) + r.rps.toFixed(0).padStart(10) + f(r.p50) + f(r.p99) + f(r.max) + String(r.non2xx).padStart(8) + String(r.errors).padStart(8));
+    }
+    console.log(`hol p99 = ${hol.p99.toFixed(2)} ms (${(hol.p99 / baseP99).toFixed(1)}x baseline)`);
+  }
+
+  if (kinds.length > 1) {
+    const first = results[kinds[0]]!.rows;
+    const w = Math.max(...first.map((r) => r.name.length));
+    const cell = (k: Kind, i: number, fn: (r: Row) => string) => (results[k] ? fn(results[k]!.rows[i]) : "-").padStart(12);
+    console.log("\ncomparison\n" + "scenario".padEnd(w) + ALL.map((k) => (k + " rps").padStart(12)).join("") + ALL.map((k) => (k + " p99").padStart(12)).join(""));
+    first.forEach((r, i) => {
+      console.log(r.name.padEnd(w) + ALL.map((k) => cell(k, i, (x) => x.rps.toFixed(0))).join("") + ALL.map((k) => cell(k, i, (x) => x.p99.toFixed(2))).join(""));
+    });
+    console.log("");
+    for (const k of kinds) console.log(`hol p99 [${k}] = ${results[k]!.hol.p99.toFixed(2)} ms (${(results[k]!.hol.p99 / results[k]!.baseP99).toFixed(1)}x baseline)`);
+  }
 
   if (jsonPath) {
     const sh = (cmd: string[]) => spawnSync(cmd, { cwd: root }).stdout.toString().trim();
+    const servers: Record<string, unknown> = {};
+    for (const k of kinds) {
+      const r = results[k]!;
+      servers[k] = { rows: r.rows, hol: { p99Ms: r.hol.p99, baselineP99Ms: r.baseP99, factor: r.hol.p99 / r.baseP99 } };
+    }
     writeFileSync(jsonPath, JSON.stringify({
-      meta: { sha: sh(["git", "rev-parse", "--short", "HEAD"]), uname: sh(["uname", "-sm"]), cpus: cpus().length, date: new Date().toISOString(), scale },
-      rows,
-      hol: { p99Ms: hol.p99, baselineP99Ms: base99, factor },
+      meta: { sha: sh(["git", "rev-parse", "--short", "HEAD"]), uname: sh(["uname", "-sm"]), cpus: cpus().length, date: new Date().toISOString(), scale, keepalive },
+      servers,
     }, null, 2));
     console.log(`wrote ${jsonPath}`);
   }
-  if (rows.some((r) => r.errors > 0 || r.non2xx > 0)) {
+  if (Object.values(results).some((r) => r!.rows.some((x) => x.errors > 0 || x.non2xx > 0))) {
     console.error("WARNING: errors or non-2xx responses seen");
     process.exitCode = 1;
   }
