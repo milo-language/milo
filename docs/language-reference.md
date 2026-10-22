@@ -5279,7 +5279,7 @@ let p = Promise<i64>.blocking(move (): i64 => { return crunch() })
 let r = p.await()!   // caller never blocks; the work runs in parallel
 ```
 
-The closure's captures must be `Send` (it crosses to another thread) — the compiler enforces this exactly as for the closures below. Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
+The closure's captures must be `Send` (it crosses to another thread) — the compiler enforces this exactly as for the closures below. The thread comes from an elastic process-wide pool (up to 512 workers, `MILO_BLOCKING_THREADS` to change it; an idle worker exits after 10 s), so a `thread_local var` may carry over between jobs; see [Concurrency](site/features/concurrency.md#promise-blocking-cpu-bound-work-and-blocking-ffi). Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
 
 Split work across cores by fanning `Promise.blocking` handles into `Promise.all` — no dedicated parallel construct needed:
 

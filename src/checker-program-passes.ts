@@ -1928,7 +1928,7 @@ export function checkGlobalBorrowInvalidation(host: ProgramPassHost, program: Pr
   // Literals handed straight to a std entry point that runs them exactly once. Nothing
   // can run them a second time, and scoped tasks sharing a binding are checkTaskScopes'
   // business, so their written captures are plain locals here.
-  const RUNS_ONCE = /^(Task\$scope|TaskScope\$spawn|Task\$spawn|Task\$spawnWithStack|spawnOsThreadDetached|Promise\b.*\$(run|blocking))$/;
+  const RUNS_ONCE = /^(Task\$scope|TaskScope\$spawn|Task\$spawn|Task\$spawnWithStack|spawnOsThreadDetached|blockingPoolSubmit|Promise\b.*\$(run|blocking))$/;
   const runsOnce = new Set<unknown>();
   const { writes, parks } = globalWriteSummary(host, program, view, mutableGlobals, seed);
   const heldAcrossPark = paramViewsAcrossPark(host, view, parks);

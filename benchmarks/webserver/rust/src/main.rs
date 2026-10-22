@@ -28,6 +28,11 @@ async fn fib_handler(Path(n): Path<i64>) -> String {
     fib(n).to_string()
 }
 
+// Same work on tokio's blocking pool, matching /fibb/:n in server.milo (Promise.blocking).
+async fn fib_blocking_handler(Path(n): Path<i64>) -> String {
+    tokio::task::spawn_blocking(move || fib(n)).await.unwrap().to_string()
+}
+
 async fn db_handler() -> String {
     let param = COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
     CONN.with(|c| {
@@ -78,6 +83,7 @@ fn main() {
         let app = Router::new()
             .route("/hello", get(hello))
             .route("/fib/{n}", get(fib_handler))
+            .route("/fibb/{n}", get(fib_blocking_handler))
             .route("/db", get(db_handler));
         let l = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap();
         axum::serve(l, app).await.unwrap();

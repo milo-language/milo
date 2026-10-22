@@ -661,6 +661,21 @@ pub fn pthread_cond_destroy(_cond: *u8): i32 {
     return 0
 }
 
+// Wait on `cond` (with `mutex` held) for at most `ms` milliseconds. 0 when woken, which
+// may be spurious; nonzero on timeout. SleepConditionVariableSRW returns 0 on timeout.
+// @replayHooked: only std/runtime's blocking pool calls it, and the pool runs only outside
+// record/replay (Promise.blocking keeps a thread per call there).
+@replayHooked
+@unsafe
+pub fn condWaitMillis(cond: *u8, mutex: *u8, ms: i64): i32 {
+    var r: i32 = 0
+    unsafe { r = SleepConditionVariableSRW(cond, mutex, ms as u32, 0) }
+    if r == 0 {
+        return 1
+    }
+    return 0
+}
+
 // pthread_t is a HANDLE here. The start routine's signature differs — pthread wants
 // void*(*)(void*) and Win32 wants DWORD(*)(LPVOID) — but on x64 both take their argument
 // in RCX and return in RAX, and the return value is discarded by every caller in std, so

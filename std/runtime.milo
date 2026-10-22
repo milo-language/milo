@@ -33,13 +33,13 @@
 @!replayHooked
 
 from "std/os" import {
-    malloc, free, realloc, memcpy, memset
+    malloc, free, realloc, memcpy, memset, getenv
 }
 from "std/platform" import {
     getcontext, makecontext, swapcontext, write, close,
     uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset, uctxOnCallerStack,
     protRead, protWrite, protNone, mapPrivate, mapAnon,
-    pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_cond_destroy, pthread_create, pthread_detach,
+    pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_cond_destroy, pthread_create, pthread_detach, condWaitMillis, usleep,
     mmap, munmap, mprotect
 }
 from "std/event" import {
@@ -953,29 +953,22 @@ impl TaskScope {
 // foreign-thread branch → xfer list + eventLoopNotify) is what lets a green
 // awaiter park and be woken from this foreign thread.
 
-// Set by osThreadTrampoline on the threads it starts.
+// Set on the threads spawnOsThreadDetached and the blocking pool start.
 thread_local var gOnWorkerThread: bool = false
 
-// True on a thread spawnOsThreadDetached started (a Promise.blocking worker), false on
-// the main thread. Such a thread ends after one closure and runs no destructor for its
-// thread_locals, so a per-thread cache (std/fetch's connection pool) skips it rather
-// than leak what it holds when the thread exits.
+// True on a thread spawnOsThreadDetached or the blocking pool started (a Promise.blocking
+// worker), false on the main thread. Such a thread exits without running a destructor for
+// its thread_locals (a pool worker does so once it has idled past blockingIdleMillis), so
+// a per-thread cache (std/fetch's connection pool) skips it rather than leak what it holds
+// when the thread exits.
 pub fn isWorkerThread(): bool {
     return gOnWorkerThread
 }
 
-// pthread entry: unpacks { fnPtr, envPtr, replay thread number }, runs the void
-// closure, frees both.
-fn osThreadTrampoline(arg: *u8): *u8 {
+// Run a `move () => void` closure handed over as its raw (fn, env) pair, then release the
+// environment.
+fn runDetachedClosure(fnPtr: *u8, envPtr: *u8): void {
     unsafe {
-        gOnWorkerThread = true
-        var fnPtr: *u8 = 0 as *u8
-        var envPtr: *u8 = 0 as *u8
-        var rrTid: i64 = 0
-        memcpy((fnPtr.addrOf()) as *u8, arg, 8)
-        memcpy((envPtr.addrOf()) as *u8, (arg as i64 + 8) as *u8, 8)
-        memcpy((rrTid.addrOf()) as *u8, (arg as i64 + 16) as *u8, 8)
-        replayThreadStart(rrTid)
         _callClosureVoid(fnPtr, envPtr)
         // A closure environment's first word is its drop glue, and that glue is the whole
         // destructor: it drops each capture still live and then frees the block. Calling it
@@ -1000,6 +993,22 @@ fn osThreadTrampoline(arg: *u8): *u8 {
         } else {
             free(envPtr)
         }
+    }
+}
+
+// pthread entry: unpacks { fnPtr, envPtr, replay thread number }, runs the void
+// closure, frees both.
+fn osThreadTrampoline(arg: *u8): *u8 {
+    unsafe {
+        gOnWorkerThread = true
+        var fnPtr: *u8 = 0 as *u8
+        var envPtr: *u8 = 0 as *u8
+        var rrTid: i64 = 0
+        memcpy((fnPtr.addrOf()) as *u8, arg, 8)
+        memcpy((envPtr.addrOf()) as *u8, (arg as i64 + 8) as *u8, 8)
+        memcpy((rrTid.addrOf()) as *u8, (arg as i64 + 16) as *u8, 8)
+        replayThreadStart(rrTid)
+        runDetachedClosure(fnPtr, envPtr)
         free(arg)
         replayThreadExit()
         return 0 as *u8
@@ -1034,6 +1043,290 @@ pub fn spawnOsThreadDetached(f: move () => void): void {
             forget(f)
         } else {
             free(packed)
+        }
+    }
+}
+
+// ── blocking pool (powers Promise.blocking outside record/replay) ──
+// A process-wide pool of OS threads, so a Promise.blocking job does not pay for a fresh
+// pthread and its stack. On an M4 a trivial job cost about 4 us through a thread of its own
+// and 0.7 us through the pool (benchmarks/runtime/blocking_pool.milo, batches of 64).
+// Elastic like tokio's spawn_blocking: a submit hands the job to a parked idle worker if
+// there is one, else starts a new worker, up to blockingThreadCap(); past the cap jobs
+// queue, FIFO. The elasticity is what keeps it correct, not a tuning knob: a job
+// may block on another blocking job (or on DNS, which std/net runs here too), and a small
+// fixed pool deadlocks on that where a thread per call cannot.
+//
+// Pool block, built on first use and never freed: a worker parked at process exit still
+// owns the mutex it waits on, the same reason schedulerRunMainRaw leaves the scheduler up.
+//   0: mutex (64)     64: cond (48)     112: head (*u8)     120: tail (*u8)
+// 128: idle (i64): parked workers no submit has claimed yet
+// 136: notified (i64): claims made (signals sent) that no parked worker has taken yet
+// 144: threads (i64): live workers     152: cap (i64)
+// 160: starting (i64): workers created that have not yet taken the mutex
+// Everything past the cond is read and written only under the mutex.
+// Job node (24 bytes): 0 next (*u8), 8 closure fn, 16 closure env.
+
+// The pool block's address once built; 0 before the first submit, 1 while one thread
+// builds it. Only ever touched through atomics.
+var gBlockingPool: i64 = 0
+
+fn bpCond(): i64 {
+    return 64
+}
+
+fn bpHead(): i64 {
+    return 112
+}
+
+fn bpTail(): i64 {
+    return 120
+}
+
+fn bpIdle(): i64 {
+    return 128
+}
+
+fn bpNotified(): i64 {
+    return 136
+}
+
+fn bpThreads(): i64 {
+    return 144
+}
+
+fn bpCap(): i64 {
+    return 152
+}
+
+fn bpStarting(): i64 {
+    return 160
+}
+
+fn bpSize(): i64 {
+    return 168
+}
+
+// The most workers the pool runs at once. 512 is tokio's default: high enough that jobs
+// waiting on other jobs do not starve in practice, low enough that a runaway submit loop
+// queues instead of hitting the OS's per-process thread limit (a few thousand on darwin).
+// A parked worker costs the pages its stack touched, not the whole reservation.
+// MILO_BLOCKING_THREADS (a positive integer) overrides it, read once when the pool is built.
+fn blockingThreadCap(): i64 {
+    unsafe {
+        let s = getenv("MILO_BLOCKING_THREADS")
+        if s as i64 != 0 {
+            var n: i64 = 0
+            var i: i64 = 0
+            var ok = true
+            while true {
+                let c = _loadU8((s as i64 + i) as *u8) as i64
+                if c == 0 {
+                    break
+                }
+                if c < 48 || c > 57 || n > 1000000 {
+                    ok = false
+                    break
+                }
+                n = n * 10 + (c - 48)
+                i += 1
+            }
+            if ok && n > 0 {
+                return n
+            }
+        }
+    }
+    return 512
+}
+
+// How long an idle worker stays parked before it exits. tokio's default keep-alive: a
+// burst that started hundreds of workers gives them back within seconds, while steady
+// traffic keeps reusing the same few. The pool never keeps a floor of workers; an idle
+// process ends up with none.
+fn blockingIdleMillis(): i64 {
+    return 10000
+}
+
+// The pool, built by whichever thread gets here first.
+fn blockingPool(): *u8 {
+    unsafe {
+        let word = gBlockingPool.addrOf() as *u8
+        var p = _atomicLoadI64(word)
+        if p > 1 {
+            return p as *u8
+        }
+        if _atomicCasI64(word, 0, 1) == 0 {
+            let b = malloc(bpSize())
+            memset(b, 0, bpSize())
+            pthread_mutex_init(b, 0 as *u8)
+            pthread_cond_init((b as i64 + bpCond()) as *u8, 0 as *u8)
+            rtStoreI64(b, bpCap(), blockingThreadCap())
+            _atomicStoreI64(word, b as i64)
+            return b
+        }
+        // Another thread is building it: a malloc and two inits away.
+        while p <= 1 {
+            usleep(50)
+            p = _atomicLoadI64(word)
+        }
+        return p as *u8
+    }
+}
+
+// Under the pool mutex, with the queue non-empty: make sure some worker is on its way to
+// it. Returns true when the caller must start one with bpStartWorker after unlocking.
+//
+// One worker on its way is enough, because a worker that dequeues a job and still sees a
+// queue behind it calls this again before running its own job. So a job that blocks
+// (on another blocking job, say) never sits in front of work no worker is coming for,
+// which is the property that keeps nested blocking jobs from deadlocking below the cap.
+// It also moves the wakeups off the submitter: a burst of N submits costs one signal on
+// the submitting thread, and the workers pass the rest along in parallel.
+fn bpWakeLocked(pool: *u8): bool {
+    if rtLoadI64(pool, bpNotified()) + rtLoadI64(pool, bpStarting()) > 0 {
+        return false
+    }
+    let idle = rtLoadI64(pool, bpIdle())
+    if idle > 0 {
+        // Claimed before the signal, so the next caller does not count on this worker
+        // too. Whichever parked worker wakes takes the claim (see blockingWorker).
+        rtStoreI64(pool, bpIdle(), idle - 1)
+        rtStoreI64(pool, bpNotified(), rtLoadI64(pool, bpNotified()) + 1)
+        unsafe { pthread_cond_signal((pool as i64 + bpCond()) as *u8) }
+        return false
+    }
+    let threads = rtLoadI64(pool, bpThreads())
+    if threads < rtLoadI64(pool, bpCap()) {
+        // Counted before the thread exists, so concurrent callers respect the cap.
+        rtStoreI64(pool, bpThreads(), threads + 1)
+        rtStoreI64(pool, bpStarting(), rtLoadI64(pool, bpStarting()) + 1)
+        return true
+    }
+    return false
+}
+
+// Start the worker bpWakeLocked counted. Called without the mutex held.
+// @thread: the worker runs only closures that entered through blockingPoolSubmit, which is
+// @thread itself; there is no closure here to check, but every thread spawn sits in one.
+@thread
+fn bpStartWorker(pool: *u8): void {
+    unsafe {
+        var tid: i64 = 0
+        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, blockingWorker as *u8, pool)
+        if r == 0 {
+            pthread_detach(tid)
+            return
+        }
+        // No thread: undo the count. A job still queued waits for the next submit to try
+        // again; the thread per call this pool replaced never ran it at all.
+        pthread_mutex_lock(pool)
+        rtStoreI64(pool, bpThreads(), rtLoadI64(pool, bpThreads()) - 1)
+        rtStoreI64(pool, bpStarting(), rtLoadI64(pool, bpStarting()) - 1)
+        pthread_mutex_unlock(pool)
+    }
+}
+
+// A job that spawned a green task or armed a timer left a scheduler on this thread. The
+// next job must not inherit it: with a scheduler present but no task on it, a main-context
+// channel wait polls that empty scheduler in a loop instead of sleeping on the condvar.
+// When the thread was the job's alone, the scheduler went (leaked) with it.
+fn blockingJobDone(): void {
+    let sched = getSched()
+    if sched as i64 == 0 {
+        return
+    }
+    if rtLoadI64(sched, sNumTasks()) == 0 {
+        schedulerShutdown()
+    } else {
+        // Tasks the job abandoned stay parked on it for good, as they did when its thread
+        // exited; a foreign unpark may still reach its transfer list, so it is not freed.
+        setSched(0 as *u8)
+    }
+}
+
+// A pool worker's pthread entry; `arg` is the pool block. Runs queued jobs, parks on the
+// condvar when the queue is empty, and exits after blockingIdleMillis unclaimed.
+fn blockingWorker(arg: *u8): *u8 {
+    unsafe {
+        gOnWorkerThread = true
+        let pool = arg
+        let cond = (pool as i64 + bpCond()) as *u8
+        pthread_mutex_lock(pool)
+        rtStoreI64(pool, bpStarting(), rtLoadI64(pool, bpStarting()) - 1)
+        while true {
+            let job = rtReadPtr(pool, bpHead())
+            if job as i64 != 0 {
+                let next = rtReadPtr(job, 0)
+                rtStorePtr(pool, bpHead(), next)
+                var spawn = false
+                if next as i64 == 0 {
+                    rtStorePtr(pool, bpTail(), 0 as *u8)
+                } else {
+                    spawn = bpWakeLocked(pool)
+                }
+                pthread_mutex_unlock(pool)
+                if spawn {
+                    bpStartWorker(pool)
+                }
+                runDetachedClosure(rtReadPtr(job, 8), rtReadPtr(job, 16))
+                free(job)
+                blockingJobDone()
+                pthread_mutex_lock(pool)
+            } else {
+                rtStoreI64(pool, bpIdle(), rtLoadI64(pool, bpIdle()) + 1)
+                // A claim belongs to whichever parked worker wakes first: a signal may
+                // wake a different one than was counted, and a claim found at timeout
+                // still counts, so no claim is left behind with its worker gone.
+                var claimed = false
+                var expired = false
+                while !claimed && !expired {
+                    let r = condWaitMillis(cond, pool, blockingIdleMillis())
+                    let n = rtLoadI64(pool, bpNotified())
+                    if n > 0 {
+                        rtStoreI64(pool, bpNotified(), n - 1)
+                        claimed = true
+                    } else if r != 0 {
+                        expired = true
+                    }
+                }
+                if expired {
+                    rtStoreI64(pool, bpIdle(), rtLoadI64(pool, bpIdle()) - 1)
+                    if rtReadPtr(pool, bpHead()) as i64 == 0 {
+                        rtStoreI64(pool, bpThreads(), rtLoadI64(pool, bpThreads()) - 1)
+                        pthread_mutex_unlock(pool)
+                        return 0 as *u8
+                    }
+                }
+            }
+        }
+        return 0 as *u8
+    }
+}
+
+// Queue `f` on the blocking pool.
+// @thread: `f` runs on a pool worker, so the checker holds its captures to Send and
+// rejects unsynchronized mutable globals reached from its body.
+@thread
+fn blockingPoolSubmit(f: move () => void): void {
+    unsafe {
+        let pool = blockingPool()
+        let job = malloc(24)
+        rtStorePtr(job, 0, 0 as *u8)
+        memcpy((job as i64 + 8) as *u8, (f.addrOf()) as *u8, 16)
+        // The job node owns the closure environment now (see spawnOsThreadDetached).
+        forget(f)
+        pthread_mutex_lock(pool)
+        let tail = rtReadPtr(pool, bpTail())
+        if tail as i64 == 0 {
+            rtStorePtr(pool, bpHead(), job)
+        } else {
+            rtStorePtr(tail, 0, job)
+        }
+        rtStorePtr(pool, bpTail(), job)
+        let spawn = bpWakeLocked(pool)
+        pthread_mutex_unlock(pool)
+        if spawn {
+            bpStartWorker(pool)
         }
     }
 }
@@ -1127,10 +1420,20 @@ impl Promise<T> {
     fn blocking(f: move () => T): Promise<T> {
         let ch = Channel<T>.new(1)!
         let chSend = ch.clone() // worker thread's owning handle
-        spawnOsThreadDetached(move(): void => {
-            let result: T = runOnce(f)
-            chSend.send(result)!
-        })
+        // Record/replay numbers each OS thread when it is spawned and keys the thread's
+        // records by that number, so a reused pool thread would replay under the wrong
+        // identity. A recorded or replayed run keeps a thread per call.
+        if replayOff() {
+            blockingPoolSubmit(move(): void => {
+                let result: T = runOnce(f)
+                chSend.send(result)!
+            })
+        } else {
+            spawnOsThreadDetached(move(): void => {
+                let result: T = runOnce(f)
+                chSend.send(result)!
+            })
+        }
         return Promise {
             _ch: ch,
             _blocking: true

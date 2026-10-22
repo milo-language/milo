@@ -1,0 +1,45 @@
+// @expect: 42
+// @expect: 2 false
+// @expect: 3 false
+// @expect: done
+
+from "std/runtime" import {
+    Promise, schedulerExists
+}
+from "std/time" import {
+    ensureTimersLive
+}
+from "std/env" import {
+    Env
+}
+
+thread_local var jobsHere: i64 = 0
+
+struct Seen {
+    job: i64,
+    sched: bool,
+}
+
+// A blocking job that arms the green timers (std/timer does for a timeout) leaves a scheduler on its worker thread. With the
+// pool capped at one worker every job below shares that thread, and none may inherit the
+// first job's scheduler: a main-context wait with an empty scheduler present spins on it.
+pub fn main(): i32 {
+    Env.set("MILO_BLOCKING_THREADS", "1")!
+    let first = Promise<i64>.blocking(move(): i64 => {
+        jobsHere += 1
+        ensureTimersLive()
+        print(42)
+        return jobsHere
+    })
+    let _ = first.await()!
+    for _ in 0..2 {
+        let p = Promise<Seen>.blocking(move(): Seen => {
+            jobsHere += 1
+            return Seen { job: jobsHere, sched: schedulerExists() }
+        })
+        let s = p.await()!
+        print(s.job, " ", s.sched)
+    }
+    print("done")
+    return 0
+}

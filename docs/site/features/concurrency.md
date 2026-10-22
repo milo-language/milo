@@ -162,7 +162,7 @@ fn main(): i32 {
 
 ## Promise.blocking: CPU-Bound Work and Blocking FFI
 
-The green scheduler is single-threaded and cooperative: a closure that spins on the CPU or calls a C function that blocks never yields, so it starves every other task. `Promise.blocking(fn)` runs `fn` on a real detached OS thread instead — the one escape hatch for work that can't cooperate. The result comes back through the same `await()`, so from the caller's side it is just a `Promise`. It requires explicit type args:
+The green scheduler is single-threaded and cooperative: a closure that spins on the CPU or calls a C function that blocks never yields, so it starves every other task. `Promise.blocking(fn)` runs `fn` on a real OS thread instead — the one escape hatch for work that can't cooperate. The result comes back through the same `await()`, so from the caller's side it is just a `Promise`. It requires explicit type args:
 
 ```milo
 from "std/runtime" import { Promise }
@@ -171,13 +171,15 @@ fn crunch(): i64 { return 0 }   // heavy pure computation
 
 fn main(): i32 {
     let p = Promise<i64>.blocking(move (): i64 => { return crunch() })
-    let r = p.await()!   // the work runs on its own thread
+    let r = p.await()!   // the work runs on a pool thread
     print(r)
     return 0
 }
 ```
 
 Whatever the closure captured is released before the result is sent, so by the time `await()` returns you a value, every destructor the closure owned has already run: a lock it held is free, a file it opened is closed, a reader handle it cloned is gone. That ordering is a guarantee rather than a race — a worker whose environment was torn down only after the send let a caller act on a result while the closure's resources were still alive, which is the kind of bug that shows up on one platform's scheduler and nowhere else.
+
+The threads come from a process-wide pool, so a call costs a queue hand-off rather than a thread start. The pool is elastic: a job goes to an idle worker if there is one and otherwise starts a new thread, up to 512 at once (`MILO_BLOCKING_THREADS` sets another cap, read when the first job runs); past the cap jobs wait their turn in order. A worker idle for 10 seconds exits. Because it grows on demand, a blocking job may itself start another and wait for it without deadlocking, as long as the cap is not reached. A worker runs many jobs over its life, so a `thread_local var` written in one job is still set in the next job that lands on the same thread. Under record/replay (`MILO_RECORD`/`MILO_REPLAY`) each call still gets a thread of its own, since the trace names each thread by the order it was started in.
 
 The closure runs on another OS thread, so the compiler rejects any capture that is not `Send`. It applies the same check to `spawnOsThreadDetached` (see [Thread Safety](#thread-safety-send-sync)). Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
 
