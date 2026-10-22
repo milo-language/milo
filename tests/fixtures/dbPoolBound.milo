@@ -1,0 +1,49 @@
+// @skip-os: win32
+// A pool of size 2 runs at most two jobs at once, however many are queued, and does run
+// two at once (each job holds its thread for a while so they overlap).
+// @expect: peak 2
+// @expect: done 12
+from "std/sqlite" import { Database, dbQuery, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+from "std/sync" import { AtomicI64 }
+from "std/runtime" import { Promise, promiseAll }
+from "std/time" import { sleepBlockingMs }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-dbpool-bound")!
+    let pool = DbPool.open(dir + "/t.db", 2)!
+    let running = AtomicI64.new(0)
+    let peak = AtomicI64.new(0)
+    var ps: Vec<Promise<i64>> = Vec.new()
+    var i: i64 = 0
+    while i < 12 {
+        let r = running.clone()
+        let pk = peak.clone()
+        ps.push(dbPoolRun(pool, move(db: &Database): i64 => {
+            let now = r.add(1) + 1
+            var seen = pk.load()
+            while now > seen && pk.cas(seen, now) != seen {
+                seen = pk.load()
+            }
+            sleepBlockingMs(20)
+            let st = dbQuery(db, "SELECT 1")!
+            dbNext(st)!
+            r.sub(1)
+            return dbColumnInt64(st, 0)
+        }))
+        i += 1
+    }
+    var done: i64 = 0
+    for v in promiseAll(ps).await()! {
+        done += v
+    }
+    print($"peak {peak.load()}")
+    print($"done {done}")
+    dbPoolClose(pool)
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = removeFile(dir + "/t.db" + suffix)
+    }
+    let _ = removeDir(dir)
+    return 0
+}

@@ -1,0 +1,70 @@
+// @skip-os: win32
+// Checked SQL inside dbPoolRun: migrations, checked writes through the pool from many
+// green tasks, then @derive(Row) reads on (possibly) other connections that see every
+// committed row.
+// @expect: inserted 40
+// @expect: count 40
+// @expect: first user0 0
+// @expect: last user39 39
+from "std/sqlite" import { Database, dbRun, dbScalar, SqlArg }
+from "std/migrate" import { Migration, dbMigrate }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+from "std/sync" import { AtomicI64, WaitGroup }
+from "std/runtime" import { Task }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+@derive(Row)
+struct User {
+    id: i64,
+    login: string,
+    score: i64,
+}
+
+fn migrations(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL, score INTEGER NOT NULL)")]
+}
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-dbpool-writes")!
+    let path = dir + "/t.db"
+    let pool = DbPool.open(path, 3)!
+    dbPoolRun(pool, move(db: &Database): bool => {
+        dbMigrate(db, migrations())!
+        return true
+    }).await()!
+
+    let wg = WaitGroup.new()
+    let inserted = AtomicI64.new(0)
+    var i: i64 = 0
+    while i < 40 {
+        wg.add(1)
+        let w = wg.clone()
+        let ins = inserted.clone()
+        let pl = pool.clone()
+        let n = i
+        Task.spawn(move(): void => {
+            let changed = dbPoolRun(pl, move(db: &Database): i64 => {
+                return dbRun(db, "INSERT INTO users (login, score) VALUES (?, ?)", [SqlArg.Text($"user{n}"), SqlArg.Int(n)])!
+            }).await()!
+            ins.add(changed)
+            w.done()
+        })
+        i += 1
+    }
+    wg.wait()
+    print($"inserted {inserted.load()}")
+
+    let count = dbPoolRun(pool, move(db: &Database): i64 => dbScalar(db, "SELECT count(*) FROM users", [])! ?? -1).await()!
+    print($"count {count}")
+    let users = dbPoolRun(pool, move(db: &Database): Vec<User> => {
+        return User.fetchAll(db, "SELECT id, login, score FROM users ORDER BY score", [])!
+    }).await()!
+    print($"first {users[0].login} {users[0].score}")
+    print($"last {users[users.len - 1].login} {users[users.len - 1].score}")
+    dbPoolClose(pool)
+    let _ = removeFile(path)
+    let _ = removeFile(path + "-wal")
+    let _ = removeFile(path + "-shm")
+    let _ = removeDir(dir)
+    return 0
+}

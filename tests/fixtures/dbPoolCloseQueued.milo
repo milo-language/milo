@@ -1,0 +1,55 @@
+// @skip-os: win32
+// Closing a pool with jobs still queued lets every one of them finish and deliver its
+// result, then returns; a job submitted afterwards through a surviving handle resolves to
+// an Err instead of hanging.
+// @expect: closed
+// @expect: results 20 sum 190
+// @expect: after close: Err
+from "std/sqlite" import { Database, dbQuery, dbBindInt64, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+from "std/runtime" import { Promise }
+from "std/time" import { sleepBlockingMs }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-dbpool-close")!
+    let pool = DbPool.open(dir + "/t.db", 1)!
+    let spare = pool.clone()
+    var ps: Vec<Promise<i64>> = Vec.new()
+    var i: i64 = 0
+    while i < 20 {
+        let n = i
+        ps.push(dbPoolRun(pool, move(db: &Database): i64 => {
+            sleepBlockingMs(2)
+            let st = dbQuery(db, "SELECT ?")!
+            dbBindInt64(st, 1, n)!
+            dbNext(st)!
+            return dbColumnInt64(st, 0)
+        }))
+        i += 1
+    }
+    dbPoolClose(pool)
+    print("closed")
+    var got: i64 = 0
+    var sum: i64 = 0
+    var k: i64 = 0
+    for p in ps {
+        let v = p.await()!
+        if v != k {
+            print($"job {k} returned {v}")
+        }
+        got += 1
+        sum += v
+        k += 1
+    }
+    print($"results {got} sum {sum}")
+    match dbPoolRun(spare, move(db: &Database): i64 => 1).await() {
+        Ok(_) => print("after close: Ok")
+        Err(_) => print("after close: Err")
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = removeFile(dir + "/t.db" + suffix)
+    }
+    let _ = removeDir(dir)
+    return 0
+}

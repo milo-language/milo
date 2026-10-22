@@ -1,14 +1,16 @@
 // Fixture server for benchmarks/webserver/bench.ts: one cheap route, a CPU route run inline and on
-// Promise.blocking, one SQLite route.
+// Promise.blocking, one SQLite route run inline and through a DbPool.
 from "std/http" import { Context, Response, Router, ServeOptions, serveRouterWith }
 from "std/sqlite" import { Database, dbOpen, dbExec, dbQuery, dbNext, dbBindInt64, dbColumnInt64, dbColumnFloat, uncheckedSql }
 from "std/env" import { Env }
 from "std/fs" import { pathExists, removeFile }
 from "std/strconv" import { parseInt }
 from "std/runtime" import { Promise }
+from "std/dbpool" import { DbPool, dbPoolRun }
 
 // Module scope only takes constant initializers, so the handle rides in a one-element Vec.
 var dbs: Vec<Database> = []
+var pools: Vec<DbPool> = []
 var counter: i64 = 0
 
 fn fib(n: i64): i64 {
@@ -39,14 +41,9 @@ fn fibBlockingHandler(ctx: &mut Context): Response {
     return ctx.text(v.toString())
 }
 
-// The parameter varies per request so the query is never a repeat of the last one.
-fn dbHandler(ctx: &mut Context): Response {
-    counter += 1
-    let Ok(st) = dbQuery(dbs[0], "SELECT grp, count(*), sum(val) FROM t WHERE grp % 7 = ? GROUP BY grp") else {
-        ctx.setStatus(500)
-        return ctx.text("query failed")
-    }
-    let _ = dbBindInt64(st, 1, counter % 7)
+fn groupQuery(db: &Database, param: i64): Result<string> {
+    let st = dbQuery(db, "SELECT grp, count(*), sum(val) FROM t WHERE grp % 7 = ? GROUP BY grp")?
+    let _ = dbBindInt64(st, 1, param)
     var out: string = ""
     while dbNext(st) ?? false {
         out.pushStr(dbColumnInt64(st, 0).toString())
@@ -55,6 +52,31 @@ fn dbHandler(ctx: &mut Context): Response {
         out.pushStr(" ")
         out.pushStr(dbColumnFloat(st, 2).toString())
         out.pushStr("\n")
+    }
+    return Result.Ok(out)
+}
+
+// The parameter varies per request so the query is never a repeat of the last one.
+fn dbHandler(ctx: &mut Context): Response {
+    counter += 1
+    let Ok(out) = groupQuery(dbs[0], counter % 7) else {
+        ctx.setStatus(500)
+        return ctx.text("query failed")
+    }
+    return ctx.text(out)
+}
+
+// The same query on a pool connection's thread: the handler's green task parks meanwhile.
+fn dbPoolHandler(ctx: &mut Context): Response {
+    counter += 1
+    let param = counter % 7
+    // A handle of its own: the checker cannot see that dbPoolRun never parks (the closure's
+    // send does, on the pool thread), so a reference into the global Vec may not be passed.
+    let pool = pools[0].clone()
+    let p = dbPoolRun(pool, move(db: &Database): Result<string> => groupQuery(db, param))
+    let Ok(Ok(out)) = p.await() else {
+        ctx.setStatus(500)
+        return ctx.text("query failed")
     }
     return ctx.text(out)
 }
@@ -75,6 +97,11 @@ fn setupDb(path: string): bool {
     }
     let _ = dbExec(db, "COMMIT")
     dbs.push(db)
+    // Size 0: one connection per core.
+    let Ok(pool) = DbPool.open(path, 0) else {
+        return false
+    }
+    pools.push(pool)
     return true
 }
 
@@ -89,6 +116,7 @@ pub fn main(): i32 {
     r.get("/fib/:n", fibHandler)
     r.get("/fibb/:n", fibBlockingHandler)
     r.get("/db", dbHandler)
+    r.get("/dbp", dbPoolHandler)
     let opts = ServeOptions {}
     let result = serveRouterWith("127.0.0.1", port as u16, r, opts)
     if let Err(msg) = result {

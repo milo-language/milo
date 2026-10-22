@@ -159,6 +159,7 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
   // warm up code paths and the db page cache before measuring
   await runOha("warmup", "/hello", 4, 200);
   await runOha("warmup", "/db", 4, 50);
+  await runOha("warmup", "/dbp", 4, 50);
 
   if (stress) {
     const r = await runOha("stress fibb45 c=10 n=20", "/fibb/45", 10, 20);
@@ -174,6 +175,8 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
   add(await runOha("fibb27 c=64", "/fibb/27", 64, cnt(1500)));
   add(await runOha("db c=1", "/db", 1, cnt(1000)));
   add(await runOha("db c=64", "/db", 64, cnt(3000)));
+  add(await runOha("dbp c=1", "/dbp", 1, cnt(1000)));
+  add(await runOha("dbp c=64", "/dbp", 64, cnt(3000)));
 
   add(await runOha("hol-baseline hello c=4", "/hello", 4, cnt(2000)));
 
@@ -192,6 +195,15 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
   bg = spawn(ohaArgs(`/fibb/${HOL_FIB}`, 16, cnt(1500)), { stdout: "ignore", stderr: "ignore" });
   await Bun.sleep(300);
   add(await runOha(`hol-blocking hello c=4 (+fibb${HOL_FIB} c=16)`, "/hello", 4, cnt(2000)));
+  bg.kill(9);
+  bg = undefined;
+
+  // Background query load through the connection pool (DbPool / spawn_blocking with a
+  // per-thread connection): the cheap route should not wait behind the queries.
+  await drainPorts();
+  bg = spawn(ohaArgs("/dbp", 16, cnt(20000)), { stdout: "ignore", stderr: "ignore" });
+  await Bun.sleep(300);
+  add(await runOha("hol-db hello c=4 (+dbp c=16)", "/hello", 4, cnt(2000)));
   bg.kill(9);
   bg = undefined;
 

@@ -171,6 +171,7 @@ const stdlibSidebar = [
       { text: 'std/cache', link: '/stdlib/cache' },
       { text: 'std/sqlite', link: '/stdlib/sqlite' },
       { text: 'std/migrate', link: '/stdlib/migrate' },
+      { text: 'std/dbpool', link: '/stdlib/dbpool' },
     ]
   },
   {

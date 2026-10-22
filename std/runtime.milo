@@ -1372,6 +1372,15 @@ impl Promise<T> {
         }
     }
 
+    // A Promise whose value an OS thread outside the scheduler sends on `ch` (std/dbpool's
+    // workers), so a main-thread await blocks on the channel the way Promise.blocking does.
+    fn _fromThreadChannel(ch: Channel<T>): Promise<T> {
+        return Promise {
+            _ch: ch,
+            _blocking: true
+        }
+    }
+
     // The result channel, so a Promise can be armed in a Select:
     //
     //   sel.onRecv(p.channel())           // arm 0

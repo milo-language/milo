@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 570 distinct messages across 732 programs the compiler must reject.
+Every error message the test suite pins: 572 distinct messages across 735 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -86,6 +86,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
 - [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
 - [`'helper' is not imported`](#helper-is-not-imported)
+- [`'hits' is a mutable global, and this code runs on a real OS thread`](#hits-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread)
 - [`'Holder.show' can park this task while it holds a reference into 'g's buffer`](#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
@@ -294,6 +295,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot return a closure that captures 's' by reference`](#cannot-return-a-closure-that-captures-s-by-reference)
 - [`cannot return a reference`](#cannot-return-a-reference)
 - [`cannot return a reference stored inside 'Option'`](#cannot-return-a-reference-stored-inside-option)
+- [`cannot send 'chSend' of type 'Channel<Statement>' across threads`](#cannot-send-chsend-of-type-channel-statement-across-threads)
 - [`cannot send 'p' of type '*u8' across threads`](#cannot-send-p-of-type-u8-across-threads)
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
@@ -2116,6 +2118,27 @@ fn main() {
 ```
 
 <sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
+
+## `'hits' is a mutable global, and this code runs on a real OS thread` {#hits-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread}
+
+dbPoolRun's closure runs on a pool thread, so it is held to the @thread rules.
+
+```milo skip
+from "std/sqlite" import { Database }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+var hits: i64 = 0
+
+fn main(): void {
+    let pool = DbPool.open("app.db", 1)!
+    let _n = dbPoolRun(pool, move(db: &Database): i64 => {
+        hits += 1
+        return hits
+    }).await()!
+}
+```
+
+<sub>[tests/errors/dbPoolMutableGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolMutableGlobal.milo)</sub>
 
 ## `'Holder.show' can park this task while it holds a reference into 'g's buffer` {#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer}
 
@@ -7837,6 +7860,25 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/withRawEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/withRawEscape.milo)</sub>
 
+## `cannot send 'chSend' of type 'Channel<Statement>' across threads` {#cannot-send-chsend-of-type-channel-statement-across-threads}
+
+A Statement belongs to its pool thread's connection, so a job cannot hand one back to the awaiting thread: the result type must be Send.
+
+```milo skip
+from "std/sqlite" import { Database, Statement, dbQuery, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+
+pub fn main(): i32 {
+    let pool = DbPool.open(":memory:", 1)!
+    let st = dbPoolRun(pool, move(db: &Database): Statement => dbQuery(db, "SELECT 1")!).await()!
+    dbNext(st)!
+    print(dbColumnInt64(st, 0))
+    return 0
+}
+```
+
+<sub>[tests/errors/dbPoolStatementEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolStatementEscape.milo)</sub>
+
 ## `cannot send 'p' of type '*u8' across threads` {#cannot-send-p-of-type-u8-across-threads}
 
 ```milo skip
@@ -12087,6 +12129,28 @@ fn main(): i32 {
 <sub>[tests/errors/loopVarShadow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/loopVarShadow.milo)</sub>
 
 ## `SQL error in the query passed to 'dbPrepare': no such column: logn` {#sql-error-in-the-query-passed-to-dbprepare-no-such-column-logn}
+
+Checked SQL is checked the same inside a dbPoolRun closure as outside one.
+
+```milo skip
+from "std/sqlite" import { Database, dbPrepare, dbNext, SqlArg }
+from "std/migrate" import { Migration }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")]
+}
+
+fn main(): void {
+    let pool = DbPool.open("app.db", 1)!
+    let _found = dbPoolRun(pool, move(db: &Database): bool => {
+        let st = dbPrepare(db, "SELECT logn FROM users WHERE id = ?", [SqlArg.Int(1)])!
+        return dbNext(st)!
+    }).await()!
+}
+```
+
+<sub>[tests/errors/dbPoolSqlUnknownColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolSqlUnknownColumn.milo)</sub>
 
 A column the schema does not have is a compile error at the literal, with the nearest name.
 

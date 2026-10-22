@@ -99,6 +99,7 @@ Most utilities are **namespaced**: call a static on the namespace (`Path.join`, 
 | [`std/sqlite`](sqlite) | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements; compile-time checked `dbPrepare`/`dbRun`/`dbScalar` |
 | [`std/browser`](browser) | Headless Chrome over DevTools — navigate, viewport, color scheme, evaluate, PNG screenshots |
 | [`std/migrate`](migrate) | Versioned SQLite migrations — `Migration`, `dbMigrate`, adopting a pre-migration database, `dbBackup` |
+| [`std/dbpool`](dbpool) | SQLite connection pool on dedicated OS threads, `DbPool`, `dbPoolRun`: queries stop blocking the scheduler |
 | [`std/url`](url) | URL parsing — `Url.parse`, then `u.queryGet`, `u.toString` |
 
 ## Strings & Formatting

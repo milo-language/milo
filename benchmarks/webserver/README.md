@@ -16,9 +16,11 @@ It builds `server.milo` with `--release`, starts it (`PORT` default 8090, `DB_PA
 | `fib27 c=1`, `c=64` | pure CPU handler (~0.5 ms); does throughput scale with concurrency |
 | `fibb27 c=64` | the same work on the blocking pool (`/fibb/:n`: `Promise.blocking` in Milo, `spawn_blocking` in Rust); scales with cores even on a single-threaded scheduler |
 | `db c=1`, `c=64` | one SQLite aggregate over 50k rows per request (~1.5 ms) |
+| `dbp c=1`, `c=64` | the same query through a connection pool (`/dbp`: std/dbpool `DbPool` sized to the cores in Milo, `spawn_blocking` with a `thread_local!` connection in Rust) |
 | `hol-baseline` | `/hello` c=4 alone |
 | `hol` | same `/hello` c=4 while a background `/fib/32` c=16 (~6 ms per request) runs. **Key number**: `hol p99 = X ms (Yx baseline)`, how long a cheap request waits behind CPU work |
 | `hol-blocking` | `hol` with the background on `/fibb/32`: the CPU work runs on the blocking pool, so the cheap route should not wait behind it |
+| `hol-db` | `hol` with the background on `/dbp` c=16: the queries run on pool threads, so the cheap route should not wait behind them |
 | `--stress` | instead of the rows above: `/fibb/45` (seconds per request) at c=10, n=20, per server; rps and p99 |
 
 HOL uses fib(32) rather than fib(27): at 0.5 ms a fib(27) is too short to show queueing behind one task (fib27 as background gave 0.7x, i.e. noise).
@@ -69,7 +71,7 @@ Per-request overhead drops by more than half (hello c=64 2.6x). Under CPU-bound 
 
 - `rust1`: `RUST_THREADS=1`, tokio `current_thread` runtime. Single-threaded like Milo today, so this is the like-for-like row.
 - `rustmt`: `RUST_THREADS=0`, tokio `multi_thread` with the default worker count (one per core). What a Rust author gets by default.
-- `/db` uses one `rusqlite` connection per runtime thread (`thread_local!`, WAL, `prepare_cached`) rather than a shared `Mutex<Connection>`: a mutex would serialize the multi-thread runtime on the db and understate Rust. Queries and `/fib` run inline in the handler, as in Milo; `/fibb` is the one route that uses `spawn_blocking`, matching Milo's `Promise.blocking`. Milo prints floats differently (bytes differ), both return 200 with 15 lines.
+- `/db` uses one `rusqlite` connection per runtime thread (`thread_local!`, WAL, `prepare_cached`) rather than a shared `Mutex<Connection>`: a mutex would serialize the multi-thread runtime on the db and understate Rust. Queries and `/fib` run inline in the handler, as in Milo; `/fibb` and `/dbp` are the routes that use `spawn_blocking`, matching Milo's `Promise.blocking` and `DbPool`. Milo prints floats differently (bytes differ), both return 200 with 15 lines.
 
 Keep-alive policy: by default every server is driven with `oha --disable-keepalive` (a new TCP connection per request). `--keepalive` lets oha reuse connections, which all three servers support. The mode is printed at the start of each run.
 
@@ -143,3 +145,26 @@ stress fibb45 c=10 n=20        2.69        3.57        3.51     3748.37     2827
 All ten requests of a round run at once on every server; the 1.3x gap is fib(45)'s own cost.
 
 `benchmarks/runtime/blocking_pool.milo` isolates the hand-off: 200000 trivial jobs submitted from a green task in batches of 64, awaited with `promiseAll`. Same machine, release build, best of three: d3ab9f82 253k jobs/s, with the pool 1.44M jobs/s (5.7x). At batch 1 (one job in flight) 83k vs 122k.
+
+## DbPool
+
+std/dbpool runs SQLite on dedicated OS threads, one connection each (`/dbp`, pool size 0 = one per core), instead of on the scheduler's thread (`/db`). `--keepalive --server all`, 2026-10-21, branch db-pool (199a616e plus the DbPool change), Apple M4, `Darwin arm64`, 10 cpus, 0 errors, 0 non-2xx:
+
+```
+scenario                                 milo rps   rust1 rps  rustmt rps    milo p99   rust1 p99  rustmt p99
+hello c=1                                   26497       26847       30034        0.07        0.09        0.07
+hello c=64                                 124263      174220      198890        0.79        0.92        0.56
+fib27 c=1                                    1969        2586        2784        0.59        0.75        0.40
+fib27 c=64                                   2146        2886       16685       45.96       25.55        7.32
+fibb27 c=64                                 13785       17305       17625        8.58        6.17        7.49
+db c=1                                        637         662         675        1.71        2.96        1.85
+db c=64                                       671         697        3081      140.49      101.59       39.48
+dbp c=1                                       624         678         650        1.77        1.74        2.71
+dbp c=64                                     3283        3353        3194       25.74      173.47      194.76
+hol-baseline hello c=4                      65661       77997       56686        0.10        0.07        0.18
+hol hello c=4 (+fib32 c=16)                   275         378        2102      153.34       62.59       10.54
+hol-blocking hello c=4 (+fibb32 c=16)       54057       30478        9077        0.13        1.07        7.20
+hol-db hello c=4 (+dbp c=16)                57595       31943       60004        0.13        0.42        0.12
+```
+
+`dbp c=64` is 4.9x `db c=64` (3283 vs 671 rps) with p99 down from 140 ms to 26 ms, level with multi-threaded Rust's inline `db c=64` (3081 rps). A cheap request behind 16 concurrent queries waits p99 0.13 ms, at the hol-baseline. Rust's `dbp` p99 is high because `spawn_blocking` is elastic: 64 requests in flight can start up to 64 threads (each opening its own connection), which then contend for 10 cores, where the DbPool caps running queries at the core count and queues the rest.

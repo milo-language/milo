@@ -1,0 +1,405 @@
+// std/dbpool — a fixed pool of SQLite connections, each owned by its own OS thread
+//
+// A query run on the green-task scheduler's thread stops every other task until it
+// finishes, so one slow query delays each cheap request queued behind it. A DbPool runs
+// queries on `size` dedicated threads instead. Each thread opens one connection (with the
+// same pragmas `dbOpen` sets) and keeps it for its lifetime, since a sqlite connection
+// must never be used by two threads at once. `dbPoolRun` queues a closure that receives
+// the connection; the awaiting green task parks while it runs and the scheduler keeps
+// serving everything else.
+//
+//   let pool = DbPool.open("app.db", 0)!         // one connection per core
+//   let p = dbPoolRun(pool, move(db: &Database): Result<i64> => {
+//       return dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", [SqlArg.Text(bio), SqlArg.Int(id)])
+//   })
+//   let changed = p.await()!!
+//
+// The closure uses the ordinary std/sqlite calls, so checked SQL (`dbRun`, `dbPrepare`,
+// `@derive(Row)` fetches) is checked at compile time exactly as it is outside a pool.
+//
+// At most `size` closures run at once; the rest wait in FIFO order. The pool never grows,
+// so a closure must not wait on another job of the same pool: with every thread so
+// blocked, the job it waits for never starts. Use Promise.blocking for work that is not a
+// query.
+//
+// Writes: SQLite admits one writer at a time and the pool does not route reads and writes
+// to different connections. Concurrent writers queue on the database lock for up to
+// busy_timeout (5 s), then fail with SQLITE_BUSY. Keep write transactions short, take the
+// lock up front with dbBeginImmediate, and for a write-heavy app send writes through a
+// second pool of size 1 so they queue in the pool rather than on the lock.
+//
+// A DbPool is a reference-counted handle: `clone()` gives another task its own handle to
+// the same pool, and the pool shuts down when the last handle drops (or at dbPoolClose).
+// All pool state sits behind one mutex, so handles may live on any thread. A server that
+// keeps its pool in a module-level `Vec<DbPool>` passes `pools[0].clone()` from a handler:
+// the checker counts dbPoolRun as parking (its closure sends, though on the pool thread),
+// so it rejects a reference into the global's buffer held across the call.
+//
+// Record/replay: DbPool.open fails while recording or replaying. Replay orders a thread's
+// sqlite calls by the thread's number, and which pool thread picks up which job is not
+// recorded, so a replay would answer queries with another job's results. Use one
+// connection from `dbOpen` in a program that must replay.
+
+// No pool exists in a recorded or replayed run (openWith refuses first), so none of this
+// file's thread and lock calls can run there, and the compiler need not redirect them.
+@!replayHooked
+
+from "std/sqlite" import { Database, dbOpen, dbExec }
+from "std/sync" import { Channel }
+from "std/runtime" import { Promise }
+from "std/sysinfo" import { cpuCount }
+from "std/replay" import { replayActive, replayRecording }
+from "std/os" import { malloc, free, memcpy, memset }
+from "std/platform" import {
+    pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
+    pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast,
+    pthread_cond_destroy, pthread_create, pthread_join, exitNow
+}
+
+// Pool block, freed when the last handle drops:
+//   0: mutex (64)     64: cond (48), signalled when a job is queued or the pool closes
+// 112: head (*u8)    120: tail (*u8)    128: closing (i64)    136: threads (i64)
+// 144: tids (*u8, `threads` pthread_t words)    152: refs (i64, atomic, not under the mutex)
+// Job node (24 bytes): 0 next (*u8), 8 closure fn, 16 closure env.
+fn dpCond(): i64 {
+    return 64
+}
+
+fn dpHead(): i64 {
+    return 112
+}
+
+fn dpTail(): i64 {
+    return 120
+}
+
+fn dpClosing(): i64 {
+    return 128
+}
+
+fn dpThreads(): i64 {
+    return 136
+}
+
+fn dpTids(): i64 {
+    return 144
+}
+
+fn dpRefs(): i64 {
+    return 152
+}
+
+fn dpSize(): i64 {
+    return 160
+}
+
+fn dpLoad(base: *u8, off: i64): i64 {
+    unsafe {
+        let addr = (base as i64 + off) as *i64
+        return *addr
+    }
+}
+
+fn dpStore(base: *u8, off: i64, val: i64): void {
+    unsafe {
+        memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 8)
+    }
+}
+
+// The pool block a worker thread serves, 0 on every other thread. Lets dbPoolClose
+// refuse to join the thread it is running on.
+thread_local var gDbPoolServing: i64 = 0
+
+// A handle to a pool of SQLite connections; see the module comment.
+pub struct DbPool {
+    _p: *u8,
+}
+
+// Safety: the pool block is reached only under its mutex (the refcount by atomics), and
+// each connection is touched only by the worker thread that owns it.
+unsafe
+
+impl Send for DbPool {
+}
+unsafe
+
+impl Sync for DbPool {
+}
+
+impl Drop for DbPool {
+    fn drop(self: &mut Self): void {
+        let p = self._p
+        if p as i64 == 0 {
+            return
+        }
+        self._p = 0 as *u8
+        unsafe {
+            if _atomicSubI64((p as i64 + dpRefs()) as *u8, 1) != 1 {
+                return
+            }
+        }
+        dpShutdown(p)
+        unsafe {
+            pthread_cond_destroy((p as i64 + dpCond()) as *u8)
+            pthread_mutex_destroy(p)
+            free(dpLoad(p, dpTids()) as *u8)
+            free(p)
+        }
+    }
+}
+
+impl DbPool {
+    // Open `size` connections to `path`, each on a thread of its own; `size <= 0` means
+    // one per core. Errs, with nothing left running, if any connection fails to open.
+    fn open(path: string, size: i64): Result<DbPool> {
+        return DbPool.openWith(path, size, [])
+    }
+
+    // Like `open`, then run each statement in `setup` on every connection before the pool
+    // takes work (`PRAGMA journal_size_limit=...`, `PRAGMA cache_size=...`). Plain SQL
+    // rather than a callback: it runs on the opening thread before any worker exists, so
+    // a failure fails `openWith` with the statement named, and no job can observe a
+    // connection that is half set up.
+    fn openWith(path: string, size: i64, setup: Vec<string>): Result<DbPool> {
+        if replayActive() || replayRecording() {
+            return Result.Err("DbPool is not supported under record/replay; open one connection with dbOpen instead")
+        }
+        var n = size
+        if n <= 0 {
+            n = cpuCount()
+            if n <= 0 {
+                n = 1
+            }
+        }
+        // Each connection to an in-memory database is a database of its own.
+        if (path == ":memory:" || path == "") && n != 1 {
+            return Result.Err("DbPool over an in-memory database needs size 1: each connection would see a different database")
+        }
+        // Every connection is opened before any thread starts, so a failure has nothing to
+        // stop. A connection moves to its thread once and stays there; sqlite permits
+        // that, it forbids only concurrent use.
+        var dbs: Vec<Database> = Vec.new()
+        var i: i64 = 0
+        while i < n {
+            let db = dbOpen(path)?
+            for s in setup {
+                match dbExec(db, s) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Result.Err("DbPool setup '" + s + "' failed: " + e)
+                    }
+                }
+            }
+            dbs.push(db)
+            i += 1
+        }
+        unsafe {
+            let p = malloc(dpSize())
+            memset(p, 0, dpSize())
+            pthread_mutex_init(p, 0 as *u8)
+            pthread_cond_init((p as i64 + dpCond()) as *u8, 0 as *u8)
+            let tids = malloc(n * 8)
+            memset(tids, 0, n * 8)
+            dpStore(p, dpTids(), tids as i64)
+            dpStore(p, dpRefs(), 1)
+            // The handle exists from here on, so an early return below shuts down the
+            // threads already started and closes the connections not yet handed out.
+            let pool = DbPool { _p: p }
+            while dbs.len > 0 {
+                let Some(db) = dbs.pop() else {
+                    break
+                }
+                let arg = malloc(8 + sizeOf<Database>())
+                memcpy(arg, (p.addrOf()) as *u8, 8)
+                memcpy((arg as i64 + 8) as *u8, (db.addrOf()) as *u8, sizeOf<Database>())
+                let started = dpStartWorker(p, arg)
+                if !started {
+                    free(arg)
+                    return Result.Err("DbPool could not start a thread")
+                }
+                // The worker owns the connection now, moved through the memcpy above.
+                forget(db)
+            }
+            return Result.Ok(pool)
+        }
+    }
+
+    // Another handle to the same pool, for a task of its own to hold.
+    fn clone(self: &Self): DbPool {
+        unsafe { _atomicAddI64((self._p as i64 + dpRefs()) as *u8, 1) }
+        return DbPool { _p: self._p }
+    }
+
+    // The number of connections (and threads) in the pool.
+    fn size(self: &Self): i64 {
+        unsafe {
+            pthread_mutex_lock(self._p)
+            let n = dpLoad(self._p, dpThreads())
+            pthread_mutex_unlock(self._p)
+            return n
+        }
+    }
+}
+
+// Start one worker for `arg` (pool block, then the Database it will own). Counted under
+// the mutex so a failed create leaves `threads` naming exactly the joinable ones.
+// @thread: the worker runs only closures that entered through dbPoolSubmit, which is
+// @thread itself; there is no closure here to check, but every thread spawn sits in one.
+@thread
+fn dpStartWorker(p: *u8, arg: *u8): bool {
+    unsafe {
+        var tid: i64 = 0
+        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, dbPoolWorker as *u8, arg)
+        if r != 0 {
+            return false
+        }
+        pthread_mutex_lock(p)
+        let k = dpLoad(p, dpThreads())
+        dpStore(dpLoad(p, dpTids()) as *u8, k * 8, tid)
+        dpStore(p, dpThreads(), k + 1)
+        pthread_mutex_unlock(p)
+        return true
+    }
+}
+
+// A worker's pthread entry: owns one connection, runs queued jobs against it until the
+// pool closes and the queue is empty, then closes the connection.
+fn dbPoolWorker(arg: *u8): *u8 {
+    unsafe {
+        let p = dpLoad(arg, 0) as *u8
+        var db: Database = zeroed<Database>()
+        memcpy((db.addrOf()) as *u8, (arg as i64 + 8) as *u8, sizeOf<Database>())
+        free(arg)
+        gDbPoolServing = p as i64
+        let cond = (p as i64 + dpCond()) as *u8
+        pthread_mutex_lock(p)
+        while true {
+            let job = dpLoad(p, dpHead()) as *u8
+            if job as i64 != 0 {
+                let next = dpLoad(job, 0)
+                dpStore(p, dpHead(), next)
+                if next == 0 {
+                    dpStore(p, dpTail(), 0)
+                }
+                pthread_mutex_unlock(p)
+                dpRunJob(job, db)
+                pthread_mutex_lock(p)
+            } else if dpLoad(p, dpClosing()) != 0 {
+                break
+            } else {
+                pthread_cond_wait(cond, p)
+            }
+        }
+        pthread_mutex_unlock(p)
+        gDbPoolServing = 0
+        return 0 as *u8
+    }
+}
+
+// Rebuild the job's closure from its node and call it. The local owns the environment, so
+// it is released when this returns, after the closure has sent its result.
+fn dpRunJob(job: *u8, db: &Database): void {
+    unsafe {
+        var g: move (&Database) => void = zeroed<move (&Database) => void>()
+        memcpy((g.addrOf()) as *u8, (job as i64 + 8) as *u8, 16)
+        free(job)
+        g(db)
+    }
+}
+
+// Stop taking jobs, let the queued ones finish, and join the workers (each closes its
+// connection on the way out). Only the call that flips `closing` joins.
+fn dpShutdown(p: *u8): void {
+    if gDbPoolServing == p as i64 {
+        // Joining would wait on this very thread. Reached by dropping a pool's last handle,
+        // or calling dbPoolClose, inside one of the pool's own jobs.
+        eprint("DbPool closed from inside one of its own jobs; that would deadlock")
+        exitNow(134)
+    }
+    unsafe {
+        pthread_mutex_lock(p)
+        if dpLoad(p, dpClosing()) != 0 {
+            pthread_mutex_unlock(p)
+            return
+        }
+        dpStore(p, dpClosing(), 1)
+        pthread_cond_broadcast((p as i64 + dpCond()) as *u8)
+        let n = dpLoad(p, dpThreads())
+        let tids = dpLoad(p, dpTids()) as *u8
+        pthread_mutex_unlock(p)
+        // `threads` and `tids` no longer change: workers are started only by openWith,
+        // before the handle escapes.
+        var i: i64 = 0
+        while i < n {
+            pthread_join(dpLoad(tids, i * 8), 0 as *u8)
+            i += 1
+        }
+    }
+}
+
+// Shut the pool down now for every handle: no new jobs are taken (a later dbPoolRun
+// resolves to an Err), the queued ones finish and deliver their results, and the
+// connections close. Blocks the calling thread until the workers have exited; a second
+// close, from another handle, returns at once. Dropping the last handle does the same.
+pub fn dbPoolClose(pool: DbPool): void {
+    dpShutdown(pool._p)
+}
+
+// Queue `f` on the pool. False, with `f` dropped unrun, once the pool is closing.
+// @thread: `f` runs on a pool worker, so the checker holds its captures to Send and
+// rejects unsynchronized mutable globals reached from its body.
+@thread
+fn dbPoolSubmit(pool: &DbPool, f: move (&Database) => void): bool {
+    unsafe {
+        let p = pool._p
+        pthread_mutex_lock(p)
+        if dpLoad(p, dpClosing()) != 0 {
+            pthread_mutex_unlock(p)
+            return false
+        }
+        let job = malloc(24)
+        dpStore(job, 0, 0)
+        memcpy((job as i64 + 8) as *u8, (f.addrOf()) as *u8, 16)
+        // The job node owns the closure environment now (see spawnOsThreadDetached).
+        forget(f)
+        let tail = dpLoad(p, dpTail()) as *u8
+        if tail as i64 == 0 {
+            dpStore(p, dpHead(), job as i64)
+        } else {
+            dpStore(tail, 0, job as i64)
+        }
+        dpStore(p, dpTail(), job as i64)
+        pthread_cond_signal((p as i64 + dpCond()) as *u8)
+        pthread_mutex_unlock(p)
+        return true
+    }
+}
+
+// Call `f` and let its captures go before returning, so they are released before the
+// result is sent (see runOnce in std/runtime).
+fn runOnceDb<T>(f: move (&Database) => T, db: &Database): T {
+    return f(db)
+}
+
+// Run `f` on one of the pool's connections, on that connection's thread. Awaiting the
+// Promise from a green task parks only that task. At most `pool.size()` closures run at
+// once; the rest queue FIFO. Resolves to an Err if the pool was closed first.
+// @thread: `f` runs on a pool worker, so its captures must be Send and the checker rejects
+// unsynchronized mutable globals reached from its body.
+//
+// Standalone rather than a method: a generic method taking a closure over the struct's
+// own type monomorphizes recursively (see promiseAll).
+@thread
+pub fn dbPoolRun<T>(pool: &DbPool, f: move (&Database) => T): Promise<T> {
+    let ch = Channel<T>.new(1)!
+    let chSend = ch.clone()
+    let queued = dbPoolSubmit(pool, move(db: &Database): void => {
+        let result: T = runOnceDb(f, db)
+        chSend.send(result)!
+    })
+    if !queued {
+        // The job and its sender are gone; closing the channel turns the await into an Err.
+        ch.close()
+    }
+    return Promise<T>._fromThreadChannel(ch)
+}

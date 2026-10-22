@@ -1,0 +1,17 @@
+// @error: SQL error in the query passed to 'dbPrepare': no such column: logn
+// Checked SQL is checked the same inside a dbPoolRun closure as outside one.
+from "std/sqlite" import { Database, dbPrepare, dbNext, SqlArg }
+from "std/migrate" import { Migration }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")]
+}
+
+fn main(): void {
+    let pool = DbPool.open("app.db", 1)!
+    let _found = dbPoolRun(pool, move(db: &Database): bool => {
+        let st = dbPrepare(db, "SELECT logn FROM users WHERE id = ?", [SqlArg.Int(1)])!
+        return dbNext(st)!
+    }).await()!
+}

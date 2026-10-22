@@ -183,6 +183,8 @@ The threads come from a process-wide pool, so a call costs a queue hand-off rath
 
 The closure runs on another OS thread, so the compiler rejects any capture that is not `Send`. It applies the same check to `spawnOsThreadDetached` (see [Thread Safety](#thread-safety-send-sync)). Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
 
+SQLite queries are blocking FFI too, but a connection belongs to one thread, so they go through [`std/dbpool`](../stdlib/dbpool) instead: a `DbPool` keeps one connection on each of a fixed number of threads, and `dbPoolRun(pool, move(db: &Database): T => ...)` runs a closure against one of them, returning a `Promise`.
+
 Split work across cores by fanning `Promise.blocking` handles into `Promise.all` — no dedicated parallel construct needed:
 
 ```milo
