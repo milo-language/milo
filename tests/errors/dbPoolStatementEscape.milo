@@ -1,0 +1,13 @@
+// @error: cannot send 'chSend' of type 'Channel<Statement>' across threads
+// A Statement belongs to its pool thread's connection, so a job cannot hand one back to the
+// awaiting thread: the result type must be Send.
+from "std/sqlite" import { Database, Statement, dbQuery, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+
+pub fn main(): i32 {
+    let pool = DbPool.open(":memory:", 1)!
+    let st = dbPoolRun(pool, move(db: &Database): Statement => dbQuery(db, "SELECT 1")!).await()!
+    dbNext(st)!
+    print(dbColumnInt64(st, 0))
+    return 0
+}

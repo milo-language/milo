@@ -1,0 +1,100 @@
+// @skip-os: win32
+// Many green tasks query one DbPool at once, each through its own cloned handle; every
+// result lands in the right task. Also: per-connection setup runs on every connection, a
+// size of 0 means one per core, and an in-memory pool wider than one is refused.
+// @expect: setup on 4 connections
+// @expect: sum 49995000 bad 0
+// @expect: cores ok
+// @expect: memory refused
+from "std/sqlite" import { Database, dbOpen, dbExec, dbQuery, dbBindInt64, dbNext, dbColumnInt64, dbClose }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+from "std/sync" import { AtomicI64, WaitGroup }
+from "std/runtime" import { Task, Promise, promiseAll }
+from "std/sysinfo" import { cpuCount }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+fn sumGroup(db: &Database, g: i64): i64 {
+    let st = dbQuery(db, "SELECT sum(v) FROM t WHERE grp = ?")!
+    dbBindInt64(st, 1, g)!
+    dbNext(st)!
+    return dbColumnInt64(st, 0)
+}
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-dbpool-many")!
+    let path = dir + "/t.db"
+    let db = dbOpen(path)!
+    dbExec(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, grp INTEGER NOT NULL, v INTEGER NOT NULL)")!
+    dbExec(db, "BEGIN")!
+    var i: i64 = 0
+    while i < 10000 {
+        dbExec(db, $"INSERT INTO t (grp, v) VALUES ({i % 100}, {i})")!
+        i += 1
+    }
+    dbExec(db, "COMMIT")!
+    dbClose(db)
+
+    let pool = DbPool.openWith(path, 4, ["PRAGMA journal_size_limit=1048576"])!
+    // One job per connection is not guaranteed to land one per thread, so ask each job
+    // for its own connection's setting: all of them must carry it.
+    var ps: Vec<Promise<i64>> = Vec.new()
+    var k: i64 = 0
+    while k < 16 {
+        ps.push(dbPoolRun(pool, move(c: &Database): i64 => {
+            let st = dbQuery(c, "PRAGMA journal_size_limit")!
+            dbNext(st)!
+            return dbColumnInt64(st, 0)
+        }))
+        k += 1
+    }
+    var allSet = true
+    for v in promiseAll(ps).await()! {
+        if v != 1048576 {
+            allSet = false
+        }
+    }
+    if allSet {
+        print($"setup on {pool.size()} connections")
+    }
+
+    let wg = WaitGroup.new()
+    let total = AtomicI64.new(0)
+    let bad = AtomicI64.new(0)
+    var t: i64 = 0
+    while t < 100 {
+        wg.add(1)
+        let w = wg.clone()
+        let tot = total.clone()
+        let b = bad.clone()
+        let pl = pool.clone()
+        let g = t
+        Task.spawn(move(): void => {
+            let got = dbPoolRun(pl, move(c: &Database): i64 => sumGroup(c, g)).await()!
+            // group g holds g, g+100, ..., g+9900: 100 rows summing to 100*g + 495000
+            if got != 100 * g + 495000 {
+                b.add(1)
+            }
+            tot.add(got)
+            w.done()
+        })
+        t += 1
+    }
+    wg.wait()
+    print($"sum {total.load()} bad {bad.load()}")
+    dbPoolClose(pool)
+
+    let wide = DbPool.open(path, 0)!
+    if wide.size() == cpuCount() {
+        print("cores ok")
+    }
+    dbPoolClose(wide)
+    match DbPool.open(":memory:", 2) {
+        Ok(_) => print("memory accepted")
+        Err(_) => print("memory refused")
+    }
+    let _ = removeFile(path)
+    let _ = removeFile(path + "-wal")
+    let _ = removeFile(path + "-shm")
+    let _ = removeDir(dir)
+    return 0
+}

@@ -1,0 +1,53 @@
+// @skip-os: win32
+// A slow query on the pool leaves the scheduler free: a green task keeps ticking on 1 ms
+// timers while the query runs, where the same query on the scheduler's thread would stop
+// it for the whole run.
+// @expect: rows 3000000
+// @expect: ticked while it ran
+from "std/sqlite" import { Database, dbQuery, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+from "std/sync" import { AtomicI64, WaitGroup }
+from "std/runtime" import { Task }
+from "std/time" import { sleepMs }
+from "std/fs" import { makeTempDir, removeFile, removeDir }
+
+pub fn main(): i32 {
+    let dir = makeTempDir("milo-dbpool-slow")!
+    let pool = DbPool.open(dir + "/t.db", 1)!
+    let finished = AtomicI64.new(0)
+    let ticks = AtomicI64.new(0)
+    let wg = WaitGroup.new()
+    wg.add(1)
+    let w = wg.clone()
+    let fin = finished.clone()
+    let tk = ticks.clone()
+    Task.spawn(move(): void => {
+        while fin.load() == 0 {
+            tk.add(1)
+            sleepMs(1)
+        }
+        w.done()
+    })
+    let rows = dbPoolRun(pool, move(db: &Database): i64 => {
+        let st = dbQuery(db, "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) SELECT count(*) FROM c")!
+        dbNext(st)!
+        return dbColumnInt64(st, 0)
+    })
+    let atStart = ticks.load()
+    let n = rows.await()!
+    let during = ticks.load() - atStart
+    finished.store(1)
+    wg.wait()
+    print($"rows {n}")
+    if during >= 10 {
+        print("ticked while it ran")
+    } else {
+        print($"only {during} ticks while it ran")
+    }
+    dbPoolClose(pool)
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = removeFile(dir + "/t.db" + suffix)
+    }
+    let _ = removeDir(dir)
+    return 0
+}

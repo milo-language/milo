@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 580 distinct messages across 744 programs the compiler must reject.
+Every error message the test suite pins: 584 distinct messages across 749 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -78,6 +78,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'G' is a mutable global, and this code runs on a real OS thread (via 'work' → the implicit 'D.drop')`](#g-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread-via-work-the-implicit-d-drop)
 - [`'get' argument 1: expected HandleB, got HandleA`](#get-argument-1-expected-handleb-got-handlea)
 - [`'get' is not available on 'Arena<Res>': 'get' copies its element out, and 'Res' carries Drop`](#get-is-not-available-on-arena-res-get-copies-its-element-out-and-res-carries-drop)
+- [`'get' would copy 'move () => i64' out of the Vec: it carries an owning closure's environment`](#get-would-copy-move-i64-out-of-the-vec-it-carries-an-owning-closure-s-environment)
 - [`'get' would copy 'Res' out of the HashMap: it carries Drop`](#get-would-copy-res-out-of-the-hashmap-it-carries-drop)
 - [`'getOrInsert' is not available on 'HashMap<i64, Res>': 'getOrInsert' copies its element out, and 'Res' carries Drop`](#getorinsert-is-not-available-on-hashmap-i64-res-getorinsert-copies-its-element-out-and-res-carries-drop)
 - [`'h' is borrowed by one argument and moved out by a later one (a move of 'h.items')`](#h-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-h-items)
@@ -86,6 +87,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'helper' is imported from '../fixtures/lib/collide/a' and also declared in this file`](#helper-is-imported-from-fixtures-lib-collide-a-and-also-declared-in-this-file)
 - [`'helper' is imported from both '../fixtures/lib/collide/a' and '../fixtures/lib/collide/b'`](#helper-is-imported-from-both-fixtures-lib-collide-a-and-fixtures-lib-collide-b)
 - [`'helper' is not imported`](#helper-is-not-imported)
+- [`'hits' is a mutable global, and this code runs on a real OS thread`](#hits-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread)
 - [`'Holder.show' can park this task while it holds a reference into 'g's buffer`](#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer)
 - [`'id' shadows an outer binding`](#id-shadows-an-outer-binding)
 - [`'if' is an expression`](#if-is-an-expression)
@@ -302,6 +304,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot return a closure that captures 's' by reference`](#cannot-return-a-closure-that-captures-s-by-reference)
 - [`cannot return a reference`](#cannot-return-a-reference)
 - [`cannot return a reference stored inside 'Option'`](#cannot-return-a-reference-stored-inside-option)
+- [`cannot send 'chSend' of type 'Channel<Statement>' across threads`](#cannot-send-chsend-of-type-channel-statement-across-threads)
 - [`cannot send 'p' of type '*u8' across threads`](#cannot-send-p-of-type-u8-across-threads)
 - [`cannot send 'u' of type 'Unsafe' across threads`](#cannot-send-u-of-type-unsafe-across-threads)
 - [`cannot send 'wrapped'`](#cannot-send-wrapped)
@@ -495,6 +498,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`requires function to return`](#requires-function-to-return)
 - [`requires impl 'Eq' for 'Score'`](#requires-impl-eq-for-score)
 - [`requires numeric type`](#requires-numeric-type)
+- [`returns the element's own field on one path and a new string on another`](#returns-the-element-s-own-field-on-one-path-and-a-new-string-on-another)
 - [`shadows a standard-library function`](#shadows-a-standard-library-function)
 - [`shadows an outer binding`](#shadows-an-outer-binding)
 - [`SQL error in the query passed to 'dbPrepare': no such column: logn`](#sql-error-in-the-query-passed-to-dbprepare-no-such-column-logn)
@@ -1990,6 +1994,23 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/copyOutArenaGet.milo](https://github.com/milo-language/milo/blob/main/tests/errors/copyOutArenaGet.milo)</sub>
 
+## `'get' would copy 'move () => i64' out of the Vec: it carries an owning closure's environment` {#get-would-copy-move-i64-out-of-the-vec-it-carries-an-owning-closure-s-environment}
+
+A copy of an owning closure would share its env, and both copies' drops would free it.
+
+```milo skip
+pub fn main(): i32 {
+    let s = "abc".clone()
+    var v: Vec<move () => i64> = []
+    v.push(move (): i64 => s.len())
+    let f = v.get(0)!
+    print(f())
+    return 0
+}
+```
+
+<sub>[tests/errors/getOwningClosure.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOwningClosure.milo)</sub>
+
 ## `'get' would copy 'Res' out of the HashMap: it carries Drop` {#get-would-copy-res-out-of-the-hashmap-it-carries-drop}
 
 `m.get(k)` hands back a copy of the value, the map keeps its own, and both run Drop. `for k, v in m` borrows; `remove` takes the map's copy out for real.
@@ -2126,6 +2147,27 @@ fn main() {
 ```
 
 <sub>[tests/errors/pubNameNotImported.milo](https://github.com/milo-language/milo/blob/main/tests/errors/pubNameNotImported.milo)</sub>
+
+## `'hits' is a mutable global, and this code runs on a real OS thread` {#hits-is-a-mutable-global-and-this-code-runs-on-a-real-os-thread}
+
+dbPoolRun's closure runs on a pool thread, so it is held to the @thread rules.
+
+```milo skip
+from "std/sqlite" import { Database }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+var hits: i64 = 0
+
+fn main(): void {
+    let pool = DbPool.open("app.db", 1)!
+    let _n = dbPoolRun(pool, move(db: &Database): i64 => {
+        hits += 1
+        return hits
+    }).await()!
+}
+```
+
+<sub>[tests/errors/dbPoolMutableGlobal.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolMutableGlobal.milo)</sub>
 
 ## `'Holder.show' can park this task while it holds a reference into 'g's buffer` {#holder-show-can-park-this-task-while-it-holds-a-reference-into-g-s-buffer}
 
@@ -8006,6 +8048,25 @@ pub fn main(): i32 {
 
 <sub>[tests/errors/withRawEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/withRawEscape.milo)</sub>
 
+## `cannot send 'chSend' of type 'Channel<Statement>' across threads` {#cannot-send-chsend-of-type-channel-statement-across-threads}
+
+A Statement belongs to its pool thread's connection, so a job cannot hand one back to the awaiting thread: the result type must be Send.
+
+```milo skip
+from "std/sqlite" import { Database, Statement, dbQuery, dbNext, dbColumnInt64 }
+from "std/dbpool" import { DbPool, dbPoolRun, dbPoolClose }
+
+pub fn main(): i32 {
+    let pool = DbPool.open(":memory:", 1)!
+    let st = dbPoolRun(pool, move(db: &Database): Statement => dbQuery(db, "SELECT 1")!).await()!
+    dbNext(st)!
+    print(dbColumnInt64(st, 0))
+    return 0
+}
+```
+
+<sub>[tests/errors/dbPoolStatementEscape.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolStatementEscape.milo)</sub>
+
 ## `cannot send 'p' of type '*u8' across threads` {#cannot-send-p-of-type-u8-across-threads}
 
 ```milo skip
@@ -12265,6 +12326,26 @@ fn main(): i32 {
 
 <sub>[tests/errors/stringArith.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringArith.milo)</sub>
 
+## `returns the element's own field on one path and a new string on another` {#returns-the-element-s-own-field-on-one-path-and-a-new-string-on-another}
+
+A sortByKey extractor that returns the element's own field on one path and a new string on another gives the sort keys it must forget and keys it must drop, with no way to tell them apart: rejected, with the clone that makes every key owned as the fix.
+
+```milo skip
+struct P { name: string, n: i64 }
+
+fn main() {
+    var ps: Vec<P> = [P { name: "b" + "", n: 1 }]
+    ps.sortByKey((p: &P): string => {
+        if p.n > 0 {
+            return p.name
+        }
+        return p.name + "!"
+    })
+}
+```
+
+<sub>[tests/errors/sortByKeyMixedExtractor.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sortByKeyMixedExtractor.milo)</sub>
+
 ## `shadows a standard-library function` {#shadows-a-standard-library-function}
 
 asciiIsDigit is a prelude/std function taking (ch). Redefining it with a different signature would rebind std/string's own internal calls to this body and break them — the resolver rejects it. (A same-signature override is fine.)
@@ -12304,6 +12385,28 @@ fn main(): i32 {
 <sub>[tests/errors/loopVarShadow.milo](https://github.com/milo-language/milo/blob/main/tests/errors/loopVarShadow.milo)</sub>
 
 ## `SQL error in the query passed to 'dbPrepare': no such column: logn` {#sql-error-in-the-query-passed-to-dbprepare-no-such-column-logn}
+
+Checked SQL is checked the same inside a dbPoolRun closure as outside one.
+
+```milo skip
+from "std/sqlite" import { Database, dbPrepare, dbNext, SqlArg }
+from "std/migrate" import { Migration }
+from "std/dbpool" import { DbPool, dbPoolRun }
+
+fn schema(): Vec<Migration> {
+    return [Migration.sql(1, "users", "CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL)")]
+}
+
+fn main(): void {
+    let pool = DbPool.open("app.db", 1)!
+    let _found = dbPoolRun(pool, move(db: &Database): bool => {
+        let st = dbPrepare(db, "SELECT logn FROM users WHERE id = ?", [SqlArg.Int(1)])!
+        return dbNext(st)!
+    }).await()!
+}
+```
+
+<sub>[tests/errors/dbPoolSqlUnknownColumn.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dbPoolSqlUnknownColumn.milo)</sub>
 
 A column the schema does not have is a compile error at the literal, with the nearest name.
 

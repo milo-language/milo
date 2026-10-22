@@ -375,6 +375,16 @@ pub fn rtWritePtr(base: *u8, off: i64, val: *u8): void
 
 Store a pointer at `base + off`. `base` must point at a live, writable block that covers it.
 
+#### `runDetachedClosure`
+
+```milo
+pub fn runDetachedClosure(fnPtr: *u8, envPtr: *u8): void
+```
+
+Run a `move () => void` closure handed over as its raw (fn, env) pair, then release the
+environment.
+Also std/dbpool's job runner.
+
 #### `schedStructSize`
 
 ```milo

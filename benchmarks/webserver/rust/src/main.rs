@@ -33,8 +33,7 @@ async fn fib_blocking_handler(Path(n): Path<i64>) -> String {
     tokio::task::spawn_blocking(move || fib(n)).await.unwrap().to_string()
 }
 
-async fn db_handler() -> String {
-    let param = COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+fn db_query(param: i64) -> String {
     CONN.with(|c| {
         let mut st = c
             .prepare_cached("SELECT grp, count(*), sum(val) FROM t WHERE grp % 7 = ? GROUP BY grp")
@@ -47,6 +46,17 @@ async fn db_handler() -> String {
         }
         out
     })
+}
+
+async fn db_handler() -> String {
+    db_query(COUNTER.fetch_add(1, Ordering::Relaxed) + 1)
+}
+
+// The same query on tokio's blocking pool, matching /dbp in server.milo (DbPool). CONN is
+// thread_local, so each blocking thread opens its own connection once and keeps it.
+async fn db_pool_handler() -> String {
+    let param = COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    tokio::task::spawn_blocking(move || db_query(param)).await.unwrap()
 }
 
 fn setup_db(path: &str) {
@@ -84,7 +94,8 @@ fn main() {
             .route("/hello", get(hello))
             .route("/fib/{n}", get(fib_handler))
             .route("/fibb/{n}", get(fib_blocking_handler))
-            .route("/db", get(db_handler));
+            .route("/db", get(db_handler))
+            .route("/dbp", get(db_pool_handler));
         let l = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap();
         axum::serve(l, app).await.unwrap();
     });

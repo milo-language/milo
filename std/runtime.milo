@@ -967,7 +967,8 @@ pub fn isWorkerThread(): bool {
 
 // Run a `move () => void` closure handed over as its raw (fn, env) pair, then release the
 // environment.
-fn runDetachedClosure(fnPtr: *u8, envPtr: *u8): void {
+// Also std/dbpool's job runner.
+pub fn runDetachedClosure(fnPtr: *u8, envPtr: *u8): void {
     unsafe {
         _callClosureVoid(fnPtr, envPtr)
         // A closure environment's first word is its drop glue, and that glue is the whole
@@ -1369,6 +1370,15 @@ impl Promise<T> {
         return Promise {
             _ch: ch,
             _blocking: false
+        }
+    }
+
+    // A Promise whose value an OS thread outside the scheduler sends on `ch` (std/dbpool's
+    // workers), so a main-thread await blocks on the channel the way Promise.blocking does.
+    fn _fromThreadChannel(ch: Channel<T>): Promise<T> {
+        return Promise {
+            _ch: ch,
+            _blocking: true
         }
     }
 
