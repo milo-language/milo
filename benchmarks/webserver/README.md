@@ -3,7 +3,7 @@
 Throughput and head-of-line (HOL) latency for `std/http`. One command:
 
 ```
-bun benchmarks/webserver/bench.ts [--scale 1] [--json out.json]
+bun benchmarks/webserver/bench.ts [--scale 1] [--json out.json] [--keepalive] [--server milo|rust1|rustmt|all] [--stress]
 ```
 
 It builds `server.milo` with `--release`, starts it (`PORT` default 8090, `DB_PATH` temp file), and drives it with [`oha`](https://github.com/hatoo/oha) (`brew install oha`). The server is killed on exit and ctrl-c.
@@ -14,9 +14,12 @@ It builds `server.milo` with `--release`, starts it (`PORT` default 8090, `DB_PA
 |---|---|
 | `hello c=1`, `c=64` | fixed per-request overhead (accept, parse, route, respond); c=64 adds scheduler/fd-wakeup cost |
 | `fib27 c=1`, `c=64` | pure CPU handler (~0.5 ms); does throughput scale with concurrency |
+| `fibb27 c=64` | the same work on the blocking pool (`/fibb/:n`: `Promise.blocking` in Milo, `spawn_blocking` in Rust); scales with cores even on a single-threaded scheduler |
 | `db c=1`, `c=64` | one SQLite aggregate over 50k rows per request (~1.5 ms) |
 | `hol-baseline` | `/hello` c=4 alone |
 | `hol` | same `/hello` c=4 while a background `/fib/32` c=16 (~6 ms per request) runs. **Key number**: `hol p99 = X ms (Yx baseline)`, how long a cheap request waits behind CPU work |
+| `hol-blocking` | `hol` with the background on `/fibb/32`: the CPU work runs on the blocking pool, so the cheap route should not wait behind it |
+| `--stress` | instead of the rows above: `/fibb/45` (seconds per request) at c=10, n=20, per server; rps and p99 |
 
 HOL uses fib(32) rather than fib(27): at 0.5 ms a fib(27) is too short to show queueing behind one task (fib27 as background gave 0.7x, i.e. noise).
 
@@ -66,7 +69,7 @@ Per-request overhead drops by more than half (hello c=64 2.6x). Under CPU-bound 
 
 - `rust1`: `RUST_THREADS=1`, tokio `current_thread` runtime. Single-threaded like Milo today, so this is the like-for-like row.
 - `rustmt`: `RUST_THREADS=0`, tokio `multi_thread` with the default worker count (one per core). What a Rust author gets by default.
-- `/db` uses one `rusqlite` connection per runtime thread (`thread_local!`, WAL, `prepare_cached`) rather than a shared `Mutex<Connection>`: a mutex would serialize the multi-thread runtime on the db and understate Rust. Queries and fib run inline in the handler (no `spawn_blocking`), as in Milo. Milo prints floats differently (bytes differ), both return 200 with 15 lines.
+- `/db` uses one `rusqlite` connection per runtime thread (`thread_local!`, WAL, `prepare_cached`) rather than a shared `Mutex<Connection>`: a mutex would serialize the multi-thread runtime on the db and understate Rust. Queries and `/fib` run inline in the handler, as in Milo; `/fibb` is the one route that uses `spawn_blocking`, matching Milo's `Promise.blocking`. Milo prints floats differently (bytes differ), both return 200 with 15 lines.
 
 Keep-alive policy: by default every server is driven with `oha --disable-keepalive` (a new TCP connection per request). `--keepalive` lets oha reuse connections, which all three servers support. The mode is printed at the start of each run.
 
@@ -109,3 +112,34 @@ hol p99 [rustmt] =   6.38 ms (66.4x baseline)
 ```
 
 With connection setup out of the way, rust1 is 1.7x Milo on hello c=64, and rustmt is no faster than rust1 there.
+
+## Blocking pool
+
+`Promise.blocking` runs on a reusable elastic pool of OS threads (std/runtime `blockingPoolSubmit`) instead of a new pthread per call. `--keepalive --server all`, 2026-10-21, git d3ab9f82 plus the pool change, Apple M4, `Darwin arm64`, 10 cpus, 0 errors, 0 non-2xx:
+
+```
+scenario                                 milo rps   rust1 rps  rustmt rps    milo p99   rust1 p99  rustmt p99
+hello c=1                                   25204       30633       30008        0.08        0.08        0.08
+hello c=64                                 124002      201341      203885        0.81        0.38        0.56
+fib27 c=1                                    1990        2824        2846        0.59        0.39        0.40
+fib27 c=64                                   2076        3012       19342       46.86       22.23        6.22
+fibb27 c=64                                 14339       19875       19612        7.71        5.67        7.06
+db c=1                                        642         698         717        1.66        1.53        1.45
+db c=64                                       681         740        3694      138.20       89.00       32.02
+hol-baseline hello c=4                      64080       67831       66556        0.09        0.09        0.09
+hol hello c=4 (+fib32 c=16)                   271         390        4203      156.70       59.86        5.99
+hol-blocking hello c=4 (+fibb32 c=16)       56312       73594       13005        0.11        0.07        4.07
+```
+
+The same Milo rows on d3ab9f82 without the pool (a thread per `Promise.blocking`): `fibb27 c=64` 14026 rps, p99 7.77 ms (CPU-bound either way); `hol-blocking` 2747 rps, p99 6.69 ms. With the pool the cheap route's p99 behind a fib(32) load drops from 157 ms inline (6.7 ms thread per call) to 0.11 ms, level with rust1. `fibb27 c=64` is 7x `fib27 c=64`; its distance from Rust's is the fib itself (`fib27 c=1`: Rust 1.4x).
+
+`--stress --keepalive --server all`, same machine and commit:
+
+```
+scenario                   milo rps   rust1 rps  rustmt rps    milo p99   rust1 p99  rustmt p99
+stress fibb45 c=10 n=20        2.69        3.57        3.51     3748.37     2827.31     2892.16
+```
+
+All ten requests of a round run at once on every server; the 1.3x gap is fib(45)'s own cost.
+
+`benchmarks/runtime/blocking_pool.milo` isolates the hand-off: 200000 trivial jobs submitted from a green task in batches of 64, awaited with `promiseAll`. Same machine, release build, best of three: d3ab9f82 253k jobs/s, with the pool 1.44M jobs/s (5.7x). At batch 1 (one job in flight) 83k vs 122k.

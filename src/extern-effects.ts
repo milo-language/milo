@@ -245,6 +245,8 @@ export const EXTERN_EFFECTS: Record<string, ExternEffect> = {
   pthread_cond_init: sync(man(3, "pthread_cond_init")),
   pthread_cond_destroy: sync(man(3, "pthread_cond_destroy")),
   pthread_cond_wait: sync(man(3, "pthread_cond_wait")),
+  pthread_cond_timedwait: sync(man(3, "pthread_cond_timedwait")),
+  pthread_cond_timedwait_relative_np: sync(man(3, "pthread_cond_timedwait")),
   pthread_cond_signal: sync(man(3, "pthread_cond_signal")),
   pthread_cond_broadcast: sync(man(3, "pthread_cond_broadcast")),
   pthread_rwlock_init: sync(man(3, "pthread_rwlock_init")),

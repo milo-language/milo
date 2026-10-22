@@ -15,6 +15,8 @@ const jsonPath = opt("--json");
 const basePort = Number(process.env.PORT ?? 8090);
 const keepalive = argv.includes("--keepalive");
 const serverOpt = opt("--server") ?? "all";
+// fib(45) is seconds per request, so this runs only on request and replaces the default rows.
+const stress = argv.includes("--stress");
 type Kind = "milo" | "rust1" | "rustmt";
 const ALL: Kind[] = ["milo", "rust1", "rustmt"];
 if (serverOpt !== "all" && !ALL.includes(serverOpt as Kind)) {
@@ -106,6 +108,8 @@ async function runOha(name: string, path: string, c: number, n: number): Promise
 // fib(27) is only ~0.5 ms here, too short to show head-of-line blocking; fib(32) is ~6 ms.
 const HOL_FIB = 32;
 const cnt = (n: number) => Math.max(1, Math.round(n * scale));
+// Whole requests per second, except the stress row, which runs at a few per second.
+const rpsStr = (rps: number) => (rps < 100 ? rps.toFixed(2) : rps.toFixed(0));
 
 interface Result {
   rows: Row[];
@@ -129,6 +133,12 @@ function buildRust(): string {
   return join(root, "benchmarks/webserver/rust/target/release/bench-server-rust");
 }
 
+async function stopServer() {
+  server!.kill(9);
+  await server!.exited;
+  server = undefined;
+}
+
 async function runServer(kind: Kind, bin: string): Promise<Result> {
   const port = portOf(kind);
   base = `http://127.0.0.1:${port}`;
@@ -144,16 +154,24 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
   if (!up) throw new Error(`${kind} server did not answer /hello`);
 
   const rows: Row[] = [];
-  const add = (r: Row) => { rows.push(r); console.log(`  ${r.name}: ${r.rps.toFixed(0)} rps, p99 ${r.p99.toFixed(2)} ms`); };
+  const add = (r: Row) => { rows.push(r); console.log(`  ${r.name}: ${rpsStr(r.rps)} rps, p99 ${r.p99.toFixed(2)} ms`); };
 
   // warm up code paths and the db page cache before measuring
   await runOha("warmup", "/hello", 4, 200);
   await runOha("warmup", "/db", 4, 50);
 
+  if (stress) {
+    const r = await runOha("stress fibb45 c=10 n=20", "/fibb/45", 10, 20);
+    add(r);
+    await stopServer();
+    return { rows, hol: r, baseP99: r.p99 };
+  }
+
   add(await runOha("hello c=1", "/hello", 1, cnt(3000)));
   add(await runOha("hello c=64", "/hello", 64, cnt(8000)));
   add(await runOha("fib27 c=1", "/fib/27", 1, cnt(300)));
   add(await runOha("fib27 c=64", "/fib/27", 64, cnt(1500)));
+  add(await runOha("fibb27 c=64", "/fibb/27", 64, cnt(1500)));
   add(await runOha("db c=1", "/db", 1, cnt(1000)));
   add(await runOha("db c=64", "/db", 64, cnt(3000)));
 
@@ -168,9 +186,16 @@ async function runServer(kind: Kind, bin: string): Promise<Result> {
   bg = undefined;
   add(hol);
 
-  server.kill(9);
-  await server.exited;
-  server = undefined;
+  // The same HOL setup with the CPU work on the blocking pool (Promise.blocking /
+  // spawn_blocking) instead of inline: the cheap route should no longer wait behind it.
+  await drainPorts();
+  bg = spawn(ohaArgs(`/fibb/${HOL_FIB}`, 16, cnt(1500)), { stdout: "ignore", stderr: "ignore" });
+  await Bun.sleep(300);
+  add(await runOha(`hol-blocking hello c=4 (+fibb${HOL_FIB} c=16)`, "/hello", 4, cnt(2000)));
+  bg.kill(9);
+  bg = undefined;
+
+  await stopServer();
   return { rows, hol, baseP99: rows.find((r) => r.name.startsWith("hol-baseline"))!.p99 };
 }
 
@@ -192,9 +217,9 @@ async function main() {
     const w = Math.max(...rows.map((r) => r.name.length));
     console.log(`\n[${k}]\n` + "scenario".padEnd(w) + "       rps    p50 ms    p99 ms    max ms  non2xx  errors");
     for (const r of rows) {
-      console.log(r.name.padEnd(w) + r.rps.toFixed(0).padStart(10) + f(r.p50) + f(r.p99) + f(r.max) + String(r.non2xx).padStart(8) + String(r.errors).padStart(8));
+      console.log(r.name.padEnd(w) + rpsStr(r.rps).padStart(10) + f(r.p50) + f(r.p99) + f(r.max) + String(r.non2xx).padStart(8) + String(r.errors).padStart(8));
     }
-    console.log(`hol p99 = ${hol.p99.toFixed(2)} ms (${(hol.p99 / baseP99).toFixed(1)}x baseline)`);
+    if (!stress) console.log(`hol p99 = ${hol.p99.toFixed(2)} ms (${(hol.p99 / baseP99).toFixed(1)}x baseline)`);
   }
 
   if (kinds.length > 1) {
@@ -203,10 +228,10 @@ async function main() {
     const cell = (k: Kind, i: number, fn: (r: Row) => string) => (results[k] ? fn(results[k]!.rows[i]) : "-").padStart(12);
     console.log("\ncomparison\n" + "scenario".padEnd(w) + ALL.map((k) => (k + " rps").padStart(12)).join("") + ALL.map((k) => (k + " p99").padStart(12)).join(""));
     first.forEach((r, i) => {
-      console.log(r.name.padEnd(w) + ALL.map((k) => cell(k, i, (x) => x.rps.toFixed(0))).join("") + ALL.map((k) => cell(k, i, (x) => x.p99.toFixed(2))).join(""));
+      console.log(r.name.padEnd(w) + ALL.map((k) => cell(k, i, (x) => rpsStr(x.rps))).join("") + ALL.map((k) => cell(k, i, (x) => x.p99.toFixed(2))).join(""));
     });
     console.log("");
-    for (const k of kinds) console.log(`hol p99 [${k}] = ${results[k]!.hol.p99.toFixed(2)} ms (${(results[k]!.hol.p99 / results[k]!.baseP99).toFixed(1)}x baseline)`);
+    if (!stress) for (const k of kinds) console.log(`hol p99 [${k}] = ${results[k]!.hol.p99.toFixed(2)} ms (${(results[k]!.hol.p99 / results[k]!.baseP99).toFixed(1)}x baseline)`);
   }
 
   if (jsonPath) {

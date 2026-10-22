@@ -1,0 +1,41 @@
+// @expect: 2080
+// @expect: 6
+// @expect: done
+
+from "std/runtime" import {
+    Promise
+}
+
+// A blocking job that waits on another blocking job. With every outer job holding a
+// worker while its inner job is still queued, a fixed-size pool would deadlock here; the
+// elastic pool starts a worker for the inner job instead.
+fn nested(i: i64): i64 {
+    let inner = Promise<i64>.blocking(move(): i64 => {
+        return i + 1
+    })
+    return inner.await()!
+}
+
+pub fn main(): i32 {
+    var ps: Vec<Promise<i64>> = Vec.new()
+    for i in 0..64 {
+        ps.push(Promise<i64>.blocking(move(): i64 => {
+            return nested(i)
+        }))
+    }
+    var sum: i64 = 0
+    for p in ps {
+        sum += p.await()!
+    }
+    print(sum)
+    // Three levels deep, awaited from main.
+    let deep = Promise<i64>.blocking(move(): i64 => {
+        let mid = Promise<i64>.blocking(move(): i64 => {
+            return nested(4)
+        })
+        return mid.await()! + 1
+    })
+    print(deep.await()!)
+    print("done")
+    return 0
+}

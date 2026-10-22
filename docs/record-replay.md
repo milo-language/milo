@@ -197,7 +197,8 @@ own redeclaration of the extern does not have. A hole is never silent:
 ### Phase 4: OS threads
 
 One trace serves every OS thread. A thread std starts (`Promise.blocking`, std/shard) is
-numbered when its parent records `thread.spawn`, so the numbering replays, and every
+numbered when its parent records `thread.spawn`, so the numbering replays (which is why a
+recorded or replayed run gives each `Promise.blocking` its own thread instead of a pooled one), and every
 record a thread makes names it after its kind: `fs.read@2`. The trace order is the order
 the records were made, under std/replay's lock. Under replay a thread answers its next
 call only when the record at the head of the trace is its own, so each thread gets the

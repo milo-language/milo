@@ -565,6 +565,30 @@ pub extern fn pthread_cond_broadcast(cond: *u8): i32
 
 pub extern fn pthread_cond_destroy(cond: *u8): i32
 
+pub extern fn pthread_cond_timedwait(cond: *u8, mutex: *u8, abstime: *u8): i32
+
+// Wait on `cond` (with `mutex` held) for at most `ms` milliseconds. 0 when woken, which
+// may be spurious; nonzero on timeout. The deadline is CLOCK_REALTIME, the default clock
+// of a condvar made with a null attr, so a stepped clock moves it; callers only use this
+// for coarse keep-alive timeouts.
+// @replayHooked: only std/runtime's blocking pool calls it, and the pool runs only outside
+// record/replay (Promise.blocking keeps a thread per call there).
+@replayHooked
+@unsafe
+pub fn condWaitMillis(cond: *u8, mutex: *u8, ms: i64): i32 {
+    var tv: [u8; 16] = [0; 16]
+    var ts: [u8; 16] = [0; 16]
+    unsafe {
+        gettimeofday(tv as *u8, 0 as *u8)
+        let tvp = tv as *i64
+        let tsp = ts as *i64
+        let nsec = tvp[1] * 1000 + (ms % 1000) * 1000000
+        tsp[0] = tvp[0] + ms / 1000 + nsec / 1000000000
+        tsp[1] = nsec % 1000000000
+        return pthread_cond_timedwait(cond, mutex, ts as *u8)
+    }
+}
+
 pub extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
 
 pub extern fn pthread_rwlock_rdlock(rwlock: *u8): i32

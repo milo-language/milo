@@ -1,0 +1,44 @@
+// @expect: 200
+// @expect: reused
+// @expect: done
+
+from "std/runtime" import {
+    Promise
+}
+from "std/env" import {
+    Env
+}
+
+// Counts the jobs each OS thread has run. A thread per call would see 1 every time.
+thread_local var jobsHere: i64 = 0
+
+// Caps the pool at two workers (read once, when the first job builds the pool), so 200
+// jobs must share them: past the cap jobs queue rather than start threads, and at least
+// one worker runs 100 or more of them.
+pub fn main(): i32 {
+    Env.set("MILO_BLOCKING_THREADS", "2")!
+    var ps: Vec<Promise<i64>> = Vec.new()
+    for _ in 0..200 {
+        ps.push(Promise<i64>.blocking(move(): i64 => {
+            jobsHere += 1
+            return jobsHere
+        }))
+    }
+    var n: i64 = 0
+    var most: i64 = 0
+    for p in ps {
+        let c = p.await()!
+        if c > most {
+            most = c
+        }
+        n += 1
+    }
+    print(n)
+    if most >= 100 {
+        print("reused")
+    } else {
+        print(most)
+    }
+    print("done")
+    return 0
+}

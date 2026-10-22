@@ -573,6 +573,26 @@ pub extern fn pthread_cond_broadcast(cond: *u8): i32
 
 pub extern fn pthread_cond_destroy(cond: *u8): i32
 
+// Relative to now, so a wait never reads the wall clock (and never stretches or cuts
+// short when it is stepped). Copied from the darwin arm; undefined on wasm.
+pub extern fn pthread_cond_timedwait_relative_np(cond: *u8, mutex: *u8, reltime: *u8): i32
+
+// Wait on `cond` (with `mutex` held) for at most `ms` milliseconds. 0 when woken, which
+// may be spurious; nonzero on timeout.
+// @replayHooked: only std/runtime's blocking pool calls it, and the pool runs only outside
+// record/replay (Promise.blocking keeps a thread per call there).
+@replayHooked
+@unsafe
+pub fn condWaitMillis(cond: *u8, mutex: *u8, ms: i64): i32 {
+    var ts: [u8; 16] = [0; 16]
+    unsafe {
+        let tsp = ts as *i64
+        tsp[0] = ms / 1000
+        tsp[1] = (ms % 1000) * 1000000
+        return pthread_cond_timedwait_relative_np(cond, mutex, ts as *u8)
+    }
+}
+
 pub extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
 
 pub extern fn pthread_rwlock_rdlock(rwlock: *u8): i32

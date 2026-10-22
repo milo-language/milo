@@ -25,7 +25,7 @@
   "src/derive-template.ts": 211,
   "src/diagnostics.ts": 119,
   "src/emit-mlir.ts": 5322,
-  "src/extern-effects.ts": 534,
+  "src/extern-effects.ts": 536,
   "src/fixes.ts": 211,
   "src/fmtbin.ts": 157,
   "src/headergen.ts": 169,

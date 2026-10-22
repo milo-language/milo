@@ -237,10 +237,11 @@ pub fn guardPageSize(): i64
 pub fn isWorkerThread(): bool
 ```
 
-True on a thread spawnOsThreadDetached started (a Promise.blocking worker), false on
-the main thread. Such a thread ends after one closure and runs no destructor for its
-thread_locals, so a per-thread cache (std/fetch's connection pool) skips it rather
-than leak what it holds when the thread exits.
+True on a thread spawnOsThreadDetached or the blocking pool started (a Promise.blocking
+worker), false on the main thread. Such a thread exits without running a destructor for
+its thread_locals (a pool worker does so once it has idled past blockingIdleMillis), so
+a per-thread cache (std/fetch's connection pool) skips it rather than leak what it holds
+when the thread exits.
 
 #### `kindPlain`
 

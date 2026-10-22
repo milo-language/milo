@@ -1,0 +1,63 @@
+// Throughput of trivial Promise.blocking jobs: a green task submits M jobs in batches of
+// B, awaiting each batch with promiseAll. A job does almost nothing, so the rate is the
+// cost of getting work onto an OS thread and its result back (thread start or pool
+// hand-off, channel send, cross-thread unpark).
+//
+//   ./milo build benchmarks/runtime/blocking_pool.milo --release -o benchmarks/runtime/blocking_pool
+//   benchmarks/runtime/blocking_pool 20000 64   # M jobs, batch size
+
+from "std/runtime" import {
+    Task, Promise, promiseAll, schedulerRunToCompletion
+}
+from "std/time" import {
+    epochMillis
+}
+from "std/args" import {
+    args
+}
+from "std/strconv" import {
+    parseInt
+}
+
+fn argOr(i: i64, dflt: i64): i64 {
+    let a = args()
+    if a.len() > i {
+        return parseInt(a[i]) ?? dflt
+    }
+    return dflt
+}
+
+pub fn main(): i32 {
+    let jobs = argOr(1, 20000)
+    let batch = argOr(2, 64)
+    Task.spawn(move(): void => {
+        let t0 = epochMillis()
+        var sum: i64 = 0
+        var base: i64 = 0
+        while base < jobs {
+            var ps: Vec<Promise<i64>> = Vec.new()
+            var k: i64 = 0
+            while k < batch && base + k < jobs {
+                let i = base + k
+                ps.push(Promise<i64>.blocking(move(): i64 => {
+                    return i
+                }))
+                k += 1
+            }
+            for v in promiseAll(ps).await()! {
+                sum += v
+            }
+            base += batch
+        }
+        var ms = epochMillis() - t0
+        if ms == 0 {
+            ms = 1
+        }
+        if sum != jobs * (jobs - 1) / 2 {
+            print("wrong sum ", sum)
+        }
+        print("jobs=", jobs, " batch=", batch, " ms=", ms, " jobs_per_sec=", jobs * 1000 / ms)
+    })
+    schedulerRunToCompletion()
+    return 0
+}

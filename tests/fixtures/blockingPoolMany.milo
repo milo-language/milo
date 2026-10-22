@@ -1,0 +1,41 @@
+// @expect: 2666466670000
+// @expect: done
+
+from "std/runtime" import {
+    Promise, promiseAll
+}
+
+// Far more Promise.blocking jobs than cores, awaited in batches from a green task: each
+// result must land in its own promise in order, whichever pool worker ran it.
+pub fn main(): i32 {
+    let total: i64 = 20000
+    let batch: i64 = 64
+    var sum: i64 = 0
+    var base: i64 = 0
+    while base < total {
+        var ps: Vec<Promise<i64>> = Vec.new()
+        var k: i64 = 0
+        while k < batch && base + k < total {
+            let i = base + k
+            ps.push(Promise<i64>.blocking(move(): i64 => {
+                return i * i
+            }))
+            k += 1
+        }
+        let got = promiseAll(ps).await()!
+        var j: i64 = 0
+        for v in got {
+            let i = base + j
+            if v != i * i {
+                print("wrong result")
+                return 1
+            }
+            sum += v
+            j += 1
+        }
+        base += batch
+    }
+    print(sum)
+    print("done")
+    return 0
+}

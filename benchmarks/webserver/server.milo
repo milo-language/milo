@@ -1,9 +1,11 @@
-// Fixture server for benchmarks/webserver/bench.ts: one cheap route, one CPU route, one SQLite route.
+// Fixture server for benchmarks/webserver/bench.ts: one cheap route, a CPU route run inline and on
+// Promise.blocking, one SQLite route.
 from "std/http" import { Context, Response, Router, ServeOptions, serveRouterWith }
 from "std/sqlite" import { Database, dbOpen, dbExec, dbQuery, dbNext, dbBindInt64, dbColumnInt64, dbColumnFloat, uncheckedSql }
 from "std/env" import { Env }
 from "std/fs" import { pathExists, removeFile }
 from "std/strconv" import { parseInt }
+from "std/runtime" import { Promise }
 
 // Module scope only takes constant initializers, so the handle rides in a one-element Vec.
 var dbs: Vec<Database> = []
@@ -23,6 +25,18 @@ fn helloHandler(ctx: &mut Context): Response {
 fn fibHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n") ?? "") ?? 20
     return ctx.text(fib(n).toString())
+}
+
+// The same work on the blocking pool: the handler's green task parks until a worker thread
+// has the result, so other connections keep being served meanwhile.
+fn fibBlockingHandler(ctx: &mut Context): Response {
+    let n = parseInt(ctx.param("n") ?? "") ?? 20
+    let p = Promise<i64>.blocking(move(): i64 => fib(n))
+    let Ok(v) = p.await() else {
+        ctx.setStatus(500)
+        return ctx.text("blocking job failed")
+    }
+    return ctx.text(v.toString())
 }
 
 // The parameter varies per request so the query is never a repeat of the last one.
@@ -73,6 +87,7 @@ pub fn main(): i32 {
     var r: Router = Router.new()
     r.get("/hello", helloHandler)
     r.get("/fib/:n", fibHandler)
+    r.get("/fibb/:n", fibBlockingHandler)
     r.get("/db", dbHandler)
     let opts = ServeOptions {}
     let result = serveRouterWith("127.0.0.1", port as u16, r, opts)
