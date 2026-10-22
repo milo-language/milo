@@ -8125,6 +8125,8 @@ A conforming implementation shall accept this program, and running it shall writ
 - `3 false`
 - `done`
 
+**Rationale.** (debt: std/event.windows.milo keeps winLoopTable as an unsynchronized global, so a scheduler started on a worker thread there is a data race the thread checker rejects)
+
 *Program:* [`tests/fixtures/blockingPoolSchedulerReset.milo`](../tests/fixtures/blockingPoolSchedulerReset.milo) — *verified by:* tests/run.test.ts — `fixtures (compile + run)`
 
 ### MILO-B-booleanLogic
