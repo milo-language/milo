@@ -134,13 +134,15 @@ from "std/sync" import { Channel, AtomicI64 }
 
 fn main() {
     let lock = Channel<i64>.new(1)!
-    lock.send(0)!
+    let ready = Channel<i64>.new(4)!
     let hits = AtomicI64.new(0)
     var ps: Vec<Promise<i64>> = Vec.new()
     for w in 0..4 {
         let l = lock.clone()
         let h = hits.clone()
+        let r = ready.clone()
         ps.push(Promise<i64>.blocking(move (): i64 => {
+            r.send(w)!
             var mine: i64 = 0
             for i in 0..25 {
                 let c = l.recv()!
@@ -152,6 +154,12 @@ fn main() {
             return mine
         }))
     }
+    // The lock opens only once all four workers are running, so they really contend: a
+    // reused pool worker could otherwise finish its 25 rounds before the next one starts.
+    for i in 0..4 {
+        let _r = ready.recv()!
+    }
+    lock.send(0)!
     var total: i64 = 0
     for p in ps {
         total += p.await()!

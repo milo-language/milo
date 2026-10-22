@@ -1,3 +1,6 @@
+// @skip-os: win32
+// (debt: std/event.windows.milo keeps winLoopTable as an unsynchronized global, so a
+// scheduler started on a worker thread there is a data race the thread checker rejects)
 // @expect: 42
 // @expect: 2 false
 // @expect: 3 false
