@@ -1462,7 +1462,17 @@ class FnEmitter {
       case "StringClone": {
         // Milo's implicit copy of a string: a new owner of the same buffer.
         if (e.str.kind === "StringLit") return this.expr(e.str);
-        const p = this.fieldPlace(e.str);
+        let p = this.fieldPlace(e.str);
+        if (!p && e.str.kind === "FieldAccess") {
+          // A string field of a value read in place (a for-in element, a by-value
+          // binding): its bits into a slot that drops nothing, shared from there.
+          const v = this.expr(e.str);
+          if (v.ty !== STR || v.own !== "view") throw new MlirUnsupported("string copy of a temporary");
+          const ref = this.fresh();
+          this.vars.push(`  ${ref} = milo.var "view" : !milo.ref<${STR}>`);
+          this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
+          p = { ref, ty: STR };
+        }
         if (!p || p.ty !== STR) throw new MlirUnsupported("string copy of a temporary");
         this.cx.mlirHelper("milo.share.string", () => ({
           params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],

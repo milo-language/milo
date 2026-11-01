@@ -1,0 +1,40 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a string field copied
+// out of a value read in place (a for-in element of a Vec of structs), which shares the
+// buffer: returned inside an Option, kept in a local and pushed onto (copy on write,
+// the element keeps its own), and copied twice.
+
+struct Param { name: string, value: string }
+
+fn find(ps: &Vec<Param>, name: &string): Option<string> {
+    for p in ps {
+        if p.name == name {
+            return Some(p.value)
+        }
+    }
+    return None
+}
+
+fn joined(ps: &Vec<Param>): string {
+    var out = ""
+    for p in ps {
+        var v = p.value
+        v.pushStr(";")
+        let again = p.value
+        out.pushStr(v)
+        out.pushStr(again)
+    }
+    return out
+}
+
+fn run() {
+    var ps: Vec<Param> = Vec.new()
+    ps.push(Param { name: "a", value: "one" + "1" })
+    ps.push(Param { name: "b", value: "two" + "2" })
+    print(find(ps, "b") ?? "none", " ", find(ps, "z") ?? "none")
+    print(joined(ps))
+    print(ps[0].value, " ", ps[1].value)
+}
+
+fn main() {
+    run()
+}
