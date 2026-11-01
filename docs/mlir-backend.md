@@ -1,9 +1,9 @@
 <!-- doc-meta
 system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time behind MILO_MLIR=1
-key-files: mlir/Milo.td, mlir/Scalar.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
+key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (M1 scalar functions in; shape rewritten for the high-level dialect)
+last-verified: 2026-11-01 (third batch: main, print, aggregates, drop elaboration)
 -->
 
 # MLIR backend
@@ -18,9 +18,10 @@ versioning, not hoisting), and the dialect expresses both, so axpy ran 2.9x fast
 ```
 Source -> Lexer -> Parser -> Resolver -> Checker -> HIR  (TypeScript)
 HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
-    -> milo-opt (C++, mlir/): verify -> [desugar, drop elaboration: later]
-       -> milo-lower-structured-cf -> convert-milo-to-llvm -> mem2reg, canonicalize
-    -> LLVM IR, spliced into the legacy module (src/mlir-backend.ts) -> clang
+    -> milo-opt (C++, mlir/): verify -> milo-scope-drops -> expand-index, raise-to-scf
+       -> milo-lower-structured-cf -> milo-elaborate-drops -> loop passes
+       -> convert-milo-to-llvm -> mem2reg, canonicalize -> LLVM IR (--emit-llvmir)
+    -> spliced into the legacy module (src/mlir-backend.ts) -> clang
 ```
 
 - **Everything after the checker moves into MLIR**, JSIR/ClangIR style. The goal is to
@@ -107,6 +108,60 @@ run: axpy compiled from Milo source under `MILO_MLIR=1` vectorizes (0.095 ns/ele
 the Vec ops in: 1805 pass, 0 fail, 71962 of 263941 instances (27.3%). Still legacy:
 `main` and the print builtins, by-value non-scalar params (they need drops, M4), strings,
 structs, enums.
+
+**Third batch (2026-11-01): main, print, aggregates, drop elaboration.**
+
+- *main and print.* `main` goes through MLIR unless a green-task wrapper owns it
+  (`mlirMainOk`): it is `i32 @main(i32, ptr)`, and the splice moves legacy's prologue
+  (argc/argv globals, stdout buffering, global init) to the top of the MLIR entry block. A
+  main with a raw pointer stays legacy (its body would be kept for the noalias analysis, and
+  then there is no stub to find the prologue in). `milo.print` (`stderr` for eprint) takes
+  every part; `print($"...")` is `print(format(parts))` in HIR and prints the parts. It
+  lowers to one call of a legacy function generated for exactly that sequence of part
+  types (codegen `mlirHelper`/`mlirPrintHelper`, named by `typeKey`), so the formatting is
+  legacy's by construction instead of a second copy of it in C++.
+- *Aggregates.* `!milo.struct<"Name", fields...>` and `!milo.enum<"Name", size, align,
+  [tag: (T at offset, ...)]>` lower to LLVM's identified structs of legacy's names, so a
+  spliced body uses the module's own `%Name`. The enum spells out legacy's `EnumLayout`
+  (codegen `mlirEnumLayout`): nothing in C++ recomputes it, the tag and payload go through
+  an entry-block slot at those byte offsets as in `enumFieldPtr`. Niche-packed enums
+  (ranged ints) and aggregates of 128 bytes or more (`isBigAgg`) stay legacy. Ops:
+  `struct.new/get`, `field_ref` (a field's place, for loads, stores and by-ref args),
+  `enum.new/tag/payload`, and `milo.match`: a region per arm, an enum arm's payload as its
+  entry block's arguments (read at the arm's entry by milo-lower-structured-cf, which
+  switches on the tag), literal cases on ints and bools, `default` for `_`. If-expressions
+  are `milo.if` with results. `&mut` match subjects, nested patterns and float or string
+  literal patterns stay legacy.
+- *Owned values (M4 foundation).* `!milo.string` and `!milo.vecval<T>` (Vec of scalars by
+  value; its place is the M2 `!milo.vec<T>`, via `vec.place`) live only in `milo.var
+  owned` slots, listed by the `milo.scope` that owns them. The emitter states facts:
+  `milo.store` (init or overwrite), `milo.move` (the checker's `isMove` last use),
+  `milo.load` (a view, for borrows), `string.share` (HIR StringClone). milo-scope-drops
+  puts a `milo.drop` at every scope exit (end, break, continue, return) and before every
+  store over a value with drop glue, then inlines the scopes. milo-elaborate-drops runs
+  MLIR's dense forward dataflow (DeadCodeAnalysis + a definitely/maybe-init lattice per
+  owned slot) over the CFG: a drop of a slot empty on every path goes, one full on every
+  path stays, the rest get the slot's drop flag (`milo.drop %s if %flag`, the flag kept
+  in step at every store, move and drop), and a read of a slot that may be empty is a
+  compile error. A drop calls `milo.drop.<key>(ptr)`, legacy's drop glue
+  (`mlirDropHelper`); push and share call legacy-generated functions too. Owned
+  temporaries in a borrow position (print, `&T` args, len) go into a slot of the
+  innermost block. Structs and enums holding strings or Vecs are not taken yet.
+- *Gates.* Programs `print`, `aggregates`, `owned` under `mlir/test/programs`; FileCheck
+  `print.mlir`, `aggregates.mlir`, `drops.mlir`, verifier cases in `verify.mlir`. Planted
+  bugs: string literal length - 1 turned `print` red; payload read at field 0's offset
+  turned `aggregates` red (`area(Rect(2, 3))` printed 4); making maybe-init drops
+  unconditional left `mlir-same` green but ASan reported a heap-use-after-free in
+  `owned`; erasing every drop left 24 more live heap blocks at exit (203 against 179).
+- *Leaks on this machine.* `leaks -atExit` (scripts/leak-check.ts) and lldb never get the
+  task port here and hang, on legacy binaries too: the lldb replay test ("a breakpoint on
+  miloReplayStop stops at the record") fails the same way on legacy, so it is the
+  machine. ASan's symbolizer (atos) hangs the same way on a report; run with
+  `ASAN_OPTIONS=symbolize=0`. The leak check used instead: a DYLD malloc/free counting
+  interposer comparing live blocks at exit, legacy against MILO_MLIR=1, per fixture.
+- *One process.* `milo-opt --emit-llvmir <passes>` runs the pipeline and prints LLVM IR
+  (byte-identical to piping into mlir-translate); the milo-opt stage went from about 40
+  to 26 ms on the `owned` program.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
