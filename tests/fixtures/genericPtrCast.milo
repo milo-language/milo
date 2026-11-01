@@ -1,0 +1,13 @@
+// A cast to a pointer to a generic struct keeps its pointer: `p as *P<i64>` once
+// resolved to a plain `P<i64>` and failed as "cannot cast to P<i64>".
+struct P<T> { a: T, b: T }
+
+fn main() {
+    var x: [i64; 2] = [5, 7]
+    unsafe {
+        let raw = x.addrOf() as *u8
+        let p = raw as *P<i64>
+        print(p[0].a + p[0].b)
+    }
+}
+// @expect: 12
