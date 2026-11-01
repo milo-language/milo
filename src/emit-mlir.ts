@@ -608,7 +608,15 @@ class FnEmitter {
         if (args.length) {
           const refs = args.map(() => this.fresh());
           this.emit(`^bb0(${args.map((a, k) => `${refs[k]}: ${a.ty}`).join(", ")}):`);
-          args.forEach((a, k) => { if (a.name !== "_") this.bind(a.name, { kind: "ssa", v: { ref: refs[k], ty: a.ty } }); });
+          // A binding is a mutable copy of the payload, as legacy bindPayloads makes it:
+          // `c.bump()` in the arm changes the binding.
+          args.forEach((a, k) => {
+            if (a.name === "_") return;
+            const slot = this.fresh();
+            this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
+            this.emit(`milo.store ${refs[k]}, ${slot} : !milo.ref<${a.ty}>`);
+            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty });
+          });
         }
         return resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
       });
@@ -729,6 +737,8 @@ class FnEmitter {
     }
     if (`!milo.ref<${b.kind === "var" ? b.ty : b.v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
     if (b.kind === "var") return { ref: b.ref, param: b.param };
+    // A spilled copy would take the callee's writes and drop them.
+    if (mut) throw new MlirUnsupported("&mut of an immutable binding");
     const ref = this.fresh();
     this.vars.push(`  ${ref} = milo.var ${quote(e.name)} : ${refTy}`);
     this.emit(`milo.store ${b.v.ref}, ${ref} : ${refTy}`);
