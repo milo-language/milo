@@ -17,9 +17,10 @@ the move checker, because none of them see IR. The same logic written as Milo in
 type-checked, move-checked, monomorphized like any generic, and optimized by LLVM. The
 compiler shrinks; collection bugs become ordinary Milo bugs.
 
-MLIR was considered as the alternative route to less backend code and rejected for now: it
-replaces the builder and some passes (about 1.5k lines) but not the Milo semantics that make
-up the bulk of codegen, and it adds a pinned C++ dependency.
+MLIR is not the route to less backend code: it replaces the builder and some passes (about
+1.5k lines), not the Milo semantics that make up the bulk of codegen. It is the route to a
+higher optimization ceiling; see the prototype in `mlir/README.md` (axpy 2.9x faster than
+today, with bounds checks proven away by loop versioning).
 
 ## The split: the checker keeps the type, std owns the bodies
 

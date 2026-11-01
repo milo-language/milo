@@ -1,0 +1,26 @@
+// The same kernels as test/kernels.mlir, compiled by today's Milo codegen as the baseline.
+@wrapping
+fn axpy(a: &mut Vec<f64>, b: &Vec<f64>, k: f64): void {
+    for i in 0..a.len() {
+        a[i] = a[i] + k * b[i]
+    }
+}
+
+@wrapping
+fn grid(m: &mut Vec<f64>, w: i64, h: i64): void {
+    for y in 1..h {
+        for x in 0..w {
+            m[y * w + x] = m[y * w + x] + m[(y - 1) * w + x]
+        }
+    }
+}
+
+fn main() {
+    var a: Vec<f64> = Vec.new()
+    var b: Vec<f64> = Vec.new()
+    var i: i64 = 0
+    while i < 1000 { a.push(1.0); b.push(2.0); i = i + 1 }
+    axpy(&mut a, b, 3.0)
+    grid(&mut a, 10, 100)
+    print(a[999])
+}
