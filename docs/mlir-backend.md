@@ -193,11 +193,47 @@ never moves the header, bounds checks are panic points) become attributes on tho
 types, checked and exploited by generic passes rather than by special cases. SIMD and GPU
 become opt-in std modules over upstream dialects (`vector`, `gpu`), not compiler features.
 
-### Candidate: verification from the compiled IR
+### Verification from the compiled IR (decided)
 
 Contracts (`requires`, `ensures`, loop invariants) lower to the upstream `smt` dialect
 from the same milo IR that is compiled, so what is proven is what runs, rather than a
-separate model of the source (`src/verify.ts` today).
+separate model of the source (`src/verify.ts` today). The `smt` ops export through
+upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver (`std/smt`), which
+`src/prove-milo.ts` already drives from SMT-LIB text.
+
+### Raising: modernize and harden source through the dialect
+
+JSIR's defining trait is that it round-trips: source goes up into the dialect, passes
+transform it, and it prints back as source. Milo gets the same:
+
+- The top layer stays source-faithful (for-in, `?`, interpolation kept as ops; desugaring is
+  a pass), and the emitter reads the checker's output rather than desugared HIR.
+- A dialect-to-Milo printer plus `milo fmt`; edits are minimal so comments survive.
+- Proof gate per rewrite: the printed source re-parses to the identical top-layer dialect,
+  and a pure refactor lowers to identical normalized IR.
+- Rewrites: `var` to `let`; unwritten `&mut T` to `&T`; read-only owned private params to
+  `&T`; last-use clone to move; string clone removal; ranged-type inference; dead
+  `@wrapping`; unsafe pointer loops to slices; contract inference and static proof;
+  `@pure` and effect inference; index loops to for-in; match on Result to `?`; loops to
+  fold/any/find; `isSome` plus unwrap to `if let`; std API migration; dead code. First
+  proof of concept: `var` to `let` and `&mut` to `&`.
+
+### The dialect as a product
+
+Anything that emits valid milo dialect gets Milo's semantics and lowering; the first such
+client is the self-hosted frontend. Needed: op and dialect docs generated from `Milo.td`
+(`mlir-tblgen -gen-dialect-doc`, gated, never hand-written), a `libMiloDialect` library
+and C API, and a versioned format after M7 (MLIR bytecode dialect versioning). The
+verifiers are the contract a client codes against.
+
+### Deploying apps built with MLIR
+
+Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the
+corpus and the milojs apps; a per-app record/replay differential (record real traffic
+with the legacy build, replay it against the MLIR build, byte-diff the responses, repeat
+under ASan); a shadow run, then a canary through the existing socket-activated restart
+(`ops/restart-gate.sh`) with the legacy binary kept for rollback. Server hot paths need M6
+(tasks) before a canary is meaningful. The default flips only after a clean canary.
 
 ## Gates (every milestone, every commit)
 
