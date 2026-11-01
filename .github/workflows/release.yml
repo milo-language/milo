@@ -77,6 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # milo-opt ships beside the compiler, linked statically so it needs no LLVM dylib from
+      # this runner. darwin-x64 cross-compiles from an arm64 runner and Homebrew's LLVM there
+      # has no x86 build of MLIR, so that archive has no milo-opt: install.sh says so.
+      - uses: ./.github/actions/milo-opt
+        if: matrix.target != 'darwin-x64'
+        with:
+          static: "1"
       - run: bun run scripts/bundle-stdlib.ts
       # Must run before --compile: the stamp is frozen into the binary, so `milo
       # --version` on a release build names the commit instead of saying "dev". On a
@@ -90,6 +97,10 @@ jobs:
       - run: |
           mkdir -p milo-${{ matrix.target }}
           mv milo milo-${{ matrix.target }}/milo
+          if [ -f mlir/build/milo-opt ]; then
+            strip -x mlir/build/milo-opt || true
+            cp mlir/build/milo-opt milo-${{ matrix.target }}/milo-opt
+          fi
           tar czf milo-${{ matrix.target }}.tar.gz milo-${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
@@ -122,6 +133,7 @@ jobs:
             # nfpm resolves contents.src as a glob before env expansion, so the path
             # can't be a variable — stage each arch at the one path the config names.
             mkdir -p dist && cp "milo-${target}/milo" dist/milo
+            cp "milo-${target}/milo-opt" dist/milo-opt
             MILO_DEB_ARCH="$arch" \
               nfpm package -f packaging/nfpm.yaml -p deb -t "milo_${MILO_VERSION}_${arch}.deb"
             MILO_DEB_ARCH="$arch" \

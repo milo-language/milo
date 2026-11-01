@@ -12,7 +12,7 @@
 
 import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
@@ -21,8 +21,23 @@ export const MLIR_MODE = process.env.MILO_MLIR === "1";
 
 // A compiled milo binary has no real path of its own; the test driver passes MILO_ROOT.
 const ROOT = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const MILO_OPT = process.env.MILO_OPT ?? join(ROOT, "mlir", "build", "milo-opt");
-const LLVM_BIN = process.env.MILO_LLVM_BIN ?? "/opt/homebrew/opt/llvm/bin";
+// A source checkout builds it at mlir/build/milo-opt; an installed compiler (install.sh,
+// the Homebrew formula, the deb/rpm) has it next to the milo binary.
+function findMiloOpt(): string {
+  if (process.env.MILO_OPT) return process.env.MILO_OPT;
+  const built = join(ROOT, "mlir", "build", "milo-opt");
+  const beside = join(dirname(process.execPath), "milo-opt");
+  return !existsSync(built) && existsSync(beside) ? beside : built;
+}
+const MILO_OPT = findMiloOpt();
+// The LLVM whose clang compiles the module, the one milo-opt was built against (mlir/build.sh
+// looks in the same places).
+function findLlvmBin(): string {
+  if (process.env.MILO_LLVM_BIN) return process.env.MILO_LLVM_BIN;
+  const dirs = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin", "/home/linuxbrew/.linuxbrew/opt/llvm/bin", "/usr/lib/llvm-23/bin"];
+  return dirs.find(d => existsSync(join(d, "clang"))) ?? dirs[0];
+}
+const LLVM_BIN = findLlvmBin();
 const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
@@ -90,7 +105,7 @@ export function mlirClang(): { path: string; id: string } {
 }
 function tool(path: string, what: string): string {
   if (!existsSync(path)) {
-    console.error(`error: MILO_MLIR=1 needs ${what} at ${path}; ${BUILD_HINT}`);
+    console.error(`error: missing ${what} at ${path}; ${BUILD_HINT} (or MILO_LEGACY=1 for the legacy code generator)`);
     process.exit(1);
   }
   return path;
@@ -186,7 +201,8 @@ export class MlirPlan {
     const optPath = tool(MILO_OPT, "milo-opt");
     // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
     // elsewhere (a planted-bug build under build/) has no sources beside it to compare.
-    const stale = staleMiloOpt(optPath, dirname(dirname(optPath)));
+    // An installed milo-opt (beside the compiler) has no sources to compare with.
+    const stale = basename(dirname(optPath)).startsWith("build") ? staleMiloOpt(optPath, dirname(dirname(optPath))) : null;
     if (stale) {
       console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
       process.exit(1);

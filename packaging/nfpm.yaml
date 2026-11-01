@@ -30,6 +30,10 @@ contents:
   # A fixed path, not ${MILO_BIN}: nfpm expands ${VAR} in scalar fields but resolves
   # `src` as a glob first, so an env var here fails with "no matching files". The
   # caller stages the arch's binary at dist/milo instead.
+  - src: dist/milo-opt
+    dst: /usr/bin/milo-opt
+    file_info:
+      mode: 0755
   - src: dist/milo
     dst: /usr/bin/milo
     file_info:
@@ -38,8 +42,10 @@ contents:
 # clang links the object files milo emits, so a package without it installs fine and
 # then fails on the first build. Recommends rather than Depends: `milo emit-ir`,
 # `emit-ast`, and the LSP all work without a linker.
+# The compiler compiles through the clang of milo-opt's LLVM (docs/mlir-backend.md).
 recommends:
-  - clang
+  - clang-23
+  - llvm-23
 
 rpm:
   # rpmbuild otherwise picks its own compression per host and the artifact name drifts.

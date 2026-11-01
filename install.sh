@@ -60,6 +60,19 @@ check_clang() {
     esac
 }
 
+check_llvm() {
+    # milo compiles its output with the clang of the LLVM that milo-opt was built against
+    # (LLVM 23), never the system one: the IR is that LLVM's.
+    for d in "${MILO_LLVM_BIN:-}" /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin /home/linuxbrew/.linuxbrew/opt/llvm/bin /usr/lib/llvm-23/bin; do
+        [ -n "$d" ] && [ -x "$d/clang" ] && return 0
+    done
+    printf '\n\033[33mwarning:\033[0m no LLVM 23 install found; milo builds need its clang.\n'
+    case "$(uname -s)" in
+        Darwin) printf '  Install with: brew install llvm\n\n' ;;
+        Linux)  printf '  Install with: brew install llvm, or apt.llvm.org (llvm.sh 23), or set MILO_LLVM_BIN\n\n' ;;
+    esac
+}
+
 # The newest v* tag, read from the release list rather than GitHub's "latest release"
 # pointer: that pointer follows whichever release was published last unless told
 # otherwise, and the rolling `latest` build is republished on every push to main.
@@ -105,10 +118,22 @@ main() {
         cp "$bin" "$INSTALL_DIR/milo" && chmod +x "$INSTALL_DIR/milo"
     }
 
+    # milo-opt is the MLIR half of every default build. It lives beside milo, where the
+    # compiler looks for it. The darwin-x64 archive has none (see release.yml).
+    if [ -f "$tmp/milo-$target/milo-opt" ]; then
+        chmod +x "$tmp/milo-$target/milo-opt"
+        mv "$tmp/milo-$target/milo-opt" "$INSTALL_DIR/milo-opt" 2>/dev/null || {
+            cp "$tmp/milo-$target/milo-opt" "$INSTALL_DIR/milo-opt" && chmod +x "$INSTALL_DIR/milo-opt"
+        }
+    else
+        printf '\n\033[33mwarning:\033[0m this archive has no milo-opt. Build it with: sh mlir/build.sh (in a milo checkout, needs LLVM 23),\n  or set MILO_LEGACY=1 to compile with the legacy code generator.\n\n'
+    fi
+
     installed=$("$INSTALL_DIR/milo" --version 2>/dev/null || echo "unknown version")
     info "installed $installed to $INSTALL_DIR/milo"
 
     check_clang
+    check_llvm
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*)

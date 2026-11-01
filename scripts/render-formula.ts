@@ -66,14 +66,16 @@ ${block(intel("linux"), "      ")}
     end
   end
 
-  # No depends_on "llvm": milo only needs a *linker driver*, and pulling in the llvm
-  # keg would make a ~2 GB download the default install for a 60 MB compiler. macOS
-  # already ships clang with the Command Line Tools.
+  # milo compiles through MLIR by default: milo-opt (shipped beside milo, statically linked)
+  # produces the function bodies and the clang of Homebrew's LLVM compiles the module
+  # (docs/mlir-backend.md), so llvm is a real dependency, not just a linker driver.
+  depends_on "llvm"
+
   def caveats
     <<~EOS
-      milo links what it compiles with clang.
-        macOS: install the Xcode Command Line Tools — xcode-select --install
-        Linux: install your distribution's clang, or run: brew install llvm
+      milo compiles with the clang of Homebrew's llvm (brew install llvm).
+      The Intel macOS archive ships no milo-opt: build it (sh mlir/build.sh in a milo
+      checkout) or run with MILO_LEGACY=1 to use the legacy code generator.
     EOS
   end
 
@@ -82,6 +84,8 @@ ${block(intel("linux"), "      ")}
     # normally lands at the top level; the nested path is the fallback if that changes.
     src = File.exist?("milo") ? "milo" : Dir["milo-*/milo"].first
     bin.install src => "milo"
+    opt = File.exist?("milo-opt") ? "milo-opt" : Dir["milo-*/milo-opt"].first
+    bin.install opt => "milo-opt" if opt
   end
 
   test do
