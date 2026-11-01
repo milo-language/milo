@@ -15,12 +15,38 @@ import { spawnSync } from "child_process";
 import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
+import type { TargetInfo } from "./target";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 
 // On unless MILO_LEGACY=1 (temporary escape hatch for critical deploys; docs/mlir-backend.md).
 // MILO_MLIR=0 is the old opt-out spelling, accepted for one release; MILO_MLIR=1 is a no-op.
-// Windows has no milo-opt build, so it stays on the legacy codegen.
-export const MLIR_MODE = process.env.MILO_LEGACY !== "1" && process.env.MILO_MLIR !== "0" && process.platform !== "win32";
+export const MLIR_MODE = process.env.MILO_LEGACY !== "1" && process.env.MILO_MLIR !== "0";
+
+/**
+ * Whether builds for `target` go through MLIR: every hosted target (cross builds and
+ * Windows included) and wasm64. A 32-bit target (the Cortex-M family) stays legacy:
+ * legacy codegen's typeSize/enum layout hardcode an 8-byte pointer, while milo-opt lays
+ * structs out with the target's data layout (4-byte pointer on thumb), so the two halves
+ * of one module would disagree about every struct holding a pointer.
+ */
+export function mlirTargetOk(target: TargetInfo): boolean {
+  return target.arch !== "arm";
+}
+
+// The data layout clang uses for `triple` (the one source of truth for it: legacy codegen
+// emits no `target datalayout` and lets clang pick). Asked of the clang of milo-opt's LLVM,
+// the same one that later compiles the module, so both halves of the module agree by
+// construction.
+const dataLayouts = new Map<string, string>();
+export function targetDataLayout(triple: string): string {
+  const known = dataLayouts.get(triple);
+  if (known) return known;
+  const r = spawnSync(mlirClang().path, ["--target=" + triple, "-S", "-emit-llvm", "-x", "c", "/dev/null", "-o", "-"], { encoding: "utf-8" });
+  const m = r.status === 0 ? /^target datalayout = "([^"]*)"/m.exec(r.stdout) : null;
+  if (!m) throw new Error(`mlir: cannot get the data layout of ${triple} from clang:\n${r.stderr}`);
+  dataLayouts.set(triple, m[1]);
+  return m[1];
+}
 
 // A compiled milo binary has no real path of its own; the test driver passes MILO_ROOT.
 const ROOT = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -101,7 +127,7 @@ export function mlirClang(): { path: string; id: string } {
   }
   const cc = process.env.MILO_CC;
   if (cc && version(cc) !== wantVersion) {
-    console.error(`error: an MLIR build needs the clang of milo-opt's LLVM (${want}: ${wantVersion}); MILO_CC=${cc} is ${version(cc) ?? "not a working clang"}. Unset MILO_CC or point it at a clang of the same LLVM.`);
+    console.error(`error: an MLIR build needs the clang of milo-opt's LLVM (${want}: ${wantVersion}); MILO_CC=${cc} is ${version(cc) ?? "not a working clang"}. Unset MILO_CC or point it at a clang of the same LLVM (a cross toolchain's too).`);
     process.exit(1);
   }
   return { path: cc ?? want, id: `${cc ?? want}\n${wantVersion}` };
@@ -155,7 +181,7 @@ export class MlirPlan {
   private log: string[] = [];
   private readonly fns = new Map<string, HIRFunction>();
 
-  constructor(hir: HIRModule, private cx: MlirEmitCtx) {
+  constructor(hir: HIRModule, private cx: MlirEmitCtx, private target: TargetInfo) {
     for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
   }
 
@@ -211,10 +237,18 @@ export class MlirPlan {
       console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
       process.exit(1);
     }
-    const text = mlirModuleText(this.taken);
+    // The MLIR module is for the TARGET: the translation reads both attributes, and the
+    // lowering sizes types with the data layout.
+    const triple = this.target.triple;
+    const dl = targetDataLayout(triple);
+    const text = `module attributes {llvm.target_triple = "${triple}", llvm.data_layout = "${dl}"} {\n${mlirModuleText(this.taken)}}\n`;
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
     // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
     const ll = run(optPath, ["--emit-llvmir", ...MLIR_PIPELINE], text).split("\n");
+    // The bodies are spliced into the legacy module: a triple or layout the two disagree on
+    // would size a struct differently on each side of a call.
+    if (!ll.includes(`target triple = "${triple}"`) || !ll.includes(`target datalayout = "${dl}"`)) throw new Error(`mlir: milo-opt did not emit for ${triple}`);
+    if (!ir.split("\n").includes(`target triple = "${triple}"`)) throw new Error(`mlir: the legacy module is not for ${triple}`);
 
     const bodies = new Map<string, { header: string; body: string[] }>();
     const decls: { name: string; line: string }[] = [];
@@ -312,6 +346,10 @@ export class MlirPlan {
     // A global MLIR only declares (the recorder's counters) is the legacy module's own.
     out.push(...metadata.map(renumber));
     const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
+    // Legacy names no data layout (clang picks it from the triple); name the one the bodies
+    // were lowered with.
+    const tripleAt = out.indexOf(`target triple = "${triple}"`);
+    out.splice(tripleAt, 0, `target datalayout = "${dl}"`);
     const firstDefine = out.findIndex(l => l.startsWith("define"));
     out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");
     return out.join("\n");

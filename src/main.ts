@@ -17,7 +17,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
-import { MLIR_MODE, MlirPlan, mlirClang } from "./mlir-backend";
+import { MLIR_MODE, MlirPlan, mlirClang, mlirTargetOk } from "./mlir-backend";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -298,8 +298,7 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  // milo-opt emits for the host's data layout: a cross target keeps the legacy codegen.
-  const plan = MLIR_MODE && target.triple === getHostTarget().triple ? new MlirPlan(hirModule, cg) : null;
+  const plan = MLIR_MODE && mlirTargetOk(target) ? new MlirPlan(hirModule, cg, target) : null;
   if (plan) cg.mlirTake = fn => plan.take(fn);
   let ir = phase("codegen", () => cg.generate(hirModule));
   if (plan) ir = phase("mlir", () => plan.compile(ir));
@@ -584,9 +583,9 @@ function detectToolchain(): Toolchain {
   // mac that is Apple's, whose codegen differs from upstream LLVM (it splits hot/cold
   // paths into `.cold.N` functions by default): a cross build meant to match what a
   // Linux box's clang produces needs a way to pick Homebrew's instead.
-  // A MILO_CC is validated against the MLIR clang only when a host compile actually goes
-  // through milo-opt (MlirPlan.compile): cross builds name their own clang and stay legacy.
-  if (MLIR_MODE && !process.env.MILO_CC) {
+  // An MLIR build (every target) hands the IR of milo-opt's LLVM to this clang, so a MILO_CC
+  // (a cross toolchain's clang included) must be of that LLVM's version: mlirClang() checks.
+  if (MLIR_MODE) {
     cachedToolchain = { kind: "clang", ...mlirClang() };
     return cachedToolchain;
   }
@@ -644,6 +643,12 @@ function detectToolchain(): Toolchain {
 let cachedWasmClang: string | null | undefined;
 function detectWasmClang(): string | null {
   if (cachedWasmClang !== undefined) return cachedWasmClang;
+  // Its IR may come from milo-opt: the compiling clang is then the one of milo-opt's LLVM.
+  if (MLIR_MODE) {
+    const cc = mlirClang().path;
+    const targets = spawnSync(cc, ["--print-targets"], { encoding: "utf-8" }).stdout ?? "";
+    return (cachedWasmClang = /\bwasm64\b/.test(targets) ? cc : null);
+  }
   const candidates = ["clang", "/opt/homebrew/opt/llvm/bin/clang", "/usr/local/opt/llvm/bin/clang"];
   for (const cc of candidates) {
     try {
