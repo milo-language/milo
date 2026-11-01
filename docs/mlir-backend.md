@@ -488,6 +488,10 @@ structs, enums.
   the empty one), stored whole into the place of a place-only T. A fn value has no zero
   (verifier). Program `zeroed`, FileCheck in `scalar-to-llvm.mlir`, a verifier case.
   Planted bug: an i64 zero emitted as 1 (`zeroed` stdout).
+- *Interpolated strings as values* (`format`): the builtin helper with every string part
+  lent from its place (print already printed the parts without building the string).
+  Program `format`. Planted bug: the result not owned (`format` `--owned` red: 4 more
+  live blocks).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

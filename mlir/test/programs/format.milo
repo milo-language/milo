@@ -1,0 +1,19 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: interpolated strings as values (format, a legacy helper per part
+// shape and site): ints, floats, bools, chars, string locals, fields and temporaries,
+// stored, returned and concatenated.
+
+struct P { name: string, x: i64 }
+
+fn label(p: &P): string { return $"{p.name}@{p.x}" }
+
+fn mk(n: i64): string { return "t".repeat(n) }
+
+fn main() {
+    let p = P { name: "pt", x: 3 }
+    let s = $"a={p.x} f={2.5} b={true} c={'z'} s={label(p)} t={mk(2)}"
+    var acc = ""
+    for i in 0..3 { acc = acc + $"[{i}:{s.len()}]" }
+    print(s)
+    print(acc, " ", $"{acc.len()}".len())
+}

@@ -2311,7 +2311,7 @@ class FnEmitter {
    * legacy function per builtin, operand shape and call site. A by-ref operand goes as
    * its place; the others are scalars or pointers by value. A string result is owned.
    */
-  private builtinCall(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+  private builtinCall(e: HIRExpr & { kind: "Call" }, stmt: boolean, lendStrings = false): Val {
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];
@@ -2319,10 +2319,11 @@ class FnEmitter {
     e.args.forEach((a, k) => {
       const t = stripRefs(a.expr.type);
       const name = `a${k}`;
-      if (a.passByRef) {
+      // format reads its string parts: lent from their places, as print lends them.
+      if (a.passByRef || (lendStrings && t.tag === "string")) {
         const ty = this.value(t, "builtin operand");
         const r = this.place(a.expr, refOf(ty), a.refMut).ref;
-        params.push({ name, type: t, isRef: !a.refMut, isRefMut: a.refMut });
+        params.push({ name, type: t, isRef: !a.refMut, isRefMut: !!a.refMut });
         args.push(`${r} : ${refOf(ty)}`);
         keys.push(`r${typeKey(t)}`);
         return;
@@ -2366,6 +2367,7 @@ class FnEmitter {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
+      if (e.func === "format") return this.builtinCall(e, stmt, true);
       throw new MlirUnsupported(`builtin ${e.func}`);
     }
     const callee = this.fns.get(e.func);
