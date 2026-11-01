@@ -17,7 +17,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
-import { MLIR_MODE, compileThroughMlir } from "./mlir-backend";
+import { MLIR_MODE, compileThroughMlir, mlirClang } from "./mlir-backend";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -582,6 +582,10 @@ function detectToolchain(): Toolchain {
   // mac that is Apple's, whose codegen differs from upstream LLVM (it splits hot/cold
   // paths into `.cold.N` functions by default): a cross build meant to match what a
   // Linux box's clang produces needs a way to pick Homebrew's instead.
+  if (MLIR_MODE) {
+    cachedToolchain = { kind: "clang", ...mlirClang() };
+    return cachedToolchain;
+  }
   const candidates = process.env.MILO_CC ? [process.env.MILO_CC] : ["/usr/bin/clang", "clang"];
   let tooOld: { path: string; major: number } | null = null;
   for (const cc of candidates) {

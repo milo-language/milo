@@ -113,9 +113,10 @@ moves into std becomes ordinary Milo, which this backend handles without special
 ## Toolchain
 
 `mlir/` builds `milo-opt` against an installed MLIR (Homebrew LLVM 23.1.3 today) with one
-CMake configure: `sh mlir/build.sh`. LLVM 23 prints float constants in a syntax
-older clangs reject (`f0x...`, `+inf`, `+qnan`); `src/mlir-backend.ts` rewrites them to the
-classic hex form, since the clang that compiles the module may be Apple's. MLIR's C++
+CMake configure: `sh mlir/build.sh`. A `MILO_MLIR=1` build compiles the whole module with
+the clang of that same LLVM (`/opt/homebrew/opt/llvm/bin/clang`), never Apple's: LLVM 23 IR
+fed to clang 21 is version skew (it already rejects LLVM 23's float constant syntax), and
+a `MILO_CC` of another version is an error. MLIR's C++
 API changes every release, so the LLVM version is pinned and bumped on purpose.
 `MILO_MLIR=1` without a built `milo-opt` is an error naming the build command, never a
 silent fallback.

@@ -43,55 +43,28 @@ function unquote(n: string): string {
   return n.startsWith('"') ? n.slice(1, -1).replace(/\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : n;
 }
 
-// LLVM 23 prints float constants it cannot spell in decimal as `f0x<bits>` (the value's
-// own width), `±inf`, `±qnan`, `±nan(0xP)` and `±snan(0xP)`: syntax older parsers reject,
-// and the clang that compiles the module may be one (Apple's /usr/bin/clang). The classic
-// form is `0x` + the value's bits as a double, which every LLVM reads.
-const hex64 = (b: bigint) => `0x${b.toString(16).toUpperCase().padStart(16, "0")}`;
-
-// f32 bits -> the same value's f64 bits. Inf/NaN by bits, since a JS round trip may not
-// keep a NaN's payload.
-function widenF32(bits: number): bigint {
-  if (((bits >>> 23) & 0xff) === 0xff) {
-    return (BigInt(bits >>> 31) << 63n) | (0x7ffn << 52n) | (BigInt(bits & 0x7fffff) << 29n);
+// The clang that compiles a MILO_MLIR=1 module: the one from the LLVM install milo-opt and
+// mlir-translate come from. Their IR is that LLVM's, and an older clang (Apple's) may
+// misread or reject it (LLVM 23 spells some float constants in a syntax clang 21 cannot
+// parse). A MILO_CC naming a clang of another version is an error, not a quiet override.
+export function mlirClang(): { path: string; id: string } {
+  const want = join(LLVM_BIN, "clang");
+  const version = (cc: string): string | null => {
+    const r = spawnSync(cc, ["--version"], { encoding: "utf-8" });
+    return r.status === 0 ? (r.stdout.split("\n")[0] ?? "") : null;
+  };
+  const wantVersion = version(want);
+  if (wantVersion === null) {
+    console.error(`error: MILO_MLIR=1 compiles with ${want} (the clang of milo-opt's LLVM), which does not run`);
+    process.exit(1);
   }
-  const v = new DataView(new ArrayBuffer(8));
-  v.setUint32(0, bits);
-  v.setFloat64(0, v.getFloat32(0));
-  return v.getBigUint64(0);
-}
-
-export function oldFloatSyntax(line: string): string {
-  let out = line.replace(/\bf0x([0-9A-Fa-f]{16}|[0-9A-Fa-f]{8})\b/g, (_, hex: string) =>
-    hex.length === 16 ? `0x${hex.toUpperCase()}` : hex64(widenF32(parseInt(hex, 16))));
-  out = out.replace(/(?<![\w.%@])([+-])(inf|qnan)\b/g, (_, sign: string, what: string) =>
-    hex64((sign === "-" ? 1n << 63n : 0n) | (what === "inf" ? 0x7ffn << 52n : 0x7ff8n << 48n)));
-  // A float printed in decimal round-trips as a float, but older parsers read the decimal
-  // as a double and reject it unless that double is exactly a float (1.401300e-45).
-  if (/\bfloat\b/.test(line)) {
-    out = out.replace(/(?<![\w.%@])-?\d\.\d+e[+-]\d+\b/g, (lit: string) => {
-      const v = Number(lit);
-      if (Math.fround(v) === v) return lit;
-      if (/\bdouble\b/.test(line)) throw new Error(`mlir: cannot tell the width of ${lit} in: ${line}`);
-      const d = new DataView(new ArrayBuffer(8));
-      d.setFloat64(0, Math.fround(v));
-      return hex64(d.getBigUint64(0));
-    });
+  const cc = process.env.MILO_CC;
+  if (cc && version(cc) !== wantVersion) {
+    console.error(`error: MILO_MLIR=1 needs the clang of milo-opt's LLVM (${want}: ${wantVersion}); MILO_CC=${cc} is ${version(cc) ?? "not a working clang"}. Unset MILO_CC or point it at a clang of the same LLVM.`);
+    process.exit(1);
   }
-  return out.replace(/(?<![\w.%@])([+-])(s?nan)\(0x([0-9A-Fa-f]+)\)/g, (_, sign: string, what: string, p: string) => {
-    // A NaN's payload is in units of its own type's mantissa, so the width matters here;
-    // the line's one float type says which it is.
-    const isF = /\bfloat\b/.test(line), isD = /\bdouble\b/.test(line);
-    if (isF === isD) throw new Error(`mlir: cannot tell the width of a NaN constant in: ${line}`);
-    const payload = BigInt(`0x${p}`);
-    if (isD) {
-      return hex64((sign === "-" ? 1n << 63n : 0n) | (0x7ffn << 52n) | (what === "nan" ? 1n << 51n : 0n) | payload);
-    }
-    const bits = (sign === "-" ? 0x80000000 : 0) + 0x7f800000 + (what === "nan" ? 0x400000 : 0) + Number(payload);
-    return hex64(widenF32(bits));
-  });
+  return { path: cc ?? want, id: `${cc ?? want}\n${wantVersion}` };
 }
-
 function tool(path: string, what: string): string {
   if (!existsSync(path)) {
     console.error(`error: MILO_MLIR=1 needs ${what} at ${path}; ${BUILD_HINT}`);
@@ -160,7 +133,6 @@ export function compileThroughMlir(ir: string, hir: HIRModule, cx: MlirEmitCtx):
   for (const name of mod.defined) {
     const got = bodies.get(name);
     if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
-    got.body = got.body.map(oldFloatSyntax);
     for (const l of got.body) {
       // The body is spliced into a module whose attribute groups and metadata it does not
       // know; neither appears in what M1 emits, so finding one is a bug to fix here.
