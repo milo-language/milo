@@ -255,6 +255,12 @@ structs, enums.
   struct drop helper (`emitMlirDropFn`) turned the new program `string-fields` red only
   through the -O0 count ("legacy 0, mlir 15"), and `append`, `owning-aggregates` and
   `sret` red at -O2 as before.
+- *StrReserve* (`_strReserve`, std's `string.push`): a call of a legacy function per call
+  line taking the string's place (`milo.str.reserve.<line>.<file hash>`), so the room test,
+  the copy out of a shared or static buffer and the out-of-memory panic's line are
+  legacy's. Program `str-push`; planted bug: reserving 0 bytes instead of `n` turned it
+  red (ASan heap-buffer-overflow). Tahoe Roads api: 2705 to 2997 of 5263 function
+  instances (51.4% to 56.9%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

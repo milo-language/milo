@@ -1,0 +1,42 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: std's string.push
+// (`_strReserve`, then two stores and the length bump) on every kind of buffer: a static
+// literal (no heap, so the slow path copies), a buffer shared with another string (the
+// pusher gets its own copy, the other keeps its bytes), a fresh one growing past several
+// capacities, a struct field and a `&mut` param.
+
+struct Line { text: string, n: i64 }
+
+fn digits(s: &mut string, n: i64) {
+    var k = n
+    while k > 0 {
+        s.push((48 + k % 10) as u8)
+        k = k / 10
+    }
+}
+
+fn build(n: i64): string {
+    var s = ""
+    for i in 0..n {
+        s.push((97 + i % 26) as u8)
+    }
+    return s
+}
+
+fn main() {
+    var lit = "ab"
+    lit.push(99)
+    print(lit, " ", lit.len())
+    let shared = build(5)
+    var mine = shared
+    mine.push(33)
+    print(shared, " ", mine)
+    let long = build(300)
+    print(long.len(), " ", long.substr(290, 300))
+    var line = Line { text: "n=", n: 7 }
+    line.text.push(61)
+    digits(&mut line.text, 9081726354)
+    print(line.text, " ", line.n)
+    var d = ""
+    digits(&mut d, 42)
+    print(d)
+}

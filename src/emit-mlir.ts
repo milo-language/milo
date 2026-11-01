@@ -199,6 +199,12 @@ function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0): string {
 }
 
 /** MLIR string literal (symbol names, file names in locations). */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (const ch of Buffer.from(s, "utf-8")) h = Math.imul(h ^ ch, 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+
 function quote(s: string): string {
   let out = "";
   for (const ch of Buffer.from(s, "utf-8")) {
@@ -861,6 +867,29 @@ class FnEmitter {
         }));
         this.callees.set(name, `(${PTR}, si64, si64) -> ${PTR}`);
         return this.def(`func.call @${quote(name)}(${d.ref}, ${l.ref}, ${c.ref}) : (${PTR}, si64, si64) -> ${PTR}`, PTR);
+      }
+      case "StrReserve": {
+        // std/string's `_strReserve(&mut s, n)`: legacy's room test and growth
+        // (genStrReserve) as a function of the legacy module taking the string's place.
+        // Its out-of-memory panic names the call's line, so there is one per call line.
+        if (scalar(e.type, "reserved buffer") !== PTR) throw new MlirUnsupported("string reserve type");
+        const l = this.cx.checkLocation(e.span);
+        if (!l) throw new MlirUnsupported("no source file for a panic location");
+        const s = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
+        const n = this.expr(e.extra);
+        if (n.ty !== "si64") throw new MlirUnsupported("string reserve size type");
+        const name = `milo.str.reserve.${l.line}.${fnv1a(l.file)}`;
+        const str: TypeKind = { tag: "string" };
+        const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+        this.cx.mlirHelper(name, () => ({
+          params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "n", type: i64, isRef: false, isRefMut: false }],
+          retType: e.type,
+          body: [{ kind: "Return", retType: e.type, value: { kind: "StrReserve", type: e.type, span: e.span,
+            str: { kind: "Ident", name: "s", type: str, isMove: false }, extra: { kind: "Ident", name: "n", type: i64 } } }],
+        }));
+        const fnTy = `(!milo.ref<${STR}>, si64) -> ${PTR}`;
+        this.callees.set(name, fnTy);
+        return this.def(`func.call @${quote(name)}(${s}, ${n.ref}) : ${fnTy}`, PTR);
       }
       case "SizeOf":
         if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
