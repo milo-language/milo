@@ -969,15 +969,25 @@ class FnEmitter {
         // checker lets nothing write the Vec while the loop borrows it. The index moves
         // on before the body, so a `continue` (back to the condition) cannot skip it.
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
-        if (s.iterableKind !== "vec" || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
+        if ((s.iterableKind !== "vec" && s.iterableKind !== "string") || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
-        const { place, elem } = this.vecPlace(s.iterable);
-        // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
-        const byPlace = valueType(this.cx, stripRefs(elemKind)) === null && placeType(this.cx, stripRefs(elemKind)) === elem;
-        if (!byPlace && (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
-        const data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
-        const len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
+        let place = "", elem: string, data: string, len: string, byPlace = false;
+        if (s.iterableKind === "string") {
+          // `for b in s`: its bytes, data and len read once (genForEach's string case).
+          const v = this.borrow(this.expr(s.iterable), s.iterable.type);
+          elem = "ui8";
+          if (v.ty !== STR || valueType(this.cx, stripRefs(elemKind)) !== elem) throw new MlirUnsupported("for over a string of another element type");
+          data = this.def(`milo.string.data ${v.ref}`, PTR).ref;
+          len = this.def(`milo.string.len ${v.ref}`, "si64").ref;
+        } else {
+          ({ place, elem } = this.vecPlace(s.iterable));
+          // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
+          byPlace = valueType(this.cx, stripRefs(elemKind)) === null && placeType(this.cx, stripRefs(elemKind)) === elem;
+          if (!byPlace && (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
+          data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
+          len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
+        }
         const idx = this.fresh();
         this.vars.push(`  ${idx} = milo.var "for.idx" : !milo.ref<si64>`);
         this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
@@ -1128,6 +1138,12 @@ class FnEmitter {
       case "UnaryOp": return this.unop(e);
       case "Cast": {
         if (e.operand.type.tag === "array" && e.targetType.tag === "ptr") return this.decay(e.operand);
+        if (stripRefs(e.operand.type).tag === "string" && e.targetType.tag === "ptr") {
+          // `s as *u8`: the bytes, as legacy genCast reads field 0 (no copy, no NUL).
+          const v = this.borrow(this.expr(e.operand), e.operand.type);
+          if (v.ty !== STR) throw new MlirUnsupported("cast of a non-string");
+          return this.def(`milo.string.data ${v.ref}`, PTR);
+        }
         const from = scalar(e.operand.type, "cast source");
         const to = scalar(e.targetType, "cast target");
         const v = this.expr(e.operand);

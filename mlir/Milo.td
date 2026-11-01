@@ -315,6 +315,14 @@ def Milo_AddrOp : Milo_Op<"addr", [Pure]> {
   let assemblyFormat = "$place attr-dict `:` type($place)";
 }
 
+// A string's data pointer (its bytes, no NUL promised): `s as *u8` and the bytes a
+// `for b in s` walks, as legacy reads field 0 of %String. The ODS types are its verifier.
+def Milo_StringDataOp : Milo_Op<"string.data", [Pure]> {
+  let arguments = (ins Milo_StringType:$value);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
 // `zeroed<T>()`: every byte of a T zero, legacy's zeroinitializer. For a string or a Vec
 // that is the empty one (null data, cap 0), whose drop does nothing.
 def Milo_ZeroOp : Milo_Op<"zero", [Pure]> {

@@ -35,3 +35,12 @@ func.func @byte(%s: !milo.string, %i: si64) -> ui8 {
   %b = milo.string.byte %s[%i] loc("t.milo":3:5)
   milo.return %b : ui8
 }
+
+// `s as *u8` and the bytes of `for b in s`: field 0 of the %String.
+// CHECK-LABEL: llvm.func @bytes
+// CHECK-NEXT:   %[[D:.*]] = llvm.extractvalue %arg0[0] : !llvm.struct<"String", (ptr, i64, i64)>
+// CHECK-NEXT:   llvm.return %[[D]] : !llvm.ptr
+func.func @bytes(%s: !milo.string) -> !milo.ptr {
+  %d = milo.string.data %s
+  milo.return %d : !milo.ptr
+}

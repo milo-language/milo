@@ -523,6 +523,10 @@ structs, enums.
   as legacy zeroes it, so the struct's drop finds an empty one; not when a struct on
   the way runs a user Drop. Program `move-field`. Planted bug: no zeroing (`move-field`
   exit 0 -> 1, a double free).
+- *`for b in s` and `s as *u8`* read the string's data pointer (`milo.string.data`,
+  field 0) and its len once, as legacy's genForEach and genCast. Program
+  `string-bytes`, FileCheck in `pointers.mlir`. Planted bug: the walk starting one byte
+  in (`string-bytes` stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

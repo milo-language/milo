@@ -1,0 +1,37 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `for b in s` over a string's bytes (with and without the index, a
+// break, a temporary string) and `s as *u8` handed to C (milo.string.data).
+
+extern fn strlen(p: *u8): i64
+
+fn sum(s: &string): i64 {
+    var t: i64 = 0
+    for b in s { t += b as i64 }
+    return t
+}
+
+fn firstSpace(s: &string): i64 {
+    for i, b in s {
+        if b == 32 { return i }
+    }
+    return -1
+}
+
+fn upto(s: &string, stop: u8): i64 {
+    var n: i64 = 0
+    for b in s {
+        if b == stop { break }
+        n += 1
+    }
+    return n
+}
+
+// Not main: a main naming a raw pointer keeps its legacy body.
+fn run() {
+    let s = "hello world"
+    var c: i64 = 0
+    for b in "x".repeat(4) { c += b as i64 }
+    unsafe { print(sum(s), " ", firstSpace(s), " ", upto(s, 111), " ", c, " ", strlen(s as *u8)) }
+}
+
+fn main() { run() }
