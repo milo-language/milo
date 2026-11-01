@@ -13395,10 +13395,6 @@ export class TypeChecker {
         if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${this.show(sepType)}`, sp); }
         return this.setType(expr, { tag: "string" });
       }
-      if (expr.method === "isEmpty") {
-        if (expr.args.length !== 0) { this.error(`'isEmpty' takes no arguments`, sp); }
-        return this.setType(expr, { tag: "bool" });
-      }
       // fold(init, (acc, elem) => acc) — the accumulate half of the functional
       // set. `reduce` is accepted as the same operation because that is what
       // the majority of readers will type; the suggestion table points at

@@ -6,6 +6,8 @@
 
 // Activates std/hashmap's `impl HashMap` methods program-wide; it exports no names.
 from "std/hashmap" import {}
+// The same for std/vec's `impl Vec` methods.
+from "std/vec" import {}
 
 from "std/string" import {
     asciiIsWhitespace, asciiIsDigit, asciiIsAlpha, asciiIsAlphanumeric,

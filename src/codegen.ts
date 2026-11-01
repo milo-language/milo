@@ -60,7 +60,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
-  "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert", "VecIsEmpty",
+  "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert",
   "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
   "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey", "VecSum",
   "VecSwap", "VecTruncate", "WrappingArith", "Zeroed",
@@ -5651,17 +5651,6 @@ export class Codegen {
         return genVecAll(this, expr, lines);
       case "VecFold":
         return genVecFold(this, expr, lines);
-      case "VecIsEmpty": {
-        this.hasVecType = true;
-        const ov = this.genVal(expr.object, lines);
-        const len = b.extractvalue(val(ov.ref, VEC_TY), 1, Ty.i64).ref;
-        const result = b.icmp("eq", val(len, Ty.i64), val("0", Ty.i64)).ref;
-        // The receiver is a temporary here — `mkVec().len` reads a length out of a Vec
-        // nobody owns. StringLen above already did this; its Vec and HashMap siblings did
-        // not. Reading a scalar keeps no pointer into the container, so it can go now.
-        this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
-        return [lines, result, "i1"];
-      }
       case "VecReverse":
         return genVecReverse(this, expr, lines);
       case "VecSwap":

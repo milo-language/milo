@@ -102,7 +102,6 @@ export type HIRExpr =
   | { kind: "VecSum"; vec: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecAll"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFold"; vec: HIRExpr; init: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecIsEmpty"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecEnumerate"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecReverse"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSwap"; object: HIRExpr; indexA: HIRExpr; indexB: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

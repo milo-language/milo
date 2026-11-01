@@ -1436,9 +1436,6 @@ class LowerCtx {
             ];
             return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
           }
-          if (expr.method === "isEmpty") {
-            return { kind: "VecIsEmpty", object: recv(), type, span: expr.span };
-          }
           if (expr.method === "contains") {
             return { kind: "VecContains", vec: recv(), value: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
@@ -1624,7 +1621,9 @@ class LowerCtx {
           const args: HIRArg[] = allExprs.map((a, i) => {
             const borrowed = this.c.autoBorrowed.get(a);
             const jsonType = this.c.autoJsonStringify.get(a);
-            let lowered = this.lowerExpr(a);
+            // A fixed array calling a std `impl Vec` method passes the same full-range
+            // view the builtin combinators get; `[N x T]` is not the `%Vec` the body reads.
+            let lowered = i === 0 && sliceFixedArray ? recv() : this.lowerExpr(a);
             // A scoped task's by-reference literal is created in the Task.scope body's
             // frame, which returns before the scope joins the task: its environment (the
             // pointers to what it borrows) goes on the heap, and the task's reap frees it.

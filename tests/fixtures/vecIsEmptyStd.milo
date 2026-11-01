@@ -1,0 +1,60 @@
+// Vec.isEmpty is std/vec.milo code. Covers empty and filled Vecs of several element
+// types, slices (empty and not) as the receiver, a fixed array, a temporary receiver,
+// a ranged element type and a call inside a capturing closure.
+// @expect: truefalse
+// @expect: truefalse
+// @expect: falsetrue
+// @expect: truefalse
+// @expect: false
+// @expect: truefalse
+// @expect: false
+// @expect: 2
+
+struct Pt {
+    x: i64,
+    name: string,
+}
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("s" + i.toString())
+    }
+    return v
+}
+
+fn viewEmpty(s: &[i64]): bool {
+    return s.isEmpty()
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    let v: Vec<i64> = [1, 2, 3]
+    print(e.isEmpty(), v.isEmpty())
+
+    let es: Vec<string> = Vec.new()
+    let ss: Vec<string> = ["a" + "b"]
+    print(es.isEmpty(), ss.isEmpty())
+
+    let fs: Vec<f64> = [0.5]
+    let ps: Vec<Pt> = Vec.new()
+    print(fs.isEmpty(), ps.isEmpty())
+
+    print(viewEmpty(v[1..1]), viewEmpty(v[0..2]))
+
+    let a = [7, 8]
+    print(a.isEmpty())
+
+    print(mk(0).isEmpty(), mk(2).isEmpty())
+
+    let r: Vec<Digit> = [3]
+    print(r.isEmpty())
+
+    let groups: Vec<Vec<i64>> = [[1], [], [2, 3]]
+    let skip = e
+    let nonEmpty = groups.filter((g: &Vec<i64>) => !g.isEmpty() && skip.isEmpty())
+    print(nonEmpty.len())
+}
+
+// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
+type Digit = i32(0..9)

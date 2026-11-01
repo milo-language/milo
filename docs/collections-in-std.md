@@ -269,3 +269,15 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   HM_SEED went with this commit. `emitHashMapInsertValues` had no caller left besides
   the builtin insert: std/set, derive(Json) and std/json all insert through Milo code,
   which is the std method now.
+- 2026-11-01: phase 2 step 0. `@inline` and the `@pure` exemption are gated on
+  `isStdCollectionModule` (std/hashmap.milo, std/vec.milo; anchored path match); the
+  `_map*` intrinsics stay std/hashmap only. Pinned wording is now "only the std
+  collection modules may force inlining" (`inlineOutsideStdCollections`). A slice
+  receiver (`&[T]`, `&mut [T]`) may call any `impl Vec<T>` method taking `self: &Self`,
+  passed as the same `{ptr, len, cap}` the builtins read; a `&mut Self` one is refused
+  ("'pushTwice' needs an owned Vec; a slice is a view", `sliceReceiverMutVecImpl`; with
+  the check removed that program compiles and pushes through the view).
+- 2026-11-01: std/vec.milo created (prelude `from "std/vec" import {}`); `isEmpty` moved
+  (`self.len() == 0`). A fixed array receiver of a moved method gets the builtin's
+  full-range VecSlice (lower.ts, the resolved-method path). Planted `== 1` turns
+  `vecIsEmptyStd` red; old and new output identical; 0 leaks; 300M calls 0.10s vs 0.10s.

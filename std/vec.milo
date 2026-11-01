@@ -1,0 +1,13 @@
+// std/vec: Vec method bodies written in Milo (docs/collections-in-std.md).
+//
+// Vec stays a builtin type: the checker owns its type rules, and codegen still owns the
+// layout ({ptr, len, cap}), literals, indexing, slicing, len, for-in, drop and display.
+// Every method here takes `self: &Self` unless it must change the Vec, so a slice
+// (`&[T]`, the same layout) may call it too.
+
+impl Vec<T> {
+    // Whether the Vec has no elements.
+    fn isEmpty(self: &Self): bool {
+        return self.len() == 0
+    }
+}
