@@ -553,3 +553,10 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   vecWithCapacity turns `vecWithCapacityFilledStd` red. Output identical (fixture without
   the i32 line); live heap equal; 17 corpus files pass. makeVec, genVecWithCapacity and
   genVecFilled went. Step 5 done: `codegen-vec.ts` is 1326 -> 351 lines.
+- 2026-11-01: fixes from the background corpus. sortByKey forgets keys through a std/vec
+  `_vecForget` (the `Forget` node): a program defining its own `forget` shadowed the
+  builtin inside std (`genericUserFnShadowsBuiltin`). A refused reference push
+  (`vecPushRef`) no longer instantiates std's push with the reference element, which
+  added two errors inside std/vec.milo. `slicePush` now pins the slice-receiver rule's
+  wording ("'push' needs an owned Vec; a slice is a view") in place of "type '[i64]' has
+  no method 'push'": still refused, the std method is found and the view rule refuses it.

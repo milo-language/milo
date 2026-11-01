@@ -139,7 +139,8 @@ export function isHashMapModule(file: string | undefined): boolean {
 // `_vecGrowBuf(data, len, cap): *T` moves a full buffer of `len` elements to one of `cap`
 // (emitGrowBytes, the checked allocation push used); `_vecNonNegative(n)` is n after
 // the "negative capacity" check, at the caller's line under @trackCaller.
-export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut", "_vecGrowBuf", "_vecNonNegative"]);
+// `_vecForget(x)` is `forget(x)`, which a user fn named forget would shadow in std.
+export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut", "_vecGrowBuf", "_vecNonNegative", "_vecForget"]);
 export function isVecModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -6032,10 +6033,10 @@ export class TypeChecker {
   // Not dispatchMangledMethod: those rules accept any int index, which lowering widens, and
   // map's callback is checked once, there, to learn its type argument. `typeArgs` are a
   // generic method's own (`map<U>`). An element still unknown after an error (or an
-  // uninferred `Vec.new()`) has no instance to bind, and the error is already reported.
+  // uninferred `Vec.new()`), or the reference push refused, has no instance to bind.
   private bindStdVecMethod(expr: ExprOf<"MethodCall">, element: TypeKind, method: string, ret: TypeKind,
     opts: { mutable?: boolean; typeArgs?: TypeKind[] } = {}): TypeKind {
-    if (element.tag === "unknown") return this.setType(expr, ret);
+    if (element.tag === "unknown" || element.tag === "ref") return this.setType(expr, ret);
     let mangled: string | null;
     if (opts.typeArgs) {
       const key = `Vec_${this.mangleTypeName(element)}$${method}`;
@@ -10832,7 +10833,7 @@ export class TypeChecker {
       }
       return this.setType(expr, { tag: "void" });
     }
-    if (VEC_INTRINSICS.has(expr.func) && isVecModule(sp?.file)) return this.checkNatLess(expr);
+    if (expr.func === "_natLess" && isVecModule(sp?.file)) return this.checkNatLess(expr);
     if (expr.func === "sizeOf") {
       if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`sizeOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
       if (expr.args.length !== 0) { this.error(`sizeOf takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -10863,7 +10864,7 @@ export class TypeChecker {
     // safety. Deliberately not `unsafe`: forgetting a value is memory-SAFE (leaking is
     // safe), it is merely usually wrong, and requiring `unsafe` here would push callers
     // toward wrapping a whole region rather than this one call.
-    if (expr.func === "forget" && !this.shadowedByUserFn("forget")) {
+    if ((expr.func === "forget" && !this.shadowedByUserFn("forget")) || (expr.func === "_vecForget" && isVecModule(sp?.file))) {
       if (expr.args.length !== 1) {
         this.error(`'forget' takes exactly one argument`, sp);
         return this.setType(expr, { tag: "void" });

@@ -3,7 +3,7 @@
 // slice does not own the storage it points at, and growing it would reallocate a buffer
 // belonging to someone else. Whitelisting the read-only names rather than widening the
 // whole arm is what keeps this rejected.
-// @error: type '[i64]' has no method 'push'
+// @error: 'push' needs an owned Vec; a slice is a view
 
 fn grow(s: &[i64]) {
     s.push(1)

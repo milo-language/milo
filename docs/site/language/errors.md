@@ -111,6 +111,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
 - [`'Process' is imported from 'std/process' and also declared in this file`](#process-is-imported-from-std-process-and-also-declared-in-this-file)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
+- [`'push' needs an owned Vec; a slice is a view`](#push-needs-an-owned-vec-a-slice-is-a-view)
 - [`'pushTwice' needs an owned Vec; a slice is a view`](#pushtwice-needs-an-owned-vec-a-slice-is-a-view)
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
@@ -526,7 +527,6 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`this closure is passed to a 'move' parameter, so it owns its captures`](#this-closure-is-passed-to-a-move-parameter-so-it-owns-its-captures)
 - [`two fields map to the JSON name 'id'`](#two-fields-map-to-the-json-name-id)
 - [`two migrations claim version 1`](#two-migrations-claim-version-1)
-- [`type '[i64]' has no method 'push'`](#type-i64-has-no-method-push)
 - [`type 'Handle' has no method 'clone'`](#type-handle-has-no-method-clone)
 - [`type 'i64' does not implement trait 'AsFd'`](#type-i64-does-not-implement-trait-asfd)
 - [`type 'Math' has no static method 'minimum'`](#type-math-has-no-static-method-minimum)
@@ -2857,6 +2857,25 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapPtrInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapPtrInterface.milo)</sub>
+
+## `'push' needs an owned Vec; a slice is a view` {#push-needs-an-owned-vec-a-slice-is-a-view}
+
+A slice is a non-owning VIEW. The read-only combinators are available on it because it shares the Vec representation, but the mutating half of that same set must not be: a slice does not own the storage it points at, and growing it would reallocate a buffer belonging to someone else. Whitelisting the read-only names rather than widening the whole arm is what keeps this rejected.
+
+```milo skip
+fn grow(s: &[i64]) {
+    s.push(1)
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    grow(v)
+    print(v.len)
+}
+```
+
+<sub>[tests/errors/slicePush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/slicePush.milo)</sub>
 
 ## `'pushTwice' needs an owned Vec; a slice is a view` {#pushtwice-needs-an-owned-vec-a-slice-is-a-view}
 
@@ -12927,25 +12946,6 @@ fn main(): void {
 ```
 
 <sub>[tests/errors/sqlDuplicateVersion.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sqlDuplicateVersion.milo)</sub>
-
-## `type '[i64]' has no method 'push'` {#type-i64-has-no-method-push}
-
-A slice is a non-owning VIEW. The read-only combinators are available on it because it shares the Vec representation, but the mutating half of that same set must not be: a slice does not own the storage it points at, and growing it would reallocate a buffer belonging to someone else. Whitelisting the read-only names rather than widening the whole arm is what keeps this rejected.
-
-```milo skip
-fn grow(s: &[i64]) {
-    s.push(1)
-}
-
-fn main() {
-    var v: Vec<i64> = Vec.new()
-    v.push(1)
-    grow(v)
-    print(v.len)
-}
-```
-
-<sub>[tests/errors/slicePush.milo](https://github.com/milo-language/milo/blob/main/tests/errors/slicePush.milo)</sub>
 
 ## `type 'Handle' has no method 'clone'` {#type-handle-has-no-method-clone}
 

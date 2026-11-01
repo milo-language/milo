@@ -5842,7 +5842,7 @@ A conforming implementation shall reject this program at compile time.
 
 A conforming implementation shall reject this program at compile time.
 
-- The diagnostic shall contain: `type '[i64]' has no method 'push'`
+- The diagnostic shall contain: `'push' needs an owned Vec; a slice is a view`
 
 **Rationale.** A slice is a non-owning VIEW. The read-only combinators are available on it because it shares the Vec representation, but the mutating half of that same set must not be: a slice does not own the storage it points at, and growing it would reallocate a buffer belonging to someone else. Whitelisting the read-only names rather than widening the whole arm is what keeps this rejected.
 

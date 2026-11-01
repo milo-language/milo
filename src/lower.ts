@@ -848,6 +848,7 @@ class LowerCtx {
       case "Call": {
         if (VEC_INTRINSICS.has(expr.func) && isVecModule(expr.span?.file)) {
           if (expr.func === "_vecCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          if (expr.func === "_vecForget") return { kind: "Forget", value: this.lowerExpr(expr.args[0]), type: { tag: "void" }, span: expr.span };
           if (expr.func === "_vecNonNegative") return { kind: "NonNegative", value: this.lowerExpr(expr.args[0]), what: "capacity", type, span: expr.span };
           if (expr.func === "_vecGrowBuf") {
             const element = type.tag === "ptr" ? type.inner : { tag: "unknown" as const };

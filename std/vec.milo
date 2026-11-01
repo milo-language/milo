@@ -442,8 +442,9 @@ impl Vec<T> {
     // float, string and bool. The key of the element being placed is taken once; the key
     // of each element it is compared against is taken per comparison, the builtin's call
     // sequence. A key may be a view of its element (`(p: &P) => p.name`, the one place
-    // a closure may return a field of its borrowed parameter), so every key is forgotten,
-    // never dropped. @inline for the same reason as sortBy.
+    // a closure may return a field of its borrowed parameter), so every key is forgotten
+    // (_vecForget, which a user fn named forget cannot shadow), never dropped. @inline for
+    // the same reason as sortBy.
     @inline
     fn sortByKey<K>(self: &mut Self, f: (&T) => K) {
         unsafe {
@@ -457,14 +458,14 @@ impl Vec<T> {
                 while j > 0 {
                     let kp = f(data[j.wrappingSub(1)])
                     let after = _natLess(kt, kp)
-                    forget(kp)
+                    _vecForget(kp)
                     if !after {
                         break
                     }
                     data[j] = *data[j.wrappingSub(1)].addrOf()
                     j = j.wrappingSub(1)
                 }
-                forget(kt)
+                _vecForget(kt)
                 data[j] = tmp
                 i = i.wrappingAdd(1)
             }
