@@ -1,0 +1,10 @@
+// Differential panic program (scripts/mlir-same.ts --programs): std's Vec.insert past
+// the length panics through _vecPanic (a legacy helper per site); @trackCaller names
+// this line. stderr and exit status must match legacy codegen.
+fn main() {
+    var v: Vec<string> = Vec.new()
+    v.push("a")
+    v.insert(1, "b")
+    print(v.len())
+    v.insert(5, "c")
+}

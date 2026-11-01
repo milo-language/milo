@@ -1273,6 +1273,15 @@ class FnEmitter {
         return this.match(e, this.value(e.type, "match-expression")).v;
       }
       case "Propagate": return this.propagate(e);
+      // std's panics with a message: legacy's text and abort in a helper per site.
+      case "StrPanic": {
+        const v = this.expr(e.value);
+        if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("panic value type");
+        return this.intrinsic(`strpanic.${fnv1a(`${e.head}\0${e.tail}`)}`, e, [{ name: "v", type: e.value.type, mode: "val", ref: v.ref }],
+          ([x]) => ({ ...e, value: x }), null);
+      }
+      case "VecPanic":
+        return this.intrinsic(`vecpanic.${fnv1a(e.message)}`, e, [], () => ({ ...e }), null);
       case "StringPushStr": {
         // `s.pushStr(x)`: the place, then x, as legacy genStringPushStr; milo.string.append
         // is legacy's pushStr (unique first, then grow; `s.pushStr(s)` re-based).
@@ -1995,7 +2004,18 @@ class FnEmitter {
         const b = this.lookup(e.operand.name);
         if (b.kind === "vec") return this.def(`milo.addr ${b.ref} : !milo.vec<${b.elem}>`, PTR);
         if (b.kind === "var") return this.def(`milo.addr ${b.ref} : !milo.ref<${b.ty}>`, PTR);
+        // An immutable binding held as an SSA value: from here on it lives in a slot, as
+        // legacy's alloca does, so a write through the address is seen by later reads.
+        const ref = this.fresh();
+        this.vars.push(`  ${ref} = milo.var ${quote(e.operand.name)} : !milo.ref<${b.v.ty}>`);
+        this.emit(`milo.store ${b.v.ref}, ${ref} : !milo.ref<${b.v.ty}>`);
+        const m = [...this.scopes].reverse().find(s => s.has((e.operand as { name: string }).name))!;
+        m.set(e.operand.name, { kind: "var", ref, ty: b.v.ty });
+        return this.def(`milo.addr ${ref} : !milo.ref<${b.v.ty}>`, PTR);
       }
+      // A place behind a pointer (`data[i].addrOf()`) is its address already.
+      const pp = this.ptrPlace(e.operand);
+      if (pp) return { ref: pp.ptr, ty: PTR };
       const p = this.fieldPlace(e.operand);
       if (!p) throw new MlirUnsupported("address of a value");
       return this.def(`milo.addr ${p.ref} : !milo.ref<${p.ty}>`, PTR);
@@ -2295,9 +2315,9 @@ class FnEmitter {
     return ret === STR ? { ...r, own: "owned" } : r;
   }
 
-  /** `e` never returns: a `never` value, or the builtin exit (typed void in HIR). */
+  /** `e` never returns: a `never` value, a std panic, or the builtin exit (typed void in HIR). */
   private diverges(e: HIRExpr): boolean {
-    return e.type.tag === "never" || (e.kind === "Call" && e.func === "exit" && this.cx.isBuiltinName("exit"));
+    return e.type.tag === "never" || e.kind === "StrPanic" || e.kind === "VecPanic" || (e.kind === "Call" && e.func === "exit" && this.cx.isBuiltinName("exit"));
   }
 
   /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */

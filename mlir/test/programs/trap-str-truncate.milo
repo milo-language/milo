@@ -1,0 +1,11 @@
+// Differential panic program (scripts/mlir-same.ts --programs): std's string truncate
+// inside a multibyte character panics through _strPanic with the length in its message
+// (a legacy helper per site). stderr and exit status must match legacy codegen.
+fn main() {
+    var s = "héllo"
+    s.truncate(1)
+    print(s)
+    var t = "héllo"
+    t.truncate(2)
+    print(t)
+}

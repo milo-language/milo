@@ -471,6 +471,14 @@ structs, enums.
   result not owned (`builtins` `--owned` red at -O0: one more live block). `exit` ends
   its path as a jump does (HIR types it void): `take(s); exit(1)` on one branch then
   `print(s)` failed drop elaboration ("may be empty"), caught by `exitDivergesMoves`.
+- *std's panics* (`_strPanic`, `_vecPanic`: HIR StrPanic, VecPanic) are intrinsic helpers
+  per message and site, and end their path as exit does. *addrOf* of an immutable SSA
+  binding moves it to a slot from there on (legacy's alloca: a write through the
+  address is seen by later reads), and of a place behind a pointer is that pointer
+  (`data[i].addrOf()` in std's insert and remove). Programs `trap-vec-insert`,
+  `trap-str-truncate`, `addr-of`. Planted bugs: the binding spilled but not rebound
+  (`addr-of` stdout: 40 for 41); the panic's value replaced by 0 (`trap-str-truncate`
+  stderr).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

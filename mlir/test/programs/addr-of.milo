@@ -1,0 +1,31 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): the
+// address of an immutable binding (it moves to a slot, as legacy's alloca) and of a place
+// behind a pointer, as std's Vec.insert and remove take them for memmove.
+
+extern fn memmove(d: *u8, s: *u8, n: i64): *u8
+
+fn shift(): i64 {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..6 { v.push(i * 11) }
+    unsafe {
+        let data = v.ptr()
+        memmove(data[2].addrOf() as *u8, data[1].addrOf() as *u8, 3 * 8)
+    }
+    var t: i64 = 0
+    for i in 0..6 { t = t * 100 + v[i] }
+    return t
+}
+
+fn poke(n: i64): i64 {
+    let x = n * 2
+    unsafe {
+        let p = x.addrOf()
+        * p = *p + 1
+    }
+    return x
+}
+
+fn main() {
+    print(shift())
+    print(poke(20))
+}
