@@ -288,3 +288,12 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   receiver (`[9, 4, 8].first()`) reached clang as `[3 x i64]` where `%Vec` was read.
   Planted `wrappingSub(2)` turns `vecFirstLastStd` red; output identical to the old
   compiler apart from those two; 0 leaks; bench 0.07s builtin vs 0.05s std.
+- 2026-11-01: `contains` moved: `for e in self { if e == x { return true } }`, needle
+  taken as `&T` (no refcount round trip for a string needle, nothing moved). The
+  element-type gate (`vecContainsStruct`) stays at the call. A ranged element
+  (`Vec<i32(0..9)>`) dispatches to the plain-int instantiation, so `r.contains(12)` stays
+  legal and false; a `&i32(0..9)` needle would have refused any plain i32. `==` gives the
+  builtin's semantics (string by content, float `oeq`: NaN never found, -0.0 finds 0.0).
+  Arity/type messages now come from the generic method path ("'contains' argument 1:
+  expected i64, got string"). Planted `!=` turns `vecContainsStd` red; output identical
+  to the old compiler; 0 leaks; bench 3M int + string searches 1.03s builtin vs 1.00s std.

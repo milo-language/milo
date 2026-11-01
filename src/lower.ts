@@ -1436,9 +1436,6 @@ class LowerCtx {
             ];
             return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
           }
-          if (expr.method === "contains") {
-            return { kind: "VecContains", vec: recv(), value: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "reverse") {
             return { kind: "VecReverse", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
           }

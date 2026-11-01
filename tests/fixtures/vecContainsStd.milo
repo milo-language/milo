@@ -1,0 +1,71 @@
+// Vec.contains is std/vec.milo code. Covers empty Vecs, slices and a fixed array as the
+// receiver, int widths (an unhinted literal needle), bool, string by content (a needle
+// built at runtime, a needle variable still usable afterwards), float IEEE equality (NaN
+// is never found, -0.0 finds 0.0), a temporary receiver and needle, a capturing closure,
+// and a ranged element searched with any value of its width. The element-type refusal
+// is pinned by errors/vecContainsStruct.milo.
+// @expect: false false
+// @expect: true false
+// @expect: true true false
+// @expect: true false
+// @expect: true false true
+// @expect: abc
+// @expect: false true true
+// @expect: true false
+// @expect: true false
+// @expect: 2
+// @expect: true false false
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("s" + i.toString())
+    }
+    return v
+}
+
+fn inView(s: &[i64], x: i64): bool {
+    return s.contains(x)
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    let es: Vec<string> = Vec.new()
+    print(e.contains(1), " ", es.contains(""))
+
+    let v: Vec<i64> = [1, 2, 3]
+    print(v.contains(3), " ", v.contains(4))
+
+    let bytes: Vec<u8> = [0, 200, 255]
+    let small: Vec<i16> = [-5, 7]
+    print(bytes.contains(255), " ", small.contains(-5), " ", small.contains(5))
+
+    let bs: Vec<bool> = [true, true]
+    print(bs.contains(true), " ", bs.contains(false))
+
+    let ss: Vec<string> = ["ab" + "c", "d"]
+    let needle = "a" + "bc"
+    print(ss.contains(needle), " ", ss.contains("ab"), " ", ss.contains("d"))
+    print(needle)
+
+    let nan = 0.0 / 0.0
+    let fs: Vec<f64> = [nan, 0.0, 1.5]
+    print(fs.contains(nan), " ", fs.contains(-0.0), " ", fs.contains(1.5))
+
+    print(inView(v[1..3], 2), " ", inView(v[1..3], 1))
+
+    let a = [4, 5]
+    print(a.contains(5), " ", mk(3).contains("s" + 3.toString()))
+
+    let words: Vec<string> = ["s1", "x", "s2"]
+    let known = mk(3)
+    let hits = words.filter((w: &string) => known.contains(w))
+    print(hits.len())
+
+    let r: Vec<Digit> = [3, 8]
+    let wide: i32 = 40
+    print(r.contains(8), " ", r.contains(12), " ", r.contains(wide))
+}
+
+// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
+type Digit = i32(0..9)

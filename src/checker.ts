@@ -10468,6 +10468,14 @@ export class TypeChecker {
   // `contains`/`indexOf` compare elements inline in codegen (icmp/fcmp/string compare), so
   // only those element types are searchable. `contains` used to skip this check and a
   // Vec<Struct> reached codegen as an `icmp` on an aggregate, which clang rejected.
+  // A Vec of a ranged int searches as a Vec of the plain int: the needle may be any value
+  // of that width (`Vec<i32(0..9)>.contains(12)` is false, not an error), as the builtin
+  // took it. Same layout, so the plain instantiation reads the ranged Vec unchanged.
+  private plainSearchElement(el: TypeKind, method: string): string | null {
+    if (el.tag !== "int" || (el.min === undefined && el.max === undefined)) return null;
+    return this.instantiateContainerImpl("Vec", [{ tag: "int", bits: el.bits, signed: el.signed }], method)?.mangled ?? null;
+  }
+
   private vecSearchComparable(el: TypeKind, method: string, alt: string, sp: Span | undefined): boolean {
     if (el.tag === "int" || el.tag === "float" || el.tag === "string" || el.tag === "bool" || el.tag === "unknown") return true;
     this.error(`'${method}' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
@@ -13448,14 +13456,11 @@ export class TypeChecker {
         }
         return this.setType(expr, objType.element);
       }
+      // contains is std/vec code; its element-type restriction stays here, at the call.
       if (expr.method === "contains") {
-        if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument`, sp); return this.setType(expr, { tag: "bool" }); }
         if (!this.vecSearchComparable(objType.element, "contains", "any", sp)) return this.setType(expr, { tag: "bool" });
-        const argType = this.checkExpr(expr.args[0], objType.element);
-        if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
-          this.error(`'contains': expected ${this.show(objType.element)}, got ${this.show(argType)}`, sp);
-        }
-        return this.setType(expr, { tag: "bool" });
+        const plain = this.plainSearchElement(objType.element, expr.method);
+        if (plain) return this.dispatchMangledMethod(expr, plain, sp);
       }
       if (expr.method === "reverse") {
         if (expr.args.length !== 0) { this.error(`'reverse' takes no arguments`, sp); }

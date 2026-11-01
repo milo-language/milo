@@ -22,4 +22,16 @@ impl Vec<T> {
         // which get answers with None.
         return self.get(self.len().wrappingSub(1))
     }
+
+    // Whether some element equals `x`. The checker limits this to int, float, string and
+    // bool elements; `==` is the language's: a string by content, a float by IEEE
+    // equality (NaN equals nothing, -0.0 equals 0.0).
+    fn contains(self: &Self, x: &T): bool {
+        for e in self {
+            if e == x {
+                return true
+            }
+        }
+        return false
+    }
 }
