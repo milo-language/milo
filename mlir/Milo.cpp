@@ -103,6 +103,17 @@ LogicalResult IndexStoreOp::verify() {
   return success();
 }
 
+LogicalResult PrintOp::verify() {
+  for (Type t : getParts().getTypes()) {
+    auto i = dyn_cast<IntegerType>(t);
+    bool ok = (i && (!i.isSignless() || i.getWidth() == 1)) || t.isF32() || t.isF64() ||
+              isa<PtrType, StringType>(t);
+    if (!ok)
+      return emitOpError("cannot display a part of type ") << t;
+  }
+  return success();
+}
+
 LogicalResult ForOp::verify() {
   Type t = getStart().getType();
   Block &entry = getBodyRegion().front();

@@ -21,6 +21,10 @@ export interface MlirEmitCtx {
   fnSigs: Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>;
   sretFns: Set<string>;
   llvmType(t: TypeKind): string;
+  // main is taken only when it is the process entry (no green-task wrapper around it).
+  readonly mlirMainOk: boolean;
+  mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string;
+  hasStringType: boolean;
 }
 
 export class MlirUnsupported extends Error {
@@ -29,6 +33,8 @@ export class MlirUnsupported extends Error {
 
 // `*T` for any T: untyped, as the pointee type rides on each access.
 const PTR = "!milo.ptr";
+// Only ever a literal until drops exist (Milo.td StringType).
+const STR = "!milo.string";
 
 /** The dialect's type for a Milo scalar (ints carry signedness), or null. */
 export function mlirType(t: TypeKind): string | null {
@@ -103,8 +109,10 @@ class FnEmitter {
     const fn = this.fn;
     if (fn.isExtern) throw new MlirUnsupported("extern fn");
     if (fn.isVariadic) throw new MlirUnsupported("variadic fn");
-    // main's prologue (argc/argv, global init, stdout buffering) is legacy codegen's.
-    if (fn.name === "main") throw new MlirUnsupported("main");
+    // main's prologue (argc/argv, global init, stdout buffering) is legacy codegen's; the
+    // splice keeps it. Behind a green-task wrapper main is another function, left legacy.
+    const isMain = fn.name === "main";
+    if (isMain && (!this.cx.mlirMainOk || fn.params.length || fn.retType.tag !== "void")) throw new MlirUnsupported("main");
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
@@ -128,12 +136,16 @@ class FnEmitter {
       this.bind(p.name, { kind: "ssa", v: { ref: `%p${i}`, ty } });
       return `%p${i}: ${ty}`;
     });
-    const ret = fn.retType.tag === "void" ? null : scalar(fn.retType, "return");
+    // main is `i32 @main(i32 argc, ptr argv)` and returns 0, as legacy emits it.
+    if (isMain) params.push("%argc: si32", `%argv: ${PTR}`);
+    const ret = isMain ? "si32" : fn.retType.tag === "void" ? null : scalar(fn.retType, "return");
+    this.isMain = isMain;
     // As legacy replayEngineScope, which applies only when std/replay is in the program.
     this.replay = !!fn.replayEngine && this.cx.replayScope;
     if (this.replay) this.emit("milo.replay.enter");
     if (!this.stmts(fn.body)) {
-      if (ret === null) this.ret("milo.return");
+      if (isMain) this.retMain();
+      else if (ret === null) this.ret("milo.return");
       else this.emit("milo.unreachable");
     }
     const head = `func.func @${quote(fn.name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} {`;
@@ -141,6 +153,11 @@ class FnEmitter {
   }
 
   private replay = false;
+  private isMain = false;
+  private retMain(): void {
+    const z = this.def("milo.const 0 : si32", "si32");
+    this.ret(`milo.return ${z.ref} : si32`);
+  }
   private ret(line: string): void {
     if (this.replay) this.emit("milo.replay.exit");
     this.emit(line);
@@ -187,6 +204,10 @@ class FnEmitter {
     switch (s.kind) {
       case "Let": {
         if (s.viewBind) throw new MlirUnsupported("view let");
+        if (s.type.tag === "string" && !s.mutable && s.value.kind === "StringLit") {
+          this.bind(s.name, { kind: "ssa", v: this.expr(s.value) });
+          return false;
+        }
         const ty = scalar(s.type, "let");
         const v = this.expr(s.value);
         if (v.ty !== ty) throw new MlirUnsupported("let of a different type");
@@ -224,6 +245,7 @@ class FnEmitter {
         return false;
       }
       case "Return": {
+        if (!s.value && this.isMain) { this.retMain(); return true; }
         if (!s.value) { this.ret("milo.return"); return true; }
         const v = this.expr(s.value);
         if (v.ty !== mlirType(this.fn.retType)) throw new MlirUnsupported("return of a different type");
@@ -318,6 +340,9 @@ class FnEmitter {
       }
       case "BoolLit":
         return this.def(`milo.const ${e.value}`, "i1");
+      case "StringLit":
+        this.cx.hasStringType = true;
+        return this.def(`milo.string.lit ${quote(e.value)}`, STR);
       case "FloatLit": {
         const ty = scalar(e.type, "FloatLit");
         if (ty !== "f32" && ty !== "f64") throw new MlirUnsupported("float literal of int type");
@@ -460,9 +485,35 @@ class FnEmitter {
     return { ref };
   }
 
+  /**
+   * print/eprint: one milo.print of every part. An interpolated string is
+   * `print(format(parts))`; printing the parts displays the same text without building the
+   * string (format and print share legacy's int and float formatting).
+   */
+  private print(e: HIRExpr & { kind: "Call" }): Val {
+    let args = e.args;
+    const only = args.length === 1 ? args[0].expr : null;
+    if (only?.kind === "Call" && only.func === "format" && this.cx.isBuiltinName("format")) args = only.args;
+    const parts = args.map(a => {
+      if (a.passByRef) throw new MlirUnsupported("by-ref print part");
+      let t = a.expr.type;
+      while (t.tag === "ref") t = t.inner;
+      const v = this.expr(a.expr);
+      const key = v.ty === STR ? "string" : v.ty === PTR ? "ptr" : v.ty;
+      if (key !== "string" && mlirType(t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+      return { v, key, type: t };
+    });
+    this.cx.mlirPrintHelper(e.func === "eprint", parts.map(p => ({ key: p.key, type: p.type })));
+    const flag = e.func === "eprint" ? " stderr" : "";
+    if (parts.length === 0) this.emit(`milo.print${flag}`);
+    else this.emit(`milo.print${flag} ${parts.map(p => p.v.ref).join(", ")} : ${parts.map(p => p.v.ty).join(", ")}`);
+    return { ref: "", ty: "" };
+  }
+
   private call(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+    if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (e.variadic) throw new MlirUnsupported("variadic call");
-    if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported("builtin call");
+    if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported(`builtin ${e.func}`);
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
     if (!callee || !sig || sig.variadic || this.cx.sretFns.has(e.func)) throw new MlirUnsupported("callee");

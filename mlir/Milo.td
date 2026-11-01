@@ -98,8 +98,33 @@ def Milo_PtrType : TypeDef<Milo_Dialect, "Ptr"> {
   let mnemonic = "ptr";
 }
 
+// Milo's `string` value: legacy's `%String = { ptr data, i64 len, i64 cap }`, the same
+// bytes on both sides of the splice. Until drop elaboration exists (M4) the emitter only
+// makes one from a literal, whose cap is 0: the buffer is static, so no copy or drop of it
+// ever needs to run code.
+def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
+  let mnemonic = "string";
+}
+
 // What a local, a parameter or a result can hold.
 def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
+
+// A string literal: the bytes as a private constant, len, cap 0.
+def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
+  let arguments = (ins StrAttr:$value);
+  let results = (outs Milo_StringType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+// `print(a, b, ...)` (or `eprint` with `stderr`): each part displayed the way Milo
+// displays its type, then a newline. Lowered to one call of a function the legacy module
+// defines for exactly this sequence of part types (codegen mlirPrintHelper), so the text
+// is legacy's byte for byte. Writes a stream: no traits, so nothing moves it or drops it.
+def Milo_PrintOp : Milo_Op<"print"> {
+  let arguments = (ins Variadic<AnyType>:$parts, UnitAttr:$stderr);
+  let assemblyFormat = "(`stderr` $stderr^)? ($parts^ `:` type($parts))? attr-dict";
+  let hasVerifier = 1;
+}
 
 def Milo_PtrLoadOp : Milo_Op<"ptr.load"> {
   let arguments = (ins Arg<Milo_PtrType, "", [MemRead]>:$ptr);

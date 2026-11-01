@@ -1,0 +1,51 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): main, print and
+// eprint of every scalar type, string literals (escapes, UTF-8, an embedded NUL) and
+// interpolation, from main and from another function, in a loop, then an early return.
+
+fn show(n: i64, x: f64) {
+    print($"n={n} x={x} half={x / 2.0}")
+    eprint("to stderr ", n)
+}
+
+fn floats() {
+    let z = 0.0
+    print(1.0 / z, -1.0 / z, z / z, -z, 0.1 + 0.2, 1e300 * 10.0, 123456789.0)
+    let f: f32 = 3.14159
+    print(f, f * 1000000.0, 1.0e-7 as f32)
+}
+
+fn ints() {
+    let a: i8 = -128
+    let b: u8 = 255
+    let c: i16 = -32768
+    let d: u16 = 65535
+    let e: i32 = -2147483648
+    let f: u32 = 4294967295
+    let g: i64 = -9223372036854775807 - 1
+    let h: u64 = 18446744073709551615
+    print(a, " ", b, " ", c, " ", d)
+    print(e, " ", f, " ", g, " ", h)
+    print('a', true, false)
+}
+
+fn main() {
+    print("hello")
+    print("tab\tquote\" back\\ ünïcödé ✓")
+    print("nul[\0]byte")
+    print()
+    ints()
+    floats()
+    let s = "bound literal"
+    print(s, " twice: ", s)
+    for i in 0..3 {
+        show(i, i as f64 * 1.5)
+    }
+    var k = 0
+    while true {
+        k += 1
+        if k == 4 {
+            print($"returning at {k}")
+            return
+        }
+    }
+}

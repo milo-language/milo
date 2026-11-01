@@ -204,6 +204,8 @@ export class Codegen {
   // MILO_MLIR=1 (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
+  // The print/eprint helpers MLIR bodies call (mlirPrintHelper), by symbol.
+  private mlirPrintHelpers = new Map<string, HIRFunction>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1950,6 +1952,11 @@ export class Codegen {
     // The overflow and bounds routines too: MLIR bodies call them, and stubs set no flag.
     if (this.mlirTake) {
       fnBodies.push(this.mlirPanicFn());
+      // Ordinary legacy functions; offering them to MLIR again would recurse.
+      const take = this.mlirTake;
+      this.mlirTake = null;
+      for (const fn of this.mlirPrintHelpers.values()) fnBodies.push(this.genFunction(fn));
+      this.mlirTake = take;
       this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
 
@@ -2678,12 +2685,6 @@ export class Codegen {
       const allParams = isSret ? [{ name: "__sret.out", ty: Ty.ptr }, ...params] : params;
       b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg, ...(fn.alwaysInline && { attrs: " alwaysinline" }) });
     }
-    if (Array.isArray(mlirStub)) {
-      lines.push(...mlirStub);
-      b.endFn();
-      this.currentSubprogramId = null;
-      return lines;
-    }
     if (fn.name === "main" && !this.wrapMainGreen) {
       b.store(V("%_milo_argc", Ty.i32), V("@_milo_argc_global", Ty.ptr));
       b.store(V("%_milo_argv", Ty.ptr), V("@_milo_argv_global", Ty.ptr));
@@ -2691,6 +2692,13 @@ export class Codegen {
       this.emitStdoutBufferingOptIn(lines);
       // after argc/argv: a global initializer may read them (argparse-style defaults)
       if (this.needsGlobalInit) b.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
+    }
+    // main's prologue above stays: the splice moves it into the MLIR body's entry block.
+    if (Array.isArray(mlirStub)) {
+      lines.push(...mlirStub);
+      b.endFn();
+      this.currentSubprogramId = null;
+      return lines;
     }
 
     const paramSpillStart = lines.length;
@@ -3236,6 +3244,31 @@ export class Codegen {
   // The panic routine functions compiled through MLIR call (src/mlir-backend.ts): prints
   // `msg` as the format, exactly as the inline division and shift traps do, then aborts
   // through the panic hook.
+  /** MILO_MLIR=1: main goes through MLIR only when it is the process entry itself. */
+  public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
+
+  /**
+   * The symbol of a legacy function doing `print(a0, a1, ...)` (or eprint) of parts of
+   * these types, generated with the module: milo.print lowers to one call of it, so the
+   * formatting is legacy's own. `key` spells each part type as the C++ lowering does
+   * (Scalar.cpp printKey). Non-scalar parts are passed by reference.
+   */
+  public mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string {
+    const name = [stderr ? "milo.eprint" : "milo.print", ...parts.map(p => p.key)].join(".");
+    if (!this.mlirPrintHelpers.has(name)) {
+      const byRef = (t: TypeKind) => !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr");
+      const params = parts.map((p, i) => ({ name: `a${i}`, type: p.type, isRef: byRef(p.type), isRefMut: false }));
+      this.mlirPrintHelpers.set(name, {
+        name, params, retType: { tag: "void" }, isExtern: false, isVariadic: false,
+        body: [{ kind: "ExprStmt", expr: {
+          kind: "Call", func: stderr ? "eprint" : "print", type: { tag: "void" }, variadic: true,
+          args: params.map(p => ({ expr: { kind: "Ident", name: p.name, type: p.type }, passByRef: false, refMut: false })),
+        } }],
+      });
+    }
+    return name;
+  }
+
   private mlirPanicFn(): string[] {
     this.tempCounter = 0;
     this.labelCounter = 0;

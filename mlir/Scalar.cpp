@@ -885,6 +885,91 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   }
 };
 
+// legacy's `%String`, by name: the spliced body then uses the module's own definition.
+LLVM::LLVMStructType stringStruct(MLIRContext *ctx) {
+  auto s = LLVM::LLVMStructType::getIdentified(ctx, "String");
+  if (!s.isInitialized()) {
+    Type i64 = IntegerType::get(ctx, 64);
+    (void)s.setBody({LLVM::LLVMPointerType::get(ctx), i64, i64}, /*isPacked=*/false);
+  }
+  return s;
+}
+
+struct StringLitLowering : ConvertOpToLLVMPattern<StringLitOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StringLitOp op, OpAdaptor,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    StringRef text = op.getValue();
+    Type i64 = rw.getI64Type();
+    Value s = LLVM::UndefOp::create(rw, loc, stringStruct(rw.getContext()));
+    s = LLVM::InsertValueOp::create(rw, loc, s, globalString(rw, loc, module, text), ArrayRef<int64_t>{0});
+    s = LLVM::InsertValueOp::create(rw, loc, s, constInt(rw, loc, i64, (int64_t)text.size()), ArrayRef<int64_t>{1});
+    s = LLVM::InsertValueOp::create(rw, loc, s, constInt(rw, loc, i64, 0), ArrayRef<int64_t>{2});
+    rw.replaceOp(op, s);
+    return success();
+  }
+};
+
+// How a print helper's symbol spells a part type; codegen mlirPrintHelper builds the
+// same name from the Milo types.
+std::string printKey(Type t) {
+  if (auto i = dyn_cast<IntegerType>(t))
+    return (i.isSigned() ? "si" : i.isUnsigned() ? "ui" : "i") + std::to_string(i.getWidth());
+  if (isa<PtrType>(t))
+    return "ptr";
+  if (isa<StringType>(t))
+    return "string";
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  os << t;
+  return s;
+}
+
+// Scalars are passed by value, everything else by reference (a slot in the entry block,
+// so a print in a loop does not grow the stack).
+struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PrintOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    std::string name = op.getStderr() ? "milo.eprint" : "milo.print";
+    SmallVector<Value> args;
+    SmallVector<Type> argTys;
+    for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
+      Type t = part.getType();
+      name += "." + printKey(t);
+      if (!isa<StringType>(t)) {
+        args.push_back(v);
+        argTys.push_back(v.getType());
+        continue;
+      }
+      Value slot;
+      {
+        OpBuilder::InsertionGuard g(rw);
+        rw.setInsertionPointToStart(&op->getParentRegion()->front());
+        Value one = constInt(rw, loc, rw.getI64Type(), 1);
+        slot = LLVM::AllocaOp::create(rw, loc, ptrTy, v.getType(), one);
+      }
+      LLVM::StoreOp::create(rw, loc, v, slot);
+      args.push_back(slot);
+      argTys.push_back(ptrTy);
+    }
+    auto fn = LLVM::lookupOrCreateFn(rw, module, name, argTys,
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    LLVM::CallOp::create(rw, loc, *fn, args);
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct CheckUnaliasedLowering : ConvertOpToLLVMPattern<CheckUnaliasedOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -937,6 +1022,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
   tc.addConversion([ctx = &tc.getContext()](PtrType) -> Type {
     return LLVM::LLVMPointerType::get(ctx);
   });
+  tc.addConversion([ctx = &tc.getContext()](StringType) -> Type { return stringStruct(ctx); });
   patterns.add<AddLowering, SubLowering, MulLowering, NegLowering, DivLowering,
                RemLowering, ShiftLowering<ShlOp, true>, ShiftLowering<ShrOp, false>,
                BitLowering<AndOp, LLVM::AndOp>, BitLowering<OrOp, LLVM::OrOp>,
@@ -944,7 +1030,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering>(tc);
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
+               StringLitLowering, PrintLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

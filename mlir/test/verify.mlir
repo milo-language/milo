@@ -114,3 +114,11 @@ func.func @for_iv(%a: si64) {
   }
   milo.return
 }
+
+// -----
+
+func.func @print_signless(%a: i32) {
+  // expected-error @+1 {{cannot display a part of type 'i32'}}
+  milo.print %a : i32
+  milo.return
+}

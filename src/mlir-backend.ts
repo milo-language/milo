@@ -118,6 +118,7 @@ function run(cmd: string, args: string[], input: string): string {
 }
 
 const STUB_MARK = "; milo.mlir.stub";
+const STUB_FIRST = "  unreachable";
 
 /**
  * Which functions go through MLIR, decided by legacy codegen as it reaches each one
@@ -147,11 +148,14 @@ export class MlirPlan {
     if (fn.isExtern) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns);
     if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
+    const ptrs = r.text.slice(r.text.indexOf("\n")).includes("!milo.ptr");
+    // main's prologue is found ahead of its stub, and with a pointer there is no stub.
+    if (ptrs && fn.name === "main") { this.log.push("main\traw pointer in main"); return null; }
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(fn.name);
-    if (r.text.slice(r.text.indexOf("\n")).includes("!milo.ptr")) return "legacy";
-    const stub = ["  unreachable", "mlir.stub.calls:", STUB_MARK];
+    if (ptrs) return "legacy";
+    const stub = [STUB_FIRST, "mlir.stub.calls:", STUB_MARK];
     // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
     // everything else is a scalar or a slot of this frame, which reaches no global.
     for (const call of r.calls) {
@@ -237,18 +241,39 @@ export class MlirPlan {
         if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
       }
       let header = l.replace(/ !dbg !\d+/, "");
-      this.fns.get(name)!.params.forEach((p, k) => {
-        const re = new RegExp(String.raw` %${p.name.replace(/[$.]/g, "\\$&")}(?=[,)])`);
-        if (!re.test(header)) throw new Error(`mlir: no param %${p.name} in ${header}`);
+      // main's are the process entry's argc/argv (codegen genFunction), not Milo params.
+      const paramNames = name === "main" ? ["_milo_argc", "_milo_argv"] : this.fns.get(name)!.params.map(p => p.name);
+      const renames: [RegExp, string][] = [];
+      paramNames.forEach((p, k) => {
+        const re = new RegExp(String.raw` %${p.replace(/[$.]/g, "\\$&")}(?=[,)])`);
+        if (!re.test(header)) throw new Error(`mlir: no param %${p} in ${header}`);
         header = header.replace(re, ` %${k}`);
+        renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
       });
+      // Legacy lines ahead of the stub (main's prologue: argc/argv globals, stdout
+      // buffering, global init) run first, at the top of the MLIR entry block. They are
+      // calls and stores of params and globals, so they number no values of their own.
+      const prologue: string[] = [];
+      for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
+        if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
+        // The legacy entry label goes; the MLIR body brings its own entry block.
+        if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
+        let p = lines[j].replace(/, !dbg !\d+/, "");
+        for (const [re, to] of renames) p = p.replace(re, to);
+        if (/^\s*%\d+ = |^\S.*:$/.test(p)) throw new Error(`mlir: ${name} prologue defines a value or a block: ${p}`);
+        prologue.push(p);
+      }
       // Return type and param types; param attributes (nonnull, noalias, ...) are legacy's.
       const sig = (h: string) => {
         const m = /^define [^@]*?(\S+) @[^(]*\((.*)\)/.exec(h);
         return m ? `${m[1]}(${m[2].split(", ").map(p => p.split(" ")[0]).join(", ")})` : h;
       };
       if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
-      out.push(header, ...got.body.map(renumber));
+      const body = got.body.map(renumber);
+      // An entry block is printed unlabeled unless something branches to it.
+      const at = body.length && /^\S.*:/.test(body[0]) ? 1 : 0;
+      body.splice(at, 0, ...prologue);
+      out.push(header, ...body);
       while (lines[i] !== "}") i++;
       out.push("}");
       spliced++;
