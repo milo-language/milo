@@ -277,6 +277,14 @@ structs, enums.
   Planted bugs, each red on stdout: the discarded result dropped at the end of its block
   ("after" printed before "drop 70"); the pending-operand check off (the Drop of `mk(90)`
   missing). Tahoe Roads api: 2997 to 3149 (59.8%).
+- *Print order.* `print("a ", f(1))` evaluated every part before printing any, where
+  legacy writes each string part once it is evaluated (after the scalar parts before it):
+  a part that prints, or panics, landed in a different place. Found by `user-drop`. Each
+  string part that is not the last now ends a `milo.print partial` (no newline, the
+  `.part` helper; the verifier requires the string at the end); an interpolated string
+  still evaluates every part first, as `format` does. Programs `print-order`,
+  `trap-print-part` (stdout before the panic); FileCheck in `print.mlir`, verifier case
+  in `verify.mlir`. Planted bug: never splitting turned both red (stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

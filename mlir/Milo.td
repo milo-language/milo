@@ -246,9 +246,11 @@ def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
 // displays its type, then a newline. Lowered to one call of a function the legacy module
 // defines for exactly this sequence of part types (codegen mlirPrintHelper), so the text
 // is legacy's byte for byte. Writes a stream: no traits, so nothing moves it or drops it.
+// `partial`: the first parts of one print, up to and including a string part, with no
+// newline (legacy writes a string part as soon as it is evaluated).
 def Milo_PrintOp : Milo_Op<"print"> {
-  let arguments = (ins Variadic<AnyType>:$parts, UnitAttr:$stderr);
-  let assemblyFormat = "(`stderr` $stderr^)? ($parts^ `:` type($parts))? attr-dict";
+  let arguments = (ins Variadic<AnyType>:$parts, UnitAttr:$stderr, UnitAttr:$partial);
+  let assemblyFormat = "(`stderr` $stderr^)? (`partial` $partial^)? ($parts^ `:` type($parts))? attr-dict";
   let hasVerifier = 1;
 }
 

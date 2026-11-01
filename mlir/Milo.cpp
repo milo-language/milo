@@ -335,6 +335,8 @@ LogicalResult PrintOp::verify() {
     if (!ok)
       return emitOpError("cannot display a part of type ") << t;
   }
+  if (getPartial() && (getParts().empty() || !isa<StringType>(getParts().back().getType())))
+    return emitOpError("partial must end at a string part");
   return success();
 }
 

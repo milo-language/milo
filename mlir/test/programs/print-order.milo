@@ -1,0 +1,23 @@
+// Differential program for scripts/mlir-same.ts --programs: print and eprint parts that
+// print themselves. Legacy writes a string part as soon as it is evaluated, after the
+// scalar parts before it, so a part's own output lands in the middle of the line; an
+// interpolated string is built whole first.
+
+fn f(x: i64): i64 {
+    print("in f ", x)
+    return x
+}
+
+fn g(s: string): string {
+    print("in g ", s)
+    return s
+}
+
+fn main() {
+    print("a ", f(1), " b ", f(2))
+    print(f(3), f(4), g("c"), f(5))
+    print(g("d"), g("e"))
+    print($"{f(6)} and {g("h")}")
+    eprint("e ", f(7), " ", f(8))
+    print(true, " ", 2.5, g("tail"))
+}

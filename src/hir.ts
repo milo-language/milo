@@ -19,7 +19,9 @@ export type HIRExpr =
   | { kind: "Ident"; name: string; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "BinOp"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "UnaryOp"; op: string; operand: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; span?: Span }
+  // noNewline: a print/eprint of the first parts of one print, ending at a string part
+  // (only the MLIR path's print helpers make one; emit-mlir print).
+  | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; noNewline?: boolean; span?: Span }
   // `base` (struct update): the unlisted fields are moved out of it and codegen drops its
   // listed (overridden) ones, so the base is consumed exactly once.
   | { kind: "StructLit"; name: string; fields: { name: string; value: HIRExpr }[]; base?: HIRExpr; type: TypeKind; span?: Span }

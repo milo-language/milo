@@ -22,3 +22,15 @@ func.func @show(%n: si64, %x: f64, %b: i1) {
   }
   milo.return
 }
+
+// A partial print (the parts up to a string part) calls the `.part` helper, which
+// writes no newline.
+// CHECK-LABEL: llvm.func @streamed
+// CHECK: llvm.call @milo.print.part.si64.string(
+// CHECK: llvm.call @milo.print.si64(
+func.func @streamed(%a: si64, %b: si64) {
+  %s = milo.string.lit " then "
+  milo.print partial %a, %s : si64, !milo.string
+  milo.print %b : si64
+  milo.return
+}

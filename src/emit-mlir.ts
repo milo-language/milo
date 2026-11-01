@@ -23,7 +23,7 @@ export interface MlirEmitCtx {
   llvmType(t: TypeKind): string;
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
-  mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string;
+  mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
   hasVecType: boolean;
   mlirDropHelper(key: string, t: TypeKind): void;
@@ -1593,28 +1593,39 @@ class FnEmitter {
   }
 
   /**
-   * print/eprint: one milo.print of every part. An interpolated string is
-   * `print(format(parts))`; printing the parts displays the same text without building the
-   * string (format and print share legacy's int and float formatting).
+   * print/eprint. An interpolated string is `print(format(parts))`; printing the parts
+   * displays the same text without building the string (format and print share legacy's
+   * int and float formatting), and like format evaluates every part first. A plain print
+   * is legacy's stream: each string part is written once it is evaluated, after the
+   * scalars before it, so a part that prints (or panics) lands between them. Each string
+   * part therefore ends a `milo.print partial` of the parts so far.
    */
   private print(e: HIRExpr & { kind: "Call" }): Val {
     let args = e.args;
     const only = args.length === 1 ? args[0].expr : null;
-    if (only?.kind === "Call" && only.func === "format" && this.cx.isBuiltinName("format")) args = only.args;
-    const parts = args.map(a => {
+    const formatted = only?.kind === "Call" && only.func === "format" && this.cx.isBuiltinName("format");
+    if (formatted) args = only.args;
+    const stderr = e.func === "eprint";
+    const flag = stderr ? " stderr" : "";
+    let parts: { v: Val; key: string; type: TypeKind }[] = [];
+    const flush = (partial: boolean) => {
+      this.cx.mlirPrintHelper(stderr, parts.map(p => ({ key: p.key, type: p.type })), partial);
+      const attrs = `${flag}${partial ? " partial" : ""}`;
+      if (parts.length === 0) this.emit(`milo.print${attrs}`);
+      else this.emit(`milo.print${attrs} ${parts.map(p => p.v.ref).join(", ")} : ${parts.map(p => p.v.ty).join(", ")}`);
+      parts = [];
+    };
+    args.forEach((a, i) => {
       if (a.passByRef) throw new MlirUnsupported("by-ref print part");
       let t = a.expr.type;
       while (t.tag === "ref") t = t.inner;
       const v = this.borrow(this.expr(a.expr), t);
       // Scalar.cpp printKey spells the same names.
       if (valueType(this.cx, t) !== v.ty || t.tag === "vec") throw new MlirUnsupported(`print part of type ${t.tag}`);
-      const key = typeKey(t);
-      return { v, key, type: t };
+      parts.push({ v, key: typeKey(t), type: t });
+      if (!formatted && t.tag === "string" && i < args.length - 1) flush(true);
     });
-    this.cx.mlirPrintHelper(e.func === "eprint", parts.map(p => ({ key: p.key, type: p.type })));
-    const flag = e.func === "eprint" ? " stderr" : "";
-    if (parts.length === 0) this.emit(`milo.print${flag}`);
-    else this.emit(`milo.print${flag} ${parts.map(p => p.v.ref).join(", ")} : ${parts.map(p => p.v.ty).join(", ")}`);
+    flush(false);
     return { ref: "", ty: "" };
   }
 

@@ -1310,6 +1310,8 @@ struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
     auto module = op->getParentOfType<ModuleOp>();
     auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
     std::string name = op.getStderr() ? "milo.eprint" : "milo.print";
+    if (op.getPartial())
+      name += ".part";
     SmallVector<Value> args;
     SmallVector<Type> argTys;
     for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {

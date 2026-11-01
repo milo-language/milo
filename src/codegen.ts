@@ -3284,15 +3284,15 @@ export class Codegen {
   }
 
   /** The legacy function doing `print(a0, a1, ...)` (or eprint); non-scalar parts by reference. */
-  public mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string {
-    const name = [stderr ? "milo.eprint" : "milo.print", ...parts.map(p => p.key)].join(".");
+  public mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial = false): string {
+    const name = [stderr ? "milo.eprint" : "milo.print", ...(partial ? ["part"] : []), ...parts.map(p => p.key)].join(".");
     return this.mlirHelper(name, () => {
       const byRef = (t: TypeKind) => !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr");
       const params = parts.map((p, i) => ({ name: `a${i}`, type: p.type, isRef: byRef(p.type), isRefMut: false }));
       return {
         params, retType: { tag: "void" },
         body: [{ kind: "ExprStmt", expr: {
-          kind: "Call", func: stderr ? "eprint" : "print", type: { tag: "void" }, variadic: true,
+          kind: "Call", func: stderr ? "eprint" : "print", type: { tag: "void" }, variadic: true, noNewline: partial,
           args: params.map(p => ({ expr: { kind: "Ident", name: p.name, type: p.type }, passByRef: false, refMut: false })),
         } }],
       };
@@ -5152,7 +5152,7 @@ export class Codegen {
         }
       }
       flushBatch();
-      b.callDiscard(Ty.i32, "@putchar", [i32c(10)]);
+      if (!expr.noNewline) b.callDiscard(Ty.i32, "@putchar", [i32c(10)]);
       for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
       for (const t of printTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);
       return [lines, "void", "void"];
@@ -5191,7 +5191,7 @@ export class Codegen {
           this.pendBufs(tempBufs, bufMark);
         }
       }
-      partFmts.push("\n");
+      if (!expr.noNewline) partFmts.push("\n");
       flushBatch();
       for (const tb of tempBufs) b.callDiscard(Ty.void, "@free", [ptrV(tb)]);
       for (const t of eprintTemps) this.dropOwnedTemp(lines, t.val, t.ty, t.expr);

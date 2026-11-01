@@ -1,0 +1,17 @@
+// Differential panic program (scripts/mlir-same.ts --programs): a print part panics after
+// a string part has already been written, which legacy flushes before the panic message.
+fn at(v: &Vec<i64>, i: i64): i64 {
+    return v[i]
+}
+
+fn show(v: &Vec<i64>) {
+    print("first ", at(v, 0), " then ", at(v, 7))
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..3 {
+        v.push(i)
+    }
+    show(v)
+}

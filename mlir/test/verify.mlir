@@ -125,6 +125,14 @@ func.func @print_signless(%a: i32) {
 
 // -----
 
+func.func @print_partial_scalar(%a: si64) {
+  // expected-error @+1 {{partial must end at a string part}}
+  milo.print partial %a : si64
+  milo.return
+}
+
+// -----
+
 func.func @struct_fields(%a: si64) {
   // expected-error @+1 {{operands are not the fields of}}
   %0 = milo.struct.new %a : si64 -> !milo.struct<"P", si64, f64>
