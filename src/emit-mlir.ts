@@ -2792,9 +2792,19 @@ class FnEmitter {
     const keys: string[] = [];
     const mark = this.pending;
     e.args.forEach((a, k) => {
-      if (a.passByRef) throw new MlirUnsupported("by-ref argument of an extern call");
       const t = a.expr.type;
       const name = `a${k}`;
+      if (a.passByRef) {
+        // C gets the place's address, as legacy passes it; the helper's param is that place.
+        const st = stripRefs(t);
+        if (st.tag === "string" || st.tag === "vec" || st.tag === "array") throw new MlirUnsupported(`by-ref ${st.tag} argument of an extern call`);
+        const ty = this.place$(st, "extern by-ref operand");
+        const r = this.place(a.expr, refOf(ty), a.refMut).ref;
+        params.push({ name, type: st, isRef: !a.refMut, isRefMut: !!a.refMut });
+        args.push(`${r} : ${refOf(ty)}`);
+        keys.push(`r${typeKey(st)}`);
+        return;
+      }
       if (t.tag === "string") {
         let ref: string;
         const local = this.ownedLocal(a.expr);

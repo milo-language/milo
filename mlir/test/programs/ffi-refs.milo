@@ -1,0 +1,29 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: extern calls taking
+// `&mut T`, which C gets as the place's address, through std's recorded calls (legacy's
+// genCall in a helper): `getsockname` fills a struct and a length behind std/os's
+// getSockAddr4 and getSockPort, on a socket bound to 127.0.0.1 (any port) and a bad fd, and strtol given a C string.
+
+from "std/os" import { sysSocket, bind, getSockAddr4, getSockPort }
+from "std/platform" import { makeSockaddr, closeSocket, SockAddr }
+
+extern fn strtol(s: *u8, end: &mut i64, base: i32): i64
+
+fn run() {
+    unsafe {
+        let fd = sysSocket(2, 1, 0)
+        var sa = makeSockaddr(0, 0x0100007F)
+        print(fd >= 0, " ", bind(fd, (sa.addrOf()) as *SockAddr, 16))
+        print(getSockAddr4(fd), " ", getSockPort(fd) > 0)
+        print(getSockAddr4(-1), " ", getSockPort(-1))
+        closeSocket(fd)
+        // A string to a `*u8` param makes this a C string call; the `&mut i64` is the end
+        // pointer C writes back.
+        var end: i64 = 0
+        let n = strtol("123xyz", &mut end, 10)
+        print(n, " ", end != 0)
+    }
+}
+
+fn main() {
+    run()
+}
