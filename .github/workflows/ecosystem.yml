@@ -31,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/milo-opt
       # The compiler runs from source here (bun run src/main.ts), and `milo pkg add`
       # shells out to git — both are already present on the runner.
       - run: bun install --frozen-lockfile

@@ -48,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/milo-opt
       - run: bun install --frozen-lockfile
       # The fixpoint links stage2 at -O0 against these; -O0 is what keeps the link honest,
       # since at higher opt levels an unused SSL/sqlite call gets eliminated and a missing
@@ -77,6 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/milo-opt
       - run: bun install --frozen-lockfile
       - run: brew install openssl@3 sqlite
       - run: sh scripts/selfhost.sh
@@ -96,6 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/milo-opt
       - run: bun install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y clang lld libssl-dev libsqlite3-dev
       - name: Build milo-self with the oracle

@@ -1,0 +1,50 @@
+name: Build milo-opt
+description: >
+  Installs LLVM/MLIR 23 and builds mlir/build/milo-opt, which every default milo build runs
+  (docs/mlir-backend.md). Every job that compiles a Milo program uses this; there is no
+  skip path, because a job without milo-opt fails with "missing milo-opt" by design.
+inputs:
+  static:
+    description: "1 to link MLIR and LLVM statically (release archives)"
+    default: "0"
+runs:
+  using: composite
+  steps:
+    - name: Install LLVM, CMake, Ninja (macOS)
+      if: runner.os == 'macOS'
+      shell: sh
+      run: |
+        brew install llvm cmake ninja
+        echo "MILO_LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+    # apt.llvm.org carries the same LLVM major mlir/build.sh expects; Ubuntu's own llvm
+    # packages are older and have no MLIR 23.
+    - name: Install LLVM, MLIR, CMake, Ninja (Linux)
+      if: runner.os == 'Linux'
+      shell: sh
+      run: |
+        wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+        sudo bash /tmp/llvm.sh 23
+        sudo apt-get install -y llvm-23-dev libmlir-23-dev mlir-23-tools cmake ninja-build libzstd-dev zlib1g-dev
+        echo "MILO_LLVM_BIN=/usr/lib/llvm-23/bin" >> "$GITHUB_ENV"
+    - name: LLVM version (cache key)
+      id: llvm
+      shell: sh
+      run: echo "version=$("$MILO_LLVM_BIN/llvm-config" --version)" >> "$GITHUB_OUTPUT"
+    # Only the binary is cached, keyed on everything it is built from. A restored binary is
+    # older than the freshly checked-out sources, so it is touched below: the key already
+    # proves the sources match, and src/mlir-backend.ts compares mtimes.
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: mlir/build/milo-opt
+        key: milo-opt-${{ runner.os }}-${{ runner.arch }}-llvm${{ steps.llvm.outputs.version }}-static${{ inputs.static }}-${{ hashFiles('mlir/*.td', 'mlir/*.cpp', 'mlir/*.h', 'mlir/CMakeLists.txt', 'mlir/build.sh') }}
+    - name: Build milo-opt
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: sh
+      env:
+        MILO_OPT_STATIC: ${{ inputs.static }}
+      run: sh mlir/build.sh
+    - name: Mark cached milo-opt current
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: sh
+      run: touch mlir/build/milo-opt

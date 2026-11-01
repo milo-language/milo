@@ -20,6 +20,9 @@ jobs:
           # but the fix belongs here.
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
+      # MLIR is the default build path: every Milo program compiled below runs milo-opt
+      # and the clang of its LLVM. Windows is the one host without it (MILO_LEGACY there).
+      - uses: ./.github/actions/milo-opt
       # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules —
       # without it every `console`/`process`/`Buffer` is an error. `bun test` happens to
       # run fine without deps, which is exactly why this gap stayed invisible.
@@ -151,6 +154,9 @@ jobs:
         with:
           fetch-depth: 0   # tags, for tests/breakingChanges.test.ts
       - uses: oven-sh/setup-bun@v2
+      # LLVM 23 + milo-opt (apt.llvm.org); the compile step uses that LLVM's clang, not the
+      # distro clang installed below.
+      - uses: ./.github/actions/milo-opt
       - run: bun install --frozen-lockfile
       # clang is what milo shells out to for every compile, so the job cannot work without
       # it — but it was never installed here, only inherited from whatever the runner image
