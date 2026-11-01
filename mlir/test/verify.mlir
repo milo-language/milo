@@ -183,3 +183,31 @@ func.func @global_of_ref() {
   %g = milo.global "g" : !milo.ref<!milo.ref<si64>>
   milo.return
 }
+
+// -----
+
+func.func @body(%env: !milo.ptr, %x: si32) -> si32 {
+  milo.return %x : si32
+}
+
+func.func @closure_sig() {
+  // expected-error @+1 {{not (!milo.ptr env) + }}
+  %f = milo.closure @body : !milo.fn<(si64) -> si64>
+  milo.return
+}
+
+// -----
+
+func.func @capture_outside(%e: !milo.ptr, %env: !milo.ptr) {
+  // expected-error @+1 {{reads an env that is not its closure body's first argument}}
+  %c = milo.env.capture %env[0] : !milo.ref<si64>
+  milo.return
+}
+
+// -----
+
+func.func @call_args(%f: !milo.fn<(si64) -> si64>, %x: si32) {
+  // expected-error @+1 {{arguments do not match}}
+  %r = milo.closure.call %f(%x) : !milo.fn<(si64) -> si64>, si32 -> si64
+  milo.return
+}

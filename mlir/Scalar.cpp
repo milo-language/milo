@@ -826,6 +826,81 @@ struct ReplayLowering : ConvertOpToLLVMPattern<OpT> {
   }
 };
 
+// The env: { ptr drop header (null: a frame's env owns nothing), ptr capture... } in an
+// entry-block slot; the value: { ptr @fn, ptr env }, with a null env when nothing is
+// captured, as legacy genClosure builds both.
+struct ClosureLowering : ConvertOpToLLVMPattern<ClosureOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ClosureOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Value env;
+    if (a.getCaptures().empty()) {
+      env = LLVM::ZeroOp::create(rw, loc, ptrTy);
+    } else {
+      SmallVector<Type> fields(a.getCaptures().size() + 1, ptrTy);
+      auto envTy = LLVM::LLVMStructType::getLiteral(rw.getContext(), fields);
+      env = entrySlot(rw, op, envTy);
+      auto field = [&](int32_t i) {
+        return LLVM::GEPOp::create(rw, loc, ptrTy, envTy, env, ArrayRef<LLVM::GEPArg>{0, i});
+      };
+      LLVM::StoreOp::create(rw, loc, LLVM::ZeroOp::create(rw, loc, ptrTy), field(0));
+      for (auto [i, c] : llvm::enumerate(a.getCaptures()))
+        LLVM::StoreOp::create(rw, loc, c, field(i + 1));
+    }
+    Type pairTy = getTypeConverter()->convertType(op.getType());
+    Value fn = LLVM::AddressOfOp::create(rw, loc, ptrTy, op.getFn());
+    Value pair = LLVM::UndefOp::create(rw, loc, pairTy);
+    pair = LLVM::InsertValueOp::create(rw, loc, pair, fn, ArrayRef<int64_t>{0});
+    pair = LLVM::InsertValueOp::create(rw, loc, pair, env, ArrayRef<int64_t>{1});
+    rw.replaceOp(op, pair);
+    return success();
+  }
+};
+
+struct EnvCaptureLowering : ConvertOpToLLVMPattern<EnvCaptureOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnvCaptureOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Value at = LLVM::GEPOp::create(rw, loc, ptrTy, ptrTy, a.getEnv(),
+                                   ArrayRef<LLVM::GEPArg>{(int32_t)op.getIndex() + 1});
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, ptrTy, at);
+    return success();
+  }
+};
+
+struct ClosureCallLowering : ConvertOpToLLVMPattern<ClosureCallOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ClosureCallOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Value fn = LLVM::ExtractValueOp::create(rw, loc, a.getCallee(), ArrayRef<int64_t>{0});
+    Value env = LLVM::ExtractValueOp::create(rw, loc, a.getCallee(), ArrayRef<int64_t>{1});
+    SmallVector<Value> args{fn, env};
+    SmallVector<Type> argTys{ptrTy};
+    for (Value v : a.getArgs()) {
+      args.push_back(v);
+      argTys.push_back(v.getType());
+    }
+    Type ret = op.getResult() ? getTypeConverter()->convertType(op.getResult().getType())
+                              : LLVM::LLVMVoidType::get(rw.getContext());
+    auto fty = LLVM::LLVMFunctionType::get(ret, argTys);
+    auto call = LLVM::CallOp::create(rw, loc, fty, args);
+    if (op.getResult())
+      rw.replaceOp(op, call.getResult());
+    else
+      rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct GlobalLowering : ConvertOpToLLVMPattern<GlobalOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1290,6 +1365,10 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     return LLVM::LLVMPointerType::get(ctx);
   });
   tc.addConversion([ctx = &tc.getContext()](StringType) -> Type { return stringStruct(ctx); });
+  tc.addConversion([ctx = &tc.getContext()](FnType) -> Type {
+    auto p = LLVM::LLVMPointerType::get(ctx);
+    return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
+  });
   // Identified by legacy's names, so a spliced body's `%Point` is the module's own type.
   tc.addConversion([&tc](StructType s) -> std::optional<Type> {
     auto st = LLVM::LLVMStructType::getIdentified(&tc.getContext(), s.getName());
@@ -1330,7 +1409,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
-               GlobalLowering, GlobalInitLowering>(tc);
+               GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering,
+               ClosureCallLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

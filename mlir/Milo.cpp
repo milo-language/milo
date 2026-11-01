@@ -1,5 +1,6 @@
 // milo dialect registration and the tablegen'd type and op definitions.
 #include "Milo.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -230,8 +231,37 @@ LogicalResult GlobalOp::verify() {
     return emitOpError("needs a name");
   // A reference is second-class and never stored, so no global holds one.
   Type t = getRef().getType().getPointee();
-  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, StringType, VecValType>(t))
+  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, StringType, VecValType, FnType>(t))
     return emitOpError("holds a ") << t << ": a global holds a value";
+  return success();
+}
+
+LogicalResult ClosureOp::verify() {
+  auto body = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!body)
+    return emitOpError("names no function: ") << getFn();
+  FunctionType sig = getType().getSignature();
+  FunctionType fty = body.getFunctionType();
+  if (fty.getNumInputs() != sig.getNumInputs() + 1 || !isa<PtrType>(fty.getInput(0)) ||
+      fty.getInputs().drop_front() != sig.getInputs() || fty.getResults() != sig.getResults())
+    return emitOpError("body @") << getFn() << " is " << fty << ", not (!milo.ptr env) + " << sig;
+  return success();
+}
+
+LogicalResult EnvCaptureOp::verify() {
+  auto fn = (*this)->getParentOfType<func::FuncOp>();
+  auto arg = dyn_cast<BlockArgument>(getEnv());
+  if (!fn || !arg || arg.getOwner() != &fn.getBody().front() || arg.getArgNumber() != 0)
+    return emitOpError("reads an env that is not its closure body's first argument");
+  return success();
+}
+
+LogicalResult ClosureCallOp::verify() {
+  FunctionType sig = getCallee().getType().getSignature();
+  if (TypeRange(getArgs()) != sig.getInputs())
+    return emitOpError("arguments do not match ") << sig;
+  if (TypeRange(getOperation()->getResultTypes()) != sig.getResults())
+    return emitOpError("result does not match ") << sig;
   return success();
 }
 

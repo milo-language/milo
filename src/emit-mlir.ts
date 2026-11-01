@@ -101,6 +101,7 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
     if (e) cx.hasVecType = true;
     return e && `!milo.vecval<${e}>`;
   }
+  if (t.tag === "fn") return fnType(cx, t);
   if (m !== null || (t.tag !== "struct" && t.tag !== "enum")) return m;
   let cache = aggregates.get(cx);
   if (!cache) aggregates.set(cx, cache = new Map());
@@ -111,6 +112,28 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = aggregateType(cx, t);
   cache.set(key, r);
   return r;
+}
+
+/**
+ * A non-owning fn value `(T) => R` as !milo.fn; null for an owning (`move`) one, whose
+ * environment is heap memory with drop glue, and for a param the dialect lacks.
+ */
+function fnType(cx: MlirEmitCtx, t: TypeKind & { tag: "fn" }): string | null {
+  if (t.owning) return null;
+  const ps = t.params.map(p => closureParamType(cx, p));
+  if (ps.some(x => x === null)) return null;
+  const r = t.ret.tag === "void" ? "()" : valueType(cx, t.ret);
+  return r === null ? null : `!milo.fn<(${ps.join(", ")}) -> ${r}>`;
+}
+
+/** A closure param: a `&T` is the place (legacy closureParamTy passes a pointer). */
+function closureParamType(cx: MlirEmitCtx, p: TypeKind): string | null {
+  if (p.tag !== "ref") return valueType(cx, p);
+  if (p.inner.tag === "vec") { const e = vecElem(cx, p.inner); return e && `!milo.vec<${e}>`; }
+  // A slice param is the address of a %Vec header that a slice expression makes: not yet.
+  if (p.inner.tag === "array") return null;
+  const v = valueType(cx, p.inner);
+  return v && `!milo.ref<${v}>`;
 }
 
 // Its own `impl Drop`; one on a field's type makes that field's valueType null.
@@ -186,11 +209,29 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 // An `owned` var holds a value with drop glue for the scope that declared it.
 // A `vec` is a `&Vec<T>` / `&mut Vec<T>` param: the address of the caller's header.
 type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean }
-  | { kind: "vec"; ref: string; elem: string; param: number } | { kind: "opaque"; what: string };
+  | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string };
 
 // A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
 // when its text names one (Milo.h needsDrop).
-const hasDrop = (ty: string) => ty.includes(STR) || ty.includes("!milo.vecval<");
+const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<"); };
+
+/** `ty` with every !milo.fn<...> cut out: a fn value's signature owns nothing. */
+function withoutFnTypes(ty: string): string {
+  let out = "";
+  for (let i = 0; i < ty.length;) {
+    if (!ty.startsWith("!milo.fn<", i)) { out += ty[i++]; continue; }
+    let depth = 0;
+    for (; i < ty.length; i++) {
+      if (ty.startsWith("->", i)) { i++; continue; }
+      if (ty[i] === "<") depth++;
+      else if (ty[i] === ">" && --depth === 0) { i++; break; }
+    }
+  }
+  return out;
+}
+
+// What the closure bodies of one top-level function share: their names and texts.
+interface ClosureState { next: number; texts: string[]; names: string[] }
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -210,7 +251,40 @@ class FnEmitter {
   // by-ref params (null for anything else): what codegen's stub must reproduce.
   readonly calls: { name: string; refParams: (number | null)[] }[] = [];
 
-  constructor(private fn: HIRFunction, private cx: MlirEmitCtx, private fns: Map<string, HIRFunction>) {}
+  constructor(private fn: HIRFunction, private cx: MlirEmitCtx, private fns: Map<string, HIRFunction>,
+    readonly closures: ClosureState = { next: 0, texts: [], names: [] }) {}
+
+  /**
+   * Closure literal `e` as a function of its own, `name`: the env, then its params. Each
+   * capture is bound to its place, read out of the env (milo.env.capture).
+   */
+  runClosure(e: HIRExpr & { kind: "Closure" }, name: string, caps: { name: string; place: string; b: Binding }[]): string {
+    const params = ["%env: !milo.ptr"];
+    caps.forEach((c, i) => {
+      const r = this.def(`milo.env.capture %env[${i}] : ${c.place}`, c.place).ref;
+      this.bind(c.name, c.b.kind === "vec" ? { kind: "vec", ref: r, elem: c.b.elem } : { kind: "var", ref: r, ty: (c.b as { ty: string }).ty });
+    });
+    e.params.forEach((p, i) => {
+      const ty = closureParamType(this.cx, p.type);
+      if (ty === null) throw new MlirUnsupported(`closure param of type ${blocker(this.cx, stripRefs(p.type))}`);
+      params.push(`%p${i}: ${ty}`);
+      if (ty.startsWith("!milo.vec<")) this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem: ty.slice(10, -1) });
+      else if (p.type.tag === "ref") this.bind(p.name, { kind: "var", ref: `%p${i}`, ty: ty.slice(10, -1) });
+      else if (hasDrop(ty)) {
+        // An owned param is the closure's, as a function's is.
+        const slot = this.ownedSlot(p.name, ty, p.type);
+        this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
+        this.bind(p.name, { kind: "var", ref: slot, ty, owned: true });
+      } else this.bind(p.name, { kind: "ssa", v: { ref: `%p${i}`, ty } });
+    });
+    const ret = e.retType.tag === "void" ? null : this.value(e.retType, "closure result");
+    this.retTy = ret;
+    const jumped = this.stmts(e.body);
+    this.closeScope(0, jumped, null);
+    if (!jumped) this.emit(ret === null ? "milo.return" : "milo.unreachable");
+    const head = `func.func @${quote(name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} attributes {llvm.linkage = #llvm.linkage<internal>} {`;
+    return [head, ...this.vars, ...this.body, "}"].join("\n");
+  }
 
   run(): string {
     const fn = this.fn;
@@ -612,6 +686,16 @@ class FnEmitter {
         return this.def(`milo.const ${floatLit(e.value, ty)} : ${ty}`, ty);
       }
       case "Ident": {
+        if (e.type.tag === "fn" && this.fns.has(e.name) && !this.scopes.some(m => m.has(e.name)) && !this.cx.mlirGlobal(e.name)) {
+          // A named fn as a value: legacy's trampoline (closure convention, null env),
+          // made by a legacy helper returning the pair.
+          const ty = this.value(e.type, "fn value");
+          const name = this.cx.mlirHelper(`milo.fnval.${e.name}`, () => ({
+            params: [], retType: e.type,
+            body: [{ kind: "Return", retType: e.type, value: { kind: "Ident", name: e.name, type: e.type } }],
+          }));
+          return this.callHelper(name, [], ty);
+        }
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
         if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
@@ -735,6 +819,8 @@ class FnEmitter {
         this.emit("}");
         return { ref, ty, own: hasDrop(ty) ? "owned" : undefined };
       }
+      case "Closure": return this.closure(e);
+      case "ClosureCall": return this.closureCall(e, stmt);
       case "MatchExpr": {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
         return this.match(e, this.value(e.type, "match-expression")).v;
@@ -744,13 +830,89 @@ class FnEmitter {
     }
   }
 
+  /**
+   * A by-reference closure literal (legacy genClosure without `move`): a function of its
+   * own, and a milo.closure lending it the place of every capture. A `let` held as an SSA
+   * value is spilled to a slot: it is immutable, so the copy reads the same.
+   */
+  private closure(e: HIRExpr & { kind: "Closure" }): Val {
+    if (e.isMove || e.heapEnv || e.keyExtractor) throw new MlirUnsupported(e.isMove ? "move closure" : "heap-env closure");
+    const ty = this.value(e.type, "closure");
+    // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
+    // global's closure is ever called, so legacy gives that env a static slot instead.
+    if (e.captures.length && this.fn.name.startsWith("__milo.")) throw new MlirUnsupported("closure env in a global initializer");
+    const caps = e.captures.map(c => {
+      const b = this.lookup(c.name);
+      if (b.kind === "vec") return { name: c.name, place: `!milo.vec<${b.elem}>`, ref: b.ref, b };
+      if (b.kind === "var") return { name: c.name, place: `!milo.ref<${b.ty}>`, ref: b.ref, b };
+      if (hasDrop(b.v.ty)) throw new MlirUnsupported("capture of an owned value");
+      const ref = this.fresh();
+      this.vars.push(`  ${ref} = milo.var ${quote(c.name)} : !milo.ref<${b.v.ty}>`);
+      this.emit(`milo.store ${b.v.ref}, ${ref} : !milo.ref<${b.v.ty}>`);
+      return { name: c.name, place: `!milo.ref<${b.v.ty}>`, ref, b: { kind: "var" as const, ref, ty: b.v.ty } };
+    });
+    const name = `${this.fn.name}$closure${this.closures.next++}`;
+    const inner = new FnEmitter(this.fn, this.cx, this.fns, this.closures);
+    const text = inner.runClosure(e, name, caps);
+    this.closures.texts.push(text);
+    this.closures.names.push(name);
+    for (const [k, v] of inner.callees) this.callees.set(k, v);
+    const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
+    return this.def(`milo.closure @${quote(name)}${ops} : ${ty}`, ty);
+  }
+
+  /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */
+  private closureCall(e: HIRExpr & { kind: "ClosureCall" }, stmt: boolean): Val {
+    const ft = stripRefs(this.fieldType(e.callee));
+    if (ft.tag !== "fn") throw new MlirUnsupported("call of a non-fn");
+    const f = this.expr(e.callee);
+    if (!f.ty.startsWith("!milo.fn<")) throw new MlirUnsupported("callee type");
+    if (ft.params.length !== e.args.length) throw new MlirUnsupported("closure call arity");
+    const ptys = ft.params.map(p => closureParamType(this.cx, p));
+    const refs: { ref: string; mut: boolean; ty: string }[] = [];
+    const args = e.args.map((a, i) => {
+      const pty = ptys[i];
+      if (pty === null || (ft.params[i].tag === "ref") !== a.passByRef) throw new MlirUnsupported("closure call arg");
+      if (a.passByRef) {
+        const r = this.place(a.expr, pty, a.refMut).ref;
+        refs.push({ ref: r, mut: a.refMut, ty: pty });
+        return r;
+      }
+      const v = this.consume(this.expr(a.expr), "argument");
+      if (v.ty !== pty) throw new MlirUnsupported("closure call arg type");
+      return v.ref;
+    });
+    for (let i = 0; i < refs.length; i++) {
+      for (let j = i + 1; j < refs.length; j++) {
+        if ((!refs[i].mut && !refs[j].mut) || refs[i].ref === refs[j].ref) continue;
+        this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
+      }
+    }
+    const ret = ft.ret.tag === "void" ? null : this.value(ft.ret, "closure result");
+    if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
+    const call = `milo.closure.call ${f.ref}(${args.join(", ")}) : ${f.ty}${args.length ? `, ${ptys.join(", ")}` : ""}${ret ? ` -> ${ret}` : ""}`;
+    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+    return { ...this.def(call, ret), own: hasDrop(ret) ? "owned" : undefined };
+  }
+
   /** The index and value type of the struct field `e` reads. */
   private field(e: HIRExpr & { kind: "FieldAccess" }): { index: number; ty: string } {
     const st = stripRefs(e.object.type);
     if (st.tag !== "struct") throw new MlirUnsupported(`field of a ${st.tag}`);
     const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
     if (index < 0) throw new MlirUnsupported("unknown field");
-    return { index, ty: this.value(e.type, "field") };
+    return { index, ty: this.value(this.fieldType(e), "field") };
+  }
+
+  /**
+   * The type of the value `e` reads. A fn-typed field's HIR type has lost its params
+   * (`(i64, i64) => i64` reads as `() => i64`); the struct's layout has them.
+   */
+  private fieldType(e: HIRExpr): TypeKind {
+    if (e.kind !== "FieldAccess" || e.type.tag !== "fn") return e.type;
+    const st = stripRefs(e.object.type);
+    const f = st.tag === "struct" ? this.cx.structLayouts.get(st.name)?.fields.find(x => x.name === e.field) : undefined;
+    return f?.typeKind ?? e.type;
   }
 
   /**
@@ -1193,13 +1355,16 @@ export interface MlirFunction {
   /** Every function it calls, with the dialect's function type. */
   callees: Map<string, string>;
   calls: FnEmitter["calls"];
+  /** Its closure bodies: functions of their own, in `text` too, new to the legacy module. */
+  closures: string[];
 }
 
 /** `fn` in the dialect, or the reason it stays on legacy codegen. */
 export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): MlirFunction | string {
   const em = new FnEmitter(fn, cx, fns);
   try {
-    return { name: fn.name, text: em.run(), callees: em.callees, calls: em.calls };
+    const text = em.run();
+    return { name: fn.name, text: [text, ...em.closures.texts].join("\n"), callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
     if (err instanceof MlirUnsupported) return err.reason;
     throw err;
@@ -1214,11 +1379,17 @@ export function mlirSupports(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, 
 
 /** One module: the functions, plus a declaration for every callee not among them. */
 export function mlirModuleText(funcs: MlirFunction[]): string {
-  const have = new Set(funcs.map(f => f.name));
+  const have = new Set(funcs.flatMap(f => [f.name, ...f.closures]));
   const callees = new Map<string, string>();
   for (const f of funcs) for (const [k, v] of f.callees) if (!have.has(k)) callees.set(k, v);
   const decls = [...callees].map(([k, ty]) => {
-    const [args, ret] = ty.split(" -> ");
+    // The arrow after the argument list's closing paren: a !milo.fn argument has its own.
+    let depth = 0, end = 0;
+    for (; end < ty.length; end++) {
+      if (ty[end] === "(") depth++;
+      else if (ty[end] === ")" && --depth === 0) break;
+    }
+    const args = ty.slice(0, end + 1), ret = ty.slice(end + 5);
     return `func.func private @${quote(k)}${args}${ret === "()" ? "" : ` -> ${ret}`}`;
   });
   return [...decls, ...funcs.map(f => f.text), ""].join("\n");

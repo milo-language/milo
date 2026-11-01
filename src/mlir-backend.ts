@@ -203,9 +203,11 @@ export class MlirPlan {
     // Mutable globals the body names are what the analysis reads as `touches`, and their
     // addresses flow like a raw pointer's: neither is in a stub's call list.
     const body = r.text.slice(r.text.indexOf("\n"));
-    const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ");
+    // A fn value runs unknown code, and a closure lends this frame's slots to it: the
+    // analysis reads both from the legacy body (byRefClosures, an indirect call).
+    const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ") || body.includes("!milo.fn<");
     // main's prologue is found ahead of its stub, and with a full legacy body there is none.
-    if (ptrs && fn.name === "main") { this.log.push(`main\t${body.includes("!milo.ptr") ? "raw pointer" : "global"} in main`); return null; }
+    if (ptrs && fn.name === "main") { this.log.push(`main\t${body.includes("!milo.fn<") ? "fn value" : body.includes("!milo.ptr") ? "raw pointer" : "global"} in main`); return null; }
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(fn.name);
@@ -348,6 +350,14 @@ export class MlirPlan {
     // A stub that ships would be an `unreachable` where a function body belongs.
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
+    // Closure bodies are functions legacy never defined (it made its own, now dead, for
+    // the bodies it generated): appended whole, MLIR's `define internal` line and all.
+    for (const name of this.taken.flatMap(f => f.closures)) {
+      const got = bodies.get(name);
+      if (!got) throw new Error(`mlir: milo-opt produced no body for closure ${name}`);
+      for (const b of got.body) if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
+      out.push(got.header.replace(/ #\d+/g, ""), ...got.body.map(renumber), "}");
+    }
     // A global MLIR only declares (the recorder's counters) is the legacy module's own.
     out.push(...metadata.map(renumber));
     const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];

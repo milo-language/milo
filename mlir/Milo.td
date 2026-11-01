@@ -147,8 +147,18 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
 
 def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType]>;
 
+// A non-owning fn value `(T) => R`: legacy's `{ ptr fn, ptr env }`. The fn takes the env
+// first, then the params of `signature` (a `&T` param is a !milo.ref, a `&Vec<T>` a
+// !milo.vec). The env is null or a frame's (milo.closure), never owned, so the value is
+// Copy and has no drop glue; owning (`move`) closures stay legacy.
+def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
+  let mnemonic = "fn";
+  let parameters = (ins "::mlir::FunctionType":$signature);
+  let assemblyFormat = "`<` $signature `>`";
+}
+
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_FnType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 
@@ -500,6 +510,37 @@ def Milo_GlobalOp : Milo_Op<"global", [Pure]> {
   let arguments = (ins StrAttr:$name);
   let results = (outs Milo_RefType:$ref);
   let assemblyFormat = "$name attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
+// A by-reference closure literal: `fn` is its body, a func.func taking `(!milo.ptr env,
+// params...)`, and the env (an entry-block slot of this frame: null drop header, then
+// the captures' addresses in order) lends it every capture in place. The checker keeps
+// such a closure from outliving the frame; no captures means a null env. Not Pure: the
+// body may write any capture whenever the value is called.
+def Milo_ClosureOp : Milo_Op<"closure"> {
+  let arguments = (ins FlatSymbolRefAttr:$fn,
+                       Variadic<AnyTypeOf<[Milo_RefType, Milo_VecType]>>:$captures);
+  let results = (outs Milo_FnType:$result);
+  let assemblyFormat = "$fn (`(` $captures^ `:` type($captures) `)`)? attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+// Inside a closure body: the place of capture `index`, read out of the env, which must be
+// the function's first argument.
+def Milo_EnvCaptureOp : Milo_Op<"env.capture", [Pure]> {
+  let arguments = (ins Milo_PtrType:$env, I64Attr:$index);
+  let results = (outs AnyTypeOf<[Milo_RefType, Milo_VecType]>:$place);
+  let assemblyFormat = "$env `[` $index `]` attr-dict `:` type($place)";
+  let hasVerifier = 1;
+}
+
+// `f(args)` through a fn value: its fn pointer called with its env first. Unknown code,
+// so no traits.
+def Milo_ClosureCallOp : Milo_Op<"closure.call"> {
+  let arguments = (ins Milo_FnType:$callee, Variadic<AnyType>:$args);
+  let results = (outs Optional<Milo_Value>:$result);
+  let assemblyFormat = "$callee `(` $args `)` attr-dict `:` type($callee) (`,` type($args)^)? (`->` type($result)^)?";
   let hasVerifier = 1;
 }
 

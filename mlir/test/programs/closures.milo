@@ -1,0 +1,73 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): non-owning fn
+// values. Closure literals capturing by reference (a `let`, a `var` written by the body,
+// a by-ref param, a string read in place, a Vec param), fn-typed params called and
+// forwarded, a named fn as a value, a fn stored in a struct, nested closures, a closure
+// taking `&mut` and owned args.
+
+struct Op { name: string, f: (i64, i64) => i64 }
+
+fn apply(f: (i64) => i64, x: i64): i64 { return f(x) }
+
+fn twice(f: (i64) => i64, x: i64): i64 { return apply(f, apply(f, x)) }
+
+fn each(n: i64, f: (i64) => void) {
+    for i in 0..n { f(i) }
+}
+
+fn add(a: i64, b: i64): i64 { return a + b }
+
+fn mul(a: i64, b: i64): i64 { return a * b }
+
+fn run(op: &Op, a: i64, b: i64): i64 { return op.f(a, b) }
+
+fn sumVec(v: &Vec<i64>): i64 {
+    var t: i64 = 0
+    each(v.len(), (i: i64) => { t += v[i] })
+    return t
+}
+
+fn scaled(k: &i64, x: i64): i64 {
+    return apply((y: i64) => y * k, x)
+}
+
+fn bumpAll(n: i64): i64 {
+    var acc: i64 = 0
+    let bump = (c: &mut i64, by: i64) => { c += by }
+    for i in 0..n { bump(&mut acc, i) }
+    return acc
+}
+
+fn lens(): i64 {
+    let tag: string = "abc".repeat(2)
+    let measure = (s: string): i64 => s.len() + tag.len()
+    return measure("xy".repeat(3))
+}
+
+fn nested(base: i64): i64 {
+    let outer = (x: i64): i64 => {
+        let inner = (y: i64): i64 => y + base
+        return inner(x) * 2
+    }
+    return outer(5)
+}
+
+fn main() {
+    let k: i64 = 3
+    print(apply((x: i64) => x + k, 4))
+    print(twice((x: i64) => x * 2, 5))
+    var seen: i64 = 0
+    each(4, (i: i64) => { seen += i * 10 })
+    print(seen)
+    let plus = Op { name: "add", f: add }
+    let times = Op { name: "mul", f: mul }
+    print(plus.name, " ", run(plus, 6, 7), " ", times.name, " ", run(times, 6, 7))
+    var v: Vec<i64> = Vec.new()
+    for i in 0..5 { v.push(i * i) }
+    print(sumVec(v))
+    print(scaled(k, 7))
+    print(bumpAll(5))
+    print(lens())
+    print(nested(10))
+    let f = add
+    print(f(1, 2))
+}
