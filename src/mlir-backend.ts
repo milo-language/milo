@@ -69,6 +69,10 @@ function findLlvmBin(): string {
 const LLVM_BIN = findLlvmBin();
 const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
+// arith's `select %c, 1, 0` -> `extui %c` makes a signless-only op from a select whose
+// type is Milo's si32 (a bool if-expression folded to a select), which then fails to verify.
+const CANONICALIZE = "--canonicalize=disable-patterns=SelectToExtUI";
+
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
 export const MLIR_PIPELINE = [
   "--milo-verify",
@@ -91,17 +95,17 @@ export const MLIR_PIPELINE = [
   // Init state of every owned slot over the CFG (MLIR's dense dataflow): before any
   // generic pass can move a store or a drop.
   "--milo-elaborate-drops",
-  "--canonicalize",
+  CANONICALIZE,
   "--milo-hoist-vec-reads",
   "--loop-invariant-code-motion",
   "--milo-version-bounds-checks",
   "--cse",
-  "--canonicalize",
+  CANONICALIZE,
   "--convert-scf-to-cf",
   "--convert-milo-to-llvm",
   "--reconcile-unrealized-casts",
   "--mem2reg",
-  "--canonicalize",
+  CANONICALIZE,
 ];
 
 const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
@@ -170,6 +174,7 @@ function run(cmd: string, args: string[], input: string): string {
   return r.stdout;
 }
 
+const ONLY = process.env.MILO_MLIR_ONLY ? new RegExp(process.env.MILO_MLIR_ONLY) : null;
 const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
 
@@ -199,6 +204,8 @@ export class MlirPlan {
    */
   take(fn: HIRFunction): string[] | "legacy" | null {
     if (fn.isExtern) return null;
+    // Bisecting a miscompile: only functions whose name matches go through MLIR.
+    if (ONLY && !ONLY.test(fn.name)) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns);
     if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
     // A lazy global's init function is codegen's own, not in the HIR module.
