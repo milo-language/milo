@@ -1,0 +1,132 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `for x in makeVec()`,
+// where the loop owns the Vec and hands each element out by value. Scalars, strings and
+// a type with a user Drop (its drops print, so the order of the binding's drop against
+// the elements no iteration reached is in stdout), with break, continue, a return from
+// inside, an element moved out of the binding, an index, an empty Vec, and the loop
+// inside another loop.
+
+struct Noisy { id: i64 }
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+fn nums(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n {
+        v.push(i * 3)
+    }
+    return v
+}
+
+fn words(): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    v.push("alpha")
+    v.push("be")
+    v.push("gamma" + "!")
+    v.push("delta")
+    return v
+}
+
+fn noisies(n: i64): Vec<Noisy> {
+    var v: Vec<Noisy> = Vec.new()
+    for i in 0..n {
+        v.push(Noisy { id: i })
+    }
+    return v
+}
+
+fn sumNums(): i64 {
+    var s = 0
+    for x in nums(6) {
+        if x == 6 {
+            continue
+        }
+        s = s + x
+    }
+    return s
+}
+
+fn keepLong(): Vec<string> {
+    var out: Vec<string> = Vec.new()
+    for w in words() {
+        if w.len() > 2 {
+            out.push(w)
+        }
+    }
+    return out
+}
+
+fn firstShort(): string {
+    for i, w in words() {
+        if w.len() < 3 {
+            return w + $"@{i}"
+        }
+    }
+    return "none"
+}
+
+fn breakAt(k: i64) {
+    for n in noisies(4) {
+        print("see ", n.id)
+        if n.id == k {
+            break
+        }
+    }
+    print("after break")
+}
+
+fn returnAt(k: i64): i64 {
+    for n in noisies(4) {
+        if n.id == k {
+            return n.id * 10
+        }
+        print("pass ", n.id)
+    }
+    return -1
+}
+
+fn take(n: Noisy): i64 {
+    return n.id + 100
+}
+
+fn moveSome(): i64 {
+    var t = 0
+    for n in noisies(3) {
+        if n.id != 1 {
+            t = t + take(n)
+        }
+    }
+    return t
+}
+
+fn nested(): i64 {
+    var t = 0
+    for round in 0..3 {
+        for w in words() {
+            if w.len() == round + 1 {
+                break
+            }
+            t = t + w.len()
+        }
+    }
+    return t
+}
+
+fn main() {
+    print(sumNums())
+    let kept = keepLong()
+    print(kept.len(), " ", kept[0], " ", kept[2])
+    print(firstShort())
+    breakAt(1)
+    print(returnAt(2))
+    print(moveSome())
+    var empty = 0
+    for x in nums(0) {
+        empty = empty + x
+    }
+    print(empty)
+    print(nested())
+}

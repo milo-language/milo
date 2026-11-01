@@ -209,7 +209,7 @@ MILO_ARITH(NegOp, !getWrapping())
 #undef MILO_ARITH
 
 bool milo::needsDrop(Type t) {
-  if (isa<StringType, VecValType>(t))
+  if (isa<StringType, VecValType, VecTailType>(t))
     return true;
   if (auto f = dyn_cast<FnType>(t))
     return f.getOwning();
@@ -329,6 +329,44 @@ LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
   if (!v || v.getElementType() != getType().getElementType())
     return emitOpError("needs the slot of a Vec of ") << getType().getElementType();
+  return success();
+}
+
+// The vectail ops' slot: an owned one (only its drop glue frees what no iteration took).
+static VecTailType vecTailSlot(Operation *op, Value ref) {
+  auto t = dyn_cast<VecTailType>(cast<RefType>(ref.getType()).getPointee());
+  auto v = ref.getDefiningOp<VarOp>();
+  if (!t || !v || !v.getOwned()) {
+    op->emitOpError("needs an owned slot of a !milo.vectail");
+    return {};
+  }
+  return t;
+}
+
+LogicalResult VecTailInitOp::verify() {
+  auto t = vecTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (getVec().getType().getElementType() != t.getElementType())
+    return emitOpError("moves a Vec of ") << getVec().getType().getElementType() << " into " << t;
+  return success();
+}
+
+LogicalResult VecTailVecOp::verify() {
+  auto t = vecTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (getType().getElementType() != t.getElementType())
+    return emitOpError("is the header of a Vec of ") << t.getElementType() << ", not " << getType();
+  return success();
+}
+
+LogicalResult VecTailTakeOp::verify() {
+  auto t = vecTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (getType() != t.getElementType())
+    return emitOpError("takes an element of ") << t << ", not " << getType();
   return success();
 }
 

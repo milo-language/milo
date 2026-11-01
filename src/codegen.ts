@@ -208,6 +208,8 @@ export class Codegen {
   // drop glue they call (mlirDropHelper), by symbol and type.
   private mlirHelpers = new Map<string, HIRFunction>();
   private mlirDropHelpers = new Map<string, TypeKind>();
+  // The same for what is left of a Vec a consuming for-in takes apart (mlirVecTailDropHelper).
+  private mlirVecTailDropHelpers = new Map<string, TypeKind>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1959,6 +1961,7 @@ export class Codegen {
       this.mlirTake = null;
       for (const fn of this.mlirHelpers.values()) fnBodies.push(this.genFunction(fn));
       for (const [name, t] of this.mlirDropHelpers) this.emitMlirDropFn(name, t);
+      for (const [name, t] of this.mlirVecTailDropHelpers) this.emitMlirVecTailDropFn(name, t);
       this.mlirTake = take;
       this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
@@ -3306,6 +3309,26 @@ export class Codegen {
     this.mlirDropHelpers.set(`milo.drop.${key}`, t);
   }
 
+  /**
+   * `milo.drop.vectail.<key>(ptr)`: the drop of a `{ %Vec, i64 cursor }` (Milo.td VecTailType),
+   * legacy's consumed for-in tail drop: the elements from the cursor on, then the buffer.
+   */
+  public mlirVecTailDropHelper(key: string, vec: TypeKind): void {
+    this.mlirVecTailDropHelpers.set(`milo.drop.vectail.${key}`, vec);
+  }
+
+  private emitMlirVecTailDropFn(name: string, vec: TypeKind): void {
+    this.emitHelperFn(2, body => {
+      const b = new LlvmTextBuilder(body, this);
+      b.defineFn({ name, ret: Ty.void, params: [{ name: "p", ty: Ty.ptr }], internal: true });
+      const cursor = b.gep(Ty.of("{ %Vec, i64 }"), val("%p", Ty.ptr), [i32c(0), i32c(1)]);
+      // Its loop counter's alloca goes into the body, which emitHelperFn hoists.
+      this.emitConsumedTailDrop(body, "%p", vec, cursor.ref, body);
+      b.ret();
+      b.endFn();
+    });
+  }
+
   private emitMlirDropFn(name: string, t: TypeKind): void {
     this.emitHelperFn(2, body => {
       const b = new LlvmTextBuilder(body, this);
@@ -4202,7 +4225,7 @@ export class Codegen {
 
   // Drop what a consuming loop's container still owns: elements [cursor, len) (a fixed
   // array's len is its size), then a Vec's buffer.
-  private emitConsumedTailDrop(lines: string[], addr: string, typeKind: TypeKind, cursor: string) {
+  private emitConsumedTailDrop(lines: string[], addr: string, typeKind: TypeKind, cursor: string, allocas: string[] = this.entryAllocas) {
     const elem = typeKind.tag === "vec" || typeKind.tag === "array" ? typeKind.element : null;
     if (!elem) throw new Error(`consumed for-in over ${typeKind.tag}`);
     const elemTy = this.llvmType(elem);
@@ -4228,7 +4251,7 @@ export class Codegen {
     if (this.needsDropCg(elem)) {
       // A numbered temp in the entry block: entryAlloca takes only named slots, so this stays text.
       const iAddr = b.reserveTemp(Ty.ptr);
-      this.entryAllocas.push(`  ${iAddr.ref} = alloca i64`);
+      allocas.push(`  ${iAddr.ref} = alloca i64`);
       const start = b.load(Ty.i64, ptr(cursor));
       b.store(start, iAddr);
       const condB = b.newBlock("consumed.tail.cond");

@@ -290,6 +290,8 @@ struct ElaborateDropsPass
         ref = m.getRef();
       else if (auto s = dyn_cast<StringShareOp>(op))
         ref = s.getRef();
+      else if (auto t = dyn_cast<VecTailTakeOp>(op))
+        ref = t.getRef();
       if (!ref || !isOwnedSlot(ref))
         return;
       const InitLattice *l = before(op);
@@ -472,6 +474,58 @@ struct VecNewLowering : ConvertOpToLLVMPattern<VecNewOp> {
   }
 };
 
+// A vectail slot is `{ %Vec, i64 cursor }`: the header at offset 0, the cursor after it.
+Value vecTailCursor(ConversionPatternRewriter &rw, Location loc, const TypeConverter *tc,
+                    VecTailType t, Value slot) {
+  return LLVM::GEPOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()),
+                             tc->convertType(t), slot, ArrayRef<LLVM::GEPArg>{0, 1});
+}
+
+struct VecTailInitLowering : ConvertOpToLLVMPattern<VecTailInitOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecTailInitOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto t = cast<VecTailType>(op.getRef().getType().getPointee());
+    LLVM::StoreOp::create(rw, loc, a.getVec(), a.getRef());
+    Value zero = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(0));
+    LLVM::StoreOp::create(rw, loc, zero, vecTailCursor(rw, loc, getTypeConverter(), t, a.getRef()));
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
+struct VecTailVecLowering : ConvertOpToLLVMPattern<VecTailVecOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecTailVecOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getRef());
+    return success();
+  }
+};
+
+struct VecTailTakeLowering : ConvertOpToLLVMPattern<VecTailTakeOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecTailTakeOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    auto t = cast<VecTailType>(op.getRef().getType().getPointee());
+    Type elem = getTypeConverter()->convertType(op.getType());
+    Value data = LLVM::LoadOp::create(rw, loc, ptrTy, a.getRef());
+    Value ep = LLVM::GEPOp::create(rw, loc, ptrTy, elem, data, ValueRange{a.getIndex()});
+    Value v = LLVM::LoadOp::create(rw, loc, elem, ep);
+    Value one = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(1));
+    Value next = LLVM::AddOp::create(rw, loc, a.getIndex(), one);
+    LLVM::StoreOp::create(rw, loc, next, vecTailCursor(rw, loc, getTypeConverter(), t, a.getRef()));
+    rw.replaceOp(op, v);
+    return success();
+  }
+};
+
 struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -545,6 +599,12 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     }
     return s;
   });
+  tc.addConversion([&tc](VecTailType t) -> Type {
+    MLIRContext *ctx = &tc.getContext();
+    return LLVM::LLVMStructType::getLiteral(
+        ctx, {tc.convertType(VecValType::get(ctx, t.getElementType())), IntegerType::get(ctx, 64)});
+  });
+  patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering>(tc);
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }

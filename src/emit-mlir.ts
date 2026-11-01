@@ -27,6 +27,7 @@ export interface MlirEmitCtx {
   hasStringType: boolean;
   hasVecType: boolean;
   mlirDropHelper(key: string, t: TypeKind): void;
+  mlirVecTailDropHelper(key: string, vec: TypeKind): void;
   mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string;
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
   mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
@@ -269,7 +270,7 @@ type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string;
 // A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
 // when its text names one (Milo.h needsDrop).
 // A type with its own `impl Drop` is marked after its name (`!milo.struct<"Noisy" drop, ...>`).
-const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
+const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
 const OWNING_FN = "<owning fn>";
 const USER_DROP = '" drop';
 /** `ty` runs a user's Drop when dropped: when that happens is observable. */
@@ -969,6 +970,7 @@ class FnEmitter {
         // checker lets nothing write the Vec while the loop borrows it. The index moves
         // on before the body, so a `continue` (back to the condition) cannot skip it.
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+        if (s.consume && s.iterableKind === "vec") return this.consumedForEach(s);
         if ((s.iterableKind !== "vec" && s.iterableKind !== "string") || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
@@ -1064,6 +1066,63 @@ class FnEmitter {
       default:
         throw new MlirUnsupported(`stmt ${s.kind}`);
     }
+  }
+
+  /**
+   * `for x in makeVec()`: the loop owns the Vec (legacy genConsumedIterable). It lives in a
+   * vectail slot of a block around the loop, and each iteration moves its element out into
+   * the binding (an owned slot of the body when it has drop glue) and moves the cursor past
+   * it, so whichever way control leaves, the slot's drop frees exactly the elements no
+   * iteration took, then the buffer, after the binding's drop as legacy orders them.
+   */
+  private consumedForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
+    const vt = stripRefs(s.iterable.type);
+    const elemKind = stripRefs(s.varName2 ? s.varType2! : s.varType);
+    if (vt.tag !== "vec") throw new MlirUnsupported("for over a consumed vec of another type");
+    const elem = valueType(this.cx, elemKind);
+    if (elem === null || elem !== valueType(this.cx, vt.element) || isBig(this.cx, elem)) throw new MlirUnsupported("for over a consumed vec of place-only elements");
+    const vecTy = `!milo.vecval<${elem}>`, tailTy = `!milo.vectail<${elem}>`;
+    this.owned.push([]);
+    const start = this.body.length;
+    const v = this.consume(this.expr(s.iterable), "consumed for-in");
+    if (v.ty !== vecTy) throw new MlirUnsupported("for over a consumed vec of another type");
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "for.vec" owned : !milo.ref<${tailTy}>`);
+    this.owned[this.owned.length - 1].push({ ref: slot, ty: tailTy });
+    this.cx.mlirVecTailDropHelper(typeKey(vt.element), vt);
+    this.emit(`milo.vectail.init ${v.ref}, ${slot} : ${vecTy}, !milo.ref<${tailTy}>`);
+    this.emit(`milo.filled ${slot} : !milo.ref<${tailTy}>`);
+    const hdr = this.def(`milo.vectail.vec ${slot} : !milo.ref<${tailTy}> -> !milo.vec<${elem}>`, `!milo.vec<${elem}>`).ref;
+    const len = this.def(`milo.len ${hdr} : !milo.vec<${elem}>`, "si64").ref;
+    const idx = this.fresh();
+    this.vars.push(`  ${idx} = milo.var "for.idx" : !milo.ref<si64>`);
+    this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
+    this.loops++;
+    this.region("milo.while {", () => {
+      const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
+      this.emit(`milo.condition ${this.def(`milo.cmp lt, ${i}, ${len} : si64`, "i1").ref}`);
+      return true;
+    });
+    this.region("} do {", () => {
+      const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
+      const one = this.def("milo.const 1 : si64", "si64").ref;
+      this.emit(`milo.store ${this.def(`milo.add ${i}, ${one} wrapping : si64`, "si64").ref}, ${idx} : !milo.ref<si64>`);
+      const x = this.def(`milo.vectail.take ${slot}[${i}] : !milo.ref<${tailTy}> -> ${elem}`, elem);
+      const name = s.varName2 ?? s.varName;
+      if (hasDrop(elem)) {
+        const own = this.ownedSlot(name, elem, elemKind);
+        this.emit(`milo.store ${x.ref}, ${own} : !milo.ref<${elem}>`);
+        this.bind(name, { kind: "var", ref: own, ty: elem, owned: true });
+      } else {
+        this.bind(name, { kind: "ssa", v: x });
+      }
+      if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: i, ty: "si64" } });
+      return this.stmts(s.body);
+    });
+    this.emit("}");
+    this.loops--;
+    this.closeScope(start, false, null);
+    return false;
   }
 
   private def(rhs: string, ty: string, loc = ""): Val {

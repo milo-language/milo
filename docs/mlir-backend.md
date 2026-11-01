@@ -3,7 +3,7 @@ system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (sixth batch: Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
+last-verified: 2026-11-01 (seventh batch: consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
 -->
 
 # MLIR backend
@@ -536,6 +536,22 @@ structs, enums.
   enum's place) and *unwrapOr* is `??`; the closure-taking ops (map, andThen, orElse,
   unwrapOrElse) stay legacy. Program `option-ops`. Planted bug: the test inverted
   (`option-ops` stdout).
+
+**Seventh batch (2026-11-01): Tahoe Roads' next reasons.** `mlir/build.sh` prints the
+cmake or ninja log when a step fails (it went to /dev/null, so a broken milo-opt build
+was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
+
+- *`for x in makeVec()`* (a consuming for-in over a Vec, value-typed elements): the Vec
+  moves into an owned slot of `!milo.vectail<T>`, legacy's `{ %Vec, i64 cursor }`
+  (genConsumedIterable), in a block around the loop (`milo.vectail.init`, then
+  `milo.filled`). `milo.vectail.take %slot[%i]` moves element i out into the binding (an
+  owned slot of the body when it has drop glue) and sets the cursor past it; the slot's
+  drop glue is legacy's tail drop (`milo.drop.vectail.<elem>`, emitConsumedTailDrop): the
+  elements from the cursor on, then the buffer, so a break or a return frees exactly what
+  no iteration took, after the binding. Still legacy: place-only elements, consumed
+  arrays. Program `consumed-for`, FileCheck `vectail.mlir`, two verifier cases. Planted
+  bug: take storing the cursor at i instead of i + 1 (`consumed-for` stdout: the element
+  a break stopped at dropped twice). Tahoe Roads api: 4988 (93.2%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

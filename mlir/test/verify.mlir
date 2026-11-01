@@ -287,3 +287,21 @@ func.func @copy_onto_itself(%a: !milo.ref<!milo.struct<"A", si64>>) {
   milo.copy %a, %a : !milo.ref<!milo.struct<"A", si64>>, !milo.ref<!milo.struct<"A", si64>> of !milo.struct<"A", si64>
   milo.return
 }
+
+// -----
+
+func.func @vectail_unowned(%v: !milo.vecval<si64>) {
+  %s = milo.var "for.vec" : !milo.ref<!milo.vectail<si64>>
+  // expected-error @+1 {{needs an owned slot of a !milo.vectail}}
+  milo.vectail.init %v, %s : !milo.vecval<si64>, !milo.ref<!milo.vectail<si64>>
+  milo.return
+}
+
+// -----
+
+func.func @vectail_take_type(%i: si64) -> si32 {
+  %s = milo.var "for.vec" owned : !milo.ref<!milo.vectail<si64>>
+  // expected-error @+1 {{takes an element of '!milo.vectail<si64>', not 'si32'}}
+  %x = milo.vectail.take %s[%i] : !milo.ref<!milo.vectail<si64>> -> si32
+  milo.return %x : si32
+}

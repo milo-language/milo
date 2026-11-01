@@ -106,6 +106,17 @@ def Milo_VecValType : TypeDef<Milo_Dialect, "VecVal"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+// What is left of a Vec a consuming `for x in makeVec()` takes apart from the front:
+// legacy's `{ %Vec, i64 cursor }` (genConsumedIterable). The elements before the cursor
+// were moved out; the drop glue drops those from the cursor on, then frees the buffer, so
+// a break or a return out of the loop frees exactly what no iteration took. Lives only in
+// an owned slot (milo.vectail.init), never as an SSA value.
+def Milo_VecTailType : TypeDef<Milo_Dialect, "VecTail"> {
+  let mnemonic = "vectail";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+}
+
 // Milo's `string` value: legacy's `%String = { ptr data, i64 len, i64 cap }`, the same
 // bytes on both sides of the splice. A literal has cap 0: its buffer is static, so its
 // drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
@@ -472,6 +483,33 @@ def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
   let arguments = (ins Milo_RefType:$ref);
   let results = (outs Milo_VecType:$vec);
   let assemblyFormat = "$ref attr-dict `:` type($ref) `->` type($vec)";
+  let hasVerifier = 1;
+}
+
+// The Vec `vec` moved into the owned slot `ref` with its cursor at 0. A fill in place: the
+// emitter follows it with milo.filled.
+def Milo_VecTailInitOp : Milo_Op<"vectail.init"> {
+  let arguments = (ins Milo_VecValType:$vec, Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref);
+  let assemblyFormat = "$vec `,` $ref attr-dict `:` type($vec) `,` type($ref)";
+  let hasVerifier = 1;
+}
+
+// The header of the Vec in a vectail slot, for its data pointer and len: the same address.
+def Milo_VecTailVecOp : Milo_Op<"vectail.vec", [Pure]> {
+  let arguments = (ins Milo_RefType:$ref);
+  let results = (outs Milo_VecType:$vec);
+  let assemblyFormat = "$ref attr-dict `:` type($ref) `->` type($vec)";
+  let hasVerifier = 1;
+}
+
+// Element `index` moved out of the vectail in `ref`, and the cursor set past it: from here
+// on the element is the result's, not the Vec's. Unchecked: the loop condition keeps
+// `index` below len, and the elements come in order, so the cursor only moves forward.
+def Milo_VecTailTakeOp : Milo_Op<"vectail.take"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>, MemRead<Milo_VecHeader>, MemRead<Milo_VecElems>]>:$ref,
+                       SI64:$index);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
   let hasVerifier = 1;
 }
 

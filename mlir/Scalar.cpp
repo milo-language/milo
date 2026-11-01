@@ -1332,6 +1332,8 @@ std::string milo::typeKey(Type t) {
     return "string";
   if (auto v = dyn_cast<VecValType>(t))
     return "vec." + typeKey(v.getElementType());
+  if (auto v = dyn_cast<VecTailType>(t))
+    return "vectail." + typeKey(v.getElementType());
   if (auto s = dyn_cast<StructType>(t))
     return ("S" + s.getName()).str();
   if (auto e = dyn_cast<EnumType>(t))
