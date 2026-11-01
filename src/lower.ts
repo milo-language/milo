@@ -1414,9 +1414,6 @@ class LowerCtx {
           if (expr.method === "filter") {
             return { kind: "VecFilter", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
-          if (expr.method === "sum") {
-            return { kind: "VecSum", vec: recv(), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "join") {
             const args: HIRArg[] = [
               { expr: recv(), passByRef: true, refMut: false },

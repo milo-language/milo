@@ -1,0 +1,12 @@
+// @runtime-error: vecSumOverflow.milo:11
+// sum's checked add overflows inside std/vec.milo; @trackCaller makes the panic name the
+// caller's line, as the builtin's inline add did.
+
+fn big(): i64 {
+    return 9223372036854775807
+}
+
+fn main() {
+    let v: Vec<i64> = [big(), 1]
+    print(v.sum())
+}

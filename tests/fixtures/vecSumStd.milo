@@ -1,0 +1,57 @@
+// Vec.sum is std/vec.milo code (checked add, @trackCaller). Covers empty Vecs, slices and
+// a fixed array as the receiver, int widths, floats, a ranged element (summed as its plain
+// int, past the element's range), a temporary receiver, a capture, a @wrapping caller
+// (dispatched to wrappingSum, so it wraps as the builtin did) and wrappingSum called
+// directly. The checked overflow is pinned by runtime-errors/vecSumOverflow.milo.
+// @expect: 0 0
+// @expect: 6 -2
+// @expect: 300 -3
+// @expect: 4
+// @expect: 5.5 0
+// @expect: 21 9
+// @expect: 17
+// @expect: 3
+// @expect: -9223372036854775808
+// @expect: -128 -128
+
+fn mk(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n {
+        v.push(i)
+    }
+    return v
+}
+
+fn total(s: &[i64]): i64 {
+    return s.sum()
+}
+
+@wrapping
+fn wrapped(v: &Vec<i64>): i64 {
+    return v.sum()
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    let ef: Vec<f64> = Vec.new()
+    print(e.sum(), " ", ef.sum())
+    let v: Vec<i64> = [1, 2, 3, -8]
+    print(total(v[0..3]), " ", v.sum())
+    let bytes: Vec<u16> = [100, 200]
+    let small: Vec<i8> = [-1, -2]
+    print(bytes.sum(), " ", small.sum())
+    let a = [1, 3]
+    print(a.sum())
+    let fs: Vec<f64> = [2.5, 3.0]
+    print(fs.sum(), " ", total(v[2..2]))
+    let r: Vec<i32(0..9)> = [9, 9, 3]
+    print(r.sum(), " ", r[0..1].sum())
+    print(mk(5).sum() + 7)
+    let ws: Vec<Vec<i64>> = [[1], [2]]
+    let n = ws.fold(0, (acc: i64, w: &Vec<i64>) => acc + w.sum())
+    print(n)
+    let big: Vec<i64> = [9223372036854775807, 1]
+    print(wrapped(big))
+    let tiny: Vec<i8> = [127, 1]
+    print(tiny.wrappingSum(), " ", tiny.wrappingSum())
+}

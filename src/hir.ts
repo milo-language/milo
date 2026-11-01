@@ -96,7 +96,6 @@ export type HIRExpr =
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
   | { kind: "VecMap"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; resultElementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilter"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecSum"; vec: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecReverse"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSwap"; object: HIRExpr; indexA: HIRExpr; indexB: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecInsert"; object: HIRExpr; index: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

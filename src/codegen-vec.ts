@@ -1257,52 +1257,6 @@ export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReser
   return [lines, "0", "void"];
 }
 
-// v.sum() — accumulate all elements. Integer addition follows the enclosing function's
-// normal checked/wrapping policy; floats use fadd. Empty vec sums to 0.
-export function genVecSum(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSum" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  const vv = ctx.genVal(expr.vec, lines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv.ref, Ty.of("%Vec"));
-  const data = b.extractvalue(vec, 0, Ty.ptr);
-  const len = b.extractvalue(vec, 1, Ty.i64);
-  const elemTyStr = ctx.llvmType(expr.elementType);
-  const elemTy = Ty.of(elemTyStr);
-  const isFloat = expr.elementType.tag === "float";
-  const accAddr = b.entryAlloca(`%__sum_acc.${ctx.scopeCounter++}.addr`, elemTy);
-  b.store(val(isFloat ? "0.0" : "0", elemTy), accAddr);
-  const idxAddr = b.entryAlloca(`%__sum_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
-  b.store(I64_0, idxAddr);
-
-  const condL = b.newBlock("sum.cond");
-  const bodyL = b.newBlock("sum.body");
-  const endL = b.newBlock("sum.end");
-  b.br(condL);
-  b.position(condL);
-  const idx = b.load(Ty.i64, idxAddr);
-  const cmp = b.icmp("ult", idx, len);
-  b.condBr(cmp, bodyL, endL);
-  b.position(bodyL);
-  const elemPtr = b.gep(elemTy, data, [idx]);
-  const elem = b.load(elemTy, elemPtr);
-  const acc = b.load(elemTy, accAddr);
-  let newAcc: Val;
-  if (!isFloat && ctx.trapOnOverflow && !ctx.currentFnWrapping) {
-    newAcc = val(ctx.emitCheckedArith(lines, "add", ctx.isUnsigned(expr.elementType), elemTyStr, acc.ref, elem.ref, expr.span), elemTy);
-  } else {
-    newAcc = b.binop(isFloat ? "fadd" : "add", acc, elem);
-  }
-  b.store(newAcc, accAddr);
-  const nextIdx = b.binop("add", idx, I64_1);
-  b.store(nextIdx, idxAddr);
-  b.br(condL);
-  b.position(endL);
-  const result = b.load(elemTy, accAddr);
-  // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.vec);
-  return [lines, result.ref, elemTyStr];
-}
-
 // v.retain(pred): one pass, compacting keepers toward the front and dropping the
 // rest where they sit. No second buffer — that is the whole point next to filter.
 export function genVecRetain(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRetain" }, lines: string[]): Gen {

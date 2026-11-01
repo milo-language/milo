@@ -347,3 +347,12 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   at the caller's line 13; with mapWithSlots untracked it reports std/hashmap.milo:211) and
   `trackCallerOutsideStd`. Insert growth's OOM cannot be provoked in a test; it rides the
   same mapGrow stamp. Bench 200 maps grown to 100k: 0.65s before vs 0.64s.
+- 2026-11-01: `sum` moved: `acc = acc + e` from `0 as T`, `@trackCaller`, so an overflow
+  reports the caller's line (`runtime-errors/vecSumOverflow`, the same line the builtin
+  named; with the attribute dropped it reports std/vec.milo:96). Inside a @wrapping fn (or
+  module) the checker dispatches an int `v.sum()` to std's `wrappingSum`, as the builtin
+  wrapped there. Decided: `wrappingSum` is public and user-callable, the explicit spelling
+  next to `wrappingAdd`; ints only. A ranged element sums as its plain int (the builtin
+  typed the result as the ranged element though the total leaves the range; same output).
+  Planted `acc = e` turns `vecSumStd` red; output identical to the old compiler; 0 leaks;
+  bench 300k sums of 1000 i64 + 1000 f64 1.03s builtin vs 1.01s std.

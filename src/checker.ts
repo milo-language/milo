@@ -13484,13 +13484,22 @@ export class TypeChecker {
         const body = this.instantiateContainerImpl("Vec", [objType.element], expr.method);
         if (body) return this.dispatchMangledMethod(expr, body.mangled, sp, true);
       }
-      if (expr.method === "sum") {
-        if (expr.args.length !== 0) { this.error(`'sum' takes no arguments`, sp); }
-        if (objType.element.tag !== "int" && objType.element.tag !== "float") {
-          this.error(`'sum' requires a Vec of integers or floats, got Vec<${this.show(objType.element)}>`, sp);
+      // sum is std/vec code. A ranged element sums as its plain int (the total is not in
+      // the element's range); inside a @wrapping fn an int sum is std's wrappingSum, as
+      // the builtin wrapped there.
+      if (expr.method === "sum" || expr.method === "wrappingSum") {
+        const el = objType.element;
+        if (el.tag !== "int" && (el.tag !== "float" || expr.method === "wrappingSum")) {
+          this.error(`'${expr.method}' requires a Vec of integers${expr.method === "sum" ? " or floats" : ""}, got Vec<${this.show(el)}>`, sp);
+          for (const a of expr.args) this.checkExpr(a);
           return this.setType(expr, { tag: "unknown" });
         }
-        return this.setType(expr, objType.element);
+        const fn = this.currentFnDecl;
+        const wrapping = expr.method === "sum" && el.tag === "int" &&
+          !!(fn?.fromWrappingModule || fn?.attributes?.some(a => a.name === "wrapping"));
+        const plain: TypeKind = el.tag === "int" ? { tag: "int", bits: el.bits, signed: el.signed } : el;
+        const body = this.instantiateContainerImpl("Vec", [plain], wrapping ? "wrappingSum" : expr.method);
+        if (body) return this.dispatchMangledMethod(expr, body.mangled, sp);
       }
       // contains is std/vec code; its element-type restriction stays here, at the call.
       if (expr.method === "contains") {

@@ -8,7 +8,7 @@ import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -62,7 +62,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
   "VecLen", "VecPtr", "VecPush", "VecReserve", "VecRetain",
-  "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey", "VecSum",
+  "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
   "VecSwap", "VecTruncate", "WrappingArith", "Zeroed",
 ];
 
@@ -5680,8 +5680,6 @@ export class Codegen {
         return genVecMap(this, expr, lines);
       case "VecFilter":
         return genVecFilter(this, expr, lines);
-      case "VecSum":
-        return genVecSum(this, expr, lines);
       case "VecReverse":
         return genVecReverse(this, expr, lines);
       case "VecSwap":

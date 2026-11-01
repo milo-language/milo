@@ -85,6 +85,28 @@ impl Vec<T> {
         return self.get(best)
     }
 
+    // The sum of the elements (0 for an empty Vec). The checker limits this to int and
+    // float elements. Integer addition is checked: an overflow panics, and @trackCaller
+    // makes the panic name the caller's line. Inside a @wrapping function the checker
+    // calls wrappingSum instead, as the builtin wrapped there.
+    @trackCaller
+    fn sum(self: &Self): T {
+        var acc = 0 as T
+        for e in self {
+            acc = acc + e
+        }
+        return acc
+    }
+
+    // The sum of an integer Vec with two's-complement wrapping on overflow, never a panic.
+    fn wrappingSum(self: &Self): T {
+        var acc = 0 as T
+        for e in self {
+            acc = acc.wrappingAdd(e)
+        }
+        return acc
+    }
+
     // The callback methods below lend `f` each element in turn. The checker holds the
     // receiver borrowed while the callback is checked, so `f` may read the Vec but not
     // change it, and a Copy element may be taken by value (`(x: i64) => ...`). They are
