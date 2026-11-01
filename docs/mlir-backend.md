@@ -669,6 +669,92 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
   statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.
 
+**Eighth batch (2026-11-01): ownership from the checker's types, then the corpus' top
+reasons.** Tahoe Roads api at the start: 5236 of 5351 (97.9%); corpus 98.3%
+(388883/395597), 1128 of 1128 same under `--owned`. The order followed the corpus counts,
+which beat Tahoe Roads' (each std function counts once per fixture that pulls it in).
+
+- *What owns something is decided from the checker's type, not the dialect text.* Every
+  type placeType spells records, from its TypeKind, whether it has drop glue (Milo.cpp
+  needsDrop over the checker's type) and whether a user Drop runs inside it; hasDrop and
+  runsUserDrop look the text up, and a text not spelled from a checker type (other than a
+  place or a consumed Vec's tail) keeps the function legacy. The text hid ownership in one
+  place: inside its own body a type is spelled by name alone, so the array branch read
+  `[Tree; 2]` inside `struct Tree { name: string, kids: Vec<[Tree; 2]> }` as an array that
+  owns nothing and spelled a type the dialect has no drops for. It also disagreed with
+  legacy in one: legacy computes droppable enums in a single pass, so an enum holding one
+  declared after it (`enum W { Wrap(Option<string>) }`) never gets drop glue, a legacy
+  leak (every `W` built leaks its string). Where the structural answer and legacy's
+  needsDropCg differ the type now stays legacy ("a type legacy's drop glue does not
+  drop"), so both sides leak alike; the legacy bug is not fixed here. A sweep that ran
+  both checks over every fixture found `borrowedEnumPayloadViews` (that `W`) as the only
+  disagreement. Program `drop-structure`. Planted bug: a Vec read as owning nothing
+  (`for-each`, `hashmaps`, `vec-elems`, `view-lets` `--owned` red, `move-field` exit
+  0 -> 1); a planted mismatch with needsDropCg instead only moved functions to legacy,
+  which is the check working.
+- *Helpers keyed by a plain fn type* (`Vec<(i64) => bool>`'s grow and drop glue): typeKey
+  spells a non-owning fn by signature, `fn<n>.<params>.<result or v>`, a `&T` param as
+  `r<T>`, the same in Scalar.cpp. Program `fn-helpers`. Planted bug: the result left out
+  of the key (`fn-helpers` red: the drop glue's symbol undefined at link). Found on the
+  way, a legacy bug, kept: a Vec of `(&Vec<i64>) => i64` does not link on legacy either
+  (`vec$vecGrowOne_fn_ref_Vec<i64>_ret_i64` is not a valid LLVM name).
+- *`move` closures capturing a user Drop*: the refusal is gone; the closure's env drop
+  runs where legacy runs it now that temporaries die at their statement's end. Program
+  `drop-captures` (scope end, early return, overwrite, loop, moved into a callee,
+  returned, a temporary). Planted bug: the capture loaded instead of moved (stdout: a
+  second `drop`).
+- *for-in over fixed arrays of plain elements*: a consumed one (`for i in [0, 1, 5]`, a
+  call's result) evaluated into a slot first, a place borrowed where it is; `milo.for`
+  over the indices, the binding the element's place. Program `array-for`. Planted bug:
+  one iteration short (stdout).
+- *`f as *u8`*: a named function's own symbol in a legacy helper per function
+  (`milo.fnaddr.<f>`), any other fn value's code pointer through an intrinsic helper, as
+  genCast does. Program `fn-addr`. Planted bug: one helper for every function (stdout:
+  two functions' addresses equal).
+- *`assert(c, msg)`*: `c`, then in its `else` legacy's failure path in a helper
+  (`assert(false, msg)`), so the message is evaluated only when the assert fails.
+  Program `trap-assert`. Planted bug: the condition negated.
+- *for-range bounds of another type*: legacy extends a bound by the loop variable's
+  signedness (a u8 bound of an i32 loop is sign extended: 200 reads as -56), so the
+  bound's bits are read as that signedness, then extended. Program `for-bounds`. Planted
+  bug: extended by the bound's own signedness (stdout).
+- *By-ref arguments of C string and variadic extern calls* (std's recorded calls,
+  `__rrx_getsockname`): lent as the helper's `&T` param. Program `ffi-refs`. Planted bug:
+  a copy lent instead of the place (stdout: strtol's end pointer never written).
+- *main behind the green-task wrapper*: main's body is `__milo_main_body` (codegen's
+  MAIN_BODY_FN), no params, its i32 the exit code; no prologue to keep, so a body naming
+  globals or fn values is taken too. Program `green-main`. Planted bug: the body returns
+  1 (exit status).
+- *String slices* (`s[a..b]`, a `&string` view): legacy's genStringSlice in a helper, of
+  a place's string only, the view never dropped. A slice lent to a `&string` param stays
+  legacy (it reaches the C-string path). Program `str-slices`. Planted bug: the end bound
+  passed as the start (stdout).
+- *`Heap<I>` of an interface* as `!milo.dyn<"I">`, opaque, legacy's `{ ptr, ptr }`, owned
+  (drop glue `milo.drop.dyn.<I>`); a method call through a box held in a place is
+  legacy's itable dispatch in a helper per interface, method and operand shape. This
+  takes std's `ErrorContext.message`, the corpus' top reason. Boxing (InterfaceCoerce)
+  and a `&I` receiver stay legacy. Program `dyn-heaps`, FileCheck `dyn.mlir`. Planted
+  bug: every call dispatched to method 0 (stdout).
+- *`return f()` of a void f* (and expression-bodied `(x): void => f(x)` closures): the
+  call as a statement, then the return. Program `void-returns`. Planted bug: the call
+  dropped (stdout).
+- *A string field copied out of a value read in place* (`Some(p.value)` for a for-in
+  element): the field's bits into a slot that drops nothing, shared from there. Program
+  `view-copies`. Planted bug: a bit copy instead of a share (`--owned`: a double free).
+- *for-in over Vec elements holding an array* (std/net's IpAddr, under 128 bytes):
+  bound as the element's place. Program `array-elems-for`. Planted bug: every iteration
+  bound to element 0 (`array-elems-for`, `big-for` stdout).
+- *`==` / `!=` on payload-free enums*: the tags compared, as legacy. Program `enum-eq`.
+  Planted bug: `!=` compared as `==` (stdout).
+- *Where it stands*: Tahoe Roads api 5280 of 5351 (98.7%); `--programs --owned` 97 of 97
+  same. The full corpus was not rerun at the end of the batch. Tahoe Roads' next reasons:
+  arrays of owning elements (`[string; N]` lets, globals, indexing and for-in: 22
+  functions together, the largest piece left), enum patterns whose bindings escape (a
+  `let ... else`, 5), nested patterns (4), temporaries with a user Drop (4), a Vec that is
+  not a param, a local or a field (4), sret calls as values (3), `&T` lets (3), fn values
+  given to externs (3). A `&string` slice lent to a `&string` param goes the C-string
+  path and stays legacy.
+
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
 
