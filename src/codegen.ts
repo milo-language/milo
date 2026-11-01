@@ -158,6 +158,14 @@ export function sanitizerKind(): "address" | "thread" {
 // that arm stores a clone and the place keeps its own value.
 export type ForkSlot = { addr: string; ty: string; cloneViews?: boolean };
 
+// `p[i] = x` through a raw pointer writes without dropping the old slot, the same as
+// `*p = x`. The compiler cannot know whether raw memory holds a live value, and dropping
+// an uninitialized slot frees garbage; unsafe code that replaces a live value moves the
+// old one out first (`let _ = *p[i].addrOf()`).
+function isRawSlot(target: HIRExpr): boolean {
+  return target.kind === "IndexAccess" && target.object.type.tag === "ptr";
+}
+
 export class Codegen {
   public target: TargetInfo;
   private output: string[] = [];
@@ -2935,7 +2943,8 @@ export class Codegen {
           lines.push(...tl);
           const isLValueTgt =
             !stmt.isInit &&
-            (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess");
+            (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess") &&
+            !isRawSlot(stmt.target);
           const cover = isLValueTgt ? this.flagsCovering(stmt.target) : null;
           if (isLValueTgt && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
             if (cover) this.emitDropPlace(lines, tPtr, stmt.target.type, cover.flags, cover.path);
@@ -2956,7 +2965,8 @@ export class Codegen {
         // (`p = p`), where `val` still aliases the slot's live data.
         const isLValueTarget =
           !stmt.isInit &&
-          (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess");
+          (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess") &&
+          !isRawSlot(stmt.target);
         const cover = isLValueTarget ? this.flagsCovering(stmt.target) : null;
         if (isLValueTarget && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
           if (cover) this.emitDropPlace(lines, targetPtr, stmt.target.type, cover.flags, cover.path);

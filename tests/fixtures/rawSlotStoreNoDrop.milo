@@ -1,0 +1,33 @@
+// `p[i] = x` through a raw pointer must not drop the slot's old contents: the buffer
+// is fresh from malloc, so a drop would run on garbage. Only the moved-out value drops.
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8): void
+
+struct Tok { id: i64 }
+
+impl Drop for Tok { fn drop(self: &mut Tok): void { print("drop " + self.id.toString()) } }
+
+fn show(t: &Tok): void { print(t.id) }
+
+fn bump(t: &mut Tok): void { t.id = t.id + 10 }
+
+fn main() {
+    unsafe {
+        var p = malloc(2 * sizeOf<Tok>()) as *Tok
+        p[0] = Tok { id: 1 }
+        p[1] = Tok { id: 2 }
+        show(p[1])
+        bump(&mut p[1])
+        show(p[1])
+        let a = *p[0].addrOf()
+        let b = *p[1].addrOf()
+        print(a.id + b.id)
+        free(p as *u8)
+    }
+}
+// @expect: 2
+// @expect: 12
+// @expect: 13
+// @expect: drop 12
+// @expect: drop 1
