@@ -2386,7 +2386,8 @@ class FnEmitter {
     }
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
-    if (callee?.isExtern && sig && (e.variadic || e.args.some((a, i) => !a.passByRef && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] !== "%String")))
+    // A string given to a `*u8` param is legacy's C string conversion for any callee, not only an extern.
+    if (callee && sig && ((callee.isExtern && e.variadic) || e.args.some((a, i) => !a.passByRef && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] === "ptr")))
       return this.ffiCall(e, stmt);
     if (e.variadic) throw new MlirUnsupported("variadic call");
     if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");

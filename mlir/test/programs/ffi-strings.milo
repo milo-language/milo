@@ -16,6 +16,9 @@ fn lenOf(s: &string): i64 { return strlen(s) }
 
 fn mk(n: i64): string { return "m".repeat(n) }
 
+// A Milo function with a `*u8` param gets the same C string conversion.
+fn plen(p: *u8): i64 { unsafe { return strlen(p) } }
+
 // Not main: a main naming a raw pointer keeps its legacy body.
 fn run() {
     var s = "hello"
@@ -28,7 +31,7 @@ fn run() {
         printf("%s|%d|%lld|%.2f|%s\n", s, 42 as i32, d.n * 1000000000000, 2.5, view)
         fflush(0 as *u8)
     }
-    print(s, " ", shared, " ", view)
+    print(s, " ", shared, " ", view, " ", plen(s), " ", plen(mk(3)))
 }
 
 fn main() { run() }

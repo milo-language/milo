@@ -499,6 +499,10 @@ structs, enums.
 - *`for x in v` over place-only elements* (128+ byte structs, arrays) binds `x` as the
   element's place (`milo.index.ref`, in bounds by the loop condition). Program
   `big-for`. Planted bug: every iteration bound to element 0 (`big-for` stdout).
+- *A string given to a `*u8` param of a Milo function* gets the same C string
+  conversion as for an extern (legacy keys it on the signature, not on extern), so it
+  goes through the `milo.ffi.*` helper too (`plen` in `ffi-strings`; the temporary
+  plant above turns it red the same way).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
