@@ -61,7 +61,7 @@ codegen. The MLIR function's LLVM body replaces the legacy body textually inside
 module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
 the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
 `internal`, and internal symbols do not resolve across modules. Legacy codegen still
-generates the replaced body, because its module-wide noalias dataflow reads every body. The path is the DEFAULT build; `MILO_LEGACY=1` is a temporary escape hatch (critical deploys only, see "Deploying apps built with MLIR"). `MILO_MLIR=1` is a no-op and `MILO_MLIR=0` means `MILO_LEGACY=1`, both for one release only. Windows and non-host targets (cross builds, wasm, bare metal) keep the legacy codegen. The coverage number (MLIR functions / all
+generates the replaced body, because its module-wide noalias dataflow reads every body. The path is the DEFAULT build; `MILO_LEGACY=1` is a temporary escape hatch (critical deploys only, see "Deploying apps built with MLIR"). `MILO_MLIR=1` is a no-op and `MILO_MLIR=0` means `MILO_LEGACY=1`, both for one release only. MLIR is on for every hosted target (cross builds and Windows included) and wasm64; legacy codegen is only the internal per-function fallback until coverage is 100%, then it is deleted. milo-opt emits for the TARGET: the module carries `llvm.target_triple` and `llvm.data_layout` (the layout clang uses for that triple, asked of milo-opt's own clang once per build), and the splice refuses a triple or layout the two halves disagree on. The one exception is the 32-bit Cortex-M family (`arch === "arm"`, `mlirTargetOk`): legacy `typeSize` and enum layouts hardcode an 8-byte pointer, while milo-opt sizes structs with the target layout (4-byte pointers), so the halves of one module would disagree on every struct holding a pointer; it moves when legacy sizes come from the target layout. `bun scripts/mlir-cross.ts` is the gate for non-host targets. The coverage number (MLIR functions / all
 function instances over the corpus) is printed by the gate and must only go up. When it
 reaches 100% the legacy codegen is deleted and the escape hatch goes with it.
 
@@ -270,7 +270,7 @@ canary.
 CMake configure: `sh mlir/build.sh`. A default build compiles the whole module with
 the clang of that same LLVM (`/opt/homebrew/opt/llvm/bin/clang`), never Apple's: LLVM 23 IR
 fed to clang 21 is version skew (it already rejects LLVM 23's float constant syntax), and
-a `MILO_CC` of another version is an error. MLIR's C++
+a `MILO_CC` of another version is an error, cross builds included: a cross toolchain's clang (`MILO_CC`, with `MILO_SYSROOT` and lld, as ~/git/digitalocean/milo-cross.mk sets them) only compiles and links, but it consumes milo-opt's IR, so it must be Homebrew LLVM 23's too. The wasm64 build uses the same clang. MLIR's C++
 API changes every release, so the LLVM version is pinned and bumped on purpose.
 A default build without a built `milo-opt` is an error naming the build command, never a
 silent fallback. `milo-opt` is found at `mlir/build/milo-opt` in a checkout, else next to the

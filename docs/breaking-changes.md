@@ -22,8 +22,9 @@ added here each time a version is cut.
 `milo-opt` (docs/mlir-backend.md) and need LLVM 23 plus a built `milo-opt` (`sh mlir/build.sh`,
 or the one shipped beside the `milo` binary). Set `MILO_LEGACY=1` for the old all-legacy
 codegen; that switch is temporary. `MILO_MLIR=1` is now a no-op, and `MILO_MLIR=0` is read
-as `MILO_LEGACY=1` for this one release, then ignored. Windows, cross targets, wasm and bare
-metal still use the legacy codegen. No source change is needed.
+as `MILO_LEGACY=1` for this one release, then ignored. Cross builds, Windows and wasm64 go
+through MLIR too, with the same clang requirement (a `MILO_CC` must be of milo-opt's LLVM
+version); only Cortex-M still uses the legacy codegen. No source change is needed.
 
 ## `sWaitHead` is gone from std/runtime (2026-10-21)
 
