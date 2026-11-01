@@ -95,3 +95,13 @@ func.func @set_tag(%e: !milo.ref<!milo.enum<"Big", size = 16, align = 8, [0: (),
   milo.store %x, %f init : !milo.ref<f64>
   milo.return
 }
+
+// A HashMap is legacy's identified %HashMap; map.len reads its second field.
+// CHECK-LABEL: llvm.func @map_len
+// CHECK-SAME:  !llvm.struct<"HashMap", (ptr, i64, i64, i64, i64)>
+// CHECK:       %[[N:.*]] = llvm.extractvalue %arg0[1] : !llvm.struct<"HashMap", (ptr, i64, i64, i64, i64)>
+// CHECK:       llvm.return %[[N]] : i64
+func.func @map_len(%m: !milo.map<!milo.string, si64>) -> si64 {
+  %n = milo.map.len %m : !milo.map<!milo.string, si64>
+  milo.return %n : si64
+}

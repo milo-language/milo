@@ -80,6 +80,7 @@ function typeKey(t: TypeKind): string {
     case "ptr": return "ptr";
     case "string": return "string";
     case "vec": return `vec.${typeKey(t.element)}`;
+    case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
     case "fn": if (t.owning) return "ownfn"; throw new MlirUnsupported("helper for a fn");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
@@ -142,6 +143,11 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
     return e && `!milo.vecval<${e}>`;
   }
   if (t.tag === "fn") return fnType(cx, t);
+  if (t.tag === "hashmap") {
+    // Opaque here: std/hashmap's methods read it through a raw pointer (MapRaw).
+    const k = placeType(cx, t.key), v = placeType(cx, t.value);
+    return k && v && `!milo.map<${k}, ${v}>`;
+  }
   if (t.tag === "array") {
     // A fixed-size array of elements that own nothing: a place only, at any size (a
     // slice, size null, is a Vec header that a slice expression makes: not yet).
@@ -289,7 +295,7 @@ type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string;
 // A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
 // when its text names one (Milo.h needsDrop).
 // A type with its own `impl Drop` is marked after its name (`!milo.struct<"Noisy" drop, ...>`).
-const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
+const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes("!milo.map<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
 const OWNING_FN = "<owning fn>";
 const USER_DROP = '" drop';
 /** `ty` runs a user's Drop when dropped: when that happens is observable. */
@@ -1395,6 +1401,32 @@ class FnEmitter {
         return this.intrinsic("unique", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
           ([x]) => ({ kind: "StrUnique", type: e.type, span: e.span, str: x }), null);
       }
+      case "MapHash": {
+        const kt = stripRefs(e.key.type);
+        const k = this.place(e.key, refOf(this.value(kt, "map key")), false).ref;
+        const seed = this.expr(e.seed);
+        if (seed.ty !== "si64") throw new MlirUnsupported("map seed type");
+        return this.intrinsic("maphash", e, [{ name: "k", type: kt, mode: "ref", ref: k }, { name: "s", type: I64, mode: "val", ref: seed.ref }],
+          ([a, b]) => ({ kind: "MapHash", type: e.type, span: e.span, key: a, seed: b }), scalar(e.type, "map hash"), false);
+      }
+      case "MapKeyEq":
+      case "NatLess": {
+        const kt = stripRefs(e.a.type);
+        const rt = refOf(this.value(kt, "compared key"));
+        const a = this.place(e.a, rt, false).ref, b = this.place(e.b, rt, false).ref;
+        const kind = e.kind;
+        return this.intrinsic(kind === "MapKeyEq" ? "mapkeyeq" : "natless", e,
+          [{ name: "a", type: kt, mode: "ref", ref: a }, { name: "b", type: kt, mode: "ref", ref: b }],
+          ([x, y]) => ({ kind, type: e.type, span: e.span, a: x, b: y }), scalar(e.type, "comparison"), false);
+      }
+      case "MapSeed":
+        return this.intrinsic("mapseed", e, [], () => ({ kind: "MapSeed", type: e.type, span: e.span }), scalar(e.type, "map seed"), false);
+      case "MapAlloc": {
+        const n = this.expr(e.count), z = this.expr(e.size);
+        if (n.ty !== "si64" || z.ty !== "si64") throw new MlirUnsupported("map alloc operand types");
+        return this.intrinsic("mapalloc", e, [{ name: "n", type: I64, mode: "val", ref: n.ref }, { name: "z", type: I64, mode: "val", ref: z.ref }],
+          ([a, b]) => ({ kind: "MapAlloc", type: e.type, span: e.span, count: a, size: b }), scalar(e.type, "map buffer"));
+      }
       case "MapCopyOut": {
         // `_vecCopyOut(place)`: legacy's structural deep copy of what the place holds
         // (emitDeepCloneFromPtr), an owned value.
@@ -1441,6 +1473,11 @@ class FnEmitter {
         const l = this.expr(e.left), r = this.expr(e.right);
         if (l.ty !== ty || r.ty !== ty) throw new MlirUnsupported("wrapping operand types");
         return this.def(`milo.${op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
+      }
+      case "HashMapLen": {
+        const m = this.borrow(this.expr(e.object), e.object.type);
+        if (!m.ty.startsWith("!milo.map<")) throw new MlirUnsupported("len of a non-map");
+        return this.def(`milo.map.len ${m.ref} : ${m.ty}`, "si64");
       }
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);

@@ -106,6 +106,16 @@ def Milo_VecValType : TypeDef<Milo_Dialect, "VecVal"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+// A HashMap<K, V> value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
+// i64 tombs }` (codegen-map.ts). Its methods are Milo code in std/hashmap that reads it
+// through a raw pointer, so no op here looks inside; K and V only name its drop glue
+// (legacy's, milo.drop.map.<k>.<v>).
+def Milo_MapType : TypeDef<Milo_Dialect, "Map"> {
+  let mnemonic = "map";
+  let parameters = (ins "::mlir::Type":$keyType, "::mlir::Type":$valueType);
+  let assemblyFormat = "`<` $keyType `,` $valueType `>`";
+}
+
 // What is left of a Vec a consuming `for x in makeVec()` takes apart from the front:
 // legacy's `{ %Vec, i64 cursor }` (genConsumedIterable). The elements before the cursor
 // were moved out; the drop glue drops those from the cursor on, then frees the buffer, so
@@ -206,7 +216,7 @@ def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
 }
 
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_FnType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_FnType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 
@@ -551,6 +561,13 @@ def Milo_VecTailTakePlaceOp : Milo_Op<"vectail.take_place"> {
   let results = (outs Milo_RefType:$result);
   let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
   let hasVerifier = 1;
+}
+
+// `m.len()` of a HashMap value (a view is enough): the header's len field.
+def Milo_MapLenOp : Milo_Op<"map.len", [Pure]> {
+  let arguments = (ins Milo_MapType:$value);
+  let results = (outs SI64:$len);
+  let assemblyFormat = "$value attr-dict `:` type($value)";
 }
 
 // `v.ptr()`: the Vec's data pointer, read out of its header.

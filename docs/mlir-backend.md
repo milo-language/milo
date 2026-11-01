@@ -607,6 +607,17 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   holding an array; FileCheck in `vectail.mlir`. Planted bug: no `milo.filled` (the build
   fails: drop elaboration finds the binding read while it may be empty). Tahoe Roads api:
   5179 (96.8%).
+- *HashMap* as `!milo.map<K, V>`, legacy's `%HashMap` (codegen-map.ts), opaque: its
+  methods are std/hashmap's Milo code reading it through a raw pointer, so only lets,
+  params, fields, results, `zeroed`, its drop (legacy's glue, `milo.drop.map.<k>.<v>`)
+  and `m.len()` (`milo.map.len`) are needed. std's map intrinsics (`_mapHash`,
+  `_mapKeyEq`, `_natLess`, `_mapSeed`, `_mapAlloc`) are `intrinsic` helpers, the key
+  operands lent as places. Program `hashmaps`, FileCheck in `aggregates.mlir`. Planted
+  bugs: key equality done as `_natLess` (`hashmaps` stdout); `hasDrop` not seeing a map
+  (`hashmaps` `--owned`: legacy 0 live blocks, MLIR 1, from the `HashMap<i64, i64>`:
+  hasDrop matches type text, and a map with a string in its key or value type passed
+  for owning without the fix). Tahoe Roads api: 5222 (97.6%); 65 HashMap fixtures same
+  under `--owned`.
 - *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
   of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
   statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.

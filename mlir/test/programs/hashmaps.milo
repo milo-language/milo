@@ -1,0 +1,64 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: HashMap values, an
+// opaque `!milo.map<K, V>` whose methods are std/hashmap's Milo code (MapRaw through a raw
+// pointer; the hash, key compare, seed and table allocation are legacy's helpers). Built,
+// filled, overwritten, removed from, lent by reference, held in a struct, returned and
+// dropped, with string keys and owning values.
+
+from "std/hashmap" import { HashMap }
+
+struct Entry { name: string, hits: i64 }
+
+struct Index { byName: HashMap<string, Entry>, total: i64 }
+
+fn counts(words: &Vec<string>): HashMap<string, i64> {
+    var m: HashMap<string, i64> = HashMap.new()
+    for w in words {
+        let n = m.get(w) ?? 0
+        m.insert(w, n + 1)
+    }
+    return m
+}
+
+fn hits(ix: &Index, k: &string): i64 {
+    match ix.byName.get(k) {
+        Option.Some(e) => { return e.hits }
+        Option.None => { return -1 }
+    }
+}
+
+fn add(ix: &mut Index, k: string, n: i64) {
+    ix.byName.insert(k, Entry { name: k + "!", hits: n })
+    ix.total = ix.total + n
+}
+
+fn run() {
+    var words: Vec<string> = Vec.new()
+    words.push("a")
+    words.push("bb")
+    words.push("a")
+    words.push("c" + "c")
+    words.push("a")
+    var m = counts(words)
+    print(m.len(), " ", m.get("a") ?? 0, " ", m.get("cc") ?? 0, " ", m.contains("zz"))
+    m.remove("a")
+    m.insert("bb", 10)
+    print(m.len(), " ", m.get("a") ?? -1, " ", m.get("bb") ?? 0)
+    var ix = Index { byName: HashMap.new(), total: 0 }
+    for i in 0..20 {
+        add(&mut ix, $"k{i}", i)
+    }
+    add(&mut ix, "k3", 100)
+    // Scalar keys and values: the map is all that owns anything here.
+    var sq: HashMap<i64, i64> = HashMap.new()
+    for i in 0..50 {
+        sq.insert(i, i * i)
+    }
+    print(sq.get(7) ?? 0, " ", sq.len())
+    print(hits(ix, "k3"), " ", hits(ix, "k19"), " ", hits(ix, "nope"), " ", ix.total, " ", ix.byName.len())
+}
+
+// The maps live in a function of their own: what main still holds at its end, legacy
+// leaves to the exit.
+fn main() {
+    run()
+}

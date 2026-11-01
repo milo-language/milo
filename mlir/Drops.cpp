@@ -543,6 +543,15 @@ struct VecTailTakePlaceLowering : ConvertOpToLLVMPattern<VecTailTakePlaceOp> {
   }
 };
 
+struct MapLenLowering : ConvertOpToLLVMPattern<MapLenOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(MapLenOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::ExtractValueOp>(op, a.getValue(), ArrayRef<int64_t>{1});
+    return success();
+  }
+};
+
 struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -616,12 +625,20 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     }
     return s;
   });
+  tc.addConversion([ctx = &tc.getContext()](MapType) -> Type {
+    auto s = LLVM::LLVMStructType::getIdentified(ctx, "HashMap");
+    if (!s.isInitialized()) {
+      Type i64 = IntegerType::get(ctx, 64);
+      (void)s.setBody({LLVM::LLVMPointerType::get(ctx), i64, i64, i64, i64}, /*isPacked=*/false);
+    }
+    return s;
+  });
   tc.addConversion([&tc](VecTailType t) -> Type {
     MLIRContext *ctx = &tc.getContext();
     return LLVM::LLVMStructType::getLiteral(
         ctx, {tc.convertType(VecValType::get(ctx, t.getElementType())), IntegerType::get(ctx, 64)});
   });
-  patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering>(tc);
+  patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering, MapLenLowering>(tc);
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }
