@@ -1,0 +1,87 @@
+// Vec.truncate and Vec.clear are std/vec.milo code. Covers an empty Vec, a negative length
+// (empties), a length at and past the end (no-op, never a grow), an i32 length, string and
+// nested Vec elements, Drop elements (dropped once each, first to last, before the call
+// returns), capacity kept by clear, reuse after clear, a field receiver, and a closure that
+// captures the Vec it clears.
+// @expect: 0
+// @expect: [1, 2, 3, 4, 5]
+// @expect: [1, 2, 3]
+// @expect: 0 true
+// @expect: ["a"]
+// @expect: [[1], [2, 3]]
+// @expect: [[7]]
+// @expect: drop 2
+// @expect: drop 3
+// @expect: drop 4
+// @expect: after truncate 2
+// @expect: drop 0
+// @expect: drop 1
+// @expect: after clear 0
+// @expect: 0
+// @expect: ["p"]
+// @expect: done
+// @expect: drop 9
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Holder {
+    items: Vec<string>,
+}
+
+fn mk(n: i64): Vec<Noisy> {
+    var v: Vec<Noisy> = Vec.new()
+    for i in 0..n {
+        v.push(Noisy { id: i })
+    }
+    return v
+}
+
+fn main() {
+    var e: Vec<i64> = Vec.new()
+    e.truncate(3)
+    e.clear()
+    e.truncate(-1)
+    print(e.len())
+    var v: Vec<i64> = [1, 2, 3, 4, 5]
+    v.truncate(9)
+    v.truncate(5)
+    print(v)
+    let k: i32 = 3
+    v.truncate(k)
+    print(v)
+    v.truncate(-7)
+    print(v.len(), " ", v.capacity() > 0)
+    var s: Vec<string> = ["a", "b" + "c", "d"]
+    s.truncate(1)
+    print(s)
+    var nested: Vec<Vec<i64>> = [[1], [2, 3], [4]]
+    nested.truncate(2)
+    print(nested)
+    nested.clear()
+    nested.push([7])
+    print(nested)
+    var ns = mk(5)
+    ns.truncate(2)
+    print("after truncate ", ns.len())
+    ns.clear()
+    print("after clear ", ns.len())
+    ns.push(Noisy { id: 9 })
+    var h = Holder { items: ["x", "y"] }
+    h.items.clear()
+    print(h.items.len())
+    var cap: Vec<string> = ["p", "q"]
+    let f = () => {
+        cap.truncate(1)
+        print(cap)
+    }
+    f()
+    print("done")
+}

@@ -29,6 +29,13 @@ fn vecSwapAt<T>(a: *T, b: *T) {
     }
 }
 
+// Moves the value at `p` out and drops it, leaving the bytes behind as dead storage.
+fn vecDropAt<T>(p: *T) {
+    unsafe {
+        let _gone = *p
+    }
+}
+
 impl Vec<T> {
     // Whether the Vec has no elements.
     fn isEmpty(self: &Self): bool {
@@ -243,5 +250,34 @@ impl Vec<T> {
                 hi = hi.wrappingSub(1)
             }
         }
+    }
+
+    // Drops every element at index `n` and above, first to last, then shortens the Vec.
+    // A negative `n` empties it; an `n` at or past the length changes nothing (it never
+    // grows the Vec).
+    fn truncate(self: &mut Self, n: i64) {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            let len = raw[0]._len
+            var keep = n
+            if keep < 0 {
+                keep = 0
+            }
+            if keep >= len {
+                return
+            }
+            let data = raw[0]._data
+            var i = keep
+            while i < len {
+                vecDropAt(data[i].addrOf())
+                i = i.wrappingAdd(1)
+            }
+            raw[0]._len = keep
+        }
+    }
+
+    // Drops every element, first to last; the capacity is kept.
+    fn clear(self: &mut Self) {
+        self.truncate(0)
     }
 }

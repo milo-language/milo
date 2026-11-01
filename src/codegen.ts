@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecRemove, genVecSlice, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecRemove, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -62,7 +62,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "VecExtend", "VecInsert",
   "VecLen", "VecPtr", "VecPush", "VecReserve", "VecRetain",
   "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
-  "VecTruncate", "WrappingArith", "Zeroed",
+  "WrappingArith", "Zeroed",
 ];
 
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
@@ -5692,8 +5692,6 @@ export class Codegen {
         return genVecInsert(this, expr, lines);
       case "VecRemove":
         return genVecRemove(this, expr, lines);
-      case "VecTruncate":
-        return genVecTruncate(this, expr, lines);
       case "VecGetOpt":
         return genVecGetOpt(this, expr, lines);
       case "VecExtend":

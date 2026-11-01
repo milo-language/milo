@@ -386,3 +386,13 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   (184 blocks both; `leaks -atExit` hangs on this host, so a malloc-interposing counter
   stands in); bench 200k reverses of 1000 i64 + 1000 strings and 100M swaps 0.41s builtin
   vs 0.39s std.
+- 2026-11-01: `truncate` and `clear` moved (clear is `truncate(0)`). Same policy as
+  genVecTruncate: a negative length empties, a length at or past the end is a no-op, the
+  elements at and above the cut are dropped in place first to last (`vecDropAt`, a bitwise
+  move out), then len is stored. "cannot clear an immutable Vec" stays (the builtin branch
+  checks, then binds the std body). Old bug gone: an i32 length reached clang as an i64
+  compare on an i32 value; the resolved-method widening covers it. Planted: no drop in the
+  loop turns `vecTruncateClearStd` red and the live-heap counter shows 4 more blocks at
+  exit (188 vs 184). Output identical to the old compiler (fixture without the i32 line);
+  live heap equal; bench 15M rounds of push/truncate/clear over i64 and string Vecs 0.45s
+  builtin vs 0.46s std (cpu time, median of 5, interleaved; wall time is noise at load 23).

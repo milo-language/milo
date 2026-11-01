@@ -574,67 +574,6 @@ export function genVecPanic(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPanic" 
   return [lines, "void", "void"];
 }
 
-// `v.truncate(n)` / `v.clear()`. Elements at index >= n are OWNED by the Vec, so
-// shortening the length without running their drop glue would leak every string,
-// nested Vec or Drop-implementing struct above the cut. The counter lives in an
-// alloca rather than a phi because emitDropValue splits the block.
-export function genVecTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecTruncate" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  const elemType = expr.elementType;
-  const elemTy = Ty.of(ctx.llvmType(elemType));
-
-  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
-  lines.push(...vecPtrLines);
-  const vecPtr = val(vecPtrRef, Ty.ptr);
-  const nRaw = ctx.genVal(expr.length, lines);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  // A negative length means empty; a length past the end is a no-op, never a grow.
-  const isNeg = b.icmp("slt", val(nRaw.ref, Ty.i64), I64_0);
-  const n = b.select(isNeg, I64_0, val(nRaw.ref, Ty.i64));
-
-  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
-  const len = b.load(Ty.i64, lenPtr);
-
-  const doneLabel = b.newBlock("vec.trunc.done");
-  const startLabel = b.newBlock("vec.trunc.start");
-  const noop = b.icmp("uge", n, len);
-  b.condBr(noop, doneLabel, startLabel);
-  b.position(startLabel);
-
-  if (ctx.needsDropCg(elemType)) {
-    const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
-    const data = b.load(Ty.ptr, dataPtr);
-
-    const iAddr = b.entryAlloca(`%__trunc_i.${ctx.scopeCounter++}.addr`, Ty.i64);
-    b.store(n, iAddr);
-
-    const condLabel = b.newBlock("vec.trunc.cond");
-    const bodyLabel = b.newBlock("vec.trunc.body");
-    const finLabel = b.newBlock("vec.trunc.fin");
-    b.br(condLabel);
-    b.position(condLabel);
-    const i = b.load(Ty.i64, iAddr);
-    const cont = b.icmp("ult", i, len);
-    b.condBr(cont, bodyLabel, finLabel);
-
-    b.position(bodyLabel);
-    const elemPtr = b.gep(elemTy, data, [i]);
-    ctx.emitDropValue(lines, elemPtr.ref, elemType);
-    const iNow = b.load(Ty.i64, iAddr);
-    const iNext = b.binop("add", iNow, I64_1);
-    b.store(iNext, iAddr);
-    b.br(condLabel);
-
-    b.position(finLabel);
-  }
-
-  b.store(n, lenPtr);
-  b.br(doneLabel);
-  b.position(doneLabel);
-  return [lines, "void", "void"];
-}
-
 export function genVecRemove(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRemove" }, lines: string[]): Gen {
   ctx.hasVecType = true;
   ctx.needsDprintf = true;

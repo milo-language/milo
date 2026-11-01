@@ -13453,7 +13453,7 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot ${expr.method} an immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, expr.method, { tag: "void" });
       }
       if (expr.method === "pop") {
         if (expr.args.length !== 0) { this.error(`'pop' takes no arguments`, sp); }
