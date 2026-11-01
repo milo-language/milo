@@ -38,7 +38,6 @@ interface CodegenCtx extends StringCtx {
   registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind): string;
   valStore(ty: string, val: string, ptr: string, copy: CopyDecl): string;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
-  callbackElemArg(lines: string[], cbType: TypeKind, elemPtr: string, elemTy: string, paramIdx?: number): { arg: string; argTy: string };
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   enumLayouts: Map<string, EnumLayout>;
@@ -205,8 +204,7 @@ function closureParts(ctx: CodegenCtx, lines: string[], closure: string): { fnPt
 // (checker.ts checkCallbackSig), and these two sites passed the pointer regardless. The
 // closure then compared ADDRESSES: `sortByKey((x: i64): i64 => 0 - x)` ordered by negated
 // pointer, and `sortBy((x: i64, y: i64): bool => x > y)` left the vector untouched. Same
-// hole, and the same fix, as callbackElemArg in codegen.ts — kept separate because this
-// file takes a CodegenCtx rather than the class.
+// hole, and the same fix, the other combinators had.
 function cbElemArg(
   ctx: CodegenCtx,
   lines: string[],
@@ -286,77 +284,10 @@ export function genVecSortByKey(
 }
 
 const VEC_TY = Ty.of("%Vec");
-const CLOSURE_TY = Ty.of("{ ptr, ptr }");
 const I64_0 = val("0", Ty.i64);
 const I64_1 = val("1", Ty.i64);
 const I32_0 = val("0", Ty.i32);
 const I32_1 = val("1", Ty.i32);
-
-// Extract closure fn/env and vec data/len for functional methods.
-// `release` frees a temporary receiver (`mk().any(f)`, `a.filter(f).map(g)`) and must run
-// after the loop: every combinator reads elements in place or deep-clones them out, so
-// once it has finished nothing points into the receiver and nothing else will free it.
-function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
-  fnPtr: Val; envPtr: Val; data: Val; len: Val; elemTy: Ty; release: () => void;
-} {
-  ctx.hasVecType = true;
-  const vv = ctx.genVal(vecExpr, lines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv.ref, VEC_TY);
-  const data = b.extractvalue(vec, 0, Ty.ptr);
-  const len = b.extractvalue(vec, 1, Ty.i64);
-  const cv = ctx.genVal(cbExpr, lines);
-  const cb = val(cv.ref, CLOSURE_TY);
-  const fnPtr = b.extractvalue(cb, 0, Ty.ptr);
-  const envPtr = b.extractvalue(cb, 1, Ty.ptr);
-  const release = () => ctx.dropOwnedTemp(lines, vv.ref, "%Vec", vecExpr);
-  return { fnPtr, envPtr, data, len, elemTy: Ty.of(ctx.llvmType(elemType)), release };
-}
-
-export function genVecMap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMap" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
-  const resultElemTy = Ty.of(ctx.llvmType(expr.resultElementType));
-  const resultElemSize = ctx.typeSizeOf(expr.resultElementType);
-  ctx.needsMalloc = true;
-
-  // allocate result buffer: malloc(len * elemSize)
-  const { buf: bufRef } = ctx.emitAllocBytes(lines, len.ref, resultElemSize, "vecmap", expr.span);
-  const buf = val(bufRef, Ty.ptr);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  const idxAddr = b.entryAlloca(`%__map_idx.${ctx.scopeCounter++}.addr`, Ty.i64);
-  b.store(I64_0, idxAddr);
-
-  const condLabel = b.newBlock("map.cond");
-  const bodyLabel = b.newBlock("map.body");
-  const endLabel = b.newBlock("map.end");
-
-  b.br(condLabel);
-  b.position(condLabel);
-  const idx = b.load(Ty.i64, idxAddr);
-  const cmp = b.icmp("ult", idx, len);
-  b.condBr(cmp, bodyLabel, endLabel);
-  b.position(bodyLabel);
-  const elemPtr = b.gep(elemTy, data, [idx]);
-  // check if callback takes element by value or by ref
-  const cbType = expr.callback.type;
-  const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
-  const callArg = paramIsRef ? elemPtr : b.load(elemTy, elemPtr);
-  const result = b.call(resultElemTy, fnPtr.ref, [envPtr, callArg]);
-  const destPtr = b.gep(resultElemTy, buf, [idx]);
-  b.store(result, destPtr);
-  const nextIdx = b.binop("add", idx, I64_1);
-  b.store(nextIdx, idxAddr);
-  b.br(condLabel);
-  b.position(endLabel);
-
-  // build result Vec { buf, len, len }
-  const v0 = b.insertvalue(val("undef", VEC_TY), buf, 0);
-  const v1 = b.insertvalue(v0, len, 1);
-  const v2 = b.insertvalue(v1, len, 2);
-  release();
-  return [lines, v2.ref, "%Vec"];
-}
 
 // Set up an `alloca Option<…>` pre-filled with None; callers branch to a "some"
 // block that overwrites the tag and payload. Shared by get/min/max/indexOf/position.

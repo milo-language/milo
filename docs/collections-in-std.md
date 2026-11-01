@@ -432,3 +432,18 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   reject programs the builtin accepted). `cbArgVal` lost its last caller. Planted `!f`
   turns `vecFilterStd` red; output identical; live heap equal; 15 corpus files pass;
   bench 1.5M filters of 256 i64 + 256 strings 0.78s builtin vs 0.76s std.
+- 2026-11-01: `map` moved as `map<U>`, `@inline`: exactly `len` slots
+  (`Vec.withCapacity(len)`), `dst[i] = f(src[i])`, len stored at the end. The checker keeps
+  the builtin's callback check (receiver frozen) to learn U from the callback's return
+  type, then binds `map<U>` without checking the callback twice (`bindStdVecMethod` with
+  type arguments). std passes `&T`, so a by-value callback on a Copy element is adapted:
+  a literal or named fn by `coerceCopyCallback`, and a fn VALUE (`let f = (x: i64) => ...;
+  v.map(f)`, which the builtin took and `any` already refuses) by a thunk `(p: &T) => f(p)`,
+  so no program the builtin accepted is refused. The std methods now write the header
+  through a non-generic `VecHead` and reach elements through `ptr()`: a `VecRaw<U>` per
+  element type needed a struct name for `U = [i64; 2]`, which LLVM rejected. Fixed in
+  passing: `typeKindToMiloType` spelled a fixed array as a struct name, so any generic
+  instantiated with one reached clang as `%[i64; 2]`. `vecPreamble`, `CLOSURE_TY` and
+  codegen's `callbackElemArg` lost their last callers. Planted `f(src[0])` turns
+  `vecMapStd` red; output identical; live heap equal (187 blocks both); 22 corpus files
+  pass; bench 1.5M maps of 256 i64 + 256 strings 0.23s builtin vs 0.24s std.

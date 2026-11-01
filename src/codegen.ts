@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -5666,8 +5666,6 @@ export class Codegen {
         this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, len, "i64"];
       }
-      case "VecMap":
-        return genVecMap(this, expr, lines);
       case "VecInsert":
         return genVecInsert(this, expr, lines);
       case "VecGetOpt":
@@ -7785,34 +7783,6 @@ export class Codegen {
     return [lines, val, innerTy];
   }
 
-  // What to hand a Vec combinator's callback for one element.
-  //
-  // Every combinator hints `&T`, but the checker deliberately lets a closure declare a
-  // COPY T by value (see checkCallbackSig). Codegen has to honour that or the closure
-  // receives a POINTER where it declared an integer: `each((x: i64) => print(x))` printed
-  // raw addresses, `filter((x: i64): bool => x > 1)` kept every element because a heap
-  // pointer is greater than 1, and `retain((x: i64): bool => x % 2 == 0)` kept every
-  // element because a heap pointer is even. genVecMap had this right and eight sibling
-  // sites did not — the same idiom, present in one copy and missing from the rest.
-  //
-  // `paramIdx` because the element is not always the first argument: fold takes the
-  // accumulator first, eachIndexed the index.
-  callbackElemArg(
-    lines: string[],
-    cbType: TypeKind,
-    elemPtr: string,
-    elemTy: string,
-    paramIdx = 0,
-  ): { arg: string; argTy: string } {
-    const p = cbType.tag === "fn" ? cbType.params[paramIdx] : undefined;
-    // Unknown/missing means the checker already reported it; pass the pointer as before
-    // rather than inventing a load on a type we cannot name.
-    if (!p || p.tag === "ref" || p.tag === "unknown") return { arg: elemPtr, argTy: "ptr" };
-    const loaded = this.nextTemp();
-    lines.push(`  ${loaded} = load ${elemTy}, ptr ${elemPtr}`);
-    return { arg: loaded, argTy: elemTy };
-  }
-
   // The one place a heap buffer is sized and allocated. `count * elemSize` was written
   // longhand at 15 sites and not one of them checked the product, so any site reachable
   // with a user-controlled count under-allocated on overflow (malloc got the wrapped byte
@@ -9456,7 +9426,6 @@ export class Codegen {
       case "VecNew":
       case "VecWithCapacity":
       case "VecFilled":
-      case "VecMap":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":
       // get's payload is cloned out of the buffer, so nothing else owns it and

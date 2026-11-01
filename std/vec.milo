@@ -5,17 +5,21 @@
 // Every method here takes `self: &Self` unless it must change the Vec, so a slice
 // (`&[T]`, the same layout) may call it too.
 //
-// The methods that change a Vec reach its header through VecRaw, which mirrors codegen's
-// %Vec layout field for field. Elements move with raw-pointer reads and writes: `*p` is a
-// bitwise move out, `*p = x` a store that drops nothing, so no element is copied or
-// dropped twice. A bounds panic goes through _vecPanic for the builtins' wording, and
-// @trackCaller makes every panic name the caller's line.
+// The methods that change a Vec's length write its header through VecHead, which mirrors
+// codegen's %Vec layout field for field; they reach the elements through `ptr()`, typed.
+// Elements move with raw-pointer reads and writes: `*p` is a bitwise move out, `*p = x` a
+// store that drops nothing, so no element is copied or dropped twice. A bounds panic goes
+// through _vecPanic for the builtins' wording, and @trackCaller makes every panic name the
+// caller's line.
 
 // Declared here, as std/string does, so the prelude's Vec pulls in no other module.
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
 
-struct VecRaw<T> {
-    _data: *T,
+// Not generic: the header's layout does not depend on the element, and an instantiation
+// per element type would need a struct name for every T (`[i64; 2]` has none that LLVM
+// accepts).
+struct VecHead {
+    _data: *u8,
     _len: i64,
     _cap: i64,
 }
@@ -237,6 +241,26 @@ impl Vec<T> {
         return _vecCopyOut(self)
     }
 
+    // A new Vec of `f` applied to each element, in order, with exactly `len` slots, as the
+    // builtin allocated it. The checker infers U from the callback's return type.
+    @inline
+    fn map<U>(self: &Self, f: (&T) => U): Vec<U> {
+        let len = self.len()
+        var out: Vec<U> = Vec.withCapacity(len)
+        unsafe {
+            let src = self.ptr()
+            var raw = (out.addrOf() as *u8) as *VecHead
+            var dst = out.ptr()
+            var i = 0
+            while i < len {
+                dst[i] = f(src[i])
+                i = i.wrappingAdd(1)
+            }
+            raw[0]._len = len
+        }
+        return out
+    }
+
     // A new Vec of copies of the elements `f` holds for, in order. The copies are
     // _vecCopyOut's, as clone's are. Its capacity is the source length (every element
     // might match), as the builtin allocated it.
@@ -246,8 +270,8 @@ impl Vec<T> {
         var out: Vec<T> = Vec.withCapacity(len)
         unsafe {
             let src = self.ptr()
-            var raw = (out.addrOf() as *u8) as *VecRaw<T>
-            var dst = raw[0]._data
+            var raw = (out.addrOf() as *u8) as *VecHead
+            var dst = out.ptr()
             var n = 0
             var i = 0
             while i < len {
@@ -293,7 +317,7 @@ impl Vec<T> {
     // grows the Vec).
     fn truncate(self: &mut Self, n: i64) {
         unsafe {
-            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            var raw = (self.addrOf() as *u8) as *VecHead
             let len = raw[0]._len
             var keep = n
             if keep < 0 {
@@ -302,7 +326,7 @@ impl Vec<T> {
             if keep >= len {
                 return
             }
-            let data = raw[0]._data
+            let data = self.ptr()
             var i = keep
             while i < len {
                 vecDropAt(data[i].addrOf())
@@ -321,14 +345,14 @@ impl Vec<T> {
     // its slot; nothing is copied.
     fn pop(self: &mut Self): Option<T> {
         unsafe {
-            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            var raw = (self.addrOf() as *u8) as *VecHead
             let len = raw[0]._len
             if len == 0 {
                 return Option.None
             }
             let last = len.wrappingSub(1)
             raw[0]._len = last
-            let data = raw[0]._data
+            let data = self.ptr()
             return Option.Some(*data[last].addrOf())
         }
     }
@@ -338,13 +362,13 @@ impl Vec<T> {
     @trackCaller
     fn remove(self: &mut Self, i: i64): T {
         unsafe {
-            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            var raw = (self.addrOf() as *u8) as *VecHead
             let len = raw[0]._len
             // Unsigned, so a negative index is out of range too, in one compare.
             if (i as u64) >= (len as u64) {
                 _vecPanic("remove index out of bounds")
             }
-            let data = raw[0]._data
+            let data = self.ptr()
             let out = *data[i].addrOf()
             let next = i.wrappingAdd(1)
             memmove(data[i].addrOf() as *u8, data[next].addrOf() as *u8, len.wrappingSub(next).wrappingMul(sizeOf<T>()))
@@ -360,9 +384,9 @@ impl Vec<T> {
     @inline
     fn retain(self: &mut Self, f: (&T) => bool) {
         unsafe {
-            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            var raw = (self.addrOf() as *u8) as *VecHead
             let len = raw[0]._len
-            var data = raw[0]._data
+            var data = self.ptr()
             var kept = 0
             var i = 0
             while i < len {

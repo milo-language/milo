@@ -2902,6 +2902,12 @@ export class TypeChecker {
           return { ...simpleType(`${t.signed ? "i" : "u"}${t.bits}`), rangeMin: t.min, rangeMax: t.max };
         }
         return simpleType(typeName(t));
+      // typeName spells `[i64; 2]`, which resolved as a struct name: std's `map<U>` with a
+      // fixed-array U reached clang as `%[i64; 2]`. An array type is its element's type
+      // with the array flag (one level; a nested array keeps the spelled name).
+      case "array":
+        if (t.element.tag !== "array") return { ...this.typeKindToMiloType(t.element), isArray: true, arraySize: t.size };
+        return simpleType(typeName(t));
       default: return simpleType(typeName(t));
     }
   }
@@ -13480,12 +13486,43 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+        // The body is std/vec's map<U>, with U the callback's return type, so the callback
+        // is checked here, once, and the method bound after. std passes `&T`: a by-value
+        // Copy callback is adapted to it (closure literal or named fn); a fn VALUE taking T
+        // is wrapped in a thunk here, since the builtin map took one: `(p: &T) => f(p)`,
+        // which borrows `f` only for the call (std's `f` parameter does not escape).
+        this.coerceCopyCallback(expr.args[0], cbHint);
+        const a0 = expr.args[0]!;
+        const local = a0.kind === "Ident" ? this.lookup(a0.name) : undefined;
+        if (a0.kind === "Ident" && local?.type.tag === "fn" && local.type.params.length === 1
+            && this.isCopyType(objType.element) && typeEq(local.type.params[0]!, objType.element)) {
+          const span = a0.span;
+          const call: Expr = { kind: "Call", func: a0.name, args: [{ kind: "Ident", name: "__cb0", span }], span };
+          const fnRet = local.type.ret;
+          const thunk: Expr = {
+            kind: "Closure",
+            params: [{ name: "__cb0", type: this.typeKindToMiloType(elemRef), span }],
+            retType: fnRet.tag === "void" ? null : this.typeKindToMiloType(fnRet),
+            body: [fnRet.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
+            span,
+          };
+          for (const k of Object.keys(a0)) delete (a0 as unknown as Record<string, unknown>)[k];
+          Object.assign(a0, thunk);
+        }
         const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
-        return this.setType(expr, { tag: "vec", element: cbType.ret });
+        const ret: TypeKind = { tag: "vec", element: cbType.ret };
+        const p0 = cbType.params[0];
+        if (p0 && p0.tag !== "ref" && p0.tag !== "unknown") {
+          this.error(`'map' callback parameter 1 is declared ${this.show(p0)}, but map passes ${this.show(elemRef)}`, sp,
+            `declare the parameter as '${this.show(elemRef)}', or pass a closure literal, which is adapted`);
+          return this.setType(expr, ret);
+        }
+        if (cbType.ret.tag === "unknown") return this.setType(expr, ret);
+        return this.bindStdVecMethod(expr, objType.element, "map", ret, { mutable: false, typeArgs: [cbType.ret] });
       }
       // filter is std/vec code, dispatched like the read-only callback methods. It copies
       // each kept element structurally (_vecCopyOut), as the builtin did, Drop elements too.
