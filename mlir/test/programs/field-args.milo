@@ -1,0 +1,45 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a field lent as a
+// `&T` argument: a Vec field of a place (lent as its header), a field of an immutable
+// value, and an owning field of a temporary (the temporary keeps owning it).
+
+struct Doc { title: string, words: Vec<string>, n: i64 }
+
+struct Pt { x: i64, y: i64 }
+
+fn count(v: &Vec<string>): i64 {
+    return v.len()
+}
+
+fn width(s: &string): i64 {
+    return s.len()
+}
+
+fn sq(n: &i64): i64 {
+    return n * n
+}
+
+fn mk(k: i64): Doc {
+    var w: Vec<string> = Vec.new()
+    for i in 0..k {
+        w.push("w".repeat(i + 1))
+    }
+    return Doc { title: "t".repeat(k), words: w, n: k }
+}
+
+fn summary(d: &Doc): i64 {
+    return count(d.words) * 100 + width(d.title)
+}
+
+fn fresh(k: i64): i64 {
+    return width(mk(k).title) + count(mk(k).words)
+}
+
+fn point(a: i64): i64 {
+    let p = Pt { x: a, y: a + 1 }
+    return sq(p.x) + sq(p.y)
+}
+
+fn main() {
+    let d = mk(3)
+    print(summary(d), " ", fresh(4), " ", point(5), " ", d.words)
+}

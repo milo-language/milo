@@ -1767,8 +1767,22 @@ class FnEmitter {
     if (e.kind === "FieldAccess") {
       // A field of a slot is lent in place; the slot's param, if any, is where it points.
       const p = this.fieldPlace(e);
-      if (!p || `!milo.ref<${p.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of a field of a value");
-      return { ref: p.ref, param: p.param };
+      if (p) {
+        // A Vec field is lent as its header's place.
+        if (refOf(p.ty) === refTy && refTy !== `!milo.ref<${p.ty}>`)
+          return { ref: this.def(`milo.vec.place ${p.ref} : !milo.ref<${p.ty}> -> ${refTy}`, refTy).ref, param: p.param };
+        if (`!milo.ref<${p.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of a field of another type");
+        return { ref: p.ref, param: p.param };
+      }
+      // A field of a value (an immutable binding, a temporary): lent from a slot of its
+      // own that drops nothing, the value or the temporary still owning what it holds.
+      if (mut) throw new MlirUnsupported("&mut of a field of a value");
+      const v = this.expr(e);
+      if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of a field of a value");
+      const ref = this.fresh();
+      this.vars.push(`  ${ref} = milo.var "arg" : ${refTy}`);
+      this.emit(`milo.store ${v.ref}, ${ref} : ${refTy}`);
+      return { ref };
     }
     if (e.kind !== "Ident") {
       // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.

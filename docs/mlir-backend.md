@@ -345,6 +345,10 @@ structs, enums.
   anything measured: strings arrive as `StringClone`, and the checker refuses moving an
   owning struct out of a borrow. Program `tail-views`; planted bug: `milo.load` for the
   move (`tail-views` stdout, a use after free). Tahoe Roads api: 3992 of 5350 (74.6%).
+- *Fields as `&T` arguments*: a Vec field of a place is lent as its header
+  (`milo.vec.place`); a field of a value (an immutable binding) from a slot of its own that
+  drops nothing. Program `field-args`; planted bug: the spill slot never written
+  (`field-args` stdout). Tahoe Roads api: 4051 of 5350 (75.7%).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
