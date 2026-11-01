@@ -164,6 +164,22 @@ func.func @enum_offset(%e: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 2),
 
 // -----
 
+func.func @enum_two_bodies(%a: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>,
+// expected-error @+1 {{enum "S" has two different bodies}}
+                           %b: !milo.enum<"S", size = 16, align = 8, [0: (si64 at 8), 1: ()]>) {
+  milo.return
+}
+
+// -----
+
+func.func @struct_two_bodies(%a: !milo.struct<"P", si64>,
+// expected-error @+1 {{struct "P" has two different bodies}}
+                             %b: !milo.struct<"P", f64>) {
+  milo.return
+}
+
+// -----
+
 func.func @match_arity(%e: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>) {
   // expected-error @+1 {{payload is not the fields of variant 0}}
   milo.match %e : !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]> [0, 1] {

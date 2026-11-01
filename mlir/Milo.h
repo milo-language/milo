@@ -53,6 +53,65 @@ void populateScalarToLLVMPatterns(mlir::LLVMTypeConverter &tc,
                                   mlir::RewritePatternSet &patterns);
 } // namespace milo
 
+namespace milo::detail {
+// Storage of the identified aggregates (Milo.td StructType, EnumType): uniqued by name,
+// the body set once by mutate, after the type exists, so it can refer to itself.
+struct StructTypeStorage : mlir::TypeStorage {
+  using KeyTy = llvm::StringRef;
+  explicit StructTypeStorage(llvm::StringRef name) : name(name) {}
+  bool operator==(const KeyTy &k) const { return k == name; }
+  static llvm::hash_code hashKey(const KeyTy &k) { return llvm::hash_value(k); }
+  static StructTypeStorage *construct(mlir::TypeStorageAllocator &a, const KeyTy &k) {
+    return new (a.allocate<StructTypeStorage>()) StructTypeStorage(a.copyInto(k));
+  }
+  llvm::LogicalResult mutate(mlir::TypeStorageAllocator &a, llvm::ArrayRef<mlir::Type> f,
+                             bool drop) {
+    if (initialized)
+      return llvm::success(f == fields && drop == userDrop);
+    fields = a.copyInto(f);
+    userDrop = drop;
+    initialized = true;
+    return llvm::success();
+  }
+  llvm::StringRef name;
+  llvm::ArrayRef<mlir::Type> fields;
+  bool userDrop = false;
+  bool initialized = false;
+};
+
+struct EnumTypeStorage : mlir::TypeStorage {
+  using KeyTy = llvm::StringRef;
+  explicit EnumTypeStorage(llvm::StringRef name) : name(name) {}
+  bool operator==(const KeyTy &k) const { return k == name; }
+  static llvm::hash_code hashKey(const KeyTy &k) { return llvm::hash_value(k); }
+  static EnumTypeStorage *construct(mlir::TypeStorageAllocator &a, const KeyTy &k) {
+    return new (a.allocate<EnumTypeStorage>()) EnumTypeStorage(a.copyInto(k));
+  }
+  llvm::LogicalResult mutate(mlir::TypeStorageAllocator &a, int64_t sz, int64_t al,
+                             llvm::ArrayRef<int32_t> tg, llvm::ArrayRef<mlir::TupleType> vs,
+                             llvm::ArrayRef<int64_t> offs, bool drop) {
+    if (initialized)
+      return llvm::success(sz == size && al == align && tg == tags && vs == variants &&
+                           offs == offsets && drop == userDrop);
+    size = sz;
+    align = al;
+    tags = a.copyInto(tg);
+    variants = a.copyInto(vs);
+    offsets = a.copyInto(offs);
+    userDrop = drop;
+    initialized = true;
+    return llvm::success();
+  }
+  llvm::StringRef name;
+  int64_t size = 0, align = 0;
+  llvm::ArrayRef<int32_t> tags;
+  llvm::ArrayRef<mlir::TupleType> variants;
+  llvm::ArrayRef<int64_t> offsets;
+  bool userDrop = false;
+  bool initialized = false;
+};
+} // namespace milo::detail
+
 #include "MiloDialect.h.inc"
 #include "MiloEnums.h.inc"
 #define GET_TYPEDEF_CLASSES

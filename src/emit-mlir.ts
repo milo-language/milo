@@ -95,6 +95,9 @@ function scalar(t: TypeKind, what: string): string {
 }
 
 const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
+// The aggregates placeType is spelling, outermost first, and the outermost of them the
+// spelling so far names by name alone.
+const spelling = new WeakMap<MlirEmitCtx, { keys: string[]; outer: number }>();
 
 const bigTypes = new WeakMap<MlirEmitCtx, Set<string>>();
 
@@ -154,10 +157,23 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
   if (!cache) aggregates.set(cx, cache = new Map());
   const key = `${t.tag} ${t.name}`;
   if (cache.has(key)) return cache.get(key)!;
-  // A type that contains itself is behind a Heap, which this rejects anyway.
-  cache.set(key, null);
-  const r = aggregateType(cx, t);
-  cache.set(key, r);
+  let sp = spelling.get(cx);
+  if (!sp) spelling.set(cx, sp = { keys: [], outer: Infinity });
+  const at = sp.keys.indexOf(key);
+  if (at >= 0) {
+    // Met again inside its own fields (through a Vec): by name alone, the same type.
+    sp.outer = Math.min(sp.outer, at);
+    return `!milo.${t.tag}<${quote(t.name)}>`;
+  }
+  const depth = sp.keys.length, saved = sp.outer;
+  sp.keys.push(key);
+  sp.outer = Infinity;
+  let r: string | null;
+  try { r = aggregateType(cx, t); } finally { sp.keys.pop(); }
+  // A spelling that names an enclosing type by name alone is complete only inside that
+  // type's own, so it is not the one to reuse.
+  if (sp.outer >= depth) cache.set(key, r);
+  sp.outer = Math.min(saved, sp.outer);
   // One holding an array is a place only too: the array is never an SSA value.
   if (r !== null && (cx.typeSizeOf(t) >= 128 || r.includes("!milo.array<"))) {
     if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
@@ -216,15 +232,17 @@ function stripRefs(t: TypeKind): TypeKind {
 }
 
 /** Why valueType rejects `t`: its tag, and for an aggregate what inside it blocks it. */
-function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0): string {
+function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0, seen: string[] = []): string {
   if (t.tag === "int") return "ranged int";
+  if (t.tag === "vec" && depth <= 3) return `vec (${blocker(cx, t.element, depth + 1, seen)})`;
   if ((t.tag !== "struct" && t.tag !== "enum") || depth > 3) return t.tag;
+  if (seen.includes(t.name)) return "recursive";
   const why = cx.typeSizeOf(t) >= 128 ? "128+ bytes" : cx.llvmType(t) !== `%${t.name}` ? "niche" : null;
   if (why) return `${t.tag} (${why})`;
   const fields = t.tag === "struct" ? cx.structLayouts.get(t.name)?.fields.map(f => f.typeKind) ?? []
     : cx.mlirEnumLayout(t.name)?.variants.flatMap(v => v.fields) ?? [];
   const bad = fields.find(f => valueType(cx, f) === null);
-  return bad ? `${t.tag} (${blocker(cx, bad, depth + 1)})` : t.tag;
+  return bad ? `${t.tag} (${blocker(cx, bad, depth + 1, [...seen, t.name])})` : t.tag;
 }
 
 /** MLIR string literal (symbol names, file names in locations). */

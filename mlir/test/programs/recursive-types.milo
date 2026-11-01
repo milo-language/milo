@@ -1,0 +1,141 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: types that hold
+// themselves through a Vec (a JSON-like value, a tree), which the dialect spells by name
+// inside their own body. Built, matched by reference and by value, walked recursively,
+// lent as `&Vec<Val>`, held in a struct param, moved into and out of Vecs, and dropped.
+
+enum Val {
+    Null,
+    Num(i64),
+    Str(string),
+    Arr(Vec<Val>),
+    Obj(Vec<Member>),
+}
+
+struct Member { key: string, val: Val }
+
+struct Tree { label: string, kids: Vec<Tree> }
+
+struct Doc { root: Val, name: string }
+
+fn render(v: &Val): string {
+    match v {
+        Val.Null => { return "null" }
+        Val.Num(n) => { return $"{n}" }
+        Val.Str(s) => { return "\"" + s + "\"" }
+        Val.Arr(items) => { return "[" + renderAll(items) + "]" }
+        Val.Obj(ms) => {
+            var out = "{"
+            for i, m in ms {
+                if i > 0 {
+                    out.pushStr(",")
+                }
+                out.pushStr(m.key + ":" + render(m.val))
+            }
+            return out + "}"
+        }
+    }
+}
+
+fn renderAll(items: &Vec<Val>): string {
+    var out = ""
+    for i, it in items {
+        if i > 0 {
+            out.pushStr(",")
+        }
+        out.pushStr(render(it))
+    }
+    return out
+}
+
+fn sum(v: &Val): i64 {
+    match v {
+        Val.Num(n) => { return n }
+        Val.Arr(items) => {
+            var t = 0
+            for it in items {
+                t = t + sum(it)
+            }
+            return t
+        }
+        Val.Obj(ms) => {
+            var t = 0
+            for m in ms {
+                t = t + sum(m.val)
+            }
+            return t
+        }
+        _ => { return 0 }
+    }
+}
+
+fn member(k: string, v: Val): Member {
+    return Member { key: k, val: v }
+}
+
+fn sample(n: i64): Val {
+    var items: Vec<Val> = Vec.new()
+    for i in 0..n {
+        items.push(Val.Num(i))
+    }
+    items.push(Val.Str("s" + $"{n}"))
+    items.push(Val.Null)
+    var ms: Vec<Member> = Vec.new()
+    ms.push(member("a", Val.Arr(items)))
+    ms.push(member("b", Val.Num(n * 10)))
+    return Val.Obj(ms)
+}
+
+fn depth(t: &Tree): i64 {
+    var d = 0
+    for k in t.kids {
+        let kd = depth(k)
+        if kd > d {
+            d = kd
+        }
+    }
+    return d + 1
+}
+
+fn grow(label: string, n: i64): Tree {
+    var kids: Vec<Tree> = Vec.new()
+    if n > 0 {
+        kids.push(grow(label + "l", n - 1))
+        kids.push(Tree { label: label + "r", kids: Vec.new() })
+    }
+    return Tree { label: label, kids: kids }
+}
+
+fn describe(d: &Doc): string {
+    return d.name + "=" + render(d.root)
+}
+
+fn firstStr(v: Val): string {
+    match v {
+        Val.Arr(items) => {
+            for it in items {
+                match it {
+                    Val.Str(s) => { return s }
+                    _ => {}
+                }
+            }
+            return "-"
+        }
+        _ => { return "-" }
+    }
+}
+
+fn main() {
+    let v = sample(3)
+    print(render(v))
+    print(sum(v))
+    let t = grow("t", 3)
+    print(depth(t), " ", t.label, " ", t.kids.len())
+    let d = Doc { root: sample(1), name: "doc" }
+    print(describe(d))
+    var arr: Vec<Val> = Vec.new()
+    arr.push(Val.Num(5))
+    arr.push(Val.Str("x"))
+    arr.push(sample(2))
+    print(renderAll(arr))
+    print(firstStr(Val.Arr(arr)))
+}

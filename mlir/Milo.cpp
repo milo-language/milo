@@ -31,29 +31,56 @@ void MiloDialect::initialize() {
 // Aggregate types.
 //===----------------------------------------------------------------------===//
 
-// !milo.struct<"Name", T0, T1>
+// !milo.struct<"Name", T0, T1>, or `!milo.struct<"Name">` inside its own body. A bare name
+// that is neither being parsed nor defined yet is the struct with no fields. A body may be
+// spelled again inside itself (a field type spelled whole): it must be the same body.
 Type StructType::parse(AsmParser &p) {
   std::string name;
-  SmallVector<Type> fields;
+  SMLoc loc = p.getCurrentLocation();
   if (p.parseLess() || p.parseString(&name))
     return {};
+  auto t = StructType::get(p.getContext(), name);
+  FailureOr<AsmParser::CyclicParseReset> cycle = p.tryStartCyclicParse(t);
+  if (succeeded(p.parseOptionalGreater())) {
+    if (failed(cycle) || t.isInitialized())
+      return t;
+    (void)t.setBody({}, false);
+    return t;
+  }
   bool userDrop = succeeded(p.parseOptionalKeyword("drop"));
+  SmallVector<Type> fields;
   while (succeeded(p.parseOptionalComma())) {
-    Type t;
-    if (p.parseType(t))
+    Type f;
+    if (p.parseType(f))
       return {};
-    fields.push_back(t);
+    fields.push_back(f);
   }
   if (p.parseGreater())
     return {};
-  return StructType::get(p.getContext(), name, fields, userDrop);
+  if (failed(t.setBody(fields, userDrop))) {
+    p.emitError(loc) << "struct \"" << name << "\" has two different bodies";
+    return {};
+  }
+  return t;
 }
 
 void StructType::print(AsmPrinter &p) const {
-  p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "");
-  for (Type t : getFields())
-    p << ", " << t;
+  FailureOr<AsmPrinter::CyclicPrintReset> cycle = p.tryStartCyclicPrint(*this);
+  p << "<\"" << getName() << "\"";
+  if (succeeded(cycle)) {
+    p << (getUserDrop() ? " drop" : "");
+    for (Type t : getFields())
+      p << ", " << t;
+  }
   p << ">";
+}
+
+StringRef StructType::getName() const { return getImpl()->name; }
+ArrayRef<Type> StructType::getFields() const { return getImpl()->fields; }
+bool StructType::getUserDrop() const { return getImpl()->userDrop; }
+bool StructType::isInitialized() const { return getImpl()->initialized; }
+LogicalResult StructType::setBody(ArrayRef<Type> fields, bool userDrop) {
+  return Base::mutate(fields, userDrop);
 }
 
 Type FnType::parse(AsmParser &p) {
@@ -70,7 +97,8 @@ void FnType::print(AsmPrinter &p) const {
   p << "<" << (getOwning() ? "owning " : "") << getSignature() << ">";
 }
 
-// !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>
+// !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>, or
+// `!milo.enum<"Name">`, the same type by name (inside its own body, or defined elsewhere).
 Type EnumType::parse(AsmParser &p) {
   std::string name;
   int64_t size, align;
@@ -78,8 +106,12 @@ Type EnumType::parse(AsmParser &p) {
   SmallVector<TupleType> variants;
   SmallVector<int64_t> offsets;
   bool userDrop = false;
+  SMLoc loc = p.getCurrentLocation();
   if (p.parseLess() || p.parseString(&name))
     return {};
+  auto t = EnumType::get(p.getContext(), name);
+  if (succeeded(p.parseOptionalGreater()))
+    return t;
   userDrop = succeeded(p.parseOptionalKeyword("drop"));
   if (p.parseComma() || p.parseKeyword("size") ||
       p.parseEqual() || p.parseInteger(size) || p.parseComma() || p.parseKeyword("align") ||
@@ -106,11 +138,18 @@ Type EnumType::parse(AsmParser &p) {
   };
   if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, variant) || p.parseGreater())
     return {};
-  return EnumType::getChecked([&] { return p.emitError(p.getNameLoc()); }, p.getContext(),
-                              name, size, align, tags, variants, offsets, userDrop);
+  if (failed(t.setBody([&] { return p.emitError(loc); }, size, align, tags, variants, offsets,
+                       userDrop)))
+    return {};
+  return t;
 }
 
 void EnumType::print(AsmPrinter &p) const {
+  FailureOr<AsmPrinter::CyclicPrintReset> cycle = p.tryStartCyclicPrint(*this);
+  if (failed(cycle) || !isInitialized()) {
+    p << "<\"" << getName() << "\">";
+    return;
+  }
   p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "") << ", size = " << getSize() << ", align = " << getAlign() << ", [";
   unsigned k = 0;
   llvm::interleaveComma(llvm::zip(getTags(), getVariants()), p, [&](auto tv) {
@@ -122,9 +161,19 @@ void EnumType::print(AsmPrinter &p) const {
   p << "]>";
 }
 
-LogicalResult EnumType::verify(function_ref<InFlightDiagnostic()> emitError, StringRef,
-                               int64_t size, int64_t align, ArrayRef<int32_t> tags,
-                               ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets, bool) {
+StringRef EnumType::getName() const { return getImpl()->name; }
+int64_t EnumType::getSize() const { return getImpl()->size; }
+int64_t EnumType::getAlign() const { return getImpl()->align; }
+ArrayRef<int32_t> EnumType::getTags() const { return getImpl()->tags; }
+ArrayRef<TupleType> EnumType::getVariants() const { return getImpl()->variants; }
+ArrayRef<int64_t> EnumType::getOffsets() const { return getImpl()->offsets; }
+bool EnumType::getUserDrop() const { return getImpl()->userDrop; }
+bool EnumType::isInitialized() const { return getImpl()->initialized; }
+
+LogicalResult EnumType::setBody(function_ref<InFlightDiagnostic()> emitError, int64_t size,
+                                int64_t align, ArrayRef<int32_t> tags,
+                                ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets,
+                                bool userDrop) {
   if (tags.size() != variants.size())
     return emitError() << "needs one tag per variant";
   size_t fields = 0;
@@ -139,6 +188,8 @@ LogicalResult EnumType::verify(function_ref<InFlightDiagnostic()> emitError, Str
   for (int64_t off : offsets)
     if (off < 4 || off >= size)
       return emitError() << "payload offset " << off << " is outside bytes 4.." << size;
+  if (failed(Base::mutate(size, align, tags, variants, offsets, userDrop)))
+    return emitError() << "enum \"" << getName() << "\" has two different bodies";
   return success();
 }
 

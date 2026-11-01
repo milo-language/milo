@@ -131,11 +131,23 @@ def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
 // A type with its own `impl Drop` says so after its name, `!milo.struct<"Noisy" drop, si64>`
 // (enums the same way): it has drop glue whatever its fields are, and the glue runs the
 // user's drop first (legacy's, through milo.drop.<key>).
-def Milo_StructType : TypeDef<Milo_Dialect, "Struct"> {
+// Structs and enums are identified by name, as LLVM's identified structs are: the body is
+// set once, after the type exists, so a type can hold itself through a Vec (a JSON value,
+// a tree). Inside its own body it is spelled by name alone, `!milo.enum<"Json">`, which is
+// the same type. A second body for a name must equal the first (the parser checks).
+def Milo_StructType : TypeDef<Milo_Dialect, "Struct", [MutableType]> {
   let mnemonic = "struct";
-  let parameters = (ins StringRefParameter<>:$name, ArrayRefParameter<"::mlir::Type">:$fields,
-                        "bool":$userDrop);
+  let storageClass = "StructTypeStorage";
+  let genStorageClass = 0;
+  let parameters = (ins StringRefParameter<>:$name);
   let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = [{
+    ::llvm::ArrayRef<::mlir::Type> getFields() const;
+    bool getUserDrop() const;
+    bool isInitialized() const;
+    // Fails when the body was already set to another one.
+    ::mlir::LogicalResult setBody(::llvm::ArrayRef<::mlir::Type> fields, bool userDrop);
+  }];
 }
 
 // A tagged enum by value, with the layout legacy codegen computed (EnumLayout), spelled
@@ -144,15 +156,25 @@ def Milo_StructType : TypeDef<Milo_Dialect, "Struct"> {
 // variant's fields at the byte offsets after `at`:
 //   !milo.enum<"Shape", size = 24, align = 8, [0: (f64 at 8), 1: (f64 at 8, f64 at 16), 2: ()]>
 // Niche-packed enums (EnumLayout.niche) have no tag word and are not expressible here.
-def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
+def Milo_EnumType : TypeDef<Milo_Dialect, "Enum", [MutableType]> {
   let mnemonic = "enum";
-  let parameters = (ins StringRefParameter<>:$name, "int64_t":$size, "int64_t":$align,
-                        ArrayRefParameter<"int32_t">:$tags,
-                        ArrayRefParameter<"::mlir::TupleType">:$variants,
-                        ArrayRefParameter<"int64_t">:$offsets, "bool":$userDrop);
+  let storageClass = "EnumTypeStorage";
+  let genStorageClass = 0;
+  let parameters = (ins StringRefParameter<>:$name);
   let hasCustomAssemblyFormat = 1;
-  let genVerifyDecl = 1;
   let extraClassDeclaration = [{
+    int64_t getSize() const;
+    int64_t getAlign() const;
+    ::llvm::ArrayRef<int32_t> getTags() const;
+    ::llvm::ArrayRef<::mlir::TupleType> getVariants() const;
+    ::llvm::ArrayRef<int64_t> getOffsets() const;
+    bool getUserDrop() const;
+    bool isInitialized() const;
+    // Checks the layout, then sets it; fails when it was already set to another one.
+    ::mlir::LogicalResult setBody(::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
+                                  int64_t size, int64_t align, ::llvm::ArrayRef<int32_t> tags,
+                                  ::llvm::ArrayRef<::mlir::TupleType> variants,
+                                  ::llvm::ArrayRef<int64_t> offsets, bool userDrop);
     // The variant with this tag, or -1.
     int variantOf(int32_t tag) const;
     // Byte offset of field `k` of variant `v`.

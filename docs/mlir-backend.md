@@ -552,6 +552,17 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   arrays. Program `consumed-for`, FileCheck `vectail.mlir`, two verifier cases. Planted
   bug: take storing the cursor at i instead of i + 1 (`consumed-for` stdout: the element
   a break stopped at dropped twice). Tahoe Roads api: 4988 (93.2%).
+- *Types that hold themselves through a Vec* (a JSON value, `JsonVal` in std/json, a
+  tree): `!milo.struct` and `!milo.enum` are identified by name now, as LLVM's identified
+  structs (mutable storage, the body set once; Milo.h `StructTypeStorage`), so inside its
+  own body a type is spelled by name alone (`!milo.enum<"Val">`) and is the same type. A
+  body spelled again inside itself must be the same body, and a second, different body for
+  a name is a parse error. placeType spells the back reference and does not cache a
+  spelling that names an enclosing type, so every spelling it hands out is complete. The
+  legacy reasons now say what blocks a Vec (`vec (struct (fn))`) and name recursion.
+  Program `recursive-types`, FileCheck `recursive.mlir` (round trip), two verifier cases.
+  Planted bug: a bare name inside its own body read as the empty struct (`recursive-types`
+  red: the build fails). Tahoe Roads api: 5069 (94.7%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
