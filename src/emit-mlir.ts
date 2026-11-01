@@ -1855,8 +1855,6 @@ class FnEmitter {
     for (const c of e.captures) {
       if (c.type.tag === "ref") throw new MlirUnsupported("move closure capturing a reference");
       const cty = this.value(c.type, "capture");
-      // The env's drop runs a captured user Drop: when depends on the closure's timing.
-      if (this.runsUserDrop(cty)) throw new MlirUnsupported("move closure capturing a user Drop");
       const b = this.lookup(c.name);
       let v: Val;
       if (b.kind === "ssa") v = this.consume(b.v, "capture");

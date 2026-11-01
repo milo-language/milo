@@ -1,0 +1,96 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `move` closures that
+// capture a value with a user `impl Drop`, so when the env's drop runs is in stdout. A
+// closure dropped at its scope's end, at an early return, by an overwrite, in a loop, after
+// a move into a callee, returned to the caller, and discarded as a statement's temporary.
+
+struct Noisy { id: i64 }
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Pair { n: Noisy, tag: string }
+
+fn mk(id: i64): Noisy {
+    print("mk ", id)
+    return Noisy { id: id }
+}
+
+fn run(f: move () => i64): i64 {
+    print("run")
+    return f()
+}
+
+fn maker(id: i64): move () => i64 {
+    let n = mk(id)
+    return move(): i64 => n.id * 2
+}
+
+fn scoped() {
+    let n = mk(1)
+    let f = move(): i64 => n.id + 1
+    print("call ", f())
+    print("end of scoped")
+}
+
+fn early(flag: bool): i64 {
+    let n = mk(2)
+    let f = move(): i64 => n.id
+    if flag {
+        print("early")
+        return f()
+    }
+    print("late")
+    return 0
+}
+
+fn overwrite() {
+    let a = mk(3)
+    let b = mk(4)
+    var f = move(): i64 => a.id
+    print("first ", f())
+    f = move(): i64 => b.id
+    print("second ", f())
+}
+
+fn looped() {
+    var i = 0
+    while i < 2 {
+        let n = mk(10 + i)
+        let f = move(): i64 => n.id
+        print("loop ", f())
+        i = i + 1
+    }
+}
+
+fn passed() {
+    let n = mk(5)
+    print("got ", run(move(): i64 => n.id))
+    print("after run")
+}
+
+fn pair() {
+    let p = Pair { n: mk(6), tag: "t" + "u" }
+    let f = move(): i64 => p.n.id + p.tag.len()
+    print("pair ", f())
+}
+
+fn drive() {
+    scoped()
+    print(early(true))
+    print(early(false))
+    overwrite()
+    looped()
+    passed()
+    let g = maker(7)
+    print("made ", g())
+    print("temp ", run(maker(8)))
+    pair()
+    print("done")
+}
+
+fn main() {
+    drive()
+}
