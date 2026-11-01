@@ -484,6 +484,10 @@ structs, enums.
   never drops that payload (one more live block at exit than this backend, which
   drops it), so taking it would change the leak count. Program `default-value`.
   Planted bug: the Some arm yielding the default (`default-value` stdout).
+- *`zeroed<T>()`* is `milo.zero : T` (LLVM's zero of the type; for a string or a Vec
+  the empty one), stored whole into the place of a place-only T. A fn value has no zero
+  (verifier). Program `zeroed`, FileCheck in `scalar-to-llvm.mlir`, a verifier case.
+  Planted bug: an i64 zero emitted as 1 (`zeroed` stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

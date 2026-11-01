@@ -251,3 +251,13 @@ func.func @bounds(%i: i64, %l: i64) {
   milo.bounds_check %i, %l loc("t.milo":9:4)
   milo.return
 }
+
+// milo.zero is LLVM's zero of the converted type, any size.
+// CHECK-LABEL: llvm.func @zero_struct
+// CHECK:   %[[Z:.*]] = llvm.mlir.zero : !llvm.struct<"Z", (i64, array<32 x i8>)>
+// CHECK:   llvm.store %[[Z]]
+func.func @zero_struct(%r: !milo.ref<!milo.struct<"Z", si64, !milo.array<ui8, 32>>>) {
+  %z = milo.zero : !milo.struct<"Z", si64, !milo.array<ui8, 32>>
+  milo.store %z, %r init : !milo.ref<!milo.struct<"Z", si64, !milo.array<ui8, 32>>>
+  milo.return
+}

@@ -458,6 +458,11 @@ class FnEmitter {
       if (e.kind === "MatchExpr") { this.match(e, null, b => this.tailInto(b, dst, ty)); return; }
       if (e.kind === "Propagate") { this.propagate(e, { dst, ty }); return; }
       if (e.kind === "DefaultValue") { this.defaultValue(e, { dst, ty }); return; }
+      if (e.kind === "Zeroed" && this.place$(e.zeroType, "zeroed value") === ty) {
+        // A constant store: LLVM makes it a memset, as legacy's zeroinitializer store.
+        this.emit(`milo.store ${this.def(`milo.zero : ${ty}`, ty).ref}, ${dst} init : !milo.ref<${ty}>`);
+        return;
+      }
       if (e.kind === "IfExpr") {
         const c = this.expr(e.cond);
         if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
@@ -1275,6 +1280,11 @@ class FnEmitter {
       }
       case "Propagate": return this.propagate(e);
       case "DefaultValue": return this.defaultValue(e);
+      case "Zeroed": {
+        const ty = this.value(e.zeroType, "zeroed value");
+        if (ty.startsWith("!milo.fn<")) throw new MlirUnsupported("zeroed fn value");
+        return { ...this.def(`milo.zero : ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
+      }
       // std's panics with a message: legacy's text and abort in a helper per site.
       case "StrPanic": {
         const v = this.expr(e.value);

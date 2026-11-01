@@ -301,6 +301,13 @@ LogicalResult FilledOp::verify() {
   return success();
 }
 
+LogicalResult ZeroOp::verify() {
+  // A fn value's zero would be a call through null; nothing spells one.
+  if (isa<FnType>(getType()))
+    return emitOpError("has no zero of a fn value");
+  return success();
+}
+
 LogicalResult CopyOp::verify() {
   if (!isa<StructType, EnumType, ArrayType>(getElem()))
     return emitOpError("copies a struct, an enum or an array, not ") << getElem();

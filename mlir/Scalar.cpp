@@ -949,6 +949,16 @@ struct PtrStoreLowering : ConvertOpToLLVMPattern<PtrStoreOp> {
   }
 };
 
+struct ZeroLowering : ConvertOpToLLVMPattern<ZeroOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ZeroOp op, OpAdaptor,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::ZeroOp>(op, getTypeConverter()->convertType(op.getType()));
+    return success();
+  }
+};
+
 struct ArrayElemRefLowering : ConvertOpToLLVMPattern<ArrayElemRefOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1479,7 +1489,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering,
                ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, CopyLowering,
-               ArrayElemRefLowering>(tc);
+               ArrayElemRefLowering, ZeroLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

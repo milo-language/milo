@@ -1,0 +1,41 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `zeroed<T>()` (milo.zero) of scalars, a struct holding a string and
+// a Vec (the empty ones, dropped as no-ops), an enum, a fixed-size array and a 128+ byte
+// struct built in its place, then overwritten.
+
+struct Rec { name: string, items: Vec<i64>, n: i64 }
+
+enum Shape { Dot, Line(i64) }
+
+struct Wide {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64
+}
+
+fn shapeTag(s: &Shape): i64 {
+    match s {
+        Dot => { return 0 }
+        Line(n) => { return n }
+    }
+}
+
+fn main() {
+    unsafe {
+        let x = zeroed<i64>()
+        let f = zeroed<f64>()
+        var r = zeroed<Rec>()
+        print(x, " ", f, " ", r.name.len(), " ", r.items.len(), " ", r.n)
+        r.name = "now"
+        r.items.push(4)
+        print(r.name, " ", r.items.len())
+        let s = zeroed<Shape>()
+        print(shapeTag(s))
+        var buf = zeroed<[u8; 32]>()
+        buf[31] = 2
+        var t: i64 = 0
+        for i in 0..32 { t += buf[i] as i64 }
+        var w = zeroed<Wide>()
+        w.p = 9
+        print(t, " ", w.a + w.p)
+    }
+}

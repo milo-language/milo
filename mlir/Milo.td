@@ -315,6 +315,14 @@ def Milo_AddrOp : Milo_Op<"addr", [Pure]> {
   let assemblyFormat = "$place attr-dict `:` type($place)";
 }
 
+// `zeroed<T>()`: every byte of a T zero, legacy's zeroinitializer. For a string or a Vec
+// that is the empty one (null data, cap 0), whose drop does nothing.
+def Milo_ZeroOp : Milo_Op<"zero", [Pure]> {
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Milo_ConstOp : Milo_Op<"const", [ConstantLike, Pure,
     AllTypesMatch<["value", "result"]>]> {
   let summary = "an int, float or bool literal";

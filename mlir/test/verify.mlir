@@ -258,6 +258,14 @@ func.func @array_index_type(%a: !milo.ref<!milo.array<ui8, 4>>, %i: si64) {
 
 // -----
 
+func.func @zero_fn() {
+  // expected-error @+1 {{has no zero of a fn value}}
+  %z = milo.zero : !milo.fn<(si64) -> si64>
+  milo.return
+}
+
+// -----
+
 func.func @copy_scalar(%a: !milo.ref<si64>, %b: !milo.ref<si64>) {
   // expected-error @+1 {{copies a struct, an enum or an array, not 'si64'}}
   milo.copy %a, %b : !milo.ref<si64>, !milo.ref<si64> of si64
