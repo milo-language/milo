@@ -507,6 +507,14 @@ structs, enums.
   `Result<Row, E>`) passes from its slot through one SSA value, as a big argument does
   (bigArg). `maybeRow` in `big-branches`. Planted bug: the temporary loaded instead of
   moved out of its slot (`big-branches` stdout, a use after free).
+- *A call is a scope of its own* (callScope): the temporaries its by-ref arguments lend
+  from die right after it, before its result is used, as legacy's argTempDrops; so an
+  argument temporary with a user Drop (`peek(mk(1))`) is taken, its drop where legacy
+  prints it. Other user-Drop temporaries (a field of one, a print part) stay legacy.
+  Found on the way: a store over an owning field never registered the old value's drop
+  glue, so `self.items = Vec.new()` linked only when something else had (`arenaDropElements`
+  at -O0). Program `drop-args`. Planted bug: calls not scoped (`drop-args` stdout: the
+  drops after the statement).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

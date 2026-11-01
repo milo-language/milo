@@ -441,7 +441,7 @@ class FnEmitter {
    * The stores are `init`: `dst` holds nothing yet.
    */
   private into(e: HIRExpr, dst: string, ty: string): void {
-    if (this.isSretCall(e)) { this.call(e, true, dst); return; }
+    if (this.isSretCall(e)) { this.callScope(() => this.call(e, true, dst)); return; }
     const src = valueType(this.cx, e.type) === ty ? null : this.bigPlace(e, ty);
     if (src) {
       this.emit(`milo.copy ${src.ref}, ${dst} : ${src.refTy}, !milo.ref<${ty}> of ${ty}`);
@@ -729,10 +729,26 @@ class FnEmitter {
    * A slot for a temporary. A user's Drop on it would run at the end of the block, where
    * legacy runs it after the call or at the end of the statement: those stay legacy.
    */
-  private tempSlot(name: string, ty: string, t: TypeKind): string {
-    if (runsUserDrop(ty)) throw new MlirUnsupported("temporary with a user Drop");
+  private tempSlot(name: string, ty: string, t: TypeKind, arg = false): string {
+    if (runsUserDrop(ty) && !arg) throw new MlirUnsupported("temporary with a user Drop");
     return this.ownedSlot(name, ty, t);
   }
+
+  /**
+   * A direct call in a block of its own: the temporaries its arguments lend from die right
+   * after it, before its result is used, as legacy drops an argument temporary after its
+   * call (argTempDrops). That timing is what lets one with a user Drop be taken.
+   */
+  private callScope(fill: () => Val): Val {
+    this.owned.push([]);
+    const start = this.body.length;
+    const v = fill();
+    return this.closeScope(start, false, v.ty ? v : null) ?? v;
+  }
+
+  // Set while place() lends a by-ref argument of the call being emitted: its temporary is
+  // in that call's scope (callScope), so a user Drop on it runs when legacy runs it.
+  private lendingArg = false;
 
   /** A slot owning a `ty` (string, Vec) for the innermost block. */
   private ownedSlot(name: string, ty: string, t: TypeKind): string {
@@ -842,6 +858,8 @@ class FnEmitter {
             const p = this.fieldPlace(s.target);
             if (!p) throw new MlirUnsupported("assign to a field of a value");
             if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
+            // milo-scope-drops drops the old value before the store: its glue must exist.
+            if (hasDrop(p.ty)) this.dropGlue(p.ty, s.target.type);
             this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
             return false;
           }
@@ -1111,7 +1129,7 @@ class FnEmitter {
         if ((from === PTR && to.startsWith("f")) || (to === PTR && from.startsWith("f"))) throw new MlirUnsupported("cast between a pointer and a float");
         return this.def(`milo.cast ${v.ref} : ${from} to ${to}`, to);
       }
-      case "Call": return this.call(e, stmt);
+      case "Call": return this.callScope(() => this.call(e, stmt));
       case "IndexAccess": {
         const pp = this.ptrPlace(e);
         if (pp) return this.ptrRead(pp);
@@ -2185,6 +2203,8 @@ class FnEmitter {
     if (e.kind !== "Ident") {
       // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.
       if (mut) throw new MlirUnsupported(`by-ref &mut arg ${e.kind}`);
+      const arg = this.lendingArg;
+      this.lendingArg = false;
       const v = this.expr(e);
       const vm = /^!milo\.vecval<(.*)>$/.exec(v.ty);
       if (vm && refTy === `!milo.vec<${vm[1]}>` && v.own === "owned" && !this.bitCopies.has(v.ref)) {
@@ -2196,7 +2216,7 @@ class FnEmitter {
       if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
       if (hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary that owns a buffer lends from a slot that drops it.
-        const slot = this.tempSlot("arg", v.ty, e.type);
+        const slot = this.tempSlot("arg", v.ty, e.type, arg);
         this.emit(`milo.store ${v.ref}, ${slot} : ${refTy}`);
         return { ref: slot };
       }
@@ -2419,7 +2439,9 @@ class FnEmitter {
     const args = e.args.map((a, j) => {
       const i = j + k0;
       if (a.passByRef) {
+        this.lendingArg = true;
         const ref = this.place(a.expr, paramTys[i], a.refMut);
+        this.lendingArg = false;
         refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
         provenance.push(ref.param ?? null);
         return ref.ref;

@@ -1,0 +1,33 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: temporaries with a
+// user Drop lent to by-ref params. Each dies right after its call (a call is a scope of
+// its own), before the call's result is used, so the drop prints land where legacy's do.
+
+struct Noisy { id: i64 }
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+fn mk(id: i64): Noisy {
+    print("mk ", id)
+    return Noisy { id: id }
+}
+
+fn peek(n: &Noisy): i64 {
+    print("peek ", n.id)
+    return n.id * 2
+}
+
+fn both(a: &Noisy, b: &Noisy): i64 { return a.id + b.id }
+
+fn main() {
+    let x = peek(mk(1)) + 1
+    print("x ", x)
+    print("y ", peek(mk(2)))
+    let z = both(mk(3), mk(4)) + peek(mk(5))
+    print("z ", z)
+    if peek(mk(6)) > 10 { print("big") } else { print("small") }
+    print("end")
+}
