@@ -237,6 +237,10 @@ export interface HIRFunction {
   // Drives what the generated C header declares: the header is the library's published
   // API, so a helper the author never marked `pub` has no business in it.
   isPub?: boolean;
+  // @trackCaller (std collection modules only): specialized per call site (track-caller.ts);
+  // a copy carries the call span its panics report.
+  trackCaller?: boolean;
+  trackedCaller?: Span;
   // @inline (std collection modules only): emitted `alwaysinline`.
   alwaysInline?: boolean;
   sourceFile?: string; // origin file — DWARF DIFile/DISubprogram (set by lower from the resolver-stamped AST fn)

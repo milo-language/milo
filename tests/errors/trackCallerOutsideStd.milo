@@ -1,0 +1,11 @@
+// @error: only the std collection modules may report their caller's location
+// '@trackCaller' exists so a collection method moved out of codegen still blames the
+// user's line, as the builtin did; a user program's panics name the line they happen on.
+@trackCaller
+fn half(x: i64): i64 {
+    return x / 2
+}
+
+fn main() {
+    print(half(3))
+}

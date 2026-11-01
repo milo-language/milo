@@ -8,6 +8,7 @@ import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS,
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
+import { specializeTrackCaller } from "./track-caller";
 import { SCOPED_SPAWN_FN } from "./checker-program-passes";
 
 const isStdReplayFile = (f: string | undefined) => !!f && /[\\/]std[\\/]replay\.milo$/.test(f);
@@ -22,7 +23,9 @@ export function lower(program: Program, checked: CheckResult, sourceDir?: string
   const os = targetOs ?? (process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "darwin");
   const arch = targetArch ?? (process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch);
   const ctx = new LowerCtx(checked, sourceDir ?? process.cwd(), os, arch);
-  return ctx.lowerProgram(program);
+  const mod = ctx.lowerProgram(program);
+  specializeTrackCaller(mod);
+  return mod;
 }
 
 class LowerCtx {
@@ -276,6 +279,7 @@ class LowerCtx {
       ...((fn.fromWrappingModule || fn.attributes?.some(a => a.name === "wrapping")) && { isWrapping: true }),
       ...(fn.isPub && { isPub: true }),
       ...(fn.attributes?.some(a => a.name === "inline") && { alwaysInline: true }),
+      ...(fn.attributes?.some(a => a.name === "trackCaller") && { trackCaller: true }),
       ...(fn.sourceFile && { sourceFile: fn.sourceFile }),
       ...(this.isReplayEngine(fn) && { replayEngine: true }),
       // AST fns carry no span; proxy the decl line with the first body stmt that has one

@@ -137,6 +137,12 @@ _Goes on: `fn`, `method`._
 
 std collection modules (std/hashmap, std/vec) only: inline this function at every call site (LLVM `alwaysinline`), as the builtin code it replaced was emitted inline. Elsewhere it is an error; the optimizer decides.
 
+### `@trackCaller`
+
+_Goes on: `fn`, `method`._
+
+std collection modules (std/hashmap, std/vec) only: a panic inside this function (bounds, overflow, division, allocation failure, size overflow) reports the CALLER's file:line, as Rust's #[track_caller] does, so a moved builtin method still blames the user's line. Implemented by specializing the function per call site.
+
 ### `@thread`
 
 _Goes on: `fn`, `method`._

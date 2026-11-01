@@ -334,3 +334,16 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   bug gone: a fixed-array receiver (`[4, 2, 8].min()`) failed in clang. Planted swapped
   operands in min turn `vecMinMaxStd` red; output identical to the old compiler without the
   fixed-array line; 0 leaks; bench 0.76s builtin vs 0.70s std.
+- 2026-11-01: `@trackCaller` (std collection modules only, the @inline gate): a panic
+  inside the fn reports its caller's file:line. Implemented as per-call-site
+  specialization after lowering (src/track-caller.ts): each direct call of a tracked fn
+  gets a copy stamped with the call's span, and codegen's panicAt / panicLine /
+  emitCheckFilePtr use the stamp; a tracked call inside a copy passes the stamp on. Chosen
+  over a hidden location argument because every panic message bakes its location into a
+  constant string, and the attribute's users are @inline anyway, so the copies cost what
+  inlining does. Applied to insert, getOrInsertWith, mapGrow, mapNew, mapWithCapacity and
+  mapWithSlots; mapGrow now allocates the new slots itself so mapRehash (which cannot
+  panic) stays one copy. Pinned by `runtime-errors/hashMapWithCapacityHuge` (size overflow
+  at the caller's line 13; with mapWithSlots untracked it reports std/hashmap.milo:211) and
+  `trackCallerOutsideStd`. Insert growth's OOM cannot be provoked in a test; it rides the
+  same mapGrow stamp. Bench 200 maps grown to 100k: 0.65s before vs 0.64s.

@@ -39,6 +39,7 @@ export interface StringCtx extends NameSource {
   emitFdPrintf(lines: string[], fd: number, fmtLabel: string, argsStr: string): void;
   emitCheckFilePtr(lines: string[], span?: Span): string;
   panicAt(span?: Span): string;
+  panicLine(span?: Span): number;
   panicAbort(lines: string[]): void;
   entryAllocas: string[];
   enumLayouts: Map<string, EnumLayout>;
@@ -324,7 +325,7 @@ export function genStringSetByte(ctx: StringCtx, expr: HIRExpr & { kind: "String
   b.condBr(inRange, ok, fail);
   b.position(fail);
   const filePtr = val(ctx.emitCheckFilePtr(lines, expr.span), Ty.ptr);
-  b.callDiscard(Ty.void, "@__milo_bounds_fail", [idx, len, filePtr, val(String(expr.span?.line ?? 0), Ty.i32)]);
+  b.callDiscard(Ty.void, "@__milo_bounds_fail", [idx, len, filePtr, val(String(ctx.panicLine(expr.span)), Ty.i32)]);
   b.unreachable();
   b.position(ok);
   ctx.emitStrUnique(lines, strPtr.ref);

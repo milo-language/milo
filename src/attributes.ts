@@ -193,6 +193,15 @@ export const ATTRIBUTES: AttrInfo[] = [
       "builtin code it replaced was emitted inline. Elsewhere it is an error; the optimizer decides.",
   },
   {
+    name: "trackCaller",
+    targets: ["fn", "method"],
+    doc:
+      "std collection modules (std/hashmap, std/vec) only: a panic inside this function " +
+      "(bounds, overflow, division, allocation failure, size overflow) reports the CALLER's " +
+      "file:line, as Rust's #[track_caller] does, so a moved builtin method still blames the " +
+      "user's line. Implemented by specializing the function per call site.",
+  },
+  {
     name: "thread",
     targets: ["fn", "method"],
     doc:

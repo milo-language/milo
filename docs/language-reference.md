@@ -4083,6 +4083,12 @@ it use the file-level form, `@!replayHooked`.
 It exists for `HashMap.insert`, whose hash and probe exceed LLVM's inlining threshold but
 replaced code codegen used to emit inline at every call site.
 
+`@trackCaller` (same modules only) makes a panic inside the function (bounds, overflow,
+division, allocation failure) report the caller's file:line, like Rust's
+`#[track_caller]`, so `HashMap.withCapacity(n)` with an impossible `n` blames the user's
+line. The function is specialized per call site; a tracked call inside it passes the
+location on.
+
 ### Extern Structs
 
 `extern struct` declares a C-layout struct. The compiler knows field offsets and generates GEP instructions for field access:

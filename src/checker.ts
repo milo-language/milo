@@ -4339,6 +4339,13 @@ export class TypeChecker {
               this.error(`'@inline' takes no arguments`, undefined, `write '@inline fn ${fn.name}(...)'`);
             }
           }
+          else if (attr.name === "trackCaller") {
+            if (!isStdCollectionModule(fn.sourceFile)) {
+              this.error(`'@trackCaller' on '${fn.name}': only the std collection modules may report their caller's location`, undefined, `drop '@trackCaller'; a panic names the line it happens on`);
+            } else if (attr.args.length > 0) {
+              this.error(`'@trackCaller' takes no arguments`, undefined, `write '@trackCaller fn ${fn.name}(...)'`);
+            }
+          }
           else if (attr.name === "records") {
             if (!fn.isExtern) {
               this.error(`'@records' on '${fn.name}': only an extern has calls for record/replay to capture`, undefined, `drop '@records'`);
@@ -5735,6 +5742,9 @@ export class TypeChecker {
         } else if (attr.name === "inline" && !isStdCollectionModule((m.span ?? impl.span)?.file)) {
           this.error(`'@inline' on '${typeName}.${m.name}': only the std collection modules may force inlining`, m.span ?? impl.span,
             `drop '@inline'; the optimizer inlines small functions on its own`);
+        } else if (attr.name === "trackCaller" && !isStdCollectionModule((m.span ?? impl.span)?.file)) {
+          this.error(`'@trackCaller' on '${typeName}.${m.name}': only the std collection modules may report their caller's location`, m.span ?? impl.span,
+            `drop '@trackCaller'; a panic names the line it happens on`);
         } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);

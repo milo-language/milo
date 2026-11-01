@@ -386,6 +386,8 @@ export class Codegen {
   // Set for the duration of a `@wrapping` function: + - * -x, div INT_MIN/-1 and over-shifts
   // use defined modular arithmetic instead of trapping. Div-by-zero, bounds, ranged still trap.
   public currentFnWrapping = false;
+  // The call span a @trackCaller copy reports its panics at (panicAt); unset elsewhere.
+  private trackedCaller: Span | undefined;
   private itableLayouts = new Map<string, { globalName: string; methodCount: number }>();
 
   private filePath?: string;
@@ -2630,6 +2632,7 @@ export class Codegen {
     this.emittedAddrs.clear();
     this.currentFnName = fn.name;
     this.currentFnWrapping = !!fn.isWrapping;
+    this.trackedCaller = fn.trackedCaller;
     const lines: string[] = [];
     const b = new LlvmTextBuilder(lines, this);
 
@@ -3217,7 +3220,7 @@ export class Codegen {
     // check already does — keeping it out of the hot block, which is the whole point of
     // the handler being out of line.
     const filePtr = this.emitCheckFilePtr(lines, span);
-    lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${size}, ptr ${filePtr}, i32 ${span?.line ?? 0})`);
+    lines.push(`  call void @__milo_bounds_fail(i64 ${idx}, i64 ${size}, ptr ${filePtr}, i32 ${this.panicLine(span)})`);
     lines.push(`  unreachable`);
     lines.push(`${okLabel}:`);
   }
@@ -3651,6 +3654,8 @@ export class Codegen {
   }
 
   public panicAt(span?: Span): string {
+    // Inside a @trackCaller copy every panic names the call site (track-caller.ts).
+    if (this.trackedCaller) span = this.trackedCaller;
     const file = span?.file ?? this.filePath;
     return `${file ? `${this.displayPath(file)}:` : ""}${span?.line ?? 0}:${span?.col ?? 0}`;
   }
@@ -3670,7 +3675,14 @@ export class Codegen {
   }
 
   // Pointer to the interned name of the file a check lives in, for its error message.
+  // The line a check's out-of-line handler reports; the call site inside a @trackCaller
+  // copy, as panicAt does for the inline messages.
+  public panicLine(span?: Span): number {
+    return (this.trackedCaller ?? span)?.line ?? 0;
+  }
+
   public emitCheckFilePtr(lines: string[], span?: Span): string {
+    if (this.trackedCaller) span = this.trackedCaller;
     const file = this.displayPath(span?.file ?? this.filePath ?? "<unknown>");
     let global = this.checkFileConstants.get(file);
     if (!global) {
@@ -3702,7 +3714,7 @@ export class Codegen {
     // inline ones. Index arithmetic is checked too, so these land in the same hot
     // loops the subscripts do.
     const filePtr = this.emitCheckFilePtr(lines, span);
-    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(filePtr, Ty.ptr), i32c(span?.line ?? 0)]);
+    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(filePtr, Ty.ptr), i32c(this.panicLine(span))]);
     b.unreachable();
     b.position(okB);
     return value.ref;
@@ -3724,7 +3736,7 @@ export class Codegen {
     b.position(failB);
     const fmtPtr = b.gep(Ty.of("[44 x i8]"), V("@.range_err", Ty.ptr), [i32c(0), i32c(0)]);
     const filePtr = this.emitCheckFilePtr(lines, span);
-    this.emitFdPrintf(lines, 2, fmtPtr.ref, `, ptr ${filePtr}, i32 ${span?.line ?? 0}`);
+    this.emitFdPrintf(lines, 2, fmtPtr.ref, `, ptr ${filePtr}, i32 ${this.panicLine(span)}`);
     this.panicAbort(lines);
     b.unreachable();
     b.position(okB);
@@ -3762,7 +3774,7 @@ export class Codegen {
     const kindPtr = this.nextTemp();
     lines.push(`  ${kindPtr} = getelementptr [${kind.length + 1} x i8], ptr @.contract_kind_${kind}, i32 0, i32 0`);
     const filePtr = this.emitCheckFilePtr(lines, span);
-    this.emitFdPrintf(lines, 2, fmtPtr, `, ptr ${kindPtr}, ptr ${filePtr}, i32 ${span?.line ?? 0}`);
+    this.emitFdPrintf(lines, 2, fmtPtr, `, ptr ${kindPtr}, ptr ${filePtr}, i32 ${this.panicLine(span)}`);
     this.panicAbort(lines);
     lines.push(`  unreachable`);
     lines.push(`${okLabel}:`);
@@ -7921,7 +7933,7 @@ export class Codegen {
     b.condBr(ovf, badB, okB);
     b.position(badB);
     const fp = this.emitCheckFilePtr(lines, span);
-    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(fp, Ty.ptr), i32c(span?.line ?? 0)]);
+    b.callDiscard(Ty.void, "@__milo_overflow_fail", [V(fp, Ty.ptr), i32c(this.panicLine(span))]);
     b.unreachable();
     b.position(okB);
     return prod.ref;
@@ -7938,7 +7950,7 @@ export class Codegen {
     lines.push(`  br i1 ${got}, label %${aok}, label %${abad}`);
     lines.push(`${abad}:`);
     const fp2 = this.emitCheckFilePtr(lines, span);
-    lines.push(`  call void @__milo_overflow_fail(ptr ${fp2}, i32 ${span?.line ?? 0})`);
+    lines.push(`  call void @__milo_overflow_fail(ptr ${fp2}, i32 ${this.panicLine(span)})`);
     lines.push(`  unreachable`);
     lines.push(`${aok}:`);
   }

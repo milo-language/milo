@@ -1,0 +1,17 @@
+// @runtime-error: hashMapWithCapacityHuge.milo:13
+// A capacity whose slot array cannot be sized fails the allocation's size check inside
+// std/hashmap's mapWithSlots. @trackCaller (on mapWithCapacity and mapWithSlots) makes
+// the panic name this line, as the builtin's did; without it the message pointed into
+// std/hashmap.milo.
+
+pub fn huge(): i64 {
+    return 2305843009213693952
+}
+
+pub fn main(): i32 {
+    let n = huge()
+    var m: HashMap<i64, i64> = HashMap.withCapacity(n)
+    m.insert(1, 2)
+    print(m.len)
+    return 0
+}
