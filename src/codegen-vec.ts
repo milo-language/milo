@@ -598,71 +598,20 @@ function emitElemOrd(ctx: CodegenCtx, lines: string[], elemType: TypeKind, a: Va
   return b.icmp(wantGreater ? (signed ? "sgt" : "ugt") : (signed ? "slt" : "ult"), a, bv);
 }
 
-export function genVecMinMax(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMinMax" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const vv = ctx.genVal(expr.object, lines);
+// std/vec's `_natLess(a, b)`: emitElemOrd's `a < b`, so std's min/max order elements as
+// the builtins did. The operands are places loaded bitwise (no string refcount traffic).
+export function genNatLess(ctx: CodegenCtx, expr: HIRExpr & { kind: "NatLess" }, lines: string[]): Gen {
   const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv.ref, VEC_TY);
-  const data = b.extractvalue(vec, 0, Ty.ptr);
-  const len = b.extractvalue(vec, 1, Ty.i64);
-
-  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecminmax", lines);
-  const empty = b.icmp("eq", len, I64_0);
-  const scanLabel = b.newBlock("vecmm.scan");
-  const endLabel = b.newBlock("vecmm.end");
-  b.condBr(empty, endLabel, scanLabel);
-  b.position(scanLabel);
-
-  // Track the winning index, not the value: a String winner is cloned once, at
-  // the end, instead of on every improvement.
-  const bestAddr = b.alloca(Ty.i64);
-  b.store(I64_0, bestAddr);
-  const iAddr = b.alloca(Ty.i64);
-  b.store(I64_1, iAddr);
-  const cond = b.newBlock("vecmm.cond");
-  const body = b.newBlock("vecmm.body");
-  const better = b.newBlock("vecmm.better");
-  const step = b.newBlock("vecmm.step");
-  const done = b.newBlock("vecmm.done");
-  b.br(cond);
-  b.position(cond);
-  const i = b.load(Ty.i64, iAddr);
-  const more = b.icmp("ult", i, len);
-  b.condBr(more, body, done);
-  b.position(body);
-  const curPtr = b.gep(elemTy, data, [i]);
-  const cur = b.load(elemTy, curPtr);
-  const bestIdx = b.load(Ty.i64, bestAddr);
-  const bestPtr = b.gep(elemTy, data, [bestIdx]);
-  const best = b.load(elemTy, bestPtr);
-  const wins = emitElemOrd(ctx, lines, expr.elementType, cur, best, expr.isMax);
-  const winsLabel = b.newBlock("vecmm.cmpdone");
-  b.br(winsLabel);
-  b.position(winsLabel);
-  b.condBr(wins, better, step);
-  b.position(better);
-  const iNow = b.load(Ty.i64, iAddr);
-  b.store(iNow, bestAddr);
-  b.br(step);
-  b.position(step);
-  const iCur = b.load(Ty.i64, iAddr);
-  const iNext = b.binop("add", iCur, I64_1);
-  b.store(iNext, iAddr);
-  b.br(cond);
-  b.position(done);
-  const winIdx = b.load(Ty.i64, bestAddr);
-  const winPtr = b.gep(elemTy, data, [winIdx]);
-  const cloned = val(ctx.emitDeepCloneFromPtr(lines, winPtr.ref, expr.elementType), elemTy);
-  ctx.storeEnumTag(lines, slot.enumTy, slot.addr.ref, slot.someTag);
-  const payloadPtr = val(ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr.ref, slot.someTag), Ty.ptr);
-  b.store(cloned, payloadPtr);
-  b.br(endLabel);
-  b.position(endLabel);
-  const result = b.load(slot.enumT, slot.addr);
-  // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
-  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.object);
-  return [lines, result.ref, slot.enumTy];
+  const load = (e: HIRExpr): Val => {
+    const t = e.type.tag === "ref" ? e.type.inner : e.type;
+    const [placeLines, ptr] = ctx.genLValue(e);
+    lines.push(...placeLines);
+    return b.load(Ty.of(ctx.llvmType(t)), val(ptr, Ty.ptr));
+  };
+  const elemType = expr.a.type.tag === "ref" ? expr.a.type.inner : expr.a.type;
+  const x = load(expr.a);
+  const y = load(expr.b);
+  return [lines, emitElemOrd(ctx, lines, elemType, x, y, false).ref, "i1"];
 }
 
 // `v.truncate(n)` / `v.clear()`. Elements at index >= n are OWNED by the Vec, so

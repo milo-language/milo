@@ -8,7 +8,7 @@ import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecGetOpt, genVecMinMax, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -56,7 +56,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapLen",
 "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NonNegative", "OffsetOf",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
@@ -5682,8 +5682,6 @@ export class Codegen {
         return genVecTruncate(this, expr, lines);
       case "VecGetOpt":
         return genVecGetOpt(this, expr, lines);
-      case "VecMinMax":
-        return genVecMinMax(this, expr, lines);
       case "VecExtend":
         return genVecExtend(this, expr, lines);
       case "VecRetain":
@@ -5709,6 +5707,8 @@ export class Codegen {
         try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }
       case "MapHash":
         return genMapHash(this, expr, lines);
+      case "NatLess":
+        return genNatLess(this, expr, lines);
       case "MapKeyEq":
         return genMapKeyEq(this, expr, lines);
       case "MapCopyOut":
@@ -9475,7 +9475,6 @@ export class Codegen {
       // (get/first/last/min/max/find) or moved out of it (pop). Either way nothing
       // else owns it, so `print(must(v, 0, "v"))` used to leak one copy per call.
       case "VecGetOpt":
-      case "VecMinMax":
       case "VecPop":
       // `remove` moves the element out of the buffer exactly as `pop` does, and was the
       // sibling this list forgot: `v.remove(0)` as a statement dropped NOTHING, so the

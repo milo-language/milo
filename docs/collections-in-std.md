@@ -326,3 +326,11 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   callback methods are `@inline`: called, the bench was 3.4% slower (1.49s vs 1.54s);
   inlined it is at parity (1.93s vs 1.94s, 2.23s vs 2.12s under load). Planted `if f(e)` for
   `if !f(e)` in all turns `vecCallbacksStd` red; output identical to the old compiler; 0 leaks.
+- 2026-11-01: `min` and `max` moved, over a std/vec-only intrinsic `_natLess(a, b)`:
+  emitElemOrd's `a < b` (ints by signedness, float `olt`, string byte order, bool
+  false < true, which the language's `<` lacks). Same scan as genVecMinMax: best index from
+  0, replaced only on a strict win, so the first of equals wins and a leading NaN stays the
+  answer; the winner is copied out through get. The element gate stays at the call. Old
+  bug gone: a fixed-array receiver (`[4, 2, 8].min()`) failed in clang. Planted swapped
+  operands in min turn `vecMinMaxStd` red; output identical to the old compiler without the
+  fixed-array line; 0 leaks; bench 0.76s builtin vs 0.70s std.

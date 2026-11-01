@@ -131,6 +131,15 @@ export function isHashMapModule(file: string | undefined): boolean {
   return posix === "std/hashmap.milo" || posix.endsWith("/std/hashmap.milo");
 }
 
+// std/vec's natural order, `_natLess(a, b)`: the comparison the builtin min/max/sort emit
+// (emitElemOrd), including `false < true`, which the language's `<` does not have on bool.
+export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess"]);
+export function isVecModule(file: string | undefined): boolean {
+  if (!file) return false;
+  const posix = file.replace(/\\/g, "/");
+  return posix === "std/vec.milo" || posix.endsWith("/std/vec.milo");
+}
+
 // std/vec methods taking a callback over the elements; see the dispatch in the Vec chain.
 const VEC_CALLBACK_METHODS: ReadonlySet<string> = new Set(["each", "enumerate", "any", "all", "position", "find", "fold", "reduce"]);
 
@@ -10451,6 +10460,31 @@ export class TypeChecker {
   // `contains`/`indexOf` compare elements inline in codegen (icmp/fcmp/string compare), so
   // only those element types are searchable. `contains` used to skip this check and a
   // Vec<Struct> reached codegen as an `icmp` on an aggregate, which clang rejected.
+  // `_natLess(a, b): bool`, std/vec only. Both operands are places of one comparable type
+  // (int, float, string, bool), read in place as _mapKeyEq's keys are, so comparing two
+  // string elements makes no refcount round trip.
+  private checkNatLess(expr: ExprOf<"Call">): TypeKind {
+    const sp = expr.span;
+    if (expr.args.length !== 2) {
+      this.error(`'_natLess' expects 2 arguments, got ${expr.args.length}`, sp);
+      return this.setType(expr, { tag: "bool" });
+    }
+    const types = expr.args.map(a => {
+      if (a.kind !== "Ident" && a.kind !== "FieldAccess" && a.kind !== "IndexAccess") {
+        this.error(`'_natLess': an operand must be a place (a variable, field or element)`, a.span);
+      }
+      const t = this.checkExpr(a);
+      return t.tag === "ref" ? t.inner : t;
+    });
+    const [a, b] = types as [TypeKind, TypeKind];
+    if (a.tag !== "int" && a.tag !== "float" && a.tag !== "string" && a.tag !== "bool" && a.tag !== "unknown") {
+      this.error(`'_natLess': no natural order on ${this.show(a)}`, sp);
+    } else if (!typeEq(unranged(a), unranged(b)) && b.tag !== "unknown" && a.tag !== "unknown") {
+      this.error(`'_natLess': both operands must have the same type, got ${this.show(a)} and ${this.show(b)}`, sp);
+    }
+    return this.setType(expr, { tag: "bool" });
+  }
+
   // `v.fold(init, f)` / `reduce`: std/vec's `fold<A>`, with A taken from the seed. A bare
   // constant seed defaults to i64, so when the callback annotates its accumulator that
   // annotation is the real type (`fold(0, (acc: i32, x: &i32) => acc + x)` over a narrower
@@ -10687,6 +10721,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(sp?.file)) return this.checkMapIntrinsic(expr);
+    if (VEC_INTRINSICS.has(expr.func) && isVecModule(sp?.file)) return this.checkNatLess(expr);
     if (expr.func === "sizeOf") {
       if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`sizeOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
       if (expr.args.length !== 0) { this.error(`sizeOf takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -13591,14 +13626,13 @@ export class TypeChecker {
       // rather than invent an ordering for structs (which would be an opinion, not
       // a fact — see the HashMap key note) min/max are refused on them outright.
       if (expr.method === "min" || expr.method === "max") {
-        if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
         const el = objType.element;
         if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
           this.error(`'${expr.method}' requires a Vec of a comparable type (int, float, string, bool), got Vec<${this.show(el)}>`, sp,
             `there is no ordering on ${this.show(el)} — use 'fold' with your own comparison, or 'sortByKey' then 'first'`);
           return this.setType(expr, { tag: "unknown" });
         }
-        return this.setType(expr, this.resolveOptionForValue(el, sp));
+        // The body is std/vec code over _natLess; only the element gate stays here.
       }
       // `find` answers "which value"; `indexOf`/`position` answer "where".
       // indexOf is std/vec code, gated and dispatched like contains.

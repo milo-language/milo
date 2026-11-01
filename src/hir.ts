@@ -105,7 +105,6 @@ export type HIRExpr =
   // Total indexed read: `get(i)`, and the `first()`/`last()` sugar that lowers to it.
   // Out of range yields None instead of the panic `v[i]` raises.
   | { kind: "VecGetOpt"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
-  | { kind: "VecMinMax"; object: HIRExpr; elementType: TypeKind; isMax: boolean; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecRetain"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecCapacity"; object: HIRExpr; type: TypeKind; span?: Span }
@@ -122,6 +121,8 @@ export type HIRExpr =
   // std/hashmap intrinsics (checker.ts MAP_INTRINSICS); the key operands are places.
   | { kind: "MapHash"; key: HIRExpr; seed: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "MapKeyEq"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
+  // std/vec `_natLess(a, b)` (checker.ts VEC_INTRINSICS); both operands are places.
+  | { kind: "NatLess"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
   // An owned deep copy of the value at a place (emitDeepCloneFromPtr).
   | { kind: "MapCopyOut"; value: HIRExpr; type: TypeKind; span?: Span }
   // A fresh seed from HASH_SEED_FN (record/replay fixes its sequence); it may be 0.

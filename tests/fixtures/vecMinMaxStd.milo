@@ -1,0 +1,67 @@
+// Vec.min and Vec.max are std/vec.milo code, ordered by the _natLess intrinsic (the
+// builtin's order). Covers empty Vecs, slices and a fixed array as the receiver, signed
+// and unsigned ints, bool (false < true), strings by byte order, floats with -0.0 and NaN
+// (a NaN in front stays the answer, a later NaN is never picked), the first of equal
+// elements, a ranged element, a temporary receiver and a capture. The fixed array case
+// failed in clang on the old compiler (the builtin passed [N x T] where %Vec was read).
+// @expect: none none
+// @expect: -7 9
+// @expect: 0 255
+// @expect: false true
+// @expect: Zed b
+// @expect: -0.5 3.5
+// @expect: nan nan
+// @expect: -2 1
+// @expect: 0 none
+// @expect: 2 8
+// @expect: 3 8
+// @expect: s0 s4
+// @expect: 1
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Some(x) => x.toString(),
+        None => "none",
+    }
+}
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("s" + i.toString())
+    }
+    return v
+}
+
+fn lo(s: &[i64]): Option<i64> {
+    return s.min()
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    print(show(e.min()), " ", show(e.max()))
+    let v: Vec<i64> = [3, -7, 9, 0, 9]
+    print(v.min()!, " ", v.max()!)
+    let bytes: Vec<u8> = [200, 0, 255]
+    print(bytes.min()!, " ", bytes.max()!)
+    let bs: Vec<bool> = [true, false, true]
+    print(bs.min()!, " ", bs.max()!)
+    let ss: Vec<string> = ["b", "a" + "x", "Zed"]
+    print(ss.min()!, " ", ss.max()!)
+    let fs: Vec<f64> = [1.0, -0.5, 3.5, -0.0]
+    print(fs.min()!, " ", fs.max()!)
+    let nan = 0.0 / 0.0
+    let nf: Vec<f64> = [nan, 1.0, -2.0]
+    let nl: Vec<f64> = [1.0, nan, -2.0]
+    print(nf.min()!, " ", nf.max()!)
+    print(nl.min()!, " ", nl.max()!)
+    print(show(lo(v[2..5])), " ", show(lo(v[1..1])))
+    let a = [4, 2, 8]
+    print(a.min()!, " ", a.max()!)
+    let r: Vec<i32(0..9)> = [3, 8, 5]
+    print(r.min()!, " ", r.max()!)
+    print(mk(5).min()!, " ", mk(5).max()!)
+    let limits: Vec<i64> = [5, 1, 7]
+    let fits = v.filter((x: &i64) => x > limits.min()!)
+    print(fits.len() - 2)
+}

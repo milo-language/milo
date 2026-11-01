@@ -4,7 +4,7 @@
 import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
 import { declaredType, floatNamespaceConst, isNestedPattern } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
-import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, isForeignModule, isHashMapModule, userFnShadowsBuiltin } from "./checker";
+import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS, isForeignModule, isHashMapModule, isVecModule, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
@@ -842,6 +842,9 @@ class LowerCtx {
         }
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
+        if (VEC_INTRINSICS.has(expr.func) && isVecModule(expr.span?.file)) {
+          return { kind: "NatLess", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
+        }
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
           if (expr.func === "_mapCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           if (expr.func === "_mapSeed") return { kind: "MapSeed", type, span: expr.span };
@@ -1456,9 +1459,6 @@ class LowerCtx {
             const object = this.lowerExpr(expr.object);
             const index = this.lowerExpr(expr.args[0]);
             return { kind: "VecGetOpt", object, index, elementType: objType.element, optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
-          }
-          if (expr.method === "min" || expr.method === "max") {
-            return { kind: "VecMinMax", object: this.lowerExpr(expr.object), elementType: objType.element, isMax: expr.method === "max", optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
           }
           if (expr.method === "extend") {
             return { kind: "VecExtend", object: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
