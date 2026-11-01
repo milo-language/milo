@@ -2608,6 +2608,14 @@ class FnEmitter {
       return { ref, ty: "i1" };
     }
     if (stripRefs(e.left.type).tag === "string" && stripRefs(e.right.type).tag === "string") return this.stringBinop(e);
+    const lt = stripRefs(e.left.type);
+    if ((e.op === "==" || e.op === "!=") && lt.tag === "enum") {
+      // As legacy: the tags compared (the checker allows `==` only on payload-free enums).
+      const l = this.expr(e.left), r = this.expr(e.right);
+      if (l.ty !== r.ty || !l.ty.startsWith("!milo.enum<") || this.hasDrop(l.ty)) throw new MlirUnsupported("binop operand types");
+      const a = this.def(`milo.enum.tag ${l.ref} : ${l.ty}`, "si32"), b = this.def(`milo.enum.tag ${r.ref} : ${r.ty}`, "si32");
+      return this.def(`milo.cmp ${CMPS[e.op]}, ${a.ref}, ${b.ref} : si32`, "i1");
+    }
     const ty = scalar(e.left.type, "binop operand");
     if (ty === PTR && !(e.op in CMPS)) throw new MlirUnsupported(`pointer ${e.op}`);
     const l = this.expr(e.left), r = this.expr(e.right);

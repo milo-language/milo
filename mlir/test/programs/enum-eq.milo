@@ -1,0 +1,33 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `==` and `!=` on
+// payload-free enums, as legacy compares them: the tags. Locals, a by-ref param, a
+// struct field, a call's result, and a second enum.
+
+enum Color { Red, Green, Blue }
+
+enum Code { Fine, Missing, Broken }
+
+struct Pixel { c: Color, x: i64 }
+
+fn pick(n: i64): Color {
+    if n == 0 { return Color.Red }
+    if n == 1 { return Color.Green }
+    return Color.Blue
+}
+
+fn same(a: &Color, b: Color): bool {
+    return a == b
+}
+
+fn run() {
+    let a = pick(1)
+    let b = Color.Green
+    print(a == b, " ", a != b, " ", pick(2) == Color.Red, " ", same(a, pick(0)))
+    let p = Pixel { c: Color.Blue, x: 3 }
+    print(p.c == Color.Blue, " ", p.c != pick(2), " ", p.x)
+    let k = Code.Missing
+    print(k == Code.Missing, " ", k != Code.Broken)
+}
+
+fn main() {
+    run()
+}
