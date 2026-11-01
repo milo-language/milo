@@ -84,7 +84,7 @@ function typeKey(t: TypeKind): string {
     case "string": return "string";
     case "vec": return `vec.${typeKey(t.element)}`;
     case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
-    case "heap": if (t.inner.tag !== "interface") return `heap.${typeKey(t.inner)}`; throw new MlirUnsupported("helper for a Heap of an interface");
+    case "heap": return t.inner.tag === "interface" ? `dyn.${t.inner.name}` : `heap.${typeKey(t.inner)}`;
     // A plain fn by its signature, as Scalar.cpp typeKey: a helper takes it as a typed
     // param. The param count and `v` for no result keep the dotted key decodable.
     case "fn": if (t.owning) return "ownfn";
@@ -230,8 +230,8 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
   }
   if (t.tag === "fn") return fnType(cx, t);
   if (t.tag === "heap") {
-    // A Heap of an interface is a fat { data, vtable } pair: not yet.
-    if (t.inner.tag === "interface") return null;
+    // A Heap of an interface is legacy's fat { data, itable } pair, opaque here.
+    if (t.inner.tag === "interface") return `!milo.dyn<${quote(t.inner.name)}>`;
     const v = placeType(cx, t.inner);
     return v && `!milo.heap<${v}>`;
   }
@@ -1269,6 +1269,39 @@ class FnEmitter {
    * iteration took, then the buffer, after the binding's drop as legacy orders them.
    */
   /**
+   * `h.m(args)` through a `Heap<I>`: legacy's itable dispatch (genInterfaceMethodCall) in a
+   * helper per interface, method and operand shape, the box lent by its place. Arguments
+   * are scalars by value or places lent as the callee's `&T`; a string result is owned.
+   */
+  private dynCall(e: HIRExpr & { kind: "InterfaceMethodCall" }): Val {
+    const ot = stripRefs(e.object.type);
+    if (ot.tag !== "heap" || ot.inner.tag !== "interface") throw new MlirUnsupported("interface call on a borrowed interface");
+    const p = this.fieldPlace(e.object);
+    const dty = this.place$(ot, "interface box");
+    if (!p || p.ty !== dty) throw new MlirUnsupported("interface call on a box that is not a place");
+    const ops: { name: string; type: TypeKind; mode: "val" | "ref" | "mut"; ref: string }[] = [{ name: "o", type: ot, mode: "ref", ref: p.ref }];
+    const mark = this.pending;
+    e.args.forEach((a, k) => {
+      const t = stripRefs(a.expr.type);
+      if (a.passByRef) {
+        const ty = this.place$(t, "interface call operand");
+        ops.push({ name: `a${k}`, type: t, mode: a.refMut ? "mut" : "ref", ref: this.place(a.expr, refOf(ty), a.refMut).ref });
+        return;
+      }
+      const v = this.pend(this.expr(a.expr));
+      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`interface call argument of type ${t.tag}`);
+      ops.push({ name: `a${k}`, type: t, mode: "val", ref: v.ref });
+    });
+    this.pending = mark;
+    const ret = e.type.tag === "void" ? null : this.value(e.type, "interface call result");
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("interface call result type");
+    const r = this.intrinsic(`dyn${e.methodIndex}`, e, ops, ([o, ...xs]) => ({
+      ...e, object: o, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })),
+    }), ret, false);
+    return ret === STR ? { ...r, own: "owned" } : r;
+  }
+
+  /**
    * `f as *u8`, in a legacy helper doing exactly that (genCast): a named function's own
    * symbol, not its trampoline, and any other fn value's code pointer, its first field.
    */
@@ -1432,6 +1465,7 @@ class FnEmitter {
         }));
         return { ...this.def(`milo.string.share ${p.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       }
+      case "InterfaceMethodCall": return this.dynCall(e);
       case "StringSlice": {
         // `s[a..b]`, legacy's genStringSlice in a helper: a `&string` view into s's buffer
         // (data and len, nothing owned), range-checked. Only a place's string, which
@@ -1661,6 +1695,7 @@ class FnEmitter {
       }
       case "HeapCreate": {
         const ty = this.value(e.type, "box");
+        if (ty.startsWith("!milo.dyn<")) throw new MlirUnsupported("box of an interface");
         const inner = /^!milo\.heap<(.*)>$/.exec(ty)![1];
         const v = valueType(this.cx, e.value.type) === null ? this.bigArg(e.value, inner) : this.consume(this.expr(e.value), "boxed value");
         if (v.ty !== inner) throw new MlirUnsupported("boxed value of another type");

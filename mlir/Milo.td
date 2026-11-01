@@ -125,6 +125,15 @@ def Milo_HeapType : TypeDef<Milo_Dialect, "Heap"> {
   let assemblyFormat = "`<` $valueType `>`";
 }
 
+// A `Heap<I>` of an interface: legacy's `{ ptr data, ptr itable }`, owned (its drop glue,
+// legacy's milo.drop.dyn.<I>, runs the concrete type's drop through the itable and frees
+// the box). Opaque: a method call through it is legacy's dispatch in a helper.
+def Milo_DynType : TypeDef<Milo_Dialect, "Dyn"> {
+  let mnemonic = "dyn";
+  let parameters = (ins StringRefParameter<>:$iface);
+  let assemblyFormat = "`<` $iface `>`";
+}
+
 // What is left of a Vec a consuming `for x in makeVec()` takes apart from the front:
 // legacy's `{ %Vec, i64 cursor }` (genConsumedIterable). The elements before the cursor
 // were moved out; the drop glue drops those from the cursor on, then frees the buffer, so
@@ -225,7 +234,7 @@ def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
 }
 
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_HeapType, Milo_FnType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_HeapType, Milo_DynType, Milo_FnType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 
