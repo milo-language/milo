@@ -1525,9 +1525,6 @@ class LowerCtx {
           if (expr.method === "clear") {
             return { kind: "HashMapClear", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
-          if (expr.method === "keys" || expr.method === "values") {
-            return { kind: "HashMapEntries", object: this.lowerExpr(expr.object), field: expr.method === "keys" ? "key" : "value", type, span: expr.span };
-          }
         }
         if (objType?.tag === "string") {
           if (expr.method === "push") {

@@ -166,3 +166,9 @@ special cases.
   (`refuseImmutableReceiver`): any `&mut self` method, in every dispatch path, needs a
   receiver a `&mut` argument could take (`unwritableMutTarget`, shared with the argument
   check). Heap receivers, temporaries and by-value match bindings stay legal.
+- 2026-11-01: `keys` and `values` moved: slot-order loop, `out.push(_mapCopyOut(...))` into
+  a `Vec.withCapacity(len)` (same capacity as the builtin's exact allocation). The
+  interface/closure and resource copy-out refusals stay at the call in the checker.
+  Fixture checks keys() against the builtin for-in order. Planted tombstone match and
+  reversed slot order turn `hashMapKeysValuesStd` red; 0 leaks; bench 0.38s builtin vs
+  0.32s std (100k-entry keys+values x1000, 2k string keys x2000).

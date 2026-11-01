@@ -71,7 +71,6 @@ export type HIRExpr =
   | { kind: "HashMapClear"; object: HIRExpr; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —
   // the map keeps its own copy). `field` says which half of the entry to collect.
-  | { kind: "HashMapEntries"; object: HIRExpr; field: "key" | "value"; type: TypeKind; span?: Span }
   | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringPush"; str: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringPushStr"; str: HIRExpr; other: HIRExpr; type: TypeKind; span?: Span }

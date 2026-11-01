@@ -131,6 +131,43 @@ impl HashMap<K, V> {
         return true
     }
 
+    // A copy of every key, in slot order (unspecified, varies per process with the seed:
+    // sort the result for a stable order).
+    fn keys(self: &Self): Vec<K> {
+        var out: Vec<K> = Vec.withCapacity(self.len)
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let data = raw[0]._data
+            let cap = raw[0]._cap
+            var i: i64 = 0
+            while i < cap {
+                if data[i].state == 1 {
+                    out.push(_mapCopyOut(data[i].key))
+                }
+                i = i + 1
+            }
+        }
+        return out
+    }
+
+    // A copy of every value, in the same slot order as keys().
+    fn values(self: &Self): Vec<V> {
+        var out: Vec<V> = Vec.withCapacity(self.len)
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let data = raw[0]._data
+            let cap = raw[0]._cap
+            var i: i64 = 0
+            while i < cap {
+                if data[i].state == 1 {
+                    out.push(_mapCopyOut(data[i].value))
+                }
+                i = i + 1
+            }
+        }
+        return out
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0

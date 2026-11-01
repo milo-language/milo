@@ -1,0 +1,84 @@
+// HashMap.keys/values, now std/hashmap.milo code: a Vec holding a structural copy of each
+// occupied slot's key or value, in slot order. Dense tables, tombstones from remove,
+// string and struct keys, Vec/string/struct values copied out (changing the copy leaves
+// the map alone), keys and values pairing up by position, empty maps, the result's
+// capacity, and a temporary receiver.
+struct Pt { x: i64, y: i64 }
+
+struct Bag { name: string, xs: Vec<i64> }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i * 3); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    let ks = m.keys()
+    let vs = m.values()
+    print(ks.len.toString() + " " + vs.len.toString() + " " + ks.capacity().toString())
+    var ok = true
+    var ksum: i64 = 0
+    i = 0
+    while i < ks.len {
+        if vs[i] != ks[i] * 3 { ok = false }
+        ksum = ksum + ks[i]
+        i = i + 1
+    }
+    print(ok)
+    print(ksum)
+    // Slot order: the same order the builtin for-in walks.
+    var walked: Vec<i64> = Vec.new()
+    for k, v in m { walked.push(k) }
+    var same = walked.len == ks.len
+    i = 0
+    while i < ks.len { if walked[i] != ks[i] { same = false }; i = i + 1 }
+    print(same)
+    var sorted = ks.clone()
+    sorted.sort()
+    print(sorted[0].toString() + " " + sorted[sorted.len - 1].toString())
+
+    var e: HashMap<string, i64> = HashMap.new()
+    print(e.keys().len.toString() + " " + e.values().len.toString())
+
+    var s: HashMap<string, Bag> = HashMap.new()
+    i = 0
+    while i < 50 { s.insert("w" + i.toString(), Bag { name: "b" + i.toString(), xs: [i] }); i = i + 1 }
+    var bags = s.values()
+    bags[0].xs.push(99)
+    bags[0].name = "changed"
+    var grown: i64 = 0
+    for k, v in s { grown = grown + v.xs.len }
+    print(grown)
+    var names = s.keys()
+    names.sort()
+    print(names[0] + " " + names[names.len - 1])
+
+    var p: HashMap<Pt, Vec<string>> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, ["a"])
+    p.insert(Pt { x: 3, y: 4 }, ["b", "c"])
+    var total: i64 = 0
+    for pt in p.keys() { total = total + pt.x + pt.y }
+    for v in p.values() { total = total + v.len * 100 }
+    print(total)
+
+    print(squares(50).keys().len)
+    print(squares(50).values().len)
+}
+// @expect: 666 666 666
+// @expect: true
+// @expect: 332667
+// @expect: true
+// @expect: 1 998
+// @expect: 0 0
+// @expect: 50
+// @expect: w0 w9
+// @expect: 310
+// @expect: 50
+// @expect: 50

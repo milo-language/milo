@@ -13629,11 +13629,6 @@ export class TypeChecker {
         for (const a of expr.args) this.checkExpr(a);
         return this.setType(expr, { tag: "unknown" });
       }
-      // In-place access. `modify` hands the callback a `&mut V` view of the stored value,
-      // so a nested container is updated where it sits instead of get-clone-mutate-insert;
-      // `getOrInsertWith` is the "entry or default" half. The receiver is frozen for the
-      // callback's duration (borrowDuringCallback), so the callback cannot insert into or
-      // remove from the map it is reaching into.
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
@@ -13659,19 +13654,18 @@ export class TypeChecker {
         }
         return this.setType(expr, objType);
       }
-      // keys()/values() snapshot into a Vec. Iteration order is unspecified and
-      // varies per process (the hash seed is randomized), so the snapshot is the
-      // supported way to get a stable order: collect, then sort.
+      // keys()/values() are std/hashmap code copying each element out structurally; the
+      // copies they cannot make are refused here, at the call, before the body exists.
       if (expr.method === "keys" || expr.method === "values") {
-        if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
         const el = expr.method === "keys" ? objType.key : objType.value;
         if (el.tag === "interface" || el.tag === "fn") {
           this.error(`'${expr.method}' cannot copy ${this.show(el)} out of the map`, sp,
             `iterate with 'for k, v in map' instead — it borrows rather than copies`);
           return this.setType(expr, { tag: "unknown" });
         }
-        this.errorIfResourceCopyOut(el, expr.method, "HashMap", sp, `Iterate with 'for k, v in m' instead, which borrows`);
-        return this.setType(expr, { tag: "vec", element: el });
+        if (this.errorIfResourceCopyOut(el, expr.method, "HashMap", sp, `Iterate with 'for k, v in m' instead, which borrows`)) {
+          return this.setType(expr, { tag: "unknown" });
+        }
       }
       {
         const blanket = this.instantiateContainerImpl("HashMap", [objType.key, objType.value], expr.method);
