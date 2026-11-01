@@ -80,4 +80,26 @@ impl HashMap<K, V> {
             return fallback
         }
     }
+
+    // A copy of the value under `key`, or None when the key is absent. The variants are
+    // qualified: a user fn named `Some` shadows the bare alias program-wide.
+    fn get(self: &Self, key: &K): Option<V> {
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let data = raw[0]._data
+            let mask = raw[0]._cap.wrappingSub(1)
+            var slot = _mapHash(key, raw[0]._seed) & mask
+            while true {
+                let state = data[slot].state
+                if state == 0 {
+                    return Option.None
+                }
+                if state == 1 && _mapKeyEq(key, data[slot].key) {
+                    return Option.Some(_mapCopyOut(data[slot].value))
+                }
+                slot = slot.wrappingAdd(1) & mask
+            }
+            return Option.None
+        }
+    }
 }

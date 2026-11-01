@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-10-31 (phase 1 in progress: contains, isEmpty, getOrDefault moved)
+last-verified: 2026-10-31 (phase 1 in progress: contains, isEmpty, getOrDefault, get moved)
 -->
 
 # Collections in std
@@ -123,3 +123,8 @@ special cases.
   copying lookups probe inline, since mapFind's slot-then-test measured about 4% slower.
   Planted probe step `+ 2` turns `hashMapGetOrDefaultStd` red; 0 leaks; 600M lookups
   1.31s builtin vs 1.32s std.
+- 2026-10-31: `get` moved (inline probe, `Some(_mapCopyOut(...))`). The pinned copy-out
+  message (`dropElementHashMapGet`) still comes from the checker's hashmap chain. Planted
+  tombstone match and probe step `+ 2` each turn `hashMapGetStd` red; 0 leaks; 600M i64
+  lookups 1.32s builtin vs 1.34s std. builtinMembers.test checks with the prelude since the
+  getOrDefault commit, so a row whose body moved to std resolves (red since `contains`).

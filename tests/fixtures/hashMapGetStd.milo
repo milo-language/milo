@@ -1,0 +1,110 @@
+// HashMap.get, now std/hashmap.milo code probing the table codegen builds. Dense tables,
+// tombstones from remove, string and struct keys, temporary receivers and keys, and values
+// deep-copied out (string, Vec, struct, enum): changing the copy leaves the map alone.
+struct Pt { x: i64, y: i64 }
+
+struct Bag { name: string, xs: Vec<i64> }
+
+enum Shape { Dot, Line(Vec<i64>) }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn words(): HashMap<string, Vec<string>> {
+    var m: HashMap<string, Vec<string>> = HashMap.new()
+    m.insert("a", ["x", "y"])
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i * 2); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    var sum: i64 = 0
+    var misses: i64 = 0
+    i = 0
+    while i < 1200 {
+        match m.get(i) {
+            Some(v) => { sum = sum + v }
+            None => { misses = misses + 1 }
+        }
+        i = i + 1
+    }
+    print(sum)
+    print(misses)
+
+    var s: HashMap<string, string> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), "v" + i.toString()); i = i + 1 }
+    print(s.get("w299") ?? "none")
+    print(s.get("w300") ?? "none")
+    print(s.get("w" + (7).toString()) ?? "none")
+    print(s.get("").isSome())
+
+    var p: HashMap<Pt, Bag> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, Bag { name: "a", xs: Vec<i64>.filled(2, 5) })
+    if let Some(b) = p.get(Pt { x: 1, y: 2 }) {
+        var got = b
+        got.xs.push(9)
+        got.name = "changed"
+        print(got.name + " " + got.xs.len.toString())
+    }
+    if let Some(b) = p.get(Pt { x: 1, y: 2 }) {
+        print(b.name + " " + b.xs.len.toString())
+    }
+    print(p.get(Pt { x: 2, y: 1 }).isSome())
+
+    // The copy-back idiom: the copy outlives an insert over the same key.
+    var vs: HashMap<i64, Vec<i64>> = HashMap.new()
+    vs.insert(1, Vec<i64>.filled(3, 7))
+    var v = vs.get(1)!
+    v.push(8)
+    vs.insert(1, v)
+    print(vs.get(1)!.len)
+    print(vs.get(2).isSome())
+
+    var e: HashMap<i64, Shape> = HashMap.new()
+    e.insert(1, Shape.Line([1, 2, 3]))
+    e.insert(2, Shape.Dot)
+    match e.get(1) {
+        Some(Shape.Line(xs)) => print(xs.len)
+        _ => print("?")
+    }
+    match e.get(2) {
+        Some(Shape.Dot) => print("dot")
+        _ => print("?")
+    }
+
+    var small: HashMap<i32, i32> = HashMap.new()
+    small.insert(3, 30)
+    print(small.get(3) ?? 0)
+    print(small.get(4) ?? 0)
+
+    print(squares(50).get(49 * 49) ?? -1)
+    print(squares(50).get(50 * 50) ?? -1)
+    print(words().get("a")!.len)
+}
+// @expect: 665334
+// @expect: 534
+// @expect: v299
+// @expect: none
+// @expect: v7
+// @expect: false
+// @expect: changed 3
+// @expect: a 2
+// @expect: false
+// @expect: 4
+// @expect: false
+// @expect: 3
+// @expect: dot
+// @expect: 30
+// @expect: 0
+// @expect: 49
+// @expect: -1
+// @expect: 2

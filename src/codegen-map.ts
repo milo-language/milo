@@ -6,8 +6,7 @@ import type { HIRExpr } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { OwnLedger } from "./codegen-own";
-import type { Gen, StructLayout, EnumLayout, EnumVariant } from "./codegen";
-import { must } from "./must";
+import type { Gen, StructLayout } from "./codegen";
 import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Block, type Val } from "./ir";
 
 // %HashMap field indices. The struct is { data, len, cap, seed, tombs }, and these offsets
@@ -48,11 +47,8 @@ export interface CodegenMapCtx {
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
   emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }): void;
-  storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
-  enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
   own: OwnLedger;
   structLayouts: Map<string, StructLayout>;
-  enumLayouts: Map<string, EnumLayout>;
   hasHashMapType: boolean;
   hasVecType: boolean;
   hasStringType: boolean;
@@ -965,93 +961,6 @@ export function genHashMapEntries(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "H
   // its keys and its values on every call.
   ctx.dropOwnedTemp(lines, ov.ref, "%HashMap", expr.object);
   return asGen(lines, v);
-}
-
-export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapGet" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  const mapType = expr.map.type;
-  if (mapType.tag !== "hashmap") throw new Error("HashMapGet on non-hashmap");
-  const keyType = mapType.key;
-  const valueType = mapType.value;
-  const keyTy = Ty.of(ctx.llvmType(keyType));
-  const valTy = Ty.of(ctx.llvmType(valueType));
-  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
-  const b = new LlvmTextBuilder(lines, ctx);
-
-  const optionEnumName = expr.optionEnumName;
-  const optionLayout = ctx.enumLayouts.get(optionEnumName);
-  if (!optionLayout) throw new Error(`no enum layout for ${optionEnumName}`);
-  const optionTy = Ty.of(`%${optionEnumName}`);
-
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const keyVal = ctx.genVal(expr.key, lines);
-  const key = val(keyVal.ref, keyTy);
-
-  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
-  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
-
-  const probeCond = b.newBlock("hmg.probe");
-  const probeCheck = b.newBlock("hmg.check");
-  const probeOccupied = b.newBlock("hmg.occupied");
-  const foundLabel = b.newBlock("hmg.found");
-  const notFoundLabel = b.newBlock("hmg.notfound");
-  const probeNext = b.newBlock("hmg.pnext");
-  const doneLabel = b.newBlock("hmg.done");
-
-  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
-    { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, key, keyType },
-  );
-
-  // found — construct Some(value)
-  b.position(foundLabel);
-  const valPtr = entryField(b, entryTy, entryPtr, 2);
-  // Deep-clone, don't `load`: a shallow copy aliases the map's heap, and a later
-  // `insert` on the same key drops the old value out from under it (the copy-back
-  // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Vec indexing already does
-  // this; emitDeepCloneFromPtr degrades to a plain load for Copy types.
-  const foundVal = ctx.emitDeepCloneFromPtr(lines, valPtr.ref, valueType);
-  // The clone can open new basic blocks (vec/enum clone loops), so the phi at
-  // the bottom must name the block we actually end in, not `foundLabel`.
-  const foundEnd = b.newBlock("hmg.found.end");
-  b.br(foundEnd);
-  b.position(foundEnd);
-  // build Option::Some(val) — tag=0, payload=value
-  const someAlloca = b.alloca(optionTy);
-  const someTag = must(optionLayout.variants, "Some", "variants").tag;
-  ctx.storeEnumTag(lines, optionTy.ll, someAlloca.ref, someTag);
-  const somePayloadPtr = ctx.enumPayloadPtr(lines, optionTy.ll, someAlloca.ref, someTag);
-  b.store(val(foundVal, valTy), val(somePayloadPtr, Ty.ptr));
-  const someVal = b.load(optionTy, someAlloca);
-  b.br(doneLabel);
-
-  // not found — construct None
-  b.position(notFoundLabel);
-  const noneAlloca = b.alloca(optionTy);
-  // zero it first to avoid garbage in payload
-  ctx.needsMemset = true;
-  const optionSizeI = entrySizeOf(b, optionTy);
-  b.callDiscard(Ty.ptr, "@memset", [noneAlloca, i32c(0), optionSizeI]);
-  const noneTag = must(optionLayout.variants, "None", "variants").tag;
-  ctx.storeEnumTag(lines, optionTy.ll, noneAlloca.ref, noneTag);
-  const noneVal = b.load(optionTy, noneAlloca);
-  b.br(doneLabel);
-
-  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
-
-  b.position(doneLabel);
-  const result = b.phi(optionTy, [[someVal, foundEnd], [noneVal, notFoundLabel]]);
-  // The key was built by the CALLER and handed to a lookup that only reads it. Nothing
-  // takes ownership on this path, so without a drop `m.get("k" + i.toString())` leaks
-  // that string on every call — one 16-byte allocation per lookup, in about the most
-  // ordinary map idiom there is. `insert` already knew this for its overwrite path;
-  // the four read-only lookups did not. dropOwnedTemp no-ops unless the argument really
-  // is an owned temporary, so a variable or a literal key is untouched.
-  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
-  // A materialized receiver is an owned temporary nobody else will free. This runs after
-  // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-  if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return asGen(lines, result);
 }
 
 // The std/hashmap intrinsics: the same hash and key comparison the builtin methods above

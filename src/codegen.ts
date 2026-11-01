@@ -16,7 +16,7 @@ import {
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
-  genHashMapNew, genHashMapInsert, genHashMapGet, genMapHash, genMapKeyEq, genMapCopyOut, genHashMapModify,
+  genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
@@ -5712,8 +5712,6 @@ export class Codegen {
         return genHashMapNew(this, expr, lines);
       case "HashMapInsert":
         return genHashMapInsert(this, expr, lines);
-      case "HashMapGet":
-        return genHashMapGet(this, expr, lines);
       case "MapHash":
         return genMapHash(this, expr, lines);
       case "MapKeyEq":
@@ -9504,8 +9502,6 @@ export class Codegen {
       // "take an element out and ignore it" disagreed.
       case "VecRemove":
       case "VecFind":
-      // HashMap.get clones the value out of the table for the same reason.
-      case "HashMapGet":
         return true;
       case "BinOp":
         // string `+` only — the comparisons return bool

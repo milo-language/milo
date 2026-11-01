@@ -65,7 +65,6 @@ export type HIRExpr =
   | { kind: "VecClone"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapNew"; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
   // `m.modify(k, f)`: f(&mut value) in place when the key is present; bool says whether.
   | { kind: "HashMapModify"; map: HIRExpr; key: HIRExpr; callback: HIRExpr; type: TypeKind; span?: Span }
   // `m.getOrInsertWith(k, init)`: insert init() when the key is absent; bool says whether it did.

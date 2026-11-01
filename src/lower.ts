@@ -1516,10 +1516,6 @@ class LowerCtx {
           if (expr.method === "insert") {
             return { kind: "HashMapInsert", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
-          if (expr.method === "get") {
-            const optionEnumName = type.tag === "enum" ? type.name : "";
-            return { kind: "HashMapGet", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), optionEnumName, type, span: expr.span };
-          }
           if (expr.method === "modify") {
             return { kind: "HashMapModify", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), callback: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }

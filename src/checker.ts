@@ -13558,19 +13558,9 @@ export class TypeChecker {
         this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });
       }
-      if (expr.method === "get") {
-        if (expr.args.length !== 1) { this.error(`'get' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`get key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
-        this.errorIfResourceCopyOut(objType.value, "get", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
-        const optionType = this.resolveOptionForValue(objType.value, sp);
-        return this.setType(expr, optionType);
-      }
       // The copying lookups are std/hashmap code; the copy-out rule stays here so a
       // resource value is refused at the call, before the std body is instantiated.
-      if (expr.method === "getOrDefault" &&
+      if ((expr.method === "get" || expr.method === "getOrDefault") &&
           this.errorIfResourceCopyOut(objType.value, expr.method, "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`)) {
         for (const a of expr.args) this.checkExpr(a);
         return this.setType(expr, { tag: "unknown" });
