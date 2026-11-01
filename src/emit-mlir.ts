@@ -2165,6 +2165,12 @@ class FnEmitter {
       if (`!milo.ref<${er.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of an element of another type");
       return { ref: er.ref, param: er.param };
     }
+    if (this.isSretCall(e) || (e.kind !== "Ident" && valueType(this.cx, e.type) === null && placeType(this.cx, e.type) !== null)) {
+      // A 128+ byte temporary lent as `&T` is built in a slot of this block, which drops it.
+      const sl = this.bigSlot("arg", e, true);
+      if (`!milo.ref<${sl.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
+      return { ref: sl.ref };
+    }
     if (e.kind !== "Ident") {
       // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.
       if (mut) throw new MlirUnsupported(`by-ref &mut arg ${e.kind}`);

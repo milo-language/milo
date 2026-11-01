@@ -492,6 +492,10 @@ structs, enums.
   lent from its place (print already printed the parts without building the string).
   Program `format`. Planted bug: the result not owned (`format` `--owned` red: 4 more
   live blocks).
+- *A 128+ byte temporary lent as `&T`* (`show(picked(p))`, an sret call or any
+  place-only value) is built in a slot of the block, which drops it. `big-branches`'s
+  main goes through MLIR now. Planted bug: that slot not owned (`big-branches`
+  `--owned` red: 8 more live blocks).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
