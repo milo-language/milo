@@ -1,0 +1,81 @@
+// Vec.swap and Vec.reverse are std/vec.milo code (raw moves, nothing copied or dropped).
+// Covers empty and one-element Vecs, odd and even lengths, swap of a slot with itself,
+// i32 and u8 indexes (widened as the builtin did), string, nested Vec and Drop elements
+// (the drop log shows each value dropped once, at scope end), a field receiver, and a
+// closure that captures a Vec it then reverses. The bounds panics are pinned by
+// runtime-errors/vecSwapOutOfBounds.milo, vecSwapIndexWraps.milo and vecSwapStdLine.milo.
+// @expect: 0 1
+// @expect: [3, 2, 1] [4, 3, 2, 1]
+// @expect: [1, 2, 3]
+// @expect: ["c", "b", "a"]
+// @expect: ["b", "a", "c"]
+// @expect: [[3], [1, 2]]
+// @expect: [9, 8]
+// @expect: 3 1 2
+// @expect: [5, 6, 7]
+// @expect: drop 3
+// @expect: drop 1
+// @expect: drop 2
+// @expect: done
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Holder {
+    items: Vec<i64>,
+}
+
+fn run() {
+    var ns: Vec<Noisy> = Vec.new()
+    ns.push(Noisy { id: 1 })
+    ns.push(Noisy { id: 2 })
+    ns.push(Noisy { id: 3 })
+    ns.reverse()
+    ns.swap(1, 2)
+    print(ns[0].id, " ", ns[1].id, " ", ns[2].id)
+    var h = Holder { items: [7, 6, 5] }
+    h.items.reverse()
+    print(h.items)
+}
+
+fn main() {
+    var e: Vec<i64> = Vec.new()
+    e.reverse()
+    var one: Vec<i64> = [1]
+    one.reverse()
+    print(e.len(), " ", one[0])
+    var odd: Vec<i64> = [1, 2, 3]
+    var even: Vec<i64> = [1, 2, 3, 4]
+    odd.reverse()
+    even.reverse()
+    print(odd, " ", even)
+    let i: i32 = 0
+    let j: u8 = 2
+    odd.swap(i, j)
+    odd.swap(1, 1)
+    print(odd)
+    var s: Vec<string> = ["a", "b", "c"]
+    s.reverse()
+    print(s)
+    s.swap(0, 2)
+    s.swap(0, 1)
+    print(s)
+    var nested: Vec<Vec<i64>> = [[1, 2], [3]]
+    nested.swap(0, 1)
+    print(nested)
+    var cap: Vec<i64> = [8, 9]
+    let f = () => {
+        cap.reverse()
+        print(cap)
+    }
+    f()
+    run()
+    print("done")
+}

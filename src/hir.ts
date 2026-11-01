@@ -96,8 +96,6 @@ export type HIRExpr =
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
   | { kind: "VecMap"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; resultElementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilter"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecReverse"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecSwap"; object: HIRExpr; indexA: HIRExpr; indexB: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecInsert"; object: HIRExpr; index: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecRemove"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecTruncate"; object: HIRExpr; length: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
@@ -122,6 +120,8 @@ export type HIRExpr =
   | { kind: "MapKeyEq"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
   // std/vec `_natLess(a, b)` (checker.ts VEC_INTRINSICS); both operands are places.
   | { kind: "NatLess"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
+  // std/vec `_vecPanic("msg")`: prints "msg at <location>" and aborts.
+  | { kind: "VecPanic"; message: string; type: TypeKind; span?: Span }
   // An owned deep copy of the value at a place (emitDeepCloneFromPtr).
   | { kind: "MapCopyOut"; value: HIRExpr; type: TypeKind; span?: Span }
   // A fresh seed from HASH_SEED_FN (record/replay fixes its sequence); it may be 0.

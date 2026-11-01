@@ -423,61 +423,6 @@ export function genVecFilter(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilter
   return [lines, v2.ref, "%Vec"];
 }
 
-export function genVecReverse(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReverse" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  ctx.needsMemcpy = true;
-  const elemType = expr.elementType;
-  const elemSize = ctx.typeSizeOf(elemType);
-  const elemTy = Ty.of(ctx.llvmType(elemType));
-
-  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
-  lines.push(...vecPtrLines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const vecPtr = val(vecPtrRef, Ty.ptr);
-
-  const dataPtr = b.gep(VEC_TY, vecPtr, [val("0", Ty.i32), val("0", Ty.i32)]);
-  const data = b.load(Ty.ptr, dataPtr);
-  const lenPtr = b.gep(VEC_TY, vecPtr, [val("0", Ty.i32), val("1", Ty.i32)]);
-  const len = b.load(Ty.i64, lenPtr);
-
-  const tmpAddr = b.entryAlloca(`%__rev_tmp.${ctx.scopeCounter++}.addr`, elemTy);
-
-  const loAddr = b.entryAlloca(`%__rev_lo.${ctx.scopeCounter++}.addr`, Ty.i64);
-  b.store(I64_0, loAddr);
-  const hiAddr = b.entryAlloca(`%__rev_hi.${ctx.scopeCounter++}.addr`, Ty.i64);
-  const hiInit = b.binop("sub", len, I64_1);
-  b.store(hiInit, hiAddr);
-
-  const condLabel = b.newBlock("rev.cond");
-  const bodyLabel = b.newBlock("rev.body");
-  const endLabel = b.newBlock("rev.end");
-
-  b.br(condLabel);
-  b.position(condLabel);
-  const lo = b.load(Ty.i64, loAddr);
-  const hi = b.load(Ty.i64, hiAddr);
-  const cmp = b.icmp("slt", lo, hi);
-  b.condBr(cmp, bodyLabel, endLabel);
-
-  b.position(bodyLabel);
-  const loPtr = b.gep(elemTy, data, [lo]);
-  const hiPtr = b.gep(elemTy, data, [hi]);
-  const size = val(String(elemSize), Ty.i64);
-  const volatileOff = val("false", Ty.i1);
-  const memcpy = (dst: Val, src: Val) => b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [dst, src, size, volatileOff]);
-  memcpy(tmpAddr, loPtr);
-  memcpy(loPtr, hiPtr);
-  memcpy(hiPtr, tmpAddr);
-  const nextLo = b.binop("add", lo, I64_1);
-  b.store(nextLo, loAddr);
-  const nextHi = b.binop("sub", hi, I64_1);
-  b.store(nextHi, hiAddr);
-  b.br(condLabel);
-
-  b.position(endLabel);
-  return [lines, "void", "void"];
-}
-
 // pop(): Option<T> — Some(last) when non-empty, None when empty. The popped
 // slot's ownership transfers into the Some payload (len-- makes the slot dead),
 // so the value moves out with no clone. No panic path: `!` handles that.
@@ -614,6 +559,21 @@ export function genNatLess(ctx: CodegenCtx, expr: HIRExpr & { kind: "NatLess" },
   return [lines, emitElemOrd(ctx, lines, elemType, x, y, false).ref, "i1"];
 }
 
+// std/vec's `_vecPanic("msg")`: the builtins' bounds-panic shape, "msg at file:line:col".
+// Inside a @trackCaller copy panicAt names the caller, so the message is the builtin's.
+export function genVecPanic(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPanic" }, lines: string[]): Gen {
+  ctx.needsDprintf = true;
+  ctx.needsExit = true;
+  const b = new LlvmTextBuilder(lines, ctx);
+  const { label, length } = ctx.addString(`${expr.message} at ${ctx.panicAt(expr.span)}\n`);
+  const msg = b.gep(Ty.of(`[${length} x i8]`), val(label, Ty.ptr), [I32_0, I32_0]);
+  ctx.emitFdPrintf(lines, 2, msg.ref, "");
+  ctx.panicAbort(lines);
+  b.unreachable();
+  b.position(b.newBlock("vecpanic.after"));
+  return [lines, "void", "void"];
+}
+
 // `v.truncate(n)` / `v.clear()`. Elements at index >= n are OWNED by the Vec, so
 // shortening the length without running their drop glue would leak every string,
 // nested Vec or Drop-implementing struct above the cut. The counter lives in an
@@ -672,44 +632,6 @@ export function genVecTruncate(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecTrun
   b.store(n, lenPtr);
   b.br(doneLabel);
   b.position(doneLabel);
-  return [lines, "void", "void"];
-}
-
-export function genVecSwap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSwap" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  ctx.needsMemcpy = true;
-  const elemType = expr.elementType;
-  const elemSize = val(String(ctx.typeSizeOf(elemType)), Ty.i64);
-  const elemTy = Ty.of(ctx.llvmType(elemType));
-
-  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
-  lines.push(...vecPtrLines);
-  const vecPtr = val(vecPtrRef, Ty.ptr);
-
-  const aVal = val(ctx.genBoundI64(expr.indexA, lines), Ty.i64);
-  const bVal = val(ctx.genBoundI64(expr.indexB, lines), Ty.i64);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  // Both indices are bounds-checked. This GEP'd straight into the buffer and memcpy'd
-  // three times with no length load at all, so `v.swap(0, 999999)` was an out-of-bounds
-  // read AND write from safe code that exited 0. Every other indexed Vec operation
-  // checks; this one was simply missed.
-  const lenPtrB = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
-  const lenB = b.load(Ty.i64, lenPtrB);
-  for (const idx of [aVal, bVal]) ctx.emitBoundsCheck(lines, idx.ref, lenB.ref, expr.span);
-
-  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
-  const data = b.load(Ty.ptr, dataPtr);
-
-  const ptrA = b.gep(elemTy, data, [aVal]);
-  const ptrB = b.gep(elemTy, data, [bVal]);
-
-  const tmpAddr = b.entryAlloca(`%__swap_tmp.${ctx.scopeCounter++}.addr`, elemTy);
-  const noVolatile = val("false", Ty.i1);
-  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [tmpAddr, ptrA, elemSize, noVolatile]);
-  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [ptrA, ptrB, elemSize, noVolatile]);
-  b.callDiscard(Ty.void, "@llvm.memcpy.p0.p0.i64", [ptrB, tmpAddr, elemSize, noVolatile]);
-
   return [lines, "void", "void"];
 }
 

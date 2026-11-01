@@ -372,3 +372,17 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   typed the result as the ranged element though the total leaves the range; same output).
   Planted `acc = e` turns `vecSumStd` red; output identical to the old compiler; 0 leaks;
   bench 300k sums of 1000 i64 + 1000 f64 1.03s builtin vs 1.01s std.
+- 2026-11-01: phase 2 step 2 begins. `swap` and `reverse` moved: the elements move through a
+  shared `vecSwapAt` (`let t = *pa; *pa = *pb; *pb = t`, bitwise, nothing copied or
+  dropped). swap is `@trackCaller`; its indexes are checked by `self[a].addrOf()` /
+  `self[b].addrOf()`, the indexing bounds check, `a` first, so the panic text and line are
+  the builtin's (`runtime-errors/vecSwapStdLine`; the two older swap panics pass
+  unchanged). The checker keeps the builtin branches (arity, any-int indexes, "cannot
+  reverse immutable Vec") and binds the std body (`bindStdVecMethod`); lowering widens a
+  non-i64 int argument of a resolved method to its i64 parameter, as genBoundI64 did. Also
+  added: `_vecPanic("msg")`, std/vec only, which prints the builtins' "msg at
+  file:line:col" for remove and insert. Planted `hi.wrappingSub(2)` turns
+  `vecSwapReverseStd` red; output identical to the old compiler; live heap at exit equal
+  (184 blocks both; `leaks -atExit` hangs on this host, so a malloc-interposing counter
+  stands in); bench 200k reverses of 1000 i64 + 1000 strings and 100M swaps 0.41s builtin
+  vs 0.39s std.

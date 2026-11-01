@@ -1,0 +1,14 @@
+// @runtime-error: vecSwapStdLine.milo:11
+// Vec.swap is std/vec.milo code; @trackCaller makes its bounds panic name this line, as
+// the builtin's inline check did (without it the panic points into std/vec.milo).
+
+pub fn far(): i64 {
+    return 5
+}
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["a", "b"]
+    v.swap(0, far())
+    print(v[0])
+    return 0
+}

@@ -4,6 +4,30 @@
 // layout ({ptr, len, cap}), literals, indexing, slicing, len, for-in, drop and display.
 // Every method here takes `self: &Self` unless it must change the Vec, so a slice
 // (`&[T]`, the same layout) may call it too.
+//
+// The methods that change a Vec reach its header through VecRaw, which mirrors codegen's
+// %Vec layout field for field. Elements move with raw-pointer reads and writes: `*p` is a
+// bitwise move out, `*p = x` a store that drops nothing, so no element is copied or
+// dropped twice. A bounds panic goes through _vecPanic for the builtins' wording, and
+// @trackCaller makes every panic name the caller's line.
+
+struct VecRaw<T> {
+    _data: *T,
+    _len: i64,
+    _cap: i64,
+}
+
+// Exchanges the values at `a` and `b` (which may be the same slot) without copying or
+// dropping either.
+fn vecSwapAt<T>(a: *T, b: *T) {
+    unsafe {
+        var pa = a
+        var pb = b
+        let t = *pa
+        * pa = *pb
+        * pb = t
+    }
+}
 
 impl Vec<T> {
     // Whether the Vec has no elements.
@@ -193,5 +217,31 @@ impl Vec<T> {
     // The same as fold, under the name most readers type first.
     fn reduce<A>(self: &Self, init: A, f: (A, &T) => A): A {
         return self.fold(init, f)
+    }
+
+    // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,
+    // with the indexing panic.
+    @inline
+    @trackCaller
+    fn swap(self: &mut Self, a: i64, b: i64) {
+        unsafe {
+            let pa = self[a].addrOf()
+            let pb = self[b].addrOf()
+            vecSwapAt(pa, pb)
+        }
+    }
+
+    // Reverses the order of the elements in place.
+    fn reverse(self: &mut Self) {
+        unsafe {
+            let data = self.ptr()
+            var lo = 0
+            var hi = self.len().wrappingSub(1)
+            while lo < hi {
+                vecSwapAt(data[lo].addrOf(), data[hi].addrOf())
+                lo = lo.wrappingAdd(1)
+                hi = hi.wrappingSub(1)
+            }
+        }
     }
 }

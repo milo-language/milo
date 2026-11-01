@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecRemove, genVecSlice, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -55,14 +55,14 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapLen",
 "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "OffsetOf",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "VecPanic", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
   "VecLen", "VecPtr", "VecPush", "VecReserve", "VecRetain",
-  "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
-  "VecSwap", "VecTruncate", "WrappingArith", "Zeroed",
+  "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
+  "VecTruncate", "WrappingArith", "Zeroed",
 ];
 
 // `.` can't appear in a Milo identifier, so this never collides with a user function.
@@ -5688,10 +5688,6 @@ export class Codegen {
         return genVecMap(this, expr, lines);
       case "VecFilter":
         return genVecFilter(this, expr, lines);
-      case "VecReverse":
-        return genVecReverse(this, expr, lines);
-      case "VecSwap":
-        return genVecSwap(this, expr, lines);
       case "VecInsert":
         return genVecInsert(this, expr, lines);
       case "VecRemove":
@@ -5727,6 +5723,8 @@ export class Codegen {
         return genMapHash(this, expr, lines);
       case "NatLess":
         return genNatLess(this, expr, lines);
+      case "VecPanic":
+        return genVecPanic(this, expr, lines);
       case "MapKeyEq":
         return genMapKeyEq(this, expr, lines);
       case "MapCopyOut":

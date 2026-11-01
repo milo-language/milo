@@ -133,7 +133,9 @@ export function isHashMapModule(file: string | undefined): boolean {
 
 // std/vec's natural order, `_natLess(a, b)`: the comparison the builtin min/max/sort emit
 // (emitElemOrd), including `false < true`, which the language's `<` does not have on bool.
-export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess"]);
+// `_vecPanic("msg")` prints "msg at file:line:col" and aborts, the wording of the
+// builtins' own bounds panics (remove, insert), which a plain panic() would not keep.
+export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic"]);
 export function isVecModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -5971,6 +5973,21 @@ export class TypeChecker {
     return true;
   }
 
+  // A Vec method whose call the builtin rules above have already checked (arity, argument
+  // types, the mutable receiver, with the builtin wordings tests pin) and whose body is
+  // std/vec code: record the instantiated method for lowering, as HashMap insert does.
+  // Not dispatchMangledMethod: those rules accept any int index, which lowering widens.
+  private bindStdVecMethod(expr: ExprOf<"MethodCall">, element: TypeKind, method: string, ret: TypeKind): TypeKind {
+    const body = this.instantiateContainerImpl("Vec", [element], method);
+    if (!body) {
+      this.error(`Vec has no method '${method}'`, expr.span);
+      return this.setType(expr, ret);
+    }
+    this.autoBorrow(expr.object, { mutable: true });
+    this.resolvedMethods.set(expr, body.mangled);
+    return this.setType(expr, ret);
+  }
+
   // `borrowsForCallback`: the receiver is frozen while the arguments are checked, and the
   // call-site exclusivity rule is not applied. That is the builtin callback methods' rule
   // (borrowDuringCallback): the callback may read the receiver but not insert into or
@@ -10731,6 +10748,12 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(sp?.file)) return this.checkMapIntrinsic(expr);
+    if (expr.func === "_vecPanic" && isVecModule(sp?.file)) {
+      if (expr.args.length !== 1 || expr.args[0]!.kind !== "StringLit") {
+        this.error(`'_vecPanic' expects one string literal`, sp);
+      }
+      return this.setType(expr, { tag: "void" });
+    }
     if (VEC_INTRINSICS.has(expr.func) && isVecModule(sp?.file)) return this.checkNatLess(expr);
     if (expr.func === "sizeOf") {
       if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`sizeOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -13512,7 +13535,7 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot reverse immutable Vec`, sp, `declare with 'var' to make it mutable`);
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "reverse", { tag: "void" });
       }
       if (expr.method === "swap") {
         if (expr.args.length !== 2) { this.error(`'swap' expects 2 arguments (index a, index b)`, sp); return this.setType(expr, { tag: "void" }); }
@@ -13523,7 +13546,7 @@ export class TypeChecker {
         const bType = this.checkExpr(expr.args[1]);
         if (aType.tag !== "int" && aType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${this.show(aType)}`, sp); }
         if (bType.tag !== "int" && bType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${this.show(bType)}`, sp); }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "swap", { tag: "void" });
       }
       if (expr.method === "insert") {
         if (expr.args.length !== 2) { this.error(`'insert' expects 2 arguments (index, value)`, sp); return this.setType(expr, { tag: "void" }); }

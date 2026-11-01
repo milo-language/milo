@@ -847,6 +847,10 @@ class LowerCtx {
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
         if (VEC_INTRINSICS.has(expr.func) && isVecModule(expr.span?.file)) {
+          if (expr.func === "_vecPanic") {
+            const msg = expr.args[0];
+            return { kind: "VecPanic", message: msg?.kind === "StringLit" ? msg.value : "", type, span: expr.span };
+          }
           return { kind: "NatLess", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
         }
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
@@ -1421,12 +1425,6 @@ class LowerCtx {
             ];
             return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
           }
-          if (expr.method === "reverse") {
-            return { kind: "VecReverse", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "swap") {
-            return { kind: "VecSwap", object: this.lowerExpr(expr.object), indexA: this.lowerExpr(expr.args[0]), indexB: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "insert") {
             return { kind: "VecInsert", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
           }
@@ -1573,7 +1571,7 @@ class LowerCtx {
         // user-defined method (trait or inherent)
         const resolved = this.c.resolvedMethods.get(expr);
         if (resolved) {
-          must(this.c.functions, resolved, "functions"); // asserts the resolved method has a signature before lowering its call
+          const sig = must(this.c.functions, resolved, "functions"); // asserts the resolved method has a signature before lowering its call
           const heapRecv = this.c.heapMethodReceivers.has(expr);
           const allExprs = [expr.object, ...expr.args];
           const args: HIRArg[] = allExprs.map((a, i) => {
@@ -1600,6 +1598,14 @@ class LowerCtx {
                 : ht && ht.tag === "ref" && ht.inner.tag === "heap" ? ht.inner.inner
                 : lowered.type;
               lowered = { kind: "HeapDeref", operand: lowered, type: inner, isMove: !borrowed, span: a.span };
+            }
+            // A std Vec method bound by bindStdVecMethod takes an i64 index where the
+            // builtin rules accepted any int, as genBoundI64 widened it.
+            const pt = sig?.params[i]?.type;
+            if (pt?.tag === "int" && lowered.type.tag === "int" && !borrowed
+                && (pt.bits !== lowered.type.bits || pt.signed !== lowered.type.signed)) {
+              const to: TypeKind = { tag: "int", bits: pt.bits, signed: pt.signed };
+              lowered = { kind: "Cast", operand: lowered, targetType: to, type: to, span: a.span };
             }
             return {
               expr: lowered,
