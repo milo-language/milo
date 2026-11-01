@@ -1,0 +1,12 @@
+// @error: use of moved variable 'k'
+// `getOrInsertWith(key: K, init)` takes the key by value: a miss stores it in the map.
+// The builtin stored the caller's key without moving it, so the caller and the map both
+// owned it and the caller's drop freed what the map still held (heap-use-after-free).
+struct Name { first: string, last: string }
+
+fn main() {
+    var m: HashMap<Name, i64> = HashMap.new()
+    let k = Name { first: "ada" + "", last: "lovelace" + "" }
+    m.getOrInsertWith(k, (): i64 => 1)
+    print(k.first)
+}

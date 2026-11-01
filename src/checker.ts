@@ -13587,19 +13587,6 @@ export class TypeChecker {
       // `getOrInsertWith` is the "entry or default" half. The receiver is frozen for the
       // callback's duration (borrowDuringCallback), so the callback cannot insert into or
       // remove from the map it is reaching into.
-      if (expr.method === "getOrInsertWith") {
-        if (expr.args.length !== 2) { this.error(`'getOrInsertWith' expects 2 arguments (key, init), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`getOrInsertWith key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
-        const cbHint: TypeKind = { tag: "fn", params: [], ret: objType.value };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[1], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "bool" });
-      }
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
@@ -13641,7 +13628,7 @@ export class TypeChecker {
       }
       {
         const blanket = this.instantiateContainerImpl("HashMap", [objType.key, objType.value], expr.method);
-        if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp, expr.method === "modify");
+        if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp, expr.method === "modify" || expr.method === "getOrInsertWith");
         if (this.reportWithheldContainerMethod("HashMap", [objType.key, objType.value], objType, expr.method, sp)) return this.setType(expr, { tag: "unknown" });
       }
       this.error(`HashMap has no method '${expr.method}'`, sp, memberHint(expr.method, HASHMAP_MEMBERS));

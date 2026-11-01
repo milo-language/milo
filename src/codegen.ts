@@ -17,7 +17,7 @@ import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut,
-  genHashMapGetOrInsertWith, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
+  genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -55,7 +55,7 @@ export function noaliasEnabled(): boolean {
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
-  "Forget", "HashMapClear", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen",
+  "Forget", "HashMapClear", "HashMapInsert", "HashMapLen",
 "HashMapNew", "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MapHash", "MapKeyEq", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
@@ -5718,8 +5718,6 @@ export class Codegen {
         return genMapKeyEq(this, expr, lines);
       case "MapCopyOut":
         return genMapCopyOut(this, expr, lines);
-      case "HashMapGetOrInsertWith":
-        return genHashMapGetOrInsertWith(this, expr, lines);
       case "HashMapWithCapacity":
         return genHashMapWithCapacity(this, expr, lines);
       case "HashMapClone":

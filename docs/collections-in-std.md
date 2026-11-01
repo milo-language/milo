@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-11-01 (phase 1 in progress: contains, isEmpty, getOrDefault, get, remove, modify moved)
+last-verified: 2026-11-01 (phase 1 in progress: contains, isEmpty, getOrDefault, get, remove, modify, getOrInsertWith moved)
 -->
 
 # Collections in std
@@ -145,3 +145,13 @@ special cases.
   accepted and miscompiled (it printed the slot's address). Planted: tombstone match and
   probe step `+ 2` turn `hashMapModifyStd` red; dropping the flag turns
   `hashMapModifyReentrant` red. 0 leaks; 600M lookups 1.27s builtin vs 1.26s std.
+- 2026-11-01: `getOrInsertWith` moved, key now BY VALUE. The builtin never moved the key
+  but stored it on a miss: a heap string key was freed by the caller while the map held
+  it (ASan: heap-use-after-free; the old compiler's run of `hashMapGetOrInsertWithStd` is
+  killed). A reused non-Copy, non-string key is now a use after move
+  (`getOrInsertWithKeyMoved`). A miss probes twice (inline probe, then the builtin insert)
+  until insert moves; `init` keeps the callback borrow (`getOrInsertWithReentrant`).
+  Planted always-insert turns the fixture red. ASan clean, 0 leaks. Bench: miss path
+  0.37s vs 0.37s; hit path 0.58s builtin vs 0.61s std. Both inline fully and keep the map
+  in registers; the -O2 loops differ in shape (the builtin's state test is one `switch`,
+  the std loop two compares plus a rotated loop), which is the remaining ~4%.

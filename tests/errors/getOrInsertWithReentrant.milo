@@ -1,0 +1,10 @@
+// @error: cannot call 'insert' on 'm' while 'm.getOrInsertWith' borrows it
+// The map is borrowed while init runs: init may read it, but an insert inside it could
+// grow the table between getOrInsertWith's probe and its own insert.
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.getOrInsertWith("a", (): i64 => {
+        m.insert("b", 2)
+        return 1
+    })
+}

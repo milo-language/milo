@@ -103,6 +103,34 @@ impl HashMap<K, V> {
         }
     }
 
+    // Insert `init()` under `key` when the key is absent; true when it did. The key is
+    // taken by value: a miss stores it, a hit drops it. `init` runs only on a miss; the
+    // checker borrows the map for it, so it may read the map but not change it.
+    //
+    // A miss probes twice (here, then again inside insert) because insert is still
+    // builtin; an insert-at-slot helper shared with insert removes the second probe
+    // once insert moves into std.
+    fn getOrInsertWith(self: &mut Self, key: K, init: () => V): bool {
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let data = raw[0]._data
+            let mask = raw[0]._cap.wrappingSub(1)
+            var slot = _mapHash(key, raw[0]._seed) & mask
+            while true {
+                let state = data[slot].state
+                if state == 0 {
+                    break
+                }
+                if state == 1 && _mapKeyEq(key, data[slot].key) {
+                    return false
+                }
+                slot = slot.wrappingAdd(1) & mask
+            }
+        }
+        self.insert(key, init())
+        return true
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0

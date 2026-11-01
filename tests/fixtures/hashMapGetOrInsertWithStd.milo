@@ -1,0 +1,60 @@
+// HashMap.getOrInsertWith, now std/hashmap.milo code taking the key by value: a miss
+// inserts the key with init(), a hit drops it. The builtin stored the caller's key on a
+// miss without moving it, so a heap string key was freed by the caller while the map
+// still held it (heap-use-after-free from safe code). Dense tables, tombstones, string
+// and struct keys, Vec values, an init that reads the map, and a temporary key.
+struct Pt { x: i64, y: i64 }
+
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    var i: i64 = 0
+    var inserted: i64 = 0
+    while i < 400 {
+        let k = "key-" + (i % 300).toString() + "-long-enough-to-be-on-the-heap"
+        if m.getOrInsertWith(k, (): i64 => 7) { inserted = inserted + 1 }
+        i = i + 1
+    }
+    print(inserted)
+    print(m.len)
+    var total: i64 = 0
+    for k, v in m { total = total + k.len + v }
+    print(total)
+
+    var d: HashMap<i64, i64> = HashMap.new()
+    i = 0
+    while i < 1000 { d.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { d.remove(i) }; i = i + 1 }
+    inserted = 0
+    i = 0
+    while i < 1200 {
+        if d.getOrInsertWith(i, (): i64 => -1) { inserted = inserted + 1 }
+        i = i + 1
+    }
+    print(inserted)
+    print(d.len)
+    print(d.get(3) ?? 0)
+    print(d.get(4) ?? 0)
+
+    var p: HashMap<Pt, Vec<string>> = HashMap.new()
+    print(p.getOrInsertWith(Pt { x: 1, y: 2 }, (): Vec<string> => ["a", "b"]))
+    print(p.getOrInsertWith(Pt { x: 1, y: 2 }, (): Vec<string> => ["c"]))
+    print(p.get(Pt { x: 1, y: 2 })!.len)
+
+    var r: HashMap<string, i64> = HashMap.new()
+    r.insert("a", 1)
+    print(r.getOrInsertWith("b", (): i64 => r.len + r.getOrDefault("a", 0)))
+    print(r.get("b") ?? 0)
+}
+// @expect: 300
+// @expect: 300
+// @expect: 13090
+// @expect: 534
+// @expect: 1200
+// @expect: -1
+// @expect: 4
+// @expect: true
+// @expect: false
+// @expect: 2
+// @expect: true
+// @expect: 2
