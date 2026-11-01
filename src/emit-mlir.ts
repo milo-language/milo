@@ -1255,9 +1255,12 @@ class FnEmitter {
         const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
         if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
         const mark = this.pending;
-        const args = e.args.map(a => this.pend(this.consume(this.expr(a), "payload")));
+        // A 128+ byte payload of an enum that is a value passes through one SSA value from
+        // its place (bigArg), as a big argument does at a call.
+        const fields = v.fields.map(f => valueType(this.cx, f) ?? this.place$(f, "payload"));
+        const args = e.args.map((a, k) => this.pend(valueType(this.cx, v.fields[k]) === null
+          ? this.bigArg(a, fields[k]) : this.consume(this.expr(a), "payload")));
         this.pending = mark;
-        const fields = v.fields.map(f => this.value(f, "payload"));
         if (args.some((a, k) => a.ty !== fields[k])) throw new MlirUnsupported("payload of another type");
         const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
         return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };

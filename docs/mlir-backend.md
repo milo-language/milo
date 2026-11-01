@@ -503,6 +503,10 @@ structs, enums.
   conversion as for an extern (legacy keys it on the signature, not on extern), so it
   goes through the `milo.ffi.*` helper too (`plen` in `ffi-strings`; the temporary
   plant above turns it red the same way).
+- *A 128+ byte payload of an enum that is a value* (`Some(row(i))`, a derived clone of
+  `Result<Row, E>`) passes from its slot through one SSA value, as a big argument does
+  (bigArg). `maybeRow` in `big-branches`. Planted bug: the temporary loaded instead of
+  moved out of its slot (`big-branches` stdout, a use after free).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
