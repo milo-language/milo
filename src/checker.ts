@@ -10001,6 +10001,7 @@ export class TypeChecker {
     }
     if (expr.kind === "EnumLit" && expr.enumName === "HashMap" && expr.variant === "new" && hint?.tag === "hashmap") {
       if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, expr.span); }
+      this.bindMapConstructor(expr, hint);
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -10010,6 +10011,7 @@ export class TypeChecker {
         const c = this.checkExpr(expr.args[0]);
         if (c.tag !== "int" && c.tag !== "unknown") this.error(`'HashMap.withCapacity': capacity must be an integer, got ${this.show(c)}`, expr.span);
       }
+      this.bindMapConstructor(expr, hint);
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -12251,6 +12253,24 @@ export class TypeChecker {
       if (t.tag !== "int" && t.tag !== "unknown") this.error(`'${expr.func}': expected an i64, got ${this.show(t)}`, a.span);
     }
     return this.setType(expr, isSeed ? i64 : { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } });
+  }
+
+  // `HashMap.new()` / `HashMap.withCapacity(n)` call std/hashmap's mapNew / mapWithCapacity,
+  // instantiated for the <K, V> the context gave the literal. Recorded as a static call,
+  // so lowering emits the call and the whole-program passes see a real callee.
+  private bindMapConstructor(expr: ExprOf<"EnumLit">, t: TypeKind): void {
+    // An unhashable key was already refused where the type was written; instantiating
+    // would repeat that error once per std/hashmap line that hashes a key.
+    if (t.tag !== "hashmap" || !this.isHashable(t.key)) return;
+    const base = expr.variant === "new" ? "mapNew" : "mapWithCapacity";
+    // The resolver module-scopes a private std name (`hashmap$mapNew`), so find it by origin.
+    const generic = [...this.genericFns.entries()].find(([name, g]) =>
+      (name === base || name.endsWith(`$${base}`)) && isHashMapModule(g.decl.sourceFile));
+    if (!generic) {
+      this.error(`'HashMap.${expr.variant}' needs std/hashmap, which the prelude imports`, expr.span);
+      return;
+    }
+    this.staticCalls.set(expr, this.monomorphizeFn(generic[0], [t.key, t.value], expr.span));
   }
 
   private checkMapCopyOut(expr: ExprOf<"Call">): TypeKind {

@@ -16,8 +16,7 @@ import {
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
-  genHashMapNew, genMapHash, genMapKeyEq, genMapCopyOut, genMapSeed, genMapAlloc,
-  genHashMapWithCapacity,
+  genMapHash, genMapKeyEq, genMapCopyOut, genMapSeed, genMapAlloc,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -56,8 +55,8 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapLen",
-"HashMapNew", "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "OffsetOf",
+"HeapCreate", "HeapPtr", "Ident",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NonNegative", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
@@ -5708,8 +5707,6 @@ export class Codegen {
       case "VecSortByKey":
         this.own.keyExtractor = this.own.on;
         try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }
-      case "HashMapNew":
-        return genHashMapNew(this, expr, lines);
       case "MapHash":
         return genMapHash(this, expr, lines);
       case "MapKeyEq":
@@ -5720,8 +5717,11 @@ export class Codegen {
         return genMapSeed(this, lines);
       case "MapAlloc":
         return genMapAlloc(this, expr, lines);
-      case "HashMapWithCapacity":
-        return genHashMapWithCapacity(this, expr, lines);
+      case "NonNegative": {
+        const v = this.genVal(expr.value, lines);
+        this.emitNonNegativeCheck(lines, v.ref, expr.what, expr.span);
+        return [lines, v.ref, "i64"];
+      }
       case "HashMapLen": {
         this.hasHashMapType = true;
         const ov = this.genVal(expr.object, lines);
@@ -9469,7 +9469,6 @@ export class Codegen {
       case "VecFilled":
       case "VecMap":
       case "VecFilter":
-      case "HashMapWithCapacity":
       // fold returns the ACCUMULATOR, which is owned whenever the accumulator type is —
       // `v.fold("", (a: string, x: &i64): string => a + x.toString())` hands back a String
       // nobody else owns. It sat in NOT_OWNED_TEMP with the scalar-yielding Vec reads.

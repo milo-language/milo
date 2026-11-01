@@ -1,0 +1,35 @@
+// A @pure fn may use HashMap as it could when every method was builtin: std/hashmap's
+// bodies are unsafe, so they cannot carry @pure, and the purity pass treats them as the
+// builtin they replaced. A closure handed to modify/getOrInsertWith is still checked.
+@pure
+fn has(m: &HashMap<i64, i64>): bool {
+    return m.contains(1) && m.getOrDefault(2, 0) == 0 && m.get(3).isNone() && !m.isEmpty()
+}
+
+@pure
+fn build(): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.withCapacity(4)
+    m.insert(1, 2)
+    m.remove(1)
+    m.insert(1, 6)
+    m.modify(1, (v: &mut i64) => { v = v + 1 })
+    m.getOrInsertWith(9, () => 10)
+    var n: HashMap<i64, i64> = HashMap.new()
+    n.insert(4, m.keys().len())
+    n.clear()
+    m.insert(8, n.len + m.values().len())
+    return m.clone()
+}
+
+fn main() {
+    let m = build()
+    print(has(m))
+    print(m.getOrDefault(1, 0))
+    print(m.getOrDefault(9, 0))
+    print(m.getOrDefault(8, 0))
+}
+
+// @expect: true
+// @expect: 7
+// @expect: 10
+// @expect: 2

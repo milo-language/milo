@@ -1,0 +1,118 @@
+// HashMap.new and HashMap.withCapacity, now calls of std/hashmap's mapNew/mapWithCapacity:
+// 8 slots for new, withCapacity rounded to the power of two that takes n entries without
+// growing, seed 0 until the first insert. The table fields are read through the %HashMap
+// layout ({data, len, cap, seed, tombs}).
+struct Holder { m: HashMap<string, i64>, n: i64 }
+
+var globalMap: HashMap<i64, string> = HashMap.new()
+
+fn capOf<K, V>(m: &HashMap<K, V>): i64 {
+    unsafe {
+        let p = (m.addrOf() as *u8) as *i64
+        return p[2]
+    }
+}
+
+fn seedOf<K, V>(m: &HashMap<K, V>): i64 {
+    unsafe {
+        let p = (m.addrOf() as *u8) as *i64
+        return p[3]
+    }
+}
+
+fn empty<K, V>(): HashMap<K, V> {
+    return HashMap.new()
+}
+
+fn sized(n: i64): HashMap<i64, i64> {
+    return HashMap.withCapacity(n)
+}
+
+@pure
+fn pureMap(): HashMap<i64, bool> {
+    var m: HashMap<i64, bool> = HashMap.new()
+    m.insert(1, true)
+    return m
+}
+
+fn report(n: i64) {
+    var m = sized(n)
+    let before = capOf(m)
+    var i: i64 = 0
+    while i < n { m.insert(i, i); i = i + 1 }
+    print("withCapacity(" + n.toString() + ") cap " + before.toString() + " after " + capOf(m).toString() + " len " + m.len.toString())
+}
+
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    print(capOf(m))
+    print(seedOf(m) == 0)
+    print(m.len)
+    print(m.isEmpty())
+    m.insert("a", 1)
+    print(seedOf(m) != 0)
+
+    report(0)
+    report(1)
+    report(5)
+    report(6)
+    report(7)
+    report(8)
+    report(9)
+    report(11)
+    report(12)
+    report(1000)
+    report(100000)
+
+    // An unfilled withCapacity map keeps seed 0 too.
+    let w = sized(50)
+    print(seedOf(w) == 0)
+
+    // The spelled form, a struct field, a generic constructor, a global, a @pure fn.
+    var s = HashMap<string, Vec<i64>>.withCapacity(3)
+    s.insert("x", [1, 2])
+    print(capOf(s))
+    print(s.len)
+    var h = Holder { m: HashMap.new(), n: 2 }
+    h.m.insert("k", h.n)
+    print(h.m.getOrDefault("k", 0))
+    var e: HashMap<i64, string> = empty()
+    e.insert(3, "three")
+    print(e.getOrDefault(3, "?"))
+    print(capOf(e))
+    globalMap.insert(7, "seven")
+    print(globalMap.getOrDefault(7, "?"))
+    print(pureMap().len)
+    var maps: Vec<HashMap<i64, i64>> = []
+    var i: i64 = 0
+    while i < 100 { maps.push(HashMap.withCapacity(i)); i = i + 1 }
+    var total: i64 = 0
+    for mm in maps { total = total + capOf(mm) }
+    print(total)
+}
+
+// @expect: 8
+// @expect: true
+// @expect: 0
+// @expect: true
+// @expect: true
+// @expect: withCapacity(0) cap 8 after 8 len 0
+// @expect: withCapacity(1) cap 8 after 8 len 1
+// @expect: withCapacity(5) cap 16 after 16 len 5
+// @expect: withCapacity(6) cap 16 after 16 len 6
+// @expect: withCapacity(7) cap 16 after 16 len 7
+// @expect: withCapacity(8) cap 16 after 16 len 8
+// @expect: withCapacity(9) cap 16 after 16 len 9
+// @expect: withCapacity(11) cap 32 after 32 len 11
+// @expect: withCapacity(12) cap 32 after 32 len 12
+// @expect: withCapacity(1000) cap 2048 after 2048 len 1000
+// @expect: withCapacity(100000) cap 262144 after 262144 len 100000
+// @expect: true
+// @expect: 8
+// @expect: 1
+// @expect: 2
+// @expect: three
+// @expect: 8
+// @expect: seven
+// @expect: 1
+// @expect: 9480

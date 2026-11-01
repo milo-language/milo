@@ -27,7 +27,7 @@ export interface OwnHost {
 const OWN_STATIC_KINDS = new Set<string>(["StringLit"]);
 // Producers of a fresh owned value that isOwnedTempExpr leaves out (it lists only what
 // codegen drops when discarded): the value is new, so the copy intent is a make.
-const OWN_FRESH_KINDS = new Set<string>(["HashMapNew", "Closure", "HeapCreate", "OptionOp", "ArrayRepeat"]);
+const OWN_FRESH_KINDS = new Set<string>(["Closure", "HeapCreate", "OptionOp", "ArrayRepeat"]);
 
 export class OwnLedger {
   constructor(private readonly host: OwnHost) {}

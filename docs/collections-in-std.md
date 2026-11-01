@@ -209,3 +209,21 @@ special cases.
   200 maps grown to 100k 0.68s vs 0.69s; mixed counting/churn/getOrInsertWith 0.17s vs
   0.17s. The rest of the overwrite gap is loop shape, not memory traffic (both keep the
   map's fields in registers).
+- 2026-11-01: `HashMap.new` and `HashMap.withCapacity` are calls of std's `mapNew` /
+  `mapWithCapacity`. The checker keeps its inference (`let m: HashMap<K, V> =
+  HashMap.new()`, the spelled `HashMap<K, V>.withCapacity(n)`) and records the instance as
+  a static call, so lowering emits an ordinary Call and the whole-program passes see a
+  callee. The map is built as `zeroed<HashMap<K, V>>()` with data and cap written through
+  the MapRaw view (len, seed, tombs stay 0; HashMap has no Drop to run on the zeroed
+  value). withCapacity rounds in u64 as the builtin's udiv did; the negative check stays
+  at the caller's line through a `NonNegative` HIR node on the argument (same panic text
+  and location; pinned by `runtime-errors/hashMapWithCapacityNegative`). A non-i64 int
+  capacity, which reached clang as an i64/i32 mismatch, is now widened. Fixed in passing:
+  a `@pure` fn could not call any moved method (`contains`, `get`, ... since the first
+  commit of this phase, and insert/new would have joined them); the purity pass now treats
+  std/hashmap callees as the builtin it was (`hashMapPureStd`; its bodies are unsafe, so
+  they cannot say @pure). A HashMap global initializer is now a lazy init (a call), not a
+  constant. Planted: `/ 4` for `/ 3` in the rounding turns `hashMapNewStd` red; dropping
+  the NonNegative wrapper turns the runtime-error test red ("integer overflow at
+  std/hashmap.milo"). Iteration order under MILO_RECORD unchanged, 0 leaks, ASan clean.
+  Bench: 3M new + 1M withCapacity(20) maps 2.12s vs 2.12s.

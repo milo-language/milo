@@ -9,6 +9,7 @@ import type { Program, Function, Stmt, Expr, Span, Pattern, ChainClause } from "
 import { patternLeafNames } from "./ast";
 import type { TypeKind } from "./types";
 import type { CaptureInfo, FnSig } from "./checker";
+import { isHashMapModule } from "./checker";
 import { RETAINING_MEMBERS, MUTATING_COLLECTION_METHODS } from "./builtin-members";
 
 // What a whole-program pass may ask of the finished program. Built once by
@@ -767,6 +768,10 @@ export function checkPurity(host: ProgramPassHost, program: Program, view: Progr
 
     const checkCall = (target: string, span: Span | undefined) => {
       if (pureNames.has(target) || PURE_BUILTINS.has(target)) return;
+      // std/hashmap is the builtin HashMap's method bodies, which act only on the map and
+      // the arguments handed to them, as the builtin did. It cannot say '@pure' itself:
+      // its bodies are unsafe (raw slot access), which @pure refuses.
+      if (isHashMapModule(view.fns.get(target)?.sourceFile)) return;
       const sig = host.functions.get(target);
       if (!sig) {
         // No registered signature: a compiler builtin (`Vec.new`, `v.len()`). Those act

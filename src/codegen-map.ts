@@ -53,15 +53,7 @@ export interface CodegenMapCtx {
   needsGetentropy: boolean;
 }
 
-const i64c = (n: number): Val => val(String(n), Ty.i64);
 const i32c = (n: number): Val => val(String(n), Ty.i32);
-const HASHMAP_TY = Ty.of("%HashMap");
-
-// sizeof(entry) as an i64, via the null-GEP idiom.
-function entrySizeOf(b: Builder, entryTy: Ty): Val {
-  const p = b.gep(entryTy, val("null", Ty.ptr), [i32c(1)]);
-  return b.cast("ptrtoint", p, Ty.i64);
-}
 
 function fnvHash(ctx: CodegenMapCtx, b: Builder, key: Val, keyType: TypeKind, seed: Val): Val {
   // FNV-1a: hash = offset_basis ^ seed; then fold the key's bytes in.
@@ -176,75 +168,6 @@ function keysEqual(ctx: CodegenMapCtx, b: Builder, k1: Val, k2: Val, keyType: Ty
     return acc ?? val("true", Ty.i1); // a fieldless struct compares equal vacuously
   }
   throw new Error(`uncomparable key type: ${keyType.tag}`);
-}
-
-export function genHashMapNew(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapNew" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  ctx.needsMalloc = true;
-  const b = new LlvmTextBuilder(lines, ctx);
-  const entryTy = Ty.of(ctx.hashMapEntryType(expr.keyType, expr.valueType));
-  // allocate initial 8 entries, zeroed
-  const entrySize = b.gep(entryTy, val("null", Ty.ptr), [val("1", Ty.i32)]);
-  const entrySizeI = b.cast("ptrtoint", entrySize, Ty.i64);
-  const { buf, bytes } = ctx.emitAllocBytes(lines, entrySizeI.ref, 8, "hmnew", expr.span);
-  ctx.needsMemset = true;
-  b.callDiscard(Ty.ptr, "@memset", [val(buf, Ty.ptr), val("0", Ty.i32), val(bytes, Ty.i64)]);
-
-  const zero = val("0", Ty.i64);
-  let m = b.insertvalue(val("undef", Ty.of("%HashMap")), val(buf, Ty.ptr), HM_DATA);
-  m = b.insertvalue(m, zero, HM_LEN);
-  m = b.insertvalue(m, val("8", Ty.i64), HM_CAP);
-  // seed = 0 (lazy init on first insert)
-  m = b.insertvalue(m, zero, HM_SEED);
-  m = b.insertvalue(m, zero, HM_TOMBS);
-  return asGen(lines, m);
-}
-
-// HashMap.withCapacity(n): pre-size the table so inserting n entries never rehashes.
-// Insert grows when (len+1)*4 >= cap*3, so the table must hold cap > 4(n+1)/3; the
-// loop rounds that up to a power of two (the mask-based probe requires one).
-export function genHashMapWithCapacity(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapWithCapacity" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  ctx.needsMalloc = true;
-  ctx.needsMemset = true;
-  const entryTy = Ty.of(ctx.hashMapEntryType(expr.keyType, expr.valueType));
-  const b = new LlvmTextBuilder(lines, ctx);
-  const nRef = ctx.genVal(expr.capacity, lines);
-  ctx.emitNonNegativeCheck(lines, nRef.ref, "capacity", expr.span);
-  const nVal = val(nRef.ref, Ty.i64);
-
-  const nPlus1 = b.binop("add", nVal, i64c(1));
-  const scaled = b.binop("mul", nPlus1, i64c(4));
-  const wantDiv = b.binop("udiv", scaled, i64c(3));
-  const want = b.binop("add", wantDiv, i64c(1));
-
-  const capSlot = b.alloca(Ty.i64);
-  b.store(i64c(8), capSlot);
-  const roundCond = b.newBlock("hmwc.cond");
-  const roundBody = b.newBlock("hmwc.body");
-  const roundEnd = b.newBlock("hmwc.end");
-  b.br(roundCond);
-  b.position(roundCond);
-  const curCap = b.load(Ty.i64, capSlot);
-  const tooSmall = b.icmp("ult", curCap, want);
-  b.condBr(tooSmall, roundBody, roundEnd);
-  b.position(roundBody);
-  const dbl = b.binop("shl", curCap, i64c(1));
-  b.store(dbl, capSlot);
-  b.br(roundCond);
-  b.position(roundEnd);
-  const cap = b.load(Ty.i64, capSlot);
-
-  const entrySizeI = entrySizeOf(b, entryTy);
-  const { buf: dataPtr, bytes: totalSize } = ctx.emitAllocBytes(lines, entrySizeI.ref, cap.ref, "hmwith", expr.span);
-  b.callDiscard(Ty.ptr, "@memset", [val(dataPtr, Ty.ptr), i32c(0), val(totalSize, Ty.i64)]);
-
-  let m = b.insertvalue(val("undef", HASHMAP_TY), val(dataPtr, Ty.ptr), HM_DATA);
-  m = b.insertvalue(m, i64c(0), HM_LEN);
-  m = b.insertvalue(m, cap, HM_CAP);
-  m = b.insertvalue(m, i64c(0), HM_SEED);
-  m = b.insertvalue(m, i64c(0), HM_TOMBS);
-  return asGen(lines, m);
 }
 
 // The std/hashmap intrinsics: the same hash and key comparison the builtin methods above

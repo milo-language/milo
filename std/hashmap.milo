@@ -171,6 +171,40 @@ fn mapStoreAt<K, V>(table: *MapRaw<K, V>, slot: i64, key: K, value: V): void {
     }
 }
 
+// `HashMap.new()`: the checker infers <K, V> from the context and lowers the call here.
+fn mapNew<K, V>(): HashMap<K, V> {
+    return mapWithSlots(8)
+}
+
+// `HashMap.withCapacity(n)`: a table that takes n entries without growing. Insert grows
+// when (len + 1) * 4 >= cap * 3, so cap must exceed 4(n + 1)/3; it is rounded up to a power
+// of two (the probe masks with cap - 1) from 8. The caller has already refused a negative
+// n, at its own line. Unsigned, as the builtin computed it: an absurd n then fails the
+// allocation's size check instead of wrapping to a small table.
+fn mapWithCapacity<K, V>(n: i64): HashMap<K, V> {
+    let want = ((n as u64).wrappingAdd(1).wrappingMul(4)) / 3 + 1
+    var cap: u64 = 8
+    while cap < want {
+        cap = cap.wrappingMul(2)
+    }
+    return mapWithSlots(cap as i64)
+}
+
+// An empty map of `cap` zeroed slots. Seed 0 means "draw one on the first insert", so a
+// map that is never filled costs no entropy. The map is built in place: zeroed gives
+// every field 0 (len, seed and tombstones stay that way), then data and cap are written
+// through its address, the same MapRaw view every method uses. A HashMap has no Drop of
+// its own to run on the zeroed value, and nothing reads it before both fields are set.
+fn mapWithSlots<K, V>(cap: i64): HashMap<K, V> {
+    unsafe {
+        var m = zeroed<HashMap<K, V>>()
+        var raw = (m.addrOf() as *u8) as *MapRaw<K, V>
+        raw[0]._data = _mapAlloc(cap, sizeOf<MapSlot<K, V>>()) as *MapSlot<K, V>
+        raw[0]._cap = cap
+        return m
+    }
+}
+
 impl HashMap<K, V> {
     // Remove `key` and its value, if present. The slot becomes a tombstone, so later
     // probes walk past it; the key and value are dropped in place, key first.

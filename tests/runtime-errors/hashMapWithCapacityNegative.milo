@@ -1,0 +1,14 @@
+// @runtime-error: hashMapWithCapacityNegative.milo:10:32: -4
+// The panic is "milo: negative capacity at <this file>:10:32: -4". The check rides the
+// argument of std's mapWithCapacity, so it still names the caller's line.
+
+pub fn negCap(): i64 {
+    return -4
+}
+
+pub fn main(): i32 {
+    var m: HashMap<i64, i64> = HashMap.withCapacity(negCap())
+    m.insert(1, 2)
+    print(m.len)
+    return 0
+}
