@@ -149,7 +149,16 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
   }];
 }
 
-def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType]>;
+// A fixed-size array `[T; N]`, legacy's `[N x T]`. Held only in places, as a 128+ byte
+// aggregate is, whatever its size: an SSA value exists only at the ABI (a by-value param
+// or argument), so a large buffer is never split per element. Its elements own nothing.
+def Milo_ArrayType : TypeDef<Milo_Dialect, "Array"> {
+  let mnemonic = "array";
+  let parameters = (ins "::mlir::Type":$elementType, "int64_t":$size);
+  let assemblyFormat = "`<` $elementType `,` $size `>`";
+}
+
+def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType, Milo_ArrayType]>;
 
 // A fn value `(T) => R`: legacy's `{ ptr fn, ptr env }`. The fn takes the env first, then
 // the params of `signature` (a `&T` param is a !milo.ref, a `&Vec<T>` a !milo.vec). A
@@ -570,6 +579,24 @@ def Milo_VecElemRefOp : Milo_Op<"vec.elem_ref"> {
   let arguments = (ins Arg<Milo_VecType, "", [MemRead<Milo_VecHeader>]>:$vec, I64:$index);
   let results = (outs Milo_RefType:$ref);
   let assemblyFormat = "$vec `[` $index `]` attr-dict `:` type($vec) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
+// `a[i]` on the place of a fixed-size array: the element's place after legacy's bounds
+// check against the size (genBoundsCheckedPtr; the panic names the op's location).
+// milo-expand-index lowers it to bounds_check and array.elem_ref.
+def Milo_ArrayIndexOp : Milo_Op<"array.index"> {
+  let arguments = (ins Milo_RefType:$array, SI64:$index);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
+// The place of element `index` of an array place, unchecked.
+def Milo_ArrayElemRefOp : Milo_Op<"array.elem_ref", [Pure]> {
+  let arguments = (ins Milo_RefType:$array, I64:$index);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$array `[` $index `]` attr-dict `:` type($array) `->` type($ref)";
   let hasVerifier = 1;
 }
 

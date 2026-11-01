@@ -80,6 +80,7 @@ function typeKey(t: TypeKind): string {
     case "fn": if (t.owning) return "ownfn"; throw new MlirUnsupported("helper for a fn");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
+    case "array": if (t.size !== null) return `arr${t.size}.${typeKey(t.element)}`; throw new MlirUnsupported("helper for a slice");
     default: throw new MlirUnsupported(`helper for a ${t.tag}`);
   }
 }
@@ -135,6 +136,16 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
     return e && `!milo.vecval<${e}>`;
   }
   if (t.tag === "fn") return fnType(cx, t);
+  if (t.tag === "array") {
+    // A fixed-size array of elements that own nothing: a place only, at any size (a
+    // slice, size null, is a Vec header that a slice expression makes: not yet).
+    const e = t.size === null ? null : placeType(cx, t.element);
+    if (e === null || hasDrop(e)) return null;
+    const r = `!milo.array<${e}, ${t.size}>`;
+    if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
+    bigTypes.get(cx)!.add(r);
+    return r;
+  }
   if (m !== null || (t.tag !== "struct" && t.tag !== "enum")) return m;
   let cache = aggregates.get(cx);
   if (!cache) aggregates.set(cx, cache = new Map());
@@ -144,7 +155,8 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
   cache.set(key, null);
   const r = aggregateType(cx, t);
   cache.set(key, r);
-  if (r !== null && cx.typeSizeOf(t) >= 128) {
+  // One holding an array is a place only too: the array is never an SSA value.
+  if (r !== null && (cx.typeSizeOf(t) >= 128 || r.includes("!milo.array<"))) {
     if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
     bigTypes.get(cx)!.add(r);
   }
@@ -429,6 +441,10 @@ class FnEmitter {
       src.done();
       return;
     }
+    if ((e.kind === "ArrayLit" || e.kind === "ArrayRepeat") && e.type.tag === "array") {
+      this.arrayInto(e, dst, ty);
+      return;
+    }
     if (e.kind !== "StructLit" && valueType(this.cx, e.type) === ty) {
       // A big enum that is also a value: computed, then stored whole.
       const v = this.consume(this.expr(e), "value");
@@ -440,15 +456,66 @@ class FnEmitter {
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
     const given = new Map<string, Val>();
     const mark = this.pending;
-    for (const f of e.fields) given.set(f.name, this.pend(this.consume(this.expr(f.value), "field")));
+    for (const f of e.fields) {
+      const i = layout.fields.findIndex(lf => lf.name === f.name);
+      const lt = layout.fields[i]?.typeKind;
+      const pty = lt && valueType(this.cx, lt) === null ? placeType(this.cx, lt) : null;
+      if (pty === null) { given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"))); continue; }
+      // A field that is a place only (an array) is built in its own place, in source order.
+      if (hasDrop(pty)) throw new MlirUnsupported("128+ byte owning field built in place");
+      this.into(f.value, this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref, pty);
+      given.set(f.name, { ref: "", ty: pty });
+    }
     this.pending = mark;
     layout.fields.forEach((f, i) => {
       const v = given.get(f.name);
+      if (v?.ref === "") return;
       const fty = this.value(f.typeKind, "field");
       if (!v || v.ty !== fty) throw new MlirUnsupported("struct literal field");
       const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
       this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
     });
+  }
+
+  /** `[T; N]` where a `*T` is wanted (a cast, a pointer argument): the array's address, as legacy. */
+  private decay(e: HIRExpr): Val {
+    const p = this.fieldPlace(e);
+    if (!p || !p.ty.startsWith("!milo.array<")) throw new MlirUnsupported("pointer to an array that is not a place");
+    return this.def(`milo.addr ${p.ref} : !milo.ref<${p.ty}>`, PTR);
+  }
+
+  /**
+   * An array literal written into the array place `dst`, element by element: `[a, b]`
+   * evaluates and stores each in turn, as legacy genArrayLit; `[v; n]` evaluates `v` once
+   * and stores it n times in a loop (LLVM makes a memset of a zero one, as legacy's
+   * zeroinitializer is).
+   */
+  private arrayInto(e: HIRExpr & { kind: "ArrayLit" | "ArrayRepeat" }, dst: string, ty: string): void {
+    const t = e.type as TypeKind & { tag: "array" };
+    const ety = this.value(t.element, "array element");
+    const at = (i: string) => this.def(`milo.array.index ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`, this.loc(e.span)).ref;
+    if (e.kind === "ArrayLit") {
+      if (e.elements.length !== t.size) throw new MlirUnsupported("array literal of another size");
+      e.elements.forEach((x, k) => {
+        const v = this.consume(this.expr(x), "array element");
+        if (v.ty !== ety) throw new MlirUnsupported("array element of another type");
+        const r = at(this.def(`milo.const ${k} : si64`, "si64").ref);
+        this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${ety}>`);
+      });
+      return;
+    }
+    if (e.cloneFn || e.count !== t.size) throw new MlirUnsupported("array repeat of an owning value");
+    const v = this.expr(e.value);
+    if (v.ty !== ety) throw new MlirUnsupported("array element of another type");
+    const lo = this.def("milo.const 0 : si64", "si64").ref;
+    const hi = this.def(`milo.const ${e.count} : si64`, "si64").ref;
+    const iv = this.fresh();
+    this.region(`milo.for ${lo} to ${hi} : si64 {`, () => {
+      this.emit(`^bb0(${iv}: si64):`);
+      this.emit(`milo.store ${v.ref}, ${at(iv)} init : !milo.ref<${ety}>`);
+      return false;
+    });
+    this.emit("}");
   }
 
   /**
@@ -998,6 +1065,7 @@ class FnEmitter {
       case "BinOp": return this.binop(e);
       case "UnaryOp": return this.unop(e);
       case "Cast": {
+        if (e.operand.type.tag === "array" && e.targetType.tag === "ptr") return this.decay(e.operand);
         const from = scalar(e.operand.type, "cast source");
         const to = scalar(e.targetType, "cast target");
         const v = this.expr(e.operand);
@@ -1182,6 +1250,31 @@ class FnEmitter {
         return this.match(e, this.value(e.type, "match-expression")).v;
       }
       case "Propagate": return this.propagate(e);
+      case "ArrayLit": {
+        if (e.type.tag !== "vec") throw new MlirUnsupported("array literal as a value");
+        const ty = this.value(e.type, "Vec literal");
+        if (e.elements.length === 0) return { ...this.def(`milo.vec.new : ${ty}`, ty), own: "owned" };
+        // Legacy's genArrayLit (one malloc of exactly n elements, each stored as it is
+        // evaluated) in a legacy function per element type and count, the elements
+        // evaluated here in order and moved into it.
+        const et = e.type.element;
+        const ety = this.value(et, "Vec literal element");
+        const mark = this.pending;
+        const args = e.elements.map(x => {
+          const v = this.pend(this.consume(this.expr(x), "Vec literal element"));
+          if (v.ty !== ety) throw new MlirUnsupported("Vec literal element of another type");
+          return `${v.ref} : ${ety}`;
+        });
+        this.pending = mark;
+        const name = this.cx.mlirHelper(`milo.veclit.${typeKey(et)}.${e.elements.length}`, () => ({
+          params: e.elements.map((_, k) => ({ name: `e${k}`, type: et, isRef: false, isRefMut: false })),
+          retType: e.type,
+          body: [{ kind: "Return", retType: e.type, value: { kind: "ArrayLit", type: e.type,
+            elements: e.elements.map((_, k) => ({ kind: "Ident" as const, name: `e${k}`, type: et, isMove: true })) } }],
+        }));
+        if (hasDrop(ety)) this.dropGlue(ty, e.type);
+        return { ...this.callHelper(name, args, ty), own: "owned" };
+      }
       default:
         throw new MlirUnsupported(`expr ${e.kind}`);
     }
@@ -1882,7 +1975,20 @@ class FnEmitter {
    */
   private elemRef(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
     if (e.kind !== "IndexAccess") return null;
-    const el = vecElem(this.cx, stripRefs(e.object.type));
+    const ot = stripRefs(e.object.type);
+    if (ot.tag === "array" && ot.size !== null) {
+      // A fixed-size array's element, of any type, through the array's place.
+      const at = this.place$(ot, "indexed array");
+      const p = this.fieldPlace(e.object);
+      if (!p || p.ty !== at) throw new MlirUnsupported("index into an array that is not a place");
+      const i = this.expr(e.index);
+      if (!/^[su]i\d+$/.test(i.ty)) throw new MlirUnsupported("non-int index");
+      const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
+      const ty = this.place$(ot.element, "array element");
+      const ref = this.def(`milo.array.index ${p.ref}[${index}] : !milo.ref<${at}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`, this.loc(e.span)).ref;
+      return { ref, ty, param: p.param };
+    }
+    const el = vecElem(this.cx, ot);
     if (el === null || isScalarTy(el)) return null;
     const { place, elem, param } = this.vecPlace(e.object);
     const i = this.expr(e.index);
@@ -2050,6 +2156,7 @@ class FnEmitter {
         provenance.push(ref.param ?? null);
         return ref.ref;
       }
+      if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
       const v = this.pend(isBig(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.consume(this.expr(a.expr), "argument"));
       if (v.ty !== paramTys[i]) throw new MlirUnsupported("call arg type");
       provenance.push(null);

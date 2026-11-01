@@ -242,8 +242,24 @@ func.func @index_ref_type(%v: !milo.vec<!milo.struct<"A", si64>>, %i: si64) {
 
 // -----
 
+func.func @array_index_not_array(%a: !milo.ref<si64>, %i: si64) {
+  // expected-error @+1 {{needs the place of an array}}
+  %r = milo.array.index %a[%i] : !milo.ref<si64> -> !milo.ref<si64>
+  milo.return
+}
+
+// -----
+
+func.func @array_index_type(%a: !milo.ref<!milo.array<ui8, 4>>, %i: si64) {
+  // expected-error @+1 {{is not a place of the array's element type}}
+  %r = milo.array.index %a[%i] : !milo.ref<!milo.array<ui8, 4>> -> !milo.ref<si64>
+  milo.return
+}
+
+// -----
+
 func.func @copy_scalar(%a: !milo.ref<si64>, %b: !milo.ref<si64>) {
-  // expected-error @+1 {{copies a struct or an enum, not 'si64'}}
+  // expected-error @+1 {{copies a struct, an enum or an array, not 'si64'}}
   milo.copy %a, %b : !milo.ref<si64>, !milo.ref<si64> of si64
   milo.return
 }

@@ -302,8 +302,8 @@ LogicalResult FilledOp::verify() {
 }
 
 LogicalResult CopyOp::verify() {
-  if (!isa<StructType, EnumType>(getElem()))
-    return emitOpError("copies a struct or an enum, not ") << getElem();
+  if (!isa<StructType, EnumType, ArrayType>(getElem()))
+    return emitOpError("copies a struct, an enum or an array, not ") << getElem();
   for (Value side : {getSrc(), getDst()})
     if (auto r = dyn_cast<RefType>(side.getType()); r && r.getPointee() != getElem())
       return emitOpError("needs places of ") << getElem() << ", not " << side.getType();
@@ -361,6 +361,19 @@ LogicalResult VecElemRefOp::verify() {
     return emitOpError("is not a place of the Vec's element type");
   return success();
 }
+
+// An array.index / array.elem_ref: from an array's place to one of its element's.
+template <typename OpT> static LogicalResult verifyArrayElem(OpT op) {
+  auto a = dyn_cast<ArrayType>(op.getArray().getType().getPointee());
+  if (!a)
+    return op.emitOpError("needs the place of an array, not ") << op.getArray().getType();
+  if (op.getRef().getType().getPointee() != a.getElementType())
+    return op.emitOpError("is not a place of the array's element type");
+  return success();
+}
+
+LogicalResult ArrayIndexOp::verify() { return verifyArrayElem(*this); }
+LogicalResult ArrayElemRefOp::verify() { return verifyArrayElem(*this); }
 
 LogicalResult IndexStoreOp::verify() {
   if (getValue().getType() != getVec().getType().getElementType())

@@ -390,6 +390,20 @@ structs, enums.
   FileCheck `index-ref.mlir`, a verifier case. Planted bug: the element read as a bit
   copy instead of the deep copy (`vec-elems` exit 0 -> 1, a double free). Tahoe Roads
   api: 4235 (79.2%).
+- *Fixed-size arrays* (`!milo.array<T, N>`, LLVM's `[N x T]`) of elements that own
+  nothing: places only at any size, as 128+ byte aggregates are, and so is any struct
+  or enum holding one; an SSA array exists only at the ABI. `[v; n]` stores `v` in a
+  `milo.for` (LLVM makes the memset of a zero one), `[a, b]` stores each element as it
+  is evaluated; `a[i]` is `milo.array.index` (legacy's bounds check against N, then
+  `milo.array.elem_ref`, a GEP); an array decays to its address for a `*T` argument or a
+  cast, as legacy; a struct literal builds an array field in its own place. Helper names
+  spell an array `arr<N>.<elem>` on both sides (Vec<[i64; 3]>'s growth and drop). Vec
+  literals are a legacy function per element type and count (`milo.veclit.<key>.<n>`,
+  genArrayLit's one malloc of exactly n), the elements evaluated in order and moved into
+  it; `[]` is `milo.vec.new`. Still legacy: slices, arrays of owning elements, a small
+  struct holding an array returned by value, `for x in` an array. Programs `arrays`,
+  `trap-array-oob`; FileCheck `arrays.mlir`, two verifier cases. Planted bug: array
+  literal elements stored in reverse (`arrays` stdout). Tahoe Roads api: 4364 (81.6%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

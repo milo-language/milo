@@ -1,0 +1,71 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: fixed-size arrays, which MLIR holds only as places (!milo.array),
+// built from `[v; n]` and `[a, b, c]`, indexed with legacy's bounds check, lent `&` and
+// `&mut`, decayed to `*u8` for an extern and a cast, in a Vec, in a struct; and Vec
+// literals (a legacy helper per element type and count), owning elements among them.
+
+extern fn memset(p: *u8, c: i32, n: i64): *u8
+
+struct Packet { id: i64, bytes: [u8; 8] }
+
+fn sum(b: &[u8; 16]): i64 {
+    var t: i64 = 0
+    for i in 0..16 { t += b[i] as i64 }
+    return t
+}
+
+fn fill(b: &mut [u8; 16], from: i64, v: u8) {
+    for i in from..16 { b[i] = v }
+}
+
+fn buffers(): i64 {
+    var buf: [u8; 16] = [0; 16]
+    buf[3] = 7
+    fill(&mut buf, 12, 2)
+    unsafe {
+        memset(buf, 1, 2)
+        let p = buf as *u8
+        p[5] = 40
+    }
+    var big: [u8; 4096] = [9; 4096]
+    big[4095] = 1
+    var bt: i64 = 0
+    for i in 0..4096 { bt += big[i] as i64 }
+    return sum(buf) * 100000 + bt
+}
+
+fn grid(): i64 {
+    let row = [1, 2, 3]
+    var g: Vec<[i64; 3]> = Vec.new()
+    g.push([0; 3])
+    g.push(row)
+    for r in 0..2 {
+        for c in 0..3 { g[r][c] = row[c] * (r + 1) }
+    }
+    return g[0][0] + g[0][2] * 10 + g[1][1] * 100 + g[1][2] * 1000
+}
+
+fn packet(): i64 {
+    var p = Packet { id: 5, bytes: [0; 8] }
+    p.bytes[2] = 11
+    p.bytes[7] = p.bytes[2] + 1
+    var t = p.id
+    for i in 0..8 { t += p.bytes[i] as i64 }
+    return t
+}
+
+fn literals(): string {
+    let xs: Vec<i64> = [4, 5, 6, 7]
+    let none: Vec<i64> = []
+    let names: Vec<string> = ["ab", "c" + "d", "efg".repeat(2)]
+    var out = ""
+    for n in names { out = out + n + "," }
+    return out + (xs[1] + xs[3]).toString() + " " + none.len().toString() + " " + names.len().toString()
+}
+
+fn main() {
+    print(buffers())
+    print(grid())
+    print(packet())
+    print(literals())
+}

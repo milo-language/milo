@@ -948,6 +948,18 @@ struct PtrStoreLowering : ConvertOpToLLVMPattern<PtrStoreOp> {
   }
 };
 
+struct ArrayElemRefLowering : ConvertOpToLLVMPattern<ArrayElemRefOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(ArrayElemRefOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type at = getTypeConverter()->convertType(op.getArray().getType().getPointee());
+    rw.replaceOpWithNewOp<LLVM::GEPOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), at,
+                                       a.getArray(), ArrayRef<LLVM::GEPArg>{0, a.getIndex()});
+    return success();
+  }
+};
+
 struct CopyLowering : ConvertOpToLLVMPattern<CopyOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1098,7 +1110,7 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   void runOnOperation() override {
     SmallVector<Operation *> ops;
     getOperation().walk([&](Operation *op) {
-      if (isa<IndexOp, IndexStoreOp, IndexRefOp, LenOp>(op))
+      if (isa<IndexOp, IndexStoreOp, IndexRefOp, ArrayIndexOp, LenOp>(op))
         ops.push_back(op);
     });
     for (Operation *op : ops) {
@@ -1123,6 +1135,12 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
       } else if (auto r = dyn_cast<IndexRefOp>(op)) {
         Value j = checked(r.getVec(), r.getIndex());
         r.replaceAllUsesWith(VecElemRefOp::create(b, loc, r.getType(), r.getVec(), j).getResult());
+      } else if (auto a = dyn_cast<ArrayIndexOp>(op)) {
+        Value j = signless(a.getIndex());
+        auto at = cast<ArrayType>(a.getArray().getType().getPointee());
+        Value n = arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(at.getSize()));
+        BoundsCheckOp::create(b, loc, j, n);
+        a.replaceAllUsesWith(ArrayElemRefOp::create(b, loc, a.getType(), a.getArray(), j).getResult());
       } else {
         auto len = cast<LenOp>(op);
         Value l = VecLenOp::create(b, loc, i64, len.getVec());
@@ -1299,6 +1317,8 @@ std::string milo::typeKey(Type t) {
     return ("E" + e.getName()).str();
   if (auto f = dyn_cast<FnType>(t); f && f.getOwning())
     return "ownfn";
+  if (auto a = dyn_cast<ArrayType>(t))
+    return "arr" + std::to_string(a.getSize()) + "." + typeKey(a.getElementType());
   std::string s;
   llvm::raw_string_ostream os(s);
   os << t;
@@ -1406,6 +1426,12 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     return LLVM::LLVMPointerType::get(ctx);
   });
   tc.addConversion([ctx = &tc.getContext()](StringType) -> Type { return stringStruct(ctx); });
+  tc.addConversion([&tc](ArrayType a) -> std::optional<Type> {
+    Type e = tc.convertType(a.getElementType());
+    if (!e)
+      return std::nullopt;
+    return LLVM::LLVMArrayType::get(e, a.getSize());
+  });
   tc.addConversion([ctx = &tc.getContext()](FnType) -> Type {
     auto p = LLVM::LLVMPointerType::get(ctx);
     return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
@@ -1451,7 +1477,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering,
-               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, CopyLowering>(tc);
+               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, CopyLowering,
+               ArrayElemRefLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

@@ -1,0 +1,13 @@
+// Differential panic program (scripts/mlir-same.ts --programs): an out-of-bounds index
+// of a fixed-size array (milo.array.index) through a `&mut` param, after in-bounds
+// writes; stderr, the line and exit status must match legacy codegen.
+fn set(b: &mut [i64; 4], i: i64, v: i64) {
+    b[i] = v
+}
+
+fn main() {
+    var a: [i64; 4] = [0; 4]
+    for i in 0..4 { set(&mut a, i, i * 3) }
+    print(a[3])
+    set(&mut a, 4, 1)
+}
