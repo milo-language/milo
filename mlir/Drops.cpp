@@ -292,6 +292,8 @@ struct ElaborateDropsPass
         ref = s.getRef();
       else if (auto t = dyn_cast<VecTailTakeOp>(op))
         ref = t.getRef();
+      else if (auto t = dyn_cast<VecTailTakePlaceOp>(op))
+        ref = t.getRef();
       if (!ref || !isOwnedSlot(ref))
         return;
       const InitLattice *l = before(op);
@@ -506,22 +508,37 @@ struct VecTailVecLowering : ConvertOpToLLVMPattern<VecTailVecOp> {
   }
 };
 
+// The address of element `index` of the vectail at `slot`, and the cursor set past it.
+Value vecTailTake(ConversionPatternRewriter &rw, Location loc, const TypeConverter *tc,
+                  Value ref, Value slot, Value index) {
+  auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+  auto t = cast<VecTailType>(cast<RefType>(ref.getType()).getPointee());
+  Type elem = tc->convertType(t.getElementType());
+  Value data = LLVM::LoadOp::create(rw, loc, ptrTy, slot);
+  Value ep = LLVM::GEPOp::create(rw, loc, ptrTy, elem, data, ValueRange{index});
+  Value one = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(1));
+  Value next = LLVM::AddOp::create(rw, loc, index, one);
+  LLVM::StoreOp::create(rw, loc, next, vecTailCursor(rw, loc, tc, t, slot));
+  return ep;
+}
+
 struct VecTailTakeLowering : ConvertOpToLLVMPattern<VecTailTakeOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
   matchAndRewrite(VecTailTakeOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    Location loc = op.getLoc();
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    auto t = cast<VecTailType>(op.getRef().getType().getPointee());
-    Type elem = getTypeConverter()->convertType(op.getType());
-    Value data = LLVM::LoadOp::create(rw, loc, ptrTy, a.getRef());
-    Value ep = LLVM::GEPOp::create(rw, loc, ptrTy, elem, data, ValueRange{a.getIndex()});
-    Value v = LLVM::LoadOp::create(rw, loc, elem, ep);
-    Value one = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(1));
-    Value next = LLVM::AddOp::create(rw, loc, a.getIndex(), one);
-    LLVM::StoreOp::create(rw, loc, next, vecTailCursor(rw, loc, getTypeConverter(), t, a.getRef()));
-    rw.replaceOp(op, v);
+    Value ep = vecTailTake(rw, op.getLoc(), getTypeConverter(), op.getRef(), a.getRef(), a.getIndex());
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, getTypeConverter()->convertType(op.getType()), ep);
+    return success();
+  }
+};
+
+struct VecTailTakePlaceLowering : ConvertOpToLLVMPattern<VecTailTakePlaceOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecTailTakePlaceOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, vecTailTake(rw, op.getLoc(), getTypeConverter(), op.getRef(), a.getRef(), a.getIndex()));
     return success();
   }
 };
@@ -604,7 +621,7 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     return LLVM::LLVMStructType::getLiteral(
         ctx, {tc.convertType(VecValType::get(ctx, t.getElementType())), IntegerType::get(ctx, 64)});
   });
-  patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering>(tc);
+  patterns.add<VecTailInitLowering, VecTailVecLowering, VecTailTakeLowering, VecTailTakePlaceLowering>(tc);
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
                StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }

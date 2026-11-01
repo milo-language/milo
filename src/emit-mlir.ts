@@ -1175,8 +1175,11 @@ class FnEmitter {
     const vt = stripRefs(s.iterable.type);
     const elemKind = stripRefs(s.varName2 ? s.varType2! : s.varType);
     if (vt.tag !== "vec") throw new MlirUnsupported("for over a consumed vec of another type");
-    const elem = valueType(this.cx, elemKind);
-    if (elem === null || elem !== valueType(this.cx, vt.element) || isBig(this.cx, elem)) throw new MlirUnsupported("for over a consumed vec of place-only elements");
+    const elem = placeType(this.cx, elemKind);
+    if (elem === null || elem !== placeType(this.cx, vt.element)) throw new MlirUnsupported("for over a consumed vec of another element type");
+    // A place-only element is copied out of its place into the binding's slot, as legacy's
+    // emitConsumeElement memcpys it.
+    const byPlace = valueType(this.cx, elemKind) === null;
     const vecTy = `!milo.vecval<${elem}>`, tailTy = `!milo.vectail<${elem}>`;
     this.owned.push([]);
     const start = this.body.length;
@@ -1203,8 +1206,23 @@ class FnEmitter {
       const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
       const one = this.def("milo.const 1 : si64", "si64").ref;
       this.emit(`milo.store ${this.def(`milo.add ${i}, ${one} wrapping : si64`, "si64").ref}, ${idx} : !milo.ref<si64>`);
-      const x = this.def(`milo.vectail.take ${slot}[${i}] : !milo.ref<${tailTy}> -> ${elem}`, elem);
       const name = s.varName2 ?? s.varName;
+      if (byPlace) {
+        const from = this.def(`milo.vectail.take_place ${slot}[${i}] : !milo.ref<${tailTy}> -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`).ref;
+        const own = hasDrop(elem);
+        let to: string;
+        if (own) to = this.ownedSlot(name, elem, elemKind);
+        else {
+          to = this.fresh();
+          this.vars.push(`  ${to} = milo.var ${quote(name)} : !milo.ref<${elem}>`);
+        }
+        this.emit(`milo.copy ${from}, ${to} : !milo.ref<${elem}>, !milo.ref<${elem}> of ${elem}`);
+        if (own) this.emit(`milo.filled ${to} : !milo.ref<${elem}>`);
+        this.bind(name, { kind: "var", ref: to, ty: elem, owned: own });
+        if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: i, ty: "si64" } });
+        return this.stmts(s.body);
+      }
+      const x = this.def(`milo.vectail.take ${slot}[${i}] : !milo.ref<${tailTy}> -> ${elem}`, elem);
       if (hasDrop(elem)) {
         const own = this.ownedSlot(name, elem, elemKind);
         this.emit(`milo.store ${x.ref}, ${own} : !milo.ref<${elem}>`);

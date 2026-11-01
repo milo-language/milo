@@ -115,7 +115,49 @@ fn nested(): i64 {
     return t
 }
 
+// Place-only elements: copied out of the Vec into the binding.
+struct Wide { a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64, name: string }
+
+struct Cells { v: [i64; 4] }
+
+fn wides(n: i64): Vec<Wide> {
+    var v: Vec<Wide> = Vec.new()
+    for i in 0..n {
+        v.push(Wide { a: i, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0, j: 0, k: 0, l: 0, m: 0, n: 0, o: 0, p: i * 2, name: $"w{i}" })
+    }
+    return v
+}
+
+fn keepWides(): i64 {
+    var kept: Vec<Wide> = Vec.new()
+    for w in wides(5) {
+        if w.a == 3 {
+            break
+        }
+        if w.a % 2 == 0 {
+            kept.push(w)
+        }
+    }
+    var t = 0
+    for w in kept {
+        t = t + w.p + w.name.len()
+    }
+    return t
+}
+
+fn cells(): i64 {
+    var v: Vec<Cells> = Vec.new()
+    v.push(Cells { v: [1, 2, 3, 4] })
+    v.push(Cells { v: [5, 6, 7, 8] })
+    var t = 0
+    for c in v.clone() {
+        t = t + c.v[3]
+    }
+    return t
+}
+
 fn main() {
+    print(keepWides(), " ", cells())
     print(sumNums())
     let kept = keepLong()
     print(kept.len(), " ", kept[0], " ", kept[2])

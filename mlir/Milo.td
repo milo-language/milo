@@ -543,6 +543,16 @@ def Milo_VecTailTakeOp : Milo_Op<"vectail.take"> {
   let hasVerifier = 1;
 }
 
+// vectail.take for a place-only element (128+ bytes, or holding an array): the element's
+// place, which the caller copies out of (milo.copy), with the cursor set past it.
+def Milo_VecTailTakePlaceOp : Milo_Op<"vectail.take_place"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>, MemRead<Milo_VecHeader>]>:$ref,
+                       SI64:$index);
+  let results = (outs Milo_RefType:$result);
+  let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
+  let hasVerifier = 1;
+}
+
 // `v.ptr()`: the Vec's data pointer, read out of its header.
 def Milo_VecDataOp : Milo_Op<"vec.data"> {
   let arguments = (ins Arg<Milo_VecType, "", [MemRead<Milo_VecHeader>]>:$vec);

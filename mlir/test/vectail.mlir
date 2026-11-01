@@ -11,10 +11,10 @@
 // CHECK:       llvm.store %{{.*}}, %[[C0]] : i64, !llvm.ptr
 // CHECK:       %[[D:.*]] = llvm.load %[[S]] : !llvm.ptr -> !llvm.ptr
 // CHECK:       %[[E:.*]] = llvm.getelementptr %[[D]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<"String"
-// CHECK:       llvm.load %[[E]] : !llvm.ptr -> !llvm.struct<"String"
 // CHECK:       %[[N:.*]] = llvm.add %{{.*}}, %{{.*}} : i64
 // CHECK:       %[[C1:.*]] = llvm.getelementptr %[[S]][0, 1]
 // CHECK:       llvm.store %[[N]], %[[C1]] : i64, !llvm.ptr
+// CHECK:       llvm.load %[[E]] : !llvm.ptr -> !llvm.struct<"String"
 // CHECK:       llvm.call @milo.drop.vectail.string(%[[S]])
 // CHECK:       llvm.return
 func.func @take_first(%v: !milo.vecval<!milo.string>, %i: si64) -> !milo.string {
@@ -44,4 +44,24 @@ func.func @header(%v: !milo.vecval<si64>) -> si64 {
     milo.yield %n : si64
   }
   milo.return %r : si64
+}
+
+// take_place: the element's address, with the cursor moved past it the same way.
+// CHECK-LABEL: llvm.func @take_place
+// CHECK:       %[[D:.*]] = llvm.load %{{.*}} : !llvm.ptr -> !llvm.ptr
+// CHECK:       %[[E:.*]] = llvm.getelementptr %[[D]][%arg1] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.array<4 x i64>
+// CHECK:       %[[N:.*]] = llvm.add %arg1, %{{.*}} : i64
+// CHECK:       llvm.store %[[N]], %{{.*}} : i64, !llvm.ptr
+// CHECK:       "llvm.intr.memcpy"(%{{.*}}, %[[E]], %{{.*}})
+func.func @take_place(%v: !milo.vecval<!milo.array<si64, 4>>, %i: si64) {
+  %s = milo.var "for.vec" owned : !milo.ref<!milo.vectail<!milo.array<si64, 4>>>
+  %x = milo.var "x" : !milo.ref<!milo.array<si64, 4>>
+  milo.scope %s : !milo.ref<!milo.vectail<!milo.array<si64, 4>>> {
+    milo.vectail.init %v, %s : !milo.vecval<!milo.array<si64, 4>>, !milo.ref<!milo.vectail<!milo.array<si64, 4>>>
+    milo.filled %s : !milo.ref<!milo.vectail<!milo.array<si64, 4>>>
+    %e = milo.vectail.take_place %s[%i] : !milo.ref<!milo.vectail<!milo.array<si64, 4>>> -> !milo.ref<!milo.array<si64, 4>>
+    milo.copy %e, %x : !milo.ref<!milo.array<si64, 4>>, !milo.ref<!milo.array<si64, 4>> of !milo.array<si64, 4>
+    milo.yield
+  }
+  milo.return
 }

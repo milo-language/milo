@@ -430,6 +430,15 @@ LogicalResult VecTailTakeOp::verify() {
   return success();
 }
 
+LogicalResult VecTailTakePlaceOp::verify() {
+  auto t = vecTailSlot(*this, getRef());
+  if (!t)
+    return failure();
+  if (getType().getPointee() != t.getElementType())
+    return emitOpError("is the place of an element of ") << t << ", not " << getType();
+  return success();
+}
+
 LogicalResult PtrFieldOp::verify() {
   auto s = dyn_cast<StructType>(getRecord());
   if (!s || getIndex() >= s.getFields().size())

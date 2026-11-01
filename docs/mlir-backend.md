@@ -600,6 +600,16 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   goes straight into the caller's place with an `init` store (`into`, the `abiResult`
   flag, for that call only). Program `array-results`. Planted bug: the call's result not
   stored into the place (`array-results` exit 0 -> 1). Tahoe Roads api: 5172 (96.7%).
+- *Consuming for-in over place-only elements*: `milo.vectail.take_place` gives the
+  element's place with the cursor moved past it, and the element is copied into the
+  binding's slot (`milo.copy`, then `milo.filled` when it owns something), as legacy's
+  emitConsumeElement memcpys it. `consumed-for` gains a 128+ byte owning element and one
+  holding an array; FileCheck in `vectail.mlir`. Planted bug: no `milo.filled` (the build
+  fails: drop elaboration finds the binding read while it may be empty). Tahoe Roads api:
+  5179 (96.8%).
+- *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
+  of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
+  statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
