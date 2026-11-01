@@ -186,6 +186,13 @@ export const ATTRIBUTES: AttrInfo[] = [
     doc: "This function reads no global or module state; the checker enforces it.",
   },
   {
+    name: "inline",
+    targets: ["fn", "method"],
+    doc:
+      "std/hashmap only: inline this function at every call site (LLVM `alwaysinline`), as the " +
+      "builtin code it replaced was emitted inline. Elsewhere it is an error; the optimizer decides.",
+  },
+  {
     name: "thread",
     targets: ["fn", "method"],
     doc:

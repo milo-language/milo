@@ -64,7 +64,6 @@ export type HIRExpr =
   | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecClone"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapNew"; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapWithCapacity"; capacity: HIRExpr; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —
@@ -137,6 +136,10 @@ export type HIRExpr =
   | { kind: "MapKeyEq"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
   // An owned deep copy of the value at a place (emitDeepCloneFromPtr).
   | { kind: "MapCopyOut"; value: HIRExpr; type: TypeKind; span?: Span }
+  // A fresh seed from HASH_SEED_FN (record/replay fixes its sequence); it may be 0.
+  | { kind: "MapSeed"; type: TypeKind; span?: Span }
+  // count * size zeroed bytes through emitAllocBytes (overflow and null checked).
+  | { kind: "MapAlloc"; count: HIRExpr; size: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }
@@ -243,6 +246,8 @@ export interface HIRFunction {
   // Drives what the generated C header declares: the header is the library's published
   // API, so a helper the author never marked `pub` has no business in it.
   isPub?: boolean;
+  // @inline (std/hashmap only): emitted `alwaysinline`.
+  alwaysInline?: boolean;
   sourceFile?: string; // origin file — DWARF DIFile/DISubprogram (set by lower from the resolver-stamped AST fn)
   line?: number;       // 1-based decl-line proxy (first body stmt) — DISubprogram line
   // Part of the record/replay engine (std/replay, a recording hook, a generated extern

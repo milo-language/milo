@@ -131,6 +131,12 @@ _Goes on: `fn`, `method`._
 
 This function reads no global or module state; the checker enforces it.
 
+### `@inline`
+
+_Goes on: `fn`, `method`._
+
+std/hashmap only: inline this function at every call site (LLVM `alwaysinline`), as the builtin code it replaced was emitted inline. Elsewhere it is an error; the optimizer decides.
+
 ### `@thread`
 
 _Goes on: `fn`, `method`._

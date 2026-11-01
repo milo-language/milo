@@ -4074,6 +4074,10 @@ site (`--deny=replay-hole` fails the build).
 `sys*` wrappers); the compiler leaves its calls direct. std/replay and the runtime under
 it use the file-level form, `@!replayHooked`.
 
+`@inline` (std/hashmap only; anywhere else it is an error) emits a function `alwaysinline`.
+It exists for `HashMap.insert`, whose hash and probe exceed LLVM's inlining threshold but
+replaced code codegen used to emit inline at every call site.
+
 ### Extern Structs
 
 `extern struct` declares a C-layout struct. The compiler knows field offsets and generates GEP instructions for field access:

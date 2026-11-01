@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-11-01 (phase 1 in progress: contains, isEmpty, getOrDefault, get, remove, modify, getOrInsertWith moved)
+last-verified: 2026-11-01 (phase 1 in progress: every HashMap method but new and withCapacity moved)
 -->
 
 # Collections in std
@@ -186,3 +186,26 @@ special cases.
   temporary receiver back uncopied (`mk().clone()` now copies). Interface/closure/
   resource refusals stay at the call. Same keys() order as the source; planted
   remove-one-entry turns `hashMapCloneStd` red; 0 leaks; bench 1.15s vs 1.15s.
+- 2026-11-01: `insert` moved, with two intrinsics: `_mapSeed` (a call of codegen's
+  `__milo_hash_seed`, so record/replay still fixes the seed sequence) and `_mapAlloc`
+  (zeroed slots through `emitAllocBytes`, so the allocation keeps its overflow and null
+  checks and the allocChokePoint gate stays honest). Same policy: seed drawn on the first
+  insert (0 becomes FNV's offset basis), grow when `(len + tombs + 1) * 4 >= cap * 3`,
+  always doubling, rehash with the same seed, first tombstone on the probe reused, overwrite
+  keeps the old key (old value dropped, then the new key). The checker keeps the builtin
+  insert's own rules (key moved before the value is checked, no call-site exclusivity, so
+  `m.insert(k, m.getOrDefault(k, 0) + 1)` stays legal) and records the std method for
+  lowering. getOrInsertWith now probes once (`mapProbeInsert` returns the slot or the
+  vacant slot) and re-probes only after seeding or growth. Iteration order under
+  `MILO_RECORD` is byte-identical to the builtin's. A called insert was 45% slower on an
+  overwrite loop (cost 450 vs LLVM's 225 threshold), so `@inline` (std/hashmap only,
+  `alwaysinline`) marks insert and its grow step, and the rehash takes the fields rather
+  than the map so the map's address never escapes (an escaped map stayed in memory).
+  OOM or size overflow while growing now reports a std/hashmap.milo line, not the caller's.
+  Planted: doubling by 4 and not counting tombstones (churn hangs) turn
+  `hashMapInsertStd` red; skipping the re-probe after growth turns it and
+  `hashMapGetOrInsertWithStd` red. 0 leaks, ASan clean. Bench (median of 5, builtin vs
+  std): 200M overwrites 1.03s vs 1.07s; 20x (1M inserts + 1M overwrites) 1.05s vs 1.08s;
+  200 maps grown to 100k 0.68s vs 0.69s; mixed counting/churn/getOrInsertWith 0.17s vs
+  0.17s. The rest of the overwrite gap is loop shape, not memory traffic (both keep the
+  map's fields in registers).

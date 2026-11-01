@@ -275,6 +275,7 @@ class LowerCtx {
       isVariadic: fn.isVariadic,
       ...((fn.fromWrappingModule || fn.attributes?.some(a => a.name === "wrapping")) && { isWrapping: true }),
       ...(fn.isPub && { isPub: true }),
+      ...(fn.attributes?.some(a => a.name === "inline") && { alwaysInline: true }),
       ...(fn.sourceFile && { sourceFile: fn.sourceFile }),
       ...(this.isReplayEngine(fn) && { replayEngine: true }),
       // AST fns carry no span; proxy the decl line with the first body stmt that has one
@@ -843,6 +844,8 @@ class LowerCtx {
       case "Call": {
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
           if (expr.func === "_mapCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          if (expr.func === "_mapSeed") return { kind: "MapSeed", type, span: expr.span };
+          if (expr.func === "_mapAlloc") return { kind: "MapAlloc", count: this.lowerExpr(expr.args[0]), size: this.lowerExpr(expr.args[1]), type, span: expr.span };
           return expr.func === "_mapHash"
             ? { kind: "MapHash", key: this.lowerExpr(expr.args[0]), seed: this.lowerExpr(expr.args[1]), type, span: expr.span }
             : { kind: "MapKeyEq", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
@@ -1513,9 +1516,6 @@ class LowerCtx {
           }
         }
         if (objType?.tag === "hashmap") {
-          if (expr.method === "insert") {
-            return { kind: "HashMapInsert", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), type, span: expr.span };
-          }
           if (expr.method === "len") {
             return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }

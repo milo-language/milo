@@ -1,11 +1,12 @@
 // std/hashmap: HashMap method bodies written in Milo (docs/collections-in-std.md).
 //
 // HashMap stays a builtin type: the checker owns its type rules and codegen still owns
-// new, insert, for-in, drop and display. The methods here read the same table through
-// MapRaw, which mirrors codegen's %HashMap layout field for field, so both sides agree
-// on every slot. Hashing and key comparison go through _mapHash/_mapKeyEq, the code the
-// builtin methods emit, so a key hashes to the same slot whichever side probes it.
-// _mapCopyOut is the structural deep copy the builtin lookups made of a stored value.
+// new, for-in, drop and display. The methods here read the same table through MapRaw,
+// which mirrors codegen's %HashMap layout field for field, so both sides agree on every
+// slot. Hashing and key comparison go through _mapHash/_mapKeyEq, the code codegen
+// emits for them, so a key hashes to the same slot whichever side probes it.
+// _mapCopyOut is the structural deep copy the builtin lookups made of a stored value;
+// _mapSeed and _mapAlloc are codegen's seed source and checked allocation.
 //
 // Table: open addressing, linear probing, capacity a power of two (at least 8). A slot is
 // empty (0), occupied (1) or a tombstone (2); a probe stops only at an empty slot.
@@ -23,6 +24,12 @@ struct MapRaw<K, V> {
     _seed: i64,
     _tombs: i64,
 }
+
+// Declared here, as std/string does, so the prelude's map pulls in no other module.
+extern fn free(p: *u8): void
+
+// The table helpers below take the map as a `*MapRaw` and rebind it with `var`: a store
+// through `p[0].field` needs `p` itself bound mutably, and parameters are immutable.
 
 // The slot holding `key`, or -1 when it is absent.
 fn mapFind<K, V>(m: &HashMap<K, V>, key: &K): i64 {
@@ -49,6 +56,118 @@ fn mapFind<K, V>(m: &HashMap<K, V>, key: &K): i64 {
 fn mapDropAt<T>(p: *T) {
     unsafe {
         let _gone = *p
+    }
+}
+
+// The table's seed, drawn on the first insert. A fresh map has seed 0 so building one
+// that is never filled costs no entropy; a draw of 0 is replaced by FNV's offset basis
+// (14695981039346656037 as an i64), since 0 is what "not seeded yet" means.
+fn mapSeeded<K, V>(table: *MapRaw<K, V>): void {
+    unsafe {
+        var raw = table
+        if raw[0]._seed == 0 {
+            var seed = _mapSeed()
+            if seed == 0 {
+                seed = -3750763034362895579
+            }
+            raw[0]._seed = seed
+        }
+    }
+}
+
+// Whether one more entry would pass the 3/4 load factor. Tombstones count: a probe stops
+// only at an empty slot, so the table must always keep one, and insert/remove churn would
+// otherwise tombstone every slot while `_len` stays near zero.
+fn mapNeedsGrow<K, V>(raw: *MapRaw<K, V>): bool {
+    unsafe {
+        let load = raw[0]._len.wrappingAdd(raw[0]._tombs).wrappingAdd(1)
+        return load.wrappingMul(4) >= raw[0]._cap.wrappingMul(3)
+    }
+}
+
+// Doubles the table, rehashing every live entry. Inlined so the map's address never
+// reaches a call LLVM keeps out of line: an escaped map stays in memory, and the insert
+// loop then reloads every field (9% slower than the builtin on an overwrite loop).
+@inline
+fn mapGrow<K, V>(table: *MapRaw<K, V>): void {
+    unsafe {
+        var raw = table
+        let cap = raw[0]._cap.wrappingMul(2)
+        raw[0]._data = mapRehash(raw[0]._data, raw[0]._cap, cap, raw[0]._seed)
+        raw[0]._cap = cap
+        raw[0]._tombs = 0
+    }
+}
+
+// A slot array of `cap` slots holding every live entry of `old`, rehashed with the same
+// seed; `old` is freed. Tombstones are not carried over, which is what clears them.
+fn mapRehash<K, V>(old: *MapSlot<K, V>, oldCap: i64, cap: i64, seed: i64): *MapSlot<K, V> {
+    unsafe {
+        var data = _mapAlloc(cap, sizeOf<MapSlot<K, V>>()) as *MapSlot<K, V>
+        let mask = cap.wrappingSub(1)
+        var i: i64 = 0
+        while i < oldCap {
+            if old[i].state == 1 {
+                var slot = _mapHash(old[i].key, seed) & mask
+                while data[slot].state != 0 {
+                    slot = slot.wrappingAdd(1) & mask
+                }
+                // Bitwise moves: the old array is freed without dropping anything in it.
+                data[slot].state = 1
+                * data[slot].key.addrOf() = *old[i].key.addrOf()
+                * data[slot].value.addrOf() = *old[i].value.addrOf()
+            }
+            i = i.wrappingAdd(1)
+        }
+        free(old as *u8)
+        return data
+    }
+}
+
+// The slot holding `key` (>= 0), or, when it is absent, -1 - the slot an insert takes:
+// the first tombstone the probe passed, else the empty slot that ended it. Stopping at
+// the tombstone instead of remembering it would let insert write a second copy of a key
+// stored further along the chain.
+fn mapProbeInsert<K, V>(raw: *MapRaw<K, V>, key: &K): i64 {
+    unsafe {
+        let data = raw[0]._data
+        let mask = raw[0]._cap.wrappingSub(1)
+        var slot = _mapHash(key, raw[0]._seed) & mask
+        var tomb: i64 = -1
+        while true {
+            let state = data[slot].state
+            if state == 0 {
+                if tomb >= 0 {
+                    return (-1).wrappingSub(tomb)
+                }
+                return (-1).wrappingSub(slot)
+            }
+            if state == 1 {
+                if _mapKeyEq(key, data[slot].key) {
+                    return slot
+                }
+            } else if tomb < 0 {
+                tomb = slot
+            }
+            slot = slot.wrappingAdd(1) & mask
+        }
+        return -1
+    }
+}
+
+// Store a new entry in the vacant `slot` mapProbeInsert chose. Reusing a tombstone
+// retires it, or the count only grows and the table rehashes on a load it does not carry.
+fn mapStoreAt<K, V>(table: *MapRaw<K, V>, slot: i64, key: K, value: V): void {
+    unsafe {
+        var raw = table
+        var data = raw[0]._data
+        if data[slot].state == 2 {
+            raw[0]._tombs = raw[0]._tombs.wrappingSub(1)
+        }
+        data[slot].state = 1
+        * data[slot].key.addrOf() = key
+        * data[slot].value.addrOf() = value
+        raw[0]._len = raw[0]._len.wrappingAdd(1)
     }
 }
 
@@ -103,32 +222,56 @@ impl HashMap<K, V> {
         }
     }
 
+    // Store `value` under `key`. An existing entry keeps its key and gets the new value
+    // (the old value is dropped first, then the key passed in); the table doubles when one
+    // more entry would pass the 3/4 load factor. The checker moves the key before it
+    // checks the value, so `m.insert(k, m.get(k))` is a use after move.
+    //
+    // @inline: the hash and probe cost LLVM about twice its inlining threshold, and a
+    // called insert measured 45% slower than the inline builtin on a 40M-overwrite loop.
+    @inline
+    fn insert(self: &mut Self, key: K, value: V): void {
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            mapSeeded(raw)
+            if mapNeedsGrow(raw) {
+                mapGrow(raw)
+            }
+            let at = mapProbeInsert(raw, key)
+            if at >= 0 {
+                let data = raw[0]._data
+                mapDropAt(data[at].value.addrOf())
+                * data[at].value.addrOf() = value
+                return
+            }
+            mapStoreAt(raw, (-1).wrappingSub(at), key, value)
+        }
+    }
+
     // Insert `init()` under `key` when the key is absent; true when it did. The key is
     // taken by value: a miss stores it, a hit drops it. `init` runs only on a miss; the
-    // checker borrows the map for it, so it may read the map but not change it.
-    //
-    // A miss probes twice (here, then again inside insert) because insert is still
-    // builtin; an insert-at-slot helper shared with insert removes the second probe
-    // once insert moves into std.
+    // checker borrows the map for it, so it may read the map but not change it, and the
+    // vacant slot the probe found is still the one to fill afterwards.
     fn getOrInsertWith(self: &mut Self, key: K, init: () => V): bool {
         unsafe {
             let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
-            let data = raw[0]._data
-            let mask = raw[0]._cap.wrappingSub(1)
-            var slot = _mapHash(key, raw[0]._seed) & mask
-            while true {
-                let state = data[slot].state
-                if state == 0 {
-                    break
-                }
-                if state == 1 && _mapKeyEq(key, data[slot].key) {
-                    return false
-                }
-                slot = slot.wrappingAdd(1) & mask
+            var at = mapProbeInsert(raw, key)
+            if at >= 0 {
+                return false
             }
+            let value = init()
+            // Seeding or growing moves every slot, so only then is the key probed again. A
+            // hit never grows the table, as with the builtin.
+            if raw[0]._seed == 0 || mapNeedsGrow(raw) {
+                mapSeeded(raw)
+                if mapNeedsGrow(raw) {
+                    mapGrow(raw)
+                }
+                at = mapProbeInsert(raw, key)
+            }
+            mapStoreAt(raw, (-1).wrappingSub(at), key, value)
+            return true
         }
-        self.insert(key, init())
-        return true
     }
 
     // A copy of every key, in slot order (unspecified, varies per process with the seed:

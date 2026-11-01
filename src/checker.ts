@@ -124,7 +124,7 @@ function substituteAliasType(body: MiloType, subst: ReadonlyMap<string, MiloType
 
 // std/hashmap's hashing and key comparison, the same code the builtin HashMap emits, so a
 // method moved into std hashes and matches keys exactly as the ones still in codegen do.
-export const MAP_INTRINSICS: ReadonlySet<string> = new Set(["_mapHash", "_mapKeyEq", "_mapCopyOut"]);
+export const MAP_INTRINSICS: ReadonlySet<string> = new Set(["_mapHash", "_mapKeyEq", "_mapCopyOut", "_mapSeed", "_mapAlloc"]);
 export function isHashMapModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -4303,6 +4303,13 @@ export class TypeChecker {
           else if (attr.name === "replayHooked") {
             if (attr.args.length > 0) this.error(`'@replayHooked' takes no arguments`, undefined, `write '@replayHooked fn ${fn.name}(...)'`);
           }
+          else if (attr.name === "inline") {
+            if (!isHashMapModule(fn.sourceFile)) {
+              this.error(`'@inline' on '${fn.name}': only std/hashmap may force inlining`, undefined, `drop '@inline'; the optimizer inlines small functions on its own`);
+            } else if (attr.args.length > 0) {
+              this.error(`'@inline' takes no arguments`, undefined, `write '@inline fn ${fn.name}(...)'`);
+            }
+          }
           else if (attr.name === "records") {
             if (!fn.isExtern) {
               this.error(`'@records' on '${fn.name}': only an extern has calls for record/replay to capture`, undefined, `drop '@records'`);
@@ -5696,6 +5703,9 @@ export class TypeChecker {
         } else if (attr.name === "sql" || attr.name === "sqlSchema") {
           const bad = validateSqlAttribute(attr, `${typeName}.${m.name}`, m.params);
           if (bad) this.error(bad, m.span ?? impl.span);
+        } else if (attr.name === "inline" && !isHashMapModule((m.span ?? impl.span)?.file)) {
+          this.error(`'@inline' on '${typeName}.${m.name}': only std/hashmap may force inlining`, m.span ?? impl.span,
+            `drop '@inline'; the optimizer inlines small functions on its own`);
         } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,
             `write '@${attr.name}' on the line above 'fn ${m.name}'`);
@@ -12190,6 +12200,7 @@ export class TypeChecker {
   private checkMapIntrinsic(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
     if (expr.func === "_mapCopyOut") return this.checkMapCopyOut(expr);
+    if (expr.func === "_mapSeed" || expr.func === "_mapAlloc") return this.checkMapTableIntrinsic(expr);
     const isHash = expr.func === "_mapHash";
     const result: TypeKind = isHash ? { tag: "int", bits: 64, signed: true } : { tag: "bool" };
     if (expr.args.length !== 2) {
@@ -12225,6 +12236,23 @@ export class TypeChecker {
   // rule in the hashmap method chain), not here: instantiating `impl HashMap` checks
   // every method body, so refusing here broke `HashMap<i64, Res>` programs that never
   // call get. `@copyOut` would withhold get for a Drop KEY too, which the builtin allowed.
+  // `_mapSeed(): i64` (codegen's HASH_SEED_FN, so record/replay still fixes the seed
+  // sequence) and `_mapAlloc(count, size): *u8` (count * size zeroed bytes through
+  // emitAllocBytes, the overflow- and null-checked allocation the builtin table used).
+  private checkMapTableIntrinsic(expr: ExprOf<"Call">): TypeKind {
+    const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+    const isSeed = expr.func === "_mapSeed";
+    const want = isSeed ? 0 : 2;
+    if (expr.args.length !== want) {
+      this.error(`'${expr.func}' expects ${want} argument(s), got ${expr.args.length}`, expr.span);
+    }
+    for (const a of expr.args) {
+      const t = this.checkExpr(a, i64);
+      if (t.tag !== "int" && t.tag !== "unknown") this.error(`'${expr.func}': expected an i64, got ${this.show(t)}`, a.span);
+    }
+    return this.setType(expr, isSeed ? i64 : { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } });
+  }
+
   private checkMapCopyOut(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
     if (expr.args.length !== 1) {
@@ -13622,6 +13650,16 @@ export class TypeChecker {
         }
         this.tryMove(expr.args[1]);
         this.holdPointerArgsIn(expr.object, expr.args);
+        // The body is std/hashmap code, but the call keeps the rules above rather than
+        // dispatchMangledMethod's: its call-site exclusivity check would refuse the common
+        // `m.insert(k, m.getOrDefault(k, 0) + 1)`, whose value is computed before the call.
+        const body = this.instantiateContainerImpl("HashMap", [objType.key, objType.value], "insert");
+        if (!body) {
+          this.error(`HashMap has no method 'insert'`, sp);
+          return this.setType(expr, { tag: "void" });
+        }
+        this.autoBorrow(expr.object, { mutable: true });
+        this.resolvedMethods.set(expr, body.mangled);
         return this.setType(expr, { tag: "void" });
       }
       // The copying lookups are std/hashmap code; the copy-out rule stays here so a

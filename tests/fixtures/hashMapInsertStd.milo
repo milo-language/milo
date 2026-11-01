@@ -1,0 +1,303 @@
+// HashMap.insert, now std/hashmap.milo code: lazy seeding, the 3/4 load factor counting
+// tombstones, doubling with a rehash, tombstone reuse, and overwrite (old value dropped,
+// old key kept, new key dropped). The table fields are read through the %HashMap layout
+// ({data, len, cap, seed, tombs}) so the growth policy itself is pinned, not just len.
+struct Pt { x: i64, y: i64 }
+
+struct Tk { id: i64 }
+
+impl Drop for Tk { fn drop(self: &mut Self): void { print("drop key " + self.id.toString()) } }
+
+struct Tv { id: i64 }
+
+impl Drop for Tv { fn drop(self: &mut Self): void { print("drop val " + self.id.toString()) } }
+
+struct Holder { m: HashMap<string, i64> }
+
+fn capOf<K, V>(m: &HashMap<K, V>): i64 {
+    unsafe {
+        let p = (m.addrOf() as *u8) as *i64
+        return p[2]
+    }
+}
+
+fn tombsOf<K, V>(m: &HashMap<K, V>): i64 {
+    unsafe {
+        let p = (m.addrOf() as *u8) as *i64
+        return p[4]
+    }
+}
+
+fn seeded<K, V>(m: &HashMap<K, V>): bool {
+    unsafe {
+        let p = (m.addrOf() as *u8) as *i64
+        return p[3] != 0
+    }
+}
+
+fn fill(m: &mut HashMap<string, i64>, n: i64) {
+    var i: i64 = 0
+    while i < n { m.insert("k" + i.toString(), i); i = i + 1 }
+}
+
+var quietDrops: i64 = 0
+
+struct Tq { id: i64 }
+
+impl Drop for Tq { fn drop(self: &mut Self): void { quietDrops = quietDrops + 1 } }
+
+fn consume(m: HashMap<i64, Tv>) {
+    print(m.len)
+}
+
+fn consumeQ(m: HashMap<Tq, i64>) {
+    print(m.len)
+}
+
+fn main() {
+    // Growth from 8 to past a million: print the size at which each doubling happened.
+    var m: HashMap<i64, i64> = HashMap.new()
+    print(seeded(m))
+    var lastCap = capOf(m)
+    print("cap " + lastCap.toString())
+    var i: i64 = 0
+    while i < 1000000 {
+        m.insert(i * 7919, i)
+        if capOf(m) != lastCap {
+            lastCap = capOf(m)
+            print("len " + m.len.toString() + " cap " + lastCap.toString())
+        }
+        i = i + 1
+    }
+    print(seeded(m))
+    var sum: i64 = 0
+    var hits: i64 = 0
+    i = 0
+    while i < 1000000 {
+        sum = sum + m.getOrDefault(i * 7919, -1)
+        if m.contains(i * 7919 + 1) { hits = hits + 1 }
+        i = i + 1
+    }
+    print(sum)
+    print(hits)
+    // Overwriting every key changes no size.
+    i = 0
+    while i < 1000000 { m.insert(i * 7919, 1); i = i + 1 }
+    print(m.len)
+    print(capOf(m))
+    var total: i64 = 0
+    for k, v in m { total = total + v }
+    print(total)
+
+    // Tombstone-heavy churn: a live set of 3 and a stream of insert/remove. Tombstones
+    // count toward the load, so the table rehashes in place (same capacity) to clear them
+    // instead of filling up; a reused tombstone is retired.
+    var c: HashMap<i64, i64> = HashMap.new()
+    c.insert(-1, 0)
+    c.insert(-2, 0)
+    c.insert(-3, 0)
+    var maxTombs: i64 = 0
+    i = 0
+    while i < 200000 {
+        c.insert(i, i)
+        c.remove(i)
+        if tombsOf(c) > maxTombs { maxTombs = tombsOf(c) }
+        i = i + 1
+    }
+    // Growth under churn is the builtin's policy too: a rehash always doubles.
+    print("churn len " + c.len.toString() + " cap " + capOf(c).toString() + " many tombs " + (maxTombs > 50000).toString())
+    c.remove(-2)
+    print(tombsOf(c) > 0)
+    let before = tombsOf(c)
+    c.insert(-2, 5)
+    print(c.getOrDefault(-2, 0))
+    print(c.len)
+    print(tombsOf(c) <= before)
+
+    // Churn on string keys while the live set grows.
+    var s: HashMap<string, i64> = HashMap.new()
+    i = 0
+    while i < 50000 {
+        s.insert("a" + i.toString(), i)
+        if i % 2 == 1 { s.remove("a" + (i - 1).toString()) }
+        i = i + 1
+    }
+    print("strings len " + s.len.toString() + " cap " + capOf(s).toString())
+    print(s.getOrDefault("a49999", -1))
+    print(s.getOrDefault("a49998", -1))
+    print(s.contains("a0"))
+
+    // Counting with the value computed from the map itself.
+    var counts: HashMap<string, i64> = HashMap.new()
+    let words = ["a", "b", "a", "c", "b", "a"]
+    for w in words { counts.insert(w, counts.getOrDefault(w, 0) + 1) }
+    print(counts.getOrDefault("a", 0))
+    print(counts.getOrDefault("b", 0))
+    print(counts.getOrDefault("c", 0))
+    print(counts.len)
+
+    // Struct keys and Vec values.
+    var p: HashMap<Pt, Vec<string>> = HashMap.new()
+    i = 0
+    while i < 100 {
+        p.insert(Pt { x: i % 10, y: i / 10 }, ["v" + i.toString()])
+        i = i + 1
+    }
+    p.insert(Pt { x: 3, y: 4 }, ["over", "write"])
+    print(p.len)
+    match p.get(Pt { x: 3, y: 4 }) {
+        Some(v) => print(v[0] + v[1]),
+        None => print("missing"),
+    }
+    match p.get(Pt { x: 9, y: 9 }) {
+        Some(v) => print(v[0]),
+        None => print("missing"),
+    }
+
+    // Overwrite with Drop values: the old value is dropped, then the key passed in.
+    var d: HashMap<i64, Tv> = HashMap.new()
+    d.insert(1, Tv { id: 10 })
+    d.insert(2, Tv { id: 20 })
+    print("overwrite 1")
+    d.insert(1, Tv { id: 11 })
+    print("overwrite 2")
+    d.insert(2, Tv { id: 21 })
+    d.remove(2)
+    print("drop map")
+    consume(d)
+    var dk: HashMap<Tk, Tv> = HashMap.new()
+    dk.insert(Tk { id: 1 }, Tv { id: 100 })
+    print("overwrite key 1")
+    dk.insert(Tk { id: 1 }, Tv { id: 101 })
+    print(dk.len)
+    print("growing drop map")
+    // Growing moves Drop keys bitwise: nothing is dropped until the map goes.
+    var dg: HashMap<Tq, i64> = HashMap.new()
+    i = 0
+    while i < 7 { dg.insert(Tq { id: i }, i); i = i + 1 }
+    print("grown " + capOf(dg).toString() + " drops " + quietDrops.toString())
+    consumeQ(dg)
+    print("quiet drops " + quietDrops.toString())
+    print("end drops")
+
+    // A map behind a &mut parameter, in a struct field and in a Vec element.
+    var f: HashMap<string, i64> = HashMap.new()
+    fill(&mut f, 20)
+    print(f.len)
+    print(f.getOrDefault("k19", -1))
+    var h = Holder { m: HashMap.new() }
+    h.m.insert("x", 1)
+    h.m.insert("x", 2)
+    h.m.insert("y", 3)
+    print(h.m.len)
+    print(h.m.getOrDefault("x", 0))
+    var maps: Vec<HashMap<i64, string>> = []
+    maps.push(HashMap.new())
+    maps.push(HashMap.new())
+    maps[1].insert(5, "five")
+    maps[1].insert(6, "six")
+    print(maps[0].len)
+    print(maps[1].len)
+    print(maps[1].getOrDefault(6, "?"))
+
+    // getOrInsertWith on a fresh, unseeded map, then across growth and over tombstones.
+    var g: HashMap<string, i64> = HashMap.new()
+    print(g.getOrInsertWith("first", () => 1))
+    print(seeded(g))
+    i = 0
+    while i < 1000 {
+        let k = "g" + (i % 300).toString()
+        g.getOrInsertWith(k, () => 7)
+        i = i + 1
+    }
+    print(g.len)
+    print(capOf(g))
+    i = 0
+    while i < 300 { if i % 2 == 0 { g.remove("g" + i.toString()) }; i = i + 1 }
+    let tb = tombsOf(g)
+    print(tb)
+    i = 0
+    while i < 300 { g.getOrInsertWith("g" + i.toString(), () => 9); i = i + 1 }
+    print(g.len)
+    print(tombsOf(g) < tb)
+    print(g.getOrDefault("g0", 0))
+    print(g.getOrDefault("g1", 0))
+}
+
+// @expect: false
+// @expect: cap 8
+// @expect: len 6 cap 16
+// @expect: len 12 cap 32
+// @expect: len 24 cap 64
+// @expect: len 48 cap 128
+// @expect: len 96 cap 256
+// @expect: len 192 cap 512
+// @expect: len 384 cap 1024
+// @expect: len 768 cap 2048
+// @expect: len 1536 cap 4096
+// @expect: len 3072 cap 8192
+// @expect: len 6144 cap 16384
+// @expect: len 12288 cap 32768
+// @expect: len 24576 cap 65536
+// @expect: len 49152 cap 131072
+// @expect: len 98304 cap 262144
+// @expect: len 196608 cap 524288
+// @expect: len 393216 cap 1048576
+// @expect: len 786432 cap 2097152
+// @expect: true
+// @expect: 499999500000
+// @expect: 0
+// @expect: 1000000
+// @expect: 2097152
+// @expect: 1000000
+// @expect: churn len 3 cap 131072 many tombs true
+// @expect: true
+// @expect: 5
+// @expect: 3
+// @expect: true
+// @expect: strings len 25000 cap 65536
+// @expect: 49999
+// @expect: -1
+// @expect: false
+// @expect: 3
+// @expect: 2
+// @expect: 1
+// @expect: 3
+// @expect: 100
+// @expect: overwrite
+// @expect: v99
+// @expect: overwrite 1
+// @expect: drop val 10
+// @expect: overwrite 2
+// @expect: drop val 20
+// @expect: drop val 21
+// @expect: drop map
+// @expect: 1
+// @expect: drop val 11
+// @expect: overwrite key 1
+// @expect: drop val 100
+// @expect: drop key 1
+// @expect: 1
+// @expect: growing drop map
+// @expect: grown 16 drops 0
+// @expect: 7
+// @expect: quiet drops 7
+// @expect: end drops
+// @expect: 20
+// @expect: 19
+// @expect: 2
+// @expect: 2
+// @expect: 0
+// @expect: 2
+// @expect: six
+// @expect: true
+// @expect: true
+// @expect: 301
+// @expect: 512
+// @expect: 150
+// @expect: 301
+// @expect: true
+// @expect: 9
+// @expect: 7
+// @expect: drop key 1
+// @expect: drop val 101

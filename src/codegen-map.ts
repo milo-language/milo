@@ -48,7 +48,6 @@ export interface CodegenMapCtx {
   hasHashMapType: boolean;
   hasStringType: boolean;
   needsMalloc: boolean;
-  needsFree: boolean;
   needsMemset: boolean;
   needsMemcmp: boolean;
   needsGetentropy: boolean;
@@ -56,30 +55,12 @@ export interface CodegenMapCtx {
 
 const i64c = (n: number): Val => val(String(n), Ty.i64);
 const i32c = (n: number): Val => val(String(n), Ty.i32);
-const i8c = (n: number): Val => val(String(n), Ty.i8);
 const HASHMAP_TY = Ty.of("%HashMap");
-
-// Address of field `idx` of the %HashMap at `map`.
-function hmField(b: Builder, map: Val, idx: number): Val {
-  return b.gep(HASHMAP_TY, map, [i32c(0), i32c(idx)]);
-}
-
-// Address of field `idx` (1 = key, 2 = value; 0 is the state byte) of a map entry.
-function entryField(b: Builder, entryTy: Ty, entry: Val, idx: number): Val {
-  return b.gep(entryTy, entry, [i32c(0), i32c(idx)]);
-}
 
 // sizeof(entry) as an i64, via the null-GEP idiom.
 function entrySizeOf(b: Builder, entryTy: Ty): Val {
   const p = b.gep(entryTy, val("null", Ty.ptr), [i32c(1)]);
   return b.cast("ptrtoint", p, Ty.i64);
-}
-
-// slotAddr = (slot + 1) & mask
-function probeAdvance(b: Builder, slot: Val, mask: Val, slotAddr: Val): void {
-  const next = b.binop("add", slot, i64c(1));
-  const wrapped = b.binop("and", next, mask);
-  b.store(wrapped, slotAddr);
 }
 
 function fnvHash(ctx: CodegenMapCtx, b: Builder, key: Val, keyType: TypeKind, seed: Val): Val {
@@ -197,29 +178,6 @@ function keysEqual(ctx: CodegenMapCtx, b: Builder, k1: Val, k2: Val, keyType: Ty
   throw new Error(`uncomparable key type: ${keyType.tag}`);
 }
 
-// The address of a map for a keyed operation.
-//
-// genLValue answers the literal "null" for anything that is not a place, so a lookup on
-// a TEMPORARY receiver — `makeMap().contains(k)`, `parseHeaders(s).get(k)` — GEP'd from
-// null, read a capacity out of low memory, and then probed. The probe only stops at an
-// empty slot, so with a garbage capacity it never stopped: a HANG out of ordinary safe
-// code, not a wrong answer. Every keyed op had it, at every revision.
-//
-// A temporary has no address until we give it one. Materialize it into a slot and tell
-// the caller to drop that slot when the lookup is done — it is an owned value nobody
-// else will ever free.
-function mapReceiverPtr(ctx: CodegenMapCtx, lines: string[], mapExpr: HIRExpr): { ptr: string; tempSlot: string | null } {
-  const [ptrLines, ptr] = ctx.genLValue(mapExpr);
-  lines.push(...ptrLines);
-  if (ptr !== "null") return { ptr, tempSlot: null };
-  const exprVal = ctx.genVal(mapExpr, lines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const slot = b.alloca(Ty.of(exprVal.ty.ll));
-  b.store(exprVal, slot);
-  ctx.own.valToSlot(exprVal.ref, slot.ref);
-  return { ptr: slot.ref, tempSlot: slot.ref };
-}
-
 export function genHashMapNew(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapNew" }, lines: string[]): Gen {
   ctx.hasHashMapType = true;
   ctx.needsMalloc = true;
@@ -240,270 +198,6 @@ export function genHashMapNew(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   m = b.insertvalue(m, zero, HM_SEED);
   m = b.insertvalue(m, zero, HM_TOMBS);
   return asGen(lines, m);
-}
-
-export function genHashMapInsert(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapInsert" }, lines: string[]): Gen {
-  const mapType = expr.map.type;
-  if (mapType.tag !== "hashmap") throw new Error("HashMapInsert on non-hashmap");
-  // get pointer to map
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-
-  // eval key and value
-  const keyVal = ctx.genVal(expr.key, lines);
-  const valVal = ctx.genVal(expr.value, lines);
-  emitHashMapInsertValues(ctx, lines, mapPtr, mapType, keyVal.ref, valVal.ref, expr.span);
-  ctx.own.endVal(lines, keyVal.ref, "STORE"); ctx.own.endVal(lines, valVal.ref, "STORE");
-  // Inserting into a temporary is pointless but legal, and the temporary still leaks
-  // without ctx.
-  if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, mapType);
-  return [lines, "0", "void"];
-}
-
-// The insert proper, on an already-evaluated key and value: seed, grow, probe, store.
-// `getOrInsertWith` reaches it with a value its init closure produced after its own
-// probe missed; the key was evaluated once, up front, for both probes.
-function emitHashMapInsertValues(ctx: CodegenMapCtx, lines: string[], mapPtr: string, mapType: TypeKind & { tag: "hashmap" }, keyVal: string, valVal: string, span?: Span): void {
-  ctx.hasHashMapType = true;
-  ctx.needsMalloc = true;
-  ctx.needsFree = true;
-  ctx.needsGetentropy = true;
-
-  const keyType = mapType.key;
-  const valueType = mapType.value;
-  const keyTy = Ty.of(ctx.llvmType(keyType));
-  const valTy = Ty.of(ctx.llvmType(valueType));
-  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
-  const b = new LlvmTextBuilder(lines, ctx);
-  const map = val(mapPtr, Ty.ptr);
-  const key = val(keyVal, keyTy);
-  const value = val(valVal, valTy);
-
-  // lazy seed init
-  const seedPtr = hmField(b, map, HM_SEED);
-  const seed = b.load(Ty.i64, seedPtr);
-  const seedIsZero = b.icmp("eq", seed, i64c(0));
-  const initLabel = b.newBlock("seed.init");
-  const haveLabel = b.newBlock("seed.have");
-  const preLabel = b.newBlock("seed.pre");
-  b.br(preLabel);
-  b.position(preLabel);
-  b.condBr(seedIsZero, initLabel, haveLabel);
-  b.position(initLabel);
-  const newSeed = b.call(Ty.i64, `@${HASH_SEED_FN}`, []);
-  const isStillZero = b.icmp("eq", newSeed, i64c(0));
-  const finalSeed = b.select(isStillZero, val("14695981039346656037", Ty.i64), newSeed);
-  b.store(finalSeed, seedPtr);
-  b.br(haveLabel);
-  b.position(haveLabel);
-  const activeSeed = b.phi(Ty.i64, [[seed, preLabel], [finalSeed, initLabel]]);
-
-  // load cap and len
-  const lenPtr = hmField(b, map, HM_LEN);
-  const len = b.load(Ty.i64, lenPtr);
-  const capPtr = hmField(b, map, HM_CAP);
-  const cap = b.load(Ty.i64, capPtr);
-  const dataFieldPtr = hmField(b, map, HM_DATA);
-
-  // resize check: (len + tombstones + 1) * 4 >= cap * 3
-  //
-  // Tombstones are counted, not just live entries. A probe below stops only at an EMPTY
-  // slot, so the table must always have one; a load factor computed from `len` alone
-  // lets insert/remove churn tombstone every slot while len stays near zero, and then
-  // no probe terminates. Rehashing drops tombstones, which is what makes this the fix
-  // for both that and the duplicate-key bug.
-  const tombsPtr = hmField(b, map, HM_TOMBS);
-  const tombs = b.load(Ty.i64, tombsPtr);
-  const lenPlusTombs = b.binop("add", len, tombs);
-  const lenPlus1 = b.binop("add", lenPlusTombs, i64c(1));
-  const lhs = b.binop("mul", lenPlus1, i64c(4));
-  const rhs = b.binop("mul", cap, i64c(3));
-  const needResize = b.icmp("uge", lhs, rhs);
-  const resizeLabel = b.newBlock("hm.resize");
-  const insertLabel = b.newBlock("hm.insert");
-  b.condBr(needResize, resizeLabel, insertLabel);
-
-  // resize block
-  b.position(resizeLabel);
-  const newCap = b.binop("shl", cap, i64c(1)); // cap * 2
-  const entrySizeI = entrySizeOf(b, entryTy);
-  const { buf: newDataRef, bytes: newTotalSize } = ctx.emitAllocBytes(lines, entrySizeI.ref, newCap.ref, "hmresize", span);
-  const newData = val(newDataRef, Ty.ptr);
-  ctx.needsMemset = true;
-  b.callDiscard(Ty.ptr, "@memset", [newData, i32c(0), val(newTotalSize, Ty.i64)]);
-  // rehash all occupied entries from old data
-  const oldData = b.load(Ty.ptr, dataFieldPtr);
-  const rehashCond = b.newBlock("rehash.cond");
-  const rehashBody = b.newBlock("rehash.body");
-  const rehashEnd = b.newBlock("rehash.end");
-  const riAddr = b.alloca(Ty.i64);
-  b.store(i64c(0), riAddr);
-  b.br(rehashCond);
-  b.position(rehashCond);
-  const ri = b.load(Ty.i64, riAddr);
-  const riCmp = b.icmp("ult", ri, cap);
-  b.condBr(riCmp, rehashBody, rehashEnd);
-  b.position(rehashBody);
-  const oldEntryPtr = b.gep(entryTy, oldData, [ri]);
-  const oldState = b.load(Ty.i8, oldEntryPtr);
-  const isOccupied = b.icmp("eq", oldState, i8c(1));
-  const rehashInsert = b.newBlock("rehash.ins");
-  const rehashNext = b.newBlock("rehash.next");
-  b.condBr(isOccupied, rehashInsert, rehashNext);
-  b.position(rehashInsert);
-  // load key from old entry
-  const oldKeyPtr = entryField(b, entryTy, oldEntryPtr, 1);
-  const oldKey = b.load(keyTy, oldKeyPtr);
-  // load value from old entry
-  const oldValPtr = entryField(b, entryTy, oldEntryPtr, 2);
-  const oldVal = b.load(valTy, oldValPtr);
-  // hash key with new mask
-  const rehashHash = fnvHash(ctx, b, oldKey, keyType, activeSeed);
-  const newMask = b.binop("sub", newCap, i64c(1));
-  // probe in new array
-  const rjAddr = b.alloca(Ty.i64);
-  const rehashSlot0 = b.binop("and", rehashHash, newMask);
-  b.store(rehashSlot0, rjAddr);
-  const rehashProbeCond = b.newBlock("rehash.probe");
-  b.br(rehashProbeCond);
-  b.position(rehashProbeCond);
-  const rj = b.load(Ty.i64, rjAddr);
-  const newEntryPtr = b.gep(entryTy, newData, [rj]);
-  const newState = b.load(Ty.i8, newEntryPtr);
-  const newEmpty = b.icmp("eq", newState, i8c(0));
-  const rehashStore = b.newBlock("rehash.store");
-  const rehashProbeNext = b.newBlock("rehash.pnext");
-  b.condBr(newEmpty, rehashStore, rehashProbeNext);
-  b.position(rehashStore);
-  b.store(i8c(1), newEntryPtr);
-  const newKeyPtr = entryField(b, entryTy, newEntryPtr, 1);
-  b.store(oldKey, newKeyPtr);
-  const newValPtr = entryField(b, entryTy, newEntryPtr, 2);
-  b.store(oldVal, newValPtr);
-  b.br(rehashNext);
-  b.position(rehashProbeNext);
-  probeAdvance(b, rj, newMask, rjAddr);
-  b.br(rehashProbeCond);
-  b.position(rehashNext);
-  const riNext = b.binop("add", ri, i64c(1));
-  b.store(riNext, riAddr);
-  b.br(rehashCond);
-  b.position(rehashEnd);
-  // free old data, update map fields
-  b.callDiscard(Ty.void, "@free", [oldData]);
-  b.store(newData, dataFieldPtr);
-  b.store(newCap, capPtr);
-  // The rehash loop above relocates occupied slots only, so the new table has none.
-  b.store(i64c(0), tombsPtr);
-  b.br(insertLabel);
-
-  // insert block — probe for slot
-  b.position(insertLabel);
-  const curCap = b.load(Ty.i64, capPtr);
-  const curData = b.load(Ty.ptr, dataFieldPtr);
-  const curSeed = b.load(Ty.i64, seedPtr);
-  const hash = fnvHash(ctx, b, key, keyType, curSeed);
-  const mask = b.binop("sub", curCap, i64c(1));
-  const slotAddr = b.alloca(Ty.i64);
-  const slot0 = b.binop("and", hash, mask);
-  b.store(slot0, slotAddr);
-
-  const probeCond = b.newBlock("hm.probe");
-  const probeOccupied = b.newBlock("hm.occupied");
-  const probeEmpty = b.newBlock("hm.empty");
-  const probeNext = b.newBlock("hm.pnext");
-  const insertDone = b.newBlock("hm.done");
-  const probeNotOcc = b.newBlock("hm.notocc");
-  const probeTomb = b.newBlock("hm.tomb");
-  const probeTombRecord = b.newBlock("hm.tombrec");
-
-  // Where to put the entry if the key turns out to be absent: the FIRST tombstone
-  // passed on the way, or the empty slot that ends the probe. -1 = none seen yet.
-  // Stopping at a tombstone instead of remembering it is what let `insert` write a
-  // second copy of a key that already existed further along the chain.
-  const firstTombAddr = b.alloca(Ty.i64);
-  b.store(i64c(-1), firstTombAddr);
-
-  b.br(probeCond);
-  b.position(probeCond);
-  const slot = b.load(Ty.i64, slotAddr);
-  const entryPtr = b.gep(entryTy, curData, [slot]);
-  const state = b.load(Ty.i8, entryPtr);
-  // state == 1 (occupied) -> check key
-  const stateIsOccupied = b.icmp("eq", state, i8c(1));
-  b.condBr(stateIsOccupied, probeOccupied, probeNotOcc);
-
-  // not occupied: either a tombstone to remember and probe past, or the empty slot
-  // that proves the key is absent.
-  b.position(probeNotOcc);
-  const stateIsTomb = b.icmp("eq", state, i8c(2));
-  b.condBr(stateIsTomb, probeTomb, probeEmpty);
-
-  b.position(probeTomb);
-  const seenTomb = b.load(Ty.i64, firstTombAddr);
-  const tombUnset = b.icmp("eq", seenTomb, i64c(-1));
-  b.condBr(tombUnset, probeTombRecord, probeNext);
-
-  b.position(probeTombRecord);
-  b.store(slot, firstTombAddr);
-  b.br(probeNext);
-
-  // occupied: compare keys
-  b.position(probeOccupied);
-  const existingKeyPtr = entryField(b, entryTy, entryPtr, 1);
-  const existingKey = b.load(keyTy, existingKeyPtr);
-  const keysMatch = keysEqual(ctx, b, key, existingKey, keyType);
-  const overwriteLabel = b.newBlock("hm.overwrite");
-  b.condBr(keysMatch, overwriteLabel, probeNext);
-
-  // overwrite existing value
-  b.position(overwriteLabel);
-  const existingValPtr = entryField(b, entryTy, entryPtr, 2);
-  // TODO(insert-return-value): return old value as Option<V>
-  if (ctx.needsDropCg(valueType)) {
-    ctx.emitDropValue(lines, existingValPtr.ref, valueType);
-  }
-  b.store(value, existingValPtr);
-  // The map keeps the key it already has, so the one just handed in has no owner:
-  // the checker moved it out of the caller and this path never stores it. Without
-  // this, re-inserting a `String` key leaked its buffer on every duplicate.
-  if (ctx.needsDropCg(keyType)) {
-    const dupKeyAddr = b.alloca(keyTy);
-    b.store(key, dupKeyAddr);
-    ctx.emitDropValue(lines, dupKeyAddr.ref, keyType);
-  }
-  b.br(insertDone);
-
-  // Empty slot reached: the key is definitely absent, because the probe walked every
-  // slot between its home and here. Reuse the first tombstone passed if there was one,
-  // which keeps the chain short; otherwise take this slot.
-  b.position(probeEmpty);
-  const tombCandidate = b.load(Ty.i64, firstTombAddr);
-  const reuseTomb = b.icmp("ne", tombCandidate, i64c(-1));
-  const writeSlot = b.select(reuseTomb, tombCandidate, slot);
-  const writePtr = b.gep(entryTy, curData, [writeSlot]);
-  // Reusing a tombstone retires it — otherwise the count only ever grows and the table
-  // rehashes on a load it does not actually carry.
-  const tombsNow = b.load(Ty.i64, tombsPtr);
-  const tombsLess = b.binop("sub", tombsNow, i64c(1));
-  const tombsAfter = b.select(reuseTomb, tombsLess, tombsNow);
-  b.store(tombsAfter, tombsPtr);
-  b.store(i8c(1), writePtr);
-  const newKeySlotPtr = entryField(b, entryTy, writePtr, 1);
-  b.store(key, newKeySlotPtr);
-  const newValSlotPtr = entryField(b, entryTy, writePtr, 2);
-  b.store(value, newValSlotPtr);
-  // increment len
-  const curLen = b.load(Ty.i64, lenPtr);
-  const newLen = b.binop("add", curLen, i64c(1));
-  b.store(newLen, lenPtr);
-  b.br(insertDone);
-
-  // probe next slot
-  b.position(probeNext);
-  probeAdvance(b, slot, mask, slotAddr);
-  b.br(probeCond);
-
-  b.position(insertDone);
 }
 
 // HashMap.withCapacity(n): pre-size the table so inserting n entries never rehashes.
@@ -585,4 +279,20 @@ export function genMapCopyOut(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapCo
   // `insert` on the same key drops the old value out from under it (the copy-back
   // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Degrades to a load for Copy types.
   return asGen(lines, val(ctx.emitDeepCloneFromPtr(lines, ptr, expr.type), Ty.of(ctx.llvmType(expr.type))));
+}
+
+export function genMapSeed(ctx: CodegenMapCtx, lines: string[]): Gen {
+  ctx.needsGetentropy = true;
+  const b = new LlvmTextBuilder(lines, ctx);
+  return asGen(lines, b.call(Ty.i64, `@${HASH_SEED_FN}`, []));
+}
+
+export function genMapAlloc(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapAlloc" }, lines: string[]): Gen {
+  const count = ctx.genVal(expr.count, lines);
+  const size = ctx.genVal(expr.size, lines);
+  const { buf, bytes } = ctx.emitAllocBytes(lines, count.ref, size.ref, "hmalloc", expr.span);
+  ctx.needsMemset = true;
+  const b = new LlvmTextBuilder(lines, ctx);
+  b.callDiscard(Ty.ptr, "@memset", [val(buf, Ty.ptr), i32c(0), val(bytes, Ty.i64)]);
+  return asGen(lines, val(buf, Ty.ptr));
 }

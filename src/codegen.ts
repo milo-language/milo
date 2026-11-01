@@ -16,7 +16,7 @@ import {
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
-  genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut,
+  genHashMapNew, genMapHash, genMapKeyEq, genMapCopyOut, genMapSeed, genMapAlloc,
   genHashMapWithCapacity,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
@@ -55,9 +55,9 @@ export function noaliasEnabled(): boolean {
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
-  "Forget", "HashMapInsert", "HashMapLen",
+  "Forget", "HashMapLen",
 "HashMapNew", "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MapHash", "MapKeyEq", "MemSwap", "OffsetOf",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
@@ -2662,7 +2662,7 @@ export class Codegen {
       // objects and silently pick one body when they differed (issue #5).
       // `.` can't appear in a Milo identifier, so %__sret.out never collides
       const allParams = isSret ? [{ name: "__sret.out", ty: Ty.ptr }, ...params] : params;
-      b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg });
+      b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg, ...(fn.alwaysInline && { attrs: " alwaysinline" }) });
     }
     if (fn.name === "main" && !this.wrapMainGreen) {
       b.store(V("%_milo_argc", Ty.i32), V("@_milo_argc_global", Ty.ptr));
@@ -5710,14 +5710,16 @@ export class Codegen {
         try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }
       case "HashMapNew":
         return genHashMapNew(this, expr, lines);
-      case "HashMapInsert":
-        return genHashMapInsert(this, expr, lines);
       case "MapHash":
         return genMapHash(this, expr, lines);
       case "MapKeyEq":
         return genMapKeyEq(this, expr, lines);
       case "MapCopyOut":
         return genMapCopyOut(this, expr, lines);
+      case "MapSeed":
+        return genMapSeed(this, lines);
+      case "MapAlloc":
+        return genMapAlloc(this, expr, lines);
       case "HashMapWithCapacity":
         return genHashMapWithCapacity(this, expr, lines);
       case "HashMapLen": {
