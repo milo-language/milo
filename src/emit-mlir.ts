@@ -1,5 +1,5 @@
 // HIR -> the source-level `milo` MLIR dialect (mlir/Milo.td), as text, for the functions
-// MILO_MLIR=1 compiles through milo-opt (docs/mlir-backend.md). A printer, not a lowering:
+// the MLIR path compiles through milo-opt (docs/mlir-backend.md). A printer, not a lowering:
 // structured control flow stays region ops, `var` stays a slot, Milo's checked arithmetic
 // stays one op carrying its trap; every rewrite after this is a milo-opt pass.
 //

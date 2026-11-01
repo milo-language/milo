@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Differential gate for the MLIR backend (docs/mlir-backend.md): every fixture is built with
-// MILO_MLIR=1 and without, both binaries run, and stdout, stderr and the exit status must
+// the default (MLIR) and with MILO_LEGACY=1, both binaries run, and stdout, stderr and the exit status must
 // match. It prints the coverage number (function instances compiled through MLIR / all
 // non-extern function instances, from MILO_MLIR_LOG), the most common reasons the rest
 // stayed on legacy codegen, and the corpus build time on each side.
@@ -38,6 +38,16 @@ const killed = (r: RunResult) => (!!r.guardKill && NOISE.has(r.guardKill)) || /\
 if (!existsSync(MILO_OPT)) {
   console.error(`mlir-same: ${MILO_OPT} is not built; run \`sh mlir/build.sh\``);
   process.exit(1);
+}
+
+// The candidate is the default build; the baseline is MILO_LEGACY=1. Any inherited setting of
+// either switch is dropped first so the caller's shell cannot flip a side.
+function buildEnv(mlir: boolean, extra: Record<string, string>): Record<string, string> {
+  const e = { ...process.env } as Record<string, string>;
+  delete e.MILO_MLIR;
+  delete e.MILO_LEGACY;
+  if (!mlir) e.MILO_LEGACY = "1";
+  return { ...e, ...extra };
 }
 
 async function guarded(what: string, cmd: string, args: string[], opts: Parameters<typeof guardedRun>[2]): Promise<RunResult> {
@@ -82,7 +92,7 @@ async function build(name: string, mlir: boolean): Promise<{ bin: string; res: R
   const args = ["run", MAIN, "build", `${name}.milo`, "-o", bin];
   const companion = `${name}.c`;
   if (existsSync(companion)) args.push(companion);
-  const env = { ...process.env, MILO_MLIR: mlir ? "1" : "0", ...(mlir ? { MILO_MLIR_LOG: log } : {}) };
+  const env = buildEnv(mlir, mlir ? { MILO_MLIR_LOG: log } : {});
   if (mlir) rmSync(log, { force: true });
   const t0 = performance.now();
   const res = await guarded(`build ${name} (${mlir ? "mlir" : "legacy"})`, "bun", args, { env, timeoutMs: 180_000 });
@@ -134,7 +144,7 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
   const asanBin = `${mlirBin}.asan`;
   const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", "-o", asanBin];
   if (existsSync(`${name}.c`)) args.push(`${name}.c`);
-  const b = await guarded(`build ${name} (mlir, asan)`, "bun", args, { env: { ...process.env, MILO_MLIR: "1" }, timeoutMs: 180_000 });
+  const b = await guarded(`build ${name} (mlir, asan)`, "bun", args, { env: buildEnv(true, {}), timeoutMs: 180_000 });
   if (b.code !== 0) return `asan build failed: ${b.stderr.trim().split("\n")[0]}`;
   const leaks = process.platform === "linux" ? 1 : 0;
   const r = await guarded(`run ${asanBin}`, asanBin, [], { timeoutMs: 60_000, cwd: tmp, env: { ...process.env, ASAN_OPTIONS: `detect_leaks=${leaks}:symbolize=0` } });

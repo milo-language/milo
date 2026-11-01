@@ -55,7 +55,7 @@ grid was already vectorized by LLVM; it is memory-bound and stays at parity.
 ## Gates (`./run.sh`, one command)
 
 - FileCheck tests on the passes (`test/version.mlir`).
-- Differential: 19 sizes, result bits identical across the milo-dialect pipeline, `MILO_MLIR=1` on kernels.milo,
+- Differential: 19 sizes, result bits identical across the milo-dialect pipeline, the default build on kernels.milo,
   the same pipeline without versioning, and today's codegen.
 - Panic: a short `b` fails at index `b.len` after exactly `b.len` writes, identical
   with and without versioning, including at the edge `b.len = a.len - 1`.
@@ -65,7 +65,7 @@ grid was already vectorized by LLVM; it is memory-bound and stays at parity.
 
 ## Not done
 
-- `test/kernels.mlir` is hand-written; `bench/kernels.milo` now also goes through the emitter under `MILO_MLIR=1` (the `milo-mlir` row of `./run.sh`: same result bits, axpy vectorized, 0.095 ns/elem).
+- `test/kernels.mlir` is hand-written; `bench/kernels.milo` now also goes through the emitter by default (the `milo-mlir` row of `./run.sh`: same result bits, axpy vectorized, 0.095 ns/elem).
 - Index forms beyond `iv + invariant`; steps other than 1 are accepted but bounded
   conservatively.
 - Buffer disjointness (fact 3), DWARF, the C ABI, everything outside these kernels.

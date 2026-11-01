@@ -16,14 +16,14 @@ HEAD="--milo-hoist-vec-reads --loop-invariant-code-motion"
 TAIL="--cse --canonicalize --milo-expand-checks --convert-scf-to-cf --convert-milo-to-llvm --reconcile-unrealized-casts"
 build/milo-opt test/kernels.mlir $HEAD --milo-version-bounds-checks $TAIL | "$LLVM/mlir-translate" --mlir-to-llvmir > "$O/mlir.ll"
 build/milo-opt test/kernels.mlir $HEAD $TAIL | "$LLVM/mlir-translate" --mlir-to-llvmir > "$O/mlir-nov.ll"
-(cd ..; bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
+(cd ..; MILO_LEGACY=1 bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
   | sed -E 's/^define internal (void @(axpy|grid)\(.*\)) \{/define \1 noinline {/; s/@main\(/@milo_unused_main(/' > "$O/milo.ll"
 
-# milo-mlir: kernels.milo itself through MILO_MLIR=1 (emitter, versioning, legacy splice).
-(cd ..; MILO_MLIR=1 bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
+# milo-mlir: kernels.milo itself through the default build (emitter, versioning, legacy splice).
+(cd ..; env -u MILO_LEGACY bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
   | sed -E 's/^define internal (void @(axpy|grid)\(.*\)) \{/define \1 noinline {/; s/@main\(/@milo_unused_main(/' > "$O/milo-mlir.ll"
 # The MLIR body is what carries TBAA; without it MLIR did not take axpy.
-awk '/^define void @axpy/,/^}/' "$O/milo-mlir.ll" | grep -q "!tbaa" || { echo "FAIL: MILO_MLIR=1 did not compile axpy through MLIR"; exit 1; }
+awk '/^define void @axpy/,/^}/' "$O/milo-mlir.ll" | grep -q "!tbaa" || { echo "FAIL: the default build did not compile axpy through MLIR"; exit 1; }
 
 sed -E "s/^(define void @axpy\(ptr noalias nonnull dereferenceable\(24\) align 8 %a, ptr) /\1 noalias /" "$O/milo.ll" > "$O/milo-noalias.ll"
 grep -q "^define void @axpy(ptr noalias [^,]*, ptr noalias" "$O/milo-noalias.ll"
@@ -41,7 +41,7 @@ done
 [ "$n" -ge 4 ] || { echo "FAIL: only $n FileCheck tests ran"; exit 1; }
 echo "ok ($n files)"
 
-echo "== MILO_MLIR=1 vs legacy on test/programs (scalar fns, every trap)"
+echo "== default build vs MILO_LEGACY=1 on test/programs (scalar fns, every trap)"
 out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 1; }
 echo "$out" | tail -3
 

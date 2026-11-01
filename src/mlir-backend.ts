@@ -1,4 +1,4 @@
-// MILO_MLIR=1 driver (docs/mlir-backend.md): the functions the milo dialect covers go
+// MLIR driver (default build path; MILO_LEGACY=1 turns it off) (docs/mlir-backend.md): the functions the milo dialect covers go
 // HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
 // replace the legacy codegen's in the one LLVM module clang sees.
 //
@@ -17,7 +17,10 @@ import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
 import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 
-export const MLIR_MODE = process.env.MILO_MLIR === "1";
+// On unless MILO_LEGACY=1 (temporary escape hatch for critical deploys; docs/mlir-backend.md).
+// MILO_MLIR=0 is the old opt-out spelling, accepted for one release; MILO_MLIR=1 is a no-op.
+// Windows has no milo-opt build, so it stays on the legacy codegen.
+export const MLIR_MODE = process.env.MILO_LEGACY !== "1" && process.env.MILO_MLIR !== "0" && process.platform !== "win32";
 
 // A compiled milo binary has no real path of its own; the test driver passes MILO_ROOT.
 const ROOT = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -81,7 +84,7 @@ function unquote(n: string): string {
   return n.startsWith('"') ? n.slice(1, -1).replace(/\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : n;
 }
 
-// The clang that compiles a MILO_MLIR=1 module: the one from the LLVM install milo-opt
+// The clang that compiles an MLIR-path module: the one from the LLVM install milo-opt
 // comes from. Its IR is that LLVM's, and an older clang (Apple's) may
 // misread or reject it (LLVM 23 spells some float constants in a syntax clang 21 cannot
 // parse). A MILO_CC naming a clang of another version is an error, not a quiet override.
@@ -93,12 +96,12 @@ export function mlirClang(): { path: string; id: string } {
   };
   const wantVersion = version(want);
   if (wantVersion === null) {
-    console.error(`error: MILO_MLIR=1 compiles with ${want} (the clang of milo-opt's LLVM), which does not run`);
+    console.error(`error: an MLIR build compiles with ${want} (the clang of milo-opt's LLVM), which does not run`);
     process.exit(1);
   }
   const cc = process.env.MILO_CC;
   if (cc && version(cc) !== wantVersion) {
-    console.error(`error: MILO_MLIR=1 needs the clang of milo-opt's LLVM (${want}: ${wantVersion}); MILO_CC=${cc} is ${version(cc) ?? "not a working clang"}. Unset MILO_CC or point it at a clang of the same LLVM.`);
+    console.error(`error: an MLIR build needs the clang of milo-opt's LLVM (${want}: ${wantVersion}); MILO_CC=${cc} is ${version(cc) ?? "not a working clang"}. Unset MILO_CC or point it at a clang of the same LLVM.`);
     process.exit(1);
   }
   return { path: cc ?? want, id: `${cc ?? want}\n${wantVersion}` };
@@ -198,6 +201,7 @@ export class MlirPlan {
     const logPath = process.env.MILO_MLIR_LOG;
     if (logPath && this.log.length) appendFileSync(logPath, this.log.join("\n") + "\n");
     if (this.taken.length === 0) return ir;
+    mlirClang();
     const optPath = tool(MILO_OPT, "milo-opt");
     // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
     // elsewhere (a planted-bug build under build/) has no sources beside it to compare.

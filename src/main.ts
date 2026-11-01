@@ -298,7 +298,8 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  const plan = MLIR_MODE ? new MlirPlan(hirModule, cg) : null;
+  // milo-opt emits for the host's data layout: a cross target keeps the legacy codegen.
+  const plan = MLIR_MODE && target.triple === getHostTarget().triple ? new MlirPlan(hirModule, cg) : null;
   if (plan) cg.mlirTake = fn => plan.take(fn);
   let ir = phase("codegen", () => cg.generate(hirModule));
   if (plan) ir = phase("mlir", () => plan.compile(ir));
@@ -583,7 +584,9 @@ function detectToolchain(): Toolchain {
   // mac that is Apple's, whose codegen differs from upstream LLVM (it splits hot/cold
   // paths into `.cold.N` functions by default): a cross build meant to match what a
   // Linux box's clang produces needs a way to pick Homebrew's instead.
-  if (MLIR_MODE) {
+  // A MILO_CC is validated against the MLIR clang only when a host compile actually goes
+  // through milo-opt (MlirPlan.compile): cross builds name their own clang and stay legacy.
+  if (MLIR_MODE && !process.env.MILO_CC) {
     cachedToolchain = { kind: "clang", ...mlirClang() };
     return cachedToolchain;
   }

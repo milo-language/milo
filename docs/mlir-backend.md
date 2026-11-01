@@ -1,6 +1,6 @@
 <!-- doc-meta
 system: mlir-backend-plan
-purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time behind MILO_MLIR=1
+purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
 last-verified: 2026-11-01 (third batch: main, print, aggregates, drop elaboration)
@@ -61,9 +61,9 @@ codegen. The MLIR function's LLVM body replaces the legacy body textually inside
 module (`src/mlir-backend.ts`), under the legacy `define` line, so linkage, attributes and
 the ABI are the legacy ones by construction. Not llvm-link: legacy non-exported fns are
 `internal`, and internal symbols do not resolve across modules. Legacy codegen still
-generates the replaced body, because its module-wide noalias dataflow reads every body. `MILO_MLIR=1` turns the path on; the coverage number (MLIR functions / all
+generates the replaced body, because its module-wide noalias dataflow reads every body. The path is the DEFAULT build; `MILO_LEGACY=1` is a temporary escape hatch (critical deploys only, see "Deploying apps built with MLIR"). `MILO_MLIR=1` is a no-op and `MILO_MLIR=0` means `MILO_LEGACY=1`, both for one release only. Windows and non-host targets (cross builds, wasm, bare metal) keep the legacy codegen. The coverage number (MLIR functions / all
 function instances over the corpus) is printed by the gate and must only go up. When it
-reaches 100% the default flips, then the legacy codegen is deleted.
+reaches 100% the legacy codegen is deleted and the escape hatch goes with it.
 
 ## Milestones
 
@@ -233,12 +233,14 @@ corpus and the milojs apps; a per-app record/replay differential (record real tr
 with the legacy build, replay it against the MLIR build, byte-diff the responses, repeat
 under ASan); a shadow run, then a canary through the existing socket-activated restart
 (`ops/restart-gate.sh`) with the legacy binary kept for rollback. Server hot paths need M6
-(tasks) before a canary is meaningful. The default flips only after a clean canary.
+(tasks) before a canary is meaningful. The default is already on, so until an app's differential passes its deploy script keeps
+`MILO_LEGACY=1` (the build is the legacy codegen byte for byte); drop it per app after the
+canary.
 
 ## Gates (every milestone, every commit)
 
-- **Corpus diff**: `bun test tests/run.test.ts` with `MILO_MLIR=1` passes exactly as without
-  it. `bun scripts/mlir-same.ts` builds every fixture both ways and diffs stdout, stderr
+- **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
+  `MILO_LEGACY=1`. `bun scripts/mlir-same.ts` builds every fixture both ways and diffs stdout, stderr
   and exit status, and prints coverage and build time; it fails when nothing went through
   MLIR. `--programs` runs only `mlir/test/programs/` (scalar programs and one per trap,
   seconds), which `mlir/run.sh` runs too. A planted bug in an MLIR lowering must turn
@@ -265,10 +267,17 @@ under ASan); a shadow run, then a canary through the existing socket-activated r
 ## Toolchain
 
 `mlir/` builds `milo-opt` against an installed MLIR (Homebrew LLVM 23.1.3 today) with one
-CMake configure: `sh mlir/build.sh`. A `MILO_MLIR=1` build compiles the whole module with
+CMake configure: `sh mlir/build.sh`. A default build compiles the whole module with
 the clang of that same LLVM (`/opt/homebrew/opt/llvm/bin/clang`), never Apple's: LLVM 23 IR
 fed to clang 21 is version skew (it already rejects LLVM 23's float constant syntax), and
 a `MILO_CC` of another version is an error. MLIR's C++
 API changes every release, so the LLVM version is pinned and bumped on purpose.
-`MILO_MLIR=1` without a built `milo-opt` is an error naming the build command, never a
-silent fallback.
+A default build without a built `milo-opt` is an error naming the build command, never a
+silent fallback. `milo-opt` is found at `mlir/build/milo-opt` in a checkout, else next to the
+`milo` binary (what install.sh, the Homebrew formula and the deb/rpm ship; `MILO_OPT`
+overrides). Release archives carry a statically linked milo-opt (`MILO_OPT_STATIC=1 sh
+mlir/build.sh`; about 235 MB stripped, trimming the linked MLIR set is open work); the
+darwin-x64 archive has none (no x86 MLIR on the arm64 runner), so Intel macs use
+`MILO_LEGACY=1` or build it. CI builds it through `.github/actions/milo-opt` (Homebrew on
+macOS, apt.llvm.org LLVM 23 on Linux), cached on the hash of `mlir/` sources and the LLVM
+version.

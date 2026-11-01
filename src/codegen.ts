@@ -201,7 +201,7 @@ export class Codegen {
   // ensures clauses of the function being generated; checked at every return site
   private currentEnsures: HIRContract[] = [];
   public trapOnOverflow = false;
-  // MILO_MLIR=1 (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
+  // the MLIR path (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
   // Legacy functions MLIR bodies call (mlirHelper, mlirPrintHelper), by symbol, and the
@@ -3248,7 +3248,7 @@ export class Codegen {
   // `msg` as the format, exactly as the inline division and shift traps do, then aborts
   // through the panic hook.
   /**
-   * MILO_MLIR=1: enum `name`'s layout as this codegen stores it (EnumLayout), for the
+   * MLIR path: enum `name`'s layout as this codegen stores it (EnumLayout), for the
    * dialect's !milo.enum to spell out; null for a niche-packed one, which has no tag word.
    */
   public mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null {
@@ -3261,7 +3261,7 @@ export class Codegen {
     };
   }
 
-  /** MILO_MLIR=1: main goes through MLIR only when it is the process entry itself. */
+  /** MLIR path: main goes through MLIR only when it is the process entry itself. */
   public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
 
   /**
