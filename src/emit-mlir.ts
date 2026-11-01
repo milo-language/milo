@@ -611,6 +611,23 @@ class FnEmitter {
         const { vec, elem, index } = this.indexPlace(e);
         return this.def(`milo.index ${vec}[${index}] : !milo.vec<${elem}> -> ${elem}`, elem, this.loc(e.span));
       }
+      case "VecGrowBuf": {
+        // Legacy's buffer growth (overflow and allocation checks), as a function of the
+        // legacy module per element type; its out-of-memory panic names no source line.
+        const d = this.expr(e.data), l = this.expr(e.len), c = this.expr(e.cap);
+        if (d.ty !== PTR || l.ty !== "si64" || c.ty !== "si64" || scalar(e.type, "grown buffer") !== PTR) throw new MlirUnsupported("vec growth types");
+        const name = `milo.vec.grow.${typeKey(e.elementType)}`;
+        const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+        this.cx.mlirHelper(name, () => ({
+          params: [{ name: "d", type: e.data.type, isRef: false, isRefMut: false },
+            { name: "l", type: i64, isRef: false, isRefMut: false }, { name: "c", type: i64, isRef: false, isRefMut: false }],
+          retType: e.type,
+          body: [{ kind: "Return", retType: e.type, value: { kind: "VecGrowBuf", elementType: e.elementType, type: e.type,
+            data: { kind: "Ident", name: "d", type: e.data.type }, len: { kind: "Ident", name: "l", type: i64 }, cap: { kind: "Ident", name: "c", type: i64 } } }],
+        }));
+        this.callees.set(name, `(${PTR}, si64, si64) -> ${PTR}`);
+        return this.def(`func.call @${quote(name)}(${d.ref}, ${l.ref}, ${c.ref}) : (${PTR}, si64, si64) -> ${PTR}`, PTR);
+      }
       case "SizeOf":
         if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
         return this.def(`milo.const ${this.cx.typeSizeOf(e.sizeType)} : si64`, "si64");
