@@ -56,10 +56,10 @@ def Milo_VecStoreOp : Milo_Op<"vec.store"> {
 
 // Panics unless 0 <= index < len (one unsigned compare). Reading VecElems pins it after
 // every earlier element store: a task that recovers from the panic observes exactly
-// the writes made before the failing index.
+// the writes made before the failing index. The panic names the op's location.
 def Milo_BoundsCheckOp : Milo_Op<"bounds_check",
     [MemoryEffects<[MemRead<Milo_VecElems>, MemWrite<Milo_Panic>]>]> {
-  let arguments = (ins I64:$index, I64:$len, I32Attr:$line);
+  let arguments = (ins I64:$index, I64:$len);
   let assemblyFormat = "$index `,` $len attr-dict";
 }
 
@@ -209,7 +209,8 @@ def Milo_LoadOp : Milo_Op<"load", [
 // what makes `noalias` on a `&mut` param sound.
 def Milo_CheckUnaliasedOp : Milo_Op<"check_unaliased",
     [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
-  let arguments = (ins Milo_RefType:$lhs, Milo_RefType:$rhs);
+  let arguments = (ins AnyTypeOf<[Milo_RefType, Milo_VecType]>:$lhs,
+                       AnyTypeOf<[Milo_RefType, Milo_VecType]>:$rhs);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs)";
 }
 
@@ -222,6 +223,30 @@ def Milo_ReplayEnterOp : Milo_Op<"replay.enter"> {
 }
 def Milo_ReplayExitOp : Milo_Op<"replay.exit"> {
   let assemblyFormat = "attr-dict";
+}
+
+// Source-level Vec access through a `&Vec<T>` / `&mut Vec<T>` (or slice) param, as the
+// language writes it: `v[i]`, `v[i] = x`, `v.len()`. The index is Milo's i64 (narrower
+// ints are cast to it first, by their own signedness). milo-expand-index lowers these to
+// vec.len, bounds_check and vec.load/store above, which the loop passes understand.
+def Milo_IndexOp : Milo_Op<"index"> {
+  let arguments = (ins Milo_VecType:$vec, SI64:$index);
+  let results = (outs Milo_Scalar:$result);
+  let assemblyFormat = "$vec `[` $index `]` attr-dict `:` type($vec) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Milo_IndexStoreOp : Milo_Op<"index.store"> {
+  let arguments = (ins Milo_Scalar:$value, Milo_VecType:$vec, SI64:$index);
+  let assemblyFormat = "$value `,` $vec `[` $index `]` attr-dict `:` type($value) `,` type($vec)";
+  let hasVerifier = 1;
+}
+
+def Milo_LenOp : Milo_Op<"len",
+    [MemoryEffects<[MemRead<Milo_VecHeader>]>]> {
+  let arguments = (ins Milo_VecType:$vec);
+  let results = (outs SI64:$len);
+  let assemblyFormat = "$vec attr-dict `:` type($vec)";
 }
 
 def Milo_StoreOp : Milo_Op<"store", [

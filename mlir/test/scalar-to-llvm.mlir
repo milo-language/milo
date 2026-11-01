@@ -238,3 +238,16 @@ func.func @replay_engine() {
   milo.replay.exit
   milo.return
 }
+
+// Bounds check: one unsigned compare; legacy's 4-argument routine on the failing edge.
+// CHECK-LABEL: llvm.func @bounds
+// CHECK:   %[[OOB:.*]] = llvm.icmp "uge" %arg0, %arg1 : i64
+// CHECK:   llvm.cond_br %[[OOB]], ^[[FAIL:bb[0-9]+]], ^[[OK:bb[0-9]+]]
+// CHECK: ^[[FAIL]]:
+// CHECK:   %[[LINE:.*]] = llvm.mlir.constant(9 : i32)
+// CHECK:   llvm.call @__milo_bounds_fail(%arg0, %arg1, %{{.*}}, %[[LINE]])
+// CHECK-NEXT:   llvm.unreachable
+func.func @bounds(%i: i64, %l: i64) {
+  milo.bounds_check %i, %l loc("t.milo":9:4)
+  milo.return
+}

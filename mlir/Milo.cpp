@@ -76,6 +76,18 @@ LogicalResult IfOp::verify() {
   return success();
 }
 
+LogicalResult IndexOp::verify() {
+  if (getType() != getVec().getType().getElementType())
+    return emitOpError("result is not the Vec's element type");
+  return success();
+}
+
+LogicalResult IndexStoreOp::verify() {
+  if (getValue().getType() != getVec().getType().getElementType())
+    return emitOpError("value is not the Vec's element type");
+  return success();
+}
+
 LogicalResult ForOp::verify() {
   Type t = getStart().getType();
   Block &entry = getBodyRegion().front();

@@ -28,6 +28,7 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
 export const MLIR_PIPELINE = [
   "--milo-verify",
+  "--milo-expand-index",
   "--milo-lower-structured-cf",
   "--convert-milo-to-llvm",
   "--reconcile-unrealized-casts",
@@ -147,6 +148,7 @@ export class MlirPlan {
     const bodies = new Map<string, { header: string; body: string[] }>();
     const decls: { name: string; line: string }[] = [];
     const globals: string[] = [];
+    const metadata: string[] = [];
     for (let i = 0; i < ll.length; i++) {
       const l = ll[i];
       if (l.startsWith("define")) {
@@ -158,6 +160,8 @@ export class MlirPlan {
       } else if (l.startsWith("declare")) {
         const m = DECL_RE.exec(l);
         if (m) decls.push({ name: unquote(m[1]), line: l.replace(/ #\d+$/, "") });
+      } else if (/^!\d+ = /.test(l)) {
+        metadata.push(l);
       } else if (l.startsWith("@")) {
         globals.push(l);
       }
@@ -165,6 +169,10 @@ export class MlirPlan {
 
     const lines = ir.split("\n");
     const known = new Set<string>();
+    // MLIR's metadata ids start at 0, as legacy's do: shift them past the legacy ones.
+    let mdBase = 0;
+    for (const l of lines) { const m = /^!(\d+) = /.exec(l); if (m) mdBase = Math.max(mdBase, Number(m[1]) + 1); }
+    const renumber = (s: string) => s.replace(/!(\d+)\b/g, (_, n: string) => `!${Number(n) + mdBase}`);
     const out: string[] = [];
     let spliced = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -182,9 +190,10 @@ export class MlirPlan {
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
       for (const b of got.body) {
-        // The body is spliced into a module whose attribute groups and metadata it does
-        // not know; neither appears in what the scalar ops lower to, so one is a bug here.
-        if (/ #\d+\b|!\w/.test(b)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
+        // The body is spliced into a module whose attribute groups it does not know, and
+        // whose metadata numbering it shares: TBAA tags are renumbered below, anything
+        // else (attribute groups, !dbg) is not something these ops lower to.
+        if (/ #\d+\b/.test(b) || /!\w/.test(b.replace(/, !tbaa !\d+/g, ""))) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
       }
       let header = l.replace(/ !dbg !\d+/, "");
       this.fns.get(name)!.params.forEach((p, k) => {
@@ -198,7 +207,7 @@ export class MlirPlan {
         return m ? `${m[1]}(${m[2].split(", ").map(p => p.split(" ")[0]).join(", ")})` : h;
       };
       if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
-      out.push(header, ...got.body);
+      out.push(header, ...got.body.map(renumber));
       while (lines[i] !== "}") i++;
       out.push("}");
       spliced++;
@@ -207,6 +216,7 @@ export class MlirPlan {
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
     // A global MLIR only declares (the recorder's counters) is the legacy module's own.
+    out.push(...metadata.map(renumber));
     const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
     const firstDefine = out.findIndex(l => l.startsWith("define"));
     out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");

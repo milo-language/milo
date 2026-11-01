@@ -39,6 +39,13 @@ export function mlirType(t: TypeKind): string | null {
   return null;
 }
 
+/** The element type of a Vec of scalars, or null. */
+function vecElem(t: TypeKind): string | null {
+  if (t.tag !== "vec") return null;
+  const e = mlirType(t.element);
+  return e === null || e === PTR ? null : e;
+}
+
 function scalar(t: TypeKind, what: string): string {
   const m = mlirType(t);
   if (m === null) throw new MlirUnsupported(`${what} of type ${t.tag}`);
@@ -70,7 +77,9 @@ function floatLit(v: number, ty: string): string {
 
 interface Val { ref: string; ty: string }
 // A `var` is a slot; so is a by-ref param, whose slot is the caller's (`param` is its index).
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number } | { kind: "opaque"; what: string };
+// A `vec` is a `&Vec<T>` / `&mut Vec<T>` param: the address of the caller's header.
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number }
+  | { kind: "vec"; ref: string; elem: string; param: number } | { kind: "opaque"; what: string };
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -102,6 +111,11 @@ class FnEmitter {
     const params = fn.params.map((p, i) => {
       // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
       // function qualifies only if it never names it (lookup refuses).
+      const elem = vecElem(p.type);
+      if ((p.isRef || p.isRefMut) && elem !== null) {
+        this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem, param: i });
+        return `%p${i}: !milo.vec<${elem}>`;
+      }
       if ((p.isRef || p.isRefMut) && mlirType(p.type) === null) {
         this.bind(p.name, { kind: "opaque", what: p.type.tag });
         return `%p${i}: ${PTR}`;
@@ -187,10 +201,18 @@ class FnEmitter {
         if (s.isInit) throw new MlirUnsupported("init assign");
         if (s.target.kind === "PtrDeref") {
           const ty = scalar(s.target.type, "store through a pointer");
-          const p = this.expr(s.target.operand);
+          // The value first, then the place: legacy genStmt Assign's order.
           const v = this.expr(s.value);
+          const p = this.expr(s.target.operand);
           if (p.ty !== PTR || v.ty !== ty) throw new MlirUnsupported("store through a pointer of another type");
           this.emit(`milo.ptr.store ${v.ref}, ${p.ref} : ${ty}`);
+          return false;
+        }
+        if (s.target.kind === "IndexAccess") {
+          const v = this.expr(s.value);
+          const { vec, elem, index } = this.indexPlace(s.target);
+          if (v.ty !== elem) throw new MlirUnsupported("element store of another type");
+          this.emit(`milo.index.store ${v.ref}, ${vec}[${index}] : ${elem}, !milo.vec<${elem}> ${this.loc(s.target.span)}`);
           return false;
         }
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
@@ -304,6 +326,7 @@ class FnEmitter {
       case "Ident": {
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
+        if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
         return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
       }
       case "BinOp": return this.binop(e);
@@ -318,6 +341,15 @@ class FnEmitter {
         return this.def(`milo.cast ${v.ref} : ${from} to ${to}`, to);
       }
       case "Call": return this.call(e, stmt);
+      case "IndexAccess": {
+        const { vec, elem, index } = this.indexPlace(e);
+        return this.def(`milo.index ${vec}[${index}] : !milo.vec<${elem}> -> ${elem}`, elem, this.loc(e.span));
+      }
+      case "VecLen": {
+        const b = e.object.kind === "Ident" ? this.lookup(e.object.name) : null;
+        if (b?.kind !== "vec") throw new MlirUnsupported("len of a Vec that is not a by-ref param");
+        return this.def(`milo.len ${b.ref} : !milo.vec<${b.elem}>`, "si64");
+      }
       case "PtrDeref": {
         const ty = scalar(e.type, "load through a pointer");
         const p = this.expr(e.operand);
@@ -396,12 +428,30 @@ class FnEmitter {
   }
 
   /**
+   * `v[i]` on a by-ref Vec param: the Vec, its element type and the index as si64. Object
+   * first, then the index, as legacy genVecBoundsCheckedPtr evaluates them; a narrower
+   * index widens by its own signedness (legacy indexToI64), which milo.cast does.
+   */
+  private indexPlace(e: HIRExpr & { kind: "IndexAccess" }): { vec: string; elem: string; index: string } {
+    const b = e.object.kind === "Ident" ? this.lookup(e.object.name) : null;
+    if (b?.kind !== "vec") throw new MlirUnsupported("index into something other than a by-ref Vec param");
+    const i = this.expr(e.index);
+    if (!/^[su]i\d+$/.test(i.ty)) throw new MlirUnsupported("non-int index");
+    const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
+    return { vec: b.ref, elem: b.elem, index };
+  }
+
+  /**
    * The slot a by-ref argument borrows. A `var` or a by-ref param is its own slot; an
    * immutable value lent as `&T` gets a fresh one, as legacy codegen spills it.
    */
   private place(e: HIRExpr, refTy: string): { ref: string; param?: number } {
     if (e.kind !== "Ident") throw new MlirUnsupported(`by-ref arg ${e.kind}`);
     const b = this.lookup(e.name);
+    if (b.kind === "vec") {
+      if (`!milo.vec<${b.elem}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
+      return { ref: b.ref, param: b.param };
+    }
     if (`!milo.ref<${b.kind === "var" ? b.ty : b.v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
     if (b.kind === "var") return { ref: b.ref, param: b.param };
     const ref = this.fresh();
@@ -422,9 +472,10 @@ class FnEmitter {
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
-      const ty = scalar(p.type, byRef ? "by-ref arg" : "call arg");
+      const elem = byRef ? vecElem(p.type) : null;
+      const ty = elem ?? scalar(p.type, byRef ? "by-ref arg" : "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
-      return byRef ? `!milo.ref<${ty}>` : ty;
+      return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
     const ret = callee.retType.tag === "void" ? null : scalar(callee.retType, "call result");
     if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");

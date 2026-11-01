@@ -190,7 +190,7 @@ struct ExpandChecksPass
     if (!module.lookupSymbol(kBoundsFail)) {
       OpBuilder b = OpBuilder::atBlockBegin(module.getBody());
       auto fnTy = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(ctx),
-                                              {i64, i64, i32});
+                                              {i64, i64, LLVM::LLVMPointerType::get(ctx), i32});
       auto fn = LLVM::LLVMFuncOp::create(b, module.getLoc(), kBoundsFail, fnTy);
       // noreturn lets LLVM treat the failure branch as a dead end, so the checked
       // loop still optimizes like the one the old codegen produced.
@@ -200,13 +200,19 @@ struct ExpandChecksPass
     module.walk([&](BoundsCheckOp check) {
       OpBuilder b(check);
       Location loc = check.getLoc();
+      auto pos = loc->findInstanceOf<FileLineColLoc>();
+      if (!pos) {
+        check.emitOpError("can panic, so it needs a file:line:col location");
+        return signalPassFailure();
+      }
       Value oob = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge,
                                         check.getIndex(), check.getLen());
       auto ifOp = scf::IfOp::create(b, loc, TypeRange{}, oob, false);
       b.setInsertionPointToStart(ifOp.thenBlock());
-      Value line = arith::ConstantOp::create(b, loc, check.getLineAttr());
+      Value line = arith::ConstantOp::create(b, loc, b.getI32IntegerAttr(pos.getLine()));
+      Value file = globalString(b, loc, module, pos.getFilename());
       LLVM::CallOp::create(b, loc, TypeRange{}, kBoundsFail,
-                           ValueRange{check.getIndex(), check.getLen(), line});
+                           ValueRange{check.getIndex(), check.getLen(), file, line});
       check.erase();
     });
   }
@@ -266,7 +272,7 @@ struct VecLoadLowering : ConvertOpToLLVMPattern<VecLoadOp> {
   LogicalResult
   matchAndRewrite(VecLoadOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    Type t = op.getType();
+    Type t = getTypeConverter()->convertType(op.getType());
     Value p = elemPtr(rw, op.getLoc(), a.getVec(), a.getIndex(), t);
     auto ld = LLVM::LoadOp::create(rw, op.getLoc(), t, p);
     ld.setTbaaAttr(tbaaTag(rw.getContext(), elemTagName(t)));
@@ -280,7 +286,7 @@ struct VecStoreLowering : ConvertOpToLLVMPattern<VecStoreOp> {
   LogicalResult
   matchAndRewrite(VecStoreOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    Type t = op.getValue().getType();
+    Type t = a.getValue().getType();
     Value p = elemPtr(rw, op.getLoc(), a.getVec(), a.getIndex(), t);
     auto st = LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), p);
     st.setTbaaAttr(tbaaTag(rw.getContext(), elemTagName(t)));

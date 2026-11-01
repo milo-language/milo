@@ -1,0 +1,48 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): `&Vec<T>` and
+// `&mut Vec<T>` params of scalars: v[i], v[i] = x, v.len(), passed on to other fns.
+
+fn sum(v: &Vec<i64>): i64 {
+    var s: i64 = 0
+    for i in 0..v.len() { s += v[i] }
+    return s
+}
+
+fn axpy(a: &mut Vec<f64>, b: &Vec<f64>, k: f64) {
+    for i in 0..a.len() { a[i] = a[i] + k * b[i] }
+}
+
+fn at32(v: &Vec<u8>, i: i32): u8 { return v[i] }
+
+fn bumpAll(v: &mut Vec<i64>) {
+    var i: i64 = 0
+    while i < v.len() {
+        v[i] += i
+        i += 1
+    }
+}
+
+fn total(v: &mut Vec<i64>): i64 {
+    bumpAll(&mut v)
+    return sum(v)
+}
+
+fn anyNeg(v: &Vec<f64>): bool {
+    for i in 0..v.len() {
+        if v[i] < 0.0 { return true }
+    }
+    return false
+}
+
+fn main() {
+    var xs: Vec<i64> = [1, 2, 3, 4]
+    print(sum(xs))
+    print(total(&mut xs))
+    var a: Vec<f64> = [1.0, 2.0, 3.0]
+    let b: Vec<f64> = [0.5, -1.0, 2.0]
+    axpy(&mut a, b, 2.0)
+    print(a[0])
+    print(a[2])
+    print(anyNeg(b))
+    let bytes: Vec<u8> = [7, 8, 9]
+    print(at32(bytes, 2))
+}

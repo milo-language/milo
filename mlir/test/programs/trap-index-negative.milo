@@ -1,0 +1,11 @@
+// Differential panic program (scripts/mlir-same.ts --programs): the trap fires in a
+// helper compiled through MLIR; stderr and exit status must match legacy codegen.
+fn f(v: &mut Vec<u8>, i: i32) {
+    v[i] = 1
+}
+
+fn main() {
+    var v: Vec<u8> = [1, 2, 3]
+    f(&mut v, -1)
+    print(v[0])
+}

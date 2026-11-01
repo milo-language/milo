@@ -1948,10 +1948,10 @@ export class Codegen {
     if (this.lazyGlobals.size > 0) this.closureBodies.push(this.emitLazyGlobals(functions));
     // Generated with the bodies, not after them: it sets the needs* flags its printf and
     // abort declarations hang off.
-    // The overflow routine too: MLIR bodies call it, and their stubs set no flag.
+    // The overflow and bounds routines too: MLIR bodies call them, and stubs set no flag.
     if (this.mlirTake) {
       fnBodies.push(this.mlirPanicFn());
-      this.needsOverflowCheck = this.needsPrintf = this.needsExit = true;
+      this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
 
     // auto-declare C functions needed by built-ins and bounds checks

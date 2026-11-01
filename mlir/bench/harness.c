@@ -23,7 +23,9 @@ static uint64_t digest(const Vec *v) {
 }
 
 // The milo-opt pipeline calls this; the baseline module carries its own.
-void __milo_bounds_fail(int64_t idx, int64_t len, int32_t line) {
+// Same signature as legacy codegen's helper: the file rides along for the message.
+void __milo_bounds_fail(int64_t idx, int64_t len, const char *file, int32_t line) {
+  (void)file;
   int64_t written = 0;
   for (int64_t i = 0; i < g_watch->len; i++)
     if (g_watch->ptr[i] != 1.0) written++;

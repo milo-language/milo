@@ -1,6 +1,8 @@
 // Declarations for the milo dialect, its side-effect resources and its passes.
 #pragma once
 #include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
@@ -26,6 +28,9 @@ struct PanicResource : mlir::SideEffects::Resource::Base<PanicResource> {
 };
 void registerPasses();
 void registerScalarPasses();
+// The address of a private NUL-terminated constant holding `s`, one per distinct text.
+mlir::Value globalString(mlir::OpBuilder &b, mlir::Location loc, mlir::ModuleOp module,
+                         llvm::StringRef s);
 // Lowers the source-level scalar ops (Scalar.cpp) inside convert-milo-to-llvm.
 void populateScalarToLLVMPatterns(mlir::LLVMTypeConverter &tc,
                                   mlir::RewritePatternSet &patterns);

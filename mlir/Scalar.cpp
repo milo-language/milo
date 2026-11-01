@@ -221,8 +221,9 @@ FailureOr<SrcPos> srcPos(Operation *op) {
 }
 
 // The address of a NUL-terminated private constant holding `s`, one global per text.
-Value stringPtr(ConversionPatternRewriter &rw, Location loc, ModuleOp module,
-                StringRef s) {
+} // namespace
+
+Value milo::globalString(OpBuilder &rw, Location loc, ModuleOp module, StringRef s) {
   std::string bytes = (s + Twine('\0')).str();
   std::string name = "milo.mlir.s." + llvm::utohexstr(llvm::xxh3_64bits(bytes));
   auto global = module.lookupSymbol<LLVM::GlobalOp>(name);
@@ -236,6 +237,8 @@ Value stringPtr(ConversionPatternRewriter &rw, Location loc, ModuleOp module,
   }
   return LLVM::AddressOfOp::create(rw, loc, global);
 }
+
+namespace {
 
 // Branches to a fresh block that panics when `failed` holds; continues after it in a
 // new block, where the rewriter is left. The call happens in the failing block only, so
@@ -268,7 +271,7 @@ LogicalResult panicIf(ConversionPatternRewriter &rw, Operation *op, Value bad,
     return failure();
   std::string msg = ("milo: " + what + " at " + pos->at() + tail + "\n").str();
   branchToPanic(rw, loc, bad, [&] {
-    LLVM::CallOp::create(rw, loc, *fn, ValueRange{stringPtr(rw, loc, module, msg)});
+    LLVM::CallOp::create(rw, loc, *fn, ValueRange{globalString(rw, loc, module, msg)});
   });
   return success();
 }
@@ -303,7 +306,7 @@ FailureOr<Value> checkedArith(ConversionPatternRewriter &rw, Operation *op, Type
   if (failed(fn))
     return failure();
   branchToPanic(rw, loc, ov, [&] {
-    Value file = stringPtr(rw, loc, module, pos->file);
+    Value file = globalString(rw, loc, module, pos->file);
     Value line = constInt(rw, loc, rw.getI32Type(), pos->line);
     LLVM::CallOp::create(rw, loc, *fn, ValueRange{file, line});
   });
@@ -711,6 +714,81 @@ struct UnreachableLowering : ConvertOpToLLVMPattern<UnreachableOp> {
   }
 };
 
+// `idx < len` (unsigned, so a negative index fails too), else legacy's out-of-line
+// `__milo_bounds_fail(idx, len, file, line)`: one cold call on the failing edge.
+struct BoundsCheckLowering : ConvertOpToLLVMPattern<BoundsCheckOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(BoundsCheckOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto pos = srcPos(op);
+    if (failed(pos))
+      return failure();
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    auto fn = LLVM::lookupOrCreateFn(rw, module, "__milo_bounds_fail",
+                                     {rw.getI64Type(), rw.getI64Type(), ptrTy, rw.getI32Type()},
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    Value oob = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::uge, a.getIndex(), a.getLen());
+    branchToPanic(rw, loc, oob, [&] {
+      Value file = globalString(rw, loc, module, pos->file);
+      Value line = constInt(rw, loc, rw.getI32Type(), pos->line);
+      LLVM::CallOp::create(rw, loc, *fn, ValueRange{a.getIndex(), a.getLen(), file, line});
+    });
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
+// milo-expand-index: `v[i]`, `v[i] = x` and `v.len()` become the Vec-level ops (vec.len,
+// bounds_check, vec.load/store, on a signless i64) that the hoisting and versioning
+// passes work on. The check takes the access's location, so its panic names `v[i]`.
+struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandIndexPass)
+  StringRef getArgument() const final { return "milo-expand-index"; }
+  StringRef getDescription() const final {
+    return "Lower source-level Vec indexing to len, bounds_check and vec.load/store";
+  }
+  void runOnOperation() override {
+    SmallVector<Operation *> ops;
+    getOperation().walk([&](Operation *op) {
+      if (isa<IndexOp, IndexStoreOp, LenOp>(op))
+        ops.push_back(op);
+    });
+    for (Operation *op : ops) {
+      OpBuilder b(op);
+      Location loc = op->getLoc();
+      Type i64 = b.getI64Type();
+      auto signless = [&](Value v) {
+        return UnrealizedConversionCastOp::create(b, loc, TypeRange{i64}, ValueRange{v}).getResult(0);
+      };
+      auto checked = [&](Value vec, Value index) {
+        Value j = signless(index);
+        Value len = VecLenOp::create(b, loc, i64, vec);
+        BoundsCheckOp::create(b, loc, j, len);
+        return j;
+      };
+      if (auto ix = dyn_cast<IndexOp>(op)) {
+        Value j = checked(ix.getVec(), ix.getIndex());
+        ix.replaceAllUsesWith(VecLoadOp::create(b, loc, ix.getType(), ix.getVec(), j).getResult());
+      } else if (auto st = dyn_cast<IndexStoreOp>(op)) {
+        Value j = checked(st.getVec(), st.getIndex());
+        VecStoreOp::create(b, loc, st.getValue(), st.getVec(), j);
+      } else {
+        auto len = cast<LenOp>(op);
+        Value l = VecLenOp::create(b, loc, i64, len.getVec());
+        Type si64 = len.getType();
+        len.replaceAllUsesWith(
+            UnrealizedConversionCastOp::create(b, loc, TypeRange{si64}, ValueRange{l}).getResult(0));
+      }
+      op->erase();
+    }
+  }
+};
+
 struct CheckUnaliasedLowering : ConvertOpToLLVMPattern<CheckUnaliasedOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -770,10 +848,11 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>>(tc);
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering>(tc);
 }
 
 void milo::registerScalarPasses() {
   PassRegistration<LowerStructuredCFPass>();
   PassRegistration<VerifyPass>();
+  PassRegistration<ExpandIndexPass>();
 }
