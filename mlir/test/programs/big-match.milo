@@ -44,6 +44,20 @@ fn label(g: Got): string {
     return s
 }
 
+// A 128+ byte enum is also a value: built by an enum literal, returned by value (legacy
+// does not sret an enum), and stored into a local's slot.
+fn wrap(n: i64): Got {
+    if n > 3 {
+        return Got.Count(n)
+    }
+    return Got.Miss("m".repeat(n))
+}
+
+fn viaLocal(n: i64): i64 {
+    let g = wrap(n)
+    return countOnly(g)
+}
+
 fn countOnly(g: Got): i64 {
     match g {
         Got.Count(n) => { return n }
@@ -57,5 +71,5 @@ fn main() {
         t = t + score(fetch(i), i) + countOnly(fetch(i))
         print(label(fetch(i)).len())
     }
-    print(t)
+    print(t, " ", viaLocal(2), " ", viaLocal(9))
 }

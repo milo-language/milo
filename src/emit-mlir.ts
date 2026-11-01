@@ -106,8 +106,14 @@ function isBig(cx: MlirEmitCtx, ty: string): boolean {
  */
 function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = placeType(cx, t);
+  if (r !== null && isBig(cx, r) && r.startsWith("!milo.enum<") && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT) return r;
   return r !== null && isBig(cx, r) ? null : r;
 }
+
+// A 128+ byte enum below this is also a value: legacy returns and passes one by value
+// (only structs get sret), so it is an SSA aggregate there too. Larger ones stay places,
+// the size at which SROA's split of a whole-aggregate load starts to cost.
+const BIG_ENUM_VALUE_LIMIT = 512;
 
 /**
  * The dialect's type for what a place of type `t` holds: a scalar, a string, a Vec, a fn
@@ -411,7 +417,13 @@ class FnEmitter {
    */
   private into(e: HIRExpr, dst: string, ty: string): void {
     if (this.isSretCall(e)) { this.call(e, true, dst); return; }
-    if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported("128+ byte value other than a literal or an sret call");
+    if (e.kind !== "StructLit" && valueType(this.cx, e.type) === ty) {
+      // A big enum that is also a value: computed, then stored whole.
+      const v = this.consume(this.expr(e), "value");
+      this.emit(`milo.store ${v.ref}, ${dst} init : !milo.ref<${ty}>`);
+      return;
+    }
+    if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
     const given = new Map<string, Val>();
@@ -904,7 +916,7 @@ class FnEmitter {
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
         if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
-        if (b.kind === "var" && isBig(this.cx, b.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
+        if (b.kind === "var" && isBig(this.cx, b.ty) && valueType(this.cx, e.type) !== b.ty) throw new MlirUnsupported("a 128+ byte aggregate as a value");
         if (!hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };

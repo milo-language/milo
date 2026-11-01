@@ -333,6 +333,11 @@ structs, enums.
   arms bind places and leave the subject to its scope's drop. Program `big-match`;
   planted bug: no `milo.move` (`big-match`: the -O2 build crashed, a double free). Tahoe
   Roads api: 3869 of 5350 (72.3%).
+- *128+ byte enums below 512 bytes are values too* (`BIG_ENUM_VALUE_LIMIT`): legacy
+  returns and passes an enum by value (only structs get sret), so it is an SSA aggregate
+  there as well; larger ones, and every 128+ byte struct, stay places. `into` stores such
+  a value whole into its slot. Program `big-match` (`wrap`, `viaLocal`); planted bug:
+  the value not stored (`big-match` exit 0 -> 1). Tahoe Roads api: 3889 of 5350 (72.7%).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
