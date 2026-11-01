@@ -81,3 +81,17 @@ func.func @digit(%c: ui8) -> si64 {
   }
   milo.return %r : si64
 }
+
+// A place-only enum literal is built where it lives: the tag stored at offset 0, then the
+// payload through its field place.
+// CHECK-LABEL: llvm.func @set_tag
+// CHECK:       %[[T:.*]] = llvm.mlir.constant(2 : i32) : i32
+// CHECK:       llvm.store %[[T]], %arg0 : i32, !llvm.ptr
+// CHECK:       %[[F:.*]] = llvm.getelementptr inbounds %arg0[8] : (!llvm.ptr) -> !llvm.ptr, i8
+// CHECK:       llvm.store %arg1, %[[F]] : f64, !llvm.ptr
+func.func @set_tag(%e: !milo.ref<!milo.enum<"Big", size = 16, align = 8, [0: (), 2: (f64 at 8)]>>, %x: f64) {
+  milo.enum.set_tag %e, 2 : !milo.ref<!milo.enum<"Big", size = 16, align = 8, [0: (), 2: (f64 at 8)]>>
+  %f = milo.enum.field_ref %e[2, 0] : !milo.ref<!milo.enum<"Big", size = 16, align = 8, [0: (), 2: (f64 at 8)]>> -> !milo.ref<f64>
+  milo.store %x, %f init : !milo.ref<f64>
+  milo.return
+}

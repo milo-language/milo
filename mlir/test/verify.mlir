@@ -329,3 +329,11 @@ func.func @fn_cast_signature(%f: !milo.fn<(si64) -> si64>) {
   %o = milo.fn.cast %f : !milo.fn<(si64) -> si64> -> !milo.fn<owning (si32) -> si64>
   milo.return
 }
+
+// -----
+
+func.func @set_tag_variant(%e: !milo.ref<!milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>>) {
+  // expected-error @+1 {{has no variant with tag 3}}
+  milo.enum.set_tag %e, 3 : !milo.ref<!milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>>
+  milo.return
+}

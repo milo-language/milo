@@ -1283,6 +1283,19 @@ struct EnumFieldRefLowering : ConvertOpToLLVMPattern<EnumFieldRefOp> {
 };
 
 // The i32 tag is bytes 0..4 of every tagged enum (EnumLayout).
+// The tag is the i32 in bytes 0..4 (EnumType).
+struct EnumSetTagLowering : ConvertOpToLLVMPattern<EnumSetTagOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnumSetTagOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Value tag = LLVM::ConstantOp::create(rw, op.getLoc(), rw.getI32Type(),
+                                         rw.getI32IntegerAttr(op.getTag()));
+    rw.replaceOpWithNewOp<LLVM::StoreOp>(op, tag, a.getRef());
+    return success();
+  }
+};
+
 struct EnumTagAtLowering : ConvertOpToLLVMPattern<EnumTagAtOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1510,7 +1523,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,
-               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, CopyLowering,
+               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, EnumSetTagLowering, CopyLowering,
                ArrayElemRefLowering, ZeroLowering, StringDataLowering>(tc);
 }
 

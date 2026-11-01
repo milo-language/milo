@@ -586,6 +586,13 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   later field keeps the function legacy. Program `big-owning-fields` (with
   `lib/reqs.milo`). Planted bug: the moved local not emptied after its copy into the field
   (`big-owning-fields` exit 0 -> 1, a double free). Tahoe Roads api: 5139 (96.0%).
+- *Literals of place-only enums* (`Ok(row)` of a Result holding a 128+ byte struct with an
+  array, the derived `fromJson`/`clone` of big rows): built where they live,
+  `milo.enum.set_tag` then each payload field through `milo.enum.field_ref`, a place-only
+  one built in its place; filled owning fields count as pending, as above. Program
+  `big-enum-lits` (with `lib/shapes.milo`), FileCheck in `aggregates.mlir`, a verifier
+  case. Planted bug: every tag written as 0 (`big-enum-lits` stdout). Tahoe Roads api:
+  5154 (96.3%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

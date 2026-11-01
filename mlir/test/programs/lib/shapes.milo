@@ -1,0 +1,24 @@
+// Place-only enums for big-enum-lits.milo, in a module of their own so the functions
+// returning a Grid are sret.
+
+pub struct Grid { cells: [i64; 70], name: string }
+
+pub enum Shape { Dot, Box(Grid, string), Note(string) }
+
+pub fn grid(n: i64, name: string): Grid {
+    var g = Grid { cells: [0; 70], name: name }
+    for i in 0..70 {
+        g.cells[i] = i * n
+    }
+    return g
+}
+
+pub fn pick(k: i64): Shape {
+    if k == 0 {
+        return Shape.Dot
+    }
+    if k == 1 {
+        return Shape.Note("n" + $"{k}")
+    }
+    return Shape.Box(grid(k, "g" + $"{k}"), "box" + $"{k}")
+}

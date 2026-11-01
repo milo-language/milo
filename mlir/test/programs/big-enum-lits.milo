@@ -1,0 +1,28 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: literals of enums that
+// are places only (a payload holding a fixed array, or 512+ bytes), built where they live:
+// the tag, then each payload field, an owning or place-only one built in its place.
+
+from "./lib/shapes" import { Grid, Shape, grid, pick }
+
+fn describe(s: &Shape): string {
+    match s {
+        Shape.Dot => { return "dot" }
+        Shape.Box(g, label) => { return $"{label}:{g.name}:{g.cells[69]}" }
+        Shape.Note(t) => { return "note " + t }
+    }
+}
+
+fn main() {
+    let a = Shape.Box(grid(2, "two"), "lit")
+    print(describe(a))
+    let b = Shape.Note("hello" + "!")
+    print(describe(b))
+    for k in 0..4 {
+        print(describe(pick(k)))
+    }
+    let r: Result<Grid, string> = Result.Ok(grid(3, "three"))
+    match r {
+        Result.Ok(g) => { print(g.name, " ", g.cells[10]) }
+        Result.Err(e) => { print(e) }
+    }
+}

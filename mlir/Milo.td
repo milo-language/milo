@@ -279,6 +279,14 @@ def Milo_EnumTagAtOp : Milo_Op<"enum.tag_at"> {
   let hasVerifier = 1;
 }
 
+// The tag of the enum at `ref` written in place: with the payload stored through
+// enum.field_ref, how a 128+ byte enum literal is built where it lives.
+def Milo_EnumSetTagOp : Milo_Op<"enum.set_tag"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref, I32Attr:$tag);
+  let assemblyFormat = "$ref `,` $tag attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
 // A string literal: the bytes as a private constant, len, cap 0.
 def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
   let arguments = (ins StrAttr:$value);

@@ -559,6 +559,13 @@ LogicalResult EnumFieldRefOp::verify() {
   return success();
 }
 
+LogicalResult EnumSetTagOp::verify() {
+  auto e = dyn_cast<EnumType>(getRef().getType().getPointee());
+  if (!e)
+    return emitOpError("needs the place of an enum");
+  return verifyVariant(*this, e, getTag(), std::nullopt);
+}
+
 LogicalResult EnumTagAtOp::verify() {
   if (!isa<EnumType>(getRef().getType().getPointee()))
     return emitOpError("needs the place of an enum");

@@ -498,6 +498,7 @@ class FnEmitter {
       this.emit(`milo.store ${v.ref}, ${dst} init : !milo.ref<${ty}>`);
       return;
     }
+    if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
     if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
@@ -525,6 +526,31 @@ class FnEmitter {
       const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
       this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
     });
+  }
+
+  /**
+   * A place-only enum literal (`Ok(bigRow)` of a 512+ byte Result) built where it lives:
+   * the tag, then each payload field in order through its place, a place-only one built
+   * in it. A filled owning field is owned by nothing until the enum's place is, so it
+   * counts as pending, as in a struct literal built in place.
+   */
+  private enumInto(e: HIRExpr & { kind: "EnumLit" }, dst: string, ty: string): void {
+    const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
+    if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
+    this.emit(`milo.enum.set_tag ${dst}, ${v.tag} : !milo.ref<${ty}>`);
+    const mark = this.pending;
+    e.args.forEach((a, k) => {
+      const fty = this.place$(v.fields[k], "payload");
+      const r = this.def(`milo.enum.field_ref ${dst}[${v.tag}, ${k}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
+      if (valueType(this.cx, v.fields[k]) === null) this.into(a, r, fty);
+      else {
+        const x = this.consume(this.expr(a), "payload");
+        if (x.ty !== fty) throw new MlirUnsupported("payload of another type");
+        this.emit(`milo.store ${x.ref}, ${r} init : !milo.ref<${fty}>`);
+      }
+      if (hasDrop(fty)) this.pending++;
+    });
+    this.pending = mark;
   }
 
   /**
