@@ -264,7 +264,9 @@ export class MlirPlan {
         prologue.push(p);
       }
       // Return type and param types; param attributes (nonnull, noalias, ...) are legacy's.
+      // MLIR quotes a type name with `$` in it (`%"a$B"`); unquoted it is the same name.
       const sig = (h: string) => {
+        h = h.replace(/%"([-\w$.]+)"/g, "%$1");
         const m = /^define [^@]*?(\S+) @[^(]*\((.*)\)/.exec(h);
         return m ? `${m[1]}(${m[2].split(", ").map(p => p.split(" ")[0]).join(", ")})` : h;
       };
