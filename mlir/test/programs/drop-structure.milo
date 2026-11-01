@@ -1,0 +1,51 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: what owns something
+// is decided from the checker's types, not the dialect text. Inside its own body `Tree`
+// is spelled by name alone, so the text of `[Tree; 2]` there names no string or Vec and
+// read as an array that owns nothing. `W` holds an enum declared after it, which legacy's
+// drop glue never drops (a legacy leak both sides must agree on).
+
+struct Tree { name: string, kids: Vec<[Tree; 2]> }
+
+enum W {
+    Wrap(Option<string>),
+    Empty,
+}
+
+fn nameLen(t: &Tree): i64 {
+    return t.name.len()
+}
+
+fn pass(t: Tree): Tree {
+    let u = t
+    return u
+}
+
+fn leaf(s: string): Tree {
+    return Tree { name: s, kids: Vec.new() }
+}
+
+fn wrap(i: i64): W {
+    return W.Wrap(Some($"a string long enough to live on the heap {i}"))
+}
+
+fn wlen(w: &W): i64 {
+    match w {
+        W.Wrap(o) => { if let Some(s) = o { return s.len() } return 0 }
+        W.Empty => { return -1 }
+    }
+}
+
+fn main() {
+    var t = leaf("ab" + "cd")
+    t.kids.push([leaf("e" + "f"), leaf("g" + "h")])
+    let u = pass(t)
+    print($"{nameLen(u)} {u.kids.len()}\n")
+    var i = 0
+    var n = 0
+    while i < 3 {
+        let w = wrap(i)
+        n = n + wlen(w)
+        i = i + 1
+    }
+    print($"{n} {wlen(W.Empty)}\n")
+}

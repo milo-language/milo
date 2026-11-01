@@ -130,12 +130,90 @@ const placeOnly = new WeakMap<MlirEmitCtx, Set<string>>();
 // the size at which SROA's split of a whole-aggregate load starts to cost.
 const BIG_ENUM_VALUE_LIMIT = 512;
 
+// What a spelled type owns, decided from the checker's type it was spelled from, never
+// from its text: a type met again inside itself is spelled by name alone, which hides
+// its fields. A string instead of an answer is why the type stays legacy.
+interface Owns { drop: boolean; userDrop: boolean }
+const owners = new WeakMap<MlirEmitCtx, Map<string, Owns | string>>();
+
+function recordOwns(cx: MlirEmitCtx, text: string, t: TypeKind): void {
+  let m = owners.get(cx);
+  if (!m) owners.set(cx, m = new Map());
+  const drop = ownsStructurally(cx, t, []);
+  // milo-opt decides what to drop from the dialect type (Milo.cpp needsDrop), the drop
+  // glue it calls is legacy's (needsDropCg): where they differ, one of them is wrong.
+  // Legacy computes droppable enums in one pass, so an enum holding one declared after
+  // it (`enum W { Wrap(Option<string>) }`) is never dropped there: a legacy leak.
+  const o: Owns | string = drop !== cx.needsDropCg(t) ? "a type legacy's drop glue does not drop"
+    : { drop, userDrop: runsUserDropT(cx, t, []) };
+  const had = m.get(text);
+  if (had === undefined) m.set(text, o);
+  else if (typeof had !== "string" && (typeof o === "string" || had.drop !== o.drop || had.userDrop !== o.userDrop))
+    m.set(text, typeof o === "string" ? o : "a type whose dialect spelling two checker types share");
+}
+
+/** Milo.cpp needsDrop, over the checker's type. */
+function ownsStructurally(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
+  switch (t.tag) {
+    case "string": case "vec": case "hashmap": case "heap": return true;
+    case "fn": return t.owning === true;
+    case "struct": case "enum": {
+      if (cx.dropImpls.has(t.name)) return true;
+      // A type holds itself only through a Vec or a Heap, which owns already.
+      if (seen.includes(t.name)) return false;
+      return fieldTypes(cx, t).some(f => ownsStructurally(cx, f, [...seen, t.name]));
+    }
+    default: return false;
+  }
+}
+
+function fieldTypes(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): TypeKind[] {
+  return t.tag === "struct" ? cx.structLayouts.get(t.name)?.fields.map(f => f.typeKind) ?? []
+    : cx.mlirEnumLayout(t.name)?.variants.flatMap(v => v.fields) ?? [];
+}
+
+/** A user's Drop runs somewhere inside a value of `t` when it is dropped. */
+function runsUserDropT(cx: MlirEmitCtx, t: TypeKind, seen: string[]): boolean {
+  switch (t.tag) {
+    case "vec": case "array": return runsUserDropT(cx, t.element, seen);
+    case "heap": return runsUserDropT(cx, t.inner, seen);
+    case "hashmap": return runsUserDropT(cx, t.key, seen) || runsUserDropT(cx, t.value, seen);
+    case "struct": case "enum":
+      if (cx.dropImpls.has(t.name)) return true;
+      if (seen.includes(t.name)) return false;
+      return fieldTypes(cx, t).some(f => runsUserDropT(cx, f, [...seen, t.name]));
+    // The concrete type behind an interface is erased (legacy typeRunsUserDrop).
+    case "interface": return true;
+    // An owning closure's captures are not in its type; capturing one is refused instead.
+    default: return false;
+  }
+}
+
+/**
+ * What a value of dialect type `ty` owns. Every value type the emitter uses comes from
+ * placeType, or is a place (a ref, a Vec header: a borrow) or a consumed Vec's tail.
+ */
+function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
+  const o = owners.get(cx)?.get(ty);
+  if (typeof o === "string") throw new MlirUnsupported(o);
+  if (o) return o;
+  if (ty.startsWith("!milo.ref<") || ty.startsWith("!milo.vec<")) return { drop: false, userDrop: false };
+  if (ty.startsWith("!milo.vectail<")) return { drop: true, userDrop: ownsOf(cx, `!milo.vecval<${ty.slice(14, -1)}>`).userDrop };
+  throw new MlirUnsupported("ownership of a type not spelled from a checker type");
+}
+
 /**
  * The dialect's type for what a place of type `t` holds: a scalar, a string, a Vec, a fn
  * value, or a struct or enum of those, of any size. A big one is read and written field
  * by field through field_ref, as legacy does through its address.
  */
 function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
+  const r = spellPlace(cx, t);
+  if (r !== null) recordOwns(cx, r, t);
+  return r;
+}
+
+function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
   const m = mlirType(t);
   if (t.tag === "string") { cx.hasStringType = true; return STR; }
   if (t.tag === "vec") {
@@ -159,7 +237,9 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
     // A fixed-size array of elements that own nothing: a place only, at any size (a
     // slice, size null, is a Vec header that a slice expression makes: not yet).
     const e = t.size === null ? null : placeType(cx, t.element);
-    if (e === null || hasDrop(e)) return null;
+    // Asked of the checker's element: inside its own body a type is spelled by name
+    // alone, and that text would say an owning element owns nothing.
+    if (e === null || cx.needsDropCg(t.element)) return null;
     const r = `!milo.array<${e}, ${t.size}>`;
     if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
     bigTypes.get(cx)!.add(r);
@@ -299,34 +379,6 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean }
   | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string };
 
-// A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
-// when its text names one (Milo.h needsDrop).
-// A type with its own `impl Drop` is marked after its name (`!milo.struct<"Noisy" drop, ...>`).
-const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes("!milo.map<") || t.includes("!milo.heap<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
-const OWNING_FN = "<owning fn>";
-const USER_DROP = '" drop';
-/** `ty` runs a user's Drop when dropped: when that happens is observable. */
-const runsUserDrop = (ty: string) => withoutFnTypes(ty).includes(USER_DROP);
-
-/**
- * `ty` with every !milo.fn<...> cut out: a fn value's signature owns nothing. An owning
- * one owns its env, which leaves OWNING_FN in its place.
- */
-function withoutFnTypes(ty: string): string {
-  let out = "";
-  for (let i = 0; i < ty.length;) {
-    if (!ty.startsWith("!milo.fn<", i)) { out += ty[i++]; continue; }
-    if (ty.startsWith("!milo.fn<owning ", i)) out += OWNING_FN;
-    let depth = 0;
-    for (; i < ty.length; i++) {
-      if (ty.startsWith("->", i)) { i++; continue; }
-      if (ty[i] === "<") depth++;
-      else if (ty[i] === ">" && --depth === 0) { i++; break; }
-    }
-  }
-  return out;
-}
-
 // What the closure bodies of one top-level function share: their names and texts.
 interface ClosureState { next: number; texts: string[]; names: string[] }
 
@@ -356,6 +408,10 @@ class FnEmitter {
   constructor(private fn: HIRFunction, private cx: MlirEmitCtx, private fns: Map<string, HIRFunction>,
     readonly closures: ClosureState = { next: 0, texts: [], names: [] }) {}
 
+  private hasDrop(ty: string): boolean { return ownsOf(this.cx, ty).drop; }
+  /** `ty` runs a user's Drop when dropped: when that happens is observable. */
+  private runsUserDrop(ty: string): boolean { return ownsOf(this.cx, ty).userDrop; }
+
   /**
    * Closure literal `e` as a function of its own, `name`: the env, then its params. Each
    * capture is bound to its place, read out of the env (milo.env.capture).
@@ -372,7 +428,7 @@ class FnEmitter {
       params.push(`%p${i}: ${ty}`);
       if (ty.startsWith("!milo.vec<")) this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem: ty.slice(10, -1) });
       else if (p.type.tag === "ref") this.bind(p.name, { kind: "var", ref: `%p${i}`, ty: ty.slice(10, -1) });
-      else if (hasDrop(ty)) {
+      else if (this.hasDrop(ty)) {
         // An owned param is the closure's, as a function's is.
         const slot = this.ownedSlot(p.name, ty, p.type);
         this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
@@ -416,7 +472,7 @@ class FnEmitter {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
       }
-      if (isBig(this.cx, ty) && !hasDrop(ty)) {
+      if (isBig(this.cx, ty) && !this.hasDrop(ty)) {
         // A 128+ byte param arrives by value (legacy's ABI) and goes straight to a slot, as
         // legacy spills it; from there it is only a place.
         const slot = this.fresh();
@@ -425,7 +481,7 @@ class FnEmitter {
         this.bind(p.name, { kind: "var", ref: slot, ty });
         return `%p${i}: ${ty}`;
       }
-      if (hasDrop(ty)) {
+      if (this.hasDrop(ty)) {
         // The callee owns a by-value string or Vec: it lives in a slot of the body's scope.
         const slot = this.ownedSlot(p.name, ty, p.type);
         this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
@@ -537,7 +593,7 @@ class FnEmitter {
       this.into(f.value, this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref, pty);
       // An owning one built in place is owned by nothing until the whole struct is: a
       // jump out of a later field would leak it, so it counts as a pending operand.
-      if (hasDrop(pty)) this.pending++;
+      if (this.hasDrop(pty)) this.pending++;
       given.set(f.name, { ref: "", ty: pty });
     }
     this.pending = mark;
@@ -572,7 +628,7 @@ class FnEmitter {
         if (x.ty !== fty) throw new MlirUnsupported("payload of another type");
         this.emit(`milo.store ${x.ref}, ${r} init : !milo.ref<${fty}>`);
       }
-      if (hasDrop(fty)) this.pending++;
+      if (this.hasDrop(fty)) this.pending++;
     });
     this.pending = mark;
   }
@@ -645,11 +701,11 @@ class FnEmitter {
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
       const b = e.kind === "Ident" ? this.lookup(e.name) : null;
       if (b && b.kind !== "var") return null;
-      if (b && hasDrop(ty)) {
+      if (b && this.hasDrop(ty)) {
         if (b.ty !== ty || !b.owned || !e.isMove) throw new MlirUnsupported("128+ byte copy that is not a move of a local");
         return { ref: b.ref, refTy: `!milo.ref<${ty}>`, done: () => { this.def(`milo.move ${b.ref} : !milo.ref<${ty}>`, ty); } };
       }
-      if (!b && hasDrop(ty)) {
+      if (!b && this.hasDrop(ty)) {
         // Moved out of a local's field: zeroed behind the copy, as moveField does.
         if (e.kind !== "FieldAccess" || !e.isMove || !this.fieldOfOwnedLocal(e)) throw new MlirUnsupported("move out of a field");
         const p = this.fieldPlace(e)!;
@@ -669,7 +725,7 @@ class FnEmitter {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
       // A Vec element: legacy deep-copies an owning one, which no place copy is.
-      if (hasDrop(ty)) throw new MlirUnsupported("deep copy of a 128+ byte element");
+      if (this.hasDrop(ty)) throw new MlirUnsupported("deep copy of a 128+ byte element");
       const er = this.elemRef(e);
       return er && er.ty === ty ? { ref: er.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
@@ -685,17 +741,17 @@ class FnEmitter {
     if (e.kind === "Ident") {
       const b = this.lookup(e.name);
       if (b.kind !== "var" || b.ty !== ty) throw new MlirUnsupported("128+ byte argument");
-      if (hasDrop(ty) && !(b.owned && e.isMove)) throw new MlirUnsupported("128+ byte argument that is not a move");
+      if (this.hasDrop(ty) && !(b.owned && e.isMove)) throw new MlirUnsupported("128+ byte argument that is not a move");
       slot = { ref: b.ref, owned: !!b.owned };
     } else slot = this.bigSlot("arg", e, true);
-    const op = hasDrop(ty) ? "milo.move" : "milo.load";
-    return { ...this.def(`${op} ${slot.ref} : !milo.ref<${ty}>`, ty), own: hasDrop(ty) ? "owned" : undefined };
+    const op = this.hasDrop(ty) ? "milo.move" : "milo.load";
+    return { ...this.def(`${op} ${slot.ref} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
   /** A slot of this block holding `e` (128+ bytes), filled in place; owned when it has drop glue. */
   private bigSlot(name: string, e: HIRExpr, temp = false): { ref: string; ty: string; owned: boolean } {
     const ty = this.place$(e.type, "value");
-    const owned = hasDrop(ty);
+    const owned = this.hasDrop(ty);
     let ref: string;
     if (owned) ref = temp ? this.tempSlot(name, ty, e.type) : this.ownedSlot(name, ty, e.type);
     else {
@@ -801,7 +857,7 @@ class FnEmitter {
   private closeScope(start: number, jumped: boolean, v: Val | null): Val | null {
     const owned = this.owned.pop()!;
     if (owned.length === 0) return v;
-    if (v && hasDrop(v.ty) && v.own === "view") throw new MlirUnsupported("a borrowed value leaving its scope");
+    if (v && this.hasDrop(v.ty) && v.own === "view") throw new MlirUnsupported("a borrowed value leaving its scope");
     // A region's entry block label stays the region's.
     if (/^\s*\^bb0\(/.test(this.body[start] ?? "")) start++;
     const inner = this.body.splice(start);
@@ -833,7 +889,7 @@ class FnEmitter {
    * legacy runs it after the call or at the end of the statement: those stay legacy.
    */
   private tempSlot(name: string, ty: string, t: TypeKind, arg = false): string {
-    if (runsUserDrop(ty) && !arg) throw new MlirUnsupported("temporary with a user Drop");
+    if (this.runsUserDrop(ty) && !arg) throw new MlirUnsupported("temporary with a user Drop");
     return this.ownedSlot(name, ty, t);
   }
 
@@ -872,7 +928,7 @@ class FnEmitter {
   // keeps the function legacy.
   private pending = 0;
   private pend(v: Val): Val {
-    if (hasDrop(v.ty) && v.own === "owned") this.pending++;
+    if (this.hasDrop(v.ty) && v.own === "owned") this.pending++;
     return v;
   }
   private noPending(): void {
@@ -881,7 +937,7 @@ class FnEmitter {
 
   /** `v` where it is consumed (stored, passed or returned by value): it must own itself. */
   private consume(v: Val, what: string): Val {
-    if (hasDrop(v.ty) && v.own === "view") throw new MlirUnsupported(`${what} copies a borrowed value`);
+    if (this.hasDrop(v.ty) && v.own === "view") throw new MlirUnsupported(`${what} copies a borrowed value`);
     return v;
   }
 
@@ -890,7 +946,7 @@ class FnEmitter {
    * innermost block, which drops it when the block ends, and is read in place from there.
    */
   private borrow(v: Val, t: TypeKind): Val {
-    if (!hasDrop(v.ty) || v.own !== "owned") return v;
+    if (!this.hasDrop(v.ty) || v.own !== "owned") return v;
     if (this.bitCopies.has(v.ref)) return { ...v, own: "view" };
     const slot = this.tempSlot("tmp", v.ty, t);
     this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
@@ -935,7 +991,7 @@ class FnEmitter {
         // The value's temporaries die at the end of the statement; the binding's slot is the block's.
         const v = this.scoped(() => this.consume(this.expr(s.value), "let"));
         if (v.ty !== ty) throw new MlirUnsupported("let of a different type");
-        if (hasDrop(ty)) {
+        if (this.hasDrop(ty)) {
           const slot = this.ownedSlot(s.name, ty, s.type);
           this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${ty}>`);
           this.bind(s.name, { kind: "var", ref: slot, ty, owned: true });
@@ -982,9 +1038,9 @@ class FnEmitter {
             if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
             // Legacy never drops what `*h = v` overwrites (its Assign drops only through an
             // Ident, a field or an element): dropping it here would change the leak count.
-            if (s.target.kind === "HeapDeref" && hasDrop(p.ty)) throw new MlirUnsupported("store over an owning boxed value");
+            if (s.target.kind === "HeapDeref" && this.hasDrop(p.ty)) throw new MlirUnsupported("store over an owning boxed value");
             // milo-scope-drops drops the old value before the store: its glue must exist.
-            if (hasDrop(p.ty)) this.dropGlue(p.ty, s.target.type);
+            if (this.hasDrop(p.ty)) this.dropGlue(p.ty, s.target.type);
             this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
             return false;
           }
@@ -992,7 +1048,7 @@ class FnEmitter {
           if (er) {
             // milo-scope-drops drops the old element before the store, as legacy does.
             if (v.ty !== er.ty) throw new MlirUnsupported("element store of another type");
-            if (hasDrop(er.ty)) this.dropGlue(er.ty, s.target.type);
+            if (this.hasDrop(er.ty)) this.dropGlue(er.ty, s.target.type);
             this.emit(`milo.store ${v.ref}, ${er.ref} : !milo.ref<${er.ty}>`);
             return false;
           }
@@ -1007,7 +1063,7 @@ class FnEmitter {
         // The old value's drop is milo-scope-drops' business: it goes before the store.
         const v = this.consume(this.expr(s.value), "assignment");
         if (v.ty !== b.ty) throw new MlirUnsupported("assign of a different type");
-        if (hasDrop(b.ty) && !s.isInit) this.dropGlue(b.ty, s.target.type);
+        if (this.hasDrop(b.ty) && !s.isInit) this.dropGlue(b.ty, s.target.type);
         this.emit(`milo.store ${v.ref}, ${b.ref}${s.isInit ? " init" : ""} : !milo.ref<${b.ty}>`);
         return false;
       }
@@ -1036,7 +1092,7 @@ class FnEmitter {
           return true;
         }
         const v = this.expr(s.expr, true);
-        if (v.ty && runsUserDrop(v.ty) && v.own === "owned") {
+        if (v.ty && this.runsUserDrop(v.ty) && v.own === "owned") {
           // A result nobody takes runs its user Drop at the end of the statement, as
           // legacy drops it: a slot of a block of its own, closed right here.
           this.owned.push([]);
@@ -1129,7 +1185,7 @@ class FnEmitter {
           } else {
             const ep = this.def(`milo.ptr.elem ${data}[${i}] : ${elem}`, PTR).ref;
             const x = this.def(`milo.ptr.load ${ep} : ${elem}`, elem);
-            this.bind(s.varName2 ?? s.varName, { kind: "ssa", v: { ...x, own: hasDrop(elem) ? "view" : undefined } });
+            this.bind(s.varName2 ?? s.varName, { kind: "ssa", v: { ...x, own: this.hasDrop(elem) ? "view" : undefined } });
           }
           if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: i, ty: "si64" } });
           return this.stmts(s.body);
@@ -1232,7 +1288,7 @@ class FnEmitter {
       const name = s.varName2 ?? s.varName;
       if (byPlace) {
         const from = this.def(`milo.vectail.take_place ${slot}[${i}] : !milo.ref<${tailTy}> -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`).ref;
-        const own = hasDrop(elem);
+        const own = this.hasDrop(elem);
         let to: string;
         if (own) to = this.ownedSlot(name, elem, elemKind);
         else {
@@ -1246,7 +1302,7 @@ class FnEmitter {
         return this.stmts(s.body);
       }
       const x = this.def(`milo.vectail.take ${slot}[${i}] : !milo.ref<${tailTy}> -> ${elem}`, elem);
-      if (hasDrop(elem)) {
+      if (this.hasDrop(elem)) {
         const own = this.ownedSlot(name, elem, elemKind);
         this.emit(`milo.store ${x.ref}, ${own} : !milo.ref<${elem}>`);
         this.bind(name, { kind: "var", ref: own, ty: elem, owned: true });
@@ -1324,7 +1380,7 @@ class FnEmitter {
         if (b.kind === "ssa") return b.v;
         if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
         if (b.kind === "var" && isBig(this.cx, b.ty) && valueType(this.cx, e.type) !== b.ty) throw new MlirUnsupported("a 128+ byte aggregate as a value");
-        if (!hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
+        if (!this.hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };
         if (!b.owned) throw new MlirUnsupported("move out of a borrow");
@@ -1363,7 +1419,7 @@ class FnEmitter {
         const er = this.elemRef(e);
         if (er) {
           if (placeOnly.get(this.cx)?.has(er.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
-          if (!hasDrop(er.ty)) return this.def(`milo.load ${er.ref} : !milo.ref<${er.ty}>`, er.ty);
+          if (!this.hasDrop(er.ty)) return this.def(`milo.load ${er.ref} : !milo.ref<${er.ty}>`, er.ty);
           // Legacy clones an owning element (emitDeepCloneFromPtr): `v[i]` is always an
           // independent value, and the Vec keeps its own.
           return this.copyOut(e, er.ref, er.ty, true);
@@ -1496,7 +1552,7 @@ class FnEmitter {
         // result's now), then `v` stored over it with nothing dropped.
         const ty = this.value(e.type, "replaced value");
         const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
-        const old = { ...this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty), own: hasDrop(ty) ? "owned" as const : undefined };
+        const old = { ...this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" as const : undefined };
         // Until the store, the old value has two owners on paper: no jump may come between.
         const mark = this.pending;
         this.pend(old);
@@ -1519,7 +1575,7 @@ class FnEmitter {
         const ty = this.value(e.type, "boxed value");
         const hty = `!milo.heap<${ty}>`;
         const payload = (h: string) => this.def(`milo.load ${this.def(`milo.heap.place ${h} : ${hty} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref} : !milo.ref<${ty}>`, ty);
-        if (temp || (e.isMove && hasDrop(ty))) {
+        if (temp || (e.isMove && this.hasDrop(ty))) {
           // As legacy genHeapMoveOut: the payload out, the box freed with nothing dropped,
           // and a box held by a place left empty (an owned local's slot emptied, a field
           // set to null), so no drop of it ever runs on the leftover.
@@ -1541,12 +1597,12 @@ class FnEmitter {
           const v = payload(h);
           this.emit(`milo.heap.free ${h} : ${hty}`);
           after();
-          return { ...v, own: hasDrop(ty) ? "owned" : undefined };
+          return { ...v, own: this.hasDrop(ty) ? "owned" : undefined };
         }
         // A read leaves the box its payload: a bit copy that owns nothing.
         const p = this.heapPlace(e);
         const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
-        if (!hasDrop(p.ty)) return v;
+        if (!this.hasDrop(p.ty)) return v;
         if (e.isMove) throw new MlirUnsupported("move out of a box");
         this.bitCopies.add(v.ref);
         return { ...v, own: "view" };
@@ -1566,8 +1622,8 @@ class FnEmitter {
         if (pp) return this.ptrRead(pp);
         // A field of a place is read in place, as legacy genFieldPtr does; of a value, out
         // of the value.
-        if (e.isMove && hasDrop(this.value(e.type, "field"))) return this.moveField(e);
-        const own = hasDrop(this.value(e.type, "field")) ? "view" as const : undefined;
+        if (e.isMove && this.hasDrop(this.value(e.type, "field"))) return this.moveField(e);
+        const own = this.hasDrop(this.value(e.type, "field")) ? "view" as const : undefined;
         const p = this.fieldPlace(e);
         if (p) return { ...this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own };
         const { index, ty } = this.field(e);
@@ -1589,7 +1645,7 @@ class FnEmitter {
         this.pending = mark;
         if (args.some((a, k) => a.ty !== fields[k])) throw new MlirUnsupported("payload of another type");
         const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
-        return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
+        return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "IsCheck": {
         const v = this.expr(e.operand);
@@ -1607,7 +1663,7 @@ class FnEmitter {
         this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
         this.region("} else {", () => this.tail(e.elseBody, ty));
         this.emit("}");
-        return { ref, ty, own: hasDrop(ty) ? "owned" : undefined };
+        return { ref, ty, own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "Closure": return this.closure(e);
       case "ClosureCall": return this.closureCall(e, stmt);
@@ -1625,7 +1681,7 @@ class FnEmitter {
         const ty = this.value(e.type, "unwrapped payload");
         if (v.ty !== this.value(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
         const r = this.intrinsic(`unwrap`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }], ([x]) => ({ ...e, operand: { ...x, isMove: true } as HIRExpr }), ty);
-        return { ...r, own: hasDrop(ty) ? "owned" : undefined };
+        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "OptionOp": {
         // isSome/isNone (isOk/isErr): a test of the tag, Some and Ok being tag 0; unwrapOr
@@ -1656,7 +1712,7 @@ class FnEmitter {
       case "Zeroed": {
         const ty = this.value(e.zeroType, "zeroed value");
         if (ty.startsWith("!milo.fn<")) throw new MlirUnsupported("zeroed fn value");
-        return { ...this.def(`milo.zero : ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
+        return { ...this.def(`milo.zero : ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
       // std's panics with a message: legacy's text and abort in a helper per site.
       case "StrPanic": {
@@ -1699,7 +1755,7 @@ class FnEmitter {
           body: [{ kind: "Return", retType: e.type, value: { kind: "ArrayLit", type: e.type,
             elements: e.elements.map((_, k) => ({ kind: "Ident" as const, name: `e${k}`, type: et, isMove: true })) } }],
         }));
-        if (hasDrop(ety)) this.dropGlue(ty, e.type);
+        if (this.hasDrop(ety)) this.dropGlue(ty, e.type);
         return { ...this.callHelper(name, args, ty), own: "owned" };
       }
       default:
@@ -1723,7 +1779,7 @@ class FnEmitter {
       const b = this.lookup(c.name);
       if (b.kind === "vec") return { name: c.name, place: `!milo.vec<${b.elem}>`, ref: b.ref, b };
       if (b.kind === "var") return { name: c.name, place: `!milo.ref<${b.ty}>`, ref: b.ref, b };
-      if (hasDrop(b.v.ty)) throw new MlirUnsupported("capture of an owned value");
+      if (this.hasDrop(b.v.ty)) throw new MlirUnsupported("capture of an owned value");
       const ref = this.fresh();
       this.vars.push(`  ${ref} = milo.var ${quote(c.name)} : !milo.ref<${b.v.ty}>`);
       this.emit(`milo.store ${b.v.ref}, ${ref} : !milo.ref<${b.v.ty}>`);
@@ -1749,7 +1805,7 @@ class FnEmitter {
     if (vm && slot) src = this.def(`milo.vec.place ${src} : !milo.ref<${ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref;
     const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
       ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
-    return { ...r, own: hasDrop(ty) ? "owned" : undefined };
+    return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
   /**
@@ -1796,12 +1852,12 @@ class FnEmitter {
       if (c.type.tag === "ref") throw new MlirUnsupported("move closure capturing a reference");
       const cty = this.value(c.type, "capture");
       // The env's drop runs a captured user Drop: when depends on the closure's timing.
-      if (runsUserDrop(cty)) throw new MlirUnsupported("move closure capturing a user Drop");
+      if (this.runsUserDrop(cty)) throw new MlirUnsupported("move closure capturing a user Drop");
       const b = this.lookup(c.name);
       let v: Val;
       if (b.kind === "ssa") v = this.consume(b.v, "capture");
       else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported("capture binding");
-      else if (!hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
+      else if (!this.hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
       else if (c.share && cty === STR) {
         this.cx.mlirHelper("milo.share.string", () => ({
           params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],
@@ -1860,7 +1916,7 @@ class FnEmitter {
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
     const call = `milo.closure.call ${f.ref}(${args.join(", ")}) : ${f.ty}${args.length ? `, ${ptys.join(", ")}` : ""}${ret ? ` -> ${ret}` : ""}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
-    return { ...this.def(call, ret), own: hasDrop(ret) ? "owned" : undefined };
+    return { ...this.def(call, ret), own: this.hasDrop(ret) ? "owned" : undefined };
   }
 
   /** The index and value type of the struct field `e` reads. */
@@ -1925,7 +1981,7 @@ class FnEmitter {
   /** A read of a place through a pointer: a bit copy that, for a string or a Vec, owns. */
   private ptrRead(p: { ptr: string; ty: string }): Val {
     if (placeOnly.get(this.cx)?.has(p.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
-    const v: Val = { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: hasDrop(p.ty) ? "owned" : undefined };
+    const v: Val = { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: this.hasDrop(p.ty) ? "owned" : undefined };
     if (v.own) this.bitCopies.add(v.ref);
     return v;
   }
@@ -1979,7 +2035,7 @@ class FnEmitter {
     for (const f of e.fields) given.set(f.name, this.pend(this.consume(this.expr(f.value), "field")));
     this.pending = mark;
     // The base gives up its unlisted fields and drops its listed ones: not with owned ones yet.
-    if (e.base && hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
+    if (e.base && this.hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
     const base = e.base ? this.expr(e.base) : null;
     if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
     const ops = layout.fields.map((f, i) => {
@@ -1990,7 +2046,7 @@ class FnEmitter {
       return v;
     });
     const operands = ops.length ? `${ops.map(o => o.ref).join(", ")} : ${ops.map(o => o.ty).join(", ")} ` : "";
-    return { ...this.def(`milo.struct.new ${operands}-> ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
+    return { ...this.def(`milo.struct.new ${operands}-> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
   /**
@@ -2050,7 +2106,7 @@ class FnEmitter {
     // A 128+ byte enum is matched through its place: a switch on the tag read there
     // (milo.enum.tag_at), each binding the payload field's place (milo.enum.field_ref).
     const bigEnum = subjPlaceTy !== null && isBig(this.cx, subjPlaceTy) && subjPlaceTy.startsWith("!milo.enum<");
-    const owning = hasDrop(bigEnum ? subjPlaceTy! : this.value(m.subject.type, "match subject"));
+    const owning = this.hasDrop(bigEnum ? subjPlaceTy! : this.value(m.subject.type, "match subject"));
     // By value, the owned slot the subject lives in: an arm that binds an owning payload
     // field moves the subject out of it (milo.move), so drop elaboration sees it empty on
     // that path and full on the others, as legacy's alive flag does.
@@ -2080,7 +2136,7 @@ class FnEmitter {
       place = this.fieldPlace(m.subject);
       if (place && isBig(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
       if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
-      subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: hasDrop(place.ty) ? "view" : undefined };
+      subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: this.hasDrop(place.ty) ? "view" : undefined };
     } else if (owning && !m.subjectIsRef) {
       const e = m.subject;
       const b = e.kind === "Ident" ? this.lookup(e.name) : null;
@@ -2094,7 +2150,7 @@ class FnEmitter {
         const lay = st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
         const emptied = !!lay && m.arms.every(a => a.pattern.kind === "EnumPattern" && !a.pattern.tests
           && (lay.variants.find(x => x.tag === (a.pattern as { tag: number }).tag)?.fields ?? [null]).every((f, k) =>
-            f !== null && (!hasDrop(this.place$(f, "payload")) || (a.pattern as { bindings: { name: string }[] }).bindings[k]?.name)));
+            f !== null && (!this.hasDrop(this.place$(f, "payload")) || (a.pattern as { bindings: { name: string }[] }).bindings[k]?.name)));
         from = this.tempSlot("subject", v.ty, e.type, emptied);
         this.emit(`milo.store ${v.ref}, ${from} : !milo.ref<${v.ty}>`);
       }
@@ -2140,10 +2196,10 @@ class FnEmitter {
     const head = `${resultTy ? `${ref} = ` : ""}milo.match ${subj.ref} : ${subj.ty}${resultTy ? ` -> ${resultTy}` : ""} [${cases.join(", ")}]${dflt ? " default" : ""} {`;
     let allDone = true;
     arms.forEach(({ arm, args, tag }, i) => {
-      const consumes = from !== null && args.some(a => a.name !== "_" && hasDrop(a.ty));
+      const consumes = from !== null && args.some(a => a.name !== "_" && this.hasDrop(a.ty));
       // Legacy stops dropping the subject once an arm takes a payload, so an owning field
       // the arm leaves unbound would be legacy's leak; not reproduced.
-      if (consumes && args.some(a => a.name === "_" && hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
+      if (consumes && args.some(a => a.name === "_" && this.hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
       const done = this.region(i === 0 ? head : "}, {", () => {
         if (bigEnum && consumes) {
           // The arm takes the payload: its fields are read out of the place, then the
@@ -2160,7 +2216,7 @@ class FnEmitter {
           args.forEach((a, k) => {
             const v = fields[k];
             if (v === null) return;
-            const owns = hasDrop(a.ty);
+            const owns = this.hasDrop(a.ty);
             const slot = owns ? this.ownedSlot(a.name, a.ty, layout!.variants.find(x => x.tag === tag)!.fields[k]) : this.fresh();
             if (!owns) this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             this.emit(`milo.store ${v}, ${slot} : !milo.ref<${a.ty}>`);
@@ -2172,7 +2228,7 @@ class FnEmitter {
             const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
             // Through `&mut`, and for a payload with drop glue, the binding is the payload's
             // place (legacy binds a pointer); a Copy payload under `&` is a copy.
-            if (m.subjectIsMut || hasDrop(a.ty) || isBig(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
+            if (m.subjectIsMut || this.hasDrop(a.ty) || isBig(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
             const slot = this.fresh();
             this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
             const v = this.def(`milo.load ${r} : !milo.ref<${a.ty}>`, a.ty).ref;
@@ -2195,7 +2251,7 @@ class FnEmitter {
             args.forEach((a, k) => {
               if (a.name === "_") return;
               refs[k] = this.def(`milo.enum.payload ${moved}[${tag}, ${k}] : ${subj.ty} -> ${a.ty}`, a.ty).ref;
-              if (!hasDrop(a.ty)) return;
+              if (!this.hasDrop(a.ty)) return;
               // The binding owns the payload now, for the arm's scope.
               const slot = this.ownedSlot(a.name, a.ty, layout!.variants.find(v => v.tag === tag)!.fields[k]);
               this.emit(`milo.store ${refs[k]}, ${slot} : !milo.ref<${a.ty}>`);
@@ -2221,7 +2277,7 @@ class FnEmitter {
     // A match that is not exhaustive by its cases alone still is by the checker, so
     // arms that all jump leave nothing after them.
     if (!resultTy && !armBody && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
-    return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
+    return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && this.hasDrop(resultTy) ? "owned" : undefined } };
   }
 
   /**
@@ -2271,7 +2327,7 @@ class FnEmitter {
     // Legacy never drops the payload of the other variant (an owning Err leaks there);
     // dropping it here would change the live-block count, so such ones stay legacy.
     const others = this.cx.mlirEnumLayout(e.enumName)!.variants.filter(v => v.tag !== 0).flatMap(v => v.fields);
-    if (others.some(f => hasDrop(this.place$(f, "`??` payload")))) throw new MlirUnsupported("`??` over an owning Err");
+    if (others.some(f => this.hasDrop(this.place$(f, "`??` payload")))) throw new MlirUnsupported("`??` over an owning Err");
     const name = `dflt$v${this.n++}`;
     const arms = [
       { pattern: { kind: "EnumPattern" as const, variant: ok.name, tag: 0, bindings: [{ name, type: ok.fields[0] }] },
@@ -2311,7 +2367,7 @@ class FnEmitter {
       const thenDone = this.region(`${resultTy ? `${ref} = ` : ""}milo.if ${c.ref}${resultTy ? ` -> ${resultTy}` : ""} {`, run);
       const elseDone = this.region("} else {", () => arm(i + 1));
       this.emit("}");
-      if (resultTy) return { ref, ty: resultTy, own: hasDrop(resultTy) ? "owned" : undefined };
+      if (resultTy) return { ref, ty: resultTy, own: this.hasDrop(resultTy) ? "owned" : undefined };
       // Filling a place, the caller goes on after the chain: no terminator at its top.
       if (thenDone && elseDone && !(armBody && i === 0)) { this.emit("milo.unreachable"); return true; }
       return false;
@@ -2582,7 +2638,7 @@ class FnEmitter {
         return { ref: this.def(`milo.vec.place ${slot} : !milo.ref<${v.ty}> -> ${refTy}`, refTy).ref };
       }
       if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
-      if (hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
+      if (this.hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary that owns a buffer lends from a slot that drops it.
         const slot = this.tempSlot("arg", v.ty, e.type, arg);
         this.emit(`milo.store ${v.ref}, ${slot} : ${refTy}`);
@@ -2783,7 +2839,7 @@ class FnEmitter {
     }
     if (e.kind !== "FieldAccess" || e.object.type.tag !== "struct") return false;
     const st = this.place$(e.object.type, "struct");
-    return !runsUserDrop(st) && this.fieldOfOwnedLocal(e.object);
+    return !this.runsUserDrop(st) && this.fieldOfOwnedLocal(e.object);
   }
 
   /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */
@@ -2866,7 +2922,7 @@ class FnEmitter {
     if (into !== undefined) args.unshift(into);
     const call = `func.call @${quote(e.func)}(${args.join(", ")}) : ${fnTy}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
-    return { ...this.def(call, ret), own: hasDrop(ret) ? "owned" : undefined };
+    return { ...this.def(call, ret), own: this.hasDrop(ret) ? "owned" : undefined };
   }
 }
 
