@@ -21,3 +21,12 @@ func.func @owner(%s: !milo.string, %x: si64) -> si64 {
   }
   milo.return %r : si64
 }
+
+// milo.fn.cast keeps the pair's bits: a plain fn handed on as owning is the same value.
+// CHECK-LABEL: llvm.func @cast_owning
+// CHECK-NOT:   llvm.insertvalue
+// CHECK:       llvm.return %arg0
+func.func @cast_owning(%f: !milo.fn<(si64) -> si64>) -> !milo.fn<owning (si64) -> si64> {
+  %o = milo.fn.cast %f : !milo.fn<(si64) -> si64> -> !milo.fn<owning (si64) -> si64>
+  milo.return %o : !milo.fn<owning (si64) -> si64>
+}

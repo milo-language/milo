@@ -321,3 +321,11 @@ func.func @vectail_take_type(%i: si64) -> si32 {
   %x = milo.vectail.take %s[%i] : !milo.ref<!milo.vectail<si64>> -> si32
   milo.return %x : si32
 }
+
+// -----
+
+func.func @fn_cast_signature(%f: !milo.fn<(si64) -> si64>) {
+  // expected-error @+1 {{changes the signature}}
+  %o = milo.fn.cast %f : !milo.fn<(si64) -> si64> -> !milo.fn<owning (si32) -> si64>
+  milo.return
+}

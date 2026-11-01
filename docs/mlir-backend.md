@@ -563,6 +563,15 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   Program `recursive-types`, FileCheck `recursive.mlir` (round trip), two verifier cases.
   Planted bug: a bare name inside its own body read as the empty struct (`recursive-types`
   red: the build fails). Tahoe Roads api: 5069 (94.7%).
+- *fn values over 128+ byte structs* (std/http's `(&mut Context) => Response` handlers in
+  `Route`, `Router`): a `&T` param of a fn type is the place of T (placeType), so a
+  place-only T is lent by its address as in any by-ref param. `milo.fn.cast` retypes a fn
+  value between owning and plain (same bits): a named fn or a frame closure given to a
+  `move` param, and a `move` closure stored into a plain fn field, where nobody drops it
+  (legacy leaks its env the same way; the live-block count agrees). Program `fn-fields`
+  (with `lib/ctx.milo`), FileCheck in `owning-fn.mlir`, a verifier case. Planted bug: the
+  cast's lowering nulling the env (`fn-fields` red: the capturing handler crashed). Tahoe
+  Roads api: 5117 (95.6%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

@@ -1,0 +1,11 @@
+// A 128+ byte request context for fn-fields.milo: in a module of its own, so mkCtx is
+// sret (the entry file's functions keep a C-visible by-value result).
+
+pub struct Req { method: string, path: string, query: string, body: string, a: string, b: string }
+
+pub struct Ctx { req: Req, status: i64, notes: Vec<string> }
+
+pub fn mkCtx(path: string): Ctx {
+    let req = Req { method: "GET", path: path, query: "", body: "xyz", a: "", b: "" }
+    return Ctx { req: req, status: 0, notes: Vec.new() }
+}

@@ -1,0 +1,77 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: fn values whose
+// params lend a 128+ byte struct (`(&mut Ctx) => Reply`, the shape of std/http's route
+// handlers), kept in struct fields, in a Vec of such structs and in a router-like struct
+// passed by reference and by value; called through the field and through an element. A
+// `move` closure stored into a plain fn field is leaked, by legacy and here alike.
+
+from "./lib/ctx" import { Req, Ctx, mkCtx }
+
+enum Reply { Text(string), Code(i64) }
+
+struct Route { path: string, handler: (&mut Ctx) => Reply }
+
+struct Router { routes: Vec<Route>, fallback: (&Ctx) => i64 }
+
+fn hello(c: &mut Ctx): Reply {
+    c.status = 200
+    c.notes.push("hello")
+    return Reply.Text("hi " + c.req.path)
+}
+
+fn missing(c: &mut Ctx): Reply {
+    c.status = 404
+    return Reply.Code(404)
+}
+
+fn quiet(c: &Ctx): i64 {
+    return c.status + c.req.body.len()
+}
+
+fn newRouter(): Router {
+    return Router { routes: [], fallback: quiet }
+}
+
+fn add(r: &mut Router, path: string, h: move (&mut Ctx) => Reply) {
+    r.routes.push(Route { path: path, handler: h })
+}
+
+fn dispatch(r: &Router, c: &mut Ctx): string {
+    for rt in r.routes {
+        if rt.path == c.req.path {
+            match rt.handler(&mut c) {
+                Reply.Text(s) => { return s }
+                Reply.Code(n) => { return $"code {n}" }
+            }
+        }
+    }
+    return $"fallback {r.fallback(c)}"
+}
+
+fn count(r: Router): i64 {
+    return r.routes.len()
+}
+
+fn run() {
+    var r = newRouter()
+    add(&mut r, "/", hello)
+    add(&mut r, "/gone", missing)
+    let tag = "cap" + "!"
+    add(&mut r, "/cap", move(c: &mut Ctx): Reply => {
+        c.status = 201
+        return Reply.Text(tag)
+    })
+    var k = mkCtx("/cap")
+    print(dispatch(r, &mut k), " ", k.status)
+    var c = mkCtx("/")
+    print(dispatch(r, &mut c), " ", c.status, " ", c.notes.len())
+    var d = mkCtx("/gone")
+    print(dispatch(r, &mut d), " ", d.status)
+    var e = mkCtx("/other")
+    print(dispatch(r, &mut e))
+    print(count(r))
+}
+
+// A main naming a fn value keeps its legacy body.
+fn main() {
+    run()
+}

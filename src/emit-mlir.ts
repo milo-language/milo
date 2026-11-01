@@ -199,7 +199,8 @@ function closureParamType(cx: MlirEmitCtx, p: TypeKind): string | null {
   if (p.inner.tag === "vec") { const e = vecElem(cx, p.inner); return e && `!milo.vec<${e}>`; }
   // A slice param is the address of a %Vec header that a slice expression makes: not yet.
   if (p.inner.tag === "array") return null;
-  const v = valueType(cx, p.inner);
+  // A place, so a 128+ byte struct is lent like any other (its address).
+  const v = placeType(cx, p.inner);
   return v && `!milo.ref<${v}>`;
 }
 
@@ -514,13 +515,28 @@ class FnEmitter {
     }
     this.pending = mark;
     layout.fields.forEach((f, i) => {
-      const v = given.get(f.name);
-      if (v?.ref === "") return;
+      const g = given.get(f.name);
+      if (g?.ref === "") return;
       const fty = this.value(f.typeKind, "field");
+      const v = g && this.fnAs(g, fty, true);
       if (!v || v.ty !== fty) throw new MlirUnsupported("struct literal field");
       const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
       this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
     });
+  }
+
+  /**
+   * `v` as a fn value of type `ty` when the two differ only in owning (milo.fn.cast): a
+   * plain one may always become owning (its drop frees nothing); an owned one becomes
+   * plain only where `leak` says legacy stores it with nobody to free it (a field).
+   */
+  private fnAs(v: Val, ty: string, leak = false): Val {
+    if (v.ty === ty || !v.ty.startsWith("!milo.fn<") || !ty.startsWith("!milo.fn<")) return v;
+    const plain = (t: string) => t.replace(/^!milo\.fn<owning /, "!milo.fn<");
+    if (plain(v.ty) !== plain(ty)) return v;
+    const toOwning = ty.startsWith("!milo.fn<owning ");
+    if (!toOwning && !(leak && v.own === "owned")) return v;
+    return { ...this.def(`milo.fn.cast ${v.ref} : ${v.ty} -> ${ty}`, ty), own: toOwning ? "owned" : undefined };
   }
 
   /** `[T; N]` where a `*T` is wanted (a cast, a pointer argument): the array's address, as legacy. */
@@ -1758,7 +1774,8 @@ class FnEmitter {
     if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
     const ops = layout.fields.map((f, i) => {
       const fty = this.value(f.typeKind, "field");
-      const v = given.get(f.name) ?? (base ? this.def(`milo.struct.get ${base.ref}[${i}] : ${ty} -> ${fty}`, fty) : null);
+      const g = given.get(f.name);
+      const v = g ? this.fnAs(g, fty, true) : base ? this.def(`milo.struct.get ${base.ref}[${i}] : ${ty} -> ${fty}`, fty) : null;
       if (!v || v.ty !== fty) throw new MlirUnsupported("struct literal field");
       return v;
     });
@@ -2615,7 +2632,7 @@ class FnEmitter {
         return ref.ref;
       }
       if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
-      const v = this.pend(isBig(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.consume(this.expr(a.expr), "argument"));
+      const v = this.pend(isBig(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.fnAs(this.consume(this.expr(a.expr), "argument"), paramTys[i]));
       if (v.ty !== paramTys[i]) throw new MlirUnsupported("call arg type");
       provenance.push(null);
       return v.ref;

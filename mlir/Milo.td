@@ -712,6 +712,18 @@ def Milo_GlobalOp : Milo_Op<"global", [Pure]> {
 // the captures' addresses in order) lends it every capture in place. The checker keeps
 // such a closure from outliving the frame; no captures means a null env. Not Pure: the
 // body may write any capture whenever the value is called.
+// A fn value retyped between owning and plain, with the same signature and bits. Plain to
+// owning: a named fn's trampoline or a frame closure handed to a `move` param; the owning
+// drop glue skips a null env and a null header, so dropping it frees nothing. Owning to
+// plain: a `move` closure stored into a plain fn field, where nobody drops it (legacy
+// leaks its env the same way).
+def Milo_FnCastOp : Milo_Op<"fn.cast", [Pure]> {
+  let arguments = (ins Milo_FnType:$value);
+  let results = (outs Milo_FnType:$result);
+  let assemblyFormat = "$value attr-dict `:` type($value) `->` type($result)";
+  let hasVerifier = 1;
+}
+
 def Milo_ClosureOp : Milo_Op<"closure"> {
   let arguments = (ins FlatSymbolRefAttr:$fn,
                        Variadic<AnyTypeOf<[Milo_RefType, Milo_VecType]>>:$captures);

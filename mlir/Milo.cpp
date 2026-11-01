@@ -322,6 +322,15 @@ LogicalResult ClosureOp::verify() {
   return success();
 }
 
+LogicalResult FnCastOp::verify() {
+  FnType from = getValue().getType(), to = getType();
+  if (from.getSignature() != to.getSignature())
+    return emitOpError("changes the signature: ") << from << " to " << to;
+  if (from.getOwning() == to.getOwning())
+    return emitOpError("changes nothing: ") << from;
+  return success();
+}
+
 LogicalResult EnvCaptureOp::verify() {
   auto fn = (*this)->getParentOfType<func::FuncOp>();
   auto arg = dyn_cast<BlockArgument>(getEnv());

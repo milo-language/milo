@@ -875,6 +875,16 @@ struct EnvCaptureLowering : ConvertOpToLLVMPattern<EnvCaptureOp> {
   }
 };
 
+// Both are { ptr fn, ptr env }: nothing to do.
+struct FnCastLowering : ConvertOpToLLVMPattern<FnCastOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(FnCastOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getValue());
+    return success();
+  }
+};
+
 struct ClosureCallLowering : ConvertOpToLLVMPattern<ClosureCallOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1499,7 +1509,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
-               GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering,
+               GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,
                ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, CopyLowering,
                ArrayElemRefLowering, ZeroLowering, StringDataLowering>(tc);
 }
