@@ -235,6 +235,27 @@ structs, enums.
   blocks); a big by-value argument loaded instead of moved (`sret` double free).
   `MILO_MLIR_ONLY=<regex>` limits MLIR to matching function names, for bisecting.
 
+**Fifth batch (2026-11-01): gate audit and std fixes.**
+
+- *Vec.map to a fixed array.* `vecMapStd` reported a heap-buffer-overflow under ASan in
+  both backends. Not map, not `@inline`: the checker substituted a type argument into a
+  use site with the use site's array flags, so `*T` with T = [i64; 2] became `*i64`, and
+  vecWithCapacity's `_vecGrowBuf(0 as *T, ...)` sized the buffer at 8 bytes a slot
+  (`wrapTypeArg`). The reverse, T = `*[i64; 2]`, spelled the pointee as a struct name.
+  Regression fixtures `vecMapFixedArrayStd` (ASan red without the fix, both backends) and
+  `genericPtrToArrayArg`. The other 42 `vec*Std`, `str*Std` and `hashMap*Std` fixtures
+  ran clean under ASan on both backends.
+- *Live-block counter.* Erasing every drop of a struct of strings left the count equal to
+  legacy's, for two reasons. At -O2 LLVM deletes a malloc whose block is never read, so a
+  string that is built, measured and leaked is never allocated: the count now also runs
+  on `--fast` builds of both sides. And libSystem's own allocations (stdio, locale) varied
+  with the binary's layout, one block apart between legacy and MLIR at -O0 on six
+  programs that allocate nothing different: only calls from the executable's `__TEXT`
+  count now, and a counter that found no executable fails the gate. Planted bug: a no-op
+  struct drop helper (`emitMlirDropFn`) turned the new program `string-fields` red only
+  through the -O0 count ("legacy 0, mlir 15"), and `append`, `owning-aggregates` and
+  `sret` red at -O2 as before.
+
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
 
@@ -311,7 +332,8 @@ canary.
   --owned` before committing, the full corpus with `--owned` in the background. For every
   program MLIR took part of, live heap blocks at exit must equal legacy's
   (`scripts/livecount.c`, a malloc/free counter injected with DYLD_INSERT_LIBRARIES; on
-  Linux LeakSanitizer covers it) and the MLIR binary must run clean under ASan
+  Linux LeakSanitizer covers it), counted at -O2 and again on `--fast` (-O0) builds, and
+  only for calls made from the executable's own code and the MLIR binary must run clean under ASan
   (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs here). The
   output diff cannot gate this: making maybe-init drops unconditional left it green
   while ASan reported a heap-use-after-free (`--owned` red), and erasing every drop

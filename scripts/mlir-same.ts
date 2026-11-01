@@ -10,7 +10,8 @@
 //   bun scripts/mlir-same.ts --programs       # only mlir/test/programs (seconds)
 //   bun scripts/mlir-same.ts --jobs 2
 //   bun scripts/mlir-same.ts --programs --owned   # also: live heap blocks at exit equal
-//                                             # legacy's (scripts/livecount.c), clean ASan
+//                                             # legacy's (scripts/livecount.c; at -O2 and
+//                                             # at -O0), clean ASan
 //
 // It cannot pass vacuously: zero fixtures compared, zero functions through MLIR, or a
 // milo-opt that is not built all fail. A mismatch is rerun once on both sides; a fixture
@@ -139,7 +140,20 @@ async function ownership(name: string, mlirBin: string, legacyBin: string, legac
     const [lm, lh] = [await live(mlirBin), await live(legacyBin)];
     // No count from a program that exits normally means the counter was not loaded.
     if (lh === null && legacyRun.code === 0) return "live blocks: scripts/livecount.c did not load";
+    if (lh !== null && !/^-?\d+$/.test(lh)) return `live blocks: scripts/livecount.c counted nothing (${lh})`;
     if (lm !== lh) return `live blocks at exit: legacy ${lh}, mlir ${lm}`;
+    // Again at -O0 (`--fast`: checks as at -O2). At -O2 LLVM deletes a malloc whose block
+    // is never read, so a heap string that is built, measured and then leaked is never
+    // allocated at all: erasing a struct's drop of its strings left both counts equal.
+    const fast = async (mlir: boolean) => {
+      const bin = `${mlir ? mlirBin : legacyBin}.fast`;
+      const args = ["run", MAIN, "build", `${name}.milo`, "--fast", "-o", bin];
+      if (existsSync(`${name}.c`)) args.push(`${name}.c`);
+      const b = await guarded(`build ${name} (${mlir ? "mlir" : "legacy"}, -O0)`, "bun", args, { env: buildEnv(mlir, {}), timeoutMs: 180_000 });
+      return b.code === 0 ? await live(bin) : `build failed: ${b.stderr.trim().split("\n")[0]}`;
+    };
+    const [fm, fh] = [await fast(true), await fast(false)];
+    if (fm !== fh) return `live blocks at exit at -O0: legacy ${fh}, mlir ${fm}`;
   }
   const asanBin = `${mlirBin}.asan`;
   const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", "-o", asanBin];

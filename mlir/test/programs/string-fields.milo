@@ -1,0 +1,51 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: heap strings in a
+// struct that are built, measured and dropped, never otherwise read. At -O2 LLVM deletes
+// a malloc whose block nobody reads, so with the struct's drop erased these strings are
+// never allocated and the -O2 live count stays equal to legacy's; the -O0 count is what
+// sees the leak.
+
+struct Three {
+    a: string,
+    b: string,
+    c: string,
+}
+
+struct Nine {
+    a: string,
+    b: string,
+    c: string,
+    d: string,
+    e: string,
+    f: string,
+    g: string,
+    h: string,
+    i: string,
+}
+
+fn mk3(n: i64): Three {
+    let s = "x".repeat(n + 1)
+    return Three { a: s + "a", b: s + "b", c: s + "c" }
+}
+
+fn use3(k: i64): i64 {
+    let t = mk3(k)
+    return t.a.len() + t.c.len()
+}
+
+fn mk9(n: i64): Nine {
+    let s = "y".repeat(n + 1)
+    return Nine { a: s + "a", b: s + "b", c: s + "c", d: s + "d", e: s + "e", f: s + "f", g: s + "g", h: s + "h", i: s + "i" }
+}
+
+fn use9(k: i64): i64 {
+    let n = mk9(k)
+    return n.a.len() + n.i.len()
+}
+
+fn main() {
+    var t = 0
+    for k in 0..5 {
+        t = t + use3(k) + use9(k)
+    }
+    print(t)
+}
