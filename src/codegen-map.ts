@@ -584,7 +584,7 @@ function emitHashProbePrologue(
   return { slot, entryPtr };
 }
 
-// One keyed probe, shared by modify and getOrInsertWith: evaluates the receiver and
+// One keyed probe for getOrInsertWith: evaluates the receiver and
 // key, opens the probe, and returns the labels plus what the found block needs (the
 // entry pointer) and what the not-found block needs (the map pointer and the evaluated
 // key). The caller writes both blocks and the join.
@@ -624,37 +624,6 @@ function emitProbeNext(b: Builder, p: { slot: Val; mask: Val; slotAddr: Val; pro
   b.position(p.probeNext);
   probeAdvance(b, p.slot, p.mask, p.slotAddr);
   b.br(p.probeCond);
-}
-
-// `m.modify(k, f)`: on a hit, call f with a pointer to the stored value (a `&mut V`
-// view, so the callback writes the entry in place) and yield true; a miss yields false.
-export function genHashMapModify(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapModify" }, lines: string[]): Gen {
-  const mapType = expr.map.type;
-  if (mapType.tag !== "hashmap") throw new Error("HashMapModify on non-hashmap");
-  const entryTy = Ty.of(ctx.hashMapEntryType(mapType.key, mapType.value));
-  const b = new LlvmTextBuilder(lines, ctx);
-  // The callback first: its environment must exist before the probe branches.
-  const cv = ctx.genVal(expr.callback, lines);
-  const closure = val(cv.ref, Ty.of("{ ptr, ptr }"));
-  const fnPtr = b.extractvalue(closure, 0, Ty.ptr);
-  const envPtr = b.extractvalue(closure, 1, Ty.ptr);
-
-  const p = beginHashMapProbe(ctx, b, lines, expr.map, expr.key, "hmm");
-  const doneLabel = b.newBlock("hmm.done");
-
-  b.position(p.foundLabel);
-  const valPtr = entryField(b, entryTy, p.entryPtr, 2);
-  b.callDiscard(Ty.void, fnPtr.ref, [envPtr, valPtr]);
-  b.br(doneLabel);
-  b.position(p.notFoundLabel);
-  b.br(doneLabel);
-  emitProbeNext(b, p);
-
-  b.position(doneLabel);
-  const result = b.phi(Ty.i1, [[val("true", Ty.i1), p.foundLabel], [val("false", Ty.i1), p.notFoundLabel]]);
-  ctx.dropOwnedTemp(lines, p.key.ref, p.key.ty.ll, expr.key);
-  if (p.mapTempSlot) ctx.emitDropValue(lines, p.mapTempSlot, mapType);
-  return asGen(lines, result);
 }
 
 // `m.getOrInsertWith(k, init)`: a miss calls init() and inserts the result under the

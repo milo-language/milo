@@ -5899,7 +5899,11 @@ export class TypeChecker {
   // than by looking it up: a generic method (`fn map<R>`) and a blanket container impl
   // (`impl Trait for Vec<T>`). The ordinary path is not routed through here because it
   // carries the `json` auto-stringify special case, which neither of these can reach.
-  private dispatchMangledMethod(expr: Extract<Expr, { kind: "MethodCall" }>, mangled: string, sp?: Span): TypeKind {
+  // `borrowsForCallback`: the receiver is frozen while the arguments are checked, and the
+  // call-site exclusivity rule is not applied. That is the builtin callback methods' rule
+  // (borrowDuringCallback): the callback may read the receiver but not insert into or
+  // remove from it, where exclusivity would refuse any capture of it at all.
+  private dispatchMangledMethod(expr: Extract<Expr, { kind: "MethodCall" }>, mangled: string, sp?: Span, borrowsForCallback = false): TypeKind {
     const sig = must(this.functions, mangled, "instantiated method");
     const selfParam = sig.params[0];
     if (selfParam?.type.tag === "ref") {
@@ -5915,13 +5919,15 @@ export class TypeChecker {
       this.error(`'${expr.method}' expects ${sig.params.length - 1} argument(s), got ${expr.args.length}`, sp);
     }
     this.takeExplicitMutArgs(expr.args, expr.method, i => this.sigParamAt(sig.params[i + 1]));
+    const cbBorrow = borrowsForCallback ? this.borrowDuringCallback(expr.object, expr) : null;
     for (let i = 0; i < expr.args.length; i++) {
       const expected = sig.params[i + 1];
       if (!expected) break;
       this.checkMethodArg(expr, i, expected.type, sp);
       if (!this.argIsBorrowed(expr.args[i]!, expected.type)) this.tryMove(expr.args[i]!);
     }
-    this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
+    if (cbBorrow) this.unfreeze(cbBorrow);
+    if (!borrowsForCallback) this.checkCallSiteExclusivity(selfParam ? [expr.object, ...expr.args] : expr.args, sp);
     this.resolvedMethods.set(expr, mangled);
     this.requireUnsafeMethod(mangled, expr.method, sp);
     return this.setType(expr, sig.ret);
@@ -13581,20 +13587,6 @@ export class TypeChecker {
       // `getOrInsertWith` is the "entry or default" half. The receiver is frozen for the
       // callback's duration (borrowDuringCallback), so the callback cannot insert into or
       // remove from the map it is reaching into.
-      if (expr.method === "modify") {
-        if (expr.args.length !== 2) { this.error(`'modify' expects 2 arguments (key, callback), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`modify key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
-        const valRef: TypeKind = { tag: "ref", inner: objType.value, mutable: true };
-        const cbHint: TypeKind = { tag: "fn", params: [valRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[1], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "modify", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "bool" });
-      }
       if (expr.method === "getOrInsertWith") {
         if (expr.args.length !== 2) { this.error(`'getOrInsertWith' expects 2 arguments (key, init), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
         const keyType = this.checkExpr(expr.args[0], objType.key);
@@ -13649,7 +13641,7 @@ export class TypeChecker {
       }
       {
         const blanket = this.instantiateContainerImpl("HashMap", [objType.key, objType.value], expr.method);
-        if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp);
+        if (blanket) return this.dispatchMangledMethod(expr, blanket.mangled, sp, expr.method === "modify");
         if (this.reportWithheldContainerMethod("HashMap", [objType.key, objType.value], objType, expr.method, sp)) return this.setType(expr, { tag: "unknown" });
       }
       this.error(`HashMap has no method '${expr.method}'`, sp, memberHint(expr.method, HASHMAP_MEMBERS));

@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-11-01 (phase 1 in progress: contains, isEmpty, getOrDefault, get, remove moved)
+last-verified: 2026-11-01 (phase 1 in progress: contains, isEmpty, getOrDefault, get, remove, modify moved)
 -->
 
 # Collections in std
@@ -136,3 +136,12 @@ special cases.
   a red fixture; probe step `+ 2` and a missing `_tombs` increment (insert/remove churn
   then hangs) turn `hashMapRemoveStd` red. Bench: i64 churn 0.29s vs 0.29s, string/Vec
   churn 0.11s builtin vs 0.09s std.
+- 2026-11-01: `modify` moved (`f(&mut data[slot].value)`). The builtin's callback borrow
+  stays: `dispatchMangledMethod(..., borrowsForCallback)` freezes the receiver while the
+  callback is checked and skips the call-site exclusivity rule, which would refuse any
+  capture of the map (a callback reading `m.len` was accepted and still is), so
+  `hashMapModifyReentrant` keeps its message. One program class is now rejected: a
+  callback declaring its `&mut V` parameter by value (`(v: i64)`), which the builtin
+  accepted and miscompiled (it printed the slot's address). Planted: tombstone match and
+  probe step `+ 2` turn `hashMapModifyStd` red; dropping the flag turns
+  `hashMapModifyReentrant` red. 0 leaks; 600M lookups 1.27s builtin vs 1.26s std.

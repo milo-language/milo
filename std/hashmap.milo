@@ -80,6 +80,29 @@ impl HashMap<K, V> {
         }
     }
 
+    // Run `f` on the value under `key` in place; false when the key is absent. The
+    // checker borrows the map for the callback, so `f` cannot insert into or remove from it.
+    fn modify(self: &mut Self, key: &K, f: (&mut V) => void): bool {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            var data = raw[0]._data
+            let mask = raw[0]._cap.wrappingSub(1)
+            var slot = _mapHash(key, raw[0]._seed) & mask
+            while true {
+                let state = data[slot].state
+                if state == 0 {
+                    return false
+                }
+                if state == 1 && _mapKeyEq(key, data[slot].key) {
+                    f(&mut data[slot].value)
+                    return true
+                }
+                slot = slot.wrappingAdd(1) & mask
+            }
+            return false
+        }
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0

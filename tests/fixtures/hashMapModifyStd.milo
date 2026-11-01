@@ -1,0 +1,84 @@
+// HashMap.modify, now std/hashmap.milo code: the callback runs on the stored value in
+// place (a `&mut V` into the table) and modify says whether the key was there. Dense
+// tables, tombstones from remove, string and struct keys, Vec/string/struct values
+// grown in place, a callback that reads the map it is modifying, upsert (built on
+// modify), a temporary key and a temporary receiver.
+struct Pt { x: i64, y: i64 }
+
+struct Bag { name: string, xs: Vec<i64> }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    var hits: i64 = 0
+    i = 0
+    while i < 1200 {
+        if m.modify(i, (v: &mut i64): void => { v = v * 10 }) { hits = hits + 1 }
+        i = i + 1
+    }
+    print(hits)
+    var sum: i64 = 0
+    i = 0
+    while i < 1000 { sum = sum + m.getOrDefault(i, 0); i = i + 1 }
+    print(sum)
+
+    var s: HashMap<string, Vec<string>> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), ["a"]); i = i + 1 }
+    i = 0
+    while i < 300 {
+        s.modify("w" + (i % 7).toString(), (v: &mut Vec<string>): void => { v.push("x" + i.toString()) })
+        i = i + 1
+    }
+    print(s.get("w3")!.len)
+    print(s.get("w10")!.len)
+    print(s.modify("nope", (v: &mut Vec<string>): void => { v.clear() }))
+
+    var p: HashMap<Pt, Bag> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, Bag { name: "a", xs: [] })
+    var j: i64 = 0
+    while j < 100 {
+        p.modify(Pt { x: 1, y: 2 }, (b: &mut Bag): void => { b.xs.push(j); b.name = b.name + "." })
+        j = j + 1
+    }
+    let b = p.get(Pt { x: 1, y: 2 })!
+    print(b.xs.len.toString() + " " + b.name.len.toString())
+
+    var r: HashMap<string, i64> = HashMap.new()
+    r.insert("a", 1)
+    r.insert("b", 5)
+    print(r.modify("a", (v: &mut i64): void => { v = v + r.len + r.getOrDefault("b", 0) }))
+    print(r.get("a") ?? 0)
+
+    var counts: HashMap<string, i64> = HashMap.new()
+    for w in ["x", "y", "x", "z", "x"] {
+        counts.upsert(w, 0, (c: &mut i64): void => { c = c + 1 })
+    }
+    print(counts.get("x") ?? 0)
+    print(counts.len)
+
+    print(squares(50).modify(49 * 49, (v: &mut i64): void => { v = 0 }))
+    print(squares(50).modify(50 * 50, (v: &mut i64): void => { v = 0 }))
+}
+// @expect: 666
+// @expect: 3326670
+// @expect: 44
+// @expect: 1
+// @expect: false
+// @expect: 100 101
+// @expect: true
+// @expect: 8
+// @expect: 3
+// @expect: 3
+// @expect: true
+// @expect: false
