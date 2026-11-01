@@ -63,6 +63,8 @@ function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
 }
 
 const I64: TypeKind = { tag: "int", bits: 64, signed: true };
+/** The place type of a `ty`: a Vec's is its header (!milo.vec), anything else's a !milo.ref. */
+const refOf = (ty: string) => { const m = /^!milo\.vecval<(.*)>$/.exec(ty); return m ? `!milo.vec<${m[1]}>` : `!milo.ref<${ty}>`; };
 const isScalarTy = (ty: string) => /^([su]i\d+|i1|f32|f64)$/.test(ty);
 
 /** How the symbol of a legacy helper spells a type: Milo.h typeKey of its dialect type. */
@@ -982,6 +984,15 @@ class FnEmitter {
         return this.intrinsic("unique", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
           ([x]) => ({ kind: "StrUnique", type: e.type, span: e.span, str: x }), null);
       }
+      case "MapCopyOut": {
+        // `_vecCopyOut(place)`: legacy's structural deep copy of what the place holds
+        // (emitDeepCloneFromPtr), an owned value.
+        const ty = this.value(e.type, "copied value");
+        const src = this.place(e.value, refOf(ty), false).ref;
+        const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
+          ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
+        return { ...r, own: hasDrop(ty) ? "owned" : undefined };
+      }
       case "StringCstr": {
         // `s.cstr()`: the place's buffer made unique and NUL-terminated, then its bytes.
         if (scalar(e.type, "cstr") !== PTR) throw new MlirUnsupported("cstr type");
@@ -1127,7 +1138,7 @@ class FnEmitter {
     make: (idents: HIRExpr[]) => HIRExpr, ret: string | null, panics = true): Val {
     const l = panics ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : { line: 0, col: 0, file: "" };
     if (!l) throw new MlirUnsupported("no source file for a panic location");
-    const tys = ops.map(o => { const t = this.value(o.type, "intrinsic operand"); return o.mode === "val" ? t : `!milo.ref<${t}>`; });
+    const tys = ops.map(o => { const t = this.value(o.type, "intrinsic operand"); return o.mode === "val" ? t : refOf(t); });
     const site = panics ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
     const name = `milo.intr.${kind}.${ops.map(o => typeKey(o.type)).join(".")}${site}`;
     const retType = e.type;

@@ -1,0 +1,36 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: std's structural copy
+// (`_vecCopyOut`, `_mapCopyOut`) through Vec.clone, Vec.filter and HashMap.get on owning
+// elements: the copy owns its own buffers, the source keeps its own.
+
+struct Row { name: string, cells: Vec<i64> }
+
+fn rows(): Vec<Row> {
+    var out: Vec<Row> = Vec.new()
+    for i in 0..3 {
+        var cells: Vec<i64> = Vec.new()
+        cells.push(i)
+        cells.push(i * 10)
+        out.push(Row { name: "r".repeat(i + 1), cells: cells })
+    }
+    return out
+}
+
+fn main() {
+    var words: Vec<string> = Vec.new()
+    words.push("alpha")
+    words.push("be")
+    words.push("gamma")
+    let copy = words.clone()
+    words.push("delta")
+    print(copy, " ", words.len())
+    let long = words.filter((w: &string) => w.len() > 2)
+    print(long)
+    let rs = rows()
+    let rs2 = rs.clone()
+    print(rs2.len(), " ", rs2[2].name, " ", rs2[2].cells[1], " ", rs[0].name)
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("k", "v".repeat(3))
+    let got = m.get("k")
+    m.insert("k", "w")
+    print(got, " ", m.get("k"))
+}

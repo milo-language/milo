@@ -321,6 +321,10 @@ structs, enums.
   `for-each`; planted bug: `le` for `lt` in the condition (`for-each` exit 0 -> 1, a read
   past the end). Tahoe Roads api: 3706 of 5350 (69.3%); left: element types without a
   value type (28), strings (18), consumed Vecs (11).
+- *MapCopyOut* (`_vecCopyOut`/`_mapCopyOut`, behind Vec.clone, filter and HashMap.get):
+  the same `intrinsic` call, the place lent (a Vec's as its header, `refOf`), the result
+  owned. Program `copy-out`; planted bug: a shallow copy instead of the deep one
+  (`copy-out` exit 0 -> 1). Tahoe Roads api: 3801 of 5350 (71.0%).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
