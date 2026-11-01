@@ -59,7 +59,6 @@ export type HIRExpr =
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecWithCapacity"; capacity: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilled"; count: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —

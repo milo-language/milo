@@ -498,3 +498,14 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   clang as an i64 compare on an i32 value. Planted no-doubling turns `vecReserveStd` red.
   Output identical (fixture without the i32 line); live heap equal; bench 2M rounds of
   reserve/push 0.07s vs 0.07s.
+- 2026-11-01: `push` moved, `@inline @trackCaller`: load len and cap through VecHead,
+  `if len >= cap` (unsigned) grow through `vecGrowOne` (the builtin's policy: first buffer
+  `max(1, min(8, 64 / size))` elements, then doubling; `_vecGrowBuf`), `data[len] = x`,
+  len + 1. The -O2 IR of a push loop is the builtin's line for line (207 lines of main
+  both, the header in SSA registers, the same grow block; only value names differ). The
+  checker keeps its push rules (deferred element inference, range and interface
+  coercion, "cannot push to immutable Vec") and binds the std body. Planted first
+  capacity 4 turns `vecPushStd` red. Output identical; live heap equal. Bench (cpu,
+  median of 5): 20 Vecs grown to 10M i64 0.12s vs 0.12s; 3M Vecs of 12 0.11s vs 0.11s;
+  20M string + struct pushes 0.27s vs 0.27s; 150M pushes into pre-sized Vecs 0.03s vs
+  0.03s.

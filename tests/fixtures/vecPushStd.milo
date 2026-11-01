@@ -1,0 +1,121 @@
+// Vec.push is std/vec.milo code (@inline: capacity compare, store, length bump; the grow
+// path is the builtin's policy through _vecGrowBuf). Covers the first allocation sized by
+// element (8 i64s, 2 of a 24-byte struct, 1 of a 100-byte one, 8 of a zero-size one),
+// doubling past the 4096-byte realloc threshold, an inferred element type
+// (`var v = Vec.new()`), a ranged element, strings and Drop elements (each dropped once),
+// an interface element (coerced at the push), a pre-sized Vec (no growth), a field
+// receiver, a Vec of Vecs, and a closure that captures the Vec it pushes to.
+// @expect: 1 8
+// @expect: 2
+// @expect: 1 7
+// @expect: 8
+// @expect: 5000 8192 14997 2331
+// @expect: ["x", "yz"]
+// @expect: [9, 0]
+// @expect: pushed 3
+// @expect: 9
+// @expect: ["a", "b"] 4
+// @expect: ["held"]
+// @expect: [[1, 2], [5]]
+// @expect: [4, 5]
+// @expect: drop 0
+// @expect: drop 1
+// @expect: drop 2
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Three {
+    a: i64,
+    b: i64,
+    c: i64,
+}
+
+struct Big {
+    xs: [i64; 12],
+    tail: i32,
+}
+
+struct Empty {}
+
+interface Shape {
+    fn area(self: &Self): i64
+}
+
+struct Sq {
+    s: i64,
+}
+
+impl Sq {
+    fn area(self: &Self): i64 {
+        return self.s * self.s
+    }
+}
+
+struct Holder {
+    items: Vec<string>,
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    print(v.len(), " ", v.capacity())
+    var t: Vec<Three> = Vec.new()
+    t.push(Three { a: 1, b: 2, c: 3 })
+    print(t.capacity())
+    var big: Vec<Big> = Vec.new()
+    big.push(Big { xs: [0; 12], tail: 7 })
+    print(big.capacity(), " ", big[0].tail)
+    var es: Vec<Empty> = Vec.new()
+    es.push(Empty {})
+    print(es.capacity())
+    var many: Vec<i64> = Vec.new()
+    for i in 0..5000 {
+        many.push(i * 3)
+    }
+    print(many.len(), " ", many.capacity(), " ", many[4999], " ", many[777])
+    var inferred = Vec.new()
+    inferred.push("x")
+    inferred.push("y" + "z")
+    print(inferred)
+    var r: Vec<i32(0..9)> = Vec.new()
+    r.push(9)
+    r.push(0)
+    print(r)
+    var ns: Vec<Noisy> = Vec.new()
+    for i in 0..3 {
+        ns.push(Noisy { id: i })
+    }
+    print("pushed ", ns.len())
+    var shapes: Vec<Heap<Shape>> = Vec.new()
+    shapes.push(Heap(Sq { s: 3 }))
+    for sh in shapes {
+        print(sh.area())
+    }
+    var pre: Vec<string> = Vec.withCapacity(4)
+    pre.push("a")
+    pre.push("b")
+    print(pre, " ", pre.capacity())
+    var h = Holder { items: Vec.new() }
+    h.items.push("held")
+    print(h.items)
+    var vv: Vec<Vec<i64>> = Vec.new()
+    vv.push([1, 2])
+    vv.push(Vec.new())
+    vv[1].push(5)
+    print(vv)
+    var cap: Vec<i64> = Vec.new()
+    let f = (x: i64) => {
+        cap.push(x)
+    }
+    f(4)
+    f(5)
+    print(cap)
+}

@@ -66,6 +66,30 @@ fn vecReserveTotal<T>(v: &mut Vec<T>, need: i64) {
     }
 }
 
+// Grows a full Vec (len == cap) for one more element, as push always has: the first
+// buffer is sized near 64 bytes (8 elements of up to 8 bytes, fewer of larger ones, at
+// least one), then the capacity doubles.
+@inline
+@trackCaller
+fn vecGrowOne<T>(v: &mut Vec<T>, len: i64, cap: i64) {
+    unsafe {
+        var raw = (v.addrOf() as *u8) as *VecHead
+        var newCap = cap.wrappingMul(2)
+        if cap == 0 {
+            let size = sizeOf<T>()
+            newCap = 8
+            if size > 8 {
+                newCap = 64 / size
+                if newCap < 1 {
+                    newCap = 1
+                }
+            }
+        }
+        raw[0]._data = _vecGrowBuf(v.ptr(), len, newCap) as *u8
+        raw[0]._cap = newCap
+    }
+}
+
 impl Vec<T> {
     // Whether the Vec has no elements.
     fn isEmpty(self: &Self): bool {
@@ -404,6 +428,24 @@ impl Vec<T> {
                 data[j] = tmp
                 i = i.wrappingAdd(1)
             }
+        }
+    }
+
+    // Appends `x`. The hot path is a capacity compare, one store and the length bump;
+    // @inline so it compiles to that at each call site, as the builtin's inline IR did.
+    @inline
+    @trackCaller
+    fn push(self: &mut Self, x: T) {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecHead
+            let len = raw[0]._len
+            let cap = raw[0]._cap
+            if (len as u64) >= (cap as u64) {
+                vecGrowOne(&mut self, len, cap)
+            }
+            var data = self.ptr()
+            data[len] = x
+            raw[0]._len = len.wrappingAdd(1)
         }
     }
 

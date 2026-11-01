@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, genVecInsert, genVecExtend, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -60,7 +60,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
-  "VecLen", "VecPtr", "VecPush",
+  "VecLen", "VecPtr",
   "VecSlice",
   "WrappingArith", "Zeroed",
 ];
@@ -3388,9 +3388,6 @@ export class Codegen {
       this.walkExpr(e, (x) => {
         if (mutates) return;
         switch (x.kind) {
-          case "VecPush":
-            if (mentionsRoot(x.vec)) mutates = true;
-            break;
           case "Call":
             if (x.args.some(a => mentionsRoot(a.expr))) mutates = true;
             break;
@@ -5654,8 +5651,6 @@ export class Codegen {
         return genVecWithCapacity(this, expr, lines);
       case "VecFilled":
         return genVecFilled(this, expr, lines);
-      case "VecPush":
-        return genVecPush(this, expr, lines);
       case "VecLen": {
         this.hasVecType = true;
         const ov = this.genVal(expr.object, lines);

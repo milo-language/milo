@@ -6024,6 +6024,13 @@ export class TypeChecker {
     return true;
   }
 
+  // push's body is std/vec code; an element type still unknown after an error has no
+  // instance to bind.
+  private bindStdVecPush(expr: ExprOf<"MethodCall">, element: TypeKind): TypeKind {
+    if (element.tag === "unknown") return this.setType(expr, { tag: "void" });
+    return this.bindStdVecMethod(expr, element, "push", { tag: "void" });
+  }
+
   // A Vec method whose call the builtin rules above have already checked (arity, argument
   // types, the mutable receiver, with the builtin wordings tests pin) and whose body is
   // std/vec code: record the instantiated method for lowering, as HashMap insert does.
@@ -13492,7 +13499,7 @@ export class TypeChecker {
           Object.assign(objType.element as object, argType);
           this.tryMove(expr.args[0]);
           this.holdPointerArgsIn(expr.object, expr.args);
-          return this.setType(expr, { tag: "void" });
+          return this.bindStdVecPush(expr, objType.element);
         }
         const argType = this.checkExpr(expr.args[0], objType.element);
         if (objType.element.tag === "int") this.enforceRangeInto(expr.args[0], argType, objType.element, expr.args[0].span);
@@ -13506,7 +13513,7 @@ export class TypeChecker {
         }
         this.tryMove(expr.args[0]);
         this.holdPointerArgsIn(expr.object, expr.args);
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecPush(expr, objType.element);
       }
       if (expr.method === "clear" || expr.method === "truncate") {
         // truncate(n) drops everything at index >= n; clear() is truncate(0).
