@@ -10,7 +10,10 @@
 // Elements move with raw-pointer reads and writes: `*p` is a bitwise move out, `*p = x` a
 // store that drops nothing, so no element is copied or dropped twice. A bounds panic goes
 // through _vecPanic for the builtins' wording, and @trackCaller makes every panic name the
-// caller's line.
+// caller's line. Every method that changes a Vec is @inline: called, it takes the Vec's
+// address, and a header whose address escapes stays in memory, so a loop that pushes and
+// also clears or pops could no longer keep len and cap in registers (a push/clear loop
+// measured 20% slower with clear called).
 
 // Declared here, as std/string does, so the prelude's Vec pulls in no other module.
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
@@ -90,6 +93,41 @@ fn vecGrowOne<T>(v: &mut Vec<T>, len: i64, cap: i64) {
         raw[0]._data = _vecGrowBuf(v.ptr(), len, newCap) as *u8
         raw[0]._cap = newCap
     }
+}
+
+// `Vec.withCapacity(n)`: an empty Vec with room for `n`. The checker infers T from the
+// context and lowers the call here; the caller has already refused a negative `n`, at its
+// own line. The buffer comes from _vecGrowBuf over nothing (a null buffer, no elements
+// kept), so it is the same checked allocation, and zeroed gives len 0.
+@inline
+@trackCaller
+fn vecWithCapacity<T>(n: i64): Vec<T> {
+    unsafe {
+        var v = zeroed<Vec<T>>()
+        var raw = (v.addrOf() as *u8) as *VecHead
+        raw[0]._data = _vecGrowBuf(0 as *T, 0, n) as *u8
+        raw[0]._cap = n
+        return v
+    }
+}
+
+// `Vec.filled(n, x)`: `n` copies of `x`, with exactly `n` slots. The checker allows a Copy
+// element only, so the slots share nothing; it has refused a negative `n` at the caller.
+@inline
+@trackCaller
+fn vecFilled<T>(n: i64, x: T): Vec<T> {
+    var v: Vec<T> = vecWithCapacity(n)
+    unsafe {
+        var data = v.ptr()
+        var i = 0
+        while i < n {
+            data[i] = x
+            i = i.wrappingAdd(1)
+        }
+        var raw = (v.addrOf() as *u8) as *VecHead
+        raw[0]._len = n
+    }
+    return v
 }
 
 impl Vec<T> {
@@ -517,6 +555,7 @@ impl Vec<T> {
     }
 
     // Reverses the order of the elements in place.
+    @inline
     fn reverse(self: &mut Self) {
         unsafe {
             let data = self.ptr()
@@ -533,6 +572,7 @@ impl Vec<T> {
     // Drops every element at index `n` and above, first to last, then shortens the Vec.
     // A negative `n` empties it; an `n` at or past the length changes nothing (it never
     // grows the Vec).
+    @inline
     fn truncate(self: &mut Self, n: i64) {
         unsafe {
             var raw = (self.addrOf() as *u8) as *VecHead
@@ -555,12 +595,14 @@ impl Vec<T> {
     }
 
     // Drops every element, first to last; the capacity is kept.
+    @inline
     fn clear(self: &mut Self) {
         self.truncate(0)
     }
 
     // Takes the last element out, or None when the Vec is empty. The value moves out of
     // its slot; nothing is copied.
+    @inline
     fn pop(self: &mut Self): Option<T> {
         unsafe {
             var raw = (self.addrOf() as *u8) as *VecHead
@@ -577,6 +619,7 @@ impl Vec<T> {
 
     // Takes the element at `i` out and shifts the rest down by one. An index outside
     // 0..len panics with the builtin's "remove index out of bounds".
+    @inline
     @trackCaller
     fn remove(self: &mut Self, i: i64): T {
         unsafe {

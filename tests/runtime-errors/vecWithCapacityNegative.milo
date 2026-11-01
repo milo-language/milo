@@ -1,12 +1,13 @@
-// @runtime-error: negative capacity
+// @runtime-error: negative capacity at tests/runtime-errors/vecWithCapacityNegative.milo:10:23: -2
+// Vec.withCapacity is std/vec's vecWithCapacity; the negative check rides the argument at the
+// call, so the panic names this line, as the builtin's did.
 
-pub fn negCap(): i64 {
-    return -4
+pub fn neg(): i64 {
+    return -2
 }
 
 pub fn main(): i32 {
-    var v: Vec<i32> = Vec.withCapacity(negCap())
-    v.push(1)
-    print(v.len() as i32)
+    let v: Vec<i64> = Vec.withCapacity(neg())
+    print(v.len())
     return 0
 }

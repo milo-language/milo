@@ -1,15 +1,13 @@
-// @runtime-error: negative length
+// @runtime-error: negative length at tests/runtime-errors/vecFilledNegative.milo:10:23: -2
+// Vec.filled is std/vec's vecFilled; the negative-count check rides the argument at the
+// call, so the panic names this line, as the builtin's did.
 
-// Vec.filled with a negative count used to store len = -1; the unsigned index
-// bounds check then let every index through, giving an OOB write/read. It must
-// trap on the negative count instead.
-pub fn negCount(): i64 {
-    return -1
+pub fn neg(): i64 {
+    return -2
 }
 
 pub fn main(): i32 {
-    var v: Vec<i32> = Vec.filled(negCount(), 7)
-    v[0] = 12345
-    print(v[0])
+    let v: Vec<i64> = Vec.filled(neg(), 1)
+    print(v.len())
     return 0
 }

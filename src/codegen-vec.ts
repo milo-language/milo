@@ -7,7 +7,7 @@ import type { HIRExpr } from "./hir";
 import type { OwnLedger, CopyDecl } from "./codegen-own";
 import type { EnumLayout, EnumVariant } from "./codegen";
 import { genStringOrd, type StringCtx } from "./codegen-string";
-import { LlvmTextBuilder, Ty, val, asGen, type Val, type Builder } from "./ir";
+import { LlvmTextBuilder, Ty, val, asGen, type Val } from "./ir";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this — they are not part of its external API.
@@ -51,7 +51,6 @@ interface CodegenCtx extends StringCtx {
 
 const VEC_TY = Ty.of("%Vec");
 const I64_0 = val("0", Ty.i64);
-const I64_1 = val("1", Ty.i64);
 const I32_0 = val("0", Ty.i32);
 
 // Set up an `alloca Option<…>` pre-filled with None; callers branch to a "some"
@@ -265,64 +264,6 @@ function genArraySlice(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecSlice" }, li
 // few hundred bytes) ran 13% slower on realloc than on the copy. At a page and above
 // the remap is what keeps peak RSS at the new size (vec_grow: 132 MB -> 68 MB).
 export const REALLOC_MIN_BYTES = 4096;
-
-
-
-// { ptr, len, cap } as three insertvalues into undef, the %Vec layout.
-function makeVec(b: Builder, data: Val, len: Val, cap: Val): Val {
-  const v0 = b.insertvalue(val("undef", VEC_TY), data, 0);
-  const v1 = b.insertvalue(v0, len, 1);
-  return b.insertvalue(v1, cap, 2);
-}
-
-export function genVecWithCapacity(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecWithCapacity" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  ctx.needsMalloc = true;
-  const elemSize = ctx.typeSizeOf(expr.elementType);
-  const capRef = ctx.genVal(expr.capacity, lines);
-  ctx.emitNonNegativeCheck(lines, capRef.ref, "capacity", expr.span);
-  // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
-  // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
-  // the "buffer or null" invariant push checks (null only when cap==0).
-  const { buf } = ctx.emitAllocBytes(lines, capRef.ref, elemSize, "veccap", expr.span);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const vec = makeVec(b, val(buf, Ty.ptr), I64_0, val(capRef.ref, Ty.i64));
-  return asGen(lines, vec);
-}
-
-export function genVecFilled(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilled" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  ctx.needsMalloc = true;
-  const elemSize = ctx.typeSizeOf(expr.elementType);
-  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const cntRef = ctx.genVal(expr.count, lines);
-  ctx.emitNonNegativeCheck(lines, cntRef.ref, "length", expr.span);
-  const valRef = ctx.genVal(expr.value, lines);
-  const { buf: bufRef } = ctx.emitAllocBytes(lines, cntRef.ref, elemSize, "vecrep", expr.span);
-  const buf = val(bufRef, Ty.ptr);
-  const cnt = val(cntRef.ref, Ty.i64);
-  // fill loop: for i in 0..count { buf[i] = value }
-  const b = new LlvmTextBuilder(lines, ctx);
-  const idxSlot = b.alloca(Ty.i64);
-  b.store(I64_0, idxSlot);
-  const condL = b.newBlock("vecfill.cond");
-  const bodyL = b.newBlock("vecfill.body");
-  const endL = b.newBlock("vecfill.end");
-  b.br(condL);
-  b.position(condL);
-  const iv = b.load(Ty.i64, idxSlot);
-  const more = b.icmp("ult", iv, cnt);
-  b.condBr(more, bodyL, endL);
-  b.position(bodyL);
-  const slot = b.gep(elemTy, buf, [iv]);
-  b.store(val(valRef.ref, elemTy), slot);
-  const inc = b.binop("add", iv, I64_1);
-  b.store(inc, idxSlot);
-  b.br(condL);
-  b.position(endL);
-  return asGen(lines, makeVec(b, buf, cnt, cnt));
-}
-
 
 // Grow a heap buffer to `count * elemSize` bytes, keeping its first `keepBytes`, and
 // return the new pointer (the old one is dead afterwards). A buffer holding at least

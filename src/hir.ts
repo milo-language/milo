@@ -57,8 +57,6 @@ export type HIRExpr =
   | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "MatchExpr"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; subjectIsMut?: boolean; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecWithCapacity"; capacity: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecFilled"; count: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —

@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -5647,10 +5647,6 @@ export class Codegen {
         const s2 = b.insertvalue(s1, val("0", Ty.i64), 2);
         return [lines, s2.ref, "%Vec"];
       }
-      case "VecWithCapacity":
-        return genVecWithCapacity(this, expr, lines);
-      case "VecFilled":
-        return genVecFilled(this, expr, lines);
       case "VecLen": {
         this.hasVecType = true;
         const ov = this.genVal(expr.object, lines);
@@ -9411,8 +9407,6 @@ export class Codegen {
       case "StringSubstr":
       case "StringWithCapacity":
       case "VecNew":
-      case "VecWithCapacity":
-      case "VecFilled":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":
       // get's payload is cloned out of the buffer, so nothing else owns it and

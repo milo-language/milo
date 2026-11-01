@@ -1127,21 +1127,20 @@ class LowerCtx {
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
         }
-        if (expr.enumName === "Vec" && expr.variant === "withCapacity" && type.tag === "vec") {
-          return { kind: "VecWithCapacity", capacity: this.lowerExpr(expr.args[0]), elementType: type.element, type, span: expr.span };
-        }
-        if (expr.enumName === "Vec" && expr.variant === "filled" && type.tag === "vec") {
-          return { kind: "VecFilled", count: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: type.element, type, span: expr.span };
-        }
         // A negative capacity panics at the caller's line, as the builtin did, so the check
-        // rides the argument here rather than living in std's mapWithCapacity.
-        const mapCtor = this.c.staticCalls.get(expr);
-        if (expr.enumName === "HashMap" && expr.variant === "withCapacity" && type.tag === "hashmap" && mapCtor) {
+        // rides the argument here rather than living in std's mapWithCapacity (and std/vec's
+        // vecWithCapacity / vecFilled, which say "length" for filled's count).
+        const ctor = this.c.staticCalls.get(expr);
+        const vecCtor = expr.enumName === "Vec" && (expr.variant === "withCapacity" || expr.variant === "filled") && type.tag === "vec";
+        if (ctor && (vecCtor || (expr.enumName === "HashMap" && expr.variant === "withCapacity" && type.tag === "hashmap"))) {
           const i64: TypeKind = { tag: "int", bits: 64, signed: true };
           let n = this.lowerExpr(expr.args[0]);
           if (n.type.tag === "int" && (n.type.bits !== 64 || !n.type.signed)) n = { kind: "Cast", operand: n, targetType: i64, type: i64, span: n.span };
-          const capacity: HIRExpr = { kind: "NonNegative", value: n, what: "capacity", type: i64, span: expr.span };
-          return { kind: "Call", func: mapCtor, args: [{ expr: capacity, passByRef: false, refMut: false }], type, variadic: false, span: expr.span };
+          const what = expr.variant === "filled" ? "length" : "capacity";
+          const count: HIRExpr = { kind: "NonNegative", value: n, what, type: i64, span: expr.span };
+          const args: HIRArg[] = [{ expr: count, passByRef: false, refMut: false }];
+          if (expr.variant === "filled") args.push({ expr: this.lowerExpr(expr.args[1]), passByRef: false, refMut: false });
+          return { kind: "Call", func: ctor, args, type, variadic: false, span: expr.span };
         }
         // `Kind.tryFrom(n)` → Option<Kind>. `type` is the Option enum the checker inferred.
         const reprInfo = this.c.enums.get(expr.enumName);

@@ -534,3 +534,20 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   `hashMapWithCapacityHuge` and `hashMapWithCapacityNegative` unchanged. Bench 3M new +
   1M withCapacity(20) maps 3.93s before vs 3.95s after (this host is loaded; the earlier
   2.12s was measured idle).
+- 2026-11-01: `Vec.withCapacity` and `Vec.filled` are calls of std's `vecWithCapacity` /
+  `vecFilled` (`bindVecConstructor`, as HashMap.new's bindMapConstructor): `zeroed<Vec<T>>()`
+  with a buffer from `_vecGrowBuf` over nothing (the same checked malloc), and filled's
+  store loop. The checker keeps its inference and refusals (filled's Copy rule); the
+  deferred `var v = Vec.withCapacity(n)` binds its constructor when the first push
+  resolves the element (`inferVecCtors`). The negative check rides the argument as a
+  `NonNegative` node, "capacity" or "length" (`runtime-errors/vecWithCapacityNegative`,
+  `vecFilledNegative`: same text and line:col as the old compiler). Old bug gone: an i32
+  count reached clang as an i64 compare on an i32 value. `Vec.new` stays builtin: it is
+  the constant `{null, 0, 0}`; a call would make a global initializer lazy for nothing.
+  In the same commit every std method that changes a Vec became `@inline` (reverse,
+  truncate, clear, pop, remove; the rest already were): a called `clear` took the Vec's
+  address, so a loop that pushes and clears kept the header in memory (0.14s builtin vs
+  0.17s std); inlined 0.44s vs 0.44s on a 10M-round run. Planted cap 1 in
+  vecWithCapacity turns `vecWithCapacityFilledStd` red. Output identical (fixture without
+  the i32 line); live heap equal; 17 corpus files pass. makeVec, genVecWithCapacity and
+  genVecFilled went. Step 5 done: `codegen-vec.ts` is 1326 -> 351 lines.

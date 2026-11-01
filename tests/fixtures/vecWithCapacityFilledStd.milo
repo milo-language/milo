@@ -1,0 +1,60 @@
+// Vec.withCapacity and Vec.filled are calls of std/vec's vecWithCapacity / vecFilled; the
+// checker still infers the element from the context. Covers capacity 0, a capacity pushes
+// stay within (no growth), an i32 count, string elements, filled with 0, ints, floats,
+// bools and a Copy struct, a field initializer, a return position, and both inside a
+// generic fn. The negative checks are pinned by runtime-errors/vecWithCapacityNegative and
+// vecFilledNegative.
+// @expect: 0 0
+// @expect: ["a", "bc", "d"] 3
+// @expect: 5
+// @expect: [] 0
+// @expect: [7, 7, 7, 7] 4
+// @expect: [0, 0, 0]
+// @expect: [true, true]
+// @expect: 3
+// @expect: [false, false, false]
+// @expect: 4
+
+struct Pt {
+    x: i64,
+    y: i64,
+}
+
+struct Grid {
+    cells: Vec<bool>,
+}
+
+fn zeros(n: i64): Vec<f64> {
+    return Vec.filled(n, 0.0)
+}
+
+fn sized<T>(n: i64): Vec<T> {
+    var v: Vec<T> = Vec.withCapacity(n)
+    return v
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.withCapacity(0)
+    print(e.len(), " ", e.capacity())
+    var w: Vec<string> = Vec.withCapacity(3)
+    w.push("a")
+    w.push("b" + "c")
+    w.push("d")
+    print(w, " ", w.capacity())
+    let k: i32 = 5
+    let wk: Vec<u8> = Vec.withCapacity(k)
+    print(wk.capacity())
+    let none: Vec<i64> = Vec.filled(0, 7)
+    print(none, " ", none.capacity())
+    let sevens: Vec<i64> = Vec.filled(4, 7)
+    print(sevens, " ", sevens.capacity())
+    print(zeros(3))
+    let flags: Vec<bool> = Vec.filled(2, true)
+    print(flags)
+    let pts: Vec<Pt> = Vec.filled(2, Pt { x: 1, y: 2 })
+    print(pts[1].x + pts[1].y)
+    let g = Grid { cells: Vec.filled(3, false) }
+    print(g.cells)
+    let s: Vec<string> = sized(4)
+    print(s.capacity())
+}

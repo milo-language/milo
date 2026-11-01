@@ -704,6 +704,8 @@ export class TypeChecker {
   // records each with its span so an unresolved one (no push ever seen) can error.
   private inferVecElems = new WeakSet<object>();
   private pendingInferVecs: Array<{ elem: TypeKind; span: Span | undefined }> = [];
+  // A deferred `Vec.withCapacity(n)` binds its std constructor when the element resolves.
+  private inferVecCtors = new WeakMap<object, ExprOf<"EnumLit">>();
   private _globalTypes = new Map<string, TypeKind>();
   private _nonConstGlobals: string[] = [];
   private functions = new Map<string, FnSig>();
@@ -7588,6 +7590,7 @@ export class TypeChecker {
     const elem: TypeKind = { tag: "unknown" };
     const vecTy: TypeKind = { tag: "vec", element: elem };
     this.inferVecElems.add(elem);
+    if (value.variant === "withCapacity") this.inferVecCtors.set(elem, value);
     this.pendingInferVecs.push({ elem, span: value.span });
     this.exprTypes.set(value, vecTy);
     return vecTy;
@@ -10088,6 +10091,7 @@ export class TypeChecker {
         const c = this.checkExpr(expr.args[0]);
         if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${this.show(c)}`, expr.span);
       }
+      this.bindVecConstructor(expr, hint);
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -10107,6 +10111,8 @@ export class TypeChecker {
         // N slots would alias one heap buffer and free it N times.
         if (!this.isCopyType(hint.element)) {
           this.error(`'Vec.filled' requires a Copy element type (got ${this.show(hint.element)}) — the fill value is duplicated into every slot; build a non-Copy Vec with a push loop`, expr.span);
+        } else {
+          this.bindVecConstructor(expr, hint);
         }
       }
       this.exprTypes.set(expr, hint);
@@ -12525,6 +12531,22 @@ export class TypeChecker {
     this.staticCalls.set(expr, this.monomorphizeFn(generic[0], [t.key, t.value], expr.span));
   }
 
+  // `Vec.withCapacity(n)` / `Vec.filled(n, x)` call std/vec's vecWithCapacity / vecFilled
+  // for the element the context gave, recorded as a static call as bindMapConstructor does.
+  // Vec.new stays builtin: it is the constant {null, 0, 0}, and a call would turn a global
+  // initializer into a lazy one for nothing.
+  private bindVecConstructor(expr: ExprOf<"EnumLit">, t: TypeKind): void {
+    if (t.tag !== "vec" || t.element.tag === "unknown") return;
+    const base = expr.variant === "withCapacity" ? "vecWithCapacity" : "vecFilled";
+    const generic = [...this.genericFns.entries()].find(([name, g]) =>
+      (name === base || name.endsWith(`$${base}`)) && isVecModule(g.decl.sourceFile));
+    if (!generic) {
+      this.error(`'Vec.${expr.variant}' needs std/vec, which the prelude imports`, expr.span);
+      return;
+    }
+    this.staticCalls.set(expr, this.monomorphizeFn(generic[0], [t.element], expr.span));
+  }
+
   private checkMapCopyOut(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
     if (expr.args.length !== 1) {
@@ -13492,6 +13514,8 @@ export class TypeChecker {
           }
           this.inferVecElems.delete(objType.element as object);
           Object.assign(objType.element as object, argType);
+          const ctor = this.inferVecCtors.get(objType.element as object);
+          if (ctor) this.bindVecConstructor(ctor, objType);
           this.tryMove(expr.args[0]);
           this.holdPointerArgsIn(expr.object, expr.args);
           return this.bindStdVecMethod(expr, objType.element, "push", { tag: "void" });
