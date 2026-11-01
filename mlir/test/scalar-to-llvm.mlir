@@ -193,3 +193,24 @@ func.func @unaliased(%a: !milo.ref<si64>, %b: !milo.ref<f64>) {
   milo.check_unaliased %a, %b : !milo.ref<si64>, !milo.ref<f64> loc("t.milo":8:3)
   milo.return
 }
+
+// Raw pointers: untyped llvm.ptr, the access carries the type; int to pointer widens
+// by the source's signedness first, as legacy codegen does.
+// CHECK-LABEL: llvm.func @raw
+// CHECK: %[[V:.*]] = llvm.load %arg0 : !llvm.ptr -> i32
+// CHECK: llvm.store %[[V]], %arg0 : i32, !llvm.ptr
+// CHECK: %[[A:.*]] = llvm.ptrtoint %arg0 : !llvm.ptr to i64
+// CHECK: %[[W:.*]] = llvm.sext %arg1 : i32 to i64
+// CHECK: llvm.inttoptr %[[W]] : i64 to !llvm.ptr
+// CHECK: %[[Z:.*]] = llvm.zext %arg2 : i8 to i64
+// CHECK: llvm.inttoptr %[[Z]] : i64 to !llvm.ptr
+// CHECK: llvm.icmp "eq" %arg0, %{{.*}} : !llvm.ptr
+func.func @raw(%p: !milo.ptr, %i: si32, %u: ui8) -> i1 {
+  %v = milo.ptr.load %p : si32
+  milo.ptr.store %v, %p : si32
+  %a = milo.cast %p : !milo.ptr to si64
+  %q = milo.cast %i : si32 to !milo.ptr
+  %r = milo.cast %u : ui8 to !milo.ptr
+  %e = milo.cmp eq, %p, %q : !milo.ptr
+  milo.return %e : i1
+}

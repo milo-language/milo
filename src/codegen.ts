@@ -204,7 +204,7 @@ export class Codegen {
   public trapOnOverflow = false;
   // MILO_MLIR=1 (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
-  public mlirTake: ((fn: HIRFunction) => string[] | null) | null = null;
+  public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -2677,7 +2677,7 @@ export class Codegen {
       const allParams = isSret ? [{ name: "__sret.out", ty: Ty.ptr }, ...params] : params;
       b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg, ...(fn.alwaysInline && { attrs: " alwaysinline" }) });
     }
-    if (mlirStub) {
+    if (Array.isArray(mlirStub)) {
       lines.push(...mlirStub);
       b.endFn();
       this.currentSubprogramId = null;

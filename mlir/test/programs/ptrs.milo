@@ -1,0 +1,49 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): raw `*T`
+// params and results, loads and stores through them, pointer casts and comparisons.
+
+fn readI64(p: *i64): i64 {
+    unsafe { return *p }
+}
+
+fn writeI64(p: *i64, v: i64) {
+    *p = v * 2
+}
+
+fn asBytes(p: *i64): *u8 {
+    unsafe { return p as *u8 }
+}
+
+fn lowByte(p: *u8): u8 {
+    unsafe { return *p }
+}
+
+fn same(a: *u8, b: *u8): bool { return a == b }
+
+fn addrBits(p: *u8): i64 {
+    return (p as i64) & 7
+}
+
+fn bump(p: *i32, n: i32) {
+    var i: i32 = 0
+    while i < n {
+        unsafe {*p = *p + 1 }
+        i += 1
+    }
+}
+
+fn main() {
+    var x: i64 = 21
+    var y: i32 = 5
+    unsafe {
+        let p = (x.addrOf()) as *i64
+        writeI64(p, readI64(p))
+        print(x)
+        let b = asBytes(p)
+        print(lowByte(b))
+        print(same(b, b))
+        print(same(b, (y.addrOf()) as *u8))
+        print(addrBits(b))
+        bump((y.addrOf()) as *i32, 4)
+        print(y)
+    }
+}

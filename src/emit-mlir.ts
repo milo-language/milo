@@ -25,11 +25,15 @@ export class MlirUnsupported extends Error {
   constructor(readonly reason: string) { super(`mlir: unsupported ${reason}`); }
 }
 
+// `*T` for any T: untyped, as the pointee type rides on each access.
+const PTR = "!milo.ptr";
+
 /** The dialect's type for a Milo scalar (ints carry signedness), or null. */
 export function mlirType(t: TypeKind): string | null {
   if (t.tag === "int" && t.min === undefined && t.max === undefined) return `${t.signed ? "si" : "ui"}${t.bits}`;
   if (t.tag === "float") return t.bits === 32 ? "f32" : "f64";
   if (t.tag === "bool") return "i1";
+  if (t.tag === "ptr") return PTR;
   return null;
 }
 
@@ -161,6 +165,14 @@ class FnEmitter {
       }
       case "Assign": {
         if (s.isInit) throw new MlirUnsupported("init assign");
+        if (s.target.kind === "PtrDeref") {
+          const ty = scalar(s.target.type, "store through a pointer");
+          const p = this.expr(s.target.operand);
+          const v = this.expr(s.value);
+          if (p.ty !== PTR || v.ty !== ty) throw new MlirUnsupported("store through a pointer of another type");
+          this.emit(`milo.ptr.store ${v.ref}, ${p.ref} : ${ty}`);
+          return false;
+        }
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
         const b = this.lookup(s.target.name);
         if (b.kind !== "var") throw new MlirUnsupported("assign to an immutable binding");
@@ -213,7 +225,7 @@ class FnEmitter {
       case "ForRange": {
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         const ty = scalar(s.varType, "for var");
-        if (ty === "i1" || ty.startsWith("f")) throw new MlirUnsupported("for over a non-int");
+        if (ty === "i1" || ty === PTR || ty.startsWith("f")) throw new MlirUnsupported("for over a non-int");
         const start = this.expr(s.start);
         const end = this.expr(s.end);
         // Legacy codegen widens a narrower bound by the loop variable's signedness, which
@@ -259,7 +271,7 @@ class FnEmitter {
       case "IntLit":
       case "CharLit": {
         const ty = scalar(e.type, e.kind);
-        if (ty === "i1") throw new MlirUnsupported("int literal of type bool");
+        if (ty === "i1" || ty === PTR) throw new MlirUnsupported(`int literal of type ${ty}`);
         return this.def(`milo.const ${BigInt(e.value)} : ${ty}`, ty);
       }
       case "BoolLit":
@@ -282,9 +294,16 @@ class FnEmitter {
         const v = this.expr(e.operand);
         if (v.ty !== from) throw new MlirUnsupported("cast operand type");
         if (from === to) return v;
+        if ((from === PTR && to.startsWith("f")) || (to === PTR && from.startsWith("f"))) throw new MlirUnsupported("cast between a pointer and a float");
         return this.def(`milo.cast ${v.ref} : ${from} to ${to}`, to);
       }
       case "Call": return this.call(e, stmt);
+      case "PtrDeref": {
+        const ty = scalar(e.type, "load through a pointer");
+        const p = this.expr(e.operand);
+        if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
+        return this.def(`milo.ptr.load ${p.ref} : ${ty}`, ty);
+      }
       default:
         throw new MlirUnsupported(`expr ${e.kind}`);
     }
@@ -310,6 +329,7 @@ class FnEmitter {
       return { ref, ty: "i1" };
     }
     const ty = scalar(e.left.type, "binop operand");
+    if (ty === PTR && !(e.op in CMPS)) throw new MlirUnsupported(`pointer ${e.op}`);
     const l = this.expr(e.left), r = this.expr(e.right);
     if (l.ty !== ty || r.ty !== ty) throw new MlirUnsupported("binop operand types");
     if (e.op in CMPS) return this.def(`milo.cmp ${CMPS[e.op]}, ${l.ref}, ${r.ref} : ${ty}`, "i1");
@@ -333,6 +353,7 @@ class FnEmitter {
 
   private unop(e: HIRExpr & { kind: "UnaryOp" }): Val {
     const ty = scalar(e.type, "unop");
+    if (ty === PTR) throw new MlirUnsupported(`unop ${e.op} on a pointer`);
     if (e.op === "-") {
       // A negated literal is a constant, as in codegen: i32's MIN is spelled
       // `-2147483648` and must not reach a checked negation of 2147483648.

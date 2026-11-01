@@ -87,6 +87,27 @@ def Milo_RefType : TypeDef<Milo_Dialect, "Ref"> {
   let assemblyFormat = "`<` $pointee `>`";
 }
 
+// A raw pointer `*T` (unsafe code only). Untyped, like LLVM's: `*T` can be reinterpreted,
+// so the pointee type rides on each access (milo.ptr.load/store), not on the pointer.
+// Unlike a !milo.ref it is a first-class value: stored, returned, compared, cast.
+def Milo_PtrType : TypeDef<Milo_Dialect, "Ptr"> {
+  let mnemonic = "ptr";
+}
+
+// What a local, a parameter or a result can hold.
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
+
+def Milo_PtrLoadOp : Milo_Op<"ptr.load"> {
+  let arguments = (ins Arg<Milo_PtrType, "", [MemRead]>:$ptr);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$ptr attr-dict `:` type($result)";
+}
+
+def Milo_PtrStoreOp : Milo_Op<"ptr.store"> {
+  let arguments = (ins Milo_Value:$value, Arg<Milo_PtrType, "", [MemWrite]>:$ptr);
+  let assemblyFormat = "$value `,` $ptr attr-dict `:` type($value)";
+}
+
 def Milo_ConstOp : Milo_Op<"const", [ConstantLike, Pure,
     AllTypesMatch<["value", "result"]>]> {
   let summary = "an int, float or bool literal";
@@ -154,15 +175,15 @@ def Milo_CmpPredicate : I64EnumAttr<"CmpPredicate", "comparison", [
 // does). On floats every comparison is ordered except `ne`, which holds when either side
 // is NaN, so `x != x` is true for NaN.
 def Milo_CmpOp : Milo_Op<"cmp", [Pure, SameTypeOperands]> {
-  let arguments = (ins Milo_CmpPredicate:$predicate, Milo_Scalar:$lhs, Milo_Scalar:$rhs);
+  let arguments = (ins Milo_CmpPredicate:$predicate, Milo_Value:$lhs, Milo_Value:$rhs);
   let results = (outs I1:$result);
   let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
 }
 
 // `x as T` between scalars. Float to int saturates (NaN is 0); it never traps.
 def Milo_CastOp : Milo_Op<"cast", [Pure]> {
-  let arguments = (ins Milo_Scalar:$operand);
-  let results = (outs Milo_Scalar:$result);
+  let arguments = (ins Milo_Value:$operand);
+  let results = (outs Milo_Value:$result);
   let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($result)";
 }
 
@@ -179,7 +200,7 @@ def Milo_LoadOp : Milo_Op<"load", [
     TypesMatchWith<"result is the slot's type", "ref", "result",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {
   let arguments = (ins Arg<Milo_RefType, "", [MemRead]>:$ref);
-  let results = (outs Milo_Scalar:$result);
+  let results = (outs Milo_Value:$result);
   let assemblyFormat = "$ref attr-dict `:` type($ref)";
 }
 
@@ -195,7 +216,7 @@ def Milo_CheckUnaliasedOp : Milo_Op<"check_unaliased",
 def Milo_StoreOp : Milo_Op<"store", [
     TypesMatchWith<"value is the slot's type", "ref", "value",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {
-  let arguments = (ins Milo_Scalar:$value, Arg<Milo_RefType, "", [MemWrite]>:$ref);
+  let arguments = (ins Milo_Value:$value, Arg<Milo_RefType, "", [MemWrite]>:$ref);
   let assemblyFormat = "$value `,` $ref attr-dict `:` type($ref)";
 }
 
@@ -204,7 +225,7 @@ def Milo_StoreOp : Milo_Op<"store", [
 // continue or unreachable.
 def Milo_IfOp : Milo_Op<"if", [NoRegionArguments, RecursiveMemoryEffects]> {
   let arguments = (ins I1:$condition);
-  let results = (outs Variadic<Milo_Scalar>:$results);
+  let results = (outs Variadic<Milo_Value>:$results);
   let regions = (region MinSizedRegion<1>:$thenRegion, AnyRegion:$elseRegion);
   let assemblyFormat = "$condition (`->` type($results)^)? $thenRegion (`else` $elseRegion^)? attr-dict";
   let hasVerifier = 1;
@@ -236,7 +257,7 @@ def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start",
 
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
     ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp"]>]> {
-  let arguments = (ins Variadic<Milo_Scalar>:$values);
+  let arguments = (ins Variadic<Milo_Value>:$values);
   let assemblyFormat = "($values^ `:` type($values))? attr-dict";
   let hasVerifier = 1;
 }
@@ -257,7 +278,7 @@ def Milo_ContinueOp : Milo_JumpOp<"continue">;
 
 // `return`, from any depth of nested regions.
 def Milo_ReturnOp : Milo_Op<"return", [Pure, Terminator]> {
-  let arguments = (ins Optional<Milo_Scalar>:$value);
+  let arguments = (ins Optional<Milo_Value>:$value);
   let assemblyFormat = "($value^ `:` type($value))? attr-dict";
   let hasVerifier = 1;
 }

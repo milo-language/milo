@@ -523,6 +523,28 @@ struct CastLowering : ConvertOpToLLVMPattern<CastOp> {
       rw.replaceOp(op, x);
       return success();
     }
+    if (isa<PtrType>(from)) {
+      if (!isa<IntegerType>(toLL))
+        return rw.notifyMatchFailure(op, "pointer to a non-integer");
+      rw.replaceOpWithNewOp<LLVM::PtrToIntOp>(op, toLL, x);
+      return success();
+    }
+    if (isa<PtrType>(to)) {
+      // Pointers are 64-bit; inttoptr from a narrower int crashes AArch64 instruction
+      // selection, so legacy codegen widens first, by the source's signedness.
+      auto fromI = dyn_cast<IntegerType>(x.getType());
+      if (!fromI)
+        return rw.notifyMatchFailure(op, "a non-integer to a pointer");
+      Value wide = x;
+      if (fromI.getWidth() < 64) {
+        Type i64 = rw.getI64Type();
+        bool sext = cast<IntegerType>(from).isSigned();
+        wide = sext ? LLVM::SExtOp::create(rw, loc, i64, x).getResult()
+                    : LLVM::ZExtOp::create(rw, loc, i64, x).getResult();
+      }
+      rw.replaceOpWithNewOp<LLVM::IntToPtrOp>(op, toLL, wide);
+      return success();
+    }
     auto fromF = dyn_cast<FloatType>(from);
     auto toF = dyn_cast<FloatType>(to);
     Value v;
@@ -588,6 +610,27 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
   matchAndRewrite(StoreOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
     rw.replaceOpWithNewOp<LLVM::StoreOp>(op, a.getValue(), a.getRef());
+    return success();
+  }
+};
+
+struct PtrLoadLowering : ConvertOpToLLVMPattern<PtrLoadOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PtrLoadOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type t = getTypeConverter()->convertType(op.getType());
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, t, a.getPtr());
+    return success();
+  }
+};
+
+struct PtrStoreLowering : ConvertOpToLLVMPattern<PtrStoreOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PtrStoreOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::StoreOp>(op, a.getValue(), a.getPtr());
     return success();
   }
 };
@@ -664,12 +707,16 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
   tc.addConversion([ctx = &tc.getContext()](RefType) -> Type {
     return LLVM::LLVMPointerType::get(ctx);
   });
+  tc.addConversion([ctx = &tc.getContext()](PtrType) -> Type {
+    return LLVM::LLVMPointerType::get(ctx);
+  });
   patterns.add<AddLowering, SubLowering, MulLowering, NegLowering, DivLowering,
                RemLowering, ShiftLowering<ShlOp, true>, ShiftLowering<ShrOp, false>,
                BitLowering<AndOp, LLVM::AndOp>, BitLowering<OrOp, LLVM::OrOp>,
                BitLowering<XorOp, LLVM::XOrOp>, NotLowering, ConstLowering, CmpLowering,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
-               UnreachableLowering, CheckUnaliasedLowering>(tc);
+               UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
+               PtrStoreLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

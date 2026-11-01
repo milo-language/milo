@@ -90,6 +90,7 @@ const STUB_MARK = "; milo.mlir.stub";
  */
 export class MlirPlan {
   private taken: MlirFunction[] = [];
+  private takenNames = new Set<string>();
   private log: string[] = [];
   private readonly fns = new Map<string, HIRFunction>();
 
@@ -101,15 +102,19 @@ export class MlirPlan {
    * The stub body for `fn` when MLIR takes it, else null. The stub is never executed and
    * never shipped; it exists for codegen's module-wide noalias dataflow, which reads call
    * edges out of the IR text: one dead call per callee keeps the edges through this
-   * function. Its own body has nothing else that analysis looks at (scalars only: no
-   * pointers, no globals).
+   * function. With by-ref params and scalars that is all the analysis would see in the
+   * real body. A raw pointer flows in ways a stub does not capture (stored, returned,
+   * made from an int), so a function with one keeps its legacy body for the analysis
+   * ("legacy"), and pays for generating it.
    */
-  take(fn: HIRFunction): string[] | null {
+  take(fn: HIRFunction): string[] | "legacy" | null {
     if (fn.isExtern) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns);
     if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
+    this.takenNames.add(fn.name);
+    if (r.text.includes("!milo.ptr")) return "legacy";
     const stub = ["  unreachable", "mlir.stub.calls:", STUB_MARK];
     // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
     // everything else is a scalar or a slot of this frame, which reaches no global.
@@ -165,11 +170,12 @@ export class MlirPlan {
       const l = lines[i];
       const d = DECL_RE.exec(l);
       if (d) known.add(unquote(d[1]));
-      if (!l.startsWith("define") || lines[i + 2] !== "  unreachable" || lines[i + 4] !== STUB_MARK) {
+      const def = l.startsWith("define") ? DEFINE_RE.exec(l) : null;
+      const name = def ? unquote(def[1]) : null;
+      if (name === null || !this.takenNames.has(name)) {
         out.push(l);
         continue;
       }
-      const name = unquote(DEFINE_RE.exec(l)![1]);
       const got = bodies.get(name);
       if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
       for (const b of got.body) {
@@ -196,6 +202,7 @@ export class MlirPlan {
     }
     // A stub that ships would be an `unreachable` where a function body belongs.
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
+    if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
     const extras = [...globals, ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
     const firstDefine = out.findIndex(l => l.startsWith("define"));
     out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");
