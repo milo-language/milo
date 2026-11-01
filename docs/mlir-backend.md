@@ -152,13 +152,12 @@ structs, enums.
   bugs: string literal length - 1 turned `print` red; payload read at field 0's offset
   turned `aggregates` red (`area(Rect(2, 3))` printed 4); making maybe-init drops
   unconditional left `mlir-same` green but ASan reported a heap-use-after-free in
-  `owned`; erasing every drop left 24 more live heap blocks at exit (203 against 179).
+  `owned`; erasing every drop left 23 more live heap blocks at exit; both turn `--owned` red.
 - *Leaks on this machine.* `leaks -atExit` (scripts/leak-check.ts) and lldb never get the
   task port here and hang, on legacy binaries too: the lldb replay test ("a breakpoint on
   miloReplayStop stops at the record") fails the same way on legacy, so it is the
   machine. ASan's symbolizer (atos) hangs the same way on a report; run with
-  `ASAN_OPTIONS=symbolize=0`. The leak check used instead: a DYLD malloc/free counting
-  interposer comparing live blocks at exit, legacy against MILO_MLIR=1, per fixture.
+  `ASAN_OPTIONS=symbolize=0`. The leak check used instead is `mlir-same --owned` (Gates).
 - *One process.* `milo-opt --emit-llvmir <passes>` runs the pipeline and prints LLVM IR
   (byte-identical to piping into mlir-translate); the milo-opt stage went from about 40
   to 26 ms on the `owned` program.
@@ -196,7 +195,16 @@ separate model of the source (`src/verify.ts` today).
   the same message and line) and the scalar program too.
 - **FileCheck tests** per pass and per lowering, in `mlir/test/`, each run by its own
   `RUN:` line from `mlir/run.sh`; `verify.mlir` covers the op verifiers.
-- **Leaks and ASan** from M4 on: no new findings under `MILO_MLIR=1`.
+- **Ownership** from M4 on, required for any commit touching ownership lowering (owned
+  slots, scopes, moves, drops, drop elaboration): `bun scripts/mlir-same.ts --programs
+  --owned` before committing, the full corpus with `--owned` in the background. For every
+  program MLIR took part of, live heap blocks at exit must equal legacy's
+  (`scripts/livecount.c`, a malloc/free counter injected with DYLD_INSERT_LIBRARIES; on
+  Linux LeakSanitizer covers it) and the MLIR binary must run clean under ASan
+  (`ASAN_OPTIONS=symbolize=0`: symbolizing needs the task port, which hangs here). The
+  output diff cannot gate this: making maybe-init drops unconditional left it green
+  while ASan reported a heap-use-after-free (`--owned` red), and erasing every drop
+  left 202 live blocks against legacy's 179 (`--owned` red).
 - **Compile time** of the corpus, legacy vs MLIR path, recorded from M1. A regression is a
   problem to fix (in-process C API, caching, parallel CGUs), not a reason to stop.
 - **Coverage** only goes up.

@@ -9,6 +9,8 @@
 //   bun scripts/mlir-same.ts --filter arith   # only names matching the regex
 //   bun scripts/mlir-same.ts --programs       # only mlir/test/programs (seconds)
 //   bun scripts/mlir-same.ts --jobs 2
+//   bun scripts/mlir-same.ts --programs --owned   # also: live heap blocks at exit equal
+//                                             # legacy's (scripts/livecount.c), clean ASan
 //
 // It cannot pass vacuously: zero fixtures compared, zero functions through MLIR, or a
 // milo-opt that is not built all fail. A mismatch is rerun once on both sides; a fixture
@@ -58,8 +60,16 @@ const list = (dir: string) => readdirSync(dir).filter(f => f.endsWith(".milo")).
 const programs = list(PROGRAMS);
 const names = [...programs, ...(argv.includes("--programs") ? [] : list(FIXTURES))];
 const tmp = mkdtempSync(join(tmpdir(), "milo-mlir-same-"));
+const OWNED = argv.includes("--owned");
+// The live-block counter, built once; darwin only (Linux has LeakSanitizer in the ASan run).
+let LIVECOUNT: string | null = null;
+if (OWNED && process.platform === "darwin") {
+  LIVECOUNT = join(tmp, "livecount.dylib");
+  const cc = Bun.spawnSync(["/usr/bin/clang", "-dynamiclib", "-O1", "-o", LIVECOUNT, join(ROOT, "scripts", "livecount.c")]);
+  if (cc.exitCode !== 0) { console.error(`mlir-same: cannot build scripts/livecount.c:\n${cc.stderr}`); process.exit(1); }
+}
 
-type Verdict = "same" | "differ" | "nondeterministic" | "build-differ" | "no-build";
+type Verdict = "same" | "differ" | "nondeterministic" | "build-differ" | "no-build" | "owned-differ";
 const results: { name: string; verdict: Verdict; detail?: string }[] = [];
 const fnTotal = { ok: 0, all: 0 };
 const reasons = new Map<string, number>();
@@ -95,6 +105,45 @@ const run = (bin: string) => guarded(`run ${bin}`, bin, [], { timeoutMs: 30_000,
 const key = (r: RunResult) => JSON.stringify([r.code, r.signal, r.stdout, r.stderr]);
 let fixturesLowered = 0;
 
+// --owned: the output diff cannot see a wrong drop (a double free of a string often prints
+// the same bytes), so for every program MLIR took part of, two more checks.
+//  * live heap blocks at exit (scripts/livecount.c, darwin): MLIR's must equal legacy's;
+//    more is a missing drop, fewer an extra free.
+//  * the MLIR binary under ASan: no report, same exit status. Symbolizing a report needs
+//    the task port, which hangs where lldb does, so it is off: the report names no lines.
+async function ownership(name: string, mlirBin: string, legacyBin: string, legacyRun: RunResult): Promise<string | null> {
+  if (LIVECOUNT) {
+    // Not through guard.ts: it execs via /bin/sh, and macOS strips DYLD_* from anything a
+    // system binary starts. The same binary has just run to completion under the guard
+    // with the same input, so a direct spawn with a hard timeout is what is left to risk.
+    const live = async (bin: string) => {
+      const out = `${bin}.live`;
+      rmSync(out, { force: true });
+      const p = Bun.spawn([bin], { cwd: tmp, stdout: "ignore", stderr: "ignore", stdin: "ignore",
+        env: { ...process.env, DYLD_INSERT_LIBRARIES: LIVECOUNT!, MILO_LIVECOUNT_OUT: out } });
+      const timer = setTimeout(() => p.kill(9), 30_000);
+      await p.exited;
+      clearTimeout(timer);
+      return existsSync(out) ? readFileSync(out, "utf-8").trim() : null;
+    };
+    const [lm, lh] = [await live(mlirBin), await live(legacyBin)];
+    // No count from a program that exits normally means the counter was not loaded.
+    if (lh === null && legacyRun.code === 0) return "live blocks: scripts/livecount.c did not load";
+    if (lm !== lh) return `live blocks at exit: legacy ${lh}, mlir ${lm}`;
+  }
+  const asanBin = `${mlirBin}.asan`;
+  const args = ["run", MAIN, "build", `${name}.milo`, "--sanitize", "-o", asanBin];
+  if (existsSync(`${name}.c`)) args.push(`${name}.c`);
+  const b = await guarded(`build ${name} (mlir, asan)`, "bun", args, { env: { ...process.env, MILO_MLIR: "1" }, timeoutMs: 180_000 });
+  if (b.code !== 0) return `asan build failed: ${b.stderr.trim().split("\n")[0]}`;
+  const leaks = process.platform === "linux" ? 1 : 0;
+  const r = await guarded(`run ${asanBin}`, asanBin, [], { timeoutMs: 60_000, cwd: tmp, env: { ...process.env, ASAN_OPTIONS: `detect_leaks=${leaks}:symbolize=0` } });
+  const report = /ERROR: (AddressSanitizer|LeakSanitizer)[^\n]*/.exec(r.stderr);
+  if (report) return report[0];
+  if (r.code !== legacyRun.code) return `under asan exit ${legacyRun.code} -> ${r.code}`;
+  return null;
+}
+
 async function one(name: string): Promise<void> {
   // Both sides are always built, so the build-time totals cover the same corpus.
   const m = await build(name, true);
@@ -110,11 +159,15 @@ async function one(name: string): Promise<void> {
   }
   if (m.res.code !== 0) { results.push({ name, verdict: "no-build" }); return; }
   let [rm, rh] = await Promise.all([run(m.bin), run(h.bin)]);
-  if (key(rm) === key(rh)) { results.push({ name, verdict: "same" }); return; }
+  const same = async () => {
+    const bad = OWNED && m.lowered > 0 ? await ownership(name, m.bin, h.bin, rh) : null;
+    results.push(bad ? { name, verdict: "owned-differ", detail: bad } : { name, verdict: "same" });
+  };
+  if (key(rm) === key(rh)) return same();
   const rh2 = await run(h.bin);
   if (key(rh2) !== key(rh)) { results.push({ name, verdict: "nondeterministic" }); return; }
   rm = await run(m.bin);
-  if (key(rm) === key(rh)) { results.push({ name, verdict: "same" }); return; }
+  if (key(rm) === key(rh)) return same();
   const what = rm.code !== rh.code ? `exit ${rh.code} -> ${rm.code}` : rm.stdout !== rh.stdout ? "stdout" : "stderr";
   results.push({ name, verdict: "differ", detail: what });
 }
@@ -126,7 +179,7 @@ await Promise.all(Array.from({ length: jobs }, async () => {
 rmSync(tmp, { recursive: true, force: true });
 
 const count = (v: Verdict) => results.filter(r => r.verdict === v).length;
-for (const r of results) if (r.verdict === "differ" || r.verdict === "build-differ") console.log(`DIFF ${basename(r.name)}: ${r.verdict} ${r.detail ?? ""}`);
+for (const r of results) if (r.verdict === "differ" || r.verdict === "build-differ" || r.verdict === "owned-differ") console.log(`DIFF ${basename(r.name)}: ${r.verdict} ${r.detail ?? ""}`);
 for (const r of results) if (r.verdict === "nondeterministic") console.log(`nondeterministic ${basename(r.name)}`);
 const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 console.log(`legacy reasons: ${top.map(([r, n]) => `${r} ${n}`).join(", ")}`);
@@ -134,8 +187,9 @@ const pct = fnTotal.all ? (100 * fnTotal.ok / fnTotal.all).toFixed(1) : "0";
 console.log(`mlir coverage: ${fnTotal.ok}/${fnTotal.all} function instances (${pct}%), in ${fixturesLowered}/${names.length} programs`);
 const s = (ms: number) => (ms / 1000).toFixed(1);
 console.log(`build time (sum over fixtures): legacy ${s(buildMs.legacy)}s, mlir ${s(buildMs.mlir)}s (${buildMs.legacy ? ((buildMs.mlir / buildMs.legacy - 1) * 100).toFixed(1) : "?"}%)`);
-const compared = count("same") + count("differ") + count("build-differ");
-console.log(`mlir-same: ${count("same")}/${compared} same, ${count("differ") + count("build-differ")} differ, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither`);
+const bad = count("differ") + count("build-differ") + count("owned-differ");
+const compared = count("same") + bad;
+console.log(`mlir-same: ${count("same")}/${compared} same, ${bad} differ${OWNED ? ` (${count("owned-differ")} in ownership)` : ""}, ${count("nondeterministic")} nondeterministic, ${count("no-build")} build on neither`);
 if (compared === 0) { console.error("mlir-same: nothing compared"); process.exit(1); }
 if (fnTotal.ok === 0) { console.error("mlir-same: no function went through MLIR, so nothing was tested"); process.exit(1); }
-process.exit(count("differ") + count("build-differ") > 0 ? 1 : 0);
+process.exit(bad > 0 ? 1 : 0);
