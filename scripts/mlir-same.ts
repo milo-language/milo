@@ -6,7 +6,7 @@
 // stayed on legacy codegen, and the corpus build time on each side.
 //
 //   bun scripts/mlir-same.ts                  # all fixtures
-//   bun scripts/mlir-same.ts --filter arith   # only names containing the substring
+//   bun scripts/mlir-same.ts --filter arith   # only names matching the regex
 //   bun scripts/mlir-same.ts --programs       # only mlir/test/programs (seconds)
 //   bun scripts/mlir-same.ts --jobs 2
 //
@@ -54,7 +54,7 @@ async function guarded(what: string, cmd: string, args: string[], opts: Paramete
 // written for this gate, panicking ones included; every one must reach MLIR.
 const PROGRAMS = join(ROOT, "mlir", "test", "programs");
 const list = (dir: string) => readdirSync(dir).filter(f => f.endsWith(".milo")).map(f => join(dir, f.slice(0, -5)))
-  .filter(n => !filter || basename(n).includes(filter)).sort();
+  .filter(n => !filter || new RegExp(filter).test(basename(n))).sort();
 const programs = list(PROGRAMS);
 const names = [...programs, ...(argv.includes("--programs") ? [] : list(FIXTURES))];
 const tmp = mkdtempSync(join(tmpdir(), "milo-mlir-same-"));

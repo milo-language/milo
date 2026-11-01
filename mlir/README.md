@@ -3,7 +3,7 @@ system: mlir-prototype
 purpose: prototype milo MLIR dialect: Vec and bounds-check semantics as IR, loop versioning that removes checks a range test proves, lowering to LLVM with TBAA
 key-files: mlir/Milo.td, mlir/Passes.cpp, mlir/test/kernels.mlir, mlir/test/version.mlir, mlir/bench/harness.c, mlir/run.sh
 update-when: a pass, the lowering, a gate or the measured numbers change
-last-verified: 2026-10-31 (prototype; hand-written input, no TS emitter yet)
+last-verified: 2026-11-01 (Vec kernels still hand-written; scalar ops have an emitter, see docs/mlir-backend.md)
 -->
 
 # milo MLIR prototype
@@ -65,9 +65,9 @@ grid was already vectorized by LLVM; it is memory-bound and stays at parity.
 
 ## Not done
 
-- Input is hand-written MLIR shaped like the frontend's output; no MIR -> MLIR emitter.
+- The Vec kernels are hand-written MLIR shaped like the frontend's output; the emitter (`src/emit-mlir.ts`) covers scalar functions only so far (M1, `Scalar.cpp`).
 - Index forms beyond `iv + invariant`; steps other than 1 are accepted but bounded
   conservatively.
 - Buffer disjointness (fact 3), DWARF, the C ABI, everything outside these kernels.
 
-Build: `cmake -G Ninja -B build -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir`, then `./run.sh`.
+Build: `sh build.sh` (milo-opt only), or `./run.sh` (build plus every gate here: the FileCheck tests in `test/` run by their RUN lines).
