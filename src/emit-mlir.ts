@@ -1164,6 +1164,7 @@ class FnEmitter {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
         return this.match(e, this.value(e.type, "match-expression")).v;
       }
+      case "Propagate": return this.propagate(e);
       default:
         throw new MlirUnsupported(`expr ${e.kind}`);
     }
@@ -1618,6 +1619,42 @@ class FnEmitter {
     // arms that all jump leave nothing after them.
     if (!resultTy && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
+  }
+
+  /**
+   * `x?` as the match it means, as legacy genPropagate: `Ok(v) => v` (tag 0, Some for an
+   * Option), `Err(e) => return Err(e)` in the function's result enum, the error wrapped in
+   * its From variant first for a conversion. The error arm is a return statement, so the
+   * scope drops run before it and a pending owned operand keeps the function legacy.
+   */
+  private propagate(e: HIRExpr & { kind: "Propagate" }): Val {
+    if (e.boxConversion) throw new MlirUnsupported("`?` boxing its error into a Heap");
+    if (e.messageFn) throw new MlirUnsupported("`?` turning its error into a message");
+    const src = this.cx.mlirEnumLayout(e.enumName);
+    const ret = e.retType.tag === "enum" ? this.cx.mlirEnumLayout(e.retType.name) : null;
+    const isErr = (v: { name: string }) => v.name === "Err" || v.name === "None";
+    const ok = src?.variants.find(v => v.tag === 0);
+    const err = src?.variants.find(isErr);
+    const retErr = ret?.variants.find(isErr);
+    if (!ok || !err || !retErr || ok.fields.length > 1 || err.fields.length !== retErr.fields.length || err.fields.length > 1) throw new MlirUnsupported("`?` enum layout");
+    const n = this.n++;
+    const okName = `prop$ok${n}`, errName = `prop$err${n}`;
+    let errVal: HIRExpr | null = err.fields.length ? { kind: "Ident", name: errName, type: err.fields[0], isMove: true } : null;
+    if (e.fromConversion) {
+      const target = retErr.fields[0];
+      if (!errVal || target?.tag !== "enum" || target.name !== e.fromConversion.targetEnumName) throw new MlirUnsupported("`?` conversion layout");
+      errVal = { kind: "EnumLit", enumName: target.name, variant: e.fromConversion.wrapVariant, args: [errVal], type: target };
+    }
+    const okArm = {
+      pattern: { kind: "EnumPattern" as const, variant: ok.name, tag: 0, bindings: ok.fields.length ? [{ name: okName, type: ok.fields[0] }] : [] },
+      body: ok.fields.length ? [{ kind: "ExprStmt" as const, expr: { kind: "Ident" as const, name: okName, type: e.type, isMove: true } }] : [],
+    };
+    const errArm = {
+      pattern: { kind: "EnumPattern" as const, variant: err.name, tag: err.tag, bindings: err.fields.length ? [{ name: errName, type: err.fields[0] }] : [] },
+      body: [{ kind: "Return" as const, retType: e.retType, value: { kind: "EnumLit" as const, enumName: (e.retType as { name: string }).name, variant: retErr.name, args: errVal ? [errVal] : [], type: e.retType } }],
+    };
+    const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
+    return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v;
   }
 
   /**

@@ -1,0 +1,107 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `?` on Result and Option, with owned payloads on both sides, owned
+// locals live at the early return (their drops run before it), a From conversion of the
+// error, a `?` whose value is discarded, one inside a loop.
+
+enum IoError { NotFound(string), Denied(i64) }
+
+enum AppError { Io(IoError), Other(string) }
+
+fn read(path: string): Result<string, IoError> {
+    if path == "missing" { return Result.Err(IoError.NotFound(path)) }
+    if path == "secret" { return Result.Err(IoError.Denied(13)) }
+    return Result.Ok("<" + path + ">")
+}
+
+fn size(path: string): Result<i64, IoError> {
+    let held = "held ".repeat(3)
+    let body = read(path)?
+    return Result.Ok(body.len() + held.len())
+}
+
+fn app(path: string): Result<string, AppError> {
+    let tag = "tag:" + path
+    let body = read(path)?
+    return Result.Ok(tag + body)
+}
+
+fn check(n: i64): Result<bool, string> {
+    if n > 2 { return Result.Err("too big: " + n.toString()) }
+    return Result.Ok(n == 1)
+}
+
+fn checks(n: i64): Result<i64, string> {
+    var t: i64 = 0
+    for i in 0..n {
+        check(i)?
+        t += i
+    }
+    return Result.Ok(t)
+}
+
+fn first(v: &Vec<string>): Option<string> {
+    if v.len() == 0 { return Option.None }
+    return Option.Some(v[0].clone())
+}
+
+fn firstLen(v: &Vec<string>): Option<i64> {
+    let s = first(v)?
+    return Option.Some(s.len())
+}
+
+fn ignored(path: string): Result<i64, IoError> {
+    read(path)?
+    return Result.Ok(1)
+}
+
+// The same Result type in and out: the error goes back as it came.
+fn label(path: string): Result<string, string> {
+    if path == "missing" { return Result.Err("no " + path) }
+    return Result.Ok("L" + path)
+}
+
+fn relay(path: string): Result<string, string> {
+    let s = label(path)?
+    return Result.Ok(s + "!")
+}
+
+fn ioName(e: &IoError): string {
+    match e {
+        NotFound(p) => { return "not found " + p }
+        Denied(c) => { return "denied " + c.toString() }
+    }
+}
+
+fn main() {
+    for p in ["a", "missing", "secret", "bcd"] {
+        match size(p) {
+            Ok(n) => print("size ", n)
+            Err(e) => print("size err ", ioName(e))
+        }
+        match app(p) {
+            Ok(s) => print("app ", s)
+            Err(e) => match e {
+                Io(i) => print("app io ", ioName(i))
+                Other(s) => print("app other ", s)
+            }
+        }
+        match ignored(p) {
+            Ok(n) => print("ignored ", n)
+            Err(e) => print("ignored err ", ioName(e))
+        }
+        match relay(p) {
+            Ok(s) => print("relay ", s)
+            Err(e) => print("relay err ", e)
+        }
+    }
+    for n in 0..5 {
+        match checks(n) {
+            Ok(t) => print("checks ", t)
+            Err(s) => print("checks err ", s)
+        }
+    }
+    var v: Vec<string> = Vec.new()
+    match firstLen(v) { Some(n) => print("first ", n) None => print("first none") }
+    v.push("hello")
+    match firstLen(v) { Some(n) => print("first ", n) None => print("first none") }
+}

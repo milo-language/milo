@@ -368,6 +368,15 @@ structs, enums.
   result, so the sret ones live in a module), FileCheck `copy.mlir`, three verifier
   cases. Planted bug: no `milo.move` after the copy into the element (`big-elems` exit
   0 -> 1, a double free of the pushed Row). Tahoe Roads api: 4051 to 4151 (77.6%).
+- *`?`* is the match it means, built as HIR and emitted by `match`: `Ok(v) => v` (tag 0;
+  Some), `Err(e) => return Err(e)` in the function's result enum, wrapped in the From
+  variant first for a conversion. The return is a return statement's, so scope drops run
+  before it and a pending owned operand keeps the function legacy, as for any return.
+  Still legacy: a `?` boxing its error into `Heap<Iface>` and one turning it into a
+  message. Program `propagate`; planted bug: the early return built with the result
+  enum's Ok variant (`propagate` stdout). Tahoe Roads api: 4169 (77.9%): of the 78
+  functions it blocked, most now stop on what comes next (variadic calls, user-Drop
+  temporaries).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
