@@ -1411,12 +1411,6 @@ class LowerCtx {
           if (expr.method === "insert") {
             return { kind: "VecInsert", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
           }
-          if (expr.method === "sort") {
-            return { kind: "VecSort", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "sortBy") {
-            return { kind: "VecSortBy", object: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "sortByKey") {
             const cbType = this.c.exprTypes.get(expr.args[0]);
             const keyType: TypeKind = cbType?.tag === "fn" ? cbType.ret : { tag: "unknown" };

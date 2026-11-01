@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -61,7 +61,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
   "VecLen", "VecPtr", "VecPush", "VecReserve",
-  "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
+  "VecSlice", "VecSortByKey",
   "WrappingArith", "Zeroed",
 ];
 
@@ -5684,10 +5684,6 @@ export class Codegen {
         this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, cap, "i64"];
       }
-      case "VecSort":
-        return genVecSort(this, expr.object, expr.elementType, lines);
-      case "VecSortBy":
-        return genVecSortBy(this, expr.object, expr.callback, expr.elementType, lines);
       case "VecSortByKey":
         this.own.keyExtractor = this.own.on;
         try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }

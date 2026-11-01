@@ -5980,6 +5980,42 @@ export class TypeChecker {
     return true;
   }
 
+  // A local fn value taking a Copy element by value (`let f = (x: i64) => ...; v.map(f)`),
+  // passed where std/vec calls with `&T`: rewritten in place to the thunk
+  // `(p0: &T, ...) => f(p0, ...)`, which borrows `f` only for the call (the std callback
+  // parameter does not escape). The builtin map and sorts loaded the element for such a
+  // callback; coerceCopyCallback covers literals and named fns, not locals.
+  private thunkByValueFnValue(arg: Expr, element: TypeKind, arity: number): void {
+    if (arg.kind !== "Ident") return;
+    const t = this.lookup(arg.name)?.type;
+    if (t?.tag !== "fn" || t.params.length !== arity || !this.isCopyType(element)) return;
+    if (!t.params.every(p => typeEq(p, element))) return;
+    const span = arg.span;
+    const names = t.params.map((_, i) => `__cb${i}`);
+    const call: Expr = { kind: "Call", func: arg.name, args: names.map(name => ({ kind: "Ident", name, span })), span };
+    const elemRef: TypeKind = { tag: "ref", inner: element, mutable: false };
+    const thunk: Expr = {
+      kind: "Closure",
+      params: names.map(name => ({ name, type: this.typeKindToMiloType(elemRef), span })),
+      retType: t.ret.tag === "void" ? null : this.typeKindToMiloType(t.ret),
+      body: [t.ret.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
+      span,
+    };
+    for (const k of Object.keys(arg)) delete (arg as unknown as Record<string, unknown>)[k];
+    Object.assign(arg, thunk);
+  }
+
+  // After the adaptations above, a callback std/vec would call with `&T` that still takes
+  // an element by value (only a shape neither adapter recognises): refused, rather than
+  // handed a pointer where it reads a value. True when it reported.
+  private refuseByValueCallback(cb: TypeKind & { tag: "fn" }, elemRef: TypeKind, method: string, sp: Span | undefined): boolean {
+    const i = cb.params.findIndex(p => p.tag !== "ref" && p.tag !== "unknown");
+    if (i < 0) return false;
+    this.error(`'${method}' callback parameter ${i + 1} is declared ${this.show(cb.params[i]!)}, but ${method} passes ${this.show(elemRef)}`, sp,
+      `declare the parameter as '${this.show(elemRef)}'`);
+    return true;
+  }
+
   // A Vec method whose call the builtin rules above have already checked (arity, argument
   // types, the mutable receiver, with the builtin wordings tests pin) and whose body is
   // std/vec code: record the instantiated method for lowering, as HashMap insert does.
@@ -13488,40 +13524,17 @@ export class TypeChecker {
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
         // The body is std/vec's map<U>, with U the callback's return type, so the callback
         // is checked here, once, and the method bound after. std passes `&T`: a by-value
-        // Copy callback is adapted to it (closure literal or named fn); a fn VALUE taking T
-        // is wrapped in a thunk here, since the builtin map took one: `(p: &T) => f(p)`,
-        // which borrows `f` only for the call (std's `f` parameter does not escape).
+        // Copy callback is adapted to it (a literal or named fn by coerceCopyCallback, a fn
+        // value by thunkByValueFnValue), so every callback the builtin took still works.
         this.coerceCopyCallback(expr.args[0], cbHint);
-        const a0 = expr.args[0]!;
-        const local = a0.kind === "Ident" ? this.lookup(a0.name) : undefined;
-        if (a0.kind === "Ident" && local?.type.tag === "fn" && local.type.params.length === 1
-            && this.isCopyType(objType.element) && typeEq(local.type.params[0]!, objType.element)) {
-          const span = a0.span;
-          const call: Expr = { kind: "Call", func: a0.name, args: [{ kind: "Ident", name: "__cb0", span }], span };
-          const fnRet = local.type.ret;
-          const thunk: Expr = {
-            kind: "Closure",
-            params: [{ name: "__cb0", type: this.typeKindToMiloType(elemRef), span }],
-            retType: fnRet.tag === "void" ? null : this.typeKindToMiloType(fnRet),
-            body: [fnRet.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
-            span,
-          };
-          for (const k of Object.keys(a0)) delete (a0 as unknown as Record<string, unknown>)[k];
-          Object.assign(a0, thunk);
-        }
+        this.thunkByValueFnValue(expr.args[0]!, objType.element, 1);
         const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "map", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
         const ret: TypeKind = { tag: "vec", element: cbType.ret };
-        const p0 = cbType.params[0];
-        if (p0 && p0.tag !== "ref" && p0.tag !== "unknown") {
-          this.error(`'map' callback parameter 1 is declared ${this.show(p0)}, but map passes ${this.show(elemRef)}`, sp,
-            `declare the parameter as '${this.show(elemRef)}', or pass a closure literal, which is adapted`);
-          return this.setType(expr, ret);
-        }
-        if (cbType.ret.tag === "unknown") return this.setType(expr, ret);
+        if (this.refuseByValueCallback(cbType, elemRef, "map", sp) || cbType.ret.tag === "unknown") return this.setType(expr, ret);
         return this.bindStdVecMethod(expr, objType.element, "map", ret, { mutable: false, typeArgs: [cbType.ret] });
       }
       // filter is std/vec code, dispatched like the read-only callback methods. It copies
@@ -13627,8 +13640,9 @@ export class TypeChecker {
         const el = objType.element;
         if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
           this.error(`'sort' requires Vec of a comparable type (int, float, string, bool)`, sp);
+          return this.setType(expr, { tag: "void" });
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, el, "sort", { tag: "void" });
       }
       if (expr.method === "sortBy") {
         if (expr.args.length !== 1) { this.error(`'sortBy' expects 1 argument (comparator)`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -13640,6 +13654,10 @@ export class TypeChecker {
         // read by its sign, so an i64 key difference (`a.t - b.t`) needs no `as i32`,
         // the cast that truncated a difference of k * 2^32 to 0.
         const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "unknown" } };
+        // The body is std/vec's sortBy<R>, R the comparator's return type; checked here
+        // once and bound after, as map is.
+        this.coerceCopyCallback(expr.args[0], cbHint);
+        this.thunkByValueFnValue(expr.args[0]!, objType.element, 2);
         const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortBy", sp);
@@ -13648,6 +13666,9 @@ export class TypeChecker {
         else if (cbType.ret.tag !== "unknown" && !(cbType.ret.tag === "int" && cbType.ret.signed)) {
           this.error(`'sortBy' callback returns ${this.show(cbType.ret)}, but sortBy expects a signed integer (negative: a first, positive: b first, zero: keep order)`, sp,
             `return an ordering such as 'if a.x < b.x { -1 } else if a.x > b.x { 1 } else { 0 }', or sort by a key with 'sortByKey'`);
+        } else if (cbType.ret.tag === "int" && this.refuseByValueCallback(cbType, elemRef, "sortBy", sp) === false) {
+          const r: TypeKind = { tag: "int", bits: cbType.ret.bits, signed: true };
+          return this.bindStdVecMethod(expr, objType.element, "sortBy", { tag: "void" }, { typeArgs: [r] });
         }
         return this.setType(expr, { tag: "void" });
       }

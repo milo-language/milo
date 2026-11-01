@@ -301,6 +301,56 @@ impl Vec<T> {
         return out
     }
 
+    // The sorts are the builtin's insertion sort, kept as it was so that every program sees
+    // the same result and the same sequence of callback calls: element i is moved out,
+    // larger elements before it shift up one slot each (bitwise moves), and it is stored in
+    // the gap. Stable: an element passes only one strictly greater than itself.
+
+    // Sorts in place by the natural order (_natLess: ints by signedness, floats by IEEE
+    // `<`, so a NaN never moves past anything, strings by bytes, false before true). The
+    // checker limits this to those element types.
+    fn sort(self: &mut Self) {
+        unsafe {
+            let data = self.ptr()
+            let len = self.len()
+            var i = 1
+            while i < len {
+                let tmp = *data[i].addrOf()
+                var j = i
+                while j > 0 && _natLess(tmp, data[j.wrappingSub(1)]) {
+                    data[j] = *data[j.wrappingSub(1)].addrOf()
+                    j = j.wrappingSub(1)
+                }
+                data[j] = tmp
+                i = i.wrappingAdd(1)
+            }
+        }
+    }
+
+    // Sorts in place by a comparator: `f(a, b)` positive means b goes first, zero or
+    // negative keeps a first. R is whatever signed integer the comparator returns; only
+    // its sign is read. @inline so the comparator is inlined into the loop; called, it
+    // measured about 20% slower than the builtin.
+    @inline
+    fn sortBy<R>(self: &mut Self, f: (&T, &T) => R) {
+        let zero = 0 as R
+        unsafe {
+            let data = self.ptr()
+            let len = self.len()
+            var i = 1
+            while i < len {
+                let tmp = *data[i].addrOf()
+                var j = i
+                while j > 0 && f(data[j.wrappingSub(1)], tmp) > zero {
+                    data[j] = *data[j.wrappingSub(1)].addrOf()
+                    j = j.wrappingSub(1)
+                }
+                data[j] = tmp
+                i = i.wrappingAdd(1)
+            }
+        }
+    }
+
     // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,
     // with the indexing panic.
     @inline

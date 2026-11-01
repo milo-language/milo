@@ -455,3 +455,19 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   1M joins of 64 strings 0.80s builtin vs 0.56s std (for-in drops the index bounds checks
   vecJoin's `parts[i]` paid). src-milo's resolver still lists vecJoin; it lags, as allowed.
   Step 3 done.
+- 2026-11-01: phase 2 step 4 begins. `sort` and `sortBy` moved. The builtin algorithm is a
+  stable insertion sort (element i moved to a scratch slot, larger predecessors shifted up
+  one by memcpy, the element stored in the gap; `prev > tmp` is the only test). std keeps
+  exactly that, with bitwise moves, so results and the sequence of comparator calls are
+  unchanged (the fixture counts them: 7 for a five-element case, old and new). A faster
+  merge sort was not taken: same results for a consistent comparator, but a different
+  call sequence for a side-effecting one. sort compares `_natLess(tmp, prev)`, the same
+  order as emitBuiltinGt's `prev > tmp` (NaN never moves, strings by bytes then length,
+  false first). sortBy is `sortBy<R>` over the comparator's signed return type, `f(prev,
+  tmp) > 0 as R`; the checker keeps its callback check and binds it as map does, with the
+  shared `thunkByValueFnValue` (also map's now) and `refuseByValueCallback`. sortBy is
+  `@inline`: called, a 3000-record sortBy was 20% slower (0.22s vs 0.18s); inlined 0.18s
+  vs 0.18s. Planted `>= zero` (unstable) turns `vecSortStd` red. Output identical; live
+  heap equal (189 blocks both); 11 corpus files pass; bench 200 sorts of 3000 elements:
+  i64 0.25s builtin vs 0.22s std, strings 1.16s vs 1.17s, sortBy on a field 0.18s vs
+  0.18s.

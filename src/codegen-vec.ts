@@ -170,25 +170,6 @@ function emitBuiltinGt(ctx: CodegenCtx, lines: string[], keyType: TypeKind, a: V
   }
 }
 
-export function genVecSort(
-  ctx: CodegenCtx,
-  object: any,
-  elementType: TypeKind,
-  lines: string[],
-): [string[], string, string] {
-  const p = sortPreamble(ctx, object, elementType, lines, "sort");
-  const elemTy = p.elemTy;
-
-  insertionSortLoop(ctx, lines, p, "sort", (prevPtr, tmpAddr) => {
-    const b = new LlvmTextBuilder(lines, ctx);
-    const prevVal = b.load(elemTy, prevPtr);
-    const tmpVal = b.load(elemTy, tmpAddr);
-    return emitBuiltinGt(ctx, lines, elementType, prevVal, tmpVal);
-  });
-
-  return [lines, "void", "void"];
-}
-
 // A closure value is { fn ptr, env ptr }.
 function closureParts(ctx: CodegenCtx, lines: string[], closure: string): { fnPtr: Val; envPtr: Val } {
   const b = new LlvmTextBuilder(lines, ctx);
@@ -216,31 +197,6 @@ function cbElemArg(
   const prm = cbType.tag === "fn" ? cbType.params[paramIdx] : undefined;
   if (!prm || prm.tag === "ref" || prm.tag === "unknown") return elemPtr;
   return new LlvmTextBuilder(lines, ctx).load(elemTy, elemPtr);
-}
-
-export function genVecSortBy(
-  ctx: CodegenCtx,
-  object: any,
-  callback: any,
-  elementType: TypeKind,
-  lines: string[],
-): [string[], string, string] {
-  const p = sortPreamble(ctx, object, elementType, lines, "sortby");
-  // the checker admits any signed integer return; the sign is all that is read
-  const retTy = Ty.of(callback.type.tag === "fn" && callback.type.ret.tag === "int" ? ctx.llvmType(callback.type.ret) : "i32");
-
-  const cv = ctx.genVal(callback, lines);
-  const { fnPtr, envPtr } = closureParts(ctx, lines, cv.ref);
-
-  insertionSortLoop(ctx, lines, p, "sortby", (prevPtr, tmpAddr) => {
-    const a = cbElemArg(ctx, lines, callback.type, prevPtr, p.elemTy, 0);
-    const bArg = cbElemArg(ctx, lines, callback.type, tmpAddr, p.elemTy, 1);
-    const b = new LlvmTextBuilder(lines, ctx);
-    const cmpResult = b.call(retTy, fnPtr.ref, [envPtr, a, bArg]);
-    return b.icmp("sgt", cmpResult, val("0", retTy));
-  });
-
-  return [lines, "void", "void"];
 }
 
 export function genVecSortByKey(

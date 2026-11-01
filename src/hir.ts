@@ -99,8 +99,6 @@ export type HIRExpr =
   | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecCapacity"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecReserve"; object: HIRExpr; additional: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecSort"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecSortBy"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSortByKey"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; keyType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "WrappingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
