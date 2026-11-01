@@ -186,16 +186,18 @@ fn mapNew<K, V>(): HashMap<K, V> {
 // `HashMap.withCapacity(n)`: a table that takes n entries without growing. Insert grows
 // when (len + 1) * 4 >= cap * 3, so cap must exceed 4(n + 1)/3; it is rounded up to a power
 // of two (the probe masks with cap - 1) from 8. The caller has already refused a negative
-// n, at its own line. Unsigned, as the builtin computed it: an absurd n then fails the
-// allocation's size check instead of wrapping to a small table.
+// n, at its own line. Checked arithmetic: from n = 2^61 - 1 the product overflows and
+// panics ("integer overflow", at the caller's line under @trackCaller), the same panic
+// the allocation's size check gives for every smaller n too large to allocate. Wrapping
+// arithmetic here turned n = 2^62 into an 8-slot table.
 @trackCaller
 fn mapWithCapacity<K, V>(n: i64): HashMap<K, V> {
-    let want = ((n as u64).wrappingAdd(1).wrappingMul(4)) / 3 + 1
-    var cap: u64 = 8
+    let want = (n + 1) * 4 / 3 + 1
+    var cap = 8
     while cap < want {
-        cap = cap.wrappingMul(2)
+        cap = cap * 2
     }
-    return mapWithSlots(cap as i64)
+    return mapWithSlots(cap)
 }
 
 // An empty map of `cap` zeroed slots. Seed 0 means "draw one on the first insert", so a

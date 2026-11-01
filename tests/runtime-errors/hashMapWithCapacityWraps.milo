@@ -1,0 +1,17 @@
+// @runtime-error: integer overflow at tests/runtime-errors/hashMapWithCapacityWraps.milo:13
+// n = 2^62: std/hashmap's mapWithCapacity rounded (n + 1) * 4 in wrapping u64, which came
+// to 4, and built an 8-slot table, so this printed 1. The rounding is checked now and
+// fails with the size check's panic at this line (@trackCaller).
+
+pub fn huge(): i64 {
+    return 4611686018427387904
+}
+
+pub fn main(): i32 {
+    let n = huge()
+    var m: HashMap<i64, i64> = HashMap.new()
+    m = HashMap.withCapacity(n)
+    m.insert(1, 2)
+    print(m.len)
+    return 0
+}

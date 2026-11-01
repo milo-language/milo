@@ -524,3 +524,13 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   identical (fixture without the i32 line); live heap equal; 79 corpus files calling
   insert/extend pass; bench 200k rounds of 32 inserts (i64 + string) 0.10s vs 0.10s, 300k
   rounds of 8 extends 0.13s vs 0.13s.
+- 2026-11-01: fixed `mapWithCapacity`: it rounded `(n + 1) * 4 / 3 + 1` in wrapping u64,
+  so `HashMap.withCapacity(2^62)` came to 4 and built an 8-slot table (its comment said an
+  absurd n fails the size check; it did not). The rounding is checked i64 arithmetic now:
+  from n = 2^61 - 1 it overflows and panics "integer overflow" at the caller's line
+  (@trackCaller), the panic the allocation's size check gives for the smaller n too large
+  to allocate, so every impossible capacity fails one way. Pinned by
+  `runtime-errors/hashMapWithCapacityWraps` (the old compiler prints 1);
+  `hashMapWithCapacityHuge` and `hashMapWithCapacityNegative` unchanged. Bench 3M new +
+  1M withCapacity(20) maps 3.93s before vs 3.95s after (this host is loaded; the earlier
+  2.12s was measured idle).
