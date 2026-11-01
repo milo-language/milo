@@ -1,0 +1,41 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): module globals
+// read and written from MLIR functions, constant and lazy (an initializer that runs code),
+// scalars, a string reassigned (its old value dropped), a struct field written in place.
+
+struct Counter { hits: i64, last: i64 }
+
+let LIMIT: i64 = 40
+var total: i64 = 0
+var label: string = "start"
+var counter: Counter = Counter { hits: 0, last: 0 }
+let GREETING: string = "hello".repeat(2)
+let SQUARES: i64 = squareSum(5)
+
+fn squareSum(n: i64): i64 {
+    var t: i64 = 0
+    for i in 0..n { t += i * i }
+    return t
+}
+
+fn bump(x: i64) {
+    total += x
+    counter.hits += 1
+    counter.last = x
+    if total > LIMIT { label = "over" }
+}
+
+fn rename(n: i64) {
+    label = "n".repeat(n)
+}
+
+fn greetLen(): i64 { return GREETING.len() + SQUARES }
+
+fn main() {
+    for i in 0..10 { bump(i) }
+    print(total, " ", counter.hits, " ", counter.last, " ", label)
+    rename(3)
+    print(label, " ", label.len())
+    rename(5)
+    print(label)
+    print(greetLen(), " ", GREETING)
+}

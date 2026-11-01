@@ -175,3 +175,11 @@ func.func @match_cases(%n: si32) {
   }
   milo.return
 }
+
+// -----
+
+func.func @global_of_ref() {
+  // expected-error @+1 {{a global holds a value}}
+  %g = milo.global "g" : !milo.ref<!milo.ref<si64>>
+  milo.return
+}

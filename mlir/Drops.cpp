@@ -84,7 +84,7 @@ struct ScopeDropsPass : PassWrapper<ScopeDropsPass, OperationPass<func::FuncOp>>
         // A slot that is not owned holds a borrowed or static copy (a spilled `&T`
         // argument) and is garbage before its first store: nothing in it to drop.
         auto var = st.getRef().getDefiningOp<VarOp>();
-        if (needsDrop(st.getValue().getType()) && (!var || var.getOwned())) {
+        if (needsDrop(st.getValue().getType()) && (!var || var.getOwned()) && !st.getInit()) {
           b.setInsertionPoint(st);
           DropOp::create(b, st.getLoc(), st.getRef(), Value());
         }

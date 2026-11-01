@@ -33,6 +33,7 @@ export interface MlirEmitCtx {
   needsDropCg(t: TypeKind): boolean;
   dropImpls: Set<string>;
   typeSizeOf(t: TypeKind): number;
+  mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null;
 }
 
 export class MlirUnsupported extends Error {
@@ -141,6 +142,18 @@ function stripRefs(t: TypeKind): TypeKind {
   return t;
 }
 
+/** Why valueType rejects `t`: its tag, and for an aggregate what inside it blocks it. */
+function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0): string {
+  if (t.tag === "int") return "ranged int";
+  if ((t.tag !== "struct" && t.tag !== "enum") || depth > 3) return t.tag;
+  const why = hasUserDrop(cx, t) ? "user Drop" : cx.typeSizeOf(t) >= 128 ? "128+ bytes" : cx.llvmType(t) !== `%${t.name}` ? "niche" : null;
+  if (why) return `${t.tag} (${why})`;
+  const fields = t.tag === "struct" ? cx.structLayouts.get(t.name)?.fields.map(f => f.typeKind) ?? []
+    : cx.mlirEnumLayout(t.name)?.variants.flatMap(v => v.fields) ?? [];
+  const bad = fields.find(f => valueType(cx, f) === null);
+  return bad ? `${t.tag} (${blocker(cx, bad, depth + 1)})` : t.tag;
+}
+
 /** MLIR string literal (symbol names, file names in locations). */
 function quote(s: string): string {
   let out = "";
@@ -219,7 +232,7 @@ class FnEmitter {
         return `%p${i}: !milo.vec<${elem}>`;
       }
       if ((p.isRef || p.isRefMut) && valueType(this.cx, p.type) === null) {
-        this.bind(p.name, { kind: "opaque", what: p.type.tag });
+        this.bind(p.name, { kind: "opaque", what: blocker(this.cx, p.type) });
         return `%p${i}: ${PTR}`;
       }
       const ty = this.value(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
@@ -262,7 +275,7 @@ class FnEmitter {
 
   private value(t: TypeKind, what: string): string {
     const v = valueType(this.cx, t);
-    if (v === null) throw new MlirUnsupported(`${what} of type ${t.tag}`);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
     return v;
   }
   private retMain(): void {
@@ -284,7 +297,18 @@ class FnEmitter {
       if (b?.kind === "opaque") throw new MlirUnsupported(`use of a by-ref param of type ${b.what}`);
       if (b) return b;
     }
-    throw new MlirUnsupported("global or unknown ident");
+    const g = this.cx.mlirGlobal(name);
+    if (!g) throw new MlirUnsupported("unknown ident");
+    if (g.threadLocal) throw new MlirUnsupported("thread-local global");
+    // Its place, not an owned slot: nothing here may move out of it or drop it at a scope end.
+    const ty = this.value(g.type, "global");
+    const ref = this.def(`milo.global ${quote(name)} : !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+    return { kind: "var", ref, ty };
+  }
+
+  /** `name` is a module global here: no local binding shadows it. */
+  private isGlobal(name: string): boolean {
+    return !this.scopes.some(m => m.has(name)) && this.cx.mlirGlobal(name) !== null;
   }
 
   private loc(span: Span | undefined): string {
@@ -404,7 +428,8 @@ class FnEmitter {
         return false;
       }
       case "Assign": {
-        if (s.isInit) throw new MlirUnsupported("init assign");
+        // A lazy global's first fill: the slot holds zeroes, nothing to drop.
+        if (s.isInit && (s.target.kind !== "Ident" || !this.isGlobal(s.target.name))) throw new MlirUnsupported("init assign");
         if (s.target.kind === "PtrDeref") {
           const ty = scalar(s.target.type, "store through a pointer");
           // The value first, then the place: legacy genStmt Assign's order.
@@ -441,8 +466,8 @@ class FnEmitter {
         // The old value's drop is milo-scope-drops' business: it goes before the store.
         const v = this.consume(this.expr(s.value), "assignment");
         if (v.ty !== b.ty) throw new MlirUnsupported("assign of a different type");
-        if (hasDrop(b.ty)) this.dropGlue(b.ty, s.target.type);
-        this.emit(`milo.store ${v.ref}, ${b.ref} : !milo.ref<${b.ty}>`);
+        if (hasDrop(b.ty) && !s.isInit) this.dropGlue(b.ty, s.target.type);
+        this.emit(`milo.store ${v.ref}, ${b.ref}${s.isInit ? " init" : ""} : !milo.ref<${b.ty}>`);
         return false;
       }
       case "Return": {
@@ -518,6 +543,9 @@ class FnEmitter {
         return true;
       case "Match":
         return this.match(s, null).done;
+      case "LazyGlobalInit":
+        this.emit(`milo.global.init ${quote(s.name)}`);
+        return false;
       case "Block":
         // Opens no scope: a `let` in it binds in the enclosing one.
         return this.stmts(s.body);

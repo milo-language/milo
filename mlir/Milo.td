@@ -482,11 +482,34 @@ def Milo_LenOp : Milo_Op<"len",
   let assemblyFormat = "$vec attr-dict `:` type($vec)";
 }
 
+// `init`: the place holds no value yet (a lazy global's first fill, HIR Assign isInit), so
+// nothing is dropped before the store even when the type has drop glue.
 def Milo_StoreOp : Milo_Op<"store", [
     TypesMatchWith<"value is the slot's type", "ref", "value",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {
-  let arguments = (ins Milo_Value:$value, Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref);
-  let assemblyFormat = "$value `,` $ref attr-dict `:` type($ref)";
+  let arguments = (ins Milo_Value:$value, Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref,
+                       UnitAttr:$init);
+  let assemblyFormat = "$value `,` $ref (`init` $init^)? attr-dict `:` type($ref)";
+}
+
+// The place of module global `name` (a `let`/`var` at module level), defined by the legacy
+// module. Not an owned slot: what it holds outlives every function, so no scope drops it;
+// a store over it drops the old value (milo-scope-drops), as through a `&mut` param.
+// Thread-local globals stay legacy.
+def Milo_GlobalOp : Milo_Op<"global", [Pure]> {
+  let arguments = (ins StrAttr:$name);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$name attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
+// Lazy global `name` is filled before the next statement reads it: a call of legacy's
+// guarded entry (`__milo.lazy.<name>`, src/lazy-globals.ts), which runs the initializer
+// the first time. It runs arbitrary code, so it declares no effects (any memory).
+def Milo_GlobalInitOp : Milo_Op<"global.init"> {
+  let arguments = (ins StrAttr:$name);
+  let assemblyFormat = "$name attr-dict";
+  let hasVerifier = 1;
 }
 
 // `if cond { } else { }`. With results it is an expression (`&&`, `||`): both regions

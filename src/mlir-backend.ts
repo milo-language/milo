@@ -198,9 +198,14 @@ export class MlirPlan {
     if (fn.isExtern) return null;
     const r = emitMlirFunction(fn, this.cx, this.fns);
     if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
-    const ptrs = r.text.slice(r.text.indexOf("\n")).includes("!milo.ptr");
-    // main's prologue is found ahead of its stub, and with a pointer there is no stub.
-    if (ptrs && fn.name === "main") { this.log.push("main\traw pointer in main"); return null; }
+    // A lazy global's init function is codegen's own, not in the HIR module.
+    if (!this.fns.has(fn.name)) this.fns.set(fn.name, fn);
+    // Mutable globals the body names are what the analysis reads as `touches`, and their
+    // addresses flow like a raw pointer's: neither is in a stub's call list.
+    const body = r.text.slice(r.text.indexOf("\n"));
+    const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ");
+    // main's prologue is found ahead of its stub, and with a full legacy body there is none.
+    if (ptrs && fn.name === "main") { this.log.push(`main\t${body.includes("!milo.ptr") ? "raw pointer" : "global"} in main`); return null; }
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(fn.name);

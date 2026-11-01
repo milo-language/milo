@@ -3261,6 +3261,14 @@ export class Codegen {
     };
   }
 
+  /** MILO_MLIR=1: module global `name` (its `@name` slot), or null for any other name. */
+  public mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null {
+    const g = this.globalVars.get(name);
+    if (!g) return null;
+    const h = (this.hirGlobals as { name: string; threadLocal?: boolean }[]).find(x => x.name === name);
+    return { type: g.typeKind, threadLocal: !!h?.threadLocal };
+  }
+
   /** MLIR path: main goes through MLIR only when it is the process entry itself. */
   public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
 

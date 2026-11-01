@@ -225,6 +225,22 @@ LogicalResult DropOp::verify() {
   return success();
 }
 
+LogicalResult GlobalOp::verify() {
+  if (getName().empty())
+    return emitOpError("needs a name");
+  // A reference is second-class and never stored, so no global holds one.
+  Type t = getRef().getType().getPointee();
+  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, StringType, VecValType>(t))
+    return emitOpError("holds a ") << t << ": a global holds a value";
+  return success();
+}
+
+LogicalResult GlobalInitOp::verify() {
+  if (getName().empty())
+    return emitOpError("needs a name");
+  return success();
+}
+
 LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
   if (!v || v.getElementType() != getType().getElementType())

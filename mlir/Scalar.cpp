@@ -775,7 +775,9 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
   }
 };
 
-// The recorder's globals, defined by std/replay in the legacy module.
+// The address of a global the legacy module defines (the recorder's, a Milo module global).
+// Declared external here with a placeholder type: with opaque pointers only the accesses
+// carry types, and the splice drops the declaration for a name the module already has.
 Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name) {
   auto module = op->getParentOfType<ModuleOp>();
   auto g = module.lookupSymbol<LLVM::GlobalOp>(name);
@@ -819,6 +821,32 @@ struct ReplayLowering : ConvertOpToLLVMPattern<OpT> {
     LLVM::BrOp::create(rw, loc, ValueRange{}, cont);
     rw.setInsertionPointToEnd(cur);
     LLVM::CondBrOp::create(rw, loc, cond, adjust, cont);
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
+struct GlobalLowering : ConvertOpToLLVMPattern<GlobalOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(GlobalOp op, OpAdaptor,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, replayGlobal(rw, op, op.getName()));
+    return success();
+  }
+};
+
+struct GlobalInitLowering : ConvertOpToLLVMPattern<GlobalInitOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(GlobalInitOp op, OpAdaptor,
+                  ConversionPatternRewriter &rw) const override {
+    auto module = op->getParentOfType<ModuleOp>();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, ("__milo.lazy." + op.getName()).str(), {},
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    LLVM::CallOp::create(rw, op.getLoc(), *fn, ValueRange{});
     rw.eraseOp(op);
     return success();
   }
@@ -1301,7 +1329,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
-               EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering>(tc);
+               EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
+               GlobalLowering, GlobalInitLowering>(tc);
 }
 
 void milo::registerScalarPasses() {
