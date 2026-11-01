@@ -1,0 +1,29 @@
+// An enum holding an enum declared after it (here std's Option<string>) gets drop glue:
+// legacy computed droppable enums in one pass in declaration order and leaked every W's
+// string. `bun scripts/mlir-same.ts --filter enumHoldsLaterEnumDrop --owned` counts it.
+// @expect: 5
+enum W {
+    Wrap(Option<string>),
+    Empty,
+}
+
+fn mk(i: i64): W {
+    if i == 99 { return W.Empty }
+    return W.Wrap(Option.Some("a long heap string here number ".clone() + i.toString()))
+}
+
+fn isWrap(w: &W): bool {
+    return match w {
+        W.Wrap(_) => true
+        W.Empty => false
+    }
+}
+
+fn main() {
+    var n = 0
+    for i in 0..5 {
+        let w = mk(i)
+        if isWrap(w) { n = n + 1 }
+    }
+    print(n)
+}

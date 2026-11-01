@@ -1816,14 +1816,23 @@ export class Codegen {
     this.dropImpls = module.dropImpls;
     this.structDropCache.clear();
 
-    // compute which enums need drop glue
-    for (const [name, layout] of this.enumLayouts) {
-      for (const [, variant] of layout.variants) {
-        if (variant.fieldTypeKinds.some(f => this.needsDropCg(f) || (f.tag === "enum" && f.name === name))) {
-          this.droppableEnums.add(name);
-          break;
+    // compute which enums need drop glue, to a fixpoint: an enum can hold one declared
+    // after it (`enum W { Wrap(Option<string>) }`), and a single pass in declaration
+    // order left W without glue, leaking every payload it held. The struct cache is
+    // cleared each pass because it memoizes answers that read droppableEnums.
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const [name, layout] of this.enumLayouts) {
+        if (this.droppableEnums.has(name)) continue;
+        for (const [, variant] of layout.variants) {
+          if (variant.fieldTypeKinds.some(f => this.needsDropCg(f) || (f.tag === "enum" && f.name === name))) {
+            this.droppableEnums.add(name);
+            changed = true;
+            break;
+          }
         }
       }
+      if (changed) this.structDropCache.clear();
     }
 
     // Before the signatures: refParamAttrs reads it, and an exported fn's call sites must

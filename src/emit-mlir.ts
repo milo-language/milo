@@ -146,17 +146,13 @@ const owners = new WeakMap<MlirEmitCtx, Map<string, Owns | string>>();
 function recordOwns(cx: MlirEmitCtx, text: string, t: TypeKind): void {
   let m = owners.get(cx);
   if (!m) owners.set(cx, m = new Map());
-  const drop = ownsStructurally(cx, t, []);
-  // milo-opt decides what to drop from the dialect type (Milo.cpp needsDrop), the drop
-  // glue it calls is legacy's (needsDropCg): where they differ, one of them is wrong.
-  // Legacy computes droppable enums in one pass, so an enum holding one declared after
-  // it (`enum W { Wrap(Option<string>) }`) is never dropped there: a legacy leak.
-  const o: Owns | string = drop !== cx.needsDropCg(t) ? "a type legacy's drop glue does not drop"
-    : { drop, userDrop: runsUserDropT(cx, t, []) };
+  // milo-opt decides what to drop from the dialect type (Milo.cpp needsDrop), so this
+  // must agree with the drop glue it calls, legacy's needsDropCg.
+  const o: Owns = { drop: ownsStructurally(cx, t, []), userDrop: runsUserDropT(cx, t, []) };
   const had = m.get(text);
   if (had === undefined) m.set(text, o);
-  else if (typeof had !== "string" && (typeof o === "string" || had.drop !== o.drop || had.userDrop !== o.userDrop))
-    m.set(text, typeof o === "string" ? o : "a type whose dialect spelling two checker types share");
+  else if (typeof had !== "string" && (had.drop !== o.drop || had.userDrop !== o.userDrop))
+    m.set(text, "a type whose dialect spelling two checker types share");
 }
 
 /** Milo.cpp needsDrop, over the checker's type. */

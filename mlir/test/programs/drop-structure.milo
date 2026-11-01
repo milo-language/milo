@@ -2,7 +2,7 @@
 // is decided from the checker's types, not the dialect text. Inside its own body `Tree`
 // is spelled by name alone, so the text of `[Tree; 2]` there names no string or Vec and
 // read as an array that owns nothing. `W` holds an enum declared after it, which legacy's
-// drop glue never drops (a legacy leak both sides must agree on).
+// one-pass drop glue never dropped (a leak, fixed: the pass is a fixpoint now).
 
 struct Tree { name: string, kids: Vec<[Tree; 2]> }
 
