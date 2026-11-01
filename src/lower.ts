@@ -1479,9 +1479,6 @@ class LowerCtx {
           if (expr.method === "min" || expr.method === "max") {
             return { kind: "VecMinMax", object: this.lowerExpr(expr.object), elementType: objType.element, isMax: expr.method === "max", optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
           }
-          if (expr.method === "indexOf") {
-            return { kind: "VecIndexOf", vec: recv(), value: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
-          }
           if (expr.method === "position") {
             return { kind: "VecPosition", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
           }

@@ -13610,15 +13610,11 @@ export class TypeChecker {
         return this.setType(expr, this.resolveOptionForValue(el, sp));
       }
       // `find` answers "which value"; `indexOf`/`position` answer "where".
+      // indexOf is std/vec code, gated and dispatched like contains.
       if (expr.method === "indexOf") {
-        if (expr.args.length !== 1) { this.error(`'indexOf' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const el = objType.element;
-        if (!this.vecSearchComparable(el, "indexOf", "position", sp)) return this.setType(expr, { tag: "unknown" });
-        const argType = this.checkExpr(expr.args[0], el);
-        if (!typeEq(el, argType) && argType.tag !== "unknown") {
-          this.error(`'indexOf': expected ${this.show(el)}, got ${this.show(argType)}`, sp);
-        }
-        return this.setType(expr, this.resolveOptionForValue({ tag: "int", bits: 64, signed: true }, sp));
+        if (!this.vecSearchComparable(objType.element, "indexOf", "position", sp)) return this.setType(expr, { tag: "unknown" });
+        const plain = this.plainSearchElement(objType.element, expr.method);
+        if (plain) return this.dispatchMangledMethod(expr, plain, sp);
       }
       if (expr.method === "position") {
         if (expr.args.length !== 1) { this.error(`'position' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }

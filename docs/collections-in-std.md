@@ -297,3 +297,13 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   Arity/type messages now come from the generic method path ("'contains' argument 1:
   expected i64, got string"). Planted `!=` turns `vecContainsStd` red; output identical
   to the old compiler; 0 leaks; bench 3M int + string searches 1.03s builtin vs 1.00s std.
+- 2026-11-01: container impl methods are instantiated on demand (the commit before
+  isEmpty): an inherent `impl Vec<T>` method is checked for a `T` only when called, a
+  trait impl still whole and once. Without it, any std/vec call on a `Vec<Vec<i64>>`
+  instantiated `contains` and failed on its `==`, and `Option<HashMap<K, V>>` from a
+  container instance got a type name with spaces (`typeKindToMiloType` now keeps the
+  map's type arguments). Pinned by `containerImplOnDemand`.
+- 2026-11-01: `indexOf` moved: the contains loop with a wrapping counter, `Some(i)` /
+  `None`. Same gate and ranged-int dispatch as contains. Planted `wrappingAdd(2)` turns
+  `vecIndexOfStd` red; output identical; 0 leaks; bench 3M int + string searches 1.06s
+  builtin vs 1.03s std.

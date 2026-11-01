@@ -1,0 +1,72 @@
+// Vec.indexOf is std/vec.milo code. Covers empty Vecs, slices and a fixed array as the
+// receiver (a slice answers with its own indices), the first of repeated matches, int
+// widths, bool, string by content, float IEEE equality (NaN never found, -0.0 finds
+// 0.0), a temporary receiver and needle, a capturing closure, and a ranged element
+// searched with any value of its width.
+// @expect: none none
+// @expect: 0 2 none
+// @expect: 1 none
+// @expect: 2 0 none
+// @expect: 1 none
+// @expect: none 1 2
+// @expect: 1
+// @expect: 0 2
+// @expect: s1 s2
+// @expect: 1 none none
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Some(i) => i.toString(),
+        None => "none",
+    }
+}
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("s" + i.toString())
+    }
+    return v
+}
+
+fn at(s: &[i64], x: i64): Option<i64> {
+    return s.indexOf(x)
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    let es: Vec<string> = Vec.new()
+    print(show(e.indexOf(1)), " ", show(es.indexOf("")))
+
+    let v: Vec<i64> = [5, 6, 7, 5]
+    print(show(v.indexOf(5)), " ", show(v.indexOf(7)), " ", show(v.indexOf(8)))
+    print(show(at(v[1..4], 7)), " ", show(at(v[1..1], 6)))
+
+    let bytes: Vec<u8> = [9, 200, 255]
+    let bs: Vec<bool> = [true, false]
+    print(show(bytes.indexOf(255)), " ", show(bs.indexOf(true)), " ", show(bytes.indexOf(1)))
+
+    let ss: Vec<string> = ["x", "ab" + "c"]
+    print(show(ss.indexOf("a" + "bc")), " ", show(ss.indexOf("ab")))
+
+    let nan = 0.0 / 0.0
+    let fs: Vec<f64> = [nan, 0.0, 1.5]
+    print(show(fs.indexOf(nan)), " ", show(fs.indexOf(-0.0)), " ", show(fs.indexOf(1.5)))
+
+    let a = [4, 5]
+    print(show(a.indexOf(5)))
+
+    print(show(mk(3).indexOf("s" + 0.toString())), " ", show(mk(3).indexOf("s2")))
+
+    let known = mk(3)
+    let words: Vec<string> = ["s1", "x", "s2"]
+    let hits = words.filter((w: &string) => known.indexOf(w) != None)
+    print(hits[0], " ", hits[1])
+
+    let r: Vec<Digit> = [3, 8]
+    let wide: i32 = 40
+    print(show(r.indexOf(8)), " ", show(r.indexOf(12)), " ", show(r.indexOf(wide)))
+}
+
+// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
+type Digit = i32(0..9)

@@ -6,7 +6,7 @@ import type { Span } from "./ast";
 import type { HIRExpr } from "./hir";
 import type { OwnLedger, CopyDecl } from "./codegen-own";
 import type { EnumLayout, EnumVariant } from "./codegen";
-import { genStringCmp, genStringOrd, type StringCtx } from "./codegen-string";
+import { genStringOrd, type StringCtx } from "./codegen-string";
 import { LlvmTextBuilder, Ty, val, asGen, type Val, type Builder } from "./ir";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
@@ -893,70 +893,6 @@ export function genVecMinMax(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMinMax
   const result = b.load(slot.enumT, slot.addr);
   // A temporary receiver is dead once the scan is done; the result is a scalar or a clone.
   ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.object);
-  return [lines, result.ref, slot.enumTy];
-}
-
-export function genVecIndexOf(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecIndexOf" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-  const vv = ctx.genVal(expr.vec, lines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const vec = val(vv.ref, VEC_TY);
-  const data = b.extractvalue(vec, 0, Ty.ptr);
-  const len = b.extractvalue(vec, 1, Ty.i64);
-  const nvRef = ctx.genVal(expr.value, lines);
-  const nv = val(nvRef.ref, elemTy);
-
-  const slot = optionResultSlot(ctx, expr.optionEnumName, "vecidx", lines);
-  const iAddr = b.alloca(Ty.i64);
-  b.store(I64_0, iAddr);
-  const cond = b.newBlock("vecidx.cond");
-  const body = b.newBlock("vecidx.body");
-  const found = b.newBlock("vecidx.found");
-  const step = b.newBlock("vecidx.step");
-  const end = b.newBlock("vecidx.end");
-  b.br(cond);
-  b.position(cond);
-  const i = b.load(Ty.i64, iAddr);
-  const more = b.icmp("ult", i, len);
-  b.condBr(more, body, end);
-  b.position(body);
-  const elemPtr = b.gep(elemTy, data, [i]);
-  const elemVal = b.load(elemTy, elemPtr);
-  let eq: Val;
-  if (expr.elementType.tag === "string") {
-    const [, r] = genStringCmp(ctx, lines, elemVal.ref, nv.ref, true);
-    eq = val(r, Ty.i1);
-  } else if (expr.elementType.tag === "float") {
-    eq = b.fcmp("oeq", elemVal, nv);
-  } else {
-    eq = b.icmp("eq", elemVal, nv);
-  }
-  // the string compare above may have opened blocks; land in a fresh one so the
-  // index load below is reachable from a single predecessor
-  const testLabel = b.newBlock("vecidx.test");
-  b.br(testLabel);
-  b.position(testLabel);
-  b.condBr(eq, found, step);
-  b.position(found);
-  const hitIdx = b.load(Ty.i64, iAddr);
-  ctx.storeEnumTag(lines, slot.enumTy, slot.addr.ref, slot.someTag);
-  const payloadPtr = val(ctx.enumPayloadPtr(lines, slot.enumTy, slot.addr.ref, slot.someTag), Ty.ptr);
-  b.store(hitIdx, payloadPtr);
-  b.br(end);
-  b.position(step);
-  const iCur = b.load(Ty.i64, iAddr);
-  const iNext = b.binop("add", iCur, I64_1);
-  b.store(iNext, iAddr);
-  b.br(cond);
-  b.position(end);
-  const result = b.load(slot.enumT, slot.addr);
-  // Same as the map lookups: the needle is the caller's, and a read-only search takes
-  // no ownership of it. `v.contains("s" + i.toString())` leaked the needle per call.
-  ctx.dropOwnedTemp(lines, nv.ref, elemTy.ll, expr.value);
-  // …and the receiver, when that is a temporary: `mkVec().contains(x)` leaked the whole
-  // container. A search keeps no pointer into it once the answer is a scalar.
-  ctx.dropOwnedTemp(lines, vv.ref, "%Vec", expr.vec);
   return [lines, result.ref, slot.enumTy];
 }
 

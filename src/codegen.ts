@@ -8,7 +8,7 @@ import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecIndexOf, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -60,7 +60,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecEach",
-  "VecEnumerate", "VecExtend", "VecIndexOf", "VecInsert",
+  "VecEnumerate", "VecExtend", "VecInsert",
   "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
   "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey", "VecSum",
   "VecSwap", "VecTruncate", "WrappingArith", "Zeroed",
@@ -5667,8 +5667,6 @@ export class Codegen {
         return genVecGetOpt(this, expr, lines);
       case "VecMinMax":
         return genVecMinMax(this, expr, lines);
-      case "VecIndexOf":
-        return genVecIndexOf(this, expr, lines);
       case "VecPosition":
         return genVecPosition(this, expr, lines);
       case "VecExtend":

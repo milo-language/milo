@@ -112,7 +112,6 @@ export type HIRExpr =
   // Out of range yields None instead of the panic `v[i]` raises.
   | { kind: "VecGetOpt"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecMinMax"; object: HIRExpr; elementType: TypeKind; isMax: boolean; optionEnumName: string; type: TypeKind; span?: Span }
-  | { kind: "VecIndexOf"; vec: HIRExpr; value: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecPosition"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecRetain"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

@@ -34,4 +34,19 @@ impl Vec<T> {
         }
         return false
     }
+
+    // The index of the first element equal to `x`, or None. Same element types and the
+    // same `==` as contains. The variants are qualified: a user fn named `Some` shadows
+    // the bare alias program-wide (fixture preludeVariantsShadowed).
+    fn indexOf(self: &Self, x: &T): Option<i64> {
+        var i = 0
+        for e in self {
+            if e == x {
+                return Option.Some(i)
+            }
+            // i < len, so it cannot overflow; wrapping keeps the check out of the loop.
+            i = i.wrappingAdd(1)
+        }
+        return Option.None
+    }
 }
