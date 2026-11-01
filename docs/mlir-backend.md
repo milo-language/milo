@@ -338,6 +338,13 @@ structs, enums.
   there as well; larger ones, and every 128+ byte struct, stay places. `into` stores such
   a value whole into its slot. Program `big-match` (`wrap`, `viaLocal`); planted bug:
   the value not stored (`big-match` exit 0 -> 1). Tahoe Roads api: 3889 of 5350 (72.7%).
+- *An arm's own binding as its value* (`let Some(v) = f() else { ... }`, `Some(v) => v` on
+  an owned subject): moved out of the arm's slot (`milo.move`), as legacy moves an
+  arm-local tail; it was "block value copies a borrowed value" (144 in Tahoe Roads).
+  Copying a view out of a place at a tail (legacy's cloneViewValue) is not needed by
+  anything measured: strings arrive as `StringClone`, and the checker refuses moving an
+  owning struct out of a borrow. Program `tail-views`; planted bug: `milo.load` for the
+  move (`tail-views` stdout, a use after free). Tahoe Roads api: 3992 of 5350 (74.6%).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop

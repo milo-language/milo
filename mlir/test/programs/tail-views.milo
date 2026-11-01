@@ -1,0 +1,56 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: values yielded by an
+// if-expression or a match arm. An arm's own payload binding (what `let ... else` makes)
+// is moved out; a string read out of a place is a new owner of its buffer.
+
+struct Cfg { name: string, tags: Vec<i64>, alt: string }
+
+fn choose(c: &Cfg, first: bool): string {
+    let s = if first { c.name } else { c.alt + "!" }
+    return s
+}
+
+fn find(words: &Vec<string>, n: i64): Option<string> {
+    if n < words.len() {
+        return Option.Some(words[n])
+    }
+    return Option.None
+}
+
+// `let ... else` yields the arm's own payload binding: moved out, not copied.
+fn firstOr(words: &Vec<string>, n: i64): string {
+    let Option.Some(w) = find(words, n) else {
+        return "none"
+    }
+    return w + "?"
+}
+
+// A payload read through a borrowed subject: yielded, a new owner of the string.
+fn peek(o: &Option<string>): string {
+    let s = match o {
+        Option.Some(w) => w,
+        Option.None => "-",
+    }
+    return s
+}
+
+fn pickName(a: &string, b: &string, n: i64): string {
+    return if n > 0 { a } else { b }
+}
+
+fn main() {
+    var tags: Vec<i64> = Vec.new()
+    tags.push(1)
+    tags.push(2)
+    let c = Cfg { name: "cfg".repeat(2), tags: tags, alt: "alt".repeat(2) }
+    let a = choose(c, true)
+    let b = choose(c, false)
+    print(a, " ", b, " ", c.name)
+    let x = "x".repeat(3)
+    let y = "y".repeat(2)
+    print(pickName(x, y, 1), " ", pickName(x, y, 0), " ", x, " ", y)
+    var ws: Vec<string> = Vec.new()
+    ws.push("w".repeat(3))
+    print(firstOr(ws, 0), " ", firstOr(ws, 5), " ", ws)
+    let o = find(ws, 0)
+    print(peek(o), " ", peek(Option.None), " ", o)
+}

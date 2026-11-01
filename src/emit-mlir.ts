@@ -1368,7 +1368,13 @@ class FnEmitter {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
-    const v = this.consume(this.expr(last.expr), "block value");
+    const armLocal = last.expr.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(last.expr.name) : undefined;
+    // The block's own binding (an arm's payload, as `let ... else` makes one) is moved out,
+    // as legacy does for an arm-local tail (forkTailIsView's armLocal).
+    let v = armLocal?.kind === "var" && armLocal.owned
+      ? { ...this.def(`milo.move ${armLocal.ref} : !milo.ref<${armLocal.ty}>`, armLocal.ty), own: "owned" as const }
+      : this.expr(last.expr);
+    v = this.consume(v, "block value");
     if (v.ty !== ty) throw new MlirUnsupported("block value of another type");
     return v;
   }
