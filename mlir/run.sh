@@ -35,6 +35,10 @@ done
 [ "$n" -ge 4 ] || { echo "FAIL: only $n FileCheck tests ran"; exit 1; }
 echo "ok ($n files)"
 
+echo "== MILO_MLIR=1 vs legacy on test/programs (scalar fns, every trap)"
+out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 1; }
+echo "$out" | tail -3
+
 echo "== differential: same result bits on every size"
 for v in mlir mlir-nov milo; do "$O/$v" check > "$O/$v.check"; done
 cmp "$O/mlir.check" "$O/milo.check" && cmp "$O/mlir-nov.check" "$O/milo.check" && echo "ok ($(wc -l < "$O/milo.check" | tr -d ' ') cases)"
