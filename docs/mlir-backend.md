@@ -53,6 +53,24 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
   subprocess. If compile time demands it, switch to the MLIR C API over `bun:ffi`; the
   emitter's output does not change.
 
+## Leverage beyond the port
+
+What the move buys after coverage is complete, in order of payoff. Each one is upstream
+MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it ships.
+
+| Lever | Upstream piece | What Milo gets | Status |
+|---|---|---|---|
+| Cheaper safety | `IntegerRangeAnalysis`, dataflow framework | prove overflow and bounds checks dead and delete them; checked arithmetic costs less | partly: bounds-check versioning ships; range analysis not wired |
+| Correctness tooling | crash reproducers (`--mlir-pass-pipeline-crash-reproducer`), `mlir-reduce`, `--mlir-print-ir-after-all`, debug counters | a compiler crash becomes a one-file repro, reduced automatically; bisect a miscompile to one pass application | available, not wired into the driver |
+| Compile time | multithreaded pass manager | function passes run in parallel for free; the fix for the current build-time regression | not measured |
+| Contracts | `smt` dialect | `requires`/`ensures` checked by a solver from the same IR the compiler lowers | decided (see Verification) |
+| Loop optimization | `affine`, `linalg`, `vector` | tiling, fusion and vectorization of array and Vec loops, which hand-written IR never had | prototype only (axpy 2.9x) |
+| Async | `async` dialect, LLVM coroutines | M6 tasks lower through upstream coroutine passes instead of hand-built state machines | M6 |
+| Debug info | `Location` plus LLVM dialect debug attributes | DWARF follows every op through every pass | M7 (DWARF parity) |
+| Caching | MLIR bytecode | stable serialized modules: incremental builds, prechecked packages | not started |
+| Other clients | the dialect itself, C API | another frontend (a self-hosted Milo frontend, ChadScript) targets `milo` and inherits drops, checks and lowering | self-hosting plan |
+| New targets | `gpu`, NVVM, ROCDL, SPIR-V | Milo kernels on GPUs, later | not planned |
+
 ## Coexistence: one function at a time
 
 A function compiles through the MLIR path when every HIR node in it is supported (one
