@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-10-31 (plan written; no phase started)
+last-verified: 2026-10-31 (phase 1 in progress: contains moved)
 -->
 
 # Collections in std
@@ -106,3 +106,8 @@ special cases.
 ## Progress log
 
 - 2026-10-31: plan written. MLIR route evaluated and parked. RawVec spike passes.
+- 2026-10-31: phase 0 closed (primitives exist; raw-pointer index store no longer drops
+  the old slot, c0a3d294). Phase 1 started: `_mapHash`/`_mapKeyEq` intrinsics and
+  `contains` moved to `std/hashmap.milo`. Corpus 1774/1774; planted probe-step bug turns
+  `hashMapContainsStd` red; contains benchmark at parity (0.10s vs 0.10s). Also fixed
+  `p as *P<i64>` (a pointer to a generic struct lost its `*` in `resolve`).

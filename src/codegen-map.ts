@@ -589,51 +589,6 @@ function emitHashProbePrologue(
   return { slot, entryPtr };
 }
 
-export function genHashMapContains(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapContains" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  const mapType = expr.map.type;
-  if (mapType.tag !== "hashmap") throw new Error("HashMapContains on non-hashmap");
-  const keyType = mapType.key;
-  const valueType = mapType.value;
-  const keyTy = Ty.of(ctx.llvmType(keyType));
-  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
-  const b = new LlvmTextBuilder(lines, ctx);
-
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const keyVal = ctx.genVal(expr.key, lines);
-  const key = val(keyVal.ref, keyTy);
-
-  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
-  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
-
-  const probeCond = b.newBlock("hmc.probe");
-  const probeOccupied = b.newBlock("hmc.occupied");
-  const probeCheck = b.newBlock("hmc.check");
-  const foundLabel = b.newBlock("hmc.found");
-  const notFoundLabel = b.newBlock("hmc.notfound");
-  const probeNext = b.newBlock("hmc.pnext");
-  const doneLabel = b.newBlock("hmc.done");
-
-  const { slot } = emitHashProbePrologue(ctx, b,
-    { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, key, keyType },
-  );
-
-  b.position(foundLabel);
-  b.br(doneLabel);
-  b.position(notFoundLabel);
-  b.br(doneLabel);
-  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
-
-  b.position(doneLabel);
-  const result = b.phi(Ty.i1, [[val("true", Ty.i1), foundLabel], [val("false", Ty.i1), notFoundLabel]]);
-  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
-  // A materialized receiver is an owned temporary nobody else will free. This runs after
-  // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-  if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return asGen(lines, result);
-}
-
 // One keyed probe, shared by modify and getOrInsertWith: evaluates the receiver and
 // key, opens the probe, and returns the labels plus what the found block needs (the
 // entry pointer) and what the not-found block needs (the map pointer and the evaluated
@@ -1170,4 +1125,29 @@ export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   // the phi above, so the block it opens cannot invalidate the phi's predecessors.
   if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
   return asGen(lines, result);
+}
+
+// The std/hashmap intrinsics: the same hash and key comparison the builtin methods above
+// emit, so a method moved into std probes the same slots and matches the same keys. The
+// key operands are places; loading them bitwise (as the probe loads a stored key) keeps
+// a string key's refcount untouched.
+function loadKeyPlace(ctx: CodegenMapCtx, b: Builder, lines: string[], expr: HIRExpr): { key: Val; keyType: TypeKind } {
+  const keyType = expr.type.tag === "ref" ? expr.type.inner : expr.type;
+  const [placeLines, ptr] = ctx.genLValue(expr);
+  lines.push(...placeLines);
+  return { key: b.load(Ty.of(ctx.llvmType(keyType)), val(ptr, Ty.ptr)), keyType };
+}
+
+export function genMapHash(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapHash" }, lines: string[]): Gen {
+  const b = new LlvmTextBuilder(lines, ctx);
+  const { key, keyType } = loadKeyPlace(ctx, b, lines, expr.key);
+  const seed = ctx.genVal(expr.seed, lines);
+  return asGen(lines, fnvHash(ctx, b, key, keyType, val(seed.ref, Ty.i64)));
+}
+
+export function genMapKeyEq(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapKeyEq" }, lines: string[]): Gen {
+  const b = new LlvmTextBuilder(lines, ctx);
+  const a = loadKeyPlace(ctx, b, lines, expr.a);
+  const c = loadKeyPlace(ctx, b, lines, expr.b);
+  return asGen(lines, keysEqual(ctx, b, a.key, c.key, a.keyType));
 }

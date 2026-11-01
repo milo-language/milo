@@ -122,6 +122,15 @@ function substituteAliasType(body: MiloType, subst: ReadonlyMap<string, MiloType
   };
 }
 
+// std/hashmap's hashing and key comparison, the same code the builtin HashMap emits, so a
+// method moved into std hashes and matches keys exactly as the ones still in codegen do.
+export const MAP_INTRINSICS: ReadonlySet<string> = new Set(["_mapHash", "_mapKeyEq"]);
+export function isHashMapModule(file: string | undefined): boolean {
+  if (!file) return false;
+  const posix = file.replace(/\\/g, "/");
+  return posix === "std/hashmap.milo" || posix.endsWith("/std/hashmap.milo");
+}
+
 export function isForeignModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -2340,6 +2349,12 @@ export class TypeChecker {
       // "cannot iterate over type 'i64'" against a program that never wrote one. Wrap here,
       // inside the ref/ptr wrappers, which belong outside the array.
       if (ty.isArray) result = { tag: "array", element: result, size: ty.arraySize };
+      // `*P<i64>` came through here without its pointer: the cast `p as *P<i64>` then
+      // resolved to a plain `P<i64>` and failed as a cast to a struct.
+      const depth = ty.ptrDepth ?? (ty.isPtr ? 1 : 0);
+      for (let i = 0; i < depth; i++) result = { tag: "ptr", inner: result };
+      if (depth > 0) return result;
+      if (ty.isNullableRef) return { tag: "ptr", inner: result };
       if (ty.isRef) return { tag: "ref", inner: result, mutable: false };
       if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
       return result;
@@ -10529,6 +10544,7 @@ export class TypeChecker {
         `there is no pre-state to name in a ${this.contractScope === null ? "function body" : `'${this.contractScope}' clause`}`);
       return this.setType(expr, { tag: "unknown" });
     }
+    if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(sp?.file)) return this.checkMapIntrinsic(expr);
     if (expr.func === "sizeOf") {
       if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`sizeOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
       if (expr.args.length !== 0) { this.error(`sizeOf takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -12097,6 +12113,38 @@ export class TypeChecker {
     return this.setType(expr, inner);
   }
 
+  // `_mapHash(key, seed): i64` and `_mapKeyEq(a, b): bool`, std/hashmap only. The key
+  // arguments are places read in place (codegen loads them through their address), so
+  // a string key is hashed without a refcount round trip and nothing moves.
+  private checkMapIntrinsic(expr: ExprOf<"Call">): TypeKind {
+    const sp = expr.span;
+    const isHash = expr.func === "_mapHash";
+    const result: TypeKind = isHash ? { tag: "int", bits: 64, signed: true } : { tag: "bool" };
+    if (expr.args.length !== 2) {
+      this.error(`'${expr.func}' expects 2 arguments, got ${expr.args.length}`, sp);
+      return this.setType(expr, result);
+    }
+    const keyArgs = isHash ? [expr.args[0]] : expr.args;
+    const keyTypes = keyArgs.map(a => {
+      if (a.kind !== "Ident" && a.kind !== "FieldAccess" && a.kind !== "IndexAccess") {
+        this.error(`'${expr.func}': a key argument must be a place (a variable, field or element)`, a.span);
+      }
+      const t = this.checkExpr(a);
+      return t.tag === "ref" ? t.inner : t;
+    });
+    keyTypes.forEach((t, i) => this.validateHashableKey(t, keyArgs[i].span));
+    if (!isHash && !typeEq(keyTypes[0], keyTypes[1]) && keyTypes[0].tag !== "unknown" && keyTypes[1].tag !== "unknown") {
+      this.error(`'_mapKeyEq': both keys must have the same type, got ${this.show(keyTypes[0])} and ${this.show(keyTypes[1])}`, sp);
+    }
+    if (isHash) {
+      const seedType = this.checkExpr(expr.args[1], { tag: "int", bits: 64, signed: true });
+      if (seedType.tag !== "int" && seedType.tag !== "unknown") {
+        this.error(`'_mapHash': the seed must be an i64, got ${this.show(seedType)}`, expr.args[1].span);
+      }
+    }
+    return this.setType(expr, result);
+  }
+
   private checkPropagateExpr(expr: ExprOf<"Propagate">): TypeKind {
     const sp = expr.span;
     const operandType = this.checkExpr(expr.operand);
@@ -13538,14 +13586,6 @@ export class TypeChecker {
         const cbSig = this.checkExpr(expr.args[1], cbHint);
         this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "bool" });
-      }
-      if (expr.method === "contains") {
-        if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`contains key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
         return this.setType(expr, { tag: "bool" });
       }
       if (expr.method === "remove") {

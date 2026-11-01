@@ -1,0 +1,51 @@
+// HashMap.contains, now std/hashmap.milo code probing the table codegen builds. Dense
+// tables, tombstones from remove, struct and string keys, a temporary receiver.
+struct Pt { x: i64, y: i64 }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    var present: i64 = 0
+    var absent: i64 = 0
+    i = 0
+    while i < 1200 {
+        if m.contains(i) { present = present + 1 } else { absent = absent + 1 }
+        i = i + 1
+    }
+    print(present)
+    print(absent)
+
+    var s: HashMap<string, bool> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), true); i = i + 1 }
+    print(s.contains("w299"))
+    print(s.contains("w300"))
+    print(s.contains(""))
+
+    var p: HashMap<Pt, i64> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, 0)
+    print(p.contains(Pt { x: 1, y: 2 }))
+    print(p.contains(Pt { x: 2, y: 1 }))
+
+    print(squares(50).contains(49 * 49))
+    print(squares(50).contains(50 * 50))
+}
+// @expect: 666
+// @expect: 534
+// @expect: true
+// @expect: false
+// @expect: false
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: false

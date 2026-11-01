@@ -4,6 +4,9 @@
 // need no import. Importing from std/string here also activates its `impl string`
 // methods (e.g. indexOfFrom) program-wide.
 
+// Activates std/hashmap's `impl HashMap` methods program-wide; it exports no names.
+from "std/hashmap" import {}
+
 from "std/string" import {
     asciiIsWhitespace, asciiIsDigit, asciiIsAlpha, asciiIsAlphanumeric,
     asciiIsLower, asciiIsUpper, asciiIsPunctuation, asciiIsHexDigit,

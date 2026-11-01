@@ -4,7 +4,7 @@
 import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
 import { declaredType, floatNamespaceConst, isNestedPattern } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
-import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, isForeignModule, userFnShadowsBuiltin } from "./checker";
+import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, isForeignModule, isHashMapModule, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
@@ -841,6 +841,11 @@ class LowerCtx {
         }
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
+        if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
+          return expr.func === "_mapHash"
+            ? { kind: "MapHash", key: this.lowerExpr(expr.args[0]), seed: this.lowerExpr(expr.args[1]), type, span: expr.span }
+            : { kind: "MapKeyEq", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
+        }
         if (expr.func === "sizeOf") {
           const sizeType = this.c.sizeOfTypes.get(expr);
           if (!sizeType) throw new Error("sizeOf: missing resolved type");
@@ -1522,9 +1527,6 @@ class LowerCtx {
           }
           if (expr.method === "getOrInsertWith") {
             return { kind: "HashMapGetOrInsertWith", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), init: this.lowerExpr(expr.args[1]), type, span: expr.span };
-          }
-          if (expr.method === "contains") {
-            return { kind: "HashMapContains", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
           if (expr.method === "remove") {
             return { kind: "HashMapRemove", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };

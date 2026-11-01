@@ -71,7 +71,6 @@ export type HIRExpr =
   | { kind: "HashMapModify"; map: HIRExpr; key: HIRExpr; callback: HIRExpr; type: TypeKind; span?: Span }
   // `m.getOrInsertWith(k, init)`: insert init() when the key is absent; bool says whether it did.
   | { kind: "HashMapGetOrInsertWith"; map: HIRExpr; key: HIRExpr; init: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HashMapContains"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapWithCapacity"; capacity: HIRExpr; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
@@ -143,6 +142,9 @@ export type HIRExpr =
   | { kind: "BitIntrinsic"; intrinsic: string; value: HIRExpr; amount?: HIRExpr; span?: Span; type: TypeKind }
   | { kind: "OptionOp"; op: string; value: HIRExpr; default?: HIRExpr; boxConversion?: PropagateBoxing; enumName: string; type: TypeKind; span?: Span }
   | { kind: "SizeOf"; sizeType: TypeKind; type: TypeKind; span?: Span }
+  // std/hashmap intrinsics (checker.ts MAP_INTRINSICS); the key operands are places.
+  | { kind: "MapHash"; key: HIRExpr; seed: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "MapKeyEq"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }

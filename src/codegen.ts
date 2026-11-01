@@ -16,7 +16,7 @@ import {
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
-  genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genHashMapContains, genHashMapModify,
+  genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genMapHash, genMapKeyEq, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
@@ -55,9 +55,9 @@ export function noaliasEnabled(): boolean {
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
-  "Forget", "HashMapClear", "HashMapContains", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
+  "Forget", "HashMapClear", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
 "HashMapNew", "HashMapRemove", "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MemSwap", "OffsetOf",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapHash", "MapKeyEq", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecContains", "VecEach",
@@ -5716,8 +5716,10 @@ export class Codegen {
         return genHashMapGet(this, expr, lines);
       case "HashMapGetOrDefault":
         return genHashMapGetOrDefault(this, expr, lines);
-      case "HashMapContains":
-        return genHashMapContains(this, expr, lines);
+      case "MapHash":
+        return genMapHash(this, expr, lines);
+      case "MapKeyEq":
+        return genMapKeyEq(this, expr, lines);
       case "HashMapModify":
         return genHashMapModify(this, expr, lines);
       case "HashMapGetOrInsertWith":

@@ -1,0 +1,47 @@
+// std/hashmap: HashMap method bodies written in Milo (docs/collections-in-std.md).
+//
+// HashMap stays a builtin type: the checker owns its type rules and codegen still owns
+// new, insert, for-in, drop and display. The methods here read the same table through
+// MapRaw, which mirrors codegen's %HashMap layout field for field, so both sides agree
+// on every slot. Hashing and key comparison go through _mapHash/_mapKeyEq, the code the
+// builtin methods emit, so a key hashes to the same slot whichever side probes it.
+//
+// Table: open addressing, linear probing, capacity a power of two (at least 8). A slot is
+// empty (0), occupied (1) or a tombstone (2); a probe stops only at an empty slot.
+
+struct MapSlot<K, V> {
+    state: i8,
+    key: K,
+    value: V,
+}
+
+struct MapRaw<K, V> {
+    _data: *MapSlot<K, V>,
+    _len: i64,
+    _cap: i64,
+    _seed: i64,
+    _tombs: i64,
+}
+
+impl HashMap<K, V> {
+    // True when `key` is in the map.
+    fn contains(self: &Self, key: &K): bool {
+        unsafe {
+            let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            let data = raw[0]._data
+            let mask = raw[0]._cap - 1
+            var slot = _mapHash(key, raw[0]._seed) & mask
+            while true {
+                let state = data[slot].state
+                if state == 0 {
+                    return false
+                }
+                if state == 1 && _mapKeyEq(key, data[slot].key) {
+                    return true
+                }
+                slot = (slot + 1) & mask
+            }
+            return false
+        }
+    }
+}
