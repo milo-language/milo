@@ -1,0 +1,42 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `for i in a..b`
+// whose bounds have another type than the loop variable. Legacy extends a narrower
+// bound by the loop variable's signedness (a u32 bound of an i64 loop is sign extended,
+// so 0xFFFFFFFF reads as -1), and a same-width bound of the other signedness is its bits.
+
+fn count(lo: i32, hi: u8): i64 {
+    var n: i32 = 0
+    for i in lo..hi { n = n + i }
+    return n as i64
+}
+
+fn wide(hi: u32): i64 {
+    var n: i64 = 0
+    for k in 0..hi {
+        n = n + 1
+        if n > 5 { break }
+    }
+    return n
+}
+
+fn unsignedLoop(hi: i32): u64 {
+    var n: u64 = 0
+    for k in 0..hi {
+        n = n + 1
+        if n > 1000 { break }
+    }
+    return n
+}
+
+fn run() {
+    print(count(-3, 4), " ", count(2, 200))
+    print(wide(3), " ", wide(4294967295))
+    print(unsignedLoop(7), " ", unsignedLoop(-1))
+    let len: i32 = 5
+    var s: i64 = 0
+    for j in 0..len { s = s + j * 10 }
+    print(s)
+}
+
+fn main() {
+    run()
+}
