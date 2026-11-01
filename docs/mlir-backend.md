@@ -426,7 +426,14 @@ structs, enums.
   a thread-local scalar read and written through a fresh slot instead of its global
   (`tls-globals` stdout). The full `--owned` corpus run on the first commit of this
   batch was 1092 of 1093 same: `channelCrossThreadPark` had 13 live blocks at exit on
-  legacy and 0 on MLIR once, same on two reruns (threads still alive at exit).
+  legacy and 0 on MLIR once, same on two reruns (threads still alive at exit). Corpus:
+  405026 (83.7%); Tahoe Roads api: 4441 of 5351 (83.0%).
+- *`*p` of any type* is a place reached through a pointer (ptrPlace): read whole as a bit
+  copy that owns what the memory owns (as `p[i]` already was), written whole with
+  nothing dropped, `(*p).f` read and written in place, a 128+ byte one copied with
+  milo.copy. Program `ptr-structs` (in a function of its own: a main naming a raw pointer
+  keeps its legacy body). Planted bug: `*p` addressing the element after p (`ptr-structs`
+  stdout the same, `--owned` red: ASan heap-buffer-overflow).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

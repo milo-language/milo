@@ -554,6 +554,10 @@ class FnEmitter {
       const p = this.fieldPlace(e);
       return p && p.ty === ty ? { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
+    if (e.kind === "PtrDeref") {
+      const pp = this.ptrPlace(e)!;
+      return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
+    }
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
       if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
@@ -796,16 +800,8 @@ class FnEmitter {
       case "Assign": {
         // A lazy global's first fill: the slot holds zeroes, nothing to drop.
         if (s.isInit && (s.target.kind !== "Ident" || !this.isGlobal(s.target.name))) throw new MlirUnsupported("init assign");
-        if (s.target.kind === "PtrDeref") {
-          const ty = scalar(s.target.type, "store through a pointer");
-          // The value first, then the place: legacy genStmt Assign's order.
-          const v = this.expr(s.value);
-          const p = this.expr(s.target.operand);
-          if (p.ty !== PTR || v.ty !== ty) throw new MlirUnsupported("store through a pointer of another type");
-          this.emit(`milo.ptr.store ${v.ref}, ${p.ref} : ${ty}`);
-          return false;
-        }
-        if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess") {
+        // The value first, then the place: legacy genStmt Assign's order.
+        if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess" || s.target.kind === "PtrDeref") {
           const big = placeType(this.cx, s.target.type);
           if (big !== null && valueType(this.cx, s.target.type) === null) {
             // A 128+ byte one, as legacy: the value into a place of its own first (or a
@@ -828,6 +824,7 @@ class FnEmitter {
             this.emit(`milo.ptr.store ${v.ref}, ${pp.ptr} : ${pp.ty}`);
             return false;
           }
+          if (s.target.kind === "PtrDeref") throw new MlirUnsupported("store through a pointer of another type");
           if (s.target.kind === "FieldAccess") {
             const p = this.fieldPlace(s.target);
             if (!p) throw new MlirUnsupported("assign to a field of a value");
@@ -1203,12 +1200,7 @@ class FnEmitter {
         const { place, elem } = this.vecPlace(e.object);
         return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");
       }
-      case "PtrDeref": {
-        const ty = scalar(e.type, "load through a pointer");
-        const p = this.expr(e.operand);
-        if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
-        return this.def(`milo.ptr.load ${p.ref} : ${ty}`, ty);
-      }
+      case "PtrDeref": return this.ptrRead(this.ptrPlace(e)!);
       case "FieldAccess": {
         const pp = this.ptrPlace(e);
         if (pp) return this.ptrRead(pp);
@@ -1475,6 +1467,12 @@ class FnEmitter {
    * does: the pointer, then the index.
    */
   private ptrPlace(e: HIRExpr): { ptr: string; ty: string } | null {
+    if (e.kind === "PtrDeref") {
+      // `*p`: what p points at, of any type; an owning one is a bit copy, as ptrRead says.
+      const p = this.expr(e.operand);
+      if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
+      return { ptr: p.ref, ty: this.memType(e.type, "load through a pointer") };
+    }
     if (e.kind === "IndexAccess" && stripRefs(e.object.type).tag === "ptr") {
       const p = this.expr(e.object);
       const i = this.expr(e.index);

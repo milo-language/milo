@@ -1,0 +1,61 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `*p` on a pointer to a struct, as std's runtime and channels use it:
+// read whole (a bit copy of what the memory owns), written whole, fields read and written
+// through `(*p).f`, a 128+ byte struct copied in and out, and an owning one moved in.
+
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8)
+
+struct Node { next: *u8, value: i64, tag: i64 }
+
+struct Named { name: string, n: i64 }
+
+struct Wide {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64
+}
+
+fn walk(head: *Node): i64 {
+    var t: i64 = 0
+    var p = head
+    unsafe {
+        while (p as *u8) != (0 as *u8) {
+            let n = *p
+            t += n.value * 10 + n.tag
+            p = n.next as *Node
+        }
+    }
+    return t
+}
+
+// Not main: a main naming a raw pointer keeps its legacy body.
+fn run() {
+    unsafe {
+        let a = malloc(24) as *Node
+        let b = malloc(24) as *Node
+        * b = Node { next: 0 as *u8, value: 2, tag: 7 }
+        *a = Node { next: b as *u8, value: 1, tag: 0 }
+        (*a).tag = (*b).tag + 1
+        print(walk(a), " ", (*a).tag)
+
+        let w = malloc(128) as *Wide
+        * w = Wide { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16 }
+        (*w).p = (*w).p * 2
+        let copy = *w
+        print(copy.a + copy.p, " ", (*w).h)
+
+        let s = malloc(32) as *Named
+        let owned = Named { name: "x".repeat(5), n: 3 }
+        *s = owned
+        print((*s).name, " ", (*s).name.len() + (*s).n)
+        let back = *s
+        print(back.name)
+        free(a as *u8)
+        free(b as *u8)
+        free(w as *u8)
+        free(s as *u8)
+    }
+}
+
+fn main() { run() }
