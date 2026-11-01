@@ -917,7 +917,14 @@ class FnEmitter {
   private stmtIn(s: HIRStmt): boolean {
     switch (s.kind) {
       case "Let": {
-        if (s.viewBind) throw new MlirUnsupported("view let");
+        if (s.viewBind) {
+          // The checker proved nobody can tell the element from a clone: the binding is
+          // the element's place, as legacy binds its address (no copy, nothing to drop).
+          const er = s.value.kind === "IndexAccess" ? this.elemRef(s.value) : null;
+          if (!er) throw new MlirUnsupported("view let");
+          this.bind(s.name, { kind: "var", ref: er.ref, ty: er.ty });
+          return false;
+        }
         const pt = placeType(this.cx, s.type);
         if (pt !== null && isBig(this.cx, pt)) {
           const b = this.bigSlot(s.name, s.value);

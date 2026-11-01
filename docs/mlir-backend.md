@@ -641,6 +641,11 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   heap-use-after-free, before genHeapMoveOut was mirrored, and `heapMoveOutSkipsDrop`
   stdout: a spurious `drop 0`); the owned local loaded instead of moved before the free
   (`heaps` exit 0 -> 1, `heapMoveOutSkipsDrop` stdout: a double free).
+- *View lets* (`let w = ws[i]` of an owning element the checker lets alias the element,
+  viewLets): the binding is the element's place (elemRef), as legacy binds its address:
+  no copy, nothing dropped. Program `view-lets`. Planted bug: the element bit-copied into
+  an owned slot of its own (`view-lets` exit 0 -> 1, a double free). Tahoe Roads api: 5236
+  of 5351 (97.9%).
 - *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
   of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
   statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.

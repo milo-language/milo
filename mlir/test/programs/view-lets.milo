@@ -1,0 +1,38 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `let x = v[i]` of an
+// owning element the checker lets alias the element in place (viewLets): the binding is
+// the element's place, read without a copy and never dropped.
+
+struct P { name: string, tags: Vec<string> }
+
+fn longest(ws: &Vec<string>): i64 {
+    var best = 0
+    for i in 0..ws.len() {
+        let w = ws[i]
+        if w.len() > best {
+            best = w.len()
+        }
+    }
+    return best
+}
+
+fn firstTag(ps: &Vec<P>, i: i64): string {
+    let p = ps[i]
+    return p.name + ":" + p.tags[0]
+}
+
+fn run() {
+    var ws: Vec<string> = Vec.new()
+    ws.push("ab")
+    ws.push("abcd" + "e")
+    ws.push("x")
+    print(longest(ws))
+    var ps: Vec<P> = Vec.new()
+    var t: Vec<string> = Vec.new()
+    t.push("t" + "1")
+    ps.push(P { name: "p" + "0", tags: t })
+    print(firstTag(ps, 0))
+}
+
+fn main() {
+    run()
+}
