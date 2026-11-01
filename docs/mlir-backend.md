@@ -64,7 +64,8 @@ MLIR or LLVM code we reuse rather than write. Nothing here is claimed until it s
 | Correctness tooling | crash reproducers (`--mlir-pass-pipeline-crash-reproducer`), `mlir-reduce`, `--mlir-print-ir-after-all`, debug counters | a compiler crash becomes a one-file repro, reduced automatically; bisect a miscompile to one pass application | available, not wired into the driver |
 | Compile time | multithreaded pass manager | function passes run in parallel for free; the fix for the current build-time regression | not measured |
 | Contracts | `smt` dialect | `requires`/`ensures` checked by a solver from the same IR the compiler lowers | decided (see Verification) |
-| Loop optimization | `affine`, `linalg`, `vector` | tiling, fusion and vectorization of array and Vec loops, which hand-written IR never had | prototype only (axpy 2.9x) |
+| Loop optimization | `memref`, `affine`, `linalg`, `vector` | scalar Vec and array loops lower through `memref` (everything else stays milo to llvm), gaining tiling, fusion and vectorization of array and Vec loops, which hand-written IR never had | prototype only (axpy 2.9x) |
+| Portable C | `emitc` | emit C source for targets with a C compiler but no good LLVM backend (odd MCUs, certified toolchains); a path off legacy for Cortex-M | not started |
 | Async | `async` dialect, LLVM coroutines | M6 tasks lower through upstream coroutine passes instead of hand-built state machines | M6 |
 | Debug info | `Location` plus LLVM dialect debug attributes | DWARF follows every op through every pass | M7 (DWARF parity) |
 | Caching | MLIR bytecode | stable serialized modules: incremental builds, prechecked packages | not started |
