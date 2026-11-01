@@ -1283,6 +1283,8 @@ std::string milo::typeKey(Type t) {
     return ("S" + s.getName()).str();
   if (auto e = dyn_cast<EnumType>(t))
     return ("E" + e.getName()).str();
+  if (auto f = dyn_cast<FnType>(t); f && f.getOwning())
+    return "ownfn";
   std::string s;
   llvm::raw_string_ostream os(s);
   os << t;

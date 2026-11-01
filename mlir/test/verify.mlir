@@ -214,6 +214,18 @@ func.func @capture_outside(%e: !milo.ptr, %env: !milo.ptr) {
 
 // -----
 
+func.func @body(%env: !milo.ptr, %x: si64) -> si64 {
+  milo.return %x : si64
+}
+
+func.func @closure_owning() {
+  // expected-error @+1 {{builds a by-reference closure, which owns nothing}}
+  %f = milo.closure @body : !milo.fn<owning (si64) -> si64>
+  milo.return
+}
+
+// -----
+
 func.func @call_args(%f: !milo.fn<(si64) -> si64>, %x: si32) {
   // expected-error @+1 {{arguments do not match}}
   %r = milo.closure.call %f(%x) : !milo.fn<(si64) -> si64>, si32 -> si64

@@ -285,6 +285,20 @@ structs, enums.
   still evaluates every part first, as `format` does. Programs `print-order`,
   `trap-print-part` (stdout before the panic); FileCheck in `print.mlir`, verifier case
   in `verify.mlir`. Planted bug: never splitting turned both red (stdout).
+- *`move` closures.* `!milo.fn<owning (T) -> R>` is an owned value (needsDrop; its glue
+  is legacy's for owning closures, `milo.drop.ownfn`, which calls the env's header). A
+  `move` closure literal is a call of a legacy function made for it
+  (`milo.mkclosure.<fn>.<k>`) taking each capture by value, whose body is legacy's
+  genClosure: the heap env, its drop glue, the liveness flags, the run-once check and the
+  closure body are legacy's. A capture moves out of its owned slot; a shared string
+  capture passes `milo.string.share`. `milo.closure` refuses an owning type (verifier).
+  Still legacy: a capture of a reference or of a type with a user Drop, heap-env
+  (task) and key-extractor closures. Program `move-closures`, FileCheck
+  `owning-fn.mlir`, verifier case. Planted bug: passing a capture with `milo.load`
+  instead of `milo.move` crashed the -O0 build (`live blocks at exit at -O0: legacy 0,
+  mlir null`, a double free). The 142 fixtures with a `move` closure: 141 same, 2
+  nondeterministic on legacy too (http timing). Tahoe Roads api: 3190 of 5327 (59.9%;
+  its function count moved from 5263 under me, the app is being edited).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

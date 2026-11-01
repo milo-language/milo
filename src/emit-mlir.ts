@@ -74,6 +74,7 @@ function typeKey(t: TypeKind): string {
     case "ptr": return "ptr";
     case "string": return "string";
     case "vec": return `vec.${typeKey(t.element)}`;
+    case "fn": if (t.owning) return "ownfn"; throw new MlirUnsupported("helper for a fn");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
     default: throw new MlirUnsupported(`helper for a ${t.tag}`);
@@ -140,11 +141,10 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
  * environment is heap memory with drop glue, and for a param the dialect lacks.
  */
 function fnType(cx: MlirEmitCtx, t: TypeKind & { tag: "fn" }): string | null {
-  if (t.owning) return null;
   const ps = t.params.map(p => closureParamType(cx, p));
   if (ps.some(x => x === null)) return null;
   const r = t.ret.tag === "void" ? "()" : valueType(cx, t.ret);
-  return r === null ? null : `!milo.fn<(${ps.join(", ")}) -> ${r}>`;
+  return r === null ? null : `!milo.fn<${t.owning ? "owning " : ""}(${ps.join(", ")}) -> ${r}>`;
 }
 
 /** A closure param: a `&T` is the place (legacy closureParamTy passes a pointer). */
@@ -240,16 +240,21 @@ type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string;
 // A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
 // when its text names one (Milo.h needsDrop).
 // A type with its own `impl Drop` is marked after its name (`!milo.struct<"Noisy" drop, ...>`).
-const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes(USER_DROP); };
+const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
+const OWNING_FN = "<owning fn>";
 const USER_DROP = '" drop';
 /** `ty` runs a user's Drop when dropped: when that happens is observable. */
 const runsUserDrop = (ty: string) => withoutFnTypes(ty).includes(USER_DROP);
 
-/** `ty` with every !milo.fn<...> cut out: a fn value's signature owns nothing. */
+/**
+ * `ty` with every !milo.fn<...> cut out: a fn value's signature owns nothing. An owning
+ * one owns its env, which leaves OWNING_FN in its place.
+ */
 function withoutFnTypes(ty: string): string {
   let out = "";
   for (let i = 0; i < ty.length;) {
     if (!ty.startsWith("!milo.fn<", i)) { out += ty[i++]; continue; }
+    if (ty.startsWith("!milo.fn<owning ", i)) out += OWNING_FN;
     let depth = 0;
     for (; i < ty.length; i++) {
       if (ty.startsWith("->", i)) { i++; continue; }
@@ -1020,6 +1025,7 @@ class FnEmitter {
    * value is spilled to a slot: it is immutable, so the copy reads the same.
    */
   private closure(e: HIRExpr & { kind: "Closure" }): Val {
+    if (e.isMove && !e.heapEnv && !e.keyExtractor) return this.moveClosure(e);
     if (e.isMove || e.heapEnv || e.keyExtractor) throw new MlirUnsupported(e.isMove ? "move closure" : "heap-env closure");
     const ty = this.value(e.type, "closure");
     // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
@@ -1043,6 +1049,52 @@ class FnEmitter {
     for (const [k, v] of inner.callees) this.callees.set(k, v);
     const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
     return this.def(`milo.closure @${quote(name)}${ops} : ${ty}`, ty);
+  }
+
+  /**
+   * A `move` closure: legacy's genClosure inside a legacy function of its own
+   * (`milo.mkclosure.<fn>.<k>`) taking each capture by value, so the heap env, its drop
+   * glue, the liveness flags and the run-once check are legacy's, and so is the body. A
+   * capture moves out of its owned slot into the call; a shared string capture
+   * (`share`) passes a new owner of the same buffer and the binding stays live.
+   */
+  private moveClosure(e: HIRExpr & { kind: "Closure" }): Val {
+    const ty = this.value(e.type, "move closure");
+    const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
+    const args: Val[] = [];
+    for (const c of e.captures) {
+      if (c.type.tag === "ref") throw new MlirUnsupported("move closure capturing a reference");
+      const cty = this.value(c.type, "capture");
+      // The env's drop runs a captured user Drop: when depends on the closure's timing.
+      if (runsUserDrop(cty)) throw new MlirUnsupported("move closure capturing a user Drop");
+      const b = this.lookup(c.name);
+      let v: Val;
+      if (b.kind === "ssa") v = this.consume(b.v, "capture");
+      else if (b.kind !== "var" || b.ty !== cty) throw new MlirUnsupported("capture binding");
+      else if (!hasDrop(cty)) v = this.def(`milo.load ${b.ref} : !milo.ref<${cty}>`, cty);
+      else if (c.share && cty === STR) {
+        this.cx.mlirHelper("milo.share.string", () => ({
+          params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],
+          retType: { tag: "string" },
+          body: [{ kind: "Return", retType: { tag: "string" }, value: {
+            kind: "StringClone", type: { tag: "string" }, str: { kind: "Ident", name: "s", type: { tag: "string" }, isMove: false } } }],
+        }));
+        v = { ...this.def(`milo.string.share ${b.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
+      } else if (b.owned && !c.share) v = { ...this.def(`milo.move ${b.ref} : !milo.ref<${cty}>`, cty), own: "owned" };
+      else throw new MlirUnsupported("capture that is not a move of an owned local");
+      params.push({ name: c.name, type: c.type, isRef: false, isRefMut: false });
+      args.push(v);
+    }
+    const name = `milo.mkclosure.${this.fn.name}.${this.closures.next++}`;
+    this.cx.mlirHelper(name, () => ({
+      params, retType: e.type,
+      // The helper's params are its own: every capture is moved into the env.
+      body: [{ kind: "Return", retType: e.type, value: { ...e, captures: e.captures.map(c => ({ ...c, share: false })) } }],
+    }));
+    const fnTy = `(${args.map(a => a.ty).join(", ")}) -> ${ty}`;
+    this.callees.set(name, fnTy);
+    this.dropGlue(ty, e.type);
+    return { ...this.def(`func.call @${quote(name)}(${args.map(a => a.ref).join(", ")}) : ${fnTy}`, ty), own: "owned" };
   }
 
   /** `f(args)` through a fn value: the callee, then the args, as legacy genClosureCall. */

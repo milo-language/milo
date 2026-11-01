@@ -151,14 +151,16 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
 
 def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType]>;
 
-// A non-owning fn value `(T) => R`: legacy's `{ ptr fn, ptr env }`. The fn takes the env
-// first, then the params of `signature` (a `&T` param is a !milo.ref, a `&Vec<T>` a
-// !milo.vec). The env is null or a frame's (milo.closure), never owned, so the value is
-// Copy and has no drop glue; owning (`move`) closures stay legacy.
+// A fn value `(T) => R`: legacy's `{ ptr fn, ptr env }`. The fn takes the env first, then
+// the params of `signature` (a `&T` param is a !milo.ref, a `&Vec<T>` a !milo.vec). A
+// plain one's env is null or a frame's (milo.closure), never owned, so the value is Copy
+// and has no drop glue. An `owning` one (`move (T) => R`, `!milo.fn<owning (T) -> R>`)
+// holds a heap env whose first word is its drop glue: it is an owned value, dropped
+// through legacy's glue for owning closures (milo.drop.ownfn).
 def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
   let mnemonic = "fn";
-  let parameters = (ins "::mlir::FunctionType":$signature);
-  let assemblyFormat = "`<` $signature `>`";
+  let parameters = (ins "::mlir::FunctionType":$signature, "bool":$owning);
+  let hasCustomAssemblyFormat = 1;
 }
 
 // What a local, a parameter or a result can hold.

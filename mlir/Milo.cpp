@@ -56,6 +56,20 @@ void StructType::print(AsmPrinter &p) const {
   p << ">";
 }
 
+Type FnType::parse(AsmParser &p) {
+  FunctionType sig;
+  if (p.parseLess())
+    return {};
+  bool owning = succeeded(p.parseOptionalKeyword("owning"));
+  if (p.parseType(sig) || p.parseGreater())
+    return {};
+  return FnType::get(p.getContext(), sig, owning);
+}
+
+void FnType::print(AsmPrinter &p) const {
+  p << "<" << (getOwning() ? "owning " : "") << getSignature() << ">";
+}
+
 // !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>
 Type EnumType::parse(AsmParser &p) {
   std::string name;
@@ -197,6 +211,8 @@ MILO_ARITH(NegOp, !getWrapping())
 bool milo::needsDrop(Type t) {
   if (isa<StringType, VecValType>(t))
     return true;
+  if (auto f = dyn_cast<FnType>(t))
+    return f.getOwning();
   if (auto s = dyn_cast<StructType>(t))
     return s.getUserDrop() || llvm::any_of(s.getFields(), needsDrop);
   if (auto e = dyn_cast<EnumType>(t))
@@ -245,6 +261,8 @@ LogicalResult ClosureOp::verify() {
   auto body = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
   if (!body)
     return emitOpError("names no function: ") << getFn();
+  if (getType().getOwning())
+    return emitOpError("builds a by-reference closure, which owns nothing: not ") << getType();
   FunctionType sig = getType().getSignature();
   FunctionType fty = body.getFunctionType();
   if (fty.getNumInputs() != sig.getNumInputs() + 1 || !isa<PtrType>(fty.getInput(0)) ||
