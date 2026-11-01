@@ -3244,6 +3244,20 @@ export class Codegen {
   // The panic routine functions compiled through MLIR call (src/mlir-backend.ts): prints
   // `msg` as the format, exactly as the inline division and shift traps do, then aborts
   // through the panic hook.
+  /**
+   * MILO_MLIR=1: enum `name`'s layout as this codegen stores it (EnumLayout), for the
+   * dialect's !milo.enum to spell out; null for a niche-packed one, which has no tag word.
+   */
+  public mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null {
+    const l = this.enumLayouts.get(name);
+    if (!l || l.niche) return null;
+    return {
+      size: l.size,
+      align: Math.max(4, l.payloadAlign),
+      variants: [...l.variants].map(([vn, v]) => ({ name: vn, tag: v.tag, fields: v.fieldTypeKinds, offsets: this.variantFieldOffsets(v.fieldTypes) })),
+    };
+  }
+
   /** MILO_MLIR=1: main goes through MLIR only when it is the process entry itself. */
   public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
 

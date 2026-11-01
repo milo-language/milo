@@ -25,6 +25,10 @@ export interface MlirEmitCtx {
   readonly mlirMainOk: boolean;
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string;
   hasStringType: boolean;
+  structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
+  mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
+  needsDropCg(t: TypeKind): boolean;
+  typeSizeOf(t: TypeKind): number;
 }
 
 export class MlirUnsupported extends Error {
@@ -56,6 +60,51 @@ function scalar(t: TypeKind, what: string): string {
   const m = mlirType(t);
   if (m === null) throw new MlirUnsupported(`${what} of type ${t.tag}`);
   return m;
+}
+
+const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
+
+/**
+ * The dialect's type for a value of `t`: a scalar, or a struct or enum made of such values
+ * with no drop glue (owned values are M4). Null otherwise, and for an aggregate of 128
+ * bytes or more, which legacy codegen never holds as an SSA value (isBigAgg).
+ */
+function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
+  const m = mlirType(t);
+  if (m !== null || (t.tag !== "struct" && t.tag !== "enum")) return m;
+  let cache = aggregates.get(cx);
+  if (!cache) aggregates.set(cx, cache = new Map());
+  const key = `${t.tag} ${t.name}`;
+  if (cache.has(key)) return cache.get(key)!;
+  // A type that contains itself is behind a Heap, which this rejects anyway.
+  cache.set(key, null);
+  const r = aggregateType(cx, t);
+  cache.set(key, r);
+  return r;
+}
+
+function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): string | null {
+  if (cx.needsDropCg(t) || cx.typeSizeOf(t) >= 128 || cx.llvmType(t) !== `%${t.name}`) return null;
+  if (t.tag === "struct") {
+    const l = cx.structLayouts.get(t.name);
+    const fields = l?.fields.map(f => valueType(cx, f.typeKind));
+    if (!fields || fields.some(f => f === null)) return null;
+    return `!milo.struct<${quote(t.name)}${fields.map(f => `, ${f}`).join("")}>`;
+  }
+  const l = cx.mlirEnumLayout(t.name);
+  if (!l) return null;
+  const variants: string[] = [];
+  for (const v of l.variants) {
+    const fields = v.fields.map(f => valueType(cx, f));
+    if (fields.some(f => f === null)) return null;
+    variants.push(`${v.tag}: (${fields.map((f, k) => `${f} at ${v.offsets[k]}`).join(", ")})`);
+  }
+  return `!milo.enum<${quote(t.name)}, size = ${l.size}, align = ${l.align}, [${variants.join(", ")}]>`;
+}
+
+function stripRefs(t: TypeKind): TypeKind {
+  while (t.tag === "ref") t = t.inner;
+  return t;
 }
 
 /** MLIR string literal (symbol names, file names in locations). */
@@ -124,11 +173,11 @@ class FnEmitter {
         this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem, param: i });
         return `%p${i}: !milo.vec<${elem}>`;
       }
-      if ((p.isRef || p.isRefMut) && mlirType(p.type) === null) {
+      if ((p.isRef || p.isRefMut) && valueType(this.cx, p.type) === null) {
         this.bind(p.name, { kind: "opaque", what: p.type.tag });
         return `%p${i}: ${PTR}`;
       }
-      const ty = scalar(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
+      const ty = this.value(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
@@ -138,8 +187,9 @@ class FnEmitter {
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0, as legacy emits it.
     if (isMain) params.push("%argc: si32", `%argv: ${PTR}`);
-    const ret = isMain ? "si32" : fn.retType.tag === "void" ? null : scalar(fn.retType, "return");
+    const ret = isMain ? "si32" : fn.retType.tag === "void" ? null : this.value(fn.retType, "return");
     this.isMain = isMain;
+    this.retTy = ret;
     // As legacy replayEngineScope, which applies only when std/replay is in the program.
     this.replay = !!fn.replayEngine && this.cx.replayScope;
     if (this.replay) this.emit("milo.replay.enter");
@@ -154,6 +204,13 @@ class FnEmitter {
 
   private replay = false;
   private isMain = false;
+  private retTy: string | null = null;
+
+  private value(t: TypeKind, what: string): string {
+    const v = valueType(this.cx, t);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${t.tag}`);
+    return v;
+  }
   private retMain(): void {
     const z = this.def("milo.const 0 : si32", "si32");
     this.ret(`milo.return ${z.ref} : si32`);
@@ -208,7 +265,7 @@ class FnEmitter {
           this.bind(s.name, { kind: "ssa", v: this.expr(s.value) });
           return false;
         }
-        const ty = scalar(s.type, "let");
+        const ty = this.value(s.type, "let");
         const v = this.expr(s.value);
         if (v.ty !== ty) throw new MlirUnsupported("let of a different type");
         if (!s.mutable) { this.bind(s.name, { kind: "ssa", v }); return false; }
@@ -236,6 +293,14 @@ class FnEmitter {
           this.emit(`milo.index.store ${v.ref}, ${vec}[${index}] : ${elem}, !milo.vec<${elem}> ${this.loc(s.target.span)}`);
           return false;
         }
+        if (s.target.kind === "FieldAccess") {
+          const v = this.expr(s.value);
+          const p = this.fieldPlace(s.target);
+          if (!p) throw new MlirUnsupported("assign to a field of a value");
+          if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
+          this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
+          return false;
+        }
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
         const b = this.lookup(s.target.name);
         if (b.kind !== "var") throw new MlirUnsupported("assign to an immutable binding");
@@ -248,7 +313,7 @@ class FnEmitter {
         if (!s.value && this.isMain) { this.retMain(); return true; }
         if (!s.value) { this.ret("milo.return"); return true; }
         const v = this.expr(s.value);
-        if (v.ty !== mlirType(this.fn.retType)) throw new MlirUnsupported("return of a different type");
+        if (v.ty !== this.retTy) throw new MlirUnsupported("return of a different type");
         this.ret(`milo.return ${v.ref} : ${v.ty}`);
         return true;
       }
@@ -311,6 +376,8 @@ class FnEmitter {
         if (this.loops === 0) throw new MlirUnsupported(`${s.kind} outside a loop`);
         this.emit(s.kind === "Break" ? "milo.break" : "milo.continue");
         return true;
+      case "Match":
+        return this.match(s, null).done;
       case "Block":
         // Opens no scope: a `let` in it binds in the enclosing one.
         return this.stmts(s.body);
@@ -381,9 +448,177 @@ class FnEmitter {
         if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
         return this.def(`milo.ptr.load ${p.ref} : ${ty}`, ty);
       }
+      case "FieldAccess": {
+        // A field of a place is read in place, as legacy genFieldPtr does; of a value, out
+        // of the value.
+        const p = this.fieldPlace(e);
+        if (p) return this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
+        const { index, ty } = this.field(e);
+        const s = this.expr(e.object);
+        return this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty);
+      }
+      case "StructLit": return this.structLit(e);
+      case "EnumLit": {
+        const ty = this.value(e.type, "enum literal");
+        const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
+        if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
+        const args = e.args.map(a => this.expr(a));
+        const fields = v.fields.map(f => this.value(f, "payload"));
+        if (args.some((a, k) => a.ty !== fields[k])) throw new MlirUnsupported("payload of another type");
+        const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
+        return this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty);
+      }
+      case "IsCheck": {
+        const v = this.expr(e.operand);
+        if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("`is` on a non-enum");
+        const tag = this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32");
+        const want = this.def(`milo.const ${e.tag} : si32`, "si32");
+        return this.def(`milo.cmp eq, ${tag.ref}, ${want.ref} : si32`, "i1");
+      }
+      case "IfExpr": {
+        if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("if-expression without a value");
+        const ty = this.value(e.type, "if-expression");
+        const c = this.expr(e.cond);
+        if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
+        const ref = this.fresh();
+        this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
+        this.region("} else {", () => this.tail(e.elseBody, ty));
+        this.emit("}");
+        return { ref, ty };
+      }
+      case "MatchExpr": {
+        if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
+        return this.match(e, this.value(e.type, "match-expression")).v;
+      }
       default:
         throw new MlirUnsupported(`expr ${e.kind}`);
     }
+  }
+
+  /** The index and value type of the struct field `e` reads. */
+  private field(e: HIRExpr & { kind: "FieldAccess" }): { index: number; ty: string } {
+    const st = stripRefs(e.object.type);
+    if (st.tag !== "struct") throw new MlirUnsupported(`field of a ${st.tag}`);
+    const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
+    if (index < 0) throw new MlirUnsupported("unknown field");
+    return { index, ty: this.value(e.type, "field") };
+  }
+
+  /** The slot `e` names (a `var`, a by-ref param, a field of either), or null for a value. */
+  private fieldPlace(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
+    if (e.kind === "Ident") {
+      const b = this.lookup(e.name);
+      return b.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : null;
+    }
+    if (e.kind !== "FieldAccess") return null;
+    const base = this.fieldPlace(e.object);
+    if (!base) return null;
+    const { index, ty } = this.field(e);
+    const r = this.def(`milo.field_ref ${base.ref}[${index}] : !milo.ref<${base.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`);
+    return { ref: r.ref, ty, param: base.param };
+  }
+
+  /**
+   * `S { a: x, ..base }`: the listed fields in source order, then the base, as legacy
+   * genStructLit evaluates them; the unlisted fields come out of the base.
+   */
+  private structLit(e: HIRExpr & { kind: "StructLit" }): Val {
+    const ty = this.value(e.type, "struct literal");
+    const layout = this.cx.structLayouts.get(e.name);
+    if (!layout) throw new MlirUnsupported("struct layout");
+    const given = new Map<string, Val>();
+    for (const f of e.fields) given.set(f.name, this.expr(f.value));
+    const base = e.base ? this.expr(e.base) : null;
+    if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
+    const ops = layout.fields.map((f, i) => {
+      const fty = this.value(f.typeKind, "field");
+      const v = given.get(f.name) ?? (base ? this.def(`milo.struct.get ${base.ref}[${i}] : ${ty} -> ${fty}`, fty) : null);
+      if (!v || v.ty !== fty) throw new MlirUnsupported("struct literal field");
+      return v;
+    });
+    const operands = ops.length ? `${ops.map(o => o.ref).join(", ")} : ${ops.map(o => o.ty).join(", ")} ` : "";
+    return this.def(`milo.struct.new ${operands}-> ${ty}`, ty);
+  }
+
+  /**
+   * A value-producing block (if-expression and match arms): every statement but the last,
+   * then the last one's value yielded. Always returns true: it ends in a yield or a jump.
+   */
+  private tail(body: HIRStmt[], ty: string): boolean {
+    const last = body[body.length - 1];
+    if (this.stmts(body.slice(0, -1))) return true;
+    if (last?.kind !== "ExprStmt") {
+      if (last && this.stmt(last)) return true;
+      throw new MlirUnsupported("value block without a value");
+    }
+    const v = this.expr(last.expr);
+    if (v.ty !== ty) throw new MlirUnsupported("block value of another type");
+    this.emit(`milo.yield ${v.ref} : ${ty}`);
+    return true;
+  }
+
+  /**
+   * `match` as milo.match: one region per arm, the `_` arm last. A flat enum pattern's
+   * bindings are its arm's block arguments (payload i is binding i); a literal pattern on
+   * an int or bool is a case value. `resultTy` makes it an expression.
+   */
+  private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean },
+    resultTy: string | null): { done: boolean; v: Val } {
+    // A `&mut` subject binds views that write the payload in place.
+    if (m.subjectIsMut) throw new MlirUnsupported("match on a &mut subject");
+    const subj = this.expr(m.subject);
+    const isEnum = subj.ty.startsWith("!milo.enum<");
+    const st = stripRefs(m.subject.type);
+    const layout = isEnum && st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
+    if (isEnum && !layout) throw new MlirUnsupported("match subject layout");
+    if (!isEnum && !/^([su]i\d+|i1)$/.test(subj.ty)) throw new MlirUnsupported(`match on ${subj.ty}`);
+    const cases: bigint[] = [];
+    const arms: { arm: typeof m.arms[0]; args: { name: string; ty: string }[] }[] = [];
+    let dflt: typeof m.arms[0] | null = null;
+    for (const arm of m.arms) {
+      const p = arm.pattern;
+      if (p.kind === "WildcardPattern") {
+        if (dflt) throw new MlirUnsupported("two wildcard arms");
+        dflt = arm;
+        continue;
+      }
+      let c: bigint;
+      let args: { name: string; ty: string }[] = [];
+      if (p.kind === "EnumPattern") {
+        if (!layout || p.tests) throw new MlirUnsupported("nested pattern");
+        const v = layout.variants.find(x => x.tag === p.tag);
+        if (!v || p.bindings.length > v.fields.length || p.bindings.some(b => b.escapes || b.path)) throw new MlirUnsupported("enum pattern");
+        c = BigInt(p.tag);
+        args = v.fields.map((f, k) => ({ name: p.bindings[k]?.name ?? "_", ty: this.value(f, "payload") }));
+      } else {
+        if (isEnum || !["int", "char", "bool"].includes(p.literalKind)) throw new MlirUnsupported(`${p.literalKind} pattern`);
+        // As the i64 holding its bits: a u64 case above i64::MAX wraps, the switch reads it back at the width.
+        c = BigInt.asIntN(64, typeof p.value === "boolean" ? BigInt(p.value ? 1 : 0) : BigInt(p.value));
+      }
+      if (cases.includes(c)) throw new MlirUnsupported("two arms for one case");
+      cases.push(c);
+      arms.push({ arm, args });
+    }
+    if (dflt) arms.push({ arm: dflt, args: [] });
+    const ref = resultTy ? this.fresh() : "";
+    const head = `${resultTy ? `${ref} = ` : ""}milo.match ${subj.ref} : ${subj.ty}${resultTy ? ` -> ${resultTy}` : ""} [${cases.join(", ")}]${dflt ? " default" : ""} {`;
+    let allDone = true;
+    arms.forEach(({ arm, args }, i) => {
+      const done = this.region(i === 0 ? head : "}, {", () => {
+        if (args.length) {
+          const refs = args.map(() => this.fresh());
+          this.emit(`^bb0(${args.map((a, k) => `${refs[k]}: ${a.ty}`).join(", ")}):`);
+          args.forEach((a, k) => { if (a.name !== "_") this.bind(a.name, { kind: "ssa", v: { ref: refs[k], ty: a.ty } }); });
+        }
+        return resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
+      });
+      if (!done) allDone = false;
+    });
+    this.emit("}");
+    // A match that is not exhaustive by its cases alone still is by the checker, so
+    // arms that all jump leave nothing after them.
+    if (!resultTy && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
+    return { done: false, v: { ref, ty: resultTy ?? "" } };
   }
 
   private binop(e: HIRExpr & { kind: "BinOp" }): Val {
@@ -470,8 +705,23 @@ class FnEmitter {
    * The slot a by-ref argument borrows. A `var` or a by-ref param is its own slot; an
    * immutable value lent as `&T` gets a fresh one, as legacy codegen spills it.
    */
-  private place(e: HIRExpr, refTy: string): { ref: string; param?: number } {
-    if (e.kind !== "Ident") throw new MlirUnsupported(`by-ref arg ${e.kind}`);
+  private place(e: HIRExpr, refTy: string, mut: boolean): { ref: string; param?: number } {
+    if (e.kind === "FieldAccess") {
+      // A field of a slot is lent in place; the slot's param, if any, is where it points.
+      const p = this.fieldPlace(e);
+      if (!p || `!milo.ref<${p.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of a field of a value");
+      return { ref: p.ref, param: p.param };
+    }
+    if (e.kind !== "Ident") {
+      // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.
+      if (mut) throw new MlirUnsupported(`by-ref &mut arg ${e.kind}`);
+      const v = this.expr(e);
+      if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
+      const ref = this.fresh();
+      this.vars.push(`  ${ref} = milo.var "arg" : ${refTy}`);
+      this.emit(`milo.store ${v.ref}, ${ref} : ${refTy}`);
+      return { ref };
+    }
     const b = this.lookup(e.name);
     if (b.kind === "vec") {
       if (`!milo.vec<${b.elem}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
@@ -499,8 +749,10 @@ class FnEmitter {
       let t = a.expr.type;
       while (t.tag === "ref") t = t.inner;
       const v = this.expr(a.expr);
-      const key = v.ty === STR ? "string" : v.ty === PTR ? "ptr" : v.ty;
-      if (key !== "string" && mlirType(t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+      // Scalar.cpp printKey spells the same names.
+      const key = v.ty === STR ? "string" : v.ty === PTR ? "ptr"
+        : t.tag === "struct" ? `S${t.name}` : t.tag === "enum" ? `E${t.name}` : v.ty;
+      if (key !== "string" && valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
       return { v, key, type: t };
     });
     this.cx.mlirPrintHelper(e.func === "eprint", parts.map(p => ({ key: p.key, type: p.type })));
@@ -524,18 +776,18 @@ class FnEmitter {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
       const elem = byRef ? vecElem(p.type) : null;
-      const ty = elem ?? scalar(p.type, byRef ? "by-ref arg" : "call arg");
+      const ty = elem ?? this.value(p.type, byRef ? "by-ref arg" : "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
-    const ret = callee.retType.tag === "void" ? null : scalar(callee.retType, "call result");
+    const ret = callee.retType.tag === "void" ? null : this.value(callee.retType, "call result");
     if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
     const refs: { ref: string; mut: boolean; ty: string }[] = [];
     const provenance: (number | null)[] = [];
     const args = e.args.map((a, i) => {
       if (a.passByRef) {
-        const ref = this.place(a.expr, paramTys[i]);
+        const ref = this.place(a.expr, paramTys[i], a.refMut);
         refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
         provenance.push(ref.param ?? null);
         return ref.ref;

@@ -122,3 +122,56 @@ func.func @print_signless(%a: i32) {
   milo.print %a : i32
   milo.return
 }
+
+// -----
+
+func.func @struct_fields(%a: si64) {
+  // expected-error @+1 {{operands are not the fields of}}
+  %0 = milo.struct.new %a : si64 -> !milo.struct<"P", si64, f64>
+  milo.return
+}
+
+// -----
+
+func.func @struct_get(%p: !milo.struct<"P", si64, f64>) {
+  // expected-error @+1 {{has no field 1 of type 'si64'}}
+  %0 = milo.struct.get %p[1] : !milo.struct<"P", si64, f64> -> si64
+  milo.return
+}
+
+// -----
+
+func.func @enum_tag(%x: f64) {
+  // expected-error @+1 {{has no variant with tag 5}}
+  %0 = milo.enum.new 5 (%x : f64) -> !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>
+  milo.return
+}
+
+// -----
+
+// expected-error @+1 {{payload offset 2 is outside bytes 4..16}}
+func.func @enum_offset(%e: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 2), 1: ()]>) {
+  milo.return
+}
+
+// -----
+
+func.func @match_arity(%e: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>) {
+  // expected-error @+1 {{payload is not the fields of variant 0}}
+  milo.match %e : !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]> [0, 1] {
+    milo.yield
+  }, {
+    milo.yield
+  }
+  milo.return
+}
+
+// -----
+
+func.func @match_cases(%n: si32) {
+  // expected-error @+1 {{needs one region per case}}
+  milo.match %n : si32 [0, 1] {
+    milo.yield
+  }
+  milo.return
+}

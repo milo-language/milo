@@ -1,0 +1,144 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): structs and
+// enums of scalars by value (construction, field reads and writes through a var and a
+// `&mut` param, struct update, nesting), enum payloads of every alignment, match as a
+// statement and an expression (bindings, `_`, literals, a wildcard first, arms that
+// return or break), if-expressions, `is`, and printing both.
+
+struct Point { x: i64, y: f64 }
+
+struct Line { a: Point, b: Point, tag: u8 }
+
+struct Flags { on: bool, level: u8, scale: f32 }
+
+struct Pair<A, B> { first: A, second: B }
+
+enum Shape { Circle(f64), Rect(f64, f64), Empty }
+
+enum Small { A(u8), B(bool, u8), C(i16, i32), D }
+
+enum Color { Red, Green, Blue }
+
+enum Maybe<T> { Just(T), Nothing }
+
+fn area(s: Shape): f64 {
+    match s {
+        Shape.Circle(r) => { return 3.0 * r * r }
+        Shape.Rect(w, h) => { return w * h }
+        Shape.Empty => { return 0.0 }
+    }
+}
+
+fn describe(s: &Small): i64 {
+    return match s {
+        Small.A(n) => n as i64,
+        Small.B(f, n) => if f { n as i64 * 2 } else { 0 - (n as i64) },
+        Small.C(a, b) => a as i64 + b as i64,
+        Small.D => -1,
+    }
+}
+
+fn shift(p: &mut Point, dx: i64) {
+    p.x = p.x + dx
+    p.y = p.y * 2.0
+}
+
+fn moveLine(l: &mut Line) {
+    l.a.x += 100
+    shift(&mut l.b, 5)
+    l.tag = l.tag + 1
+}
+
+fn find(n: i64): Option<i64> {
+    if n > 0 { return Some(n * 2) }
+    return None
+}
+
+fn safeDiv(a: i64, b: i64): Result<i64, i64> {
+    if b == 0 { return Result.Err(a) }
+    return Result.Ok(a / b)
+}
+
+fn classify(c: u8): i64 {
+    return match c {
+        _ => 0,
+        'a' => 1,
+        'z' => 26,
+        255 => 255,
+    }
+}
+
+fn sign(b: bool, n: i32): i32 {
+    let s = match b { true => 1, false => -1 }
+    return match n { 0 => 0, _ => s * n }
+}
+
+fn next(c: Color): Color {
+    match c {
+        Color.Red => { return Color.Green }
+        Color.Green => { return Color.Blue }
+        _ => {}
+    }
+    return Color.Red
+}
+
+fn firstBig(limit: i64): i64 {
+    var i: i64 = 0
+    var found: i64 = -1
+    while i < limit {
+        i += 1
+        match find(i - 3) {
+            Some(v) => {
+                if v > 6 {
+                    found = v
+                    break
+                }
+            }
+            None => { continue }
+        }
+    }
+    return found
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2.5 }
+    var l = Line { a: p, b: Point { x: 3, y: 4.0 }, tag: 7 }
+    print(l.a.x + l.b.x, " ", l.tag)
+    moveLine(&mut l)
+    print(l.a, " ", l.b, " ", l.tag)
+    var q = Point { y: 9.5, ..p }
+    q.x = q.x * 10
+    print(q)
+    let f = Flags { on: true, level: 200, scale: 0.5 }
+    print(f, " ", f.on, " ", f.level, " ", f.scale)
+    let pr = Pair { first: -3, second: Color.Blue }
+    print(pr.first, " ", pr.second)
+    print(area(Shape.Rect(2.0, 3.0)), " ", area(Shape.Circle(1.5)), " ", area(Shape.Empty))
+    print(Shape.Rect(1.0, 2.0), " ", Shape.Empty)
+    print(describe(Small.A(250)), " ", describe(Small.B(true, 21)), " ", describe(Small.B(false, 4)))
+    let c = Small.C(-300, 70000)
+    print(describe(c), " ", describe(Small.D))
+    print(Small.B(true, 9), " ", Small.C(-1, 2))
+    match find(3) {
+        Some(k) => print("found ", k),
+        None => print("none"),
+    }
+    match find(-1) {
+        Some(_) => print("unexpected"),
+        None => print("none"),
+    }
+    match safeDiv(7, 2) {
+        Result.Ok(v) => print("ok ", v),
+        Result.Err(e) => print("err ", e),
+    }
+    match safeDiv(7, 0) {
+        Result.Ok(v) => print("ok ", v),
+        Result.Err(e) => print("err ", e),
+    }
+    print(classify('a'), classify('z'), classify(255), classify('q'))
+    print(sign(true, 5), " ", sign(false, 5), " ", sign(true, 0))
+    print(next(Color.Red), " ", next(Color.Green), " ", next(Color.Blue))
+    let m = Maybe.Just(4.25)
+    print(m is Maybe.Just, " ", m is Maybe.Nothing)
+    let big = if p.x > 0 { if p.y > 2.0 { 1 } else { 2 } } else { 3 }
+    print(big, " ", firstBig(20))
+}

@@ -160,6 +160,62 @@ void lowerFor(IRRewriter &rw, ForOp op) {
   rw.eraseOp(op);
 }
 
+// switch(key): one block per arm, the default arm (or an unreachable) otherwise. An enum
+// arm's block arguments become payload reads at its entry, where the tag is known.
+void lowerMatch(IRRewriter &rw, MatchOp op) {
+  Location loc = op.getLoc();
+  Block *cur = op->getBlock();
+  Block *cont = rw.splitBlock(cur, std::next(op->getIterator()));
+  for (Type t : op.getResultTypes())
+    cont->addArgument(t, loc);
+  Value subject = op.getSubject();
+  auto e = dyn_cast<EnumType>(subject.getType());
+
+  rw.setInsertionPoint(op);
+  Value key = e ? Value(EnumTagOp::create(rw, loc, rw.getIntegerType(32, true), subject))
+                : subject;
+  unsigned width = cast<IntegerType>(key.getType()).getWidth();
+  if (!cast<IntegerType>(key.getType()).isSignless())
+    key = UnrealizedConversionCastOp::create(rw, loc, TypeRange{rw.getIntegerType(width)},
+                                             ValueRange{key})
+              .getResult(0);
+
+  SmallVector<Block *> entries;
+  for (auto [i, region] : llvm::enumerate(op.getArms())) {
+    Block *entry = &region.front();
+    if (e && i < op.getCases().size() && entry->getNumArguments()) {
+      rw.setInsertionPointToStart(entry);
+      int32_t tag = static_cast<int32_t>(op.getCases()[i]);
+      for (BlockArgument a : entry->getArguments())
+        a.replaceAllUsesWith(EnumPayloadOp::create(rw, loc, a.getType(), subject,
+                                                   rw.getI32IntegerAttr(tag),
+                                                   rw.getI64IntegerAttr(a.getArgNumber())));
+      entry->eraseArguments(0, entry->getNumArguments());
+    }
+    rewriteTerminators<YieldOp>(region, [&](YieldOp y) {
+      rw.setInsertionPoint(y);
+      rw.replaceOpWithNewOp<cf::BranchOp>(y, cont, y.getValues());
+    });
+    entries.push_back(entry);
+    rw.inlineRegionBefore(region, cont);
+  }
+  Block *dflt;
+  if (op.getHasDefault()) {
+    dflt = entries.back();
+    entries.pop_back();
+  } else {
+    dflt = rw.createBlock(cont);
+    UnreachableOp::create(rw, loc);
+  }
+  SmallVector<APInt> values;
+  for (int64_t c : op.getCases())
+    values.push_back(APInt(width, c, /*isSigned=*/true, /*implicitTrunc=*/true));
+  SmallVector<ValueRange> noArgs(entries.size(), ValueRange{});
+  rw.setInsertionPointToEnd(cur);
+  cf::SwitchOp::create(rw, loc, key, dflt, ValueRange{}, values, entries, noArgs);
+  rw.replaceOp(op, cont->getArguments());
+}
+
 //===----------------------------------------------------------------------===//
 // milo-raise-to-scf
 //===----------------------------------------------------------------------===//
@@ -175,7 +231,7 @@ bool raisable(ForOp f) {
   if (!iv || !iv.isSigned())
     return false;
   WalkResult r = f.getBodyRegion().walk([](Operation *op) {
-    if (isa<BreakOp, ContinueOp, ReturnOp, UnreachableOp, WhileOp, LoopOp, ForOp>(op))
+    if (isa<BreakOp, ContinueOp, ReturnOp, UnreachableOp, WhileOp, LoopOp, ForOp, MatchOp>(op))
       return WalkResult::interrupt();
     for (Region &reg : op->getRegions())
       if (!reg.hasOneBlock() && !reg.empty())
@@ -268,7 +324,7 @@ struct LowerStructuredCFPass
     // Innermost first: by the time a loop is lowered, every jump left inside it is its own.
     SmallVector<Operation *> ops;
     getOperation().walk<WalkOrder::PostOrder>([&](Operation *op) {
-      if (isa<IfOp, WhileOp, LoopOp, ForOp>(op))
+      if (isa<IfOp, WhileOp, LoopOp, ForOp, MatchOp>(op))
         ops.push_back(op);
     });
     IRRewriter rw(&getContext());
@@ -277,6 +333,8 @@ struct LowerStructuredCFPass
         lowerIf(rw, i);
       else if (auto w = dyn_cast<WhileOp>(op))
         lowerWhile(rw, w);
+      else if (auto m = dyn_cast<MatchOp>(op))
+        lowerMatch(rw, m);
       else if (auto f = dyn_cast<ForOp>(op))
         lowerFor(rw, f);
       else
@@ -913,6 +971,111 @@ struct StringLitLowering : ConvertOpToLLVMPattern<StringLitOp> {
   }
 };
 
+// A stack slot of type `t` at the top of the function's entry block, so code in a loop
+// does not grow the frame. Ops reaching this lowering sit directly in the function body.
+Value entrySlot(ConversionPatternRewriter &rw, Operation *op, Type t) {
+  OpBuilder::InsertionGuard g(rw);
+  rw.setInsertionPointToStart(&op->getParentRegion()->front());
+  Location loc = op->getLoc();
+  Value one = constInt(rw, loc, rw.getI64Type(), 1);
+  return LLVM::AllocaOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()), t, one);
+}
+
+Value byteOffset(ConversionPatternRewriter &rw, Location loc, Value base, int64_t off) {
+  if (off == 0)
+    return base;
+  return LLVM::GEPOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()),
+                             rw.getI8Type(), base, ArrayRef<LLVM::GEPArg>{off},
+                             LLVM::GEPNoWrapFlags::inbounds);
+}
+
+// An enum goes through memory, as in legacy codegen (enumFieldPtr): its storage array has
+// no per-variant shape, so the tag and each payload field are read and written at their
+// byte offsets; SROA folds the slot away.
+struct EnumNewLowering : ConvertOpToLLVMPattern<EnumNewOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnumNewOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    EnumType e = op.getType();
+    Type et = getTypeConverter()->convertType(e);
+    Value slot = entrySlot(rw, op, et);
+    LLVM::StoreOp::create(rw, loc, constInt(rw, loc, rw.getI32Type(), op.getTag()), slot);
+    unsigned v = e.variantOf(op.getTag());
+    for (auto [k, f] : llvm::enumerate(a.getFields()))
+      LLVM::StoreOp::create(rw, loc, f, byteOffset(rw, loc, slot, e.offsetOf(v, k)));
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, et, slot);
+    return success();
+  }
+};
+
+struct EnumTagLowering : ConvertOpToLLVMPattern<EnumTagOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnumTagOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Value slot = entrySlot(rw, op, a.getValue().getType());
+    LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), slot);
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI32Type(), slot);
+    return success();
+  }
+};
+
+struct EnumPayloadLowering : ConvertOpToLLVMPattern<EnumPayloadOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnumPayloadOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    EnumType e = op.getValue().getType();
+    Value slot = entrySlot(rw, op, a.getValue().getType());
+    LLVM::StoreOp::create(rw, loc, a.getValue(), slot);
+    int64_t off = e.offsetOf(e.variantOf(op.getTag()), op.getIndex());
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, getTypeConverter()->convertType(op.getType()),
+                                        byteOffset(rw, loc, slot, off));
+    return success();
+  }
+};
+
+struct StructNewLowering : ConvertOpToLLVMPattern<StructNewOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StructNewOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Value s = LLVM::UndefOp::create(rw, loc, getTypeConverter()->convertType(op.getType()));
+    for (auto [k, f] : llvm::enumerate(a.getFields()))
+      s = LLVM::InsertValueOp::create(rw, loc, s, f, ArrayRef<int64_t>{(int64_t)k});
+    rw.replaceOp(op, s);
+    return success();
+  }
+};
+
+struct StructGetLowering : ConvertOpToLLVMPattern<StructGetOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StructGetOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::ExtractValueOp>(op, a.getValue(),
+                                                ArrayRef<int64_t>{(int64_t)op.getIndex()});
+    return success();
+  }
+};
+
+struct FieldRefLowering : ConvertOpToLLVMPattern<FieldRefOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(FieldRefOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type st = getTypeConverter()->convertType(op.getRef().getType().getPointee());
+    rw.replaceOpWithNewOp<LLVM::GEPOp>(
+        op, LLVM::LLVMPointerType::get(rw.getContext()), st, a.getRef(),
+        ArrayRef<LLVM::GEPArg>{0, (int32_t)op.getIndex()}, LLVM::GEPNoWrapFlags::inbounds);
+    return success();
+  }
+};
+
 // How a print helper's symbol spells a part type; codegen mlirPrintHelper builds the
 // same name from the Milo types.
 std::string printKey(Type t) {
@@ -922,6 +1085,10 @@ std::string printKey(Type t) {
     return "ptr";
   if (isa<StringType>(t))
     return "string";
+  if (auto s = dyn_cast<StructType>(t))
+    return ("S" + s.getName()).str();
+  if (auto e = dyn_cast<EnumType>(t))
+    return ("E" + e.getName()).str();
   std::string s;
   llvm::raw_string_ostream os(s);
   os << t;
@@ -944,18 +1111,12 @@ struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
     for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
       Type t = part.getType();
       name += "." + printKey(t);
-      if (!isa<StringType>(t)) {
+      if (!isa<StringType, StructType, EnumType>(t)) {
         args.push_back(v);
         argTys.push_back(v.getType());
         continue;
       }
-      Value slot;
-      {
-        OpBuilder::InsertionGuard g(rw);
-        rw.setInsertionPointToStart(&op->getParentRegion()->front());
-        Value one = constInt(rw, loc, rw.getI64Type(), 1);
-        slot = LLVM::AllocaOp::create(rw, loc, ptrTy, v.getType(), one);
-      }
+      Value slot = entrySlot(rw, op, v.getType());
       LLVM::StoreOp::create(rw, loc, v, slot);
       args.push_back(slot);
       argTys.push_back(ptrTy);
@@ -1023,6 +1184,35 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     return LLVM::LLVMPointerType::get(ctx);
   });
   tc.addConversion([ctx = &tc.getContext()](StringType) -> Type { return stringStruct(ctx); });
+  // Identified by legacy's names, so a spliced body's `%Point` is the module's own type.
+  tc.addConversion([&tc](StructType s) -> std::optional<Type> {
+    auto st = LLVM::LLVMStructType::getIdentified(&tc.getContext(), s.getName());
+    if (st.isInitialized())
+      return st;
+    SmallVector<Type> fields;
+    for (Type f : s.getFields()) {
+      Type c = tc.convertType(f);
+      if (!c)
+        return std::nullopt;
+      fields.push_back(c);
+    }
+    if (failed(st.setBody(fields, /*isPacked=*/false)))
+      return std::nullopt;
+    return st;
+  });
+  tc.addConversion([&tc](EnumType e) -> std::optional<Type> {
+    MLIRContext *ctx = &tc.getContext();
+    auto st = LLVM::LLVMStructType::getIdentified(ctx, e.getName());
+    if (st.isInitialized())
+      return st;
+    Type body = e.getSize() == 0
+                    ? Type(IntegerType::get(ctx, 32))
+                    : Type(LLVM::LLVMArrayType::get(IntegerType::get(ctx, 8 * e.getAlign()),
+                                                    e.getSize() / e.getAlign()));
+    if (failed(st.setBody({body}, /*isPacked=*/false)))
+      return std::nullopt;
+    return st;
+  });
   patterns.add<AddLowering, SubLowering, MulLowering, NegLowering, DivLowering,
                RemLowering, ShiftLowering<ShlOp, true>, ShiftLowering<ShrOp, false>,
                BitLowering<AndOp, LLVM::AndOp>, BitLowering<OrOp, LLVM::OrOp>,
@@ -1031,7 +1221,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
                ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
-               StringLitLowering, PrintLowering>(tc);
+               StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
+               EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

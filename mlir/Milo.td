@@ -106,8 +106,94 @@ def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
   let mnemonic = "string";
 }
 
+// A struct by value, named as legacy codegen names its LLVM type (`%Point`), with its
+// fields' types in declaration order: `!milo.struct<"Point", si64, f64>`. It lowers to
+// the identified LLVM struct of that name, so a spliced body uses the module's own
+// definition and the layout is LLVM's natural one, which is legacy's.
+def Milo_StructType : TypeDef<Milo_Dialect, "Struct"> {
+  let mnemonic = "struct";
+  let parameters = (ins StringRefParameter<>:$name, ArrayRefParameter<"::mlir::Type">:$fields);
+  let hasCustomAssemblyFormat = 1;
+}
+
+// A tagged enum by value, with the layout legacy codegen computed (EnumLayout), spelled
+// out so nothing here recomputes it: `size` bytes stored as `[size/align x i(8*align)]`
+// (or `{ i32 }` when size is 0, a fieldless enum), the i32 tag in bytes 0..4, and each
+// variant's fields at the byte offsets after `at`:
+//   !milo.enum<"Shape", size = 24, align = 8, [0: (f64 at 8), 1: (f64 at 8, f64 at 16), 2: ()]>
+// Niche-packed enums (EnumLayout.niche) have no tag word and are not expressible here.
+def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
+  let mnemonic = "enum";
+  let parameters = (ins StringRefParameter<>:$name, "int64_t":$size, "int64_t":$align,
+                        ArrayRefParameter<"int32_t">:$tags,
+                        ArrayRefParameter<"::mlir::TupleType">:$variants,
+                        ArrayRefParameter<"int64_t">:$offsets);
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    // The variant with this tag, or -1.
+    int variantOf(int32_t tag) const;
+    // Byte offset of field `k` of variant `v`.
+    int64_t offsetOf(unsigned v, unsigned k) const;
+  }];
+}
+
+def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType]>;
+
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate]>;
+// What compares and casts.
+def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
+
+// `S { a: x, b: y }`: the fields in declaration order (the emitter evaluates them in
+// source order first).
+def Milo_StructNewOp : Milo_Op<"struct.new", [Pure]> {
+  let arguments = (ins Variadic<Milo_Value>:$fields);
+  let results = (outs Milo_StructType:$result);
+  let assemblyFormat = "($fields^ `:` type($fields))? attr-dict `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// Field `index` of a struct value.
+def Milo_StructGetOp : Milo_Op<"struct.get", [Pure]> {
+  let arguments = (ins Milo_StructType:$value, I64Attr:$index);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$value `[` $index `]` attr-dict `:` type($value) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// The place of field `index` inside the struct at `ref`: still second-class, it only
+// feeds loads, stores and by-ref arguments.
+def Milo_FieldRefOp : Milo_Op<"field_ref", [Pure]> {
+  let arguments = (ins Milo_RefType:$ref, I64Attr:$index);
+  let results = (outs Milo_RefType:$result);
+  let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// `E.V(args)`: the variant with tag `tag`, its payload fields from the operands.
+def Milo_EnumNewOp : Milo_Op<"enum.new", [Pure]> {
+  let arguments = (ins I32Attr:$tag, Variadic<Milo_Value>:$fields);
+  let results = (outs Milo_EnumType:$result);
+  let assemblyFormat = "$tag ( `(` $fields^ `:` type($fields) `)` )? attr-dict `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// The tag of an enum value (`x is V` compares it; milo.match switches on it).
+def Milo_EnumTagOp : Milo_Op<"enum.tag", [Pure]> {
+  let arguments = (ins Milo_EnumType:$value);
+  let results = (outs SI32:$tag);
+  let assemblyFormat = "$value attr-dict `:` type($value)";
+}
+
+// Field `index` of the payload of variant `tag`. Meaningful only when the value has that
+// tag: milo-lower-structured-cf makes these at the entry of the arm that matched it.
+def Milo_EnumPayloadOp : Milo_Op<"enum.payload", [Pure]> {
+  let arguments = (ins Milo_EnumType:$value, I32Attr:$tag, I64Attr:$index);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$value `[` $tag `,` $index `]` attr-dict `:` type($value) `->` type($result)";
+  let hasVerifier = 1;
+}
 
 // A string literal: the bytes as a private constant, len, cap 0.
 def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
@@ -207,15 +293,15 @@ def Milo_CmpPredicate : I64EnumAttr<"CmpPredicate", "comparison", [
 // does). On floats every comparison is ordered except `ne`, which holds when either side
 // is NaN, so `x != x` is true for NaN.
 def Milo_CmpOp : Milo_Op<"cmp", [Pure, SameTypeOperands]> {
-  let arguments = (ins Milo_CmpPredicate:$predicate, Milo_Value:$lhs, Milo_Value:$rhs);
+  let arguments = (ins Milo_CmpPredicate:$predicate, Milo_Simple:$lhs, Milo_Simple:$rhs);
   let results = (outs I1:$result);
   let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
 }
 
 // `x as T` between scalars. Float to int saturates (NaN is 0); it never traps.
 def Milo_CastOp : Milo_Op<"cast", [Pure]> {
-  let arguments = (ins Milo_Value:$operand);
-  let results = (outs Milo_Value:$result);
+  let arguments = (ins Milo_Simple:$operand);
+  let results = (outs Milo_Simple:$result);
   let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($result)";
 }
 
@@ -323,8 +409,23 @@ def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start",
   let hasVerifier = 1;
 }
 
+// `match subject { arms }`, one region per arm. On an enum, `cases` holds each arm's tag
+// and the arm's entry block takes that variant's payload fields as arguments (what the
+// pattern binds); on an int or bool, `cases` are the literal values and arms take none.
+// With `default` the last region is the `_` arm; without one, a value matching no case
+// is unreachable (the checker proved the match exhaustive). With results it is an
+// expression: each arm yields them or ends in a jump.
+def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects]> {
+  let arguments = (ins AnyTypeOf<[Milo_EnumType, Milo_Int, I1]>:$subject,
+                       DenseI64ArrayAttr:$cases, UnitAttr:$hasDefault);
+  let results = (outs Variadic<Milo_Value>:$results);
+  let regions = (region VariadicRegion<MinSizedRegion<1>>:$arms);
+  let assemblyFormat = "$subject `:` type($subject) (`->` type($results)^)? $cases (`default` $hasDefault^)? $arms attr-dict";
+  let hasVerifier = 1;
+}
+
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
-    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp"]>]> {
+    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "MatchOp"]>]> {
   let arguments = (ins Variadic<Milo_Value>:$values);
   let assemblyFormat = "($values^ `:` type($values))? attr-dict";
   let hasVerifier = 1;

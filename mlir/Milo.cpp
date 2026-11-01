@@ -27,6 +27,116 @@ void MiloDialect::initialize() {
 }
 
 //===----------------------------------------------------------------------===//
+// Aggregate types.
+//===----------------------------------------------------------------------===//
+
+// !milo.struct<"Name", T0, T1>
+Type StructType::parse(AsmParser &p) {
+  std::string name;
+  SmallVector<Type> fields;
+  if (p.parseLess() || p.parseString(&name))
+    return {};
+  while (succeeded(p.parseOptionalComma())) {
+    Type t;
+    if (p.parseType(t))
+      return {};
+    fields.push_back(t);
+  }
+  if (p.parseGreater())
+    return {};
+  return StructType::get(p.getContext(), name, fields);
+}
+
+void StructType::print(AsmPrinter &p) const {
+  p << "<\"" << getName() << "\"";
+  for (Type t : getFields())
+    p << ", " << t;
+  p << ">";
+}
+
+// !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>
+Type EnumType::parse(AsmParser &p) {
+  std::string name;
+  int64_t size, align;
+  SmallVector<int32_t> tags;
+  SmallVector<TupleType> variants;
+  SmallVector<int64_t> offsets;
+  if (p.parseLess() || p.parseString(&name) || p.parseComma() || p.parseKeyword("size") ||
+      p.parseEqual() || p.parseInteger(size) || p.parseComma() || p.parseKeyword("align") ||
+      p.parseEqual() || p.parseInteger(align) || p.parseComma())
+    return {};
+  auto variant = [&]() -> ParseResult {
+    int32_t tag;
+    SmallVector<Type> fields;
+    auto field = [&]() -> ParseResult {
+      Type t;
+      int64_t off;
+      if (p.parseType(t) || p.parseKeyword("at") || p.parseInteger(off))
+        return failure();
+      fields.push_back(t);
+      offsets.push_back(off);
+      return success();
+    };
+    if (p.parseInteger(tag) || p.parseColon() ||
+        p.parseCommaSeparatedList(AsmParser::Delimiter::Paren, field))
+      return failure();
+    tags.push_back(tag);
+    variants.push_back(TupleType::get(p.getContext(), fields));
+    return success();
+  };
+  if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, variant) || p.parseGreater())
+    return {};
+  return EnumType::getChecked([&] { return p.emitError(p.getNameLoc()); }, p.getContext(),
+                              name, size, align, tags, variants, offsets);
+}
+
+void EnumType::print(AsmPrinter &p) const {
+  p << "<\"" << getName() << "\", size = " << getSize() << ", align = " << getAlign() << ", [";
+  unsigned k = 0;
+  llvm::interleaveComma(llvm::zip(getTags(), getVariants()), p, [&](auto tv) {
+    p << std::get<0>(tv) << ": (";
+    llvm::interleaveComma(std::get<1>(tv).getTypes(), p,
+                          [&](Type t) { p << t << " at " << getOffsets()[k++]; });
+    p << ")";
+  });
+  p << "]>";
+}
+
+LogicalResult EnumType::verify(function_ref<InFlightDiagnostic()> emitError, StringRef,
+                               int64_t size, int64_t align, ArrayRef<int32_t> tags,
+                               ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets) {
+  if (tags.size() != variants.size())
+    return emitError() << "needs one tag per variant";
+  size_t fields = 0;
+  for (TupleType v : variants)
+    fields += v.size();
+  if (offsets.size() != fields)
+    return emitError() << "needs one offset per payload field";
+  if ((align != 4 && align != 8) || size % align)
+    return emitError() << "size " << size << " is not stored as " << align << "-byte words";
+  if (size == 0 && fields)
+    return emitError() << "of size 0 has payload fields";
+  for (int64_t off : offsets)
+    if (off < 4 || off >= size)
+      return emitError() << "payload offset " << off << " is outside bytes 4.." << size;
+  return success();
+}
+
+int EnumType::variantOf(int32_t tag) const {
+  for (auto [i, t] : llvm::enumerate(getTags()))
+    if (t == tag)
+      return i;
+  return -1;
+}
+
+int64_t EnumType::offsetOf(unsigned v, unsigned k) const {
+  unsigned base = 0;
+  for (unsigned i = 0; i < v; i++)
+    base += getVariants()[i].size();
+  return getOffsets()[base + k];
+}
+
+//===----------------------------------------------------------------------===//
 // Verifiers and effects of the source-level ops.
 //===----------------------------------------------------------------------===//
 
@@ -107,9 +217,84 @@ LogicalResult PrintOp::verify() {
   for (Type t : getParts().getTypes()) {
     auto i = dyn_cast<IntegerType>(t);
     bool ok = (i && (!i.isSignless() || i.getWidth() == 1)) || t.isF32() || t.isF64() ||
-              isa<PtrType, StringType>(t);
+              isa<PtrType, StringType, StructType, EnumType>(t);
     if (!ok)
       return emitOpError("cannot display a part of type ") << t;
+  }
+  return success();
+}
+
+LogicalResult StructNewOp::verify() {
+  if (getFields().getTypes() != getType().getFields())
+    return emitOpError("operands are not the fields of ") << getType();
+  return success();
+}
+
+LogicalResult StructGetOp::verify() {
+  ArrayRef<Type> fields = getValue().getType().getFields();
+  if (getIndex() >= fields.size() || fields[getIndex()] != getType())
+    return emitOpError("has no field ") << getIndex() << " of type " << getType();
+  return success();
+}
+
+LogicalResult FieldRefOp::verify() {
+  auto s = dyn_cast<StructType>(getRef().getType().getPointee());
+  if (!s)
+    return emitOpError("needs the place of a struct");
+  ArrayRef<Type> fields = s.getFields();
+  if (getIndex() >= fields.size() || fields[getIndex()] != getType().getPointee())
+    return emitOpError("has no field ") << getIndex() << " of type " << getType().getPointee();
+  return success();
+}
+
+// Variant `tag` of `e`, its fields checked against `types` when given.
+static LogicalResult verifyVariant(Operation *op, EnumType e, int32_t tag,
+                                   std::optional<TypeRange> types) {
+  int v = e.variantOf(tag);
+  if (v < 0)
+    return op->emitOpError("has no variant with tag ") << tag;
+  if (types && *types != TypeRange(e.getVariants()[v].getTypes()))
+    return op->emitOpError("payload is not the fields of variant ") << tag;
+  return success();
+}
+
+LogicalResult EnumNewOp::verify() {
+  return verifyVariant(*this, getType(), getTag(), TypeRange(getFields().getTypes()));
+}
+
+LogicalResult EnumPayloadOp::verify() {
+  EnumType e = getValue().getType();
+  if (failed(verifyVariant(*this, e, getTag(), std::nullopt)))
+    return failure();
+  TupleType fields = e.getVariants()[e.variantOf(getTag())];
+  if (getIndex() >= fields.size() || fields.getType(getIndex()) != getType())
+    return emitOpError("has no payload field ") << getIndex() << " of type " << getType();
+  return success();
+}
+
+LogicalResult MatchOp::verify() {
+  size_t arms = getArms().size();
+  if (getCases().size() + (getHasDefault() ? 1 : 0) != arms)
+    return emitOpError("needs one region per case") << (getHasDefault() ? ", plus the default" : "");
+  llvm::SmallDenseSet<int64_t> seen;
+  for (int64_t c : getCases())
+    if (!seen.insert(c).second)
+      return emitOpError("has two arms for case ") << c;
+  auto e = dyn_cast<EnumType>(getSubject().getType());
+  for (auto [i, region] : llvm::enumerate(getArms())) {
+    TypeRange args = region.front().getArgumentTypes();
+    if (i == getCases().size()) {
+      if (!args.empty())
+        return emitOpError("default arm takes no arguments");
+      continue;
+    }
+    int64_t c = getCases()[i];
+    if (e) {
+      if (failed(verifyVariant(*this, e, static_cast<int32_t>(c), args)))
+        return failure();
+    } else if (!args.empty()) {
+      return emitOpError("arm on a literal takes no arguments");
+    }
   }
   return success();
 }
@@ -124,9 +309,9 @@ LogicalResult ForOp::verify() {
 
 LogicalResult YieldOp::verify() {
   Operation *parent = (*this)->getParentOp();
-  if (auto ifOp = dyn_cast<IfOp>(parent)) {
-    if (getValues().getTypes() != ifOp.getResultTypes())
-      return emitOpError("yields types that do not match the enclosing milo.if");
+  if (isa<IfOp, MatchOp>(parent)) {
+    if (getValues().getTypes() != parent->getResultTypes())
+      return emitOpError("yields types that do not match the enclosing ") << parent->getName();
     return success();
   }
   if (!getValues().empty())
