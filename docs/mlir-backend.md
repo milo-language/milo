@@ -618,6 +618,12 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   hasDrop matches type text, and a map with a string in its key or value type passed
   for owning without the fix). Tahoe Roads api: 5222 (97.6%); 65 HashMap fixtures same
   under `--owned`.
+- *`replace(p, v)` and `opt.take()`* (HIR MemReplace), values only: the old value read
+  out of the place as the owned result, `v` evaluated (the old value pending meanwhile,
+  so a jump keeps the function legacy), then stored `init`, nothing dropped, as legacy's
+  genMemReplace. Program `replace`. Planted bug: the store without `init`, so the moved-out
+  old value is dropped too (`replace` stdout: a use after free). Tahoe Roads api: 5230
+  (97.7%).
 - *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
   of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
   statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.

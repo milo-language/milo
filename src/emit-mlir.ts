@@ -1474,6 +1474,21 @@ class FnEmitter {
         if (l.ty !== ty || r.ty !== ty) throw new MlirUnsupported("wrapping operand types");
         return this.def(`milo.${op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
       }
+      case "MemReplace": {
+        // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the
+        // result's now), then `v` stored over it with nothing dropped.
+        const ty = this.value(e.type, "replaced value");
+        const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
+        const old = { ...this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty), own: hasDrop(ty) ? "owned" as const : undefined };
+        // Until the store, the old value has two owners on paper: no jump may come between.
+        const mark = this.pending;
+        this.pend(old);
+        const v = this.consume(this.expr(e.value), "replacement");
+        this.pending = mark;
+        if (v.ty !== ty) throw new MlirUnsupported("replacement of another type");
+        this.emit(`milo.store ${v.ref}, ${p} init : !milo.ref<${ty}>`);
+        return old;
+      }
       case "HashMapLen": {
         const m = this.borrow(this.expr(e.object), e.object.type);
         if (!m.ty.startsWith("!milo.map<")) throw new MlirUnsupported("len of a non-map");

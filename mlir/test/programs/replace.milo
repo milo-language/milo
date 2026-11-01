@@ -1,0 +1,33 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `replace(p, v)`
+// and `opt.take()`: the old value moves out as the result and the new one is stored over
+// it with nothing dropped. Locals, fields through `&mut`, Vec-owning and string values,
+// a discarded result, and Option.take on a field.
+
+struct Slot { name: string, items: Vec<i64>, next: Option<string> }
+
+fn swapName(s: &mut Slot, n: string): string {
+    return replace(s.name, n)
+}
+
+fn drain(s: &mut Slot): Vec<i64> {
+    return replace(s.items, Vec.new())
+}
+
+fn main() {
+    var a = "first" + "!"
+    let old = replace(a, "second")
+    print(old, " ", a)
+    var s = Slot { name: "x", items: Vec.new(), next: Option.Some("n" + "1") }
+    s.items.push(1)
+    s.items.push(2)
+    print(swapName(&mut s, "y"), " ", s.name)
+    let got = drain(&mut s)
+    print(got.len(), " ", s.items.len())
+    replace(s.name, "z" + "z")
+    print(s.name)
+    let t = s.next.take()
+    print(t ?? "none", " ", s.next ?? "none")
+    var k = 5
+    let was = replace(k, 6)
+    print(was, " ", k)
+}
