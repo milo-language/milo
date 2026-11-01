@@ -92,6 +92,23 @@ slices measured (two extra subprocesses per build, and the legacy body is still 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
 
+### After M7: modularity
+
+Once every function goes through the dialect, std can write `milo` and upstream ops
+inline (std-only or `unsafe`-gated, the way Mojo's std spells `__mlir_op.`). Then Vec,
+HashMap and string become plain std structs whose methods are Milo plus a few inline ops,
+with no type tags in the checker. The checker shrinks to the core rules: ownership,
+second-class references, generics, traits. Collection-specific rules (a Vec element store
+never moves the header, bounds checks are panic points) become attributes on those std
+types, checked and exploited by generic passes rather than by special cases. SIMD and GPU
+become opt-in std modules over upstream dialects (`vector`, `gpu`), not compiler features.
+
+### Candidate: verification from the compiled IR
+
+Contracts (`requires`, `ensures`, loop invariants) lower to the upstream `smt` dialect
+from the same milo IR that is compiled, so what is proven is what runs, rather than a
+separate model of the source (`src/verify.ts` today).
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` with `MILO_MLIR=1` passes exactly as without
