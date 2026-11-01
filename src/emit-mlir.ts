@@ -457,6 +457,7 @@ class FnEmitter {
     if (valueType(this.cx, e.type) !== ty) {
       if (e.kind === "MatchExpr") { this.match(e, null, b => this.tailInto(b, dst, ty)); return; }
       if (e.kind === "Propagate") { this.propagate(e, { dst, ty }); return; }
+      if (e.kind === "DefaultValue") { this.defaultValue(e, { dst, ty }); return; }
       if (e.kind === "IfExpr") {
         const c = this.expr(e.cond);
         if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
@@ -1273,6 +1274,7 @@ class FnEmitter {
         return this.match(e, this.value(e.type, "match-expression")).v;
       }
       case "Propagate": return this.propagate(e);
+      case "DefaultValue": return this.defaultValue(e);
       // std's panics with a message: legacy's text and abort in a helper per site.
       case "StrPanic": {
         const v = this.expr(e.value);
@@ -1850,6 +1852,27 @@ class FnEmitter {
     if (into) return this.match({ subject: e.operand, arms: [okArm, errArm] }, null, b => this.tailInto(b, into.dst, into.ty)).v;
     const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
     return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v;
+  }
+
+  /**
+   * `x ?? d` as the match it means, as legacy genDefaultValue: `Some(v) => v` (tag 0; Ok),
+   * anything else evaluates `d`. The subject is consumed only on the first arm.
+   */
+  private defaultValue(e: HIRExpr & { kind: "DefaultValue" }, into?: { dst: string; ty: string }): Val {
+    const ok = this.cx.mlirEnumLayout(e.enumName)?.variants.find(v => v.tag === 0);
+    if (!ok || ok.fields.length !== 1) throw new MlirUnsupported("`??` enum layout");
+    // Legacy never drops the payload of the other variant (an owning Err leaks there);
+    // dropping it here would change the live-block count, so such ones stay legacy.
+    const others = this.cx.mlirEnumLayout(e.enumName)!.variants.filter(v => v.tag !== 0).flatMap(v => v.fields);
+    if (others.some(f => hasDrop(this.place$(f, "`??` payload")))) throw new MlirUnsupported("`??` over an owning Err");
+    const name = `dflt$v${this.n++}`;
+    const arms = [
+      { pattern: { kind: "EnumPattern" as const, variant: ok.name, tag: 0, bindings: [{ name, type: ok.fields[0] }] },
+        body: [{ kind: "ExprStmt" as const, expr: { kind: "Ident" as const, name, type: e.type, isMove: true } }] },
+      { pattern: { kind: "WildcardPattern" as const }, body: [{ kind: "ExprStmt" as const, expr: e.default }] },
+    ];
+    if (into) return this.match({ subject: e.operand, arms }, null, b => this.tailInto(b, into.dst, into.ty)).v;
+    return this.match({ subject: e.operand, arms }, this.value(e.type, "`??` result")).v;
   }
 
   /**

@@ -479,6 +479,11 @@ structs, enums.
   `trap-str-truncate`, `addr-of`. Planted bugs: the binding spilled but not rebound
   (`addr-of` stdout: 40 for 41); the panic's value replaced by 0 (`trap-str-truncate`
   stderr).
+- *`x ?? d`* is the match it means (`Some(v) => v`, `_ => d`), also into a place for a
+  128+ byte result. A `??` over a Result whose Err owns something stays legacy: legacy
+  never drops that payload (one more live block at exit than this backend, which
+  drops it), so taking it would change the leak count. Program `default-value`.
+  Planted bug: the Some arm yielding the default (`default-value` stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

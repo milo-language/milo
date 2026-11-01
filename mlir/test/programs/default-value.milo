@@ -1,0 +1,36 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `x ?? d` on Option and Result, with owned payloads and defaults,
+// and a default that is only evaluated when needed. An owning Err stays legacy (legacy
+// leaks its payload there).
+
+fn find(v: &Vec<string>, k: string): Option<string> {
+    for s in v { if s.startsWith(k) { return Some(s + "*") } }
+    return None
+}
+
+fn parse(s: string): Result<i64, i64> {
+    if s.len() == 0 { return Err(-7) }
+    return Ok(s.len() * 10)
+}
+
+var calls: i64 = 0
+
+fn fallback(): string {
+    calls += 1
+    return "fb" + calls.toString()
+}
+
+// Not main: a main naming a global keeps its legacy body.
+fn run() {
+    var v: Vec<string> = Vec.new()
+    v.push("apple")
+    v.push("banana")
+    let a = find(v, "ba") ?? fallback()
+    let b = find(v, "zz") ?? fallback()
+    let c = find(v, "ap") ?? "lit"
+    let n = parse("abc") ?? -1
+    let m = parse("") ?? -1
+    print(a, " ", b, " ", c, " ", n, " ", m, " ", calls)
+}
+
+fn main() { run() }
