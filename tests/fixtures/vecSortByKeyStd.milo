@@ -1,0 +1,110 @@
+// Vec.sortByKey is std/vec.milo's sortByKey<K>, the builtin's stable insertion sort with
+// the key of the element being placed taken once. Covers an empty Vec, int, float, bool
+// and string keys, a key that is a string field of the borrowed element (a view: never
+// dropped, so the element keeps its name), a computed string key, a ranged key, a by-value
+// extractor and a by-value fn value on a Copy element, Drop elements, stability, a key
+// function that counts its calls (the builtin's call sequence), a field receiver, and a
+// capture.
+// @expect: 0
+// @expect: al di cy bo 
+// @expect: al bo cy di 
+// @expect: bo di cy al 
+// @expect: di al bo cy 
+// @expect: al bo cy di 
+// @expect: [5, 3, -1]
+// @expect: [3, 2, 1]
+// @expect: [4, 17, 9]
+// @expect: [1, 2, 3, 4, 5] 11
+// @expect: [1, 2, 3]
+// @expect: [3, 2, 1]
+// @expect: 1 2 3
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 3
+// @expect: done
+
+struct P {
+    name: string,
+    age: i64,
+    score: f64,
+    vip: bool,
+}
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Holder {
+    items: Vec<i64>,
+}
+
+fn people(): Vec<P> {
+    return [P { name: "cy" + "", age: 30, score: 1.5, vip: true }, P { name: "al", age: 25, score: 9.0, vip: false }, P { name: "bo", age: 30, score: -2.0, vip: true }, P { name: "di", age: 25, score: 0.0, vip: false },]
+}
+
+fn names(ps: &Vec<P>): string {
+    var out = ""
+    for p in ps {
+        out.pushStr(p.name)
+        out.pushStr(" ")
+    }
+    return out
+}
+
+fn run() {
+    var ns: Vec<Noisy> = Vec.new()
+    ns.push(Noisy { id: 2 })
+    ns.push(Noisy { id: 3 })
+    ns.push(Noisy { id: 1 })
+    ns.sortByKey((n: &Noisy) => n.id)
+    print(ns[0].id, " ", ns[1].id, " ", ns[2].id)
+}
+
+fn main() {
+    var e: Vec<P> = Vec.new()
+    e.sortByKey((p: &P) => p.age)
+    print(e.len())
+    var ps = people()
+    ps.sortByKey((p: &P) => p.age)
+    print(names(ps))
+    ps.sortByKey((p: &P) => p.name)
+    print(names(ps))
+    ps.sortByKey((p: &P) => p.score)
+    print(names(ps))
+    ps.sortByKey((p: &P) => p.vip)
+    print(names(ps))
+    ps.sortByKey((p: &P) => p.name + "!")
+    print(names(ps))
+    var v: Vec<i64> = [5, -1, 3]
+    v.sortByKey((x: i64) => 0 - x)
+    print(v)
+    let neg = (x: i64): i64 => 0 - x
+    var w: Vec<i64> = [1, 3, 2]
+    w.sortByKey(neg)
+    print(w)
+    var r: Vec<i64> = [17, 4, 9]
+    r.sortByKey((x: &i64): i32(0..9) => (x % 10) as i32(0..9))
+    print(r)
+    var calls = 0
+    var c: Vec<i64> = [4, 3, 2, 1, 5]
+    c.sortByKey((x: &i64) => {
+        calls = calls + 1
+        return x
+    })
+    print(c, " ", calls)
+    var h = Holder { items: [3, 1, 2] }
+    h.items.sortByKey((x: &i64) => x)
+    print(h.items)
+    let sign = -1
+    var cap: Vec<i64> = [1, 2, 3]
+    cap.sortByKey((x: &i64) => x * sign)
+    print(cap)
+    run()
+    print("done")
+}

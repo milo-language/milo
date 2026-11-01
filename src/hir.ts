@@ -88,7 +88,7 @@ export type HIRExpr =
   | { kind: "NumberToString"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "BoolToString"; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "JsonStringify"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean; consumedInClosure?: boolean; share?: boolean }[]; retType: TypeKind; type: TypeKind; isMove?: boolean; heapEnv?: boolean; span?: Span }
+  | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean; consumedInClosure?: boolean; share?: boolean }[]; retType: TypeKind; type: TypeKind; isMove?: boolean; heapEnv?: boolean; keyExtractor?: boolean; span?: Span }
   // indirect call through a bare C function pointer: no env argument
   | { kind: "CFnCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
@@ -99,7 +99,6 @@ export type HIRExpr =
   | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecCapacity"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecReserve"; object: HIRExpr; additional: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecSortByKey"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; keyType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "WrappingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }

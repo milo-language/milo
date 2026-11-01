@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -61,7 +61,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
   "VecLen", "VecPtr", "VecPush", "VecReserve",
-  "VecSlice", "VecSortByKey",
+  "VecSlice",
   "WrappingArith", "Zeroed",
 ];
 
@@ -5684,9 +5684,6 @@ export class Codegen {
         this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, cap, "i64"];
       }
-      case "VecSortByKey":
-        this.own.keyExtractor = this.own.on;
-        try { return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines); } finally { this.own.keyExtractor = false; }
       case "MapHash":
         return genMapHash(this, expr, lines);
       case "NatLess":
@@ -5757,7 +5754,10 @@ export class Codegen {
       case "JsonStringify":
         return this.genJsonStringify(expr, lines);
       case "Closure":
-        return this.genClosure(expr, lines);
+        // sortByKey's extractor returns a view of its parameter; the ledger is told so.
+        if (!expr.keyExtractor) return this.genClosure(expr, lines);
+        this.own.keyExtractor = this.own.on;
+        try { return this.genClosure(expr, lines); } finally { this.own.keyExtractor = false; }
       case "CFnCall":
         return this.genCFnCall(expr, lines);
       case "ClosureCall":

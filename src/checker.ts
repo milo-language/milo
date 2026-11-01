@@ -561,6 +561,7 @@ export interface CheckResult {
   borrowedExprs: Set<Expr>;
   sharedStringExprs: Set<Expr>;
   sharedStringCaptures: Map<Expr, Set<string>>;
+  keyExtractorClosures: Set<Expr>;
   autoWrappedOption: Map<Expr, string>;
   arrayToVecCoercions: Set<Expr>;
   // `[v; N]` of a type with a Clone impl: the mangled clone fn codegen calls for the N-1
@@ -896,6 +897,9 @@ export class TypeChecker {
   // callee known to read a returned field without retaining or dropping it. Only the
   // move-out-of-a-borrow rule reads it; see the FieldAccess branch of tryMove.
   private keyExtractorDepth = 0;
+  // sortByKey's extractor arguments, so codegen can tell the ownership ledger that the
+  // closure returns a view (codegen-own.ts keyExtractor).
+  private keyExtractorClosures = new Set<Expr>();
   private currentFnRetType: TypeKind = { tag: "void" };
   // Origin file of the fn body being checked; see checkFieldPrivacy.
   private currentFnFile: string | undefined;
@@ -3762,6 +3766,7 @@ export class TypeChecker {
       borrowedExprs: this.borrowedExprs,
       sharedStringExprs: this.sharedStringExprs,
       sharedStringCaptures: this.sharedStringCaptures,
+      keyExtractorClosures: this.keyExtractorClosures,
       autoWrappedOption: this.autoWrappedOption,
       arrayToVecCoercions: this.arrayToVecCoercions,
       arrayRepeatClones: this.arrayRepeatClones,
@@ -13679,9 +13684,13 @@ export class TypeChecker {
         }
         const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
         const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+        this.coerceCopyCallback(expr.args[0], cbHint);
+        this.thunkByValueFnValue(expr.args[0]!, objType.element, 1);
         const cbBorrow = this.borrowDuringCallback(expr.object, expr);
         // The one position where a closure may hand back a field of its borrowed
-        // parameter: the sort reads the key to compare it and never stores or drops it.
+        // parameter: the sort reads the key to compare it and never stores or drops it
+        // (std/vec's sortByKey forgets every key it is handed).
+        this.keyExtractorClosures.add(expr.args[0]!);
         this.keyExtractorDepth++;
         const cbType = this.checkExpr(expr.args[0], cbHint);
         this.checkCallbackSig(cbType, cbHint, "sortByKey", sp);
@@ -13690,9 +13699,11 @@ export class TypeChecker {
         if (cbType.tag !== "fn") { this.error(`'sortByKey' argument must be a function`, sp); return this.setType(expr, { tag: "void" }); }
         const keyType = cbType.ret;
         if (keyType.tag !== "int" && keyType.tag !== "float" && keyType.tag !== "string" && keyType.tag !== "bool") {
-          this.error(`'sortByKey' key must be a comparable type (int, float, string, bool), got ${this.show(keyType)}`, sp);
+          if (keyType.tag !== "unknown") this.error(`'sortByKey' key must be a comparable type (int, float, string, bool), got ${this.show(keyType)}`, sp);
+          return this.setType(expr, { tag: "void" });
         }
-        return this.setType(expr, { tag: "void" });
+        if (this.refuseByValueCallback(cbType, elemRef, "sortByKey", sp)) return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "sortByKey", { tag: "void" }, { typeArgs: [keyType] });
       }
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }

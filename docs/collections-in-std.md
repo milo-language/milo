@@ -471,3 +471,17 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   heap equal (189 blocks both); 11 corpus files pass; bench 200 sorts of 3000 elements:
   i64 0.25s builtin vs 0.22s std, strings 1.16s vs 1.17s, sortBy on a field 0.18s vs
   0.18s.
+- 2026-11-01: `sortByKey` moved as `sortByKey<K>`, `@inline`, the same insertion sort with
+  genVecSortByKey's call sequence (the placed element's key once per outer step, the
+  compared element's key per comparison; 11 calls in the fixture's five-element case, old
+  and new). A key may be a VIEW of its element: the checker's keyExtractorDepth lets the
+  closure return a string field of its borrowed parameter without a share, and the builtin
+  never dropped a key. std therefore `forget`s every key; dropping one instead (planted)
+  frees the element's name and turns `vecSortByKeyStd` red. A computed key leaks one
+  string per call, as the builtin's did (equal live heap, 192 blocks both). The ownership
+  ledger's keyExtractor mode is now set by a `keyExtractor` flag on the extractor's HIR
+  Closure (checker `keyExtractorClosures`), so the closure's returned view still reports
+  nothing. With it went the last sort codegen (sortPreamble, insertionSortLoop,
+  emitBuiltinGt, closureParts, cbElemArg). ASan clean; output identical; 6 corpus files
+  pass; bench 500 sorts of 3000 records by an i64 key 0.61s builtin vs 0.63s std, 100 by
+  a string field 0.62s vs 0.62s. Step 4 done.

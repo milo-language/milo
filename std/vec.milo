@@ -351,6 +351,39 @@ impl Vec<T> {
         }
     }
 
+    // Sorts in place by the natural order of `f`'s key, which the checker limits to int,
+    // float, string and bool. The key of the element being placed is taken once; the key
+    // of each element it is compared against is taken per comparison, the builtin's call
+    // sequence. A key may be a view of its element (`(p: &P) => p.name`, the one place
+    // a closure may return a field of its borrowed parameter), so every key is forgotten,
+    // never dropped. @inline for the same reason as sortBy.
+    @inline
+    fn sortByKey<K>(self: &mut Self, f: (&T) => K) {
+        unsafe {
+            let data = self.ptr()
+            let len = self.len()
+            var i = 1
+            while i < len {
+                let tmp = *data[i].addrOf()
+                let kt = f(tmp)
+                var j = i
+                while j > 0 {
+                    let kp = f(data[j.wrappingSub(1)])
+                    let after = _natLess(kt, kp)
+                    forget(kp)
+                    if !after {
+                        break
+                    }
+                    data[j] = *data[j.wrappingSub(1)].addrOf()
+                    j = j.wrappingSub(1)
+                }
+                forget(kt)
+                data[j] = tmp
+                i = i.wrappingAdd(1)
+            }
+        }
+    }
+
     // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,
     // with the indexing panic.
     @inline
