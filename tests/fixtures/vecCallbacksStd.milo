@@ -1,0 +1,103 @@
+// each, enumerate, any, all, position, find, fold and reduce are std/vec.milo code.
+// Covers empty Vecs, slices and a fixed array as the receiver, string/struct/float
+// elements, closures that capture (and one that reads the Vec it is lent), the Copy
+// by-value callback forms (a closure literal and a named fn), fold's seed retyped to the
+// closure's narrower accumulator, an owned string accumulator, and find copying out.
+// @expect: each: 1 2 3
+// @expect: each empty done
+// @expect: enum: 0=a 1=bb
+// @expect: true false false true
+// @expect: true true false
+// @expect: 1 none none
+// @expect: bb none
+// @expect: p2 2.5
+// @expect: 6 0 3
+// @expect: -1|1|2
+// @expect: 10 26
+// @expect: 3 true 1
+// @expect: by value: 6 true 1
+// @expect: named: 2 false
+// @expect: nan: false true
+// @expect: 15
+
+struct Pt {
+    x: i64,
+    name: string,
+}
+
+fn big(x: i64): bool {
+    return x > 2
+}
+
+fn tally(acc: i64, x: &i64): i64 {
+    return acc + x * 2
+}
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Some(i) => i.toString(),
+        None => "none",
+    }
+}
+
+fn anyOver(s: &[i64], limit: i64): bool {
+    return s.any((x: &i64) => x > limit)
+}
+
+fn main() {
+    let v: Vec<i64> = [1, 2, 3]
+    var line = "each:"
+    v.each((x: &i64) => {
+        line = line + " " + x.toString()
+    })
+    print(line)
+    let e: Vec<i64> = Vec.new()
+    e.each((x: &i64) => print("never ", x))
+    print("each empty done")
+
+    let ss: Vec<string> = ["a", "b" + "b"]
+    var en = "enum:"
+    ss.enumerate((i: i64, s: &string) => {
+        en = en + " " + i.toString() + "=" + s
+    })
+    print(en)
+
+    print(v.any((x: &i64) => x == 3), " ", e.any((x: &i64) => true), " ", e.all((x: &i64) => false) == false, " ", v.all((x: &i64) => x > 0))
+    print(anyOver(v[1..3], 2), " ", ss.any((s: &string) => s.len == 2), " ", ss.all((s: &string) => s.len == 2))
+
+    print(show(v.position((x: &i64) => x == 2)), " ", show(v.position((x: &i64) => x > 9)), " ", show(e.position((x: &i64) => true)))
+    let hit = ss.find((s: &string) => s.len > 1)
+    let miss = ss.find((s: &string) => s == "zz")
+    print(hit!, " ", miss ?? "none")
+
+    let ps: Vec<Pt> = [Pt { x: 1, name: "p1" }, Pt { x: 2, name: "p2" }]
+    let fs: Vec<f64> = [1.0, 2.5]
+    print(ps.find((p: &Pt) => p.x == 2)!.name, " ", fs.find((f: &f64) => f > 2.0)!)
+
+    print(v.fold(0, (acc: i64, x: &i64) => acc + x), " ", e.fold(0, (acc: i64, x: &i64) => acc + x), " ", v.reduce(0, (acc: i64, x: &i64) => acc + 1))
+    let joined = v.fold("-1", (acc: string, x: &i64) => acc + "|" + x.toString())
+    print(joined.substr(0, 6))
+    let narrow: Vec<i32> = [4, 6]
+    let n32 = narrow.fold(0, (acc: i32, x: &i32) => acc + x)
+    let a = [5, 7, 9]
+    print(n32, " ", a.fold(5, (acc: i64, x: &i64) => acc + x))
+
+    let lens = ss.fold(0, (acc: i64, s: &string) => acc + s.len)
+    print(lens, " ", v.any((x: &i64) => v.len() == 3), " ", show(v[1..3].position((x: &i64) => x == 3)))
+
+    print("by value: ", v.fold(0, (acc: i64, x: i64) => acc + x), " ", v.any((x: i64) => x > 2), " ", show(v.position((x: i64) => x == 2)))
+    print("named: ", v.fold(-10, tally), " ", e.any(big))
+
+    let nan = 0.0 / 0.0
+    let ws: Vec<f64> = [nan, 1.0]
+    print("nan: ", ws.any((f: &f64) => f == nan), " ", ws.all((f: &f64) => f != 5.0))
+
+    var total = 0
+    v.each((x: i64) => {
+        total += x
+    })
+    v.enumerate((i: i64, x: i64) => {
+        total += i + x
+    })
+    print(total)
+}

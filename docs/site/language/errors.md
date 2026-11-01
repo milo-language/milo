@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 579 distinct messages across 742 programs the compiler must reject.
+Every error message the test suite pins: 579 distinct messages across 743 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -12595,6 +12595,21 @@ fn main() {
 <sub>[tests/errors/cSigArityMismatch.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cSigArityMismatch.milo)</sub>
 
 ## `takes string by value, but each passes &string` {#takes-string-by-value-but-each-passes-string}
+
+A named fn taking a Copy element by value is wrapped in a thunk and accepted (fixtures/callbackCopyCoerce.milo). A string owns heap, so taking it by value would move it out of the Vec being iterated: no thunk, the same refusal a closure literal gets (vecCallbackMovesOwned.milo).
+
+```milo skip
+fn shout(s: string) {
+    print(s)
+}
+
+fn main() {
+    let v: Vec<string> = ["a", "bb"]
+    v.each(shout)
+}
+```
+
+<sub>[tests/errors/callbackByValueNamedNonCopy.milo](https://github.com/milo-language/milo/blob/main/tests/errors/callbackByValueNamedNonCopy.milo)</sub>
 
 A combinator lends its callback a pointer INTO the container it is iterating. Declaring the parameter by value is fine for a Copy element (codegen loads it), but a string owns heap: taking it by value would move it out of a container the caller still owns. This used to type-check. Codegen passed the pointer anyway and the callback read it as a string, so `each` printed whatever bytes followed that address in the process — a memory disclosure out of ordinary safe Milo, no `unsafe` anywhere.
 

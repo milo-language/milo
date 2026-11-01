@@ -131,6 +131,9 @@ export function isHashMapModule(file: string | undefined): boolean {
   return posix === "std/hashmap.milo" || posix.endsWith("/std/hashmap.milo");
 }
 
+// std/vec methods taking a callback over the elements; see the dispatch in the Vec chain.
+const VEC_CALLBACK_METHODS: ReadonlySet<string> = new Set(["each", "enumerate", "any", "all", "position", "find", "fold", "reduce"]);
+
 // The std modules that hold builtin collections' method bodies. They replaced code codegen
 // emitted inline and may use the std-only machinery that implies (`@inline`, the `@pure`
 // exemption). Anchored on a separator like isForeignModule, so "notstd/vec.milo" is not one.
@@ -5872,55 +5875,35 @@ export class TypeChecker {
       existing.push({ traitName: impl.traitName, typeName, methods });
       this.traitImpls.set(typeName, existing);
     } else {
-      // inherent impl
-      if (this.inherentImpls.has(typeName)) {
-        // merge methods into existing
-        const existing = must(this.inherentImpls, typeName, "inherent impls");
-        for (const m of impl.methods) {
-          const mangled = `${typeName}$${m.name}`;
-          const concreteFn: Function = {
-            ...m,
-            name: mangled,
-            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
-            retType: this.substituteSelfInMiloType(m.retType, typeName),
-          };
-          const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
-          const ret = this.resolve(concreteFn.retType);
-          if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
-          if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
-          this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
-          existing.methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
-          this.monomorphizedFns.push(concreteFn);
-          implFnsToCheck.push(concreteFn);
+      // inherent impl. A second impl block for the type (or the next method of a container
+      // impl, which is instantiated on demand) merges into the first.
+      const existing = this.inherentImpls.get(typeName);
+      const methods = existing?.methods ?? new Map<string, FnSig>();
+      for (const m of impl.methods) {
+        const mangled = `${typeName}$${m.name}`;
+        const concreteFn: Function = {
+          ...m,
+          name: mangled,
+          params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
+          retType: this.substituteSelfInMiloType(m.retType, typeName),
+        };
+        // A method with its own type parameters is a template, not a signature. Checking
+        // its body here would type `R` as a struct nobody declared; the call site
+        // instantiates it instead.
+        if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
+        if (m.typeParams && m.typeParams.length > 0) {
+          this.genericMethods.set(mangled, { decl: concreteFn, owner: typeName });
+          continue;
         }
-      } else {
-        const methods = new Map<string, FnSig>();
-        for (const m of impl.methods) {
-          const mangled = `${typeName}$${m.name}`;
-          const concreteFn: Function = {
-            ...m,
-            name: mangled,
-            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
-            retType: this.substituteSelfInMiloType(m.retType, typeName),
-          };
-          // A method with its own type parameters is a template, not a signature. Checking
-          // its body here would type `R` as a struct nobody declared; the call site
-          // instantiates it instead.
-          if (isUnsafeDecl(m)) this.unsafeMethods.add(mangled);
-          if (m.typeParams && m.typeParams.length > 0) {
-            this.genericMethods.set(mangled, { decl: concreteFn, owner: typeName });
-            continue;
-          }
-          const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
-          const ret = this.resolve(concreteFn.retType);
-          if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
-          this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
-          methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
-          this.monomorphizedFns.push(concreteFn);
-          implFnsToCheck.push(concreteFn);
-        }
-        this.inherentImpls.set(typeName, { traitName: null, typeName, methods });
+        const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
+        const ret = this.resolve(concreteFn.retType);
+        if (m.attributes) this.sql.methodAttrs.set(mangled, m.attributes);
+        this.functions.set(mangled, { params, ret, variadic: false, ...mustUseOf(m) });
+        methods.set(m.name, { params, ret, variadic: false, contracts: m.contracts, ...mustUseOf(m) });
+        this.monomorphizedFns.push(concreteFn);
+        implFnsToCheck.push(concreteFn);
       }
+      if (!existing) this.inherentImpls.set(typeName, { traitName: null, typeName, methods });
     }
   }
 
@@ -10468,6 +10451,43 @@ export class TypeChecker {
   // `contains`/`indexOf` compare elements inline in codegen (icmp/fcmp/string compare), so
   // only those element types are searchable. `contains` used to skip this check and a
   // Vec<Struct> reached codegen as an `icmp` on an aggregate, which clang rejected.
+  // `v.fold(init, f)` / `reduce`: std/vec's `fold<A>`, with A taken from the seed. A bare
+  // constant seed defaults to i64, so when the callback annotates its accumulator that
+  // annotation is the real type (`fold(0, (acc: i32, x: &i32) => acc + x)` over a narrower
+  // Vec) and the seed is retyped first, as the builtin did.
+  private checkVecFold(expr: ExprOf<"MethodCall">, element: TypeKind, sp: Span | undefined): TypeKind {
+    if (expr.args.length !== 2) {
+      this.error(`'${expr.method}' expects 2 arguments (initial value, callback)`, sp);
+      for (const a of expr.args) this.checkExpr(a);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    let accType = this.checkExpr(expr.args[0]);
+    const cb = expr.args[1];
+    if (accType.tag === "int" && this.isConstIntExpr(expr.args[0]) && cb.kind === "Closure" && cb.params.length > 0) {
+      // A closure param may have no annotation, so read the field rather than declaredType.
+      const declared = cb.params[0].type;
+      if (declared) {
+        const annotated = this.resolve(declared);
+        if (annotated.tag === "int" && !typeEq(annotated, accType)) {
+          this.retypeConstInt(expr.args[0], annotated);
+          accType = annotated;
+        }
+      }
+    }
+    if (accType.tag === "unknown") {
+      this.checkExpr(cb);
+      return this.setType(expr, accType);
+    }
+    const key = `Vec_${this.mangleTypeName(element)}$${expr.method}`;
+    if (!this.genericMethods.has(key)) this.instantiateContainerImpl("Vec", [element], expr.method);
+    const mangled = this.genericMethods.has(key) ? this.monomorphizeMethod(key, [accType], sp) : null;
+    if (!mangled) {
+      this.error(`Vec has no method '${expr.method}'`, sp);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    return this.dispatchMangledMethod(expr, mangled, sp, true);
+  }
+
   // A Vec of a ranged int searches as a Vec of the plain int: the needle may be any value
   // of that width (`Vec<i32(0..9)>.contains(12)` is false, not an error), as the builtin
   // took it. Same layout, so the plain instantiation reads the ranged Vec unchanged.
@@ -13398,57 +13418,6 @@ export class TypeChecker {
         if (cbType.tag !== "fn") { this.error(`'filter' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
         return this.setType(expr, { tag: "vec", element: objType.element });
       }
-      if (expr.method === "each") {
-        if (expr.args.length !== 1) { this.error(`'each' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "each", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "void" });
-      }
-      if (expr.method === "enumerate") {
-        if (expr.args.length !== 1) { this.error(`'enumerate' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [{ tag: "int", bits: 64, signed: true }, elemRef], ret: { tag: "void" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "enumerate", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "void" });
-      }
-      if (expr.method === "find") {
-        if (expr.args.length !== 1) { this.error(`'find' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbType = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbType, cbHint, "find", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        if (cbType.tag !== "fn") { this.error(`'find' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
-        return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
-      }
-      if (expr.method === "any") {
-        if (expr.args.length !== 1) { this.error(`'any' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "any", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "bool" });
-      }
-      if (expr.method === "all") {
-        if (expr.args.length !== 1) { this.error(`'all' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbSig = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbSig, cbHint, "all", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        return this.setType(expr, { tag: "bool" });
-      }
       if (expr.method === "join") {
         if (expr.args.length !== 1) { this.error(`'join' expects 1 argument (separator)`, sp); return this.setType(expr, { tag: "unknown" }); }
         if (objType.element.tag !== "string") { this.error(`'join' is only available on Vec<string>`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -13456,50 +13425,19 @@ export class TypeChecker {
         if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${this.show(sepType)}`, sp); }
         return this.setType(expr, { tag: "string" });
       }
-      // fold(init, (acc, elem) => acc) — the accumulate half of the functional
-      // set. `reduce` is accepted as the same operation because that is what
-      // the majority of readers will type; the suggestion table points at
-      // `fold` when neither spelling is a method (a non-Vec receiver).
-      if (expr.method === "fold" || expr.method === "reduce") {
-        if (expr.args.length !== 2) {
-          this.error(`'${expr.method}' expects 2 arguments (initial value, callback)`, sp);
-          return this.setType(expr, { tag: "unknown" });
+      // The callback methods are std/vec code. The callback is checked with the receiver
+      // frozen (borrowsForCallback), as the builtins did: it may read the Vec, not change it.
+      if (VEC_CALLBACK_METHODS.has(expr.method)) {
+        // find copies the match out; refused at the call for a resource element, the
+        // same rule as first/last, rather than inside std/vec's get.
+        if (expr.method === "find" &&
+            this.errorIfResourceCopyOut(objType.element, "find", "Vec", sp, `Find the index with 'position' and borrow 'v[i]', or take it out for real with 'remove'`)) {
+          for (const a of expr.args) this.checkExpr(a);
+          return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
         }
-        let accType = this.checkExpr(expr.args[0]);
-        // A bare `0` seed defaults to i64, which would make every fold over a
-        // narrower Vec a width mismatch the writer has to spell around. When the
-        // callback annotates its accumulator, that annotation is the real type —
-        // adopt it before checking the callback, or the closure body reports the
-        // mismatch first and the seed never gets a chance to widen. Only for a
-        // constant seed, where re-typing loses nothing.
-        const cb = expr.args[1];
-        if (accType.tag === "int" && this.isConstIntExpr(expr.args[0]) &&
-            cb.kind === "Closure" && cb.params.length > 0) {
-          // A closure param may legitimately have no annotation, so read the
-          // field directly rather than through declaredType (which throws).
-          const declared = cb.params[0].type;
-          if (declared) {
-            const annotated = this.resolve(declared);
-            if (annotated.tag === "int" && !typeEq(annotated, accType)) {
-              this.retypeConstInt(expr.args[0], annotated);
-              accType = annotated;
-            }
-          }
-        }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [accType, elemRef], ret: accType };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbType = this.checkExpr(expr.args[1], cbHint);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        if (cbType.tag !== "fn") { this.error(`'${expr.method}' argument 2 must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
-        // `fold` checked the callback's RETURN against the accumulator and never its
-        // parameters, so `fold(0, (acc: i64, x: &string) => acc + x.len)` over a Vec<i64>
-        // read each element as a string pointer and folded garbage.
-        this.checkCallbackSig(cbType, cbHint, expr.method, sp);
-        if (!typeEq(cbType.ret, accType) && cbType.ret.tag !== "unknown" && accType.tag !== "unknown") {
-          this.error(`'${expr.method}' callback must return ${this.show(accType)} to match the initial value, got ${this.show(cbType.ret)}`, sp);
-        }
-        return this.setType(expr, accType);
+        if (expr.method === "fold" || expr.method === "reduce") return this.checkVecFold(expr, objType.element, sp);
+        const body = this.instantiateContainerImpl("Vec", [objType.element], expr.method);
+        if (body) return this.dispatchMangledMethod(expr, body.mangled, sp, true);
       }
       if (expr.method === "sum") {
         if (expr.args.length !== 0) { this.error(`'sum' takes no arguments`, sp); }
@@ -13668,17 +13606,6 @@ export class TypeChecker {
         if (!this.vecSearchComparable(objType.element, "indexOf", "position", sp)) return this.setType(expr, { tag: "unknown" });
         const plain = this.plainSearchElement(objType.element, expr.method);
         if (plain) return this.dispatchMangledMethod(expr, plain, sp);
-      }
-      if (expr.method === "position") {
-        if (expr.args.length !== 1) { this.error(`'position' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbType = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbType, cbHint, "position", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        if (cbType.tag !== "fn") { this.error(`'position' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
-        return this.setType(expr, this.resolveOptionForValue({ tag: "int", bits: 64, signed: true }, sp));
       }
       // extend moves the other Vec in — its elements are transplanted, not copied,
       // so there is no clone and no way to touch the source afterwards.

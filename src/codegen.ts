@@ -8,7 +8,7 @@ import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecFind, genVecGetOpt, genVecMinMax, genVecPosition, genVecMap, genVecFilter, genVecEach, genVecAny, genVecAll, genVecFold, genVecReverse, genVecRemove, genVecSlice, genVecEnumerate, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genVecPop, genVecGetOpt, genVecMinMax, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecSum, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -59,9 +59,9 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NonNegative", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
-  "UnaryOp", "VecAll", "VecAny", "VecCapacity", "VecEach",
-  "VecEnumerate", "VecExtend", "VecInsert",
-  "VecLen", "VecPosition", "VecPtr", "VecPush", "VecReserve", "VecRetain",
+  "UnaryOp", "VecCapacity",
+  "VecExtend", "VecInsert",
+  "VecLen", "VecPtr", "VecPush", "VecReserve", "VecRetain",
   "VecReverse", "VecSlice", "VecSort", "VecSortBy", "VecSortByKey", "VecSum",
   "VecSwap", "VecTruncate", "WrappingArith", "Zeroed",
 ];
@@ -5668,18 +5668,8 @@ export class Codegen {
         return genVecMap(this, expr, lines);
       case "VecFilter":
         return genVecFilter(this, expr, lines);
-      case "VecEach":
-        return genVecEach(this, expr, lines);
-      case "VecFind":
-        return genVecFind(this, expr, lines);
-      case "VecAny":
-        return genVecAny(this, expr, lines);
       case "VecSum":
         return genVecSum(this, expr, lines);
-      case "VecAll":
-        return genVecAll(this, expr, lines);
-      case "VecFold":
-        return genVecFold(this, expr, lines);
       case "VecReverse":
         return genVecReverse(this, expr, lines);
       case "VecSwap":
@@ -5690,14 +5680,10 @@ export class Codegen {
         return genVecRemove(this, expr, lines);
       case "VecTruncate":
         return genVecTruncate(this, expr, lines);
-      case "VecEnumerate":
-        return genVecEnumerate(this, expr, lines);
       case "VecGetOpt":
         return genVecGetOpt(this, expr, lines);
       case "VecMinMax":
         return genVecMinMax(this, expr, lines);
-      case "VecPosition":
-        return genVecPosition(this, expr, lines);
       case "VecExtend":
         return genVecExtend(this, expr, lines);
       case "VecRetain":
@@ -9483,11 +9469,6 @@ export class Codegen {
       case "VecFilled":
       case "VecMap":
       case "VecFilter":
-      // fold returns the ACCUMULATOR, which is owned whenever the accumulator type is —
-      // `v.fold("", (a: string, x: &i64): string => a + x.toString())` hands back a String
-      // nobody else owns. It sat in NOT_OWNED_TEMP with the scalar-yielding Vec reads.
-      // dropOwnedTemp still checks needsDropCg, so an i64 accumulator is unaffected.
-      case "VecFold":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":
       // Option-returning Vec reads: the payload is either cloned out of the buffer
@@ -9502,7 +9483,6 @@ export class Codegen {
       // already correct, which is what made the gap invisible — the two spellings of
       // "take an element out and ignore it" disagreed.
       case "VecRemove":
-      case "VecFind":
         return true;
       case "BinOp":
         // string `+` only — the comparisons return bool

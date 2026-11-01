@@ -307,3 +307,22 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   `None`. Same gate and ranged-int dispatch as contains. Planted `wrappingAdd(2)` turns
   `vecIndexOfStd` red; output identical; 0 leaks; bench 3M int + string searches 1.06s
   builtin vs 1.03s std.
+- 2026-11-01: milo fmt no longer spaces a ranged type argument (`Vec < i32(0..9) >`, which
+  then failed to parse) or a minus after a postfix unwrap (`x! -2`); round-trip cases in
+  tests/fmt.test.ts, the `type Digit` workarounds removed, two mangled fixtures healed.
+- 2026-11-01: callback coercion, a general call rule: where `(&T, ...) => R` is expected and
+  T is Copy, `(T, ...) => R` is accepted (a closure literal's parameter is retyped to `&T`,
+  a named fn is wrapped in a thunk). Non-Copy stays refused with the builtins' message
+  (`callbackByValueNamedNonCopy`, `vecCallbackMovesOwned`). A generic method's callback
+  mismatch now reports through checkCallbackSig ("callback parameter 1 is declared ...").
+- 2026-11-01: each, enumerate, any, all, position, find, fold and reduce moved. All are
+  dispatched with the callback borrow (receiver frozen while the callback is checked;
+  `borrowNoteCallback` unchanged). fold is `fold<A>` with A from the seed, and the seed is
+  retyped to the closure's annotated int accumulator first (`checkVecFold`). find copies
+  out through get; a resource element is now refused at the call (the builtin find copied
+  a Drop element out structurally, the double release first/last already refused). Fixed in
+  passing: a second registration of an inherent impl (now routine, with on-demand container
+  methods) dropped generic methods and @sql attributes; the two copies are one loop. The
+  callback methods are `@inline`: called, the bench was 3.4% slower (1.49s vs 1.54s);
+  inlined it is at parity (1.93s vs 1.94s, 2.23s vs 2.12s under load). Planted `if f(e)` for
+  `if !f(e)` in all turns `vecCallbacksStd` red; output identical to the old compiler; 0 leaks.

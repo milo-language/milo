@@ -49,4 +49,92 @@ impl Vec<T> {
         }
         return Option.None
     }
+
+    // The callback methods below lend `f` each element in turn. The checker holds the
+    // receiver borrowed while the callback is checked, so `f` may read the Vec but not
+    // change it, and a Copy element may be taken by value (`(x: i64) => ...`). They are
+    // @inline so the closure, known at each call site, can be inlined into the loop as
+    // the builtins' was; called, they measured about 3% slower.
+
+    // Calls `f` on every element, first to last.
+    @inline
+    fn each(self: &Self, f: (&T) => void) {
+        for e in self {
+            f(e)
+        }
+    }
+
+    // Calls `f` with each element and its index.
+    @inline
+    fn enumerate(self: &Self, f: (i64, &T) => void) {
+        var i = 0
+        for e in self {
+            f(i, e)
+            i = i.wrappingAdd(1)
+        }
+    }
+
+    // Whether `f` holds for some element; stops at the first that it does.
+    @inline
+    fn any(self: &Self, f: (&T) => bool): bool {
+        for e in self {
+            if f(e) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Whether `f` holds for every element (true for an empty Vec); stops at the first
+    // that it does not.
+    @inline
+    fn all(self: &Self, f: (&T) => bool): bool {
+        for e in self {
+            if !f(e) {
+                return false
+            }
+        }
+        return true
+    }
+
+    // The index of the first element `f` holds for, or None.
+    @inline
+    fn position(self: &Self, f: (&T) => bool): Option<i64> {
+        var i = 0
+        for e in self {
+            if f(e) {
+                return Option.Some(i)
+            }
+            i = i.wrappingAdd(1)
+        }
+        return Option.None
+    }
+
+    // A copy of the first element `f` holds for, or None.
+    @inline
+    fn find(self: &Self, f: (&T) => bool): Option<T> {
+        var i = 0
+        for e in self {
+            if f(e) {
+                return self.get(i)
+            }
+            i = i.wrappingAdd(1)
+        }
+        return Option.None
+    }
+
+    // Threads an accumulator through the elements: `f(f(f(init, v[0]), v[1]), ...)`.
+    @inline
+    fn fold<A>(self: &Self, init: A, f: (A, &T) => A): A {
+        var acc = init
+        for e in self {
+            acc = f(acc, e)
+        }
+        return acc
+    }
+
+    // The same as fold, under the name most readers type first.
+    fn reduce<A>(self: &Self, init: A, f: (A, &T) => A): A {
+        return self.fold(init, f)
+    }
 }

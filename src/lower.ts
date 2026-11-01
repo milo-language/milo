@@ -1407,25 +1407,6 @@ class LowerCtx {
           if (expr.method === "filter") {
             return { kind: "VecFilter", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
-          if (expr.method === "each") {
-            return { kind: "VecEach", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "enumerate") {
-            return { kind: "VecEnumerate", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "find") {
-            const optionEnumName = type.tag === "enum" ? type.name : "";
-            return { kind: "VecFind", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName, type, span: expr.span };
-          }
-          if (expr.method === "any") {
-            return { kind: "VecAny", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "all") {
-            return { kind: "VecAll", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
-          if (expr.method === "fold" || expr.method === "reduce") {
-            return { kind: "VecFold", vec: recv(), init: this.lowerExpr(expr.args[0]), callback: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "sum") {
             return { kind: "VecSum", vec: recv(), elementType: objType.element, type, span: expr.span };
           }
@@ -1478,9 +1459,6 @@ class LowerCtx {
           }
           if (expr.method === "min" || expr.method === "max") {
             return { kind: "VecMinMax", object: this.lowerExpr(expr.object), elementType: objType.element, isMax: expr.method === "max", optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
-          }
-          if (expr.method === "position") {
-            return { kind: "VecPosition", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
           }
           if (expr.method === "extend") {
             return { kind: "VecExtend", object: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
