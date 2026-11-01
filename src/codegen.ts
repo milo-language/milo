@@ -204,8 +204,10 @@ export class Codegen {
   // MILO_MLIR=1 (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
   // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
   public mlirTake: ((fn: HIRFunction) => string[] | "legacy" | null) | null = null;
-  // The print/eprint helpers MLIR bodies call (mlirPrintHelper), by symbol.
-  private mlirPrintHelpers = new Map<string, HIRFunction>();
+  // Legacy functions MLIR bodies call (mlirHelper, mlirPrintHelper), by symbol, and the
+  // drop glue they call (mlirDropHelper), by symbol and type.
+  private mlirHelpers = new Map<string, HIRFunction>();
+  private mlirDropHelpers = new Map<string, TypeKind>();
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1955,7 +1957,8 @@ export class Codegen {
       // Ordinary legacy functions; offering them to MLIR again would recurse.
       const take = this.mlirTake;
       this.mlirTake = null;
-      for (const fn of this.mlirPrintHelpers.values()) fnBodies.push(this.genFunction(fn));
+      for (const fn of this.mlirHelpers.values()) fnBodies.push(this.genFunction(fn));
+      for (const [name, t] of this.mlirDropHelpers) this.emitMlirDropFn(name, t);
       this.mlirTake = take;
       this.needsOverflowCheck = this.needsBoundsCheck = this.needsPrintf = this.needsExit = true;
     }
@@ -3262,25 +3265,45 @@ export class Codegen {
   public get mlirMainOk(): boolean { return !this.wrapMainGreen; }
 
   /**
-   * The symbol of a legacy function doing `print(a0, a1, ...)` (or eprint) of parts of
-   * these types, generated with the module: milo.print lowers to one call of it, so the
-   * formatting is legacy's own. `key` spells each part type as the C++ lowering does
-   * (Scalar.cpp printKey). Non-scalar parts are passed by reference.
+   * A legacy function named `name`, generated with the module from the HIR `make` builds,
+   * for an MLIR body to call: the dialect's bridge to what only legacy codegen knows how
+   * to emit yet (print formatting, Vec growth, string sharing). The C++ lowering names
+   * the same symbol from MLIR types (Milo.h typeKey).
    */
+  public mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string {
+    if (!this.mlirHelpers.has(name)) this.mlirHelpers.set(name, { name, isExtern: false, isVariadic: false, ...make() });
+    return name;
+  }
+
+  /** The legacy function doing `print(a0, a1, ...)` (or eprint); non-scalar parts by reference. */
   public mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[]): string {
     const name = [stderr ? "milo.eprint" : "milo.print", ...parts.map(p => p.key)].join(".");
-    if (!this.mlirPrintHelpers.has(name)) {
+    return this.mlirHelper(name, () => {
       const byRef = (t: TypeKind) => !(t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr");
       const params = parts.map((p, i) => ({ name: `a${i}`, type: p.type, isRef: byRef(p.type), isRefMut: false }));
-      this.mlirPrintHelpers.set(name, {
-        name, params, retType: { tag: "void" }, isExtern: false, isVariadic: false,
+      return {
+        params, retType: { tag: "void" },
         body: [{ kind: "ExprStmt", expr: {
           kind: "Call", func: stderr ? "eprint" : "print", type: { tag: "void" }, variadic: true,
           args: params.map(p => ({ expr: { kind: "Ident", name: p.name, type: p.type }, passByRef: false, refMut: false })),
         } }],
-      });
-    }
-    return name;
+      };
+    });
+  }
+
+  /** `milo.drop.<key>(ptr)`: legacy's drop glue for `t`, run on the value at the pointer. */
+  public mlirDropHelper(key: string, t: TypeKind): void {
+    this.mlirDropHelpers.set(`milo.drop.${key}`, t);
+  }
+
+  private emitMlirDropFn(name: string, t: TypeKind): void {
+    this.emitHelperFn(2, body => {
+      const b = new LlvmTextBuilder(body, this);
+      b.defineFn({ name, ret: Ty.void, params: [{ name: "p", ty: Ty.ptr }], internal: true });
+      this.emitDropValue(body, "%p", t);
+      b.ret();
+      b.endFn();
+    });
   }
 
   private mlirPanicFn(): string[] {

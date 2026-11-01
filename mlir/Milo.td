@@ -98,10 +98,17 @@ def Milo_PtrType : TypeDef<Milo_Dialect, "Ptr"> {
   let mnemonic = "ptr";
 }
 
+// A Vec<T> value: legacy's `%Vec = { ptr data, i64 len, i64 cap }`. Its place, the address
+// of that header, is !milo.vec<T> (milo.vec.place), which the indexing ops take.
+def Milo_VecValType : TypeDef<Milo_Dialect, "VecVal"> {
+  let mnemonic = "vecval";
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+}
+
 // Milo's `string` value: legacy's `%String = { ptr data, i64 len, i64 cap }`, the same
-// bytes on both sides of the splice. Until drop elaboration exists (M4) the emitter only
-// makes one from a literal, whose cap is 0: the buffer is static, so no copy or drop of it
-// ever needs to run code.
+// bytes on both sides of the splice. A literal has cap 0: its buffer is static, so its
+// drop glue does nothing. Strings and Vecs are owned values: see milo.var `owned`.
 def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
   let mnemonic = "string";
 }
@@ -141,7 +148,7 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
 def Milo_Aggregate : AnyTypeOf<[Milo_StructType, Milo_EnumType]>;
 
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 
@@ -307,10 +314,83 @@ def Milo_CastOp : Milo_Op<"cast", [Pure]> {
 
 // `var name`: a mutable local. Must sit in the function's entry block, so the frame is
 // fixed: a slot allocated inside a loop would grow the stack every iteration.
+//
+// `owned`: the slot holds a value with drop glue (a string, a Vec) that it owns. Such a
+// slot is listed by the milo.scope that owns it; from there on the IR says only where the
+// value is stored (milo.store), moved out (milo.move) and read in place (milo.load, a view
+// that never owns), and milo-scope-drops / milo-elaborate-drops decide where it dies.
 def Milo_VarOp : Milo_Op<"var"> {
-  let arguments = (ins StrAttr:$name);
+  let arguments = (ins StrAttr:$name, UnitAttr:$owned);
   let results = (outs Milo_RefType:$ref);
-  let assemblyFormat = "$name attr-dict `:` type($ref)";
+  let assemblyFormat = "$name (`owned` $owned^)? attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
+// A lexical scope that owns the slots it lists: whatever they still hold dies when control
+// leaves it, by falling off its end or by a break, continue or return out of it
+// (milo-scope-drops puts the drops there). With results it yields them, like milo.if.
+def Milo_ScopeOp : Milo_Op<"scope", [NoRegionArguments, RecursiveMemoryEffects]> {
+  let arguments = (ins Variadic<Milo_RefType>:$slots);
+  let results = (outs Variadic<Milo_Value>:$results);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "($slots^ `:` type($slots))? (`->` type($results)^)? $body attr-dict";
+  let hasVerifier = 1;
+}
+
+// The value in an owned slot, moved out: the slot holds nothing after it.
+def Milo_MoveOp : Milo_Op<"move", [
+    TypesMatchWith<"result is the slot's type", "ref", "result",
+                   "::llvm::cast<RefType>($_self).getPointee()">]> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>, MemWrite<Milo_Slot>]>:$ref);
+  let results = (outs Milo_Value:$result);
+  let assemblyFormat = "$ref attr-dict `:` type($ref)";
+}
+
+// The value in the slot dies: its drop glue runs (legacy's, codegen mlirDropHelper). On an
+// owned slot this is "if it holds one" until milo-elaborate-drops decides: it erases the
+// drop where the slot is empty on every path, keeps it where it is full on every path,
+// and gives it the slot's drop flag (`if %flag`) where that differs by path. On any other
+// place (a `&mut` param, a field) it always holds one.
+def Milo_DropOp : Milo_Op<"drop"> {
+  let arguments = (ins Milo_RefType:$ref, Optional<I1>:$flag);
+  let assemblyFormat = "$ref (`if` $flag^)? attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
+// The header of the Vec in a slot, for indexing and len: the same address.
+def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
+  let arguments = (ins Milo_RefType:$ref);
+  let results = (outs Milo_VecType:$vec);
+  let assemblyFormat = "$ref attr-dict `:` type($ref) `->` type($vec)";
+  let hasVerifier = 1;
+}
+
+// `Vec.new()`: no buffer, len 0, cap 0.
+def Milo_VecNewOp : Milo_Op<"vec.new", [Pure]> {
+  let results = (outs Milo_VecValType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+// `v.push(x)`: one call of legacy's push for this element type (codegen mlirHelper).
+def Milo_VecPushOp : Milo_Op<"vec.push"> {
+  let arguments = (ins Milo_VecType:$vec, AnyType:$value);
+  let assemblyFormat = "$vec `,` $value attr-dict `:` type($vec) `,` type($value)";
+  let hasVerifier = 1;
+}
+
+// `s.len()` of a string value (a view is enough).
+def Milo_StringLenOp : Milo_Op<"string.len", [Pure]> {
+  let arguments = (ins Milo_StringType:$value);
+  let results = (outs SI64:$len);
+  let assemblyFormat = "$value attr-dict";
+}
+
+// A new owner of the string at `ref` (Milo's implicit copy of a string, HIR StringClone):
+// legacy's share, one more count on a heap buffer.
+def Milo_StringShareOp : Milo_Op<"string.share"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>]>:$ref);
+  let results = (outs Milo_StringType:$result);
+  let assemblyFormat = "$ref attr-dict `:` type($ref)";
   let hasVerifier = 1;
 }
 
@@ -425,7 +505,7 @@ def Milo_MatchOp : Milo_Op<"match", [RecursiveMemoryEffects]> {
 }
 
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
-    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "MatchOp"]>]> {
+    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp", "MatchOp", "ScopeOp"]>]> {
   let arguments = (ins Variadic<Milo_Value>:$values);
   let assemblyFormat = "($values^ `:` type($values))? attr-dict";
   let hasVerifier = 1;

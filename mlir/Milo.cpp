@@ -188,10 +188,51 @@ MILO_ARITH(RemOp, true)
 MILO_ARITH(NegOp, !getWrapping())
 #undef MILO_ARITH
 
+bool milo::needsDrop(Type t) { return isa<StringType, VecValType>(t); }
+
 LogicalResult VarOp::verify() {
   if (!(*this)->getBlock()->isEntryBlock() ||
       !isa<FunctionOpInterface>((*this)->getParentOp()))
     return emitOpError("must be in the function's entry block");
+  if (getOwned() && !needsDrop(getRef().getType().getPointee()))
+    return emitOpError("owns a value with no drop glue");
+  return success();
+}
+
+LogicalResult ScopeOp::verify() {
+  for (Value s : getSlots()) {
+    auto v = s.getDefiningOp<VarOp>();
+    if (!v || !v.getOwned())
+      return emitOpError("lists a slot that is not an owned milo.var");
+  }
+  return success();
+}
+
+LogicalResult DropOp::verify() {
+  if (!needsDrop(getRef().getType().getPointee()))
+    return emitOpError("of a value with no drop glue");
+  auto v = getRef().getDefiningOp<VarOp>();
+  if (getFlag() && !(v && v.getOwned()))
+    return emitOpError("with a drop flag needs an owned slot");
+  return success();
+}
+
+LogicalResult VecPlaceOp::verify() {
+  auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
+  if (!v || v.getElementType() != getType().getElementType())
+    return emitOpError("needs the slot of a Vec of ") << getType().getElementType();
+  return success();
+}
+
+LogicalResult VecPushOp::verify() {
+  if (getValue().getType() != getVec().getType().getElementType())
+    return emitOpError("value is not the Vec's element type");
+  return success();
+}
+
+LogicalResult StringShareOp::verify() {
+  if (!isa<StringType>(getRef().getType().getPointee()))
+    return emitOpError("needs the place of a string");
   return success();
 }
 
@@ -309,7 +350,7 @@ LogicalResult ForOp::verify() {
 
 LogicalResult YieldOp::verify() {
   Operation *parent = (*this)->getParentOp();
-  if (isa<IfOp, MatchOp>(parent)) {
+  if (isa<IfOp, MatchOp, ScopeOp>(parent)) {
     if (getValues().getTypes() != parent->getResultTypes())
       return emitOpError("yields types that do not match the enclosing ") << parent->getName();
     return success();

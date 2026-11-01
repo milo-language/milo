@@ -971,15 +971,6 @@ struct StringLitLowering : ConvertOpToLLVMPattern<StringLitOp> {
   }
 };
 
-// A stack slot of type `t` at the top of the function's entry block, so code in a loop
-// does not grow the frame. Ops reaching this lowering sit directly in the function body.
-Value entrySlot(ConversionPatternRewriter &rw, Operation *op, Type t) {
-  OpBuilder::InsertionGuard g(rw);
-  rw.setInsertionPointToStart(&op->getParentRegion()->front());
-  Location loc = op->getLoc();
-  Value one = constInt(rw, loc, rw.getI64Type(), 1);
-  return LLVM::AllocaOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()), t, one);
-}
 
 Value byteOffset(ConversionPatternRewriter &rw, Location loc, Value base, int64_t off) {
   if (off == 0)
@@ -1076,15 +1067,17 @@ struct FieldRefLowering : ConvertOpToLLVMPattern<FieldRefOp> {
   }
 };
 
-// How a print helper's symbol spells a part type; codegen mlirPrintHelper builds the
-// same name from the Milo types.
-std::string printKey(Type t) {
+} // namespace
+
+std::string milo::typeKey(Type t) {
   if (auto i = dyn_cast<IntegerType>(t))
     return (i.isSigned() ? "si" : i.isUnsigned() ? "ui" : "i") + std::to_string(i.getWidth());
   if (isa<PtrType>(t))
     return "ptr";
   if (isa<StringType>(t))
     return "string";
+  if (auto v = dyn_cast<VecValType>(t))
+    return "vec." + typeKey(v.getElementType());
   if (auto s = dyn_cast<StructType>(t))
     return ("S" + s.getName()).str();
   if (auto e = dyn_cast<EnumType>(t))
@@ -1094,6 +1087,16 @@ std::string printKey(Type t) {
   os << t;
   return s;
 }
+
+Value milo::entrySlot(ConversionPatternRewriter &rw, Operation *op, Type t) {
+  OpBuilder::InsertionGuard g(rw);
+  rw.setInsertionPointToStart(&op->getParentRegion()->front());
+  Location loc = op->getLoc();
+  Value one = LLVM::ConstantOp::create(rw, loc, rw.getI64Type(), rw.getI64IntegerAttr(1));
+  return LLVM::AllocaOp::create(rw, loc, LLVM::LLVMPointerType::get(rw.getContext()), t, one);
+}
+
+namespace {
 
 // Scalars are passed by value, everything else by reference (a slot in the entry block,
 // so a print in a loop does not grow the stack).
@@ -1110,7 +1113,7 @@ struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
     SmallVector<Type> argTys;
     for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
       Type t = part.getType();
-      name += "." + printKey(t);
+      name += "." + typeKey(t);
       if (!isa<StringType, StructType, EnumType>(t)) {
         args.push_back(v);
         argTys.push_back(v.getType());

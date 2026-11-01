@@ -319,6 +319,7 @@ struct ConvertMiloToLLVMPass
     cf::populateControlFlowToLLVMConversionPatterns(tc, patterns);
     patterns.add<VecLenLowering, VecLoadLowering, VecStoreLowering>(tc);
     populateScalarToLLVMPatterns(tc, patterns);
+    populateOwnedToLLVMPatterns(tc, patterns);
     LLVMConversionTarget target(*ctx);
     target.addLegalOp<ModuleOp>();
     if (failed(applyFullConversion(getOperation(), target, std::move(patterns))))
@@ -334,4 +335,5 @@ void milo::registerPasses() {
   PassRegistration<ExpandChecksPass>();
   PassRegistration<ConvertMiloToLLVMPass>();
   registerScalarPasses();
+  registerDropPasses();
 }

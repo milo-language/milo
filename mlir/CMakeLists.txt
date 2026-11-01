@@ -21,7 +21,7 @@ mlir_tablegen(MiloEnums.h.inc -gen-enum-decls)
 mlir_tablegen(MiloEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(MiloIncGen)
 
-add_executable(milo-opt milo-opt.cpp Milo.cpp Passes.cpp Scalar.cpp)
+add_executable(milo-opt milo-opt.cpp Milo.cpp Passes.cpp Scalar.cpp Drops.cpp)
 add_dependencies(milo-opt MiloIncGen)
 if(NOT LLVM_ENABLE_RTTI)
   target_compile_options(milo-opt PRIVATE -fno-rtti)

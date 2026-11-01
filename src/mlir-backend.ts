@@ -28,6 +28,9 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
 export const MLIR_PIPELINE = [
   "--milo-verify",
+  // Drops where owned slots' scopes end and before stores over owned values, while the
+  // scopes are still regions; which of them run is decided after control flow is lowered.
+  "--milo-scope-drops",
   "--milo-expand-index",
   // Loops scf.for can hold go there, where the Vec passes work: hoist `len` out of loops
   // that never grow a Vec, then run a check-free copy when one range test proves every
@@ -38,6 +41,9 @@ export const MLIR_PIPELINE = [
   // (no RegionBranchOpInterface), so CSE would reuse a load from before a milo.while
   // inside its body as if the loop never stored in between.
   "--milo-lower-structured-cf",
+  // Init state of every owned slot over the CFG (MLIR's dense dataflow): before any
+  // generic pass can move a store or a drop.
+  "--milo-elaborate-drops",
   "--canonicalize",
   "--milo-hoist-vec-reads",
   "--loop-invariant-code-motion",

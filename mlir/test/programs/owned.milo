@@ -1,0 +1,89 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs), and a leak and
+// ASan target: owned strings and Vecs as locals, params, results and temporaries; moves,
+// shares, reassignment (also through `&mut`), drops at scope ends, on break, continue
+// and early return, and a drop that needs a flag (moved on one path only).
+
+fn take(s: string): i64 { return s.len() }
+
+fn peek(s: &string): i64 { return s.len() }
+
+fn mk(n: i64): string { return "ab".repeat(n) }
+
+fn echo(s: string): string { return s }
+
+fn replace(s: &mut string, n: i64) { s = mk(n) }
+
+fn sum(v: &Vec<i64>): i64 {
+    var t: i64 = 0
+    for i in 0..v.len() { t += v[i] }
+    return t
+}
+
+fn build(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n { v.push(i * i) }
+    return v
+}
+
+fn pick(c: bool): string {
+    let a = mk(2)
+    let b = mk(3)
+    if c { return a }
+    return b
+}
+
+fn maybeMove(c: bool): i64 {
+    let s = mk(5)
+    var n: i64 = 0
+    if c { n = take(s) }
+    return n + 1
+}
+
+fn firstLong(limit: i64): i64 {
+    var i: i64 = 0
+    while i < limit {
+        let s = mk(i)
+        let v = build(i)
+        if s.len() > 6 { return s.len() + v.len() }
+        if i == 1 {
+            i += 2
+            continue
+        }
+        i += 1
+    }
+    return -1
+}
+
+fn main() {
+    let a = mk(3)
+    print(peek(a), " ", take(a), " ", take(a))
+    var b = mk(1)
+    b = mk(2)
+    b = echo(b)
+    print(a, " ", b)
+    replace(&mut b, 4)
+    print(b, " ", peek(mk(4)), " ", mk(2))
+    let v = build(6)
+    print(v.len(), " ", sum(v), " ", v[3], " ", sum(build(3)))
+    var w = build(2)
+    w = build(4)
+    w.push(100)
+    print(w.len(), " ", sum(w))
+    print(pick(true), " ", pick(false))
+    print(maybeMove(true), " ", maybeMove(false))
+    print(firstLong(10))
+    var i = 0
+    while i < 4 {
+        let t = mk(i)
+        if i == 1 {
+            i += 1
+            continue
+        }
+        if i == 3 { break }
+        print(t)
+        i += 1
+    }
+    let lit = "static"
+    let copy = lit
+    print(copy, " ", lit)
+}
