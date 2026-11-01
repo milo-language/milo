@@ -107,8 +107,14 @@ function isBig(cx: MlirEmitCtx, ty: string): boolean {
 function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const r = placeType(cx, t);
   if (r !== null && isBig(cx, r) && r.startsWith("!milo.enum<") && cx.typeSizeOf(t) < BIG_ENUM_VALUE_LIMIT) return r;
-  return r !== null && isBig(cx, r) ? null : r;
+  if (r === null || !isBig(cx, r)) return r;
+  if (!placeOnly.has(cx)) placeOnly.set(cx, new Set());
+  placeOnly.get(cx)!.add(r);
+  return null;
 }
+
+// The big types valueType refused: only ever in places, copied with milo.copy.
+const placeOnly = new WeakMap<MlirEmitCtx, Set<string>>();
 
 // A 128+ byte enum below this is also a value: legacy returns and passes one by value
 // (only structs get sret), so it is an SSA aggregate there too. Larger ones stay places,
@@ -417,6 +423,12 @@ class FnEmitter {
    */
   private into(e: HIRExpr, dst: string, ty: string): void {
     if (this.isSretCall(e)) { this.call(e, true, dst); return; }
+    const src = valueType(this.cx, e.type) === ty ? null : this.bigPlace(e, ty);
+    if (src) {
+      this.emit(`milo.copy ${src.ref}, ${dst} : ${src.refTy}, !milo.ref<${ty}> of ${ty}`);
+      src.done();
+      return;
+    }
     if (e.kind !== "StructLit" && valueType(this.cx, e.type) === ty) {
       // A big enum that is also a value: computed, then stored whole.
       const v = this.consume(this.expr(e), "value");
@@ -437,6 +449,35 @@ class FnEmitter {
       const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
       this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
     });
+  }
+
+  /**
+   * The place `e` (128+ bytes, of type `ty`) is read out of for a milo.copy, or null when
+   * `e` is not a place: a local, a field of a place, or memory behind a raw pointer (whose
+   * bits the copy owns, as ptrRead's do). An owning local gives its value up only as the
+   * checker's move of it: `done` then empties its slot, after the copy.
+   */
+  private bigPlace(e: HIRExpr, ty: string): { ref: string; refTy: string; done: () => void } | null {
+    const none = () => {};
+    if (e.kind === "Ident" || e.kind === "FieldAccess") {
+      const pp = e.kind === "FieldAccess" ? this.ptrPlace(e) : null;
+      if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
+      const b = e.kind === "Ident" ? this.lookup(e.name) : null;
+      if (b && b.kind !== "var") return null;
+      if (b && hasDrop(ty)) {
+        if (b.ty !== ty || !b.owned || !e.isMove) throw new MlirUnsupported("128+ byte copy that is not a move of a local");
+        return { ref: b.ref, refTy: `!milo.ref<${ty}>`, done: () => { this.def(`milo.move ${b.ref} : !milo.ref<${ty}>`, ty); } };
+      }
+      // An owning field would leave its struct partly moved (legacy tracks it apart).
+      if (!b && hasDrop(ty)) throw new MlirUnsupported("move out of a field");
+      const p = this.fieldPlace(e);
+      return p && p.ty === ty ? { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
+    }
+    if (e.kind === "IndexAccess") {
+      const pp = this.ptrPlace(e);
+      return pp && pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
+    }
+    return null;
   }
 
   /**
@@ -477,6 +518,11 @@ class FnEmitter {
     const v = placeType(this.cx, t);
     if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
     return v;
+  }
+
+  /** The type of what memory behind a pointer holds: a value's, or a 128+ byte place's. */
+  private memType(t: TypeKind, what: string): string {
+    return valueType(this.cx, t) ?? this.place$(t, what);
   }
 
   private value(t: TypeKind, what: string): string {
@@ -676,6 +722,20 @@ class FnEmitter {
           return false;
         }
         if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess") {
+          const big = placeType(this.cx, s.target.type);
+          if (big !== null && valueType(this.cx, s.target.type) === null) {
+            // A 128+ byte one, as legacy: the value into a place of its own first (or a
+            // local's slot), then copied. Through a pointer nothing is dropped.
+            const src = this.bigPlace(s.value, big) ?? (() => {
+              const sl = this.bigSlot("tmp", s.value, true);
+              return { ref: sl.ref, refTy: `!milo.ref<${big}>`, done: () => { if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${big}>`, big); } };
+            })();
+            const pp = this.ptrPlace(s.target);
+            if (!pp || pp.ty !== big) throw new MlirUnsupported("128+ byte store other than through a pointer");
+            this.emit(`milo.copy ${src.ref}, ${pp.ptr} : ${src.refTy}, ${PTR} of ${big}`);
+            src.done();
+            return false;
+          }
           // Through a raw pointer: the value is stored as is, nothing is dropped (unsafe).
           const v = this.consume(this.expr(s.value), "store through a pointer");
           const pp = this.ptrPlace(s.target);
@@ -1282,7 +1342,7 @@ class FnEmitter {
       const p = this.expr(e.object);
       const i = this.expr(e.index);
       if (p.ty !== PTR || i.ty !== "si64") throw new MlirUnsupported("pointer index of another type");
-      const ty = this.value(e.type, "pointer element");
+      const ty = this.memType(e.type, "pointer element");
       return { ptr: this.def(`milo.ptr.elem ${p.ref}[${i.ref}] : ${ty}`, PTR).ref, ty };
     }
     if (e.kind !== "FieldAccess") return null;
@@ -1292,7 +1352,7 @@ class FnEmitter {
     if (obj.tag === "ptr") {
       st = obj.inner;
       const p = this.expr(e.object);
-      base = { ptr: p.ref, ty: this.value(st, "pointee") };
+      base = { ptr: p.ref, ty: this.memType(st, "pointee") };
     } else {
       base = this.ptrPlace(e.object);
       st = obj;
@@ -1301,12 +1361,13 @@ class FnEmitter {
     if (st.tag !== "struct") throw new MlirUnsupported("field through a pointer to a non-struct");
     const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
     if (index < 0) throw new MlirUnsupported("unknown field");
-    const ty = this.value(e.type, "field");
+    const ty = this.memType(e.type, "field");
     return { ptr: this.def(`milo.ptr.field ${base.ptr}[${index}] : ${base.ty}`, PTR).ref, ty };
   }
 
   /** A read of a place through a pointer: a bit copy that, for a string or a Vec, owns. */
   private ptrRead(p: { ptr: string; ty: string }): Val {
+    if (placeOnly.get(this.cx)?.has(p.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
     const v: Val = { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: hasDrop(p.ty) ? "owned" : undefined };
     if (v.own) this.bitCopies.add(v.ref);
     return v;

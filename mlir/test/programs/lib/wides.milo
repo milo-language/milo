@@ -1,0 +1,39 @@
+// 128+ byte structs for big-elems.milo: in a module of their own, so the functions
+// returning them are sret (the entry file's keep a C-visible by-value result).
+
+pub struct Wide {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64
+}
+
+pub struct Row {
+    name: string, host: string, path: string, user: string, note: string,
+    port: i64, retries: i64, timeout: i64, flags: i64
+}
+
+pub fn wide(x: i64): Wide {
+    return Wide {
+        a: x, b: x + 1, c: x + 2, d: x + 3, e: x + 4, f: x + 5, g: x + 6, h: x + 7,
+        i: x + 8, j: x + 9, k: x + 10, l: x + 11, m: x + 12, n: x + 13, o: x + 14, p: x + 15
+    }
+}
+
+pub fn row(i: i64): Row {
+    return Row {
+        name: "n".repeat(i), host: "h", path: "/p", user: "u", note: "",
+        port: 80 + i, retries: i, timeout: 5, flags: 0
+    }
+}
+
+// A big local copied into another and returned through the hidden out pointer.
+pub fn copied(x: i64): Wide {
+    let w = wide(x)
+    let v = w
+    return v
+}
+
+// An owning one moved out of a local into the out pointer.
+pub fn moved(i: i64): Row {
+    let r = row(i)
+    return r
+}

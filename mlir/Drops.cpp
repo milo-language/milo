@@ -423,6 +423,12 @@ struct MoveLowering : ConvertOpToLLVMPattern<MoveOp> {
   LogicalResult
   matchAndRewrite(MoveOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
+    // One that only empties its slot (after a milo.copy out of it) loads nothing: even a
+    // dead whole load of a 128+ byte aggregate is split per element by SROA.
+    if (op->use_empty()) {
+      rw.eraseOp(op);
+      return success();
+    }
     rw.replaceOpWithNewOp<LLVM::LoadOp>(op, getTypeConverter()->convertType(op.getType()),
                                         a.getRef());
     return success();

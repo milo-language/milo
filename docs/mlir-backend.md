@@ -3,7 +3,7 @@ system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (fourth batch: globals, closures, matches, big aggregates, append in place)
+last-verified: 2026-11-01 (sixth batch: Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
 -->
 
 # MLIR backend
@@ -355,6 +355,19 @@ structs, enums.
   temporaries: 13 instances over the 80 Drop fixtures, none in Tahoe Roads; legacy's
   timing differs per construct (an argument temporary dies after its call, a print part
   after the print), so it is a scope per consuming op, not per statement, when it is done.
+
+**Sixth batch (2026-11-01): Tahoe Roads' top legacy reasons, by count.**
+
+- *128+ byte values between places* (`milo.copy %src, %dst : <ref or ptr>, <ref or ptr>
+  of T`, one memcpy of T's size, as legacy's emitMemcpy): std's `push`/`insert` store a
+  big element through a raw pointer, `let v = w` and `return w` copy a big local, a big
+  element is read out of a pointer into a slot. The value never becomes SSA. An owned
+  source given up is emptied by an unused `milo.move`, which now lowers to nothing (a
+  dead whole load of a big aggregate is still split per element by SROA). Program
+  `big-elems` (with `lib/wides.milo`: functions of the entry file keep a by-value
+  result, so the sret ones live in a module), FileCheck `copy.mlir`, three verifier
+  cases. Planted bug: no `milo.move` after the copy into the element (`big-elems` exit
+  0 -> 1, a double free of the pushed Row). Tahoe Roads api: 4051 to 4151 (77.6%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

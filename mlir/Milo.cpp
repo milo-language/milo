@@ -301,6 +301,17 @@ LogicalResult FilledOp::verify() {
   return success();
 }
 
+LogicalResult CopyOp::verify() {
+  if (!isa<StructType, EnumType>(getElem()))
+    return emitOpError("copies a struct or an enum, not ") << getElem();
+  for (Value side : {getSrc(), getDst()})
+    if (auto r = dyn_cast<RefType>(side.getType()); r && r.getPointee() != getElem())
+      return emitOpError("needs places of ") << getElem() << ", not " << side.getType();
+  if (getSrc() == getDst())
+    return emitOpError("copies a place onto itself");
+  return success();
+}
+
 LogicalResult GlobalInitOp::verify() {
   if (getName().empty())
     return emitOpError("needs a name");

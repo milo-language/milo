@@ -231,3 +231,27 @@ func.func @call_args(%f: !milo.fn<(si64) -> si64>, %x: si32) {
   %r = milo.closure.call %f(%x) : !milo.fn<(si64) -> si64>, si32 -> si64
   milo.return
 }
+
+// -----
+
+func.func @copy_scalar(%a: !milo.ref<si64>, %b: !milo.ref<si64>) {
+  // expected-error @+1 {{copies a struct or an enum, not 'si64'}}
+  milo.copy %a, %b : !milo.ref<si64>, !milo.ref<si64> of si64
+  milo.return
+}
+
+// -----
+
+func.func @copy_other_type(%a: !milo.ref<!milo.struct<"A", si64>>, %p: !milo.ptr) {
+  // expected-error @+1 {{needs places of}}
+  milo.copy %a, %p : !milo.ref<!milo.struct<"A", si64>>, !milo.ptr of !milo.struct<"B", si64>
+  milo.return
+}
+
+// -----
+
+func.func @copy_onto_itself(%a: !milo.ref<!milo.struct<"A", si64>>) {
+  // expected-error @+1 {{copies a place onto itself}}
+  milo.copy %a, %a : !milo.ref<!milo.struct<"A", si64>>, !milo.ref<!milo.struct<"A", si64>> of !milo.struct<"A", si64>
+  milo.return
+}

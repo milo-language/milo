@@ -1,0 +1,29 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: Vecs of 128+ byte structs (lib/wides.milo), which MLIR holds only as
+// places. std's push and insert move them through raw pointers (milo.copy), owning ones
+// (strings inside) and plain ones; big locals are copied and returned through sret.
+from "./lib/wides" import { Wide, Row, wide, row, copied, moved }
+
+fn wsum(w: &Wide): i64 { return w.a + w.h + w.p }
+
+fn rsum(r: &Row): i64 { return r.name.len() + r.port + r.retries * 10 }
+
+fn main() {
+    var ws: Vec<Wide> = Vec.new()
+    for i in 0..5 { ws.push(wide(i * 100)) }
+    let w = wide(7)
+    ws.push(w)
+    ws.insert(1, copied(9))
+    var t: i64 = 0
+    for i in 0..ws.len() { t += wsum(ws[i]) }
+    print("wide total ", t, " len ", ws.len())
+
+    var rs: Vec<Row> = Vec.new()
+    for i in 0..4 { rs.push(row(i)) }
+    let r = row(9)
+    rs.push(r)
+    rs.insert(0, moved(3))
+    var u: i64 = 0
+    for i in 0..rs.len() { u += rsum(rs[i]) }
+    print("row total ", u, " len ", rs.len(), " first ", rs[0].name, " last ", rs[rs.len() - 1].name)
+}

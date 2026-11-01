@@ -267,6 +267,19 @@ def Milo_PtrStoreOp : Milo_Op<"ptr.store"> {
   let assemblyFormat = "$value `,` $ptr attr-dict `:` type($value)";
 }
 
+// A `T` copied from one place to another, as legacy's llvm.memcpy: how a 128+ byte
+// aggregate moves between places without becoming an SSA value (SROA splits a whole
+// aggregate load per element). Either side is a slot (!milo.ref<T>) or a raw pointer to a
+// T. It moves no ownership by itself: an owned source that gives its value up is emptied
+// right after with an unused milo.move, an owned destination is marked milo.filled.
+def Milo_CopyOp : Milo_Op<"copy"> {
+  let arguments = (ins Arg<AnyTypeOf<[Milo_RefType, Milo_PtrType]>, "", [MemRead]>:$src,
+                       Arg<AnyTypeOf<[Milo_RefType, Milo_PtrType]>, "", [MemWrite]>:$dst,
+                       TypeAttr:$elem);
+  let assemblyFormat = "$src `,` $dst attr-dict `:` type($src) `,` type($dst) `of` $elem";
+  let hasVerifier = 1;
+}
+
 // `p[i]` on a `*T` as a place: the address of element `i` (unchecked, as in C). The
 // element is then read and written with ptr.load/ptr.store, whose unknown memory may be a
 // Vec's header or elements: std's Vec methods write their header this way, so a place
