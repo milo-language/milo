@@ -1,0 +1,14 @@
+// @runtime-error: insert index out of bounds at tests/runtime-errors/vecInsertStdLine.milo:11:5
+// Vec.insert is std/vec.milo code; _vecPanic keeps the builtin's message and @trackCaller
+// makes it name this line (without it the panic points into std/vec.milo).
+
+pub fn at(): i64 {
+    return 3
+}
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["a", "b"]
+    v.insert(at(), "c")
+    print(v)
+    return 0
+}

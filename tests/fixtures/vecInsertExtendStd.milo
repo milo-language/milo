@@ -1,0 +1,97 @@
+// Vec.insert and Vec.extend are std/vec.milo code. insert: at the front, middle and end
+// (== len, an append), into an empty Vec, through a growth, an i32 index, string and
+// Drop elements. extend: onto an empty Vec, from an empty Vec, through a growth (doubling
+// or exactly len + n), string and Drop elements moved across bitwise (none copied, none
+// dropped by the move; the source's buffer is freed), a temporary source, a field
+// receiver and a capture. The insert bounds panic is pinned by
+// runtime-errors/vecInsertStdLine.milo.
+// @expect: [7] 8
+// @expect: [0, 1, 20, 2, 3, 40, 4, 5, 6, 7, 8, 99] 16
+// @expect: ["a", "b", "c", "d"]
+// @expect: [1, 2, 3] 3
+// @expect: [1, 2, 3, 4] 6
+// @expect: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] 13
+// @expect: ["w", "m0", "m1", "m2"]
+// @expect: ["h", "k", "i", "j"]
+// @expect: [0, 1, 2, 3]
+// @expect: moved 4 0123
+// @expect: drop 0
+// @expect: drop 1
+// @expect: drop 2
+// @expect: drop 3
+// @expect: done
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Holder {
+    items: Vec<string>,
+}
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("m" + i.toString())
+    }
+    return v
+}
+
+fn run() {
+    var a: Vec<Noisy> = Vec.new()
+    a.push(Noisy { id: 1 })
+    a.insert(0, Noisy { id: 0 })
+    var b: Vec<Noisy> = Vec.new()
+    b.push(Noisy { id: 2 })
+    b.push(Noisy { id: 3 })
+    a.extend(b)
+    print("moved ", a.len(), " ", a[0].id, a[1].id, a[2].id, a[3].id)
+}
+
+fn main() {
+    var e: Vec<i64> = Vec.new()
+    e.insert(0, 7)
+    print(e, " ", e.capacity())
+    var v: Vec<i64> = [1, 2, 3, 4, 5, 6, 7, 8]
+    v.insert(0, 0)
+    v.insert(4, 40)
+    v.insert(v.len(), 99)
+    let k: i32 = 2
+    v.insert(k, 20)
+    print(v, " ", v.capacity())
+    var s: Vec<string> = ["b", "d"]
+    s.insert(0, "a")
+    s.insert(2, "c" + "")
+    print(s)
+    var x: Vec<i64> = Vec.new()
+    let none: Vec<i64> = Vec.new()
+    x.extend(none)
+    x.extend([1, 2, 3])
+    print(x, " ", x.capacity())
+    x.extend([4])
+    print(x, " ", x.capacity())
+    x.extend([5, 6, 7, 8, 9, 10, 11, 12, 13])
+    print(x, " ", x.capacity())
+    var ws: Vec<string> = ["w"]
+    ws.extend(mk(3))
+    print(ws)
+    var h = Holder { items: ["h"] }
+    h.items.extend(["i", "j"])
+    h.items.insert(1, "k")
+    print(h.items)
+    var cap: Vec<i64> = [1]
+    let f = () => {
+        cap.extend([2, 3])
+        cap.insert(0, 0)
+        print(cap)
+    }
+    f()
+    run()
+    print("done")
+}

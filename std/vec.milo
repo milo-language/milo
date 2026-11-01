@@ -15,6 +15,8 @@
 // Declared here, as std/string does, so the prelude's Vec pulls in no other module.
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
 
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+
 // Not generic: the header's layout does not depend on the element, and an instantiation
 // per element type would need a struct name for every T (`[i64; 2]` has none that LLVM
 // accepts).
@@ -446,6 +448,50 @@ impl Vec<T> {
             var data = self.ptr()
             data[len] = x
             raw[0]._len = len.wrappingAdd(1)
+        }
+    }
+
+    // Inserts `x` at index `i`, shifting the elements from `i` on up by one. `i` may be
+    // the length (an append); past it panics with the builtin's "insert index out of
+    // bounds", before any growth. Grows as push does.
+    @inline
+    @trackCaller
+    fn insert(self: &mut Self, i: i64, x: T) {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecHead
+            let len = raw[0]._len
+            // Unsigned, so a negative index is out of range too, in one compare.
+            if (i as u64) > (len as u64) {
+                _vecPanic("insert index out of bounds")
+            }
+            let cap = raw[0]._cap
+            if (len as u64) >= (cap as u64) {
+                vecGrowOne(&mut self, len, cap)
+            }
+            var data = self.ptr()
+            memmove(data[i.wrappingAdd(1)].addrOf() as *u8, data[i].addrOf() as *u8, len.wrappingSub(i).wrappingMul(sizeOf<T>()))
+            data[i] = x
+            raw[0]._len = len.wrappingAdd(1)
+        }
+    }
+
+    // Moves every element of `other` onto the end, bitwise: nothing is copied or dropped,
+    // and `other` (which the call consumes) leaves holding no elements, so its own drop
+    // frees only its buffer.
+    @inline
+    @trackCaller
+    fn extend(self: &mut Self, other: Vec<T>) {
+        unsafe {
+            let n = other.len()
+            var raw = (self.addrOf() as *u8) as *VecHead
+            let len = raw[0]._len
+            let need = len.wrappingAdd(n)
+            vecReserveTotal(&mut self, need)
+            var data = self.ptr()
+            memcpy(data[len].addrOf() as *u8, other.ptr() as *u8, n.wrappingMul(sizeOf<T>()))
+            raw[0]._len = need
+            var spent = (other.addrOf() as *u8) as *VecHead
+            spent[0]._len = 0
         }
     }
 

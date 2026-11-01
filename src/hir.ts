@@ -91,11 +91,9 @@ export type HIRExpr =
   // indirect call through a bare C function pointer: no env argument
   | { kind: "CFnCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
-  | { kind: "VecInsert"; object: HIRExpr; index: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   // Total indexed read: `get(i)`, and the `first()`/`last()` sugar that lowers to it.
   // Out of range yields None instead of the panic `v[i]` raises.
   | { kind: "VecGetOpt"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
-  | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecCapacity"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "WrappingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }

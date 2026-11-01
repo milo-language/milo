@@ -509,3 +509,18 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   median of 5): 20 Vecs grown to 10M i64 0.12s vs 0.12s; 3M Vecs of 12 0.11s vs 0.11s;
   20M string + struct pushes 0.27s vs 0.27s; 150M pushes into pre-sized Vecs 0.03s vs
   0.03s.
+- 2026-11-01: `insert` and `extend` moved together (one commit: each is a few lines over a
+  helper the previous two commits added). insert checks `i > len` (unsigned) first and
+  panics through `_vecPanic("insert index out of bounds")` (`runtime-errors/
+  vecInsertStdLine`, same text and line:col as the builtin), grows as push does
+  (`vecGrowOne`), memmoves the tail up one, stores. extend reserves `len + n` through
+  `vecReserveTotal` (emitVecEnsureCapacity's policy), memcpys the source's elements
+  across, then sets the consumed source's len to 0 so its ordinary drop frees only the
+  buffer (the builtin freed it inline when cap > 0; a cap-0 Vec frees nothing either
+  way). With them went genVecInsert, genVecExtend, emitVecEnsureCapacity and
+  vecInitialCap. Old bug gone: an i32 insert index reached clang as an i64 compare on an
+  i32 value. Planted: leaving the source's len makes its drop free the moved strings
+  (garbage names, Drop elements dropped twice) and turns `vecInsertExtendStd` red. Output
+  identical (fixture without the i32 line); live heap equal; 79 corpus files calling
+  insert/extend pass; bench 200k rounds of 32 inserts (i64 + string) 0.10s vs 0.10s, 300k
+  rounds of 8 extends 0.13s vs 0.13s.

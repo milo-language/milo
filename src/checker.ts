@@ -6024,21 +6024,16 @@ export class TypeChecker {
     return true;
   }
 
-  // push's body is std/vec code; an element type still unknown after an error has no
-  // instance to bind.
-  private bindStdVecPush(expr: ExprOf<"MethodCall">, element: TypeKind): TypeKind {
-    if (element.tag === "unknown") return this.setType(expr, { tag: "void" });
-    return this.bindStdVecMethod(expr, element, "push", { tag: "void" });
-  }
-
   // A Vec method whose call the builtin rules above have already checked (arity, argument
   // types, the mutable receiver, with the builtin wordings tests pin) and whose body is
   // std/vec code: record the instantiated method for lowering, as HashMap insert does.
   // Not dispatchMangledMethod: those rules accept any int index, which lowering widens, and
   // map's callback is checked once, there, to learn its type argument. `typeArgs` are a
-  // generic method's own (`map<U>`).
+  // generic method's own (`map<U>`). An element still unknown after an error (or an
+  // uninferred `Vec.new()`) has no instance to bind, and the error is already reported.
   private bindStdVecMethod(expr: ExprOf<"MethodCall">, element: TypeKind, method: string, ret: TypeKind,
     opts: { mutable?: boolean; typeArgs?: TypeKind[] } = {}): TypeKind {
+    if (element.tag === "unknown") return this.setType(expr, ret);
     let mangled: string | null;
     if (opts.typeArgs) {
       const key = `Vec_${this.mangleTypeName(element)}$${method}`;
@@ -13499,7 +13494,7 @@ export class TypeChecker {
           Object.assign(objType.element as object, argType);
           this.tryMove(expr.args[0]);
           this.holdPointerArgsIn(expr.object, expr.args);
-          return this.bindStdVecPush(expr, objType.element);
+          return this.bindStdVecMethod(expr, objType.element, "push", { tag: "void" });
         }
         const argType = this.checkExpr(expr.args[0], objType.element);
         if (objType.element.tag === "int") this.enforceRangeInto(expr.args[0], argType, objType.element, expr.args[0].span);
@@ -13513,7 +13508,7 @@ export class TypeChecker {
         }
         this.tryMove(expr.args[0]);
         this.holdPointerArgsIn(expr.object, expr.args);
-        return this.bindStdVecPush(expr, objType.element);
+        return this.bindStdVecMethod(expr, objType.element, "push", { tag: "void" });
       }
       if (expr.method === "clear" || expr.method === "truncate") {
         // truncate(n) drops everything at index >= n; clear() is truncate(0).
@@ -13644,7 +13639,7 @@ export class TypeChecker {
         }
         this.tryMove(expr.args[1]);
         this.holdPointerArgsIn(expr.object, [expr.args[1]]);
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "insert", { tag: "void" });
       }
       if (expr.method === "remove") {
         if (expr.args.length !== 1) { this.error(`'remove' expects 1 argument (index)`, sp); return this.setType(expr, objType.element); }
@@ -13793,7 +13788,7 @@ export class TypeChecker {
           this.error(`'extend': expected ${this.show(objType)}, got ${this.show(otherType)}`, sp);
         }
         this.tryMove(expr.args[0]);
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "extend", { tag: "void" });
       }
       // retain is std/vec code, dispatched like the read-only callback methods (receiver
       // frozen while the predicate is checked); the receiver rule keeps "cannot retain on

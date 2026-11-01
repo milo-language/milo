@@ -1411,9 +1411,6 @@ class LowerCtx {
           return { kind: "ArrayLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
         if (objType?.tag === "vec") {
-          if (expr.method === "insert") {
-            return { kind: "VecInsert", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
@@ -1421,9 +1418,6 @@ class LowerCtx {
             const object = this.lowerExpr(expr.object);
             const index = this.lowerExpr(expr.args[0]);
             return { kind: "VecGetOpt", object, index, elementType: objType.element, optionEnumName: type.tag === "enum" ? type.name : "", type, span: expr.span };
-          }
-          if (expr.method === "extend") {
-            return { kind: "VecExtend", object: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
           if (expr.method === "capacity") {
             return { kind: "VecCapacity", object: this.lowerExpr(expr.object), type, span: expr.span };
