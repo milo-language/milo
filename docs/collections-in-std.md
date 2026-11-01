@@ -82,6 +82,40 @@ MIR drop elaboration (phase 2c) pauses until phase 1 lands: both
 edit codegen, and every body moved to std becomes ordinary Milo that MIR covers without
 special cases.
 
+## Phase 2: Vec method bodies (plan, 2026-11-01)
+
+Same split as HashMap: the `vec` tag, layout `{ptr, len, cap}`, indexing, slicing, views,
+`len`, `ptr`, literals and for-in stay builtin; method bodies move to `impl Vec<T>` in
+`std/vec.milo`, one method (or one shared-helper family) per commit, with the HashMap gates.
+
+Step 0, slice receivers. A `&[T]` / `&mut [T]` carries the Vec layout, and today's read-only
+builtins work on it (types.ts, the slice-readable list). A std `impl Vec<T>` method does not:
+`fn f(s: &[i64]) { s.firstOr(0) }` fails with "type '[i64]' has no method". Rule: a slice
+receiver may call an `impl Vec<T>` method whose receiver is `self: &Self`; never a
+`&mut Self` one (a view cannot grow or shrink its owner). Lands with a fixture before any
+read-only method moves.
+
+Order (cheapest and least coupled first; growth last, as with HashMap insert):
+
+1. Read-only scans: isEmpty, first, last, get, contains, indexOf, position, any, all, find,
+   each, enumerate, fold/reduce, sum, min, max. Equality for contains/indexOf must match the
+   builtin's element comparison (it is restricted to int, float, string, bool).
+2. In-place, no growth: swap, reverse, truncate, clear, pop, remove, retain. Drops must match
+   (leak gate).
+3. Allocating: map, filter, join, clone. `map` needs a method-level type parameter (std may
+   use them, AGENTS.md).
+4. Sorting: sort, sortBy, sortByKey. Read the builtin's algorithm first; std must be stable
+   if it is, and the benchmark gate matters most here.
+5. Growth: reserve, push, insert, extend, plus `Vec.new`/`withCapacity`/`filled`. push is the
+   hottest method in the corpus: it must inline to the same fast path (capacity check,
+   store, len bump) or stay builtin.
+
+Stays builtin: len, capacity, ptr, slice, indexing, for-in, drop, display, deep clone.
+
+The std-only machinery phase 1 added (`@inline`, the `@pure` exemption, the `_map*`
+intrinsics) is gated on `isHashMapModule`; step 0 widens the gate to the std collection
+modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can use it.
+
 ## Gates (every phase, every commit)
 
 - **Fixture corpus**: `bun test tests/run.test.ts` green, and under the phase's flag. Proven
