@@ -377,48 +377,38 @@ class FnEmitter {
   }
 }
 
-export interface MlirModule {
+export interface MlirFunction {
+  name: string;
   text: string;
-  /** Function names emitted as definitions, in order. */
-  defined: string[];
-  /** Every function considered, with "ok" or the reason it stayed on legacy codegen. */
-  log: { name: string; reason: string }[];
+  /** Every function it calls, with the dialect's function type. */
+  callees: Map<string, string>;
 }
 
-/** Why `fn` stays on legacy codegen, or null when the dialect covers it. */
-export function mlirSupports(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): string | null {
+/** `fn` in the dialect, or the reason it stays on legacy codegen. */
+export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): MlirFunction | string {
+  const em = new FnEmitter(fn, cx, fns);
   try {
-    new FnEmitter(fn, cx, fns).run();
-    return null;
+    return { name: fn.name, text: em.run(), callees: em.callees };
   } catch (err) {
     if (err instanceof MlirUnsupported) return err.reason;
     throw err;
   }
 }
 
-/** The module for every function in `candidates` the dialect covers. */
-export function emitMlirModule(candidates: HIRFunction[], cx: MlirEmitCtx, fns: Map<string, HIRFunction>): MlirModule {
-  const funcs: string[] = [];
-  const defined: string[] = [];
-  const log: { name: string; reason: string }[] = [];
+/** Why `fn` stays on legacy codegen, or null when the dialect covers it. */
+export function mlirSupports(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): string | null {
+  const r = emitMlirFunction(fn, cx, fns);
+  return typeof r === "string" ? r : null;
+}
+
+/** One module: the functions, plus a declaration for every callee not among them. */
+export function mlirModuleText(funcs: MlirFunction[]): string {
+  const have = new Set(funcs.map(f => f.name));
   const callees = new Map<string, string>();
-  for (const fn of candidates) {
-    const em = new FnEmitter(fn, cx, fns);
-    try {
-      funcs.push(em.run());
-    } catch (err) {
-      if (!(err instanceof MlirUnsupported)) throw err;
-      log.push({ name: fn.name, reason: err.reason });
-      continue;
-    }
-    defined.push(fn.name);
-    log.push({ name: fn.name, reason: "ok" });
-    for (const [k, v] of em.callees) callees.set(k, v);
-  }
-  const have = new Set(defined);
-  const decls = [...callees].filter(([k]) => !have.has(k)).map(([k, ty]) => {
+  for (const f of funcs) for (const [k, v] of f.callees) if (!have.has(k)) callees.set(k, v);
+  const decls = [...callees].map(([k, ty]) => {
     const [args, ret] = ty.split(" -> ");
     return `func.func private @${quote(k)}${args}${ret === "()" ? "" : ` -> ${ret}`}`;
   });
-  return { text: [...decls, ...funcs, ""].join("\n"), defined, log };
+  return [...decls, ...funcs.map(f => f.text), ""].join("\n");
 }

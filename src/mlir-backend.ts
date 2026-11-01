@@ -5,9 +5,8 @@
 // Linking is a textual splice, not llvm-link. Legacy codegen makes every non-exported fn
 // `internal`, and two modules cannot reference each other's internal symbols, so llvm-link
 // would need every cross-module callee promoted and re-internalized afterwards. In one
-// module the names simply resolve. The legacy body is still generated and then dropped:
-// codegen's module-wide analyses (the noalias reach dataflow) read every body, and the
-// legacy body computes the same values, so they stay sound without knowing about MLIR.
+// module the names simply resolve. Legacy codegen emits only a stub for a taken function
+// (MlirPlan.take), with its real `define` line and its call edges.
 // The `define` line is the legacy one (linkage, attributes, ABI), with params renumbered
 // to the MLIR body's `%0..%n-1`; DWARF for these functions is M6, so -g drops their `!dbg`.
 
@@ -16,7 +15,7 @@ import { spawnSync } from "child_process";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { HIRFunction, HIRModule } from "./hir";
-import { emitMlirModule, type MlirEmitCtx } from "./emit-mlir";
+import { emitMlirFunction, mlirModuleText, type MlirEmitCtx, type MlirFunction } from "./emit-mlir";
 
 export const MLIR_MODE = process.env.MILO_MLIR === "1";
 
@@ -81,81 +80,114 @@ function run(cmd: string, args: string[], input: string): string {
   return r.stdout;
 }
 
-/** `ir` with the bodies of every function the dialect covers compiled through MLIR. */
-export function compileThroughMlir(ir: string, hir: HIRModule, cx: MlirEmitCtx): string {
-  const optPath = tool(MILO_OPT, "milo-opt");
-  const translate = tool(join(LLVM_BIN, "mlir-translate"), "mlir-translate");
-  const lines = ir.split("\n");
-  const defineAt = new Map<string, number>();
-  const known = new Set<string>();
-  for (let i = 0; i < lines.length; i++) {
-    const d = DECL_RE.exec(lines[i]);
-    if (!d) continue;
-    const name = unquote(d[1]);
-    known.add(name);
-    if (lines[i].startsWith("define")) defineAt.set(name, i);
+const STUB_MARK = "; milo.mlir.stub";
+
+/**
+ * Which functions go through MLIR, decided by legacy codegen as it reaches each one
+ * (`take`, called from genFunction once signatures are known). A taken function gets a stub
+ * body there instead of its legacy one; `compileThroughMlir` replaces the stub.
+ */
+export class MlirPlan {
+  private taken: MlirFunction[] = [];
+  private log: string[] = [];
+  private readonly fns = new Map<string, HIRFunction>();
+
+  constructor(hir: HIRModule, private cx: MlirEmitCtx) {
+    for (const f of hir.functions) if (!this.fns.has(f.name)) this.fns.set(f.name, f);
   }
 
-  const fns = new Map<string, HIRFunction>();
-  for (const f of hir.functions) if (!fns.has(f.name)) fns.set(f.name, f);
-  const candidates = [...fns.values()].filter(f => !f.isExtern && defineAt.has(f.name));
-  const mod = emitMlirModule(candidates, cx, fns);
-  const logPath = process.env.MILO_MLIR_LOG;
-  if (logPath) {
-    const missing = [...fns.values()].filter(f => !f.isExtern && !defineAt.has(f.name));
-    const rows = [...mod.log.map(l => `${l.name}\t${l.reason}`), ...missing.map(f => `${f.name}\tno legacy define`)];
-    if (rows.length) appendFileSync(logPath, rows.join("\n") + "\n");
-  }
-  if (mod.defined.length === 0) return ir;
-  if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, mod.text);
-
-  const opt = run(optPath, ["-", ...MLIR_PIPELINE], mod.text);
-  const ll = run(translate, ["--mlir-to-llvmir", "-"], opt).split("\n");
-
-  const bodies = new Map<string, { header: string; body: string[] }>();
-  const extras: string[] = [];
-  for (let i = 0; i < ll.length; i++) {
-    const l = ll[i];
-    if (l.startsWith("define")) {
-      const m = DEFINE_RE.exec(l);
-      if (!m) throw new Error(`mlir: unparsed define: ${l}`);
-      const end = ll.indexOf("}", i);
-      bodies.set(unquote(m[1]), { header: l, body: ll.slice(i + 1, end) });
-      i = end;
-    } else if (l.startsWith("declare")) {
-      const m = DECL_RE.exec(l);
-      if (m && !known.has(unquote(m[1]))) extras.push(l.replace(/ #\d+$/, ""));
-    } else if (l.startsWith("@")) {
-      extras.push(l);
+  /**
+   * The stub body for `fn` when MLIR takes it, else null. The stub is never executed and
+   * never shipped; it exists for codegen's module-wide noalias dataflow, which reads call
+   * edges out of the IR text: one dead call per callee keeps the edges through this
+   * function. Its own body has nothing else that analysis looks at (scalars only: no
+   * pointers, no globals).
+   */
+  take(fn: HIRFunction): string[] | null {
+    if (fn.isExtern) return null;
+    const r = emitMlirFunction(fn, this.cx, this.fns);
+    if (typeof r === "string") { this.log.push(`${fn.name}\t${r}`); return null; }
+    this.taken.push(r);
+    this.log.push(`${fn.name}\tok`);
+    const stub = ["  unreachable", "mlir.stub.calls:", STUB_MARK];
+    for (const name of r.callees.keys()) {
+      const callee = this.fns.get(name)!;
+      const args = callee.params.map(p => `${this.cx.llvmType(p.type)} poison`).join(", ");
+      const sym = /^[-\w$.]+$/.test(name) ? name : `"${name}"`;
+      stub.push(`  call ${this.cx.llvmType(callee.retType)} @${sym}(${args})`);
     }
+    stub.push("  unreachable");
+    return stub;
   }
 
-  for (const name of mod.defined) {
-    const got = bodies.get(name);
-    if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
-    for (const l of got.body) {
-      // The body is spliced into a module whose attribute groups and metadata it does not
-      // know; neither appears in what M1 emits, so finding one is a bug to fix here.
-      if (/ #\d+\b|!\w/.test(l)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${l}`);
+  /** `ir` with every stub replaced by the function's body compiled through MLIR. */
+  compile(ir: string): string {
+    const logPath = process.env.MILO_MLIR_LOG;
+    if (logPath && this.log.length) appendFileSync(logPath, this.log.join("\n") + "\n");
+    if (this.taken.length === 0) return ir;
+    const optPath = tool(MILO_OPT, "milo-opt");
+    const translate = tool(join(LLVM_BIN, "mlir-translate"), "mlir-translate");
+    const text = mlirModuleText(this.taken);
+    if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
+    const ll = run(translate, ["--mlir-to-llvmir", "-"], run(optPath, ["-", ...MLIR_PIPELINE], text)).split("\n");
+
+    const bodies = new Map<string, { header: string; body: string[] }>();
+    const decls: { name: string; line: string }[] = [];
+    const globals: string[] = [];
+    for (let i = 0; i < ll.length; i++) {
+      const l = ll[i];
+      if (l.startsWith("define")) {
+        const m = DEFINE_RE.exec(l);
+        if (!m) throw new Error(`mlir: unparsed define: ${l}`);
+        const end = ll.indexOf("}", i);
+        bodies.set(unquote(m[1]), { header: l, body: ll.slice(i + 1, end) });
+        i = end;
+      } else if (l.startsWith("declare")) {
+        const m = DECL_RE.exec(l);
+        if (m) decls.push({ name: unquote(m[1]), line: l.replace(/ #\d+$/, "") });
+      } else if (l.startsWith("@")) {
+        globals.push(l);
+      }
     }
-    const at = defineAt.get(name)!;
-    const fn = fns.get(name)!;
-    let header = lines[at].replace(/ !dbg !\d+/, "");
-    fn.params.forEach((p, i) => {
-      const re = new RegExp(String.raw` %${p.name.replace(/[$.]/g, "\\$&")}(?=[,)])`);
-      if (!re.test(header)) throw new Error(`mlir: no param %${p.name} in ${header}`);
-      header = header.replace(re, ` %${i}`);
-    });
-    const sig = (h: string) => { const m = /^define [^@]*?(\S+) @[^(]*(\(.*\))/.exec(h); return m ? `${m[1]}${m[2]}` : h; };
-    if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
-    let end = at;
-    while (lines[end] !== "}") end++;
-    lines.splice(at, end - at + 1, header, ...got.body, "}");
-    // Later defines moved; re-index the ones after this splice.
-    const delta = got.body.length + 2 - (end - at + 1);
-    for (const [k, v] of defineAt) if (v > at) defineAt.set(k, v + delta);
+
+    const lines = ir.split("\n");
+    const known = new Set<string>();
+    const out: string[] = [];
+    let spliced = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const d = DECL_RE.exec(l);
+      if (d) known.add(unquote(d[1]));
+      if (!l.startsWith("define") || lines[i + 2] !== "  unreachable" || lines[i + 4] !== STUB_MARK) {
+        out.push(l);
+        continue;
+      }
+      const name = unquote(DEFINE_RE.exec(l)![1]);
+      const got = bodies.get(name);
+      if (!got) throw new Error(`mlir: milo-opt produced no body for ${name}`);
+      for (const b of got.body) {
+        // The body is spliced into a module whose attribute groups and metadata it does
+        // not know; neither appears in what the scalar ops lower to, so one is a bug here.
+        if (/ #\d+\b|!\w/.test(b)) throw new Error(`mlir: ${name} body carries attributes or metadata: ${b}`);
+      }
+      let header = l.replace(/ !dbg !\d+/, "");
+      this.fns.get(name)!.params.forEach((p, k) => {
+        const re = new RegExp(String.raw` %${p.name.replace(/[$.]/g, "\\$&")}(?=[,)])`);
+        if (!re.test(header)) throw new Error(`mlir: no param %${p.name} in ${header}`);
+        header = header.replace(re, ` %${k}`);
+      });
+      const sig = (h: string) => { const m = /^define [^@]*?(\S+) @[^(]*(\(.*\))/.exec(h); return m ? `${m[1]}${m[2]}` : h; };
+      if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
+      out.push(header, ...got.body);
+      while (lines[i] !== "}") i++;
+      out.push("}");
+      spliced++;
+    }
+    // A stub that ships would be an `unreachable` where a function body belongs.
+    if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
+    const extras = [...globals, ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
+    const firstDefine = out.findIndex(l => l.startsWith("define"));
+    out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");
+    return out.join("\n");
   }
-  const firstDefine = lines.findIndex(l => l.startsWith("define"));
-  lines.splice(firstDefine < 0 ? lines.length : firstDefine, 0, ...extras, "");
-  return lines.join("\n");
 }

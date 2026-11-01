@@ -202,8 +202,9 @@ export class Codegen {
   // ensures clauses of the function being generated; checked at every return site
   private currentEnsures: HIRContract[] = [];
   public trapOnOverflow = false;
-  // MILO_MLIR=1: also define __milo_mlir_panic for the functions compiled through MLIR.
-  public mlirPanicHelper = false;
+  // MILO_MLIR=1 (src/mlir-backend.ts MlirPlan.take): the stub body for a function MLIR
+  // compiles, which genFunction emits in place of the legacy one, or null to compile it here.
+  public mlirTake: ((fn: HIRFunction) => string[] | null) | null = null;
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1947,7 +1948,11 @@ export class Codegen {
     if (this.lazyGlobals.size > 0) this.closureBodies.push(this.emitLazyGlobals(functions));
     // Generated with the bodies, not after them: it sets the needs* flags its printf and
     // abort declarations hang off.
-    if (this.mlirPanicHelper) fnBodies.push(this.mlirPanicFn());
+    // The overflow routine too: MLIR bodies call it, and their stubs set no flag.
+    if (this.mlirTake) {
+      fnBodies.push(this.mlirPanicFn());
+      this.needsOverflowCheck = this.needsPrintf = this.needsExit = true;
+    }
 
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.linkName ?? e.name));
@@ -2619,6 +2624,7 @@ export class Codegen {
   }
 
   private genFunction(fn: HIRFunction): string[] {
+    const mlirStub = this.mlirTake?.(fn) ?? null;
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.locals.clear();
@@ -2670,6 +2676,12 @@ export class Codegen {
       // `.` can't appear in a Milo identifier, so %__sret.out never collides
       const allParams = isSret ? [{ name: "__sret.out", ty: Ty.ptr }, ...params] : params;
       b.defineFn({ name: fn.name, ret: Ty.of(ret), params: allParams, internal: !this.exportedFnNames.has(fn.name), dbg, ...(fn.alwaysInline && { attrs: " alwaysinline" }) });
+    }
+    if (mlirStub) {
+      lines.push(...mlirStub);
+      b.endFn();
+      this.currentSubprogramId = null;
+      return lines;
     }
     if (fn.name === "main" && !this.wrapMainGreen) {
       b.store(V("%_milo_argc", Ty.i32), V("@_milo_argc_global", Ty.ptr));
