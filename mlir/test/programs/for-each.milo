@@ -1,0 +1,73 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `for x in v` over a
+// Vec param, a local and a field, of scalars, strings and structs, with an index
+// (`for i, x in v`), break, continue, a return from inside, an empty Vec, and owned
+// locals declared in the body.
+
+struct P { name: string, n: i64 }
+
+struct Bag { items: Vec<i64> }
+
+fn sum(v: &Vec<i64>): i64 {
+    var s = 0
+    for x in v {
+        if x % 3 == 0 {
+            continue
+        }
+        s = s + x
+    }
+    return s
+}
+
+fn firstLong(words: &Vec<string>): i64 {
+    for i, w in words {
+        if w.len() > 3 {
+            return i
+        }
+    }
+    return -1
+}
+
+fn names(ps: &Vec<P>): string {
+    var out = ""
+    for p in ps {
+        let tag = p.name + "!"
+        out = out + tag
+        if p.n > 5 {
+            break
+        }
+    }
+    return out
+}
+
+fn bagTotal(b: &Bag): i64 {
+    var t = 0
+    for x in b.items {
+        t = t + x * 2
+    }
+    return t
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..10 {
+        v.push(i)
+    }
+    print(sum(v))
+    var words: Vec<string> = Vec.new()
+    words.push("ab")
+    words.push("abc")
+    words.push("abcdef")
+    print(firstLong(words), " ", firstLong(Vec.new()))
+    var ps: Vec<P> = Vec.new()
+    ps.push(P { name: "a", n: 1 })
+    ps.push(P { name: "b", n: 9 })
+    ps.push(P { name: "c", n: 2 })
+    print(names(ps))
+    let b = Bag { items: v }
+    print(bagTotal(b))
+    var count = 0
+    for w in words {
+        count = count + w.len()
+    }
+    print(count)
+}

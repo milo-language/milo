@@ -755,6 +755,43 @@ class FnEmitter {
         this.loops--;
         return false;
       }
+      case "ForEach": {
+        // `for x in v` over a Vec place, as legacy genForEach: data and len read once,
+        // then each element by index. The element is read at the top of each iteration,
+        // where legacy reads it through its address at each use: the same, since the
+        // checker lets nothing write the Vec while the loop borrows it. The index moves
+        // on before the body, so a `continue` (back to the condition) cannot skip it.
+        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+        if (s.iterableKind !== "vec" || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
+        const elemKind = s.varName2 ? s.varType2! : s.varType;
+        if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
+        const { place, elem } = this.vecPlace(s.iterable);
+        if (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem) throw new MlirUnsupported("for element type");
+        const data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
+        const len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
+        const idx = this.fresh();
+        this.vars.push(`  ${idx} = milo.var "for.idx" : !milo.ref<si64>`);
+        this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
+        this.loops++;
+        this.region("milo.while {", () => {
+          const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
+          this.emit(`milo.condition ${this.def(`milo.cmp lt, ${i}, ${len} : si64`, "i1").ref}`);
+          return true;
+        });
+        this.region("} do {", () => {
+          const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
+          const one = this.def("milo.const 1 : si64", "si64").ref;
+          this.emit(`milo.store ${this.def(`milo.add ${i}, ${one} wrapping : si64`, "si64").ref}, ${idx} : !milo.ref<si64>`);
+          const ep = this.def(`milo.ptr.elem ${data}[${i}] : ${elem}`, PTR).ref;
+          const x = this.def(`milo.ptr.load ${ep} : ${elem}`, elem);
+          this.bind(s.varName2 ?? s.varName, { kind: "ssa", v: { ...x, own: hasDrop(elem) ? "view" : undefined } });
+          if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: i, ty: "si64" } });
+          return this.stmts(s.body);
+        });
+        this.emit("}");
+        this.loops--;
+        return false;
+      }
       case "ForRange": {
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         const ty = scalar(s.varType, "for var");

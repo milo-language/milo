@@ -314,6 +314,13 @@ structs, enums.
   StrRangeCheck with start and end swapped (`strings`, `str-intrinsics`,
   `trap-substr-oob` red); bit copies not recorded (`ptr-borrow` exit 0 -> 1). Programs
   coverage 66.2% to 94.6%. Tahoe Roads api: 3190 to 3611 of 5330 (67.7%).
+- *`for x in v`* over a Vec param, local or field (not consumed, not `&mut` elements):
+  data and len read once as legacy does, a `milo.while` on an index slot that moves on
+  before the body (so `continue` cannot skip it), the element read through
+  `milo.ptr.elem`/`ptr.load` at the top of each iteration and bound as a view. Program
+  `for-each`; planted bug: `le` for `lt` in the condition (`for-each` exit 0 -> 1, a read
+  past the end). Tahoe Roads api: 3706 of 5350 (69.3%); left: element types without a
+  value type (28), strings (18), consumed Vecs (11).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
