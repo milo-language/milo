@@ -1,0 +1,20 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): C writes
+// through the bytes of a string it was given (`s.cstr()`, a `*u8` argument). A string
+// this function owns is made the only handle to its buffer first, so a shared copy of
+// it keeps its text, as legacy.
+
+extern fn memset(p: *u8, c: i32, n: i64): *u8
+
+fn run() {
+    var s = "abc"
+    s.pushStr("def")
+    let keep = s
+    unsafe { memset(s.cstr(), 88, 2) }
+    var t = "ghi"
+    t.pushStr("jkl")
+    let keep2 = t
+    unsafe { memset(t, 89, 1) }
+    print(s, " ", keep, " ", t, " ", keep2)
+}
+
+fn main() { run() }

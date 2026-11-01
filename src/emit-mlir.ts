@@ -1166,6 +1166,11 @@ class FnEmitter {
         // `s.cstr()`: the place's buffer made unique and NUL-terminated, then its bytes.
         if (scalar(e.type, "cstr") !== PTR) throw new MlirUnsupported("cstr type");
         const str = this.place(e.object, `!milo.ref<${STR}>`, false).ref;
+        // C may write through the bytes: a string owned outright here is made the only
+        // handle to its buffer first, as legacy (the helper sees only a reference).
+        if (this.ownedLocal(e.object))
+          this.intrinsic("unique", { ...e, type: { tag: "void" } }, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
+            ([x]) => ({ kind: "StrUnique", type: { tag: "void" }, span: e.span, str: x }), null);
         return this.intrinsic("cstr", e, [{ name: "s", type: { tag: "string" }, mode: "ref", ref: str }],
           ([x]) => ({ kind: "StringCstr", type: e.type, span: e.span, object: x }), PTR, false);
       }

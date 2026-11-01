@@ -455,9 +455,10 @@ structs, enums.
   intrinsic helper takes its result type from the expression it stands for, so a
   unique made for a call returning i64 fell off the end of an i64 function (a trap at
   -O2 only). Planted bug: the temporary in a slot that drops nothing (`ffi-strings`
-  `--owned` red: one more live block). Not fixed, noted: `s.cstr()` through MLIR (the
-  fifth batch's StringCstr helper takes the place by reference) never makes an owned
-  local unique first, where legacy does.
+  `--owned` red: one more live block). `s.cstr()` through MLIR (the
+  fifth batch's StringCstr helper takes the place by reference) never made an owned
+  local unique first, where legacy does; it does now (program `cstr-unique`, stdout red
+  without it: C's write reached the shared copy).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
