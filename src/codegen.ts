@@ -6,7 +6,6 @@ import { guardLazyGlobals, LAZY_GUARD_PREFIX, LAZY_INIT_PREFIX } from "./lazy-gl
 import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
-import { MIR_MODE, emitMirBody, tryMirBody } from "./codegen-mir";
 import type { PropagateBoxing } from "./checker";
 import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecReverse, genVecRemove, genVecSlice, genVecSwap, genVecTruncate, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
@@ -2760,12 +2759,7 @@ export class Codegen {
     }
 
     let hasTerminator = false;
-    const mir = MIR_MODE ? tryMirBody(this, fn) : null;
-    if (mir) {
-      emitMirBody(this, mir, lines);
-      hasTerminator = true;
-    }
-    for (const stmt of mir ? [] : fn.body) {
+    for (const stmt of fn.body) {
       const [stmtLines, terminated] = this.genStmt(stmt);
       lines.push(...stmtLines);
       // Anything past a terminator would land in an already-closed block and make
@@ -5939,7 +5933,7 @@ export class Codegen {
 
   // A numeric or bool binary op on evaluated operands, with milo's traps: overflow (unless
   // @wrapping or --no-overflow-checks), division by zero and INT_MIN / -1, and out-of-range
-  // shifts. Shared by HIR codegen and MIR emission, so both trap identically.
+  // shifts. The MLIR path (mlir/Scalar.cpp) lowers the same traps; scripts/mlir-same.ts compares them.
   public emitScalarBinOp(lines: string[], op: string, leftType: TypeKind, llt: string, lv: string, rv: string, span: Span | undefined): Gen {
     const tmp = this.nextTemp();
     const isFloat = llt === "float" || llt === "double";
@@ -6018,7 +6012,7 @@ export class Codegen {
   }
 
   // `-`, `!` and `~` on an evaluated scalar operand; integer negation traps on overflow
-  // like emitScalarBinOp's subtraction. Shared by HIR codegen and MIR emission.
+  // like emitScalarBinOp's subtraction.
   public emitScalarUnOp(lines: string[], op: string, operandType: TypeKind, ot: string, ov: string, span: Span | undefined): Gen {
     const tmp = this.nextTemp();
     if (op === "-") {
@@ -7575,7 +7569,7 @@ export class Codegen {
   }
 
   // `as` between numeric, bool and pointer types on an evaluated operand. Float to int
-  // saturates (NaN is 0), as Rust's `as` does. Shared by HIR codegen and MIR emission.
+  // saturates (NaN is 0), as Rust's `as` does.
   public emitScalarCast(lines: string[], fromKind: TypeKind, toKind: TypeKind, fromTy: string, toTy: string, ov: string): Gen {
     if (fromTy === toTy) return [lines, ov, toTy];
     const b = new LlvmTextBuilder(lines, this);

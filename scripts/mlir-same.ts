@@ -14,7 +14,7 @@
 // milo-opt that is not built all fail. A mismatch is rerun once on both sides; a fixture
 // whose legacy binary disagrees with itself is nondeterministic and reported apart. A guard
 // kill for the machine's sake (memory pressure) is retried and, every time, aborts with
-// exit 2 and no verdict, as in mir-same.ts.
+// exit 2 and no verdict.
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
 import { basename, join } from "path";
 import { tmpdir } from "os";

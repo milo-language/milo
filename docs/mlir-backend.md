@@ -24,8 +24,9 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
 ```
 
 - **Everything after the checker moves into MLIR**, JSIR/ClangIR style. The goal is to
-  delete `src/lower.ts`, `src/hir.ts`, `src/codegen*.ts`, `src/ir.ts` and `src/mir*.ts`
-  (about 19.5k lines). The TypeScript side becomes a thin printer of a **high-level `milo`
+  delete `src/lower.ts`, `src/hir.ts`, `src/codegen*.ts` and `src/ir.ts`. The TypeScript MIR
+  (`src/mir*.ts`, `src/codegen-mir.ts`, `MILO_MIR`) went first, once MLIR took more function
+  instances than MIR lowered without fallback (69078 against 61668 over the fixtures). The TypeScript side becomes a thin printer of a **high-level `milo`
   dialect that mirrors the language**; every transformation is a C++ pass.
 - **Source-level ops** (`mlir/Milo.td`): structured control flow as region ops
   (`milo.if`, `milo.while`, `milo.loop` with `milo.break`/`milo.continue`/`milo.return`),
