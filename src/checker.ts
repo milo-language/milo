@@ -904,6 +904,9 @@ export class TypeChecker {
   private genericImpls = new Map<string, { impl: import("./ast").ImplDecl; program: Program }[]>();
   // Mangled container-impl name (`Vec_i64`) -> the container type it stands for; see selfTypeOf.
   private containerSelfType = new Map<string, MiloType>();
+  // Container trait impls already instantiated, keyed by mangled name and template; see
+  // instantiateContainerImpl, which instantiates inherent methods one at a time instead.
+  private containerTraitImplsDone = new Set<string>();
   // Methods carrying their OWN type parameters (`fn map<R>(…)`), keyed `Type$method`.
   //
   // These cannot be registered as a concrete signature the way every other method is: `R`
@@ -2865,6 +2868,10 @@ export class TypeChecker {
     switch (t.tag) {
       case "vec": return { ...simpleType("Vec"), typeArgs: [this.typeKindToMiloType(t.element)] };
       case "heap": return { ...simpleType("Heap"), typeArgs: [this.typeKindToMiloType(t.inner)] };
+      // typeName spells `HashMap<i64, i64>`, which resolved as one struct name: an
+      // `Option<T>` instantiated with it got an enum named `Option_HashMap<i64, i64>`,
+      // whose spaces broke the IR value names derived from it.
+      case "hashmap": return { ...simpleType("HashMap"), typeArgs: [this.typeKindToMiloType(t.key), this.typeKindToMiloType(t.value)] };
       case "ref": return { ...simpleType(typeName(t.inner)), isRef: !t.mutable, isRefMut: t.mutable };
       case "ptr": {
         // unwrap nested ptrs so `**u8` round-trips at the right depth, not collapsed
@@ -6024,12 +6031,26 @@ export class TypeChecker {
     if (!templates.some(t => t.impl.methods.some(m => m.name === method))) return null;
 
     const argsMilo = args.map(a => this.typeKindToMiloType(a));
-    for (const { impl: gi, program: prog } of templates) {
+    for (const [ti, { impl: gi, program: prog }] of templates.entries()) {
       const names = gi.typeParams.map(t => t.name);
       // An impl whose parameter count does not match the container's is not about this
       // container shape at all (`impl T for HashMap<K>` on a two-parameter map), and
       // substituting anyway would bind the wrong positions silently.
       if (names.length !== args.length) continue;
+      // An inherent method is instantiated only when called, like a C++ template member:
+      // a method comparing elements with `==` cannot be checked for a `Vec<Vec<i64>>`, and
+      // instantiating every method for every element type would refuse any use of such
+      // a Vec. A trait impl's method set is the trait's, so it is instantiated whole, once.
+      let wanted: (m: Function) => boolean;
+      if (gi.traitName) {
+        const key = `${concreteName}#${ti}`;
+        if (this.containerTraitImplsDone.has(key)) continue;
+        this.containerTraitImplsDone.add(key);
+        wanted = () => true;
+      } else {
+        if (!gi.methods.some(m => m.name === method)) continue;
+        wanted = m => m.name === method;
+      }
       // `Self` keeps its real container type: `self: &Self` on a `Vec<T>` impl must stay
       // a Vec, not become the mangled struct name, or the body cannot index it. Every
       // position gets the same treatment, so `other: &Self` is the Vec too.
@@ -6040,7 +6061,7 @@ export class TypeChecker {
         traitName: gi.traitName,
         typeName: concreteName,
         typeParams: [],
-        methods: gi.methods.filter(m => !this.methodWithheld(m, concreteName, names, args)).map(m => ({
+        methods: gi.methods.filter(m => wanted(m) && !this.methodWithheld(m, concreteName, names, args)).map(m => ({
           ...m,
           ...(m.attributes && { attributes: m.attributes.filter(a => a.name !== "copyOut" && a.name !== "ordered") }),
           params: m.params.map(p => ({

@@ -1,0 +1,40 @@
+// A container impl's inherent methods are instantiated when called, not all at once:
+// `has` compares with `==`, which `Vec<Vec<i64>>` elements lack, yet `count` still works
+// on one. Before, calling any method instantiated every method for that element type,
+// so the first call failed inside `has` with "cannot use '==' on Vec<i64>".
+// `head` on a Vec of maps also covers the instance's `Option<HashMap<i64, i64>>`, which
+// was named with the map's spelled type (spaces and all) and broke the generated IR.
+// @expect: 2 true
+// @expect: 1 1
+// @expect: 3
+
+impl Vec<T> {
+    fn count(self: &Self): i64 {
+        return self.len()
+    }
+    fn has(self: &Self, x: &T): bool {
+        for e in self {
+            if e == x {
+                return true
+            }
+        }
+        return false
+    }
+    fn head(self: &Self): Option<T> {
+        return self.get(0)
+    }
+}
+
+fn main() {
+    let ints: Vec<i64> = [1, 2]
+    print(ints.count(), " ", ints.has(2))
+
+    let nested: Vec<Vec<i64>> = [[1, 2]]
+    var m: HashMap<i64, i64> = HashMap.new()
+    m.insert(1, 2)
+    let maps: Vec<HashMap<i64, i64>> = [m]
+    print(nested.count(), " ", maps.head()!.len)
+
+    let fs: Vec<(i64) => i64> = [(x: i64) => x + 1, (x: i64) => x * 2, (x: i64) => x]
+    print(fs.count())
+}
