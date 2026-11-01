@@ -1,0 +1,11 @@
+// @error: only the std collection modules may force inlining
+// '@inline' exists for the std collection modules (std/hashmap, std/vec), whose bodies
+// replaced code codegen emitted inline; a user program leaves inlining to the optimizer.
+@inline
+fn twice(x: i64): i64 {
+    return x * 2
+}
+
+fn main() {
+    print(twice(3))
+}

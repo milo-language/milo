@@ -466,7 +466,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`only an 'extern fn' has a C signature to verify`](#only-an-extern-fn-has-a-c-signature-to-verify)
 - [`only an 'extern struct' field can be C-invisible`](#only-an-extern-struct-field-can-be-c-invisible)
 - [`only an integer constant can be checked`](#only-an-integer-constant-can-be-checked)
-- [`only std/hashmap may force inlining`](#only-std-hashmap-may-force-inlining)
+- [`only the std collection modules may force inlining`](#only-the-std-collection-modules-may-force-inlining)
 - [`only valid as the iterable of a 'for ... in' loop`](#only-valid-as-the-iterable-of-a-for-in-loop)
 - [`Option`](#option)
 - [`Option<Option<T>> has no distinct JSON encoding`](#option-option-t-has-no-distinct-json-encoding)
@@ -11722,9 +11722,9 @@ fn main() {
 
 <sub>[tests/errors/cValueNonInt.milo](https://github.com/milo-language/milo/blob/main/tests/errors/cValueNonInt.milo)</sub>
 
-## `only std/hashmap may force inlining` {#only-std-hashmap-may-force-inlining}
+## `only the std collection modules may force inlining` {#only-the-std-collection-modules-may-force-inlining}
 
-'@inline' exists for std/hashmap's insert path, which replaced code codegen emitted inline; a user program leaves inlining to the optimizer.
+'@inline' exists for the std collection modules (std/hashmap, std/vec), whose bodies replaced code codegen emitted inline; a user program leaves inlining to the optimizer.
 
 ```milo skip
 @inline
@@ -11737,7 +11737,7 @@ fn main() {
 }
 ```
 
-<sub>[tests/errors/inlineOutsideStdHashMap.milo](https://github.com/milo-language/milo/blob/main/tests/errors/inlineOutsideStdHashMap.milo)</sub>
+<sub>[tests/errors/inlineOutsideStdCollections.milo](https://github.com/milo-language/milo/blob/main/tests/errors/inlineOutsideStdCollections.milo)</sub>
 
 ## `only valid as the iterable of a 'for ... in' loop` {#only-valid-as-the-iterable-of-a-for-in-loop}
 

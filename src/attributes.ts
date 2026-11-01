@@ -189,7 +189,7 @@ export const ATTRIBUTES: AttrInfo[] = [
     name: "inline",
     targets: ["fn", "method"],
     doc:
-      "std/hashmap only: inline this function at every call site (LLVM `alwaysinline`), as the " +
+      "std collection modules (std/hashmap, std/vec) only: inline this function at every call site (LLVM `alwaysinline`), as the " +
       "builtin code it replaced was emitted inline. Elsewhere it is an error; the optimizer decides.",
   },
   {

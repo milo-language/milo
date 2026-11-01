@@ -131,6 +131,16 @@ export function isHashMapModule(file: string | undefined): boolean {
   return posix === "std/hashmap.milo" || posix.endsWith("/std/hashmap.milo");
 }
 
+// The std modules that hold builtin collections' method bodies. They replaced code codegen
+// emitted inline and may use the std-only machinery that implies (`@inline`, the `@pure`
+// exemption). Anchored on a separator like isForeignModule, so "notstd/vec.milo" is not one.
+const STD_COLLECTION_MODULES: readonly string[] = ["std/hashmap.milo", "std/vec.milo"];
+export function isStdCollectionModule(file: string | undefined): boolean {
+  if (!file) return false;
+  const posix = file.replace(/\\/g, "/");
+  return STD_COLLECTION_MODULES.some(m => posix === m || posix.endsWith(`/${m}`));
+}
+
 export function isForeignModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -4304,8 +4314,8 @@ export class TypeChecker {
             if (attr.args.length > 0) this.error(`'@replayHooked' takes no arguments`, undefined, `write '@replayHooked fn ${fn.name}(...)'`);
           }
           else if (attr.name === "inline") {
-            if (!isHashMapModule(fn.sourceFile)) {
-              this.error(`'@inline' on '${fn.name}': only std/hashmap may force inlining`, undefined, `drop '@inline'; the optimizer inlines small functions on its own`);
+            if (!isStdCollectionModule(fn.sourceFile)) {
+              this.error(`'@inline' on '${fn.name}': only the std collection modules may force inlining`, undefined, `drop '@inline'; the optimizer inlines small functions on its own`);
             } else if (attr.args.length > 0) {
               this.error(`'@inline' takes no arguments`, undefined, `write '@inline fn ${fn.name}(...)'`);
             }
@@ -5703,8 +5713,8 @@ export class TypeChecker {
         } else if (attr.name === "sql" || attr.name === "sqlSchema") {
           const bad = validateSqlAttribute(attr, `${typeName}.${m.name}`, m.params);
           if (bad) this.error(bad, m.span ?? impl.span);
-        } else if (attr.name === "inline" && !isHashMapModule((m.span ?? impl.span)?.file)) {
-          this.error(`'@inline' on '${typeName}.${m.name}': only std/hashmap may force inlining`, m.span ?? impl.span,
+        } else if (attr.name === "inline" && !isStdCollectionModule((m.span ?? impl.span)?.file)) {
+          this.error(`'@inline' on '${typeName}.${m.name}': only the std collection modules may force inlining`, m.span ?? impl.span,
             `drop '@inline'; the optimizer inlines small functions on its own`);
         } else if (attr.args.length > 0 && attr.name !== "ordered") {
           this.error(`'@${attr.name}' takes no arguments`, m.span ?? impl.span,

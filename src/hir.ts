@@ -246,7 +246,7 @@ export interface HIRFunction {
   // Drives what the generated C header declares: the header is the library's published
   // API, so a helper the author never marked `pub` has no business in it.
   isPub?: boolean;
-  // @inline (std/hashmap only): emitted `alwaysinline`.
+  // @inline (std collection modules only): emitted `alwaysinline`.
   alwaysInline?: boolean;
   sourceFile?: string; // origin file — DWARF DIFile/DISubprogram (set by lower from the resolver-stamped AST fn)
   line?: number;       // 1-based decl-line proxy (first body stmt) — DISubprogram line

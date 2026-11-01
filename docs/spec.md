@@ -3518,15 +3518,15 @@ A conforming implementation shall reject this program at compile time.
 
 *Program:* [`tests/errors/indexPointerFieldElement.milo`](../tests/errors/indexPointerFieldElement.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
-### MILO-E-inlineOutsideStdHashMap
+### MILO-E-inlineOutsideStdCollections
 
 A conforming implementation shall reject this program at compile time.
 
-- The diagnostic shall contain: `only std/hashmap may force inlining`
+- The diagnostic shall contain: `only the std collection modules may force inlining`
 
-**Rationale.** '@inline' exists for std/hashmap's insert path, which replaced code codegen emitted inline; a user program leaves inlining to the optimizer.
+**Rationale.** '@inline' exists for the std collection modules (std/hashmap, std/vec), whose bodies replaced code codegen emitted inline; a user program leaves inlining to the optimizer.
 
-*Program:* [`tests/errors/inlineOutsideStdHashMap.milo`](../tests/errors/inlineOutsideStdHashMap.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
+*Program:* [`tests/errors/inlineOutsideStdCollections.milo`](../tests/errors/inlineOutsideStdCollections.milo) — *verified by:* tests/run.test.ts — `errors (type checker rejects)`
 
 ### MILO-E-intToExternCast
 
