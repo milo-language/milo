@@ -1,0 +1,33 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `s[a..b]` string
+// slices, `&string` views into the source's buffer. Of a local, a by-ref param and a
+// struct field, with i64 and narrower bounds, empty and whole ranges, printed. Lent to a
+// `&string` param (run, headLen) they stay legacy for now.
+
+struct Line { text: string, n: i64 }
+
+fn shout(s: &string): string {
+    return s + "!"
+}
+
+fn headLen(s: &string, n: i64): i64 {
+    return shout(s[0..n]).len()
+}
+
+fn show(s: &string, l: &Line) {
+    print(s[0..5], "|", s[7..13], "|", s[5..5], "|", s[0..s.len()])
+    let from: i32 = 14
+    print(s[from..s.len() as i32], " ", l.text[1..4])
+}
+
+fn run() {
+    let s = "hello, sliced world" + "?"
+    print(shout(s[7..13]), " ", headLen(s, 4))
+    show(s, Line { text: "xyzw" + "v", n: 0 })
+    let l = Line { text: "abc" + "def", n: 2 }
+    let m = Line { text: shout(l.text[1..4]), n: l.n }
+    print(m.text, " ", m.n, " ", l.text)
+}
+
+fn main() {
+    run()
+}

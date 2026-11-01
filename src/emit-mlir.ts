@@ -1432,6 +1432,21 @@ class FnEmitter {
         }));
         return { ...this.def(`milo.string.share ${p.ref} : !milo.ref<${STR}>`, STR), own: "owned" };
       }
+      case "StringSlice": {
+        // `s[a..b]`, legacy's genStringSlice in a helper: a `&string` view into s's buffer
+        // (data and len, nothing owned), range-checked. Only a place's string, which
+        // outlives the view; never a temporary.
+        if (e.str.kind !== "Ident" && e.str.kind !== "FieldAccess") throw new MlirUnsupported("slice of a temporary string");
+        const s = this.place(e.str, refOf(STR), false).ref;
+        const a = this.expr(e.start), b = this.expr(e.end);
+        if (!isScalarTy(a.ty) || !isScalarTy(b.ty)) throw new MlirUnsupported("slice bound type");
+        const r = this.intrinsic("strslice", e, [
+          { name: "s", type: stripRefs(e.str.type), mode: "ref", ref: s },
+          { name: "a", type: e.start.type, mode: "val", ref: a.ref },
+          { name: "b", type: e.end.type, mode: "val", ref: b.ref }],
+        ([x, y, z]) => ({ ...e, str: x, start: y, end: z }), STR);
+        return { ...r, own: "view" };
+      }
       case "StringLen": {
         const v = this.borrow(this.expr(e.object), e.object.type);
         if (v.ty !== STR) throw new MlirUnsupported("len of a non-string");
