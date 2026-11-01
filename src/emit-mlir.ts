@@ -843,6 +843,17 @@ class FnEmitter {
   }
 
   private stmt(s: HIRStmt): boolean {
+    if (s.kind !== "Assign" && s.kind !== "ExprStmt") return this.stmtIn(s);
+    // Its temporaries die at its end, as legacy drops them: a block's end may never come
+    // (an exit() later in it), and the live-block count at exit would see them.
+    this.owned.push([]);
+    const start = this.body.length;
+    const jumped = this.stmtIn(s);
+    this.closeScope(start, jumped, null);
+    return jumped;
+  }
+
+  private stmtIn(s: HIRStmt): boolean {
     switch (s.kind) {
       case "Let": {
         if (s.viewBind) throw new MlirUnsupported("view let");
@@ -853,7 +864,8 @@ class FnEmitter {
           return false;
         }
         const ty = this.value(s.type, "let");
-        const v = this.consume(this.expr(s.value), "let");
+        // The value's temporaries die at the end of the statement; the binding's slot is the block's.
+        const v = this.scoped(() => this.consume(this.expr(s.value), "let"));
         if (v.ty !== ty) throw new MlirUnsupported("let of a different type");
         if (hasDrop(ty)) {
           const slot = this.ownedSlot(s.name, ty, s.type);

@@ -572,6 +572,14 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   (with `lib/ctx.milo`), FileCheck in `owning-fn.mlir`, a verifier case. Planted bug: the
   cast's lowering nulling the env (`fn-fields` red: the capturing handler crashed). Tahoe
   Roads api: 5117 (95.6%).
+- *Temporaries die at the end of their statement* (a `let`'s value, an assignment, an
+  expression statement: a scope each), as legacy drops them, no longer at the end of the
+  block. Found by `httpRequestFraming` going red under `--owned` (legacy 40 live blocks
+  at exit, MLIR 43): `clients()` builds a string with `a + b + c` in a `let` and ends in
+  `exit(0)`, so the block end that would have dropped the concat intermediates never
+  came. A bisect with `MILO_MLIR_ONLY` named the function. Program `statement-temps`.
+  Planted bug: the statement scopes off (`statement-temps` `--owned` red: legacy 2, MLIR
+  5).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

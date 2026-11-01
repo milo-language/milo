@@ -1,0 +1,25 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: temporaries die at
+// the end of their statement (a `let`, an assignment, an expression statement), as legacy
+// drops them, not at the end of the block. An exit() before the block ends shows the
+// difference: what is still live at exit is counted.
+
+fn num(n: i64): string {
+    return $"{n}"
+}
+
+fn show(s: &string) {
+    print(s)
+}
+
+fn work() {
+    let a = num(1) + "-" + num(2) + "-" + num(3)
+    var b = ""
+    b = num(4) + "+" + num(5)
+    show(num(6) + "!" + num(7))
+    print(a, " ", b)
+    exit(0)
+}
+
+fn main() {
+    work()
+}
