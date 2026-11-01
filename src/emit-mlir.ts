@@ -893,6 +893,39 @@ class FnEmitter {
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
   }
 
+  /**
+   * `a == b`, `a < b`, `a + b` on strings: a call of a legacy function doing exactly that
+   * to two borrowed strings, so comparison and concatenation are legacy's.
+   */
+  private stringBinop(e: HIRExpr & { kind: "BinOp" }): Val {
+    const names: Record<string, string> = { "==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "+": "concat" };
+    const op = names[e.op];
+    if (!op) throw new MlirUnsupported(`string ${e.op}`);
+    const l = this.borrow(this.expr(e.left), e.left.type);
+    const r = this.borrow(this.expr(e.right), e.right.type);
+    const slot = (v: Val) => {
+      const ref = this.fresh();
+      this.vars.push(`  ${ref} = milo.var "operand" : !milo.ref<${STR}>`);
+      this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
+      return ref;
+    };
+    const [a, b] = [slot(l), slot(r)];
+    const str: TypeKind = { tag: "string" };
+    const ret: TypeKind = op === "concat" ? str : { tag: "bool" };
+    const name = `milo.string.${op}`;
+    this.cx.mlirHelper(name, () => ({
+      params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
+      retType: ret,
+      body: [{ kind: "Return", retType: ret, value: { kind: "BinOp", op: e.op, type: ret,
+        left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
+    }));
+    const rty = op === "concat" ? STR : "i1";
+    const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> ${rty}`;
+    this.callees.set(name, fnTy);
+    const v = this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, rty);
+    return op === "concat" ? { ...v, own: "owned" } : v;
+  }
+
   private binop(e: HIRExpr & { kind: "BinOp" }): Val {
     if (e.op === "&&" || e.op === "||") {
       // `a && b` is `if a { b } else { false }`: b runs only when a does not decide it.
@@ -911,6 +944,7 @@ class FnEmitter {
       this.emit("}");
       return { ref, ty: "i1" };
     }
+    if (stripRefs(e.left.type).tag === "string" && stripRefs(e.right.type).tag === "string") return this.stringBinop(e);
     const ty = scalar(e.left.type, "binop operand");
     if (ty === PTR && !(e.op in CMPS)) throw new MlirUnsupported(`pointer ${e.op}`);
     const l = this.expr(e.left), r = this.expr(e.right);

@@ -1,0 +1,27 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs --owned): string
+// comparison and concatenation (literals, owned locals, temporaries, `&string` params),
+// including the accumulate-in-a-loop shape.
+
+fn same(a: &string, b: &string): bool { return a == b }
+
+fn order(a: &string, b: &string): i64 {
+    if a < b { return -1 }
+    if a > b { return 1 }
+    return 0
+}
+
+fn greet(name: &string): string { return "hi " + name }
+
+fn main() {
+    let a = "abc"
+    let b = "ab".repeat(1) + "c"
+    print(same(a, b), " ", a == "abd", " ", a != b, " ", a <= b, " ", a >= "abb")
+    print(order("apple", "banana"), " ", order("b", "a"), " ", order(a, b))
+    print(greet(a), " ", greet("x".repeat(3)).len())
+    var acc = ""
+    for i in 0..5 {
+        acc = acc + "-" + "z".repeat(i)
+    }
+    print(acc, " ", acc.len())
+    print("" == "", " ", "a" < "", " ", "\0" > "")
+}
