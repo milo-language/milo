@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecFilter, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -5668,8 +5668,6 @@ export class Codegen {
       }
       case "VecMap":
         return genVecMap(this, expr, lines);
-      case "VecFilter":
-        return genVecFilter(this, expr, lines);
       case "VecInsert":
         return genVecInsert(this, expr, lines);
       case "VecGetOpt":
@@ -9459,7 +9457,6 @@ export class Codegen {
       case "VecWithCapacity":
       case "VecFilled":
       case "VecMap":
-      case "VecFilter":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":
       // get's payload is cloned out of the buffer, so nothing else owns it and

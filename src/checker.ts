@@ -13487,16 +13487,11 @@ export class TypeChecker {
         if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
         return this.setType(expr, { tag: "vec", element: cbType.ret });
       }
+      // filter is std/vec code, dispatched like the read-only callback methods. It copies
+      // each kept element structurally (_vecCopyOut), as the builtin did, Drop elements too.
       if (expr.method === "filter") {
-        if (expr.args.length !== 1) { this.error(`'filter' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbType = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbType, cbHint, "filter", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        if (cbType.tag !== "fn") { this.error(`'filter' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
-        return this.setType(expr, { tag: "vec", element: objType.element });
+        const body = this.instantiateContainerImpl("Vec", [objType.element], "filter");
+        if (body) return this.dispatchMangledMethod(expr, body.mangled, sp, true);
       }
       if (expr.method === "join") {
         if (expr.args.length !== 1) { this.error(`'join' expects 1 argument (separator)`, sp); return this.setType(expr, { tag: "unknown" }); }

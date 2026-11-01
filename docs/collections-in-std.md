@@ -425,3 +425,10 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   receiver back uncopied (`mk().clone()` now copies). Planted: reversing the copy turns
   `vecCloneStd` red; output identical; live heap equal; 240 corpus files calling
   `.clone()` pass; bench 400k clones of 256 i64 + 256 strings 0.21s builtin vs 0.20s std.
+- 2026-11-01: `filter` moved: a `Vec.withCapacity(len)` (the builtin's exact allocation;
+  `capacity()` of the result is unchanged), each kept element stored as `_vecCopyOut` of
+  the source slot, len stored once at the end; `@inline`. Dispatched like the callback
+  methods. A Drop element is copied structurally as before (not refused: that would
+  reject programs the builtin accepted). `cbArgVal` lost its last caller. Planted `!f`
+  turns `vecFilterStd` red; output identical; live heap equal; 15 corpus files pass;
+  bench 1.5M filters of 256 i64 + 256 strings 0.78s builtin vs 0.76s std.

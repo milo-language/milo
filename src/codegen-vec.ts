@@ -313,11 +313,6 @@ function vecPreamble(ctx: CodegenCtx, vecExpr: HIRExpr, cbExpr: HIRExpr, elemTyp
   return { fnPtr, envPtr, data, len, elemTy: Ty.of(ctx.llvmType(elemType)), release };
 }
 
-// What callbackElemArg (codegen.ts) hands the callback, as a typed value.
-function cbArgVal(arg: { arg: string; argTy: string }): Val {
-  return val(arg.arg, Ty.of(arg.argTy));
-}
-
 export function genVecMap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMap" }, lines: string[]): Gen {
   const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
   const resultElemTy = Ty.of(ctx.llvmType(expr.resultElementType));
@@ -358,66 +353,6 @@ export function genVecMap(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecMap" }, l
   // build result Vec { buf, len, len }
   const v0 = b.insertvalue(val("undef", VEC_TY), buf, 0);
   const v1 = b.insertvalue(v0, len, 1);
-  const v2 = b.insertvalue(v1, len, 2);
-  release();
-  return [lines, v2.ref, "%Vec"];
-}
-
-export function genVecFilter(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilter" }, lines: string[]): Gen {
-  const { fnPtr, envPtr, data, len, elemTy, release } = vecPreamble(ctx, expr.vec, expr.callback, expr.elementType, lines);
-  const elemSize = ctx.typeSizeOf(expr.elementType);
-  ctx.needsMalloc = true;
-
-  // allocate result buffer with capacity = source len (worst case all match)
-  const { buf: bufRef } = ctx.emitAllocBytes(lines, len.ref, elemSize, "vecfilt", expr.span);
-  const buf = val(bufRef, Ty.ptr);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  const idxAddr = `%__filter_idx.${ctx.scopeCounter++}.addr`;
-  const outIdxAddr = `%__filter_out.${ctx.scopeCounter++}.addr`;
-  const idxSlot = b.entryAlloca(idxAddr, Ty.i64);
-  const outIdxSlot = b.entryAlloca(outIdxAddr, Ty.i64);
-  b.store(I64_0, idxSlot);
-  b.store(I64_0, outIdxSlot);
-
-  const condLabel = b.newBlock("filter.cond");
-  const bodyLabel = b.newBlock("filter.body");
-  const copyLabel = b.newBlock("filter.copy");
-  const nextLabel = b.newBlock("filter.next");
-  const endLabel = b.newBlock("filter.end");
-
-  b.br(condLabel);
-  b.position(condLabel);
-  const idx = b.load(Ty.i64, idxSlot);
-  const cmp = b.icmp("ult", idx, len);
-  b.condBr(cmp, bodyLabel, endLabel);
-
-  b.position(bodyLabel);
-  const elemPtr = b.gep(elemTy, data, [idx]);
-  // keep's temp is drawn before callbackElemArg's load but defined after it
-  const keep = b.reserveTemp(Ty.i1);
-  const cbArg = cbArgVal(ctx.callbackElemArg(lines, expr.callback.type, elemPtr.ref, elemTy.ll));
-  b.call(Ty.i1, fnPtr.ref, [envPtr, cbArg], keep);
-  b.condBr(keep, copyLabel, nextLabel);
-
-  b.position(copyLabel);
-  const cloned = val(ctx.emitDeepCloneFromPtr(lines, elemPtr.ref, expr.elementType), elemTy);
-  const outIdx = b.load(Ty.i64, outIdxSlot);
-  const destPtr = b.gep(elemTy, buf, [outIdx]);
-  b.store(cloned, destPtr);
-  const nextOut = b.binop("add", outIdx, I64_1);
-  b.store(nextOut, outIdxSlot);
-  b.br(nextLabel);
-
-  b.position(nextLabel);
-  const nextIdx = b.binop("add", idx, I64_1);
-  b.store(nextIdx, idxSlot);
-  b.br(condLabel);
-
-  b.position(endLabel);
-  const finalLen = b.load(Ty.i64, outIdxSlot);
-  const v0 = b.insertvalue(val("undef", VEC_TY), buf, 0);
-  const v1 = b.insertvalue(v0, finalLen, 1);
   const v2 = b.insertvalue(v1, len, 2);
   release();
   return [lines, v2.ref, "%Vec"];

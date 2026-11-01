@@ -237,6 +237,31 @@ impl Vec<T> {
         return _vecCopyOut(self)
     }
 
+    // A new Vec of copies of the elements `f` holds for, in order. The copies are
+    // _vecCopyOut's, as clone's are. Its capacity is the source length (every element
+    // might match), as the builtin allocated it.
+    @inline
+    fn filter(self: &Self, f: (&T) => bool): Vec<T> {
+        let len = self.len()
+        var out: Vec<T> = Vec.withCapacity(len)
+        unsafe {
+            let src = self.ptr()
+            var raw = (out.addrOf() as *u8) as *VecRaw<T>
+            var dst = raw[0]._data
+            var n = 0
+            var i = 0
+            while i < len {
+                if f(src[i]) {
+                    dst[n] = _vecCopyOut(src[i])
+                    n = n.wrappingAdd(1)
+                }
+                i = i.wrappingAdd(1)
+            }
+            raw[0]._len = n
+        }
+        return out
+    }
+
     // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,
     // with the indexing panic.
     @inline

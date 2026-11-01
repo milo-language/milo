@@ -1412,9 +1412,6 @@ class LowerCtx {
             const resultElem = type.tag === "vec" ? type.element : { tag: "unknown" as const };
             return { kind: "VecMap", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, resultElementType: resultElem, type, span: expr.span };
           }
-          if (expr.method === "filter") {
-            return { kind: "VecFilter", vec: recv(), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "join") {
             const args: HIRArg[] = [
               { expr: recv(), passByRef: true, refMut: false },
