@@ -1,0 +1,30 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `return f()` of a
+// void f, early and at the end, with an owned local alive across it and a temporary
+// argument, and an expression-bodied `(x): void => f(x)` closure passed on and called.
+
+fn say(s: &string) {
+    print("say ", s)
+}
+
+fn twice(f: (&string) => void, s: &string) {
+    f(s)
+    f(s)
+}
+
+fn pick(flag: bool, s: &string) {
+    let held = "held " + s
+    if flag {
+        return say(held)
+    }
+    return say("tmp " + s)
+}
+
+fn run() {
+    pick(true, "a")
+    pick(false, "b")
+    twice((x: &string): void => say(x), "c" + "d")
+}
+
+fn main() {
+    run()
+}

@@ -1085,6 +1085,13 @@ class FnEmitter {
         }
         if (!s.value && this.isMain) { this.retMain(); return true; }
         if (!s.value) { this.ret("milo.return"); return true; }
+        if (s.value.type.tag === "void" && this.retTy === null && !this.isMain) {
+          // `return f()` of a void f, an expression-bodied `(): void => f()`: the call as
+          // a statement, then the return, as legacy emits it.
+          if (this.stmt({ kind: "ExprStmt", expr: s.value, span: s.span })) return true;
+          this.ret("milo.return");
+          return true;
+        }
         // A place-only result returned by value (an array, a struct holding one, under 128
         // bytes so not sret): loaded whole from its place at the return, legacy's ABI.
         const v = this.retPlaceOnly ? this.bigArg(s.value, this.retTy!) : this.consume(this.expr(s.value), "return");
