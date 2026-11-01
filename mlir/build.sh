@@ -15,9 +15,13 @@ STATIC=OFF
 [ "${MILO_OPT_STATIC:-}" = 1 ] && STATIC=ON
 # The static and dynamic builds must not share a cache: the flag changes the link line.
 BUILD=${MILO_OPT_BUILD_DIR:-build}
-[ -f "$BUILD/build.ninja" ] || cmake -G Ninja -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DMILO_STATIC=$STATIC \
-  -DMLIR_DIR="$LLVM/../lib/cmake/mlir" -DCMAKE_CXX_COMPILER="$LLVM/clang++" -DCMAKE_C_COMPILER="$LLVM/clang" >/dev/null
-ninja -C "$BUILD" >/dev/null
+# Quiet on success; a failing step prints its whole log (compiler errors included).
+LOG=$(mktemp)
+trap 'rm -f "$LOG"' EXIT
+quiet() { "$@" >"$LOG" 2>&1 || { cat "$LOG" >&2; exit 1; }; }
+[ -f "$BUILD/build.ninja" ] || quiet cmake -G Ninja -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DMILO_STATIC=$STATIC \
+  -DMLIR_DIR="$LLVM/../lib/cmake/mlir" -DCMAKE_CXX_COMPILER="$LLVM/clang++" -DCMAKE_C_COMPILER="$LLVM/clang"
+quiet ninja -C "$BUILD"
 # A no-op ninja leaves the binary older than freshly touched sources; src/mlir-backend.ts
 # would then call it stale.
 touch "$BUILD/milo-opt"
