@@ -115,7 +115,7 @@ export class MlirPlan {
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(fn.name);
-    if (r.text.includes("!milo.ptr")) return "legacy";
+    if (r.text.slice(r.text.indexOf("\n")).includes("!milo.ptr")) return "legacy";
     const stub = ["  unreachable", "mlir.stub.calls:", STUB_MARK];
     // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
     // everything else is a scalar or a slot of this frame, which reaches no global.

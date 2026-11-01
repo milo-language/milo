@@ -70,7 +70,7 @@ function floatLit(v: number, ty: string): string {
 
 interface Val { ref: string; ty: string }
 // A `var` is a slot; so is a by-ref param, whose slot is the caller's (`param` is its index).
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number };
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number } | { kind: "opaque"; what: string };
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -100,6 +100,12 @@ class FnEmitter {
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
     const params = fn.params.map((p, i) => {
+      // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
+      // function qualifies only if it never names it (lookup refuses).
+      if ((p.isRef || p.isRefMut) && mlirType(p.type) === null) {
+        this.bind(p.name, { kind: "opaque", what: p.type.tag });
+        return `%p${i}: ${PTR}`;
+      }
       const ty = scalar(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
@@ -130,9 +136,10 @@ class FnEmitter {
   private fresh(): string { return `%v${this.n++}`; }
   private bind(name: string, b: Binding): void { this.scopes[this.scopes.length - 1].set(name, b); }
 
-  private lookup(name: string): Binding {
+  private lookup(name: string): Exclude<Binding, { kind: "opaque" }> {
     for (let i = this.scopes.length - 1; i >= 0; i--) {
       const b = this.scopes[i].get(name);
+      if (b?.kind === "opaque") throw new MlirUnsupported(`use of a by-ref param of type ${b.what}`);
       if (b) return b;
     }
     throw new MlirUnsupported("global or unknown ident");
