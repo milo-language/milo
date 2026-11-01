@@ -81,7 +81,10 @@ struct ScopeDropsPass : PassWrapper<ScopeDropsPass, OperationPass<func::FuncOp>>
     OpBuilder b(&getContext());
     getOperation().walk([&](Operation *op) {
       if (auto st = dyn_cast<StoreOp>(op)) {
-        if (needsDrop(st.getValue().getType())) {
+        // A slot that is not owned holds a borrowed or static copy (a spilled `&T`
+        // argument) and is garbage before its first store: nothing in it to drop.
+        auto var = st.getRef().getDefiningOp<VarOp>();
+        if (needsDrop(st.getValue().getType()) && (!var || var.getOwned())) {
           b.setInsertionPoint(st);
           DropOp::create(b, st.getLoc(), st.getRef(), Value());
         }
@@ -392,23 +395,7 @@ struct StringLenLowering : ConvertOpToLLVMPattern<StringLenOp> {
   }
 };
 
-// legacy's push and share, as functions of the legacy module (codegen mlirHelper).
-struct VecPushLowering : ConvertOpToLLVMPattern<VecPushOp> {
-  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
-  LogicalResult
-  matchAndRewrite(VecPushOp op, OpAdaptor a,
-                  ConversionPatternRewriter &rw) const override {
-    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
-    auto fn = legacyFn(rw, op, "milo.vec.push." + typeKey(op.getValue().getType()),
-                       {ptrTy, a.getValue().getType()}, LLVM::LLVMVoidType::get(rw.getContext()));
-    if (!fn)
-      return failure();
-    LLVM::CallOp::create(rw, op.getLoc(), fn, ValueRange{a.getVec(), a.getValue()});
-    rw.eraseOp(op);
-    return success();
-  }
-};
-
+// legacy's string share, a function of the legacy module (codegen mlirHelper).
 struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -436,7 +423,7 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     return s;
   });
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
-               VecPushLowering, StringShareLowering>(tc);
+               StringShareLowering>(tc);
 }
 
 void milo::registerDropPasses() {

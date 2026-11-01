@@ -371,13 +371,6 @@ def Milo_VecNewOp : Milo_Op<"vec.new", [Pure]> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
-// `v.push(x)`: one call of legacy's push for this element type (codegen mlirHelper).
-def Milo_VecPushOp : Milo_Op<"vec.push"> {
-  let arguments = (ins Milo_VecType:$vec, AnyType:$value);
-  let assemblyFormat = "$vec `,` $value attr-dict `:` type($vec) `,` type($value)";
-  let hasVerifier = 1;
-}
-
 // `s.len()` of a string value (a view is enough).
 def Milo_StringLenOp : Milo_Op<"string.len", [Pure]> {
   let arguments = (ins Milo_StringType:$value);

@@ -547,20 +547,6 @@ class FnEmitter {
         const ty = this.value(e.type, "Vec");
         return { ...this.def(`milo.vec.new : ${ty}`, ty), own: "owned" };
       }
-      case "VecPush": {
-        const { place, elem } = this.vecPlace(e.vec);
-        const v = this.expr(e.value);
-        if (v.ty !== elem) throw new MlirUnsupported("push of another type");
-        const vt = stripRefs(e.vec.type);
-        this.cx.mlirHelper(`milo.vec.push.${elem}`, () => ({
-          params: [{ name: "v", type: vt, isRef: false, isRefMut: true }, { name: "x", type: e.value.type, isRef: false, isRefMut: false }],
-          retType: { tag: "void" },
-          body: [{ kind: "ExprStmt", expr: { kind: "VecPush", type: { tag: "void" },
-            vec: { kind: "Ident", name: "v", type: vt, isMove: false }, value: { kind: "Ident", name: "x", type: e.value.type, isMove: false } } }],
-        }));
-        this.emit(`milo.vec.push ${place}, ${v.ref} : !milo.vec<${elem}>, ${elem}`);
-        return { ref: "", ty: "" };
-      }
       case "FloatLit": {
         const ty = scalar(e.type, "FloatLit");
         if (ty !== "f32" && ty !== "f64") throw new MlirUnsupported("float literal of int type");

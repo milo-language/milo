@@ -144,7 +144,7 @@ structs, enums.
   path stays, the rest get the slot's drop flag (`milo.drop %s if %flag`, the flag kept
   in step at every store, move and drop), and a read of a slot that may be empty is a
   compile error. A drop calls `milo.drop.<key>(ptr)`, legacy's drop glue
-  (`mlirDropHelper`); push and share call legacy-generated functions too. Owned
+  (`mlirDropHelper`); string share calls a legacy-generated function too. Owned
   temporaries in a borrow position (print, `&T` args, len) go into a slot of the
   innermost block. Structs and enums holding strings or Vecs are not taken yet.
 - *Gates.* Programs `print`, `aggregates`, `owned` under `mlir/test/programs`; FileCheck

@@ -224,12 +224,6 @@ LogicalResult VecPlaceOp::verify() {
   return success();
 }
 
-LogicalResult VecPushOp::verify() {
-  if (getValue().getType() != getVec().getType().getElementType())
-    return emitOpError("value is not the Vec's element type");
-  return success();
-}
-
 LogicalResult StringShareOp::verify() {
   if (!isa<StringType>(getRef().getType().getPointee()))
     return emitOpError("needs the place of a string");
