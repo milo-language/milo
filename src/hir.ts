@@ -66,7 +66,6 @@ export type HIRExpr =
   | { kind: "HashMapNew"; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
-  | { kind: "HashMapGetOrDefault"; map: HIRExpr; key: HIRExpr; default: HIRExpr; type: TypeKind; span?: Span }
   // `m.modify(k, f)`: f(&mut value) in place when the key is present; bool says whether.
   | { kind: "HashMapModify"; map: HIRExpr; key: HIRExpr; callback: HIRExpr; type: TypeKind; span?: Span }
   // `m.getOrInsertWith(k, init)`: insert init() when the key is absent; bool says whether it did.
@@ -145,6 +144,8 @@ export type HIRExpr =
   // std/hashmap intrinsics (checker.ts MAP_INTRINSICS); the key operands are places.
   | { kind: "MapHash"; key: HIRExpr; seed: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "MapKeyEq"; a: HIRExpr; b: HIRExpr; type: TypeKind; span?: Span }
+  // An owned deep copy of the value at a place (emitDeepCloneFromPtr).
+  | { kind: "MapCopyOut"; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }

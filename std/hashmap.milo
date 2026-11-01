@@ -5,6 +5,7 @@
 // MapRaw, which mirrors codegen's %HashMap layout field for field, so both sides agree
 // on every slot. Hashing and key comparison go through _mapHash/_mapKeyEq, the code the
 // builtin methods emit, so a key hashes to the same slot whichever side probes it.
+// _mapCopyOut is the structural deep copy the builtin lookups made of a stored value.
 //
 // Table: open addressing, linear probing, capacity a power of two (at least 8). A slot is
 // empty (0), occupied (1) or a tombstone (2); a probe stops only at an empty slot.
@@ -23,6 +24,27 @@ struct MapRaw<K, V> {
     _tombs: i64,
 }
 
+// The slot holding `key`, or -1 when it is absent.
+fn mapFind<K, V>(m: &HashMap<K, V>, key: &K): i64 {
+    unsafe {
+        let raw = (m.addrOf() as *u8) as *MapRaw<K, V>
+        let data = raw[0]._data
+        let mask = raw[0]._cap.wrappingSub(1)
+        var slot = _mapHash(key, raw[0]._seed) & mask
+        while true {
+            let state = data[slot].state
+            if state == 0 {
+                return -1
+            }
+            if state == 1 && _mapKeyEq(key, data[slot].key) {
+                return slot
+            }
+            slot = slot.wrappingAdd(1) & mask
+        }
+        return -1
+    }
+}
+
 impl HashMap<K, V> {
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
@@ -31,22 +53,31 @@ impl HashMap<K, V> {
 
     // True when `key` is in the map.
     fn contains(self: &Self, key: &K): bool {
+        return mapFind(self, key) >= 0
+    }
+
+    // A copy of the value under `key`, or `fallback` when the key is absent. `fallback`
+    // is taken by value: a miss returns it, a hit drops it.
+    //
+    // The copying lookups probe inline rather than through mapFind: returning the slot and
+    // testing it again measured about 4% slower than the builtin on a 600M-lookup loop.
+    fn getOrDefault(self: &Self, key: &K, fallback: V): V {
         unsafe {
             let raw = (self.addrOf() as *u8) as *MapRaw<K, V>
             let data = raw[0]._data
-            let mask = raw[0]._cap - 1
+            let mask = raw[0]._cap.wrappingSub(1)
             var slot = _mapHash(key, raw[0]._seed) & mask
             while true {
                 let state = data[slot].state
                 if state == 0 {
-                    return false
+                    return fallback
                 }
                 if state == 1 && _mapKeyEq(key, data[slot].key) {
-                    return true
+                    return _mapCopyOut(data[slot].value)
                 }
-                slot = (slot + 1) & mask
+                slot = slot.wrappingAdd(1) & mask
             }
-            return false
+            return fallback
         }
     }
 }

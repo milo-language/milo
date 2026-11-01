@@ -842,6 +842,7 @@ class LowerCtx {
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
+          if (expr.func === "_mapCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           return expr.func === "_mapHash"
             ? { kind: "MapHash", key: this.lowerExpr(expr.args[0]), seed: this.lowerExpr(expr.args[1]), type, span: expr.span }
             : { kind: "MapKeyEq", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
@@ -1518,9 +1519,6 @@ class LowerCtx {
           if (expr.method === "get") {
             const optionEnumName = type.tag === "enum" ? type.name : "";
             return { kind: "HashMapGet", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), optionEnumName, type, span: expr.span };
-          }
-          if (expr.method === "getOrDefault") {
-            return { kind: "HashMapGetOrDefault", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), default: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
           if (expr.method === "modify") {
             return { kind: "HashMapModify", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), callback: this.lowerExpr(expr.args[1]), type, span: expr.span };

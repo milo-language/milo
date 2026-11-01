@@ -1,0 +1,77 @@
+// HashMap.getOrDefault, now std/hashmap.milo code probing the table codegen builds. Dense
+// tables, tombstones from remove, string and struct keys, a temporary receiver, values
+// that are deep-copied out (string, Vec, struct), and a default moved in on hit and miss.
+struct Pt { x: i64, y: i64 }
+
+struct Bag { name: string, xs: Vec<i64> }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i * 2); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    var sum: i64 = 0
+    i = 0
+    while i < 1200 { sum = sum + m.getOrDefault(i, -1); i = i + 1 }
+    print(sum)
+
+    var s: HashMap<string, string> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), "v" + i.toString()); i = i + 1 }
+    print(s.getOrDefault("w299", "none"))
+    print(s.getOrDefault("w300", "none"))
+    print(s.getOrDefault("w" + (7).toString(), "none"))
+    let dflt = "d" + "flt"
+    print(s.getOrDefault("", dflt))
+
+    var p: HashMap<Pt, Bag> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, Bag { name: "a", xs: Vec<i64>.filled(2, 5) })
+    var got = p.getOrDefault(Pt { x: 1, y: 2 }, Bag { name: "z", xs: Vec.new() })
+    got.xs.push(9)
+    got.name = "changed"
+    print(got.name + " " + got.xs.len.toString())
+    let again = p.getOrDefault(Pt { x: 1, y: 2 }, Bag { name: "z", xs: Vec.new() })
+    print(again.name + " " + again.xs.len.toString())
+    let miss = p.getOrDefault(Pt { x: 2, y: 1 }, Bag { name: "z", xs: Vec.new() })
+    print(miss.name + " " + miss.xs.len.toString())
+
+    var vs: HashMap<i64, Vec<i64>> = HashMap.new()
+    vs.insert(1, Vec<i64>.filled(3, 7))
+    let fallback: Vec<i64> = Vec<i64>.filled(1, 0)
+    var hit = vs.getOrDefault(1, fallback)
+    hit.push(8)
+    print(hit.len)
+    print(vs.getOrDefault(1, Vec.new()).len)
+    print(vs.getOrDefault(2, Vec<i64>.filled(4, 4)).len)
+
+    var small: HashMap<i32, i32> = HashMap.new()
+    small.insert(3, 30)
+    print(small.getOrDefault(3, 0))
+    print(small.getOrDefault(4, 0))
+
+    print(squares(50).getOrDefault(49 * 49, -1))
+    print(squares(50).getOrDefault(50 * 50, -1))
+}
+// @expect: 664800
+// @expect: v299
+// @expect: none
+// @expect: v7
+// @expect: dflt
+// @expect: changed 3
+// @expect: a 2
+// @expect: z 0
+// @expect: 4
+// @expect: 3
+// @expect: 4
+// @expect: 30
+// @expect: 0
+// @expect: 49
+// @expect: -1

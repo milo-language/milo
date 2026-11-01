@@ -16,7 +16,7 @@ import {
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
-  genHashMapNew, genHashMapInsert, genHashMapGet, genHashMapGetOrDefault, genMapHash, genMapKeyEq, genHashMapModify,
+  genHashMapNew, genHashMapInsert, genHashMapGet, genMapHash, genMapKeyEq, genMapCopyOut, genHashMapModify,
   genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
@@ -5714,12 +5714,12 @@ export class Codegen {
         return genHashMapInsert(this, expr, lines);
       case "HashMapGet":
         return genHashMapGet(this, expr, lines);
-      case "HashMapGetOrDefault":
-        return genHashMapGetOrDefault(this, expr, lines);
       case "MapHash":
         return genMapHash(this, expr, lines);
       case "MapKeyEq":
         return genMapKeyEq(this, expr, lines);
+      case "MapCopyOut":
+        return genMapCopyOut(this, expr, lines);
       case "HashMapModify":
         return genHashMapModify(this, expr, lines);
       case "HashMapGetOrInsertWith":
@@ -9489,13 +9489,8 @@ export class Codegen {
       // nobody else owns. It sat in NOT_OWNED_TEMP with the scalar-yielding Vec reads.
       // dropOwnedTemp still checks needsDropCg, so an i64 accumulator is unaffected.
       case "VecFold":
-      // getOrDefault yields an OWNED value on both paths — a deep clone of the stored
-      // value when the key is present, the default itself when it is not — so a discarded
-      // or temporary result has to be dropped. It sat in NOT_OWNED_TEMP next to `contains`
-      // and `len`, which really do yield scalars, and `print("D" + m.getOrDefault(k, d))`
-      // therefore leaked the clone every time. Exactly the miss the list's own comment
-      // describes for VecRemove.
-      case "HashMapGetOrDefault":
+      // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
+      case "MapCopyOut":
       // Option-returning Vec reads: the payload is either cloned out of the buffer
       // (get/first/last/min/max/find) or moved out of it (pop). Either way nothing
       // else owns it, so `print(must(v, 0, "v"))` used to leak one copy per call.
@@ -9598,16 +9593,6 @@ export class Codegen {
   // operator, leaving nothing that will ever drop it.
   public dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr) {
     if (!this.isOwnedTempExpr(expr) || !this.needsDropCg(expr.type)) return;
-    this.dropValueNow(lines, val, llTy, expr);
-  }
-
-  // Free a by-value argument the operation consumed but did not keep: an owned temporary,
-  // or a place the checker moved into the call (`isMove`, whose alive flag genExpr has
-  // already cleared, so nothing else will drop it).
-  public dropConsumedArg(lines: string[], val: string, llTy: string, expr: HIRExpr) {
-    if (!this.needsDropCg(expr.type)) return;
-    const movedPlace = (expr.kind === "Ident" || expr.kind === "FieldAccess" || expr.kind === "IndexAccess") && !!expr.isMove;
-    if (!movedPlace && !this.isOwnedTempExpr(expr)) return;
     this.dropValueNow(lines, val, llTy, expr);
   }
 

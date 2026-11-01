@@ -124,7 +124,7 @@ function substituteAliasType(body: MiloType, subst: ReadonlyMap<string, MiloType
 
 // std/hashmap's hashing and key comparison, the same code the builtin HashMap emits, so a
 // method moved into std hashes and matches keys exactly as the ones still in codegen do.
-export const MAP_INTRINSICS: ReadonlySet<string> = new Set(["_mapHash", "_mapKeyEq"]);
+export const MAP_INTRINSICS: ReadonlySet<string> = new Set(["_mapHash", "_mapKeyEq", "_mapCopyOut"]);
 export function isHashMapModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -2857,6 +2857,13 @@ export class TypeChecker {
         return { ...simpleType(typeName(cur)), isPtr: true, ptrDepth: depth };
       }
       case "fn": return { ...simpleType(""), isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
+      // typeName spells a ranged int `i32(0..9)`, which resolves as a struct name: a
+      // `W<R>` method taking `T` then refused every plain i32 instead of range-checking it.
+      case "int":
+        if (t.min !== undefined && t.max !== undefined) {
+          return { ...simpleType(`${t.signed ? "i" : "u"}${t.bits}`), rangeMin: t.min, rangeMax: t.max };
+        }
+        return simpleType(typeName(t));
       default: return simpleType(typeName(t));
     }
   }
@@ -12118,6 +12125,7 @@ export class TypeChecker {
   // a string key is hashed without a refcount round trip and nothing moves.
   private checkMapIntrinsic(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
+    if (expr.func === "_mapCopyOut") return this.checkMapCopyOut(expr);
     const isHash = expr.func === "_mapHash";
     const result: TypeKind = isHash ? { tag: "int", bits: 64, signed: true } : { tag: "bool" };
     if (expr.args.length !== 2) {
@@ -12143,6 +12151,28 @@ export class TypeChecker {
       }
     }
     return this.setType(expr, result);
+  }
+
+  // `_mapCopyOut(place): T`, std/hashmap only: a copy of a stored value, made the way the
+  // builtin get always made it (emitDeepCloneFromPtr: structural, never a user Clone), so
+  // a moved get returns the same value.
+  //
+  // A resource has no such copy, but that is refused at the user's call (the copy-out
+  // rule in the hashmap method chain), not here: instantiating `impl HashMap` checks
+  // every method body, so refusing here broke `HashMap<i64, Res>` programs that never
+  // call get. `@copyOut` would withhold get for a Drop KEY too, which the builtin allowed.
+  private checkMapCopyOut(expr: ExprOf<"Call">): TypeKind {
+    const sp = expr.span;
+    if (expr.args.length !== 1) {
+      this.error(`'_mapCopyOut' expects 1 argument, got ${expr.args.length}`, sp);
+      return this.setType(expr, { tag: "unknown" });
+    }
+    const a = expr.args[0];
+    if (a.kind !== "Ident" && a.kind !== "FieldAccess" && a.kind !== "IndexAccess") {
+      this.error(`'_mapCopyOut': the argument must be a place (a variable, field or element)`, a.span);
+    }
+    const t = this.checkExpr(a);
+    return this.setType(expr, t.tag === "ref" ? t.inner : t);
   }
 
   private checkPropagateExpr(expr: ExprOf<"Propagate">): TypeKind {
@@ -13538,23 +13568,12 @@ export class TypeChecker {
         const optionType = this.resolveOptionForValue(objType.value, sp);
         return this.setType(expr, optionType);
       }
-      if (expr.method === "getOrDefault") {
-        if (expr.args.length !== 2) { this.error(`'getOrDefault' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`getOrDefault key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
-        const valType = this.checkExpr(expr.args[1], objType.value);
-        if (objType.value.tag === "int") this.enforceRangeInto(expr.args[1], valType, objType.value, expr.args[1].span);
-        if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
-          this.error(`getOrDefault default: expected ${this.show(objType.value)}, got ${this.show(valType)}`, sp);
-        }
-        this.errorIfResourceCopyOut(objType.value, "getOrDefault", "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`);
-        // `fallback: V` is by value: a miss returns the default itself and a hit drops it.
-        // Unmoved, a named heap default was both the caller's and the result's: a miss
-        // handed its buffer out as an owned temporary, freed while `dflt` still held it.
-        this.tryMove(expr.args[1]);
-        return this.setType(expr, objType.value);
+      // The copying lookups are std/hashmap code; the copy-out rule stays here so a
+      // resource value is refused at the call, before the std body is instantiated.
+      if (expr.method === "getOrDefault" &&
+          this.errorIfResourceCopyOut(objType.value, expr.method, "HashMap", sp, `Borrow it with 'for k, v in m', or take it out for real with 'remove'`)) {
+        for (const a of expr.args) this.checkExpr(a);
+        return this.setType(expr, { tag: "unknown" });
       }
       // In-place access. `modify` hands the callback a `&mut V` view of the stored value,
       // so a nested container is updated where it sits instead of get-clone-mutate-insert;

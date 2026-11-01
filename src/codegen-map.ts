@@ -44,7 +44,6 @@ export interface CodegenMapCtx {
   needsDropCg(t: TypeKind): boolean;
   emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind): void;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
-  dropConsumedArg(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
   cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null;
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
@@ -1055,78 +1054,6 @@ export function genHashMapGet(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashM
   return asGen(lines, result);
 }
 
-export function genHashMapGetOrDefault(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapGetOrDefault" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  const mapType = expr.map.type;
-  if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrDefault on non-hashmap");
-  const keyType = mapType.key;
-  const valueType = mapType.value;
-  const keyTy = Ty.of(ctx.llvmType(keyType));
-  const valTy = Ty.of(ctx.llvmType(valueType));
-  const entryTy = Ty.of(ctx.hashMapEntryType(keyType, valueType));
-  const b = new LlvmTextBuilder(lines, ctx);
-
-  const { ptr: mapPtr, tempSlot: mapTempSlot } = mapReceiverPtr(ctx, lines, expr.map);
-  const keyVal = ctx.genVal(expr.key, lines);
-  const key = val(keyVal.ref, keyTy);
-  const defaultRef = ctx.genVal(expr.default, lines);
-  const defaultVal = val(defaultRef.ref, valTy);
-
-  const { seed, cap, data } = loadSeedCapData(b, val(mapPtr, Ty.ptr));
-  const { mask, slotAddr } = hashStartSlot(ctx, b, key, keyType, seed, cap);
-
-  const probeCond = b.newBlock("hmgd.probe");
-  const probeCheck = b.newBlock("hmgd.check");
-  const probeOccupied = b.newBlock("hmgd.occupied");
-  const foundLabel = b.newBlock("hmgd.found");
-  const notFoundLabel = b.newBlock("hmgd.notfound");
-  const probeNext = b.newBlock("hmgd.pnext");
-  const doneLabel = b.newBlock("hmgd.done");
-
-  const { slot, entryPtr } = emitHashProbePrologue(ctx, b,
-    { probeCond, probeCheck, probeOccupied, probeNext, emptyTarget: notFoundLabel, matchTarget: foundLabel },
-    { slotAddr, data, entryTy, keyTy, key, keyType },
-  );
-
-  // found — return the value directly (deep-cloned; see genHashMapGet)
-  b.position(foundLabel);
-  const valPtr = entryField(b, entryTy, entryPtr, 2);
-  const foundVal = val(ctx.emitDeepCloneFromPtr(lines, valPtr.ref, valueType), valTy);
-  // see genHashMapGet: the clone may have opened new blocks
-  const foundEnd = b.newBlock("hmgd.found.end");
-  b.br(foundEnd);
-  b.position(foundEnd);
-  // The default is dead on this path (the map had the key) and the call owns it: a
-  // computed one has no other owner, and a named one was moved in by the checker.
-  // `m.getOrDefault(k, "dflt" + i.toString())` leaked its default on every hit.
-  // The drop is conditional by construction: it sits in the found block, and the
-  // not-found path hands that same value to the caller as the result.
-  //
-  // Dropping a Vec or an enum opens basic blocks of its own, so the block this path
-  // ENDS in is not `foundEnd` any more. Rejoin an empty one and let the phi below name
-  // that, exactly as the deep clone above already has to.
-  ctx.dropConsumedArg(lines, defaultVal.ref, valTy.ll, expr.default);
-  const foundJoin = b.newBlock("hmgd.found.join");
-  b.br(foundJoin);
-  b.position(foundJoin);
-  b.br(doneLabel);
-
-  // not found — use the default value
-  b.position(notFoundLabel);
-  ctx.own.endVal(lines, defaultVal.ref, "MOVE");
-  b.br(doneLabel);
-
-  emitProbeNext(b, { slot, mask, slotAddr, probeCond, probeNext });
-
-  b.position(doneLabel);
-  const result = b.phi(valTy, [[foundVal, foundJoin], [defaultVal, notFoundLabel]]);
-  ctx.dropOwnedTemp(lines, keyVal.ref, keyTy.ll, expr.key);
-  // A materialized receiver is an owned temporary nobody else will free. This runs after
-  // the phi above, so the block it opens cannot invalidate the phi's predecessors.
-  if (mapTempSlot) ctx.emitDropValue(lines, mapTempSlot, expr.map.type);
-  return asGen(lines, result);
-}
-
 // The std/hashmap intrinsics: the same hash and key comparison the builtin methods above
 // emit, so a method moved into std probes the same slots and matches the same keys. The
 // key operands are places; loading them bitwise (as the probe loads a stored key) keeps
@@ -1150,4 +1077,13 @@ export function genMapKeyEq(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapKeyE
   const a = loadKeyPlace(ctx, b, lines, expr.a);
   const c = loadKeyPlace(ctx, b, lines, expr.b);
   return asGen(lines, keysEqual(ctx, b, a.key, c.key, a.keyType));
+}
+
+export function genMapCopyOut(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "MapCopyOut" }, lines: string[]): Gen {
+  const [placeLines, ptr] = ctx.genLValue(expr.value);
+  lines.push(...placeLines);
+  // Deep-clone, don't `load`: a shallow copy aliases the map's heap, and a later
+  // `insert` on the same key drops the old value out from under it (the copy-back
+  // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Degrades to a load for Copy types.
+  return asGen(lines, val(ctx.emitDeepCloneFromPtr(lines, ptr, expr.type), Ty.of(ctx.llvmType(expr.type))));
 }

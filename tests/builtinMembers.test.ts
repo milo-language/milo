@@ -23,6 +23,10 @@ import { join } from "path";
 import { Lexer } from "../src/lexer";
 import { Parser } from "../src/parser";
 import { TypeChecker } from "../src/checker";
+import { resolveImports } from "../src/resolver";
+import { getHostTarget } from "../src/target";
+
+const HOST = getHostTarget();
 import { BUILTIN_MEMBERS, RETAINING_MEMBERS, GROWING_MEMBERS, type BuiltinReceiver, type BuiltinMember } from "../src/builtin-members";
 
 function errorsOf(src: string): string[] {
@@ -31,8 +35,11 @@ function errorsOf(src: string): string[] {
   // would abort the whole test rather than name the row that produced it.
   try { prog = new Parser(new Lexer(src).tokenize(), src).parse(); }
   catch (e: any) { return [`probe did not parse: ${e.message}`]; }
+  // With the prelude, as the LSP checks a document: a builtin method whose body moved to
+  // std (std/hashmap.milo's `impl HashMap`) is dispatched there, not by the checker.
+  const resolved = resolveImports(prog, ".", HOST, null);
   return new TypeChecker()
-    .check({ ...prog, entryFile: "builtinMembers.milo" } as any)
+    .check({ ...resolved, entryFile: "builtinMembers.milo" } as any)
     .diagnostics.filter(d => d.severity === "error")
     .map(d => d.message);
 }
@@ -203,9 +210,6 @@ function unprobeable(m: BuiltinMember): boolean {
   // inspects the parsed PARAMETERS, not the whole string: matching `key` against the
   // raw signature also hit HashMap's `(key: K)`, silently skipping five real rows.
   if (/=>|\*|&\[|\bU\b|\bF\b/.test(m.sig)) return true;
-  // The probe checks a bare program with no prelude, so a signature naming a prelude
-  // type (`Heap<Error>` from Result.context) cannot resolve there.
-  if (m.sig.includes("Heap<Error>")) return true;
   const parsed = parseSig(m.sig);
   return parsed === null || parsed.params.some(p => p === "");
 }
@@ -253,8 +257,6 @@ test("every probeable signature's return type matches what the checker infers", 
     "heap.ptr",
     "option.andThen", "option.map", "option.orElse", "option.unwrapOrElse",
     "result.andThen", "result.map", "result.mapErr", "result.orElse", "result.unwrapOrElse",
-    // Names a prelude type (Heap<Error>); tests/fixtures/errorContext.milo runs it.
-    "result.context",
     "string.codePoints", "string.cstr", "string.lines", "string.splitView",
     "vec.all", "vec.any", "vec.each", "vec.enumerate", "vec.filter", "vec.find", "vec.fold",
     "vec.map", "vec.position", "vec.ptr", "vec.reduce", "vec.retain", "vec.slice",

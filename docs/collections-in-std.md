@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-10-31 (phase 1 in progress: contains, isEmpty moved)
+last-verified: 2026-10-31 (phase 1 in progress: contains, isEmpty, getOrDefault moved)
 -->
 
 # Collections in std
@@ -112,3 +112,14 @@ special cases.
   `hashMapContainsStd` red; contains benchmark at parity (0.10s vs 0.10s). Also fixed
   `p as *P<i64>` (a pointer to a generic struct lost its `*` in `resolve`).
 - 2026-10-31: `isEmpty` moved (`self.len == 0`). Planted `== 1` turns `hashMapIsEmptyStd` red.
+- 2026-10-31: `getOrDefault` moved, with a `_mapCopyOut` intrinsic: the builtin's
+  structural deep copy (emitDeepCloneFromPtr),
+  not `.clone()`, which would run a user Clone impl. The resource copy-out rule stays in
+  the checker's hashmap chain (`@copyOut` would also withhold it for a Drop key, which the
+  builtin allowed). Fixed in passing: a generic method taking `T` instantiated with a
+  ranged int refused every plain int instead of range-checking it (`typeKindToMiloType`).
+  Probes use wrapping arithmetic (the checked `+`/`-` added an overflow branch per step).
+  contains goes through a shared `mapFind` (parity, 1.22s vs 1.22s on 600M lookups); the
+  copying lookups probe inline, since mapFind's slot-then-test measured about 4% slower.
+  Planted probe step `+ 2` turns `hashMapGetOrDefaultStd` red; 0 leaks; 600M lookups
+  1.31s builtin vs 1.32s std.

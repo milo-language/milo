@@ -26,6 +26,8 @@ fn setI(x: &mut i32) { x = 2147483647 }
 fn readR(x: &R): R { return x }
 fn setR(x: &mut R) { x = 5 }
 fn takeO(o: Option<R>): R { return o ?? 0 }
+struct W<T> { x: i64 }
+impl W<T> { fn put(self: &Self, v: T): T { return v } }
 `;
 
 function run(name: string, body: string): string {
@@ -64,6 +66,7 @@ const cases: [string, string, string][] = [
   ["folded constant", `let n = NodeId { at: 2147483646 + 1 }\nprint(n.at)`, "out of range for"],
   ["unfoldable constant", `let n = NodeId { at: 2147483647 | 0 }\nprint(n.at)`, TRAP],
   ["method argument", `let s = S {}\nprint(s.take(big()))`, TRAP],
+  ["generic method argument", `let w: W<R> = W { x: 0 }\nprint(w.put(big()))`, TRAP],
   // A decode is an error the caller handles, not a trap: the wire is untrusted input.
   ["Json decode", `match NodeId.fromJson("{\\"at\\": 2147483647}") { Result.Ok(n) => print(n.at), Result.Err(e) => print(e.message()) }`, "out-of-range number"],
   ["Json decode below", `match NodeId.fromJson("{\\"at\\": -1}") { Result.Ok(n) => print(n.at), Result.Err(e) => print(e.message()) }`, "out-of-range number"],
