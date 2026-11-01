@@ -3262,6 +3262,8 @@ export class Codegen {
   }
 
   /** MILO_MLIR=1: module global `name` (its `@name` slot), or null for any other name. */
+  public get retainingLibc(): ReadonlySet<string> { return Codegen.RETAINING_LIBC; }
+
   public mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null {
     const g = this.globalVars.get(name);
     if (!g) return null;

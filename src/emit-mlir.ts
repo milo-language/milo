@@ -34,6 +34,8 @@ export interface MlirEmitCtx {
   dropImpls: Set<string>;
   typeSizeOf(t: TypeKind): number;
   mlirGlobal(name: string): { type: TypeKind; threadLocal: boolean } | null;
+  // libc calls that keep a pointer argument past the call (codegen RETAINING_LIBC).
+  readonly retainingLibc: ReadonlySet<string>;
 }
 
 export class MlirUnsupported extends Error {
@@ -2170,12 +2172,88 @@ class FnEmitter {
     return { ref: "", ty: "" };
   }
 
+  /**
+   * An extern call that is variadic or turns a string into a `*u8`: legacy's genCall in a
+   * legacy function per callee, argument shape and call site, so the C string conversion
+   * (a view or a literal copied to a NUL-terminated temporary for the call) and the
+   * variadic promotion are legacy's. A string goes to it by reference; one this function
+   * owns outright (a local, a field of one, a temporary) is first made the only handle to
+   * its buffer, as legacy's emitCStrUniquePlace does before C may write through it.
+   * Scalars and pointers go by value, an array as its address.
+   */
+  private ffiCall(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+    const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
+    const args: string[] = [];
+    const keys: string[] = [];
+    const mark = this.pending;
+    e.args.forEach((a, k) => {
+      if (a.passByRef) throw new MlirUnsupported("by-ref argument of an extern call");
+      const t = a.expr.type;
+      const name = `a${k}`;
+      if (t.tag === "string") {
+        let ref: string;
+        const local = this.ownedLocal(a.expr);
+        if (a.expr.kind === "StringLit" || a.expr.kind === "Ident" || a.expr.kind === "FieldAccess") {
+          ref = this.place(a.expr, `!milo.ref<${STR}>`, false).ref;
+        } else {
+          // C borrows a temporary only for the call; a callee that keeps the pointer would
+          // need it leaked, as legacy does.
+          if (this.cx.retainingLibc.has(e.func)) throw new MlirUnsupported("temporary string kept by C");
+          const v = this.expr(a.expr);
+          if (v.ty !== STR || v.own !== "owned" || this.bitCopies.has(v.ref)) throw new MlirUnsupported("C string of a view");
+          ref = this.tempSlot("cstr", STR, t);
+          this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
+        }
+        if (local || a.expr.kind !== "StringLit" && a.expr.kind !== "Ident" && a.expr.kind !== "FieldAccess")
+          this.intrinsic("unique", { ...e, type: { tag: "void" } }, [{ name: "s", type: t, mode: "mut", ref }], ([x]) => ({ kind: "StrUnique", type: { tag: "void" }, span: e.span, str: x }), null);
+        params.push({ name, type: t, isRef: true, isRefMut: false });
+        args.push(`${ref} : !milo.ref<${STR}>`);
+        keys.push("rstring");
+        return;
+      }
+      if (t.tag === "array") {
+        params.push({ name, type: { tag: "ptr", inner: t.element }, isRef: false, isRefMut: false });
+        args.push(`${this.decay(a.expr).ref} : ${PTR}`);
+        keys.push("ptr");
+        return;
+      }
+      const v = this.pend(this.expr(a.expr));
+      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`extern argument of type ${t.tag}`);
+      params.push({ name, type: t, isRef: false, isRefMut: false });
+      args.push(`${v.ref} : ${v.ty}`);
+      keys.push(typeKey(t));
+    });
+    this.pending = mark;
+    const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR) throw new MlirUnsupported("extern call result type");
+    if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
+    const l = this.cx.checkLocation(this.fn.trackedCaller ?? e.span);
+    if (!l) throw new MlirUnsupported("no source file for a panic location");
+    const name = this.cx.mlirHelper(`milo.ffi.${e.func}.${keys.join(".")}.${l.line}.${l.col}.${fnv1a(l.file)}`, () => {
+      const call: HIRExpr = { ...e, args: e.args.map((a, k) => ({ ...a, expr: { kind: "Ident", name: params[k].name, type: params[k].type, isMove: false } })) };
+      return { params, retType: e.type, trackedCaller: this.fn.trackedCaller,
+        body: [ret === null ? { kind: "ExprStmt", expr: call } : { kind: "Return", retType: e.type, value: call }] };
+    });
+    return this.callHelper(name, args, ret);
+  }
+
+  /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */
+  private ownedLocal(e: HIRExpr): boolean {
+    if (e.kind === "Ident") {
+      const b = this.scopes.some(m => m.has(e.name)) ? this.lookup(e.name) : null;
+      return b?.kind === "var" && !!b.owned;
+    }
+    return e.kind === "FieldAccess" && stripRefs(e.object.type).tag === "struct" && e.object.type.tag !== "ref" && this.ownedLocal(e.object);
+  }
+
   private call(e: HIRExpr & { kind: "Call" }, stmt: boolean, into?: string): Val {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
-    if (e.variadic) throw new MlirUnsupported("variadic call");
     if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported(`builtin ${e.func}`);
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
+    if (callee?.isExtern && sig && (e.variadic || e.args.some((a, i) => !a.passByRef && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] !== "%String")))
+      return this.ffiCall(e, stmt);
+    if (e.variadic) throw new MlirUnsupported("variadic call");
     if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");
     const sret = this.cx.sretFns.has(e.func);
     if (sret !== (into !== undefined)) throw new MlirUnsupported("sret call as a value");

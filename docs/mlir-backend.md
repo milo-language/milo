@@ -443,7 +443,21 @@ structs, enums.
   `milo.string.share` declared only a read of its slot, so CSE folded the two shares of
   `pair(s, s)` into one value passed twice (one count for two owners: a use after free,
   `valueStringUseAfterPass` stdout, `valueStringStruct` ASan). It writes the count now;
-  FileCheck `share.mlir`.
+  FileCheck `share.mlir`. Corpus: 413391 (85.4%); Tahoe Roads api: 4497 (84.0%).
+- *Extern calls with C strings, and variadic calls* (`milo.ffi.<fn>.<shape>.<site>`): the
+  call itself is legacy's genCall in a legacy function, so the string to `*u8`
+  conversion (a static or view string copied to a NUL-terminated temporary for the
+  call) and the variadic promotion are legacy's. A string goes to it by reference; one
+  this function owns outright (a local, a field of one, a temporary) is first made the
+  only handle to its buffer, as legacy's emitCStrUniquePlace does (C may write through
+  the pointer), with the StrUnique helper. A temporary given to a libc call that keeps
+  its pointer stays legacy (legacy leaks it). Program `ffi-strings`. Found on the way: an
+  intrinsic helper takes its result type from the expression it stands for, so a
+  unique made for a call returning i64 fell off the end of an i64 function (a trap at
+  -O2 only). Planted bug: the temporary in a slot that drops nothing (`ffi-strings`
+  `--owned` red: one more live block). Not fixed, noted: `s.cstr()` through MLIR (the
+  fifth batch's StringCstr helper takes the place by reference) never makes an owned
+  local unique first, where legacy does.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

@@ -1,0 +1,34 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: extern calls through a legacy function per call shape (milo.ffi.*):
+// strings to `*u8` params (a literal, a local, a shared local made unique first, a field,
+// a `&string` param, a temporary, a static one copied to a NUL-terminated temporary) and
+// variadic printf with ints, floats and strings.
+
+extern fn strlen(s: *u8): i64
+
+extern fn printf(fmt: *u8, ...): i32
+
+extern fn fflush(f: *u8): i32
+
+struct Named { name: string, n: i64 }
+
+fn lenOf(s: &string): i64 { return strlen(s) }
+
+fn mk(n: i64): string { return "m".repeat(n) }
+
+// Not main: a main naming a raw pointer keeps its legacy body.
+fn run() {
+    var s = "hello"
+    s.pushStr(" there")
+    let shared = s
+    let d = Named { name: "field" + "!", n: 2 }
+    let view = "static"
+    print(strlen("lit"), " ", strlen(s), " ", strlen(shared), " ", strlen(d.name), " ", lenOf(s), " ", strlen(mk(7)), " ", strlen(view))
+    unsafe {
+        printf("%s|%d|%lld|%.2f|%s\n", s, 42 as i32, d.n * 1000000000000, 2.5, view)
+        fflush(0 as *u8)
+    }
+    print(s, " ", shared, " ", view)
+}
+
+fn main() { run() }
