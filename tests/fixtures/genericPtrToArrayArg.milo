@@ -1,0 +1,29 @@
+// A type parameter under a pointer, instantiated with a fixed array: `*T` with
+// T = [i64; 2] is `*[i64; 2]`. Substitution used to keep the use site's array flags and
+// drop the argument's, so `*T` became `*i64` and this did not type-check ("expected
+// [i64; 2], got i64"). vecMapFixedArrayStd.milo is the same bug reaching std. The
+// other direction, T = *[i64; 2], spelled the pointee as a struct name "[i64; 2]", so
+// indexing what `id` returned twice was "cannot index type [i64; 2]".
+// @expect: 3 4
+// @expect: 3
+
+fn id<T>(x: T): T {
+    return x
+}
+
+@copyOnly
+fn second<T>(p: *T): T {
+    unsafe {
+        return p[1]
+    }
+}
+
+fn main() {
+    let pairs: Vec<[i64; 2]> = [[1, 2], [3, 4]]
+    let s = second(pairs.ptr())
+    print(s[0], " ", s[1])
+    let p = id(pairs.ptr())
+    unsafe {
+        print(p[1][0])
+    }
+}

@@ -99,6 +99,22 @@ function importPathFrom(refFile: string, declFile: string): string {
 // `Slot<Point>`, the `*` comes from the body and the name from the argument, while in
 // `Handler<&Point>` the `&` comes from the argument. Both have to survive, so the two are
 // merged rather than one overwriting the other.
+// A type parameter use site `ty` (`&T`, `*T`, `[T]`) with `sub` for T. The use site's
+// ref/pointer/array wrappers stay: `&T` must become `&P`, not a by-value `P` (a generic fn
+// taking `&T` was passed a struct where a ptr was expected), and `&[T]` must stay a slice.
+// A use site without an array of its own keeps the argument's: `*T` with T = [i64; 2] is
+// `*[i64; 2]`. Taking the use site's array flags unconditionally made it `*i64`, so std's
+// vecWithCapacity sized a Vec<[i64; 2]> buffer at 8 bytes a slot and map<U> wrote past it.
+function wrapTypeArg(ty: MiloType, sub: MiloType): MiloType {
+  if (!(ty.isRef || ty.isRefMut || ty.isPtr || ty.isArray)) return sub;
+  const keepSubArray = !ty.isArray && sub.isArray;
+  return {
+    ...sub,
+    isRef: ty.isRef, isRefMut: ty.isRefMut, isPtr: ty.isPtr, ptrDepth: ty.ptrDepth,
+    isArray: keepSubArray || ty.isArray, arraySize: keepSubArray ? sub.arraySize : ty.arraySize,
+  };
+}
+
 function substituteAliasType(body: MiloType, subst: ReadonlyMap<string, MiloType>): MiloType {
   const arg = !body.isFn && !body.typeArgs?.length ? subst.get(body.name) : undefined;
   if (arg) {
@@ -2903,6 +2919,10 @@ export class TypeChecker {
     return t;
   }
 
+  private pointeeMiloType(t: TypeKind): MiloType {
+    return t.tag === "array" && t.element.tag !== "array" ? this.typeKindToMiloType(t) : simpleType(typeName(t));
+  }
+
   private typeKindToMiloType(t: TypeKind): MiloType {
     switch (t.tag) {
       case "vec": return { ...simpleType("Vec"), typeArgs: [this.typeKindToMiloType(t.element)] };
@@ -2911,12 +2931,14 @@ export class TypeChecker {
       // `Option<T>` instantiated with it got an enum named `Option_HashMap<i64, i64>`,
       // whose spaces broke the IR value names derived from it.
       case "hashmap": return { ...simpleType("HashMap"), typeArgs: [this.typeKindToMiloType(t.key), this.typeKindToMiloType(t.value)] };
-      case "ref": return { ...simpleType(typeName(t.inner)), isRef: !t.mutable, isRefMut: t.mutable };
+      // A fixed-array pointee goes through the array case: its spelled name `[i64; 2]`
+      // resolves as a struct, so `*[i64; 2]` as T made `p[1][0]` "cannot index".
+      case "ref": return { ...this.pointeeMiloType(t.inner), isRef: !t.mutable, isRefMut: t.mutable };
       case "ptr": {
         // unwrap nested ptrs so `**u8` round-trips at the right depth, not collapsed
         let depth = 0; let cur: TypeKind = t;
         while (cur.tag === "ptr") { depth++; cur = cur.inner; }
-        return { ...simpleType(typeName(cur)), isPtr: true, ptrDepth: depth };
+        return { ...this.pointeeMiloType(cur), isPtr: true, ptrDepth: depth };
       }
       case "fn": return { ...simpleType(""), isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
       // typeName spells a ranged int `i32(0..9)`, which resolves as a struct name: a
@@ -2955,20 +2977,7 @@ export class TypeChecker {
     if (ty === null) return null;
     const idx = typeParams.indexOf(ty.name);
     if (idx !== -1) {
-      const sub = this.typeKindToMiloType(typeArgs[idx]);
-      // Preserve reference/pointer/array wrappers from the original: `&T` must become
-      // `&P`, not value `P`. Dropping isRef here collapsed the param to by-value,
-      // so a generic fn taking `&T` passed a struct where a ptr was expected. `isArray`
-      // is the same story one wrapper out: `&[T]` became `&P`, which typed a slice
-      // parameter as a single element and made a generic over slices unwritable.
-      if (ty.isRef || ty.isRefMut || ty.isPtr || ty.isArray) {
-        return {
-          ...sub,
-          isRef: ty.isRef, isRefMut: ty.isRefMut, isPtr: ty.isPtr, ptrDepth: ty.ptrDepth,
-          isArray: ty.isArray, arraySize: ty.arraySize,
-        };
-      }
-      return sub;
+      return wrapTypeArg(ty, this.typeKindToMiloType(typeArgs[idx]));
     }
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return {
@@ -3169,13 +3178,9 @@ export class TypeChecker {
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
-          const replaced = this.typeKindToMiloType(typeArgs[idx]);
           // The wrappers stay, as in substituteMiloType: `&mut S` inside a local's fn
           // type (`let w: (&mut S) => R`) became a by-value `S`.
-          const wrapped = value.isRef || value.isRefMut || value.isPtr || value.isArray
-            ? { isRef: value.isRef, isRefMut: value.isRefMut, isPtr: value.isPtr, ptrDepth: value.ptrDepth, isArray: value.isArray, arraySize: value.arraySize }
-            : {};
-          return { ...value, ...replaced, ...wrapped };
+          return { ...value, ...wrapTypeArg(value, this.typeKindToMiloType(typeArgs[idx])) };
         }
       }
       // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }. Not one that

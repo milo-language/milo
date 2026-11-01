@@ -1,0 +1,16 @@
+// Vec.map to a fixed-array element. std's vecWithCapacity allocates through
+// `_vecGrowBuf(0 as *T, ...)`, and `*T` with T = [i64; 2] used to substitute to `*i64`,
+// so the buffer had 8 bytes a slot and map wrote 16 per slot past its end: ASan reported
+// a heap-buffer-overflow under both backends (`bun run test:asan`), and plain runs
+// usually printed the right thing anyway.
+// @expect: 3 [2, 2] [3, 3]
+// @expect: 4 [3, 3, 3]
+
+fn main() {
+    let v: Vec<i64> = [1, 2, 3]
+    let vv = v.map((x: &i64) => [x, x])
+    print(vv.len(), " ", vv[1], " ", vv[2])
+    let w: Vec<i64> = [0, 1, 2, 3]
+    let triples = w.map((x: &i64) => [x, x, x])
+    print(triples.len(), " ", triples[3])
+}
