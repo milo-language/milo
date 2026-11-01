@@ -1,5 +1,5 @@
 // MILO_MLIR=1 driver (docs/mlir-backend.md): the functions the milo dialect covers go
-// HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt -> mlir-translate, and their bodies
+// HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt (passes, then LLVM IR), and their bodies
 // replace the legacy codegen's in the one LLVM module clang sees.
 //
 // Linking is a textual splice, not llvm-link. Legacy codegen makes every non-exported fn
@@ -60,8 +60,8 @@ function unquote(n: string): string {
   return n.startsWith('"') ? n.slice(1, -1).replace(/\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : n;
 }
 
-// The clang that compiles a MILO_MLIR=1 module: the one from the LLVM install milo-opt and
-// mlir-translate come from. Their IR is that LLVM's, and an older clang (Apple's) may
+// The clang that compiles a MILO_MLIR=1 module: the one from the LLVM install milo-opt
+// comes from. Its IR is that LLVM's, and an older clang (Apple's) may
 // misread or reject it (LLVM 23 spells some float constants in a syntax clang 21 cannot
 // parse). A MILO_CC naming a clang of another version is an error, not a quiet override.
 export function mlirClang(): { path: string; id: string } {
@@ -185,10 +185,10 @@ export class MlirPlan {
       console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
       process.exit(1);
     }
-    const translate = tool(join(LLVM_BIN, "mlir-translate"), "mlir-translate");
     const text = mlirModuleText(this.taken);
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);
-    const ll = run(translate, ["--mlir-to-llvmir", "-"], run(optPath, ["-", ...MLIR_PIPELINE], text)).split("\n");
+    // One process: milo-opt translates to LLVM IR itself (mlir/milo-opt.cpp).
+    const ll = run(optPath, ["--emit-llvmir", ...MLIR_PIPELINE], text).split("\n");
 
     const bodies = new Map<string, { header: string; body: string[] }>();
     const decls: { name: string; line: string }[] = [];
