@@ -845,6 +845,81 @@ struct PtrStoreLowering : ConvertOpToLLVMPattern<PtrStoreOp> {
   }
 };
 
+struct StringByteLowering : ConvertOpToLLVMPattern<StringByteOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StringByteOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto pos = srcPos(op);
+    if (failed(pos))
+      return failure();
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Type i64 = rw.getI64Type();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, "__milo_bounds_fail", {i64, i64, ptrTy, rw.getI32Type()},
+                                     LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    Value len = LLVM::ExtractValueOp::create(rw, loc, a.getValue(), ArrayRef<int64_t>{1});
+    Value oob = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::uge, a.getIndex(), len);
+    branchToPanic(rw, loc, oob, [&] {
+      Value file = globalString(rw, loc, module, pos->file);
+      Value line = constInt(rw, loc, rw.getI32Type(), pos->line);
+      LLVM::CallOp::create(rw, loc, *fn, ValueRange{a.getIndex(), len, file, line});
+    });
+    Value data = LLVM::ExtractValueOp::create(rw, loc, a.getValue(), ArrayRef<int64_t>{0});
+    Value p = LLVM::GEPOp::create(rw, loc, ptrTy, rw.getI8Type(), data, ValueRange{a.getIndex()});
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI8Type(), p);
+    return success();
+  }
+};
+
+struct PtrElemLowering : ConvertOpToLLVMPattern<PtrElemOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PtrElemOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type elem = getTypeConverter()->convertType(op.getElem());
+    rw.replaceOpWithNewOp<LLVM::GEPOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), elem,
+                                       a.getPtr(), ValueRange{a.getIndex()});
+    return success();
+  }
+};
+
+struct PtrFieldLowering : ConvertOpToLLVMPattern<PtrFieldOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PtrFieldOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type st = getTypeConverter()->convertType(op.getRecord());
+    rw.replaceOpWithNewOp<LLVM::GEPOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), st,
+                                       a.getPtr(), ArrayRef<LLVM::GEPArg>{0, (int32_t)op.getIndex()});
+    return success();
+  }
+};
+
+struct AddrLowering : ConvertOpToLLVMPattern<AddrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(AddrOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getPlace());
+    return success();
+  }
+};
+
+struct VecDataLowering : ConvertOpToLLVMPattern<VecDataOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecDataOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, ptrTy, a.getVec());
+    return success();
+  }
+};
+
 struct ReturnLowering : ConvertOpToLLVMPattern<ReturnOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1225,6 +1300,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
                ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
+               PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering>(tc);
 }
 

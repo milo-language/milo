@@ -224,6 +224,13 @@ LogicalResult VecPlaceOp::verify() {
   return success();
 }
 
+LogicalResult PtrFieldOp::verify() {
+  auto s = dyn_cast<StructType>(getRecord());
+  if (!s || getIndex() >= s.getFields().size())
+    return emitOpError("has no field ") << getIndex() << " in " << getRecord();
+  return success();
+}
+
 LogicalResult StringShareOp::verify() {
   if (!isa<StringType>(getRef().getType().getPointee()))
     return emitOpError("needs the place of a string");

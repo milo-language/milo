@@ -1,0 +1,32 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs, --owned): std's
+// Vec methods written in Milo (raw pointer places, addrOf, ptr(), wrapping arithmetic,
+// sizeOf) on Vecs of ints and of strings, and string byte indexing.
+
+fn fill(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n { v.push(i * 3) }
+    return v
+}
+
+fn words(n: i64): Vec<string> {
+    var w: Vec<string> = Vec.new()
+    for i in 0..n { w.push("w".repeat(i + 1)) }
+    return w
+}
+
+fn checksum(s: &string): i64 {
+    var t: i64 = 0
+    for i in 0..s.len() { t = t * 31 + s[i] as i64 }
+    return t
+}
+
+fn main() {
+    let v = fill(40)
+    var sum: i64 = 0
+    for i in 0..v.len() { sum += v[i] }
+    print(v.len(), " ", sum)
+    let w = words(12)
+    print(w.len())
+    let s = "hello, world"
+    print(s[0], " ", s[7], " ", checksum(s), " ", checksum("x".repeat(9)))
+}

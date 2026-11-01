@@ -53,10 +53,29 @@ export function mlirType(t: TypeKind): string | null {
 }
 
 /** The element type of a Vec of scalars, or null. */
-function vecElem(t: TypeKind): string | null {
+/** The dialect's element type of a Vec, or null. Indexing takes only scalar ones. */
+function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
   if (t.tag !== "vec") return null;
-  const e = mlirType(t.element);
+  const e = valueType(cx, t.element);
   return e === null || e === PTR ? null : e;
+}
+
+const isScalarTy = (ty: string) => /^([su]i\d+|i1|f32|f64)$/.test(ty);
+
+/** How the symbol of a legacy helper spells a type: Milo.h typeKey of its dialect type. */
+function typeKey(t: TypeKind): string {
+  t = stripRefs(t);
+  switch (t.tag) {
+    case "int": return `${t.signed ? "si" : "ui"}${t.bits}`;
+    case "float": return t.bits === 32 ? "f32" : "f64";
+    case "bool": return "i1";
+    case "ptr": return "ptr";
+    case "string": return "string";
+    case "vec": return `vec.${typeKey(t.element)}`;
+    case "struct": return `S${t.name}`;
+    case "enum": return `E${t.name}`;
+    default: throw new MlirUnsupported(`helper for a ${t.tag}`);
+  }
 }
 
 function scalar(t: TypeKind, what: string): string {
@@ -76,7 +95,7 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const m = mlirType(t);
   if (t.tag === "string") { cx.hasStringType = true; return STR; }
   if (t.tag === "vec") {
-    const e = vecElem(t);
+    const e = vecElem(cx, t);
     if (e) cx.hasVecType = true;
     return e && `!milo.vecval<${e}>`;
   }
@@ -186,7 +205,7 @@ class FnEmitter {
     const params = fn.params.map((p, i) => {
       // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
       // function qualifies only if it never names it (lookup refuses).
-      const elem = vecElem(p.type);
+      const elem = vecElem(this.cx, p.type);
       if ((p.isRef || p.isRefMut) && elem !== null) {
         this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem, param: i });
         return `%p${i}: !milo.vec<${elem}>`;
@@ -329,10 +348,8 @@ class FnEmitter {
     return ref;
   }
 
-  private dropGlue(ty: string, t: TypeKind): void {
-    // The key Milo.h typeKey gives the type.
-    const key = ty === STR ? "string" : `vec.${/^!milo\.vecval<(.*)>$/.exec(ty)![1]}`;
-    this.cx.mlirDropHelper(key, stripRefs(t));
+  private dropGlue(_ty: string, t: TypeKind): void {
+    this.cx.mlirDropHelper(typeKey(t), stripRefs(t));
   }
 
   /** `v` where it is consumed (stored, passed or returned by value): it must own itself. */
@@ -389,19 +406,25 @@ class FnEmitter {
           this.emit(`milo.ptr.store ${v.ref}, ${p.ref} : ${ty}`);
           return false;
         }
-        if (s.target.kind === "IndexAccess") {
-          const v = this.expr(s.value);
+        if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess") {
+          // Through a raw pointer: the value is stored as is, nothing is dropped (unsafe).
+          const v = this.consume(this.expr(s.value), "store through a pointer");
+          const pp = this.ptrPlace(s.target);
+          if (pp) {
+            if (v.ty !== pp.ty) throw new MlirUnsupported("store through a pointer of another type");
+            this.emit(`milo.ptr.store ${v.ref}, ${pp.ptr} : ${pp.ty}`);
+            return false;
+          }
+          if (s.target.kind === "FieldAccess") {
+            const p = this.fieldPlace(s.target);
+            if (!p) throw new MlirUnsupported("assign to a field of a value");
+            if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
+            this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
+            return false;
+          }
           const { vec, elem, index } = this.indexPlace(s.target);
           if (v.ty !== elem) throw new MlirUnsupported("element store of another type");
           this.emit(`milo.index.store ${v.ref}, ${vec}[${index}] : ${elem}, !milo.vec<${elem}> ${this.loc(s.target.span)}`);
-          return false;
-        }
-        if (s.target.kind === "FieldAccess") {
-          const v = this.expr(s.value);
-          const p = this.fieldPlace(s.target);
-          if (!p) throw new MlirUnsupported("assign to a field of a value");
-          if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
-          this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
           return false;
         }
         if (s.target.kind !== "Ident") throw new MlirUnsupported(`assign to ${s.target.kind}`);
@@ -575,8 +598,34 @@ class FnEmitter {
       }
       case "Call": return this.call(e, stmt);
       case "IndexAccess": {
+        const pp = this.ptrPlace(e);
+        if (pp) return this.ptrRead(pp);
+        if (stripRefs(e.object.type).tag === "string") {
+          // A byte, as legacy genStringIndex reads it: object, index, bounds check.
+          const s = this.borrow(this.expr(e.object), e.object.type);
+          const i = this.expr(e.index);
+          if (s.ty !== STR || !/^[su]i\d+$/.test(i.ty) || scalar(e.type, "string byte") !== "ui8") throw new MlirUnsupported("string index types");
+          const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
+          return this.def(`milo.string.byte ${s.ref}[${index}]`, "ui8", this.loc(e.span));
+        }
         const { vec, elem, index } = this.indexPlace(e);
         return this.def(`milo.index ${vec}[${index}] : !milo.vec<${elem}> -> ${elem}`, elem, this.loc(e.span));
+      }
+      case "SizeOf":
+        if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
+        return this.def(`milo.const ${this.cx.typeSizeOf(e.sizeType)} : si64`, "si64");
+      case "VecPtr": {
+        const { place, elem } = this.vecPlace(e.object);
+        return this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR);
+      }
+      case "WrappingArith": {
+        // `a.wrappingAdd(b)`: two's complement, never a trap.
+        const op = { add: "add", sub: "sub", mul: "mul" }[e.op];
+        const ty = scalar(e.type, "wrapping arithmetic");
+        if (!op || !/^[su]i\d+$/.test(ty)) throw new MlirUnsupported(`wrapping ${e.op}`);
+        const l = this.expr(e.left), r = this.expr(e.right);
+        if (l.ty !== ty || r.ty !== ty) throw new MlirUnsupported("wrapping operand types");
+        return this.def(`milo.${op} ${l.ref}, ${r.ref} wrapping : ${ty}`, ty);
       }
       case "VecLen": {
         const { place, elem } = this.vecPlace(e.object);
@@ -589,6 +638,8 @@ class FnEmitter {
         return this.def(`milo.ptr.load ${p.ref} : ${ty}`, ty);
       }
       case "FieldAccess": {
+        const pp = this.ptrPlace(e);
+        if (pp) return this.ptrRead(pp);
         // A field of a place is read in place, as legacy genFieldPtr does; of a value, out
         // of the value.
         const p = this.fieldPlace(e);
@@ -642,6 +693,44 @@ class FnEmitter {
     const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
     if (index < 0) throw new MlirUnsupported("unknown field");
     return { index, ty: this.value(e.type, "field") };
+  }
+
+  /**
+   * The address of a place reached through a raw pointer (`p[i]`, `p.f` on a `*S`,
+   * `p[i].f`) and its element type, or null when `e` is not one. As legacy genLValue
+   * does: the pointer, then the index.
+   */
+  private ptrPlace(e: HIRExpr): { ptr: string; ty: string } | null {
+    if (e.kind === "IndexAccess" && stripRefs(e.object.type).tag === "ptr") {
+      const p = this.expr(e.object);
+      const i = this.expr(e.index);
+      if (p.ty !== PTR || i.ty !== "si64") throw new MlirUnsupported("pointer index of another type");
+      const ty = this.value(e.type, "pointer element");
+      return { ptr: this.def(`milo.ptr.elem ${p.ref}[${i.ref}] : ${ty}`, PTR).ref, ty };
+    }
+    if (e.kind !== "FieldAccess") return null;
+    const obj = stripRefs(e.object.type);
+    let base: { ptr: string; ty: string } | null;
+    let st: TypeKind;
+    if (obj.tag === "ptr") {
+      st = obj.inner;
+      const p = this.expr(e.object);
+      base = { ptr: p.ref, ty: this.value(st, "pointee") };
+    } else {
+      base = this.ptrPlace(e.object);
+      st = obj;
+    }
+    if (!base) return null;
+    if (st.tag !== "struct") throw new MlirUnsupported("field through a pointer to a non-struct");
+    const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
+    if (index < 0) throw new MlirUnsupported("unknown field");
+    const ty = this.value(e.type, "field");
+    return { ptr: this.def(`milo.ptr.field ${base.ptr}[${index}] : ${base.ty}`, PTR).ref, ty };
+  }
+
+  /** A read of a place through a pointer: a bit copy that, for a string or a Vec, owns. */
+  private ptrRead(p: { ptr: string; ty: string }): Val {
+    return { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: hasDrop(p.ty) ? "owned" : undefined };
   }
 
   /** The slot `e` names (a `var`, a by-ref param, a field of either), or null for a value. */
@@ -810,6 +899,17 @@ class FnEmitter {
   }
 
   private unop(e: HIRExpr & { kind: "UnaryOp" }): Val {
+    if (e.op === "&") {
+      // `x.addrOf()`: the address of a place.
+      if (e.operand.kind === "Ident") {
+        const b = this.lookup(e.operand.name);
+        if (b.kind === "vec") return this.def(`milo.addr ${b.ref} : !milo.vec<${b.elem}>`, PTR);
+        if (b.kind === "var") return this.def(`milo.addr ${b.ref} : !milo.ref<${b.ty}>`, PTR);
+      }
+      const p = this.fieldPlace(e.operand);
+      if (!p) throw new MlirUnsupported("address of a value");
+      return this.def(`milo.addr ${p.ref} : !milo.ref<${p.ty}>`, PTR);
+    }
     const ty = scalar(e.type, "unop");
     if (ty === PTR) throw new MlirUnsupported(`unop ${e.op} on a pointer`);
     if (e.op === "-") {
@@ -840,6 +940,8 @@ class FnEmitter {
    */
   private indexPlace(e: HIRExpr & { kind: "IndexAccess" }): { vec: string; elem: string; index: string } {
     const { place, elem } = this.vecPlace(e.object);
+    // Legacy clones an element that owns (a Vec index hands out an independent value).
+    if (!isScalarTy(elem)) throw new MlirUnsupported("index into a Vec of non-scalars");
     const i = this.expr(e.index);
     if (!/^[su]i\d+$/.test(i.ty)) throw new MlirUnsupported("non-int index");
     const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
@@ -921,9 +1023,8 @@ class FnEmitter {
       while (t.tag === "ref") t = t.inner;
       const v = this.borrow(this.expr(a.expr), t);
       // Scalar.cpp printKey spells the same names.
-      const key = v.ty === STR ? "string" : v.ty === PTR ? "ptr"
-        : t.tag === "struct" ? `S${t.name}` : t.tag === "enum" ? `E${t.name}` : v.ty;
-      if (key !== "string" && valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
+      if (valueType(this.cx, t) !== v.ty || t.tag === "vec") throw new MlirUnsupported(`print part of type ${t.tag}`);
+      const key = typeKey(t);
       return { v, key, type: t };
     });
     this.cx.mlirPrintHelper(e.func === "eprint", parts.map(p => ({ key: p.key, type: p.type })));
@@ -946,7 +1047,7 @@ class FnEmitter {
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
-      const elem = byRef ? vecElem(p.type) : null;
+      const elem = byRef ? vecElem(this.cx, p.type) : null;
       const ty = elem ?? this.value(p.type, byRef ? "by-ref arg" : "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;

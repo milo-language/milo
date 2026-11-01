@@ -1,0 +1,9 @@
+// Trap program for MILO_MLIR=1: a string byte index past the end panics with legacy's
+// bounds message and line.
+fn at(s: &string, i: i64): u8 { return s[i] }
+
+fn main() {
+    let s = "abc"
+    print(at(s, 2))
+    print(at(s, 3))
+}

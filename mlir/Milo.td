@@ -230,6 +230,32 @@ def Milo_PtrStoreOp : Milo_Op<"ptr.store"> {
   let assemblyFormat = "$value `,` $ptr attr-dict `:` type($value)";
 }
 
+// `p[i]` on a `*T` as a place: the address of element `i` (unchecked, as in C). The
+// element is then read and written with ptr.load/ptr.store, whose unknown memory may be a
+// Vec's header or elements: std's Vec methods write their header this way, so a place
+// reached through a pointer is never a milo.ref (whose Slot resource excludes both).
+def Milo_PtrElemOp : Milo_Op<"ptr.elem", [Pure]> {
+  let arguments = (ins Milo_PtrType:$ptr, SI64:$index, TypeAttr:$elem);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$ptr `[` $index `]` `:` $elem attr-dict";
+}
+
+// The address of field `index` of the struct at `ptr`.
+def Milo_PtrFieldOp : Milo_Op<"ptr.field", [Pure]> {
+  let arguments = (ins Milo_PtrType:$ptr, I64Attr:$index, TypeAttr:$record);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$ptr `[` $index `]` `:` $record attr-dict";
+  let hasVerifier = 1;
+}
+
+// `x.addrOf()` on a place (unsafe): its address as a raw pointer, which may outlive the
+// borrow; what it may then touch is the unsafe code's promise.
+def Milo_AddrOp : Milo_Op<"addr", [Pure]> {
+  let arguments = (ins AnyTypeOf<[Milo_RefType, Milo_VecType]>:$place);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$place attr-dict `:` type($place)";
+}
+
 def Milo_ConstOp : Milo_Op<"const", [ConstantLike, Pure,
     AllTypesMatch<["value", "result"]>]> {
   let summary = "an int, float or bool literal";
@@ -365,6 +391,13 @@ def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
   let hasVerifier = 1;
 }
 
+// `v.ptr()`: the Vec's data pointer, read out of its header.
+def Milo_VecDataOp : Milo_Op<"vec.data"> {
+  let arguments = (ins Arg<Milo_VecType, "", [MemRead<Milo_VecHeader>]>:$vec);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$vec attr-dict `:` type($vec)";
+}
+
 // `Vec.new()`: no buffer, len 0, cap 0.
 def Milo_VecNewOp : Milo_Op<"vec.new", [Pure]> {
   let results = (outs Milo_VecValType:$result);
@@ -376,6 +409,15 @@ def Milo_StringLenOp : Milo_Op<"string.len", [Pure]> {
   let arguments = (ins Milo_StringType:$value);
   let results = (outs SI64:$len);
   let assemblyFormat = "$value attr-dict";
+}
+
+// `s[i]`: byte `i` of the string, after legacy's bounds check (`__milo_bounds_fail` with
+// the op's location, the same panic as a Vec index).
+def Milo_StringByteOp : Milo_Op<"string.byte",
+    [MemoryEffects<[MemRead, MemWrite<Milo_Panic>]>]> {
+  let arguments = (ins Milo_StringType:$value, SI64:$index);
+  let results = (outs UI8:$byte);
+  let assemblyFormat = "$value `[` $index `]` attr-dict";
 }
 
 // A new owner of the string at `ref` (Milo's implicit copy of a string, HIR StringClone):
