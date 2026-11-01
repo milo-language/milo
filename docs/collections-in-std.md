@@ -408,3 +408,11 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   old compiler (fixture without the i32 line); live heap equal; 90 corpus files calling
   pop/remove/truncate/clear/swap/reverse pass; bench 4M rounds of 16 pushes, removes and
   pops over i64 and string Vecs 0.30s builtin vs 0.25s std.
+- 2026-11-01: `retain` moved: genVecRetain's pass (keepers moved down bitwise with
+  `data[kept] = *data[i].addrOf()`, rejected ones dropped in place, len stored once at the
+  end), `@inline`. Dispatched like the read-only callback methods (receiver frozen while the
+  predicate is checked, by-value Copy predicates coerced); the receiver rule already words
+  the refusal "cannot retain on an immutable Vec". Arity and type messages now come from the
+  generic method path (no pinned test used the builtin's). Planted: no drop of a rejected
+  element turns `vecRetainStd` red and leaves one more live block. Output identical; live
+  heap equal; bench 300k rounds retaining 64 i64 + 64 strings 0.20s vs 0.20s. Step 2 done.

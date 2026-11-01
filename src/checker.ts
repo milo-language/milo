@@ -13699,21 +13699,12 @@ export class TypeChecker {
         this.tryMove(expr.args[0]);
         return this.setType(expr, { tag: "void" });
       }
-      // retain is filter's in-place twin: no second buffer, and the rejected
-      // elements are dropped rather than leaked.
+      // retain is std/vec code, dispatched like the read-only callback methods (receiver
+      // frozen while the predicate is checked); the receiver rule keeps "cannot retain on
+      // an immutable Vec".
       if (expr.method === "retain") {
-        if (expr.args.length !== 1) { this.error(`'retain' expects 1 argument (predicate)`, sp); return this.setType(expr, { tag: "void" }); }
-        if (!this.isRootMutable(expr.object)) {
-          this.error(`cannot retain on an immutable Vec`, sp, `declare with 'var' to make it mutable`);
-        }
-        const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
-        const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
-        const cbBorrow = this.borrowDuringCallback(expr.object, expr);
-        const cbType = this.checkExpr(expr.args[0], cbHint);
-        this.checkCallbackSig(cbType, cbHint, "retain", sp);
-        if (cbBorrow) this.unfreeze(cbBorrow);
-        if (cbType.tag !== "fn") { this.error(`'retain' argument must be a predicate function`, sp); }
-        return this.setType(expr, { tag: "void" });
+        const body = this.instantiateContainerImpl("Vec", [objType.element], "retain");
+        if (body) return this.dispatchMangledMethod(expr, body.mangled, sp, true);
       }
       if (expr.method === "capacity") {
         if (expr.args.length !== 0) { this.error(`'capacity' takes no arguments`, sp); }

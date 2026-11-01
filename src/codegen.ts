@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecFilter, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecFilter, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -60,7 +60,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
-  "VecLen", "VecPtr", "VecPush", "VecReserve", "VecRetain",
+  "VecLen", "VecPtr", "VecPush", "VecReserve",
   "VecSlice", "VecSort", "VecSortBy", "VecSortByKey",
   "WrappingArith", "Zeroed",
 ];
@@ -5689,8 +5689,6 @@ export class Codegen {
         return genVecGetOpt(this, expr, lines);
       case "VecExtend":
         return genVecExtend(this, expr, lines);
-      case "VecRetain":
-        return genVecRetain(this, expr, lines);
       case "VecReserve":
         return genVecReserve(this, expr, lines);
       case "VecCapacity": {

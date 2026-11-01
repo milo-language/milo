@@ -319,4 +319,29 @@ impl Vec<T> {
             return out
         }
     }
+
+    // Keeps the elements `f` holds for, in order, and drops the others where they sit,
+    // first to last: one pass, no second buffer. `f` sees each element in place; the
+    // length is stored once, after the pass. @inline for the same reason as the
+    // read-only callback methods.
+    @inline
+    fn retain(self: &mut Self, f: (&T) => bool) {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            let len = raw[0]._len
+            var data = raw[0]._data
+            var kept = 0
+            var i = 0
+            while i < len {
+                if f(data[i]) {
+                    data[kept] = *data[i].addrOf()
+                    kept = kept.wrappingAdd(1)
+                } else {
+                    vecDropAt(data[i].addrOf())
+                }
+                i = i.wrappingAdd(1)
+            }
+            raw[0]._len = kept
+        }
+    }
 }

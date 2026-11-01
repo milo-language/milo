@@ -1449,9 +1449,6 @@ class LowerCtx {
           if (expr.method === "extend") {
             return { kind: "VecExtend", object: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
-          if (expr.method === "retain") {
-            return { kind: "VecRetain", object: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
-          }
           if (expr.method === "capacity") {
             return { kind: "VecCapacity", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
