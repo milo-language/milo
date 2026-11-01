@@ -1,0 +1,13 @@
+// @error: cannot call 'bump' on immutable 's': it takes '&mut self'
+// A `&mut self` method writes its receiver, so the receiver must be writable, the same
+// rule `bump(&mut s)` follows as an argument. It used to compile and mutate the `let`.
+struct S { n: i64 }
+impl S {
+    fn bump(self: &mut Self) { self.n += 1 }
+}
+
+fn main() {
+    let s = S { n: 1 }
+    s.bump()
+    print(s.n)
+}

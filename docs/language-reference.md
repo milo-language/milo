@@ -1269,6 +1269,13 @@ print(Temp.larger(3, 9))       // 9
 print(Temp.larger(0.5, 0.25))  // 0.5
 ```
 
+A `&mut self` method writes its receiver, so the receiver must be writable, the same rule
+a `&mut` argument follows: a `var`, a field of one, a `&mut` parameter, a `Heap` box, or a
+temporary. On a `let`, a by-value parameter or a shared `&T` it is rejected ("cannot call
+'bump' on immutable 's': it takes '&mut self'"). A by-value parameter cannot be spelled
+`var`; move it into one (`var out = w`). A by-value `match` binding owns its payload and
+may call one.
+
 ---
 
 ## Enums (Sum Types)

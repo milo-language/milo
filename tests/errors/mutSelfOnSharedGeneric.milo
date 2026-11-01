@@ -1,0 +1,20 @@
+// @error: cannot call 'tick' on 'x', a shared '&' reference: it takes '&mut self'
+// A bound method resolved at monomorphization: `x: &T` is read-only, so `T.tick`, which
+// takes `&mut self`, cannot run on it. Take `x: &mut T` to mutate.
+trait Tick {
+    fn tick(self: &mut Self)
+}
+struct Counter { n: i64 }
+impl Tick for Counter {
+    fn tick(self: &mut Self) { self.n += 1 }
+}
+
+fn advance<T: Tick>(x: &T) {
+    x.tick()
+}
+
+fn main() {
+    var c = Counter { n: 0 }
+    advance(c)
+    print(c.n)
+}

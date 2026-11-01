@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 570 distinct messages across 732 programs the compiler must reject.
+Every error message the test suite pins: 576 distinct messages across 739 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -95,6 +95,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
 - [`'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'`](#merge-in-impl-merge-for-box-i64-takes-other-box-string-the-trait-merge-declares-other-self)
 - [`'Meters' is not a generic type`](#meters-is-not-a-generic-type)
+- [`'modify' argument 2: expected (&mut i64) => void, got (i64) => void`](#modify-argument-2-expected-mut-i64-void-got-i64-void)
 - [`'n' is captured by a closure argument and borrowed in the same call`](#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
 - [`'n' shadows an outer binding`](#n-shadows-an-outer-binding)
 - [`'new' is not available on 'BinaryHeap<Task>': 'new' orders its elements with '<', which 'Task' does not have`](#new-is-not-available-on-binaryheap-task-new-orders-its-elements-with-which-task-does-not-have)
@@ -212,7 +213,9 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot be instantiated with 'void'`](#cannot-be-instantiated-with-void)
 - [`cannot be passed in a variadic position`](#cannot-be-passed-in-a-variadic-position)
 - [`cannot call 'add' on 'b' while 's' borrows it`](#cannot-call-add-on-b-while-s-borrows-it)
+- [`cannot call 'bump' on immutable 's': it takes '&mut self'`](#cannot-call-bump-on-immutable-s-it-takes-mut-self)
 - [`cannot call 'feed' on 'lx' while 'w' borrows it`](#cannot-call-feed-on-lx-while-w-borrows-it)
+- [`cannot call 'insert' on 'm' while 'm.getOrInsertWith' borrows it`](#cannot-call-insert-on-m-while-m-getorinsertwith-borrows-it)
 - [`cannot call 'insert' on 'm' while 'm.modify' borrows it`](#cannot-call-insert-on-m-while-m-modify-borrows-it)
 - [`cannot call 'pop' on 'v' while a loop iterates over it`](#cannot-call-pop-on-v-while-a-loop-iterates-over-it)
 - [`cannot call 'push' on 'b' while a loop iterates over it`](#cannot-call-push-on-b-while-a-loop-iterates-over-it)
@@ -225,6 +228,8 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot call 'push' on 'xs' while 'r' borrows it`](#cannot-call-push-on-xs-while-r-borrows-it)
 - [`cannot call 'push' on 'xs' while a loop iterates over it`](#cannot-call-push-on-xs-while-a-loop-iterates-over-it)
 - [`cannot call 'setByte' on 's' while 'view' borrows it`](#cannot-call-setbyte-on-s-while-view-borrows-it)
+- [`cannot call 'tick' on 'x', a shared '&' reference: it takes '&mut self'`](#cannot-call-tick-on-x-a-shared-reference-it-takes-mut-self)
+- [`cannot call 'tick' on immutable 'c': it takes '&mut self'`](#cannot-call-tick-on-immutable-c-it-takes-mut-self)
 - [`cannot capture`](#cannot-capture)
 - [`cannot capture 's' in a 'move' closure`](#cannot-capture-s-in-a-move-closure)
 - [`cannot capture 'self' in a 'move' closure`](#cannot-capture-self-in-a-move-closure)
@@ -310,6 +315,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`cannot take 'Texture' out of a container by index: it carries @noCopy`](#cannot-take-texture-out-of-a-container-by-index-it-carries-nocopy)
 - [`cannot take a slice of a temporary`](#cannot-take-a-slice-of-a-temporary)
 - [`cannot take type parameters`](#cannot-take-type-parameters)
+- [`cannot upsert on an immutable HashMap`](#cannot-upsert-on-an-immutable-hashmap)
 - [`cannot use '..' struct update with 'R', which implements Drop`](#cannot-use-struct-update-with-r-which-implements-drop)
 - [`cannot use '==' on enum 'Shape' with payload-bearing variants`](#cannot-use-on-enum-shape-with-payload-bearing-variants)
 - [`cannot use 'self' inside 'for it in &mut self.items'`](#cannot-use-self-inside-for-it-in-mut-self-items)
@@ -2286,6 +2292,20 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/aliasTakesNoTypeArgs.milo](https://github.com/milo-language/milo/blob/main/tests/errors/aliasTakesNoTypeArgs.milo)</sub>
+
+## `'modify' argument 2: expected (&mut i64) => void, got (i64) => void` {#modify-argument-2-expected-mut-i64-void-got-i64-void}
+
+modify hands its callback a `&mut V` into the table. The builtin accepted a callback taking the value by value and passed it the pointer anyway: `print(v)` printed the slot's address.
+
+```milo skip
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("a", 1)
+    m.modify("a", (v: i64): void => { print(v) })
+}
+```
+
+<sub>[tests/errors/hashMapModifyByValueCallback.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapModifyByValueCallback.milo)</sub>
 
 ## `'n' is captured by a closure argument and borrowed in the same call` {#n-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call}
 
@@ -5369,6 +5389,25 @@ fn main(): i32 {
 
 <sub>[tests/errors/viewMutateReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/viewMutateReceiver.milo)</sub>
 
+## `cannot call 'bump' on immutable 's': it takes '&mut self'` {#cannot-call-bump-on-immutable-s-it-takes-mut-self}
+
+A `&mut self` method writes its receiver, so the receiver must be writable, the same rule `bump(&mut s)` follows as an argument. It used to compile and mutate the `let`.
+
+```milo skip
+struct S { n: i64 }
+impl S {
+    fn bump(self: &mut Self) { self.n += 1 }
+}
+
+fn main() {
+    let s = S { n: 1 }
+    s.bump()
+    print(s.n)
+}
+```
+
+<sub>[tests/errors/mutSelfOnLetStruct.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mutSelfOnLetStruct.milo)</sub>
+
 ## `cannot call 'feed' on 'lx' while 'w' borrows it` {#cannot-call-feed-on-lx-while-w-borrows-it}
 
 holding a returned &string view freezes its receiver: growing the buffer would realloc the bytes the view points into
@@ -5390,6 +5429,22 @@ fn main(): i32 {
 ```
 
 <sub>[tests/errors/stringViewFreezesReceiver.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringViewFreezesReceiver.milo)</sub>
+
+## `cannot call 'insert' on 'm' while 'm.getOrInsertWith' borrows it` {#cannot-call-insert-on-m-while-m-getorinsertwith-borrows-it}
+
+The map is borrowed while init runs: init may read it, but an insert inside it could grow the table between getOrInsertWith's probe and its own insert.
+
+```milo skip
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.getOrInsertWith("a", (): i64 => {
+        m.insert("b", 2)
+        return 1
+    })
+}
+```
+
+<sub>[tests/errors/getOrInsertWithReentrant.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOrInsertWithReentrant.milo)</sub>
 
 ## `cannot call 'insert' on 'm' while 'm.modify' borrows it` {#cannot-call-insert-on-m-while-m-modify-borrows-it}
 
@@ -5602,6 +5657,54 @@ pub fn main(): void {
 ```
 
 <sub>[tests/errors/stringSetByteUnderView.milo](https://github.com/milo-language/milo/blob/main/tests/errors/stringSetByteUnderView.milo)</sub>
+
+## `cannot call 'tick' on 'x', a shared '&' reference: it takes '&mut self'` {#cannot-call-tick-on-x-a-shared-reference-it-takes-mut-self}
+
+A bound method resolved at monomorphization: `x: &T` is read-only, so `T.tick`, which takes `&mut self`, cannot run on it. Take `x: &mut T` to mutate.
+
+```milo skip
+trait Tick {
+    fn tick(self: &mut Self)
+}
+struct Counter { n: i64 }
+impl Tick for Counter {
+    fn tick(self: &mut Self) { self.n += 1 }
+}
+
+fn advance<T: Tick>(x: &T) {
+    x.tick()
+}
+
+fn main() {
+    var c = Counter { n: 0 }
+    advance(c)
+    print(c.n)
+}
+```
+
+<sub>[tests/errors/mutSelfOnSharedGeneric.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mutSelfOnSharedGeneric.milo)</sub>
+
+## `cannot call 'tick' on immutable 'c': it takes '&mut self'` {#cannot-call-tick-on-immutable-c-it-takes-mut-self}
+
+A trait method taking `&mut self`, called on a `let`: refused like an inherent one.
+
+```milo skip
+trait Tick {
+    fn tick(self: &mut Self)
+}
+struct Counter { n: i64 }
+impl Tick for Counter {
+    fn tick(self: &mut Self) { self.n += 1 }
+}
+
+fn main() {
+    let c = Counter { n: 0 }
+    c.tick()
+    print(c.n)
+}
+```
+
+<sub>[tests/errors/mutSelfOnLetTrait.milo](https://github.com/milo-language/milo/blob/main/tests/errors/mutSelfOnLetTrait.milo)</sub>
 
 ## `cannot capture` {#cannot-capture}
 
@@ -8407,6 +8510,20 @@ fn main() {
 ```
 
 <sub>[tests/errors/interfaceGenericMethod.milo](https://github.com/milo-language/milo/blob/main/tests/errors/interfaceGenericMethod.milo)</sub>
+
+## `cannot upsert on an immutable HashMap` {#cannot-upsert-on-an-immutable-hashmap}
+
+A `&mut Self` method from a container impl (here std/prelude's `HashMap.upsert`) needs a mutable receiver, as the builtin mutating methods do. It used to compile and write through the `let`.
+
+```milo skip
+fn main() {
+    let m: HashMap<string, i64> = HashMap.new()
+    m.upsert("a", 0, (c: &mut i64): void => { c += 1 })
+    print(m.len)
+}
+```
+
+<sub>[tests/errors/hashMapUpsertImmutable.milo](https://github.com/milo-language/milo/blob/main/tests/errors/hashMapUpsertImmutable.milo)</sub>
 
 ## `cannot use '..' struct update with 'R', which implements Drop` {#cannot-use-struct-update-with-r-which-implements-drop}
 
@@ -13986,6 +14103,21 @@ fn main() {
 ```
 
 <sub>[tests/errors/genericArgReadAfterMove.milo](https://github.com/milo-language/milo/blob/main/tests/errors/genericArgReadAfterMove.milo)</sub>
+
+`getOrInsertWith(key: K, init)` takes the key by value: a miss stores it in the map. The builtin stored the caller's key without moving it, so the caller and the map both owned it and the caller's drop freed what the map still held (heap-use-after-free).
+
+```milo skip
+struct Name { first: string, last: string }
+
+fn main() {
+    var m: HashMap<Name, i64> = HashMap.new()
+    let k = Name { first: "ada" + "", last: "lovelace" + "" }
+    m.getOrInsertWith(k, (): i64 => 1)
+    print(k.first)
+}
+```
+
+<sub>[tests/errors/getOrInsertWithKeyMoved.milo](https://github.com/milo-language/milo/blob/main/tests/errors/getOrInsertWithKeyMoved.milo)</sub>
 
 `insert` takes its key before it evaluates the value, so the key is gone by the time `m.get(k)` runs. Accepted, the lookup read an emptied key, always missed, and the counter stayed at 1 with no diagnostic. Clone the key, or read the old value first.
 

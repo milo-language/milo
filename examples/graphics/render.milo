@@ -345,7 +345,8 @@ fn mixSeed(i: i64): u64 {
     return ((i as u64) + 1) * 0x9E3779B97F4A7C15
 }
 
-fn renderBand(w: Shard<u32>): Shard<u32> {
+fn renderBand(window: Shard<u32>): Shard<u32> {
+    var w = window
     let width = W
     let height = H
     let spp = SPP

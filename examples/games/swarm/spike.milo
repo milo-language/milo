@@ -208,7 +208,8 @@ fn stepAll(ps: &mut Vec<Particle>, st: &Step) {
     }
 }
 
-fn stepWindow(w: Shard<Particle>, st: &mut Step): Shard<Particle> {
+fn stepWindow(window: Shard<Particle>, st: &mut Step): Shard<Particle> {
+    var w = window
     for i in 0..w.len() {
         w.set(i, stepOne(w.get(i), st))
     }

@@ -312,6 +312,9 @@ interface VarInfo {
   // no spelling of the pattern makes the binding mutable. Recorded so the diagnostic can
   // say what actually works instead.
   patternBound?: boolean;
+  // A by-value function or closure parameter. Parameters are immutable and cannot be
+  // spelled `var`, so "declare with 'var'" is no fix; the diagnostic says to rebind.
+  byValueParam?: boolean;
   // A ref pattern binding: the place it points into (root binding + steps), so the
   // call-site exclusivity check sees `inner` and the subject it came from as one place.
   refInto?: { root: unknown; name: string; steps: PlaceStep[] };
@@ -5899,36 +5902,54 @@ export class TypeChecker {
   // than by looking it up: a generic method (`fn map<R>`) and a blanket container impl
   // (`impl Trait for Vec<T>`). The ordinary path is not routed through here because it
   // carries the `json` auto-stringify special case, which neither of these can reach.
+  // A `&mut self` method on a receiver that is not writable: the same rule a `&mut`
+  // argument gets (unwritableMutTarget), applied in every method-dispatch path. Without it
+  // `let s = S { n: 1 }; s.bump()` compiled and wrote through the `let`, and so did
+  // `let m = HashMap.new(); m.upsert(...)`. A `Heap<T>` receiver writes the box's pointee,
+  // not the binding, so it stays legal, as do temporaries (the argument rule allows them).
+  // Returns true when it reported, so the caller can stop before borrowing.
+  private refuseImmutableReceiver(expr: ExprOf<"MethodCall">, sp: Span | undefined): boolean {
+    const t = this.exprTypes.get(expr.object);
+    if (t?.tag === "heap") return false;
+    // A by-value pattern binding owns its payload (moved out, or a copy of a temporary),
+    // so its write is real; the copy of a place's payload is errorIfCopyBind's case.
+    // tests/fixtures/matchTempBindMutate.milo is the shape (`Ok(child) => child.close()`).
+    const root = this.rootNameOf(expr.object);
+    const rootInfo = root === null ? undefined : this.lookup(root);
+    if (rootInfo?.patternBound && rootInfo.type.tag !== "ref") return false;
+    const bad = this.unwritableMutTarget(expr.object);
+    if (!bad) return false;
+    const recv = t?.tag === "ref" ? t.inner : t;
+    const container = recv?.tag === "hashmap" ? "HashMap" : recv?.tag === "vec" ? "Vec" : recv?.tag === "string" ? "string" : null;
+    const name = this.describeExpr(expr.object);
+    const fix = rootInfo?.byValueParam
+      ? `'${root}' is a by-value parameter, and parameters are immutable: move it into a 'var' first ('var out = ${root}') and use that`
+      : `declare with 'var' to make it mutable`;
+    if (bad.shared) {
+      this.error(`cannot call '${expr.method}' on '${name}', a shared '&' reference: it takes '&mut self'`, sp,
+        `take '&mut ${this.show(bad.shared)}' in this function's signature if it needs to mutate`);
+    } else if (container) {
+      // The builtin container methods' wordings ("cannot remove from immutable HashMap",
+      // "cannot retain on an immutable Vec"), which tests pin.
+      this.error(expr.method === "remove" && container === "HashMap"
+        ? `cannot remove from immutable HashMap`
+        : `cannot ${expr.method} on an immutable ${container}`, sp, fix);
+    } else {
+      this.error(`cannot call '${expr.method}' on immutable '${name}': it takes '&mut self'`, sp, fix);
+    }
+    return true;
+  }
+
   // `borrowsForCallback`: the receiver is frozen while the arguments are checked, and the
   // call-site exclusivity rule is not applied. That is the builtin callback methods' rule
   // (borrowDuringCallback): the callback may read the receiver but not insert into or
   // remove from it, where exclusivity would refuse any capture of it at all.
-  // A `&mut Self` method of a builtin container's impl (std's `impl HashMap<K, V>`, a
-  // user `impl Vec<T>` or `impl string`) on an immutable receiver: a `let` binding, a `&`
-  // parameter or a temporary. The builtin mutating methods each refuse these; autoBorrow
-  // does not, so `let m = HashMap.new(); m.upsert(...)` compiled and wrote through the
-  // `let`. (A user struct's `&mut self` method on a `let` is not refused either; that is
-  // the struct rule, left alone here.)
-  private refuseImmutableContainer(expr: ExprOf<"MethodCall">, sp: Span | undefined): boolean {
-    const t = this.exprTypes.get(expr.object);
-    const recv = t?.tag === "ref" ? t.inner : t;
-    const name = recv?.tag === "hashmap" ? "HashMap" : recv?.tag === "vec" ? "Vec" : recv?.tag === "string" ? "string" : null;
-    if (name === null || this.isRootMutable(expr.object)) return false;
-    // `remove` keeps the wording the builtin used; the rest read like the builtin Vec
-    // methods' "cannot retain on an immutable Vec".
-    const msg = expr.method === "remove" && name === "HashMap"
-      ? `cannot remove from immutable HashMap`
-      : `cannot ${expr.method} on an immutable ${name}`;
-    this.error(msg, sp, `declare with 'var' to make it mutable`);
-    return true;
-  }
-
   private dispatchMangledMethod(expr: Extract<Expr, { kind: "MethodCall" }>, mangled: string, sp?: Span, borrowsForCallback = false): TypeKind {
     const sig = must(this.functions, mangled, "instantiated method");
     const selfParam = sig.params[0];
     if (selfParam?.type.tag === "ref") {
       if (selfParam.type.mutable) {
-        if (this.refuseImmutableContainer(expr, sp)) {
+        if (this.refuseImmutableReceiver(expr, sp)) {
           for (const a of expr.args) this.checkExpr(a);
           return this.setType(expr, sig.ret);
         }
@@ -6570,7 +6591,7 @@ export class TypeChecker {
       const nullableRef = declared.isNullableRef && pType.tag === "ptr"
         ? { inner: pType.inner, mutable: !!declared.isRefMut } : undefined;
       this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false, span: p.span,
-        ...(nullableRef && { nullableRef }) });
+        ...(nullableRef && { nullableRef }), ...(pType.tag !== "ref" && { byValueParam: true }) });
     }
 
     // Check contracts in a nested scope so `result` doesn't shadow body locals
@@ -9759,25 +9780,33 @@ export class TypeChecker {
       // Free-function '&mut' args were the one path that skipped this check.
       // Every binding the argument could name has to be mutable: a fork reaches
       // more than one, and it is the immutable arm that would be written through.
-      for (const place of this.placesOf(arg)) {
-        if (place.tag !== "path") continue;
-        const info = this.lookup(place.root);
-        if (info && !info.mutable && info.type.tag !== "ref") {
-          this.error(`cannot pass immutable '${this.describeExpr(arg)}' as a '&mut' argument`, sp,
-            `declare with 'var' to make it mutable`);
-          break;
-        }
-        // A shared '&T' binding is no more writable than a 'let': forwarding it to a
-        // '&mut' parameter let a callee mutate the caller's value through a borrow
-        // the caller had handed out as read-only (found in milojs, 2026-09-22).
-        if (info && info.type.tag === "ref" && !info.type.mutable) {
-          this.error(`cannot pass '${this.describeExpr(arg)}', a shared '&' reference, as a '&mut' argument`, sp,
-            `take '&mut ${this.show(info.type.inner)}' in this function's signature if it needs to mutate`);
-          break;
-        }
+      const bad = this.unwritableMutTarget(arg);
+      if (bad?.shared) {
+        this.error(`cannot pass '${this.describeExpr(arg)}', a shared '&' reference, as a '&mut' argument`, sp,
+          `take '&mut ${this.show(bad.shared)}' in this function's signature if it needs to mutate`);
+      } else if (bad) {
+        this.error(`cannot pass immutable '${this.describeExpr(arg)}' as a '&mut' argument`, sp,
+          `declare with 'var' to make it mutable`);
       }
     }
     this.autoBorrow(arg, { mutable });
+  }
+
+  // Whether a `&mut` borrow of `expr` would write through a binding that is not writable:
+  // a `let` (`shared` unset) or a shared `&T` (`shared` is T). Every binding the place
+  // could name has to be writable: a fork reaches more than one, and it is the immutable
+  // arm that would be written through. A temporary names no binding and passes.
+  private unwritableMutTarget(expr: Expr): { shared?: TypeKind } | null {
+    for (const place of this.placesOf(expr)) {
+      if (place.tag !== "path") continue;
+      const info = this.lookup(place.root);
+      if (info && !info.mutable && info.type.tag !== "ref") return {};
+      // A shared '&T' binding is no more writable than a 'let': forwarding it to a
+      // '&mut' parameter let a callee mutate the caller's value through a borrow
+      // the caller had handed out as read-only (found in milojs, 2026-09-22).
+      if (info && info.type.tag === "ref" && !info.type.mutable) return { shared: info.type.inner };
+    }
+    return null;
   }
 
   // Freeze the receiver while checking a callback that iterates it — the callback
@@ -12432,7 +12461,8 @@ export class TypeChecker {
         pType = { tag: "unknown" };
       }
       paramTypes.push(pType);
-      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false, span: p.span });
+      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false, span: p.span,
+        ...(pType.tag !== "ref" && { byValueParam: true }) });
     }
     // An explicit annotation always wins; otherwise take the caller's expected return
     // type so literals in the body get coerced against it (`() => 0` against an
@@ -13869,7 +13899,12 @@ export class TypeChecker {
         const ifaceMethod = iface.methods.get(expr.method);
         if (ifaceMethod) {
           // self is always borrowed for interface calls
-          this.autoBorrow(expr.object, { mutable: ifaceMethod.params[0]?.type.tag === "ref" && (ifaceMethod.params[0].type as any).mutable });
+          const ifaceSelfMut = ifaceMethod.params[0]?.type.tag === "ref" && (ifaceMethod.params[0].type as any).mutable;
+          if (ifaceSelfMut && this.refuseImmutableReceiver(expr, sp)) {
+            for (const a of expr.args) this.checkExpr(a);
+            return this.setType(expr, ifaceMethod.ret);
+          }
+          this.autoBorrow(expr.object, { mutable: ifaceSelfMut });
           if (expr.args.length !== ifaceMethod.params.length - 1) {
             this.error(`'${expr.method}' expects ${ifaceMethod.params.length - 1} argument(s), got ${expr.args.length}`, sp);
           }
@@ -13919,7 +13954,7 @@ export class TypeChecker {
       const selfParam = sig.params[0];
       if (selfParam) {
         if (selfParam.type.tag === "ref") {
-          if (selfParam.type.mutable && this.refuseImmutableContainer(expr, sp)) {
+          if (selfParam.type.mutable && this.refuseImmutableReceiver(expr, sp)) {
             for (const a of expr.args) this.checkExpr(a);
             return this.setType(expr, sig.ret);
           }

@@ -1,0 +1,15 @@
+// @error: cannot call 'tick' on immutable 'c': it takes '&mut self'
+// A trait method taking `&mut self`, called on a `let`: refused like an inherent one.
+trait Tick {
+    fn tick(self: &mut Self)
+}
+struct Counter { n: i64 }
+impl Tick for Counter {
+    fn tick(self: &mut Self) { self.n += 1 }
+}
+
+fn main() {
+    let c = Counter { n: 0 }
+    c.tick()
+    print(c.n)
+}

@@ -23,7 +23,8 @@ from "std/shard" import { Shard, parallelMap, parallelMapWith, StrShard, paralle
 ```milo
 from "std/shard" import { Shard, parallelMap }
 
-fn double(w: Shard<f64>): Shard<f64> {
+fn double(window: Shard<f64>): Shard<f64> {
+    var w = window
     for i in 0..w.len() {
         w.set(i, w.get(i) * 2.0)
     }
@@ -176,7 +177,8 @@ from "std/shard" import { Shard, parallelMapWith }
 
 pub struct Env { scale: f64, sum: f64 }
 
-fn scale(w: Shard<f64>, e: &mut Env): Shard<f64> {
+fn scale(window: Shard<f64>, e: &mut Env): Shard<f64> {
+    var w = window
     for i in 0..w.len() {
         let x = w.get(i) * e.scale
         w.set(i, x)

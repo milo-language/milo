@@ -18,7 +18,8 @@ pub struct Env {
     windowsSeen: i64,
 }
 
-fn scale(w: Shard<f64>, e: &mut Env): Shard<f64> {
+fn scale(window: Shard<f64>, e: &mut Env): Shard<f64> {
+    var w = window
     for i in 0..w.len() {
         let x = w.get(i) * e.scale
         w.set(i, x)

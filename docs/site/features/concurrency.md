@@ -423,7 +423,8 @@ gives it back. No reference crosses a thread, and nothing is copied.
 ```milo
 from "std/shard" import { Shard, parallelMap }
 
-fn shade(w: Shard<f64>): Shard<f64> {
+fn shade(window: Shard<f64>): Shard<f64> {
+    var w = window
     for i in 0..w.len() {
         w.set(i, w.get(i) * 2.0)
     }

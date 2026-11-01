@@ -13,7 +13,8 @@ pub struct Env {
     seen: i64,
 }
 
-fn double(w: Shard<i64>, e: &mut Env): Shard<i64> {
+fn double(window: Shard<i64>, e: &mut Env): Shard<i64> {
+    var w = window
     for i in 0..w.len() {
         w.set(i, w.get(i) * 2)
     }

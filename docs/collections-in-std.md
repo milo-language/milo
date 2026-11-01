@@ -162,3 +162,7 @@ special cases.
   wrote through the `let` (`hashMapUpsertImmutable`). modify on a temporary is refused
   now, as insert and remove already were. Not changed: a user struct's `&mut self`
   method on a `let` still compiles.
+- 2026-11-01: the container-impl mutability rule is now the general receiver rule
+  (`refuseImmutableReceiver`): any `&mut self` method, in every dispatch path, needs a
+  receiver a `&mut` argument could take (`unwritableMutTarget`, shared with the argument
+  check). Heap receivers, temporaries and by-value match bindings stay legal.

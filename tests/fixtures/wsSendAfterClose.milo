@@ -21,7 +21,7 @@ fn main(): void {
     print(ws.sendText("before").isOk())
     ws.close()
     // Likely reuses the number ws held.
-    let c2 = TcpStream.connect(ip4(127, 0, 0, 1), port)!
+    var c2 = TcpStream.connect(ip4(127, 0, 0, 1), port)!
     let s2 = l.accept()!
     print(ws.sendText("after").isErr())
     print(ws.recv().isErr())
