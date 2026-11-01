@@ -1,0 +1,9 @@
+// Trap program for MILO_MLIR=1: a substring past the end panics with legacy's message and
+// this call's line, through the per-site helper.
+fn cut(s: &string, a: i64, b: i64): string { return s.substr(a, b) }
+
+fn main() {
+    let s = "abcdef"
+    print(cut(s, 1, 3))
+    print(cut(s, 4, 9))
+}

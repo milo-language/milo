@@ -636,6 +636,35 @@ class FnEmitter {
         this.callees.set(name, `(${PTR}, si64, si64) -> ${PTR}`);
         return this.def(`func.call @${quote(name)}(${d.ref}, ${l.ref}, ${c.ref}) : (${PTR}, si64, si64) -> ${PTR}`, PTR);
       }
+      case "StringSubstr": {
+        // Legacy's substring (bounds checked, a new owned string), keyed by the call's
+        // location so its panic names this line.
+        const s = this.borrow(this.expr(e.str), e.str.type);
+        const a = this.expr(e.start), b = this.expr(e.end);
+        if (s.ty !== STR || a.ty !== "si64" || b.ty !== "si64") throw new MlirUnsupported("substr types");
+        const str: TypeKind = { tag: "string" }, i64: TypeKind = { tag: "int", bits: 64, signed: true };
+        const name = this.siteHelper("milo.string.substr", e.span, () => ({
+          params: [{ name: "s", type: str, isRef: true, isRefMut: false }, { name: "a", type: i64, isRef: false, isRefMut: false }, { name: "b", type: i64, isRef: false, isRefMut: false }],
+          retType: str,
+          body: [{ kind: "Return", retType: str, value: { ...e, str: { kind: "Ident", name: "s", type: str, isMove: false },
+            start: { kind: "Ident", name: "a", type: i64 }, end: { kind: "Ident", name: "b", type: i64 } } }],
+        }));
+        const p = this.spill(s);
+        return { ...this.callHelper(name, [`${p} : !milo.ref<${STR}>`, `${a.ref} : si64`, `${b.ref} : si64`], STR), own: "owned" };
+      }
+      case "StringPush": {
+        const p = this.fieldPlace(e.str);
+        const v = this.expr(e.byte);
+        if (!p || p.ty !== STR || v.ty !== "ui8") throw new MlirUnsupported("string push place");
+        const str: TypeKind = { tag: "string" };
+        const name = this.siteHelper("milo.string.push", e.span, () => ({
+          params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "x", type: e.byte.type, isRef: false, isRefMut: false }],
+          retType: { tag: "void" },
+          body: [{ kind: "ExprStmt", expr: { ...e, str: { kind: "Ident", name: "s", type: str, isMove: false }, byte: { kind: "Ident", name: "x", type: e.byte.type } } }],
+        }));
+        this.callHelper(name, [`${p.ref} : !milo.ref<${STR}>`, `${v.ref} : ui8`], null);
+        return { ref: "", ty: "" };
+      }
       case "SizeOf":
         if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
         return this.def(`milo.const ${this.cx.typeSizeOf(e.sizeType)} : si64`, "si64");
@@ -891,6 +920,40 @@ class FnEmitter {
     // arms that all jump leave nothing after them.
     if (!resultTy && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
+  }
+
+  /**
+   * A legacy helper whose body panics with the call's location: one per call site, named
+   * after it (the HIR node copied into the body keeps its span).
+   */
+  private siteHelper(base: string, span: Span | undefined, make: Parameters<MlirEmitCtx["mlirHelper"]>[1]): string {
+    const l = this.cx.checkLocation(span);
+    let name = base;
+    if (l) {
+      let h = 0x811c9dc5;
+      for (const c of `${l.file}:${l.line}:${l.col}`) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193) >>> 0;
+      name = `${base}.${l.line}.${l.col}.${h.toString(16)}`;
+    }
+    return this.cx.mlirHelper(name, make);
+  }
+
+  /** A borrowed or static string in a slot of its own, for a `&string` argument. */
+  private spill(v: Val): string {
+    const ref = this.fresh();
+    this.vars.push(`  ${ref} = milo.var "operand" : !milo.ref<${v.ty}>`);
+    this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${v.ty}>`);
+    return ref;
+  }
+
+  /** A call of a legacy helper; `args` are `value : type`. */
+  private callHelper(name: string, args: string[], ret: string | null): Val {
+    const refs = args.map(a => a.split(" : ")[0]);
+    const tys = args.map(a => a.slice(a.indexOf(" : ") + 3));
+    const fnTy = `(${tys.join(", ")}) -> ${ret ?? "()"}`;
+    this.callees.set(name, fnTy);
+    const call = `func.call @${quote(name)}(${refs.join(", ")}) : ${fnTy}`;
+    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+    return this.def(call, ret);
   }
 
   /**

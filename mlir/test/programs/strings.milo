@@ -24,4 +24,7 @@ fn main() {
     }
     print(acc, " ", acc.len())
     print("" == "", " ", "a" < "", " ", "\0" > "")
+    var built = ""
+    for i in 0..10 { built.push(97 + i as u8) }
+    print(built, " ", built.substr(2, 5), " ", greet(built.substr(0, 1)))
 }
