@@ -1,0 +1,58 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs --owned): structs
+// and enums holding strings and Vecs under drop elaboration: built, returned, moved into
+// callees, read through `&`, fields reassigned through `&mut` and in a local, enums with
+// owning payloads matched by reference, and printed.
+
+struct Person { name: string, age: i64, tags: Vec<i64> }
+
+struct Team { lead: Person, size: i64 }
+
+enum Msg { Text(string), Count(i64), Pair(string, string), Quit }
+
+fn mk(name: string, age: i64): Person {
+    var tags: Vec<i64> = Vec.new()
+    for i in 0..age { tags.push(i) }
+    return Person { name: name, age: age, tags: tags }
+}
+
+fn describe(p: &Person): i64 { return p.name.len() * 100 + p.age + p.tags.len() }
+
+fn rename(p: &mut Person, n: i64) { p.name = "x".repeat(n) }
+
+fn consume(p: Person): i64 { return p.age }
+
+fn weigh(m: &Msg): i64 {
+    match m {
+        Msg.Text(s) => { return s.len() }
+        Msg.Count(n) => { return n }
+        Msg.Pair(a, b) => { return a.len() * 10 + b.len() }
+        Msg.Quit => { return -1 }
+    }
+}
+
+fn pick(k: i64): Msg {
+    if k == 0 { return Msg.Text("hello".repeat(2)) }
+    if k == 1 { return Msg.Count(42) }
+    if k == 2 { return Msg.Pair("ab".repeat(2), "c") }
+    return Msg.Quit
+}
+
+fn main() {
+    let a = mk("ada".repeat(2), 3)
+    print(describe(a), " ", a.name, " ", a.tags.len())
+    var b = mk("bob", 5)
+    rename(&mut b, 4)
+    b.name = "robert"
+    b.age = b.age + 1
+    print(describe(b), " ", b.name)
+    print(consume(b))
+    let t = Team { lead: mk("cy", 2), size: 7 }
+    print(describe(t.lead), " ", t.size, " ", t.lead.name)
+    for k in 0..4 {
+        let m = pick(k)
+        print(weigh(m))
+    }
+    print(weigh(pick(2)), " ", weigh(Msg.Text("zz")))
+    let p = mk("dee", 1)
+    print(p)
+}

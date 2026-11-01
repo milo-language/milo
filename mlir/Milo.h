@@ -30,7 +30,8 @@ struct PanicResource : mlir::SideEffects::Resource::Base<PanicResource> {
   llvm::StringRef getName() const final { return "milo.panic"; }
   bool isAddressable() const final { return false; }
 };
-// A string or a Vec: values with drop glue, which only owned slots hold.
+// A string, a Vec, or a struct or enum holding one: values with drop glue, which only
+// owned slots hold.
 bool needsDrop(mlir::Type t);
 void registerPasses();
 void registerScalarPasses();

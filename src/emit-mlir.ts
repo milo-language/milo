@@ -31,6 +31,7 @@ export interface MlirEmitCtx {
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
   mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
   needsDropCg(t: TypeKind): boolean;
+  dropImpls: Set<string>;
   typeSizeOf(t: TypeKind): number;
 }
 
@@ -111,8 +112,13 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   return r;
 }
 
+// Its own `impl Drop`; one on a field's type makes that field's valueType null.
+const hasUserDrop = (cx: MlirEmitCtx, t: TypeKind & { name: string }) => cx.dropImpls.has(t.name);
+
 function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): string | null {
-  if (cx.needsDropCg(t) || cx.typeSizeOf(t) >= 128 || cx.llvmType(t) !== `%${t.name}`) return null;
+  // A user Drop runs code whose timing is observable, and legacy drops temporaries at the
+  // end of their statement, this backend at the end of their block: keep those legacy.
+  if (hasUserDrop(cx, t) || cx.typeSizeOf(t) >= 128 || cx.llvmType(t) !== `%${t.name}`) return null;
   if (t.tag === "struct") {
     const l = cx.structLayouts.get(t.name);
     const fields = l?.fields.map(f => valueType(cx, f.typeKind));
@@ -169,7 +175,9 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean }
   | { kind: "vec"; ref: string; elem: string; param: number } | { kind: "opaque"; what: string };
 
-const hasDrop = (ty: string) => ty === STR || ty.startsWith("!milo.vecval<");
+// A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
+// when its text names one (Milo.h needsDrop).
+const hasDrop = (ty: string) => ty.includes(STR) || ty.includes("!milo.vecval<");
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -659,22 +667,27 @@ class FnEmitter {
         if (pp) return this.ptrRead(pp);
         // A field of a place is read in place, as legacy genFieldPtr does; of a value, out
         // of the value.
+        // Moving an owning field out leaves its struct partly moved: legacy zeroes the field
+        // and tracks it apart, which an owned slot here does not express yet.
+        if (e.isMove && hasDrop(this.value(e.type, "field"))) throw new MlirUnsupported("move out of a field");
+        const own = hasDrop(this.value(e.type, "field")) ? "view" as const : undefined;
         const p = this.fieldPlace(e);
-        if (p) return this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
+        if (p) return { ...this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own };
         const { index, ty } = this.field(e);
-        const s = this.expr(e.object);
-        return this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty);
+        // A temporary that owns is kept in a slot while its field is read.
+        const s = this.borrow(this.expr(e.object), e.object.type);
+        return { ...this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty), own };
       }
       case "StructLit": return this.structLit(e);
       case "EnumLit": {
         const ty = this.value(e.type, "enum literal");
         const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
         if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
-        const args = e.args.map(a => this.expr(a));
+        const args = e.args.map(a => this.consume(this.expr(a), "payload"));
         const fields = v.fields.map(f => this.value(f, "payload"));
         if (args.some((a, k) => a.ty !== fields[k])) throw new MlirUnsupported("payload of another type");
         const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
-        return this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty);
+        return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
       }
       case "IsCheck": {
         const v = this.expr(e.operand);
@@ -773,7 +786,9 @@ class FnEmitter {
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout) throw new MlirUnsupported("struct layout");
     const given = new Map<string, Val>();
-    for (const f of e.fields) given.set(f.name, this.expr(f.value));
+    for (const f of e.fields) given.set(f.name, this.consume(this.expr(f.value), "field"));
+    // The base gives up its unlisted fields and drops its listed ones: not with owned ones yet.
+    if (e.base && hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
     const base = e.base ? this.expr(e.base) : null;
     if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
     const ops = layout.fields.map((f, i) => {
@@ -783,7 +798,7 @@ class FnEmitter {
       return v;
     });
     const operands = ops.length ? `${ops.map(o => o.ref).join(", ")} : ${ops.map(o => o.ty).join(", ")} ` : "";
-    return this.def(`milo.struct.new ${operands}-> ${ty}`, ty);
+    return { ...this.def(`milo.struct.new ${operands}-> ${ty}`, ty), own: hasDrop(ty) ? "owned" : undefined };
   }
 
   /**
@@ -807,11 +822,15 @@ class FnEmitter {
    * bindings are its arm's block arguments (payload i is binding i); a literal pattern on
    * an int or bool is a case value. `resultTy` makes it an expression.
    */
-  private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean },
+  private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
     resultTy: string | null): { done: boolean; v: Val } {
     // A `&mut` subject binds views that write the payload in place.
     if (m.subjectIsMut) throw new MlirUnsupported("match on a &mut subject");
-    const subj = this.expr(m.subject);
+    // An owning subject matched by value moves its payload into the bindings (legacy
+    // bindPayloads zeroes it in the subject); matched by reference, bindings are views.
+    const owning = hasDrop(this.value(m.subject.type, "match subject"));
+    if (owning && !m.subjectIsRef) throw new MlirUnsupported("match moving out of an owning enum");
+    const subj = this.borrow(this.expr(m.subject), m.subject.type);
     const isEnum = subj.ty.startsWith("!milo.enum<");
     const st = stripRefs(m.subject.type);
     const layout = isEnum && st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
@@ -969,10 +988,12 @@ class FnEmitter {
   private vecPlace(e: HIRExpr): { place: string; elem: string; param?: number } {
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return { place: b.ref, elem: b.elem, param: b.param };
-    const m = b?.kind === "var" ? /^!milo\.vecval<(.*)>$/.exec(b.ty) : null;
-    if (!b || b.kind !== "var" || !m) throw new MlirUnsupported("a Vec that is not a param or a local");
-    const place = this.def(`milo.vec.place ${b.ref} : !milo.ref<${b.ty}> -> !milo.vec<${m[1]}>`, `!milo.vec<${m[1]}>`);
-    return { place: place.ref, elem: m[1], param: b.param };
+    // A Vec local, or a Vec field of a place.
+    const slot = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : e.kind === "FieldAccess" ? this.fieldPlace(e) : null;
+    const m = slot ? /^!milo\.vecval<(.*)>$/.exec(slot.ty) : null;
+    if (!slot || !m) throw new MlirUnsupported("a Vec that is not a param, a local or a field");
+    const place = this.def(`milo.vec.place ${slot.ref} : !milo.ref<${slot.ty}> -> !milo.vec<${m[1]}>`, `!milo.vec<${m[1]}>`);
+    return { place: place.ref, elem: m[1], param: slot.param };
   }
 
   /**

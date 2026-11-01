@@ -188,7 +188,15 @@ MILO_ARITH(RemOp, true)
 MILO_ARITH(NegOp, !getWrapping())
 #undef MILO_ARITH
 
-bool milo::needsDrop(Type t) { return isa<StringType, VecValType>(t); }
+bool milo::needsDrop(Type t) {
+  if (isa<StringType, VecValType>(t))
+    return true;
+  if (auto s = dyn_cast<StructType>(t))
+    return llvm::any_of(s.getFields(), needsDrop);
+  if (auto e = dyn_cast<EnumType>(t))
+    return llvm::any_of(e.getVariants(), [](TupleType v) { return llvm::any_of(v.getTypes(), needsDrop); });
+  return false;
+}
 
 LogicalResult VarOp::verify() {
   if (!(*this)->getBlock()->isEntryBlock() ||
