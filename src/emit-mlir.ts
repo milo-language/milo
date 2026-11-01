@@ -1177,7 +1177,8 @@ class FnEmitter {
         } else {
           ({ place, elem } = this.vecPlace(s.iterable));
           // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
-          byPlace = valueType(this.cx, stripRefs(elemKind)) === null && placeType(this.cx, stripRefs(elemKind)) === elem;
+          // So is one holding an array, even when small enough to be a value elsewhere.
+          byPlace = (valueType(this.cx, stripRefs(elemKind)) === null || isBig(this.cx, elem)) && placeType(this.cx, stripRefs(elemKind)) === elem;
           if (!byPlace && (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
           data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
           len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;

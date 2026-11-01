@@ -1,0 +1,42 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: for-in over a Vec
+// whose elements hold an array but are under 128 bytes (std/net's IpAddr), bound as the
+// element's place: matched, fields read, the array indexed.
+
+enum Addr { V4(u32), V6([u8; 16], u32) }
+
+struct Tagged { id: i64, bytes: [u8; 4] }
+
+fn describe(addrs: &Vec<Addr>): i64 {
+    var n: i64 = 0
+    for a in addrs {
+        match a {
+            Addr.V4(ip) => { n = n + ip as i64 }
+            Addr.V6(b, scope) => { n = n + b[0] as i64 * 1000 + b[15] as i64 + scope as i64 }
+        }
+    }
+    return n
+}
+
+fn sum(ts: &Vec<Tagged>): i64 {
+    var n: i64 = 0
+    for i, t in ts { n = n + t.id * 10 + t.bytes[3] as i64 + i }
+    return n
+}
+
+fn run() {
+    var addrs: Vec<Addr> = Vec.new()
+    addrs.push(Addr.V4(7))
+    var b: [u8; 16] = [0; 16]
+    b[0] = 2
+    b[15] = 9
+    addrs.push(Addr.V6(b, 3))
+    print(describe(addrs))
+    var ts: Vec<Tagged> = Vec.new()
+    ts.push(Tagged { id: 1, bytes: [1, 2, 3, 4] })
+    ts.push(Tagged { id: 2, bytes: [5, 6, 7, 8] })
+    print(sum(ts))
+}
+
+fn main() {
+    run()
+}
