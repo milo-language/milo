@@ -3,7 +3,8 @@
 // here); a store over a string in one drops the old value first, an `init` store does
 // not; milo.global.init calls legacy's guarded entry for the lazy global.
 
-// CHECK: llvm.mlir.global external @total() {{.*}} : i64
+// CHECK-DAG: llvm.mlir.global external @total() {{.*}} : i64
+// CHECK-DAG: llvm.mlir.global external thread_local @hits()
 // CHECK-LABEL: llvm.func @bump
 // CHECK:   %[[G:.*]] = llvm.mlir.addressof @total : !llvm.ptr
 // CHECK:   llvm.load %[[G]] : !llvm.ptr -> i64
@@ -34,4 +35,14 @@ func.func @fill(%s: !milo.string) {
   milo.store %s, %g init : !milo.ref<!milo.string>
   milo.global.init "label"
   milo.return
+}
+
+// A thread-local one is declared thread_local; its address is a plain use, as legacy's.
+// CHECK-LABEL: llvm.func @tls
+// CHECK:   %[[T:.*]] = llvm.mlir.addressof @hits : !llvm.ptr
+// CHECK:   llvm.load %[[T]] : !llvm.ptr -> i64
+func.func @tls() -> si64 {
+  %g = milo.global "hits" thread_local : !milo.ref<si64>
+  %x = milo.load %g : !milo.ref<si64>
+  milo.return %x : si64
 }

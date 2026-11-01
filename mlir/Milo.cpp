@@ -252,7 +252,7 @@ LogicalResult GlobalOp::verify() {
     return emitOpError("needs a name");
   // A reference is second-class and never stored, so no global holds one.
   Type t = getRef().getType().getPointee();
-  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, StringType, VecValType, FnType>(t))
+  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, ArrayType, StringType, VecValType, FnType>(t))
     return emitOpError("holds a ") << t << ": a global holds a value";
   return success();
 }

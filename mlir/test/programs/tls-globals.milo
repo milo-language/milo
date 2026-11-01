@@ -1,0 +1,42 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `thread_local` globals (milo.global thread_local), a scalar and an
+// owning Vec of strings stored over (the old value dropped), and globals that are
+// places only: a fixed-size array indexed in place and a 128+ byte struct read by field.
+
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64
+}
+
+thread_local var hits: i64 = 0
+thread_local var names: Vec<string> = []
+var table: [i64; 8] = [0; 8]
+var big: Big = Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16 }
+
+fn hit(name: string): i64 {
+    hits += 1
+    names.push(name + hits.toString())
+    table[hits % 8] = table[hits % 8] + hits
+    big.p = big.p + 1
+    return hits
+}
+
+fn reset() {
+    names = ["fresh"]
+}
+
+fn report(): string {
+    var s = ""
+    for n in names { s = s + n + " " }
+    var t: i64 = 0
+    for i in 0..8 { t = t * 3 + table[i] }
+    return s + t.toString() + " " + big.a.toString() + " " + big.p.toString()
+}
+
+fn main() {
+    for i in 0..5 { hit("x") }
+    print(report())
+    reset()
+    for i in 0..11 { hit("y") }
+    print(report())
+}

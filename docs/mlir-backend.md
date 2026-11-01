@@ -412,6 +412,21 @@ structs, enums.
   `big-branches` (with `lib/branches.milo`). Planted bug: the arm's binding copied out
   but not emptied (`big-branches` exit 0 -> 1, a double free). Tahoe Roads api: 4415
   (82.5%).
+- *Ranking by the whole corpus.* From here the order is the corpus-wide count of blocked
+  function instances (a compile-only census: emit-ir with MILO_MLIR_LOG over every
+  fixture, every example with a main and milojs's two entry points), not one app's.
+  After the branches above: 397979 of 483984 (82.2%); fixtures 82.4%, examples 81.7%,
+  milojs 79.0%. Top reasons: thread-local global 6946, load through a pointer of a
+  struct 6432, `pushStr` 4720, argument copying a borrowed value 4337, variadic call
+  3926, StrPanic 3405, the atomic builtins about 12000 together.
+- *Thread-local globals* (`milo.global "g" thread_local`, declared `thread_local` in the
+  MLIR module; the address is a plain use of the symbol, as legacy takes it) and globals
+  that are places only (fixed-size arrays, 128+ byte structs): a global is now bound by
+  its place type. Program `tls-globals`, a FileCheck case in `globals.mlir`. Planted bug:
+  a thread-local scalar read and written through a fresh slot instead of its global
+  (`tls-globals` stdout). The full `--owned` corpus run on the first commit of this
+  batch was 1092 of 1093 same: `channelCrossThreadPark` had 13 live blocks at exit on
+  legacy and 0 on MLIR once, same on two reruns (threads still alive at exit).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

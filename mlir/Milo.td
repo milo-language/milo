@@ -620,11 +620,13 @@ def Milo_StoreOp : Milo_Op<"store", [
 // The place of module global `name` (a `let`/`var` at module level), defined by the legacy
 // module. Not an owned slot: what it holds outlives every function, so no scope drops it;
 // a store over it drops the old value (milo-scope-drops), as through a `&mut` param.
-// Thread-local globals stay legacy.
+// `thread_local`: a `thread_local` global, one per OS thread. Its address is taken as legacy
+// takes it (a plain use of the symbol), so it is as constant within a function here as it
+// is there.
 def Milo_GlobalOp : Milo_Op<"global", [Pure]> {
-  let arguments = (ins StrAttr:$name);
+  let arguments = (ins StrAttr:$name, UnitAttr:$tls);
   let results = (outs Milo_RefType:$ref);
-  let assemblyFormat = "$name attr-dict `:` type($ref)";
+  let assemblyFormat = "$name (`thread_local` $tls^)? attr-dict `:` type($ref)";
   let hasVerifier = 1;
 }
 

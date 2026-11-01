@@ -636,10 +636,9 @@ class FnEmitter {
     }
     const g = this.cx.mlirGlobal(name);
     if (!g) throw new MlirUnsupported("unknown ident");
-    if (g.threadLocal) throw new MlirUnsupported("thread-local global");
     // Its place, not an owned slot: nothing here may move out of it or drop it at a scope end.
-    const ty = this.value(g.type, "global");
-    const ref = this.def(`milo.global ${quote(name)} : !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+    const ty = this.place$(g.type, "global");
+    const ref = this.def(`milo.global ${quote(name)}${g.threadLocal ? " thread_local" : ""} : !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
     return { kind: "var", ref, ty };
   }
 

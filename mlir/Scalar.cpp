@@ -778,14 +778,15 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
 // The address of a global the legacy module defines (the recorder's, a Milo module global).
 // Declared external here with a placeholder type: with opaque pointers only the accesses
 // carry types, and the splice drops the declaration for a name the module already has.
-Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name) {
+Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name, bool threadLocal = false) {
   auto module = op->getParentOfType<ModuleOp>();
   auto g = module.lookupSymbol<LLVM::GlobalOp>(name);
   if (!g) {
     OpBuilder::InsertionGuard guard(rw);
     rw.setInsertionPointToStart(module.getBody());
     g = LLVM::GlobalOp::create(rw, op->getLoc(), rw.getI64Type(), /*isConstant=*/false,
-                               LLVM::Linkage::External, name, Attribute());
+                               LLVM::Linkage::External, name, Attribute(), /*alignment=*/0,
+                               /*addrSpace=*/0, /*dsoLocal=*/false, threadLocal);
   }
   return LLVM::AddressOfOp::create(rw, op->getLoc(), g);
 }
@@ -906,7 +907,7 @@ struct GlobalLowering : ConvertOpToLLVMPattern<GlobalOp> {
   LogicalResult
   matchAndRewrite(GlobalOp op, OpAdaptor,
                   ConversionPatternRewriter &rw) const override {
-    rw.replaceOp(op, replayGlobal(rw, op, op.getName()));
+    rw.replaceOp(op, replayGlobal(rw, op, op.getName(), op.getTls()));
     return success();
   }
 };
