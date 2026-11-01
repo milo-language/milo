@@ -1,5 +1,6 @@
 // Lowering of the source-level scalar ops (Milo.td, "Source-level ops"):
-//   milo-lower-structured-cf  milo.if/while/loop + yield/condition/break/continue -> cf
+//   milo-verify               rules that span ops (a !milo.ref never escapes a call)
+//   milo-lower-structured-cf  milo.if/while/loop/for + their jumps -> cf
 //   populateScalarToLLVMPatterns  milo arithmetic, casts, locals, return -> LLVM dialect,
 //                             used by convert-milo-to-llvm
 //
@@ -248,8 +249,9 @@ void branchToPanic(ConversionPatternRewriter &rw, Location loc, Value failed,
   rw.setInsertionPointToStart(cont);
 }
 
+// "milo: <what> at <file:line:col><tail>\n", the shape of every legacy panic message.
 LogicalResult panicIf(ConversionPatternRewriter &rw, Operation *op, Value bad,
-                      StringRef what) {
+                      StringRef what, StringRef tail = "") {
   auto pos = srcPos(op);
   if (failed(pos))
     return failure();
@@ -260,7 +262,7 @@ LogicalResult panicIf(ConversionPatternRewriter &rw, Operation *op, Value bad,
                                    LLVM::LLVMVoidType::get(rw.getContext()));
   if (failed(fn))
     return failure();
-  std::string msg = ("milo: " + what + " at " + pos->at() + "\n").str();
+  std::string msg = ("milo: " + what + " at " + pos->at() + tail + "\n").str();
   branchToPanic(rw, loc, bad, [&] {
     LLVM::CallOp::create(rw, loc, *fn, ValueRange{stringPtr(rw, loc, module, msg)});
   });
@@ -613,6 +615,48 @@ struct UnreachableLowering : ConvertOpToLLVMPattern<UnreachableOp> {
   }
 };
 
+struct CheckUnaliasedLowering : ConvertOpToLLVMPattern<CheckUnaliasedOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(CheckUnaliasedOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Value same = LLVM::ICmpOp::create(rw, op.getLoc(), LLVM::ICmpPredicate::eq,
+                                      a.getLhs(), a.getRhs());
+    if (failed(panicIf(rw, op, same, "aliasing '&mut' arguments",
+                       " (two mutable borrows of the same value in one call)")))
+      return failure();
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
+// milo-verify: rules no single op can check. A `!milo.ref` is second-class, like a Milo
+// `&T`: it may be a parameter or a call argument, never a result. Store, yield and
+// return already refuse one by operand type; this covers function and call signatures.
+struct VerifyPass : PassWrapper<VerifyPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyPass)
+  StringRef getArgument() const final { return "milo-verify"; }
+  StringRef getDescription() const final {
+    return "Check the rules of the source-level dialect that span ops";
+  }
+  void runOnOperation() override {
+    auto isRef = [](Type t) { return isa<RefType>(t); };
+    getOperation().walk([&](Operation *op) {
+      if (auto fn = dyn_cast<func::FuncOp>(op)) {
+        if (llvm::any_of(fn.getResultTypes(), isRef)) {
+          fn.emitOpError("returns a !milo.ref: a reference cannot outlive its call");
+          signalPassFailure();
+        }
+      } else if (auto call = dyn_cast<func::CallOp>(op)) {
+        if (llvm::any_of(call.getResultTypes(), isRef)) {
+          call.emitOpError("returns a !milo.ref: a reference cannot outlive its call");
+          signalPassFailure();
+        }
+      }
+    });
+  }
+};
+
 } // namespace
 
 void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
@@ -625,7 +669,10 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                BitLowering<AndOp, LLVM::AndOp>, BitLowering<OrOp, LLVM::OrOp>,
                BitLowering<XorOp, LLVM::XOrOp>, NotLowering, ConstLowering, CmpLowering,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
-               UnreachableLowering>(tc);
+               UnreachableLowering, CheckUnaliasedLowering>(tc);
 }
 
-void milo::registerScalarPasses() { PassRegistration<LowerStructuredCFPass>(); }
+void milo::registerScalarPasses() {
+  PassRegistration<LowerStructuredCFPass>();
+  PassRegistration<VerifyPass>();
+}

@@ -27,6 +27,7 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
 export const MLIR_PIPELINE = [
+  "--milo-verify",
   "--milo-lower-structured-cf",
   "--convert-milo-to-llvm",
   "--reconcile-unrealized-casts",
@@ -110,10 +111,16 @@ export class MlirPlan {
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     const stub = ["  unreachable", "mlir.stub.calls:", STUB_MARK];
-    for (const name of r.callees.keys()) {
-      const callee = this.fns.get(name)!;
-      const args = callee.params.map(p => `${this.cx.llvmType(p.type)} poison`).join(", ");
-      const sym = /^[-\w$.]+$/.test(name) ? name : `"${name}"`;
+    // A by-ref param passed on keeps its name, so the analysis sees where the pointer flows;
+    // everything else is a scalar or a slot of this frame, which reaches no global.
+    for (const call of r.calls) {
+      const callee = this.fns.get(call.name)!;
+      const args = callee.params.map((p, i) => {
+        const own = call.refParams[i];
+        if (p.isRef || p.isRefMut) return `ptr ${own == null ? "poison" : `%${fn.params[own].name}`}`;
+        return `${this.cx.llvmType(p.type)} poison`;
+      }).join(", ");
+      const sym = /^[-\w$.]+$/.test(call.name) ? call.name : `"${call.name}"`;
       stub.push(`  call ${this.cx.llvmType(callee.retType)} @${sym}(${args})`);
     }
     stub.push("  unreachable");
@@ -176,7 +183,11 @@ export class MlirPlan {
         if (!re.test(header)) throw new Error(`mlir: no param %${p.name} in ${header}`);
         header = header.replace(re, ` %${k}`);
       });
-      const sig = (h: string) => { const m = /^define [^@]*?(\S+) @[^(]*(\(.*\))/.exec(h); return m ? `${m[1]}${m[2]}` : h; };
+      // Return type and param types; param attributes (nonnull, noalias, ...) are legacy's.
+      const sig = (h: string) => {
+        const m = /^define [^@]*?(\S+) @[^(]*\((.*)\)/.exec(h);
+        return m ? `${m[1]}(${m[2].split(", ").map(p => p.split(" ")[0]).join(", ")})` : h;
+      };
       if (sig(header) !== sig(got.header)) throw new Error(`mlir: ABI mismatch for ${name}: legacy ${header} vs mlir ${got.header}`);
       out.push(header, ...got.body);
       while (lines[i] !== "}") i++;

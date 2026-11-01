@@ -6,6 +6,7 @@
 // CHECK-DAG: llvm.mlir.global private constant @{{.*}}("milo: division by zero at t.milo:4:9\0A\00")
 // CHECK-DAG: llvm.mlir.global private constant @{{.*}}("milo: division overflow (i32::MIN / -1) at t.milo:4:9\0A\00")
 // CHECK-DAG: llvm.mlir.global private constant @{{.*}}("milo: shift amount out of range (>= 16) at t.milo:6:2\0A\00")
+// CHECK-DAG: llvm.mlir.global private constant @{{.*}}("milo: aliasing '&mut' arguments at t.milo:8:3 (two mutable borrows of the same value in one call)\0A\00")
 
 // Signed add: sadd.with.overflow, the overflow routine with file and line on the failing
 // edge, the sum on the other.
@@ -178,4 +179,17 @@ func.func @locals() -> si32 {
 // CHECK-NEXT: llvm.unreachable
 func.func @unreachable() -> si32 {
   milo.unreachable
+}
+
+// Two by-ref args, one `&mut`: equal addresses panic with the legacy message.
+// CHECK-LABEL: llvm.func @unaliased
+// CHECK:   %[[EQ:.*]] = llvm.icmp "eq" %arg0, %arg1 : !llvm.ptr
+// CHECK:   llvm.cond_br %[[EQ]], ^[[BAD:bb[0-9]+]], ^[[OK:bb[0-9]+]]
+// CHECK: ^[[BAD]]:
+// CHECK:   llvm.call @__milo_mlir_panic
+// CHECK: ^[[OK]]:
+// CHECK-NEXT: llvm.return
+func.func @unaliased(%a: !milo.ref<si64>, %b: !milo.ref<f64>) {
+  milo.check_unaliased %a, %b : !milo.ref<si64>, !milo.ref<f64> loc("t.milo":8:3)
+  milo.return
 }

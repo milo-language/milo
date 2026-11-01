@@ -183,6 +183,15 @@ def Milo_LoadOp : Milo_Op<"load", [
   let assemblyFormat = "$ref attr-dict `:` type($ref)";
 }
 
+// Before a call with two by-ref arguments of which one is `&mut`: panics if they are the
+// same place. The checker rejects the aliasing it can prove; this is the runtime half, and
+// what makes `noalias` on a `&mut` param sound.
+def Milo_CheckUnaliasedOp : Milo_Op<"check_unaliased",
+    [MemoryEffects<[MemWrite<Milo_Panic>]>]> {
+  let arguments = (ins Milo_RefType:$lhs, Milo_RefType:$rhs);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs)";
+}
+
 def Milo_StoreOp : Milo_Op<"store", [
     TypesMatchWith<"value is the slot's type", "ref", "value",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {

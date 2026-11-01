@@ -1,0 +1,53 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): by-ref scalar
+// params (`&T`, `&mut T`) as !milo.ref values, passed on, read, written, and lent from a
+// `var`, a by-ref param and an immutable value.
+
+fn bump(n: &mut i64) { n += 1 }
+
+fn bumpTwice(n: &mut i64) {
+    bump(&mut n)
+    bump(&mut n)
+}
+
+fn addInto(dst: &mut i64, src: &i64) { dst = dst + src * 2 }
+
+fn swapish(a: &mut u8, b: &mut u8) {
+    let t = a
+    a = b
+    b = t + 1
+}
+
+fn readOnly(x: &f64): f64 { return x * 0.5 }
+
+fn sumTo(n: i64, acc: &mut i64) {
+    for i in 0..n { acc += i }
+}
+
+fn lend(x: i64): i64 {
+    var total: i64 = 0
+    addInto(&mut total, x)
+    let k: i64 = 7
+    addInto(&mut total, k)
+    bumpTwice(&mut total)
+    sumTo(10, &mut total)
+    return total
+}
+
+fn flip(b: &mut bool) { b = !b }
+
+fn main() {
+    var n: i64 = 40
+    bumpTwice(&mut n)
+    print(n)
+    var a: u8 = 3
+    var b: u8 = 250
+    swapish(&mut a, &mut b)
+    print(a)
+    print(b)
+    let h = 3.0
+    print(readOnly(h))
+    print(lend(5))
+    var t = false
+    flip(&mut t)
+    print(t)
+}

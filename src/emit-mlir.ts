@@ -63,7 +63,8 @@ function floatLit(v: number, ty: string): string {
 }
 
 interface Val { ref: string; ty: string }
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string };
+// A `var` is a slot; so is a by-ref param, whose slot is the caller's (`param` is its index).
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number };
 
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
@@ -77,6 +78,9 @@ class FnEmitter {
   private loops = 0;
   private scopes: Map<string, Binding>[] = [new Map()];
   readonly callees = new Map<string, string>();
+  // Each call, with the param index of every by-ref argument that is one of this fn's own
+  // by-ref params (null for anything else): what codegen's stub must reproduce.
+  readonly calls: { name: string; refParams: (number | null)[] }[] = [];
 
   constructor(private fn: HIRFunction, private cx: MlirEmitCtx, private fns: Map<string, HIRFunction>) {}
 
@@ -91,8 +95,11 @@ class FnEmitter {
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
     const params = fn.params.map((p, i) => {
-      if (p.isRef || p.isRefMut) throw new MlirUnsupported("by-ref param");
-      const ty = scalar(p.type, "param");
+      const ty = scalar(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
+      if (p.isRef || p.isRefMut) {
+        this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
+        return `%p${i}: !milo.ref<${ty}>`;
+      }
       this.bind(p.name, { kind: "ssa", v: { ref: `%p${i}`, ty } });
       return `%p${i}: ${ty}`;
     });
@@ -347,6 +354,21 @@ class FnEmitter {
     throw new MlirUnsupported(`unop ${e.op}`);
   }
 
+  /**
+   * The slot a by-ref argument borrows. A `var` or a by-ref param is its own slot; an
+   * immutable value lent as `&T` gets a fresh one, as legacy codegen spills it.
+   */
+  private place(e: HIRExpr, refTy: string): { ref: string; param?: number } {
+    if (e.kind !== "Ident") throw new MlirUnsupported(`by-ref arg ${e.kind}`);
+    const b = this.lookup(e.name);
+    if (`!milo.ref<${b.kind === "var" ? b.ty : b.v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
+    if (b.kind === "var") return { ref: b.ref, param: b.param };
+    const ref = this.fresh();
+    this.vars.push(`  ${ref} = milo.var ${quote(e.name)} : ${refTy}`);
+    this.emit(`milo.store ${b.v.ref}, ${ref} : ${refTy}`);
+    return { ref };
+  }
+
   private call(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
     if (e.variadic) throw new MlirUnsupported("variadic call");
     if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported("builtin call");
@@ -357,20 +379,41 @@ class FnEmitter {
     if (callee.isExtern && callee.linkName && callee.linkName !== callee.name) throw new MlirUnsupported("callee link name");
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
     const paramTys = callee.params.map((p, i) => {
-      if (p.isRef || p.isRefMut || e.args[i].passByRef) throw new MlirUnsupported("by-ref arg");
-      if (sig.paramTypes[i] !== this.cx.llvmType(p.type)) throw new MlirUnsupported("callee signature");
-      return scalar(p.type, "call arg");
+      const byRef = p.isRef || p.isRefMut;
+      if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
+      const ty = scalar(p.type, byRef ? "by-ref arg" : "call arg");
+      if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
+      return byRef ? `!milo.ref<${ty}>` : ty;
     });
     const ret = callee.retType.tag === "void" ? null : scalar(callee.retType, "call result");
     if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
+    const refs: { ref: string; mut: boolean; ty: string }[] = [];
+    const provenance: (number | null)[] = [];
     const args = e.args.map((a, i) => {
+      if (a.passByRef) {
+        const ref = this.place(a.expr, paramTys[i]);
+        refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
+        provenance.push(ref.param ?? null);
+        return ref.ref;
+      }
       const v = this.expr(a.expr);
       if (v.ty !== paramTys[i]) throw new MlirUnsupported("call arg type");
+      provenance.push(null);
       return v.ref;
     });
+    // As legacy genCall: after every argument, one check per pair with a `&mut`; a pair
+    // that is the same SSA value is the same static place, which the checker already
+    // rejected.
+    for (let i = 0; i < refs.length; i++) {
+      for (let j = i + 1; j < refs.length; j++) {
+        if ((!refs[i].mut && !refs[j].mut) || refs[i].ref === refs[j].ref) continue;
+        this.emit(`milo.check_unaliased ${refs[i].ref}, ${refs[j].ref} : ${refs[i].ty}, ${refs[j].ty} ${this.loc(e.span)}`);
+      }
+    }
     const fnTy = `(${paramTys.join(", ")}) -> ${ret === null ? "()" : ret}`;
     this.callees.set(e.func, fnTy);
+    this.calls.push({ name: e.func, refParams: provenance });
     const call = `func.call @${quote(e.func)}(${args.join(", ")}) : ${fnTy}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
     return this.def(call, ret);
@@ -382,13 +425,14 @@ export interface MlirFunction {
   text: string;
   /** Every function it calls, with the dialect's function type. */
   callees: Map<string, string>;
+  calls: FnEmitter["calls"];
 }
 
 /** `fn` in the dialect, or the reason it stays on legacy codegen. */
 export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<string, HIRFunction>): MlirFunction | string {
   const em = new FnEmitter(fn, cx, fns);
   try {
-    return { name: fn.name, text: em.run(), callees: em.callees };
+    return { name: fn.name, text: em.run(), callees: em.callees, calls: em.calls };
   } catch (err) {
     if (err instanceof MlirUnsupported) return err.reason;
     throw err;
