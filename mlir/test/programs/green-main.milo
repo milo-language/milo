@@ -1,0 +1,30 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a main that spawns
+// green tasks, so codegen wraps it (greenMainEntry) and main's own body is the internal
+// `__milo_main_body`, called with nothing by the main task. Its locals, a closure
+// handed to a task, a channel the tasks talk over, and its drops at the end.
+
+from "std/runtime" import { Task }
+from "std/sync" import { Channel }
+
+fn main() {
+    let ch = Channel<i64>.new(1)!
+    let done = Channel<i64>.new(1)!
+    let rx = ch.clone()
+    let tx = done.clone()
+    let label = "sum" + "="
+    Task.spawn(move(): void => {
+        var total: i64 = 0
+        var i = 0
+        while i < 4 {
+            total = total + rx.recv()!
+            i = i + 1
+        }
+        let _ = tx.send(total)
+    })
+    var k: i64 = 1
+    while k <= 4 {
+        let _ = ch.send(k * 10)
+        k = k + 1
+    }
+    print(label, done.recv()!)
+}

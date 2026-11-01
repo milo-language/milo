@@ -39,6 +39,9 @@ export interface MlirEmitCtx {
   readonly retainingLibc: ReadonlySet<string>;
 }
 
+// What codegen names main's body behind the green-task wrapper (Codegen.MAIN_BODY_FN).
+export const MAIN_BODY = "__milo_main_body";
+
 export class MlirUnsupported extends Error {
   constructor(readonly reason: string) { super(`mlir: unsupported ${reason}`); }
 }
@@ -453,9 +456,11 @@ class FnEmitter {
     if (fn.isExtern) throw new MlirUnsupported("extern fn");
     if (fn.isVariadic) throw new MlirUnsupported("variadic fn");
     // main's prologue (argc/argv, global init, stdout buffering) is legacy codegen's; the
-    // splice keeps it. Behind a green-task wrapper main is another function, left legacy.
+    // splice keeps it. Behind a green-task wrapper main's body is MAIN_BODY, which the
+    // wrapper's task calls with nothing and takes its i32 as the exit code.
     const isMain = fn.name === "main";
-    if (isMain && (!this.cx.mlirMainOk || fn.params.length || fn.retType.tag !== "void")) throw new MlirUnsupported("main");
+    if (isMain && (fn.params.length || fn.retType.tag !== "void")) throw new MlirUnsupported("main");
+    const green = isMain && !this.cx.mlirMainOk;
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     const params = fn.params.map((p, i) => {
@@ -496,7 +501,7 @@ class FnEmitter {
       return `%p${i}: ${ty}`;
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0, as legacy emits it.
-    if (isMain) params.push("%argc: si32", `%argv: ${PTR}`);
+    if (isMain && !green) params.push("%argc: si32", `%argv: ${PTR}`);
     // An sret function (a 128+ byte result) writes its result through `%out`, the hidden
     // first param of legacy's `void @f(ptr %__sret.out, ...)`, and returns nothing.
     if (this.cx.sretFns.has(fn.name)) {
@@ -517,7 +522,7 @@ class FnEmitter {
       else if (ret === null) this.ret("milo.return");
       else this.emit("milo.unreachable");
     }
-    const head = `func.func @${quote(fn.name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} {`;
+    const head = `func.func @${quote(green ? MAIN_BODY : fn.name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} {`;
     return [head, ...this.vars, ...this.body, "}"].join("\n");
   }
 
@@ -3045,7 +3050,7 @@ export function emitMlirFunction(fn: HIRFunction, cx: MlirEmitCtx, fns: Map<stri
   const em = new FnEmitter(fn, cx, fns);
   try {
     const text = em.run();
-    return { name: fn.name, text: [text, ...em.closures.texts].join("\n"), callees: em.callees, calls: em.calls, closures: em.closures.names };
+    return { name: fn.name === "main" && !cx.mlirMainOk ? MAIN_BODY : fn.name, text: [text, ...em.closures.texts].join("\n"), callees: em.callees, calls: em.calls, closures: em.closures.names };
   } catch (err) {
     if (err instanceof MlirUnsupported) return err.reason;
     throw err;
