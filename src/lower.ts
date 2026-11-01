@@ -1408,13 +1408,6 @@ class LowerCtx {
           if (expr.method === "push") {
             return { kind: "VecPush", vec: recv(), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
-          if (expr.method === "join") {
-            const args: HIRArg[] = [
-              { expr: recv(), passByRef: true, refMut: false },
-              { expr: this.lowerExpr(expr.args[0]), passByRef: true, refMut: false },
-            ];
-            return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
-          }
           if (expr.method === "insert") {
             return { kind: "VecInsert", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
           }

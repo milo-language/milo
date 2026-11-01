@@ -261,6 +261,21 @@ impl Vec<T> {
         return out
     }
 
+    // The elements joined into one string with `sep` between each pair. The checker
+    // allows this on a Vec<string> only.
+    fn join(self: &Self, sep: &string): string {
+        var result: string = ""
+        var i = 0
+        for part in self {
+            if i > 0 {
+                result += sep
+            }
+            result += part
+            i = i.wrappingAdd(1)
+        }
+        return result
+    }
+
     // A new Vec of copies of the elements `f` holds for, in order. The copies are
     // _vecCopyOut's, as clone's are. Its capacity is the source length (every element
     // might match), as the builtin allocated it.

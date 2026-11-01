@@ -610,17 +610,6 @@ fn strSplitWhitespace(s: &string): Vec<string> {
     return result
 }
 
-fn vecJoin(parts: &Vec<string>, sep: &string): string {
-    var result: string = ""
-    for i in 0..parts.len {
-        if i > 0 {
-            result += sep
-        }
-        result += parts[i]
-    }
-    return result
-}
-
 // True if `s` has zero length.
 fn strIsEmpty(s: &string): bool {
     return s.len == 0

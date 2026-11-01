@@ -447,3 +447,11 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   codegen's `callbackElemArg` lost their last callers. Planted `f(src[0])` turns
   `vecMapStd` red; output identical; live heap equal (187 blocks both); 22 corpus files
   pass; bench 1.5M maps of 256 i64 + 256 strings 0.23s builtin vs 0.24s std.
+- 2026-11-01: `join` moved: it was already Milo (std/string's `vecJoin`, which lowering
+  called by name), so it became the `impl Vec<T>` method (`for part in self`, instantiated
+  only for the Vec<string> the checker allows) and `vecJoin` left std/string, lowering and
+  `COMPILER_KNOWN_STD_HELPERS`. The separator is still passed as `&string`. Planted `i > 1`
+  turns `vecJoinStd` red; output identical; live heap equal; 40 corpus files pass; bench
+  1M joins of 64 strings 0.80s builtin vs 0.56s std (for-in drops the index bounds checks
+  vecJoin's `parts[i]` paid). src-milo's resolver still lists vecJoin; it lags, as allowed.
+  Step 3 done.

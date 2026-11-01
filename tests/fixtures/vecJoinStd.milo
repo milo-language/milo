@@ -1,0 +1,40 @@
+// Vec<string>.join is std/vec.milo code (it was std/string's vecJoin, called by name from
+// lowering). Covers an empty Vec, one element, an empty separator, a multi-byte separator,
+// empty elements, a separator built at runtime and a `&string` separator parameter, a
+// slice and a fixed array as the receiver, a temporary receiver, and a capture.
+// @expect: []
+// @expect: solo
+// @expect: acd a→→cd a, , cd
+// @expect: a<><>cd <>
+// @expect: |cd x+y
+// @expect: 0 1 2 3
+// @expect: a//cd
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push(i.toString())
+    }
+    return v
+}
+
+fn joinView(s: &[string], sep: &string): string {
+    return s.join(sep)
+}
+
+fn main() {
+    let e: Vec<string> = Vec.new()
+    print("[", e.join(", "), "]")
+    let one: Vec<string> = ["solo"]
+    print(one.join("-"))
+    let v: Vec<string> = ["a", "", "c" + "d"]
+    print(v.join(""), " ", v.join("→"), " ", v.join(", "))
+    let sep = "<" + ">"
+    print(v.join(sep), " ", sep)
+    print(joinView(v[1..3], "|"), " ", ["x", "y"].join("+"))
+    print(mk(4).join(" "))
+    let f = () => {
+        print(v.join("/"))
+    }
+    f()
+}

@@ -13535,7 +13535,9 @@ export class TypeChecker {
         if (objType.element.tag !== "string") { this.error(`'join' is only available on Vec<string>`, sp); return this.setType(expr, { tag: "unknown" }); }
         const sepType = this.checkExpr(expr.args[0]);
         if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${this.show(sepType)}`, sp); }
-        return this.setType(expr, { tag: "string" });
+        // std/vec's join takes the separator as `&string`, as std/string's vecJoin did.
+        this.autoBorrow(expr.args[0]!, { mutable: false });
+        return this.bindStdVecMethod(expr, objType.element, "join", { tag: "string" }, { mutable: false });
       }
       // The callback methods are std/vec code. The callback is checked with the receiver
       // frozen (borrowsForCallback), as the builtins did: it may read the Vec, not change it.
