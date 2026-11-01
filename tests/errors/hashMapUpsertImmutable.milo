@@ -1,0 +1,9 @@
+// @error: cannot upsert on an immutable HashMap
+// A `&mut Self` method from a container impl (here std/prelude's `HashMap.upsert`) needs a
+// mutable receiver, as the builtin mutating methods do. It used to compile and write
+// through the `let`.
+fn main() {
+    let m: HashMap<string, i64> = HashMap.new()
+    m.upsert("a", 0, (c: &mut i64): void => { c += 1 })
+    print(m.len)
+}

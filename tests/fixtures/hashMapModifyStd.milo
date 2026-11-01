@@ -2,7 +2,7 @@
 // place (a `&mut V` into the table) and modify says whether the key was there. Dense
 // tables, tombstones from remove, string and struct keys, Vec/string/struct values
 // grown in place, a callback that reads the map it is modifying, upsert (built on
-// modify), a temporary key and a temporary receiver.
+// modify) and a temporary key. A temporary receiver is refused: modify takes &mut Self.
 struct Pt { x: i64, y: i64 }
 
 struct Bag { name: string, xs: Vec<i64> }
@@ -67,8 +67,9 @@ fn main() {
     print(counts.get("x") ?? 0)
     print(counts.len)
 
-    print(squares(50).modify(49 * 49, (v: &mut i64): void => { v = 0 }))
-    print(squares(50).modify(50 * 50, (v: &mut i64): void => { v = 0 }))
+    var sq = squares(50)
+    print(sq.modify(49 * 49, (v: &mut i64): void => { v = 0 }))
+    print(sq.modify(50 * 50, (v: &mut i64): void => { v = 0 }))
 }
 // @expect: 666
 // @expect: 3326670

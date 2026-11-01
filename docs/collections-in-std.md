@@ -155,3 +155,10 @@ special cases.
   0.37s vs 0.37s; hit path 0.58s builtin vs 0.61s std. Both inline fully and keep the map
   in registers; the -O2 loops differ in shape (the builtin's state test is one `switch`,
   the std loop two compares plus a rotated loop), which is the remaining ~4%.
+- 2026-11-01: a `&mut Self` method from a container impl (std `impl HashMap<K, V>`, a user
+  `impl Vec<T>` or `impl string`) now requires a mutable receiver, one rule in
+  `refuseImmutableContainer` for both dispatch paths (it replaces remove's special
+  case and keeps remove's wording). `let m = HashMap.new(); m.upsert(...)` compiled and
+  wrote through the `let` (`hashMapUpsertImmutable`). modify on a temporary is refused
+  now, as insert and remove already were. Not changed: a user struct's `&mut self`
+  method on a `let` still compiles.

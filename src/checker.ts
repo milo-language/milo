@@ -5903,11 +5903,35 @@ export class TypeChecker {
   // call-site exclusivity rule is not applied. That is the builtin callback methods' rule
   // (borrowDuringCallback): the callback may read the receiver but not insert into or
   // remove from it, where exclusivity would refuse any capture of it at all.
+  // A `&mut Self` method of a builtin container's impl (std's `impl HashMap<K, V>`, a
+  // user `impl Vec<T>` or `impl string`) on an immutable receiver: a `let` binding, a `&`
+  // parameter or a temporary. The builtin mutating methods each refuse these; autoBorrow
+  // does not, so `let m = HashMap.new(); m.upsert(...)` compiled and wrote through the
+  // `let`. (A user struct's `&mut self` method on a `let` is not refused either; that is
+  // the struct rule, left alone here.)
+  private refuseImmutableContainer(expr: ExprOf<"MethodCall">, sp: Span | undefined): boolean {
+    const t = this.exprTypes.get(expr.object);
+    const recv = t?.tag === "ref" ? t.inner : t;
+    const name = recv?.tag === "hashmap" ? "HashMap" : recv?.tag === "vec" ? "Vec" : recv?.tag === "string" ? "string" : null;
+    if (name === null || this.isRootMutable(expr.object)) return false;
+    // `remove` keeps the wording the builtin used; the rest read like the builtin Vec
+    // methods' "cannot retain on an immutable Vec".
+    const msg = expr.method === "remove" && name === "HashMap"
+      ? `cannot remove from immutable HashMap`
+      : `cannot ${expr.method} on an immutable ${name}`;
+    this.error(msg, sp, `declare with 'var' to make it mutable`);
+    return true;
+  }
+
   private dispatchMangledMethod(expr: Extract<Expr, { kind: "MethodCall" }>, mangled: string, sp?: Span, borrowsForCallback = false): TypeKind {
     const sig = must(this.functions, mangled, "instantiated method");
     const selfParam = sig.params[0];
     if (selfParam?.type.tag === "ref") {
       if (selfParam.type.mutable) {
+        if (this.refuseImmutableContainer(expr, sp)) {
+          for (const a of expr.args) this.checkExpr(a);
+          return this.setType(expr, sig.ret);
+        }
         if (!this.collectionGuarded.has(expr)) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
         this.errorIfCopyBind(expr.object, expr.method, sp);
       }
@@ -13568,13 +13592,6 @@ export class TypeChecker {
         this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });
       }
-      // std/hashmap's remove takes `&mut Self`, which does not by itself refuse an
-      // immutable binding, a `&HashMap` or a temporary.
-      if (expr.method === "remove" && !this.isRootMutable(expr.object)) {
-        this.error(`cannot remove from immutable HashMap`, sp, `declare with 'var' to make it mutable`);
-        for (const a of expr.args) this.checkExpr(a);
-        return this.setType(expr, { tag: "void" });
-      }
       // The copying lookups are std/hashmap code; the copy-out rule stays here so a
       // resource value is refused at the call, before the std body is instantiated.
       if ((expr.method === "get" || expr.method === "getOrDefault") &&
@@ -13902,6 +13919,10 @@ export class TypeChecker {
       const selfParam = sig.params[0];
       if (selfParam) {
         if (selfParam.type.tag === "ref") {
+          if (selfParam.type.mutable && this.refuseImmutableContainer(expr, sp)) {
+            for (const a of expr.args) this.checkExpr(a);
+            return this.setType(expr, sig.ret);
+          }
           // a `&var self` method may mutate the receiver — same hazard as builtins
           if (selfParam.type.mutable) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
           if (selfParam.type.mutable) this.errorIfCopyBind(expr.object, expr.method, sp);
