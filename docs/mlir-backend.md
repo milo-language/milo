@@ -458,7 +458,19 @@ structs, enums.
   `--owned` red: one more live block). `s.cstr()` through MLIR (the
   fifth batch's StringCstr helper takes the place by reference) never made an owned
   local unique first, where legacy does; it does now (program `cstr-unique`, stdout red
-  without it: C's write reached the shared copy).
+  without it: C's write reached the shared copy). Corpus: 417093 (86.2%); Tahoe Roads
+  api: 4525 (84.6%).
+- *Builtins that only read their operands* (atomics, exit, flush, `_cstrToString`,
+  `_bytesToString`, `_strDataPtr`, `_miloArgAt` and the other byte and scheduler
+  accessors; `HELPER_BUILTINS`): legacy's code for each in a legacy function per
+  builtin, operand shape and call site (`milo.builtin.*`), a by-ref operand as its
+  place. Program `builtins`; its prints are in a function of their own because a
+  temporary in this backend dies at the end of its block, and `exit` before the end of
+  main's block leaves one more live block at exit than legacy, which drops it at the
+  end of the statement (only the live-block count can see it). Planted bug: a string
+  result not owned (`builtins` `--owned` red at -O0: one more live block). `exit` ends
+  its path as a jump does (HIR types it void): `take(s); exit(1)` on one branch then
+  `print(s)` failed drop elaboration ("may be empty"), caught by `exitDivergesMoves`.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

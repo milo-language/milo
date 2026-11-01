@@ -1,0 +1,51 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: builtins taken as a call of a legacy function per builtin and call
+// site (milo.builtin.*): the atomics on i64, i32 and bool, string from C bytes and back,
+// argument access, a byte load, and exit with a status after flushing.
+
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8)
+
+fn atomics(): i64 {
+    unsafe {
+        let p = malloc(16)
+        _atomicStoreI64(p, 40)
+        let a = _atomicAddI64(p, 5)
+        let s = _atomicSubI64(p, 3)
+        let w = _atomicSwapI64(p, 100)
+        let c = _atomicCasI64(p, 100, 7)
+        let q = (p as i64 + 8) as *u8
+        _atomicStoreI32(q, 9)
+        let b = _atomicAddI32(q, 1)
+        _atomicStoreBool(q, true)
+        let t = _atomicLoadBool(q)
+        let r = a * 1000000 + s * 10000 + w * 10 + _atomicLoadI64(p) + (b as i64) * 100000000
+        free(p)
+        return if t { r } else { -r }
+    }
+}
+
+fn strings(): string {
+    let s = "bytes!"
+    unsafe {
+        let d = _strDataPtr(s)
+        let back = _bytesToString(d, 5)
+        let c = _cstrToString(d)
+        return back + "/" + c + "/" + (_loadU8(d) as i64).toString()
+    }
+}
+
+// The prints in a function of their own: a temporary dies at the end of its block here,
+// and exit comes before the end of main's (legacy drops it at the end of the statement).
+fn run() {
+    print(atomics())
+    print(strings())
+    print(_miloArgCount(), " ", _miloArgAt(0).len() > 0)
+}
+
+fn main() {
+    run()
+    flush()
+    exit(3)
+}

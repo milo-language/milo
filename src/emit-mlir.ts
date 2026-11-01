@@ -297,6 +297,11 @@ function withoutFnTypes(ty: string): string {
 // What the closure bodies of one top-level function share: their names and texts.
 interface ClosureState { next: number; texts: string[]; names: string[] }
 
+// Builtins taken as a call of a legacy function doing exactly them (builtinCall): they
+// read their operands and touch nothing of the caller's frame. exit never returns, so
+// nothing after it runs either way.
+const HELPER_BUILTINS = /^(_atomic\w+|exit|flush|_cstrToString|_bytesToString|_strDataPtr|_putByte|_loadU8|_loadI32|_callClosureVoid|_schedulerGet|_schedulerSet|_panicHookSet|_miloArgCount|_miloArgAt)$/;
+
 const ARITH: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<<": "shl", ">>": "shr" };
 const BITS: Record<string, string> = { "&": "and", "|": "or", "^": "xor" };
 const CMPS: Record<string, string> = { "==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
@@ -873,6 +878,12 @@ class FnEmitter {
       }
       case "ExprStmt": {
         if (this.isSretCall(s.expr)) { this.bigSlot("tmp", s.expr, true); return false; }
+        if (this.diverges(s.expr)) {
+          // `exit(…)` and friends do not return: the path ends here, as for a jump.
+          this.expr(s.expr, true);
+          this.emit("milo.unreachable");
+          return true;
+        }
         const v = this.expr(s.expr, true);
         if (v.ty && runsUserDrop(v.ty) && v.own === "owned") {
           // A result nobody takes runs its user Drop at the end of the statement, as
@@ -1578,7 +1589,7 @@ class FnEmitter {
   private tail(body: HIRStmt[], ty: string): true | Val {
     const last = body[body.length - 1];
     if (this.stmts(body.slice(0, -1))) return true;
-    if (last?.kind !== "ExprStmt") {
+    if (last?.kind !== "ExprStmt" || this.diverges(last.expr)) {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
@@ -1601,7 +1612,7 @@ class FnEmitter {
   private tailInto(body: HIRStmt[], dst: string, ty: string): boolean {
     const last = body[body.length - 1];
     if (this.stmts(body.slice(0, -1))) return true;
-    if (last?.kind !== "ExprStmt") {
+    if (last?.kind !== "ExprStmt" || this.diverges(last.expr)) {
       if (last && this.stmt(last)) return true;
       throw new MlirUnsupported("value block without a value");
     }
@@ -2242,6 +2253,53 @@ class FnEmitter {
     return this.callHelper(name, args, ret);
   }
 
+  /**
+   * A builtin that only reads its operands (HELPER_BUILTINS): legacy's code for it in a
+   * legacy function per builtin, operand shape and call site. A by-ref operand goes as
+   * its place; the others are scalars or pointers by value. A string result is owned.
+   */
+  private builtinCall(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+    const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
+    const args: string[] = [];
+    const keys: string[] = [];
+    const mark = this.pending;
+    e.args.forEach((a, k) => {
+      const t = stripRefs(a.expr.type);
+      const name = `a${k}`;
+      if (a.passByRef) {
+        const ty = this.value(t, "builtin operand");
+        const r = this.place(a.expr, refOf(ty), a.refMut).ref;
+        params.push({ name, type: t, isRef: !a.refMut, isRefMut: a.refMut });
+        args.push(`${r} : ${refOf(ty)}`);
+        keys.push(`r${typeKey(t)}`);
+        return;
+      }
+      const v = this.pend(this.expr(a.expr));
+      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`builtin operand of type ${t.tag}`);
+      params.push({ name, type: t, isRef: false, isRefMut: false });
+      args.push(`${v.ref} : ${v.ty}`);
+      keys.push(typeKey(t));
+    });
+    this.pending = mark;
+    const ret = e.type.tag === "void" || e.type.tag === "never" ? null : this.value(e.type, "builtin result");
+    if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("builtin result type");
+    if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
+    const l = e.span ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : null;
+    const site = l ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
+    const name = this.cx.mlirHelper(`milo.builtin.${e.func}.${keys.join(".")}${site}`, () => {
+      const call: HIRExpr = { ...e, args: e.args.map((a, k) => ({ ...a, expr: { kind: "Ident", name: params[k].name, type: params[k].type, isMove: false } })) };
+      return { params, retType: ret === null ? { tag: "void" } : e.type, trackedCaller: this.fn.trackedCaller,
+        body: [ret === null ? { kind: "ExprStmt", expr: call } : { kind: "Return", retType: e.type, value: call }] };
+    });
+    const r = this.callHelper(name, args, ret);
+    return ret === STR ? { ...r, own: "owned" } : r;
+  }
+
+  /** `e` never returns: a `never` value, or the builtin exit (typed void in HIR). */
+  private diverges(e: HIRExpr): boolean {
+    return e.type.tag === "never" || (e.kind === "Call" && e.func === "exit" && this.cx.isBuiltinName("exit"));
+  }
+
   /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */
   private ownedLocal(e: HIRExpr): boolean {
     if (e.kind === "Ident") {
@@ -2253,7 +2311,10 @@ class FnEmitter {
 
   private call(e: HIRExpr & { kind: "Call" }, stmt: boolean, into?: string): Val {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
-    if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported(`builtin ${e.func}`);
+    if (this.cx.isBuiltinName(e.func)) {
+      if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
+      throw new MlirUnsupported(`builtin ${e.func}`);
+    }
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
     if (callee?.isExtern && sig && (e.variadic || e.args.some((a, i) => !a.passByRef && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] !== "%String")))
