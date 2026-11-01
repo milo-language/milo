@@ -1,0 +1,35 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `s.pushStr(x)` (milo.string.append, legacy's pushStr) onto a local,
+// a field, a `&mut` param, a shared copy (made unique first), itself, and from
+// temporaries that die after it.
+
+struct Doc { title: string, body: string }
+
+fn shout(s: &string): string { return s + "!" }
+
+fn grow(out: &mut string, n: i64) {
+    for i in 0..n {
+        out.pushStr(i.toString())
+        out.pushStr(",")
+    }
+}
+
+fn main() {
+    var s = "ab"
+    s.pushStr("cd")
+    s.pushStr(shout(s))
+    let shared = s
+    s.pushStr("-tail")
+    s.pushStr(s)
+    print(s, " ", shared, " ", s.len())
+
+    var d = Doc { title: "T", body: "" }
+    d.body.pushStr("line1")
+    d.title.pushStr(d.body)
+    grow(&mut d.body, 4)
+    print(d.title, " ", d.body)
+
+    var big = ""
+    for i in 0..1000 { big.pushStr("xyz") }
+    print(big.len())
+}

@@ -1255,6 +1255,16 @@ class FnEmitter {
         return this.match(e, this.value(e.type, "match-expression")).v;
       }
       case "Propagate": return this.propagate(e);
+      case "StringPushStr": {
+        // `s.pushStr(x)`: the place, then x, as legacy genStringPushStr; milo.string.append
+        // is legacy's pushStr (unique first, then grow; `s.pushStr(s)` re-based).
+        const dst = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
+        const x = this.borrow(this.expr(e.other), e.other.type);
+        if (x.ty !== STR) throw new MlirUnsupported("pushStr of a non-string");
+        this.stringHelpers();
+        this.emit(`milo.string.append ${dst}, ${x.ref} : !milo.ref<${STR}>`);
+        return { ref: "", ty: "" };
+      }
       case "ArrayLit": {
         if (e.type.tag !== "vec") throw new MlirUnsupported("array literal as a value");
         const ty = this.value(e.type, "Vec literal");
@@ -1865,6 +1875,23 @@ class FnEmitter {
     return this.def(call, ret);
   }
 
+  /** The legacy functions milo.string.concat and milo.string.append lower to. */
+  private stringHelpers(): void {
+    const str: TypeKind = { tag: "string" };
+    this.cx.mlirHelper("milo.string.concat", () => ({
+      params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
+      retType: str,
+      body: [{ kind: "Return", retType: str, value: { kind: "BinOp", op: "+", type: str,
+        left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
+    }));
+    this.cx.mlirHelper("milo.string.append", () => ({
+      params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "x", type: str, isRef: true, isRefMut: false }],
+      retType: { tag: "void" },
+      body: [{ kind: "ExprStmt", expr: { kind: "StringPushStr", type: { tag: "void" },
+        str: { kind: "Ident", name: "s", type: str, isMove: false }, other: { kind: "Ident", name: "x", type: str, isMove: false } } }],
+    }));
+  }
+
   /**
    * `a == b`, `a < b`, `a + b` on strings: a call of a legacy function doing exactly that
    * to two borrowed strings, so comparison and concatenation are legacy's.
@@ -1878,18 +1905,7 @@ class FnEmitter {
     const str: TypeKind = { tag: "string" };
     if (op === "concat") {
       // Both helpers: milo-append-in-place may turn `s = s + x` into the append.
-      this.cx.mlirHelper("milo.string.concat", () => ({
-        params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
-        retType: str,
-        body: [{ kind: "Return", retType: str, value: { kind: "BinOp", op: "+", type: str,
-          left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
-      }));
-      this.cx.mlirHelper("milo.string.append", () => ({
-        params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "x", type: str, isRef: true, isRefMut: false }],
-        retType: { tag: "void" },
-        body: [{ kind: "ExprStmt", expr: { kind: "StringPushStr", type: { tag: "void" },
-          str: { kind: "Ident", name: "s", type: str, isMove: false }, other: { kind: "Ident", name: "x", type: str, isMove: false } } }],
-      }));
+      this.stringHelpers();
       return { ...this.def(`milo.string.concat ${l.ref}, ${r.ref}`, STR), own: "owned" };
     }
     const slot = (v: Val) => {
