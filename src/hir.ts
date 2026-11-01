@@ -68,7 +68,8 @@ export type HIRExpr =
   // length null is clear(): no boundary to check
   | { kind: "StringTruncate"; str: HIRExpr; length: HIRExpr | null; type: TypeKind; span?: Span }
   | { kind: "StringSetByte"; str: HIRExpr; index: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "StringSubstr"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
+  // std/string `_strRangeCheck(s, start, end)`: substr's range panic, then nothing.
+  | { kind: "StrRangeCheck"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSlice"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecSlice"; vec: HIRExpr; start: HIRExpr; end: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   // A slice view over memory Milo did not allocate: `std/foreign`'s rawSlice/rawSliceMut.
@@ -80,7 +81,6 @@ export type HIRExpr =
   // both are the pointer the caller supplied, re-labelled as something with drop glue.
   // `len` is present only for the vec form.
   | { kind: "Adopt"; ptr: HIRExpr; len?: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "StringFind"; str: HIRExpr; needle: HIRExpr; from?: HIRExpr; reverse: boolean; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "StringClone"; str: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "NumberToString"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "BoolToString"; value: HIRExpr; type: TypeKind; span?: Span }

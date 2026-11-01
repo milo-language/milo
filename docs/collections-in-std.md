@@ -570,3 +570,34 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   with no source to end, an unconsumed read owns nothing. Still live: dropping the
   StringClone wrapper on a shared string (lower.ts) gives 13 new own-of-view findings
   over the sharedString* fixtures and fails --check. 1037 fixtures, 0 findings.
+||||||| parent of fec3a834 (move string indexof family and substr into std/string.milo)
+- 2026-11-01: `genericUserFnShadowsBuiltin` was red since sortByKey moved (8bdf9cad): its
+  private `fn forget<T>` took std/vec's `forget(kp)` call ("'forget' is private to ...").
+  A call from a std collection module now always means the builtin
+  (`userFnShadowsBuiltin` with the call's file; the visibility pass skips the same names
+  there): those modules define none of `forget`, `swap`, `replace`, `isNull`, `old`.
+- 2026-11-01: `genericUserFnShadowsBuiltin` was red since sortByKey moved (8bdf9cad): its
+  private `fn forget<T>` took std/vec's `forget(kp)` call ("'forget' is private to ...").
+  A call from a std collection module now always means the builtin
+  (`userFnShadowsBuiltin` with the call's file; the visibility pass skips the same names
+  there): those modules define none of `forget`, `swap`, `replace`, `isNull`, `old`.
+- 2026-11-01: phase 3 begins. `indexOf`, `indexOfFrom`, `lastIndexOf` and `substr` are
+  std/string.milo's `impl string` (the first `impl string` anywhere). The checker keeps the
+  builtin branches (arity, argument types and their wordings, any int for `from` and the
+  substr bounds, which lowering widens) and binds the std body (`bindStdStringMethod`,
+  the needle auto-borrowed as `&string`). The find family wraps the same raw helpers the
+  builtin called (strIndexOfFrom, strLastIndexOf) in `strFound`, so the semantics are
+  those helpers': byte offsets, an empty needle found at `from` even past the end, a
+  negative `from` finding nothing in a release build (and failing strIndexOfFrom's
+  `requires` in a debug build, as before). substr is `@inline @trackCaller`: a std/string
+  only intrinsic `_strRangeCheck(s, a, b)` emits emitStringRangeCheck, so the panic text
+  and caller's line:col are the builtin's (`runtime-errors/substrRangeFail` unchanged;
+  with @trackCaller dropped it names std/string.milo:838); the copy is a
+  `String.withCapacity(n + 1)` (the builtin's n + 1 bytes and cap) filled by memcpy
+  through a `StrHead` view. std/string.milo joins the std collection modules (`@inline`,
+  `@trackCaller`, the `@pure` exemption). Planted: `i < 1` in strFound turns
+  `strIndexOfStd` red; a source offset of start + 1 turns `strSubstrStd` red. Output
+  identical to the old compiler; live heap equal (184 blocks both); ASan clean; 40 corpus
+  files calling these pass. Bench (cpu, median of 5): 1M rounds of indexOf/lastIndexOf/
+  indexOfFrom/substr over a 1.3 KB string 1.32s builtin vs 1.32s std; 20M short substrs
+  0.56s vs 0.57s. codegen-string.ts 534 -> 442 lines.

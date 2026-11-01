@@ -41,7 +41,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
 | `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
 | `src/codegen-runtime.ts` | Fixed LLVM IR runtime helpers (string buffers, int formatting), kept as IR text in src/runtime/str.ll. |
-| `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, substr, find, number/bool to string), extracted to keep codegen.ts manageable. |
+| `src/codegen-string.ts` | String method lowering (concat, compare, push, slice, number/bool to string), extracted to keep codegen.ts manageable. |
 | `src/codegen-vec.ts` | Vec method codegen helpers — extracted to keep codegen.ts manageable. |
 | `src/codegen.ts` | HIR -> LLVM IR emission, including drop glue, monomorphization and the per-target calling conventions. |
 | `src/contract-tests.ts` | src/contract-tests — `milo test --contracts`: property tests written by the contracts. |

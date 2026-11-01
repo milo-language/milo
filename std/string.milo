@@ -795,3 +795,58 @@ fn strReplaceFirst(s: &string, old: &string, newVal: &string): string {
     let idx = found
     return s.substr(0, idx) + newVal + s.substr(idx + old.len, s.len)
 }
+
+// The %String layout {data, len, cap}, for the `impl string` bodies below to write through
+// `s.addrOf()` (string has no field syntax). A heap buffer has its refcount word just
+// below `_data` (src/runtime/str.ll); cap 0 means static or borrowed bytes.
+struct StrHead {
+    _data: *u8,
+    _len: i64,
+    _cap: i64,
+}
+
+// The -1 sentinel of the raw search helpers as an Option. The variants are qualified: a
+// user fn named `Some` shadows the bare alias program-wide (fixture preludeVariantsShadowed).
+fn strFound(i: i64): Option<i64> {
+    if i < 0 {
+        return Option.None
+    }
+    return Option.Some(i)
+}
+
+impl string {
+    // The byte offset of the first `needle`, or None. An empty needle is found at 0.
+    fn indexOf(self: &Self, needle: &string): Option<i64> {
+        return strFound(strIndexOfFrom(self, needle, 0))
+    }
+
+    // indexOf starting at byte offset `from`. A negative `from` finds nothing; an empty
+    // needle is found at `from`, even past the end.
+    fn indexOfFrom(self: &Self, needle: &string, from: i64): Option<i64> {
+        return strFound(strIndexOfFrom(self, needle, from))
+    }
+
+    // The byte offset of the last `needle`, or None. An empty needle is found at len.
+    fn lastIndexOf(self: &Self, needle: &string): Option<i64> {
+        return strFound(strLastIndexOf(self, needle))
+    }
+
+    // A copy of bytes [start, end). Offsets are bytes, not characters, and a cut inside a
+    // multibyte character copies the bytes as they are. Out of range panics at the caller.
+    @inline
+    @trackCaller
+    fn substr(self: &Self, start: i64, end: i64): string {
+        _strRangeCheck(self, start, end)
+        let n = end.wrappingSub(start)
+        // n + 1 bytes and cap n + 1, the builtin's allocation: room for the NUL.
+        var out = String.withCapacity(n.wrappingAdd(1))
+        unsafe {
+            var head = (out.addrOf() as *u8) as *StrHead
+            var dst = head[0]._data
+            memcpy(dst, ((self.cstr() as i64).wrappingAdd(start)) as *u8, n)
+            dst[n] = 0
+            head[0]._len = n
+        }
+        return out
+    }
+}

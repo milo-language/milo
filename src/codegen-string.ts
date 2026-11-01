@@ -1,11 +1,11 @@
-// String method lowering (concat, compare, push, slice, substr, find, number/bool to string), extracted to keep codegen.ts manageable.
+// String method lowering (concat, compare, push, slice, number/bool to string), extracted to keep codegen.ts manageable.
 
 import type { HIRExpr, HIRArg } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 import type { TargetInfo } from "./target";
 import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Val, type NameSource } from "./ir";
-import type { Gen, EnumLayout, EnumVariant } from "./codegen";
+import type { Gen } from "./codegen";
 
 // Scratch size for one formatted f64. Worst case at 17 significant digits is
 // "-1.2345678901234567e-308" — 24 bytes plus the NUL.
@@ -14,14 +14,11 @@ export const F64_BUF = 32;
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
 // public solely to satisfy this, they are not part of its external API.
 export interface StringCtx extends NameSource {
-  genExpr(expr: HIRExpr, sretDest?: string): Gen;
   genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val;
   genLValue(expr: HIRExpr): Gen;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
   cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null;
   emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }): void;
-  storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
-  enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
   emitStrAlloc(lines: string[], n: string, tag: string, span?: Span): string;
   emitStrShare(lines: string[], val: string): string;
   emitStrUnique(lines: string[], strPtr: string, srcs?: string[]): string[];
@@ -42,8 +39,6 @@ export interface StringCtx extends NameSource {
   panicLine(span?: Span): number;
   panicAbort(lines: string[]): void;
   entryAllocas: string[];
-  enumLayouts: Map<string, EnumLayout>;
-  scopeCounter: number;
   target: TargetInfo;
   hasStringType: boolean;
   needsMalloc: boolean;
@@ -380,41 +375,6 @@ export function genStringPushStr(ctx: StringCtx, expr: HIRExpr & { kind: "String
   return [lines, "void", "void"];
 }
 
-// String.substr(start, end) — allocate new owned string from s[start..end]
-export function genStringSubstr(ctx: StringCtx, expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): Gen {
-  ctx.hasStringType = true;
-  ctx.needsMalloc = true;
-  ctx.needsMemcpy = true;
-
-  const strVal = ctx.genVal(expr.str, lines);
-  const startVal = ctx.genBoundI64(expr.start, lines);
-  const endVal = ctx.genBoundI64(expr.end, lines);
-
-  ctx.emitStringRangeCheck(lines, startVal, endVal, strVal.ref, "substr", expr.span);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  const start = val(startVal, Ty.i64);
-  const subLen = b.binop("sub", val(endVal, Ty.i64), start);
-
-  const allocLen = b.binop("add", subLen, val("1", Ty.i64));
-  const buf = val(ctx.emitStrAlloc(lines, allocLen.ref, "substr", expr.span), Ty.ptr);
-
-  const srcPtr = b.extractvalue(val(strVal.ref, STRING), 0, Ty.ptr);
-  const srcOff = b.gep(Ty.i8, srcPtr, [start]);
-  b.callDiscard(Ty.ptr, "@memcpy", [buf, srcOff, subLen]);
-
-  const nullPtr = b.gep(Ty.i8, buf, [subLen]);
-  b.store(val("0", Ty.i8), nullPtr);
-
-  const s = makeString(b, buf, subLen, allocLen);
-
-  // substr COPIES out of its receiver, so nothing points into it afterwards and a
-  // temporary receiver can go: `big(i).substr(0, 100).len` leaked the whole receiver on
-  // every call. Same shape as the Vec/HashMap/StringLen receiver drops.
-  ctx.dropOwnedTemp(lines, strVal.ref, "%String", expr.str);
-  return asGen(lines, s);
-}
-
 // String.slice(start, end) — zero-copy view. Non-owning %String with cap=0.
 export function genStringSlice(ctx: StringCtx, expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): Gen {
   ctx.hasStringType = true;
@@ -479,56 +439,4 @@ export function genStringClone(ctx: StringCtx, expr: HIRExpr & { kind: "StringCl
   if (passed) return passed;
   const sVal = ctx.genVal(expr.str, lines);
   return [lines, ctx.emitStrShare(lines, sVal.ref), "%String"];
-}
-
-export function genStringFind(ctx: StringCtx, expr: HIRExpr & { kind: "StringFind" }, lines: string[]): Gen {
-  const enumTy = `%${expr.optionEnumName}`;
-  const enumT = Ty.of(enumTy);
-  const layout = ctx.enumLayouts.get(expr.optionEnumName);
-  const noneVariant = layout?.variants.get("None");
-  const someVariant = layout?.variants.get("Some");
-  if (!layout || !noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  const [strLines, strValue] = ctx.genExpr(expr.str);
-  const [needleLines, needleValue] = ctx.genExpr(expr.needle);
-  lines.push(...strLines);
-  const strPtr = b.entryAlloca(`%__string_find_haystack.${ctx.scopeCounter++}.addr`, STRING);
-  b.store(val(strValue, STRING), strPtr);
-  lines.push(...needleLines);
-  const needlePtr = b.entryAlloca(`%__string_find_needle.${ctx.scopeCounter++}.addr`, STRING);
-  b.store(val(needleValue, STRING), needlePtr);
-  let fn = expr.reverse ? "strLastIndexOf" : "strIndexOf";
-  const args = [strPtr, needlePtr];
-  if (expr.from) {
-    const fromValue = ctx.genVal(expr.from, lines);
-    fn = "strIndexOfFrom";
-    args.push(fromValue);
-  }
-  const index = b.call(Ty.i64, `@${fn}`, args);
-
-  const resultAddr = b.entryAlloca(`%__string_find_result.${ctx.scopeCounter++}.addr`, enumT);
-  b.store(val("zeroinitializer", enumT), resultAddr);
-  const found = b.icmp("sge", index, I64_0);
-  const some = b.newBlock("string.find.some");
-  const none = b.newBlock("string.find.none");
-  const end = b.newBlock("string.find.end");
-  b.condBr(found, some, none);
-  b.position(none);
-  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, noneVariant.tag);
-  b.br(end);
-  b.position(some);
-  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, someVariant.tag);
-  const payloadPtr = ctx.enumPayloadPtr(lines, enumTy, resultAddr.ref, someVariant);
-  b.store(index, val(payloadPtr, Ty.ptr));
-  b.br(end);
-  b.position(end);
-  const result = b.load(enumT, resultAddr);
-  // indexOf/indexOfFrom/lastIndexOf read both operands and answer an INDEX, so nothing
-  // points into either by the time we get here and both can go now — no deferral to
-  // argTempDrops needed. `s.indexOf("o" + i.toString())` leaked its needle per call, and
-  // `("pre" + i.toString()).indexOf("r")` leaked the receiver as well.
-  ctx.dropOwnedTemp(lines, strValue, "%String", expr.str);
-  ctx.dropOwnedTemp(lines, needleValue, "%String", expr.needle);
-  return asGen(lines, result);
 }

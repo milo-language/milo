@@ -10,7 +10,7 @@ import type { PropagateBoxing } from "./checker";
 import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
-  genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
+  genStringSetByte, genStringPushStr, genStringSlice, genNumberToString, genBoolToString, genStringClone,
 } from "./codegen-string";
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
@@ -57,7 +57,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "VecGrowBuf", "VecPanic", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
-  "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
+  "StrRangeCheck", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
 
   "VecLen", "VecPtr",
@@ -5780,8 +5780,13 @@ export class Codegen {
         return genStringTruncate(this, expr, lines);
       case "StringSetByte":
         return genStringSetByte(this, expr, lines);
-      case "StringSubstr":
-        return genStringSubstr(this, expr, lines);
+      case "StrRangeCheck": {
+        const sv = this.genVal(expr.str, lines);
+        const start = this.genBoundI64(expr.start, lines);
+        const end = this.genBoundI64(expr.end, lines);
+        this.emitStringRangeCheck(lines, start, end, sv.ref, "substr", expr.span);
+        return [lines, "void", "void"];
+      }
       case "StringSlice":
         return genStringSlice(this, expr, lines);
       case "VecSlice":
@@ -5790,8 +5795,6 @@ export class Codegen {
         return this.genRawSlice(expr, lines);
       case "Adopt":
         return this.genAdopt(expr, lines);
-      case "StringFind":
-        return genStringFind(this, expr, lines);
       case "StringClone":
         return genStringClone(this, expr, lines);
       case "NumberToString":
@@ -9474,7 +9477,6 @@ export class Codegen {
       case "BoolToString":
       case "JsonStringify":
       case "StringClone":
-      case "StringSubstr":
       case "StringWithCapacity":
       case "VecNew":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.

@@ -147,13 +147,21 @@ export function isVecModule(file: string | undefined): boolean {
   return posix === "std/vec.milo" || posix.endsWith("/std/vec.milo");
 }
 
+// std/string's `_strRangeCheck(s, start, end)`: the builtin substr's range panic,
+// "substr range out of bounds: a..b (len n) at file:line:col" (emitStringRangeCheck).
+export function isStringModule(file: string | undefined): boolean {
+  if (!file) return false;
+  const posix = file.replace(/\\/g, "/");
+  return posix === "std/string.milo" || posix.endsWith("/std/string.milo");
+}
+
 // std/vec methods taking a callback over the elements; see the dispatch in the Vec chain.
 const VEC_CALLBACK_METHODS: ReadonlySet<string> = new Set(["each", "enumerate", "any", "all", "position", "find", "fold", "reduce"]);
 
 // The std modules that hold builtin collections' method bodies. They replaced code codegen
 // emitted inline and may use the std-only machinery that implies (`@inline`, the `@pure`
 // exemption). Anchored on a separator like isForeignModule, so "notstd/vec.milo" is not one.
-const STD_COLLECTION_MODULES: readonly string[] = ["std/hashmap.milo", "std/vec.milo"];
+const STD_COLLECTION_MODULES: readonly string[] = ["std/hashmap.milo", "std/vec.milo", "std/string.milo"];
 export function isStdCollectionModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -6054,6 +6062,22 @@ export class TypeChecker {
     return this.setType(expr, ret);
   }
 
+  // bindStdVecMethod for a string: the builtin rules in the string chain checked the call
+  // (with the wordings tests pin, and any int where std takes i64, which lowering widens);
+  // the body is std/string's `impl string`. `refArgs`: the arguments std takes as `&string`.
+  private bindStdStringMethod(expr: ExprOf<"MethodCall">, method: string, ret: TypeKind, refArgs: number[] = [],
+    mutable = false): TypeKind {
+    const resolved = this.resolveMethod("string", method);
+    if (!resolved) {
+      this.error(`string has no method '${method}'`, expr.span);
+      return this.setType(expr, ret);
+    }
+    this.autoBorrow(expr.object, { mutable });
+    for (const i of refArgs) if (expr.args[i]) this.setAutoBorrowChecked(expr.args[i]!, false);
+    this.resolvedMethods.set(expr, resolved.mangled);
+    return this.setType(expr, ret);
+  }
+
   // `borrowsForCallback`: the receiver is frozen while the arguments are checked, and the
   // call-site exclusivity rule is not applied. That is the builtin callback methods' rule
   // (borrowDuringCallback): the callback may read the receiver but not insert into or
@@ -10827,6 +10851,12 @@ export class TypeChecker {
       if (grow && types[0]?.tag !== "ptr") this.error(`'_vecGrowBuf': the buffer must be a raw pointer`, sp);
       return this.setType(expr, grow ? (types[0] ?? { tag: "unknown" }) : i64);
     }
+    if (expr.func === "_strRangeCheck" && isStringModule(sp?.file)) {
+      const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+      if (expr.args.length !== 3) this.error(`'_strRangeCheck' expects 3 arguments`, sp);
+      expr.args.forEach((a, i) => this.checkExpr(a, i === 0 ? null : i64));
+      return this.setType(expr, { tag: "void" });
+    }
     if (expr.func === "_vecPanic" && isVecModule(sp?.file)) {
       if (expr.args.length !== 1 || expr.args[0]!.kind !== "StringLit") {
         this.error(`'_vecPanic' expects one string literal`, sp);
@@ -14006,7 +14036,7 @@ export class TypeChecker {
         const endType = this.checkExpr(expr.args[1]);
         if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`substr start: expected integer, got ${this.show(startType)}`, sp);
         if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${this.show(endType)}`, sp);
-        return this.setType(expr, { tag: "string" });
+        return this.bindStdStringMethod(expr, "substr", { tag: "string" });
       }
       if (expr.method === "slice") {
         const refStr: TypeKind = { tag: "ref", inner: { tag: "string" }, mutable: false };
@@ -14048,7 +14078,7 @@ export class TypeChecker {
         if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, optionI64); }
         const argType = this.checkExpr(expr.args[0]);
         if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${this.show(argType)}`, sp);
-        return this.setType(expr, optionI64);
+        return this.bindStdStringMethod(expr, expr.method, optionI64, [0]);
       }
       // like indexOf but starts the search at byte offset `from`
       if (expr.method === "indexOfFrom") {
@@ -14058,7 +14088,7 @@ export class TypeChecker {
         if (nType.tag !== "string" && nType.tag !== "unknown") this.error(`'indexOfFrom' arg 1: expected string, got ${this.show(nType)}`, sp);
         const fromType = this.checkExpr(expr.args[1]);
         if (fromType.tag !== "int" && fromType.tag !== "unknown") this.error(`'indexOfFrom' arg 2: expected integer, got ${this.show(fromType)}`, sp);
-        return this.setType(expr, optionI64);
+        return this.bindStdStringMethod(expr, "indexOfFrom", optionI64, [0]);
       }
       if (expr.method === "split") {
         if (expr.args.length !== 1) { this.error(`'split' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "vec", element: { tag: "string" } }); }

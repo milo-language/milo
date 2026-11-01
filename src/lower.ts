@@ -4,7 +4,7 @@
 import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
 import { declaredType, floatNamespaceConst, isNestedPattern } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
-import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS, isForeignModule, isHashMapModule, isVecModule, userFnShadowsBuiltin } from "./checker";
+import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS, isForeignModule, isHashMapModule, isStringModule, isVecModule, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
@@ -861,6 +861,10 @@ class LowerCtx {
           }
           return { kind: "NatLess", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
         }
+        if (expr.func === "_strRangeCheck" && isStringModule(expr.span?.file)) {
+          const [str, start, end] = expr.args.map(a => this.lowerExpr(a)) as [HIRExpr, HIRExpr, HIRExpr];
+          return { kind: "StrRangeCheck", str, start, end, type, span: expr.span };
+        }
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
           if (expr.func === "_mapCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           if (expr.func === "_mapSeed") return { kind: "MapSeed", type, span: expr.span };
@@ -1444,9 +1448,6 @@ class LowerCtx {
           if (expr.method === "clear" || expr.method === "truncate") {
             return { kind: "StringTruncate", str: this.lowerExpr(expr.object), length: expr.method === "clear" ? null : this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
-          if (expr.method === "substr") {
-            return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
-          }
           if (expr.method === "slice") {
             return { kind: "StringSlice", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
@@ -1458,19 +1459,6 @@ class LowerCtx {
           }
           if (expr.method === "cstr") {
             return { kind: "StringCstr", object: this.lowerExpr(expr.object), type, span: expr.span };
-          }
-          if (expr.method === "indexOf" || expr.method === "indexOfFrom" || expr.method === "lastIndexOf") {
-            if (type.tag !== "enum") throw new Error(`${expr.method} must return Option<i64>`);
-            return {
-              kind: "StringFind",
-              str: this.lowerExpr(expr.object),
-              needle: this.lowerExpr(expr.args[0]),
-              from: expr.method === "indexOfFrom" ? this.lowerExpr(expr.args[1]) : undefined,
-              reverse: expr.method === "lastIndexOf",
-              optionEnumName: type.name,
-              type,
-              span: expr.span,
-            };
           }
           // methods delegated to std/string runtime functions
           const strMethodMap: Record<string, string> = {

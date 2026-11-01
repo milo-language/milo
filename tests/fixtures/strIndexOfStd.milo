@@ -1,0 +1,75 @@
+// string indexOf, indexOfFrom and lastIndexOf are std/string.milo code. Byte offsets over
+// empty strings and needles, multibyte UTF-8, a shared (copy-on-write) string, slices and
+// `&string` params as the receiver, temporaries as receiver and needle, a negative or
+// past-the-end `from`, an i32 `from` and a struct field receiver.
+// @expect: 0 none 0
+// @expect: 0 none 0
+// @expect: 1 7 11 none
+// @expect: 3 9 none
+// @expect: 5 none
+// @expect: 2 none
+// @expect: 4 9
+// @expect: 0 0 3
+// @expect: 1 1 0
+// @expect: 3 1
+// @expect: 6 none 0
+// @expect: 2 2
+// @expect: true
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Some(i) => i.toString(),
+        None => "none",
+    }
+}
+
+struct Doc {
+    title: string,
+}
+
+fn viaRef(s: &string, n: &string): string {
+    return show(s.indexOf(n)) + " " + show(s.lastIndexOf(n))
+}
+
+fn mk(i: i64): string {
+    return "ab" + i.toString() + "ab"
+}
+
+@pure
+fn where(s: &string): i64 {
+    return s.indexOf("b") ?? -1
+}
+
+fn main() {
+    let e = ""
+    print(show(e.indexOf("")), " ", show(e.indexOf("a")), " ", show(e.lastIndexOf("")))
+    print(show("abc".indexOf("")), " ", show(e.indexOfFrom("a", 0)), " ", show(e.indexOfFrom("", 0)))
+
+    // é and ö are two bytes each: offsets count bytes.
+    let u = "héllo wörld"
+    print(show(u.indexOf("é")), " ", show(u.indexOf("wö")), " ", show(u.lastIndexOf("ld")), " ", show(u.indexOf("e")))
+
+    let s = "abcabcab" + "c"
+    let t = s
+    print(show(s.indexOf("abc").map((i: i64) => i + 3)), " ", show(s.lastIndexOf("")), " ", show(t.indexOf("abd")))
+    print(show(s.indexOfFrom("ca", 3)), " ", show(s.indexOfFrom("ca", 8)))
+
+    print(show(s.indexOfFrom("c", 0).map((i: i64) => i)), " ", show(s.indexOfFrom("x", 99)))
+    let k: i32 = 3
+    print(show(s.indexOfFrom("bc", k)), " ", show(s.indexOfFrom("", 9)))
+
+    let v = s.slice(3, 9)
+    print(show(v.indexOf("abc")), " ", viaRef(v, "a"))
+
+    print(viaRef(mk(7), "b7"), " ", show(mk(12).indexOf("a" + "b" + "1")))
+    print(show(mk(3).lastIndexOf("ab")), " ", show(("x" + mk(1)).indexOfFrom("ab", 1)))
+
+    let d = Doc { title: "the cat sat" }
+    print(show(d.title.lastIndexOf("at").map((i: i64) => i - 3)), " ", show(d.title.indexOf("dog")), " ", show(d.title.indexOf("the")))
+
+    var m = "xxab"
+    let shared = m
+    m.push(98)
+    print(show(shared.indexOf("ab")), " ", show(m.indexOf("abb")))
+    print(where("abc") == 1)
+}

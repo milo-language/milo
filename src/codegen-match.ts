@@ -4,7 +4,7 @@ import type { HIRStmt, HIRExpr, HIRPattern, HIRPatStep, HIRPatTest } from "./hir
 import type { TypeKind } from "./types";
 import { genStringCmp, type StringCtx } from "./codegen-string";
 import { LlvmTextBuilder, Ty, val, type Block, type Val } from "./ir";
-import type { ForkSlot, EnumVariant, LocalInfo, DroppableLocal, Gen } from "./codegen";
+import type { ForkSlot, EnumLayout, EnumVariant, LocalInfo, DroppableLocal, Gen } from "./codegen";
 import type { OwnLedger, CopyDecl } from "./codegen-own";
 import { must } from "./must";
 
@@ -13,6 +13,8 @@ const STRING = Ty.of("%String");
 // Codegen's matching members are public solely to satisfy this, they are not part of its external API.
 export interface MatchCtx extends StringCtx {
   own: OwnLedger;
+  scopeCounter: number;
+  enumLayouts: Map<string, EnumLayout>;
   locals: Map<string, LocalInfo>;
   droppableLocals: DroppableLocal[];
   structuralDropTypes: WeakSet<TypeKind>;
