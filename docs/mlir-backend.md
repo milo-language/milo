@@ -26,8 +26,9 @@ HIR -> high-level milo dialect (src/emit-mlir.ts: a printer, textual MLIR)
 - **Everything after the checker moves into MLIR**, JSIR/ClangIR style. The goal is to
   delete `src/lower.ts`, `src/hir.ts`, `src/codegen*.ts` and `src/ir.ts`. The TypeScript MIR
   (`src/mir*.ts`, `src/codegen-mir.ts`, `MILO_MIR`) went first, once MLIR took more function
-  instances than MIR lowered without fallback (69078 against 61668 over the fixtures). The TypeScript side becomes a thin printer of a **high-level `milo`
-  dialect that mirrors the language**; every transformation is a C++ pass.
+  instances than MIR lowered without fallback (69078 against 61668 over the fixtures).
+  The TypeScript side becomes a thin printer of a **high-level `milo` dialect that mirrors
+  the language**; every transformation is a C++ pass.
 - **Source-level ops** (`mlir/Milo.td`): structured control flow as region ops
   (`milo.if`, `milo.while`, `milo.loop` with `milo.break`/`milo.continue`/`milo.return`),
   mutable locals as `milo.var` slots with `milo.load`/`milo.store`, Milo's checked
@@ -89,6 +90,23 @@ variable. `-g` builds work; MLIR functions carry no DWARF yet. Numbers: `bun tes
 tests/run.test.ts` under `MILO_MLIR=1` is 1797 pass, 0 fail, with 51234 of 262577 function
 instances (19.5%) through MLIR; `scripts/mlir-same.ts` build time is 12 to 29% more on the
 slices measured (two extra subprocesses per build, and the legacy body is still generated).
+
+**Since M1 (2026-11-01).** Legacy codegen now emits only a stub for a function MLIR takes
+(its `define` line and one dead call per callee, which is what the noalias analysis reads;
+a function with a raw pointer keeps its legacy body for that analysis). The dialect gained
+by-ref scalar params as second-class `!milo.ref` values (`milo-verify` rejects one that
+outlives its call; `milo.check_unaliased` is legacy's runtime `&mut` aliasing guard),
+by-ref params of other types that the body never names, raw pointers (`!milo.ptr`,
+`milo.ptr.load/store`, pointer casts and compares), replay-engine functions
+(`milo.replay.enter/exit`), and the first of M2: `&Vec<T>`/`&mut Vec<T>` params of scalars
+(`milo.index`, `milo.index.store`, `milo.len`; `milo-expand-index` lowers them to the
+prototype's `vec.len`/`bounds_check`/`vec.load`). `milo-raise-to-scf` moves loops without
+early exits to scf.for, where `milo-hoist-vec-reads` and `milo-version-bounds-checks`
+run: axpy compiled from Milo source under `MILO_MLIR=1` vectorizes (0.095 ns/elem against
+0.278 for legacy, `mlir/run.sh`), grid stays at parity. Corpus under `MILO_MLIR=1` with
+the Vec ops in: 1805 pass, 0 fail, 71962 of 263941 instances (27.3%). Still legacy:
+`main` and the print builtins, by-value non-scalar params (they need drops, M4), strings,
+structs, enums.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
