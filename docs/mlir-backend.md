@@ -693,6 +693,13 @@ upstream's SMT-LIB exporter to z3, or to Milo's own QF_LIA solver (`std/smt`), w
 
 ### Raising: modernize and harden source through the dialect
 
+Order (decided 2026-11-01): raising comes after the self-hosted frontend, not before. The
+source-faithful top layer it needs (comments, spelling, layout) is frontend work, so it is
+built once, in the Milo frontend, instead of in TypeScript and then again in Milo. The full
+sequence: 100% coverage, parity (Cortex-M 32-bit, DWARF, compile time, CI), delete legacy,
+quick wins (crash reproducers, parallel passes, range-analysis check removal), self-host the
+frontend, raising, then `smt` contracts and the `memref` loop path.
+
 JSIR's defining trait is that it round-trips: source goes up into the dialect, passes
 transform it, and it prints back as source. Milo gets the same:
 
