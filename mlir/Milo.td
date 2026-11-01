@@ -116,6 +116,15 @@ def Milo_MapType : TypeDef<Milo_Dialect, "Map"> {
   let assemblyFormat = "`<` $keyType `,` $valueType `>`";
 }
 
+// A `Heap<T>`: legacy's malloc'd pointer to one T, owned (its drop glue, legacy's
+// milo.drop.heap.<t>, drops the T and frees the box). `*h` is the place milo.heap.place
+// gives. Through it a type can hold itself (`enum Expr { Add(Heap<Expr>, ...) }`).
+def Milo_HeapType : TypeDef<Milo_Dialect, "Heap"> {
+  let mnemonic = "heap";
+  let parameters = (ins "::mlir::Type":$valueType);
+  let assemblyFormat = "`<` $valueType `>`";
+}
+
 // What is left of a Vec a consuming `for x in makeVec()` takes apart from the front:
 // legacy's `{ %Vec, i64 cursor }` (genConsumedIterable). The elements before the cursor
 // were moved out; the drop glue drops those from the cursor on, then frees the buffer, so
@@ -216,7 +225,7 @@ def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
 }
 
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_FnType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_HeapType, Milo_FnType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 
@@ -561,6 +570,30 @@ def Milo_VecTailTakePlaceOp : Milo_Op<"vectail.take_place"> {
   let results = (outs Milo_RefType:$result);
   let assemblyFormat = "$ref `[` $index `]` attr-dict `:` type($ref) `->` type($result)";
   let hasVerifier = 1;
+}
+
+// `Heap.new(v)`: a box of T's size from malloc, `value` moved into it. It allocates, so
+// two are never one (not Pure).
+def Milo_HeapNewOp : Milo_Op<"heap.new"> {
+  let arguments = (ins Milo_Value:$value);
+  let results = (outs Arg<Milo_HeapType, "", [MemAlloc]>:$result);
+  let assemblyFormat = "$value attr-dict `:` type($value) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// `*h`: the place of the T in the box, the box's pointer itself.
+def Milo_HeapPlaceOp : Milo_Op<"heap.place", [Pure]> {
+  let arguments = (ins Milo_HeapType:$heap);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$heap attr-dict `:` type($heap) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
+// The box freed and its payload not dropped: what is left after the payload moved out
+// (`let x = *h`), as legacy's genHeapMoveOut frees it.
+def Milo_HeapFreeOp : Milo_Op<"heap.free"> {
+  let arguments = (ins Arg<Milo_HeapType, "", [MemFree]>:$heap);
+  let assemblyFormat = "$heap attr-dict `:` type($heap)";
 }
 
 // `m.len()` of a HashMap value (a view is enough): the header's len field.

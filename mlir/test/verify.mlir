@@ -337,3 +337,11 @@ func.func @set_tag_variant(%e: !milo.ref<!milo.enum<"S", size = 16, align = 8, [
   milo.enum.set_tag %e, 3 : !milo.ref<!milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>>
   milo.return
 }
+
+// -----
+
+func.func @heap_new_type(%x: si64) {
+  // expected-error @+1 {{boxes a 'si64' as '!milo.heap<f64>'}}
+  %h = milo.heap.new %x : si64 -> !milo.heap<f64>
+  milo.return
+}

@@ -624,6 +624,23 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   genMemReplace. Program `replace`. Planted bug: the store without `init`, so the moved-out
   old value is dropped too (`replace` stdout: a use after free). Tahoe Roads api: 5230
   (97.7%).
+- *`Heap<T>`* as `!milo.heap<T>` (legacy's malloc'd pointer; owned, its drop glue
+  legacy's `milo.drop.heap.<t>`; a Heap of an interface, a fat pair, stays legacy).
+  `Heap(v)` is `milo.heap.new` (malloc of T's LLVM size, the value stored), `*h` of a
+  place's box is the place `milo.heap.place` gives (reads, field reads and writes, `&T`
+  arguments, through fieldPlace), and a type can hold itself through a Heap
+  (`enum Expr { Add(Heap<Expr>, ...) }`, the named-type spelling above). A move out of a
+  box (`let x = *h` of an owning T, `*mk()`, `*Heap(x)`) is legacy's genHeapMoveOut: the
+  payload out, `milo.heap.free` (no drop), and the box's place left empty (an owned
+  local's slot moved from, a field of a local set to null), so no drop of the leftover
+  runs. Found on the way, a legacy leak, kept: `*h = v` never drops the value it
+  overwrites (legacy's Assign drops only through an Ident, a field or an element), so a
+  store over an owning boxed value stays legacy rather than change the leak count.
+  Program `heaps`, FileCheck `heap.mlir`, a verifier case. Planted bugs: a moved-out
+  payload's box zeroed in place instead of freed (`heaps` `--owned`: ASan
+  heap-use-after-free, before genHeapMoveOut was mirrored, and `heapMoveOutSkipsDrop`
+  stdout: a spurious `drop 0`); the owned local loaded instead of moved before the free
+  (`heaps` exit 0 -> 1, `heapMoveOutSkipsDrop` stdout: a double free).
 - *Corpus, `--owned`, at the recursive-types commit*: 1118 of 1119 same, coverage 96.8%
   of 394357 function instances; the one difference was `httpRequestFraming`, fixed by the
   statement scopes above; `httpServerRequestBody` was nondeterministic on legacy.

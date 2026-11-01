@@ -1,0 +1,56 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `Heap<T>` boxes.
+// Built, read through `*h` in place, a field of the payload read and written, `*h`
+// assigned (a scalar one), the payload moved out (the box zeroed, then freed
+// by its drop), a recursive type through Heap walked, and boxes dropped at scope ends.
+
+enum Expr { Num(i64), Add(Heap<Expr>, Heap<Expr>), Neg(Heap<Expr>) }
+
+struct Node { label: string, n: i64 }
+
+fn eval(e: &Expr): i64 {
+    match e {
+        Expr.Num(n) => { return n }
+        Expr.Add(a, b) => { return eval(*a) + eval(*b) }
+        Expr.Neg(x) => { return 0 - eval(*x) }
+    }
+}
+
+fn num(n: i64): Heap<Expr> {
+    return Heap(Expr.Num(n))
+}
+
+fn tree(): Expr {
+    return Expr.Add(num(2), Heap(Expr.Neg(Heap(Expr.Add(num(3), num(4))))))
+}
+
+fn label(h: &Heap<Node>): string {
+    return (*h).label + $"={(*h).n}"
+}
+
+fn run() {
+    print(eval(tree()))
+    var b = Heap(Node { label: "a" + "b", n: 1 })
+    print(label(b))
+    (*b).n = 5
+    (*b).label = "c" + "d"
+    print(label(b))
+    let taken = *b
+    print(taken.label, " ", taken.n)
+    var s = Heap("x" + "y")
+    print(*s)
+    var k = Heap(41)
+    * k = *k + 1
+    print(*k)
+    overwrite()
+}
+
+// Legacy never drops what `*h = v` overwrites, so with an owning payload this stays legacy.
+fn overwrite() {
+    var s = Heap("x" + "y")
+    * s = "z" + "w"
+    print(*s)
+}
+
+fn main() {
+    run()
+}

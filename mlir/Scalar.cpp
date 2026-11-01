@@ -991,6 +991,49 @@ struct ArrayElemRefLowering : ConvertOpToLLVMPattern<ArrayElemRefOp> {
   }
 };
 
+// malloc(sizeof T) and the value stored in it, as legacy's HeapCreate (no null check there
+// either).
+struct HeapNewLowering : ConvertOpToLLVMPattern<HeapNewOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(HeapNewOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    auto module = op->getParentOfType<ModuleOp>();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, "malloc", {rw.getI64Type()}, ptrTy);
+    if (failed(fn))
+      return failure();
+    Value size = getSizeInBytes(op.getLoc(), op.getValue().getType(), rw);
+    Value box = LLVM::CallOp::create(rw, op.getLoc(), *fn, ValueRange{size}).getResult();
+    LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), box);
+    rw.replaceOp(op, box);
+    return success();
+  }
+};
+
+struct HeapFreeLowering : ConvertOpToLLVMPattern<HeapFreeOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(HeapFreeOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    auto module = op->getParentOfType<ModuleOp>();
+    auto fn = LLVM::lookupOrCreateFn(rw, module, "free", {ptrTy}, LLVM::LLVMVoidType::get(rw.getContext()));
+    if (failed(fn))
+      return failure();
+    rw.replaceOpWithNewOp<LLVM::CallOp>(op, *fn, ValueRange{a.getHeap()});
+    return success();
+  }
+};
+
+struct HeapPlaceLowering : ConvertOpToLLVMPattern<HeapPlaceOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(HeapPlaceOp op, OpAdaptor a, ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getHeap());
+    return success();
+  }
+};
+
 struct CopyLowering : ConvertOpToLLVMPattern<CopyOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1357,6 +1400,8 @@ std::string milo::typeKey(Type t) {
     return "vec." + typeKey(v.getElementType());
   if (auto v = dyn_cast<VecTailType>(t))
     return "vectail." + typeKey(v.getElementType());
+  if (auto h = dyn_cast<HeapType>(t))
+    return "heap." + typeKey(h.getValueType());
   if (auto m = dyn_cast<MapType>(t))
     return "map." + typeKey(m.getKeyType()) + "." + typeKey(m.getValueType());
   if (auto s = dyn_cast<StructType>(t))
@@ -1480,6 +1525,9 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
       return std::nullopt;
     return LLVM::LLVMArrayType::get(e, a.getSize());
   });
+  tc.addConversion([ctx = &tc.getContext()](HeapType) -> Type {
+    return LLVM::LLVMPointerType::get(ctx);
+  });
   tc.addConversion([ctx = &tc.getContext()](FnType) -> Type {
     auto p = LLVM::LLVMPointerType::get(ctx);
     return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
@@ -1525,7 +1573,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,
-               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, EnumSetTagLowering, CopyLowering,
+               ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, EnumSetTagLowering, HeapNewLowering, HeapPlaceLowering, HeapFreeLowering, CopyLowering,
                ArrayElemRefLowering, ZeroLowering, StringDataLowering>(tc);
 }
 

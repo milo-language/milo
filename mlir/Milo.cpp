@@ -260,7 +260,7 @@ MILO_ARITH(NegOp, !getWrapping())
 #undef MILO_ARITH
 
 bool milo::needsDrop(Type t) {
-  if (isa<StringType, VecValType, VecTailType, MapType>(t))
+  if (isa<StringType, VecValType, VecTailType, MapType, HeapType>(t))
     return true;
   if (auto f = dyn_cast<FnType>(t))
     return f.getOwning();
@@ -303,7 +303,7 @@ LogicalResult GlobalOp::verify() {
     return emitOpError("needs a name");
   // A reference is second-class and never stored, so no global holds one.
   Type t = getRef().getType().getPointee();
-  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, ArrayType, StringType, VecValType, MapType, FnType>(t))
+  if (!isa<IntegerType, FloatType, PtrType, StructType, EnumType, ArrayType, StringType, VecValType, MapType, HeapType, FnType>(t))
     return emitOpError("holds a ") << t << ": a global holds a value";
   return success();
 }
@@ -436,6 +436,18 @@ LogicalResult VecTailTakePlaceOp::verify() {
     return failure();
   if (getType().getPointee() != t.getElementType())
     return emitOpError("is the place of an element of ") << t << ", not " << getType();
+  return success();
+}
+
+LogicalResult HeapNewOp::verify() {
+  if (getValue().getType() != getType().getValueType())
+    return emitOpError("boxes a ") << getValue().getType() << " as " << getType();
+  return success();
+}
+
+LogicalResult HeapPlaceOp::verify() {
+  if (getType().getPointee() != getHeap().getType().getValueType())
+    return emitOpError("is the place of a ") << getHeap().getType().getValueType() << ", not " << getType();
   return success();
 }
 

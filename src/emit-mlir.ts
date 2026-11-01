@@ -81,6 +81,7 @@ function typeKey(t: TypeKind): string {
     case "string": return "string";
     case "vec": return `vec.${typeKey(t.element)}`;
     case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
+    case "heap": if (t.inner.tag !== "interface") return `heap.${typeKey(t.inner)}`; throw new MlirUnsupported("helper for a Heap of an interface");
     case "fn": if (t.owning) return "ownfn"; throw new MlirUnsupported("helper for a fn");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
@@ -143,6 +144,12 @@ function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
     return e && `!milo.vecval<${e}>`;
   }
   if (t.tag === "fn") return fnType(cx, t);
+  if (t.tag === "heap") {
+    // A Heap of an interface is a fat { data, vtable } pair: not yet.
+    if (t.inner.tag === "interface") return null;
+    const v = placeType(cx, t.inner);
+    return v && `!milo.heap<${v}>`;
+  }
   if (t.tag === "hashmap") {
     // Opaque here: std/hashmap's methods read it through a raw pointer (MapRaw).
     const k = placeType(cx, t.key), v = placeType(cx, t.value);
@@ -295,7 +302,7 @@ type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string;
 // A dialect type is spelled out down to its fields, so it holds a string or a Vec exactly
 // when its text names one (Milo.h needsDrop).
 // A type with its own `impl Drop` is marked after its name (`!milo.struct<"Noisy" drop, ...>`).
-const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes("!milo.map<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
+const hasDrop = (ty: string) => { const t = withoutFnTypes(ty); return t.includes(STR) || t.includes("!milo.vecval<") || t.includes("!milo.vectail<") || t.includes("!milo.map<") || t.includes("!milo.heap<") || t.includes(USER_DROP) || t.includes(OWNING_FN); };
 const OWNING_FN = "<owning fn>";
 const USER_DROP = '" drop';
 /** `ty` runs a user's Drop when dropped: when that happens is observable. */
@@ -938,7 +945,7 @@ class FnEmitter {
         // A lazy global's first fill: the slot holds zeroes, nothing to drop.
         if (s.isInit && (s.target.kind !== "Ident" || !this.isGlobal(s.target.name))) throw new MlirUnsupported("init assign");
         // The value first, then the place: legacy genStmt Assign's order.
-        if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess" || s.target.kind === "PtrDeref") {
+        if (s.target.kind === "IndexAccess" || s.target.kind === "FieldAccess" || s.target.kind === "PtrDeref" || s.target.kind === "HeapDeref") {
           const big = placeType(this.cx, s.target.type);
           if (big !== null && valueType(this.cx, s.target.type) === null) {
             // A 128+ byte one, as legacy: the value into a place of its own first (or a
@@ -962,10 +969,13 @@ class FnEmitter {
             return false;
           }
           if (s.target.kind === "PtrDeref") throw new MlirUnsupported("store through a pointer of another type");
-          if (s.target.kind === "FieldAccess") {
+          if (s.target.kind === "FieldAccess" || s.target.kind === "HeapDeref") {
             const p = this.fieldPlace(s.target);
             if (!p) throw new MlirUnsupported("assign to a field of a value");
             if (v.ty !== p.ty) throw new MlirUnsupported("field store of another type");
+            // Legacy never drops what `*h = v` overwrites (its Assign drops only through an
+            // Ident, a field or an element): dropping it here would change the leak count.
+            if (s.target.kind === "HeapDeref" && hasDrop(p.ty)) throw new MlirUnsupported("store over an owning boxed value");
             // milo-scope-drops drops the old value before the store: its glue must exist.
             if (hasDrop(p.ty)) this.dropGlue(p.ty, s.target.type);
             this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
@@ -1489,6 +1499,51 @@ class FnEmitter {
         this.emit(`milo.store ${v.ref}, ${p} init : !milo.ref<${ty}>`);
         return old;
       }
+      case "HeapCreate": {
+        const ty = this.value(e.type, "box");
+        const inner = /^!milo\.heap<(.*)>$/.exec(ty)![1];
+        const v = valueType(this.cx, e.value.type) === null ? this.bigArg(e.value, inner) : this.consume(this.expr(e.value), "boxed value");
+        if (v.ty !== inner) throw new MlirUnsupported("boxed value of another type");
+        return { ...this.def(`milo.heap.new ${v.ref} : ${inner} -> ${ty}`, ty), own: "owned" };
+      }
+      case "HeapDeref": {
+        const op = e.operand;
+        const temp = op.kind === "Call" || op.kind === "ClosureCall" || op.kind === "HeapCreate";
+        const ty = this.value(e.type, "boxed value");
+        const hty = `!milo.heap<${ty}>`;
+        const payload = (h: string) => this.def(`milo.load ${this.def(`milo.heap.place ${h} : ${hty} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref} : !milo.ref<${ty}>`, ty);
+        if (temp || (e.isMove && hasDrop(ty))) {
+          // As legacy genHeapMoveOut: the payload out, the box freed with nothing dropped,
+          // and a box held by a place left empty (an owned local's slot emptied, a field
+          // set to null), so no drop of it ever runs on the leftover.
+          let h: string, after = () => {};
+          if (temp) {
+            const v = this.expr(op);
+            if (v.ty !== hty || v.own !== "owned") throw new MlirUnsupported("deref of a temporary box");
+            h = v.ref;
+          } else if (op.kind === "Ident") {
+            const b = this.lookup(op.name);
+            if (b.kind !== "var" || !b.owned || b.ty !== hty) throw new MlirUnsupported("move out of a box that is not an owned local");
+            h = this.def(`milo.move ${b.ref} : !milo.ref<${hty}>`, hty).ref;
+          } else if (op.kind === "FieldAccess" && this.fieldOfOwnedLocal(op)) {
+            const p = this.fieldPlace(op)!;
+            if (p.ty !== hty) throw new MlirUnsupported("move out of a box field of another type");
+            h = this.def(`milo.load ${p.ref} : !milo.ref<${hty}>`, hty).ref;
+            after = () => this.emit(`milo.store ${this.def(`milo.zero : ${hty}`, hty).ref}, ${p.ref} init : !milo.ref<${hty}>`);
+          } else throw new MlirUnsupported("move out of a box that is not a local's");
+          const v = payload(h);
+          this.emit(`milo.heap.free ${h} : ${hty}`);
+          after();
+          return { ...v, own: hasDrop(ty) ? "owned" : undefined };
+        }
+        // A read leaves the box its payload: a bit copy that owns nothing.
+        const p = this.heapPlace(e);
+        const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
+        if (!hasDrop(p.ty)) return v;
+        if (e.isMove) throw new MlirUnsupported("move out of a box");
+        this.bitCopies.add(v.ref);
+        return { ...v, own: "view" };
+      }
       case "HashMapLen": {
         const m = this.borrow(this.expr(e.object), e.object.type);
         if (!m.ty.startsWith("!milo.map<")) throw new MlirUnsupported("len of a non-map");
@@ -1880,12 +1935,28 @@ class FnEmitter {
       return b.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : null;
     }
     if (e.kind === "IndexAccess") return this.elemRef(e);
+    if (e.kind === "HeapDeref") return this.heapPlace(e);
     if (e.kind !== "FieldAccess") return null;
     const base = this.fieldPlace(e.object);
     if (!base) return null;
     const { index, ty } = this.field(e);
     const r = this.def(`milo.field_ref ${base.ref}[${index}] : !milo.ref<${base.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`);
     return { ref: r.ref, ty, param: base.param };
+  }
+
+  /**
+   * `*h` as a place: the box's own pointer. The box must be a place's (a local, a field,
+   * an element), not a temporary one, which legacy frees as soon as the payload is out.
+   */
+  private heapPlace(e: HIRExpr & { kind: "HeapDeref" }): { ref: string; ty: string } {
+    const op = e.operand;
+    if (op.kind !== "Ident" && op.kind !== "FieldAccess" && op.kind !== "IndexAccess" && op.kind !== "HeapDeref")
+      throw new MlirUnsupported("deref of a temporary box");
+    const h = this.expr(op);
+    const m = /^!milo\.heap<(.*)>$/.exec(h.ty);
+    if (!m || h.own === "owned") throw new MlirUnsupported("deref of a temporary box");
+    const ty = m[1];
+    return { ref: this.def(`milo.heap.place ${h.ref} : ${h.ty} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref, ty };
   }
 
   /**
