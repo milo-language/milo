@@ -82,7 +82,11 @@ function typeKey(t: TypeKind): string {
     case "vec": return `vec.${typeKey(t.element)}`;
     case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
     case "heap": if (t.inner.tag !== "interface") return `heap.${typeKey(t.inner)}`; throw new MlirUnsupported("helper for a Heap of an interface");
-    case "fn": if (t.owning) return "ownfn"; throw new MlirUnsupported("helper for a fn");
+    // A plain fn by its signature, as Scalar.cpp typeKey: a helper takes it as a typed
+    // param. The param count and `v` for no result keep the dotted key decodable.
+    case "fn": if (t.owning) return "ownfn";
+      return [`fn${t.params.length}`, ...t.params.map(p => p.tag === "ref" ? `r${typeKey(p)}` : typeKey(p)),
+        t.ret.tag === "void" ? "v" : typeKey(t.ret)].join(".");
     case "struct": return `S${t.name}`;
     case "enum": return `E${t.name}`;
     case "array": if (t.size !== null) return `arr${t.size}.${typeKey(t.element)}`; throw new MlirUnsupported("helper for a slice");

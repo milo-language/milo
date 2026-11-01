@@ -1,0 +1,52 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: helpers keyed by a
+// plain fn type (typeKey spells it by signature): a Vec of fns grown, pushed, indexed and
+// dropped, a Vec of fns taking a `&string`, and a struct holding a fn in a
+// Vec. Two signatures with the same layout must get helpers of their own.
+
+struct Rule { name: string, check: (i64) => bool }
+
+fn even(x: i64): bool { return x % 2 == 0 }
+
+fn big(x: i64): bool { return x > 10 }
+
+fn twice(x: i64): i64 { return x * 2 }
+
+fn slen(s: &string): i64 { return s.len() }
+
+fn rules(): Vec<Rule> {
+    var r: Vec<Rule> = Vec.new()
+    r.push(Rule { name: "even" + "!", check: even })
+    r.push(Rule { name: "big", check: big })
+    return r
+}
+
+fn run() {
+    var preds: Vec<(i64) => bool> = Vec.new()
+    var maps: Vec<(i64) => i64> = Vec.new()
+    var i = 0
+    while i < 9 {
+        preds.push(if i % 2 == 0 { even } else { big })
+        maps.push(twice)
+        i = i + 1
+    }
+    var hits = 0
+    var k = 0
+    while k < preds.len() {
+        let p = preds[k]
+        if p(12) { hits = hits + 1 }
+        k = k + 1
+    }
+    let f = maps[3]
+    print($"{preds.len()} {hits} {f(21)}")
+    var strs: Vec<(&string) => i64> = Vec.new()
+    strs.push(slen)
+    let s = "hello"
+    let g = strs[0]
+    print($"{g(s)}")
+    let rs = rules()
+    for r in rs { print($"{r.name} {r.check(4)} {r.check(40)}") }
+}
+
+fn main() {
+    run()
+}

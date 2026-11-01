@@ -1408,8 +1408,23 @@ std::string milo::typeKey(Type t) {
     return ("S" + s.getName()).str();
   if (auto e = dyn_cast<EnumType>(t))
     return ("E" + e.getName()).str();
-  if (auto f = dyn_cast<FnType>(t); f && f.getOwning())
-    return "ownfn";
+  if (auto f = dyn_cast<FnType>(t)) {
+    if (f.getOwning())
+      return "ownfn";
+    // Spelled by signature: a helper keyed by it takes these values as typed params. The
+    // param count and `v` for no result keep the dotted key decodable.
+    auto sig = f.getSignature();
+    std::string s = "fn" + std::to_string(sig.getNumInputs());
+    for (Type p : sig.getInputs()) {
+      if (auto r = dyn_cast<RefType>(p))
+        s += ".r" + typeKey(r.getPointee());
+      else if (auto v = dyn_cast<VecType>(p))
+        s += ".rvec." + typeKey(v.getElementType());
+      else
+        s += "." + typeKey(p);
+    }
+    return s + "." + (sig.getNumResults() ? typeKey(sig.getResult(0)) : std::string("v"));
+  }
   if (auto a = dyn_cast<ArrayType>(t))
     return "arr" + std::to_string(a.getSize()) + "." + typeKey(a.getElementType());
   std::string s;
