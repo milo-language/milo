@@ -1,0 +1,65 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: place-only results
+// returned by value (legacy's ABI: a fixed array, a small struct holding one or a string
+// beside one, and in the entry file a 128+ byte struct), loaded whole at the return and
+// stored straight into the caller's place: a `let`, an argument, a field.
+
+struct Hash { words: [i64; 8], rounds: i64 }
+
+struct Named { id: [u8; 4], name: string }
+
+struct Wide { a: [i64; 20], label: string }
+
+struct Holder { h: Hash, tag: i64 }
+
+fn initH(): [i64; 8] {
+    return [3, 1, 4, 1, 5, 9, 2, 6]
+}
+
+fn mix(h: [i64; 8], k: i64): [i64; 8] {
+    var out = h
+    for i in 0..8 {
+        out[i] = out[i] * k + i
+    }
+    return out
+}
+
+fn hash(k: i64): Hash {
+    return Hash { words: mix(initH(), k), rounds: k }
+}
+
+fn named(n: string): Named {
+    let id: [u8; 4] = [1, 2, 3, 4]
+    return Named { id: id, name: n + "!" }
+}
+
+fn wide(k: i64): Wide {
+    var w = Wide { a: [0; 20], label: $"w{k}" }
+    w.a[19] = k
+    return w
+}
+
+fn total(h: &Hash): i64 {
+    var t = 0
+    for i in 0..8 {
+        t = t + h.words[i]
+    }
+    return t + h.rounds
+}
+
+fn run() {
+    let h = initH()
+    print(h[0], " ", h[7])
+    let m = mix(h, 2)
+    print(m[1], " ", m[7])
+    print(total(hash(3)))
+    let hd = Holder { h: hash(4), tag: 1 }
+    print(total(hd.h), " ", hd.tag)
+    let n = named("x")
+    print(n.name, " ", n.id[3])
+    let w = wide(5)
+    print(w.label, " ", w.a[19])
+}
+
+fn main() {
+    run()
+}

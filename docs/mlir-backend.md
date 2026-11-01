@@ -593,6 +593,13 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   `big-enum-lits` (with `lib/shapes.milo`), FileCheck in `aggregates.mlir`, a verifier
   case. Planted bug: every tag written as 0 (`big-enum-lits` stdout). Tahoe Roads api:
   5154 (96.3%).
+- *Place-only results returned by value* (`fn initH(): [i64; 8]` in std/sha256, a small
+  struct holding an array, an entry-file function's 128+ byte struct, which legacy does
+  not make sret): the function's result is the ABI's SSA value, loaded whole from its
+  place at the return (`bigArg`, moved out when it owns something), and a call's result
+  goes straight into the caller's place with an `init` store (`into`, the `abiResult`
+  flag, for that call only). Program `array-results`. Planted bug: the call's result not
+  stored into the place (`array-results` exit 0 -> 1). Tahoe Roads api: 5172 (96.7%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

@@ -430,7 +430,8 @@ class FnEmitter {
       this.sretOut = { ref: "%out", ty: this.place$(fn.retType, "sret result") };
       params.unshift(`%out: !milo.ref<${this.sretOut.ty}>`);
     }
-    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.value(fn.retType, "return");
+    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.abiValue(fn.retType, "return");
+    this.retPlaceOnly = ret !== null && !isMain && valueType(this.cx, fn.retType) === null;
     this.isMain = isMain;
     this.retTy = ret;
     // As legacy replayEngineScope, which applies only when std/replay is in the program.
@@ -499,6 +500,16 @@ class FnEmitter {
       return;
     }
     if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
+    // isSretCall narrowed Call away; a call that is not sret returns a place-only value.
+    const c = e as HIRExpr;
+    if (c.kind === "Call" && !this.cx.isBuiltinName(c.func)) {
+      this.abiResult = true;
+      const v = this.callScope(() => this.call(c, false));
+      this.abiResult = false;
+      if (v.ty !== ty) throw new MlirUnsupported("call result of another type");
+      this.emit(`milo.store ${v.ref}, ${dst} init : !milo.ref<${ty}>`);
+      return;
+    }
     if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
@@ -684,6 +695,15 @@ class FnEmitter {
   }
   private isMain = false;
   private retTy: string | null = null;
+  private retPlaceOnly = false;
+  // Set by into() for the call it is about to emit: its place-only result may be an SSA
+  // value, the ABI's, stored straight into the destination.
+  private abiResult = false;
+
+  /** valueType, or for a place-only type the SSA value an ABI passes (a by-value result). */
+  private abiValue(t: TypeKind, what: string): string {
+    return valueType(this.cx, t) ?? this.place$(t, what);
+  }
 
   /** placeType, or the reason the function stays legacy. */
   private place$(t: TypeKind, what: string): string {
@@ -977,7 +997,9 @@ class FnEmitter {
         }
         if (!s.value && this.isMain) { this.retMain(); return true; }
         if (!s.value) { this.ret("milo.return"); return true; }
-        const v = this.consume(this.expr(s.value), "return");
+        // A place-only result returned by value (an array, a struct holding one, under 128
+        // bytes so not sret): loaded whole from its place at the return, legacy's ABI.
+        const v = this.retPlaceOnly ? this.bigArg(s.value, this.retTy!) : this.consume(this.expr(s.value), "return");
         if (v.ty !== this.retTy) throw new MlirUnsupported("return of a different type");
         this.ret(`milo.return ${v.ref} : ${v.ty}`);
         return true;
@@ -2626,6 +2648,9 @@ class FnEmitter {
   }
 
   private call(e: HIRExpr & { kind: "Call" }, stmt: boolean, into?: string): Val {
+    // For this call only, not the calls in its arguments.
+    const abi = this.abiResult;
+    this.abiResult = false;
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
@@ -2653,7 +2678,7 @@ class FnEmitter {
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
-    const ret = callee.retType.tag === "void" || sret ? null : this.value(callee.retType, "call result");
+    const ret = callee.retType.tag === "void" || sret ? null : abi ? this.abiValue(callee.retType, "call result") : this.value(callee.retType, "call result");
     if (sret) paramTys.unshift(`!milo.ref<${this.place$(callee.retType, "sret result")}>`);
     else if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
