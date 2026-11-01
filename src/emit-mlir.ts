@@ -329,10 +329,20 @@ class FnEmitter {
         this.bind(p.name, { kind: "opaque", what: blocker(this.cx, p.type) });
         return `%p${i}: ${PTR}`;
       }
-      const ty = p.isRef || p.isRefMut ? placeType(this.cx, p.type)! : this.value(p.type, "param");
+      const pt = placeType(this.cx, p.type);
+      const ty = p.isRef || p.isRefMut || (pt !== null && isBig(this.cx, pt)) ? pt! : this.value(p.type, "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
+      }
+      if (isBig(this.cx, ty) && !hasDrop(ty)) {
+        // A 128+ byte param arrives by value (legacy's ABI) and goes straight to a slot, as
+        // legacy spills it; from there it is only a place.
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var ${quote(p.name)} : !milo.ref<${ty}>`);
+        this.emit(`milo.store %p${i}, ${slot} : !milo.ref<${ty}>`);
+        this.bind(p.name, { kind: "var", ref: slot, ty });
+        return `%p${i}: ${ty}`;
       }
       if (hasDrop(ty)) {
         // The callee owns a by-value string or Vec: it lives in a slot of the body's scope.
@@ -396,6 +406,22 @@ class FnEmitter {
       const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
       this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
     });
+  }
+
+  /**
+   * A 128+ byte argument passed by value (legacy's ABI): loaded whole from its place right
+   * at the call, as legacy loads it. An owning one must be the checker's move of a local.
+   */
+  private bigArg(e: HIRExpr, ty: string): Val {
+    let slot: { ref: string; owned: boolean };
+    if (e.kind === "Ident") {
+      const b = this.lookup(e.name);
+      if (b.kind !== "var" || b.ty !== ty) throw new MlirUnsupported("128+ byte argument");
+      if (hasDrop(ty) && !(b.owned && e.isMove)) throw new MlirUnsupported("128+ byte argument that is not a move");
+      slot = { ref: b.ref, owned: !!b.owned };
+    } else slot = this.bigSlot("arg", e);
+    const op = hasDrop(ty) ? "milo.move" : "milo.load";
+    return { ...this.def(`${op} ${slot.ref} : !milo.ref<${ty}>`, ty), own: hasDrop(ty) ? "owned" : undefined };
   }
 
   /** A slot of this block holding `e` (128+ bytes), filled in place; owned when it has drop glue. */
@@ -1557,7 +1583,8 @@ class FnEmitter {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
       const elem = byRef ? vecElem(this.cx, p.type) : null;
-      const ty = elem ?? (byRef ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
+      const pt = placeType(this.cx, p.type);
+      const ty = elem ?? (byRef || (pt !== null && isBig(this.cx, pt)) ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
@@ -1576,7 +1603,7 @@ class FnEmitter {
         provenance.push(ref.param ?? null);
         return ref.ref;
       }
-      const v = this.consume(this.expr(a.expr), "argument");
+      const v = isBig(this.cx, paramTys[i]) ? this.bigArg(a.expr, paramTys[i]) : this.consume(this.expr(a.expr), "argument");
       if (v.ty !== paramTys[i]) throw new MlirUnsupported("call arg type");
       provenance.push(null);
       return v.ref;

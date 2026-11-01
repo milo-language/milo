@@ -32,3 +32,6 @@ pub fn renamed(r: &Record, tag: string): Record {
 pub fn indirect(i: i64): Record { return record(i * 2) }
 
 pub fn score(r: &Record): i64 { return r.name.len() * 1000 + r.port + r.retries + r.flags + r.items.len() }
+
+// By value: the callee owns it (legacy passes the struct itself).
+pub fn port(r: Record): i64 { return r.port + r.items.len() }
