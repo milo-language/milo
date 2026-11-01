@@ -430,6 +430,24 @@ def Milo_StringByteOp : Milo_Op<"string.byte",
   let assemblyFormat = "$value `[` $index `]` attr-dict";
 }
 
+// `a + b` on strings: a new owned string, made by legacy's concatenation (a helper of the
+// legacy module, `milo.string.concat`, the operands through slots). Allocates, so two are
+// never merged: each result is an owner of its own.
+def Milo_StringConcatOp : Milo_Op<"string.concat", [MemoryEffects<[MemRead, MemAlloc]>]> {
+  let arguments = (ins Milo_StringType:$lhs, Milo_StringType:$rhs);
+  let results = (outs Milo_StringType:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+}
+
+// The bytes of `value` appended to the string at `dst`, in place: legacy's pushStr
+// (amortized growth; a shared buffer is made unique first). milo-append-in-place makes
+// these out of `s = s + x`.
+def Milo_StringAppendOp : Milo_Op<"string.append", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let arguments = (ins Milo_RefType:$dst, Milo_StringType:$value);
+  let assemblyFormat = "$dst `,` $value attr-dict `:` type($dst)";
+  let hasVerifier = 1;
+}
+
 // A new owner of the string at `ref` (Milo's implicit copy of a string, HIR StringClone):
 // legacy's share, one more count on a heap buffer.
 def Milo_StringShareOp : Milo_Op<"string.share"> {

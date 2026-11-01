@@ -1,0 +1,49 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// target for milo-append-in-place: `s = s + x` on locals, a field, a `&mut` param and a
+// global, with temporaries and views on the right, plus the forms it must leave alone
+// (`s = s + s`, the right side reading `s`, a shared buffer that must not change).
+
+struct Doc { title: string, body: string }
+
+var log: string = ""
+
+fn piece(i: i64): string { return "<".repeat(i % 3) }
+
+fn grow(s: &mut string, n: i64) {
+    for i in 0..n { s = s + "ab" }
+}
+
+fn build(n: i64): string {
+    var s: string = ""
+    for i in 0..n {
+        s = s + piece(i)
+        s = s + "-"
+    }
+    return s
+}
+
+fn demo() {
+    let a = build(10)
+    print(a, " ", a.len())
+    var d = Doc { title: "t", body: "" }
+    for i in 0..4 { d.body = d.body + d.title }
+    print(d.body)
+    var g: string = "x"
+    grow(&mut g, 3)
+    print(g)
+    var keep: string = "base"
+    let shared = keep
+    keep = keep + "+more"
+    print(shared, " ", keep)
+    var twice: string = "ab"
+    twice = twice + twice
+    print(twice)
+    var self2: string = "q"
+    self2 = self2 + self2.substr(0, 1)
+    print(self2)
+    for i in 0..3 { log = log + piece(i + 1) }
+    print(log)
+}
+
+// main reads no global, so it goes through MLIR too; demo holds the cases.
+fn main() { demo() }

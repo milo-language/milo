@@ -265,6 +265,12 @@ LogicalResult ClosureCallOp::verify() {
   return success();
 }
 
+LogicalResult StringAppendOp::verify() {
+  if (!isa<StringType>(getDst().getType().getPointee()))
+    return emitOpError("needs the place of a string");
+  return success();
+}
+
 LogicalResult GlobalInitOp::verify() {
   if (getName().empty())
     return emitOpError("needs a name");

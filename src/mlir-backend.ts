@@ -72,6 +72,9 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 // verify (on parse) -> structured control flow to cf -> milo ops to LLVM -> SSA.
 export const MLIR_PIPELINE = [
   "--milo-verify",
+  // `s = s + x` to an in-place append: before scope-drops, whose drop of the old value
+  // ahead of the store would name the place and so stop the rewrite.
+  "--milo-append-in-place",
   // Drops where owned slots' scopes end and before stores over owned values, while the
   // scopes are still regions; which of them run is decided after control flow is lowered.
   "--milo-scope-drops",

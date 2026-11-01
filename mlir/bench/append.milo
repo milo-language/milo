@@ -1,0 +1,10 @@
+// String building in a loop (`s = s + x`): legacy codegen appends in place by matching the
+// Assign; under MILO_MLIR=1 milo-append-in-place does it in the dialect. Without either,
+// every iteration copies the whole accumulator (quadratic).
+fn piece(i: i64): string { return "ab".repeat(1 + i % 3) }
+
+fn main() {
+    var s: string = ""
+    for i in 0..200000 { s = s + piece(i) }
+    print(s.len())
+}

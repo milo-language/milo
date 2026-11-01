@@ -109,6 +109,73 @@ struct ScopeDropsPass : PassWrapper<ScopeDropsPass, OperationPass<func::FuncOp>>
 // milo-elaborate-drops
 //===----------------------------------------------------------------------===//
 
+//===----------------------------------------------------------------------===//
+// milo-append-in-place
+//===----------------------------------------------------------------------===//
+
+// Two places that are the same memory by construction: one value, the same field of the
+// same place, or the same global.
+bool samePlace(Value a, Value b) {
+  if (a == b)
+    return true;
+  auto fa = a.getDefiningOp<FieldRefOp>(), fb = b.getDefiningOp<FieldRefOp>();
+  if (fa && fb)
+    return fa.getIndex() == fb.getIndex() && samePlace(fa.getRef(), fb.getRef());
+  auto ga = a.getDefiningOp<GlobalOp>(), gb = b.getDefiningOp<GlobalOp>();
+  return ga && gb && ga.getName() == gb.getName();
+}
+
+// Does `v` read the string at `place` (a view of it, or something made from one)?
+bool readsPlace(Value v, Value place) {
+  auto ld = v.getDefiningOp<LoadOp>();
+  return ld && samePlace(ld.getRef(), place);
+}
+
+// `s = s + x` is `%l = load %s; ...; %r = string.concat %l, %x; store %r, %s`: a new
+// string with the old bytes copied, then the old one dropped (milo-scope-drops). When %r
+// has no other use, nothing between the load and the store names %s, and %x is not a
+// view of %s, appending %x to the string in %s gives the same value without the copy
+// (legacy codegen did this by matching `place = place + rhs` in its Assign; this pass is
+// the dialect's form). Runs before milo-scope-drops, so the removed store never gets a
+// drop. Nothing else may run in between that names %s: an argument `&mut s` could change
+// it while the old view is held.
+struct AppendInPlacePass : PassWrapper<AppendInPlacePass, OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AppendInPlacePass)
+  StringRef getArgument() const final { return "milo-append-in-place"; }
+  StringRef getDescription() const final {
+    return "Rewrite `s = s + x` on strings to an in-place append";
+  }
+  void runOnOperation() override {
+    SmallVector<StringConcatOp> concats;
+    getOperation().walk([&](StringConcatOp c) { concats.push_back(c); });
+    for (StringConcatOp c : concats) {
+      auto load = c.getLhs().getDefiningOp<LoadOp>();
+      if (!load || !c->hasOneUse())
+        continue;
+      auto store = dyn_cast<StoreOp>(*c->getUsers().begin());
+      if (!store || store.getInit() || store->getBlock() != load->getBlock() ||
+          !samePlace(store.getRef(), load.getRef()) || readsPlace(c.getRhs(), load.getRef()))
+        continue;
+      bool named = false;
+      for (Operation *op = load->getNextNode(); op && op != store; op = op->getNextNode())
+        if (op != c.getOperation())
+          op->walk([&](Operation *in) {
+            for (Value o : in->getOperands())
+              if (samePlace(o, load.getRef()))
+                named = true;
+          });
+      if (named)
+        continue;
+      OpBuilder b(store);
+      StringAppendOp::create(b, store.getLoc(), store.getRef(), c.getRhs());
+      store.erase();
+      c.erase();
+      if (load->use_empty())
+        load.erase();
+    }
+  }
+};
+
 enum : uint8_t { kInit = 1, kUninit = 2 };
 
 // For each owned slot, whether it may hold a value here and whether it may not.
@@ -411,6 +478,42 @@ struct StringShareLowering : ConvertOpToLLVMPattern<StringShareOp> {
   }
 };
 
+// Legacy's helpers take strings by reference: each operand goes through an entry slot.
+struct StringConcatLowering : ConvertOpToLLVMPattern<StringConcatOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StringConcatOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Type st = getTypeConverter()->convertType(op.getType());
+    Value l = entrySlot(rw, op, st), r = entrySlot(rw, op, st);
+    LLVM::StoreOp::create(rw, op.getLoc(), a.getLhs(), l);
+    LLVM::StoreOp::create(rw, op.getLoc(), a.getRhs(), r);
+    auto fn = legacyFn(rw, op, "milo.string.concat", {ptrTy, ptrTy}, st);
+    if (!fn)
+      return failure();
+    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{l, r});
+    return success();
+  }
+};
+
+struct StringAppendLowering : ConvertOpToLLVMPattern<StringAppendOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(StringAppendOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto ptrTy = LLVM::LLVMPointerType::get(rw.getContext());
+    Value v = entrySlot(rw, op, a.getValue().getType());
+    LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), v);
+    auto fn = legacyFn(rw, op, "milo.string.append", {ptrTy, ptrTy},
+                       LLVM::LLVMVoidType::get(rw.getContext()));
+    if (!fn)
+      return failure();
+    rw.replaceOpWithNewOp<LLVM::CallOp>(op, fn, ValueRange{a.getDst(), v});
+    return success();
+  }
+};
+
 } // namespace
 
 void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet &patterns) {
@@ -423,10 +526,11 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     return s;
   });
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
-               StringShareLowering>(tc);
+               StringShareLowering, StringConcatLowering, StringAppendLowering>(tc);
 }
 
 void milo::registerDropPasses() {
   PassRegistration<ScopeDropsPass>();
   PassRegistration<ElaborateDropsPass>();
+  PassRegistration<AppendInPlacePass>();
 }

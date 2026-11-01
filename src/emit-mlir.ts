@@ -1093,6 +1093,23 @@ class FnEmitter {
     if (!op) throw new MlirUnsupported(`string ${e.op}`);
     const l = this.borrow(this.expr(e.left), e.left.type);
     const r = this.borrow(this.expr(e.right), e.right.type);
+    const str: TypeKind = { tag: "string" };
+    if (op === "concat") {
+      // Both helpers: milo-append-in-place may turn `s = s + x` into the append.
+      this.cx.mlirHelper("milo.string.concat", () => ({
+        params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
+        retType: str,
+        body: [{ kind: "Return", retType: str, value: { kind: "BinOp", op: "+", type: str,
+          left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
+      }));
+      this.cx.mlirHelper("milo.string.append", () => ({
+        params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "x", type: str, isRef: true, isRefMut: false }],
+        retType: { tag: "void" },
+        body: [{ kind: "ExprStmt", expr: { kind: "StringPushStr", type: { tag: "void" },
+          str: { kind: "Ident", name: "s", type: str, isMove: false }, other: { kind: "Ident", name: "x", type: str, isMove: false } } }],
+      }));
+      return { ...this.def(`milo.string.concat ${l.ref}, ${r.ref}`, STR), own: "owned" };
+    }
     const slot = (v: Val) => {
       const ref = this.fresh();
       this.vars.push(`  ${ref} = milo.var "operand" : !milo.ref<${STR}>`);
@@ -1100,8 +1117,7 @@ class FnEmitter {
       return ref;
     };
     const [a, b] = [slot(l), slot(r)];
-    const str: TypeKind = { tag: "string" };
-    const ret: TypeKind = op === "concat" ? str : { tag: "bool" };
+    const ret: TypeKind = { tag: "bool" };
     const name = `milo.string.${op}`;
     this.cx.mlirHelper(name, () => ({
       params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
@@ -1109,11 +1125,9 @@ class FnEmitter {
       body: [{ kind: "Return", retType: ret, value: { kind: "BinOp", op: e.op, type: ret,
         left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
     }));
-    const rty = op === "concat" ? STR : "i1";
-    const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> ${rty}`;
+    const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> i1`;
     this.callees.set(name, fnTy);
-    const v = this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, rty);
-    return op === "concat" ? { ...v, own: "owned" } : v;
+    return this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, "i1");
   }
 
   private binop(e: HIRExpr & { kind: "BinOp" }): Val {
