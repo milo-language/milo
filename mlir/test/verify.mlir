@@ -234,6 +234,14 @@ func.func @call_args(%f: !milo.fn<(si64) -> si64>, %x: si32) {
 
 // -----
 
+func.func @index_ref_type(%v: !milo.vec<!milo.struct<"A", si64>>, %i: si64) {
+  // expected-error @+1 {{is not a place of the Vec's element type}}
+  %r = milo.index.ref %v[%i] : !milo.vec<!milo.struct<"A", si64>> -> !milo.ref<si64>
+  milo.return
+}
+
+// -----
+
 func.func @copy_scalar(%a: !milo.ref<si64>, %b: !milo.ref<si64>) {
   // expected-error @+1 {{copies a struct or an enum, not 'si64'}}
   milo.copy %a, %b : !milo.ref<si64>, !milo.ref<si64> of si64

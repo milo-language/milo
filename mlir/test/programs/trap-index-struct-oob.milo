@@ -1,0 +1,17 @@
+// Differential panic program (scripts/mlir-same.ts --programs): an out-of-bounds index
+// of a Vec of structs (milo.index.ref) after an in-bounds field write; stderr, the line
+// and exit status must match legacy codegen.
+struct P { x: i64, name: string }
+
+fn f(v: &mut Vec<P>, i: i64): i64 {
+    v[0].x = 5
+    return v[i].x
+}
+
+fn main() {
+    var v: Vec<P> = Vec.new()
+    v.push(P { x: 1, name: "a" })
+    v.push(P { x: 2, name: "b" })
+    print(f(&mut v, 0))
+    print(f(&mut v, 2))
+}

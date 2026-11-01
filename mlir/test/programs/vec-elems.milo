@@ -1,0 +1,87 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: indexing Vecs whose elements are not scalars (milo.index.ref). An
+// element read as a value is legacy's deep copy (changing it leaves the Vec alone); its
+// fields are read and written in place; it is lent `&` and `&mut`; it is stored over
+// (the old one dropped); and Vecs of strings, of Vecs and of enums are indexed too.
+
+struct Item { name: string, tags: Vec<string>, count: i64 }
+
+enum Shape { Circle(i64), Label(string), Empty }
+
+fn describe(it: &Item): string {
+    return it.name + "#" + it.count.toString() + "/" + it.tags.len().toString()
+}
+
+fn bump(it: &mut Item, by: i64) {
+    it.count += by
+    it.tags.push("b" + by.toString())
+}
+
+fn mk(name: string, n: i64): Item {
+    var tags: Vec<string> = Vec.new()
+    for i in 0..n { tags.push("t" + i.toString()) }
+    return Item { name: name, tags: tags, count: n }
+}
+
+fn shapeName(s: &Shape): string {
+    match s {
+        Circle(r) => { return "circle " + r.toString() }
+        Label(l) => { return "label " + l }
+        Empty => { return "empty" }
+    }
+}
+
+fn main() {
+    var items: Vec<Item> = Vec.new()
+    for i in 0..4 { items.push(mk("item" + i.toString(), i)) }
+
+    // A copy: the Vec's element keeps its own strings and count.
+    var c = items[2]
+    c.count = 99
+    c.name = "changed"
+    c.tags.push("extra")
+    print(describe(c), " vs ", describe(items[2]))
+
+    // Fields of an element, read and written in place.
+    items[1].count = items[1].count + 10
+    items[1].name = items[1].name + "!"
+    items[3].tags.push("more")
+    print(items[1].name, " ", items[1].count, " ", items[3].tags.len(), " ", items[3].tags[0])
+
+    // Lent `&mut` and `&`, then stored over: the old element is dropped.
+    bump(&mut items[0], 5)
+    print(describe(items[0]))
+    items[2] = mk("replaced", 2)
+    var t: i64 = 0
+    for i in 0..items.len() { t += describe(items[i]).len() }
+    print("total ", t, " ", describe(items[2]))
+
+    // Vecs of strings, of Vecs, of enums.
+    var names: Vec<string> = Vec.new()
+    names.push("ab")
+    names.push("cde")
+    let n1 = names[1]
+    names[0] = "xyz" + n1
+    print(names[0], " ", names[1], " ", names[0].len())
+
+    var grid: Vec<Vec<i64>> = Vec.new()
+    for r in 0..3 {
+        var row: Vec<i64> = Vec.new()
+        for k in 0..r + 2 { row.push(r * 10 + k) }
+        grid.push(row)
+    }
+    var g1 = grid[1]
+    g1.push(500)
+    print(grid[1].len(), " ", g1.len(), " ", grid[2][3], " ", grid[1][0])
+
+    var shapes: Vec<Shape> = Vec.new()
+    shapes.push(Shape.Circle(3))
+    shapes.push(Shape.Label("hi"))
+    shapes.push(Shape.Empty)
+    for i in 0..shapes.len() { print(shapeName(shapes[i])) }
+    shapes[1] = Shape.Label("bye")
+    match shapes[1] {
+        Label(l) => print("now ", l)
+        _ => print("other")
+    }
+}

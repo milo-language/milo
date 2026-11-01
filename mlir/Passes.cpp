@@ -284,6 +284,17 @@ struct VecLoadLowering : ConvertOpToLLVMPattern<VecLoadOp> {
   }
 };
 
+struct VecElemRefLowering : ConvertOpToLLVMPattern<VecElemRefOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(VecElemRefOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    Type t = getTypeConverter()->convertType(op.getType().getPointee());
+    rw.replaceOp(op, elemPtr(rw, op.getLoc(), a.getVec(), a.getIndex(), t));
+    return success();
+  }
+};
+
 struct VecStoreLowering : ConvertOpToLLVMPattern<VecStoreOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -317,7 +328,7 @@ struct ConvertMiloToLLVMPass
     populateFuncToLLVMConversionPatterns(tc, patterns);
     arith::populateArithToLLVMConversionPatterns(tc, patterns);
     cf::populateControlFlowToLLVMConversionPatterns(tc, patterns);
-    patterns.add<VecLenLowering, VecLoadLowering, VecStoreLowering>(tc);
+    patterns.add<VecLenLowering, VecLoadLowering, VecStoreLowering, VecElemRefLowering>(tc);
     populateScalarToLLVMPatterns(tc, patterns);
     populateOwnedToLLVMPatterns(tc, patterns);
     LLVMConversionTarget target(*ctx);

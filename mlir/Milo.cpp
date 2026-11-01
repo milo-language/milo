@@ -350,6 +350,18 @@ LogicalResult IndexOp::verify() {
   return success();
 }
 
+LogicalResult IndexRefOp::verify() {
+  if (getRef().getType().getPointee() != getVec().getType().getElementType())
+    return emitOpError("is not a place of the Vec's element type");
+  return success();
+}
+
+LogicalResult VecElemRefOp::verify() {
+  if (getRef().getType().getPointee() != getVec().getType().getElementType())
+    return emitOpError("is not a place of the Vec's element type");
+  return success();
+}
+
 LogicalResult IndexStoreOp::verify() {
   if (getValue().getType() != getVec().getType().getElementType())
     return emitOpError("value is not the Vec's element type");

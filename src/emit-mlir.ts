@@ -475,7 +475,11 @@ class FnEmitter {
     }
     if (e.kind === "IndexAccess") {
       const pp = this.ptrPlace(e);
-      return pp && pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
+      if (pp) return pp.ty === ty ? { ref: pp.ptr, refTy: PTR, done: none } : null;
+      // A Vec element: legacy deep-copies an owning one, which no place copy is.
+      if (hasDrop(ty)) throw new MlirUnsupported("deep copy of a 128+ byte element");
+      const er = this.elemRef(e);
+      return er && er.ty === ty ? { ref: er.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
     return null;
   }
@@ -751,6 +755,14 @@ class FnEmitter {
             this.emit(`milo.store ${v.ref}, ${p.ref} : !milo.ref<${p.ty}>`);
             return false;
           }
+          const er = this.elemRef(s.target);
+          if (er) {
+            // milo-scope-drops drops the old element before the store, as legacy does.
+            if (v.ty !== er.ty) throw new MlirUnsupported("element store of another type");
+            if (hasDrop(er.ty)) this.dropGlue(er.ty, s.target.type);
+            this.emit(`milo.store ${v.ref}, ${er.ref} : !milo.ref<${er.ty}>`);
+            return false;
+          }
           const { vec, elem, index } = this.indexPlace(s.target);
           if (v.ty !== elem) throw new MlirUnsupported("element store of another type");
           this.emit(`milo.index.store ${v.ref}, ${vec}[${index}] : ${elem}, !milo.vec<${elem}> ${this.loc(s.target.span)}`);
@@ -1006,6 +1018,14 @@ class FnEmitter {
           const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
           return this.def(`milo.string.byte ${s.ref}[${index}]`, "ui8", this.loc(e.span));
         }
+        const er = this.elemRef(e);
+        if (er) {
+          if (placeOnly.get(this.cx)?.has(er.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
+          if (!hasDrop(er.ty)) return this.def(`milo.load ${er.ref} : !milo.ref<${er.ty}>`, er.ty);
+          // Legacy clones an owning element (emitDeepCloneFromPtr): `v[i]` is always an
+          // independent value, and the Vec keeps its own.
+          return this.copyOut(e, er.ref, er.ty, true);
+        }
         const { vec, elem, index } = this.indexPlace(e);
         return this.def(`milo.index ${vec}[${index}] : !milo.vec<${elem}> -> ${elem}`, elem, this.loc(e.span));
       }
@@ -1060,10 +1080,7 @@ class FnEmitter {
         // `_vecCopyOut(place)`: legacy's structural deep copy of what the place holds
         // (emitDeepCloneFromPtr), an owned value.
         const ty = this.value(e.type, "copied value");
-        const src = this.place(e.value, refOf(ty), false).ref;
-        const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
-          ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
-        return { ...r, own: hasDrop(ty) ? "owned" : undefined };
+        return this.copyOut(e, this.place(e.value, refOf(ty), false).ref, ty);
       }
       case "StringCstr": {
         // `s.cstr()`: the place's buffer made unique and NUL-terminated, then its bytes.
@@ -1200,6 +1217,19 @@ class FnEmitter {
     for (const [k, v] of inner.callees) this.callees.set(k, v);
     const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
     return this.def(`milo.closure @${quote(name)}${ops} : ${ty}`, ty);
+  }
+
+  /**
+   * Legacy's structural deep copy (emitDeepCloneFromPtr, through MapCopyOut) of what the
+   * place `src` holds (`refOf(ty)`, or a slot of `ty` when `slot`), an owned value of
+   * `ty`. A Vec in a slot is lent as its header.
+   */
+  private copyOut(e: HIRExpr, src: string, ty: string, slot = false): Val {
+    const vm = /^!milo\.vecval<(.*)>$/.exec(ty);
+    if (vm && slot) src = this.def(`milo.vec.place ${src} : !milo.ref<${ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref;
+    const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
+      ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
+    return { ...r, own: hasDrop(ty) ? "owned" : undefined };
   }
 
   /**
@@ -1385,6 +1415,7 @@ class FnEmitter {
       const b = this.lookup(e.name);
       return b.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : null;
     }
+    if (e.kind === "IndexAccess") return this.elemRef(e);
     if (e.kind !== "FieldAccess") return null;
     const base = this.fieldPlace(e.object);
     if (!base) return null;
@@ -1845,12 +1876,28 @@ class FnEmitter {
     return { vec: place, elem, index };
   }
 
+  /**
+   * `v[i]` on a Vec of non-scalars as its element's place (milo.index.ref, bounds-checked),
+   * as legacy genLValue lends it; null for any other index. Object, then index, as legacy.
+   */
+  private elemRef(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
+    if (e.kind !== "IndexAccess") return null;
+    const el = vecElem(this.cx, stripRefs(e.object.type));
+    if (el === null || isScalarTy(el)) return null;
+    const { place, elem, param } = this.vecPlace(e.object);
+    const i = this.expr(e.index);
+    if (!/^[su]i\d+$/.test(i.ty)) throw new MlirUnsupported("non-int index");
+    const index = i.ty === "si64" ? i.ref : this.def(`milo.cast ${i.ref} : ${i.ty} to si64`, "si64").ref;
+    const ref = this.def(`milo.index.ref ${place}[${index}] : !milo.vec<${elem}> -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`, this.loc(e.span)).ref;
+    return { ref, ty: elem, param };
+  }
+
   /** The header address of the Vec `e` names: a by-ref Vec param, or an owned Vec local. */
   private vecPlace(e: HIRExpr): { place: string; elem: string; param?: number } {
     const b = e.kind === "Ident" ? this.lookup(e.name) : null;
     if (b?.kind === "vec") return { place: b.ref, elem: b.elem, param: b.param };
-    // A Vec local, or a Vec field of a place.
-    const slot = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : e.kind === "FieldAccess" ? this.fieldPlace(e) : null;
+    // A Vec local, a Vec field of a place, or a Vec element.
+    const slot = b?.kind === "var" ? { ref: b.ref, ty: b.ty, param: b.param } : e.kind === "FieldAccess" || e.kind === "IndexAccess" ? this.fieldPlace(e) : null;
     const m = slot ? /^!milo\.vecval<(.*)>$/.exec(slot.ty) : null;
     if (!slot || !m) throw new MlirUnsupported("a Vec that is not a param, a local or a field");
     const place = this.def(`milo.vec.place ${slot.ref} : !milo.ref<${slot.ty}> -> !milo.vec<${m[1]}>`, `!milo.vec<${m[1]}>`);
@@ -1881,6 +1928,14 @@ class FnEmitter {
       this.vars.push(`  ${ref} = milo.var "arg" : ${refTy}`);
       this.emit(`milo.store ${v.ref}, ${ref} : ${refTy}`);
       return { ref };
+    }
+    const er = this.elemRef(e);
+    if (er) {
+      // An element is lent in place, as legacy genLValueForArg; a Vec element as its header.
+      if (refOf(er.ty) === refTy && refTy !== `!milo.ref<${er.ty}>`)
+        return { ref: this.def(`milo.vec.place ${er.ref} : !milo.ref<${er.ty}> -> ${refTy}`, refTy).ref, param: er.param };
+      if (`!milo.ref<${er.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg of an element of another type");
+      return { ref: er.ref, param: er.param };
     }
     if (e.kind !== "Ident") {
       // A value lent as `&T` (`f(Shape.Empty)`) gets a slot of its own, as legacy spills it.

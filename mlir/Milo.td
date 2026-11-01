@@ -552,6 +552,27 @@ def Milo_IndexStoreOp : Milo_Op<"index.store"> {
   let hasVerifier = 1;
 }
 
+// `v[i]` as a place, for an element that is not a scalar: its address after legacy's
+// bounds check (the panic names the op's location), lent to a `&T` argument, read or
+// written field by field, or stored over. Read as a value it is a load, or for an owning
+// element legacy's deep copy of the place. milo-expand-index lowers it to len,
+// bounds_check and vec.elem_ref.
+def Milo_IndexRefOp : Milo_Op<"index.ref"> {
+  let arguments = (ins Milo_VecType:$vec, SI64:$index);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$vec `[` $index `]` attr-dict `:` type($vec) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
+// The place of element `index`, unchecked (the bounds_check is before it): reads only the
+// header's data pointer.
+def Milo_VecElemRefOp : Milo_Op<"vec.elem_ref"> {
+  let arguments = (ins Arg<Milo_VecType, "", [MemRead<Milo_VecHeader>]>:$vec, I64:$index);
+  let results = (outs Milo_RefType:$ref);
+  let assemblyFormat = "$vec `[` $index `]` attr-dict `:` type($vec) `->` type($ref)";
+  let hasVerifier = 1;
+}
+
 def Milo_LenOp : Milo_Op<"len",
     [MemoryEffects<[MemRead<Milo_VecHeader>]>]> {
   let arguments = (ins Milo_VecType:$vec);

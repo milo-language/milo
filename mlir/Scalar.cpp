@@ -1098,7 +1098,7 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
   void runOnOperation() override {
     SmallVector<Operation *> ops;
     getOperation().walk([&](Operation *op) {
-      if (isa<IndexOp, IndexStoreOp, LenOp>(op))
+      if (isa<IndexOp, IndexStoreOp, IndexRefOp, LenOp>(op))
         ops.push_back(op);
     });
     for (Operation *op : ops) {
@@ -1120,6 +1120,9 @@ struct ExpandIndexPass : PassWrapper<ExpandIndexPass, OperationPass<ModuleOp>> {
       } else if (auto st = dyn_cast<IndexStoreOp>(op)) {
         Value j = checked(st.getVec(), st.getIndex());
         VecStoreOp::create(b, loc, st.getValue(), st.getVec(), j);
+      } else if (auto r = dyn_cast<IndexRefOp>(op)) {
+        Value j = checked(r.getVec(), r.getIndex());
+        r.replaceAllUsesWith(VecElemRefOp::create(b, loc, r.getType(), r.getVec(), j).getResult());
       } else {
         auto len = cast<LenOp>(op);
         Value l = VecLenOp::create(b, loc, i64, len.getVec());

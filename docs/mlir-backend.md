@@ -377,6 +377,19 @@ structs, enums.
   enum's Ok variant (`propagate` stdout). Tahoe Roads api: 4169 (77.9%): of the 78
   functions it blocked, most now stop on what comes next (variadic calls, user-Drop
   temporaries).
+- *A Vec of non-scalars indexed* (`milo.index.ref %v[%i] : !milo.vec<T> -> !milo.ref<T>`,
+  the element's place after legacy's bounds check; milo-expand-index makes it len,
+  bounds_check and `milo.vec.elem_ref`): lent to `&T`/`&mut T` arguments as legacy's
+  genLValueForArg lends it, read and written field by field, stored over (milo-scope-drops
+  drops the old element first), a Vec element lent as its header, `grid[i][j]`. Read as
+  a value, an owning element is legacy's deep copy of the place (the MapCopyOut helper,
+  now `copyOut`); a 128+ byte one is copied with milo.copy when it owns nothing. A
+  `!milo.ref` into Vec element memory does not break the Slot resource's promise in
+  practice: vec.load and vec.store only ever touch Vecs of scalars, and those elements
+  are never reached through one. Programs `vec-elems`, `trap-index-struct-oob`;
+  FileCheck `index-ref.mlir`, a verifier case. Planted bug: the element read as a bit
+  copy instead of the deep copy (`vec-elems` exit 0 -> 1, a double free). Tahoe Roads
+  api: 4235 (79.2%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
