@@ -1,0 +1,14 @@
+// @runtime-error: remove index out of bounds at tests/runtime-errors/vecRemoveStdLine.milo:11:13
+// Vec.remove is std/vec.milo code; _vecPanic keeps the builtin's message and @trackCaller
+// makes it name this line (without it the panic points into std/vec.milo).
+
+pub fn at(): i64 {
+    return -1
+}
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["a", "b"]
+    let s = v.remove(at())
+    print(s)
+    return 0
+}

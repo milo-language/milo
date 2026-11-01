@@ -60,7 +60,6 @@ export type HIRExpr =
   | { kind: "VecWithCapacity"; capacity: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilled"; count: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "VecPop"; vec: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecClone"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
@@ -97,7 +96,6 @@ export type HIRExpr =
   | { kind: "VecMap"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; resultElementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilter"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecInsert"; object: HIRExpr; index: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "VecRemove"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   // Total indexed read: `get(i)`, and the `first()`/`last()` sugar that lowers to it.
   // Out of range yields None instead of the panic `v[i]` raises.
   | { kind: "VecGetOpt"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }

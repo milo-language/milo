@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecPop, genVecGetOpt, genVecMap, genVecFilter, genVecRemove, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey, genNatLess, genVecPanic, genVecGetOpt, genVecMap, genVecFilter, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, genVecRetain, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -3391,9 +3391,6 @@ export class Codegen {
           case "VecPush":
             if (mentionsRoot(x.vec)) mutates = true;
             break;
-          case "VecPop":
-            if (mentionsRoot(x.vec)) mutates = true;
-            break;
           case "Call":
             if (x.args.some(a => mentionsRoot(a.expr))) mutates = true;
             break;
@@ -5659,8 +5656,6 @@ export class Codegen {
         return genVecFilled(this, expr, lines);
       case "VecPush":
         return genVecPush(this, expr, lines);
-      case "VecPop":
-        return genVecPop(this, expr, lines);
       case "VecLen": {
         this.hasVecType = true;
         const ov = this.genVal(expr.object, lines);
@@ -5690,8 +5685,6 @@ export class Codegen {
         return genVecFilter(this, expr, lines);
       case "VecInsert":
         return genVecInsert(this, expr, lines);
-      case "VecRemove":
-        return genVecRemove(this, expr, lines);
       case "VecGetOpt":
         return genVecGetOpt(this, expr, lines);
       case "VecExtend":
@@ -9485,17 +9478,9 @@ export class Codegen {
       case "VecFilter":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":
-      // Option-returning Vec reads: the payload is either cloned out of the buffer
-      // (get/first/last/min/max/find) or moved out of it (pop). Either way nothing
-      // else owns it, so `print(must(v, 0, "v"))` used to leak one copy per call.
+      // get's payload is cloned out of the buffer, so nothing else owns it and
+      // `print(must(v, 0, "v"))` used to leak one copy per call.
       case "VecGetOpt":
-      case "VecPop":
-      // `remove` moves the element out of the buffer exactly as `pop` does, and was the
-      // sibling this list forgot: `v.remove(0)` as a statement dropped NOTHING, so the
-      // element's destructor never ran and its heap went with it. Discarding a `pop` was
-      // already correct, which is what made the gap invisible — the two spellings of
-      // "take an element out and ignore it" disagreed.
-      case "VecRemove":
         return true;
       case "BinOp":
         // string `+` only — the comparisons return bool

@@ -11,6 +11,9 @@
 // dropped twice. A bounds panic goes through _vecPanic for the builtins' wording, and
 // @trackCaller makes every panic name the caller's line.
 
+// Declared here, as std/string does, so the prelude's Vec pulls in no other module.
+extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
+
 struct VecRaw<T> {
     _data: *T,
     _len: i64,
@@ -279,5 +282,41 @@ impl Vec<T> {
     // Drops every element, first to last; the capacity is kept.
     fn clear(self: &mut Self) {
         self.truncate(0)
+    }
+
+    // Takes the last element out, or None when the Vec is empty. The value moves out of
+    // its slot; nothing is copied.
+    fn pop(self: &mut Self): Option<T> {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            let len = raw[0]._len
+            if len == 0 {
+                return Option.None
+            }
+            let last = len.wrappingSub(1)
+            raw[0]._len = last
+            let data = raw[0]._data
+            return Option.Some(*data[last].addrOf())
+        }
+    }
+
+    // Takes the element at `i` out and shifts the rest down by one. An index outside
+    // 0..len panics with the builtin's "remove index out of bounds".
+    @trackCaller
+    fn remove(self: &mut Self, i: i64): T {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *VecRaw<T>
+            let len = raw[0]._len
+            // Unsigned, so a negative index is out of range too, in one compare.
+            if (i as u64) >= (len as u64) {
+                _vecPanic("remove index out of bounds")
+            }
+            let data = raw[0]._data
+            let out = *data[i].addrOf()
+            let next = i.wrappingAdd(1)
+            memmove(data[i].addrOf() as *u8, data[next].addrOf() as *u8, len.wrappingSub(next).wrappingMul(sizeOf<T>()))
+            raw[0]._len = len.wrappingSub(1)
+            return out
+        }
     }
 }

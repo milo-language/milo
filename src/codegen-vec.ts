@@ -423,62 +423,6 @@ export function genVecFilter(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecFilter
   return [lines, v2.ref, "%Vec"];
 }
 
-// pop(): Option<T> — Some(last) when non-empty, None when empty. The popped
-// slot's ownership transfers into the Some payload (len-- makes the slot dead),
-// so the value moves out with no clone. No panic path: `!` handles that.
-export function genVecPop(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPop" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-
-  const vecType = expr.vec.type;
-  if (vecType.tag !== "vec") throw new Error("VecPop on non-vec type");
-  const elemTy = Ty.of(ctx.llvmType(vecType.element));
-
-  const enumTy = `%${expr.optionEnumName}`;
-  const enumLayout = ctx.enumLayouts.get(expr.optionEnumName);
-  if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
-  const noneVariant = enumLayout.variants.get("None");
-  const someVariant = enumLayout.variants.get("Some");
-  if (!noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
-
-  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.vec);
-  lines.push(...vecPtrLines);
-  const vecPtr = val(vecPtrRef, Ty.ptr);
-  const b = new LlvmTextBuilder(lines, ctx);
-
-  // load len
-  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
-  const len = b.load(Ty.i64, lenPtr);
-
-  // result Option, defaulted to None
-  const resultAddr = b.entryAlloca(`%__pop_result.${ctx.scopeCounter++}.addr`, Ty.of(enumTy));
-  b.store(val("zeroinitializer", Ty.of(enumTy)), resultAddr);
-  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, noneVariant.tag);
-
-  const isEmpty = b.icmp("eq", len, I64_0);
-  const someLabel = b.newBlock("vec.pop.some");
-  const endLabel = b.newBlock("vec.pop.end");
-  b.condBr(isEmpty, endLabel, someLabel);
-
-  // some: len--, move value out of data[new_len] into Some payload
-  b.position(someLabel);
-  const newLen = b.binop("sub", len, I64_1);
-  b.store(newLen, lenPtr);
-
-  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
-  const data = b.load(Ty.ptr, dataPtr);
-  const elemPtr = b.gep(elemTy, data, [newLen]);
-  const popped = b.load(elemTy, elemPtr);
-
-  ctx.storeEnumTag(lines, enumTy, resultAddr.ref, someVariant.tag);
-  const payloadPtr = val(ctx.enumPayloadPtr(lines, enumTy, resultAddr.ref, someVariant), Ty.ptr);
-  b.store(popped, payloadPtr);
-  b.br(endLabel);
-
-  b.position(endLabel);
-  const result = b.load(Ty.of(enumTy), resultAddr);
-  return [lines, result.ref, enumTy];
-}
-
 // Set up an `alloca Option<…>` pre-filled with None; callers branch to a "some"
 // block that overwrites the tag and payload. Shared by get/min/max/indexOf/position.
 function optionResultSlot(ctx: CodegenCtx, optionEnumName: string, label: string, lines: string[]): {
@@ -572,56 +516,6 @@ export function genVecPanic(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecPanic" 
   b.unreachable();
   b.position(b.newBlock("vecpanic.after"));
   return [lines, "void", "void"];
-}
-
-export function genVecRemove(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecRemove" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  ctx.needsDprintf = true;
-  ctx.needsExit = true;
-
-  const elemSize = val(String(ctx.typeSizeOf(expr.elementType)), Ty.i64);
-  const elemTy = Ty.of(ctx.llvmType(expr.elementType));
-
-  const [vecPtrLines, vecPtrRef] = ctx.genLValue(expr.object);
-  lines.push(...vecPtrLines);
-  const vecPtr = val(vecPtrRef, Ty.ptr);
-  const idxRef = ctx.genVal(expr.index, lines);
-  const idxVal = val(idxRef.ref, Ty.i64);
-
-  const b = new LlvmTextBuilder(lines, ctx);
-  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
-  const len = b.load(Ty.i64, lenPtr);
-
-  // bounds: index must be < len
-  const oob = b.icmp("uge", idxVal, len);
-  const panicLabel = b.newBlock("vec.remove.panic");
-  const okLabel = b.newBlock("vec.remove.ok");
-  b.condBr(oob, panicLabel, okLabel);
-
-  b.position(panicLabel);
-  const span = expr.span;
-  const { label: errLabel, length: errLen } = ctx.addString(`remove index out of bounds at ${ctx.panicAt(span)}\n`);
-  const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [I32_0, I32_0]);
-  ctx.emitFdPrintf(lines, 2, errPtr.ref, "");
-  ctx.panicAbort(lines);
-  b.unreachable();
-
-  b.position(okLabel);
-  const dataPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_0]);
-  const data = b.load(Ty.ptr, dataPtr);
-  const elemPtr = b.gep(elemTy, data, [idxVal]);
-  const elem = b.load(elemTy, elemPtr);
-
-  // shift [index+1, len) left by one
-  const idxPlus1 = b.binop("add", idxVal, I64_1);
-  const srcPtr = b.gep(elemTy, data, [idxPlus1]);
-  const tailCount = b.binop("sub", len, idxPlus1);
-  const tailBytes = b.binop("mul", tailCount, elemSize);
-  b.callDiscard(Ty.void, "@llvm.memmove.p0.p0.i64", [elemPtr, srcPtr, tailBytes, val("false", Ty.i1)]);
-  const newLen = b.binop("sub", len, I64_1);
-  b.store(newLen, lenPtr);
-
-  return [lines, elem.ref, elemTy.ll];
 }
 
 // The `bad` condition shared by the Vec and array slice range checks: start < 0, end < start,

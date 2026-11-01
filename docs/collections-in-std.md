@@ -396,3 +396,15 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   exit (188 vs 184). Output identical to the old compiler (fixture without the i32 line);
   live heap equal; bench 15M rounds of push/truncate/clear over i64 and string Vecs 0.45s
   builtin vs 0.46s std (cpu time, median of 5, interleaved; wall time is noise at load 23).
+- 2026-11-01: `pop` and `remove` moved. Both move the element out of its slot (`*p`, no
+  copy); remove shifts the tail with one `memmove` (declared in std/vec.milo, as
+  std/string declares memcpy) and panics through `_vecPanic("remove index out of
+  bounds")` under `@trackCaller`, so the text and line:col are the builtin's
+  (`runtime-errors/vecRemoveStdLine`, unsigned compare, so -1 is out of range). A
+  discarded result is an ordinary owned Call result and is dropped at the statement, as
+  the VecPop/VecRemove owned-temp entries did (those entries went with the nodes). Old bug
+  gone: an i32 index reached clang as an i64 compare on an i32 value. Planted: memmove
+  length in bytes instead of elements turns `vecPopRemoveStd` red. Output identical to the
+  old compiler (fixture without the i32 line); live heap equal; 90 corpus files calling
+  pop/remove/truncate/clear/swap/reverse pass; bench 4M rounds of 16 pushes, removes and
+  pops over i64 and string Vecs 0.30s builtin vs 0.25s std.

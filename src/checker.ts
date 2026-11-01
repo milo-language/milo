@@ -13462,7 +13462,7 @@ export class TypeChecker {
         }
         // Returns Option<T> — Some(last) or None when empty; caller picks the
         // failure policy via `!`/`?`/`??`. Mirrors HashMap.get / Vec.find.
-        return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
+        return this.bindStdVecMethod(expr, objType.element, "pop", this.resolveOptionForValue(objType.element, sp));
       }
       if (expr.method === "map") {
         if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -13571,7 +13571,7 @@ export class TypeChecker {
         }
         const idxType = this.checkExpr(expr.args[0]);
         if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'remove' index must be an integer, got ${this.show(idxType)}`, sp); }
-        return this.setType(expr, objType.element);
+        return this.bindStdVecMethod(expr, objType.element, "remove", objType.element);
       }
       if (expr.method === "sort") {
         if (expr.args.length !== 0) { this.error(`'sort' takes no arguments`, sp); }

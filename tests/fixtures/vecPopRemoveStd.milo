@@ -1,0 +1,74 @@
+// Vec.pop and Vec.remove are std/vec.milo code: the element moves out of its slot (no
+// copy) and the tail shifts down. Covers empty pop, pop to empty, remove at the front,
+// middle and end, an i32 index, string, nested Vec and Drop elements (each dropped once:
+// a discarded remove/pop result is dropped at the statement), a ranged element, a field
+// receiver, a temporary-free `?? ` fallback, and a closure that captures the Vec. The bounds
+// panic is pinned by runtime-errors/vecRemoveStdLine.milo.
+// @expect: -1 0
+// @expect: 1 5 [2, 3, 4]
+// @expect: 3 [2, 4]
+// @expect: 4 2 0 0
+// @expect: bc ["a", "d"] d ["a"]
+// @expect: [2, 3] [[1], [4]]
+// @expect: drop 1
+// @expect: removed
+// @expect: popped
+// @expect: kept 0 left 2
+// @expect: 9 3 0
+// @expect: x ["y"]
+// @expect: q 1
+// @expect: done
+// @expect: drop 0
+// @expect: drop 3
+// @expect: drop 2
+
+struct Noisy {
+    id: i64,
+}
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Holder {
+    items: Vec<string>,
+}
+
+fn main() {
+    var e: Vec<i64> = Vec.new()
+    print(e.pop() ?? -1, " ", e.len())
+    var v: Vec<i64> = [1, 2, 3, 4, 5]
+    print(v.remove(0), " ", v.remove(3), " ", v)
+    let k: i32 = 1
+    print(v.remove(k), " ", v)
+    print(v.pop() ?? 0, " ", v.pop() ?? 0, " ", v.pop() ?? 0, " ", v.len())
+    var s: Vec<string> = ["a", "b" + "c", "d"]
+    let mid = s.remove(1)
+    print(mid, " ", s, " ", s.pop() ?? "none", " ", s)
+    var nested: Vec<Vec<i64>> = [[1], [2, 3], [4]]
+    let got = nested.remove(1)
+    print(got, " ", nested)
+    var ns: Vec<Noisy> = Vec.new()
+    for i in 0..4 {
+        ns.push(Noisy { id: i })
+    }
+    ns.remove(1)
+    print("removed")
+    let _ = ns.pop()
+    print("popped")
+    let kept = ns.remove(0)
+    print("kept ", kept.id, " left ", ns[0].id)
+    var r: Vec<i32(0..9)> = [3, 9]
+    let x = r.pop()!
+    print(x, " ", r.remove(0), " ", r.len())
+    var h = Holder { items: ["x", "y"] }
+    print(h.items.remove(0), " ", h.items)
+    var cap: Vec<string> = ["p", "q"]
+    let f = () => {
+        print(cap.pop() ?? "", " ", cap.len())
+    }
+    f()
+    print("done")
+}
