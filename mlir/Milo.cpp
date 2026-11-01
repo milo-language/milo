@@ -30,6 +30,21 @@ void MiloDialect::initialize() {
 // Verifiers and effects of the source-level ops.
 //===----------------------------------------------------------------------===//
 
+OpFoldResult ConstOp::fold(FoldAdaptor) { return getValue(); }
+
+// A fold that yields a constant of a milo type gets a milo.const.
+Operation *MiloDialect::materializeConstant(OpBuilder &b, Attribute value, Type type,
+                                            Location loc) {
+  auto typed = dyn_cast<TypedAttr>(value);
+  if (!typed || typed.getType() != type)
+    return nullptr;
+  if (!isa<IntegerType, FloatType>(type))
+    return nullptr;
+  if (auto it = dyn_cast<IntegerType>(type); it && it.isSignless() && it.getWidth() != 1)
+    return nullptr;
+  return ConstOp::create(b, loc, type, typed);
+}
+
 static bool isMiloInt(Type t) {
   auto i = dyn_cast<IntegerType>(t);
   return i && !i.isSignless();

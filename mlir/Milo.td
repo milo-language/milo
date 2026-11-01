@@ -13,6 +13,7 @@ def Milo_Dialect : Dialect {
   let name = "milo";
   let cppNamespace = "::milo";
   let useDefaultTypePrinterParser = 1;
+  let hasConstantMaterializer = 1;
 }
 
 // A Vec<T> passed by reference: the address of its {ptr, len, cap} header.
@@ -28,6 +29,9 @@ def Milo_VecType : TypeDef<Milo_Dialect, "Vec"> {
 def Milo_VecHeader : Resource<"::milo::VecHeaderResource">;
 def Milo_VecElems : Resource<"::milo::VecElemsResource">;
 def Milo_Panic : Resource<"::milo::PanicResource">;
+// Stack slots of `var`s and the scalars a `&T` param points at: never a Vec header or
+// element, so slot traffic in a loop does not stop vec.len from being hoisted.
+def Milo_Slot : Resource<"::milo::SlotResource">;
 
 class Milo_Op<string mnemonic, list<Trait> traits = []>
     : Op<Milo_Dialect, mnemonic, traits>;
@@ -114,6 +118,9 @@ def Milo_ConstOp : Milo_Op<"const", [ConstantLike, Pure,
   let arguments = (ins TypedAttrInterface:$value);
   let results = (outs Milo_Scalar:$result);
   let assemblyFormat = "$value attr-dict";
+  // ConstantLike: generic folds (an arith.select canonicalize made from a branch) read
+  // the value through this.
+  let hasFolder = 1;
 }
 
 // `wrapping` is Milo's @wrapping (or --no-overflow-checks for + - *): two's complement
@@ -199,7 +206,7 @@ def Milo_VarOp : Milo_Op<"var"> {
 def Milo_LoadOp : Milo_Op<"load", [
     TypesMatchWith<"result is the slot's type", "ref", "result",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {
-  let arguments = (ins Arg<Milo_RefType, "", [MemRead]>:$ref);
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>]>:$ref);
   let results = (outs Milo_Value:$result);
   let assemblyFormat = "$ref attr-dict `:` type($ref)";
 }
@@ -252,7 +259,7 @@ def Milo_LenOp : Milo_Op<"len",
 def Milo_StoreOp : Milo_Op<"store", [
     TypesMatchWith<"value is the slot's type", "ref", "value",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {
-  let arguments = (ins Milo_Value:$value, Arg<Milo_RefType, "", [MemWrite]>:$ref);
+  let arguments = (ins Milo_Value:$value, Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref);
   let assemblyFormat = "$value `,` $ref attr-dict `:` type($ref)";
 }
 
@@ -304,7 +311,9 @@ def Milo_ConditionOp : Milo_Op<"condition", [Pure, Terminator, HasParent<"WhileO
   let hasVerifier = 1;
 }
 
-class Milo_JumpOp<string mnemonic> : Milo_Op<mnemonic, [Pure, Terminator]> {
+// Not Pure: a jump out of a region is control flow its parent must keep. A Pure one
+// would let canonicalize erase an `if c { return x }` whose ops are otherwise pure.
+class Milo_JumpOp<string mnemonic> : Milo_Op<mnemonic, [Terminator]> {
   let assemblyFormat = "attr-dict";
   let hasVerifier = 1;
 }
@@ -313,7 +322,7 @@ def Milo_BreakOp : Milo_JumpOp<"break">;
 def Milo_ContinueOp : Milo_JumpOp<"continue">;
 
 // `return`, from any depth of nested regions.
-def Milo_ReturnOp : Milo_Op<"return", [Pure, Terminator]> {
+def Milo_ReturnOp : Milo_Op<"return", [Terminator]> {
   let arguments = (ins Optional<Milo_Value>:$value);
   let assemblyFormat = "($value^ `:` type($value))? attr-dict";
   let hasVerifier = 1;

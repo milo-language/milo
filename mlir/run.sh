@@ -19,9 +19,15 @@ build/milo-opt test/kernels.mlir $HEAD $TAIL | "$LLVM/mlir-translate" --mlir-to-
 (cd ..; bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
   | sed -E 's/^define internal (void @(axpy|grid)\(.*\)) \{/define \1 noinline {/; s/@main\(/@milo_unused_main(/' > "$O/milo.ll"
 
+# milo-mlir: kernels.milo itself through MILO_MLIR=1 (emitter, versioning, legacy splice).
+(cd ..; MILO_MLIR=1 bun run src/main.ts emit-ir --release mlir/bench/kernels.milo) \
+  | sed -E 's/^define internal (void @(axpy|grid)\(.*\)) \{/define \1 noinline {/; s/@main\(/@milo_unused_main(/' > "$O/milo-mlir.ll"
+# The MLIR body is what carries TBAA; without it MLIR did not take axpy.
+awk '/^define void @axpy/,/^}/' "$O/milo-mlir.ll" | grep -q "!tbaa" || { echo "FAIL: MILO_MLIR=1 did not compile axpy through MLIR"; exit 1; }
+
 sed -E "s/^(define void @axpy\(ptr noalias nonnull dereferenceable\(24\) align 8 %a, ptr) /\1 noalias /" "$O/milo.ll" > "$O/milo-noalias.ll"
 grep -q "^define void @axpy(ptr noalias [^,]*, ptr noalias" "$O/milo-noalias.ll"
-for v in mlir mlir-nov milo milo-noalias; do $CC bench/harness.c "$O/$v.ll" -o "$O/$v"; done
+for v in mlir mlir-nov milo milo-noalias milo-mlir; do $CC bench/harness.c "$O/$v.ll" -o "$O/$v"; done
 
 echo "== FileCheck: every test/*.mlir with a RUN line (lit-style, run as written)"
 n=0
@@ -40,8 +46,8 @@ out=$(cd .. && bun scripts/mlir-same.ts --programs 2>&1) || { echo "$out"; exit 
 echo "$out" | tail -3
 
 echo "== differential: same result bits on every size"
-for v in mlir mlir-nov milo; do "$O/$v" check > "$O/$v.check"; done
-cmp "$O/mlir.check" "$O/milo.check" && cmp "$O/mlir-nov.check" "$O/milo.check" && echo "ok ($(wc -l < "$O/milo.check" | tr -d ' ') cases)"
+for v in mlir mlir-nov milo milo-mlir; do "$O/$v" check > "$O/$v.check"; done
+cmp "$O/mlir.check" "$O/milo.check" && cmp "$O/mlir-nov.check" "$O/milo.check" && cmp "$O/milo-mlir.check" "$O/milo.check" && echo "ok ($(wc -l < "$O/milo.check" | tr -d ' ') cases)"
 
 echo "== panic: a short b fails at idx b.len after exactly b.len writes, same as unversioned"
 for bl in 50 99; do
@@ -51,7 +57,7 @@ done
 echo ok
 
 echo "== hot loops (after clang -O3)"
-for v in mlir milo; do
+for v in mlir milo milo-mlir; do
   $LLVM/clang -O3 -w -S -emit-llvm "$O/$v.ll" -o "$O/$v.opt.ll"
   for f in axpy grid; do
     awk "/^define.*@$f\\(/,/^}/" "$O/$v.opt.ll" > "$O/$v.$f.fn"
@@ -61,4 +67,4 @@ for v in mlir milo; do
 done
 
 echo "== bench"
-for v in mlir milo milo-noalias; do printf "%-5s " "$v"; "$O/$v" bench; done
+for v in mlir milo milo-noalias milo-mlir; do printf "%-5s " "$v"; "$O/$v" bench; done

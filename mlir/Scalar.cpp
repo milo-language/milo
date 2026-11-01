@@ -12,7 +12,9 @@
 #include "Milo.h"
 
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -157,6 +159,100 @@ void lowerFor(IRRewriter &rw, ForOp op) {
   cf::BranchOp::create(rw, loc, head, ValueRange{op.getStart()});
   rw.eraseOp(op);
 }
+
+//===----------------------------------------------------------------------===//
+// milo-raise-to-scf
+//===----------------------------------------------------------------------===//
+
+Value castTo(OpBuilder &b, Location loc, Type t, Value v) {
+  return UnrealizedConversionCastOp::create(b, loc, TypeRange{t}, ValueRange{v}).getResult(0);
+}
+
+// A milo.for scf.for can express: a signed induction variable (scf.for compares signed),
+// and nothing inside that leaves the loop early or loops without bounds.
+bool raisable(ForOp f) {
+  auto iv = dyn_cast<IntegerType>(f.getStart().getType());
+  if (!iv || !iv.isSigned())
+    return false;
+  WalkResult r = f.getBodyRegion().walk([](Operation *op) {
+    if (isa<BreakOp, ContinueOp, ReturnOp, UnreachableOp, WhileOp, LoopOp, ForOp>(op))
+      return WalkResult::interrupt();
+    for (Region &reg : op->getRegions())
+      if (!reg.hasOneBlock() && !reg.empty())
+        return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  return !r.wasInterrupted() && f.getBodyRegion().hasOneBlock();
+}
+
+// Moves `from`'s ops into `to` before its terminator; `from`'s milo.yield becomes scf.yield.
+void moveBody(OpBuilder &b, Block &from, Block *to) {
+  auto y = cast<YieldOp>(from.getTerminator());
+  Operation *term = to->empty() ? nullptr : &to->back();
+  bool hasTerm = term && term->hasTrait<OpTrait::IsTerminator>();
+  to->getOperations().splice(hasTerm ? Block::iterator(term) : to->end(), from.getOperations(),
+                             from.begin(), Block::iterator(y));
+  if (hasTerm && y.getValues().empty())
+    return;
+  if (hasTerm)
+    term->erase();
+  b.setInsertionPointToEnd(to);
+  scf::YieldOp::create(b, y.getLoc(), y.getValues());
+}
+
+void raiseIf(OpBuilder &b, IfOp op) {
+  b.setInsertionPoint(op);
+  bool hasElse = !op.getElseRegion().empty();
+  auto s = scf::IfOp::create(b, op.getLoc(), op.getResultTypes(), op.getCondition(), hasElse);
+  moveBody(b, op.getThenRegion().front(), s.thenBlock());
+  if (hasElse)
+    moveBody(b, op.getElseRegion().front(), s.elseBlock());
+  op.replaceAllUsesWith(s.getResults());
+  op.erase();
+}
+
+void raiseFor(OpBuilder &b, ForOp f) {
+  Location loc = f.getLoc();
+  b.setInsertionPoint(f);
+  Type t = f.getStart().getType();
+  Type sl = b.getIntegerType(cast<IntegerType>(t).getWidth());
+  Value lb = castTo(b, loc, sl, f.getStart()), ub = castTo(b, loc, sl, f.getEnd());
+  Value one = arith::ConstantOp::create(b, loc, b.getIntegerAttr(sl, 1));
+  auto s = scf::ForOp::create(b, loc, lb, ub, one);
+  Block &body = f.getBodyRegion().front();
+  b.setInsertionPointToStart(s.getBody());
+  body.getArgument(0).replaceAllUsesWith(castTo(b, loc, t, s.getInductionVar()));
+  moveBody(b, body, s.getBody());
+  f.erase();
+}
+
+// Loops whose shape scf.for captures go to scf, where the Vec passes (hoisting `len`,
+// versioning bounds checks) and upstream loop passes work; ifs inside them become scf.if.
+// Everything else stays for milo-lower-structured-cf.
+struct RaiseToScfPass : PassWrapper<RaiseToScfPass, OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RaiseToScfPass)
+  StringRef getArgument() const final { return "milo-raise-to-scf"; }
+  StringRef getDescription() const final {
+    return "Raise milo.for loops without early exits (and their ifs) to scf";
+  }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<scf::SCFDialect, arith::ArithDialect>();
+  }
+  void runOnOperation() override {
+    SmallVector<ForOp> fors;
+    getOperation().walk<WalkOrder::PostOrder>([&](ForOp f) { fors.push_back(f); });
+    OpBuilder b(&getContext());
+    for (ForOp f : fors) {
+      if (!raisable(f))
+        continue;
+      SmallVector<IfOp> ifs;
+      f.getBodyRegion().walk<WalkOrder::PostOrder>([&](IfOp i) { ifs.push_back(i); });
+      for (IfOp i : ifs)
+        raiseIf(b, i);
+      raiseFor(b, f);
+    }
+  }
+};
 
 struct LowerStructuredCFPass
     : PassWrapper<LowerStructuredCFPass, OperationPass<func::FuncOp>> {
@@ -855,4 +951,5 @@ void milo::registerScalarPasses() {
   PassRegistration<LowerStructuredCFPass>();
   PassRegistration<VerifyPass>();
   PassRegistration<ExpandIndexPass>();
+  PassRegistration<RaiseToScfPass>();
 }

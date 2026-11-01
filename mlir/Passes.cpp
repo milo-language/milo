@@ -33,6 +33,9 @@ bool mayWriteVecHeader(scf::ForOp loop) {
   loop.getBody()->walk([&](Operation *op) {
     if (writes)
       return;
+    // A type cast between Milo's signed ints and signless ones moves no memory.
+    if (isa<UnrealizedConversionCastOp>(op))
+      return;
     auto iface = dyn_cast<MemoryEffectOpInterface>(op);
     if (!iface) {
       if (!op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())

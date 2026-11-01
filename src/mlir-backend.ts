@@ -10,7 +10,7 @@
 // The `define` line is the legacy one (linkage, attributes, ABI), with params renumbered
 // to the MLIR body's `%0..%n-1`; DWARF for these functions is M6, so -g drops their `!dbg`.
 
-import { appendFileSync, existsSync } from "fs";
+import { appendFileSync, existsSync, readdirSync, statSync } from "fs";
 import { spawnSync } from "child_process";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -29,7 +29,22 @@ const BUILD_HINT = "build it with `sh mlir/build.sh`";
 export const MLIR_PIPELINE = [
   "--milo-verify",
   "--milo-expand-index",
+  // Loops scf.for can hold go there, where the Vec passes work: hoist `len` out of loops
+  // that never grow a Vec, then run a check-free copy when one range test proves every
+  // bounds check in the loop passes (mlir/README.md).
+  "--milo-raise-to-scf",
+  // The milo region ops left (loops with early exits, ifs outside raised loops) go to cf
+  // before any generic pass runs: they do not describe their control flow to MLIR
+  // (no RegionBranchOpInterface), so CSE would reuse a load from before a milo.while
+  // inside its body as if the loop never stored in between.
   "--milo-lower-structured-cf",
+  "--canonicalize",
+  "--milo-hoist-vec-reads",
+  "--loop-invariant-code-motion",
+  "--milo-version-bounds-checks",
+  "--cse",
+  "--canonicalize",
+  "--convert-scf-to-cf",
   "--convert-milo-to-llvm",
   "--reconcile-unrealized-casts",
   "--mem2reg",
@@ -73,6 +88,25 @@ function tool(path: string, what: string): string {
     process.exit(1);
   }
   return path;
+}
+
+/**
+ * The newest milo-opt source in `mlirDir` that is newer than `binary`, or null. A milo-opt
+ * built from older sources fails on the passes the emitter now asks for, one unhelpful
+ * error per fixture; this names the cause instead. No automatic rebuild: a build takes
+ * minutes and parallel compiles would race each other to run it.
+ */
+export function staleMiloOpt(binary: string, mlirDir: string): string | null {
+  if (!existsSync(binary) || !existsSync(mlirDir)) return null;
+  const built = statSync(binary).mtimeMs;
+  let newest: string | null = null;
+  let newestMs = built;
+  for (const f of readdirSync(mlirDir)) {
+    if (!/\.(td|cpp|h)$/.test(f) && f !== "CMakeLists.txt") continue;
+    const ms = statSync(join(mlirDir, f)).mtimeMs;
+    if (ms > newestMs) { newestMs = ms; newest = f; }
+  }
+  return newest;
 }
 
 function run(cmd: string, args: string[], input: string): string {
@@ -140,6 +174,13 @@ export class MlirPlan {
     if (logPath && this.log.length) appendFileSync(logPath, this.log.join("\n") + "\n");
     if (this.taken.length === 0) return ir;
     const optPath = tool(MILO_OPT, "milo-opt");
+    // The sources are the ones the binary was built from: <mlir>/build/milo-opt. A binary
+    // elsewhere (a planted-bug build under build/) has no sources beside it to compare.
+    const stale = staleMiloOpt(optPath, dirname(dirname(optPath)));
+    if (stale) {
+      console.error(`error: milo-opt is stale (mlir/${stale} is newer than ${optPath}): run sh mlir/build.sh`);
+      process.exit(1);
+    }
     const translate = tool(join(LLVM_BIN, "mlir-translate"), "mlir-translate");
     const text = mlirModuleText(this.taken);
     if (process.env.MILO_MLIR_DUMP) appendFileSync(process.env.MILO_MLIR_DUMP, text);

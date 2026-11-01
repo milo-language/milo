@@ -22,6 +22,9 @@ struct VecHeaderResource
 struct VecElemsResource : mlir::SideEffects::Resource::Base<VecElemsResource> {
   llvm::StringRef getName() const final { return "milo.vec.elems"; }
 };
+struct SlotResource : mlir::SideEffects::Resource::Base<SlotResource> {
+  llvm::StringRef getName() const final { return "milo.slot"; }
+};
 struct PanicResource : mlir::SideEffects::Resource::Base<PanicResource> {
   llvm::StringRef getName() const final { return "milo.panic"; }
   bool isAddressable() const final { return false; }
