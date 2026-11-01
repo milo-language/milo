@@ -1522,9 +1522,6 @@ class LowerCtx {
           if (expr.method === "getOrInsertWith") {
             return { kind: "HashMapGetOrInsertWith", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), init: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
-          if (expr.method === "remove") {
-            return { kind: "HashMapRemove", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
-          }
           if (expr.method === "len") {
             return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }

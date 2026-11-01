@@ -17,7 +17,7 @@ import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut, genHashMapModify,
-  genHashMapGetOrInsertWith, genHashMapRemove, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
+  genHashMapGetOrInsertWith, genHashMapWithCapacity, genHashMapClone, genHashMapClear, genHashMapEntries,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -56,7 +56,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapClear", "HashMapGetOrInsertWith", "HashMapInsert", "HashMapLen", "HashMapModify",
-"HashMapNew", "HashMapRemove", "HeapCreate", "HeapPtr", "Ident",
+"HashMapNew", "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MapHash", "MapKeyEq", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
@@ -5722,8 +5722,6 @@ export class Codegen {
         return genHashMapModify(this, expr, lines);
       case "HashMapGetOrInsertWith":
         return genHashMapGetOrInsertWith(this, expr, lines);
-      case "HashMapRemove":
-        return genHashMapRemove(this, expr, lines);
       case "HashMapWithCapacity":
         return genHashMapWithCapacity(this, expr, lines);
       case "HashMapClone":

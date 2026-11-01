@@ -45,7 +45,41 @@ fn mapFind<K, V>(m: &HashMap<K, V>, key: &K): i64 {
     }
 }
 
+// Moves the value at `p` out and drops it, leaving the bytes behind as dead storage.
+fn mapDropAt<T>(p: *T) {
+    unsafe {
+        let _gone = *p
+    }
+}
+
 impl HashMap<K, V> {
+    // Remove `key` and its value, if present. The slot becomes a tombstone, so later
+    // probes walk past it; the key and value are dropped in place, key first.
+    fn remove(self: &mut Self, key: &K): void {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            var data = raw[0]._data
+            let mask = raw[0]._cap.wrappingSub(1)
+            var slot = _mapHash(key, raw[0]._seed) & mask
+            while true {
+                let state = data[slot].state
+                if state == 0 {
+                    return
+                }
+                if state == 1 && _mapKeyEq(key, data[slot].key) {
+                    data[slot].state = 2
+                    mapDropAt(data[slot].key.addrOf())
+                    mapDropAt(data[slot].value.addrOf())
+                    raw[0]._len = raw[0]._len.wrappingSub(1)
+                    // insert's resize trigger counts tombstones toward the load factor.
+                    raw[0]._tombs = raw[0]._tombs.wrappingAdd(1)
+                    return
+                }
+                slot = slot.wrappingAdd(1) & mask
+            }
+        }
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0

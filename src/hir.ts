@@ -69,7 +69,6 @@ export type HIRExpr =
   | { kind: "HashMapModify"; map: HIRExpr; key: HIRExpr; callback: HIRExpr; type: TypeKind; span?: Span }
   // `m.getOrInsertWith(k, init)`: insert init() when the key is absent; bool says whether it did.
   | { kind: "HashMapGetOrInsertWith"; map: HIRExpr; key: HIRExpr; init: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapWithCapacity"; capacity: HIRExpr; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapClone"; object: HIRExpr; type: TypeKind; span?: Span }

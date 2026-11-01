@@ -1,0 +1,113 @@
+// HashMap.remove, now std/hashmap.milo code: the slot becomes a tombstone, len drops, and
+// the key and value are dropped in place (key first). Dense tables, removing absent keys,
+// removing twice, re-inserting over tombstones, string/Vec/struct keys and values, Drop
+// keys and values, a temporary key and a temporary receiver.
+struct Pt { x: i64, y: i64 }
+
+struct Bag { name: string, xs: Vec<i64> }
+
+var dropped: i64 = 0
+
+struct Tk { id: i64 }
+
+impl Drop for Tk { fn drop(self: &mut Self): void { dropped = dropped + 1; print("drop key " + self.id.toString()) } }
+
+struct Tv { id: i64 }
+
+impl Drop for Tv { fn drop(self: &mut Self): void { dropped = dropped + 1; print("drop val " + self.id.toString()) } }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    m.remove(5000)
+    m.remove(3)
+    print(m.len)
+    var sum: i64 = 0
+    i = 0
+    while i < 1000 { sum = sum + m.getOrDefault(i, 0); i = i + 1 }
+    print(sum)
+    i = 0
+    while i < 1000 { m.insert(i, 1); i = i + 1 }
+    print(m.len)
+    i = 0
+    while i < 1000 { m.remove(i); i = i + 1 }
+    print(m.len)
+    print(m.isEmpty())
+
+    var s: HashMap<string, Bag> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), Bag { name: "b" + i.toString(), xs: [i, i] }); i = i + 1 }
+    i = 0
+    while i < 300 { if i % 2 == 0 { s.remove("w" + i.toString()) }; i = i + 1 }
+    print(s.len)
+    print(s.contains("w298"))
+    print(s.contains("w299"))
+    let k = "w" + "1"
+    s.remove(k)
+    print(k)
+    print(s.contains("w1"))
+
+    var p: HashMap<Pt, Vec<string>> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, ["a", "b"])
+    p.insert(Pt { x: 2, y: 1 }, ["c"])
+    p.remove(Pt { x: 1, y: 2 })
+    print(p.len)
+    print(p.get(Pt { x: 2, y: 1 })!.len)
+
+    var d: HashMap<Tk, Tv> = HashMap.new()
+    d.insert(Tk { id: 1 }, Tv { id: 10 })
+    d.insert(Tk { id: 2 }, Tv { id: 20 })
+    print("removing")
+    d.remove(Tk { id: 1 })
+    print("removed " + dropped.toString())
+    d.remove(Tk { id: 7 })
+    print("missed " + dropped.toString())
+    print(d.len)
+
+    // Insert/remove churn over distinct keys: only the tombstone count makes insert
+    // rehash, so without it every slot ends a tombstone and a miss probes forever.
+    var churn: HashMap<i64, i64> = HashMap.new()
+    i = 0
+    while i < 20000 { churn.insert(i, i); churn.remove(i); i = i + 1 }
+    print(churn.contains(-1))
+    print(churn.len)
+
+    var t = squares(50)
+    t.remove(49 * 49)
+    print(t.len)
+}
+// @expect: 666
+// @expect: 332667
+// @expect: 1000
+// @expect: 0
+// @expect: true
+// @expect: 150
+// @expect: false
+// @expect: true
+// @expect: w1
+// @expect: false
+// @expect: 1
+// @expect: 1
+// @expect: removing
+// @expect: drop key 1
+// @expect: drop val 10
+// @expect: drop key 1
+// @expect: removed 3
+// @expect: drop key 7
+// @expect: missed 4
+// @expect: 1
+// @expect: false
+// @expect: 0
+// @expect: 49
+// @expect: drop key 2
+// @expect: drop val 20

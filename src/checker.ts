@@ -2522,6 +2522,9 @@ export class TypeChecker {
   // and loses the natural-order `new`, rather than failing inside std on a `<` the
   // caller never wrote.
   private withheldMethods = new Map<string, { reason: string; hint: string }>();
+  // Calls the frozen-collection guard already judged, so a mutating builtin whose body
+  // moved to std (dispatchMangledMethod) is not reported against a live loop twice.
+  private collectionGuarded = new WeakSet<Expr>();
   private copyOutBlocker(attrs: Attribute[] | undefined, typeArgs: TypeKind[]) {
     if (!attrs?.some(a => a.name === "copyOut")) return null;
     for (const arg of typeArgs) {
@@ -5901,7 +5904,7 @@ export class TypeChecker {
     const selfParam = sig.params[0];
     if (selfParam?.type.tag === "ref") {
       if (selfParam.type.mutable) {
-        this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+        if (!this.collectionGuarded.has(expr)) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
         this.errorIfCopyBind(expr.object, expr.method, sp);
       }
       this.autoBorrow(expr.object, { mutable: selfParam.type.mutable });
@@ -13077,6 +13080,7 @@ export class TypeChecker {
     if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")
         && MUTATING_COLLECTION_METHODS.has(expr.method)) {
       this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+      this.collectionGuarded.add(expr);
     }
     // slices: `v[a..b]` desugars to `.slice(a,b)`; a slice is `&[T]` — a ref to an
     // unsized array, runtime rep = non-owning %Vec (cap=0, drop glue skips free)
@@ -13558,6 +13562,13 @@ export class TypeChecker {
         this.holdPointerArgsIn(expr.object, expr.args);
         return this.setType(expr, { tag: "void" });
       }
+      // std/hashmap's remove takes `&mut Self`, which does not by itself refuse an
+      // immutable binding, a `&HashMap` or a temporary.
+      if (expr.method === "remove" && !this.isRootMutable(expr.object)) {
+        this.error(`cannot remove from immutable HashMap`, sp, `declare with 'var' to make it mutable`);
+        for (const a of expr.args) this.checkExpr(a);
+        return this.setType(expr, { tag: "void" });
+      }
       // The copying lookups are std/hashmap code; the copy-out rule stays here so a
       // resource value is refused at the call, before the std body is instantiated.
       if ((expr.method === "get" || expr.method === "getOrDefault") &&
@@ -13596,17 +13607,6 @@ export class TypeChecker {
         this.checkCallbackSig(cbSig, cbHint, "getOrInsertWith", sp);
         if (cbBorrow) this.unfreeze(cbBorrow);
         return this.setType(expr, { tag: "bool" });
-      }
-      if (expr.method === "remove") {
-        if (expr.args.length !== 1) { this.error(`'remove' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
-        if (!this.isRootMutable(expr.object)) {
-          this.error(`cannot remove from immutable HashMap`, sp, `declare with 'var' to make it mutable`);
-        }
-        const keyType = this.checkExpr(expr.args[0], objType.key);
-        if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
-          this.error(`remove key: expected ${this.show(objType.key)}, got ${this.show(keyType)}`, sp);
-        }
-        return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
