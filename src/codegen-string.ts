@@ -161,16 +161,17 @@ export function genStringOrd(ctx: StringCtx, lines: string[], lv: string, rv: st
   return asGen(lines, b.phi(Ty.i1, [[dataResult, dataCmp], [lenResult, lenCmp]]));
 }
 
-// String.push(u8). The fast path stays inline: room for the byte and its NUL, and a
-// count of 1 (a heap buffer this handle holds alone). Anything else (a literal, a full
-// buffer, a shared one) goes through @milo.str.reserve, which copies or grows.
-export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPush" }, lines: string[]): Gen {
+// std/string's `_strReserve(&mut s, extra)`: s's data pointer, with room for `extra` more
+// bytes and the NUL, in a buffer s holds alone. The fast path stays inline (the IR the
+// builtin push emitted): room, and a count of 1. Anything else (a literal, a full buffer,
+// a shared one) goes through @milo.str.reserve, which copies or grows.
+export function genStrReserve(ctx: StringCtx, expr: HIRExpr & { kind: "StrReserve" }, lines: string[]): Gen {
   ctx.hasStringType = true;
   ctx.strRt();
 
   const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
   lines.push(...strPtrLines);
-  const byteVal = ctx.genVal(expr.byte, lines);
+  const extra = val(ctx.genBoundI64(expr.extra, lines), Ty.i64);
 
   const b = new LlvmTextBuilder(lines, ctx);
   const strPtr = val(strPtrRef, Ty.ptr);
@@ -179,9 +180,9 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
   const len = b.load(Ty.i64, lenPtr);
   const capPtr = stringField(b, strPtr, 2);
   const cap = b.load(Ty.i64, capPtr);
-  const lenPlus1 = b.binop("add", len, val("1", Ty.i64));
-  // cap > len + 1 leaves room for the byte and the NUL, and implies a heap buffer.
-  const room = b.icmp("ult", lenPlus1, cap);
+  const need = b.binop("add", len, extra);
+  // cap > len + extra leaves room for the bytes and the NUL, and implies a heap buffer.
+  const room = b.icmp("ult", need, cap);
   const chk = b.newBlock("str.chk");
   const fast = b.newBlock("str.fast");
   const slow = b.newBlock("str.slow");
@@ -196,7 +197,7 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
   b.position(fast);
   b.br(store);
   b.position(slow);
-  const grown = b.call(Ty.ptr, ctx.strReserveFn(), [strPtr, val("1", Ty.i64)]);
+  const grown = b.call(Ty.ptr, ctx.strReserveFn(), [strPtr, extra]);
   ctx.emitAllocNullCheck(lines, grown.ref, "strgrow", expr.span);
   const slowEnd = b.newBlock("str.slowend");
   b.br(slowEnd);
@@ -204,13 +205,21 @@ export function genStringPush(ctx: StringCtx, expr: HIRExpr & { kind: "StringPus
   b.br(store);
   b.position(store);
   const cur = b.phi(Ty.ptr, [[data, fast], [grown, slowEnd]], true);
-  const elemPtr = b.gep(Ty.i8, cur, [len]);
-  b.store(val(byteVal.ref, Ty.i8), elemPtr);
-  b.store(lenPlus1, lenPtr);
-  // null-terminate for FFI safety
-  const nullPtr = b.gep(Ty.i8, cur, [lenPlus1]);
-  b.store(val("0", Ty.i8), nullPtr);
+  return [lines, cur.ref, "ptr"];
+}
 
+// std/string's `_strPanic("head", n, "tail")`: prints "head<n>tail at file:line:col" and
+// aborts, the shape of the builtin truncate's panic. Inside a @trackCaller copy panicAt
+// names the caller.
+export function genStrPanic(ctx: StringCtx, expr: HIRExpr & { kind: "StrPanic" }, lines: string[]): Gen {
+  const n = val(ctx.genBoundI64(expr.value, lines), Ty.i64);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const { label, length } = ctx.addString(`${expr.head}%lld${expr.tail} at ${ctx.panicAt(expr.span)}\n`);
+  const msg = b.gep(Ty.of(`[${length} x i8]`), val(label, Ty.ptr), [val("0", Ty.i32), val("0", Ty.i32)]);
+  ctx.emitFdPrintf(lines, 2, msg.ref, `, i64 ${n.ref}`);
+  ctx.panicAbort(lines);
+  b.unreachable();
+  b.position(b.newBlock("strpanic.after"));
   return [lines, "void", "void"];
 }
 
@@ -220,130 +229,6 @@ export function genStringPushInt(ctx: StringCtx, expr: HIRExpr & { kind: "String
   lines.push(...strPtrLines);
   const vVal = ctx.genVal(expr.value, lines);
   ctx.emitAppendFormatParts(lines, strPtr, [{ val: vVal.ref, ty: vVal.ty.ll, tk: expr.value.type }], expr.span);
-  return [lines, "void", "void"];
-}
-
-// s.truncate(n) / s.clear(): shorten to n bytes, keeping the buffer and its capacity.
-// A negative n empties the string and an n at or past the end is a no-op, as for
-// Vec.truncate. An n inside a multibyte character aborts, the check charAt makes
-// (std/string strCharAt): cutting there would leave invalid UTF-8 behind. A cap-0
-// string is a static literal that cannot take the NUL a shorter string needs at its
-// new end (cstr() reads up to it), so it is copied out to an owned buffer first.
-export function genStringTruncate(ctx: StringCtx, expr: HIRExpr & { kind: "StringTruncate" }, lines: string[]): Gen {
-  ctx.hasStringType = true;
-  const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
-  lines.push(...strPtrLines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const strPtr = val(strPtrRef, Ty.ptr);
-  let n = I64_0;
-  if (expr.length) {
-    const raw = val(ctx.genBoundI64(expr.length, lines), Ty.i64);
-    const neg = b.icmp("slt", raw, I64_0);
-    n = b.select(neg, I64_0, raw);
-  }
-  const dataPtr = stringField(b, strPtr, 0);
-  const lenPtr = stringField(b, strPtr, 1);
-  const capPtr = stringField(b, strPtr, 2);
-  const len = b.load(Ty.i64, lenPtr);
-  const noop = b.icmp("uge", n, len);
-  const cut = b.newBlock("strtrunc.cut");
-  const done = b.newBlock("strtrunc.done");
-  b.condBr(noop, done, cut);
-  b.position(cut);
-  // The NUL written at the new end is a write; another handle must not see it.
-  ctx.emitStrUnique(lines, strPtr.ref);
-  const data = b.load(Ty.ptr, dataPtr);
-  if (expr.length) {
-    const at = b.gep(Ty.i8, data, [n]);
-    const byte = b.load(Ty.i8, at);
-    const hi = b.binop("and", byte, val("-64", Ty.i8));
-    const inside = b.icmp("eq", hi, val("-128", Ty.i8));
-    const bad = b.newBlock("strtrunc.mid");
-    const ok = b.newBlock("strtrunc.ok");
-    b.condBr(inside, bad, ok);
-    b.position(bad);
-    const { label: errLabel, length: errLen } = ctx.addString(
-      `milo: truncate(%lld) lands inside a multibyte UTF-8 character; truncate takes a byte length that must end on a character boundary, at ${ctx.panicAt(expr.span)}\n`,
-    );
-    const errPtr = b.gep(Ty.of(`[${errLen} x i8]`), val(errLabel, Ty.ptr), [val("0", Ty.i32), val("0", Ty.i32)]);
-    ctx.emitFdPrintf(lines, 2, errPtr.ref, `, i64 ${n.ref}`);
-    ctx.panicAbort(lines);
-    b.unreachable();
-    b.position(ok);
-  }
-  const cap = b.load(Ty.i64, capPtr);
-  const owned = b.icmp("ugt", cap, I64_0);
-  const inPlace = b.newBlock("strtrunc.inplace");
-  const copy = b.newBlock("strtrunc.copy");
-  b.condBr(owned, inPlace, copy);
-  b.position(inPlace);
-  const end = b.gep(Ty.i8, data, [n]);
-  b.store(val("0", Ty.i8), end);
-  b.store(n, lenPtr);
-  b.br(done);
-  b.position(copy);
-  ctx.needsMemcpy = true;
-  const size = b.binop("add", n, val("1", Ty.i64));
-  const buf = val(ctx.emitStrAlloc(lines, size.ref, "strtrunc", expr.span), Ty.ptr);
-  b.callDiscard(Ty.ptr, "@memcpy", [buf, data, n]);
-  const bend = b.gep(Ty.i8, buf, [n]);
-  b.store(val("0", Ty.i8), bend);
-  b.store(buf, dataPtr);
-  b.store(n, lenPtr);
-  b.store(size, capPtr);
-  b.br(done);
-  b.position(done);
-  return [lines, "void", "void"];
-}
-
-// `s.setByte(i, b)`: the bounds test is unsigned and 64-bit, so a negative or huge
-// index aborts instead of wrapping. A literal (cap 0) points into read-only data, so
-// it is copied out to an owned buffer before the write, as truncate does.
-export function genStringSetByte(ctx: StringCtx, expr: HIRExpr & { kind: "StringSetByte" }, lines: string[]): Gen {
-  ctx.hasStringType = true;
-  ctx.needsBoundsCheck = true;
-  const [strPtrLines, strPtrRef] = ctx.genLValue(expr.str);
-  lines.push(...strPtrLines);
-  const idx = val(ctx.genBoundI64(expr.index, lines), Ty.i64);
-  const bv = ctx.genVal(expr.byte, lines);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const strPtr = val(strPtrRef, Ty.ptr);
-  let byte = bv;
-  if (bv.ty.ll !== "i8") byte = b.cast("trunc", byte, Ty.i8);
-  const dataPtr = stringField(b, strPtr, 0);
-  const lenPtr = stringField(b, strPtr, 1);
-  const capPtr = stringField(b, strPtr, 2);
-  const len = b.load(Ty.i64, lenPtr);
-  const inRange = b.icmp("ult", idx, len);
-  const ok = b.newBlock("strsetbyte.ok");
-  const fail = b.newBlock("strsetbyte.oob");
-  b.condBr(inRange, ok, fail);
-  b.position(fail);
-  const filePtr = val(ctx.emitCheckFilePtr(lines, expr.span), Ty.ptr);
-  b.callDiscard(Ty.void, "@__milo_bounds_fail", [idx, len, filePtr, val(String(ctx.panicLine(expr.span)), Ty.i32)]);
-  b.unreachable();
-  b.position(ok);
-  ctx.emitStrUnique(lines, strPtr.ref);
-  const cap = b.load(Ty.i64, capPtr);
-  const owned = b.icmp("ugt", cap, I64_0);
-  const write = b.newBlock("strsetbyte.write");
-  const copy = b.newBlock("strsetbyte.copy");
-  b.condBr(owned, write, copy);
-  b.position(copy);
-  ctx.needsMemcpy = true;
-  const old = b.load(Ty.ptr, dataPtr);
-  const size = b.binop("add", len, val("1", Ty.i64));
-  const buf = val(ctx.emitStrAlloc(lines, size.ref, "strsetbyte", expr.span), Ty.ptr);
-  b.callDiscard(Ty.ptr, "@memcpy", [buf, old, len]);
-  const bend = b.gep(Ty.i8, buf, [len]);
-  b.store(val("0", Ty.i8), bend);
-  b.store(buf, dataPtr);
-  b.store(size, capPtr);
-  b.br(write);
-  b.position(write);
-  const data = b.load(Ty.ptr, dataPtr);
-  const at = b.gep(Ty.i8, data, [idx]);
-  b.store(byte, at);
   return [lines, "void", "void"];
 }
 

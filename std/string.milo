@@ -862,3 +862,98 @@ impl bool {
         return "false"
     }
 }
+
+// Shortens `s` to `n` bytes in place (0 <= n < len), keeping its buffer and capacity. The
+// NUL written at the new end is a write: another handle to the buffer must not see it, and
+// a cap-0 string (a literal, which cannot take the NUL) is first copied out to n + 1 owned
+// bytes. `checkCut`: refuse an n inside a multibyte character, which would leave invalid
+// UTF-8 behind (the check charAt makes); clear has no cut to check.
+@inline
+@trackCaller
+fn strCut(s: &mut string, n: i64, checkCut: bool) {
+    unsafe {
+        _strUnique(&mut s)
+        var head = (s.addrOf() as *u8) as *StrHead
+        var data = head[0]._data
+        if checkCut && (data[n] & 192) == 128 {
+            _strPanic("milo: truncate(", n, ") lands inside a multibyte UTF-8 character; truncate takes a byte length that must end on a character boundary,")
+        }
+        if head[0]._cap != 0 {
+            data[n] = 0
+            head[0]._len = n
+            return
+        }
+        let size = n.wrappingAdd(1)
+        var buf = _strAlloc(size)
+        memcpy(buf, data, n)
+        buf[n] = 0
+        head[0]._data = buf
+        head[0]._len = n
+        head[0]._cap = size
+    }
+}
+
+impl string {
+    // Appends the byte `b`. The hot path (room for the byte and its NUL in a buffer this
+    // handle holds alone) is _strReserve's inline test, then two stores and the length
+    // bump; @inline so each call site compiles to that, as the builtin's inline IR did.
+    @inline
+    @trackCaller
+    fn push(self: &mut Self, b: u8) {
+        unsafe {
+            var head = (self.addrOf() as *u8) as *StrHead
+            let len = head[0]._len
+            var data = _strReserve(&mut self, 1)
+            data[len] = b
+            data[len.wrappingAdd(1)] = 0
+            head[0]._len = len.wrappingAdd(1)
+        }
+    }
+
+    // Keeps the first `n` bytes. A negative `n` empties the string; `n` at or past the end
+    // is a no-op; an `n` inside a multibyte character panics at the caller.
+    @inline
+    @trackCaller
+    fn truncate(self: &mut Self, n: i64) {
+        var cut = n
+        if cut < 0 {
+            cut = 0
+        }
+        if (cut as u64) < (self.len as u64) {
+            strCut(&mut self, cut, true)
+        }
+    }
+
+    // Empties the string, keeping its buffer and capacity.
+    @inline
+    @trackCaller
+    fn clear(self: &mut Self) {
+        if self.len != 0 {
+            strCut(&mut self, 0, false)
+        }
+    }
+
+    // Overwrites byte `i`, the write-side twin of `s[i]`, with the same bounds panic. A
+    // shared buffer is copied first (copy-on-write) and a literal copied out to len + 1
+    // owned bytes.
+    @inline
+    @trackCaller
+    fn setByte(self: &mut Self, i: i64, b: u8) {
+        let _inRange = self[i]
+        unsafe {
+            _strUnique(&mut self)
+            var head = (self.addrOf() as *u8) as *StrHead
+            if head[0]._cap == 0 {
+                let len = head[0]._len
+                let size = len.wrappingAdd(1)
+                var buf = _strAlloc(size)
+                memcpy(buf, head[0]._data, len)
+                buf[len] = 0
+                head[0]._data = buf
+                head[0]._cap = size
+            }
+            var data = head[0]._data
+            data[i] = b
+        }
+    }
+}

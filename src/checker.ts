@@ -149,6 +149,12 @@ export function isVecModule(file: string | undefined): boolean {
 
 // std/string's `_strRangeCheck(s, start, end)`: the builtin substr's range panic,
 // "substr range out of bounds: a..b (len n) at file:line:col" (emitStringRangeCheck).
+// `_strReserve(&mut s, extra): *u8` is s's data pointer with room for `extra` more bytes and
+// the NUL, held by s alone (the builtin push's inline fast path, else @milo.str.reserve);
+// `_strUnique(&mut s)` makes s the only handle to its buffer (@milo.str.unique), so the
+// count logic stays in the str.ll runtime; `_strAlloc(n): *u8` is a checked n-byte buffer
+// with its count word; `_strPanic("head", n, "tail")` is truncate's formatted panic.
+export const STR_INTRINSICS: ReadonlySet<string> = new Set(["_strRangeCheck", "_strReserve", "_strUnique", "_strAlloc", "_strPanic"]);
 export function isStringModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -10819,6 +10825,29 @@ export class TypeChecker {
       "replace the whole call with 'arenaGet(arena, handle)' (or 'arena.get(handle)') — it returns the same Option<T>");
   }
 
+  // std/string's intrinsics (STR_INTRINSICS). A `&mut s` argument is the place itself.
+  private checkStrIntrinsic(expr: ExprOf<"Call">): TypeKind {
+    const sp = expr.span;
+    const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+    const u8p: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+    const shape: Record<string, { args: ("str" | "i64" | "lit")[]; ret: TypeKind }> = {
+      _strRangeCheck: { args: ["str", "i64", "i64"], ret: { tag: "void" } },
+      _strReserve: { args: ["str", "i64"], ret: u8p },
+      _strUnique: { args: ["str"], ret: { tag: "void" } },
+      _strAlloc: { args: ["i64"], ret: u8p },
+      _strPanic: { args: ["lit", "i64", "lit"], ret: { tag: "void" } },
+    };
+    const want = shape[expr.func]!;
+    if (expr.args.length !== want.args.length) this.error(`'${expr.func}' expects ${want.args.length} argument(s)`, sp);
+    expr.args.forEach((a, i) => {
+      if (a.kind === "UnaryOp" && a.op === "&mut") expr.args[i] = a = a.operand;
+      const k = want.args[i];
+      if (k === "lit" && a.kind !== "StringLit") this.error(`'${expr.func}' argument ${i + 1} must be a string literal`, sp);
+      this.checkExpr(a, k === "i64" ? i64 : null);
+    });
+    return this.setType(expr, want.ret);
+  }
+
   private shadowedByUserFn(name: string): boolean {
     return userFnShadowsBuiltin(name, { functions: this.functions, genericFns: this.genericFns });
   }
@@ -10857,12 +10886,7 @@ export class TypeChecker {
       if (grow && types[0]?.tag !== "ptr") this.error(`'_vecGrowBuf': the buffer must be a raw pointer`, sp);
       return this.setType(expr, grow ? (types[0] ?? { tag: "unknown" }) : i64);
     }
-    if (expr.func === "_strRangeCheck" && isStringModule(sp?.file)) {
-      const i64: TypeKind = { tag: "int", bits: 64, signed: true };
-      if (expr.args.length !== 3) this.error(`'_strRangeCheck' expects 3 arguments`, sp);
-      expr.args.forEach((a, i) => this.checkExpr(a, i === 0 ? null : i64));
-      return this.setType(expr, { tag: "void" });
-    }
+    if (STR_INTRINSICS.has(expr.func) && isStringModule(sp?.file)) return this.checkStrIntrinsic(expr);
     if (expr.func === "_vecPanic" && isVecModule(sp?.file)) {
       if (expr.args.length !== 1 || expr.args[0]!.kind !== "StringLit") {
         this.error(`'_vecPanic' expects one string literal`, sp);
@@ -13977,7 +14001,7 @@ export class TypeChecker {
         if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
           this.error(`string.push: expected u8, got ${this.show(argType)}`, sp);
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdStringMethod(expr, "push", { tag: "void" }, [], true);
       }
       if (expr.method === "setByte") {
         if (expr.args.length !== 2) { this.error(`'setByte' expects 2 arguments (index, byte), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
@@ -13993,7 +14017,7 @@ export class TypeChecker {
         if (!typeEq(u8t, bType) && bType.tag !== "unknown") {
           this.error(`string.setByte: expected u8, got ${this.show(bType)}`, sp);
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdStringMethod(expr, "setByte", { tag: "void" }, [], true);
       }
       if (expr.method === "pushStr") {
         if (expr.args.length !== 1) { this.error(`'pushStr' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
@@ -14035,7 +14059,7 @@ export class TypeChecker {
         if (!this.isRootMutable(expr.object)) {
           this.error(`cannot ${expr.method} an immutable string`, sp, `declare with 'var' to make it mutable`);
         }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdStringMethod(expr, expr.method, { tag: "void" }, [], true);
       }
       if (expr.method === "substr") {
         if (expr.args.length !== 2) { this.error(`'substr' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }

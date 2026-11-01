@@ -1,0 +1,88 @@
+// string push is std/string.milo code: _strReserve's inline test, then the byte, the NUL
+// and the length. Pushing onto an empty string, a literal (cap 0, copied out first), a
+// string copied out of a slice, a shared (copy-on-write) string after the share (the other
+// handle keeps its bytes), a field, a `&mut string` param and a Vec element; multibyte
+// UTF-8 built byte by byte; growth across many pushes; cstr() seeing the NUL.
+// @expect: A 1 abc ab 3
+// @expect: world! world hello world
+// @expect: xyz! xy xyz
+// @expect: mno mn 2
+// @expect: é日 5 true
+// @expect: 01ab pq?
+// @expect: 100000 10949956 100000 abcdezabcd
+
+struct Buf {
+    text: string,
+}
+
+fn addTwo(s: &mut string, b: u8) {
+    s.push(b)
+    s.push(b + 1)
+}
+
+extern fn strlen(p: *u8): i64
+
+// Through a borrow cstr() reads the shared bytes as they are (no copy-on-write).
+fn clen(s: &string): i64 {
+    unsafe {
+        return strlen(s.cstr())
+    }
+}
+
+fn main() {
+    var e = ""
+    e.push(65)
+    var lit = "ab"
+    let litCopy = lit
+    lit.push(99)
+    print(e, " ", e.len, " ", lit, " ", litCopy, " ", lit.len)
+
+    let src = "hello world"
+    let v = src.slice(6, 11)
+    var fromSlice: string = v
+    fromSlice.push(33)
+    print(fromSlice, " ", v, " ", src)
+
+    var s = "x" + "y"
+    let shared = s
+    s.push(122)
+    let shared2 = s
+    s.push(33)
+    print(s, " ", shared, " ", shared2)
+    // Room in the buffer but a second handle: the push must still copy.
+    var roomy = String.withCapacity(16)
+    roomy.pushStr("mn")
+    let other = roomy
+    roomy.push(111)
+    print(roomy, " ", other, " ", clen(other))
+
+    // é is c3 a9, 日 is e6 97 a5.
+    var u = ""
+    u.push(195)
+    u.push(169)
+    u.push(230)
+    u.push(151)
+    u.push(165)
+    print(u, " ", u.len, " ", u == "é日")
+
+    var b = Buf { text: "" }
+    addTwo(&mut b.text, 48)
+    addTwo(&mut b.text, 97)
+    var vs: Vec<string> = ["p", "q"]
+    vs[1].push(63)
+    print(b.text, " ", vs[0], vs[1])
+
+    var big = ""
+    var sum: i64 = 0
+    for i in 0..100000 {
+        big.push((97 + i % 26) as u8)
+    }
+    for i in 0..big.len {
+        sum = sum + (big[i] as i64)
+    }
+    var n: i64 = 0
+    unsafe {
+        n = strlen(big.cstr())
+    }
+    print(big.len, " ", sum, " ", n, " ", big.substr(0, 5), big.substr(99995, 100000))
+}

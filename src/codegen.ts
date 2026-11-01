@@ -9,8 +9,8 @@ import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
 import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
-  F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
-  genStringSetByte, genStringPushStr, genStringSlice, genNumberToString, genStringClone,
+  F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStrReserve, genStrPanic, genStringPushInt,
+  genStringPushStr, genStringSlice, genNumberToString, genStringClone,
 } from "./codegen-string";
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
@@ -57,7 +57,7 @@ export const NOT_OWNED_TEMP: readonly string[] = [
 "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "VecGrowBuf", "VecPanic", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
-  "StrRangeCheck", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
+  "StrRangeCheck", "StringLen", "StringLit", "StrAlloc", "StrPanic", "StrReserve", "StrUnique", "StringPushInt", "StringPushStr", "StringSlice",
   "UnaryOp", "VecCapacity",
 
   "VecLen", "VecPtr",
@@ -5770,16 +5770,26 @@ export class Codegen {
         this.dropOwnedTemp(lines, ov.ref, "%HashMap", expr.object);
         return [lines, len, "i64"];
       }
-      case "StringPush":
-        return genStringPush(this, expr, lines);
+      case "StrReserve":
+        return genStrReserve(this, expr, lines);
+      case "StrPanic":
+        return genStrPanic(this, expr, lines);
+      case "StrUnique": {
+        this.hasStringType = true;
+        const [al, addr] = this.genLValue(expr.str);
+        lines.push(...al);
+        this.emitStrUnique(lines, addr);
+        return [lines, "void", "void"];
+      }
+      case "StrAlloc": {
+        this.hasStringType = true;
+        const n = this.genBoundI64(expr.size, lines);
+        return [lines, this.emitStrAlloc(lines, n, "stralloc", expr.span), "ptr"];
+      }
       case "StringPushStr":
         return genStringPushStr(this, expr, lines);
       case "StringPushInt":
         return genStringPushInt(this, expr, lines);
-      case "StringTruncate":
-        return genStringTruncate(this, expr, lines);
-      case "StringSetByte":
-        return genStringSetByte(this, expr, lines);
       case "StrRangeCheck": {
         const sv = this.genVal(expr.str, lines);
         const start = this.genBoundI64(expr.start, lines);

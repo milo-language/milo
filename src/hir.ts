@@ -62,12 +62,17 @@ export type HIRExpr =
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —
   // the map keeps its own copy). `field` says which half of the entry to collect.
   | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "StringPush"; str: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
+  // std/string `_strReserve(&mut s, extra)`: s's data pointer with room for extra bytes + NUL, s's alone.
+  | { kind: "StrReserve"; str: HIRExpr; extra: HIRExpr; type: TypeKind; span?: Span }
+  // std/string `_strUnique(&mut s)`: make s the only handle to its buffer (@milo.str.unique).
+  | { kind: "StrUnique"; str: HIRExpr; type: TypeKind; span?: Span }
+  // std/string `_strAlloc(n)`: an n-byte string buffer with its count word (@milo.str.alloc), checked.
+  | { kind: "StrAlloc"; size: HIRExpr; type: TypeKind; span?: Span }
+  // std/string `_strPanic("head", n, "tail")`: prints "head<n>tail at <location>" and aborts.
+  | { kind: "StrPanic"; head: string; value: HIRExpr; tail: string; type: TypeKind; span?: Span }
   | { kind: "StringPushStr"; str: HIRExpr; other: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringPushInt"; str: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   // length null is clear(): no boundary to check
-  | { kind: "StringTruncate"; str: HIRExpr; length: HIRExpr | null; type: TypeKind; span?: Span }
-  | { kind: "StringSetByte"; str: HIRExpr; index: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
   // std/string `_strRangeCheck(s, start, end)`: substr's range panic, then nothing.
   | { kind: "StrRangeCheck"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSlice"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }

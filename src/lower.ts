@@ -4,7 +4,7 @@
 import type { Program, Function as AstFn, Stmt, Expr, Pattern, Span } from "./ast";
 import { declaredType, floatNamespaceConst, isNestedPattern } from "./ast";
 import type { CheckResult, EnumInfo } from "./checker";
-import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS, isForeignModule, isHashMapModule, isStringModule, isVecModule, userFnShadowsBuiltin } from "./checker";
+import { RAW_SLICE_INTRINSICS, ADOPT_INTRINSICS, MAP_INTRINSICS, VEC_INTRINSICS, isForeignModule, isHashMapModule, isStringModule, isVecModule, STR_INTRINSICS, userFnShadowsBuiltin } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal, HIRContract, HIRPatStep, HIRPatTest } from "./hir";
 import type { TypeKind } from "./types";
 import { RR_WRAPPER_FILE } from "./replay-externs";
@@ -861,9 +861,18 @@ class LowerCtx {
           }
           return { kind: "NatLess", a: this.lowerExpr(expr.args[0]), b: this.lowerExpr(expr.args[1]), type, span: expr.span };
         }
-        if (expr.func === "_strRangeCheck" && isStringModule(expr.span?.file)) {
-          const [str, start, end] = expr.args.map(a => this.lowerExpr(a)) as [HIRExpr, HIRExpr, HIRExpr];
-          return { kind: "StrRangeCheck", str, start, end, type, span: expr.span };
+        if (STR_INTRINSICS.has(expr.func) && isStringModule(expr.span?.file)) {
+          const args = expr.args.map(a => this.lowerExpr(a));
+          switch (expr.func) {
+            case "_strRangeCheck": return { kind: "StrRangeCheck", str: args[0]!, start: args[1]!, end: args[2]!, type, span: expr.span };
+            case "_strReserve": return { kind: "StrReserve", str: args[0]!, extra: args[1]!, type, span: expr.span };
+            case "_strUnique": return { kind: "StrUnique", str: args[0]!, type, span: expr.span };
+            case "_strAlloc": return { kind: "StrAlloc", size: args[0]!, type, span: expr.span };
+            default: {
+              const lit = (i: number) => { const a = expr.args[i]; return a?.kind === "StringLit" ? a.value : ""; };
+              return { kind: "StrPanic", head: lit(0), value: args[1]!, tail: lit(2), type, span: expr.span };
+            }
+          }
         }
         if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(expr.span?.file)) {
           if (expr.func === "_mapCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
@@ -1430,20 +1439,11 @@ class LowerCtx {
           }
         }
         if (objType?.tag === "string") {
-          if (expr.method === "push") {
-            return { kind: "StringPush", str: this.lowerExpr(expr.object), byte: this.lowerExpr(expr.args[0]), type, span: expr.span };
-          }
           if (expr.method === "pushStr") {
             return { kind: "StringPushStr", str: this.lowerExpr(expr.object), other: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
           if (expr.method === "pushInt") {
             return { kind: "StringPushInt", str: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
-          }
-          if (expr.method === "setByte") {
-            return { kind: "StringSetByte", str: this.lowerExpr(expr.object), index: this.lowerExpr(expr.args[0]), byte: this.lowerExpr(expr.args[1]), type, span: expr.span };
-          }
-          if (expr.method === "clear" || expr.method === "truncate") {
-            return { kind: "StringTruncate", str: this.lowerExpr(expr.object), length: expr.method === "clear" ? null : this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
           if (expr.method === "slice") {
             return { kind: "StringSlice", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };

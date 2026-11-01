@@ -1,0 +1,51 @@
+// string setByte is std/string.milo code: the index's bounds check is `s[i]`'s, then the
+// buffer is made this handle's alone and the byte written. A literal (cap 0, copied out to
+// len + 1 owned bytes), a string copied out of a slice, a shared (copy-on-write) string
+// written after the share (the other handle keeps its bytes), every byte of a multibyte
+// character rewritten, i32 and u8 indexes, a `&mut string` param, and cstr() after a write.
+// @expect: bat cat
+// @expect: AbcdeF abcdef abcdeF
+// @expect: è本 5 true
+// @expect: 7orld world hello world Milo! 5
+
+extern fn strlen(p: *u8): i64
+
+fn upFirst(s: &mut string) {
+    s.setByte(0, s[0] - 32)
+}
+
+fn main() {
+    var lit = "cat"
+    let litCopy = lit
+    lit.setByte(0, 98)
+    print(lit, " ", litCopy)
+
+    var s = "abc" + "def"
+    let shared = s
+    s.setByte(5, 70)
+    let shared2 = s
+    s.setByte(0, 65)
+    print(s, " ", shared, " ", shared2)
+
+    // é (c3 a9) becomes è (c3 a8); then the bytes of 日 (e6 97 a5) become 本 (e6 9c ac).
+    var u = "é日"
+    u.setByte(1, 168)
+    let i: i32 = 2
+    let j: u8 = 3
+    u.setByte(i + 1, 156)
+    u.setByte(j + 1, 172)
+    print(u, " ", u.len, " ", u == "è本")
+
+    let src = "hello world"
+    let v = src.slice(6, 11)
+    var fromSlice: string = v
+    fromSlice.setByte(0, 87)
+    upFirst(&mut fromSlice)
+    var w = "milo" + "!"
+    upFirst(&mut w)
+    var n: i64 = 0
+    unsafe {
+        n = strlen(w.cstr())
+    }
+    print(fromSlice, " ", v, " ", src, " ", w, " ", n)
+}

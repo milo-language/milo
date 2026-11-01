@@ -612,3 +612,30 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   buffer, @milo.fmt.f64), which std cannot call except through an intrinsic that would be
   that same codegen; the move would add an `impl` per int width and float, plus dispatch
   for ranged ints, and delete nothing.
+- 2026-11-01: `push`, `truncate`, `clear` and `setByte` moved, over four std/string-only
+  intrinsics that keep the count logic in one place: `_strReserve(&mut s, extra): *u8`
+  (genStringPush's inline test generalized to `extra` bytes: room and a count of 1, else
+  @milo.str.reserve with its null check), `_strUnique(&mut s)` (emitStrUnique, the
+  @milo.str.unique call), `_strAlloc(n): *u8` (emitStrAlloc, checked) and
+  `_strPanic("head", n, "tail")` (truncate's formatted panic, "head<n>tail at file:line:col").
+  push is `@inline @trackCaller`: reserve, byte, NUL, len + 1. truncate and clear share
+  `strCut`, genStringTruncate's policy: a negative length empties, at or past the end is a
+  no-op, then unique, the mid-character check (truncate only, as the builtin clear never
+  made it), and a cap-0 literal copied out to exactly n + 1 owned bytes. setByte checks its
+  index with `self[i]` (the same __milo_bounds_fail text and caller's line), then unique,
+  then the literal copy-out to len + 1. The checker keeps all four builtin branches and
+  their messages and binds the std bodies. Runtime errors `stringSetByteOutOfBounds`,
+  `stringTruncateMidChar` and `stringIndexWraps` print exactly what the old compiler does.
+  Planted: push skipping the count test when there is room turns `strPushStd` red (a
+  second handle's cstr() then reads the pushed byte: 3 for 2); dropping truncate's
+  negative clamp and setByte's unique turn `strTruncateStd` and `strSetByteStd` red. Output
+  identical to the old compiler; live heap equal; ASan clean. Bench (cpu, median of 5): 40
+  strings pushed to 5M bytes + 2M strings of 24 pushes 0.50s builtin vs 0.48s std; 20M
+  rounds of pushStr/setByte/truncate/clear 0.13s vs 0.12s.
+  Decided: `pushStr` and `pushInt` stay builtin. Their body is emitAppendFormatParts, the
+  in-place appender interpolation shares, with one string or int part: it re-bases a
+  source pointing into the receiver (`s.pushStr(s)`) across the reserve and formats digits
+  straight into the buffer through @milo.fmt.*. pushStr also writes a `$"..."` argument's
+  parts in place instead of building the temporary; a std pushStr would take the
+  materialized string (an allocation and a copy per call) unless lowering kept that case,
+  which leaves two implementations of one method. Neither deletes code.

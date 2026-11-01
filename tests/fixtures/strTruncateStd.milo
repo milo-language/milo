@@ -1,0 +1,79 @@
+// string truncate and clear are std/string.milo code. Byte lengths: negative empties, at or
+// past the end is a no-op, a cut on a multibyte character boundary keeps the whole
+// character. Empty strings, a literal (cap 0, copied out to an owned buffer), a string
+// copied out of a slice, a shared (copy-on-write) string cut after the share (the other
+// handle keeps its bytes), an i32 length, pushes after a cut reusing the buffer, cstr()
+// seeing the new NUL, and clear on a string whose first byte is a continuation byte (clear
+// has no cut to check).
+// @expect: [] he hello [] 0
+// @expect: [] abcdefghij abcd 0
+// @expect: hé 3 héllo
+// @expect: h 1
+// @expect: hello hello wo 123! 4
+// @expect: 10 again 5
+// @expect: [] 0
+
+extern fn strlen(p: *u8): i64
+
+fn cut(s: &mut string, n: i64) {
+    s.truncate(n)
+}
+
+fn main() {
+    var e = ""
+    e.truncate(3)
+    e.truncate(0)
+    e.clear()
+    var lit = "hello"
+    let litCopy = lit
+    lit.truncate(2)
+    var lit2 = "abc"
+    lit2.clear()
+    print("[", e, "] ", lit, " ", litCopy, " [", lit2, "] ", lit2.len)
+
+    var s = "abcdef" + "ghij"
+    let shared = s
+    s.truncate(4)
+    let shared2 = s
+    s.truncate(-7)
+    print("[", s, "] ", shared, " ", shared2, " ", s.len)
+
+    // h é (c3 a9) l l o: 3 keeps "hé", 1 keeps "h"; 99 and 6 are no-ops.
+    var u = "h" + "éllo"
+    u.truncate(99)
+    u.truncate(6)
+    let full = u
+    u.truncate(3)
+    print(u, " ", u.len, " ", full)
+    u.truncate(1)
+    print(u, " ", u.len)
+
+    let src = "hello world"
+    let v = src.slice(0, 8)
+    var fromSlice: string = v
+    fromSlice.truncate(5)
+    let k: i32 = 3
+    var w = "123456" + "7"
+    cut(&mut w, 5)
+    w.truncate(k)
+    w.push(33)
+    print(fromSlice, " ", v, " ", w, " ", w.len)
+
+    var big = ""
+    for i in 0..1000 {
+        big.push((97 + i % 26) as u8)
+    }
+    big.truncate(10)
+    var n: i64 = 0
+    unsafe {
+        n = strlen(big.cstr())
+    }
+    big.clear()
+    big.pushStr("again")
+    print(n, " ", big, " ", big.len)
+
+    var odd = "x" + "abc"
+    odd.setByte(0, 128)
+    odd.clear()
+    print("[", odd, "] ", odd.len)
+}
