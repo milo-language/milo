@@ -1,0 +1,13 @@
+// @error: takes string by value, but each passes &string
+// A named fn taking a Copy element by value is wrapped in a thunk and accepted
+// (fixtures/callbackCopyCoerce.milo). A string owns heap, so taking it by value would move
+// it out of the Vec being iterated: no thunk, the same refusal a closure literal gets
+// (vecCallbackMovesOwned.milo).
+fn shout(s: string) {
+    print(s)
+}
+
+fn main() {
+    let v: Vec<string> = ["a", "bb"]
+    v.each(shout)
+}

@@ -1,0 +1,51 @@
+// A callback slot typed `(&T, ...) => R` with T Copy accepts `(T, ...) => R`: a closure
+// literal has the parameter retyped to `&T`, a named fn is wrapped in a thunk. Holds for
+// any call, not only the Vec methods: a plain fn and a user `impl Vec<T>` method here.
+// errors/callbackByValueNamedNonCopy.milo pins the non-Copy refusal.
+// @expect: true true
+// @expect: 3 3
+// @expect: v1
+// @expect: v2
+// @expect: v3
+// @expect: 7
+
+fn countIf(xs: &Vec<i64>, f: (&i64) => bool): i64 {
+    var n = 0
+    for x in xs {
+        if f(x) {
+            n += 1
+        }
+    }
+    return n
+}
+
+fn odd(x: i64): bool {
+    return x % 2 == 1
+}
+
+fn shout(x: i64) {
+    print("v", x)
+}
+
+fn add(acc: i64, x: i64): i64 {
+    return acc + x
+}
+
+impl Vec<T> {
+    fn anyOf(self: &Self, f: (&T) => bool): bool {
+        for e in self {
+            if f(e) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+fn main() {
+    let v: Vec<i64> = [1, 2, 3, 5]
+    print(v.anyOf((x: i64) => x > 4), " ", v.anyOf(odd))
+    print(countIf(v, (x: i64) => x % 2 == 1), " ", countIf(v, odd))
+    v[0..3].each(shout)
+    print(v.fold(-4, add))
+}

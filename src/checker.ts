@@ -11870,7 +11870,53 @@ export class TypeChecker {
   // static, method, generic method, interface, fn field, closure) goes through here, so a
   // coercion one of them accepted can no longer be "expected string, got &string" in
   // another. Moves are the caller's: call forms differ in when they happen.
+  // A callback slot typed `(&T, ...) => R` with T Copy also takes `(T, ...) => R`: for a
+  // Copy T a read through the borrow is the value, so the callback is adapted, not
+  // refused. A closure literal has the parameter retyped to `&T`; a named fn is wrapped
+  // in a thunk closure `(p: &T) => f(p)`. Rewritten in the AST before checking, so the
+  // checker, lowering and codegen see one ordinary closure. A non-Copy T is left alone
+  // and refused as before: taking it by value would move it out of the container.
+  private coerceCopyCallback(arg: Expr, paramType: TypeKind): void {
+    const want = paramType.tag === "ref" ? paramType.inner : paramType;
+    if (want.tag !== "fn") return;
+    const copyRef = (t: TypeKind | undefined): TypeKind | null =>
+      t?.tag === "ref" && !t.mutable && this.isCopyType(t.inner) ? t.inner : null;
+    if (arg.kind === "Closure") {
+      if (arg.params.length !== want.params.length) return;
+      arg.params.forEach((p, i) => {
+        const inner = copyRef(want.params[i]);
+        if (!inner || !p.type || p.type.isRef || p.type.isRefMut || p.type.isPtr) return;
+        if (typeEq(this.resolve(p.type), inner)) p.type = { ...p.type, isRef: true };
+      });
+      return;
+    }
+    if (arg.kind !== "Ident" || this.lookup(arg.name)) return;
+    const sig = this.functions.get(arg.name);
+    if (!sig || sig.params.length !== want.params.length) return;
+    let adapted = false;
+    const params = sig.params.map((p, i) => {
+      const inner = copyRef(want.params[i]);
+      if (inner && typeEq(p.type, inner)) { adapted = true; return want.params[i]!; }
+      return p.type;
+    });
+    if (!adapted) return;
+    const span = arg.span;
+    const names = params.map((_, i) => `__cb${i}`);
+    const call: Expr = { kind: "Call", func: arg.name, args: names.map(name => ({ kind: "Ident", name, span })), span };
+    const thunk: Expr = {
+      kind: "Closure",
+      params: names.map((name, i) => ({ name, type: this.typeKindToMiloType(params[i]!), span })),
+      retType: sig.ret.tag === "void" ? null : this.typeKindToMiloType(sig.ret),
+      body: [sig.ret.tag === "void" ? { kind: "ExprStmt", expr: call, span } : { kind: "Return", value: call, span }],
+      span,
+    };
+    // In place: the parent's args array holds this node, and lowering reads the AST.
+    for (const k of Object.keys(arg)) delete (arg as unknown as Record<string, unknown>)[k];
+    Object.assign(arg, thunk);
+  }
+
   private checkCallArg(arg: Expr, paramType: TypeKind, sp: Span | undefined, mismatch: (argType: TypeKind) => void): TypeKind {
+    this.coerceCopyCallback(arg, paramType);
     const hint = paramType.tag === "ref" ? paramType.inner : paramType;
     const argType = this.checkExpr(arg, hint);
     if (paramType.tag === "ref") {
@@ -11964,6 +12010,13 @@ export class TypeChecker {
     return this.checkCallArg(arg, paramType, sp, argType => {
       if (special?.(argType)) return;
       const bare = paramType.tag === "ref" ? paramType.inner : paramType;
+      // A callback mismatch names the parameter at fault ("'each' callback parameter 1
+      // takes string by value, but each passes &string"), as the builtin combinators said.
+      if (bare.tag === "fn" && argType.tag === "fn") {
+        const before = this.diagnostics.length;
+        this.checkCallbackSig(argType, bare, expr.method, arg.span);
+        if (this.diagnostics.length > before) return;
+      }
       this.error(`'${expr.method}' argument ${i + 1}: expected ${this.show(bare)}, got ${this.show(argType)}`, arg.span);
     });
   }
