@@ -1,0 +1,9 @@
+// @error: 'modify' argument 2: expected (&mut i64) => void, got (i64) => void
+// modify hands its callback a `&mut V` into the table. The builtin accepted a callback
+// taking the value by value and passed it the pointer anyway: `print(v)` printed the
+// slot's address.
+fn main() {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("a", 1)
+    m.modify("a", (v: i64): void => { print(v) })
+}
