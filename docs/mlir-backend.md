@@ -3,7 +3,7 @@ system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (third batch: main, print, aggregates, drop elaboration)
+last-verified: 2026-11-01 (fourth batch: globals, closures, matches, big aggregates, append in place)
 -->
 
 # MLIR backend
@@ -178,6 +178,62 @@ structs, enums.
 - *One process.* `milo-opt --emit-llvmir <passes>` runs the pipeline and prints LLVM IR
   (byte-identical to piping into mlir-translate); the milo-opt stage went from about 40
   to 26 ms on the `owned` program.
+
+**Fourth batch (2026-11-01): M5 start, globals, big aggregates, the first dialect rewrite.**
+
+- *Globals.* `milo.global "name"` is the place of a module global (declared external, the
+  splice keeps the module's definition); not an owned slot, so a store over it drops the
+  old value as through a `&mut`. `milo.global.init` calls legacy's guarded entry
+  (`__milo.lazy.<G>`) for a `LazyGlobalInit`, and `milo.store ... init` is a lazy global's
+  first fill (HIR `isInit`: nothing to drop), so the `__milo.lazyinit.*` functions go
+  through MLIR too. Thread-local globals stay legacy. A function naming a global keeps its
+  legacy body for the noalias analysis (it reads `touches` from the text), as one with a
+  raw pointer does; so does `main`, which therefore stays legacy when it names one.
+- *Fn values and closures.* `!milo.fn<(params) -> ret>` is a non-owning fn value
+  (`{ ptr fn, ptr env }`). `milo.closure @body(captures)` builds a by-reference closure:
+  its body is a `func.func` of its own (internal, `(!milo.ptr env, params...)`), and the
+  env is an entry-block slot of the creating frame with a null drop header and the
+  captures' addresses (`milo.env.capture %env[i]` reads one back inside the body).
+  `milo.closure.call` calls through the pair with the env first. A named fn as a value is
+  legacy's trampoline, through a helper (`milo.fnval.<f>`). Closure bodies are appended
+  to the module whole; the creating function keeps its legacy body for the analysis
+  (byRefClosures, indirect calls). Still legacy: `move` closures and every owning fn type
+  (their heap env has drop glue: next), heap-env and key-extractor closures, a closure
+  with captures in a global initializer (legacy gives that env a static slot), slice
+  params. The HIR type of a fn-typed field has lost its params; the struct layout's is used.
+- *Matches.* An owning enum matched by value: an arm that binds an owning payload field
+  moves the subject out of its owned slot (`milo.move`) and binds owned slots, so drop
+  elaboration sees the subject empty on that path only (legacy's alive flag); an arm that
+  leaves an owning field unbound stays legacy (legacy leaks it). A `&mut` subject binds
+  payload places (`milo.enum.field_ref`). String and float literal patterns are a chain of
+  `==` tests in nested `milo.if`s. Still legacy: nested patterns, niche-packed enums
+  (ranged ints are not in the dialect at all), a 128+ byte enum matched by value.
+- *128+ byte aggregates* are places, never SSA values (legacy's isBigAgg: SROA splits a
+  whole-aggregate load per element). `placeType` admits them, `valueType` does not: by-ref
+  params and args, field places, a by-value param (stored to its slot on entry, as legacy
+  spills it), a by-value argument (loaded whole at the call, as legacy does), a big enum
+  matched through `&`/`&mut` (`milo.enum.tag_at`, payload places). sret functions take
+  legacy's hidden out pointer first; `return` writes a struct literal field by field
+  (`init` stores) or forwards an sret call, and `let x = f()` gives the call `x`'s slot;
+  `milo.filled` tells drop elaboration an owned slot was filled in place.
+- *`s = s + x`.* `milo.string.concat` replaced the helper call, and
+  `milo-append-in-place` (before scope-drops) rewrites `%l = load %s; ...; %r = concat %l,
+  %x; store %r, %s` to `milo.string.append %s, %x` (legacy's pushStr) when nothing in
+  between names `%s` and `%x` is not a view of it. 200000 appends: 2.13 s before, 0.01 s
+  after, the same as legacy (`mlir/bench/append.milo`). The first optimization the
+  dialect does that legacy did by matching its own Assign.
+- *Canonicalize* runs with arith's `SelectToExtUI` off: it folded a select of Milo's si32
+  (an if-expression `if b { 1 } else { 0 }`) into an `extui`, which only takes signless ints.
+- *Gates.* Programs `globals`, `closures`, `append`, `match-forms`, `bigstruct`, `sret`
+  (with `lib/bigs.milo`); FileCheck `globals.mlir`, `closures.mlir`, `append.mlir`,
+  `match-mut.mlir`, verifier cases for the new ops. Planted bugs, each red: no drop before a
+  store over a global (`globals`, one more live block); captures stored in reverse
+  (`closures` ran away to the 4 GB guard); `append` with the left operand (`append`
+  stdout); `milo.load` instead of `milo.move` in a consuming match arm (`match-forms`, ASan
+  heap-use-after-free); field_ref index swapped on big structs (`bigstruct` stdout); the
+  tag read 8 bytes in (`bigstruct` exit status); no `milo.filled` (`sret`, 14 more live
+  blocks); a big by-value argument loaded instead of moved (`sret` double free).
+  `MILO_MLIR_ONLY=<regex>` limits MLIR to matching function names, for bisecting.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
