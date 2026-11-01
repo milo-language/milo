@@ -1,0 +1,55 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: for-in over fixed
+// arrays of elements that own nothing. A literal consumed by the loop (evaluated once,
+// in order, before the first iteration), a call's result, a local and a struct field
+// borrowed in place, the index form, a break, a continue, an early return, and an
+// array of small structs.
+
+struct P { x: i64, y: i64 }
+
+struct Grid { cells: [i64; 4], name: string }
+
+fn tick(n: i64): i64 {
+    print("tick ", n)
+    return n
+}
+
+fn digits(s: &string): bool {
+    for i in [0, 1, 2, 3, 5] {
+        if s[i] < '0' || s[i] > '9' { return false }
+    }
+    return true
+}
+
+fn three(): [i64; 3] {
+    return [tick(7), tick(8), tick(9)]
+}
+
+fn sumGrid(g: &Grid): i64 {
+    var n = 0
+    for c in g.cells { n = n + c }
+    return n
+}
+
+fn run() {
+    var total = 0
+    for v in [tick(1), tick(2), tick(3)] {
+        total = total + v
+    }
+    print("total ", total)
+    for v in three() { print("got ", v) }
+    let a: [i64; 5] = [5, 4, 3, 2, 1]
+    for i, v in a {
+        if v == 3 { continue }
+        if i == 4 { break }
+        print(i, " ", v)
+    }
+    let ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]
+    for p in ps { print(p.x * p.y) }
+    let g = Grid { cells: [10, 20, 30, 40], name: "g" + "rid" }
+    print(g.name, " ", sumGrid(g))
+    print(digits("1234-5"), " ", digits("12a4-5"))
+}
+
+fn main() {
+    run()
+}

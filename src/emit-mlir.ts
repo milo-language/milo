@@ -1150,6 +1150,7 @@ class FnEmitter {
         // on before the body, so a `continue` (back to the condition) cannot skip it.
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         if (s.consume && s.iterableKind === "vec") return this.consumedForEach(s);
+        if (s.iterableKind === "array") return this.arrayForEach(s);
         if ((s.iterableKind !== "vec" && s.iterableKind !== "string") || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
@@ -1254,6 +1255,49 @@ class FnEmitter {
    * it, so whichever way control leaves, the slot's drop frees exactly the elements no
    * iteration took, then the buffer, after the binding's drop as legacy orders them.
    */
+  private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
+    /**
+     * `for x in arr` over a fixed array of elements that own nothing, as legacy genForEach:
+     * a consumed one (`for i in [0, 1, 5]`, a call) evaluated into a slot first, a place
+     * borrowed where it is; the binding is the element's place, which nothing writes while
+     * the loop runs, so reading it at each use is reading legacy's copy.
+     */
+    const at = stripRefs(s.iterable.type);
+    const elemKind = s.varName2 ? s.varType2! : s.varType;
+    if (at.tag !== "array" || at.size === null) throw new MlirUnsupported("for over a slice");
+    if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
+    const aty = this.place$(at, "for array");
+    const ety = this.place$(at.element, "for element");
+    if (placeType(this.cx, stripRefs(elemKind)) !== ety) throw new MlirUnsupported("for element type");
+    const scopeStart = this.body.length;
+    this.scopes.push(new Map());
+    this.owned.push([]);
+    try {
+      let arr: string;
+      if (s.consume) arr = this.bigSlot("for.arr", s.iterable).ref;
+      else {
+        const p = this.fieldPlace(s.iterable);
+        if (!p || p.ty !== aty) throw new MlirUnsupported("for over an array that is not a place");
+        arr = p.ref;
+      }
+      const zero = this.def("milo.const 0 : si64", "si64").ref;
+      const n = this.def(`milo.const ${at.size} : si64`, "si64").ref;
+      const iv = this.fresh();
+      this.loops++;
+      this.region(`milo.for ${zero} to ${n} : si64 {`, () => {
+        this.emit(`^bb0(${iv}: si64):`);
+        const r = this.def(`milo.array.index ${arr}[${iv}] : !milo.ref<${aty}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`, this.loc(s.span)).ref;
+        this.bind(s.varName2 ?? s.varName, { kind: "var", ref: r, ty: ety });
+        if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: iv, ty: "si64" } });
+        return this.stmts(s.body);
+      });
+      this.emit("}");
+      this.loops--;
+      this.closeScope(scopeStart, false, null);
+      return false;
+    } finally { this.scopes.pop(); }
+  }
+
   private consumedForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
     const vt = stripRefs(s.iterable.type);
     const elemKind = stripRefs(s.varName2 ? s.varType2! : s.varType);
