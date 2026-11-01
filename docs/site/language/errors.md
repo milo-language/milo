@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 578 distinct messages across 741 programs the compiler must reject.
+Every error message the test suite pins: 579 distinct messages across 742 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -91,6 +91,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'if' is an expression`](#if-is-an-expression)
 - [`'is' tests one variant, not a nested pattern`](#is-tests-one-variant-not-a-nested-pattern)
 - [`'k' is borrowed by one argument and moved out by a later one (a move of 'k')`](#k-is-borrowed-by-one-argument-and-moved-out-by-a-later-one-a-move-of-k)
+- [`'last' would copy 'Res' out of the Vec: it carries Drop`](#last-would-copy-res-out-of-the-vec-it-carries-drop)
 - [`'main' cannot be imported from './lib/frameCore'`](#main-cannot-be-imported-from-lib-framecore)
 - [`'main' must return i32 or void`](#main-must-return-i32-or-void)
 - [`'merge' in 'impl Merge for Box<i64>' takes 'other: &Box<string>'; the trait 'Merge' declares 'other: &Self'`](#merge-in-impl-merge-for-box-i64-takes-other-box-string-the-trait-merge-declares-other-self)
@@ -2229,6 +2230,25 @@ fn main() {
 ```
 
 <sub>[tests/errors/formatPieceMovedLater.milo](https://github.com/milo-language/milo/blob/main/tests/errors/formatPieceMovedLater.milo)</sub>
+
+## `'last' would copy 'Res' out of the Vec: it carries Drop` {#last-would-copy-res-out-of-the-vec-it-carries-drop}
+
+last() is std/vec code over get(); the copy-out refusal stays at the caller's call, so the message names 'last' and this line rather than the get inside std/vec.milo.
+
+```milo skip
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let r = v.last()
+    return 0
+}
+```
+
+<sub>[tests/errors/dropElementVecLast.milo](https://github.com/milo-language/milo/blob/main/tests/errors/dropElementVecLast.milo)</sub>
 
 ## `'main' cannot be imported from './lib/frameCore'` {#main-cannot-be-imported-from-lib-framecore}
 

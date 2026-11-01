@@ -10,4 +10,16 @@ impl Vec<T> {
     fn isEmpty(self: &Self): bool {
         return self.len() == 0
     }
+
+    // A copy of the first element, or None when the Vec is empty.
+    fn first(self: &Self): Option<T> {
+        return self.get(0)
+    }
+
+    // A copy of the last element, or None when the Vec is empty.
+    fn last(self: &Self): Option<T> {
+        // len is never negative, so this cannot wrap; an empty Vec asks get for -1,
+        // which get answers with None.
+        return self.get(self.len().wrappingSub(1))
+    }
 }

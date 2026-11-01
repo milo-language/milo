@@ -1,0 +1,13 @@
+// @error: 'last' would copy 'Res' out of the Vec: it carries Drop
+// last() is std/vec code over get(); the copy-out refusal stays at the caller's call, so
+// the message names 'last' and this line rather than the get inside std/vec.milo.
+var gone: i64 = 0
+struct Res { id: i64 }
+impl Drop for Res { fn drop(self: &mut Self): void { gone = gone + 1 } }
+
+pub fn main(): i32 {
+    var v: Vec<Res> = Vec.new()
+    v.push(Res { id: 1 })
+    let r = v.last()
+    return 0
+}

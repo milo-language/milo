@@ -281,3 +281,10 @@ modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can
   (`self.len() == 0`). A fixed array receiver of a moved method gets the builtin's
   full-range VecSlice (lower.ts, the resolved-method path). Planted `== 1` turns
   `vecIsEmptyStd` red; old and new output identical; 0 leaks; 300M calls 0.10s vs 0.10s.
+- 2026-11-01: `first` and `last` moved as calls of the builtin `get` (`get(0)`,
+  `get(len.wrappingSub(1))`), so the copy-out is still emitDeepCloneFromPtr. The resource
+  refusal stays at the call in the checker (`dropElementVecLast`). Two builtin bugs gone:
+  `last` lowered its receiver twice (`mk().last()` called `mk` twice), and a fixed-array
+  receiver (`[9, 4, 8].first()`) reached clang as `[3 x i64]` where `%Vec` was read.
+  Planted `wrappingSub(2)` turns `vecFirstLastStd` red; output identical to the old
+  compiler apart from those two; 0 leaks; bench 0.07s builtin vs 0.05s std.

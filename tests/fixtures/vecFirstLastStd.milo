@@ -1,0 +1,92 @@
+// Vec.first and Vec.last are std/vec.milo code (calls of the builtin get). Covers empty
+// Vecs, slices and a fixed array as the receiver, string/struct/float/nested-Vec
+// elements (copied out, the original stays intact), a ranged element and a capture.
+// A temporary receiver is evaluated once (the builtin last() evaluated it twice), and
+// a fixed array receiver works (the builtin passed [N x T] where a %Vec was read).
+// @expect: none none
+// @expect: 1 3
+// @expect: 7 7
+// @expect: none
+// @expect: 2 3
+// @expect: ab cd
+// @expect: p1 p2 2
+// @expect: 2.5 -0
+// @expect: nan
+// @expect: 2 1
+// @expect: 9 8
+// @expect: 5
+// @expect: 1
+// @expect: 1
+
+struct Pt {
+    x: i64,
+    name: string,
+}
+
+fn show(o: Option<i64>): string {
+    return match o {
+        Some(x) => x.toString(),
+        None => "none",
+    }
+}
+
+fn firstOfView(s: &[i64]): Option<i64> {
+    return s.first()
+}
+
+fn lastOfView(s: &[i64]): Option<i64> {
+    return s.last()
+}
+
+var calls = 0
+
+fn mk(): Vec<i64> {
+    calls += 1
+    return [4, 5]
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    print(show(e.first()), " ", show(e.last()))
+    let v: Vec<i64> = [1, 2, 3]
+    print(show(v.first()), " ", show(v.last()))
+    let one: Vec<i64> = [7]
+    print(show(one.first()), " ", show(one.last()))
+
+    print(show(firstOfView(v[1..1])))
+    print(show(firstOfView(v[1..3])), " ", show(lastOfView(v[1..3])))
+
+    var ss: Vec<string> = ["a" + "b", "c" + "d"]
+    let f = ss.first()!
+    let l = ss.last()!
+    ss[0].pushStr("!")
+    print(f, " ", l)
+
+    let ps: Vec<Pt> = [Pt { x: 1, name: "p1" }, Pt { x: 2, name: "p2" }]
+    let pl = ps.last()!
+    print(ps.first()!.name, " ", pl.name, " ", pl.x)
+
+    let fs: Vec<f64> = [2.5, -0.0]
+    print(fs.first()!, " ", fs.last()!)
+    let nan: Vec<f64> = [0.0 / 0.0]
+    print(nan.last()!)
+
+    var nested: Vec<Vec<i64>> = [[1, 2], [3]]
+    let n0 = nested.first()!
+    nested[0].push(9)
+    print(n0.len(), " ", nested.last()!.len())
+
+    let a = [9, 4, 8]
+    print(show(a.first()), " ", show(a.last()))
+
+    print(show(mk().last()))
+    print(calls)
+
+    let r: Vec<Digit> = [3]
+    let pick = r
+    let got = ps.filter((p: &Pt) => p.x as i32 + 2 == pick.first()!)
+    print(got.len())
+}
+
+// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
+type Digit = i32(0..9)

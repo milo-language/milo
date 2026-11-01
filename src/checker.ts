@@ -13573,19 +13573,22 @@ export class TypeChecker {
         }
         return this.setType(expr, objType);
       }
-      // `v[i]` panics out of range; get/first/last are the total reads. The
-      // element comes back cloned — a reference into the buffer could not
-      // outlive a later push.
-      if (expr.method === "get" || expr.method === "first" || expr.method === "last") {
-        const want = expr.method === "get" ? 1 : 0;
-        if (expr.args.length !== want) {
-          this.error(`'${expr.method}' expects ${want} argument${want === 1 ? " (index)" : "s"}, got ${expr.args.length}`, sp);
-        }
-        if (want === 1 && expr.args.length === 1) {
+      // `v[i]` panics out of range; get is the total read. The element comes back
+      // cloned — a reference into the buffer could not outlive a later push.
+      if (expr.method === "get") {
+        if (expr.args.length !== 1) {
+          this.error(`'get' expects 1 argument (index), got ${expr.args.length}`, sp);
+        } else {
           const idxType = this.checkExpr(expr.args[0]);
           if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'get' index must be an integer, got ${this.show(idxType)}`, sp); }
         }
         this.errorIfResourceCopyOut(objType.element, expr.method, "Vec", sp, `Borrow it ('v[i].field', 'for x in v'), or take it out for real with 'remove'/'pop'`);
+        return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
+      }
+      // first/last are std/vec calls of get; the copy-out rule is checked here so the
+      // error names the caller's method and line, not the get inside std.
+      if ((expr.method === "first" || expr.method === "last") &&
+          this.errorIfResourceCopyOut(objType.element, expr.method, "Vec", sp, `Borrow it ('v[i].field', 'for x in v'), or take it out for real with 'remove'/'pop'`)) {
         return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
       }
       // Same comparable-element gate `sort` uses. Milo has no ordering trait, so
