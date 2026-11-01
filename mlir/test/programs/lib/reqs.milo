@@ -1,0 +1,19 @@
+// 128+ byte owning structs for big-owning-fields.milo, in a module of their own so the
+// functions returning them are sret.
+
+from "./ctx" import { Req }
+
+pub struct Pair { left: Req, right: Req, tag: string }
+
+pub fn req(p: string): Req {
+    return Req { method: "PUT", path: p, query: "q", body: "b" + p, a: "", b: "" }
+}
+
+pub fn pair(n: i64): Pair {
+    let r = req("/r" + $"{n}")
+    return Pair {
+        tag: $"t{n}",
+        left: if n > 1 { req("/big") } else { Req { method: "GET", path: "/small", query: "", body: "", a: "x", b: "y" } },
+        right: r,
+    }
+}

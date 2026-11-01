@@ -580,6 +580,12 @@ was silent). Tahoe Roads api at the start: 4967 of 5351 (92.8%).
   came. A bisect with `MILO_MLIR_ONLY` named the function. Program `statement-temps`.
   Planted bug: the statement scopes off (`statement-temps` `--owned` red: legacy 2, MLIR
   5).
+- *128+ byte owning fields built in place* (`Ctx { req: Req { ... } }`, a moved local, an
+  sret call, an if): into the field's place as any place-only field; until the enclosing
+  struct is filled nothing owns it, so it counts as a pending operand and a jump out of a
+  later field keeps the function legacy. Program `big-owning-fields` (with
+  `lib/reqs.milo`). Planted bug: the moved local not emptied after its copy into the field
+  (`big-owning-fields` exit 0 -> 1, a double free). Tahoe Roads api: 5139 (96.0%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

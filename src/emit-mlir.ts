@@ -509,8 +509,10 @@ class FnEmitter {
       const pty = lt && valueType(this.cx, lt) === null ? placeType(this.cx, lt) : null;
       if (pty === null) { given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"))); continue; }
       // A field that is a place only (an array) is built in its own place, in source order.
-      if (hasDrop(pty)) throw new MlirUnsupported("128+ byte owning field built in place");
       this.into(f.value, this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref, pty);
+      // An owning one built in place is owned by nothing until the whole struct is: a
+      // jump out of a later field would leak it, so it counts as a pending operand.
+      if (hasDrop(pty)) this.pending++;
       given.set(f.name, { ref: "", ty: pty });
     }
     this.pending = mark;

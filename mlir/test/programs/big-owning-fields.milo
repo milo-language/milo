@@ -1,0 +1,19 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: 128+ byte fields that
+// own strings, built in place inside an enclosing struct literal: from a literal, from a
+// moved local, from an sret call, from an if, with owning fields evaluated around them.
+
+from "./lib/ctx" import { Req, Ctx, mkCtx }
+from "./lib/reqs" import { Pair, req, pair }
+
+fn describe(p: &Pair): string {
+    return p.tag + " " + p.left.path + " " + p.right.path + " " + p.right.body
+}
+
+fn main() {
+    let c = mkCtx("/home")
+    print(c.req.path, " ", c.req.body, " ", c.status)
+    print(describe(pair(1)))
+    print(describe(pair(2)))
+    let w = Ctx { req: req("/w"), status: 3, notes: Vec.new() }
+    print(w.req.path, " ", w.status)
+}
