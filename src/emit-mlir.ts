@@ -948,7 +948,9 @@ class FnEmitter {
         const elemKind = s.varName2 ? s.varType2! : s.varType;
         if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
         const { place, elem } = this.vecPlace(s.iterable);
-        if (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem) throw new MlirUnsupported("for element type");
+        // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
+        const byPlace = valueType(this.cx, stripRefs(elemKind)) === null && placeType(this.cx, stripRefs(elemKind)) === elem;
+        if (!byPlace && (isBig(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
         const data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
         const len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
         const idx = this.fresh();
@@ -964,9 +966,15 @@ class FnEmitter {
           const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
           const one = this.def("milo.const 1 : si64", "si64").ref;
           this.emit(`milo.store ${this.def(`milo.add ${i}, ${one} wrapping : si64`, "si64").ref}, ${idx} : !milo.ref<si64>`);
-          const ep = this.def(`milo.ptr.elem ${data}[${i}] : ${elem}`, PTR).ref;
-          const x = this.def(`milo.ptr.load ${ep} : ${elem}`, elem);
-          this.bind(s.varName2 ?? s.varName, { kind: "ssa", v: { ...x, own: hasDrop(elem) ? "view" : undefined } });
+          if (byPlace) {
+            // In bounds by the condition, and nothing writes the Vec while the loop borrows it.
+            const r = this.def(`milo.index.ref ${place}[${i}] : !milo.vec<${elem}> -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`, this.loc(s.span)).ref;
+            this.bind(s.varName2 ?? s.varName, { kind: "var", ref: r, ty: elem });
+          } else {
+            const ep = this.def(`milo.ptr.elem ${data}[${i}] : ${elem}`, PTR).ref;
+            const x = this.def(`milo.ptr.load ${ep} : ${elem}`, elem);
+            this.bind(s.varName2 ?? s.varName, { kind: "ssa", v: { ...x, own: hasDrop(elem) ? "view" : undefined } });
+          }
           if (s.varName2) this.bind(s.varName, { kind: "ssa", v: { ref: i, ty: "si64" } });
           return this.stmts(s.body);
         });

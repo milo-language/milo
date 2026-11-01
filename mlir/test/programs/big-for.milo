@@ -1,0 +1,22 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: `for x in v` over Vecs of place-only elements (128+ byte structs,
+// owning and plain, and fixed-size arrays), each bound as its element's place.
+from "./lib/wides" import { Wide, Row, wide, row }
+
+fn wsum(w: &Wide): i64 { return w.a + w.p }
+
+fn main() {
+    var ws: Vec<Wide> = Vec.new()
+    for i in 0..4 { ws.push(wide(i * 10)) }
+    var t: i64 = 0
+    for w in ws { t += wsum(w) + w.h }
+    var rs: Vec<Row> = Vec.new()
+    for i in 0..3 { rs.push(row(i + 1)) }
+    var names = ""
+    for r in rs { names = names + r.name + ":" + r.port.toString() + " " }
+    var grid: Vec<[i64; 4]> = Vec.new()
+    for i in 0..3 { grid.push([i, i * 2, i * 3, i * 4]) }
+    var g: i64 = 0
+    for row4 in grid { g = g * 10 + row4[3] - row4[0] }
+    print(t, " ", names, g)
+}
