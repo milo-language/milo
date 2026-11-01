@@ -1,0 +1,128 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs): every helper is
+// in M1 scope, so it compiles through the milo dialect, and its output must match legacy
+// codegen's byte for byte. main stays legacy and only prints.
+
+fn lt(a: i32, b: i32): bool { return a < b }
+
+fn ule(a: u32, b: u32): bool { return a <= b }
+
+fn ge8(a: i8, b: i8): bool { return a >= b }
+
+fn gtu8(a: u8, b: u8): bool { return a > b }
+
+fn feq(a: f64, b: f64): bool { return a == b }
+
+fn fne(a: f64, b: f64): bool { return a != b }
+
+fn flt(a: f32, b: f32): bool { return a < b }
+
+fn sumTo(n: i64): i64 {
+    var s: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        i = i + 1
+        if i % 3 == 0 { continue }
+        s = s + i
+    }
+    return s
+}
+
+fn firstOver(limit: i32): i32 {
+    var i: i32 = 1
+    while true {
+        if i * i > limit { break }
+        i += 1
+    }
+    return i
+}
+
+fn nested(n: i32): i32 {
+    var count: i32 = 0
+    var i: i32 = 0
+    while i < n {
+        var j: i32 = 0
+        while true {
+            if j >= i { break }
+            if (i + j) % 2 == 0 && j != 3 || i == 7 { count += 1 }
+            j += 1
+        }
+        i += 1
+    }
+    return count
+}
+
+fn fib(n: u64): u64 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn shifts(a: i32, b: u32, s: i32): i64 {
+    let x = (a >> s) as i64
+    let y = (b >> (s as u32)) as i64
+    let z = (a << s) as i64
+    return x + y * 1000 + z * 1000000
+}
+
+fn bits(a: u16, b: u16): u16 { return (a & b) | (a ^ ~b) }
+
+fn signs(a: i32, b: i32): i32 { return a / b * 100 + a % b }
+
+fn usigns(a: u32, b: u32): u32 { return a / b * 100 + a % b }
+
+fn casts(f: f64): i64 {
+    let a = f as i32
+    let b = f as u8
+    let c = f as f32
+    let d = c as f64
+    return a as i64 + b as i64 + (d * 10.0) as i64
+}
+
+fn widen(a: i8, b: u8, t: bool): i64 { return a as i64 * 1000 + b as i64 + t as i64 }
+
+fn narrow(x: i64): i32 { return (x as i16) as i32 }
+
+fn fdiv(a: f64, b: f64): f64 { return a / b - a % 3.0 }
+
+fn negf(a: f64): f64 { return -a }
+
+fn negi(a: i64): i64 { return -a + -5 }
+
+fn notb(a: bool): bool { return !a }
+
+@wrapping
+fn wrap(a: i32, b: i32, s: i32): i32 {
+    let m: i32 = -2147483648
+    return (a + b) * 3 - (m / -1) + (m % -1) + (1 << s) - (0 - m)
+}
+
+fn main() {
+    print(lt(-1, 0))
+    print(ule(4000000000, 4000000000))
+    print(ge8(-128, 127))
+    print(gtu8(200, 100))
+    let z = 0.0
+    let nan = z / z
+    print(feq(nan, nan))
+    print(fne(nan, nan))
+    print(feq(-0.0, 0.0))
+    print(flt(1.5, 2.5))
+    print(sumTo(100))
+    print(firstOver(1000))
+    print(nested(10))
+    print(fib(20))
+    print(shifts(-1024, 4000000000, 3))
+    print(bits(0xF0F0, 0x0FF0))
+    print(signs(-17, 5))
+    print(usigns(17, 5))
+    print(casts(300.75))
+    print(casts(-1.5))
+    print(casts(nan))
+    print(casts(3.0e9))
+    print(widen(-3, 250, true))
+    print(narrow(100000))
+    print(fdiv(7.0, 2.0))
+    print(negf(0.0))
+    print(negi(9))
+    print(notb(false))
+    print(wrap(2147483647, 1, 33))
+}

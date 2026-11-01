@@ -52,6 +52,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/derive-table.ts` | @derive(Table): typed insert / get / update / delete for a `@table("name")` struct, as Milo source over checked SQL. |
 | `src/derive-template.ts` | User-defined `@derive(Trait)` — the template mechanism that lets a derive ship in a package instead of a compiler PR. |
 | `src/diagnostics.ts` | Elm-style error formatting: source context, carets and severity, shared by the CLI and the LSP so a message reads the same in a terminal and an editor. |
+| `src/emit-mlir.ts` | HIR -> the source-level `milo` MLIR dialect (mlir/Milo.td), as text, for the functions MILO_MLIR=1 compiles through milo-opt (docs/mlir-backend.md). |
 | `src/extern-effects.ts` | The extern effect catalog: what every C function std declares does to the world, so record/replay can capture it (docs/record-replay.md §The extern catalog). |
 | `src/fixes.ts` | Machine-applicable fixes for diagnostics whose hint is mechanical: the edit that makes the diagnostic go away, computed from the diagnostic and the file's text, and nothing else. |
 | `src/fmtbin.ts` | Resolves the one milo-fmt binary that every formatter entry point shells out to (`milo fmt`, the LSP's textDocument/formatting handler, the pre-commit hook). |
@@ -70,6 +71,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/match-usefulness.ts` | Exhaustiveness and unreachable-arm analysis for nested match patterns (Maranget's usefulness algorithm, "Warnings for pattern matching", JFP 2007). |
 | `src/mir-build.ts` | HIR -> MIR lowering (docs/plans/codegen-ir-2026-10.md, phase 2). |
 | `src/mir.ts` | MIR: a control-flow-graph IR between HIR and the LLVM builder (docs/plans/codegen-ir-2026-10.md, phase 2). |
+| `src/mlir-backend.ts` | MILO_MLIR=1 driver (docs/mlir-backend.md): the functions the milo dialect covers go HIR -> milo MLIR (src/emit-mlir.ts) -> milo-opt -> mlir-translate, and their bodies replace the legacy codegen's in… |
 | `src/must.ts` | Checked map lookup, replacing `map.get(k)!`. |
 | `src/objcache.ts` | Content-hashed object cache: skip clang for any codegen unit whose IR it has already compiled with the same flags. |
 | `src/own-ledger.ts` | Ownership ledger verifier: checks codegen's drop bookkeeping against itself on the textual IR (MILO_OWN_LEDGER=1). |

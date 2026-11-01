@@ -8,9 +8,8 @@ set -eu
 cd "$(dirname "$0")"
 LLVM=/opt/homebrew/opt/llvm/bin
 O=build/out
-[ -f build/build.ninja ] || cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DMLIR_DIR=/opt/homebrew/opt/llvm/lib/cmake/mlir -DCMAKE_CXX_COMPILER=$LLVM/clang++ -DCMAKE_C_COMPILER=$LLVM/clang >/dev/null
+sh ./build.sh
 mkdir -p "$O"
-ninja -C build >/dev/null
 CC="$LLVM/clang -O3 -w"
 
 HEAD="--milo-hoist-vec-reads --loop-invariant-code-motion"
@@ -24,11 +23,17 @@ sed -E "s/^(define void @axpy\(ptr noalias nonnull dereferenceable\(24\) align 8
 grep -q "^define void @axpy(ptr noalias [^,]*, ptr noalias" "$O/milo-noalias.ll"
 for v in mlir mlir-nov milo milo-noalias; do $CC bench/harness.c "$O/$v.ll" -o "$O/$v"; done
 
-echo "== FileCheck: pass tests"
-for t in test/version.mlir; do
-  build/milo-opt "$t" --milo-hoist-vec-reads --milo-version-bounds-checks --canonicalize | "$LLVM/FileCheck" "$t"
+echo "== FileCheck: every test/*.mlir with a RUN line (lit-style, run as written)"
+n=0
+for t in test/*.mlir; do
+  cmd=$(sed -n "s|^// RUN: ||p" "$t")
+  [ -n "$cmd" ] || continue
+  cmd=$(printf "%s" "$cmd" | sed "s|%s|$t|g; s|milo-opt|build/milo-opt|g; s|FileCheck|$LLVM/FileCheck|g")
+  sh -c "$cmd" > /dev/null || { echo "FAIL $t"; exit 1; }
+  n=$((n + 1))
 done
-echo ok
+[ "$n" -ge 4 ] || { echo "FAIL: only $n FileCheck tests ran"; exit 1; }
+echo "ok ($n files)"
 
 echo "== differential: same result bits on every size"
 for v in mlir mlir-nov milo; do "$O/$v" check > "$O/$v.check"; done

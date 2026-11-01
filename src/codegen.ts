@@ -202,6 +202,8 @@ export class Codegen {
   // ensures clauses of the function being generated; checked at every return site
   private currentEnsures: HIRContract[] = [];
   public trapOnOverflow = false;
+  // MILO_MLIR=1: also define __milo_mlir_panic for the functions compiled through MLIR.
+  public mlirPanicHelper = false;
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
@@ -1941,6 +1943,9 @@ export class Codegen {
     for (const fn of functions) fnBodies.push(this.replayEngineScope(fn, this.genFunction(fn)));
     for (const fn of startupFns) fnBodies.push(this.genFunction(fn));
     if (this.lazyGlobals.size > 0) this.closureBodies.push(this.emitLazyGlobals(functions));
+    // Generated with the bodies, not after them: it sets the needs* flags its printf and
+    // abort declarations hang off.
+    if (this.mlirPanicHelper) fnBodies.push(this.mlirPanicFn());
 
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.linkName ?? e.name));
@@ -3217,6 +3222,22 @@ export class Codegen {
     lines.push(`${okLabel}:`);
   }
 
+  // The panic routine functions compiled through MLIR call (src/mlir-backend.ts): prints
+  // `msg` as the format, exactly as the inline division and shift traps do, then aborts
+  // through the panic hook.
+  private mlirPanicFn(): string[] {
+    this.tempCounter = 0;
+    this.labelCounter = 0;
+    const lines: string[] = [];
+    const b = new LlvmTextBuilder(lines, this);
+    b.defineFn({ name: "__milo_mlir_panic", ret: Ty.void, params: [{ name: "msg", ty: Ty.ptr }], internal: true, attrs: " noreturn cold noinline" });
+    this.emitFdPrintf(lines, 2, "%msg", "");
+    this.panicAbort(lines);
+    lines.push(`  unreachable`);
+    b.endFn();
+    return lines;
+  }
+
   private overflowFailHelper(): string[] {
     const lines: string[] = [];
     const b = new LlvmTextBuilder(lines, this);
@@ -3621,6 +3642,14 @@ export class Codegen {
   // `file:line:col` stamp baked into a runtime panic message. Prefer the span's own file
   // over the file being compiled: a panic can fire inside an imported module (a `!` in
   // std/fs), and blaming the entry file sends the reader to the wrong source line.
+  // A check's location as panic messages print it, or null when there is no file to name
+  // (panicAt and emitCheckFilePtr then disagree, so the MLIR path declines).
+  public checkLocation(span?: Span): { file: string; line: number; col: number } | null {
+    const file = span?.file ?? this.filePath;
+    if (!file) return null;
+    return { file: this.displayPath(file), line: span?.line ?? 0, col: span?.col ?? 0 };
+  }
+
   public panicAt(span?: Span): string {
     const file = span?.file ?? this.filePath;
     return `${file ? `${this.displayPath(file)}:` : ""}${span?.line ?? 0}:${span?.col ?? 0}`;

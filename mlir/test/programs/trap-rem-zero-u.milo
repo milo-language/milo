@@ -1,0 +1,7 @@
+// Differential panic program (scripts/mlir-same.ts --programs): the trap fires in a
+// helper compiled through MLIR; stderr and exit status must match legacy codegen.
+fn f(a: u64, b: u64): u64 { return a % b }
+
+fn main() {
+    print(f(7, 0))
+}

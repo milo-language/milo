@@ -5,6 +5,12 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
+
+namespace mlir {
+class LLVMTypeConverter;
+class RewritePatternSet;
+} // namespace mlir
 
 namespace milo {
 struct VecHeaderResource
@@ -19,9 +25,14 @@ struct PanicResource : mlir::SideEffects::Resource::Base<PanicResource> {
   bool isAddressable() const final { return false; }
 };
 void registerPasses();
+void registerScalarPasses();
+// Lowers the source-level scalar ops (Scalar.cpp) inside convert-milo-to-llvm.
+void populateScalarToLLVMPatterns(mlir::LLVMTypeConverter &tc,
+                                  mlir::RewritePatternSet &patterns);
 } // namespace milo
 
 #include "MiloDialect.h.inc"
+#include "MiloEnums.h.inc"
 #define GET_TYPEDEF_CLASSES
 #include "MiloTypes.h.inc"
 #define GET_OP_CLASSES

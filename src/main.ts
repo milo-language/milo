@@ -17,6 +17,7 @@ import { Parser } from "./parser";
 import type { Program } from "./ast";
 import { TypeChecker } from "./checker";
 import { Codegen, sanitizerKind } from "./codegen";
+import { MLIR_MODE, compileThroughMlir } from "./mlir-backend";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { display } from "./mangle";
@@ -297,7 +298,9 @@ function parseCheckProgram(src: string, target: TargetInfo, filePath: string, wa
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, trapOnOverflow = false, emitDebug = false, contractChecks = false, stripPanicLocations = false, sanitize = false): { ir: string; cGuards: string | null; linkLibs: string[]; hasMain: boolean; nonConstGlobals: string[]; varGlobals: string[] } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, trapOnOverflow, emitDebug, contractChecks, stripPanicLocations, sanitize);
-  const ir = phase("codegen", () => cg.generate(hirModule));
+  cg.mlirPanicHelper = MLIR_MODE;
+  let ir = phase("codegen", () => cg.generate(hirModule));
+  if (MLIR_MODE) ir = phase("mlir", () => compileThroughMlir(ir, hirModule, cg));
   // Reported by the caller that is actually linking an executable, not here: emit-ir /
   // emit-obj / emit-hir on a module with no main are all legitimate.
   const hasMain = hirModule.functions.some(f => f.name === "main" && !f.isExtern);
