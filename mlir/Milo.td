@@ -508,7 +508,8 @@ def Milo_StringAppendOp : Milo_Op<"string.append", [MemoryEffects<[MemRead, MemW
 
 // A new owner of the string at `ref` (Milo's implicit copy of a string, HIR StringClone):
 // legacy's share, one more count on a heap buffer.
-def Milo_StringShareOp : Milo_Op<"string.share"> {
+// It writes that count, so two shares of one place are two owners: CSE must not fold them.
+def Milo_StringShareOp : Milo_Op<"string.share", [MemoryEffects<[MemWrite]>]> {
   let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>]>:$ref);
   let results = (outs Milo_StringType:$result);
   let assemblyFormat = "$ref attr-dict `:` type($ref)";
