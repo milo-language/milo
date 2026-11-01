@@ -1,0 +1,19 @@
+// @error: 'pushTwice' needs an owned Vec; a slice is a view
+// A slice may call an `impl Vec<T>` method only when it takes `self: &Self`. This one
+// takes `&mut Self` and pushes: run on a view, it would grow storage the view does not
+// own (the Vec behind it keeps its old len and a buffer the push may have freed).
+impl Vec<T> {
+    fn pushTwice(self: &mut Self, x: T) {
+        self.push(x)
+    }
+}
+
+fn grow(s: &mut [i64]) {
+    s.pushTwice(1)
+}
+
+fn main() {
+    var v: Vec<i64> = [3, 4, 5]
+    grow(&mut v[0..1])
+    print(v.len())
+}

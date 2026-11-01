@@ -2212,6 +2212,11 @@ print(mid[0])          // 20 — indexed, bounds-checked
 print(sum(mid))        // 50
 ```
 
+A slice has the Vec's read-only methods (`sum`, `contains`, `first`, `any`, ...), and it
+may call any `impl Vec<T>` method, std or your own, whose receiver is `self: &Self`. A
+`self: &mut Self` method is refused on a slice (`'push' needs an owned Vec; a slice is a
+view`): it could grow or shrink storage the view does not own.
+
 A **method** may return a `&[T]` view of its own receiver's storage — the idiom for
 exposing a container for zero-copy iteration:
 

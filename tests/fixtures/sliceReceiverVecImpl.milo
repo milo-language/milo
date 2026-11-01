@@ -1,0 +1,82 @@
+// A slice (`&[T]`, `&mut [T]`) shares the Vec layout, so it may call an `impl Vec<T>`
+// method whose receiver is `self: &Self`, the same way the builtin read-only methods
+// take it. The &mut Self refusal is pinned by errors/sliceReceiverMutVecImpl.milo.
+// @expect: 3
+// @expect: 4
+// @expect: 7
+// @expect: 9
+// @expect: 11
+// @expect: 11
+// @expect: ab
+// @expect: none
+// @expect: 3
+// @expect: 4
+// @expect: 2.5
+// @expect: p1
+// @expect: 6
+
+struct Pt {
+    x: i64,
+    name: string,
+}
+
+impl Vec<T> {
+    fn firstOr(self: &Self, d: T): T {
+        if self.len() == 0 {
+            return d
+        }
+        return self[0]
+    }
+    fn countWhere(self: &Self, f: (&T) => bool): i64 {
+        var n = 0
+        for x in self {
+            if f(x) {
+                n += 1
+            }
+        }
+        return n
+    }
+}
+
+fn f(s: &[i64]): i64 {
+    return s.firstOr(7)
+}
+
+fn g(s: &mut [i64]): i64 {
+    s[0] = 11
+    return s.firstOr(7)
+}
+
+fn h(s: &[string]): string {
+    return s.firstOr("none")
+}
+
+fn firstName(s: &[Pt]): string {
+    if s.countWhere((p: &Pt) => p.x > 0) == 0 {
+        return "-"
+    }
+    return s[0].name
+}
+
+fn main() {
+    var v: Vec<i64> = [3, 4, 5]
+    print(v.firstOr(0))
+    print(f(v[1..3]))
+    print(f(v[0..0]))
+    let a = [9, 8]
+    print(f(a[0..2]))
+    print(g(&mut v[1..3]))
+    print(v[1])
+    let w: Vec<string> = ["a" + "b", "c"]
+    print(h(w[0..2]))
+    print(h(w[2..2]))
+    let s = v[0..2]
+    print(s.firstOr(0))
+    print(v[1..3].firstOr(0) - 7)
+    let fs: Vec<f64> = [2.5, 1.0]
+    print(fs[0..1].firstOr(0.0))
+    let pts: Vec<Pt> = [Pt { x: 1, name: "p1" }, Pt { x: -1, name: "p2" }]
+    print(firstName(pts[0..2]))
+    let limit = 4
+    print(v[0..3].countWhere((x: &i64) => x < limit) * 6)
+}

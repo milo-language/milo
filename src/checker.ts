@@ -14118,6 +14118,24 @@ export class TypeChecker {
       return this.setType(expr, objType);
     }
 
+    // A slice shares the Vec layout, so a read-only `impl Vec<T>` method (std or user)
+    // takes it as its `&Vec` receiver unchanged, as the builtin combinators above do. A
+    // `&mut Self` method could grow or shrink storage the slice only views.
+    if (objType.tag === "array" && objType.size === null) {
+      const blanket = this.instantiateContainerImpl("Vec", [objType.element], expr.method);
+      if (blanket) {
+        const self = blanket.sig.params[0]?.type;
+        if (self?.tag !== "ref" || self.mutable) {
+          this.error(`'${expr.method}' needs an owned Vec; a slice is a view`, sp,
+            self?.tag === "ref" ? `'${expr.method}' takes 'self: &mut Self', which may grow or shrink the storage; call it on the Vec the slice came from`
+              : `'${expr.method}' takes 'self' by value; call it on a Vec`);
+          for (const a of expr.args) this.checkExpr(a);
+          return this.setType(expr, blanket.sig.ret);
+        }
+        return this.dispatchMangledMethod(expr, blanket.mangled, sp);
+      }
+    }
+
     const skipped = objType.tag === "struct" ? this.withheldMethods.get(`${objType.name}.${expr.method}`) : undefined;
     if (skipped) {
       this.error(`'${expr.method}' is not available on '${this.show(objType)}': ${skipped.reason}`, sp, skipped.hint);

@@ -12,7 +12,7 @@ last-verified: generated
 
 # Compile errors
 
-Every error message the test suite pins: 577 distinct messages across 740 programs the compiler must reject.
+Every error message the test suite pins: 578 distinct messages across 741 programs the compiler must reject.
 Each entry is the message, why the rule exists when the fixture says, and the program that provokes it.
 Find an error by searching this page for the text the compiler printed.
 
@@ -110,6 +110,7 @@ flags, see [Warnings & errors](./warnings-and-errors#warnings).
 - [`'Point' is not generic, so 'Point<...> { … }' has no type arguments to take`](#point-is-not-generic-so-point-has-no-type-arguments-to-take)
 - [`'Process' is imported from 'std/process' and also declared in this file`](#process-is-imported-from-std-process-and-also-declared-in-this-file)
 - [`'ptr' is not available on Heap<Shape>`](#ptr-is-not-available-on-heap-shape)
+- [`'pushTwice' needs an owned Vec; a slice is a view`](#pushtwice-needs-an-owned-vec-a-slice-is-a-view)
 - [`'s' is borrowed mutably and shared in the same call`](#s-is-borrowed-mutably-and-shared-in-the-same-call)
 - [`'s' is borrowed mutably twice in the same call`](#s-is-borrowed-mutably-twice-in-the-same-call)
 - [`'s' is captured by a closure argument and borrowed in the same call`](#s-is-captured-by-a-closure-argument-and-borrowed-in-the-same-call)
@@ -2835,6 +2836,30 @@ pub fn main(): i32 {
 ```
 
 <sub>[tests/errors/heapPtrInterface.milo](https://github.com/milo-language/milo/blob/main/tests/errors/heapPtrInterface.milo)</sub>
+
+## `'pushTwice' needs an owned Vec; a slice is a view` {#pushtwice-needs-an-owned-vec-a-slice-is-a-view}
+
+A slice may call an `impl Vec<T>` method only when it takes `self: &Self`. This one takes `&mut Self` and pushes: run on a view, it would grow storage the view does not own (the Vec behind it keeps its old len and a buffer the push may have freed).
+
+```milo skip
+impl Vec<T> {
+    fn pushTwice(self: &mut Self, x: T) {
+        self.push(x)
+    }
+}
+
+fn grow(s: &mut [i64]) {
+    s.pushTwice(1)
+}
+
+fn main() {
+    var v: Vec<i64> = [3, 4, 5]
+    grow(&mut v[0..1])
+    print(v.len())
+}
+```
+
+<sub>[tests/errors/sliceReceiverMutVecImpl.milo](https://github.com/milo-language/milo/blob/main/tests/errors/sliceReceiverMutVecImpl.milo)</sub>
 
 ## `'s' is borrowed mutably and shared in the same call` {#s-is-borrowed-mutably-and-shared-in-the-same-call}
 
