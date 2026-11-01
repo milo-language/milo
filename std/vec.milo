@@ -229,6 +229,14 @@ impl Vec<T> {
         return self.fold(init, f)
     }
 
+    // A deep copy. _vecCopyOut is codegen's structural copy (emitDeepCloneFromPtr), the one
+    // that copies a Vec nested in a struct, a map or another Vec, so a user Clone impl on
+    // the element is not called, as the builtin did not call it. The checker refuses the
+    // elements that have no such copy (interfaces, closures, resources) at the call.
+    fn clone(self: &Self): Vec<T> {
+        return _vecCopyOut(self)
+    }
+
     // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,
     // with the indexing panic.
     @inline

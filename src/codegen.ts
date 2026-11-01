@@ -5666,19 +5666,6 @@ export class Codegen {
         this.dropOwnedTemp(lines, ov.ref, "%Vec", expr.object);
         return [lines, len, "i64"];
       }
-      case "VecClone": {
-        this.hasVecType = true;
-        const passed = this.cloneOfOwnedTemp(expr.object, lines);
-        if (passed) return passed;
-        const ov = this.genVal(expr.object, lines);
-        // emitDeepCloneFromPtr reads through a pointer, so spill the loaded %Vec
-        // into a scratch slot first. The spill is a shallow copy that is never
-        // dropped — only the clone it produces is owned by the caller.
-        const slot = b.alloca(VEC_TY);
-        b.store(val(ov.ref, VEC_TY), slot);
-        const cloned = this.emitDeepCloneFromPtr(lines, slot.ref, { tag: "vec", element: expr.elementType });
-        return [lines, cloned, "%Vec"];
-      }
       case "VecMap":
         return genVecMap(this, expr, lines);
       case "VecFilter":
@@ -9468,7 +9455,6 @@ export class Codegen {
       case "StringClone":
       case "StringSubstr":
       case "StringWithCapacity":
-      case "VecClone":
       case "VecNew":
       case "VecWithCapacity":
       case "VecFilled":

@@ -135,7 +135,8 @@ export function isHashMapModule(file: string | undefined): boolean {
 // (emitElemOrd), including `false < true`, which the language's `<` does not have on bool.
 // `_vecPanic("msg")` prints "msg at file:line:col" and aborts, the wording of the
 // builtins' own bounds panics (remove, insert), which a plain panic() would not keep.
-export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic"]);
+// `_vecCopyOut(place)` is _mapCopyOut under its std/vec name: the one structural copy.
+export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut"]);
 export function isVecModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -5976,15 +5977,25 @@ export class TypeChecker {
   // A Vec method whose call the builtin rules above have already checked (arity, argument
   // types, the mutable receiver, with the builtin wordings tests pin) and whose body is
   // std/vec code: record the instantiated method for lowering, as HashMap insert does.
-  // Not dispatchMangledMethod: those rules accept any int index, which lowering widens.
-  private bindStdVecMethod(expr: ExprOf<"MethodCall">, element: TypeKind, method: string, ret: TypeKind): TypeKind {
-    const body = this.instantiateContainerImpl("Vec", [element], method);
-    if (!body) {
+  // Not dispatchMangledMethod: those rules accept any int index, which lowering widens, and
+  // map's callback is checked once, there, to learn its type argument. `typeArgs` are a
+  // generic method's own (`map<U>`).
+  private bindStdVecMethod(expr: ExprOf<"MethodCall">, element: TypeKind, method: string, ret: TypeKind,
+    opts: { mutable?: boolean; typeArgs?: TypeKind[] } = {}): TypeKind {
+    let mangled: string | null;
+    if (opts.typeArgs) {
+      const key = `Vec_${this.mangleTypeName(element)}$${method}`;
+      if (!this.genericMethods.has(key)) this.instantiateContainerImpl("Vec", [element], method);
+      mangled = this.genericMethods.has(key) ? this.monomorphizeMethod(key, opts.typeArgs, expr.span) : null;
+    } else {
+      mangled = this.instantiateContainerImpl("Vec", [element], method)?.mangled ?? null;
+    }
+    if (!mangled) {
       this.error(`Vec has no method '${method}'`, expr.span);
       return this.setType(expr, ret);
     }
-    this.autoBorrow(expr.object, { mutable: true });
-    this.resolvedMethods.set(expr, body.mangled);
+    this.autoBorrow(expr.object, { mutable: opts.mutable ?? true });
+    this.resolvedMethods.set(expr, mangled);
     return this.setType(expr, ret);
   }
 
@@ -10748,6 +10759,7 @@ export class TypeChecker {
       return this.setType(expr, { tag: "unknown" });
     }
     if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(sp?.file)) return this.checkMapIntrinsic(expr);
+    if (expr.func === "_vecCopyOut" && isVecModule(sp?.file)) return this.checkMapCopyOut(expr);
     if (expr.func === "_vecPanic" && isVecModule(sp?.file)) {
       if (expr.args.length !== 1 || expr.args[0]!.kind !== "StringLit") {
         this.error(`'_vecPanic' expects one string literal`, sp);
@@ -12456,12 +12468,12 @@ export class TypeChecker {
   private checkMapCopyOut(expr: ExprOf<"Call">): TypeKind {
     const sp = expr.span;
     if (expr.args.length !== 1) {
-      this.error(`'_mapCopyOut' expects 1 argument, got ${expr.args.length}`, sp);
+      this.error(`'${expr.func}' expects 1 argument, got ${expr.args.length}`, sp);
       return this.setType(expr, { tag: "unknown" });
     }
     const a = expr.args[0];
     if (a.kind !== "Ident" && a.kind !== "FieldAccess" && a.kind !== "IndexAccess") {
-      this.error(`'_mapCopyOut': the argument must be a place (a variable, field or element)`, a.span);
+      this.error(`'${expr.func}': the argument must be a place (a variable, field or element)`, a.span);
     }
     const t = this.checkExpr(a);
     return this.setType(expr, t.tag === "ref" ? t.inner : t);
@@ -13641,8 +13653,8 @@ export class TypeChecker {
             `the concrete type is erased and the itable carries no clone slot — build a new Vec from the concrete values instead`);
         } else if (el.tag === "fn") {
           this.error(`cannot clone Vec<${this.show(el)}>: closures cannot be cloned`, sp);
-        } else {
-          this.errorIfResourceCopyOut(el, "clone", "Vec", sp, `Build the copy element by element ('for x in v { out.push(x.clone()) }')`);
+        } else if (!this.errorIfResourceCopyOut(el, "clone", "Vec", sp, `Build the copy element by element ('for x in v { out.push(x.clone()) }')`)) {
+          return this.bindStdVecMethod(expr, el, "clone", objType, { mutable: false });
         }
         return this.setType(expr, objType);
       }

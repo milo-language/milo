@@ -1,0 +1,84 @@
+// Vec.clone is std/vec.milo code over _vecCopyOut, the structural deep copy codegen uses
+// for a Vec nested anywhere. Covers an empty Vec, ints, strings (the copy is independent:
+// changing either side leaves the other), nested Vecs, a struct element with a Vec field,
+// a HashMap element, a slice receiver (a fresh owned Vec), a temporary receiver, a field
+// receiver, and a capture. A user Clone impl on the element is not called, as before.
+// @expect: 0 []
+// @expect: ["changed", "yz"] ["x", "yz", "w"]
+// @expect: [[1, 2], [], [3]] [[1, 2, 9], [], [3]]
+// @expect: i ["t1", "t2"]
+// @expect: 1 1
+// @expect: 1
+// @expect: [6, 7] true
+// @expect: ["s0", "s1", "s2"]
+// @expect: [4, 5]
+// @expect: 2
+
+struct Item {
+    name: string,
+    tags: Vec<string>,
+}
+
+struct Counted {
+    n: i64,
+}
+
+impl Clone for Counted {
+    fn clone(self: &Self): Counted {
+        print("user clone")
+        return Counted { n: self.n + 100 }
+    }
+}
+
+struct Holder {
+    items: Vec<i64>,
+}
+
+fn mk(n: i64): Vec<string> {
+    var v: Vec<string> = Vec.new()
+    for i in 0..n {
+        v.push("s" + i.toString())
+    }
+    return v
+}
+
+fn copyView(s: &[i64]): Vec<i64> {
+    return s.clone()
+}
+
+fn main() {
+    let e: Vec<i64> = Vec.new()
+    let ec = e.clone()
+    print(ec.len(), " ", ec)
+    var a: Vec<string> = ["x", "y" + "z"]
+    var b = a.clone()
+    b.push("w")
+    a[0] = "changed"
+    print(a, " ", b)
+    let nested: Vec<Vec<i64>> = [[1, 2], [], [3]]
+    var nc = nested.clone()
+    nc[0].push(9)
+    print(nested, " ", nc)
+    let items: Vec<Item> = [Item { name: "i", tags: ["t1", "t2"] }]
+    let ic = items.clone()
+    print(ic[0].name, " ", ic[0].tags)
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("k", 1)
+    let maps: Vec<HashMap<string, i64>> = [m]
+    let mc = maps.clone()
+    print(mc[0].getOrDefault("k", 0), " ", mc.len())
+    let cs: Vec<Counted> = [Counted { n: 1 }]
+    let cc = cs.clone()
+    print(cc[0].n)
+    let v: Vec<i64> = [5, 6, 7, 8]
+    let part = copyView(v[1..3])
+    print(part, " ", part.capacity() >= 2)
+    print(mk(3).clone())
+    let h = Holder { items: [4, 5] }
+    print(h.items.clone())
+    let f = () => {
+        let inner = a.clone()
+        print(inner.len())
+    }
+    f()
+}

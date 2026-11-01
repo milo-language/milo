@@ -416,3 +416,12 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   generic method path (no pinned test used the builtin's). Planted: no drop of a rejected
   element turns `vecRetainStd` red and leaves one more live block. Output identical; live
   heap equal; bench 300k rounds retaining 64 i64 + 64 strings 0.20s vs 0.20s. Step 2 done.
+- 2026-11-01: phase 2 step 3 begins. `clone` moved as `return _vecCopyOut(self)`: the
+  builtin was already emitDeepCloneFromPtr on the whole Vec (the copy every nested Vec gets;
+  it never calls a user Clone impl on the element), so std calls that one implementation.
+  `_vecCopyOut` is std/vec's name for `_mapCopyOut`: same check (`checkMapCopyOut`), same
+  HIR node (`MapCopyOut`), so HashMap and Vec share one copy. The interface/closure/resource
+  refusals stay at the call. Lost, as with HashMap clone: the shortcut handing a temporary
+  receiver back uncopied (`mk().clone()` now copies). Planted: reversing the copy turns
+  `vecCloneStd` red; output identical; live heap equal; 240 corpus files calling
+  `.clone()` pass; bench 400k clones of 256 i64 + 256 strings 0.21s builtin vs 0.20s std.

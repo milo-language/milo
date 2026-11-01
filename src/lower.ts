@@ -847,6 +847,7 @@ class LowerCtx {
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
         if (VEC_INTRINSICS.has(expr.func) && isVecModule(expr.span?.file)) {
+          if (expr.func === "_vecCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           if (expr.func === "_vecPanic") {
             const msg = expr.args[0];
             return { kind: "VecPanic", message: msg?.kind === "StringLit" ? msg.value : "", type, span: expr.span };
@@ -1437,9 +1438,6 @@ class LowerCtx {
           }
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
-          }
-          if (expr.method === "clone") {
-            return { kind: "VecClone", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
           }
           if (expr.method === "get") {
             const object = this.lowerExpr(expr.object);
