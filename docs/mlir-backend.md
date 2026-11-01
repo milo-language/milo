@@ -514,7 +514,10 @@ structs, enums.
   Found on the way: a store over an owning field never registered the old value's drop
   glue, so `self.items = Vec.new()` linked only when something else had (`arenaDropElements`
   at -O0). Program `drop-args`. Planted bug: calls not scoped (`drop-args` stdout: the
-  drops after the statement).
+  drops after the statement). A match subject temporary with a user Drop is taken when
+  every arm binds every owning payload field (`let f = File.openRead(p)?`): every path
+  empties its slot, so no drop of it ever runs. Planted bug: any subject taken (the
+  legacy-only `other` in `drop-args` then drops after "after": stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

@@ -1,6 +1,7 @@
 // Differential program for scripts/mlir-same.ts --programs --owned: temporaries with a
 // user Drop lent to by-ref params. Each dies right after its call (a call is a scope of
 // its own), before the call's result is used, so the drop prints land where legacy's do.
+// A `?` on a temporary whose every arm takes the payload has no drop timing to keep.
 
 struct Noisy { id: i64 }
 
@@ -22,7 +23,32 @@ fn peek(n: &Noisy): i64 {
 
 fn both(a: &Noisy, b: &Noisy): i64 { return a.id + b.id }
 
+fn open(id: i64): Result<Noisy, string> {
+    if id < 0 { return Err("bad " + id.toString()) }
+    return Ok(mk(id))
+}
+
+// `open(id)?` matches a temporary that both arms empty: its user Drop never runs there.
+fn use(id: i64): Result<i64, string> {
+    let n = open(id)?
+    print("using ", n.id)
+    return Ok(n.id)
+}
+
+// An arm that leaves the Noisy in the subject: legacy drops it at the end of the match
+// statement, so this function stays legacy.
+fn other() {
+    match open(4) {
+        Err(e) => print(e)
+        _ => print("other")
+    }
+    print("after")
+}
+
 fn main() {
+    other()
+    match use(7) { Ok(v) => print("ok ", v) Err(e) => print("err ", e) }
+    match use(-1) { Ok(v) => print("ok ", v) Err(e) => print("err ", e) }
     let x = peek(mk(1)) + 1
     print("x ", x)
     print("y ", peek(mk(2)))

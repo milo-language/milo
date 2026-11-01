@@ -1727,7 +1727,14 @@ class FnEmitter {
       else {
         const v = this.expr(e);
         if (v.own !== "owned") throw new MlirUnsupported("match moving out of a borrowed enum");
-        from = this.tempSlot("subject", v.ty, e.type);
+        // When every arm binds every owning payload field (`f()?`), every path empties the
+        // slot, so when it would drop does not matter: a user Drop in it never runs.
+        const st = stripRefs(e.type);
+        const lay = st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
+        const emptied = !!lay && m.arms.every(a => a.pattern.kind === "EnumPattern" && !a.pattern.tests
+          && (lay.variants.find(x => x.tag === (a.pattern as { tag: number }).tag)?.fields ?? [null]).every((f, k) =>
+            f !== null && (!hasDrop(this.place$(f, "payload")) || (a.pattern as { bindings: { name: string }[] }).bindings[k]?.name)));
+        from = this.tempSlot("subject", v.ty, e.type, emptied);
         this.emit(`milo.store ${v.ref}, ${from} : !milo.ref<${v.ty}>`);
       }
       const ty = this.value(e.type, "match subject");
