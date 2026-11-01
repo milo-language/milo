@@ -149,7 +149,12 @@ export class OwnLedger {
       this.views.set(val, this.viewMarker(lines, src, expr.name));
       return;
     }
-    if (expr.kind === "FieldAccess" || expr.kind === "IndexAccess" || expr.kind === "HeapDeref" || expr.kind === "PtrDeref") {
+    // `*p` on a raw pointer is a bitwise move-out (unsafe code owns the pointee's
+    // bookkeeping: pop, remove, a container's drop), not a borrow of a place this frame
+    // tracks. Its bytes have no owner here, so a copy into an owner is a fresh one with no
+    // source to end, the same as a literal; an unconsumed read owns nothing either.
+    if (expr.kind === "PtrDeref") { this.statics.add(val); return; }
+    if (expr.kind === "FieldAccess" || expr.kind === "IndexAccess" || expr.kind === "HeapDeref") {
       if (moving) this.makeVal(lines, val, `move:${expr.kind}`);
       else this.views.set(val, this.viewMarker(lines, 0, expr.kind));
       return;

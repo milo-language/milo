@@ -560,3 +560,13 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   added two errors inside std/vec.milo. `slicePush` now pins the slice-receiver rule's
   wording ("'push' needs an owned Vec; a slice is a view") in place of "type '[i64]' has
   no method 'push'": still refused, the std method is found and the view rule refuses it.
+||||||| parent of a50d6c7a (treat raw pointer move-outs as owned in the own ledger)
+- 2026-11-01: own-ledger gate green again. `bun scripts/own-ledger.ts --check` reported 72
+  own-of-view findings, every one a raw `*p` / `*p[i].addrOf()` move-out in std/hashmap.milo
+  and std/vec.milo (mapDropAt, mapRehash, vecDropAt, vecSwapAt, pop, remove, ...). The ledger
+  declared a PtrDeref read a view of a place, like a field read; but `*p` is a bitwise
+  move-out whose bookkeeping belongs to the unsafe code, and the pointee is no place this
+  frame tracks. It is now declared like a literal: a copy into an owner makes a fresh ID
+  with no source to end, an unconsumed read owns nothing. Still live: dropping the
+  StringClone wrapper on a shared string (lower.ts) gives 13 new own-of-view findings
+  over the sharedString* fixtures and fails --check. 1037 fixtures, 0 findings.
