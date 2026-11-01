@@ -147,12 +147,29 @@ structs, enums.
   (`mlirDropHelper`); string share calls a legacy-generated function too. Owned
   temporaries in a borrow position (print, `&T` args, len) go into a slot of the
   innermost block. Structs and enums holding strings or Vecs are not taken yet.
-- *Gates.* Programs `print`, `aggregates`, `owned` under `mlir/test/programs`; FileCheck
+- *After step 3, by coverage.* std's Vec methods (written in Milo since collections-in-std)
+  are the most common functions: raw-pointer places (`milo.ptr.elem`, `milo.ptr.field`,
+  read and written with ptr.load/store so a header write through one is never mistaken
+  for slot traffic), `milo.addr` (addrOf), `milo.vec.data` (ptr()), wrapping arithmetic,
+  sizeOf, and `_vecGrowBuf` through a legacy helper. Vec places take any element type;
+  only indexing needs scalars (legacy clones an owning element). `milo.string.byte` is
+  `s[i]` with legacy's bounds panic. Structs and enums holding strings and Vecs are owned
+  values (needsDrop is structural); still legacy: types with a user `Drop` (its timing is
+  observable, and temporaries die at block end here, at statement end there), moving an
+  owning field out, matching an owning enum by value, struct update of an owning struct.
+  String `== != < <= > >= +`, substr and push call legacy helpers; the ones that panic are
+  generated per call site, with the call's span, so the panic names the same line.
+- *Gates.* Programs `print`, `aggregates`, `owned`, `stdvec`, `owning-aggregates`,
+  `strings`, `trap-string-index-oob`, `trap-substr-oob` under `mlir/test/programs`; FileCheck
   `print.mlir`, `aggregates.mlir`, `drops.mlir`, verifier cases in `verify.mlir`. Planted
   bugs: string literal length - 1 turned `print` red; payload read at field 0's offset
   turned `aggregates` red (`area(Rect(2, 3))` printed 4); making maybe-init drops
   unconditional left `mlir-same` green but ASan reported a heap-use-after-free in
   `owned`; erasing every drop left 23 more live heap blocks at exit; both turn `--owned` red.
+  Later: `ptr.elem` at index 0 turned `stdvec` and `owned` red; no drop before a store
+  through a field place left one more live block in `owning-aggregates` (`--owned` red);
+  swapped string operands turned `strings` red; a substr helper without the call's span
+  turned `trap-substr-oob` red (stderr). FileCheck adds `pointers.mlir`.
 - *Leaks on this machine.* `leaks -atExit` (scripts/leak-check.ts) and lldb never get the
   task port here and hang, on legacy binaries too: the lldb replay test ("a breakpoint on
   miloReplayStop stops at the record") fails the same way on legacy, so it is the
