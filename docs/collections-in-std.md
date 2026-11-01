@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-11-01 (phase 1 in progress: every HashMap method but new and withCapacity moved)
+last-verified: 2026-11-01 (phase 1 done: every HashMap method, new and withCapacity are std/hashmap code)
 -->
 
 # Collections in std
@@ -227,3 +227,11 @@ special cases.
   the NonNegative wrapper turns the runtime-error test red ("integer overflow at
   std/hashmap.milo"). Iteration order under MILO_RECORD unchanged, 0 leaks, ASan clean.
   Bench: 3M new + 1M withCapacity(20) maps 2.12s vs 2.12s.
+- 2026-11-01: phase 1 done. `codegen-map.ts` is 1173 -> 211 lines: what remains is the
+  intrinsics std/hashmap calls (fnvHash/hashInto behind `_mapHash`, keysEqual behind
+  `_mapKeyEq`, `_mapCopyOut`, `_mapSeed`, `_mapAlloc`) and the %HashMap field indices
+  drop, clone and DWARF still read. For-in, drop, display, `len` and the deep clone stay
+  in codegen.ts / codegen-drop.ts. The unused ctx members and the never-read HM_LEN /
+  HM_SEED went with this commit. `emitHashMapInsertValues` had no caller left besides
+  the builtin insert: std/set, derive(Json) and std/json all insert through Milo code,
+  which is the std method now.

@@ -14,7 +14,7 @@
   "src/cli-help.ts": 287,
   "src/codegen-drop.ts": 648,
   "src/codegen-dwarf.ts": 411,
-  "src/codegen-map.ts": 221,
+  "src/codegen-map.ts": 211,
   "src/codegen-match.ts": 672,
   "src/codegen-mir.ts": 182,
   "src/codegen-own.ts": 314,

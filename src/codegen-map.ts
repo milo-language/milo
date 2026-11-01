@@ -1,22 +1,20 @@
-// HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the
-// FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable.
-// std/set's HashSet is a HashMap<T, bool> underneath, so sets lower through here too.
+// The std/hashmap intrinsics: FNV-1a hashing and key equality (_mapHash, _mapKeyEq), the
+// structural copy of a stored value (_mapCopyOut), the seed source (_mapSeed) and the
+// checked slot allocation (_mapAlloc). Every HashMap method body is Milo code in
+// std/hashmap.milo; for-in, drop, display and the deep clone stay in codegen.ts and its
+// siblings. std/set's HashSet is a HashMap<T, bool> underneath, so sets hash through here.
 
 import type { HIRExpr } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
-import type { OwnLedger } from "./codegen-own";
 import type { Gen, StructLayout } from "./codegen";
 import { LlvmTextBuilder, Ty, val, asGen, type Builder, type Val } from "./ir";
 
-// %HashMap field indices. The struct is { data, len, cap, seed, tombs }, and these offsets
-// appeared as bare `i32 0, i32 N` at 22 sites in codegen.ts — the only clue to which field
-// an N meant was the local variable name at the use site, so adding a field meant finding
-// and re-reading every one of them.
+// %HashMap is { data, len, cap, seed, tombs } (std/hashmap.milo's MapRaw mirrors it). The
+// field indices codegen still reads by number are named here, as they once appeared bare
+// at 22 sites with only a local variable name to say which field an N meant.
 export const HM_DATA = 0;
-export const HM_LEN = 1;
 export const HM_CAP = 2;
-export const HM_SEED = 3;
 // Deleted slots, counted so the resize trigger can see them. Without it a table can reach
 // a state where every slot is occupied-or-tombstone, and a probe that stops only at an
 // EMPTY slot would never terminate.
@@ -26,7 +24,8 @@ export const HM_TOMBS = 4;
 // one place or the two drift, which is exactly what happened.
 export const HASHMAP_FIELDS = 5;
 
-// The lazily-seeded hash seed function: codegen.ts defines it, every probe here calls it.
+// The hash seed source: codegen.ts defines it (record/replay fixes its sequence), and
+// std/hashmap's insert calls it through _mapSeed on a map's first insert.
 export const HASH_SEED_FN = "__milo_hash_seed";
 
 // The slice of Codegen these extracted helpers need. Codegen's matching members are
@@ -37,17 +36,10 @@ export interface CodegenMapCtx {
   llvmType(t: TypeKind): string;
   genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val;
   genLValue(expr: HIRExpr): Gen;
-  hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string;
-  needsDropCg(t: TypeKind): boolean;
-  emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind): void;
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
-  emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }): void;
-  own: OwnLedger;
   structLayouts: Map<string, StructLayout>;
-  hasHashMapType: boolean;
   hasStringType: boolean;
-  needsMalloc: boolean;
   needsMemset: boolean;
   needsMemcmp: boolean;
   needsGetentropy: boolean;
@@ -170,10 +162,8 @@ function keysEqual(ctx: CodegenMapCtx, b: Builder, k1: Val, k2: Val, keyType: Ty
   throw new Error(`uncomparable key type: ${keyType.tag}`);
 }
 
-// The std/hashmap intrinsics: the same hash and key comparison the builtin methods above
-// emit, so a method moved into std probes the same slots and matches the same keys. The
-// key operands are places; loading them bitwise (as the probe loads a stored key) keeps
-// a string key's refcount untouched.
+// The key operands of _mapHash/_mapKeyEq are places; loading them bitwise (as a probe
+// loads a stored key) keeps a string key's refcount untouched.
 function loadKeyPlace(ctx: CodegenMapCtx, b: Builder, lines: string[], expr: HIRExpr): { key: Val; keyType: TypeKind } {
   const keyType = expr.type.tag === "ref" ? expr.type.inner : expr.type;
   const [placeLines, ptr] = ctx.genLValue(expr);

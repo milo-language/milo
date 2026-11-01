@@ -37,7 +37,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/cli-help.ts` | The CLI surface: every subcommand and top-level option, in one table. |
 | `src/codegen-drop.ts` | Drop and clone glue: per-type drop sequences, deep clone, and the generated drop/clone helper functions. |
 | `src/codegen-dwarf.ts` | DWARF debug metadata for `-g` builds: files, subprograms, locations and variable types, interned as `!N = ...` nodes and attached in one final text pass over the module. |
-| `src/codegen-map.ts` | HashMap/Set lowering (new, insert, get, probe, remove, clear, clone, entries) and the FNV-1a hashing and key equality it emits, extracted to keep codegen.ts manageable. |
+| `src/codegen-map.ts` | The std/hashmap intrinsics: FNV-1a hashing and key equality (_mapHash, _mapKeyEq), the structural copy of a stored value (_mapCopyOut), the seed source (_mapSeed) and the checked slot allocation (_ma… |
 | `src/codegen-match.ts` | Match lowering: enum and literal (int/char/bool/float/string) matches, payload bindings, and the arm helpers shared with the fork-ownership logic. |
 | `src/codegen-mir.ts` | MIR -> LLVM text through the typed builder (docs/plans/codegen-ir-2026-10.md, phase 2). |
 | `src/codegen-own.ts` | Ownership ledger markers (verified and stripped by src/own-ledger.ts). |
