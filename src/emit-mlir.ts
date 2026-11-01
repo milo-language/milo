@@ -562,8 +562,15 @@ class FnEmitter {
         if (b.ty !== ty || !b.owned || !e.isMove) throw new MlirUnsupported("128+ byte copy that is not a move of a local");
         return { ref: b.ref, refTy: `!milo.ref<${ty}>`, done: () => { this.def(`milo.move ${b.ref} : !milo.ref<${ty}>`, ty); } };
       }
-      // An owning field would leave its struct partly moved (legacy tracks it apart).
-      if (!b && hasDrop(ty)) throw new MlirUnsupported("move out of a field");
+      if (!b && hasDrop(ty)) {
+        // Moved out of a local's field: zeroed behind the copy, as moveField does.
+        if (e.kind !== "FieldAccess" || !e.isMove || !this.fieldOfOwnedLocal(e)) throw new MlirUnsupported("move out of a field");
+        const p = this.fieldPlace(e)!;
+        if (p.ty !== ty) return null;
+        return { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: () => {
+          this.emit(`milo.store ${this.def(`milo.zero : ${ty}`, ty).ref}, ${p.ref} init : !milo.ref<${ty}>`);
+        } };
+      }
       const p = this.fieldPlace(e);
       return p && p.ty === ty ? { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: none } : null;
     }
@@ -1256,9 +1263,7 @@ class FnEmitter {
         if (pp) return this.ptrRead(pp);
         // A field of a place is read in place, as legacy genFieldPtr does; of a value, out
         // of the value.
-        // Moving an owning field out leaves its struct partly moved: legacy zeroes the field
-        // and tracks it apart, which an owned slot here does not express yet.
-        if (e.isMove && hasDrop(this.value(e.type, "field"))) throw new MlirUnsupported("move out of a field");
+        if (e.isMove && hasDrop(this.value(e.type, "field"))) return this.moveField(e);
         const own = hasDrop(this.value(e.type, "field")) ? "view" as const : undefined;
         const p = this.fieldPlace(e);
         if (p) return { ...this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own };
@@ -2396,6 +2401,33 @@ class FnEmitter {
   /** `e` never returns: a `never` value, a std panic, or the builtin exit (typed void in HIR). */
   private diverges(e: HIRExpr): boolean {
     return e.type.tag === "never" || e.kind === "StrPanic" || e.kind === "VecPanic" || (e.kind === "Call" && e.func === "exit" && this.cx.isBuiltinName("exit"));
+  }
+
+  /**
+   * `take(s.f)`: an owning field moved out of a local, as legacy does it: the value read
+   * out, then the field zeroed in place (an `init` store, nothing dropped), so the
+   * struct's own drop later finds an empty one there and frees nothing twice.
+   */
+  private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {
+    if (!this.fieldOfOwnedLocal(e)) throw new MlirUnsupported("move out of a field");
+    const p = this.fieldPlace(e)!;
+    const v = this.def(`milo.load ${p.ref} : !milo.ref<${p.ty}>`, p.ty);
+    this.emit(`milo.store ${this.def(`milo.zero : ${p.ty}`, p.ty).ref}, ${p.ref} init : !milo.ref<${p.ty}>`);
+    return { ...v, own: "owned" };
+  }
+
+  /**
+   * `e` is a field (of a field...) of a struct local this function owns, none of whose
+   * structs runs a user Drop (which would see the zeroed field).
+   */
+  private fieldOfOwnedLocal(e: HIRExpr): boolean {
+    if (e.kind === "Ident") {
+      const b = this.scopes.some(m => m.has(e.name)) ? this.lookup(e.name) : null;
+      return b?.kind === "var" && !!b.owned;
+    }
+    if (e.kind !== "FieldAccess" || e.object.type.tag !== "struct") return false;
+    const st = this.place$(e.object.type, "struct");
+    return !runsUserDrop(st) && this.fieldOfOwnedLocal(e.object);
   }
 
   /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */

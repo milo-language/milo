@@ -518,6 +518,11 @@ structs, enums.
   every arm binds every owning payload field (`let f = File.openRead(p)?`): every path
   empties its slot, so no drop of it ever runs. Planted bug: any subject taken (the
   legacy-only `other` in `drop-args` then drops after "after": stdout).
+- *An owning field moved out of a local* (`take(r.name)`, nested, a Vec field, a 128+
+  byte one by milo.copy): read out, then the field zeroed in place by an `init` store,
+  as legacy zeroes it, so the struct's drop finds an empty one; not when a struct on
+  the way runs a user Drop. Program `move-field`. Planted bug: no zeroing (`move-field`
+  exit 0 -> 1, a double free).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

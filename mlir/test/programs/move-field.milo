@@ -1,0 +1,31 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: owning fields moved out of a local (`take(r.name)`), a nested one,
+// a Vec field, one moved on one path only, and one refilled after the move. The field is
+// zeroed behind the move, as legacy does, so the struct's drop frees each buffer once.
+
+struct Inner { label: string, n: i64 }
+
+struct Rec { name: string, items: Vec<string>, inner: Inner }
+
+fn take(s: string): i64 { return s.len() }
+
+fn count(v: Vec<string>): i64 { return v.len() }
+
+fn mk(i: i64): Rec {
+    var items: Vec<string> = Vec.new()
+    for k in 0..i { items.push("x".repeat(k + 1)) }
+    return Rec { name: "rec".repeat(i), items: items, inner: Inner { label: "in" + i.toString(), n: i } }
+}
+
+fn run(i: i64): i64 {
+    var r = mk(i)
+    var t = take(r.name)
+    t = t * 10 + count(r.items)
+    if i > 1 { t = t * 10 + take(r.inner.label) }
+    r.name = "again"
+    return t * 10 + r.name.len() + r.inner.n
+}
+
+fn main() {
+    for i in 0..4 { print(run(i)) }
+}
