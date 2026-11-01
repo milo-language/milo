@@ -17,7 +17,7 @@ import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut,
-  genHashMapWithCapacity, genHashMapClone,
+  genHashMapWithCapacity,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -5720,8 +5720,6 @@ export class Codegen {
         return genMapCopyOut(this, expr, lines);
       case "HashMapWithCapacity":
         return genHashMapWithCapacity(this, expr, lines);
-      case "HashMapClone":
-        return genHashMapClone(this, expr, lines);
       case "HashMapLen": {
         this.hasHashMapType = true;
         const ov = this.genVal(expr.object, lines);
@@ -9470,7 +9468,6 @@ export class Codegen {
       case "VecMap":
       case "VecFilter":
       case "HashMapWithCapacity":
-      case "HashMapClone":
       // fold returns the ACCUMULATOR, which is owned whenever the accumulator type is —
       // `v.fold("", (a: string, x: &i64): string => a + x.toString())` hands back a String
       // nobody else owns. It sat in NOT_OWNED_TEMP with the scalar-yielding Vec reads.

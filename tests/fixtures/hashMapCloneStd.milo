@@ -1,0 +1,60 @@
+// HashMap.clone, now std/hashmap.milo code: a deep copy that shares no heap with the
+// source, keeps its tombstones and seed (so it iterates in the source's order), and is
+// independent afterwards. Dense tables with tombstones, string keys with Vec values,
+// struct keys, an empty map, a temporary receiver, and a clone of a clone.
+struct Pt { x: i64, y: i64 }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    var c = m.clone()
+    print(c.len)
+    let a = m.keys()
+    let b = c.keys()
+    var same = a.len == b.len
+    i = 0
+    while i < a.len { if a[i] != b[i] { same = false }; i = i + 1 }
+    print(same)
+    c.insert(5000, 1)
+    c.remove(1)
+    print(m.len.toString() + " " + c.len.toString())
+    print(m.contains(1))
+    print(c.contains(5000))
+
+    var s: HashMap<string, Vec<string>> = HashMap.new()
+    i = 0
+    while i < 100 { s.insert("w" + i.toString(), ["a" + i.toString()]); i = i + 1 }
+    var t = s.clone()
+    t.modify("w1", (v: &mut Vec<string>): void => { v.push("more") })
+    print(s.get("w1")!.len.toString() + " " + t.get("w1")!.len.toString())
+    var u = t.clone()
+    print(u.get("w1")!.len)
+
+    var p: HashMap<Pt, i64> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, 3)
+    print(p.clone().get(Pt { x: 1, y: 2 }) ?? 0)
+
+    var e: HashMap<string, i64> = HashMap.new()
+    print(e.clone().len)
+    print(squares(50).clone().len)
+}
+// @expect: 666
+// @expect: true
+// @expect: 666 666
+// @expect: true
+// @expect: true
+// @expect: 1 2
+// @expect: 2
+// @expect: 3
+// @expect: 0
+// @expect: 50

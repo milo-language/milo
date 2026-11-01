@@ -13635,19 +13635,23 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
       }
+      // clone is std/hashmap code (one _mapCopyOut of the whole table); the copies it
+      // cannot make are refused here, at the call.
       if (expr.method === "clone") {
-        if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
+        let refused = false;
         for (const [what, t] of [["key", objType.key], ["value", objType.value]] as const) {
           if (t.tag === "interface") {
             this.error(`cannot clone a HashMap with ${what} type ${this.show(t)}: an interface value has no clone`, sp,
               `the concrete type is erased and the itable carries no clone slot`);
+            refused = true;
           } else if (t.tag === "fn") {
             this.error(`cannot clone a HashMap with ${what} type ${this.show(t)}: closures cannot be cloned`, sp);
-          } else {
-            this.errorIfResourceCopyOut(t, "clone", "HashMap", sp, `Build the copy entry by entry ('for k, v in m { out.insert(k.clone(), v.clone()) }')`);
+            refused = true;
+          } else if (this.errorIfResourceCopyOut(t, "clone", "HashMap", sp, `Build the copy entry by entry ('for k, v in m { out.insert(k.clone(), v.clone()) }')`)) {
+            refused = true;
           }
         }
-        return this.setType(expr, objType);
+        if (refused) return this.setType(expr, objType);
       }
       // keys()/values() are std/hashmap code copying each element out structurally; the
       // copies they cannot make are refused here, at the call, before the body exists.

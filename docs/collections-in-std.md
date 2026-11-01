@@ -178,3 +178,11 @@ special cases.
   the state is empty). "cannot clear an immutable HashMap" kept via the receiver rule.
   Planted: no value drop gives 600 leaks and a red fixture; not resetting the states turns
   `hashMapClearStd` red (and the churn case hangs). 0 leaks; bench 0.83s vs 0.80s.
+- 2026-11-01: `clone` moved as `return _mapCopyOut(self)`: the builtin method was already
+  `emitDeepCloneFromPtr` on the whole map (memcpy of the slot array with seed and
+  tombstones, then a structural copy of each live key/value), the same code that copies a
+  map nested in a struct or Vec, so std calls that one implementation instead of
+  re-deriving malloc + slot loop + seed handling. Lost: the builtin's shortcut handing a
+  temporary receiver back uncopied (`mk().clone()` now copies). Interface/closure/
+  resource refusals stay at the call. Same keys() order as the source; planted
+  remove-one-entry turns `hashMapCloneStd` red; 0 leaks; bench 1.15s vs 1.15s.

@@ -35,22 +35,17 @@ export interface CodegenMapCtx {
   nextTemp(): string;
   nextLabel(prefix?: string): string;
   llvmType(t: TypeKind): string;
-  typeSizeOf(t: TypeKind): number;
-  genExpr(expr: HIRExpr, sretDest?: string): Gen;
   genVal(expr: HIRExpr, lines: string[], sretDest?: string): Val;
   genLValue(expr: HIRExpr): Gen;
   hashMapEntryType(keyType: TypeKind, valueType: TypeKind): string;
   needsDropCg(t: TypeKind): boolean;
   emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind): void;
-  dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
-  cloneOfOwnedTemp(src: HIRExpr, lines: string[]): Gen | null;
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   emitAllocBytes(lines: string[], count: string, elemSize: string | number, tag: string, span?: Span): { buf: string; bytes: string };
   emitNonNegativeCheck(lines: string[], val: string, what: string, span?: { line: number; col: number }): void;
   own: OwnLedger;
   structLayouts: Map<string, StructLayout>;
   hasHashMapType: boolean;
-  hasVecType: boolean;
   hasStringType: boolean;
   needsMalloc: boolean;
   needsFree: boolean;
@@ -556,20 +551,6 @@ export function genHashMapWithCapacity(ctx: CodegenMapCtx, expr: HIRExpr & { kin
   m = b.insertvalue(m, i64c(0), HM_SEED);
   m = b.insertvalue(m, i64c(0), HM_TOMBS);
   return asGen(lines, m);
-}
-
-export function genHashMapClone(ctx: CodegenMapCtx, expr: HIRExpr & { kind: "HashMapClone" }, lines: string[]): Gen {
-  ctx.hasHashMapType = true;
-  const passed = ctx.cloneOfOwnedTemp(expr.object, lines);
-  if (passed) return passed;
-  const b = new LlvmTextBuilder(lines, ctx);
-  const ov = ctx.genVal(expr.object, lines);
-  // emitDeepCloneFromPtr reads through a pointer; the spill is a shallow copy
-  // that is never dropped — only the clone it produces is owned by the caller.
-  const slot = b.alloca(HASHMAP_TY);
-  b.store(val(ov.ref, HASHMAP_TY), slot);
-  const cloned = ctx.emitDeepCloneFromPtr(lines, slot.ref, expr.object.type);
-  return [lines, cloned, "%HashMap"];
 }
 
 // The std/hashmap intrinsics: the same hash and key comparison the builtin methods above

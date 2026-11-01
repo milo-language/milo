@@ -190,6 +190,15 @@ impl HashMap<K, V> {
         }
     }
 
+    // A deep copy. _mapCopyOut is codegen's structural HashMap copy (emitDeepCloneFromPtr),
+    // the same code that copies a map nested in a struct, Vec or Option: the slot array is
+    // memcpy'd with its seed and tombstones and each live key/value is copied, so the clone
+    // iterates in the source's order. Written here rather than as malloc + a slot loop so
+    // there stays one implementation of "copy a map".
+    fn clone(self: &Self): HashMap<K, V> {
+        return _mapCopyOut(self)
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0
