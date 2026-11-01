@@ -2,7 +2,7 @@
 // Assets and the US place-name index are compiled in with embedFile, so the
 // deploy artifact is one file with no adjacent data directory to keep in sync.
 from "std/http" import {
-    Context, Response, Router, serveRouter
+    Context, Response, Router, ServeOptions, serveRouterWith
 }
 from "std/argparse" import {
     ArgParser
@@ -757,7 +757,7 @@ pub fn main(): i32 {
 
     // /api/up talks to the network inside the handler; serveRouter gives each
     // connection its own task, so one slow upstream does not stall every other client.
-    if let Err(msg) = serveRouter(port, r) {
+    if let Err(msg) = serveRouterWith("127.0.0.1", port, r, ServeOptions { socketActivation: true }) {
         print($"error: {msg}")
         return 1
     }
