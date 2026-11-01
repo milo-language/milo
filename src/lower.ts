@@ -848,6 +848,12 @@ class LowerCtx {
       case "Call": {
         if (VEC_INTRINSICS.has(expr.func) && isVecModule(expr.span?.file)) {
           if (expr.func === "_vecCopyOut") return { kind: "MapCopyOut", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          if (expr.func === "_vecNonNegative") return { kind: "NonNegative", value: this.lowerExpr(expr.args[0]), what: "capacity", type, span: expr.span };
+          if (expr.func === "_vecGrowBuf") {
+            const element = type.tag === "ptr" ? type.inner : { tag: "unknown" as const };
+            const [data, len, cap] = expr.args.map(a => this.lowerExpr(a)) as [HIRExpr, HIRExpr, HIRExpr];
+            return { kind: "VecGrowBuf", data, len, cap, elementType: element, type, span: expr.span };
+          }
           if (expr.func === "_vecPanic") {
             const msg = expr.args[0];
             return { kind: "VecPanic", message: msg?.kind === "StringLit" ? msg.value : "", type, span: expr.span };
@@ -1424,9 +1430,6 @@ class LowerCtx {
           }
           if (expr.method === "capacity") {
             return { kind: "VecCapacity", object: this.lowerExpr(expr.object), type, span: expr.span };
-          }
-          if (expr.method === "reserve") {
-            return { kind: "VecReserve", object: this.lowerExpr(expr.object), additional: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
         }
         if (objType?.tag === "hashmap") {

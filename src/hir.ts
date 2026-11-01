@@ -98,7 +98,6 @@ export type HIRExpr =
   | { kind: "VecGetOpt"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "VecExtend"; object: HIRExpr; other: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecCapacity"; object: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "VecReserve"; object: HIRExpr; additional: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "WrappingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
@@ -120,6 +119,8 @@ export type HIRExpr =
   | { kind: "MapAlloc"; count: HIRExpr; size: HIRExpr; type: TypeKind; span?: Span }
   // `value` (an i64), after panicking "negative <what>" at span when it is below zero.
   | { kind: "NonNegative"; value: HIRExpr; what: string; type: TypeKind; span?: Span }
+  // std/vec `_vecGrowBuf(data, len, cap)`: the buffer moved to `cap` slots (emitGrowBytes).
+  | { kind: "VecGrowBuf"; data: HIRExpr; len: HIRExpr; cap: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }

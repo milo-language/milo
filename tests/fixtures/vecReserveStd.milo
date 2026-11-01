@@ -1,0 +1,52 @@
+// Vec.reserve is std/vec.milo code: room for n more, doubling when that covers it, else
+// exactly len + n (emitVecEnsureCapacity's policy). Covers an empty Vec, reserve(0), a
+// reserve the capacity already covers (no change), one doubling covers and one it does
+// not, an i32 count, string elements kept across the move (small and realloc-sized
+// buffers), a field receiver and a capture. The panics are pinned by
+// runtime-errors/vecReserveNegative.milo and vecReserveCapacityOverflow.milo.
+// @expect: 0
+// @expect: 3
+// @expect: 3
+// @expect: 6 [1, 2, 3]
+// @expect: 23 [1, 2, 3]
+// @expect: 23
+// @expect: ["a", "bc", "d"] 1002
+// @expect: 8
+// @expect: 4
+
+struct Holder {
+    items: Vec<i64>,
+}
+
+fn main() {
+    var e: Vec<i64> = Vec.new()
+    e.reserve(0)
+    print(e.capacity())
+    e.reserve(3)
+    print(e.capacity())
+    e.reserve(2)
+    print(e.capacity())
+    e.push(1)
+    e.push(2)
+    e.push(3)
+    e.reserve(1)
+    print(e.capacity(), " ", e)
+    e.reserve(20)
+    print(e.capacity(), " ", e)
+    let k: i32 = 5
+    e.reserve(k)
+    print(e.capacity())
+    var s: Vec<string> = ["a", "b" + "c"]
+    s.reserve(1000)
+    s.push("d")
+    print(s, " ", s.capacity())
+    var h = Holder { items: [1] }
+    h.items.reserve(7)
+    print(h.items.capacity())
+    var cap: Vec<i64> = Vec.new()
+    let f = () => {
+        cap.reserve(4)
+        print(cap.capacity())
+    }
+    f()
+}

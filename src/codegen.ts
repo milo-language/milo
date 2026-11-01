@@ -7,7 +7,7 @@ import { type TypeKind, needsDrop, typeEq, typeName } from "./types";
 import type { TargetInfo } from "./target";
 import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
-import { genNatLess, genVecPanic, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecReserve, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
+import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, genVecPush, genVecInsert, genVecExtend, genVecWithCapacity, genVecFilled, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
   genStringSetByte, genStringPushStr, genStringSubstr, genStringSlice, genNumberToString, genBoolToString, genStringClone, genStringFind,
@@ -55,12 +55,12 @@ export const NOT_OWNED_TEMP: readonly string[] = [
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
   "Forget", "HashMapLen",
 "HeapCreate", "HeapPtr", "Ident",
-  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "VecPanic", "OffsetOf",
+  "IntLit", "InterfaceCoerce", "IsCheck", "MapAlloc", "MapHash", "MapKeyEq", "MapSeed", "MemSwap", "NatLess", "NonNegative", "VecGrowBuf", "VecPanic", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
   "StringFind", "StringLen", "StringLit", "StringPush", "StringPushInt", "StringPushStr", "StringSetByte", "StringSlice", "StringTruncate",
   "UnaryOp", "VecCapacity",
   "VecExtend", "VecInsert",
-  "VecLen", "VecPtr", "VecPush", "VecReserve",
+  "VecLen", "VecPtr", "VecPush",
   "VecSlice",
   "WrappingArith", "Zeroed",
 ];
@@ -5672,8 +5672,6 @@ export class Codegen {
         return genVecGetOpt(this, expr, lines);
       case "VecExtend":
         return genVecExtend(this, expr, lines);
-      case "VecReserve":
-        return genVecReserve(this, expr, lines);
       case "VecCapacity": {
         this.hasVecType = true;
         const ov = this.genVal(expr.object, lines);
@@ -5688,6 +5686,8 @@ export class Codegen {
         return genMapHash(this, expr, lines);
       case "NatLess":
         return genNatLess(this, expr, lines);
+      case "VecGrowBuf":
+        return genVecGrowBuf(this, expr, lines);
       case "VecPanic":
         return genVecPanic(this, expr, lines);
       case "MapKeyEq":

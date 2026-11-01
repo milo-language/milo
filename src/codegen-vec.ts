@@ -550,6 +550,20 @@ function emitGrowBytes(ctx: CodegenCtx, lines: string[], oldBuf: Val, keepBytes:
   return buf;
 }
 
+// std/vec's `_vecGrowBuf(data, len, cap)`: the buffer holding `len` elements, moved to one
+// of `cap` slots. Takes and returns plain values, so a Vec whose push is inlined keeps
+// its header in registers (an address handed to a grow call would pin it in memory).
+export function genVecGrowBuf(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecGrowBuf" }, lines: string[]): Gen {
+  ctx.hasVecType = true;
+  const elemSize = ctx.typeSizeOf(expr.elementType);
+  const data = val(ctx.genVal(expr.data, lines).ref, Ty.ptr);
+  const len = val(ctx.genVal(expr.len, lines).ref, Ty.i64);
+  const cap = val(ctx.genVal(expr.cap, lines).ref, Ty.i64);
+  const b = new LlvmTextBuilder(lines, ctx);
+  const keepBytes = b.binop("mul", len, val(String(elemSize), Ty.i64));
+  return asGen(lines, emitGrowBytes(ctx, lines, data, keepBytes, cap, elemSize, "vecgrow", expr.span));
+}
+
 // Grow `vecPtr`'s buffer so it holds at least `needCap` elements. Leaves the
 // %Vec's data/cap fields updated; len is the caller's business.
 function emitVecEnsureCapacity(ctx: CodegenCtx, lines: string[], vecPtr: Val, needCap: Val, elemSize: number, tag: string, span?: Span) {
@@ -623,23 +637,5 @@ export function genVecExtend(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecExtend
   b.br(endLabel);
   b.position(endLabel);
   ctx.own.endVal(lines, srcRef.ref, "STORE");
-  return [lines, "0", "void"];
-}
-
-export function genVecReserve(ctx: CodegenCtx, expr: HIRExpr & { kind: "VecReserve" }, lines: string[]): Gen {
-  ctx.hasVecType = true;
-  const elemSize = ctx.typeSizeOf(expr.elementType);
-  const [vecLines, vecRef] = ctx.genLValue(expr.object);
-  lines.push(...vecLines);
-  const vecPtr = val(vecRef, Ty.ptr);
-  const nRaw = ctx.genVal(expr.additional, lines);
-  ctx.emitNonNegativeCheck(lines, nRaw.ref, "capacity", expr.span);
-  const b = new LlvmTextBuilder(lines, ctx);
-  const lenPtr = b.gep(VEC_TY, vecPtr, [I32_0, I32_1]);
-  const len = b.load(Ty.i64, lenPtr);
-  // reserve(n) is "room for n MORE", matching Rust — the count a writer has in
-  // hand is almost always how many they are about to push, not the final total.
-  const need = b.binop("add", len, val(nRaw.ref, Ty.i64));
-  emitVecEnsureCapacity(ctx, lines, vecPtr, need, elemSize, "vecrsv", expr.span);
   return [lines, "0", "void"];
 }

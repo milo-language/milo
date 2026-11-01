@@ -136,7 +136,10 @@ export function isHashMapModule(file: string | undefined): boolean {
 // `_vecPanic("msg")` prints "msg at file:line:col" and aborts, the wording of the
 // builtins' own bounds panics (remove, insert), which a plain panic() would not keep.
 // `_vecCopyOut(place)` is _mapCopyOut under its std/vec name: the one structural copy.
-export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut"]);
+// `_vecGrowBuf(data, len, cap): *T` moves a full buffer of `len` elements to one of `cap`
+// (emitGrowBytes, the checked allocation push used); `_vecNonNegative(n)` is n after
+// the "negative capacity" check, at the caller's line under @trackCaller.
+export const VEC_INTRINSICS: ReadonlySet<string> = new Set(["_natLess", "_vecPanic", "_vecCopyOut", "_vecGrowBuf", "_vecNonNegative"]);
 export function isVecModule(file: string | undefined): boolean {
   if (!file) return false;
   const posix = file.replace(/\\/g, "/");
@@ -10807,6 +10810,14 @@ export class TypeChecker {
     }
     if (MAP_INTRINSICS.has(expr.func) && isHashMapModule(sp?.file)) return this.checkMapIntrinsic(expr);
     if (expr.func === "_vecCopyOut" && isVecModule(sp?.file)) return this.checkMapCopyOut(expr);
+    if ((expr.func === "_vecGrowBuf" || expr.func === "_vecNonNegative") && isVecModule(sp?.file)) {
+      const i64: TypeKind = { tag: "int", bits: 64, signed: true };
+      const grow = expr.func === "_vecGrowBuf";
+      if (expr.args.length !== (grow ? 3 : 1)) this.error(`'${expr.func}' expects ${grow ? 3 : 1} argument(s)`, sp);
+      const types = expr.args.map((a, i) => this.checkExpr(a, grow && i === 0 ? null : i64));
+      if (grow && types[0]?.tag !== "ptr") this.error(`'_vecGrowBuf': the buffer must be a raw pointer`, sp);
+      return this.setType(expr, grow ? (types[0] ?? { tag: "unknown" }) : i64);
+    }
     if (expr.func === "_vecPanic" && isVecModule(sp?.file)) {
       if (expr.args.length !== 1 || expr.args[0]!.kind !== "StringLit") {
         this.error(`'_vecPanic' expects one string literal`, sp);
@@ -13795,7 +13806,7 @@ export class TypeChecker {
         }
         const nType = this.checkExpr(expr.args[0]);
         if (nType.tag !== "int" && nType.tag !== "unknown") { this.error(`'reserve': expected an integer, got ${this.show(nType)}`, sp); }
-        return this.setType(expr, { tag: "void" });
+        return this.bindStdVecMethod(expr, objType.element, "reserve", { tag: "void" });
       }
       {
         const blanket = this.instantiateContainerImpl("Vec", [objType.element], expr.method);

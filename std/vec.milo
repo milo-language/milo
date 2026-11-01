@@ -43,6 +43,29 @@ fn vecDropAt<T>(p: *T) {
     }
 }
 
+// Makes room for `need` elements in all: nothing when the capacity already suffices,
+// else the doubled capacity, or exactly `need` when doubling falls short (so repeated
+// extends stay amortized). The buffer moves through _vecGrowBuf, whose size and null
+// checks panic at the caller's line under @trackCaller.
+@inline
+@trackCaller
+fn vecReserveTotal<T>(v: &mut Vec<T>, need: i64) {
+    unsafe {
+        var raw = (v.addrOf() as *u8) as *VecHead
+        let cap = raw[0]._cap
+        if (cap as u64) >= (need as u64) {
+            return
+        }
+        var newCap = need
+        let doubled = cap.wrappingMul(2)
+        if (doubled as u64) > (need as u64) {
+            newCap = doubled
+        }
+        raw[0]._data = _vecGrowBuf(v.ptr(), raw[0]._len, newCap) as *u8
+        raw[0]._cap = newCap
+    }
+}
+
 impl Vec<T> {
     // Whether the Vec has no elements.
     fn isEmpty(self: &Self): bool {
@@ -382,6 +405,15 @@ impl Vec<T> {
                 i = i.wrappingAdd(1)
             }
         }
+    }
+
+    // Makes room for `n` more elements without another allocation. A negative `n` panics
+    // ("negative capacity"), at the caller's line.
+    @inline
+    @trackCaller
+    fn reserve(self: &mut Self, n: i64) {
+        let extra = _vecNonNegative(n)
+        vecReserveTotal(&mut self, self.len().wrappingAdd(extra))
     }
 
     // Exchanges the elements at `a` and `b`. Both indexes are bounds-checked, `a` first,

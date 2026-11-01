@@ -485,3 +485,16 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   emitBuiltinGt, closureParts, cbElemArg). ASan clean; output identical; 6 corpus files
   pass; bench 500 sorts of 3000 records by an i64 key 0.61s builtin vs 0.63s std, 100 by
   a string field 0.62s vs 0.62s. Step 4 done.
+- 2026-11-01: phase 2 step 5 begins. `reserve` moved, over two std/vec-only intrinsics:
+  `_vecGrowBuf(data, len, cap)` (emitGrowBytes on plain values: realloc from 4096 bytes,
+  else malloc + memcpy + free, with the size-overflow and null checks, so the
+  allocChokePoint gate still covers it and the header's address never escapes) and
+  `_vecNonNegative(n)` (the `NonNegative` node HashMap.withCapacity uses). The shared
+  `vecReserveTotal` is emitVecEnsureCapacity's policy: nothing when the capacity covers
+  `need`, else the doubled capacity if that is larger, else exactly `need`. Both are
+  `@trackCaller`: "negative capacity at <caller>:line:col: -4"
+  (`runtime-errors/vecReserveNegative`, old and new identical) and the existing
+  `vecReserveCapacityOverflow` both name the caller. Old bug gone: an i32 count reached
+  clang as an i64 compare on an i32 value. Planted no-doubling turns `vecReserveStd` red.
+  Output identical (fixture without the i32 line); live heap equal; bench 2M rounds of
+  reserve/push 0.07s vs 0.07s.

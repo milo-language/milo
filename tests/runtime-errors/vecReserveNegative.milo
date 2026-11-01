@@ -1,0 +1,14 @@
+// @runtime-error: negative capacity at tests/runtime-errors/vecReserveNegative.milo:11:5: -4
+// Vec.reserve is std/vec.milo code; the "negative capacity" check (_vecNonNegative) names
+// the caller's line and column under @trackCaller, as the builtin's inline check did.
+
+pub fn neg(): i64 {
+    return -4
+}
+
+pub fn main(): i32 {
+    var v: Vec<string> = ["a"]
+    v.reserve(neg())
+    print(v.len())
+    return 0
+}
