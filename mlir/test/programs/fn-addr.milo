@@ -1,0 +1,31 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `f as *u8`. A named
+// function's own symbol (not its trampoline), compared across two casts and against
+// another's, and a `move` fn param's code pointer, as std's spawn takes a task apart.
+
+fn hello(): void { print("hello") }
+
+fn other(): void { print("other") }
+
+fn addrOf(f: move () => void): i64 {
+    unsafe {
+        let p = f as *u8
+        forget(f)
+        return p as i64
+    }
+}
+
+fn run() {
+    unsafe {
+        let a = hello as *u8
+        let b = hello as *u8
+        let c = other as *u8
+        print(a as i64 == b as i64, " ", a as i64 == c as i64, " ", a as i64 != 0)
+    }
+    let p = addrOf(move(): void => print("x"))
+    let q = addrOf(move(): void => print("y"))
+    print(p != 0, " ", p == q)
+}
+
+fn main() {
+    run()
+}

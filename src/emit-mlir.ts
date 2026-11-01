@@ -1255,6 +1255,26 @@ class FnEmitter {
    * it, so whichever way control leaves, the slot's drop frees exactly the elements no
    * iteration took, then the buffer, after the binding's drop as legacy orders them.
    */
+  /**
+   * `f as *u8`, in a legacy helper doing exactly that (genCast): a named function's own
+   * symbol, not its trampoline, and any other fn value's code pointer, its first field.
+   */
+  private fnAddress(e: HIRExpr & { kind: "Cast" }): Val {
+    const op = e.operand;
+    const named = op.kind === "Ident" && !this.scopes.some(m => m.has(op.name)) && this.cx.fnSigs.has(op.name);
+    if (named) {
+      const name = this.cx.mlirHelper(`milo.fnaddr.${op.name}`, () => ({
+        params: [], retType: e.type, body: [{ kind: "Return", retType: e.type, value: e }],
+      }));
+      this.callees.set(name, `() -> ${PTR}`);
+      return this.def(`func.call @${quote(name)}() : () -> ${PTR}`, PTR);
+    }
+    const v = this.expr(op);
+    if (v.own === "owned") throw new MlirUnsupported("cast of an owning fn temporary");
+    return this.intrinsic("fnaddr", e, [{ name: "f", type: op.type, mode: "val", ref: v.ref }],
+      ([f]) => ({ ...e, operand: f }), PTR, false);
+  }
+
   private arrayForEach(s: HIRStmt & { kind: "ForEach" }): boolean {
     /**
      * `for x in arr` over a fixed array of elements that own nothing, as legacy genForEach:
@@ -1444,6 +1464,7 @@ class FnEmitter {
           if (v.ty !== STR) throw new MlirUnsupported("cast of a non-string");
           return this.def(`milo.string.data ${v.ref}`, PTR);
         }
+        if (e.operand.type.tag === "fn" && e.targetType.tag === "ptr") return this.fnAddress(e);
         const from = scalar(e.operand.type, "cast source");
         const to = scalar(e.targetType, "cast target");
         const v = this.expr(e.operand);
