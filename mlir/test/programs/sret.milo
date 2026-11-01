@@ -1,0 +1,19 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// target: sret functions (lib/bigs.milo) built from struct literals, forwarding another
+// sret call, called into a `let`, into a discarded temporary, and in a loop.
+from "./lib/bigs" import { Record, record, renamed, indirect, score }
+
+fn main() {
+    var t: i64 = 0
+    for i in 0..6 {
+        let r = record(i)
+        let q = renamed(r, "!")
+        t += score(r) + score(q)
+    }
+    print(t)
+    let n = record(-1)
+    print(score(n))
+    let d = indirect(3)
+    print(score(d))
+    record(9)
+}

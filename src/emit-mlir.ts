@@ -317,7 +317,6 @@ class FnEmitter {
     if (isMain && (!this.cx.mlirMainOk || fn.params.length || fn.retType.tag !== "void")) throw new MlirUnsupported("main");
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
-    if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
     const params = fn.params.map((p, i) => {
       // A by-ref param of a type the dialect lacks is just a pointer in the signature; the
       // function qualifies only if it never names it (lookup refuses).
@@ -347,7 +346,13 @@ class FnEmitter {
     });
     // main is `i32 @main(i32 argc, ptr argv)` and returns 0, as legacy emits it.
     if (isMain) params.push("%argc: si32", `%argv: ${PTR}`);
-    const ret = isMain ? "si32" : fn.retType.tag === "void" ? null : this.value(fn.retType, "return");
+    // An sret function (a 128+ byte result) writes its result through `%out`, the hidden
+    // first param of legacy's `void @f(ptr %__sret.out, ...)`, and returns nothing.
+    if (this.cx.sretFns.has(fn.name)) {
+      this.sretOut = { ref: "%out", ty: this.place$(fn.retType, "sret result") };
+      params.unshift(`%out: !milo.ref<${this.sretOut.ty}>`);
+    }
+    const ret = isMain ? "si32" : fn.retType.tag === "void" || this.sretOut ? null : this.value(fn.retType, "return");
     this.isMain = isMain;
     this.retTy = ret;
     // As legacy replayEngineScope, which applies only when std/replay is in the program.
@@ -365,6 +370,48 @@ class FnEmitter {
   }
 
   private replay = false;
+  private sretOut: { ref: string; ty: string } | null = null;
+
+  /** True for a call of a function legacy lowers to sret: its result is written in place. */
+  private isSretCall(e: HIRExpr): e is HIRExpr & { kind: "Call" } {
+    return e.kind === "Call" && this.cx.sretFns.has(e.func) && !this.cx.isBuiltinName(e.func);
+  }
+
+  /**
+   * `e`, a 128+ byte aggregate, written into the place `dst` (of type `ty`) without ever
+   * being an SSA value: a struct literal field by field, an sret call through `dst`.
+   * The stores are `init`: `dst` holds nothing yet.
+   */
+  private into(e: HIRExpr, dst: string, ty: string): void {
+    if (this.isSretCall(e)) { this.call(e, true, dst); return; }
+    if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported("128+ byte value other than a literal or an sret call");
+    const layout = this.cx.structLayouts.get(e.name);
+    if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
+    const given = new Map<string, Val>();
+    for (const f of e.fields) given.set(f.name, this.consume(this.expr(f.value), "field"));
+    layout.fields.forEach((f, i) => {
+      const v = given.get(f.name);
+      const fty = this.value(f.typeKind, "field");
+      if (!v || v.ty !== fty) throw new MlirUnsupported("struct literal field");
+      const r = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
+      this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${fty}>`);
+    });
+  }
+
+  /** A slot of this block holding `e` (128+ bytes), filled in place; owned when it has drop glue. */
+  private bigSlot(name: string, e: HIRExpr): { ref: string; ty: string; owned: boolean } {
+    const ty = this.place$(e.type, "value");
+    const owned = hasDrop(ty);
+    let ref: string;
+    if (owned) ref = this.ownedSlot(name, ty, e.type);
+    else {
+      ref = this.fresh();
+      this.vars.push(`  ${ref} = milo.var ${quote(name)} : !milo.ref<${ty}>`);
+    }
+    this.into(e, ref, ty);
+    if (owned) this.emit(`milo.filled ${ref} : !milo.ref<${ty}>`);
+    return { ref, ty, owned };
+  }
   private isMain = false;
   private retTy: string | null = null;
 
@@ -513,6 +560,12 @@ class FnEmitter {
     switch (s.kind) {
       case "Let": {
         if (s.viewBind) throw new MlirUnsupported("view let");
+        const pt = placeType(this.cx, s.type);
+        if (pt !== null && isBig(this.cx, pt)) {
+          const b = this.bigSlot(s.name, s.value);
+          this.bind(s.name, { kind: "var", ref: b.ref, ty: b.ty, owned: b.owned });
+          return false;
+        }
         const ty = this.value(s.type, "let");
         const v = this.consume(this.expr(s.value), "let");
         if (v.ty !== ty) throw new MlirUnsupported("let of a different type");
@@ -573,6 +626,11 @@ class FnEmitter {
         return false;
       }
       case "Return": {
+        if (this.sretOut && s.value) {
+          this.into(s.value, this.sretOut.ref, this.sretOut.ty);
+          this.ret("milo.return");
+          return true;
+        }
         if (!s.value && this.isMain) { this.retMain(); return true; }
         if (!s.value) { this.ret("milo.return"); return true; }
         const v = this.consume(this.expr(s.value), "return");
@@ -581,6 +639,7 @@ class FnEmitter {
         return true;
       }
       case "ExprStmt": {
+        if (this.isSretCall(s.expr)) { this.bigSlot("tmp", s.expr); return false; }
         // A result nobody takes still has an owner until the block ends.
         const v = this.expr(s.expr, true);
         if (v.ty) this.borrow(v, s.expr.type);
@@ -1460,13 +1519,15 @@ class FnEmitter {
     return { ref: "", ty: "" };
   }
 
-  private call(e: HIRExpr & { kind: "Call" }, stmt: boolean): Val {
+  private call(e: HIRExpr & { kind: "Call" }, stmt: boolean, into?: string): Val {
     if ((e.func === "print" || e.func === "eprint") && this.cx.isBuiltinName(e.func)) return this.print(e);
     if (e.variadic) throw new MlirUnsupported("variadic call");
     if (this.cx.isBuiltinName(e.func)) throw new MlirUnsupported(`builtin ${e.func}`);
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
-    if (!callee || !sig || sig.variadic || this.cx.sretFns.has(e.func)) throw new MlirUnsupported("callee");
+    if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");
+    const sret = this.cx.sretFns.has(e.func);
+    if (sret !== (into !== undefined)) throw new MlirUnsupported("sret call as a value");
     // An extern's call goes to its C symbol; keep those on legacy codegen for now.
     if (callee.isExtern && callee.linkName && callee.linkName !== callee.name) throw new MlirUnsupported("callee link name");
     if (callee.params.length !== e.args.length) throw new MlirUnsupported("callee arity");
@@ -1478,12 +1539,15 @@ class FnEmitter {
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });
-    const ret = callee.retType.tag === "void" ? null : this.value(callee.retType, "call result");
-    if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
+    const ret = callee.retType.tag === "void" || sret ? null : this.value(callee.retType, "call result");
+    if (sret) paramTys.unshift(`!milo.ref<${this.place$(callee.retType, "sret result")}>`);
+    else if (ret !== null ? sig.retType !== this.cx.llvmType(callee.retType) : sig.retType !== "void") throw new MlirUnsupported("callee signature");
     if (ret === null && !stmt) throw new MlirUnsupported("void call as value");
     const refs: { ref: string; mut: boolean; ty: string }[] = [];
     const provenance: (number | null)[] = [];
-    const args = e.args.map((a, i) => {
+    const k0 = sret ? 1 : 0;
+    const args = e.args.map((a, j) => {
+      const i = j + k0;
       if (a.passByRef) {
         const ref = this.place(a.expr, paramTys[i], a.refMut);
         refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
@@ -1507,6 +1571,7 @@ class FnEmitter {
     const fnTy = `(${paramTys.join(", ")}) -> ${ret === null ? "()" : ret}`;
     this.callees.set(e.func, fnTy);
     this.calls.push({ name: e.func, refParams: provenance });
+    if (into !== undefined) args.unshift(into);
     const call = `func.call @${quote(e.func)}(${args.join(", ")}) : ${fnTy}`;
     if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
     return { ...this.def(call, ret), own: hasDrop(ret) ? "owned" : undefined };

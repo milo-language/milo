@@ -383,6 +383,15 @@ def Milo_ScopeOp : Milo_Op<"scope", [NoRegionArguments, RecursiveMemoryEffects]>
   let hasVerifier = 1;
 }
 
+// The owned slot `ref` now holds a value that was written into it in place (field by
+// field, or by an sret call through its address) rather than by milo.store: for drop
+// elaboration it is a store. A 128+ byte aggregate is filled this way, never loaded whole.
+def Milo_FilledOp : Milo_Op<"filled"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemWrite<Milo_Slot>]>:$ref);
+  let assemblyFormat = "$ref attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
 // The value in an owned slot, moved out: the slot holds nothing after it.
 def Milo_MoveOp : Milo_Op<"move", [
     TypesMatchWith<"result is the slot's type", "ref", "result",

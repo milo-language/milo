@@ -271,6 +271,13 @@ LogicalResult StringAppendOp::verify() {
   return success();
 }
 
+LogicalResult FilledOp::verify() {
+  auto v = getRef().getDefiningOp<VarOp>();
+  if (!v || !v.getOwned())
+    return emitOpError("needs an owned slot");
+  return success();
+}
+
 LogicalResult GlobalInitOp::verify() {
   if (getName().empty())
     return emitOpError("needs a name");

@@ -235,6 +235,8 @@ public:
     if (auto st = dyn_cast<StoreOp>(op)) {
       if (isOwnedSlot(st.getRef()))
         l.state[st.getRef()] = kInit;
+    } else if (auto f = dyn_cast<FilledOp>(op)) {
+      l.state[f.getRef()] = kInit;
     } else if (auto mv = dyn_cast<MoveOp>(op)) {
       if (isOwnedSlot(mv.getRef()))
         l.state[mv.getRef()] = kUninit;
@@ -358,6 +360,8 @@ struct ElaborateDropsPass
     fn.walk([&](Operation *op) {
       if (auto st = dyn_cast<StoreOp>(op); st && flags.count(st.getRef()))
         sets.push_back({op, st.getRef(), true});
+      else if (auto f = dyn_cast<FilledOp>(op); f && flags.count(f.getRef()))
+        sets.push_back({op, f.getRef(), true});
       else if (auto mv = dyn_cast<MoveOp>(op); mv && flags.count(mv.getRef()))
         sets.push_back({op, mv.getRef(), false});
       else if (auto d = dyn_cast<DropOp>(op); d && flags.count(d.getRef()))
@@ -421,6 +425,16 @@ struct MoveLowering : ConvertOpToLLVMPattern<MoveOp> {
                   ConversionPatternRewriter &rw) const override {
     rw.replaceOpWithNewOp<LLVM::LoadOp>(op, getTypeConverter()->convertType(op.getType()),
                                         a.getRef());
+    return success();
+  }
+};
+
+// A fact for drop elaboration only: the bytes are already there.
+struct FilledLowering : ConvertOpToLLVMPattern<FilledOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(FilledOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    rw.eraseOp(op);
     return success();
   }
 };
@@ -526,7 +540,7 @@ void milo::populateOwnedToLLVMPatterns(LLVMTypeConverter &tc, RewritePatternSet 
     return s;
   });
   patterns.add<DropLowering, MoveLowering, VecPlaceLowering, VecNewLowering, StringLenLowering,
-               StringShareLowering, StringConcatLowering, StringAppendLowering>(tc);
+               StringShareLowering, StringConcatLowering, StringAppendLowering, FilledLowering>(tc);
 }
 
 void milo::registerDropPasses() {

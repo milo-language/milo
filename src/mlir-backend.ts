@@ -224,9 +224,12 @@ export class MlirPlan {
         const own = call.refParams[i];
         if (p.isRef || p.isRefMut) return `ptr ${own == null ? "poison" : `%${fn.params[own].name}`}`;
         return `${this.cx.llvmType(p.type)} poison`;
-      }).join(", ");
+      });
       const sym = /^[-\w$.]+$/.test(call.name) ? call.name : `"${call.name}"`;
-      stub.push(`  call ${this.cx.llvmType(callee.retType)} @${sym}(${args})`);
+      // An sret callee is `void @f(ptr %__sret.out, ...)`; its out slot is this frame's.
+      const sret = this.cx.sretFns.has(call.name);
+      if (sret) args.unshift("ptr poison");
+      stub.push(`  call ${sret ? "void" : this.cx.llvmType(callee.retType)} @${sym}(${args.join(", ")})`);
     }
     stub.push("  unreachable");
     return stub;
@@ -313,6 +316,7 @@ export class MlirPlan {
       let header = l.replace(/ !dbg !\d+/, "");
       // main's are the process entry's argc/argv (codegen genFunction), not Milo params.
       const paramNames = name === "main" ? ["_milo_argc", "_milo_argv"] : this.fns.get(name)!.params.map(p => p.name);
+      if (this.cx.sretFns.has(name)) paramNames.unshift("__sret.out");
       const renames: [RegExp, string][] = [];
       paramNames.forEach((p, k) => {
         const re = new RegExp(String.raw` %${p.replace(/[$.]/g, "\\$&")}(?=[,)])`);

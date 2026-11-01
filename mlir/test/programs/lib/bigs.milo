@@ -1,0 +1,34 @@
+// A module of sret functions for mlir/test/programs/sret.milo: functions outside the
+// entry file that return a 128+ byte struct are lowered to `void @f(ptr %__sret.out, ...)`.
+
+pub struct Record {
+    name: string, host: string, path: string, user: string, note: string,
+    port: i64, retries: i64, timeout: i64, flags: i64, items: Vec<i64>
+}
+
+fn items(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n { v.push(i) }
+    return v
+}
+
+pub fn record(i: i64): Record {
+    if i < 0 {
+        return Record { name: "neg", host: "", path: "", user: "", note: "", port: 0, retries: 0, timeout: 0, flags: 0, items: Vec.new() }
+    }
+    return Record {
+        name: "r".repeat(i), host: "h", path: "/p", user: "u", note: "n".repeat(i % 2),
+        port: 8000 + i, retries: i, timeout: 30, flags: i * i, items: items(i % 5 + 1)
+    }
+}
+
+pub fn renamed(r: &Record, tag: string): Record {
+    return Record {
+        name: r.name + tag, host: r.host + "", path: r.path + "", user: r.user + "", note: r.note + "",
+        port: r.port, retries: r.retries + 1, timeout: r.timeout, flags: r.flags, items: items(r.items.len())
+    }
+}
+
+pub fn indirect(i: i64): Record { return record(i * 2) }
+
+pub fn score(r: &Record): i64 { return r.name.len() * 1000 + r.port + r.retries + r.flags + r.items.len() }
