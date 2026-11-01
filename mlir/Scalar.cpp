@@ -42,7 +42,8 @@ void rewriteTerminators(Region &r, F fn) {
 
 // Jumps out of a loop body. Nested loops are lowered first, so every break or continue
 // still nested in `body` targets this loop.
-void lowerJumps(IRRewriter &rw, Region &body, Block *breakTo, Block *continueTo) {
+void lowerJumps(IRRewriter &rw, Region &body, Block *breakTo, Block *continueTo,
+                ValueRange continueArgs = {}) {
   SmallVector<Operation *> jumps;
   body.walk([&](Operation *op) {
     if (isa<BreakOp, ContinueOp>(op))
@@ -50,7 +51,10 @@ void lowerJumps(IRRewriter &rw, Region &body, Block *breakTo, Block *continueTo)
   });
   for (Operation *j : jumps) {
     rw.setInsertionPoint(j);
-    rw.replaceOpWithNewOp<cf::BranchOp>(j, isa<BreakOp>(j) ? breakTo : continueTo);
+    if (isa<BreakOp>(j))
+      rw.replaceOpWithNewOp<cf::BranchOp>(j, breakTo);
+    else
+      rw.replaceOpWithNewOp<cf::BranchOp>(j, continueTo, continueArgs);
   }
 }
 
@@ -120,12 +124,44 @@ void lowerLoop(IRRewriter &rw, LoopOp op) {
   rw.eraseOp(op);
 }
 
+// head(i): i < end ? body(i) : exit;  body ... incr(i);  incr(i): head(i + 1).
+// `continue` goes to the increment, as in legacy codegen.
+void lowerFor(IRRewriter &rw, ForOp op) {
+  Location loc = op.getLoc();
+  Type t = op.getStart().getType();
+  Block *cur = op->getBlock();
+  Block *cont = rw.splitBlock(cur, std::next(op->getIterator()));
+  Block *body = &op.getBodyRegion().front();
+  Value iv = body->getArgument(0);
+  Block *head = rw.createBlock(cont, TypeRange{t}, {loc});
+  Block *incr = rw.createBlock(cont, TypeRange{t}, {loc});
+
+  rw.setInsertionPointToEnd(incr);
+  Value one = ConstOp::create(rw, loc, t, rw.getIntegerAttr(t, 1));
+  Value next = AddOp::create(rw, loc, t, incr->getArgument(0), one, rw.getUnitAttr());
+  cf::BranchOp::create(rw, loc, head, ValueRange{next});
+
+  rw.setInsertionPointToEnd(head);
+  Value more = CmpOp::create(rw, loc, rw.getI1Type(), CmpPredicate::lt, head->getArgument(0), op.getEnd());
+  cf::CondBranchOp::create(rw, loc, more, body, ValueRange{head->getArgument(0)}, cont, ValueRange{});
+
+  rewriteTerminators<YieldOp>(op.getBodyRegion(), [&](YieldOp y) {
+    rw.setInsertionPoint(y);
+    rw.replaceOpWithNewOp<cf::BranchOp>(y, incr, ValueRange{iv});
+  });
+  lowerJumps(rw, op.getBodyRegion(), cont, incr, ValueRange{iv});
+  rw.inlineRegionBefore(op.getBodyRegion(), incr);
+  rw.setInsertionPointToEnd(cur);
+  cf::BranchOp::create(rw, loc, head, ValueRange{op.getStart()});
+  rw.eraseOp(op);
+}
+
 struct LowerStructuredCFPass
     : PassWrapper<LowerStructuredCFPass, OperationPass<func::FuncOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerStructuredCFPass)
   StringRef getArgument() const final { return "milo-lower-structured-cf"; }
   StringRef getDescription() const final {
-    return "Lower milo.if/while/loop and their jumps to cf branches";
+    return "Lower milo.if/while/loop/for and their jumps to cf branches";
   }
   void getDependentDialects(DialectRegistry &r) const override {
     r.insert<cf::ControlFlowDialect>();
@@ -134,7 +170,7 @@ struct LowerStructuredCFPass
     // Innermost first: by the time a loop is lowered, every jump left inside it is its own.
     SmallVector<Operation *> ops;
     getOperation().walk<WalkOrder::PostOrder>([&](Operation *op) {
-      if (isa<IfOp, WhileOp, LoopOp>(op))
+      if (isa<IfOp, WhileOp, LoopOp, ForOp>(op))
         ops.push_back(op);
     });
     IRRewriter rw(&getContext());
@@ -143,6 +179,8 @@ struct LowerStructuredCFPass
         lowerIf(rw, i);
       else if (auto w = dyn_cast<WhileOp>(op))
         lowerWhile(rw, w);
+      else if (auto f = dyn_cast<ForOp>(op))
+        lowerFor(rw, f);
       else
         lowerLoop(rw, cast<LoopOp>(op));
     }

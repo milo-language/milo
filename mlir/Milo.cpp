@@ -76,6 +76,14 @@ LogicalResult IfOp::verify() {
   return success();
 }
 
+LogicalResult ForOp::verify() {
+  Type t = getStart().getType();
+  Block &entry = getBodyRegion().front();
+  if (entry.getNumArguments() != 1 || entry.getArgument(0).getType() != t)
+    return emitOpError("body takes one argument, the induction variable of type ") << t;
+  return success();
+}
+
 LogicalResult YieldOp::verify() {
   Operation *parent = (*this)->getParentOp();
   if (auto ifOp = dyn_cast<IfOp>(parent)) {
@@ -104,7 +112,7 @@ static Operation *enclosingLoop(Operation *op) {
   Region *from = op->getParentRegion();
   for (Operation *p = op->getParentOp(); p && !isa<FunctionOpInterface>(p);
        from = p->getParentRegion(), p = p->getParentOp()) {
-    if (isa<LoopOp>(p))
+    if (isa<LoopOp, ForOp>(p))
       return p;
     if (auto w = dyn_cast<WhileOp>(p))
       return from == &w.getBodyRegion() ? p : nullptr;

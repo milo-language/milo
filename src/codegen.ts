@@ -207,7 +207,7 @@ export class Codegen {
   // Independent of trapOnOverflow: `requires`/`ensures`/`invariant` become runtime
   // asserts. Both default on at -O0 and off above it, but they answer different
   // questions, so `--contract-checks` / `--overflow-checks` set them separately.
-  private contractChecks = false;
+  public contractChecks = false;
   private usedOverflowIntrinsics = new Set<string>();
   public needsPrintf = false;
   public needsDprintf = false;

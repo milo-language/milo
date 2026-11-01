@@ -95,3 +95,32 @@ func.func @nested(%c: i1) {
   }
   milo.return
 }
+
+// for: the bounds enter the header, `<` is signed for si64, continue and the body end
+// both go to the increment, which adds 1 without a trap.
+// CHECK-LABEL: func @for_range
+// CHECK:   cf.br ^[[HEAD:bb[0-9]+]](%arg0 : si64)
+// CHECK: ^[[HEAD]](%[[I:.*]]: si64):
+// CHECK:   %[[LT:.*]] = milo.cmp lt, %[[I]], %arg1 : si64
+// CHECK:   cf.cond_br %[[LT]], ^[[BODY:bb[0-9]+]](%[[I]] : si64), ^[[EXIT:bb[0-9]+]]
+// CHECK: ^[[BODY]](%[[IV:.*]]: si64):
+// CHECK:   cf.cond_br %arg2, ^[[CONT:bb[0-9]+]], ^[[REST:bb[0-9]+]]
+// CHECK: ^[[CONT]]:
+// CHECK-NEXT:   cf.br ^[[INCR:bb[0-9]+]](%[[IV]] : si64)
+// CHECK: ^[[REST]]:
+// CHECK-NEXT:   cf.br ^[[INCR]](%[[IV]] : si64)
+// CHECK: ^[[INCR]](%[[J:.*]]: si64):
+// CHECK:   %[[N:.*]] = milo.add %[[J]], %{{.*}} wrapping : si64
+// CHECK:   cf.br ^[[HEAD]](%[[N]] : si64)
+// CHECK: ^[[EXIT]]:
+// CHECK-NEXT:   milo.return
+func.func @for_range(%a: si64, %b: si64, %c: i1) {
+  milo.for %a to %b : si64 {
+  ^bb0(%i: si64):
+    milo.if %c {
+      milo.continue
+    }
+    milo.yield
+  }
+  milo.return
+}

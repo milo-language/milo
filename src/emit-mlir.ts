@@ -12,6 +12,8 @@ import type { Span } from "./ast";
 
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
+  // requires/ensures/invariant become runtime checks only when on (-O0 by default).
+  contractChecks: boolean;
   checkLocation(span?: Span): { file: string; line: number; col: number } | null;
   isBuiltinName(name: string): boolean;
   fnSigs: Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>;
@@ -85,7 +87,7 @@ class FnEmitter {
     // main's prologue (argc/argv, global init, stdout buffering) is legacy codegen's.
     if (fn.name === "main") throw new MlirUnsupported("main");
     if (fn.replayEngine) throw new MlirUnsupported("replay engine fn");
-    if (fn.contracts?.length || fn.oldSnapshots?.length) throw new MlirUnsupported("contracts");
+    if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
     const params = fn.params.map((p, i) => {
@@ -185,7 +187,7 @@ class FnEmitter {
         return false;
       }
       case "While": {
-        if (s.invariants?.length) throw new MlirUnsupported("loop invariant");
+        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
         this.loops++;
         if (s.cond.kind === "BoolLit" && s.cond.value) {
           this.region("milo.loop {", () => this.stmts(s.body));
@@ -197,6 +199,26 @@ class FnEmitter {
           });
           this.region("} do {", () => this.stmts(s.body));
         }
+        this.emit("}");
+        this.loops--;
+        return false;
+      }
+      case "ForRange": {
+        if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
+        const ty = scalar(s.varType, "for var");
+        if (ty === "i1" || ty.startsWith("f")) throw new MlirUnsupported("for over a non-int");
+        const start = this.expr(s.start);
+        const end = this.expr(s.end);
+        // Legacy codegen widens a narrower bound by the loop variable's signedness, which
+        // milo.cast (source signedness) would not match; such loops stay legacy.
+        if (start.ty !== ty || end.ty !== ty) throw new MlirUnsupported("for bound of a different type");
+        const iv = this.fresh();
+        this.loops++;
+        this.region(`milo.for ${start.ref} to ${end.ref} : ${ty} {`, () => {
+          this.emit(`^bb0(${iv}: ${ty}):`);
+          this.bind(s.varName, { kind: "ssa", v: { ref: iv, ty } });
+          return this.stmts(s.body);
+        });
         this.emit("}");
         this.loops--;
         return false;

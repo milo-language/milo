@@ -103,3 +103,14 @@ func.func @const_kind() -> f64 {
   %0 = "milo.const"() {value = 1 : si64} : () -> f64
   milo.return %0 : f64
 }
+
+// -----
+
+func.func @for_iv(%a: si64) {
+  // expected-error @+1 {{body takes one argument, the induction variable}}
+  milo.for %a to %a : si64 {
+  ^bb0(%i: si32):
+    milo.yield
+  }
+  milo.return
+}

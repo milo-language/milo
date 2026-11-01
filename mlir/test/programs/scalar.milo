@@ -51,6 +51,24 @@ fn nested(n: i32): i32 {
     return count
 }
 
+fn forSum(n: i64): i64 {
+    var s: i64 = 0
+    for i in 0..n {
+        if i == 5 { continue }
+        if i > 50 { break }
+        s += i * i
+    }
+    return s
+}
+
+fn forDown(a: u32, b: u32): u32 {
+    var c: u32 = 0
+    for k in a..b {
+        for m in k..b { c += m - k }
+    }
+    return c
+}
+
 fn fib(n: u64): u64 {
     if n < 2 { return n }
     return fib(n - 1) + fib(n - 2)
@@ -110,6 +128,10 @@ fn main() {
     print(firstOver(1000))
     print(nested(10))
     print(fib(20))
+    print(forSum(100))
+    print(forSum(3))
+    print(forDown(3, 9))
+    print(forDown(9, 3))
     print(shifts(-1024, 4000000000, 3))
     print(bits(0xF0F0, 0x0FF0))
     print(signs(-17, 5))

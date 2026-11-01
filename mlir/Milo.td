@@ -214,8 +214,19 @@ def Milo_LoopOp : Milo_Op<"loop", [NoRegionArguments, RecursiveMemoryEffects]> {
   let assemblyFormat = "$bodyRegion attr-dict";
 }
 
+// `for i in start..end { body }`: both bounds evaluated once, before the loop; the body's
+// entry block argument is `i`, immutable inside the body. `<` follows the signedness of
+// the type and the step is a plain (wrapping) +1, as legacy codegen emits it: i < end
+// already bounds i, so the step cannot overflow.
+def Milo_ForOp : Milo_Op<"for", [RecursiveMemoryEffects, AllTypesMatch<["start", "end"]>]> {
+  let arguments = (ins Milo_Int:$start, Milo_Int:$end);
+  let regions = (region MinSizedRegion<1>:$bodyRegion);
+  let assemblyFormat = "$start `to` $end `:` type($start) $bodyRegion attr-dict";
+  let hasVerifier = 1;
+}
+
 def Milo_YieldOp : Milo_Op<"yield", [Pure, Terminator,
-    ParentOneOf<["IfOp", "WhileOp", "LoopOp"]>]> {
+    ParentOneOf<["IfOp", "WhileOp", "LoopOp", "ForOp"]>]> {
   let arguments = (ins Variadic<Milo_Scalar>:$values);
   let assemblyFormat = "($values^ `:` type($values))? attr-dict";
   let hasVerifier = 1;
@@ -231,7 +242,7 @@ class Milo_JumpOp<string mnemonic> : Milo_Op<mnemonic, [Pure, Terminator]> {
   let assemblyFormat = "attr-dict";
   let hasVerifier = 1;
 }
-// Leave / restart the innermost enclosing milo.while or milo.loop.
+// Leave / restart the innermost enclosing milo.while, milo.loop or milo.for.
 def Milo_BreakOp : Milo_JumpOp<"break">;
 def Milo_ContinueOp : Milo_JumpOp<"continue">;
 
