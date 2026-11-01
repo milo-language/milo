@@ -1,0 +1,83 @@
+// HashMap.clear, now std/hashmap.milo code: drops every live key and value (key first,
+// in slot order), empties every slot including tombstones, zeroes len, and keeps the
+// capacity, so a refill reuses the table. String/Vec/struct and Drop keys and values,
+// clearing an empty map, clearing twice, and churn after clear.
+struct Bag { name: string, xs: Vec<i64> }
+
+var dropped: i64 = 0
+
+struct Tk { id: i64 }
+
+impl Drop for Tk { fn drop(self: &mut Self): void { dropped = dropped + 1 } }
+
+struct Tv { id: i64 }
+
+impl Drop for Tv { fn drop(self: &mut Self): void { dropped = dropped + 100 } }
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    i = 0
+    while i < 1000 { if i % 3 == 0 { m.remove(i) }; i = i + 1 }
+    m.clear()
+    print(m.len)
+    print(m.isEmpty())
+    print(m.contains(5))
+    print(m.get(7) ?? -1)
+    i = 0
+    while i < 500 { m.insert(i, i * 2); i = i + 1 }
+    print(m.len)
+    print(m.get(499) ?? -1)
+    m.clear()
+    m.clear()
+    print(m.len)
+
+    var s: HashMap<string, Bag> = HashMap.new()
+    i = 0
+    while i < 300 { s.insert("w" + i.toString(), Bag { name: "b" + i.toString(), xs: [i, i] }); i = i + 1 }
+    s.clear()
+    print(s.len)
+    s.insert("again", Bag { name: "x", xs: [] })
+    print(s.get("again")!.name)
+    print(s.contains("w1"))
+
+    var d: HashMap<Tk, Tv> = HashMap.new()
+    i = 0
+    while i < 10 { d.insert(Tk { id: i }, Tv { id: i }); i = i + 1 }
+    dropped = 0
+    d.remove(Tk { id: 3 })
+    print(dropped)
+    dropped = 0
+    d.clear()
+    print(dropped)
+    print(d.len)
+
+    var e: HashMap<string, i64> = HashMap.new()
+    e.clear()
+    print(e.len)
+
+    // Churn after clear: tombstones were reset, so the table keeps working.
+    var c: HashMap<i64, i64> = HashMap.new()
+    i = 0
+    while i < 5000 { c.insert(i, i); c.remove(i); i = i + 1 }
+    c.clear()
+    i = 0
+    while i < 5000 { c.insert(i, i); c.remove(i); i = i + 1 }
+    print(c.contains(-1))
+}
+// @expect: 0
+// @expect: true
+// @expect: false
+// @expect: -1
+// @expect: 500
+// @expect: 998
+// @expect: 0
+// @expect: 0
+// @expect: x
+// @expect: false
+// @expect: 102
+// @expect: 909
+// @expect: 0
+// @expect: 0
+// @expect: false

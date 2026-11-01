@@ -172,3 +172,9 @@ special cases.
   Fixture checks keys() against the builtin for-in order. Planted tombstone match and
   reversed slot order turn `hashMapKeysValuesStd` red; 0 leaks; bench 0.38s builtin vs
   0.32s std (100k-entry keys+values x1000, 2k string keys x2000).
+- 2026-11-01: `clear` moved: slot loop dropping each live key then value (`mapDropAt`),
+  every state set to empty, `_len`/`_tombs` zeroed; capacity and seed kept, as
+  genHashMapClear did (it also memset the dead key/value bytes, which nothing reads once
+  the state is empty). "cannot clear an immutable HashMap" kept via the receiver rule.
+  Planted: no value drop gives 600 leaks and a red fixture; not resetting the states turns
+  `hashMapClearStd` red (and the churn case hangs). 0 leaks; bench 0.83s vs 0.80s.

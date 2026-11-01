@@ -1522,9 +1522,6 @@ class LowerCtx {
           if (expr.method === "clone") {
             return { kind: "HashMapClone", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
-          if (expr.method === "clear") {
-            return { kind: "HashMapClear", object: this.lowerExpr(expr.object), type, span: expr.span };
-          }
         }
         if (objType?.tag === "string") {
           if (expr.method === "push") {

@@ -17,7 +17,7 @@ import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
 import {
   genHashMapNew, genHashMapInsert, genMapHash, genMapKeyEq, genMapCopyOut,
-  genHashMapWithCapacity, genHashMapClone, genHashMapClear,
+  genHashMapWithCapacity, genHashMapClone,
   HM_DATA, HM_CAP, HASHMAP_FIELDS, HASH_SEED_FN,
 } from "./codegen-map";
 import { cDeclGuards, type CSigClaim, type CValueClaim } from "./c-guards";
@@ -55,7 +55,7 @@ export function noaliasEnabled(): boolean {
 export const NOT_OWNED_TEMP: readonly string[] = [
   "ArrayLen", "ArrayRepeat", "BitIntrinsic", "BoolLit", "CFnCall", "Cast",
   "CharLit", "CheckedArith", "Closure", "EnumTryFrom", "FloatLit",
-  "Forget", "HashMapClear", "HashMapInsert", "HashMapLen",
+  "Forget", "HashMapInsert", "HashMapLen",
 "HashMapNew", "HeapCreate", "HeapPtr", "Ident",
   "IntLit", "InterfaceCoerce", "IsCheck", "MapHash", "MapKeyEq", "MemSwap", "OffsetOf",
   "PtrDeref", "RangeCheck", "RawSlice", "SaturatingArith", "SizeOf", "StringCstr",
@@ -5722,8 +5722,6 @@ export class Codegen {
         return genHashMapWithCapacity(this, expr, lines);
       case "HashMapClone":
         return genHashMapClone(this, expr, lines);
-      case "HashMapClear":
-        return genHashMapClear(this, expr, lines);
       case "HashMapLen": {
         this.hasHashMapType = true;
         const ov = this.genVal(expr.object, lines);

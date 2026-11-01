@@ -68,7 +68,6 @@ export type HIRExpr =
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapWithCapacity"; capacity: HIRExpr; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "HashMapClone"; object: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HashMapClear"; object: HIRExpr; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —
   // the map keeps its own copy). `field` says which half of the entry to collect.
   | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }

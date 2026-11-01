@@ -5933,6 +5933,8 @@ export class TypeChecker {
       // "cannot retain on an immutable Vec"), which tests pin.
       this.error(expr.method === "remove" && container === "HashMap"
         ? `cannot remove from immutable HashMap`
+        : expr.method === "clear" && container === "HashMap"
+        ? `cannot clear an immutable HashMap`
         : `cannot ${expr.method} on an immutable ${container}`, sp, fix);
     } else {
       this.error(`cannot call '${expr.method}' on immutable '${name}': it takes '&mut self'`, sp, fix);
@@ -13632,13 +13634,6 @@ export class TypeChecker {
       if (expr.method === "len") {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
-      }
-      if (expr.method === "clear") {
-        if (expr.args.length !== 0) { this.error(`'clear' takes no arguments`, sp); }
-        if (!this.isRootMutable(expr.object)) {
-          this.error(`cannot clear an immutable HashMap`, sp, `declare with 'var' to make it mutable`);
-        }
-        return this.setType(expr, { tag: "void" });
       }
       if (expr.method === "clone") {
         if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }

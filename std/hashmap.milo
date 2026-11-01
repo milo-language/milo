@@ -168,6 +168,28 @@ impl HashMap<K, V> {
         return out
     }
 
+    // Remove every entry. Capacity and the hash seed are kept: clear() empties the map,
+    // it does not give the table back, so refilling it reuses the slots (Vec.clear too).
+    fn clear(self: &mut Self): void {
+        unsafe {
+            var raw = (self.addrOf() as *u8) as *MapRaw<K, V>
+            var data = raw[0]._data
+            let cap = raw[0]._cap
+            var i: i64 = 0
+            while i < cap {
+                if data[i].state == 1 {
+                    mapDropAt(data[i].key.addrOf())
+                    mapDropAt(data[i].value.addrOf())
+                }
+                // Tombstones go too: every slot is empty again, so probes stop at once.
+                data[i].state = 0
+                i = i + 1
+            }
+            raw[0]._len = 0
+            raw[0]._tombs = 0
+        }
+    }
+
     // True when the map holds no entries.
     fn isEmpty(self: &Self): bool {
         return self.len == 0
