@@ -58,7 +58,7 @@ export function mlirType(t: TypeKind): string | null {
 /** The dialect's element type of a Vec, or null. Indexing takes only scalar ones. */
 function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
   if (t.tag !== "vec") return null;
-  const e = valueType(cx, t.element);
+  const e = placeType(cx, t.element);
   return e === null || e === PTR ? null : e;
 }
 
@@ -88,12 +88,29 @@ function scalar(t: TypeKind, what: string): string {
 
 const aggregates = new WeakMap<MlirEmitCtx, Map<string, string | null>>();
 
+const bigTypes = new WeakMap<MlirEmitCtx, Set<string>>();
+
+/** An aggregate of 128 bytes or more: only ever a place (placeType), never an SSA value. */
+function isBig(cx: MlirEmitCtx, ty: string): boolean {
+  return bigTypes.get(cx)?.has(ty) ?? false;
+}
+
 /**
- * The dialect's type for a value of `t`: a scalar, or a struct or enum made of such values
- * with no drop glue (owned values are M4). Null otherwise, and for an aggregate of 128
- * bytes or more, which legacy codegen never holds as an SSA value (isBigAgg).
+ * The dialect's type for a value of `t`: placeType, except an aggregate of 128 bytes or
+ * more. Legacy never holds one as an SSA value (isBigAgg): SROA splits a whole-aggregate
+ * load into one op per element, so a struct holding a big array takes -O2 forever.
  */
 function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
+  const r = placeType(cx, t);
+  return r !== null && isBig(cx, r) ? null : r;
+}
+
+/**
+ * The dialect's type for what a place of type `t` holds: a scalar, a string, a Vec, a fn
+ * value, or a struct or enum of those, of any size. A big one is read and written field
+ * by field through field_ref, as legacy does through its address.
+ */
+function placeType(cx: MlirEmitCtx, t: TypeKind): string | null {
   const m = mlirType(t);
   if (t.tag === "string") { cx.hasStringType = true; return STR; }
   if (t.tag === "vec") {
@@ -111,6 +128,10 @@ function valueType(cx: MlirEmitCtx, t: TypeKind): string | null {
   cache.set(key, null);
   const r = aggregateType(cx, t);
   cache.set(key, r);
+  if (r !== null && cx.typeSizeOf(t) >= 128) {
+    if (!bigTypes.has(cx)) bigTypes.set(cx, new Set());
+    bigTypes.get(cx)!.add(r);
+  }
   return r;
 }
 
@@ -142,10 +163,10 @@ const hasUserDrop = (cx: MlirEmitCtx, t: TypeKind & { name: string }) => cx.drop
 function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): string | null {
   // A user Drop runs code whose timing is observable, and legacy drops temporaries at the
   // end of their statement, this backend at the end of their block: keep those legacy.
-  if (hasUserDrop(cx, t) || cx.typeSizeOf(t) >= 128 || cx.llvmType(t) !== `%${t.name}`) return null;
+  if (hasUserDrop(cx, t) || cx.llvmType(t) !== `%${t.name}`) return null;
   if (t.tag === "struct") {
     const l = cx.structLayouts.get(t.name);
-    const fields = l?.fields.map(f => valueType(cx, f.typeKind));
+    const fields = l?.fields.map(f => placeType(cx, f.typeKind));
     if (!fields || fields.some(f => f === null)) return null;
     return `!milo.struct<${quote(t.name)}${fields.map(f => `, ${f}`).join("")}>`;
   }
@@ -153,7 +174,7 @@ function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }
   if (!l) return null;
   const variants: string[] = [];
   for (const v of l.variants) {
-    const fields = v.fields.map(f => valueType(cx, f));
+    const fields = v.fields.map(f => placeType(cx, f));
     if (fields.some(f => f === null)) return null;
     variants.push(`${v.tag}: (${fields.map((f, k) => `${f} at ${v.offsets[k]}`).join(", ")})`);
   }
@@ -305,11 +326,11 @@ class FnEmitter {
         this.bind(p.name, { kind: "vec", ref: `%p${i}`, elem, param: i });
         return `%p${i}: !milo.vec<${elem}>`;
       }
-      if ((p.isRef || p.isRefMut) && valueType(this.cx, p.type) === null) {
+      if ((p.isRef || p.isRefMut) && placeType(this.cx, p.type) === null) {
         this.bind(p.name, { kind: "opaque", what: blocker(this.cx, p.type) });
         return `%p${i}: ${PTR}`;
       }
-      const ty = this.value(p.type, p.isRef || p.isRefMut ? "by-ref param" : "param");
+      const ty = p.isRef || p.isRefMut ? placeType(this.cx, p.type)! : this.value(p.type, "param");
       if (p.isRef || p.isRefMut) {
         this.bind(p.name, { kind: "var", ref: `%p${i}`, ty, param: i });
         return `%p${i}: !milo.ref<${ty}>`;
@@ -346,6 +367,13 @@ class FnEmitter {
   private replay = false;
   private isMain = false;
   private retTy: string | null = null;
+
+  /** placeType, or the reason the function stays legacy. */
+  private place$(t: TypeKind, what: string): string {
+    const v = placeType(this.cx, t);
+    if (v === null) throw new MlirUnsupported(`${what} of type ${blocker(this.cx, t)}`);
+    return v;
+  }
 
   private value(t: TypeKind, what: string): string {
     const v = valueType(this.cx, t);
@@ -699,6 +727,7 @@ class FnEmitter {
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
         if (b.kind === "vec") throw new MlirUnsupported("a Vec as a value");
+        if (b.kind === "var" && isBig(this.cx, b.ty)) throw new MlirUnsupported("a 128+ byte aggregate as a value");
         if (!hasDrop(b.ty)) return this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty);
         // The checker marks the last use that takes the value; every other read borrows.
         if (!e.isMove) return { ...this.def(`milo.load ${b.ref} : !milo.ref<${b.ty}>`, b.ty), own: "view" };
@@ -901,7 +930,7 @@ class FnEmitter {
     if (st.tag !== "struct") throw new MlirUnsupported(`field of a ${st.tag}`);
     const index = this.cx.structLayouts.get(st.name)?.fields.findIndex(f => f.name === e.field) ?? -1;
     if (index < 0) throw new MlirUnsupported("unknown field");
-    return { index, ty: this.value(this.fieldType(e), "field") };
+    return { index, ty: this.place$(this.fieldType(e), "field") };
   }
 
   /**
@@ -1027,6 +1056,7 @@ class FnEmitter {
     let subj: Val;
     if (m.subjectIsMut) {
       place = this.fieldPlace(m.subject);
+      if (place && isBig(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
       if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
       subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: hasDrop(place.ty) ? "view" : undefined };
     } else if (owning && !m.subjectIsRef) {
@@ -1444,7 +1474,7 @@ class FnEmitter {
       const byRef = p.isRef || p.isRefMut;
       if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
       const elem = byRef ? vecElem(this.cx, p.type) : null;
-      const ty = elem ?? this.value(p.type, byRef ? "by-ref arg" : "call arg");
+      const ty = elem ?? (byRef ? this.place$(p.type, "by-ref arg") : this.value(p.type, "call arg"));
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return elem !== null ? `!milo.vec<${elem}>` : byRef ? `!milo.ref<${ty}>` : ty;
     });

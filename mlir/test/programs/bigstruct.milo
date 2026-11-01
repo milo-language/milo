@@ -1,0 +1,45 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// target: a struct of 128+ bytes, which MLIR holds only as a place. Its by-ref params read
+// and write fields (strings among them, so a store drops the old value), lend fields
+// `&mut`, pass the whole struct on by reference, and walk a Vec of them.
+
+struct Config {
+    name: string, host: string, path: string, user: string, note: string,
+    port: i64, retries: i64, timeout: i64, flags: i64
+}
+
+fn describe(c: &Config): i64 {
+    return c.name.len() + c.host.len() + c.port + c.retries * 10
+}
+
+fn bump(n: &mut i64, by: i64) { n += by }
+
+fn tune(c: &mut Config, k: i64) {
+    c.port = c.port + k
+    bump(&mut c.retries, 2)
+    c.note = "tuned ".repeat(k)
+    c.flags = describe(c)
+}
+
+fn total(cs: &Vec<Config>): i64 {
+    var t: i64 = 0
+    for i in 0..cs.len() { t += describe(cs[i]) }
+    return t
+}
+
+fn mk(i: i64): Config {
+    return Config {
+        name: "n".repeat(i), host: "h", path: "/", user: "u", note: "",
+        port: 80 + i, retries: i, timeout: 5, flags: 0
+    }
+}
+
+fn main() {
+    var c = mk(3)
+    tune(&mut c, 2)
+    tune(&mut c, 3)
+    print(c.port, " ", c.retries, " ", c.note, " ", c.flags, " ", describe(c))
+    var cs: Vec<Config> = Vec.new()
+    for i in 0..4 { cs.push(mk(i)) }
+    print(total(cs))
+}
