@@ -2877,6 +2877,24 @@ class FnEmitter {
     return ret === STR ? { ...r, own: "owned" } : r;
   }
 
+  /**
+   * `assert(c, msg)` as legacy's: the message is evaluated only once `c` is false, then
+   * legacy's own failure path runs in a helper (`assert(false, msg)`), which never returns.
+   */
+  private assert(e: HIRExpr & { kind: "Call" }): Val {
+    const c = this.expr(e.args[0].expr);
+    if (c.ty !== "i1") throw new MlirUnsupported("assert of a non-bool");
+    const no: HIRExpr = { kind: "BoolLit", value: false, type: { tag: "bool" }, span: e.args[0].expr.span };
+    this.region(`milo.if ${c.ref} {`, () => false);
+    this.region("} else {", () => {
+      this.builtinCall({ ...e, args: [{ ...e.args[0], expr: no }, ...e.args.slice(1)] }, true, true);
+      this.emit("milo.unreachable");
+      return true;
+    });
+    this.emit("}");
+    return { ref: "", ty: "" };
+  }
+
   /** `e` never returns: a `never` value, a std panic, or the builtin exit (typed void in HIR). */
   private diverges(e: HIRExpr): boolean {
     return e.type.tag === "never" || e.kind === "StrPanic" || e.kind === "VecPanic" || (e.kind === "Call" && e.func === "exit" && this.cx.isBuiltinName("exit"));
@@ -2926,6 +2944,7 @@ class FnEmitter {
     if (this.cx.isBuiltinName(e.func)) {
       if (HELPER_BUILTINS.test(e.func)) return this.builtinCall(e, stmt);
       if (e.func === "format") return this.builtinCall(e, stmt, true);
+      if (e.func === "assert") return this.assert(e);
       throw new MlirUnsupported(`builtin ${e.func}`);
     }
     const callee = this.fns.get(e.func);

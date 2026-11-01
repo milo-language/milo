@@ -1,0 +1,24 @@
+// Differential panic program (scripts/mlir-same.ts --programs): `assert(c, msg)`. The
+// message is evaluated only when the condition is false (its side effect shows), plain
+// and interpolated messages, an assert without one, then a failing assert whose message
+// is built from a local.
+
+fn note(s: string): string {
+    print("built ", s)
+    return s
+}
+
+fn check(n: i64) {
+    assert(n > 0)
+    assert(n < 100, note("too big"))
+    assert(n != 50, $"not fifty: {n}")
+}
+
+fn main() {
+    check(3)
+    check(42)
+    let k = 7
+    print("ok")
+    assert(k == 8, note($"k was {k}"))
+    print("unreachable")
+}
