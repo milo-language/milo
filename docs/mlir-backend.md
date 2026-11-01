@@ -404,6 +404,14 @@ structs, enums.
   struct holding an array returned by value, `for x in` an array. Programs `arrays`,
   `trap-array-oob`; FileCheck `arrays.mlir`, two verifier cases. Planted bug: array
   literal elements stored in reverse (`arrays` stdout). Tahoe Roads api: 4364 (81.6%).
+- *Branches yielding a place-only value* (a match, an if, a let-else, a `?` whose value
+  is a 128+ byte struct): `into` fills the destination from each arm (`tailInto`: the
+  arm's statements, then its last expression built in the place, or the arm's own owned
+  binding copied and emptied), as legacy's genStoreInto; the match is a statement
+  milo.match, and an arm that returns leaves the place unfilled on that path. Program
+  `big-branches` (with `lib/branches.milo`). Planted bug: the arm's binding copied out
+  but not emptied (`big-branches` exit 0 -> 1, a double free). Tahoe Roads api: 4415
+  (82.5%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

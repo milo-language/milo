@@ -1,0 +1,21 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: matches, ifs, let-else and `?` whose value is a 128+ byte struct
+// (lib/branches.milo), each arm filling the result's place: a literal, an sret call, a
+// moved local, an arm's own binding, an early return on the other path.
+from "./lib/branches" import { Pick, picked, chosen, direct, unwrapped, port }
+from "./lib/wides" import { Wide, Row }
+
+fn show(r: &Row): string {
+    return r.name + ":" + r.port.toString() + ":" + r.note
+}
+
+fn wsum(w: &Wide): i64 { return w.a + w.h + w.p }
+
+fn main() {
+    print(show(picked(Pick.Lit(4))), " ", show(picked(Pick.Call(2))), " ", show(picked(Pick.Local(3))), " ", show(picked(Pick.Skip)))
+    print(wsum(chosen(true, 3)), " ", wsum(chosen(false, 3)))
+    for i in 0..4 { print("direct ", show(direct(i))) }
+    print(show(unwrapped(5)), " ", show(unwrapped(-1)))
+    match port(6) { Some(n) => print("port ", n) None => print("port none") }
+    match port(-6) { Some(n) => print("port ", n) None => print("port none") }
+}

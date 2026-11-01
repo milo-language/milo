@@ -1,0 +1,55 @@
+// Functions for big-branches.milo, in a module of their own so the ones returning a
+// 128+ byte struct are sret: each builds its result from a match, an if, a let-else or
+// a `?`, every arm filling the result's place.
+from "./wides" import { Wide, Row, wide, row }
+
+pub enum Pick { Lit(i64), Call(i64), Local(i64), Skip }
+
+pub fn picked(p: Pick): Row {
+    let r = match p {
+        Lit(i) => Row {
+            name: "lit", host: "h", path: "/", user: "u", note: i.toString(),
+            port: i, retries: 0, timeout: 1, flags: 2
+        }
+        Call(i) => row(i)
+        Local(i) => {
+            let x = row(i + 1)
+            x
+        }
+        Skip => row(0)
+    }
+    return r
+}
+
+pub fn chosen(b: bool, i: i64): Wide {
+    return if b { wide(i) } else { wide(i * 2) }
+}
+
+pub fn direct(i: i64): Row {
+    return match i % 3 {
+        0 => row(i)
+        1 => {
+            let s = "one".repeat(i)
+            Row { name: s, host: "", path: "", user: "", note: "", port: 1, retries: 1, timeout: 1, flags: 1 }
+        }
+        _ => row(99)
+    }
+}
+
+pub fn maybeRow(i: i64): Option<Row> {
+    if i < 0 { return None }
+    return Some(row(i))
+}
+
+// let-else and `?` with a 128+ byte payload: the owned binding moves into the result.
+pub fn unwrapped(i: i64): Row {
+    let Some(r) = maybeRow(i) else {
+        return row(77)
+    }
+    return r
+}
+
+pub fn port(i: i64): Option<i64> {
+    let r = maybeRow(i)?
+    return Some(r.port + r.name.len())
+}

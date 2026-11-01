@@ -445,6 +445,20 @@ class FnEmitter {
       this.arrayInto(e, dst, ty);
       return;
     }
+    // A value-producing branch fills the place from each arm, as legacy's genStoreInto
+    // does for a big match or if: the value is never an SSA one.
+    if (valueType(this.cx, e.type) !== ty) {
+      if (e.kind === "MatchExpr") { this.match(e, null, b => this.tailInto(b, dst, ty)); return; }
+      if (e.kind === "Propagate") { this.propagate(e, { dst, ty }); return; }
+      if (e.kind === "IfExpr") {
+        const c = this.expr(e.cond);
+        if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
+        this.region(`milo.if ${c.ref} {`, () => this.tailInto(e.thenBody, dst, ty));
+        this.region("} else {", () => this.tailInto(e.elseBody, dst, ty));
+        this.emit("}");
+        return;
+      }
+    }
     if (e.kind !== "StructLit" && valueType(this.cx, e.type) === ty) {
       // A big enum that is also a value: computed, then stored whole.
       const v = this.consume(this.expr(e), "value");
@@ -1566,12 +1580,34 @@ class FnEmitter {
   }
 
   /**
+   * A value-producing block whose value goes into the place `dst` (of type `ty`, a place
+   * only): tail's statements, then the last expression built in `dst`. The block's own
+   * owned binding is moved out, as tail moves it. True when the block jumps instead.
+   */
+  private tailInto(body: HIRStmt[], dst: string, ty: string): boolean {
+    const last = body[body.length - 1];
+    if (this.stmts(body.slice(0, -1))) return true;
+    if (last?.kind !== "ExprStmt") {
+      if (last && this.stmt(last)) return true;
+      throw new MlirUnsupported("value block without a value");
+    }
+    const armLocal = last.expr.kind === "Ident" ? this.scopes[this.scopes.length - 1].get(last.expr.name) : undefined;
+    if (armLocal?.kind === "var" && armLocal.owned && armLocal.ty === ty) {
+      this.emit(`milo.copy ${armLocal.ref}, ${dst} : !milo.ref<${ty}>, !milo.ref<${ty}> of ${ty}`);
+      this.def(`milo.move ${armLocal.ref} : !milo.ref<${ty}>`, ty);
+      return false;
+    }
+    this.into(last.expr, dst, ty);
+    return false;
+  }
+
+  /**
    * `match` as milo.match: one region per arm, the `_` arm last. A flat enum pattern's
    * bindings are its arm's block arguments (payload i is binding i); a literal pattern on
    * an int or bool is a case value. `resultTy` makes it an expression.
    */
   private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
-    resultTy: string | null): { done: boolean; v: Val } {
+    resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
     // An owning subject matched by value moves its payload into the bindings (legacy
     // bindPayloads zeroes it in the subject); matched by reference, bindings are views.
     const subjPlaceTy = placeType(this.cx, m.subject.type);
@@ -1624,7 +1660,7 @@ class FnEmitter {
     } else subj = this.borrow(this.expr(m.subject), m.subject.type);
     const isEnum = bigEnum || subj.ty.startsWith("!milo.enum<");
     if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
-      return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy);
+      return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy, armBody);
     const st = stripRefs(m.subject.type);
     const layout = isEnum && st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
     if (isEnum && !layout) throw new MlirUnsupported("match subject layout");
@@ -1734,14 +1770,14 @@ class FnEmitter {
             this.bind(a.name, { kind: "var", ref: slot, ty: a.ty });
           });
         }
-        return resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
+        return armBody ? armBody(arm.body) : resultTy ? this.tail(arm.body, resultTy) : this.stmts(arm.body);
       });
       if (!done) allDone = false;
     });
     this.emit("}");
     // A match that is not exhaustive by its cases alone still is by the checker, so
     // arms that all jump leave nothing after them.
-    if (!resultTy && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
+    if (!resultTy && !armBody && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
   }
 
@@ -1751,7 +1787,7 @@ class FnEmitter {
    * its From variant first for a conversion. The error arm is a return statement, so the
    * scope drops run before it and a pending owned operand keeps the function legacy.
    */
-  private propagate(e: HIRExpr & { kind: "Propagate" }): Val {
+  private propagate(e: HIRExpr & { kind: "Propagate" }, into?: { dst: string; ty: string }): Val {
     if (e.boxConversion) throw new MlirUnsupported("`?` boxing its error into a Heap");
     if (e.messageFn) throw new MlirUnsupported("`?` turning its error into a message");
     const src = this.cx.mlirEnumLayout(e.enumName);
@@ -1777,6 +1813,7 @@ class FnEmitter {
       pattern: { kind: "EnumPattern" as const, variant: err.name, tag: err.tag, bindings: err.fields.length ? [{ name: errName, type: err.fields[0] }] : [] },
       body: [{ kind: "Return" as const, retType: e.retType, value: { kind: "EnumLit" as const, enumName: (e.retType as { name: string }).name, variant: retErr.name, args: errVal ? [errVal] : [], type: e.retType } }],
     };
+    if (into) return this.match({ subject: e.operand, arms: [okArm, errArm] }, null, b => this.tailInto(b, into.dst, into.ty)).v;
     const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
     return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v;
   }
@@ -1786,7 +1823,7 @@ class FnEmitter {
    * `==` of the subject with the literal (strings through legacy's comparison), nested
    * milo.ifs with the `_` arm innermost.
    */
-  private literalChain(arms: (HIRStmt & { kind: "Match" })["arms"], subj: Val, subjTy: TypeKind, resultTy: string | null): { done: boolean; v: Val } {
+  private literalChain(arms: (HIRStmt & { kind: "Match" })["arms"], subj: Val, subjTy: TypeKind, resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
     const name = `match$subject${this.n++}`;
     this.bind(name, { kind: "ssa", v: subj });
     const subject: HIRExpr = { kind: "Ident", name, type: subjTy, isMove: false };
@@ -1802,7 +1839,7 @@ class FnEmitter {
     const arm = (i: number): boolean | Val => {
       if (i === arms.length) { this.emit("milo.unreachable"); return true; }
       const { pattern: p, body } = arms[i];
-      const run = () => resultTy ? this.tail(body, resultTy) : this.stmts(body);
+      const run = () => armBody ? armBody(body) : resultTy ? this.tail(body, resultTy) : this.stmts(body);
       if (p.kind === "WildcardPattern") return run();
       if (p.kind !== "LiteralPattern") throw new MlirUnsupported("enum pattern on a scalar");
       const c = this.binop({ kind: "BinOp", op: "==", left: subject, right: lit(p), type: { tag: "bool" } });
@@ -1811,7 +1848,8 @@ class FnEmitter {
       const elseDone = this.region("} else {", () => arm(i + 1));
       this.emit("}");
       if (resultTy) return { ref, ty: resultTy, own: hasDrop(resultTy) ? "owned" : undefined };
-      if (thenDone && elseDone) { this.emit("milo.unreachable"); return true; }
+      // Filling a place, the caller goes on after the chain: no terminator at its top.
+      if (thenDone && elseDone && !(armBody && i === 0)) { this.emit("milo.unreachable"); return true; }
       return false;
     };
     const r = arm(0);
