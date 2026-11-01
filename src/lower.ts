@@ -1534,15 +1534,6 @@ class LowerCtx {
           if (expr.method === "len") {
             return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
-          if (expr.method === "isEmpty") {
-            const i64: TypeKind = { tag: "int", bits: 64, signed: true };
-            return {
-              kind: "BinOp", op: "==",
-              left: { kind: "HashMapLen", object: this.lowerExpr(expr.object), type: i64, span: expr.span },
-              right: { kind: "IntLit", value: 0n, type: i64, span: expr.span },
-              type, span: expr.span,
-            };
-          }
           if (expr.method === "clone") {
             return { kind: "HashMapClone", object: this.lowerExpr(expr.object), type, span: expr.span };
           }

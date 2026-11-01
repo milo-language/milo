@@ -24,6 +24,11 @@ struct MapRaw<K, V> {
 }
 
 impl HashMap<K, V> {
+    // True when the map holds no entries.
+    fn isEmpty(self: &Self): bool {
+        return self.len == 0
+    }
+
     // True when `key` is in the map.
     fn contains(self: &Self, key: &K): bool {
         unsafe {

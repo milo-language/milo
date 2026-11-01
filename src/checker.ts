@@ -13603,10 +13603,6 @@ export class TypeChecker {
         if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
         return this.setType(expr, { tag: "int", bits: 64, signed: true });
       }
-      if (expr.method === "isEmpty") {
-        if (expr.args.length !== 0) { this.error(`'isEmpty' takes no arguments`, sp); }
-        return this.setType(expr, { tag: "bool" });
-      }
       if (expr.method === "clear") {
         if (expr.args.length !== 0) { this.error(`'clear' takes no arguments`, sp); }
         if (!this.isRootMutable(expr.object)) {

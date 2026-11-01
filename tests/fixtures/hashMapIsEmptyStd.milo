@@ -1,0 +1,53 @@
+// HashMap.isEmpty, now std/hashmap.milo code. A new map, a dense table, a table emptied by
+// remove (all tombstones) and by clear, string and struct keys, a temporary receiver.
+struct Pt { x: i64, y: i64 }
+
+fn squares(n: i64): HashMap<i64, i64> {
+    var m: HashMap<i64, i64> = HashMap.new()
+    var i: i64 = 0
+    while i < n { m.insert(i * i, i); i = i + 1 }
+    return m
+}
+
+fn main() {
+    var m: HashMap<i64, i64> = HashMap.new()
+    print(m.isEmpty())
+    var i: i64 = 0
+    while i < 1000 { m.insert(i, i); i = i + 1 }
+    print(m.isEmpty())
+    i = 0
+    while i < 999 { m.remove(i); i = i + 1 }
+    print(m.isEmpty())
+    m.remove(999)
+    print(m.isEmpty())
+    m.insert(5, 5)
+    print(m.isEmpty())
+    m.clear()
+    print(m.isEmpty())
+
+    var s: HashMap<string, bool> = HashMap.new()
+    print(s.isEmpty())
+    s.insert("a", true)
+    print(s.isEmpty())
+    s.remove("a")
+    print(s.isEmpty())
+
+    var p: HashMap<Pt, i64> = HashMap.new()
+    p.insert(Pt { x: 1, y: 2 }, 0)
+    print(p.isEmpty())
+
+    print(squares(0).isEmpty())
+    print(squares(3).isEmpty())
+}
+// @expect: true
+// @expect: false
+// @expect: false
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: false
