@@ -34,7 +34,32 @@ fn mk(i: i64): Config {
     }
 }
 
+// A 128+ byte enum, matched through `&` and `&mut`.
+enum Slot { Full(Config), Port(i64), Empty }
+
+fn slotScore(s: &Slot): i64 {
+    match s {
+        Full(c) => { return describe(c) }
+        Port(p) => { return p }
+        Empty => { return -1 }
+    }
+}
+
+fn slotBump(s: &mut Slot) {
+    match s {
+        Full(c) => { tune(&mut c, 1) }
+        Port(p) => { p = p + 1 }
+        Empty => {}
+    }
+}
+
 fn main() {
+    var f = Slot.Full(mk(2))
+    var q = Slot.Port(7)
+    let e = Slot.Empty
+    slotBump(&mut f)
+    slotBump(&mut q)
+    print(slotScore(f), " ", slotScore(q), " ", slotScore(e))
     var c = mk(3)
     tune(&mut c, 2)
     tune(&mut c, 3)

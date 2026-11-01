@@ -393,6 +393,12 @@ LogicalResult EnumFieldRefOp::verify() {
   return success();
 }
 
+LogicalResult EnumTagAtOp::verify() {
+  if (!isa<EnumType>(getRef().getType().getPointee()))
+    return emitOpError("needs the place of an enum");
+  return success();
+}
+
 LogicalResult MatchOp::verify() {
   size_t arms = getArms().size();
   if (getCases().size() + (getHasDefault() ? 1 : 0) != arms)

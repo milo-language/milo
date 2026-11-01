@@ -222,6 +222,15 @@ def Milo_EnumFieldRefOp : Milo_Op<"enum.field_ref", [Pure]> {
   let hasVerifier = 1;
 }
 
+// The tag of the enum at `ref`, read in place: how a 128+ byte enum, never an SSA value,
+// is matched (a switch on this, payload bindings through enum.field_ref).
+def Milo_EnumTagAtOp : Milo_Op<"enum.tag_at"> {
+  let arguments = (ins Arg<Milo_RefType, "", [MemRead<Milo_Slot>]>:$ref);
+  let results = (outs SI32:$tag);
+  let assemblyFormat = "$ref attr-dict `:` type($ref)";
+  let hasVerifier = 1;
+}
+
 // A string literal: the bytes as a private constant, len, cap 0.
 def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
   let arguments = (ins StrAttr:$value);

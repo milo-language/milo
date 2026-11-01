@@ -1104,7 +1104,11 @@ class FnEmitter {
     resultTy: string | null): { done: boolean; v: Val } {
     // An owning subject matched by value moves its payload into the bindings (legacy
     // bindPayloads zeroes it in the subject); matched by reference, bindings are views.
-    const owning = hasDrop(this.value(m.subject.type, "match subject"));
+    const subjPlaceTy = placeType(this.cx, m.subject.type);
+    // A 128+ byte enum is matched through its place: a switch on the tag read there
+    // (milo.enum.tag_at), each binding the payload field's place (milo.enum.field_ref).
+    const bigEnum = subjPlaceTy !== null && isBig(this.cx, subjPlaceTy) && subjPlaceTy.startsWith("!milo.enum<");
+    const owning = hasDrop(bigEnum ? subjPlaceTy! : this.value(m.subject.type, "match subject"));
     // By value, the owned slot the subject lives in: an arm that binds an owning payload
     // field moves the subject out of it (milo.move), so drop elaboration sees it empty on
     // that path and full on the others, as legacy's alive flag does.
@@ -1113,7 +1117,12 @@ class FnEmitter {
     // (milo.enum.field_ref), so writing one writes the payload.
     let place: { ref: string; ty: string } | null = null;
     let subj: Val;
-    if (m.subjectIsMut) {
+    if (bigEnum) {
+      if (!m.subjectIsRef && !m.subjectIsMut) throw new MlirUnsupported("match by value on a 128+ byte enum");
+      place = this.fieldPlace(m.subject);
+      if (!place) throw new MlirUnsupported("match on a 128+ byte enum that is not a place");
+      subj = this.def(`milo.enum.tag_at ${place.ref} : !milo.ref<${place.ty}>`, "si32");
+    } else if (m.subjectIsMut) {
       place = this.fieldPlace(m.subject);
       if (place && isBig(this.cx, place.ty)) throw new MlirUnsupported("match on a 128+ byte enum");
       if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
@@ -1131,7 +1140,7 @@ class FnEmitter {
       const ty = this.value(e.type, "match subject");
       subj = { ...this.def(`milo.load ${from} : !milo.ref<${ty}>`, ty), own: "view" };
     } else subj = this.borrow(this.expr(m.subject), m.subject.type);
-    const isEnum = subj.ty.startsWith("!milo.enum<");
+    const isEnum = bigEnum || subj.ty.startsWith("!milo.enum<");
     if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
       return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy);
     const st = stripRefs(m.subject.type);
@@ -1155,7 +1164,7 @@ class FnEmitter {
         const v = layout.variants.find(x => x.tag === p.tag);
         if (!v || p.bindings.length > v.fields.length || p.bindings.some(b => b.escapes || b.path)) throw new MlirUnsupported("enum pattern");
         c = BigInt(p.tag);
-        args = v.fields.map((f, k) => ({ name: p.bindings[k]?.name ?? "_", ty: this.value(f, "payload") }));
+        args = v.fields.map((f, k) => ({ name: p.bindings[k]?.name ?? "_", ty: bigEnum ? this.place$(f, "payload") : this.value(f, "payload") }));
       } else {
         if (isEnum || !["int", "char", "bool"].includes(p.literalKind)) throw new MlirUnsupported(`${p.literalKind} pattern`);
         // As the i64 holding its bits: a u64 case above i64::MAX wraps, the switch reads it back at the width.
@@ -1175,7 +1184,20 @@ class FnEmitter {
       // the arm leaves unbound would be legacy's leak; not reproduced.
       if (consumes && args.some(a => a.name === "_" && hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
       const done = this.region(i === 0 ? head : "}, {", () => {
-        if (args.length) {
+        if (bigEnum) {
+          args.forEach((a, k) => {
+            if (a.name === "_") return;
+            const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
+            // Through `&mut`, and for a payload with drop glue, the binding is the payload's
+            // place (legacy binds a pointer); a Copy payload under `&` is a copy.
+            if (m.subjectIsMut || hasDrop(a.ty) || isBig(this.cx, a.ty)) { this.bind(a.name, { kind: "var", ref: r, ty: a.ty }); return; }
+            const slot = this.fresh();
+            this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
+            const v = this.def(`milo.load ${r} : !milo.ref<${a.ty}>`, a.ty).ref;
+            this.emit(`milo.store ${v}, ${slot} : !milo.ref<${a.ty}>`);
+            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty });
+          });
+        } else if (args.length) {
           const refs = args.map(() => this.fresh());
           this.emit(`^bb0(${args.map((a, k) => `${refs[k]}: ${a.ty}`).join(", ")}):`);
           if (place) {
