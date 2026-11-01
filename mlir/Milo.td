@@ -117,9 +117,13 @@ def Milo_StringType : TypeDef<Milo_Dialect, "String"> {
 // fields' types in declaration order: `!milo.struct<"Point", si64, f64>`. It lowers to
 // the identified LLVM struct of that name, so a spliced body uses the module's own
 // definition and the layout is LLVM's natural one, which is legacy's.
+// A type with its own `impl Drop` says so after its name, `!milo.struct<"Noisy" drop, si64>`
+// (enums the same way): it has drop glue whatever its fields are, and the glue runs the
+// user's drop first (legacy's, through milo.drop.<key>).
 def Milo_StructType : TypeDef<Milo_Dialect, "Struct"> {
   let mnemonic = "struct";
-  let parameters = (ins StringRefParameter<>:$name, ArrayRefParameter<"::mlir::Type">:$fields);
+  let parameters = (ins StringRefParameter<>:$name, ArrayRefParameter<"::mlir::Type">:$fields,
+                        "bool":$userDrop);
   let hasCustomAssemblyFormat = 1;
 }
 
@@ -134,7 +138,7 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum"> {
   let parameters = (ins StringRefParameter<>:$name, "int64_t":$size, "int64_t":$align,
                         ArrayRefParameter<"int32_t">:$tags,
                         ArrayRefParameter<"::mlir::TupleType">:$variants,
-                        ArrayRefParameter<"int64_t">:$offsets);
+                        ArrayRefParameter<"int64_t">:$offsets, "bool":$userDrop);
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
   let extraClassDeclaration = [{

@@ -261,6 +261,22 @@ structs, enums.
   legacy's. Program `str-push`; planted bug: reserving 0 bytes instead of `n` turned it
   red (ASan heap-buffer-overflow). Tahoe Roads api: 2705 to 2997 of 5263 function
   instances (51.4% to 56.9%).
+- *User `impl Drop`.* A struct or enum with its own Drop is marked after its name
+  (`!milo.struct<"Noisy" drop, si64>`): it has drop glue whatever its fields hold, and
+  the glue is legacy's (`milo.drop.<key>`), which runs the user's drop first. Named
+  locals, params, moves, overwrites, results and scope exits drop where legacy drops them
+  (last declared first, the old value after the new one is computed). Temporaries do not:
+  legacy drops an argument temporary right after its call and others at the end of the
+  statement, this backend at the end of the block, so a temporary of such a type keeps
+  its function legacy (`tempSlot`), except a discarded result (`mk(1)` as a statement),
+  which gets a scope of its own that closes at the end of the statement. Found on the
+  way, for every owning type: an owned operand still pending when a later operand jumps
+  out (`take(tok(), match o { None => return 0, ... })`) was an SSA value no scope drops,
+  so it leaked (a Drop that did not run in `propagatePendingExits`); such a jump now keeps
+  the function legacy (`noPending`). Program `user-drop`, FileCheck `user-drop.mlir`.
+  Planted bugs, each red on stdout: the discarded result dropped at the end of its block
+  ("after" printed before "drop 70"); the pending-operand check off (the Drop of `mk(90)`
+  missing). Tahoe Roads api: 2997 to 3149 (59.8%).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

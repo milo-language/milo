@@ -1,0 +1,132 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: types with a user
+// `impl Drop`, whose drops print, so their order and timing are in stdout. Named locals
+// in nested blocks, an early return and a break out of a scope, overwrites, moves into a
+// callee and out as a result, a discarded result, a struct and an enum holding one, a
+// match that moves the payload out, by-ref params, and a jump out of a call's arguments.
+
+struct Noisy { id: i64 }
+
+impl Drop for Noisy {
+    fn drop(self: &mut Self) {
+        print("drop ", self.id)
+    }
+}
+
+struct Pair { left: Noisy, name: string, right: Noisy }
+
+enum Slot { Empty, Full(Noisy) }
+
+fn mk(id: i64): Noisy {
+    print("mk ", id)
+    return Noisy { id: id }
+}
+
+fn show(n: &Noisy) {
+    print("show ", n.id)
+}
+
+fn bump(n: &mut Noisy) {
+    n.id = n.id + 100
+}
+
+fn eat(n: Noisy): i64 {
+    print("eat ", n.id)
+    return n.id
+}
+
+fn early(flag: bool): i64 {
+    let a = mk(10)
+    if flag {
+        let b = mk(11)
+        show(b)
+        return a.id
+    }
+    let c = mk(12)
+    return c.id
+}
+
+fn loopy(): i64 {
+    var total = 0
+    var i = 0
+    while i < 3 {
+        let n = mk(20 + i)
+        if i == 1 {
+            break
+        }
+        total = total + n.id
+        i = i + 1
+    }
+    return total
+}
+
+fn overwrite() {
+    var n = mk(30)
+    n = mk(31)
+    bump(&mut n)
+    show(n)
+}
+
+fn moves(): Noisy {
+    let a = mk(40)
+    let b = mk(41)
+    let ate = eat(a)
+    print("ate ", ate)
+    return b
+}
+
+fn pairs() {
+    let p = Pair { left: mk(50), name: "p", right: mk(51) }
+    show(p.left)
+    print(p.name, " ", p.right.id)
+}
+
+fn slots(full: bool): i64 {
+    let s = if full { Slot.Full(mk(60)) } else { Slot.Empty }
+    match s {
+        Slot.Full(n) => { return eat(n) }
+        Slot.Empty => { return -1 }
+    }
+}
+
+fn take(n: Noisy, k: i64): i64 {
+    return k + n.id
+}
+
+// mk(90) is evaluated, then the match leaves the function: the pending Noisy is dropped.
+fn armReturn(o: Option<i64>): i64 {
+    let n = take(mk(90), match o {
+        Option.Some(v) => v,
+        Option.None => {
+            return -1
+        },
+    })
+    return n
+}
+
+fn discarded() {
+    print("before")
+    mk(70)
+    print("after")
+}
+
+fn main() {
+    print(early(true))
+    print(early(false))
+    print(loopy())
+    overwrite()
+    let kept = moves()
+    show(kept)
+    pairs()
+    print(slots(true), " ", slots(false))
+    discarded()
+    let r1 = armReturn(Option.Some(1))
+    let r2 = armReturn(Option.None)
+    print(r1, " ", r2)
+    if kept.id > 0 {
+        let inner = mk(80)
+        let inner2 = mk(81)
+        show(inner)
+        show(inner2)
+    }
+    print("end")
+}

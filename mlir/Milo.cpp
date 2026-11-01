@@ -37,6 +37,7 @@ Type StructType::parse(AsmParser &p) {
   SmallVector<Type> fields;
   if (p.parseLess() || p.parseString(&name))
     return {};
+  bool userDrop = succeeded(p.parseOptionalKeyword("drop"));
   while (succeeded(p.parseOptionalComma())) {
     Type t;
     if (p.parseType(t))
@@ -45,11 +46,11 @@ Type StructType::parse(AsmParser &p) {
   }
   if (p.parseGreater())
     return {};
-  return StructType::get(p.getContext(), name, fields);
+  return StructType::get(p.getContext(), name, fields, userDrop);
 }
 
 void StructType::print(AsmPrinter &p) const {
-  p << "<\"" << getName() << "\"";
+  p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "");
   for (Type t : getFields())
     p << ", " << t;
   p << ">";
@@ -62,7 +63,11 @@ Type EnumType::parse(AsmParser &p) {
   SmallVector<int32_t> tags;
   SmallVector<TupleType> variants;
   SmallVector<int64_t> offsets;
-  if (p.parseLess() || p.parseString(&name) || p.parseComma() || p.parseKeyword("size") ||
+  bool userDrop = false;
+  if (p.parseLess() || p.parseString(&name))
+    return {};
+  userDrop = succeeded(p.parseOptionalKeyword("drop"));
+  if (p.parseComma() || p.parseKeyword("size") ||
       p.parseEqual() || p.parseInteger(size) || p.parseComma() || p.parseKeyword("align") ||
       p.parseEqual() || p.parseInteger(align) || p.parseComma())
     return {};
@@ -88,11 +93,11 @@ Type EnumType::parse(AsmParser &p) {
   if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, variant) || p.parseGreater())
     return {};
   return EnumType::getChecked([&] { return p.emitError(p.getNameLoc()); }, p.getContext(),
-                              name, size, align, tags, variants, offsets);
+                              name, size, align, tags, variants, offsets, userDrop);
 }
 
 void EnumType::print(AsmPrinter &p) const {
-  p << "<\"" << getName() << "\", size = " << getSize() << ", align = " << getAlign() << ", [";
+  p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "") << ", size = " << getSize() << ", align = " << getAlign() << ", [";
   unsigned k = 0;
   llvm::interleaveComma(llvm::zip(getTags(), getVariants()), p, [&](auto tv) {
     p << std::get<0>(tv) << ": (";
@@ -105,7 +110,7 @@ void EnumType::print(AsmPrinter &p) const {
 
 LogicalResult EnumType::verify(function_ref<InFlightDiagnostic()> emitError, StringRef,
                                int64_t size, int64_t align, ArrayRef<int32_t> tags,
-                               ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets) {
+                               ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets, bool) {
   if (tags.size() != variants.size())
     return emitError() << "needs one tag per variant";
   size_t fields = 0;
@@ -193,9 +198,9 @@ bool milo::needsDrop(Type t) {
   if (isa<StringType, VecValType>(t))
     return true;
   if (auto s = dyn_cast<StructType>(t))
-    return llvm::any_of(s.getFields(), needsDrop);
+    return s.getUserDrop() || llvm::any_of(s.getFields(), needsDrop);
   if (auto e = dyn_cast<EnumType>(t))
-    return llvm::any_of(e.getVariants(), [](TupleType v) { return llvm::any_of(v.getTypes(), needsDrop); });
+    return e.getUserDrop() || llvm::any_of(e.getVariants(), [](TupleType v) { return llvm::any_of(v.getTypes(), needsDrop); });
   return false;
 }
 
