@@ -47,7 +47,7 @@ fn main() {
 
     print(mk(0).isEmpty(), mk(2).isEmpty())
 
-    let r: Vec<Digit> = [3]
+    let r: Vec<i32(0..9)> = [3]
     print(r.isEmpty())
 
     let groups: Vec<Vec<i64>> = [[1], [], [2, 3]]
@@ -55,6 +55,3 @@ fn main() {
     let nonEmpty = groups.filter((g: &Vec<i64>) => !g.isEmpty() && skip.isEmpty())
     print(nonEmpty.len())
 }
-
-// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
-type Digit = i32(0..9)

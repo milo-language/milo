@@ -77,6 +77,11 @@ const cases: Record<string, string> = {
   closureArgHugsParen: `fn main(): i32 {\n    arenaModify(&mut a, h, (n: DLNode) => {\n        n.x = 1\n        return n\n    })\n    return 0\n}\n`,
   blockInArrayHugsComma: `fn main(): i32 {\n    let v = [P {\n        x: 1,\n    }, P {\n        x: 2,\n    }]\n    return v.len\n}\n`,
   blockElse: `fn f(a: bool) {\n    if a {\n        b()\n    } else {\n        c()\n    }\n}\n`,
+  // A ranged int as a type argument came out as `Vec < i32(0..9) >`, which then failed to
+  // parse as a type: the one formatter bug here that changed what a program means.
+  rangedTypeArg: `fn main() {\n    let r: Vec<i32(0..9)> = [3]\n    let s: Vec<i8(-5..5)> = [-1]\n    print(r.len() + s.len())\n}\n`,
+  // A binary `-` after a postfix unwrap or propagate printed as `x! -2`.
+  minusAfterUnwrap: `fn f(o: Option<i64>, r: Result<i64, string>): Result<i64, string> {\n    let a = o! - 2\n    let b = r? * 3\n    return Ok(a - b)\n}\n`,
 };
 
 for (const [name, src] of Object.entries(cases)) {

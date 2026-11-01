@@ -87,7 +87,7 @@ pub fn main(): i32 {
         print("infer ", i)
     }
     let pair: Result<i64, string> = Ok(1)
-    let total = pair! + get()! -1
+    let total = pair! + get()! - 1
     print("sum ", total)
     return 0
 }

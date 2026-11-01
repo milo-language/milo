@@ -62,10 +62,7 @@ fn main() {
     let hits = words.filter((w: &string) => known.contains(w))
     print(hits.len())
 
-    let r: Vec<Digit> = [3, 8]
+    let r: Vec<i32(0..9)> = [3, 8]
     let wide: i32 = 40
     print(r.contains(8), " ", r.contains(12), " ", r.contains(wide))
 }
-
-// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
-type Digit = i32(0..9)

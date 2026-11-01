@@ -82,11 +82,8 @@ fn main() {
     print(show(mk().last()))
     print(calls)
 
-    let r: Vec<Digit> = [3]
+    let r: Vec<i32(0..9)> = [3]
     let pick = r
-    let got = ps.filter((p: &Pt) => p.x as i32 + 2 == pick.first()!)
+    let got = ps.filter((p: &Pt) => p.x as i32 == pick.first()! - 2)
     print(got.len())
 }
-
-// A named range: milo fmt spaces a ranged type argument (`Vec < i32(0..9) >`).
-type Digit = i32(0..9)

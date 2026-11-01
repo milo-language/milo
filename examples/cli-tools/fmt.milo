@@ -732,6 +732,11 @@ pub fn prevIsValue(tokens: &Vec<Token>, i: i64): bool {
         return false
     }
     let pk = tokens[i - 1].kind
+    // A postfix `!` (unwrap) or `?` (propagate) ends a value when a value precedes it:
+    // `x! - 2` is a subtraction, which used to print as `x! -2`.
+    if pk == TokKind.Bang || pk == TokKind.Question {
+        return prevIsValue(tokens, i - 1)
+    }
     return pk == TokKind.Ident || pk == TokKind.Int || pk == TokKind.Float ||
     pk == TokKind.RParen || pk == TokKind.RBracket
 }
@@ -782,6 +787,10 @@ pub fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
         // loudly, but `milo fmt --check` never converges on code using them.
         t.kind == TokKind.LParen || t.kind == TokKind.RParen ||
         t.kind == TokKind.FatArrow ||
+        // DotDot/Minus are a ranged int argument, `Vec<i32(0..9)>`, `W<i8(-5..5)>`.
+        // Without them it came out as `Vec < i32(0..9) >`, which no longer parses as a
+        // type: the formatter changed the program's meaning.
+        t.kind == TokKind.DotDot || t.kind == TokKind.Minus ||
         t.kind == TokKind.Semi || t.kind == TokKind.Question {
             // type-like tokens — keep scanning
         } else {

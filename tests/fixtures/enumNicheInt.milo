@@ -106,7 +106,7 @@ fn main() {
     // layout: a ranged payload's first excluded value encodes None, so no tag word
     print(sizeOf<Option<NodeId>>())
     print(sizeOf<Option<R>>())
-    print(sizeOf < Option < i32(0..2147483646) >> ())
+    print(sizeOf<Option<i32(0..2147483646)>>())
     print(sizeOf<Node>())
     print(sizeOf<Option<U>>())
     print(sizeOf<Option<Neg>>())
