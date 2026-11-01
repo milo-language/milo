@@ -3,7 +3,7 @@ system: tools-in-milo-plan
 purpose: plan for rewriting the standalone CLI tools (package manager first) in Milo instead of TypeScript
 key-files: src/pkg.ts, src/pkgcli.ts, src/api-search.ts, src/skill.ts, src/hot.ts, src/headergen.ts, src/fmtbin.ts, examples/cli-tools/fmt.milo
 update-when: a tool moves, the driver/bootstrap scheme changes, or a gate changes
-last-verified: 2026-11-01 (plan written; nothing moved)
+last-verified: 2026-11-01 (plan written; on hold to save tokens, nothing moved)
 -->
 
 # Standalone tools in Milo
