@@ -1306,29 +1306,6 @@ class FnEmitter {
     return { done: r, v: { ref: "", ty: "" } };
   }
 
-  /**
-   * A legacy helper whose body panics with the call's location: one per call site, named
-   * after it (the HIR node copied into the body keeps its span).
-   */
-  private siteHelper(base: string, span: Span | undefined, make: Parameters<MlirEmitCtx["mlirHelper"]>[1]): string {
-    const l = this.cx.checkLocation(span);
-    let name = base;
-    if (l) {
-      let h = 0x811c9dc5;
-      for (const c of `${l.file}:${l.line}:${l.col}`) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193) >>> 0;
-      name = `${base}.${l.line}.${l.col}.${h.toString(16)}`;
-    }
-    return this.cx.mlirHelper(name, make);
-  }
-
-  /** A borrowed or static string in a slot of its own, for a `&string` argument. */
-  private spill(v: Val): string {
-    const ref = this.fresh();
-    this.vars.push(`  ${ref} = milo.var "operand" : !milo.ref<${v.ty}>`);
-    this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${v.ty}>`);
-    return ref;
-  }
-
   /** A call of a legacy helper; `args` are `value : type`. */
   private callHelper(name: string, args: string[], ret: string | null): Val {
     const refs = args.map(a => a.split(" : ")[0]);
