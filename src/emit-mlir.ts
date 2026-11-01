@@ -1340,6 +1340,26 @@ class FnEmitter {
         const r = this.intrinsic(`unwrap`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }], ([x]) => ({ ...e, operand: { ...x, isMove: true } as HIRExpr }), ty);
         return { ...r, own: hasDrop(ty) ? "owned" : undefined };
       }
+      case "OptionOp": {
+        // isSome/isNone (isOk/isErr): a test of the tag, Some and Ok being tag 0; unwrapOr
+        // is `??`. The closure-taking ones stay legacy.
+        if (e.op === "unwrapOr" && e.default)
+          return this.defaultValue({ kind: "DefaultValue", operand: e.value, default: e.default, enumName: e.enumName, type: e.type, span: e.span });
+        if (e.op !== "isSome" && e.op !== "isNone") throw new MlirUnsupported(`option op ${e.op}`);
+        const pt = placeType(this.cx, e.value.type);
+        let tag: string;
+        if (pt !== null && valueType(this.cx, e.value.type) === null) {
+          const p = this.fieldPlace(e.value);
+          if (!p) throw new MlirUnsupported("tag test of a 128+ byte enum that is not a place");
+          tag = this.def(`milo.enum.tag_at ${p.ref} : !milo.ref<${p.ty}>`, "si32").ref;
+        } else {
+          const v = this.borrow(this.expr(e.value), e.value.type);
+          if (!v.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("tag test of a non-enum");
+          tag = this.def(`milo.enum.tag ${v.ref} : ${v.ty}`, "si32").ref;
+        }
+        const zero = this.def("milo.const 0 : si32", "si32").ref;
+        return this.def(`milo.cmp ${e.op === "isSome" ? "eq" : "ne"}, ${tag}, ${zero} : si32`, "i1");
+      }
       case "Forget": {
         // `forget(x)`: x is taken and nothing drops it (an owned SSA value no slot holds).
         const v = this.consume(this.expr(e.value), "forgotten value");

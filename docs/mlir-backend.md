@@ -532,6 +532,10 @@ structs, enums.
   `forget` (the ownership counts skip a program that panics, so forget has its own).
   Planted bugs: the forgotten value dropped (`forget` `--owned`: legacy 2 live blocks,
   MLIR 0); the unwrapped payload not owned (legacy 2, MLIR 3).
+- *isSome/isNone/isOk/isErr* are tag tests (`enum.tag`, or `tag_at` of a place-only
+  enum's place) and *unwrapOr* is `??`; the closure-taking ops (map, andThen, orElse,
+  unwrapOrElse) stay legacy. Program `option-ops`. Planted bug: the test inverted
+  (`option-ops` stdout).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

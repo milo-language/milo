@@ -1,0 +1,25 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs) and an
+// ownership target: isSome/isNone/isOk/isErr as tag tests (of locals and temporaries
+// that own strings) and unwrapOr as `??` (Copy payloads only, as the checker requires).
+
+fn find(k: i64): Option<string> {
+    if k > 0 { return Some("v".repeat(k)) }
+    return None
+}
+
+fn parse(k: i64): Result<i64, i64> {
+    if k > 0 { return Ok(k * 3) }
+    return Err(k)
+}
+
+fn main() {
+    let a = find(2)
+    let b = find(0)
+    var n: i64 = 0
+    for k in -2..3 {
+        if find(k).isSome() { n += 1 }
+        if parse(k).isErr() { n += 100 }
+        n += parse(k).unwrapOr(1000)
+    }
+    print(a.isSome(), " ", a.isNone(), " ", b.isSome(), " ", parse(2).isOk(), " ", n, " ", parse(5).unwrapOr(0))
+}
