@@ -6062,17 +6062,23 @@ export class TypeChecker {
     return this.setType(expr, ret);
   }
 
-  // bindStdVecMethod for a string: the builtin rules in the string chain checked the call
-  // (with the wordings tests pin, and any int where std takes i64, which lowering widens);
-  // the body is std/string's `impl string`. `refArgs`: the arguments std takes as `&string`.
+  // bindStdVecMethod for a string or bool: the builtin rules checked the call (with the
+  // wordings tests pin, and any int where std takes i64, which lowering widens); the body
+  // is std/string's `impl string` / `impl bool`. `refArgs`: the arguments std takes as
+  // `&string`. A by-value receiver (bool's) is a Copy and needs no borrow.
   private bindStdStringMethod(expr: ExprOf<"MethodCall">, method: string, ret: TypeKind, refArgs: number[] = [],
     mutable = false): TypeKind {
-    const resolved = this.resolveMethod("string", method);
+    return this.bindStdPrimMethod(expr, "string", method, ret, refArgs, mutable);
+  }
+
+  private bindStdPrimMethod(expr: ExprOf<"MethodCall">, recv: string, method: string, ret: TypeKind, refArgs: number[] = [],
+    mutable = false): TypeKind {
+    const resolved = this.resolveMethod(recv, method);
     if (!resolved) {
-      this.error(`string has no method '${method}'`, expr.span);
+      this.error(`${recv} has no method '${method}'`, expr.span);
       return this.setType(expr, ret);
     }
-    this.autoBorrow(expr.object, { mutable });
+    if (resolved.sig.params[0]?.type.tag === "ref") this.autoBorrow(expr.object, { mutable });
     for (const i of refArgs) if (expr.args[i]) this.setAutoBorrowChecked(expr.args[i]!, false);
     this.resolvedMethods.set(expr, resolved.mangled);
     return this.setType(expr, ret);
@@ -13058,6 +13064,7 @@ export class TypeChecker {
       : objTypeRaw;
     if ((objType.tag === "int" || objType.tag === "float" || objType.tag === "bool") && expr.method === "toString") {
       if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
+      if (objType.tag === "bool") return this.bindStdPrimMethod(expr, "bool", "toString", { tag: "string" });
       return this.setType(expr, { tag: "string" });
     }
     // x.addrOf(): *T — raw address of any lvalue (the replacement for `&x`).

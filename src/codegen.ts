@@ -10,7 +10,7 @@ import type { PropagateBoxing } from "./checker";
 import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
   F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStringPush, genStringPushInt, genStringTruncate,
-  genStringSetByte, genStringPushStr, genStringSlice, genNumberToString, genBoolToString, genStringClone,
+  genStringSetByte, genStringPushStr, genStringSlice, genNumberToString, genStringClone,
 } from "./codegen-string";
 import { runtimeFn } from "./codegen-runtime";
 import { genMatch, genMatchExpr, armTailExpr, matchArmLocals, matchExprAsStmt } from "./codegen-match";
@@ -5799,8 +5799,6 @@ export class Codegen {
         return genStringClone(this, expr, lines);
       case "NumberToString":
         return genNumberToString(this, expr, lines);
-      case "BoolToString":
-        return genBoolToString(this, expr, lines);
       case "WrappingArith":
         return this.genWrappingArith(expr, lines);
       case "SaturatingArith":
@@ -9474,7 +9472,6 @@ export class Codegen {
       case "ArrayLit":
       case "StructLit":
       case "NumberToString":
-      case "BoolToString":
       case "JsonStringify":
       case "StringClone":
       case "StringWithCapacity":

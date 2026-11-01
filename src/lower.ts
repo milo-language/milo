@@ -1288,9 +1288,6 @@ class LowerCtx {
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }
-        if (objType?.tag === "bool" && expr.method === "toString") {
-          return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
-        }
         // take() is replace(place, None): the checker vetted the place as replace's.
         if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
             && expr.method === "take") {

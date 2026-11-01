@@ -418,18 +418,6 @@ export function genNumberToString(ctx: StringCtx, expr: HIRExpr & { kind: "Numbe
   return asGen(lines, makeString(b, val(buf, Ty.ptr), val(len, Ty.i64), val(String(F64_BUF), Ty.i64)));
 }
 
-export function genBoolToString(ctx: StringCtx, expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): Gen {
-  ctx.hasStringType = true;
-  const vVal = ctx.genVal(expr.value, lines);
-  const trueStr = ctx.addString("true");
-  const falseStr = ctx.addString("false");
-  const b = new LlvmTextBuilder(lines, ctx);
-  const v = val(vVal.ref, Ty.i1);
-  const ptr = b.select(v, val(trueStr.label, Ty.ptr), val(falseStr.label, Ty.ptr));
-  const len = b.select(v, val("4", Ty.i64), val("5", Ty.i64));
-  return asGen(lines, makeString(b, ptr, len, I64_0));
-}
-
 // s.clone() — deep copy of the underlying byte buffer; result is an owned %String
 export function genStringClone(ctx: StringCtx, expr: HIRExpr & { kind: "StringClone" }, lines: string[]): Gen {
   ctx.hasStringType = true;

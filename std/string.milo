@@ -850,3 +850,15 @@ impl string {
         return out
     }
 }
+
+impl bool {
+    // "true" or "false": the static literal itself (cap 0), so nothing is allocated.
+    // @inline: called, a 200M-call loop ran 8% slower than the builtin select.
+    @inline
+    fn toString(self: Self): string {
+        if self {
+            return "true"
+        }
+        return "false"
+    }
+}

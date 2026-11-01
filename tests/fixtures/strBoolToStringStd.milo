@@ -1,0 +1,43 @@
+// bool.toString is std/string.milo code (`impl bool`): the literal "true" or "false".
+// Receivers: a literal, a comparison, a `&bool` param, a field, a Vec element, a generic
+// T = bool and a callback's parameter; the result concatenated, pushed to after a share
+// (the static literal is copied out first), and returned from a @pure fn.
+// @expect: true false true false
+// @expect: true true true true false
+// @expect: false,true,false 4 5
+// @expect: False! false is true true!
+// @expect: true
+
+struct Flags {
+    on: bool,
+}
+
+fn viaRef(b: &bool): string {
+    return b.toString()
+}
+
+fn generic<T>(x: T): string {
+    return x.toString()
+}
+
+@pure
+fn label(b: bool): string {
+    return b.toString()
+}
+
+fn main() {
+    print(true.toString(), " ", false.toString(), " ", (1 < 2).toString(), " ", (2 < 1).toString())
+    let f = Flags { on: true }
+    let v: Vec<bool> = [false, true, false]
+    print(viaRef(true), " ", viaRef(f.on), " ", f.on.toString(), " ", v[1].toString(), " ", generic(false))
+    let words = v.map((b: &bool) => b.toString())
+    print(words.join(","), " ", label(true).len, " ", label(false).len)
+
+    var s = false.toString()
+    let kept = s
+    s.push(33)
+    s.setByte(0, 70)
+    print(s, " ", kept, " ", "is " + true.toString(), " ", $"{true.toString()}!")
+    let o: Option<bool> = Option.Some(true)
+    print(o.map((b: bool) => b.toString()) ?? "none")
+}

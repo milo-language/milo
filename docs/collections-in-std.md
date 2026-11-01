@@ -601,3 +601,14 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   files calling these pass. Bench (cpu, median of 5): 1M rounds of indexOf/lastIndexOf/
   indexOfFrom/substr over a 1.3 KB string 1.32s builtin vs 1.32s std; 20M short substrs
   0.56s vs 0.57s. codegen-string.ts 534 -> 442 lines.
+- 2026-11-01: `bool.toString` moved: `impl bool` in std/string.milo returns the literal
+  "true" / "false" (cap 0, as genBoolToString's select of two statics). The checker's
+  toString branch keeps its arity message and binds the std body (`bindStdPrimMethod`,
+  no borrow for a by-value receiver). `@inline`: called, 200M calls were 8% slower (0.25s
+  builtin vs 0.27s std); inlined 0.16s vs 0.16s. Planted "ture" turns
+  `strBoolToStringStd` red. Output identical; live heap equal; ASan clean.
+  Decided: int and float `toString` stay builtin. Their body is one call of the runtime
+  formatter that interpolation and pushInt share (@milo.fmt.i64/u64 into a 24-byte
+  buffer, @milo.fmt.f64), which std cannot call except through an intrinsic that would be
+  that same codegen; the move would add an `impl` per int width and float, plus dispatch
+  for ranged ints, and delete nothing.
