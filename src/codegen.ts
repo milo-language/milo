@@ -2575,8 +2575,10 @@ export class Codegen {
   // on entry and lowers it before every return, while the fixed heap is on: its
   // allocations then go to libc and leave the program's heap as the recording left it.
   // With the heap off (no MILO_RECORD/MILO_REPLAY) it is one load and branch each way.
+  public get replayScope(): boolean { return this.globalVars.has("replay$rrDepth") && this.globalVars.has("replay$rrHeapOn"); }
+
   private replayEngineScope(fn: HIRFunction, lines: string[]): string[] {
-    if (!fn.replayEngine || !this.globalVars.has("replay$rrDepth") || !this.globalVars.has("replay$rrHeapOn")) return lines;
+    if (!fn.replayEngine || !this.replayScope) return lines;
     const out: string[] = [];
     // This pass rewrites finished lines, so its blocks and values carry fixed names derived
     // from a counter rather than the nextLabel/nextTemp draws, which would renumber the body.

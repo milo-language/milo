@@ -12,6 +12,8 @@ import type { Span } from "./ast";
 
 export interface MlirEmitCtx {
   trapOnOverflow: boolean;
+  // std/replay is in the program, so replay-engine fns count their depth (codegen replayEngineScope).
+  replayScope: boolean;
   // requires/ensures/invariant become runtime checks only when on (-O0 by default).
   contractChecks: boolean;
   checkLocation(span?: Span): { file: string; line: number; col: number } | null;
@@ -94,7 +96,6 @@ class FnEmitter {
     if (fn.isVariadic) throw new MlirUnsupported("variadic fn");
     // main's prologue (argc/argv, global init, stdout buffering) is legacy codegen's.
     if (fn.name === "main") throw new MlirUnsupported("main");
-    if (fn.replayEngine) throw new MlirUnsupported("replay engine fn");
     if (this.cx.contractChecks && (fn.contracts?.length || fn.oldSnapshots?.length)) throw new MlirUnsupported("contracts");
     if (fn.entryGuards?.length) throw new MlirUnsupported("lazy global guard");
     if (this.cx.sretFns.has(fn.name)) throw new MlirUnsupported("sret");
@@ -108,9 +109,21 @@ class FnEmitter {
       return `%p${i}: ${ty}`;
     });
     const ret = fn.retType.tag === "void" ? null : scalar(fn.retType, "return");
-    if (!this.stmts(fn.body)) this.emit(ret === null ? "milo.return" : "milo.unreachable");
+    // As legacy replayEngineScope, which applies only when std/replay is in the program.
+    this.replay = !!fn.replayEngine && this.cx.replayScope;
+    if (this.replay) this.emit("milo.replay.enter");
+    if (!this.stmts(fn.body)) {
+      if (ret === null) this.ret("milo.return");
+      else this.emit("milo.unreachable");
+    }
     const head = `func.func @${quote(fn.name)}(${params.join(", ")})${ret === null ? "" : ` -> ${ret}`} {`;
     return [head, ...this.vars, ...this.body, "}"].join("\n");
+  }
+
+  private replay = false;
+  private ret(line: string): void {
+    if (this.replay) this.emit("milo.replay.exit");
+    this.emit(line);
   }
 
   private emit(line: string): void { this.body.push(`${"  ".repeat(this.depth)}${line}`); }
@@ -182,10 +195,10 @@ class FnEmitter {
         return false;
       }
       case "Return": {
-        if (!s.value) { this.emit("milo.return"); return true; }
+        if (!s.value) { this.ret("milo.return"); return true; }
         const v = this.expr(s.value);
         if (v.ty !== mlirType(this.fn.retType)) throw new MlirUnsupported("return of a different type");
-        this.emit(`milo.return ${v.ref} : ${v.ty}`);
+        this.ret(`milo.return ${v.ref} : ${v.ty}`);
         return true;
       }
       case "ExprStmt":

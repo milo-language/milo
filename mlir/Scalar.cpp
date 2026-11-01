@@ -18,6 +18,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/xxhash.h"
 
@@ -185,6 +186,9 @@ struct LowerStructuredCFPass
       else
         lowerLoop(rw, cast<LoopOp>(op));
     }
+    // Code after a loop only `return` leaves is dead, and its block now has no
+    // predecessor. Dialect conversion leaves such blocks unconverted, so they go here.
+    (void)eraseUnreachableBlocks(rw, getOperation()->getRegions());
   }
 };
 
@@ -614,6 +618,55 @@ struct StoreLowering : ConvertOpToLLVMPattern<StoreOp> {
   }
 };
 
+// The recorder's globals, defined by std/replay in the legacy module.
+Value replayGlobal(ConversionPatternRewriter &rw, Operation *op, StringRef name) {
+  auto module = op->getParentOfType<ModuleOp>();
+  auto g = module.lookupSymbol<LLVM::GlobalOp>(name);
+  if (!g) {
+    OpBuilder::InsertionGuard guard(rw);
+    rw.setInsertionPointToStart(module.getBody());
+    g = LLVM::GlobalOp::create(rw, op->getLoc(), rw.getI64Type(), /*isConstant=*/false,
+                               LLVM::Linkage::External, name, Attribute());
+  }
+  return LLVM::AddressOfOp::create(rw, op->getLoc(), g);
+}
+
+// The shape of legacy codegen's replayEngineScope: depth += 1 at entry when the heap
+// switch is on; depth -= 1 before a return when it is on and the depth is positive.
+template <typename OpT, bool Enter>
+struct ReplayLowering : ConvertOpToLLVMPattern<OpT> {
+  using ConvertOpToLLVMPattern<OpT>::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(OpT op, typename OpT::Adaptor,
+                  ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Type i64 = rw.getI64Type();
+    Value on = LLVM::LoadOp::create(rw, loc, i64, replayGlobal(rw, op, "replay$rrHeapOn"));
+    Value zero = constInt(rw, loc, i64, 0);
+    Value cond = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::ne, on, zero);
+    Value depthPtr = replayGlobal(rw, op, "replay$rrDepth");
+    Value depth;
+    if (!Enter) {
+      depth = LLVM::LoadOp::create(rw, loc, i64, depthPtr);
+      Value pos = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::sgt, depth, zero);
+      cond = LLVM::AndOp::create(rw, loc, cond, pos);
+    }
+    Block *cur = rw.getInsertionBlock();
+    Block *cont = rw.splitBlock(cur, rw.getInsertionPoint());
+    Block *adjust = rw.createBlock(cont);
+    if (Enter)
+      depth = LLVM::LoadOp::create(rw, loc, i64, depthPtr);
+    Value next = Enter ? LLVM::AddOp::create(rw, loc, depth, constInt(rw, loc, i64, 1)).getResult()
+                       : LLVM::SubOp::create(rw, loc, depth, constInt(rw, loc, i64, 1)).getResult();
+    LLVM::StoreOp::create(rw, loc, next, depthPtr);
+    LLVM::BrOp::create(rw, loc, ValueRange{}, cont);
+    rw.setInsertionPointToEnd(cur);
+    LLVM::CondBrOp::create(rw, loc, cond, adjust, cont);
+    rw.eraseOp(op);
+    return success();
+  }
+};
+
 struct PtrLoadLowering : ConvertOpToLLVMPattern<PtrLoadOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -716,7 +769,8 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                BitLowering<XorOp, LLVM::XOrOp>, NotLowering, ConstLowering, CmpLowering,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
-               PtrStoreLowering>(tc);
+               PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
+               ReplayLowering<ReplayExitOp, false>>(tc);
 }
 
 void milo::registerScalarPasses() {

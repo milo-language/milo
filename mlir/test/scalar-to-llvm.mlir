@@ -214,3 +214,27 @@ func.func @raw(%p: !milo.ptr, %i: si32, %u: ui8) -> i1 {
   %e = milo.cmp eq, %p, %q : !milo.ptr
   milo.return %e : i1
 }
+
+// Replay engine scope: depth += 1 on entry when the heap switch is on; on exit depth -= 1
+// only when the switch is on and the depth is positive.
+// CHECK-LABEL: llvm.func @replay_engine
+// CHECK:   %[[ON:.*]] = llvm.load %{{.*}} : !llvm.ptr -> i64
+// CHECK:   %[[C:.*]] = llvm.icmp "ne" %[[ON]], %{{.*}} : i64
+// CHECK:   llvm.cond_br %[[C]], ^[[IN:bb[0-9]+]], ^[[GO:bb[0-9]+]]
+// CHECK: ^[[IN]]:
+// CHECK:   llvm.add
+// CHECK:   llvm.store
+// CHECK: ^[[GO]]:
+// CHECK:   llvm.icmp "ne"
+// CHECK:   llvm.icmp "sgt"
+// CHECK:   %[[BOTH:.*]] = llvm.and
+// CHECK:   llvm.cond_br %[[BOTH]], ^[[OUT:bb[0-9]+]], ^[[RET:bb[0-9]+]]
+// CHECK: ^[[OUT]]:
+// CHECK:   llvm.sub
+// CHECK: ^[[RET]]:
+// CHECK-NEXT: llvm.return
+func.func @replay_engine() {
+  milo.replay.enter
+  milo.replay.exit
+  milo.return
+}

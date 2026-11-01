@@ -213,6 +213,17 @@ def Milo_CheckUnaliasedOp : Milo_Op<"check_unaliased",
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs)";
 }
 
+// Entry to and exit from a record/replay engine function (std/replay; HIRFunction
+// replayEngine): while the recorder's heap switch is on, the engine's own allocations go
+// to libc's malloc rather than the recorded fixed-address heap, so their nesting depth is
+// counted in `replay$rrDepth`. Enter at the top of the body, exit before every return.
+def Milo_ReplayEnterOp : Milo_Op<"replay.enter"> {
+  let assemblyFormat = "attr-dict";
+}
+def Milo_ReplayExitOp : Milo_Op<"replay.exit"> {
+  let assemblyFormat = "attr-dict";
+}
+
 def Milo_StoreOp : Milo_Op<"store", [
     TypesMatchWith<"value is the slot's type", "ref", "value",
                    "::llvm::cast<RefType>($_self).getPointee()">]> {

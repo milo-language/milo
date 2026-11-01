@@ -38,6 +38,7 @@ export const MLIR_PIPELINE = [
 const IDENT = String.raw`"(?:[^"\\]|\\.)*"|[-\w$.]+`;
 const DEFINE_RE = new RegExp(String.raw`^define [^@]*@(${IDENT})\(`);
 const DECL_RE = new RegExp(String.raw`^(?:define|declare) [^@]*@(${IDENT})\(`);
+const GLOBAL_RE = new RegExp(String.raw`^@(${IDENT}) = `);
 
 function unquote(n: string): string {
   return n.startsWith('"') ? n.slice(1, -1).replace(/\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : n;
@@ -170,6 +171,8 @@ export class MlirPlan {
       const l = lines[i];
       const d = DECL_RE.exec(l);
       if (d) known.add(unquote(d[1]));
+      const g = GLOBAL_RE.exec(l);
+      if (g) known.add(unquote(g[1]));
       const def = l.startsWith("define") ? DEFINE_RE.exec(l) : null;
       const name = def ? unquote(def[1]) : null;
       if (name === null || !this.takenNames.has(name)) {
@@ -203,7 +206,8 @@ export class MlirPlan {
     // A stub that ships would be an `unreachable` where a function body belongs.
     if (spliced !== this.taken.length) throw new Error(`mlir: spliced ${spliced} of ${this.taken.length} functions taken`);
     if (out.some(l => l === STUB_MARK)) throw new Error("mlir: a stub body survived the splice");
-    const extras = [...globals, ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
+    // A global MLIR only declares (the recorder's counters) is the legacy module's own.
+    const extras = [...globals.filter(g => !known.has(unquote(GLOBAL_RE.exec(g)![1]))), ...decls.filter(d => !known.has(d.name)).map(d => d.line)];
     const firstDefine = out.findIndex(l => l.startsWith("define"));
     out.splice(firstDefine < 0 ? out.length : firstDefine, 0, ...extras, "");
     return out.join("\n");

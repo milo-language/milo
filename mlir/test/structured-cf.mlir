@@ -124,3 +124,17 @@ func.func @for_range(%a: si64, %b: si64, %c: i1) {
   }
   milo.return
 }
+
+// Code after a loop that only `return` leaves has no predecessor and is erased.
+// CHECK-LABEL: func @dead_after_loop
+// CHECK-NOT: milo.const -1
+// CHECK: milo.return %arg0
+// CHECK-NOT: milo.return
+// CHECK: }
+func.func @dead_after_loop(%a: si32) -> si32 {
+  milo.loop {
+    milo.return %a : si32
+  }
+  %d = milo.const -1 : si32
+  milo.return %d : si32
+}
