@@ -3,7 +3,7 @@ system: collections-in-std-plan
 purpose: plan for moving HashMap, Vec and string method bodies out of hand-emitted IR in codegen and into std Milo code
 key-files: src/codegen-map.ts, src/codegen-vec.ts, src/codegen-string.ts, src/runtime/str.ll, src/builtin-members.ts, std/prelude.milo
 update-when: a phase lands, a gate changes, or the type/body split is revisited
-last-verified: 2026-11-01 (phase 1 done: every HashMap method, new and withCapacity are std/hashmap code)
+last-verified: 2026-11-01 (phase 2 done: every Vec method body, withCapacity and filled are std/vec code; Vec.new, get and the slice/len/capacity/ptr builtins stay)
 -->
 
 # Collections in std
@@ -110,7 +110,9 @@ Order (cheapest and least coupled first; growth last, as with HashMap insert):
    hottest method in the corpus: it must inline to the same fast path (capacity check,
    store, len bump) or stay builtin.
 
-Stays builtin: len, capacity, ptr, slice, indexing, for-in, drop, display, deep clone.
+Stays builtin: len, capacity, ptr, slice, indexing, for-in, drop, display, deep clone (the
+emitDeepCloneFromPtr that `_vecCopyOut` calls), `get` (which first, last, find and min/max
+call), and `Vec.new` (a constant; see the withCapacity entry in the log).
 
 The std-only machinery phase 1 added (`@inline`, the `@pure` exemption, the `_map*`
 intrinsics) is gated on `isHashMapModule`; step 0 widens the gate to the std collection

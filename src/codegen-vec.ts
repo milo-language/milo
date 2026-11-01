@@ -17,11 +17,9 @@ interface CodegenCtx extends StringCtx {
   genExpr(expr: any): [string[], string, string];
   genVal(expr: any, lines: string[], sretDest?: string): Val;
   genLValue(expr: any): [string[], string, string];
-  entryAllocas: string[];
   scopeCounter: number;
   hasVecType: boolean;
   needsMemcpy: boolean;
-  needsMemcmp: boolean;
   needsMalloc: boolean;
   needsFree: boolean;
   needsRealloc: boolean;
@@ -33,8 +31,6 @@ interface CodegenCtx extends StringCtx {
   needsExit: boolean;
   genBoundI64(bound: HIRExpr, lines: string[]): string;
   needsDropCg(t: TypeKind): boolean;
-  emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind): void;
-  emitBoundsCheck(lines: string[], idx: string, size: string, span?: Span): void;
   registerScopedTemp(lines: string[], addr: string, typeKind: TypeKind): string;
   valStore(ty: string, val: string, ptr: string, copy: CopyDecl): string;
   dropOwnedTemp(lines: string[], val: string, llTy: string, expr: HIRExpr): void;
@@ -42,10 +38,6 @@ interface CodegenCtx extends StringCtx {
   emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string;
   enumLayouts: Map<string, EnumLayout>;
   storeEnumTag(lines: string[], enumTy: string, addr: string, tag: number | string): void;
-  trapOnOverflow: boolean;
-  currentFnWrapping: boolean;
-  isUnsigned(t: TypeKind): boolean;
-  emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, span: Span | undefined): string;
   enumPayloadPtr(lines: string[], enumTy: string, addr: string, variant: EnumVariant | string | number): string;
 }
 
