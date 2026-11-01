@@ -1,0 +1,31 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: owning elements read
+// through a raw pointer and only borrowed (a `&string` argument, a print part) are the
+// memory's still: nothing may drop them. std's Vec.map does this (`f(src[i])`).
+
+fn width(s: &string): i64 {
+    return s.len()
+}
+
+fn total(v: &Vec<string>): i64 {
+    var n = 0
+    unsafe {
+        let p = v.ptr()
+        var i = 0
+        while i < v.len() {
+            n = n + width(p[i])
+            print(p[i])
+            i = i + 1
+        }
+    }
+    return n
+}
+
+fn main() {
+    var v: Vec<string> = Vec.new()
+    for i in 0..4 {
+        v.push("s".repeat(i + 1))
+    }
+    print(total(v), " ", total(v))
+    let lens = v.map((s: &string) => s.len())
+    print(lens, " ", v)
+}

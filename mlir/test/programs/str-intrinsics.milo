@@ -1,0 +1,25 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: std's string and Vec
+// intrinsics (_strAlloc, _strRangeCheck, _strUnique, number toString, _vecNonNegative)
+// through the std methods built on them: substr, slicing, repeat, replace, split, case
+// changes, padding, numbers of every width, and Vec capacities.
+
+fn main() {
+    let s = "Hello, World"
+    print(s.substr(0, 5), "|", s.substr(7, 12), "|", s.toUpper(), "|", s.toLower())
+    let r = "ab".repeat(4)
+    var shared = r
+    shared.push(33)
+    print(r, " ", shared, " ", r.replace("b", "xy"))
+    let parts = "a,bb,,ccc".split(",")
+    print(parts.len(), " ", parts[1], " ", parts[3])
+    print("7".padStart(3, "0"), " ", "x".padEnd(4, "."), " ", "  t  ".trim())
+    let a: i8 = -128
+    let b: u64 = 18446744073709551615
+    let c: i32 = 2147483647
+    print(a.toString(), " ", b.toString(), " ", c.toString(), " ", (-42).toString())
+    print(3.25.toString(), " ", (0.1 + 0.2).toString())
+    var v: Vec<i64> = Vec.withCapacity(10)
+    v.push(1)
+    v.reserve(40)
+    print(v.len(), " ", v.capacity() >= 41)
+}

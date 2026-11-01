@@ -62,6 +62,7 @@ function vecElem(cx: MlirEmitCtx, t: TypeKind): string | null {
   return e === null || e === PTR ? null : e;
 }
 
+const I64: TypeKind = { tag: "int", bits: 64, signed: true };
 const isScalarTy = (ty: string) => /^([su]i\d+|i1|f32|f64)$/.test(ty);
 
 /** How the symbol of a legacy helper spells a type: Milo.h typeKey of its dialect type. */
@@ -503,7 +504,8 @@ class FnEmitter {
   }
 
   private loc(span: Span | undefined): string {
-    const l = this.cx.checkLocation(span);
+    // Inside a @trackCaller copy every panic names the call site, as legacy panicAt.
+    const l = this.cx.checkLocation(this.fn.trackedCaller ?? span);
     if (!l) throw new MlirUnsupported("no source file for a panic location");
     return `loc(${quote(l.file)}:${l.line}:${l.col})`;
   }
@@ -609,6 +611,7 @@ class FnEmitter {
    */
   private borrow(v: Val, t: TypeKind): Val {
     if (!hasDrop(v.ty) || v.own !== "owned") return v;
+    if (this.bitCopies.has(v.ref)) return { ...v, own: "view" };
     const slot = this.tempSlot("tmp", v.ty, t);
     this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
     return { ...this.def(`milo.load ${slot} : !milo.ref<${v.ty}>`, v.ty), own: "view" };
@@ -912,28 +915,55 @@ class FnEmitter {
         this.callees.set(name, `(${PTR}, si64, si64) -> ${PTR}`);
         return this.def(`func.call @${quote(name)}(${d.ref}, ${l.ref}, ${c.ref}) : (${PTR}, si64, si64) -> ${PTR}`, PTR);
       }
+      // std/string's intrinsics, each a legacy function doing exactly it (genStrReserve,
+      // emitStrAlloc, emitStringRangeCheck, emitStrUnique, genNumberToString).
       case "StrReserve": {
-        // std/string's `_strReserve(&mut s, n)`: legacy's room test and growth
-        // (genStrReserve) as a function of the legacy module taking the string's place.
-        // Its out-of-memory panic names the call's line, so there is one per call line.
         if (scalar(e.type, "reserved buffer") !== PTR) throw new MlirUnsupported("string reserve type");
-        const l = this.cx.checkLocation(e.span);
-        if (!l) throw new MlirUnsupported("no source file for a panic location");
-        const s = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
+        const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
         const n = this.expr(e.extra);
         if (n.ty !== "si64") throw new MlirUnsupported("string reserve size type");
-        const name = `milo.str.reserve.${l.line}.${fnv1a(l.file)}`;
-        const str: TypeKind = { tag: "string" };
-        const i64: TypeKind = { tag: "int", bits: 64, signed: true };
-        this.cx.mlirHelper(name, () => ({
-          params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "n", type: i64, isRef: false, isRefMut: false }],
-          retType: e.type,
-          body: [{ kind: "Return", retType: e.type, value: { kind: "StrReserve", type: e.type, span: e.span,
-            str: { kind: "Ident", name: "s", type: str, isMove: false }, extra: { kind: "Ident", name: "n", type: i64 } } }],
-        }));
-        const fnTy = `(!milo.ref<${STR}>, si64) -> ${PTR}`;
-        this.callees.set(name, fnTy);
-        return this.def(`func.call @${quote(name)}(${s}, ${n.ref}) : ${fnTy}`, PTR);
+        return this.intrinsic("reserve", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }, { name: "n", type: I64, mode: "val", ref: n.ref }],
+          ([a, b]) => ({ kind: "StrReserve", type: e.type, span: e.span, str: a, extra: b }), PTR);
+      }
+      case "StrAlloc": {
+        if (scalar(e.type, "string buffer") !== PTR) throw new MlirUnsupported("string alloc type");
+        const n = this.expr(e.size);
+        if (n.ty !== "si64") throw new MlirUnsupported("string alloc size type");
+        return this.intrinsic("alloc", e, [{ name: "n", type: I64, mode: "val", ref: n.ref }],
+          ([a]) => ({ kind: "StrAlloc", type: e.type, span: e.span, size: a }), PTR);
+      }
+      case "StrRangeCheck": {
+        const str = this.place(e.str, `!milo.ref<${STR}>`, false).ref;
+        const a = this.expr(e.start), b = this.expr(e.end);
+        if (a.ty !== "si64" || b.ty !== "si64") throw new MlirUnsupported("string range types");
+        return this.intrinsic("range", e, [{ name: "s", type: { tag: "string" }, mode: "ref", ref: str },
+          { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
+          ([x, y, z]) => ({ kind: "StrRangeCheck", type: e.type, span: e.span, str: x, start: y, end: z }), null);
+      }
+      case "StrUnique": {
+        const str = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
+        return this.intrinsic("unique", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: str }],
+          ([x]) => ({ kind: "StrUnique", type: e.type, span: e.span, str: x }), null);
+      }
+      case "StringCstr": {
+        // `s.cstr()`: the place's buffer made unique and NUL-terminated, then its bytes.
+        if (scalar(e.type, "cstr") !== PTR) throw new MlirUnsupported("cstr type");
+        const str = this.place(e.object, `!milo.ref<${STR}>`, false).ref;
+        return this.intrinsic("cstr", e, [{ name: "s", type: { tag: "string" }, mode: "ref", ref: str }],
+          ([x]) => ({ kind: "StringCstr", type: e.type, span: e.span, object: x }), PTR, false);
+      }
+      case "NonNegative": {
+        const v = this.expr(e.value);
+        if (v.ty !== "si64" || scalar(e.type, "checked size") !== "si64") throw new MlirUnsupported("non-negative check type");
+        return this.intrinsic(`nonneg.${fnv1a(e.what)}`, e, [{ name: "v", type: I64, mode: "val", ref: v.ref }],
+          ([x]) => ({ kind: "NonNegative", type: e.type, span: e.span, value: x, what: e.what }), "si64");
+      }
+      case "NumberToString": {
+        const v = this.expr(e.value);
+        if (!isScalarTy(v.ty) || v.ty !== valueType(this.cx, e.valueType)) throw new MlirUnsupported("toString of a non-scalar");
+        const r = this.intrinsic("tostring", e, [{ name: "v", type: e.valueType, mode: "val", ref: v.ref }],
+          ([x]) => ({ kind: "NumberToString", type: e.type, span: e.span, value: x, valueType: e.valueType }), STR);
+        return { ...r, own: "owned" };
       }
       case "SizeOf":
         if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
@@ -1049,6 +1079,35 @@ class FnEmitter {
     for (const [k, v] of inner.callees) this.callees.set(k, v);
     const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
     return this.def(`milo.closure @${quote(name)}${ops} : ${ty}`, ty);
+  }
+
+  /**
+   * `e`, an intrinsic, as a call of a legacy function whose body is `make` applied to its
+   * params: one per intrinsic, param types and call site, since its panics name the line and column.
+   * `ops` are the operands as already evaluated, in legacy's order; a `ref`/`mut` one is a place.
+   */
+  private intrinsic(kind: string, e: HIRExpr, ops: { name: string; type: TypeKind; mode: "val" | "ref" | "mut"; ref: string }[],
+    make: (idents: HIRExpr[]) => HIRExpr, ret: string | null, panics = true): Val {
+    const l = panics ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : { line: 0, col: 0, file: "" };
+    if (!l) throw new MlirUnsupported("no source file for a panic location");
+    const tys = ops.map(o => { const t = this.value(o.type, "intrinsic operand"); return o.mode === "val" ? t : `!milo.ref<${t}>`; });
+    const site = panics ? `.${l.line}.${l.col}.${fnv1a(l.file)}` : "";
+    const name = `milo.intr.${kind}.${ops.map(o => typeKey(o.type)).join(".")}${site}`;
+    const retType = e.type;
+    this.cx.mlirHelper(name, () => {
+      const idents = ops.map(o => ({ kind: "Ident" as const, name: o.name, type: o.type, isMove: false }));
+      const value = make(idents);
+      return {
+        params: ops.map(o => ({ name: o.name, type: o.type, isRef: o.mode === "ref", isRefMut: o.mode === "mut" })),
+        retType, trackedCaller: this.fn.trackedCaller,
+        body: [ret === null ? { kind: "ExprStmt", expr: value } : { kind: "Return", retType, value }],
+      };
+    });
+    const fnTy = `(${tys.join(", ")})${ret === null ? " -> ()" : ` -> ${ret}`}`;
+    this.callees.set(name, fnTy);
+    const call = `func.call @${quote(name)}(${ops.map(o => o.ref).join(", ")}) : ${fnTy}`;
+    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+    return this.def(call, ret);
   }
 
   /**
@@ -1188,8 +1247,15 @@ class FnEmitter {
 
   /** A read of a place through a pointer: a bit copy that, for a string or a Vec, owns. */
   private ptrRead(p: { ptr: string; ty: string }): Val {
-    return { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: hasDrop(p.ty) ? "owned" : undefined };
+    const v: Val = { ...this.def(`milo.ptr.load ${p.ptr} : ${p.ty}`, p.ty), own: hasDrop(p.ty) ? "owned" : undefined };
+    if (v.own) this.bitCopies.add(v.ref);
+    return v;
   }
+
+  // Owning values read through a raw pointer: the bits of a value the memory still owns.
+  // Moved somewhere (std's pop), the move takes it; only borrowed (`f(src[i])` with a
+  // `&T` param, a print part), it must not be dropped, as legacy lends the element's address.
+  private bitCopies = new Set<string>();
 
   /** The slot `e` names (a `var`, a by-ref param, a field of either), or null for a value. */
   private fieldPlace(e: HIRExpr): { ref: string; ty: string; param?: number } | null {
@@ -1610,14 +1676,14 @@ class FnEmitter {
       if (mut) throw new MlirUnsupported(`by-ref &mut arg ${e.kind}`);
       const v = this.expr(e);
       const vm = /^!milo\.vecval<(.*)>$/.exec(v.ty);
-      if (vm && refTy === `!milo.vec<${vm[1]}>` && v.own === "owned") {
+      if (vm && refTy === `!milo.vec<${vm[1]}>` && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary Vec lends its header from a slot that drops it.
         const slot = this.tempSlot("arg", v.ty, e.type);
         this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
         return { ref: this.def(`milo.vec.place ${slot} : !milo.ref<${v.ty}> -> ${refTy}`, refTy).ref };
       }
       if (`!milo.ref<${v.ty}>` !== refTy) throw new MlirUnsupported("by-ref arg type");
-      if (hasDrop(v.ty) && v.own === "owned") {
+      if (hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) {
         // A temporary that owns a buffer lends from a slot that drops it.
         const slot = this.tempSlot("arg", v.ty, e.type);
         this.emit(`milo.store ${v.ref}, ${slot} : ${refTy}`);

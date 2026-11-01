@@ -1,0 +1,12 @@
+// Differential panic program (scripts/mlir-same.ts --programs): std's _vecNonNegative
+// panics on a negative capacity, naming the caller's line.
+fn grow(v: &mut Vec<i64>, n: i64) {
+    v.reserve(n)
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    grow(&mut v, 3 - 10)
+    print(v.len())
+}

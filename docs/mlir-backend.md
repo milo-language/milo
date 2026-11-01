@@ -299,6 +299,27 @@ structs, enums.
   mlir null`, a double free). The 142 fixtures with a `move` closure: 141 same, 2
   nondeterministic on legacy too (http timing). Tahoe Roads api: 3190 of 5327 (59.9%;
   its function count moved from 5263 under me, the app is being edited).
+- *std intrinsics* (`intrinsic` in emit-mlir): StrReserve, StrAlloc, StrRangeCheck,
+  StrUnique, StringCstr, NumberToString and NonNegative are each a call of a legacy
+  function doing exactly it, one per intrinsic, operand types and call site (line and
+  column: the panics print both; StringCstr, which cannot panic, is one per type). A
+  helper made inside a @trackCaller copy carries its `trackedCaller`, and `loc` now
+  honours it too, so a panic names the caller as legacy's panicAt does. Found on the way:
+  an owning element read through a raw pointer and only lent (`f(src[i])` with a `&T`
+  param, a print part) went into an owned temporary slot and was dropped, freeing the
+  Vec's strings under Vec.map (`vecMapStd` SIGBUS once map went through MLIR); such
+  reads are bit copies now (`bitCopies`), lent from a slot that drops nothing. Programs
+  `str-intrinsics`, `trap-negative-capacity`, `ptr-borrow`. Planted bugs: a helper
+  without the trackCaller span (`trap-negative-capacity` stderr named std/vec.milo:542);
+  StrRangeCheck with start and end swapped (`strings`, `str-intrinsics`,
+  `trap-substr-oob` red); bit copies not recorded (`ptr-borrow` exit 0 -> 1). Programs
+  coverage 66.2% to 94.6%. Tahoe Roads api: 3190 to 3611 of 5330 (67.7%).
+- *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
+  function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
+  the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop
+  temporaries: 13 instances over the 80 Drop fixtures, none in Tahoe Roads; legacy's
+  timing differs per construct (an argument temporary dies after its call, a print part
+  after the print), so it is a scope per consuming op, not per statement, when it is done.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
