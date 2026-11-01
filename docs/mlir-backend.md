@@ -325,6 +325,14 @@ structs, enums.
   the same `intrinsic` call, the place lent (a Vec's as its header, `refOf`), the result
   owned. Program `copy-out`; planted bug: a shallow copy instead of the deep one
   (`copy-out` exit 0 -> 1). Tahoe Roads api: 3801 of 5350 (71.0%).
+- *A 128+ byte enum matched by value*: through its place, as by reference: a local's
+  slot, or a slot of the block the subject is built in. An arm that binds an owning
+  payload reads the bound fields out of the place, empties the subject's slot
+  (`milo.move`, the value unused) and stores each owning field into a binding of its own;
+  a 128+ byte field passes through one SSA value on the way, as a big argument does. Other
+  arms bind places and leave the subject to its scope's drop. Program `big-match`;
+  planted bug: no `milo.move` (`big-match`: the -O2 build crashed, a double free). Tahoe
+  Roads api: 3869 of 5350 (72.3%).
 - *Not done, by measurement.* Interfaces: 13 fixture files use one, the dyn calls block 5
   function instances there and none in Tahoe Roads, against 27 blocked by `Heap`, which
   the dialect lacks entirely; left for after Heap. A statement-level scope for user-Drop

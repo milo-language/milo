@@ -1,0 +1,61 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a 128+ byte enum
+// (a Result holding a 128+ byte struct) matched by value. An arm that binds an owning
+// payload takes it (the subject is emptied, the binding owns it); one that binds only
+// scalars or nothing leaves the subject to be dropped at the end of the block. The
+// subject is a by-value param (legacy returns a big enum by value, not sret, so a call
+// result is not a place here).
+
+struct Big {
+    name: string, host: string, path: string, user: string, note: string,
+    port: i64, retries: i64, timeout: i64, flags: i64
+}
+
+enum Got { Hit(Big), Miss(string), Count(i64), Nothing }
+
+fn mk(i: i64): Big {
+    return Big {
+        name: "n".repeat(i), host: "h", path: "/p", user: "u", note: "x".repeat(20),
+        port: i, retries: 2, timeout: 30, flags: 0
+    }
+}
+
+fn fetch(i: i64): Got {
+    if i % 4 == 0 { return Got.Hit(mk(i)) }
+    if i % 4 == 1 { return Got.Miss("miss ".repeat(i)) }
+    if i % 4 == 2 { return Got.Count(i * 7) }
+    return Got.Nothing
+}
+
+fn score(g: Got, i: i64): i64 {
+    match g {
+        Got.Hit(b) => { return b.name.len() + b.port }
+        Got.Miss(m) => { return m.len() }
+        Got.Count(n) => { return n }
+        Got.Nothing => { return -1 }
+    }
+}
+
+fn label(g: Got): string {
+    let s = match g {
+        Got.Hit(b) => b.note,
+        Got.Miss(m) => m,
+        _ => "other",
+    }
+    return s
+}
+
+fn countOnly(g: Got): i64 {
+    match g {
+        Got.Count(n) => { return n }
+        _ => { return 0 }
+    }
+}
+
+fn main() {
+    var t = 0
+    for i in 0..8 {
+        t = t + score(fetch(i), i) + countOnly(fetch(i))
+        print(label(fetch(i)).len())
+    }
+    print(t)
+}

@@ -1384,8 +1384,20 @@ class FnEmitter {
     let place: { ref: string; ty: string } | null = null;
     let subj: Val;
     if (bigEnum) {
-      if (!m.subjectIsRef && !m.subjectIsMut) throw new MlirUnsupported("match by value on a 128+ byte enum");
-      place = this.fieldPlace(m.subject);
+      if (!m.subjectIsRef && !m.subjectIsMut) {
+        // By value: a local's own slot, or a slot of this block the subject is built in.
+        // An owning one is the `from` of a consuming arm, as for a small enum.
+        const e = m.subject;
+        const b = e.kind === "Ident" ? this.lookup(e.name) : null;
+        if (b?.kind === "var" && b.ty === subjPlaceTy) {
+          if (owning && !b.owned) throw new MlirUnsupported("match moving out of a borrowed enum");
+          place = { ref: b.ref, ty: b.ty };
+        } else {
+          const sl = this.bigSlot("subject", e, true);
+          place = { ref: sl.ref, ty: sl.ty };
+        }
+        if (owning) from = place.ref;
+      } else place = this.fieldPlace(m.subject);
       if (!place) throw new MlirUnsupported("match on a 128+ byte enum that is not a place");
       subj = this.def(`milo.enum.tag_at ${place.ref} : !milo.ref<${place.ty}>`, "si32");
     } else if (m.subjectIsMut) {
@@ -1450,7 +1462,28 @@ class FnEmitter {
       // the arm leaves unbound would be legacy's leak; not reproduced.
       if (consumes && args.some(a => a.name === "_" && hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
       const done = this.region(i === 0 ? head : "}, {", () => {
-        if (bigEnum) {
+        if (bigEnum && consumes) {
+          // The arm takes the payload: its fields are read out of the place, then the
+          // subject's slot is emptied (milo.move, whose value goes unused), and each
+          // owning field belongs to its binding for the arm's scope.
+          const fields = args.map((a, k) => {
+            if (a.name === "_") return null;
+            // A 128+ byte field passes through one SSA value from place to place, as a big
+            // argument is loaded whole at its call (bigArg).
+            const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
+            return this.def(`milo.load ${r} : !milo.ref<${a.ty}>`, a.ty).ref;
+          });
+          this.def(`milo.move ${from} : !milo.ref<${place!.ty}>`, place!.ty);
+          args.forEach((a, k) => {
+            const v = fields[k];
+            if (v === null) return;
+            const owns = hasDrop(a.ty);
+            const slot = owns ? this.ownedSlot(a.name, a.ty, layout!.variants.find(x => x.tag === tag)!.fields[k]) : this.fresh();
+            if (!owns) this.vars.push(`  ${slot} = milo.var ${quote(a.name)} : !milo.ref<${a.ty}>`);
+            this.emit(`milo.store ${v}, ${slot} : !milo.ref<${a.ty}>`);
+            this.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: owns });
+          });
+        } else if (bigEnum) {
           args.forEach((a, k) => {
             if (a.name === "_") return;
             const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
