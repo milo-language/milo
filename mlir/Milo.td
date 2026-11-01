@@ -212,6 +212,16 @@ def Milo_EnumPayloadOp : Milo_Op<"enum.payload", [Pure]> {
   let hasVerifier = 1;
 }
 
+// The place of field `index` of the payload of variant `tag`, inside the enum at `ref`:
+// what a `&mut` match subject binds, so an assignment to the binding writes the payload.
+// Meaningful only while the enum has that tag (inside the arm that matched it).
+def Milo_EnumFieldRefOp : Milo_Op<"enum.field_ref", [Pure]> {
+  let arguments = (ins Milo_RefType:$ref, I32Attr:$tag, I64Attr:$index);
+  let results = (outs Milo_RefType:$result);
+  let assemblyFormat = "$ref `[` $tag `,` $index `]` attr-dict `:` type($ref) `->` type($result)";
+  let hasVerifier = 1;
+}
+
 // A string literal: the bytes as a private constant, len, cap 0.
 def Milo_StringLitOp : Milo_Op<"string.lit", [Pure]> {
   let arguments = (ins StrAttr:$value);

@@ -1,0 +1,80 @@
+// Differential program for MILO_MLIR=1 (scripts/mlir-same.ts --programs) and an ownership
+// target: an owning enum matched by value (the arm that binds the payload owns it, the
+// others leave the subject to be dropped), from a local and from a temporary; a `&mut`
+// subject whose bindings write the payload; string and float literal patterns.
+
+enum Msg { Text(string), Pair(string, i64), Count(i64), Quit }
+
+enum Shape { Circle(f64), Rect(f64, f64) }
+
+fn mk(i: i64): Msg {
+    if i % 4 == 0 { return Msg.Text("t".repeat(i + 1)) }
+    if i % 4 == 1 { return Msg.Pair("p".repeat(i), i) }
+    if i % 4 == 2 { return Msg.Count(i) }
+    return Msg.Quit
+}
+
+fn consume(m: Msg): i64 {
+    match m {
+        Text(s) => { return s.len() }
+        Pair(s, n) => { return s.len() * 100 + n }
+        _ => { return -1 }
+    }
+}
+
+fn fromTemp(i: i64): string {
+    return match mk(i) {
+        Text(s) => s,
+        Pair(s, _n) => s + "!",
+        Count(_n) => "count",
+        Quit => "quit",
+    }
+}
+
+fn grow(s: &mut Shape) {
+    match s {
+        Circle(r) => { r = r * 2.0 }
+        Rect(w, h) => {
+            w = w + 1.0
+            h = h + 1.0
+        }
+    }
+}
+
+fn area(s: &Shape): f64 {
+    match s {
+        Circle(r) => { return r * r * 3.0 }
+        Rect(w, h) => { return w * h }
+    }
+}
+
+fn word(w: string): i64 {
+    return match w {
+        "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        _ => 0,
+    }
+}
+
+fn sign(x: f64): string {
+    match x {
+        0.0 => { return "zero" }
+        1.5 => { return "one and a half" }
+        _ => { return "other" }
+    }
+}
+
+fn main() {
+    var t: i64 = 0
+    for i in 0..9 { t = t * 3 + consume(mk(i)) }
+    print(t)
+    for i in 0..5 { print(fromTemp(i)) }
+    var c = Shape.Circle(1.5)
+    var r = Shape.Rect(2.0, 3.0)
+    grow(&mut c)
+    grow(&mut r)
+    print(area(c), " ", area(r))
+    print(word("two"), " ", word("three".substr(0, 5)), " ", word("four"))
+    print(sign(0.0), " ", sign(1.5), " ", sign(2.0))
+}

@@ -6,7 +6,7 @@
 // `emitMlirFunction` throws `MlirUnsupported` for anything outside the subset the dialect
 // covers, so the function stays on legacy codegen; `mlirSupports` is that test alone.
 
-import type { HIRExpr, HIRFunction, HIRStmt } from "./hir";
+import type { HIRExpr, HIRFunction, HIRPattern, HIRStmt } from "./hir";
 import type { TypeKind } from "./types";
 import type { Span } from "./ast";
 
@@ -1014,20 +1014,43 @@ class FnEmitter {
    */
   private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
     resultTy: string | null): { done: boolean; v: Val } {
-    // A `&mut` subject binds views that write the payload in place.
-    if (m.subjectIsMut) throw new MlirUnsupported("match on a &mut subject");
     // An owning subject matched by value moves its payload into the bindings (legacy
     // bindPayloads zeroes it in the subject); matched by reference, bindings are views.
     const owning = hasDrop(this.value(m.subject.type, "match subject"));
-    if (owning && !m.subjectIsRef) throw new MlirUnsupported("match moving out of an owning enum");
-    const subj = this.borrow(this.expr(m.subject), m.subject.type);
+    // By value, the owned slot the subject lives in: an arm that binds an owning payload
+    // field moves the subject out of it (milo.move), so drop elaboration sees it empty on
+    // that path and full on the others, as legacy's alive flag does.
+    let from: string | null = null;
+    // A `&mut` subject's place: its bindings are the payload's own places
+    // (milo.enum.field_ref), so writing one writes the payload.
+    let place: { ref: string; ty: string } | null = null;
+    let subj: Val;
+    if (m.subjectIsMut) {
+      place = this.fieldPlace(m.subject);
+      if (!place || !place.ty.startsWith("!milo.enum<")) throw new MlirUnsupported("match on a &mut subject that is not an enum place");
+      subj = { ...this.def(`milo.load ${place.ref} : !milo.ref<${place.ty}>`, place.ty), own: hasDrop(place.ty) ? "view" : undefined };
+    } else if (owning && !m.subjectIsRef) {
+      const e = m.subject;
+      const b = e.kind === "Ident" ? this.lookup(e.name) : null;
+      if (b?.kind === "var" && b.owned) from = b.ref;
+      else {
+        const v = this.expr(e);
+        if (v.own !== "owned") throw new MlirUnsupported("match moving out of a borrowed enum");
+        from = this.ownedSlot("subject", v.ty, e.type);
+        this.emit(`milo.store ${v.ref}, ${from} : !milo.ref<${v.ty}>`);
+      }
+      const ty = this.value(e.type, "match subject");
+      subj = { ...this.def(`milo.load ${from} : !milo.ref<${ty}>`, ty), own: "view" };
+    } else subj = this.borrow(this.expr(m.subject), m.subject.type);
     const isEnum = subj.ty.startsWith("!milo.enum<");
+    if (!isEnum && m.arms.some(a => a.pattern.kind === "LiteralPattern" && (a.pattern.literalKind === "string" || a.pattern.literalKind === "float")))
+      return this.literalChain(m.arms, subj, stripRefs(m.subject.type), resultTy);
     const st = stripRefs(m.subject.type);
     const layout = isEnum && st.tag === "enum" ? this.cx.mlirEnumLayout(st.name) : null;
     if (isEnum && !layout) throw new MlirUnsupported("match subject layout");
     if (!isEnum && !/^([su]i\d+|i1)$/.test(subj.ty)) throw new MlirUnsupported(`match on ${subj.ty}`);
     const cases: bigint[] = [];
-    const arms: { arm: typeof m.arms[0]; args: { name: string; ty: string }[] }[] = [];
+    const arms: { arm: typeof m.arms[0]; args: { name: string; ty: string }[]; tag?: number }[] = [];
     let dflt: typeof m.arms[0] | null = null;
     for (const arm of m.arms) {
       const p = arm.pattern;
@@ -1051,17 +1074,42 @@ class FnEmitter {
       }
       if (cases.includes(c)) throw new MlirUnsupported("two arms for one case");
       cases.push(c);
-      arms.push({ arm, args });
+      arms.push({ arm, args, tag: p.kind === "EnumPattern" ? p.tag : undefined });
     }
     if (dflt) arms.push({ arm: dflt, args: [] });
     const ref = resultTy ? this.fresh() : "";
     const head = `${resultTy ? `${ref} = ` : ""}milo.match ${subj.ref} : ${subj.ty}${resultTy ? ` -> ${resultTy}` : ""} [${cases.join(", ")}]${dflt ? " default" : ""} {`;
     let allDone = true;
-    arms.forEach(({ arm, args }, i) => {
+    arms.forEach(({ arm, args, tag }, i) => {
+      const consumes = from !== null && args.some(a => a.name !== "_" && hasDrop(a.ty));
+      // Legacy stops dropping the subject once an arm takes a payload, so an owning field
+      // the arm leaves unbound would be legacy's leak; not reproduced.
+      if (consumes && args.some(a => a.name === "_" && hasDrop(a.ty))) throw new MlirUnsupported("match leaving an owning payload field unbound");
       const done = this.region(i === 0 ? head : "}, {", () => {
         if (args.length) {
           const refs = args.map(() => this.fresh());
           this.emit(`^bb0(${args.map((a, k) => `${refs[k]}: ${a.ty}`).join(", ")}):`);
+          if (place) {
+            args.forEach((a, k) => {
+              if (a.name === "_") return;
+              const r = this.def(`milo.enum.field_ref ${place!.ref}[${tag}, ${k}] : !milo.ref<${place!.ty}> -> !milo.ref<${a.ty}>`, `!milo.ref<${a.ty}>`).ref;
+              this.bind(a.name, { kind: "var", ref: r, ty: a.ty });
+              a.name = "_";
+            });
+          }
+          if (consumes) {
+            const moved = this.def(`milo.move ${from} : !milo.ref<${subj.ty}>`, subj.ty).ref;
+            args.forEach((a, k) => {
+              if (a.name === "_") return;
+              refs[k] = this.def(`milo.enum.payload ${moved}[${tag}, ${k}] : ${subj.ty} -> ${a.ty}`, a.ty).ref;
+              if (!hasDrop(a.ty)) return;
+              // The binding owns the payload now, for the arm's scope.
+              const slot = this.ownedSlot(a.name, a.ty, layout!.variants.find(v => v.tag === tag)!.fields[k]);
+              this.emit(`milo.store ${refs[k]}, ${slot} : !milo.ref<${a.ty}>`);
+              this.bind(a.name, { kind: "var", ref: slot, ty: a.ty, owned: true });
+              a.name = "_";
+            });
+          }
           // A binding is a mutable copy of the payload, as legacy bindPayloads makes it:
           // `c.bump()` in the arm changes the binding.
           args.forEach((a, k) => {
@@ -1081,6 +1129,78 @@ class FnEmitter {
     // arms that all jump leave nothing after them.
     if (!resultTy && allDone && arms.length) { this.emit("milo.unreachable"); return { done: true, v: { ref: "", ty: "" } }; }
     return { done: false, v: { ref, ty: resultTy ?? "", own: resultTy && hasDrop(resultTy) ? "owned" : undefined } };
+  }
+
+  /**
+   * A match on a string or a float: no switch, so the arms are tested in order, each an
+   * `==` of the subject with the literal (strings through legacy's comparison), nested
+   * milo.ifs with the `_` arm innermost.
+   */
+  private literalChain(arms: (HIRStmt & { kind: "Match" })["arms"], subj: Val, subjTy: TypeKind, resultTy: string | null): { done: boolean; v: Val } {
+    const name = `match$subject${this.n++}`;
+    this.bind(name, { kind: "ssa", v: subj });
+    const subject: HIRExpr = { kind: "Ident", name, type: subjTy, isMove: false };
+    const lit = (p: HIRPattern & { kind: "LiteralPattern" }): HIRExpr => {
+      switch (p.literalKind) {
+        case "string": return { kind: "StringLit", value: String(p.value), type: subjTy };
+        case "float": return { kind: "FloatLit", value: Number(p.value), type: subjTy };
+        case "bool": return { kind: "BoolLit", value: !!p.value, type: subjTy };
+        case "char": return { kind: "CharLit", value: Number(p.value), type: subjTy };
+        default: return { kind: "IntLit", value: BigInt(p.value as bigint), type: subjTy };
+      }
+    };
+    const arm = (i: number): boolean | Val => {
+      if (i === arms.length) { this.emit("milo.unreachable"); return true; }
+      const { pattern: p, body } = arms[i];
+      const run = () => resultTy ? this.tail(body, resultTy) : this.stmts(body);
+      if (p.kind === "WildcardPattern") return run();
+      if (p.kind !== "LiteralPattern") throw new MlirUnsupported("enum pattern on a scalar");
+      const c = this.binop({ kind: "BinOp", op: "==", left: subject, right: lit(p), type: { tag: "bool" } });
+      const ref = resultTy ? this.fresh() : "";
+      const thenDone = this.region(`${resultTy ? `${ref} = ` : ""}milo.if ${c.ref}${resultTy ? ` -> ${resultTy}` : ""} {`, run);
+      const elseDone = this.region("} else {", () => arm(i + 1));
+      this.emit("}");
+      if (resultTy) return { ref, ty: resultTy, own: hasDrop(resultTy) ? "owned" : undefined };
+      if (thenDone && elseDone) { this.emit("milo.unreachable"); return true; }
+      return false;
+    };
+    const r = arm(0);
+    if (typeof r === "object") return { done: false, v: r };
+    return { done: r, v: { ref: "", ty: "" } };
+  }
+
+  /**
+   * A legacy helper whose body panics with the call's location: one per call site, named
+   * after it (the HIR node copied into the body keeps its span).
+   */
+  private siteHelper(base: string, span: Span | undefined, make: Parameters<MlirEmitCtx["mlirHelper"]>[1]): string {
+    const l = this.cx.checkLocation(span);
+    let name = base;
+    if (l) {
+      let h = 0x811c9dc5;
+      for (const c of `${l.file}:${l.line}:${l.col}`) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193) >>> 0;
+      name = `${base}.${l.line}.${l.col}.${h.toString(16)}`;
+    }
+    return this.cx.mlirHelper(name, make);
+  }
+
+  /** A borrowed or static string in a slot of its own, for a `&string` argument. */
+  private spill(v: Val): string {
+    const ref = this.fresh();
+    this.vars.push(`  ${ref} = milo.var "operand" : !milo.ref<${v.ty}>`);
+    this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${v.ty}>`);
+    return ref;
+  }
+
+  /** A call of a legacy helper; `args` are `value : type`. */
+  private callHelper(name: string, args: string[], ret: string | null): Val {
+    const refs = args.map(a => a.split(" : ")[0]);
+    const tys = args.map(a => a.slice(a.indexOf(" : ") + 3));
+    const fnTy = `(${tys.join(", ")}) -> ${ret ?? "()"}`;
+    this.callees.set(name, fnTy);
+    const call = `func.call @${quote(name)}(${refs.join(", ")}) : ${fnTy}`;
+    if (ret === null) { this.emit(call); return { ref: "", ty: "" }; }
+    return this.def(call, ret);
   }
 
   /**

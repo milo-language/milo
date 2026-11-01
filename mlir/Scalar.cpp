@@ -1207,6 +1207,18 @@ struct EnumPayloadLowering : ConvertOpToLLVMPattern<EnumPayloadOp> {
   }
 };
 
+struct EnumFieldRefLowering : ConvertOpToLLVMPattern<EnumFieldRefOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(EnumFieldRefOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    auto e = cast<EnumType>(op.getRef().getType().getPointee());
+    int64_t off = e.offsetOf(e.variantOf(op.getTag()), op.getIndex());
+    rw.replaceOp(op, byteOffset(rw, op.getLoc(), a.getRef(), off));
+    return success();
+  }
+};
+
 struct StructNewLowering : ConvertOpToLLVMPattern<StructNewOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1410,7 +1422,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering,
-               ClosureCallLowering>(tc);
+               ClosureCallLowering, EnumFieldRefLowering>(tc);
 }
 
 void milo::registerScalarPasses() {

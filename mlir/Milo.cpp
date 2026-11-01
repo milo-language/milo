@@ -374,6 +374,18 @@ LogicalResult EnumPayloadOp::verify() {
   return success();
 }
 
+LogicalResult EnumFieldRefOp::verify() {
+  auto e = dyn_cast<EnumType>(getRef().getType().getPointee());
+  if (!e)
+    return emitOpError("needs the place of an enum");
+  if (failed(verifyVariant(*this, e, getTag(), std::nullopt)))
+    return failure();
+  TupleType fields = e.getVariants()[e.variantOf(getTag())];
+  if (getIndex() >= fields.size() || fields.getType(getIndex()) != getType().getPointee())
+    return emitOpError("has no payload field ") << getIndex() << " of type " << getType().getPointee();
+  return success();
+}
+
 LogicalResult MatchOp::verify() {
   size_t arms = getArms().size();
   if (getCases().size() + (getHasDefault() ? 1 : 0) != arms)
