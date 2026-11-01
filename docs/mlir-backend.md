@@ -527,6 +527,11 @@ structs, enums.
   field 0) and its len once, as legacy's genForEach and genCast. Program
   `string-bytes`, FileCheck in `pointers.mlir`. Planted bug: the walk starting one byte
   in (`string-bytes` stdout).
+- *`x!`* is legacy's genUnwrap in a helper per enum and site, the operand moved into
+  it; *`forget(x)`* takes x into an SSA value nothing drops. Programs `trap-unwrap`,
+  `forget` (the ownership counts skip a program that panics, so forget has its own).
+  Planted bugs: the forgotten value dropped (`forget` `--owned`: legacy 2 live blocks,
+  MLIR 0); the unwrapped payload not owned (legacy 2, MLIR 3).
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.

@@ -1330,6 +1330,22 @@ class FnEmitter {
       }
       case "Propagate": return this.propagate(e);
       case "DefaultValue": return this.defaultValue(e);
+      case "Unwrap": {
+        // Legacy's genUnwrap (its panic text and location) in a helper per enum and site,
+        // the operand moved into it.
+        const st = stripRefs(e.operand.type);
+        const v = this.consume(this.expr(e.operand), "unwrapped value");
+        const ty = this.value(e.type, "unwrapped payload");
+        if (v.ty !== this.value(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
+        const r = this.intrinsic(`unwrap`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }], ([x]) => ({ ...e, operand: { ...x, isMove: true } as HIRExpr }), ty);
+        return { ...r, own: hasDrop(ty) ? "owned" : undefined };
+      }
+      case "Forget": {
+        // `forget(x)`: x is taken and nothing drops it (an owned SSA value no slot holds).
+        const v = this.consume(this.expr(e.value), "forgotten value");
+        void v;
+        return { ref: "", ty: "" };
+      }
       case "Zeroed": {
         const ty = this.value(e.zeroType, "zeroed value");
         if (ty.startsWith("!milo.fn<")) throw new MlirUnsupported("zeroed fn value");

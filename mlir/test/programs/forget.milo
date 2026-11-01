@@ -1,0 +1,19 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `forget(x)` takes x
+// and nothing drops it (one live block per call at exit, as legacy), and `x!` on owned
+// payloads that are then dropped normally.
+fn find(k: i64): Option<string> {
+    if k > 0 { return Some("v".repeat(k)) }
+    return None
+}
+
+fn lose(n: i64) {
+    let s = "gone".repeat(n)
+    unsafe { forget(s) }
+}
+
+fn main() {
+    lose(2)
+    lose(3)
+    let a = find(3)!
+    print(a, " ", find(1)!.len())
+}

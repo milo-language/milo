@@ -1,0 +1,20 @@
+// Differential panic program (scripts/mlir-same.ts --programs): `x!` (legacy's
+// genUnwrap in a helper per site) on Some, Ok with an owned payload, then on an Err whose
+// message is printed.
+fn find(k: i64): Option<string> {
+    if k > 0 { return Some("v".repeat(k)) }
+    return None
+}
+
+fn parse(k: i64): Result<i64, string> {
+    if k > 0 { return Ok(k * 3) }
+    return Err("bad " + k.toString())
+}
+
+fn main() {
+    let a = find(3)!
+    let r = find(2)
+    let b = r!
+    print(a, " ", b, " ", parse(4)!)
+    print(parse(-1)!)
+}
