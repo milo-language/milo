@@ -116,6 +116,22 @@ The std-only machinery phase 1 added (`@inline`, the `@pure` exemption, the `_ma
 intrinsics) is gated on `isHashMapModule`; step 0 widens the gate to the std collection
 modules (`std/hashmap.milo`, `std/vec.milo`, later `std/string.milo`) so Vec can use it.
 
+## Phase 3: string method bodies (plan, 2026-11-01)
+
+Most string methods already lower to Milo in std/string (lower.ts strMethodMap: trim, split,
+replace, contains, pad*, parse*, ...). Still hand-emitted in codegen-string.ts (533 lines):
+StringFind (indexOf, lastIndexOf, indexOfFrom), substr, slice, push/pushStr/pushInt,
+truncate, setByte, number/bool toString, clone, withCapacity, concat (`+`), comparisons.
+
+Order: StringFind family and substr (pure reads) -> number/bool toString -> push family,
+truncate, setByte (mutate in place: copy-on-write uniqueness via the str.ll runtime must be
+exposed as a std-only intrinsic, `_strUnique(&mut s)`) -> clone/withCapacity. Concat and
+comparisons are operators: they stay builtin until the modularity phase.
+
+Stays builtin: len, indexing, slicing syntax, literals, interpolation, cstr, for-in, the
+str.ll copy-on-write runtime (alloc/share/unique/release). Those move only when string
+becomes a plain std struct (mlir-backend.md, modularity phase).
+
 ## Gates (every phase, every commit)
 
 - **Fixture corpus**: `bun test tests/run.test.ts` green, and under the phase's flag. Proven
