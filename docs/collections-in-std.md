@@ -639,3 +639,22 @@ becomes a plain std struct (mlir-backend.md, modularity phase).
   parts in place instead of building the temporary; a std pushStr would take the
   materialized string (an allocation and a copy per call) unless lowering kept that case,
   which leaves two implementations of one method. Neither deletes code.
+- 2026-11-01: `clone` and `String.withCapacity` moved. clone is `return self` from a
+  `&Self`: a string copied out of a borrow is shared by count (the StringClone lowering
+  puts on every such copy), which is what genStringClone emitted. Lost, as with Vec and
+  HashMap clone: a temporary receiver is shared and then dropped instead of handed back
+  (one count increment and decrement). `String.withCapacity(n)` is a static call of
+  std's `strWithCapacity` (`_strAlloc(max(n, 1))`, NUL at 0, cap written through StrHead);
+  the negative check rides the argument as a `NonNegative` node, same text and line:col
+  (`runtime-errors/stringWithCapacityNegative`). Old bug gone: an i32 count reached clang
+  unwidened ("1 error generated"). substr now builds its copy through the same std
+  constructor. Planted: clone dropping a byte turns `strCloneWithCapacityStd` red;
+  withCapacity leaving cap 0 keeps the output but leaves 4 more live blocks (115 KB).
+  Output identical (fixture without the i32 count); live heap equal; ASan clean. Bench:
+  10M rounds of withCapacity + 2 pushes + clone 0.14s builtin vs 0.14s std; 20M substrs
+  0.27s vs 0.28s. Phase 3 stands at: moved indexOf, indexOfFrom, lastIndexOf, substr,
+  bool toString, push, truncate, clear, setByte, clone, withCapacity; builtin by decision
+  int/float toString, pushStr, pushInt; builtin by plan len, indexing, slice, concat,
+  comparisons, cstr. `codegen-string.ts` 534 -> 298 lines; `runtime/str.ll` unchanged at
+  348 (std reaches its alloc/unique/reserve through the intrinsics; nothing in it lost
+  its last caller).

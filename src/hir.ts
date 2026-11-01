@@ -61,7 +61,6 @@ export type HIRExpr =
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
   // `keys()`/`values()` snapshot the occupied slots into a fresh Vec (deep-cloned —
   // the map keeps its own copy). `field` says which half of the entry to collect.
-  | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }
   // std/string `_strReserve(&mut s, extra)`: s's data pointer with room for extra bytes + NUL, s's alone.
   | { kind: "StrReserve"; str: HIRExpr; extra: HIRExpr; type: TypeKind; span?: Span }
   // std/string `_strUnique(&mut s)`: make s the only handle to its buffer (@milo.str.unique).

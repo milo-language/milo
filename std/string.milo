@@ -957,3 +957,32 @@ impl string {
         }
     }
 }
+
+// `String.withCapacity(n)`: an empty string owning a buffer of room for n bytes (1 for
+// n = 0, so it owns one from the start). The caller has refused a negative n at its own
+// line (the NonNegative check lowering puts on the argument).
+@inline
+@trackCaller
+fn strWithCapacity(n: i64): string {
+    var cap = n
+    if cap == 0 {
+        cap = 1
+    }
+    var s = ""
+    unsafe {
+        var buf = _strAlloc(cap)
+        buf[0] = 0
+        var head = (s.addrOf() as *u8) as *StrHead
+        head[0]._data = buf
+        head[0]._cap = cap
+    }
+    return s
+}
+
+impl string {
+    // Another handle to the same bytes: a string copied out of a borrow shares its buffer
+    // by count (copy-on-write), which is all a string clone needs to be.
+    fn clone(self: &Self): string {
+        return self
+    }
+}

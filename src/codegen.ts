@@ -9,7 +9,7 @@ import type { Span } from "./ast";
 import type { PropagateBoxing } from "./checker";
 import { genNatLess, genVecPanic, genVecGrowBuf, genVecGetOpt, genVecSlice, REALLOC_MIN_BYTES } from "./codegen-vec";
 import {
-  F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStringWithCapacity, genStrReserve, genStrPanic, genStringPushInt,
+  F64_BUF, genStringConcat, genStringCmp, genStringOrd, genStrReserve, genStrPanic, genStringPushInt,
   genStringPushStr, genStringSlice, genNumberToString, genStringClone,
 } from "./codegen-string";
 import { runtimeFn } from "./codegen-runtime";
@@ -5541,8 +5541,6 @@ export class Codegen {
         const s2 = b.insertvalue(s1, val("0", Ty.i64), 2);
         return [lines, s2.ref, "%String"];
       }
-      case "StringWithCapacity":
-        return genStringWithCapacity(this, expr, lines);
       case "Ident":
         return this.genIdent(expr, lines);
       case "CharLit": {
@@ -9484,7 +9482,6 @@ export class Codegen {
       case "NumberToString":
       case "JsonStringify":
       case "StringClone":
-      case "StringWithCapacity":
       case "VecNew":
       // std/hashmap's copy of a stored value is a fresh deep clone nobody else owns.
       case "MapCopyOut":

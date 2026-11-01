@@ -1135,18 +1135,17 @@ class LowerCtx {
       case "IndexAccess":
         return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), isBorrowed: this.c.borrowedExprs.has(expr), span: expr.span };
       case "EnumLit": {
-        if (expr.enumName === "String" && expr.variant === "withCapacity") {
-          return { kind: "StringWithCapacity", capacity: this.lowerExpr(expr.args[0]), type: { tag: "string" }, span: expr.span };
-        }
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
         }
         // A negative capacity panics at the caller's line, as the builtin did, so the check
         // rides the argument here rather than living in std's mapWithCapacity (and std/vec's
-        // vecWithCapacity / vecFilled, which say "length" for filled's count).
+        // vecWithCapacity / vecFilled, which say "length" for filled's count, and std/string's
+        // strWithCapacity).
         const ctor = this.c.staticCalls.get(expr);
         const vecCtor = expr.enumName === "Vec" && (expr.variant === "withCapacity" || expr.variant === "filled") && type.tag === "vec";
-        if (ctor && (vecCtor || (expr.enumName === "HashMap" && expr.variant === "withCapacity" && type.tag === "hashmap"))) {
+        const strCtor = expr.enumName === "String" && expr.variant === "withCapacity" && type.tag === "string";
+        if (ctor && (vecCtor || strCtor || (expr.enumName === "HashMap" && expr.variant === "withCapacity" && type.tag === "hashmap"))) {
           const i64: TypeKind = { tag: "int", bits: 64, signed: true };
           let n = this.lowerExpr(expr.args[0]);
           if (n.type.tag === "int" && (n.type.bits !== 64 || !n.type.signed)) n = { kind: "Cast", operand: n, targetType: i64, type: i64, span: n.span };
@@ -1447,9 +1446,6 @@ class LowerCtx {
           }
           if (expr.method === "slice") {
             return { kind: "StringSlice", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
-          }
-          if (expr.method === "clone") {
-            return { kind: "StringClone", str: this.lowerExpr(expr.object), type, span: expr.span };
           }
           if (expr.method === "len") {
             return { kind: "StringLen", object: this.lowerExpr(expr.object), type, span: expr.span };

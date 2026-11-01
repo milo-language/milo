@@ -62,23 +62,6 @@ function stringField(b: Builder, strPtr: Val, i: number): Val {
   return b.gep(STRING, strPtr, [val("0", Ty.i32), val(String(i), Ty.i32)]);
 }
 
-export function genStringWithCapacity(ctx: StringCtx, expr: HIRExpr & { kind: "StringWithCapacity" }, lines: string[]): Gen {
-  ctx.hasStringType = true;
-  ctx.needsMalloc = true;
-  const capVal = ctx.genVal(expr.capacity, lines);
-  ctx.emitNonNegativeCheck(lines, capVal.ref, "capacity", expr.span);
-  const b = new LlvmTextBuilder(lines, ctx);
-  // At least one byte. A String owns its buffer exactly when cap > 0 (cap 0 marks a
-  // borrowed literal, which drop skips), and malloc(0) still hands back a live block:
-  // `String.withCapacity(0)` was an owned buffer recorded as borrowed, leaked on drop,
-  // and orphaned by the first push (which saw cap 0 and allocated afresh).
-  const isZero = b.icmp("eq", val(capVal.ref, Ty.i64), I64_0);
-  const cap = b.select(isZero, val("1", Ty.i64), val(capVal.ref, Ty.i64));
-  const buf = val(ctx.emitStrAlloc(lines, cap.ref, "strcap", expr.span), Ty.ptr);
-  b.store(val("0", Ty.i8), buf);
-  return asGen(lines, makeString(b, buf, I64_0, cap));
-}
-
 export function genStringConcat(ctx: StringCtx, lines: string[], lv: string, rv: string): Gen {
   ctx.hasStringType = true;
   ctx.needsMalloc = true;

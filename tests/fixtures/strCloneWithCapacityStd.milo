@@ -1,0 +1,61 @@
+// string clone and String.withCapacity are std/string.milo code. clone is a shared handle
+// (copy-on-write): the original and the clone each keep their bytes when either is mutated.
+// Clones of an empty string, a literal, a multibyte string, a slice, a `&string` param, a
+// field and a temporary. withCapacity: 0 (still an owned buffer), small and large counts,
+// an i32 count, pushes within and past the capacity, and a shared copy mutated after.
+// @expect: [] Héllo héllo! 7
+// @expect: he hello ada! Ada! n42 n7
+// @expect: a abcdefgh abcd 8
+// @expect: 100000 0,01,012 789
+
+struct Named {
+    name: string,
+}
+
+fn copyOf(s: &string): string {
+    return s.clone()
+}
+
+fn mk(i: i64): string {
+    return "n" + i.toString()
+}
+
+fn main() {
+    let e = ""
+    var lit = "héllo"
+    var c = lit.clone()
+    c.push(33)
+    lit.setByte(0, 72)
+    print("[", e.clone(), "] ", lit, " ", c, " ", c.len)
+
+    let src = "hello world"
+    let v = src.slice(0, 5)
+    var fromSlice = v.clone()
+    fromSlice.truncate(2)
+    let n = Named { name: "ada" + "!" }
+    var nc = copyOf(n.name)
+    nc.setByte(0, 65)
+    print(fromSlice, " ", v, " ", n.name, " ", nc, " ", mk(42).clone(), " ", copyOf(mk(7)))
+
+    var z = String.withCapacity(0)
+    z.push(97)
+    let k: i32 = 4
+    var w = String.withCapacity(k)
+    w.pushStr("abcd")
+    let wShared = w
+    w.push(101)
+    w.pushStr("fgh")
+    print(z, " ", w, " ", wShared, " ", w.len)
+
+    var big = String.withCapacity(100000)
+    for i in 0..100000 {
+        big.push((48 + i % 10) as u8)
+    }
+    var copies: Vec<string> = Vec.new()
+    for i in 0..3 {
+        var cp = big.clone()
+        cp.truncate(i + 1)
+        copies.push(cp)
+    }
+    print(big.len, " ", copies.join(","), " ", big.substr(99997, 100000))
+}

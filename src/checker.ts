@@ -12327,6 +12327,11 @@ export class TypeChecker {
       if (expr.args.length !== 1) { this.error(`'String.withCapacity' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
       const argType = this.checkExpr(expr.args[0]);
       if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'String.withCapacity': expected integer, got ${this.show(argType)}`, sp);
+      // std/string's strWithCapacity (the resolver module-scopes a private std name);
+      // lowering puts the negative check on the argument.
+      const ctor = ["string$strWithCapacity", "strWithCapacity"].find(n => this.functions.has(n));
+      if (ctor) this.staticCalls.set(expr, ctor);
+      else this.error(`'String.withCapacity' needs std/string, which the prelude imports`, sp);
       return this.setType(expr, { tag: "string" });
     }
     if (expr.enumName === "Vec" && expr.variant === "new") {
@@ -14095,7 +14100,7 @@ export class TypeChecker {
       if (expr.method === "clone") {
         if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
         if (this.reportStringClones && !this.instanceNodes.has(expr)) this.stringCloneCalls.push(expr);
-        return this.setType(expr, { tag: "string" });
+        return this.bindStdStringMethod(expr, "clone", { tag: "string" });
       }
       // string methods delegated to std/string runtime functions
       if (expr.method === "contains" || expr.method === "startsWith" || expr.method === "endsWith") {
