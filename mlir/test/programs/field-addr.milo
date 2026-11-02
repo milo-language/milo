@@ -1,0 +1,28 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): the address
+// of a field of an immutable binding held as an SSA value (`p.x.addrOf()`): the binding
+// moves to a slot, so a write through the address is seen by later reads, as legacy's
+// alloca makes it.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Seg {
+    a: Point,
+    b: Point,
+}
+
+fn bump(p: *i64) {
+    unsafe {*p = *p + 100 }
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    unsafe { bump(p.y.addrOf()) }
+    print(p.x + p.y)
+    let s = Seg { a: Point { x: 3, y: 4 }, b: Point { x: 5, y: 6 } }
+    unsafe { bump(s.b.x.addrOf()) }
+    print(s.b.x)
+    print(s.a.x + s.a.y + s.b.y)
+}

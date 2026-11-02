@@ -3184,6 +3184,20 @@ class FnEmitter {
     return this.def(`milo.${op} ${l.ref}, ${r.ref}${wrapping ? " wrapping" : ""} : ${ty}`, ty, isInt ? this.loc(e.span) : "");
   }
 
+  /**
+   * An immutable binding held as an SSA value, moved to a slot because its address is
+   * taken: from here on it lives there, as legacy's alloca does, so a write through the
+   * address is seen by later reads. The slot owns nothing: the binding never did.
+   */
+  private spill(name: string, v: Val): string {
+    const ref = this.fresh();
+    this.vars.push(`  ${ref} = milo.var ${quote(name)} : !milo.ref<${v.ty}>`);
+    this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${v.ty}>`);
+    const m = [...this.scopes].reverse().find(s => s.has(name))!;
+    m.set(name, { kind: "var", ref, ty: v.ty });
+    return ref;
+  }
+
   private unop(e: HIRExpr & { kind: "UnaryOp" }): Val {
     if (e.op === "&") {
       // `x.addrOf()`: the address of a place.
@@ -3191,18 +3205,19 @@ class FnEmitter {
         const b = this.lookup(e.operand.name);
         if (b.kind === "vec") return this.def(`milo.addr ${b.ref} : !milo.vec<${b.elem}>`, PTR);
         if (b.kind === "var") return this.def(`milo.addr ${b.ref} : !milo.ref<${b.ty}>`, PTR);
-        // An immutable binding held as an SSA value: from here on it lives in a slot, as
-        // legacy's alloca does, so a write through the address is seen by later reads.
-        const ref = this.fresh();
-        this.vars.push(`  ${ref} = milo.var ${quote(e.operand.name)} : !milo.ref<${b.v.ty}>`);
-        this.emit(`milo.store ${b.v.ref}, ${ref} : !milo.ref<${b.v.ty}>`);
-        const m = [...this.scopes].reverse().find(s => s.has((e.operand as { name: string }).name))!;
-        m.set(e.operand.name, { kind: "var", ref, ty: b.v.ty });
+        const ref = this.spill(e.operand.name, b.v);
         return this.def(`milo.addr ${ref} : !milo.ref<${b.v.ty}>`, PTR);
       }
       // A place behind a pointer (`data[i].addrOf()`) is its address already.
       const pp = this.ptrPlace(e.operand);
       if (pp) return { ref: pp.ptr, ty: PTR };
+      // A field of an immutable binding held as an SSA value: the binding moves to a slot.
+      let root: HIRExpr = e.operand;
+      while (root.kind === "FieldAccess") root = root.object;
+      if (root !== e.operand && root.kind === "Ident") {
+        const rb = this.lookup(root.name);
+        if (rb.kind === "ssa") this.spill(root.name, rb.v);
+      }
       const p = this.fieldPlace(e.operand);
       if (!p) {
         let r: HIRExpr = e.operand, path = "";
