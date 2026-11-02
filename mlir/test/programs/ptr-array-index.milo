@@ -1,0 +1,17 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a fixed array's element
+// read through a raw pointer to it (`p[1][0]`, p: *[i64; 3]): bounds-checked against the
+// array's length with legacy's panic text and location; the last read is out of range.
+
+fn main() {
+    let rows: Vec<[i64; 3]> = [[1, 2, 3], [4, 5, 6]]
+    let p = rows.ptr()
+    unsafe {
+        print(p[0][1], " ", p[1][2])
+        var k = 0
+        while k < 3 {
+            print(p[1][k])
+            k = k + 1
+        }
+        print(p[1][k])
+    }
+}

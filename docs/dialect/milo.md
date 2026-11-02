@@ -317,7 +317,7 @@ _Panic unless 0 <= index < len_
 Syntax:
 
 ```
-operation ::= `milo.bounds_check` $index `,` $len attr-dict
+operation ::= `milo.bounds_check` $index `,` $len attr-dict `:` type($index) `,` type($len)
 ```
 
 Panics unless 0 <= index < len (one unsigned compare). Reading VecElems pins it after
@@ -332,8 +332,8 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::milo::VecElemsResource,
 
 | Operand | Description |
 | :-----: | ----------- |
-| `index` | 64-bit signless integer |
-| `len` | 64-bit signless integer |
+| `index` | 64-bit signless integer or 64-bit signed integer |
+| `len` | 64-bit signless integer or 64-bit signed integer |
 
 
 

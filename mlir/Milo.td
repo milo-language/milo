@@ -110,8 +110,10 @@ def Milo_BoundsCheckOp : Milo_Op<"bounds_check",
     every earlier element store: a task that recovers from the panic observes exactly
     the writes made before the failing index. The panic names the op's location.
   }];
-  let arguments = (ins I64:$index, I64:$len);
-  let assemblyFormat = "$index `,` $len attr-dict";
+  // Signless after lowering starts (the index passes make it from i64 values); signed when
+  // the emitter checks a source index itself (a fixed array behind a pointer).
+  let arguments = (ins AnyTypeOf<[I64, SI64]>:$index, AnyTypeOf<[I64, SI64]>:$len);
+  let assemblyFormat = "$index `,` $len attr-dict `:` type($index) `,` type($len)";
 }
 
 //===----------------------------------------------------------------------===//

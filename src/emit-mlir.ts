@@ -3122,6 +3122,20 @@ class FnEmitter {
       if (p.ty !== PTR) throw new MlirUnsupported("deref of a non-pointer");
       return { ptr: p.ref, ty: this.place$(e.type, "load through a pointer") };
     }
+    {
+      // A fixed array's element behind a pointer (`p[1][0]`, p: *[T; N]): bounds-checked
+      // against N as legacy's fixed-array index (the same __milo_bounds_fail), then stepped
+      // to as a pointer: the dialect has no milo.ref behind a pointer.
+      const ot = stripRefs(e.kind === "IndexAccess" ? e.object.type : { tag: "void" } as TypeKind);
+      const base = e.kind === "IndexAccess" && ot.tag === "array" && ot.size !== null ? this.ptrPlace(e.object) : null;
+      if (base && e.kind === "IndexAccess" && ot.tag === "array" && ot.size !== null) {
+        const i = this.index(e.index);
+        const n = this.def(`milo.const ${ot.size} : si64`, "si64").ref;
+        this.emit(`milo.bounds_check ${i}, ${n} : si64, si64 ${this.loc(e.span)}`);
+        const ty = this.place$(ot.element, "array element");
+        return { ptr: this.def(`milo.ptr.elem ${base.ptr}[${i}] : ${ty}`, PTR).ref, ty };
+      }
+    }
     if (e.kind === "IndexAccess" && stripRefs(e.object.type).tag === "ptr") {
       const p = this.expr(e.object);
       const i = this.expr(e.index);
