@@ -914,6 +914,20 @@ be rejected, since the differential cannot see frontend bugs both backends share
 batch 10. After legacy is gone the remaining oracles are -O0 vs -O2, passes on vs off, and the
 harvested fixtures.
 
+### Design rule: data-oriented, no caches
+
+Decided 2026-11-01. Everything written from here on (the emitter, passes, the self-hosted
+frontend, std) answers these: flat arrays instead of hash tables; indices instead of
+pointers, with hot data packed into the upper bits of the index; structure of arrays where
+access is per field; small lists with inline capacity on the stack; bitsets, never arrays of
+bools. No caches: a slow step is redesigned, not memoized, and existing caches go when their
+code is touched. Concretely: per-type decisions are packed flag bits on an interned type id,
+not sets keyed by type text (that keying already hid an ownership bug); the self-hosted
+frontend keeps tokens, AST and HIR as flat arrays of u32 ids (the Zig and Carbon toolchain
+layout); build time comes from removing the text round trip between emitter and milo-opt
+(in-process, or MLIR bytecode) and from compiling std once as a library, not from a
+per-function compile cache.
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
