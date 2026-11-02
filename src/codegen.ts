@@ -8608,6 +8608,13 @@ export class Codegen {
   }
   private emittedMlirWrites = new Set<string>();
 
+  /** MLIR path: offsetOf(S, f), the byte offset legacy lays the field at (0 when unknown, as legacy). */
+  public mlirFieldOffset(struct: string, field: string): number {
+    const layout = this.structLayouts.get(struct);
+    const idx = layout ? layout.fields.findIndex(f => f.name === field) : -1;
+    return layout && idx >= 0 ? this.structFieldOffset(layout.fields.map(f => f.type), idx) : 0;
+  }
+
   /** MLIR path: a struct's or enum's name as a program shows it (not its mangled symbol). */
   public mlirDisplayName(name: string): string { return display(this.displayNames, name); }
 

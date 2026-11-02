@@ -35,6 +35,7 @@ export interface MlirEmitCtx {
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
   mlirDisplayName(name: string): string;
+  mlirFieldOffset(struct: string, field: string): number;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -2856,11 +2857,10 @@ class FnEmitter {
         return this.valued(r, stmt);
       }
       case "OffsetOf": {
-        // A constant legacy computes from its struct layout (structFieldOffset): read back
-        // from a helper with no operands, which LLVM folds.
+        // A constant of the struct layout (legacy structFieldOffset).
         if (scalar(e.type, "offsetOf") !== "si64") throw new MlirUnsupported("offsetOf type");
-        const st = e.sizeType.tag === "struct" ? e.sizeType.name : "x";
-        return this.intrinsic(`offsetof.${st}.${e.fieldName}`, e, [], () => e, "si64", false);
+        const off = e.sizeType.tag === "struct" ? this.cx.mlirFieldOffset(e.sizeType.name, e.fieldName) : 0;
+        return this.def(`milo.const ${off} : si64`, "si64");
       }
       case "InterfaceCoerce": {
         // Heap<T> -> Heap<I>: legacy's fat { box, itable } pair in a helper, the box moved
@@ -2924,8 +2924,8 @@ class FnEmitter {
         return v;
       }
       case "VecGetOpt": {
-        // `v.get(i)` / first / last: legacy's genVecGetOpt (the bounds test, a deep clone of
-        // the element into Some) in a helper, v lent by its place. A temporary receiver goes
+        // `v.get(i)` / first / last (legacy genVecGetOpt): in bounds (unsigned, so a negative
+        // index is out), Some of a deep clone of the element, else None; v lent by its place. A temporary receiver goes
         // to a slot that dies with the statement; legacy drops it right after the read, which
         // only a user Drop could tell apart, so such a one stays legacy.
         const k = e.object.kind;
@@ -2935,6 +2935,24 @@ class FnEmitter {
         const i = this.expr(e.index);
         if (i.ty !== "si64") throw new MlirUnsupported("get index type");
         const ty = this.value(e.type, "get result");
+        const vs = this.cx.mlirEnumLayout(e.optionEnumName)?.variants;
+        const some = vs?.find(x => x.name === "Some"), none = vs?.find(x => x.name === "None");
+        const lent = this.lent(vt, "vec of get");
+        const elem = this.place$(e.elementType, "get element");
+        if (some && none && lent === `!milo.vec<${elem}>`) {
+          const u = (x: string) => this.def(`milo.cast ${x} : si64 to ui64`, "ui64").ref;
+          const inb = this.def(`milo.cmp lt, ${u(i.ref)}, ${u(this.def(`milo.len ${v} : ${lent}`, "si64").ref)} : ui64`, "i1");
+          const res = this.fresh();
+          this.region(`${res} = milo.if ${inb.ref} -> ${ty} {`, () => {
+            const er = this.def(`milo.index.ref ${v}[${i.ref}] : ${lent} -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`).ref;
+            const c = this.hasDrop(elem) ? this.cloneTo(e.elementType, er, `!milo.ref<${elem}>`, elem) : this.def(`milo.load ${er} : !milo.ref<${elem}>`, elem);
+            if (!c) throw new MlirUnsupported("get of an element with no clone glue");
+            return { ...this.def(`milo.enum.new ${some.tag} (${c.ref} : ${elem}) -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
+          });
+          this.region("} else {", () => ({ ...this.def(`milo.enum.new ${none.tag} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined }));
+          this.emit("}");
+          return { ref: res, ty, own: this.hasDrop(ty) ? "owned" : undefined };
+        }
         const r = this.intrinsic("vecget", e, [{ name: "v", type: vt, mode: "ref", ref: v },
           { name: "i", type: I64, mode: "val", ref: i.ref }],
         ([x, y]) => ({ ...e, object: x, index: y }), ty, false);
@@ -3038,14 +3056,37 @@ class FnEmitter {
           this.unwrapInto(e, dst, ty);
           return { ...this.def(`milo.load ${dst} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
         }
-        // Legacy's genUnwrap (its panic text and location) in a helper per enum and site,
-        // the operand moved into it.
+        // Some/Ok (tag 0) gives its payload; anything else is legacy genUnwrap's message on
+        // stderr, then the panic tail: an Err(string) its text, an Err(enum) the variant
+        // shown, any other Err or a None just which it was.
         const st = stripRefs(e.operand.type);
         const v = this.consume(this.expr(e.operand), "unwrapped value");
+        const ety = this.value(st, "unwrapped enum");
+        if (v.ty !== ety) throw new MlirUnsupported("unwrap operand type");
+        const layout = this.cx.mlirEnumLayout(e.enumName);
+        if (!layout) throw new MlirUnsupported("unwrap enum layout");
+        const ok = this.def(`milo.cmp eq, ${this.def(`milo.enum.tag ${v.ref} : ${ety}`, "si32").ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
+        this.region(`milo.if ${ok.ref} {`, () => false);
+        this.region("} else {", () => {
+          const at = `error at ${this.panicAt(e.span)}: `;
+          const err = e.enumName.startsWith("Result_") ? layout.variants.find(x => x.name === "Err") : undefined;
+          const pt = err?.fields.length === 1 ? stripRefs(err.fields[0]) : null;
+          const payload = () => {
+            const pty = this.value(pt!, "Err payload");
+            const slot = this.fresh();
+            this.vars.push(`  ${slot} = milo.var "unwrap.err" : !milo.ref<${pty}>`);
+            this.emit(`milo.store ${this.def(`milo.enum.payload ${v.ref}[${err!.tag}, 0] : ${ety} -> ${pty}`, pty).ref}, ${slot} : !milo.ref<${pty}>`);
+            return { place: slot, type: pt! };
+          };
+          if (pt?.tag === "string") this.panicText([at, payload(), "\n"]);
+          else if (pt?.tag === "enum" && this.cx.mlirEnumLayout(pt.name)) this.panicText([`${at}unwrap called on Err(`, payload(), ")\n"]);
+          else this.panicText([`${at}unwrap called on ${err ? "Err" : "None"}\n`]);
+          return true;
+        });
+        this.emit("}");
+        if (e.type.tag === "void") return { ref: "", ty: "" };
         const ty = this.value(e.type, "unwrapped payload");
-        if (v.ty !== this.value(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
-        const r = this.intrinsic(`unwrap`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }], ([x]) => ({ ...e, operand: { ...x, isMove: true } as HIRExpr }), ty);
-        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+        return { ...this.def(`milo.enum.payload ${v.ref}[0, 0] : ${ety} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "OptionOp": {
         // isSome/isNone (isOk/isErr): a test of the tag, Some and Ok being tag 0; unwrapOr
@@ -4800,14 +4841,18 @@ class FnEmitter {
    * Builds the message (static text and string parts) in a scratch string, then
    * milo.panic.text writes it to stderr and aborts. Ends the block: the call never returns.
    */
-  private panicText(parts: (string | (HIRExpr & { kind: "Call" })["args"][number])[]): void {
+  private panicText(parts: (string | { place: string; type: TypeKind } | (HIRExpr & { kind: "Call" })["args"][number])[]): void {
     const slot = this.fresh();
     this.vars.push(`  ${slot} = milo.var "panic.msg" : !milo.ref<${STR}>`);
     this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
     this.stringHelpers();
     for (const p of parts) {
       if (typeof p === "string") this.emit(`milo.string.append ${slot}, ${this.def(`milo.string.lit ${quote(p)}`, STR).ref} : !milo.ref<${STR}>`);
-      else this.appendText(slot, [p], null);
+      else if ("place" in p) {
+        // A value already in a slot: a string's bytes, anything else as it displays.
+        if (p.type.tag === "string") this.emit(`milo.string.append ${slot}, ${this.def(`milo.load ${p.place} : !milo.ref<${STR}>`, STR).ref} : !milo.ref<${STR}>`);
+        else this.rtCall(this.glue.display(p.type), [{ ref: p.place, ty: this.glue.placeOf(p.type) }, { ref: slot, ty: `!milo.ref<${STR}>` }], null);
+      } else this.appendText(slot, [p], null);
     }
     this.rtCall(this.cx.mlirPanicText(), [{ ref: slot, ty: `!milo.ref<${STR}>` }], null);
     this.emit("milo.unreachable");
