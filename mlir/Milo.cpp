@@ -455,7 +455,14 @@ LogicalResult PtrLendOp::verify() {
 
 LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
-  if (!v || v.getElementType() != getType().getElementType())
+  // A Vec of owning closures lent as one of plain closures: the same { fn, env } bits, as
+  // a generic std body instantiated with the plain T (push) reads them.
+  auto plainOf = [](Type t) -> Type {
+    auto f = dyn_cast<FnType>(t);
+    return f && f.getOwning() ? FnType::get(t.getContext(), f.getSignature(), false) : t;
+  };
+  if (!v || (v.getElementType() != getType().getElementType() &&
+             plainOf(v.getElementType()) != getType().getElementType()))
     return emitOpError("needs the slot of a Vec of ") << getType().getElementType();
   return success();
 }

@@ -3936,6 +3936,10 @@ class FnEmitter {
 
   /** A place of type `placeTy` can be lent as `refTy`: the same, or a Vec slot as its header. */
   private fits(placeTy: string, refTy: string): boolean {
+    // A Vec of owning closures fits a Vec of plain ones (milo.vec.place): monomorphization
+    // gives a generic body the plain T, and legacy passes the same header.
+    const owningElems = /^!milo\.ref<!milo\.vecval<!milo\.fn<owning (.*)>>>$/.exec(placeTy);
+    if (owningElems && refTy === `!milo.vec<!milo.fn<${owningElems[1]}>>`) return true;
     return placeTy === refTy || placeTy === `!milo.ref<!milo.vecval<${/^!milo\.vec<(.*)>$/.exec(refTy)?.[1]}>>`;
   }
 

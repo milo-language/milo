@@ -2540,7 +2540,9 @@ Syntax:
 operation ::= `milo.vec.place` $ref attr-dict `:` type($ref) `->` type($vec)
 ```
 
-The header of the Vec in a slot, for indexing and len: the same address.
+The header of the Vec in a slot, for indexing and len: the same address. A Vec of
+owning closures may be lent as one of plain closures (the same bits), as a generic std
+body instantiated with the plain T sees it.
 
 Traits: `AlwaysSpeculatableImplTrait`
 

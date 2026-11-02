@@ -843,7 +843,9 @@ def Milo_DropOp : Milo_Op<"drop"> {
 def Milo_VecPlaceOp : Milo_Op<"vec.place", [Pure]> {
   let summary = "the header address of the Vec in a slot";
   let description = [{
-    The header of the Vec in a slot, for indexing and len: the same address.
+    The header of the Vec in a slot, for indexing and len: the same address. A Vec of
+    owning closures may be lent as one of plain closures (the same bits), as a generic std
+    body instantiated with the plain T sees it.
   }];
   let arguments = (ins Milo_RefType:$ref);
   let results = (outs Milo_VecType:$vec);
