@@ -3174,7 +3174,11 @@ class FnEmitter {
       const pp = this.ptrPlace(e.operand);
       if (pp) return { ref: pp.ptr, ty: PTR };
       const p = this.fieldPlace(e.operand);
-      if (!p) throw new MlirUnsupported("address of a value");
+      if (!p) {
+        let r: HIRExpr = e.operand, path = "";
+        while (r.kind === "FieldAccess") { path += ".f"; r = r.object; }
+        throw new MlirUnsupported(`address of a value (${r.kind === "Ident" ? this.lookup(r.name).kind : r.kind}${path})`);
+      }
       return this.def(`milo.addr ${p.ref} : !milo.ref<${p.ty}>`, PTR);
     }
     const ty = scalar(e.type, "unop");
