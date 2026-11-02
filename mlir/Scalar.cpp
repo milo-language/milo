@@ -1297,6 +1297,15 @@ struct SaturatingLowering : ConvertOpToLLVMPattern<SaturatingOp> {
   }
 };
 
+struct FnAddrLowering : ConvertOpToLLVMPattern<FnAddrOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(FnAddrOp op, OpAdaptor, ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<LLVM::AddressOfOp>(op, LLVM::LLVMPointerType::get(rw.getContext()), op.getFn());
+    return success();
+  }
+};
+
 struct BitsLowering : ConvertOpToLLVMPattern<BitsOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1810,7 +1819,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                CastLowering, VarLowering, LoadLowering, StoreLowering, ReturnLowering,
                UnreachableLowering, CheckUnaliasedLowering, PtrLoadLowering,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
-               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, OverflowsLowering, SaturatingLowering,
+               ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering, ContractCheckLowering, PanicIfLowering, BitsLowering, FnAddrLowering, OverflowsLowering, SaturatingLowering,
                StringLitLowering, EnumNewLowering, EnumTagLowering,
                PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,

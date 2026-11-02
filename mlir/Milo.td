@@ -942,6 +942,17 @@ def Milo_SaturatingOp : Milo_Op<"saturating", [Pure, SameOperandsAndResultType]>
   let hasVerifier = 1;
 }
 
+def Milo_FnAddrOp : Milo_Op<"fn.addr", [Pure]> {
+  let summary = "the code address of a named function";
+  let description = [{
+    `f as *u8` for a named function: the symbol's own address (not a closure trampoline),
+    as legacy codegen casts it. A C function pointer handed to C wants exactly this.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$fn);
+  let results = (outs Milo_PtrType:$result);
+  let assemblyFormat = "$fn attr-dict";
+}
+
 def Milo_BitsOp : Milo_Op<"bits", [Pure]> {
   let summary = "a bit intrinsic of an integer";
   let description = [{

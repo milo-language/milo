@@ -2085,23 +2085,24 @@ class FnEmitter {
   }
 
   /**
-   * `f as *u8`, in a legacy helper doing exactly that (genCast): a named function's own
-   * symbol, not its trampoline, and any other fn value's code pointer, its first field.
+   * `f as *u8` (legacy genCast): a named function's own symbol, not a trampoline, and any
+   * other fn value's code pointer, its first word.
    */
   private fnAddress(e: HIRExpr & { kind: "Cast" }): Val {
     const op = e.operand;
     const named = op.kind === "Ident" && !this.scopes.some(m => m.has(op.name)) && this.cx.fnSigs.has(op.name);
     if (named) {
-      const name = this.cx.mlirHelper(`milo.fnaddr.${op.name}`, () => ({
-        params: [], retType: e.type, body: [{ kind: "Return", retType: e.type, value: e }],
-      }));
-      this.callees.set(name, `() -> ${PTR}`);
-      return this.def(`func.call @${quote(name)}() : () -> ${PTR}`, PTR);
+      // Every Milo function is defined in the module; an extern is a C symbol MLIR does not
+      // declare, so its address stays out (no Milo program takes one yet).
+      if (!this.fns.get(op.name) || this.fns.get(op.name)!.isExtern) throw new MlirUnsupported("address of an extern fn");
+      return this.def(`milo.fn.addr @${quote(op.name)}`, PTR);
     }
     const v = this.expr(op);
     if (v.own === "owned") throw new MlirUnsupported("cast of an owning fn temporary");
-    return this.intrinsic("fnaddr", e, [{ name: "f", type: op.type, mode: "val", ref: v.ref }],
-      ([f]) => ({ ...e, operand: f }), PTR, false);
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "fn.addr" : !milo.ref<${v.ty}>`);
+    this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
+    return this.def(`milo.ptr.load ${this.def(`milo.addr ${slot} : !milo.ref<${v.ty}>`, PTR).ref} : ${PTR}`, PTR);
   }
 
   /**

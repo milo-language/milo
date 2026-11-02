@@ -1105,6 +1105,40 @@ elaboration it is a store. A 128+ byte aggregate is filled this way, never loade
 
 
 
+### `milo.fn.addr` (::milo::FnAddrOp)
+
+_The code address of a named function_
+
+Syntax:
+
+```
+operation ::= `milo.fn.addr` $fn attr-dict
+```
+
+`f as *u8` for a named function: the symbol's own address (not a closure trampoline),
+as legacy codegen casts it. A C function pointer handed to C wants exactly this.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>fn</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
+</table>
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | a raw pointer, untyped |
+
+
+
 ### `milo.fn.cast` (::milo::FnCastOp)
 
 _Retype a fn value between owning and plain_
