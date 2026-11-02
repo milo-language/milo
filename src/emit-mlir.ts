@@ -2653,7 +2653,8 @@ class FnEmitter {
         if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
         const ref = this.fresh();
         const mode = this.forkMode(e, ty);
-        this.forks.push(mode);
+        const fork = { mode, sawView: false };
+        this.forks.push(fork);
         try {
           this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
           // lower.ts folds a compile-time condition to `true` with the dead arm left out
@@ -2662,7 +2663,7 @@ class FnEmitter {
           this.region("} else {", () => { if (!folded) return this.tail(e.elseBody, ty); this.emit("milo.unreachable"); return true; });
         } finally { this.forks.pop(); }
         this.emit("}");
-        return { ref, ty, own: mode === "view" ? "view" : this.hasDrop(ty) ? "owned" : undefined };
+        return { ref, ty, own: mode === "view" ? (fork.sawView ? "view" : "static") : this.hasDrop(ty) ? "owned" : undefined };
       }
       case "Closure": return this.closure(e);
       case "ClosureCall": return this.valued(this.callScope(() => this.closureCall(e, stmt)), stmt);
@@ -2670,10 +2671,11 @@ class FnEmitter {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
         const ty = this.value(e.type, "match-expression");
         const mode = this.forkMode(e, ty);
-        this.forks.push(mode);
+        const fork = { mode, sawView: false };
+        this.forks.push(fork);
         try {
           const v = this.match(e, ty).v;
-          return mode === "view" ? { ...v, own: "view" } : v;
+          return mode === "view" ? { ...v, own: fork.sawView ? "view" : "static" } : v;
         } finally { this.forks.pop(); }
       }
       case "Propagate": return this.propagate(e);
@@ -3170,7 +3172,8 @@ class FnEmitter {
    * an owned value (the checker clones a place arm there), else a view (only views and
    * literals, or a view of a user-Drop type, which no clone may copy). Null: owns nothing.
    */
-  private forks: ("own" | "view" | null)[] = [];
+  // `sawView`: some arm of a view fork yielded a borrow (not only literals, which are static).
+  private forks: { mode: "own" | "view" | null; sawView: boolean }[] = [];
   private forkMode(e: HIRExpr & { kind: "IfExpr" | "MatchExpr" }, ty: string): "own" | "view" | null {
     if (!this.hasDrop(ty)) return null;
     return this.cx.mlirBlockValueOwnsResult(e) ? "own" : "view";
@@ -3189,10 +3192,11 @@ class FnEmitter {
     let v = armLocal?.kind === "var" && armLocal.owned
       ? { ...this.def(`milo.move ${armLocal.ref} : !milo.ref<${armLocal.ty}>`, armLocal.ty), own: "owned" as const }
       : this.expr(last.expr);
-    const mode = this.forks[this.forks.length - 1];
-    if (mode === "view") {
+    const fork = this.forks[this.forks.length - 1];
+    if (fork?.mode === "view") {
       // A view fork's arms only lend (a place, a literal): nothing here is owned.
       if (v.own === "owned" && !this.bitCopies.has(v.ref)) throw new MlirUnsupported("view fork arm that owns its value");
+      if (v.own === "view") fork.sawView = true;
     } else v = this.consume(v, "block value");
     if (v.ty !== ty) throw new MlirUnsupported("block value of another type");
     return v;
@@ -3696,7 +3700,7 @@ class FnEmitter {
     };
     if (into) return this.match({ subject: e.operand, arms: [okArm, errArm] }, null, b => this.tailInto(b, into.dst, into.ty)).v;
     const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
-    this.forks.push(null);
+    this.forks.push({ mode: null, sawView: false });
     try { return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v; } finally { this.forks.pop(); }
   }
 
@@ -3714,7 +3718,7 @@ class FnEmitter {
       { pattern: { kind: "WildcardPattern" as const }, body: [{ kind: "ExprStmt" as const, expr: e.default }] },
     ];
     if (into) return this.match({ subject: e.operand, arms }, null, b => this.tailInto(b, into.dst, into.ty)).v;
-    this.forks.push(null);
+    this.forks.push({ mode: null, sawView: false });
     try { return this.match({ subject: e.operand, arms }, this.value(e.type, "`??` result")).v; } finally { this.forks.pop(); }
   }
 
