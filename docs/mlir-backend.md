@@ -1098,6 +1098,15 @@ legacy genUnwrap zeroes an Ident operand through localAddr, which for a by-ref p
 slot holding its address (the first big-unwrap helper smashed its -O0 frame; it now takes a
 raw pointer); an empty `match e {}` printed an unbalanced region.
 
+- *Later the same night*: HashMap for-in (entries bound as views, slots addressed by
+  legacy's byte layout), owning array repeats, box-to-interface coercion, offsetOf, closure-taking
+  Option/Result ops (non-owning receivers), temporaries lent to builtin queries, saturating and
+  checked arithmetic. Census 484170 of 484487 (99.93%, 317 on legacy) at db7a7095; full corpus
+  `--owned` at e0e8aa8b 1172 of 1172 same (3 nondeterministic), 284 fixture functions on legacy.
+  The census's 4 emit failures were the game examples hitting its 5-minute timeout under load.
+  What is left is mostly pass work: niche-packed enums (~55), per-field drop flags for moves out
+  of a struct whose field type has a user Drop (30, legacy's field-move flags), jumps out of an
+  expression with an owned operand pending (14).
 - *Where it stands*: census 484098 of 484487 (99.92%, 389 on legacy) one commit before the
   `??` and C fn pointer fixes; full corpus `--owned` at 0c4d1317 1173 of 1173 same (1
   nondeterministic), 336 fixture functions on legacy; milojs runtime 5763 of 5774, its full
