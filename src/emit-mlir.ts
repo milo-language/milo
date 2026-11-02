@@ -3124,27 +3124,12 @@ class FnEmitter {
         const v = this.consume(this.expr(e.operand), "unwrapped value");
         const ety = this.value(st, "unwrapped enum");
         if (v.ty !== ety) throw new MlirUnsupported("unwrap operand type");
-        const layout = this.cx.mlirEnumLayout(e.enumName);
-        if (!layout) throw new MlirUnsupported("unwrap enum layout");
-        const ok = this.def(`milo.cmp eq, ${this.def(`milo.enum.tag ${v.ref} : ${ety}`, "si32").ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
-        this.region(`milo.if ${ok.ref} {`, () => false);
-        this.region("} else {", () => {
-          const at = `error at ${this.panicAt(e.span)}: `;
-          const err = e.enumName.startsWith("Result_") ? layout.variants.find(x => x.name === "Err") : undefined;
-          const pt = err?.fields.length === 1 ? stripRefs(err.fields[0]) : null;
-          const payload = () => {
-            const pty = this.value(pt!, "Err payload");
-            const slot = this.fresh();
-            this.vars.push(`  ${slot} = milo.var "unwrap.err" : !milo.ref<${pty}>`);
-            this.emit(`milo.store ${this.def(`milo.enum.payload ${v.ref}[${err!.tag}, 0] : ${ety} -> ${pty}`, pty).ref}, ${slot} : !milo.ref<${pty}>`);
-            return { place: slot, type: pt! };
-          };
-          if (pt?.tag === "string") this.panicText([at, payload(), "\n"]);
-          else if (pt?.tag === "enum" && this.cx.mlirEnumLayout(pt.name)) this.panicText([`${at}unwrap called on Err(`, payload(), ")\n"]);
-          else this.panicText([`${at}unwrap called on ${err ? "Err" : "None"}\n`]);
-          return true;
+        this.unwrapCheck(e, this.def(`milo.enum.tag ${v.ref} : ${ety}`, "si32"), (tag, pty) => {
+          const slot = this.fresh();
+          this.vars.push(`  ${slot} = milo.var "unwrap.err" : !milo.ref<${pty}>`);
+          this.emit(`milo.store ${this.def(`milo.enum.payload ${v.ref}[${tag}, 0] : ${ety} -> ${pty}`, pty).ref}, ${slot} : !milo.ref<${pty}>`);
+          return slot;
         });
-        this.emit("}");
         if (e.type.tag === "void") return { ref: "", ty: "" };
         const ty = this.value(e.type, "unwrapped payload");
         return { ...this.def(`milo.enum.payload ${v.ref}[0, 0] : ${ety} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
@@ -4939,20 +4924,37 @@ class FnEmitter {
       src = this.bigSlot("unwrap.of", o, true);
     }
     if (src.ty !== this.place$(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
-    const l = this.site(e.span);
-    const name = `milo.intr.unwrapinto.${typeKey(st)}.${l.line}.${l.col}.${fnv1a(l.file)}`;
-    const t = stripRefs(e.type);
-    this.cx.mlirHelper(name, () => ({
-      params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "o", type: { tag: "ptr", inner: st }, isRef: false, isRefMut: false }],
-      retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
-      body: [{ kind: "Assign", target: { kind: "Ident", name: "d", type: t, isMove: false }, isInit: true,
-        value: { ...e, operand: { kind: "PtrDeref", type: st, operand: { kind: "Ident", name: "o", type: { tag: "ptr", inner: st }, isMove: false } } } }],
-    }));
-    const fnTy = `(!milo.ref<${ty}>, ${PTR}) -> ()`;
-    this.callees.set(name, fnTy);
-    const at = this.def(`milo.addr ${src.ref} : !milo.ref<${src.ty}>`, PTR);
-    this.emit(`func.call @${quote(name)}(${dst}, ${at.ref}) : ${fnTy}`);
+    const sr = `!milo.ref<${src.ty}>`;
+    this.unwrapCheck(e, this.def(`milo.enum.tag_at ${src.ref} : ${sr}`, "si32"),
+      (tag, pty) => this.def(`milo.enum.field_ref ${src.ref}[${tag}, 0] : ${sr} -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref);
+    // The Some/Ok payload's bits into dst, which takes it over; the source is then empty.
+    const fr = this.def(`milo.enum.field_ref ${src.ref}[0, 0] : ${sr} -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+    if (/^!milo\.(struct|enum|array)</.test(ty)) this.emit(`milo.copy ${fr}, ${dst} : !milo.ref<${ty}>, !milo.ref<${ty}> of ${ty}`);
+    else this.emit(`milo.store ${this.def(`milo.load ${fr} : !milo.ref<${ty}>`, ty).ref}, ${dst} init : !milo.ref<${ty}>`);
     if (!plain) this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
+  }
+
+  /**
+   * Unless `tag` is 0 (Some/Ok): legacy genUnwrap's message on stderr, then the panic tail.
+   * An Err(string) shows its text, an Err(enum) the variant, any other Err or a None which
+   * it was. `errPlace(tag, ty)` gives the place of the Err payload.
+   */
+  private unwrapCheck(e: HIRExpr & { kind: "Unwrap" }, tag: Val, errPlace: (tag: number, ty: string) => string): void {
+    const layout = this.cx.mlirEnumLayout(e.enumName);
+    if (!layout) throw new MlirUnsupported("unwrap enum layout");
+    const ok = this.def(`milo.cmp eq, ${tag.ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
+    this.region(`milo.if ${ok.ref} {`, () => false);
+    this.region("} else {", () => {
+      const at = `error at ${this.panicAt(e.span)}: `;
+      const err = e.enumName.startsWith("Result_") ? layout.variants.find(x => x.name === "Err") : undefined;
+      const pt = err?.fields.length === 1 ? stripRefs(err.fields[0]) : null;
+      const payload = () => ({ place: errPlace(err!.tag, this.place$(pt!, "Err payload")), type: pt! });
+      if (pt?.tag === "string") this.panicText([at, payload(), "\n"]);
+      else if (pt?.tag === "enum" && this.cx.mlirEnumLayout(pt.name)) this.panicText([`${at}unwrap called on Err(`, payload(), ")\n"]);
+      else this.panicText([`${at}unwrap called on ${err ? "Err" : "None"}\n`]);
+      return true;
+    });
+    this.emit("}");
   }
 
   /** What a refused field move reads from, for the legacy reason: the root and its binding. */
