@@ -3,7 +3,7 @@ system: mlir-backend-plan
 purpose: plan for replacing the LLVM-text codegen with HIR -> milo MLIR dialect -> LLVM, one function at a time, now the default build (MILO_LEGACY=1 opts out)
 key-files: mlir/Milo.td, mlir/Scalar.cpp, mlir/Drops.cpp, src/emit-mlir.ts, src/mlir-backend.ts, scripts/mlir-same.ts, docs/collections-in-std.md
 update-when: a milestone lands, the coexistence scheme or the gates change
-last-verified: 2026-11-01 (seventh batch: consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
+last-verified: 2026-11-01 (ninth batch: legacy leaks fixed, owning arrays, i32 main; earlier: seventh batch, consuming for-in; earlier: sixth batch, Tahoe Roads reasons by count; earlier: globals, closures, matches, big aggregates)
 -->
 
 # MLIR backend
@@ -754,6 +754,75 @@ which beat Tahoe Roads' (each std function counts once per fixture that pulls it
   not a param, a local or a field (4), sret calls as values (3), `&T` lets (3), fn values
   given to externs (3). A `&string` slice lent to a `&string` param goes the C-string
   path and stays legacy.
+
+**Ninth batch (2026-11-01): two legacy leaks fixed, arrays of owning elements, an i32
+main.** Tahoe Roads api at the start: 5280 of 5351 (98.7%); compile-only census (emit-ir
+with MILO_MLIR_LOG over every fixture and every example with a main, std counted once per
+program that pulls it in) 389464 of 391725 (99.42%). Leaks in legacy are fixed rather
+than mirrored now (fewer leaks is strictly safer for deployed apps), and MLIR then takes
+the function with the same drops.
+
+- *Legacy enum drop glue to a fixpoint*: droppableEnums was one pass in declaration
+  order, so an enum holding one declared after it (`enum W { Wrap(Option<string>) }`,
+  Option being std's) never got glue and every `W` leaked its payload. The pass repeats
+  until nothing changes, clearing the struct drop cache each round (it memoizes answers
+  that read droppableEnums). The "a type legacy's drop glue does not drop" reason is gone:
+  the structural answer is the only one. Fixture `enumHoldsLaterEnumDrop`, with
+  `borrowedEnumPayloadViews` still same. Planted bug: the single pass back (`--fast`
+  legacy build of the fixture: 5 live blocks at exit instead of 0).
+- *`*h = v` drops what it overwrites*: legacy's Assign dropped the old value only through
+  an Ident, a field or an element, so every store into a box of an owning type leaked;
+  a HeapDeref target is an lvalue there now, and MLIR's milo.store over the box's place
+  drops it through milo-scope-drops like any field (the refusal "store over an owning
+  boxed value" is gone). Program `heap-store` (strings, a struct holding a Vec, an array
+  of structs in a box). Legacy before the fix: 19 live blocks at exit, 0 after, MLIR 0.
+  Planted bug: the MLIR store over a box marked `init` (`heap-store` `--owned`: live
+  blocks differ). 36 Heap fixtures same under `--owned`.
+- *Arrays of owning elements* (`[string; N]`, `[Row; 2]`, `Vec<[string; 2]>`, nested
+  arrays): placeType spells them (the needsDropCg refusal is gone), ownsStructurally and
+  Milo.cpp needsDrop see through an array to its element, and legacy's drop glue
+  (`milo.drop.arr<n>.<elem>`) drops one. They are place-only, so the existing big-value
+  paths carry them: lets, params, results, fields, enum payloads, indexing, borrowed and
+  consumed for-in. New here, general rather than per type: a lazy global's first fill of
+  a place-only type is built in place (`into`), as legacy's genStoreInto; a store over a
+  place-only value that holds one (an owned local, a field, an element) evaluates the
+  value into a slot, drops the old one (`milo.drop`, elaborated on an owned slot), copies,
+  and marks an owned slot filled (overwriteBig, legacy's big Assign); `p = p` is skipped
+  as legacy does; array literal elements may be place-only themselves and count as
+  pending while the literal is built (a `?` in a later element keeps the function
+  legacy). Stays legacy: an array repeat of an owning value (legacy deep clones N-1
+  copies), and a consumed for-in over elements with a user Drop (legacy drops each element
+  at the end of its iteration, MLIR after the loop: `forInIfIterable` printed the drops in
+  another order before this refusal). Moving a binding out of an array for-in is a
+  borrowed value's consume and stays legacy. Programs `owning-arrays`,
+  `owning-array-stores`; FileCheck `owning_array` in `drops.mlir`. Planted bugs:
+  overwriteBig without its drop (`owning-array-stores` `--owned`: legacy 0 live blocks,
+  MLIR 12); ownsStructurally reading an array as owning nothing (both programs `--owned`:
+  13 and 25 live blocks). 62 fixtures with owning arrays same under `--owned`. Tahoe
+  Roads api: 5301 (99.1%).
+- *`fn main(): i32`* (740 fixtures): its return value is the exit code, as legacy's.
+  Program `main-i32` (an early `return 3` with an owned string in scope). Planted bug:
+  every return of main giving 0 (`main-i32` exit 3 -> 0). 41 i32-main fixtures and 15
+  green-task ones (channels, spawn) same under `--owned`. Most of the 742 "main" instances
+  are taken; 190 now stop at mlir-backend's main restriction instead ("fn value in main"
+  97, "raw pointer in main" 60, "global in main" 33).
+- *Tried and backed out*: temporaries with a user Drop (the `tempSlot` refusal lifted)
+  turned `cacheTtl`, `dropElementBorrowForms` and `matchIndexSubjectDrop` red on stdout
+  (drop order: legacy drops an argument temporary after its call, a statement's at the
+  statement's end, MLIR at the end of the statement scope). That is a per-position timing
+  decision, left for the Place/Operand rework of emit-mlir.ts (batch 10).
+- *Where it stands*: Tahoe Roads api 5302 of 5351 (99.1%); census 389998 of 391725
+  (99.56%); `--programs --owned` 102 of 102 same. Next reasons by census count: param of
+  type fn 97 (std/http serveExchange), fn value in main 97, `&T` lets 85
+  (Mime.isTextual, url), call arg of type fn 62, nested patterns 61 (std/http wsPump,
+  streamPump), heap-env closures 61, raw pointer in main 60, store through a pointer of
+  another type 58 (a Vec of fn values' push), a Vec that is not a param, a local or a field
+  58, extern argument of type fn 57, by-ref arg / param of a slice 55 + 51
+  (std/unicode caseFind), if-expression without a value 50, enum patterns whose bindings
+  escape 47, callee link name 44 (string.substr), temporaries with a user Drop 38. Most of
+  these are one type in one position, which the batch 10 rework covers in one place
+  rather than one case each; nested patterns (a decision tree, not a switch) and
+  interfaces (boxing into one, `&I` receivers) are features of their own.
 
 Collections-in-std (`docs/collections-in-std.md`) runs alongside: every method body that
 moves into std becomes ordinary Milo, which this backend handles without special cases.
