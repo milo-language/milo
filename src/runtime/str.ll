@@ -625,3 +625,117 @@ slow:
   %grown = call ptr @milo.str.reserve(ptr %s, i64 %extra)
   ret ptr %grown
 }
+
+; @@ milo.string.push_i64
+; Appends v's decimal digits to s in place (unique first). Returns s's buffer, or null
+; when growing fails, so the caller's check reports it at its site.
+define internal ptr @milo.string.push_i64(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %v) {
+entry:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 20)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fmt, label %fail
+fmt:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %n = call i64 @milo.fmt.i64(ptr %dst, i64 %v)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_u64
+; milo.string.push_i64 for an unsigned value.
+define internal ptr @milo.string.push_u64(ptr noalias nonnull dereferenceable(24) align 8 %s, i64 %v) {
+entry:
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 20)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fmt, label %fail
+fmt:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %n = call i64 @milo.fmt.u64(ptr %dst, i64 %v)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_f64
+; Appends v as milo.fmt.f64 writes it (the shortest round-tripping digits).
+define internal ptr @milo.string.push_f64(ptr noalias nonnull dereferenceable(24) align 8 %s, double %v) {
+entry:
+  %tmp = alloca [32 x i8], align 1
+  %n = call i64 @milo.fmt.f64(double %v, ptr %tmp)
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %dst, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_f32
+; milo.string.push_f64 for an f32, through milo.fmt.f32 (the shortest f32 digits).
+define internal ptr @milo.string.push_f32(ptr noalias nonnull dereferenceable(24) align 8 %s, float %v) {
+entry:
+  %tmp = alloca [32 x i8], align 1
+  %n = call i64 @milo.fmt.f32(float %v, ptr %tmp)
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %dst, ptr %tmp, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}
+
+; @@ milo.string.push_bool
+; Appends "true" or "false" to s in place; null when growing fails.
+@milo.string.true = private unnamed_addr constant [4 x i8] c"true"
+@milo.string.false = private unnamed_addr constant [5 x i8] c"false"
+define internal ptr @milo.string.push_bool(ptr noalias nonnull dereferenceable(24) align 8 %s, i1 %v) {
+entry:
+  %src = select i1 %v, ptr @milo.string.true, ptr @milo.string.false
+  %n = select i1 %v, i64 4, i64 5
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %n)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  call ptr @memcpy(ptr %dst, ptr %src, i64 %n)
+  %nlen = add i64 %len, %n
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}

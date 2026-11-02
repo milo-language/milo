@@ -8619,6 +8619,18 @@ export class Codegen {
   }
   private emittedMlirStringOps = false;
 
+  /** MLIR path: milo.string.push_<kind>, appending one scalar's text in place. */
+  public mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool"): void {
+    if (this.emittedMlirPush.has(kind)) return;
+    this.emittedMlirPush.add(kind);
+    this.mlirStringOps();
+    if (kind === "i64" || kind === "u64") this.intFmtFns();
+    if (kind === "f64" || kind === "f32") this.ensureFloatFormatHelper(kind === "f32" ? 32 : 64);
+    const key = { i64: "milo.string.push_i64", u64: "milo.string.push_u64", f64: "milo.string.push_f64", f32: "milo.string.push_f32", bool: "milo.string.push_bool" }[kind];
+    this.helperFnBodies.push(runtimeFn(key));
+  }
+  private emittedMlirPush = new Set<string>();
+
   /** MLIR path: the map runtime sections (src/runtime/map.ll) and their hash seed. */
   public mlirMapOps(): void {
     if (this.emittedMlirMapOps) return;

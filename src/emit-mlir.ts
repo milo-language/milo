@@ -27,6 +27,7 @@ export interface MlirEmitCtx {
   mlirStrViewStep(): string;
   mlirStringOps(): void;
   mlirMapOps(): void;
+  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool"): void;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -1328,6 +1329,26 @@ class FnEmitter {
     return p;
   }
 
+  /**
+   * Appends scalar `v`'s text to the string at `dst` (legacy emitAppendFormatParts): an
+   * int as decimal (narrow ones widened by their signedness), a float as its shortest
+   * round-tripping digits, a bool as true/false.
+   */
+  private pushScalar(dst: string, v: Val, span: Span | undefined): void {
+    const m = /^([su])i(\d+)$/.exec(v.ty);
+    let kind: "i64" | "u64" | "f64" | "f32" | "bool";
+    let arg = v;
+    if (m) {
+      kind = m[1] === "s" ? "i64" : "u64";
+      const w = `${m[1]}i64`;
+      if (v.ty !== w) arg = this.def(`milo.cast ${v.ref} : ${v.ty} to ${w}`, w);
+    } else if (v.ty === "f64" || v.ty === "f32" || v.ty === "i1") {
+      kind = v.ty === "i1" ? "bool" : v.ty;
+    } else throw new MlirUnsupported(`text of a ${v.ty}`);
+    this.cx.mlirPushScalar(kind);
+    this.allocCheck(this.rtCall(`milo.string.push_${kind}`, [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
+  }
+
   private constTrue(): string {
     return this.def("milo.const true", "i1").ref;
   }
@@ -2576,9 +2597,12 @@ class FnEmitter {
       case "NumberToString": {
         const v = this.expr(e.value);
         if (!isScalarTy(v.ty) || v.ty !== valueType(this.cx, e.valueType)) throw new MlirUnsupported("toString of a non-scalar");
-        const r = this.intrinsic("tostring", e, [{ name: "v", type: e.valueType, mode: "val", ref: v.ref }],
-          ([x]) => ({ kind: "NumberToString", type: e.type, span: e.span, value: x, valueType: e.valueType }), STR);
-        return { ...r, own: "owned" };
+        // A fresh empty string, the text appended to it, then taken out of the slot.
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var "tostring" : !milo.ref<${STR}>`);
+        this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} : !milo.ref<${STR}>`);
+        this.pushScalar(slot, v, e.span);
+        return { ...this.def(`milo.load ${slot} : !milo.ref<${STR}>`, STR), own: "owned" };
       }
       case "SizeOf":
         if (scalar(e.type, "sizeOf") !== "si64") throw new MlirUnsupported("sizeOf type");
@@ -3014,10 +3038,7 @@ class FnEmitter {
         // `s.pushInt(n)`: legacy's genStringPushInt (grow, then the digits in place) in a
         // helper, the string lent `&mut`, the int by value.
         const dst = this.place(e.str, `!milo.ref<${STR}>`, true).ref;
-        const v = this.expr(e.value);
-        if (!isScalarTy(v.ty)) throw new MlirUnsupported("pushInt of a non-scalar");
-        this.intrinsic("pushint", e, [{ name: "s", type: { tag: "string" }, mode: "mut", ref: dst }, { name: "v", type: e.value.type, mode: "val", ref: v.ref }],
-          ([x, y]) => ({ ...e, str: x, value: y }), null, false);
+        this.pushScalar(dst, this.expr(e.value), e.span);
         return { ref: "", ty: "" };
       }
       case "ArrayLit": {
