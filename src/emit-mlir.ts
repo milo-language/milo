@@ -28,6 +28,7 @@ export interface MlirEmitCtx {
   mlirStrViewStep(): string;
   mlirStringOps(): void;
   mlirMapOps(): void;
+  mlirCloneOps(): void;
   mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void;
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
@@ -1126,6 +1127,12 @@ class FnEmitter {
         const tmp = this.fresh();
         this.vars.push(`  ${tmp} = milo.var "elem.copy" : !milo.ref<${ty}>`);
         const t = stripRefs(e.type);
+        let glue: string | null = null;
+        try { glue = this.glue.cloneFromPlace(t, `!milo.ref<${ty}>`, ty); } catch (err) { if (!(err instanceof MlirUnsupported)) throw err; }
+        if (glue) {
+          this.rtCall(glue, [{ ref: er.ref, ty: `!milo.ref<${ty}>` }, { ref: tmp, ty: `!milo.ref<${ty}>` }], null);
+          return { ref: tmp, refTy: `!milo.ref<${ty}>`, done: none };
+        }
         const name = `milo.intr.elemcopy.${typeKey(t)}`;
         this.cx.mlirHelper(name, () => {
           const id = (n: string): HIRExpr => ({ kind: "Ident", name: n, type: t, isMove: false });
@@ -3166,11 +3173,28 @@ class FnEmitter {
    */
   private copyOut(e: HIRExpr, src: string, ty: string, slot = false): Val {
     const vm = /^!milo\.vecval<(.*)>$/.exec(ty);
+    const native = this.cloneTo(stripRefs(e.type), src, slot ? `!milo.ref<${ty}>` : refOf(ty), ty);
+    if (native) return native;
     if (vm && slot) src = this.def(`milo.vec.place ${src} : !milo.ref<${ty}> -> !milo.vec<${vm[1]}>`, `!milo.vec<${vm[1]}>`).ref;
     const r = this.intrinsic("copyout", e, [{ name: "s", type: e.type, mode: "ref", ref: src }],
       ([x]) => ({ kind: "MapCopyOut", type: e.type, span: e.span, value: x }), ty);
     this.clones.add(r.ref);
     return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+  }
+
+  /**
+   * A deep copy of the T at place `src` (of type `srcTy`) by its clone glue, owned, in a
+   * fresh slot then loaded; null when the glue does not cover T (an owning closure).
+   */
+  private cloneTo(t: TypeKind, src: string, srcTy: string, ty: string): Val | null {
+    let fn: string;
+    try { fn = this.glue.cloneFromPlace(t, srcTy, ty); } catch (err) { if (err instanceof MlirUnsupported) return null; throw err; }
+    const tmp = this.fresh();
+    this.vars.push(`  ${tmp} = milo.var "clone" : !milo.ref<${ty}>`);
+    this.rtCall(fn, [{ ref: src, ty: srcTy }, { ref: tmp, ty: `!milo.ref<${ty}>` }], null);
+    const v = this.def(`milo.load ${tmp} : !milo.ref<${ty}>`, ty);
+    this.clones.add(v.ref);
+    return { ...v, own: this.hasDrop(ty) ? "owned" : undefined };
   }
 
   /**

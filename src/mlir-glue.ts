@@ -13,6 +13,11 @@
 //
 // eq: `milo.eq.<key>(ref K, ref K) -> i1`, a HashMap key's equality: ints and bools by
 // value, strings by bytes, structs field by field.
+// clone: `milo.clone.<key>(ptr src, ptr dst)` writes a deep copy of the T at src to dst:
+// the bits first, then every part that owns something replaced in place by its own copy
+// (a string shares its buffer by count, a Vec, HashMap or Heap gets a buffer of its own
+// whose owning elements are cloned in turn). Nothing at dst is dropped: it is written as
+// if it held nothing.
 // hash: `milo.hash.<key>(ref K, si64 h) -> si64`, FNV-1a folded over the key (map.ll): a
 // bool's one byte, an int's 8 bytes widened by its signedness, a string's bytes, a
 // struct's fields in order.
@@ -43,6 +48,49 @@ export class MlirGlue {
     const g = new GlueFn(this, this.cx);
     g.body(t, "%p", "%s");
     this.texts.push([`func.func @${h.quote(name)}(%p: ${place}, %s: ${STR_REF}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    return name;
+  }
+
+  /** The symbol of T's deep clone, generated on first use; it takes and writes raw pointers. */
+  clone(t: TypeKind): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    const name = `milo.clone.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    try {
+      const g = new GlueFn(this, this.cx);
+      g.bitCopy(t, "%src", "%dst");
+      g.cloneParts(t, "%src", "%dst");
+      this.texts.push([`func.func @${h.quote(name)}(%src: ${PTR}, %dst: ${PTR}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    } catch (err) {
+      // Not generated: a later request must not find a name with no body behind it.
+      this.names.delete(name);
+      throw err;
+    }
+    return name;
+  }
+
+  /**
+   * The clone taking places: the source as `srcTy` (a slot, or a Vec's header), the
+   * destination a slot of `ty`. A place lent from a raw pointer can only be a call's
+   * argument, so the addresses are taken in here.
+   */
+  cloneFromPlace(t: TypeKind, srcTy: string, ty: string): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    const inner = this.clone(t);
+    const header = srcTy.startsWith("!milo.vec<");
+    const name = `milo.clonefrom${header ? ".h" : ""}.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    this.texts.push([
+      `func.func @${h.quote(name)}(%src: ${srcTy}, %dst: !milo.ref<${ty}>) attributes {llvm.linkage = #llvm.linkage<internal>} {`,
+      `  %s = milo.addr %src : ${srcTy}`,
+      `  %d = milo.addr %dst : !milo.ref<${ty}>`,
+      `  func.call @${h.quote(inner)}(%s, %d) : (${PTR}, ${PTR}) -> ()`,
+      "  milo.return", "}"].join("\n"));
+    this.callees.set(inner, `(${PTR}, ${PTR}) -> ()`);
     return name;
   }
 
@@ -173,6 +221,154 @@ class GlueFn {
     if (t.tag === "bool") return "bool";
     if (t.tag === "ptr") return "ptr";
     return null;
+  }
+
+  private placeTy(t: TypeKind): string {
+    const ty = glueHelpers.placeType(this.cx, t);
+    if (ty === null) throw new MlirUnsupported(`clone of ${t.tag}`);
+    return ty;
+  }
+
+  /** The T at raw pointer `s` copied bit for bit to `d`. */
+  bitCopy(t: TypeKind, s: Ref, d: Ref): void {
+    const ty = this.placeTy(t);
+    if (/^!milo\.(struct|enum|array)</.test(ty)) this.emit(`milo.copy ${s}, ${d} : ${PTR}, ${PTR} of ${ty}`);
+    else this.emit(`milo.ptr.store ${this.def(`milo.ptr.load ${s} : ${ty}`)}, ${d} : ${ty}`);
+  }
+
+  private at(base: Ref, off: number | Ref): Ref {
+    if (off === 0) return base;
+    const o = typeof off === "number" ? this.def(`milo.const ${off} : si64`) : off;
+    return this.def(`milo.ptr.elem ${base}[${o}] : ui8`);
+  }
+
+  /** A loop over `0 ..< n` (si64), `body` given the counter. */
+  private forUpTo(n: Ref, body: (i: Ref) => void): void {
+    const i = `%g${this.n++}`;
+    this.emit(`milo.for ${this.def("milo.const 0 : si64")} to ${n} : si64 {`);
+    this.lines.push(`  ^bb0(${i}: si64):`);
+    body(i);
+    this.emit("milo.yield");
+    this.emit("}");
+  }
+
+  /**
+   * With `d` already a bit copy of the T at `s`: every owning part of it replaced by its own
+   * copy. A part that owns nothing stays as copied.
+   */
+  cloneParts(t: TypeKind, s: Ref, d: Ref): void {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    if (!this.cx.needsDropCg(t)) return;
+    const size = (x: TypeKind) => this.cx.typeSizeOf(x);
+    switch (t.tag) {
+      case "string": {
+        // The runtime's share takes the string by value (src/runtime/str.ll).
+        this.cx.mlirStringOps();
+        const v = this.def(`milo.ptr.load ${s} : ${STR}`);
+        this.emit(`milo.ptr.store ${this.call("milo.str.share", [[v, STR]], STR)}, ${d} : ${STR}`);
+        return;
+      }
+      case "vec": {
+        // { data, len, cap }: a buffer of len elements; the clone's cap is its len.
+        const vh = `!milo.struct<"Vec", ${PTR}, si64, si64>`;
+        const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${vh}`)} : ${PTR}`);
+        const len = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[1] : ${vh}`)} : si64`);
+        const es = size(t.element);
+        this.cx.mlirCloneOps();
+        const buf = this.call("milo.buf.clone", [[data, PTR], [len, "si64"], [this.def(`milo.const ${es} : si64`), "si64"]], PTR);
+        this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${vh}`)} : ${PTR}`);
+        this.emit(`milo.ptr.store ${len}, ${this.def(`milo.ptr.field ${d}[2] : ${vh}`)} : si64`);
+        if (this.cx.needsDropCg(t.element)) {
+          const ec = this.glue.clone(t.element);
+          this.forUpTo(len, i => {
+            const off = this.def(`milo.mul ${i}, ${this.def(`milo.const ${es} : si64`)} wrapping : si64`);
+            this.call(ec, [[this.at(data, off), PTR], [this.at(buf, off), PTR]], null);
+          });
+        }
+        return;
+      }
+      case "heap": {
+        const box = this.def(`milo.ptr.load ${s} : ${PTR}`);
+        this.cx.mlirCloneOps();
+        // A one-element buffer copy of the box, then its contents' owning parts.
+        const nb = this.call("milo.buf.clone", [[box, PTR], [this.def("milo.const 1 : si64"), "si64"], [this.def(`milo.const ${size(t.inner)} : si64`), "si64"]], PTR);
+        this.call(this.glue.clone(t.inner), [[box, PTR], [nb, PTR]], null);
+        this.emit(`milo.ptr.store ${nb}, ${d} : ${PTR}`);
+        return;
+      }
+      case "hashmap": {
+        // { data, len, cap, seed, tombs }: the slot buffer copied whole (states and all),
+        // then the owning key and value of each occupied slot.
+        const head = `!milo.struct<"HashMap", ${PTR}, si64, si64, si64, si64>`;
+        const data = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[0] : ${head}`)} : ${PTR}`);
+        const cap = this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${s}[2] : ${head}`)} : si64`);
+        const lay = this.cx.mapSlotLayout(t.key, t.value);
+        this.cx.mlirCloneOps();
+        const buf = this.call("milo.buf.clone", [[data, PTR], [cap, "si64"], [this.def(`milo.const ${lay.size} : si64`), "si64"]], PTR);
+        this.emit(`milo.ptr.store ${buf}, ${this.def(`milo.ptr.field ${d}[0] : ${head}`)} : ${PTR}`);
+        const kOwn = this.cx.needsDropCg(t.key), vOwn = this.cx.needsDropCg(t.value);
+        if (kOwn || vOwn) {
+          const kc = kOwn ? this.glue.clone(t.key) : null, vc = vOwn ? this.glue.clone(t.value) : null;
+          this.forUpTo(cap, i => {
+            const off = this.def(`milo.mul ${i}, ${this.def(`milo.const ${lay.size} : si64`)} wrapping : si64`);
+            const ss = this.at(data, off), ds = this.at(buf, off);
+            const st = this.def(`milo.ptr.load ${ss} : si8`);
+            this.emit(`milo.if ${this.def(`milo.cmp eq, ${st}, ${this.def("milo.const 1 : si8")} : si8`)} {`);
+            if (kc) this.call(kc, [[this.at(ss, lay.keyOffset), PTR], [this.at(ds, lay.keyOffset), PTR]], null);
+            if (vc) this.call(vc, [[this.at(ss, lay.valueOffset), PTR], [this.at(ds, lay.valueOffset), PTR]], null);
+            this.emit("milo.yield");
+            this.emit("}");
+          });
+        }
+        return;
+      }
+      case "struct": {
+        const layout = this.cx.structLayouts.get(t.name);
+        if (!layout) throw new MlirUnsupported(`clone of struct ${t.name}`);
+        const sty = this.placeTy(t);
+        layout.fields.forEach((f, i) => {
+          if (!this.cx.needsDropCg(f.typeKind)) return;
+          const fs = this.def(`milo.ptr.field ${s}[${i}] : ${sty}`), fd = this.def(`milo.ptr.field ${d}[${i}] : ${sty}`);
+          this.cloneField(f.typeKind, fs, fd);
+        });
+        return;
+      }
+      case "enum": {
+        const layout = this.cx.mlirEnumLayout(t.name);
+        if (!layout) throw new MlirUnsupported(`clone of enum ${t.name}`);
+        const ety = this.placeTy(t);
+        const owning = layout.variants.filter(v => v.fields.some(f => this.cx.needsDropCg(f)));
+        if (owning.length === 0) return;
+        const tag = this.def(`milo.enum.tag ${this.def(`milo.ptr.load ${s} : ${ety}`)} : ${ety}`);
+        for (const v of owning) {
+          this.emit(`milo.if ${this.def(`milo.cmp eq, ${tag}, ${this.def(`milo.const ${v.tag} : si32`)} : si32`)} {`);
+          v.fields.forEach((f, j) => {
+            if (!this.cx.needsDropCg(f)) return;
+            this.cloneField(f, this.at(s, v.offsets[j]), this.at(d, v.offsets[j]));
+          });
+          this.emit("milo.yield");
+          this.emit("}");
+        }
+        return;
+      }
+      case "array": {
+        if (t.size === null) throw new MlirUnsupported("clone of a slice");
+        const es = size(t.element);
+        for (let i = 0; i < t.size; i++) this.cloneField(t.element, this.at(s, i * es), this.at(d, i * es));
+        return;
+      }
+      default:
+        // An owning closure: what its env holds is not described here.
+        throw new MlirUnsupported(`clone of ${t.tag}`);
+    }
+  }
+
+  /** A part inside a struct, enum or array: in place for a leaf, by its glue otherwise. */
+  private cloneField(t: TypeKind, s: Ref, d: Ref): void {
+    t = glueHelpers.stripRefs(t);
+    if (t.tag === "struct" || t.tag === "enum" || t.tag === "vec" || t.tag === "hashmap") this.call(this.glue.clone(t), [[s, PTR], [d, PTR]], null);
+    else this.cloneParts(t, s, d);
   }
 
   /** Whether the keys at places `a` and `b` are equal. */

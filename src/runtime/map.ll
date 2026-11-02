@@ -71,3 +71,30 @@ done:
   %r = phi i64 [ %h, %entry ], [ %next, %loop ]
   ret i64 %r
 }
+
+; @@ milo.buf.clone
+; A clone's buffer: `n * size` bytes from malloc, the `n * size` bytes at `src` copied in
+; (the clone's glue then re-clones whatever in them owns something). Null for n = 0. Out
+; of memory, or a size that overflows, ends the program as a failed allocation does.
+define internal ptr @milo.buf.clone(ptr %src, i64 %n, i64 %size) {
+entry:
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %none, label %go
+none:
+  ret ptr null
+go:
+  %m = call { i64, i1 } @llvm.umul.with.overflow.i64(i64 %n, i64 %size)
+  %bytes = extractvalue { i64, i1 } %m, 0
+  %ovf = extractvalue { i64, i1 } %m, 1
+  br i1 %ovf, label %fail, label %alloc
+alloc:
+  %p = call ptr @malloc(i64 %bytes)
+  %ok = icmp ne ptr %p, null
+  br i1 %ok, label %copy, label %fail
+copy:
+  call ptr @memcpy(ptr %p, ptr %src, i64 %bytes)
+  ret ptr %p
+fail:
+  call void @milo.str.oom()
+  unreachable
+}

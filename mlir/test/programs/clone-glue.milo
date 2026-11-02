@@ -1,0 +1,30 @@
+// Clone glue: deep copies of Vecs, HashMaps, Heap boxes, structs and enums that own
+// strings and each other; the copy and the original change independently.
+struct Item { name: string, tags: Vec<string> }
+
+enum Node { Leaf(string), Pair(Vec<i64>, string), Empty }
+
+pub fn main(): i32 {
+    var items: Vec<Item> = [Item { name: "a".clone(), tags: ["x".clone(), "y".clone()] }]
+    let first = items.get(0)!
+    items[0].tags.push("z".clone())
+    print(first.name, " ", first.tags, " ", items[0].tags)
+    var nodes: Vec<Node> = [Node.Leaf("l".clone()), Node.Pair([1, 2], "p".clone()), Node.Empty]
+    let n1 = nodes.get(1)!
+    nodes[1] = Node.Empty
+    print(n1, " ", nodes)
+    var m: HashMap<string, Vec<string>> = HashMap.new()
+    m.insert("k".clone(), ["v".clone()])
+    var m2 = m.clone()
+    m2.insert("k2".clone(), [])
+    print(m.len(), " ", m2.len(), " ", m.get("k")!)
+    let hs: Vec<Heap<Item>> = [Heap(Item { name: "boxed".clone(), tags: ["t".clone()] })]
+    let hs2 = hs.clone()
+    let b = hs2.get(0)!
+    let inner = *b
+    print(inner.name, " ", inner.tags, " ", hs.len())
+    let vv: Vec<Vec<string>> = [["q".clone()], []]
+    let vv2 = vv.clone()
+    print(vv2)
+    return 0
+}

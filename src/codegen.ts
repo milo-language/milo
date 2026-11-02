@@ -8679,7 +8679,20 @@ export class Codegen {
     this.needsGetentropy = true;
     this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
     this.helperFnBodies.push(runtimeFn("milo.map.alloc"), runtimeFn("milo.hash.byte"), runtimeFn("milo.hash.u64"), runtimeFn("milo.hash.bytes"));
+    this.mlirCloneOps();
   }
+
+  /** MLIR path: milo.buf.clone, the buffer copy every Vec, HashMap and Heap clone starts from. */
+  public mlirCloneOps(): void {
+    if (this.emittedMlirCloneOps) return;
+    this.emittedMlirCloneOps = true;
+    this.strRt();
+    this.needsMalloc = true;
+    this.needsMemcpy = true;
+    this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
+    this.helperFnBodies.push(runtimeFn("milo.buf.clone"));
+  }
+  private emittedMlirCloneOps = false;
   private emittedMlirMapOps = false;
 
   public strReserveFn(): string {
