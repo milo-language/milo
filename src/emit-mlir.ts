@@ -790,11 +790,31 @@ class FnEmitter {
       return;
     }
     if (valueType(this.cx, t.element) === null) throw new MlirUnsupported("array repeat of a place-only value");
-    if (e.cloneFn || e.count !== t.size) throw new MlirUnsupported("array repeat of an owning value");
+    if (e.count !== t.size) throw new MlirUnsupported("array repeat of an owning value");
     const v = this.take(this.expr(e.value), ety, "array element");
+    if (e.cloneFn && !this.hasDrop(ety)) throw new MlirUnsupported("array repeat through a user Clone of a plain value");
     // Legacy's genArrayRepeat deep clones an owning value into all slots but the last;
     // one bit copy per slot would free the value N times.
-    if (this.hasDrop(ety)) throw new MlirUnsupported("array repeat of an owning value");
+    if (this.hasDrop(ety)) {
+      // So here: the value parks in a slot that owns nothing, slots 0..n-2 get structural
+      // clones of it (copyOut, legacy's emitDeepCloneFromPtr), the last gets the value.
+      if (e.count < 1 || (!e.cloneFn && this.runsUserDrop(ety))) throw new MlirUnsupported("array repeat of an owning value");
+      const park = this.fresh();
+      this.vars.push(`  ${park} = milo.var "repeat.of" : !milo.ref<${ety}>`);
+      this.emit(`milo.store ${v.ref}, ${park} : !milo.ref<${ety}>`);
+      const iv = this.fresh();
+      this.region(`milo.for ${this.def("milo.const 0 : si64", "si64").ref} to ${this.def(`milo.const ${e.count - 1} : si64`, "si64").ref} : si64 {`, () => {
+        this.emit(`^bb0(${iv}: si64):`);
+        // The type's own Clone when the checker found one (legacy emitCloneFnCall).
+        const c = e.cloneFn ? this.cloneCall(e.cloneFn, park, ety, e.value.type) : this.copyOut(e.value, park, ety, true);
+        this.emit(`milo.store ${c.ref}, ${at(iv)} init : !milo.ref<${ety}>`);
+        return false;
+      });
+      this.emit("}");
+      const last = this.def(`milo.const ${e.count - 1} : si64`, "si64").ref;
+      this.emit(`milo.store ${this.def(`milo.load ${park} : !milo.ref<${ety}>`, ety).ref}, ${at(last)} init : !milo.ref<${ety}>`);
+      return;
+    }
     const lo = this.def("milo.const 0 : si64", "si64").ref;
     const hi = this.def(`milo.const ${e.count} : si64`, "si64").ref;
     const iv = this.fresh();
@@ -804,6 +824,15 @@ class FnEmitter {
       return false;
     });
     this.emit("}");
+  }
+
+  /** `clone(&*slot)` through the type's own Clone fn: an owned value of `ty`. */
+  private cloneCall(fn: string, slot: string, ty: string, t: TypeKind): Val {
+    const name = `repeat$of${this.n++}`;
+    this.bind(name, { kind: "var", ref: slot, ty });
+    const v = this.expr({ kind: "Call", func: fn, args: [{ expr: { kind: "Ident", name, type: t, isMove: false }, passByRef: true, refMut: false }], type: t, variadic: false });
+    if (v.ty !== ty) throw new MlirUnsupported("clone result type");
+    return v;
   }
 
   /**

@@ -1,0 +1,23 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): `[x; n]`
+// of an owning value: slots 0..n-2 are deep clones, the last holds x itself (legacy
+// genArrayRepeat), so each slot is changed and freed on its own.
+
+struct Cell {
+    name: string,
+    tags: Vec<i64>,
+}
+
+fn main() {
+    var a = ["ab"; 3]
+    a[0].pushStr("!")
+    print(a[0] + " " + a[1] + " " + a[2])
+    var v: Vec<i64> = Vec.new()
+    v.push(7)
+    var b = [v; 4]
+    b[3].push(8)
+    print(b[0].len() + b[3].len())
+    let c = [Cell { name: "c", tags: Vec.new() }; 2]
+    print(c[1].name)
+    let one = ["solo"; 1]
+    print(one[0])
+}
