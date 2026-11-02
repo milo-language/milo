@@ -1,0 +1,23 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a `var` of a view type
+// (`var w = s[0..5]`, a Vec slice): a slot of headers that owns none of them, so each
+// reassignment replaces the header and drops nothing, and the source keeps its buffer.
+
+fn main() {
+    let s = "hello wide world" + ""
+    var w = s[0..5]
+    print(w)
+    w = s[6..10]
+    print(w)
+    var i = 0
+    while i < 3 {
+        w = s[i..i + 4]
+        print(w, " ", w.len())
+        i = i + 1
+    }
+    let v: Vec<i64> = [1, 2, 3, 4, 5]
+    var part = v[0..2]
+    print(part.len(), " ", part[1])
+    part = v[2..5]
+    print(part.len(), " ", part[2])
+    print(s, " ", v.len())
+}

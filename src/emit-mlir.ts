@@ -504,7 +504,9 @@ interface Val { ref: string; ty: string; own?: "owned" | "view" | "static" }
 // A `vec` is a `&Vec<T>` / `&mut Vec<T>` param: the address of the caller's header.
 // `zeroOnMove`: an owned element of a consumed array, whose slot drops every element after
 // the loop: a move takes it and leaves the zero value (legacy zeroes a moved element too).
-type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean }
+// `view`: a `var` of a `&T` or slice type, a slot of view headers that owns none of them:
+// an assignment replaces the header and drops nothing.
+type Binding = { kind: "ssa"; v: Val } | { kind: "var"; ref: string; ty: string; param?: number; owned?: boolean; zeroOnMove?: boolean; view?: boolean }
   | { kind: "vec"; ref: string; elem: string; param?: number } | { kind: "opaque"; what: string }
   // A `&T` reached through a raw pointer (`let p = b else` on a `?&mut T`): the dialect
   // has no milo.ref behind a pointer, so it is read and written through the pointer
@@ -1407,6 +1409,18 @@ class FnEmitter {
           return false;
         }
         const slice = s.type.tag === "array" && s.type.size === null;
+        if ((s.type.tag === "ref" || slice) && s.mutable) {
+          // `var view = s[0..5]`: a slot of views (legacy's local of the header), never an owner.
+          const inner = s.type.tag === "ref" ? s.type.inner : s.type;
+          const want = inner.tag === "array" && inner.size === null ? `!milo.vecval<${this.lent(inner, "let").slice(10, -1)}>` : this.value(inner, "let");
+          const v = this.scoped(() => this.expr(s.value));
+          if (v.ty !== want || (v.own !== "view" && this.hasDrop(v.ty))) throw new MlirUnsupported("`&T` var of a value it would own");
+          const ref = this.fresh();
+          this.vars.push(`  ${ref} = milo.var ${quote(s.name)} : !milo.ref<${want}>`);
+          this.emit(`milo.store ${v.ref}, ${ref} init : !milo.ref<${want}>`);
+          this.bind(s.name, { kind: "var", ref, ty: want, view: true });
+          return false;
+        }
         if ((s.type.tag === "ref" || slice) && !s.mutable) {
           // A `&T` or slice let (`let base = s[0..end]`): a view of what it is taken from,
           // never an owner, so bound as it is: a place as that place, a view as its SSA value.
@@ -1506,6 +1520,12 @@ class FnEmitter {
             return { ref: sl.ref, refTy: `!milo.ref<${b.ty}>`, done: () => { if (sl.owned) this.def(`milo.move ${sl.ref} : !milo.ref<${b.ty}>`, b.ty); } };
           })();
           this.overwriteBig(b.ref, b.ty, s.target.type, src, !!b.owned);
+          return false;
+        }
+        if (b.view) {
+          const v = this.expr(s.value);
+          if (v.ty !== b.ty || (v.own !== "view" && this.hasDrop(v.ty))) throw new MlirUnsupported("assignment of an owned value to a view var");
+          this.emit(`milo.store ${v.ref}, ${b.ref} init : !milo.ref<${b.ty}>`);
           return false;
         }
         // The old value's drop is milo-scope-drops' business: it goes before the store.
