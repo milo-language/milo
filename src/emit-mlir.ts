@@ -838,9 +838,11 @@ class FnEmitter {
   /**
    * `o.map(f)` and the other closure-taking Option/Result ops: legacy's genOptionOp (the
    * tag test, the conditional call, the result enum) in a helper, the receiver lent by its
-   * place and the closure passed as its value. An owning receiver is consumed: it moves
-   * into the helper by value and the op there takes it (`isMove`), as in the source, so
-   * a receiver orElse forwards is the result's alone.
+   * place and the closure passed as its value. The checker consumes a receiver exactly
+   * when the op forwards a payload that owns something (consumeForwardedPayload; context
+   * always): such a receiver moves into the helper and the op there takes it (`isMove`).
+   * A named one it did not consume is lent; a temporary one goes in by value unmoved, so
+   * the helper drops it after the op, as legacy drops a temporary receiver.
    */
   private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
     const st = stripRefs(e.value.type);
@@ -848,15 +850,19 @@ class FnEmitter {
     if (!e.default) throw new MlirUnsupported(`option op ${e.op} without a callback`);
     const fty = this.value(e.default.type, "option callback");
     const ty = this.value(e.type, "option result");
-    if (this.hasDrop(rt)) {
+    const named = e.value.kind === "Ident" || e.value.kind === "FieldAccess";
+    const consumed = this.combinatorConsumes(e.op, st);
+    if (named && !!(e.value as { isMove?: boolean }).isMove !== consumed && this.hasDrop(rt))
+      throw new MlirUnsupported(`option op ${e.op} whose receiver move disagrees with the checker's rule`);
+    if (this.hasDrop(rt) && !(named && !consumed)) {
       if (inSlot(this.cx, rt)) throw new MlirUnsupported(`option op ${e.op} on a 128+ byte owning receiver`);
       const mark = this.pending.length;
       const v = this.pend(this.operand(e.value, rt, "option receiver"), st);
       const f = this.consume(this.expr(e.default), "option callback");
       this.pending.length = mark;
       if (f.ty !== fty) throw new MlirUnsupported("option callback type");
-      const r = this.intrinsic(`opt.own.${e.op}`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
-        ([x, y]) => ({ ...e, value: { ...x, isMove: true } as HIRExpr, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
+      const r = this.intrinsic(`opt.${consumed ? "own" : "tmp"}.${e.op}`, e, [{ name: "o", type: st, mode: "val", ref: v.ref }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
+        ([x, y]) => ({ ...e, value: { ...x, isMove: consumed } as HIRExpr, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
       return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
     }
     const o = this.place(e.value, this.lent(st, "option receiver"), false).ref;
@@ -865,6 +871,16 @@ class FnEmitter {
     const r = this.intrinsic(`opt.${e.op}`, e, [{ name: "o", type: st, mode: "ref", ref: o }, { name: "f", type: e.default.type, mode: "val", ref: f.ref }],
       ([x, y]) => ({ ...e, value: x, default: { ...y, isMove: this.hasDrop(fty) } as HIRExpr }), ty);
     return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+  }
+
+  /** Whether the checker's consumeForwardedPayload consumes the receiver of `op` on `st`. */
+  private combinatorConsumes(op: string, st: TypeKind): boolean {
+    if (op === "resultContext") return true;
+    const fwd = ({ optionOrElse: "Some", resultMap: "Err", resultAndThen: "Err", resultMapErr: "Ok", resultOrElse: "Ok" } as Record<string, string>)[op];
+    if (!fwd || st.tag !== "enum") return false;
+    const v = this.cx.mlirEnumLayout(st.name)?.variants.find(x => x.name === fwd);
+    if (!v) throw new MlirUnsupported(`option op ${op} receiver layout`);
+    return v.fields.some(t => this.hasDrop(this.place$(t, "forwarded payload")));
   }
 
   /** `clone(&*slot)` through the type's own Clone fn: an owned value of `ty`. */
