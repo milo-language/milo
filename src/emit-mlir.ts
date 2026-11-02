@@ -2470,14 +2470,16 @@ class FnEmitter {
           return { ...v, own: this.hasDrop(pb.ty) ? "view" : undefined };
         }
         if (e.type.tag === "fn" && this.fns.has(e.name) && !this.scopes.some(m => m.has(e.name)) && !this.cx.mlirGlobal(e.name)) {
-          // A named fn as a value: legacy's trampoline (closure convention, null env),
-          // made by a legacy helper returning the pair.
-          const ty = this.value(e.type, "fn value");
-          const name = this.cx.mlirHelper(`milo.fnval.${e.name}`, () => ({
-            params: [], retType: e.type,
-            body: [{ kind: "Return", retType: e.type, value: { kind: "Ident", name: e.name, type: e.type } }],
-          }));
-          return this.callHelper(name, [], ty);
+          // A named fn as a value: the capture-free closure `(a, b) => f(a, b)` (legacy's
+          // trampoline: the closure convention, a null env).
+          const ft = e.type as TypeKind & { tag: "fn" };
+          const callee = this.fns.get(e.name)!;
+          const params = ft.params.map((t, i) => ({ name: `fnval$${i}`, type: t }));
+          const call: HIRExpr = { kind: "Call", func: e.name, type: ft.ret, variadic: false, args: params.map((p, i) => ({
+            expr: { kind: "Ident", name: p.name, type: p.type, isMove: !callee.params[i]?.isRef && !callee.params[i]?.isRefMut },
+            passByRef: !!(callee.params[i]?.isRef || callee.params[i]?.isRefMut), refMut: !!callee.params[i]?.isRefMut })) };
+          const body: HIRStmt[] = ft.ret.tag === "void" ? [{ kind: "ExprStmt", expr: call }] : [{ kind: "Return", retType: ft.ret, value: call }];
+          return this.expr({ kind: "Closure", params, body, captures: [], retType: ft.ret, type: e.type, span: e.span } as HIRExpr);
         }
         const b = this.lookup(e.name);
         if (b.kind === "ssa") return b.v;
