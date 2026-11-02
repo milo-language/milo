@@ -8599,6 +8599,15 @@ export class Codegen {
   // its own source location). The string is made unique first (see strRt), so the
   // returned buffer is this handle's alone. A cap-0 buffer is a static literal or a view
   // this string does not own: it is copied, never handed to realloc or free.
+  /** MLIR path: milo.string.concat/append, runtime sections over strRt and milo.str.reserve. */
+  public mlirStringOps(): void {
+    if (this.emittedMlirStringOps) return;
+    this.emittedMlirStringOps = true;
+    this.strReserveFn();
+    this.helperFnBodies.push(runtimeFn("milo.string.concat"), runtimeFn("milo.string.append"));
+  }
+  private emittedMlirStringOps = false;
+
   public strReserveFn(): string {
     if (!this.emittedStrReserve) {
       this.emittedStrReserve = true;

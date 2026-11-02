@@ -25,6 +25,7 @@ export interface MlirEmitCtx {
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
   mlirStrViewStep(): string;
+  mlirStringOps(): void;
   mlirContractFail(): void;
   mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
@@ -3988,19 +3989,8 @@ class FnEmitter {
 
   /** The legacy functions milo.string.concat and milo.string.append lower to. */
   private stringHelpers(): void {
-    const str: TypeKind = { tag: "string" };
-    this.cx.mlirHelper("milo.string.concat", () => ({
-      params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
-      retType: str,
-      body: [{ kind: "Return", retType: str, value: { kind: "BinOp", op: "+", type: str,
-        left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
-    }));
-    this.cx.mlirHelper("milo.string.append", () => ({
-      params: [{ name: "s", type: str, isRef: false, isRefMut: true }, { name: "x", type: str, isRef: true, isRefMut: false }],
-      retType: { tag: "void" },
-      body: [{ kind: "ExprStmt", expr: { kind: "StringPushStr", type: { tag: "void" },
-        str: { kind: "Ident", name: "s", type: str, isMove: false }, other: { kind: "Ident", name: "x", type: str, isMove: false } } }],
-    }));
+    // Runtime sections (src/runtime/str.ll), not legacy-generated helpers.
+    this.cx.mlirStringOps();
   }
 
   /**

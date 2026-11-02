@@ -483,3 +483,69 @@ fin:
   %n64 = sext i32 %n to i64
   ret i64 %n64
 }
+
+; @@ milo.string.concat
+; `a + b`, a fresh string of both (count 1, NUL-terminated); the MLIR path's string
+; concat (milo.string.concat lowers to a call of this).
+define internal %String @milo.string.concat(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
+entry:
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %ad = extractvalue %String %as, 0
+  %al = extractvalue %String %as, 1
+  %bd = extractvalue %String %bs, 0
+  %bl = extractvalue %String %bs, 1
+  %len = add i64 %al, %bl
+  %cap = add i64 %len, 1
+  %buf = call ptr @milo.str.alloc(i64 %cap)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %fill, label %oom
+oom:
+  call void @milo.str.oom()
+  unreachable
+fill:
+  call ptr @memcpy(ptr %buf, ptr %ad, i64 %al)
+  %tail = getelementptr i8, ptr %buf, i64 %al
+  call ptr @memcpy(ptr %tail, ptr %bd, i64 %bl)
+  %end = getelementptr i8, ptr %buf, i64 %len
+  store i8 0, ptr %end
+  %s0 = insertvalue %String undef, ptr %buf, 0
+  %s1 = insertvalue %String %s0, i64 %len, 1
+  %s2 = insertvalue %String %s1, i64 %cap, 2
+  ret %String %s2
+}
+
+; @@ milo.string.append
+; `s.pushStr(x)`: x's bytes appended to s in place (unique first, then grown by
+; milo.str.reserve). x may point into s's own buffer (`s.pushStr(s)`): its data pointer
+; is re-based onto the buffer reserve returns.
+define internal void @milo.string.append(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr nonnull dereferenceable(24) align 8 %x) {
+entry:
+  %xs = load %String, ptr %x
+  %xd = extractvalue %String %xs, 0
+  %xl = extractvalue %String %xs, 1
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len = load i64, ptr %lenp
+  %datap = getelementptr %String, ptr %s, i32 0, i32 0
+  %old = load ptr, ptr %datap
+  %oldi = ptrtoint ptr %old to i64
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %xl)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %copy, label %oom
+oom:
+  call void @milo.str.oom()
+  unreachable
+copy:
+  %dst = getelementptr i8, ptr %buf, i64 %len
+  %xdi = ptrtoint ptr %xd to i64
+  %off = sub i64 %xdi, %oldi
+  %inside = icmp ult i64 %off, %len
+  %moved = getelementptr i8, ptr %buf, i64 %off
+  %src = select i1 %inside, ptr %moved, ptr %xd
+  call ptr @memcpy(ptr %dst, ptr %src, i64 %xl)
+  %nlen = add i64 %len, %xl
+  store i64 %nlen, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %nlen
+  store i8 0, ptr %end
+  ret void
+}

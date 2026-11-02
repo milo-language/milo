@@ -1,0 +1,9 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `s.pushStr(s)`, which
+// grows s while reading it: the source pointer is re-based onto the new buffer.
+
+fn main() {
+    var s = "abc" + ""
+    var k = 0
+    while k < 6 { s.pushStr(s); k = k + 1 }
+    print(s.len(), " ", s.substr(60, 64))
+}
