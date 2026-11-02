@@ -1,0 +1,19 @@
+// A closure capturing a scalar that only a cast spells (`mode as u32` in std/fs makeDir
+// and setMode): its ownership is decided from the dialect type, never refused.
+from "std/fs" import { makeDir, removeDir, setMode }
+from "std/io" import { IoError }
+
+fn report(what: string, r: Result<Unit, IoError>) {
+    match r {
+        Result.Ok(_) => print(what + " ok"),
+        Result.Err(_) => print(what + " err"),
+    }
+}
+
+fn main() {
+    let p = "mlir-fs-mode-dir"
+    report("mkdir", makeDir(p, 493))
+    report("chmod", setMode(p, 448))
+    report("rmdir", removeDir(p))
+    report("rmdir again", removeDir(p))
+}

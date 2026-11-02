@@ -234,6 +234,8 @@ function ownsOf(cx: MlirEmitCtx, ty: string): Owns {
   const f = typeFlags(cx, ty);
   if (f & F_SHARED) throw new MlirUnsupported("a type whose dialect spelling two checker types share");
   if (f & F_SPELLED) return { drop: (f & F_DROP) !== 0, userDrop: (f & F_USER_DROP) !== 0 };
+  // A cast can make a scalar that no checker type in the module spelled (`mode as u32`).
+  if (isScalarTy(ty) || ty === PTR) return { drop: false, userDrop: false };
   if (ty.startsWith("!milo.ref<") || ty.startsWith("!milo.vec<")) return { drop: false, userDrop: false };
   if (ty.startsWith("!milo.vectail<")) return { drop: true, userDrop: ownsOf(cx, `!milo.vecval<${ty.slice(14, -1)}>`).userDrop };
   throw new MlirUnsupported("ownership of a type not spelled from a checker type");
