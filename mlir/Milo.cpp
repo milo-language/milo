@@ -410,7 +410,7 @@ LogicalResult GlobalInitOp::verify() {
 
 LogicalResult PtrLendOp::verify() {
   for (Operation *user : getResult().getUsers())
-    if (!isa<func::CallOp>(user))
+    if (!isa<CallOpInterface>(user))
       return emitOpError("is only a call's argument");
   return success();
 }
