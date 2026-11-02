@@ -1,0 +1,23 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a field moved out of a
+// field of a temporary (`mk(i).req.path`): the temporary lives in a slot of the statement,
+// the moved field is zeroed there, and the slot's drop frees the rest. Heap strings, so a
+// missing zero would free the moved one twice.
+
+struct Req { path: string, host: string }
+
+struct Ctx { req: Req, notes: Vec<string> }
+
+fn mk(i: i64): Ctx {
+    return Ctx { req: Req { path: $"/p{i}", host: $"h{i}" }, notes: [$"n{i}"] }
+}
+
+fn main() {
+    let a = mk(1).req.path
+    let b = mk(2).req.host
+    print(a, " ", b)
+    var all = ""
+    for i in 0..3 {
+        all = all + mk(i).req.path
+    }
+    print(all)
+}
