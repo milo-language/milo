@@ -1201,7 +1201,10 @@ class FnEmitter {
           const v = this.consume(this.expr(s.value), "store through a pointer");
           const pp = this.ptrPlace(s.target);
           if (pp) {
-            this.emit(`milo.ptr.store ${this.take(v, pp.ty, "store through a pointer").ref}, ${pp.ptr} : ${pp.ty}`);
+            // A generic body sees an owning fn T as plain behind a `*T` (`data[len] = x` in
+            // Vec<T>.push): the bits go to memory that legacy's glue for the pointee frees
+            // the same way, so the value is cast (fnAs's `leak`).
+            this.emit(`milo.ptr.store ${this.take(v, pp.ty, "store through a pointer", true).ref}, ${pp.ptr} : ${pp.ty}`);
             return false;
           }
           if (s.target.kind === "PtrDeref") throw new MlirUnsupported("store through a pointer of another type");
