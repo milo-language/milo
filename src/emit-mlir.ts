@@ -356,8 +356,26 @@ function fnv1a(s: string): string {
 }
 
 function quote(s: string): string {
+  return quoteBytes(Buffer.from(s, "utf-8"));
+}
+
+/**
+ * A string literal's bytes: UTF-8, except the lexer's sentinel for a `\xNN` escape (U+F780
+ * to U+F7FF, as legacy escapeCString reads it), which is the one raw byte NN.
+ */
+function literalBytes(s: string): Uint8Array {
+  const out: number[] = [];
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (c >= 0xF780 && c <= 0xF7FF) out.push(c - 0xF700);
+    else out.push(...Buffer.from(ch, "utf-8"));
+  }
+  return Uint8Array.from(out);
+}
+
+function quoteBytes(bytes: Uint8Array): string {
   let out = "";
-  for (const ch of Buffer.from(s, "utf-8")) {
+  for (const ch of bytes) {
     if (ch === 0x22 || ch === 0x5c || ch < 0x20 || ch >= 0x7f) out += `\\${ch.toString(16).padStart(2, "0")}`;
     else out += String.fromCharCode(ch);
   }
@@ -1545,7 +1563,7 @@ class FnEmitter {
         return this.def(`milo.const ${e.value}`, "i1");
       case "StringLit":
         this.cx.hasStringType = true;
-        return { ...this.def(`milo.string.lit ${quote(e.value)}`, STR), own: "static" };
+        return { ...this.def(`milo.string.lit ${quoteBytes(literalBytes(e.value))}`, STR), own: "static" };
       case "StringClone": {
         // Milo's implicit copy of a string: a new owner of the same buffer.
         if (e.str.kind === "StringLit") return this.expr(e.str);

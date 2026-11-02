@@ -1,0 +1,25 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a `\xNN` escape in a
+// string literal is the one raw byte NN (the lexer's sentinel U+F7NN), not the UTF-8 of
+// the sentinel: malformed bytes, a NUL and bytes above 0x7f beside ordinary UTF-8.
+
+fn bytes(s: string): string {
+    var out = ""
+    for i in 0..s.len {
+        if i > 0 {
+            out.pushStr(" ")
+        }
+        out.pushStr(s[i].toString())
+    }
+    return out
+}
+
+fn main() {
+    print(bytes("a\xffB"))
+    print(bytes("\x00\x7f\x80"))
+    print(bytes("é\xc3\xa9"))
+    let s = "x\xfey"
+    print(s.len)
+    if s == "x\xfey" {
+        print("same")
+    }
+}
