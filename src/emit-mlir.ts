@@ -2638,6 +2638,12 @@ class FnEmitter {
    */
   private match(m: { subject: HIRExpr; arms: (HIRStmt & { kind: "Match" })["arms"]; subjectIsMut?: boolean; subjectIsRef?: boolean },
     resultTy: string | null, armBody?: (body: HIRStmt[]) => boolean): { done: boolean; v: Val } {
+    // `match e {}` on an uninhabited type: no value reaches it (legacy emits unreachable).
+    if (m.arms.length === 0) {
+      this.peek(m.subject, v => v);
+      this.emit("milo.unreachable");
+      return { done: true, v: { ref: "", ty: "" } };
+    }
     const outer = { scope: this.scopes[this.scopes.length - 1], frame: this.blocks[this.blocks.length - 1] };
     let root = m.subject;
     while (root.kind === "FieldAccess") root = root.object;
@@ -3090,10 +3096,6 @@ class FnEmitter {
   private defaultValue(e: HIRExpr & { kind: "DefaultValue" }, into?: { dst: string; ty: string }): Val {
     const ok = this.cx.mlirEnumLayout(e.enumName)?.variants.find(v => v.tag === 0);
     if (!ok || ok.fields.length !== 1) throw new MlirUnsupported("`??` enum layout");
-    // Legacy never drops the payload of the other variant (an owning Err leaks there);
-    // dropping it here would change the live-block count, so such ones stay legacy.
-    const others = this.cx.mlirEnumLayout(e.enumName)!.variants.filter(v => v.tag !== 0).flatMap(v => v.fields);
-    if (others.some(f => this.hasDrop(this.place$(f, "`??` payload")))) throw new MlirUnsupported("`??` over an owning Err");
     const name = `dflt$v${this.n++}`;
     const arms = [
       { pattern: { kind: "EnumPattern" as const, variant: ok.name, tag: 0, bindings: [{ name, type: ok.fields[0] }] },

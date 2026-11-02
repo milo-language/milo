@@ -7564,6 +7564,15 @@ export class Codegen {
     // default untouched and its normal drop still fires there.
     b.position(noneB);
     this.own.endVal(lines, ov.ref, "MOVE");
+    // The operand is consumed: when it is not Some/Ok (an owning Err) it dies here. A
+    // temporary has no other owner; a local counts as moved, so its scope-end drop skips
+    // it, and is zeroed after, as the Some branch zeroes it.
+    const k = expr.operand.kind;
+    if (this.needsDropCg(expr.operand.type) && k !== "FieldAccess" && k !== "IndexAccess" && k !== "PtrDeref" && k !== "HeapDeref") {
+      this.emitDropValue(lines, enumAddr, expr.operand.type);
+      const srcAddr = k === "Ident" ? this.localAddr(expr.operand.name) : null;
+      if (srcAddr) b.store(V("zeroinitializer", enumT), ptr(srcAddr));
+    }
     const dv = this.genVal(expr.default, lines);
     if (this.needsDropCg(expr.type) && expr.default.kind === "Ident") {
       const dstAddr = this.localAddr(expr.default.name);

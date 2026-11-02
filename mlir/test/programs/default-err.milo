@@ -1,0 +1,28 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): `x ?? d`
+// whose other variant owns (Err(string)): a temporary operand's Err is dropped on the
+// default path (legacy leaked it before), a local's is dropped with the local.
+
+fn parse(s: string): Result<string, string> {
+    if s.len() > 3 { return Result.Err("too long: " + s) }
+    return Result.Ok(s + "!")
+}
+
+fn find(n: i64): Option<string> {
+    if n < 0 { return Option.None }
+    return Option.Some("n" + n.toString())
+}
+
+fn main() {
+    print(parse("ab") ?? "dflt")
+    print(parse("abcdef") ?? "dflt")
+    var total: i64 = 0
+    for i in 0..20 {
+        let s = parse("x".repeat(i % 6)) ?? "d"
+        total = total + s.len()
+    }
+    print(total)
+    let r = parse("long one")
+    print(r ?? "local dflt")
+    print(find(-1) ?? "none")
+    print(find(4) ?? "none")
+}
