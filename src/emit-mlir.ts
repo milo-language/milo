@@ -735,6 +735,7 @@ class FnEmitter {
       return;
     }
     if (e.kind === "EnumLit") { this.enumInto(e, dst, ty); return; }
+    if (e.kind === "OptionOp" && e.op !== "resultContext" && this.combinatorMatch(e, { dst, ty })) return;
     if (e.kind === "MemReplace") {
       // Legacy genMemReplace's big path: the old value's bits move to `dst` (the result), [MILO-O-replaceSwap]
       // then `v` is built over the place with nothing dropped. Until then both hold the
@@ -953,7 +954,74 @@ class FnEmitter {
    * A named one it did not consume is lent; a temporary one goes in by value unmoved, so
    * the helper drops it after the op, as legacy drops a temporary receiver.
    */
+  /**
+   * `o.map(f)` and the other callback combinators as the match each one means, so no
+   * helper is needed: the receiver is the subject (a temporary or a moved one is consumed,
+   * a named one the checker did not consume is matched in place), its payload binding is
+   * handed to `f` (by reference when `f` takes `&T`), and the untouched variant is
+   * forwarded as is. `f` is evaluated once, before the match, as legacy builds it.
+   * [MILO-O-combinatorReceiver]
+   */
+  private combinatorMatch(e: HIRExpr & { kind: "OptionOp" }, into?: { dst: string; ty: string }): Val | null {
+    const shapes: Record<string, { hit: string; miss: string; call: "hit" | "miss"; wrap: boolean; unwrap?: boolean }> = {
+      map: { hit: "Some", miss: "None", call: "hit", wrap: true },
+      optionAndThen: { hit: "Some", miss: "None", call: "hit", wrap: false },
+      optionOrElse: { hit: "Some", miss: "None", call: "miss", wrap: false },
+      resultMap: { hit: "Ok", miss: "Err", call: "hit", wrap: true },
+      resultAndThen: { hit: "Ok", miss: "Err", call: "hit", wrap: false },
+      resultMapErr: { hit: "Ok", miss: "Err", call: "miss", wrap: true },
+      resultOrElse: { hit: "Ok", miss: "Err", call: "miss", wrap: false },
+      unwrapOrElse: { hit: "Some", miss: "None", call: "miss", wrap: false, unwrap: true },
+      resultUnwrapOrElse: { hit: "Ok", miss: "Err", call: "miss", wrap: false, unwrap: true },
+    };
+    const sh = shapes[e.op];
+    if (!sh || !e.default || e.type.tag === "void") return null;
+    const src = this.cx.mlirEnumLayout(e.enumName);
+    const res = e.type.tag === "enum" ? this.cx.mlirEnumLayout(e.type.name) : null;
+    const hitV = src?.variants.find(v => v.name === sh.hit), missV = src?.variants.find(v => v.name === sh.miss);
+    if (!hitV || !missV || hitV.fields.length > 1 || missV.fields.length > 1) return null;
+    const ft = stripRefs(e.default.type);
+    if (ft.tag !== "fn") return null;
+    // The callback, once: an SSA binding the arms call.
+    const cb = `comb$f${this.n++}`;
+    this.bind(cb, { kind: "ssa", v: this.consume(this.expr(e.default), "combinator callback") });
+    const cbId: HIRExpr = { kind: "Ident", name: cb, type: e.default.type, isMove: false };
+    const n = this.n++;
+    // A named receiver the checker did not consume is matched in place: its bindings are
+    // views, read (its forwarded payload is Copy, by the checker's rule), never moved.
+    const k = e.value.kind;
+    const owning = !((k === "Ident" || k === "FieldAccess") && !(e.value as { isMove?: boolean }).isMove);
+    const bindOf = (v: typeof hitV, name: string) => v.fields.length ? [{ name, type: v.fields[0]! }] : [];
+    const call = (v: typeof hitV, name: string): HIRExpr => {
+      const byRef = ft.params[0]?.tag === "ref";
+      const args = v.fields.length && ft.params.length ? [{ expr: { kind: "Ident" as const, name, type: v.fields[0]!, isMove: owning && !byRef }, passByRef: byRef, refMut: false }] : [];
+      return { kind: "ClosureCall", callee: cbId, args, type: ft.ret, span: e.span };
+    };
+    const lit = (variant: string, args: HIRExpr[]): HIRExpr => {
+      const rv = res?.variants.find(v => v.name === variant);
+      if (!rv) throw new MlirUnsupported(`combinator result variant ${variant}`);
+      return { kind: "EnumLit", enumName: (e.type as { name: string }).name, variant, args, type: e.type };
+    };
+    const arm = (v: typeof hitV, isHit: boolean) => {
+      const name = `comb$${isHit ? "x" : "e"}${n}`;
+      const mine = (sh.call === "hit") === isHit;
+      const bound: HIRExpr = { kind: "Ident", name, type: v.fields[0] ?? e.type, isMove: owning };
+      const value: HIRExpr = mine
+        ? (sh.wrap ? lit(v.name, [call(v, name)]) : call(v, name))
+        : sh.unwrap ? bound : lit(v.name, v.fields.length ? [bound] : []);
+      return { pattern: { kind: "EnumPattern" as const, variant: v.name, tag: v.tag, bindings: bindOf(v, name) }, body: [{ kind: "ExprStmt" as const, expr: value }] };
+    };
+    const arms = [arm(hitV, true), arm(missV, false)];
+    this.forks.push({ mode: null, sawView: false });
+    try {
+      // A 128+ byte result is built in its place, each arm's value into it.
+      if (into) return this.match({ subject: e.value, arms, subjectIsRef: !owning }, null, b => this.tailInto(b, into.dst, into.ty)).v;
+      return this.match({ subject: e.value, arms, subjectIsRef: !owning }, this.value(e.type, "combinator result")).v;
+    } finally { this.forks.pop(); }
+  }
+
   private optionCallback(e: HIRExpr & { kind: "OptionOp" }): Val {
+    if (e.op !== "resultContext") { const m = this.combinatorMatch(e); if (m) return m; }
     const st = stripRefs(e.value.type);
     const rt = this.place$(st, "option receiver");
     if (!e.default) throw new MlirUnsupported(`option op ${e.op} without a callback`);
@@ -1408,7 +1476,8 @@ class FnEmitter {
    * in a slot (Repr) is loaded whole from its place (bigArg), as legacy passes it.
    */
   private operand(e: HIRExpr, ty: string, what: string, abi = false): Val {
-    return abi && inSlot(this.cx, ty) ? this.bigArg(e, ty) : this.take(this.expr(e), ty, what);
+    // An sret call has no SSA result: built in a slot, then loaded whole, as bigArg does.
+    return (abi && inSlot(this.cx, ty)) || this.isSretCall(e) ? this.bigArg(e, ty) : this.take(this.expr(e), ty, what);
   }
 
   /** `v` where it is consumed (stored, passed or returned by value): it must own itself. */
