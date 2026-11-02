@@ -549,3 +549,51 @@ copy:
   store i8 0, ptr %end
   ret void
 }
+
+; @@ milo.string.eq
+; `a == b` on strings: equal lengths, then equal bytes.
+define internal i1 @milo.string.eq(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
+entry:
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %al = extractvalue %String %as, 1
+  %bl = extractvalue %String %bs, 1
+  %leq = icmp eq i64 %al, %bl
+  br i1 %leq, label %bytes, label %done
+bytes:
+  %ad = extractvalue %String %as, 0
+  %bd = extractvalue %String %bs, 0
+  %c = call i32 @memcmp(ptr %ad, ptr %bd, i64 %al)
+  %ceq = icmp eq i32 %c, 0
+  br label %done
+done:
+  %r = phi i1 [ false, %entry ], [ %ceq, %bytes ]
+  ret i1 %r
+}
+
+; @@ milo.string.cmp
+; String ordering, three-way: negative, zero or positive as a sorts before, with or after
+; b. Bytes compare unsigned over the shorter length (memcmp); a prefix sorts first.
+define internal i32 @milo.string.cmp(ptr nonnull dereferenceable(24) align 8 %a, ptr nonnull dereferenceable(24) align 8 %b) {
+entry:
+  %as = load %String, ptr %a
+  %bs = load %String, ptr %b
+  %ad = extractvalue %String %as, 0
+  %al = extractvalue %String %as, 1
+  %bd = extractvalue %String %bs, 0
+  %bl = extractvalue %String %bs, 1
+  %short = icmp ult i64 %al, %bl
+  %n = select i1 %short, i64 %al, i64 %bl
+  %c = call i32 @memcmp(ptr %ad, ptr %bd, i64 %n)
+  %same = icmp eq i32 %c, 0
+  br i1 %same, label %bylen, label %done
+bylen:
+  %gt = icmp ugt i64 %al, %bl
+  %gti = zext i1 %gt to i32
+  %lti = zext i1 %short to i32
+  %l = sub i32 %gti, %lti
+  br label %done
+done:
+  %r = phi i32 [ %c, %entry ], [ %l, %bylen ]
+  ret i32 %r
+}

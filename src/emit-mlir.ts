@@ -3977,23 +3977,18 @@ class FnEmitter {
     return this.def(call, ret);
   }
 
-  /** The legacy functions milo.string.concat and milo.string.append lower to. */
   private stringHelpers(): void {
     // Runtime sections (src/runtime/str.ll), not legacy-generated helpers.
     this.cx.mlirStringOps();
   }
 
-  /**
-   * `a == b`, `a < b`, `a + b` on strings: a call of a legacy function doing exactly that
-   * to two borrowed strings, so comparison and concatenation are legacy's.
-   */
+  /** `a == b`, `a < b`, `a + b` on two borrowed strings. */
   private stringBinop(e: HIRExpr & { kind: "BinOp" }): Val {
     const names: Record<string, string> = { "==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "+": "concat" };
     const op = names[e.op];
     if (!op) throw new MlirUnsupported(`string ${e.op}`);
     const l = this.borrow(this.expr(e.left), e.left.type);
     const r = this.borrow(this.expr(e.right), e.right.type);
-    const str: TypeKind = { tag: "string" };
     if (op === "concat") {
       // Both helpers: milo-append-in-place may turn `s = s + x` into the append.
       this.stringHelpers();
@@ -4006,17 +4001,17 @@ class FnEmitter {
       return ref;
     };
     const [a, b] = [slot(l), slot(r)];
-    const ret: TypeKind = { tag: "bool" };
-    const name = `milo.string.${op}`;
-    this.cx.mlirHelper(name, () => ({
-      params: [{ name: "a", type: str, isRef: true, isRefMut: false }, { name: "b", type: str, isRef: true, isRefMut: false }],
-      retType: ret,
-      body: [{ kind: "Return", retType: ret, value: { kind: "BinOp", op: e.op, type: ret,
-        left: { kind: "Ident", name: "a", type: str, isMove: false }, right: { kind: "Ident", name: "b", type: str, isMove: false } } }],
-    }));
-    const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> i1`;
+    // Runtime sections (src/runtime/str.ll): equality, and a three-way compare for order.
+    this.stringHelpers();
+    const eq = op === "eq" || op === "ne";
+    const name = eq ? "milo.string.eq" : "milo.string.cmp";
+    const fnTy = `(!milo.ref<${STR}>, !milo.ref<${STR}>) -> ${eq ? "i1" : "si32"}`;
     this.callees.set(name, fnTy);
-    return this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, "i1");
+    const c = this.def(`func.call @${quote(name)}(${a}, ${b}) : ${fnTy}`, eq ? "i1" : "si32");
+    if (op === "eq") return c;
+    if (op === "ne") return this.def(`milo.not ${c.ref} : i1`, "i1");
+    const zero = this.def("milo.const 0 : si32", "si32");
+    return this.def(`milo.cmp ${op}, ${c.ref}, ${zero.ref} : si32`, "i1");
   }
 
   private binop(e: HIRExpr & { kind: "BinOp" }): Val {

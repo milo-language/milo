@@ -8604,7 +8604,9 @@ export class Codegen {
     if (this.emittedMlirStringOps) return;
     this.emittedMlirStringOps = true;
     this.strReserveFn();
-    this.helperFnBodies.push(runtimeFn("milo.string.concat"), runtimeFn("milo.string.append"));
+    this.helperFnBodies.push(runtimeFn("milo.string.concat"), runtimeFn("milo.string.append"),
+      runtimeFn("milo.string.eq"), runtimeFn("milo.string.cmp"));
+    this.needsMemcmp = true;
   }
   private emittedMlirStringOps = false;
 
