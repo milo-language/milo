@@ -30,6 +30,7 @@ import {
 import { display } from "./mangle";
 import { mapSymbols } from "./cgu";
 import { OwnLedger, type CopyDecl } from "./codegen-own";
+import { PROLOGUE_END } from "./mlir-backend";
 
 // Every HIRExpr kind that is NOT an owned temporary: it yields a scalar, a void, a
 // borrowed view, or a place someone else already owns, so discarding its result frees
@@ -2709,6 +2710,8 @@ export class Codegen {
       if (this.needsGlobalInit) b.callDiscard(Ty.void, `@${GLOBAL_INIT_FN}`, []);
     }
     // main's prologue above stays: the splice moves it into the MLIR body's entry block.
+    // A main kept whole for the noalias analysis marks where its prologue ends.
+    if (mlirStub === "legacy" && fn.name === "main" && !this.wrapMainGreen) lines.push(PROLOGUE_END);
     if (Array.isArray(mlirStub)) {
       lines.push(...mlirStub);
       b.endFn();

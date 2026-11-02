@@ -1,0 +1,50 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a main
+// that holds a raw pointer, names a mutable global and calls through a fn value goes
+// through MLIR while its legacy body stays for the noalias analysis. main stores the
+// address of `total` where the analysis cannot follow it, so no `&mut` param may be
+// noalias: on viaGlobal's, LLVM would keep `a` in a register across the store through
+// `gp` and print 2 instead of 10. Which global `gp` names depends on the pid, so LLVM cannot
+// resolve the store.
+
+extern fn getpid(): i32
+
+var gp: *i64 = 0 as *i64
+var total: i64 = 1
+var hits: i64 = 0
+
+// Recursive (not in tail position) so LLVM keeps it out of line, where the noalias acts.
+fn viaGlobal(a: &mut i64, n: i64): i64 {
+    if n > 0 {
+        let r = viaGlobal(&mut a, n - 1)
+        hits += 1
+        return r
+    }
+    a += 1
+    unsafe {*gp = 10 }
+    return a
+}
+
+fn addHits(a: &mut i64): i64 {
+    a += 1
+    hits += 100
+    return a
+}
+
+fn twice(f: (i64) => i64, x: i64): i64 {
+    return f(f(x))
+}
+
+fn inc(x: i64): i64 {
+    return x + 1
+}
+
+pub fn main() {
+    unsafe { gp = if getpid() < 0 { hits.addrOf() } else { total.addrOf() } }
+    print(viaGlobal(&mut total, if getpid() > 0 { 2 } else { 0 }))
+    print(viaGlobal(&mut hits, 0))
+    print(total)
+    print(addHits(&mut hits))
+    print(hits)
+    let f = inc
+    print(twice(f, 5))
+}
