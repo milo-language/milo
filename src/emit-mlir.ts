@@ -1377,6 +1377,34 @@ class FnEmitter {
     this.allocCheck(this.rtCall(`milo.string.push_${kind}`, [{ ref: dst, ty: `!milo.ref<${STR}>` }, arg], PTR), span);
   }
 
+  /**
+   * Legacy's range check of `x[a..b]` (emitStringRangeCheck, genVecSlice): start < 0,
+   * end < start or end > len panics with "milo: <what> range out of bounds: a..b (len n)".
+   */
+  private rangeCheck(what: string, a: Val, b: Val, len: Val, span: Span | undefined): void {
+    const zero = this.def("milo.const 0 : si64", "si64");
+    const c = (p: string, x: Val, y: Val) => this.def(`milo.cmp ${p}, ${x.ref}, ${y.ref} : si64`, "i1").ref;
+    const bad0 = this.def(`milo.or ${c("lt", a, zero)}, ${c("lt", b, a)} : i1`, "i1");
+    const bad = this.def(`milo.or ${bad0.ref}, ${c("gt", b, len)} : i1`, "i1");
+    this.panicIf(bad.ref, [`milo: ${what} range out of bounds: `, "..", " (len ", `) at ${this.panicAt(span)}\n`], [a.ref, b.ref, len.ref]);
+  }
+
+  /**
+   * A view `{ data, len, cap 0 }` of type `ty` (a `&string`, a slice's !milo.vecval): cap 0
+   * owns nothing, so nothing drops it. Written through a slot's address, then loaded.
+   */
+  private makeView(ty: string, data: Val, len: Val): Val {
+    const slot = this.fresh();
+    this.vars.push(`  ${slot} = milo.var "view" : !milo.ref<${ty}>`);
+    const rec = `!milo.struct<"${ty === STR ? "String" : "Vec"}", ${PTR}, si64, si64>`;
+    const at = this.def(`milo.addr ${slot} : !milo.ref<${ty}>`, PTR).ref;
+    const field = (i: number) => this.def(`milo.ptr.field ${at}[${i}] : ${rec}`, PTR).ref;
+    this.emit(`milo.ptr.store ${data.ref}, ${field(0)} : ${PTR}`);
+    this.emit(`milo.ptr.store ${len.ref}, ${field(1)} : si64`);
+    this.emit(`milo.ptr.store ${this.def("milo.const 0 : si64", "si64").ref}, ${field(2)} : si64`);
+    return { ...this.def(`milo.load ${slot} : !milo.ref<${ty}>`, ty), own: "view" };
+  }
+
   private constTrue(): string {
     return this.def("milo.const true", "i1").ref;
   }
@@ -2403,18 +2431,19 @@ class FnEmitter {
       }
       case "InterfaceMethodCall": return this.dynCall(e);
       case "StringSlice": {
-        // `s[a..b]`, legacy's genStringSlice in a helper: a `&string` view into s's buffer
-        // (data and len, nothing owned), range-checked. Only a place's string, which
+        // `s[a..b]`: a `&string` view into s's buffer (data and len, nothing owned),
+        // range-checked as legacy genStringSlice. Only a place's string, which
         // outlives the view; never a temporary.
         if (e.str.kind !== "Ident" && e.str.kind !== "FieldAccess") throw new MlirUnsupported("slice of a temporary string");
         const s = this.place(e.str, refOf(STR), false).ref;
         const a = this.expr(e.start), b = this.expr(e.end);
         if (!isScalarTy(a.ty) || !isScalarTy(b.ty)) throw new MlirUnsupported("slice bound type");
-        const r = this.intrinsic("strslice", e, [
-          { name: "s", type: stripRefs(e.str.type), mode: "ref", ref: s },
-          { name: "a", type: e.start.type, mode: "val", ref: a.ref },
-          { name: "b", type: e.end.type, mode: "val", ref: b.ref }],
-        ([x, y, z]) => ({ ...e, str: x, start: y, end: z }), STR);
+        const lo = this.widenBound(a), hi = this.widenBound(b);
+        if (lo.ty !== "si64" || hi.ty !== "si64") throw new MlirUnsupported("slice bound type");
+        const sv = this.def(`milo.load ${s} : !milo.ref<${STR}>`, STR);
+        this.rangeCheck("slice", lo, hi, this.def(`milo.string.len ${sv.ref}`, "si64"), e.span);
+        const data = this.def(`milo.ptr.elem ${this.def(`milo.string.data ${sv.ref}`, PTR).ref}[${lo.ref}] : ui8`, PTR);
+        const r = this.makeView(STR, data, this.def(`milo.sub ${hi.ref}, ${lo.ref} wrapping : si64`, "si64"));
         return { ...r, own: "view" };
       }
       case "StringLen": return this.peek(e.object, v => {
@@ -2554,13 +2583,8 @@ class FnEmitter {
         const str = this.place(e.str, `!milo.ref<${STR}>`, false).ref;
         const a = this.expr(e.start), b = this.expr(e.end);
         if (a.ty !== "si64" || b.ty !== "si64") throw new MlirUnsupported("string range types");
-        // Legacy emitStringRangeCheck: start < 0, end < start or end > len.
         const len = this.def(`milo.string.len ${this.def(`milo.load ${str} : !milo.ref<${STR}>`, STR).ref}`, "si64");
-        const zero = this.def("milo.const 0 : si64", "si64");
-        const c = (p: string, x: Val, y: Val) => this.def(`milo.cmp ${p}, ${x.ref}, ${y.ref} : si64`, "i1").ref;
-        const bad0 = this.def(`milo.or ${c("lt", a, zero)}, ${c("lt", b, a)} : i1`, "i1");
-        const bad = this.def(`milo.or ${bad0.ref}, ${c("gt", b, len)} : i1`, "i1");
-        this.panicIf(bad.ref, ["milo: substr range out of bounds: ", "..", " (len ", `) at ${this.panicAt(e.span)}\n`], [a.ref, b.ref, len.ref]);
+        this.rangeCheck("substr", a, b, len, e.span);
         return { ref: "", ty: "" };
       }
       case "StrUnique": {
@@ -2787,8 +2811,8 @@ class FnEmitter {
         return this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64");
       }
       case "VecSlice": {
-        // `v[a..b]` of a Vec, a fixed array or a slice: legacy's genVecSlice (range checks, the
-        // header into v's buffer) in a helper, v lent by its place. A view: nothing owned.
+        // `v[a..b]` of a Vec, a fixed array or a slice: range-checked as legacy genVecSlice,
+        // a header into v's storage. A view: nothing owned.
         const vt = stripRefs(e.vec.type);
         const lent = this.lent(vt, "sliced value");
         const k = e.vec.kind, at = placeType(this.cx, e.vec.type);
@@ -2802,10 +2826,14 @@ class FnEmitter {
         const a = this.widenBound(this.expr(e.start)), b = this.widenBound(this.expr(e.end));
         const elem = this.place$(e.elementType, "slice element");
         if (a.ty !== "si64" || b.ty !== "si64" || vecElem(this.cx, stripRefs(e.type)) !== elem) throw new MlirUnsupported("slice operand types");
-        const r = this.intrinsic("vecslice", e, [{ name: "v", type: vt, mode: "ref", ref: v },
-          { name: "a", type: I64, mode: "val", ref: a.ref }, { name: "b", type: I64, mode: "val", ref: b.ref }],
-        ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
-        return { ...r, own: "view" };
+        // A Vec's (or slice's) header gives data and len; a fixed array is its own storage.
+        const header = lent.startsWith("!milo.vec<");
+        if (!header && !(vt.tag === "array" && vt.size !== null)) throw new MlirUnsupported("slice of another place");
+        const base = header ? this.def(`milo.vec.data ${v} : ${lent}`, PTR) : this.def(`milo.addr ${v} : ${lent}`, PTR);
+        const len = header ? this.def(`milo.len ${v} : ${lent}`, "si64") : this.def(`milo.const ${(vt as { size: number }).size} : si64`, "si64");
+        this.rangeCheck("slice", a, b, len, e.span);
+        const data = this.def(`milo.ptr.elem ${base.ref}[${a.ref}] : ${elem}`, PTR);
+        return this.makeView(`!milo.vecval<${elem}>`, data, this.def(`milo.sub ${b.ref}, ${a.ref} wrapping : si64`, "si64"));
       }
       case "CFnCall": {
         // A call through a C fn pointer: legacy's indirect C call in a helper, scalar
@@ -2873,15 +2901,13 @@ class FnEmitter {
         return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
       }
       case "RawSlice": {
-        // A foreign view `&[T]` over (ptr, len): legacy's genRawSlice header { ptr, len, 0 }
-        // in a helper. Its capacity 0 owns nothing, so it is a view.
+        // A foreign view `&[T]` over (ptr, len): the header { ptr, len, 0 } (legacy
+        // genRawSlice). Its capacity 0 owns nothing, so it is a view.
         const elem = vecElem(this.cx, stripRefs(e.type));
         if (elem === null) throw new MlirUnsupported("raw slice element type");
         const p = this.expr(e.ptr), n = this.expr(e.len);
         if (p.ty !== PTR || n.ty !== "si64") throw new MlirUnsupported("raw slice operand types");
-        const r = this.intrinsic("rawslice", e, [{ name: "p", type: e.ptr.type, mode: "val", ref: p.ref },
-          { name: "n", type: I64, mode: "val", ref: n.ref }], ([x, y]) => ({ ...e, ptr: x, len: y }), `!milo.vecval<${elem}>`, false);
-        return { ...r, own: "view" };
+        return this.makeView(`!milo.vecval<${elem}>`, p, n);
       }
       case "RangeCheck": {
         // A value flowing into a ranged int: legacy's emitRangeCheck (its panic text) in a
