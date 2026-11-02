@@ -2262,11 +2262,12 @@ class FnEmitter {
       }
       case "VecGetOpt": {
         // `v.get(i)` / first / last: legacy's genVecGetOpt (the bounds test, a deep clone of
-        // the element into Some) in a helper, v lent by its place. Legacy also drops a
-        // temporary receiver after the read; only a named place is taken here.
+        // the element into Some) in a helper, v lent by its place. A temporary receiver goes
+        // to a slot that dies with the statement; legacy drops it right after the read, which
+        // only a user Drop could tell apart, so such a one stays legacy.
         const k = e.object.kind;
-        if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess") throw new MlirUnsupported("get on a temporary vec");
         const vt = stripRefs(e.object.type);
+        if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && this.runsUserDrop(this.place$(vt, "vec of get"))) throw new MlirUnsupported("get on a temporary vec with a user Drop");
         const v = this.place(e.object, this.lent(vt, "vec of get"), false).ref;
         const i = this.expr(e.index);
         if (i.ty !== "si64") throw new MlirUnsupported("get index type");
@@ -3394,7 +3395,7 @@ class FnEmitter {
   /**
    * A builtin whose operands are `e[field]` (and BitIntrinsic's `amount`) as legacy's own
    * codegen of it, in a helper: a scalar operand by value, any other lent by its place
-   * (a named one only: legacy would drop a temporary receiver after the read). The result
+   * (a temporary in a slot of the statement). The result
    * is a value of `e.type`, owned when it has drop glue (JsonStringify's string).
    */
   private builtinOf(e: HIRExpr, field: "object" | "value", panics: boolean): Val {
@@ -3409,7 +3410,9 @@ class FnEmitter {
         if (v.ty !== vt) throw new MlirUnsupported(`${e.kind} operand type`);
         return { name: `a${k}`, type: t, mode: "val" as const, ref: v.ref };
       }
-      if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "IndexAccess") throw new MlirUnsupported(`${e.kind} of a temporary`);
+      // A temporary goes to a slot that dies with the statement (legacy: right after the
+      // read, which only a user Drop could tell apart).
+      if (x.kind !== "Ident" && x.kind !== "FieldAccess" && x.kind !== "IndexAccess" && this.runsUserDrop(this.place$(t, `${e.kind} operand`))) throw new MlirUnsupported(`${e.kind} of a temporary with a user Drop`);
       return { name: `a${k}`, type: t, mode: "ref" as const, ref: this.place(x, this.lent(t, `${e.kind} operand`), false).ref };
     });
     const ty = this.value(e.type, `${e.kind} result`);
