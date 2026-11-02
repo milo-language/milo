@@ -1,0 +1,13 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a for over a HashMap
+// temporary walks it from a slot of the loop, which drops it after the loop.
+
+fn mk(): HashMap<string, string> {
+    var m: HashMap<string, string> = HashMap.new()
+    m.insert("a" + "", "x" + "")
+    return m
+}
+
+fn main() {
+    for k, v in mk() { print(k, v) }
+    print("end")
+}

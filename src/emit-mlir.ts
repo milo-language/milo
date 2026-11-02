@@ -1872,8 +1872,19 @@ class FnEmitter {
     this.blocks.push(this.owned.length);
     this.owned.push([]);
     try {
-      const p = this.fieldPlace(s.iterable);
-      if (!p || p.ty !== mty) throw new MlirUnsupported("for over a hashmap that is not a place");
+      let p = this.fieldPlace(s.iterable);
+      if (!p) {
+        // A map value (a fork of places, a temporary): walked from a slot. A view's slot owns
+        // nothing; a temporary's is the loop's frame's, which drops it after the loop.
+        const v = this.expr(s.iterable);
+        if (v.ty !== mty) throw new MlirUnsupported("for over a hashmap value of another type");
+        let ref: string;
+        if (v.own === "owned" && !this.bitCopies.has(v.ref)) ref = this.ownedSlot("for.map", mty, mt);
+        else { ref = this.fresh(); this.vars.push(`  ${ref} = milo.var "for.map" : !milo.ref<${mty}>`); }
+        this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${mty}>`);
+        p = { ref, ty: mty };
+      }
+      if (p.ty !== mty) throw new MlirUnsupported("for over a hashmap that is not a place");
       // Legacy's own %HashMap names the header; a slot is addressed by bytes (it is a
       // literal struct in legacy, which no !milo.struct name could spell).
       const head = `!milo.struct<"HashMap", ${PTR}, si64, si64, si64, si64>`;
