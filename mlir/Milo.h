@@ -94,21 +94,29 @@ struct EnumTypeStorage : mlir::TypeStorage {
   }
   llvm::LogicalResult mutate(mlir::TypeStorageAllocator &a, int64_t sz, int64_t al,
                              llvm::ArrayRef<int32_t> tg, llvm::ArrayRef<mlir::TupleType> vs,
-                             llvm::ArrayRef<int64_t> offs, bool drop) {
+                             llvm::ArrayRef<int64_t> offs, bool drop, unsigned nBits,
+                             int64_t nValue) {
     if (initialized)
       return llvm::success(sz == size && al == align && tg == tags && vs == variants &&
-                           offs == offsets && drop == userDrop);
+                           offs == offsets && drop == userDrop && nBits == nicheBits &&
+                           nValue == nicheValue);
     size = sz;
     align = al;
     tags = a.copyInto(tg);
     variants = a.copyInto(vs);
     offsets = a.copyInto(offs);
     userDrop = drop;
+    nicheBits = nBits;
+    nicheValue = nValue;
     initialized = true;
     return llvm::success();
   }
   llvm::StringRef name;
   int64_t size = 0, align = 0;
+  // nicheBits == 0: tagged. Otherwise the leading iN of the payload holds nicheValue for
+  // the fieldless variant (legacy EnumNiche).
+  unsigned nicheBits = 0;
+  int64_t nicheValue = 0;
   llvm::ArrayRef<int32_t> tags;
   llvm::ArrayRef<mlir::TupleType> variants;
   llvm::ArrayRef<int64_t> offsets;

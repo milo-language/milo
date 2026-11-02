@@ -100,8 +100,9 @@ void FnType::print(AsmPrinter &p) const {
   p << "<" << (getOwning() ? "owning " : "") << getSignature() << ">";
 }
 
-// !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>, or
-// `!milo.enum<"Name">`, the same type by name (inside its own body, or defined elsewhere).
+// !milo.enum<"Name", size = N, align = A, [tag: (T at off, ...), ...]>, a niche one
+// !milo.enum<"Name", niche = V : iN, [...]>, or `!milo.enum<"Name">`, the same type by
+// name (inside its own body, or defined elsewhere).
 Type EnumType::parse(AsmParser &p) {
   std::string name;
   int64_t size, align;
@@ -109,6 +110,8 @@ Type EnumType::parse(AsmParser &p) {
   SmallVector<TupleType> variants;
   SmallVector<int64_t> offsets;
   bool userDrop = false;
+  unsigned nicheBits = 0;
+  int64_t nicheValue = 0;
   SMLoc loc = p.getCurrentLocation();
   if (p.parseLess() || p.parseString(&name))
     return {};
@@ -116,10 +119,20 @@ Type EnumType::parse(AsmParser &p) {
   if (succeeded(p.parseOptionalGreater()))
     return t;
   userDrop = succeeded(p.parseOptionalKeyword("drop"));
-  if (p.parseComma() || p.parseKeyword("size") ||
-      p.parseEqual() || p.parseInteger(size) || p.parseComma() || p.parseKeyword("align") ||
-      p.parseEqual() || p.parseInteger(align) || p.parseComma())
+  if (p.parseComma())
     return {};
+  if (succeeded(p.parseOptionalKeyword("niche"))) {
+    IntegerType it;
+    if (p.parseEqual() || p.parseInteger(nicheValue) || p.parseColon() || p.parseType(it) ||
+        p.parseComma())
+      return {};
+    nicheBits = it.getWidth();
+    size = align = 0;
+  } else if (p.parseKeyword("size") || p.parseEqual() || p.parseInteger(size) ||
+             p.parseComma() || p.parseKeyword("align") || p.parseEqual() ||
+             p.parseInteger(align) || p.parseComma()) {
+    return {};
+  }
   auto variant = [&]() -> ParseResult {
     int32_t tag;
     SmallVector<Type> fields;
@@ -142,7 +155,7 @@ Type EnumType::parse(AsmParser &p) {
   if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, variant) || p.parseGreater())
     return {};
   if (failed(t.setBody([&] { return p.emitError(loc); }, size, align, tags, variants, offsets,
-                       userDrop)))
+                       userDrop, nicheBits, nicheValue)))
     return {};
   return t;
 }
@@ -153,7 +166,11 @@ void EnumType::print(AsmPrinter &p) const {
     p << "<\"" << getName() << "\">";
     return;
   }
-  p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "") << ", size = " << getSize() << ", align = " << getAlign() << ", [";
+  p << "<\"" << getName() << "\"" << (getUserDrop() ? " drop" : "");
+  if (getNicheBits())
+    p << ", niche = " << getNicheValue() << " : i" << getNicheBits() << ", [";
+  else
+    p << ", size = " << getSize() << ", align = " << getAlign() << ", [";
   unsigned k = 0;
   llvm::interleaveComma(llvm::zip(getTags(), getVariants()), p, [&](auto tv) {
     p << std::get<0>(tv) << ": (";
@@ -172,11 +189,19 @@ ArrayRef<TupleType> EnumType::getVariants() const { return getImpl()->variants; 
 ArrayRef<int64_t> EnumType::getOffsets() const { return getImpl()->offsets; }
 bool EnumType::getUserDrop() const { return getImpl()->userDrop; }
 bool EnumType::isInitialized() const { return getImpl()->initialized; }
+unsigned EnumType::getNicheBits() const { return getImpl()->nicheBits; }
+int64_t EnumType::getNicheValue() const { return getImpl()->nicheValue; }
+int32_t EnumType::getNoneTag() const {
+  return getTags()[getVariants()[0].size() == 0 ? 0 : 1];
+}
+int32_t EnumType::getSomeTag() const {
+  return getTags()[getVariants()[0].size() == 0 ? 1 : 0];
+}
 
 LogicalResult EnumType::setBody(function_ref<InFlightDiagnostic()> emitError, int64_t size,
                                 int64_t align, ArrayRef<int32_t> tags,
                                 ArrayRef<TupleType> variants, ArrayRef<int64_t> offsets,
-                                bool userDrop) {
+                                bool userDrop, unsigned nicheBits, int64_t nicheValue) {
   if (tags.size() != variants.size())
     return emitError() << "needs one tag per variant";
   size_t fields = 0;
@@ -184,6 +209,17 @@ LogicalResult EnumType::setBody(function_ref<InFlightDiagnostic()> emitError, in
     fields += v.size();
   if (offsets.size() != fields)
     return emitError() << "needs one offset per payload field";
+  if (nicheBits) {
+    if (variants.size() != 2 || fields != 1 || offsets[0] != 0)
+      return emitError() << "with a niche needs a fieldless variant and one field at 0";
+    if (nicheBits != 8 && nicheBits != 16 && nicheBits != 32 && nicheBits != 64)
+      return emitError() << "niche integer i" << nicheBits << " is not i8, i16, i32 or i64";
+    if (!llvm::isIntN(nicheBits, nicheValue))
+      return emitError() << "niche " << nicheValue << " does not fit i" << nicheBits;
+    if (failed(Base::mutate(0, 0, tags, variants, offsets, userDrop, nicheBits, nicheValue)))
+      return emitError() << "enum \"" << getName() << "\" has two different bodies";
+    return success();
+  }
   if ((align != 4 && align != 8) || size % align)
     return emitError() << "size " << size << " is not stored as " << align << "-byte words";
   if (size == 0 && fields)
@@ -191,7 +227,7 @@ LogicalResult EnumType::setBody(function_ref<InFlightDiagnostic()> emitError, in
   for (int64_t off : offsets)
     if (off < 4 || off >= size)
       return emitError() << "payload offset " << off << " is outside bytes 4.." << size;
-  if (failed(Base::mutate(size, align, tags, variants, offsets, userDrop)))
+  if (failed(Base::mutate(size, align, tags, variants, offsets, userDrop, 0, 0)))
     return emitError() << "enum \"" << getName() << "\" has two different bodies";
   return success();
 }

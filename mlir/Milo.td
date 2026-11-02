@@ -264,7 +264,10 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum", [MutableType]> {
     (or `{ i32 }` when size is 0, a fieldless enum), the i32 tag in bytes 0..4, and each
     variant's fields at the byte offsets after `at`:
       !milo.enum<"Shape", size = 24, align = 8, [0: (f64 at 8), 1: (f64 at 8, f64 at 16), 2: ()]>
-    Niche-packed enums (EnumLayout.niche) have no tag word and are not expressible here.
+    A niche-packed enum (EnumLayout.niche: two variants, one fieldless, one with a single
+    field) has no tag word. It is stored as its payload alone, `{ P }`, and the fieldless
+    variant is the value after `niche` in the payload's leading integer:
+      !milo.enum<"Option_R", niche = 2147483647 : i32, [0: (si32 at 0), 1: ()]>
   }];
   let mnemonic = "enum";
   let storageClass = "EnumTypeStorage";
@@ -283,7 +286,14 @@ def Milo_EnumType : TypeDef<Milo_Dialect, "Enum", [MutableType]> {
     ::mlir::LogicalResult setBody(::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
                                   int64_t size, int64_t align, ::llvm::ArrayRef<int32_t> tags,
                                   ::llvm::ArrayRef<::mlir::TupleType> variants,
-                                  ::llvm::ArrayRef<int64_t> offsets, bool userDrop);
+                                  ::llvm::ArrayRef<int64_t> offsets, bool userDrop,
+                                  unsigned nicheBits = 0, int64_t nicheValue = 0);
+    // 0 for a tagged enum; else the width of the integer at offset 0 holding the niche.
+    unsigned getNicheBits() const;
+    int64_t getNicheValue() const;
+    // Of a niche enum: the tag of its fieldless variant, and of its payload variant.
+    int32_t getNoneTag() const;
+    int32_t getSomeTag() const;
     // The variant with this tag, or -1.
     int variantOf(int32_t tag) const;
     // Byte offset of field `k` of variant `v`.

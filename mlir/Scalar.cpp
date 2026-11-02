@@ -1290,6 +1290,28 @@ Value byteOffset(ConversionPatternRewriter &rw, Location loc, Value base, int64_
                              LLVM::GEPNoWrapFlags::inbounds);
 }
 
+// A niche enum's tag, from the integer at offset 0 of its place (legacy loadEnumTag).
+Value nicheTagAt(ConversionPatternRewriter &rw, Location loc, EnumType e, Value at) {
+  Type it = rw.getIntegerType(e.getNicheBits());
+  Value raw = LLVM::LoadOp::create(rw, loc, it, at);
+  Value none = LLVM::ICmpOp::create(rw, loc, LLVM::ICmpPredicate::eq, raw,
+                                    constInt(rw, loc, it, e.getNicheValue()));
+  return LLVM::SelectOp::create(rw, loc, none, constInt(rw, loc, rw.getI32Type(), e.getNoneTag()),
+                                constInt(rw, loc, rw.getI32Type(), e.getSomeTag()));
+}
+
+// Write variant `tag` of the enum at `at`. A niche enum's payload variant has no tag to
+// write: its payload store is the whole value.
+void storeTag(ConversionPatternRewriter &rw, Location loc, EnumType e, Value at, int32_t tag) {
+  if (!e.getNicheBits()) {
+    LLVM::StoreOp::create(rw, loc, constInt(rw, loc, rw.getI32Type(), tag), at);
+    return;
+  }
+  if (tag == e.getNoneTag())
+    LLVM::StoreOp::create(rw, loc,
+                          constInt(rw, loc, rw.getIntegerType(e.getNicheBits()), e.getNicheValue()), at);
+}
+
 // An enum goes through memory, as in legacy codegen (enumFieldPtr): its storage array has
 // no per-variant shape, so the tag and each payload field are read and written at their
 // byte offsets; SROA folds the slot away.
@@ -1302,7 +1324,7 @@ struct EnumNewLowering : ConvertOpToLLVMPattern<EnumNewOp> {
     EnumType e = op.getType();
     Type et = getTypeConverter()->convertType(e);
     Value slot = entrySlot(rw, op, et);
-    LLVM::StoreOp::create(rw, loc, constInt(rw, loc, rw.getI32Type(), op.getTag()), slot);
+    storeTag(rw, loc, e, slot, op.getTag());
     unsigned v = e.variantOf(op.getTag());
     for (auto [k, f] : llvm::enumerate(a.getFields()))
       LLVM::StoreOp::create(rw, loc, f, byteOffset(rw, loc, slot, e.offsetOf(v, k)));
@@ -1318,7 +1340,11 @@ struct EnumTagLowering : ConvertOpToLLVMPattern<EnumTagOp> {
                   ConversionPatternRewriter &rw) const override {
     Value slot = entrySlot(rw, op, a.getValue().getType());
     LLVM::StoreOp::create(rw, op.getLoc(), a.getValue(), slot);
-    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI32Type(), slot);
+    EnumType e = op.getValue().getType();
+    if (e.getNicheBits())
+      rw.replaceOp(op, nicheTagAt(rw, op.getLoc(), e, slot));
+    else
+      rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI32Type(), slot);
     return success();
   }
 };
@@ -1358,9 +1384,9 @@ struct EnumSetTagLowering : ConvertOpToLLVMPattern<EnumSetTagOp> {
   LogicalResult
   matchAndRewrite(EnumSetTagOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    Value tag = LLVM::ConstantOp::create(rw, op.getLoc(), rw.getI32Type(),
-                                         rw.getI32IntegerAttr(op.getTag()));
-    rw.replaceOpWithNewOp<LLVM::StoreOp>(op, tag, a.getRef());
+    storeTag(rw, op.getLoc(), cast<EnumType>(op.getRef().getType().getPointee()), a.getRef(),
+             op.getTag());
+    rw.eraseOp(op);
     return success();
   }
 };
@@ -1370,7 +1396,11 @@ struct EnumTagAtLowering : ConvertOpToLLVMPattern<EnumTagAtOp> {
   LogicalResult
   matchAndRewrite(EnumTagAtOp op, OpAdaptor a,
                   ConversionPatternRewriter &rw) const override {
-    rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI32Type(), a.getRef());
+    auto e = cast<EnumType>(op.getRef().getType().getPointee());
+    if (e.getNicheBits())
+      rw.replaceOp(op, nicheTagAt(rw, op.getLoc(), e, a.getRef()));
+    else
+      rw.replaceOpWithNewOp<LLVM::LoadOp>(op, rw.getI32Type(), a.getRef());
     return success();
   }
 };
@@ -1602,6 +1632,13 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     auto st = LLVM::LLVMStructType::getIdentified(ctx, e.getName());
     if (st.isInitialized())
       return st;
+    // Legacy's niche layout, `%Name = type { P }`: the payload alone.
+    if (e.getNicheBits()) {
+      Type p = tc.convertType(e.getVariants()[e.variantOf(e.getSomeTag())].getType(0));
+      if (!p || failed(st.setBody({p}, /*isPacked=*/false)))
+        return std::nullopt;
+      return st;
+    }
     Type body = e.getSize() == 0
                     ? Type(IntegerType::get(ctx, 32))
                     : Type(LLVM::LLVMArrayType::get(IntegerType::get(ctx, 8 * e.getAlign()),

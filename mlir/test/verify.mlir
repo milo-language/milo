@@ -164,6 +164,34 @@ func.func @enum_offset(%e: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 2),
 
 // -----
 
+// expected-error @+1 {{with a niche needs a fieldless variant and one field at 0}}
+func.func @niche_offset(%e: !milo.enum<"N", niche = 2147483647 : i32, [0: (si32 at 4), 1: ()]>) {
+  milo.return
+}
+
+// -----
+
+// expected-error @+1 {{with a niche needs a fieldless variant and one field at 0}}
+func.func @niche_three(%e: !milo.enum<"N", niche = 2147483647 : i32, [0: (si32 at 0), 1: (), 2: ()]>) {
+  milo.return
+}
+
+// -----
+
+// expected-error @+1 {{niche 300 does not fit i8}}
+func.func @niche_fit(%e: !milo.enum<"N", niche = 300 : i8, [0: (ui8 at 0), 1: ()]>) {
+  milo.return
+}
+
+// -----
+
+// expected-error @+1 {{niche integer i1 is not i8, i16, i32 or i64}}
+func.func @niche_width(%e: !milo.enum<"N", niche = 0 : i1, [0: (i1 at 0), 1: ()]>) {
+  milo.return
+}
+
+// -----
+
 func.func @enum_two_bodies(%a: !milo.enum<"S", size = 16, align = 8, [0: (f64 at 8), 1: ()]>,
 // expected-error @+1 {{enum "S" has two different bodies}}
                            %b: !milo.enum<"S", size = 16, align = 8, [0: (si64 at 8), 1: ()]>) {

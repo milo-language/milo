@@ -2856,7 +2856,10 @@ out so nothing here recomputes it: `size` bytes stored as `[size/align x i(8*ali
 (or `{ i32 }` when size is 0, a fieldless enum), the i32 tag in bytes 0..4, and each
 variant's fields at the byte offsets after `at`:
   !milo.enum<"Shape", size = 24, align = 8, [0: (f64 at 8), 1: (f64 at 8, f64 at 16), 2: ()]>
-Niche-packed enums (EnumLayout.niche) have no tag word and are not expressible here.
+A niche-packed enum (EnumLayout.niche: two variants, one fieldless, one with a single
+field) has no tag word. It is stored as its payload alone, `{ P }`, and the fieldless
+variant is the value after `niche` in the payload's leading integer:
+  !milo.enum<"Option_R", niche = 2147483647 : i32, [0: (si32 at 0), 1: ()]>
 
 #### Parameters:
 
