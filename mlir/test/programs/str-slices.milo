@@ -1,7 +1,7 @@
 // Differential program for scripts/mlir-same.ts --programs --owned: `s[a..b]` string
 // slices, `&string` views into the source's buffer. Of a local, a by-ref param and a
 // struct field, with i64 and narrower bounds, empty and whole ranges, printed. Lent to a
-// `&string` param (run, headLen) they stay legacy for now.
+// `&string` param (run, headLen) the view goes in a slot nobody drops.
 
 struct Line { text: string, n: i64 }
 

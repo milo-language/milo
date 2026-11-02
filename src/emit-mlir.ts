@@ -4056,7 +4056,7 @@ class FnEmitter {
     const callee = this.fns.get(e.func);
     const sig = this.cx.fnSigs.get(e.func);
     // A string given to a `*u8` param is legacy's C string conversion for any callee, not only an extern.
-    if (callee && sig && ((callee.isExtern && e.variadic) || e.args.some((a, i) => !a.passByRef && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] === "ptr")))
+    if (callee && sig && ((callee.isExtern && e.variadic) || e.args.some((a, i) => !a.passByRef && !callee.params[i]?.isRef && !callee.params[i]?.isRefMut && stripRefs(a.expr.type).tag === "string" && sig.paramTypes[i] === "ptr")))
       return this.ffiCall(e, stmt);
     if (e.variadic) throw new MlirUnsupported("variadic call");
     if (!callee || !sig || sig.variadic) throw new MlirUnsupported("callee");
@@ -4071,9 +4071,12 @@ class FnEmitter {
     // is legacy's, in a helper (ffiCall) that Milo code calls with plain LLVM structs.
     if (callee.isExtern && [callee.retType, ...callee.params.filter(p => !p.isRef && !p.isRefMut).map(p => p.type)].some(t => t.tag === "struct" || t.tag === "array"))
       return this.ffiCall(e, stmt);
+    // A `&string` value (a slice `s[a..b]`) given to a `&string` param: the view goes in
+    // a slot nobody drops, and the param gets that place.
+    const viewArg = (i: number) => !e.args[i].passByRef && callee.params[i].isRef && e.args[i].expr.type.tag === "ref" && stripRefs(e.args[i].expr.type).tag === "string";
     const paramTys = callee.params.map((p, i) => {
       const byRef = p.isRef || p.isRefMut;
-      if (byRef !== e.args[i].passByRef) throw new MlirUnsupported("by-ref arg mismatch");
+      if (byRef !== e.args[i].passByRef && !viewArg(i)) throw new MlirUnsupported("by-ref arg mismatch");
       const ty = byRef ? this.lent(p.type, "by-ref arg") : this.place$(p.type, "call arg");
       if (sig.paramTypes[i] !== (byRef ? "ptr" : this.cx.llvmType(p.type))) throw new MlirUnsupported("callee signature");
       return ty;
@@ -4087,6 +4090,16 @@ class FnEmitter {
     const mark = this.pending.length;
     const args = e.args.map((a, j) => {
       const i = j + k0;
+      if (viewArg(j)) {
+        const v = this.expr(a.expr);
+        if (v.ty !== STR || v.own !== "view") throw new MlirUnsupported("by-ref arg of a string that is not a view");
+        const slot = this.fresh();
+        this.vars.push(`  ${slot} = milo.var "view.arg" : !milo.ref<${STR}>`);
+        this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${STR}>`);
+        refs.push({ ref: slot, mut: false, ty: paramTys[i] });
+        provenance.push(null);
+        return slot;
+      }
       if (a.passByRef) {
         const ref = this.place(a.expr, paramTys[i], a.refMut);
         refs.push({ ref: ref.ref, mut: a.refMut, ty: paramTys[i] });
