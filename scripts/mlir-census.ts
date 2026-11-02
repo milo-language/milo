@@ -44,7 +44,10 @@ async function one(file: string, i: number) {
     env: { ...process.env, MILO_MLIR_LOG: log }, stdout: "ignore", stderr: "ignore",
     cwd: resolve(file, ".."),
   });
+  // A big example (games/flight) takes minutes; one that hangs must not hold the census.
+  const timer = setTimeout(() => proc.kill(), 300_000);
   if ((await proc.exited) !== 0) failed++;
+  clearTimeout(timer);
   if (!existsSync(log)) return;
   for (const line of readFileSync(log, "utf-8").split("\n")) {
     if (!line) continue;
