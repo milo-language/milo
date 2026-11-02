@@ -2566,18 +2566,32 @@ class FnEmitter {
         const k = this.place(e.key, refOf(this.value(kt, "map key")), false).ref;
         const seed = this.expr(e.seed);
         if (seed.ty !== "si64") throw new MlirUnsupported("map seed type");
-        return this.intrinsic("maphash", e, [{ name: "k", type: kt, mode: "ref", ref: k }, { name: "s", type: I64, mode: "val", ref: seed.ref }],
-          ([a, b]) => ({ kind: "MapHash", type: e.type, span: e.span, key: a, seed: b }), scalar(e.type, "map hash"), false);
+        if (scalar(e.type, "map hash") !== "si64") throw new MlirUnsupported("map hash type");
+        this.cx.mlirMapOps();
+        // FNV-1a from its offset basis xor the seed (legacy fnvHash).
+        const h0 = this.def(`milo.xor ${this.def("milo.const -3750763034362895579 : si64", "si64").ref}, ${seed.ref} : si64`, "si64");
+        const kp = refOf(this.value(kt, "map key"));
+        return this.rtCall(this.glue.hash(kt), [{ ref: k, ty: kp }, h0], "si64");
       }
       case "MapKeyEq":
       case "NatLess": {
         const kt = stripRefs(e.a.type);
         const rt = refOf(this.value(kt, "compared key"));
         const a = this.place(e.a, rt, false).ref, b = this.place(e.b, rt, false).ref;
-        const kind = e.kind;
-        return this.intrinsic(kind === "MapKeyEq" ? "mapkeyeq" : "natless", e,
-          [{ name: "a", type: kt, mode: "ref", ref: a }, { name: "b", type: kt, mode: "ref", ref: b }],
-          ([x, y]) => ({ kind, type: e.type, span: e.span, a: x, b: y }), scalar(e.type, "comparison"), false);
+        if (scalar(e.type, "comparison") !== "i1") throw new MlirUnsupported("comparison type");
+        if (e.kind === "MapKeyEq") return this.rtCall(this.glue.eq(kt), [{ ref: a, ty: rt }, { ref: b, ty: rt }], "i1");
+        // std's _natLess: min/max/sort's `a < b` (legacy emitElemOrd): strings in byte
+        // order, floats ordered (NaN is never less), ints by signedness, false < true.
+        const ty = this.value(kt, "compared key");
+        if (ty === STR) {
+          this.stringHelpers();
+          const c = this.rtCall("milo.string.cmp", [{ ref: a, ty: rt }, { ref: b, ty: rt }], "si32");
+          return this.def(`milo.cmp lt, ${c.ref}, ${this.def("milo.const 0 : si32", "si32").ref} : si32`, "i1");
+        }
+        if (!isScalarTy(ty)) throw new MlirUnsupported(`ordering of ${ty}`);
+        let x = this.def(`milo.load ${a} : ${rt}`, ty), y = this.def(`milo.load ${b} : ${rt}`, ty);
+        if (ty === "i1") { x = this.def(`milo.cast ${x.ref} : i1 to ui8`, "ui8"); y = this.def(`milo.cast ${y.ref} : i1 to ui8`, "ui8"); }
+        return this.def(`milo.cmp lt, ${x.ref}, ${y.ref} : ${x.ty}`, "i1");
       }
       case "MapSeed":
         if (scalar(e.type, "map seed") !== "si64") throw new MlirUnsupported("map seed type");

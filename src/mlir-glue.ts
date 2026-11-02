@@ -10,6 +10,12 @@
 //   Vec, array, slice  `[a, b, c]`
 //   pointer            `0x` and lowercase hex
 // Strings are written by length, so a NUL inside one is text like any other byte.
+//
+// eq: `milo.eq.<key>(ref K, ref K) -> i1`, a HashMap key's equality: ints and bools by
+// value, strings by bytes, structs field by field.
+// hash: `milo.hash.<key>(ref K, si64 h) -> si64`, FNV-1a folded over the key (map.ll): a
+// bool's one byte, an int's 8 bytes widened by its signedness, a string's bytes, a
+// struct's fields in order.
 import type { TypeKind } from "./types";
 import { MlirUnsupported, type MlirEmitCtx, glueHelpers } from "./emit-mlir";
 
@@ -37,6 +43,34 @@ export class MlirGlue {
     const g = new GlueFn(this, this.cx);
     g.body(t, "%p", "%s");
     this.texts.push([`func.func @${h.quote(name)}(%p: ${place}, %s: ${STR_REF}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    return name;
+  }
+
+  /** The symbol of K's key equality, generated on first use. */
+  eq(t: TypeKind): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    const name = `milo.eq.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    const place = this.placeOf(t);
+    const g = new GlueFn(this, this.cx);
+    const r = g.keyEq(t, "%a", "%b");
+    this.texts.push([`func.func @${h.quote(name)}(%a: ${place}, %b: ${place}) -> i1 attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, `  milo.return ${r} : i1`, "}"].join("\n"));
+    return name;
+  }
+
+  /** The symbol of K's key hash, generated on first use. */
+  hash(t: TypeKind): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    const name = `milo.hash.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    const place = this.placeOf(t);
+    const g = new GlueFn(this, this.cx);
+    const r = g.keyHash(t, "%p", "%h");
+    this.texts.push([`func.func @${h.quote(name)}(%p: ${place}, %h: si64) -> si64 attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, `  milo.return ${r} : si64`, "}"].join("\n"));
     return name;
   }
 
@@ -139,6 +173,72 @@ class GlueFn {
     if (t.tag === "bool") return "bool";
     if (t.tag === "ptr") return "ptr";
     return null;
+  }
+
+  /** Whether the keys at places `a` and `b` are equal. */
+  keyEq(t: TypeKind, a: Ref, b: Ref): Ref {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    if (t.tag === "int" || t.tag === "bool") {
+      const ty = h.placeType(this.cx, t)!;
+      return this.def(`milo.cmp eq, ${this.def(`milo.load ${a} : !milo.ref<${ty}>`)}, ${this.def(`milo.load ${b} : !milo.ref<${ty}>`)} : ${ty}`);
+    }
+    if (t.tag === "string") {
+      this.cx.mlirStringOps();
+      return this.call("milo.string.eq", [[a, STR_REF], [b, STR_REF]], "i1");
+    }
+    if (t.tag === "struct") {
+      const layout = this.cx.structLayouts.get(t.name);
+      if (!layout) throw new MlirUnsupported(`key equality of struct ${t.name}`);
+      const sty = h.placeType(this.cx, t)!;
+      // Every field compared (no early exit): a fieldless struct is equal to itself.
+      let acc = this.def("milo.const true");
+      layout.fields.forEach((f, i) => {
+        const fty = h.placeType(this.cx, f.typeKind);
+        if (fty === null) throw new MlirUnsupported(`key equality of field ${f.name}`);
+        const fa = this.def(`milo.field_ref ${a}[${i}] : !milo.ref<${sty}> -> !milo.ref<${fty}>`);
+        const fb = this.def(`milo.field_ref ${b}[${i}] : !milo.ref<${sty}> -> !milo.ref<${fty}>`);
+        const s = h.stripRefs(f.typeKind);
+        const e = s.tag === "struct" ? this.call(this.glue.eq(s), [[fa, `!milo.ref<${fty}>`], [fb, `!milo.ref<${fty}>`]], "i1") : this.keyEq(s, fa, fb);
+        acc = this.def(`milo.and ${acc}, ${e} : i1`);
+      });
+      return acc;
+    }
+    throw new MlirUnsupported(`key equality of ${t.tag}`);
+  }
+
+  /** The hash `acc` folded over the key at place `p`. */
+  keyHash(t: TypeKind, p: Ref, acc: Ref): Ref {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    if (t.tag === "bool") {
+      const b = this.def(`milo.cast ${this.def(`milo.cast ${this.def(`milo.load ${p} : !milo.ref<i1>`)} : i1 to ui64`)} : ui64 to si64`);
+      return this.call("milo.hash.byte", [[acc, "si64"], [b, "si64"]], "si64");
+    }
+    if (t.tag === "int") {
+      const ty = h.placeType(this.cx, t)!;
+      let v = this.def(`milo.load ${p} : !milo.ref<${ty}>`);
+      if (!t.signed) { if (ty !== "ui64") v = this.def(`milo.cast ${v} : ${ty} to ui64`); v = this.def(`milo.cast ${v} : ui64 to si64`); }
+      else if (ty !== "si64") v = this.def(`milo.cast ${v} : ${ty} to si64`);
+      return this.call("milo.hash.u64", [[acc, "si64"], [v, "si64"]], "si64");
+    }
+    if (t.tag === "string") {
+      const s = this.def(`milo.load ${p} : ${STR_REF}`);
+      return this.call("milo.hash.bytes", [[acc, "si64"], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], "si64");
+    }
+    if (t.tag === "struct") {
+      const layout = this.cx.structLayouts.get(t.name);
+      if (!layout) throw new MlirUnsupported(`hash of struct ${t.name}`);
+      const sty = h.placeType(this.cx, t)!;
+      layout.fields.forEach((f, i) => {
+        const fty = h.placeType(this.cx, f.typeKind);
+        if (fty === null) throw new MlirUnsupported(`hash of field ${f.name}`);
+        const fr = this.def(`milo.field_ref ${p}[${i}] : !milo.ref<${sty}> -> !milo.ref<${fty}>`);
+        acc = this.keyHash(f.typeKind, fr, acc);
+      });
+      return acc;
+    }
+    throw new MlirUnsupported(`hash of ${t.tag}`);
   }
 
   body(t: TypeKind, p: Ref, dst: Ref): void {

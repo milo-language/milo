@@ -8678,7 +8678,7 @@ export class Codegen {
     this.needsMemset = true;
     this.needsGetentropy = true;
     this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
-    this.helperFnBodies.push(runtimeFn("milo.map.alloc"));
+    this.helperFnBodies.push(runtimeFn("milo.map.alloc"), runtimeFn("milo.hash.byte"), runtimeFn("milo.hash.u64"), runtimeFn("milo.hash.bytes"));
   }
   private emittedMlirMapOps = false;
 
