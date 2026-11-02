@@ -2354,14 +2354,19 @@ class FnEmitter {
         // `replace(&mut p, v)`, as legacy genMemReplace: the old value read out (it is the
         // result's now), then `v` stored over it with nothing dropped.
         const ty = this.value(e.type, "replaced value");
-        const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
-        const old = { ...this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" as const : undefined };
+        // A place behind a raw pointer (`replace((*r).items, v)`) is read and written
+        // through the pointer: the dialect has no milo.ref there.
+        const pp = this.ptrPlace(e.place);
+        if (pp && pp.ty !== ty) throw new MlirUnsupported("replace behind a pointer of another type");
+        const p = pp ? "" : this.place(e.place, `!milo.ref<${ty}>`, true).ref;
+        const old = { ...(pp ? this.def(`milo.ptr.load ${pp.ptr} : ${ty}`, ty) : this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty)), own: this.hasDrop(ty) ? "owned" as const : undefined };
         // Until the store, the old value has two owners on paper: no jump may come between.
         const mark = this.pending.length;
         this.pend(old, e.type, true);
         const v = this.operand(e.value, ty, "replacement");
         this.pending.length = mark;
-        this.emit(`milo.store ${v.ref}, ${p} init : !milo.ref<${ty}>`);
+        if (pp) this.emit(`milo.ptr.store ${v.ref}, ${pp.ptr} : ${ty}`);
+        else this.emit(`milo.store ${v.ref}, ${p} init : !milo.ref<${ty}>`);
         return old;
       }
       case "HeapCreate": {

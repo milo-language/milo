@@ -1,0 +1,30 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `replace(p, v)` where
+// p is behind a raw pointer (`(*r).items`): read and written through the pointer, the old
+// value handed back owned, nothing dropped at the place.
+
+struct Rec { items: Vec<string>, n: i64 }
+
+fn take(r: *Rec): Vec<string> {
+    unsafe {
+        return replace((*r).items, Vec.new())
+    }
+}
+
+fn bump(r: *Rec): i64 {
+    unsafe {
+        return replace((*r).n, 7)
+    }
+}
+
+fn main() {
+    var rec = Rec { items: ["a" + "", "b" + ""], n: 3 }
+    unsafe {
+        let p = rec.addrOf()
+        let got = take(p)
+        print(got.len(), " ", got[1], " ", rec.items.len())
+        print(bump(p), " ", rec.n)
+        rec.items.push("c" + "")
+        let again = take(p)
+        print(again[0], " ", rec.items.len())
+    }
+}
