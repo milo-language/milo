@@ -2183,6 +2183,13 @@ class FnEmitter {
           ([x, ...xs]) => ({ ...e, callee: x, args: e.args.map((a, k) => ({ ...a, expr: xs[k] })) }), ret, false);
         return this.valued(r, stmt);
       }
+      case "OffsetOf": {
+        // A constant legacy computes from its struct layout (structFieldOffset): read back
+        // from a helper with no operands, which LLVM folds.
+        if (scalar(e.type, "offsetOf") !== "si64") throw new MlirUnsupported("offsetOf type");
+        const st = e.sizeType.tag === "struct" ? e.sizeType.name : "x";
+        return this.intrinsic(`offsetof.${st}.${e.fieldName}`, e, [], () => e, "si64", false);
+      }
       case "InterfaceCoerce": {
         // Heap<T> -> Heap<I>: legacy's fat { box, itable } pair in a helper, the box moved
         // into it (the same allocation, now owned by the dyn). `&T -> &I` stays legacy.
