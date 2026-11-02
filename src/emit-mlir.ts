@@ -3353,6 +3353,17 @@ class FnEmitter {
       const sl = this.bigSlot("arg", e, true);
       return this.lendAs(sl.ref, `!milo.ref<${sl.ty}>`, refTy);
     }
+    if (!b && (e.kind === "IndexAccess" || e.kind === "PtrDeref" || e.kind === "FieldAccess") && (mut || refTy.startsWith("!milo.vec<"))) {
+      // `(*p).items.push(v)`: a place behind a raw pointer, lent where it is (legacy passes
+      // that address), as a ref or a Vec header only the call sees.
+      const pp = this.ptrPlace(e);
+      if (pp) {
+        const vm = /^!milo\.vecval<(.*)>$/.exec(pp.ty);
+        const lent = vm ? `!milo.vec<${vm[1]}>` : `!milo.ref<${pp.ty}>`;
+        if (lent !== refTy) throw new MlirUnsupported("by-ref arg of another type");
+        return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
+      }
+    }
     if (mut) throw new MlirUnsupported(`&mut of a value (${e.kind})`);
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
     if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");

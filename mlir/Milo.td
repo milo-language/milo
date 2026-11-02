@@ -519,6 +519,20 @@ def Milo_PtrFieldOp : Milo_Op<"ptr.field", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Milo_PtrLendOp : Milo_Op<"ptr.lend", [Pure]> {
+  let summary = "the place at a raw pointer, lent to a call";
+  let description = [{
+    `f(&mut (*p).items)`: the place behind a raw pointer passed as a by-ref argument, a
+    `!milo.ref` or, for a Vec, its header (`!milo.vec`), at the same address. Only a call
+    takes it: a place reached through a pointer is never read or written here through a
+    ref (see ptr.elem), so the frame's Slot accesses still never alias it.
+  }];
+  let arguments = (ins Milo_PtrType:$ptr);
+  let results = (outs AnyTypeOf<[Milo_RefType, Milo_VecType]>:$place);
+  let assemblyFormat = "$ptr attr-dict `->` type($place)";
+  let hasVerifier = 1;
+}
+
 def Milo_AddrOp : Milo_Op<"addr", [Pure]> {
   let summary = "the address of a place as a raw pointer";
   let description = [{

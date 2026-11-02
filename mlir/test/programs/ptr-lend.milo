@@ -1,0 +1,53 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a place
+// behind a raw pointer lent to a call where it is (milo.ptr.lend): a Vec field's header to
+// push/pop/clear (`(*p).items.push(v)`, milojs's RootedVec), and a struct field `&mut`.
+
+extern fn malloc(n: i64): *u8
+
+extern fn free(p: *u8)
+
+struct Rec {
+    items: Vec<string>,
+    count: i64,
+}
+
+struct Box {
+    rec: *Rec,
+}
+
+fn bump(n: &mut i64) {
+    n = n + 1
+}
+
+fn add(b: &mut Box, s: string) {
+    unsafe {
+        (*b.rec).items.push(s)
+        bump(&mut (*b.rec).count)
+    }
+}
+
+fn take(b: &mut Box): string? {
+    unsafe {
+        return (*b.rec).items.pop()
+    }
+}
+
+fn main() {
+    var b = Box { rec: 0 as *Rec }
+    unsafe {
+        b.rec = malloc(40) as *Rec
+        let init = Rec { items: Vec.new(), count: 0 }
+        *b.rec = init
+    }
+    add(&mut b, "one")
+    add(&mut b, "two")
+    add(&mut b, "three")
+    print(take(&mut b) ?? "none")
+    unsafe {
+        print((*b.rec).items.len())
+        print((*b.rec).count)
+        (*b.rec).items.clear()
+        print((*b.rec).items.len())
+    }
+    unsafe { free(b.rec as *u8) }
+}

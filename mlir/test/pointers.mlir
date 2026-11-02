@@ -44,3 +44,13 @@ func.func @bytes(%s: !milo.string) -> !milo.ptr {
   %d = milo.string.data %s
   milo.return %d : !milo.ptr
 }
+
+// A place behind a raw pointer lent to a call (`(*p).items.push(v)`): the same address.
+// CHECK-LABEL: llvm.func @lend_vec
+// CHECK:   llvm.call @push_one(%arg0) : (!llvm.ptr) -> ()
+func.func private @push_one(!milo.vec<si64>)
+func.func @lend_vec(%p: !milo.ptr) {
+  %v = milo.ptr.lend %p -> !milo.vec<si64>
+  func.call @push_one(%v) : (!milo.vec<si64>) -> ()
+  milo.return
+}

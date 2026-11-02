@@ -297,3 +297,12 @@ func.func @condition_in_body(%c: i1) {
 
 // expected-error @+1 {{outside a function}}
 milo.return
+
+// -----
+
+func.func @lend_read(%p: !milo.ptr) -> si64 {
+  // expected-error @+1 {{is only a call's argument}}
+  %r = milo.ptr.lend %p -> !milo.ref<si64>
+  %v = milo.load %r : !milo.ref<si64>
+  milo.return %v : si64
+}

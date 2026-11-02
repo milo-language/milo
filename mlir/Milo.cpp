@@ -408,6 +408,13 @@ LogicalResult GlobalInitOp::verify() {
   return success();
 }
 
+LogicalResult PtrLendOp::verify() {
+  for (Operation *user : getResult().getUsers())
+    if (!isa<func::CallOp>(user))
+      return emitOpError("is only a call's argument");
+  return success();
+}
+
 LogicalResult VecPlaceOp::verify() {
   auto v = dyn_cast<VecValType>(getRef().getType().getPointee());
   if (!v || v.getElementType() != getType().getElementType())

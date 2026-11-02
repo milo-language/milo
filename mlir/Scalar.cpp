@@ -1125,6 +1125,16 @@ struct AddrLowering : ConvertOpToLLVMPattern<AddrOp> {
   }
 };
 
+struct PtrLendLowering : ConvertOpToLLVMPattern<PtrLendOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+  LogicalResult
+  matchAndRewrite(PtrLendOp op, OpAdaptor a,
+                  ConversionPatternRewriter &rw) const override {
+    rw.replaceOp(op, a.getPtr());
+    return success();
+  }
+};
+
 struct VecDataLowering : ConvertOpToLLVMPattern<VecDataOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
   LogicalResult
@@ -1607,7 +1617,7 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
                PtrStoreLowering, ReplayLowering<ReplayEnterOp, true>,
                ReplayLowering<ReplayExitOp, false>, BoundsCheckLowering,
                StringLitLowering, PrintLowering, EnumNewLowering, EnumTagLowering,
-               PtrElemLowering, PtrFieldLowering, AddrLowering, VecDataLowering, StringByteLowering,
+               PtrElemLowering, PtrFieldLowering, AddrLowering, PtrLendLowering, VecDataLowering, StringByteLowering,
                EnumPayloadLowering, StructNewLowering, StructGetLowering, FieldRefLowering,
                GlobalLowering, GlobalInitLowering, ClosureLowering, EnvCaptureLowering, FnCastLowering,
                ClosureCallLowering, EnumFieldRefLowering, EnumTagAtLowering, EnumSetTagLowering, HeapNewLowering, HeapPlaceLowering, HeapFreeLowering, CopyLowering,

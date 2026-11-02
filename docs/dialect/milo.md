@@ -1677,6 +1677,41 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.ptr.lend` (::milo::PtrLendOp)
+
+_The place at a raw pointer, lent to a call_
+
+Syntax:
+
+```
+operation ::= `milo.ptr.lend` $ptr attr-dict `->` type($place)
+```
+
+`f(&mut (*p).items)`: the place behind a raw pointer passed as a by-ref argument, a
+`!milo.ref` or, for a Vec, its header (`!milo.vec`), at the same address. Only a call
+takes it: a place reached through a pointer is never read or written here through a
+ref (see ptr.elem), so the frame's Slot accesses still never alias it.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `ptr` | a raw pointer, untyped |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `place` | the address of a place: a local slot, a field, an element or a Vec by reference: the address of its header |
+
+
+
 ### `milo.ptr.load` (::milo::PtrLoadOp)
 
 _Read a value through a raw pointer_
