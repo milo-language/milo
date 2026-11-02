@@ -820,6 +820,20 @@ under ASan); a shadow run, then a canary through the existing socket-activated r
 `MILO_LEGACY=1` (the build is the legacy codegen byte for byte); drop it per app after the
 canary.
 
+### Batch 10: one place/operand model (planned)
+
+The tail of legacy reasons is mostly one shape: a type in a position (by-ref param of a Heap
+struct, string copy of a temporary, a Vec that is not a param/local/field, sret call as a
+value, `&T` lets, a 128+ byte aggregate as a value). `src/emit-mlir.ts` handles each pairing
+on its own and has 236 `MlirUnsupported` sites, because it grew in coverage order and mirrored
+legacy special cases. Batch 10 rebuilds it on the Rust MIR / Clang codegen model: every
+expression lowers to a place (address) or an operand (value); one function decides per type
+whether it travels as a value or lives in memory; one decides copy, move or share; every
+position (argument, return, let, field, element, temporary, loop binding) goes through them.
+Gates: `--owned` same, coverage never drops, and the `MlirUnsupported` count only goes down.
+The self-hosted frontend later prints through the same structure. Open question it answers:
+whether the 128-byte place-only rule or the owning/plain fn split should change in the language.
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
