@@ -2060,6 +2060,22 @@ class FnEmitter {
         ([x, y, z]) => ({ ...e, vec: x, start: y, end: z }), `!milo.vecval<${elem}>`);
         return { ...r, own: "view" };
       }
+      case "Adopt": {
+        // adoptHeap(p) / adoptVec(p, len): legacy's genAdopt (no conversion, only the type,
+        // whose drop glue now frees the block) in a helper. The result is owned.
+        const ty = this.value(e.type, "adopted value");
+        const p = this.expr(e.ptr);
+        if (p.ty !== PTR) throw new MlirUnsupported("adopt of a non-pointer");
+        const ops = [{ name: "p", type: e.ptr.type, mode: "val" as const, ref: p.ref }];
+        if (e.len) {
+          const n = this.expr(e.len);
+          if (n.ty !== "si64") throw new MlirUnsupported("adopt length type");
+          ops.push({ name: "n", type: I64, mode: "val", ref: n.ref });
+        }
+        const r = this.intrinsic(e.len ? "adoptvec" : "adoptheap", e, ops,
+          ([x, y]) => ({ ...e, ptr: x, ...(y && { len: y }) }), ty, false);
+        return { ...r, own: this.hasDrop(ty) ? "owned" : undefined };
+      }
       case "RawSlice": {
         // A foreign view `&[T]` over (ptr, len): legacy's genRawSlice header { ptr, len, 0 }
         // in a helper. Its capacity 0 owns nothing, so it is a view.
