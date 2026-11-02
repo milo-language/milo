@@ -97,6 +97,7 @@ function typeKey(t: TypeKind): string {
     case "vec": return `vec.${typeKey(t.element)}`;
     case "hashmap": return `map.${typeKey(t.key)}.${typeKey(t.value)}`;
     case "heap": return t.inner.tag === "interface" ? `dyn.${t.inner.name}` : `heap.${typeKey(t.inner)}`;
+    case "interface": return `dynref.${t.name}`;
     // A plain fn by its signature, as Scalar.cpp typeKey: a helper takes it as a typed
     // param. The param count and `v` for no result keep the dotted key decodable.
     case "fn": if (t.owning) return "ownfn";
@@ -272,6 +273,9 @@ function spellPlace(cx: MlirEmitCtx, t: TypeKind): string | null {
     return e && `!milo.vecval<${e}>`;
   }
   if (t.tag === "fn") return fnType(cx, t);
+  // An interface is reached only behind a `&I`: legacy's fat { data, itable } pair, which
+  // borrows both (!milo.dynref), never read as the owning `Heap<I>` (!milo.dyn).
+  if (t.tag === "interface") return dynRef(t.name);
   if (t.tag === "heap") {
     // A Heap of an interface is legacy's fat { data, itable } pair, opaque here.
     if (t.inner.tag === "interface") return `!milo.dyn<${quote(t.inner.name)}>`;
@@ -384,6 +388,8 @@ function viewResult(cx: MlirEmitCtx, t: TypeKind): string | null {
   }
   return null;
 }
+
+const dynRef = (iface: string) => `!milo.dynref<${quote(iface)}>`;
 
 function stripRefs(t: TypeKind): TypeKind {
   while (t.tag === "ref") t = t.inner;
@@ -1707,13 +1713,14 @@ class FnEmitter {
    * iteration took, then the buffer, after the binding's drop as legacy orders them.
    */
   /**
-   * `h.m(args)` through a `Heap<I>`: legacy's itable dispatch (genInterfaceMethodCall) in a
+   * `h.m(args)` through a `Heap<I>` or a `&I`: legacy's itable dispatch (genInterfaceMethodCall) in a
    * helper per interface, method and operand shape, the box lent by its place. Arguments
    * are scalars by value or places lent as the callee's `&T`; a string result is owned.
    */
   private dynCall(e: HIRExpr & { kind: "InterfaceMethodCall" }): Val {
     const ot = stripRefs(e.object.type);
-    if (ot.tag !== "heap" || ot.inner.tag !== "interface") throw new MlirUnsupported("interface call on a borrowed interface");
+    // A borrowed interface (`g: &Greeter`) is the same `{ data, itable }` pair in its place.
+    if ((ot.tag !== "heap" || ot.inner.tag !== "interface") && ot.tag !== "interface") throw new MlirUnsupported("interface call on a non-interface");
     const p = this.fieldPlace(e.object);
     const dty = this.place$(ot, "interface box");
     if (!p || p.ty !== dty) throw new MlirUnsupported("interface call on a box that is not a place");
@@ -2420,8 +2427,16 @@ class FnEmitter {
       }
       case "InterfaceCoerce": {
         // Heap<T> -> Heap<I>: legacy's fat { box, itable } pair in a helper, the box moved
-        // into it (the same allocation, now owned by the dyn). `&T -> &I` stays legacy.
-        if (e.type.tag !== "heap") throw new MlirUnsupported("coerce of a borrow to an interface");
+        // into it (the same allocation, now owned by the dyn). `&T -> &I`: the pair of T's
+        // place and the itable, borrowing both, made the same way from the lent place.
+        if (e.type.tag !== "heap") {
+          const st = stripRefs(e.value.type);
+          const ty = this.place$(stripRefs(e.type), "borrowed interface");
+          const mut = e.type.tag === "ref" && e.type.mutable;
+          const p = this.place(e.value, this.lent(st, "coerced value"), mut).ref;
+          return this.intrinsic(`coerceref.${e.fromType}.${e.ifaceName}`, e, [{ name: "x", type: st, mode: mut ? "mut" : "ref", ref: p }],
+            ([x]) => ({ ...e, value: x }), ty, false);
+        }
         const ty = this.value(e.type, "interface value");
         const v = this.consume(this.expr(e.value), "coerced box");
         const r = this.intrinsic(`coerce.${e.fromType}.${e.ifaceName}`, e, [{ name: "h", type: e.value.type, mode: "val", ref: v.ref }],
@@ -3854,10 +3869,10 @@ class FnEmitter {
         return { ref: this.def(`milo.ptr.lend ${pp.ptr} -> ${lent}`, lent).ref };
       }
     }
-    // A raw slice or a Vec slice (`&mut v[a..b]`) is a view header over memory it does not
-    // own: lent from a temporary, as legacy spills it, writes through it still reach the
-    // elements.
-    if (mut && e.kind !== "RawSlice" && e.kind !== "VecSlice") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
+    // A raw slice, a Vec slice (`&mut v[a..b]`) or a `&mut T` coerced to `&mut I` is a
+    // view header over memory it does not own: lent from a temporary, as legacy spills it,
+    // writes through it still reach that memory.
+    if (mut && e.kind !== "RawSlice" && e.kind !== "VecSlice" && e.kind !== "InterfaceCoerce") throw new MlirUnsupported(`&mut of a value (${e.kind})`);
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
     if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");
     let slot: string;

@@ -203,6 +203,18 @@ def Milo_DynType : TypeDef<Milo_Dialect, "Dyn"> {
   let assemblyFormat = "`<` $iface `>`";
 }
 
+def Milo_DynRefType : TypeDef<Milo_Dialect, "DynRef"> {
+  let summary = "a borrowed interface value";
+  let description = [{
+    A `&I`: legacy's literal `{ ptr data, ptr itable }`, borrowing both (a param, a
+    `&T` or `&mut T` coerced to `&I`). It owns nothing; a method
+    call through it is legacy's dispatch in a helper, as for `!milo.dyn`.
+  }];
+  let mnemonic = "dynref";
+  let parameters = (ins StringRefParameter<>:$iface);
+  let assemblyFormat = "`<` $iface `>`";
+}
+
 def Milo_VecTailType : TypeDef<Milo_Dialect, "VecTail"> {
   let summary = "a Vec being consumed from the front";
   let description = [{
@@ -331,7 +343,7 @@ def Milo_FnType : TypeDef<Milo_Dialect, "Fn"> {
 }
 
 // What a local, a parameter or a result can hold.
-def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_HeapType, Milo_DynType, Milo_FnType]>;
+def Milo_Value : AnyTypeOf<[Milo_Scalar, Milo_PtrType, Milo_Aggregate, Milo_StringType, Milo_VecValType, Milo_MapType, Milo_HeapType, Milo_DynType, Milo_DynRefType, Milo_FnType]>;
 // What compares and casts.
 def Milo_Simple : AnyTypeOf<[Milo_Scalar, Milo_PtrType]>;
 

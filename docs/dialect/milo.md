@@ -376,7 +376,7 @@ Interfaces: `ArgAndResultAttrsOpInterface`, `CallOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -673,7 +673,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `fields` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `fields` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 #### Results:
 
@@ -720,7 +720,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1079,7 +1079,7 @@ two are never one (not Pure).
 
 | Operand | Description |
 | :-----: | ----------- |
-| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 #### Results:
 
@@ -1149,7 +1149,7 @@ Interfaces: `RegionBranchOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1295,7 +1295,7 @@ Interfaces: `InferTypeOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1389,7 +1389,7 @@ Interfaces: `RegionBranchOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1419,7 +1419,7 @@ Interfaces: `InferTypeOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1741,7 +1741,7 @@ Vec's header or elements, a slot or the heap.
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1763,7 +1763,7 @@ whatever the pointer points at.
 
 | Operand | Description |
 | :-----: | ----------- |
-| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 | `ptr` | a raw pointer, untyped |
 
 
@@ -1859,7 +1859,7 @@ Traits: `Terminator`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1891,7 +1891,7 @@ Interfaces: `RegionBranchOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `results` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -1997,7 +1997,7 @@ nothing is dropped before the store even when the type has drop glue.
 
 | Operand | Description |
 | :-----: | ----------- |
-| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `value` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 | `ref` | the address of a place: a local slot, a field, an element |
 
 
@@ -2259,7 +2259,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -2286,7 +2286,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `fields` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `fields` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 #### Results:
 
@@ -2633,7 +2633,7 @@ on the element is the result's, not the Vec's. Unchecked: the loop condition kee
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -2773,7 +2773,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `values` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `values` | variadic of signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -2800,7 +2800,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a fn value: fn pointer and env |
+| `result` | signed integer or unsigned integer or 32-bit float or 64-bit float or 1-bit signless integer or a raw pointer, untyped or a struct by value, identified by name or a tagged enum by value, with its layout or a fixed-size array, held only in places or Milo's string value or a Vec value, the header itself or a HashMap value or an owned box holding one value or an owned box of an interface value or a borrowed interface value or a fn value: fn pointer and env |
 
 
 
@@ -2829,6 +2829,28 @@ or argument), so a large buffer is never split per element. Its elements own not
 | :-------: | :-------: | ----------- |
 | elementType | `::mlir::Type` |  |
 | size | `int64_t` |  |
+
+### DynRefType
+
+_A borrowed interface value_
+
+Syntax:
+
+```
+!milo.dynref<
+  ::llvm::StringRef   # iface
+>
+```
+
+A `&I`: legacy's literal `{ ptr data, ptr itable }`, borrowing both (a param, a
+`&T` or `&mut T` coerced to `&I`). It owns nothing; a method
+call through it is legacy's dispatch in a helper, as for `!milo.dyn`.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| iface | `::llvm::StringRef` |  |
 
 ### DynType
 

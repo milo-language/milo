@@ -1,0 +1,44 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `&I` interface views
+// (!milo.dynref), legacy's { data, itable } pair borrowing both: a `&T` and a `&mut T`
+// coerced to `&I`, and dispatch through a `&I` param.
+
+pub interface Shape {
+    fn area(self: &Self): i64
+    fn name(self: &Self): string
+}
+
+pub interface Counter {
+    fn bump(self: &mut Self, by: i64): void
+    fn get(self: &Self): i64
+}
+
+struct Sq { side: i64, label: string }
+
+impl Sq {
+    fn area(self: &Self): i64 { return self.side * self.side }
+    fn name(self: &Self): string { return "sq " + self.label }
+}
+
+struct Tally { n: i64 }
+
+impl Tally {
+    fn bump(self: &mut Self, by: i64): void { self.n = self.n + by }
+    fn get(self: &Self): i64 { return self.n }
+}
+
+fn describe(s: &Shape): string { return $"{s.name()} = {s.area()}" }
+
+fn bumpTwice(c: &mut Counter) {
+    c.bump(2)
+    c.bump(3)
+}
+
+fn main() {
+    let a = Sq { side: 4, label: "a" + "" }
+    print(describe(a))
+    let h: Heap<Shape> = Heap(Sq { side: 5, label: "h" + "" })
+    print(h.area())
+    var t = Tally { n: 1 }
+    bumpTwice(&mut t)
+    print(t.n)
+}

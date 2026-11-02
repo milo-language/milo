@@ -1465,6 +1465,8 @@ std::string milo::typeKey(Type t) {
     return "heap." + typeKey(h.getValueType());
   if (auto d = dyn_cast<DynType>(t))
     return ("dyn." + d.getIface()).str();
+  if (auto d = dyn_cast<DynRefType>(t))
+    return ("dynref." + d.getIface()).str();
   if (auto m = dyn_cast<MapType>(t))
     return "map." + typeKey(m.getKeyType()) + "." + typeKey(m.getValueType());
   if (auto s = dyn_cast<StructType>(t))
@@ -1609,6 +1611,10 @@ void milo::populateScalarToLLVMPatterns(LLVMTypeConverter &tc,
     return LLVM::LLVMPointerType::get(ctx);
   });
   tc.addConversion([ctx = &tc.getContext()](DynType) -> Type {
+    auto p = LLVM::LLVMPointerType::get(ctx);
+    return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
+  });
+  tc.addConversion([ctx = &tc.getContext()](DynRefType) -> Type {
     auto p = LLVM::LLVMPointerType::get(ctx);
     return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
   });
