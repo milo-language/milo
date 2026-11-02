@@ -3112,10 +3112,22 @@ class FnEmitter {
     const mark = this.pending.length;
     for (const f of e.fields) given.set(f.name, this.pend(this.fieldValue(f.value, layout.fields.find(lf => lf.name === f.name)?.typeKind), f.value.type));
     this.pending.length = mark;
-    // The base gives up its unlisted fields and drops its listed ones: not with owned ones yet.
-    if (e.base && this.hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
-    const base = e.base ? this.expr(e.base) : null;
+    // The base is consumed (legacy genStructUpdateBase): it gives up its unlisted fields and
+    // its listed ones are dropped here, in field order, so each field ends with one owner.
+    const base = e.base ? this.consume(this.expr(e.base), "struct update base") : null;
     if (base && base.ty !== ty) throw new MlirUnsupported("struct update base of another type");
+    if (base && this.hasDrop(ty)) {
+      if (base.own !== "owned") throw new MlirUnsupported("struct update of an owning base it does not own");
+      layout.fields.forEach((lf, i) => {
+        const fty = this.value(lf.typeKind, "field");
+        if (!given.has(lf.name) || !this.hasDrop(fty)) return;
+        this.owned.push([]);
+        const start = this.body.length;
+        const slot = this.ownedSlot("update.base", fty, lf.typeKind);
+        this.emit(`milo.store ${this.def(`milo.struct.get ${base.ref}[${i}] : ${ty} -> ${fty}`, fty).ref}, ${slot} : !milo.ref<${fty}>`);
+        this.closeScope(start, false, null);
+      });
+    }
     const ops = layout.fields.map((f, i) => {
       const fty = this.value(f.typeKind, "field");
       const g = given.get(f.name);
