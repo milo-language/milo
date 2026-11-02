@@ -136,6 +136,23 @@ export class MlirGlue {
     return name;
   }
 
+  /**
+   * `milo.json.<key>(ref S, ref string)`: std's jsonStringify of a struct of strings, ints,
+   * floats and bools, appended: `{"f":v,...}`, a string escaped (milo.string.push_json).
+   */
+  json(t: TypeKind): string {
+    const h = glueHelpers;
+    t = h.stripRefs(t);
+    if (t.tag !== "struct") throw new MlirUnsupported("jsonStringify of a non-struct");
+    const name = `milo.json.${h.typeKey(t)}`;
+    if (this.names.has(name)) return name;
+    this.names.add(name);
+    const g = new GlueFn(this, this.cx);
+    g.jsonBody(t, "%p", "%s");
+    this.texts.push([`func.func @${h.quote(name)}(%p: ${this.placeOf(t)}, %s: ${STR_REF}) attributes {llvm.linkage = #llvm.linkage<internal>} {`, ...g.vars, ...g.lines, "  milo.return", "}"].join("\n"));
+    return name;
+  }
+
   /** The symbol of K's key equality, generated on first use. */
   eq(t: TypeKind): string {
     const h = glueHelpers;
@@ -592,6 +609,25 @@ class GlueFn {
       each(data, this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${p}[1] : ${vh}`)} : si64`));
       this.call("free", [[data, PTR]], null);
     });
+  }
+
+  jsonBody(t: TypeKind & { tag: "struct" }, p: Ref, dst: Ref): void {
+    const layout = this.cx.structLayouts.get(t.name)!;
+    const sty = this.placeTy(t);
+    this.text("{", dst);
+    layout.fields.forEach((f, i) => {
+      this.text(`${i > 0 ? "," : ""}"${f.name}":`, dst);
+      const fty = this.placeTy(f.typeKind);
+      const fr = this.def(`milo.field_ref ${p}[${i}] : !milo.ref<${sty}> -> !milo.ref<${fty}>`);
+      if (f.typeKind.tag === "string") {
+        const s = this.def(`milo.load ${fr} : ${STR_REF}`);
+        this.cx.mlirPushScalar("json");
+        this.text('"', dst);
+        this.call("milo.string.push_json", [[dst, STR_REF], [this.def(`milo.string.data ${s}`), PTR], [this.def(`milo.string.len ${s}`), "si64"]], PTR);
+        this.text('"', dst);
+      } else this.part(f.typeKind, fr, dst, false);
+    });
+    this.text("}", dst);
   }
 
   /** Whether the keys at places `a` and `b` are equal. */

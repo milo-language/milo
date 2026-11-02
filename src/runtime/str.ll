@@ -860,3 +860,94 @@ free:
 done:
   ret void
 }
+
+; @@ milo.string.push_json
+; Appends the n bytes at %d to s JSON-escaped (RFC 8259, as std/json's jsonEscapeStr):
+; " \ newline tab return as two-byte escapes, any other byte below 0x20 as \u00xx.
+; Null when growing fails.
+define internal ptr @milo.string.push_json(ptr noalias nonnull dereferenceable(24) align 8 %s, ptr %d, i64 %n) {
+entry:
+  %worst = mul i64 %n, 6
+  %buf = call ptr @milo.str.reserve(ptr %s, i64 %worst)
+  %ok = icmp ne ptr %buf, null
+  br i1 %ok, label %start, label %fail
+start:
+  %lenp = getelementptr %String, ptr %s, i32 0, i32 1
+  %len0 = load i64, ptr %lenp
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %start ], [ %inext, %next ]
+  %o = phi i64 [ %len0, %start ], [ %onext, %next ]
+  %more = icmp ult i64 %i, %n
+  br i1 %more, label %byte, label %done
+byte:
+  %cp = getelementptr i8, ptr %d, i64 %i
+  %c = load i8, ptr %cp
+  %isq = icmp eq i8 %c, 34
+  %isb = icmp eq i8 %c, 92
+  %isn = icmp eq i8 %c, 10
+  %ist = icmp eq i8 %c, 9
+  %isr = icmp eq i8 %c, 13
+  %e1 = or i1 %isq, %isb
+  %e2 = or i1 %isn, %ist
+  %e3 = or i1 %e1, %e2
+  %named = or i1 %e3, %isr
+  br i1 %named, label %esc, label %notnamed
+esc:
+  %s1 = select i1 %isn, i8 110, i8 %c
+  %s2 = select i1 %ist, i8 116, i8 %s1
+  %s3 = select i1 %isr, i8 114, i8 %s2
+  %ep0 = getelementptr i8, ptr %buf, i64 %o
+  store i8 92, ptr %ep0
+  %eo1 = add i64 %o, 1
+  %ep1 = getelementptr i8, ptr %buf, i64 %eo1
+  store i8 %s3, ptr %ep1
+  %eo2 = add i64 %o, 2
+  br label %next
+notnamed:
+  %isctl = icmp ult i8 %c, 32
+  br i1 %isctl, label %ctl, label %plain
+ctl:
+  %c0 = getelementptr i8, ptr %buf, i64 %o
+  store i8 92, ptr %c0
+  %o1 = add i64 %o, 1
+  %c1 = getelementptr i8, ptr %buf, i64 %o1
+  store i8 117, ptr %c1
+  %o2 = add i64 %o, 2
+  %c2 = getelementptr i8, ptr %buf, i64 %o2
+  store i8 48, ptr %c2
+  %o3 = add i64 %o, 3
+  %c3 = getelementptr i8, ptr %buf, i64 %o3
+  store i8 48, ptr %c3
+  %hi = lshr i8 %c, 4
+  %hid = add i8 %hi, 48
+  %o4 = add i64 %o, 4
+  %c4 = getelementptr i8, ptr %buf, i64 %o4
+  store i8 %hid, ptr %c4
+  %lo = and i8 %c, 15
+  %lodig = add i8 %lo, 48
+  %loalpha = add i8 %lo, 87
+  %lolt = icmp ult i8 %lo, 10
+  %lod = select i1 %lolt, i8 %lodig, i8 %loalpha
+  %o5 = add i64 %o, 5
+  %c5 = getelementptr i8, ptr %buf, i64 %o5
+  store i8 %lod, ptr %c5
+  %o6 = add i64 %o, 6
+  br label %next
+plain:
+  %pp = getelementptr i8, ptr %buf, i64 %o
+  store i8 %c, ptr %pp
+  %op1 = add i64 %o, 1
+  br label %next
+next:
+  %onext = phi i64 [ %eo2, %esc ], [ %o6, %ctl ], [ %op1, %plain ]
+  %inext = add i64 %i, 1
+  br label %loop
+done:
+  store i64 %o, ptr %lenp
+  %end = getelementptr i8, ptr %buf, i64 %o
+  store i8 0, ptr %end
+  ret ptr %buf
+fail:
+  ret ptr null
+}

@@ -31,7 +31,7 @@ export interface MlirEmitCtx {
   mlirCloneOps(): void;
   mlirDropOps(): void;
   mlirIfaceMethodCount(name: string): number | null;
-  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void;
+  mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr" | "json"): void;
   mlirOutWrite(stderr: boolean): string;
   mlirPanicText(): string;
   mlirDisplayName(name: string): string;
@@ -2966,7 +2966,18 @@ class FnEmitter {
         };
         return arm(0);
       }
-      case "JsonStringify": return this.builtinOf(e, "value", false);
+      case "JsonStringify": {
+        // `jsonStringify(s)` of a struct: a fresh string from the struct's JSON glue.
+        const t = stripRefs(e.value.type);
+        if (t.tag !== "struct" || !this.cx.structLayouts.get(t.name)!.fields.every(f => ["string", "int", "float", "bool"].includes(f.typeKind.tag)))
+          throw new MlirUnsupported("jsonStringify of a struct with a field that has no JSON");
+        const lt = this.glue.placeOf(t);
+        const p = this.place(e.value, lt, false).ref;
+        const slot = this.ownedSlot("json", STR, { tag: "string" });
+        this.emit(`milo.store ${this.def(`milo.zero : ${STR}`, STR).ref}, ${slot} init : !milo.ref<${STR}>`);
+        this.rtCall(this.glue.json(t), [{ ref: p, ty: lt }, { ref: slot, ty: `!milo.ref<${STR}>` }], null);
+        return { ...this.def(`milo.move ${slot} : !milo.ref<${STR}>`, STR), own: "owned" };
+      }
       case "BitIntrinsic": {
         const v = this.expr(e.value);
         if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("bit intrinsic operand type");

@@ -8662,13 +8662,13 @@ export class Codegen {
   public mlirDisplayName(name: string): string { return display(this.displayNames, name); }
 
   /** MLIR path: milo.string.push_<kind>, appending one scalar's text in place. */
-  public mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr"): void {
+  public mlirPushScalar(kind: "i64" | "u64" | "f64" | "f32" | "bool" | "ptr" | "json"): void {
     if (this.emittedMlirPush.has(kind)) return;
     this.emittedMlirPush.add(kind);
     this.mlirStringOps();
     if (kind === "i64" || kind === "u64") this.intFmtFns();
     if (kind === "f64" || kind === "f32") this.ensureFloatFormatHelper(kind === "f32" ? 32 : 64);
-    const key = { i64: "milo.string.push_i64", u64: "milo.string.push_u64", f64: "milo.string.push_f64", f32: "milo.string.push_f32", bool: "milo.string.push_bool", ptr: "milo.string.push_ptr" }[kind];
+    const key = { i64: "milo.string.push_i64", u64: "milo.string.push_u64", f64: "milo.string.push_f64", f32: "milo.string.push_f32", bool: "milo.string.push_bool", ptr: "milo.string.push_ptr", json: "milo.string.push_json" }[kind];
     this.helperFnBodies.push(runtimeFn(key));
   }
   private emittedMlirPush = new Set<string>();
