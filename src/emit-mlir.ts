@@ -1019,7 +1019,7 @@ class FnEmitter {
   /** `e` read by `read`, which keeps nothing of it: a temporary `e` dies right after (tempSlot). */
   private peek(e: HIRExpr, read: (v: Val) => Val): Val {
     const v = this.expr(e);
-    if (!this.hasDrop(v.ty) || v.own !== "owned" || this.bitCopies.has(v.ref)) return read(this.borrow(v, e.type));
+    if (v.own !== "owned" || this.bitCopies.has(v.ref) || !this.hasDrop(v.ty)) return read(this.borrow(v, e.type));
     return this.scoped(() => read(this.borrow(v, e.type)));
   }
 
@@ -1103,7 +1103,7 @@ class FnEmitter {
    * innermost block, which drops it when the block ends, and is read in place from there.
    */
   private borrow(v: Val, t: TypeKind): Val {
-    if (!this.hasDrop(v.ty) || v.own !== "owned") return v;
+    if (v.own !== "owned" || !this.hasDrop(v.ty)) return v;
     if (this.bitCopies.has(v.ref)) return { ...v, own: "view" };
     const slot = this.tempSlot("tmp", v.ty, t, v);
     this.emit(`milo.store ${v.ref}, ${slot} : !milo.ref<${v.ty}>`);
@@ -1142,6 +1142,16 @@ class FnEmitter {
         if (pt !== null && inSlot(this.cx, pt)) {
           const b = this.bigSlot(s.name, s.value);
           this.bind(s.name, { kind: "var", ref: b.ref, ty: b.ty, owned: b.owned });
+          return false;
+        }
+        if (s.type.tag === "ref" && !s.mutable) {
+          // A `&T` let (`let base = s[0..end]`): a view of what it is taken from, never an
+          // owner, so bound as it is: a place as that place, a view as its SSA value.
+          const p = this.fieldPlace(s.value);
+          if (p) { this.bind(s.name, { kind: "var", ref: p.ref, ty: p.ty, param: p.param }); return false; }
+          const v = this.scoped(() => this.expr(s.value));
+          if (v.ty !== this.value(s.type.inner, "let") || (this.hasDrop(v.ty) && v.own !== "view")) throw new MlirUnsupported("`&T` let of a value it would own");
+          this.bind(s.name, { kind: "ssa", v });
           return false;
         }
         const ty = this.value(s.type, "let");
@@ -1260,6 +1270,12 @@ class FnEmitter {
       }
       case "ExprStmt": {
         if (this.isSretCall(s.expr)) { this.bigSlot("tmp", s.expr, true); return false; }
+        // An if or a match whose value nobody takes (void, or never: every arm jumps) is the
+        // statement, whose arms may end in a jump.
+        const x = s.expr;
+        if (x.kind === "IfExpr" && (x.type.tag === "void" || x.type.tag === "never"))
+          return this.stmtIn({ kind: "If", cond: x.cond, thenBody: x.thenBody, elseBody: x.elseBody, span: x.span });
+        if (x.kind === "MatchExpr" && (x.type.tag === "void" || x.type.tag === "never")) return this.match(x, null).done;
         if (this.diverges(s.expr)) {
           // `exit(…)` and friends do not return: the path ends here, as for a jump.
           this.expr(s.expr, true);
@@ -1633,17 +1649,19 @@ class FnEmitter {
         // Milo's implicit copy of a string: a new owner of the same buffer.
         if (e.str.kind === "StringLit") return this.expr(e.str);
         let p = this.fieldPlace(e.str);
-        if (!p && e.str.kind === "FieldAccess") {
-          // A string field of a value read in place (a for-in element, a by-value
-          // binding): its bits into a slot that drops nothing, shared from there.
+        if (!p) {
+          // A temporary is its own copy (legacy cloneOfOwnedTemp); a view (a string field of
+          // a value read in place, a `&string` let) has its bits put in a slot that drops
+          // nothing, and is shared from there.
           const v = this.expr(e.str);
-          if (v.ty !== STR || v.own !== "view") throw new MlirUnsupported("string copy of a temporary");
+          if (v.ty !== STR) throw new MlirUnsupported("string copy of another type");
+          if ((v.own === "owned" && !this.bitCopies.has(v.ref)) || v.own === "static") return v;
           const ref = this.fresh();
           this.vars.push(`  ${ref} = milo.var "view" : !milo.ref<${STR}>`);
           this.emit(`milo.store ${v.ref}, ${ref} : !milo.ref<${STR}>`);
           p = { ref, ty: STR };
         }
-        if (!p || p.ty !== STR) throw new MlirUnsupported("string copy of a temporary");
+        if (p.ty !== STR) throw new MlirUnsupported("string copy of another type");
         this.cx.mlirHelper("milo.share.string", () => ({
           params: [{ name: "s", type: { tag: "string" }, isRef: true, isRefMut: false }],
           retType: { tag: "string" },
@@ -2965,7 +2983,7 @@ class FnEmitter {
     const v = b?.kind === "ssa" ? b.v : this.expr(e);
     if (!this.fits(`!milo.ref<${v.ty}>`, refTy)) throw new MlirUnsupported("by-ref arg of another type");
     let slot: string;
-    if (this.hasDrop(v.ty) && v.own === "owned" && !this.bitCopies.has(v.ref)) slot = this.tempSlot("arg", v.ty, e.type, v);
+    if (v.own === "owned" && !this.bitCopies.has(v.ref) && this.hasDrop(v.ty)) slot = this.tempSlot("arg", v.ty, e.type, v);
     else {
       slot = this.fresh();
       this.vars.push(`  ${slot} = milo.var ${quote(b ? e.name : v.own === "view" && v.ty.startsWith("!milo.vecval<") ? "slice" : "arg")} : !milo.ref<${v.ty}>`);

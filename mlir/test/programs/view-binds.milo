@@ -1,0 +1,53 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: `&T` lets (a string
+// slice bound as the view it is, a by-ref param rebound), copies of a view and of a
+// temporary string, and an if or a match whose value nobody takes, as a statement whose
+// arms may jump.
+
+fn base(mediaType: &string): bool {
+    var end = mediaType.len
+    for i in 0..mediaType.len {
+        if mediaType[i] == ';' && end == mediaType.len {
+            end = i
+        }
+    }
+    let b = mediaType[0..end]
+    let copy = b
+    print(copy)
+    return b.startsWith("text/")
+}
+
+fn word(n: i64): string {
+    return "w" + n.toString()
+}
+
+fn tag(n: i64): string {
+    let s = word(n)
+    return s
+}
+
+fn sideways(n: i64): i64 {
+    var hits = 0
+    if n > 2 { hits += 1 } else { hits += 10 }
+    match n {
+        1 => { hits += 100 }
+        _ => { hits += 1000 }
+    }
+    if n == 7 {
+        return -1
+    } else {
+        print("not seven")
+    }
+    return hits
+}
+
+fn main() {
+    print(base("text/plain; charset=utf-8"))
+    print(base("image/png"))
+    let m = word(1) + "text/html; q=1"
+    print(base(m))
+    print(m)
+    print(tag(3))
+    print(sideways(1))
+    print(sideways(5))
+    print(sideways(7))
+}
