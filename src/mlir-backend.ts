@@ -185,6 +185,9 @@ function run(cmd: string, args: string[], input: string): string {
 const ONLY = process.env.MILO_MLIR_ONLY ? new RegExp(process.env.MILO_MLIR_ONLY) : null;
 const STUB_MARK = "; milo.mlir.stub";
 const STUB_FIRST = "  unreachable";
+// Where main's prologue ends when main keeps its legacy body for the noalias analysis
+// (take's "legacy"): codegen writes it right after the prologue, the splice stops there.
+export const PROLOGUE_END = "; milo.mlir.prologue.end";
 
 /**
  * Which functions go through MLIR, decided by legacy codegen as it reaches each one
@@ -224,8 +227,6 @@ export class MlirPlan {
     // A fn value runs unknown code, and a closure lends this frame's slots to it: the
     // analysis reads both from the legacy body (byRefClosures, an indirect call).
     const ptrs = body.includes("!milo.ptr") || body.includes("milo.global ") || body.includes("!milo.fn<");
-    // main's prologue is found ahead of its stub, and with a full legacy body there is none.
-    if (ptrs && r.name === "main") { this.log.push(`main\t${body.includes("!milo.fn<") ? "fn value" : body.includes("!milo.ptr") ? "raw pointer" : "global"} in main`); return null; }
     this.taken.push(r);
     this.log.push(`${fn.name}\tok`);
     this.takenNames.add(r.name);
@@ -343,11 +344,11 @@ export class MlirPlan {
         header = header.replace(re, ` %${k}`);
         renames.push([new RegExp(String.raw`%${p.replace(/[$.]/g, "\\$&")}\b`, "g"), `%${k}`]);
       });
-      // Legacy lines ahead of the stub (main's prologue: argc/argv globals, stdout
+      // Legacy lines ahead of the stub or PROLOGUE_END (main's prologue: argc/argv globals, stdout
       // buffering, global init) run first, at the top of the MLIR entry block. They are
       // calls and stores of params and globals, so they number no values of their own.
       const prologue: string[] = [];
-      for (let j = i + 1; name === "main" && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
+      for (let j = i + 1; name === "main" && lines[j] !== PROLOGUE_END && lines[j].replace(/, !dbg !\d+/, "") !== STUB_FIRST; j++) {
         if (lines[j] === "}") throw new Error(`mlir: no stub in ${name}`);
         // The legacy entry label goes; the MLIR body brings its own entry block.
         if (j === i + 1 && /^[-\w$.]+:$/.test(lines[j])) continue;
