@@ -1,0 +1,35 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): `o!` whose
+// payload is 128+ bytes and owns (strings, a Vec), written in place: from a call, from an
+// owned local, as a Result, and a None that panics with legacy's text and location.
+
+struct Big {
+    name: string,
+    tags: Vec<string>,
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64,
+    g: i64, h: i64, i: i64, j: i64, k: i64, l: i64,
+}
+
+fn find(n: i64): Option<Big> {
+    if n < 0 { return Option.None }
+    var tags: Vec<string> = Vec.new()
+    tags.push("t" + n.toString())
+    return Option.Some(Big { name: "big" + n.toString(), tags: tags, a: n, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0, j: 0, k: 0, l: n })
+}
+
+fn load(n: i64): Result<Big, string> {
+    if n > 100 { return Result.Err("too big") }
+    return Result.Ok(find(n)!)
+}
+
+fn main() {
+    let x = find(3)!
+    print(x.name)
+    print(x.tags[0])
+    let o = find(4)
+    let y = o!
+    print(y.name + " " + (y.a + y.l).toString())
+    let r = load(5)!
+    print(r.tags.len())
+    let z = find(-1)!
+    print(z.name)
+}

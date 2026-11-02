@@ -684,6 +684,7 @@ class FnEmitter {
       this.emit(`milo.store ${this.take(v, ty, "call result").ref}, ${dst} init : !milo.ref<${ty}>`);
       return;
     }
+    if (e.kind === "Unwrap") { this.unwrapInto(e, dst, ty); return; }
     if (e.kind !== "StructLit" || e.base) throw new MlirUnsupported(`128+ byte value other than a literal or an sret call: ${e.kind}`);
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
@@ -3551,6 +3552,42 @@ class FnEmitter {
    * out, then the field zeroed in place (an `init` store, nothing dropped), so the
    * struct's own drop later finds an empty one there and frees nothing twice.
    */
+  /**
+   * `o!` with a 128+ byte payload, written into `dst`: legacy's genUnwrap (its panic text
+   * and location) in a helper per site that init-assigns `d = o!`, both lent by place. The
+   * enum is moved into the helper: an owned local or a temporary in a slot of its own,
+   * marked moved after the call so its drop sees it empty.
+   */
+  private unwrapInto(e: HIRExpr & { kind: "Unwrap" }, dst: string, ty: string): void {
+    const o = e.operand, st = stripRefs(o.type);
+    let src: { ref: string; ty: string };
+    if (o.kind === "Ident") {
+      const b = this.lookup(o.name);
+      if (b.kind !== "var" || !b.owned || !o.isMove) throw new MlirUnsupported("unwrap of a 128+ byte payload out of a borrow");
+      src = { ref: b.ref, ty: b.ty };
+    } else if (o.kind === "FieldAccess" || o.kind === "IndexAccess" || o.kind === "HeapDeref" || o.kind === "PtrDeref") {
+      throw new MlirUnsupported("unwrap of a 128+ byte payload out of a place");
+    } else {
+      const sl = this.bigSlot("unwrap.of", o, true);
+      if (!sl.owned) throw new MlirUnsupported("unwrap of a 128+ byte payload that owns nothing");
+      src = sl;
+    }
+    if (src.ty !== this.place$(st, "unwrapped enum")) throw new MlirUnsupported("unwrap operand type");
+    const l = this.site(e.span);
+    const name = `milo.intr.unwrapinto.${typeKey(st)}.${l.line}.${l.col}.${fnv1a(l.file)}`;
+    const t = stripRefs(e.type);
+    this.cx.mlirHelper(name, () => ({
+      params: [{ name: "d", type: t, isRef: false, isRefMut: true }, { name: "o", type: st, isRef: false, isRefMut: true }],
+      retType: { tag: "void" }, trackedCaller: this.fn.trackedCaller,
+      body: [{ kind: "Assign", target: { kind: "Ident", name: "d", type: t, isMove: false }, isInit: true,
+        value: { ...e, operand: { kind: "Ident", name: "o", type: st, isMove: true } } }],
+    }));
+    const fnTy = `(!milo.ref<${ty}>, !milo.ref<${src.ty}>) -> ()`;
+    this.callees.set(name, fnTy);
+    this.emit(`func.call @${quote(name)}(${dst}, ${src.ref}) : ${fnTy}`);
+    this.def(`milo.move ${src.ref} : !milo.ref<${src.ty}>`, src.ty);
+  }
+
   private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {
     let p: { ref: string; ty: string };
     const o = e.object, k = o.kind;
