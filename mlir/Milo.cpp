@@ -358,6 +358,8 @@ LogicalResult GlobalOp::verify() {
 LogicalResult ClosureOp::verify() {
   if (getType().getOwning())
     return emitOpError("builds a by-reference closure, which owns nothing: not ") << getType();
+  if (getHeap() && getStaticEnv())
+    return emitOpError("has one env: heap or static, not both");
   return success();
 }
 

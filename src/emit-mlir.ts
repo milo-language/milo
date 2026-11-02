@@ -558,6 +558,9 @@ class FnEmitter {
    * capture is bound to its place, read out of the env (milo.env.capture).
    */
   runClosure(e: HIRExpr & { kind: "Closure" }, name: string, caps: { name: string; place: string; b: Binding }[]): string {
+    // A closure body runs per call: a closure it builds keeps a frame env (legacy scopes
+    // staticEnv by currentFnName, which a closure body never is).
+    this.inClosureBody = true;
     const params = ["%env: !milo.ptr"];
     caps.forEach((c, i) => {
       const r = this.def(`milo.env.capture %env[${i}] : ${c.place}`, c.place).ref;
@@ -1066,6 +1069,7 @@ class FnEmitter {
   private isMain = false;
   private retTy: string | null = null;
   private retView: string | null = null;
+  private inClosureBody = false;
   private retPlaceOnly = false;
   // Set by into() for the call it is about to emit: its place-only result may be an SSA
   // value, the ABI's, stored straight into the destination.
@@ -2752,8 +2756,9 @@ class FnEmitter {
     if (e.isMove) throw new MlirUnsupported("move closure");
     const ty = this.value(e.type, "closure");
     // A global's initializer (__milo.global_init, __milo.lazyinit.*) returns before the
-    // global's closure is ever called, so legacy gives that env a static slot instead.
-    if (e.captures.length && this.fn.name.startsWith("__milo.")) throw new MlirUnsupported("closure env in a global initializer");
+    // global's closure is ever called, so its env is static (milo.closure `static`), as
+    // legacy's staticEnv. A closure inside another closure's body keeps a frame env.
+    const staticEnv = e.captures.length > 0 && !e.heapEnv && this.fn.name.startsWith("__milo.") && !this.inClosureBody;
     const caps = e.captures.map(c => {
       const b = this.lookup(c.name);
       if (b.kind === "vec") return { name: c.name, place: `!milo.vec<${b.elem}>`, ref: b.ref, b };
@@ -2771,7 +2776,7 @@ class FnEmitter {
     this.closures.names.push(name);
     for (const [k, v] of inner.callees) this.callees.set(k, v);
     const ops = caps.length ? `(${caps.map(c => c.ref).join(", ")} : ${caps.map(c => c.place).join(", ")})` : "";
-    return this.def(`milo.closure @${quote(name)}${ops}${e.heapEnv ? " heap" : ""} : ${ty}`, ty);
+    return this.def(`milo.closure @${quote(name)}${ops}${e.heapEnv ? " heap" : ""}${staticEnv ? " static" : ""} : ${ty}`, ty);
   }
 
   /**

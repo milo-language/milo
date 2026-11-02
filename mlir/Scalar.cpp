@@ -856,6 +856,20 @@ struct ClosureLowering : ConvertOpToLLVMPattern<ClosureOp> {
         Value size = constInt(rw, loc, rw.getI64Type(), std::max<int64_t>(8 * fields.size(), 16));
         env = LLVM::CallOp::create(rw, loc, *malloc, ValueRange{size}).getResult();
         header = LLVM::AddressOfOp::create(rw, loc, ptrTy, "free");
+      } else if (op.getStaticEnv()) {
+        // A zeroed internal global per closure body, as legacy's `@<fn>_env`.
+        auto module = op->getParentOfType<ModuleOp>();
+        std::string name = (op.getFn() + "_env").str();
+        if (!module.lookupSymbol(name)) {
+          OpBuilder::InsertionGuard guard(rw);
+          rw.setInsertionPointToStart(module.getBody());
+          auto g = LLVM::GlobalOp::create(rw, loc, envTy, /*isConstant=*/false, LLVM::Linkage::Internal, name, Attribute());
+          Block *init = rw.createBlock(&g.getInitializerRegion());
+          rw.setInsertionPointToStart(init);
+          LLVM::ReturnOp::create(rw, loc, LLVM::ZeroOp::create(rw, loc, envTy).getResult());
+        }
+        env = LLVM::AddressOfOp::create(rw, loc, ptrTy, name);
+        header = LLVM::ZeroOp::create(rw, loc, ptrTy);
       } else {
         env = entrySlot(rw, op, envTy);
         header = LLVM::ZeroOp::create(rw, loc, ptrTy);

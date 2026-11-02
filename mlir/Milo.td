@@ -1214,12 +1214,16 @@ def Milo_ClosureOp : Milo_Op<"closure", [DeclareOpInterfaceMethods<SymbolUserOpI
     `heap`: the env is malloc'd instead, its drop header `free` (legacy genClosure's
     heapEnv, a scoped task's literal: the creating frame returns before the scope joins
     the task, and the task's reap calls the header). It owns the block and no capture.
+
+    `static`: the env is a module-level global (`<fn>_env`) instead of a slot: a closure
+    built by a global's initializer, whose frame is gone before the global is called
+    (legacy genClosure's staticEnv). Its captures are globals, already static.
   }];
   let arguments = (ins FlatSymbolRefAttr:$fn,
                        Variadic<AnyTypeOf<[Milo_RefType, Milo_VecType]>>:$captures,
-                       UnitAttr:$heap);
+                       UnitAttr:$heap, UnitAttr:$staticEnv);
   let results = (outs Milo_FnType:$result);
-  let assemblyFormat = "$fn (`(` $captures^ `:` type($captures) `)`)? (`heap` $heap^)? attr-dict `:` type($result)";
+  let assemblyFormat = "$fn (`(` $captures^ `:` type($captures) `)`)? (`heap` $heap^)? (`static` $staticEnv^)? attr-dict `:` type($result)";
   let hasVerifier = 1;
 }
 

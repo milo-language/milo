@@ -1,4 +1,6 @@
 // RUN: milo-opt %s --milo-verify --milo-lower-structured-cf --convert-milo-to-llvm | FileCheck %s
+// A static closure env is a module global, printed before every function.
+// CHECK: llvm.mlir.global internal @user$closure0_env() {{.*}} : !llvm.struct<(ptr, ptr)>
 // A by-reference closure: its env is an entry-block slot holding a null drop header and
 // the captures' addresses; the body reads a capture's place out of the env; a call goes
 // through the fn pointer with the env first. No captures: a null env.
@@ -37,6 +39,18 @@ func.func @user(%n: si64) -> si64 {
   %r = milo.closure.call %f(%n) : !milo.fn<(si64) -> si64>, si64 -> si64
   %g = milo.closure @"user$closure1" : !milo.fn<() -> ()>
   milo.closure.call %g() : !milo.fn<() -> ()>
+  milo.return %r : si64
+}
+
+// A static env (a global initializer's closure): one zeroed internal global per body.
+// CHECK-LABEL: llvm.func @ginit
+// CHECK:   %[[SENV:.*]] = llvm.mlir.addressof @user$closure0_env
+// CHECK:   %[[SH:.*]] = llvm.getelementptr %[[SENV]][0, 0]
+func.func @ginit(%n: si64) -> si64 {
+  %slot = milo.var "n" : !milo.ref<si64>
+  milo.store %n, %slot : !milo.ref<si64>
+  %f = milo.closure @"user$closure0"(%slot : !milo.ref<si64>) static : !milo.fn<(si64) -> si64>
+  %r = milo.closure.call %f(%n) : !milo.fn<(si64) -> si64>, si64 -> si64
   milo.return %r : si64
 }
 

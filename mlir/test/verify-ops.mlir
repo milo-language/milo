@@ -306,3 +306,15 @@ func.func @lend_read(%p: !milo.ptr) -> si64 {
   %v = milo.load %r : !milo.ref<si64>
   milo.return %v : si64
 }
+
+// -----
+
+func.func @closure_body(%env: !milo.ptr, %x: si64) -> si64 {
+  milo.return %x : si64
+}
+func.func @closure_two_envs(%n: si64) {
+  %slot = milo.var "n" : !milo.ref<si64>
+  // expected-error @+1 {{has one env: heap or static, not both}}
+  %f = milo.closure @closure_body(%slot : !milo.ref<si64>) heap static : !milo.fn<(si64) -> si64>
+  milo.return
+}
