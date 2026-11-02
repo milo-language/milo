@@ -1566,7 +1566,9 @@ class FnEmitter {
         if (s.iterableKind === "hashmap" && !s.consume) return this.mapForEach(s);
         if ((s.iterableKind !== "vec" && s.iterableKind !== "string" && !slice) || s.consume) throw new MlirUnsupported(`for over a ${s.consume ? "consumed " : ""}${s.iterableKind}`);
         const elemKind = s.varName2 ? s.varType2! : s.varType;
-        if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
+        // `for x in &mut v`: x is the element's place, written through (legacy binds its address).
+        const mutElem = elemKind.tag === "ref" && elemKind.mutable;
+        if (mutElem && s.iterableKind === "string") throw new MlirUnsupported("for over &mut string bytes");
         let place = "", elem: string, data: string, len: string, byPlace = false;
         if (s.iterableKind === "string") {
           // `for b in s`: its bytes, data and len read once (genForEach's string case).
@@ -1579,7 +1581,8 @@ class FnEmitter {
           ({ place, elem } = this.vecPlace(s.iterable));
           // A place-only element (128+ bytes, an array) is bound as its place, never loaded.
           // So is one holding an array, even when small enough to be a value elsewhere.
-          byPlace = (valueType(this.cx, stripRefs(elemKind)) === null || inSlot(this.cx, elem)) && placeType(this.cx, stripRefs(elemKind)) === elem;
+          byPlace = (mutElem || valueType(this.cx, stripRefs(elemKind)) === null || inSlot(this.cx, elem)) && placeType(this.cx, stripRefs(elemKind)) === elem;
+          if (mutElem && !byPlace) throw new MlirUnsupported("for over &mut elements of another type");
           if (!byPlace && (inSlot(this.cx, elem) || valueType(this.cx, stripRefs(elemKind)) !== elem)) throw new MlirUnsupported("for element type");
           data = this.def(`milo.vec.data ${place} : !milo.vec<${elem}>`, PTR).ref;
           len = this.def(`milo.len ${place} : !milo.vec<${elem}>`, "si64").ref;
@@ -1598,7 +1601,8 @@ class FnEmitter {
           const one = this.def("milo.const 1 : si64", "si64").ref;
           this.emit(`milo.store ${this.def(`milo.add ${i}, ${one} wrapping : si64`, "si64").ref}, ${idx} : !milo.ref<si64>`);
           if (byPlace) {
-            // In bounds by the condition, and nothing writes the Vec while the loop borrows it.
+            // In bounds by the condition, and nothing but the binding writes the Vec while the
+            // loop borrows it.
             const r = this.def(`milo.index.ref ${place}[${i}] : !milo.vec<${elem}> -> !milo.ref<${elem}>`, `!milo.ref<${elem}>`, this.loc(s.span)).ref;
             this.bind(s.varName2 ?? s.varName, { kind: "var", ref: r, ty: elem });
           } else {
@@ -1859,7 +1863,6 @@ class FnEmitter {
     const at = stripRefs(s.iterable.type);
     const elemKind = s.varName2 ? s.varType2! : s.varType;
     if (at.tag !== "array" || at.size === null) throw new MlirUnsupported("for over a slice");
-    if (elemKind.tag === "ref" && elemKind.mutable) throw new MlirUnsupported("for over &mut elements");
     const aty = this.place$(at, "for array");
     const ety = this.place$(at.element, "for element");
     if (placeType(this.cx, stripRefs(elemKind)) !== ety) throw new MlirUnsupported("for element type");
