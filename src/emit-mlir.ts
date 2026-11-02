@@ -1293,6 +1293,26 @@ class FnEmitter {
     return l;
   }
 
+  /** `file:line:col` of a panic at `span`, as legacy panicAt prints it. */
+  private panicAt(span: Span | undefined): string {
+    const l = this.site(span);
+    return `${l.file}:${l.line}:${l.col}`;
+  }
+
+  /**
+   * milo.panic_if: when `bad` holds, print `text` (static, so every `%` in it is escaped) and
+   * abort; with `value`, `text` is split at `%lld`, the one place the value is printed.
+   */
+  private panicIf(bad: string, text: string | [string, string], value?: string): void {
+    const esc = (s: string) => s.replace(/%/g, "%%");
+    const msg = typeof text === "string" ? esc(text) : `${esc(text[0])}%lld${esc(text[1])}`;
+    this.emit(`milo.panic_if ${bad}, ${quoteBytes(new TextEncoder().encode(msg))}${value ? `(${value})` : ""}`);
+  }
+
+  private constTrue(): string {
+    return this.def("milo.const true", "i1").ref;
+  }
+
   /** A call's result where a value is wanted: a void one keeps the function legacy. */
   private valued(v: Val, stmt: boolean): Val {
     if (!stmt && !v.ty) throw new MlirUnsupported("void call as value");
@@ -2522,8 +2542,9 @@ class FnEmitter {
       case "NonNegative": {
         const v = this.expr(e.value);
         if (v.ty !== "si64" || scalar(e.type, "checked size") !== "si64") throw new MlirUnsupported("non-negative check type");
-        return this.intrinsic(`nonneg.${fnv1a(e.what)}`, e, [{ name: "v", type: I64, mode: "val", ref: v.ref }],
-          ([x]) => ({ kind: "NonNegative", type: e.type, span: e.span, value: x, what: e.what }), "si64");
+        const neg = this.def(`milo.cmp lt, ${v.ref}, ${this.def("milo.const 0 : si64", "si64").ref} : si64`, "i1");
+        this.panicIf(neg.ref, [`milo: negative ${e.what} at ${this.panicAt(e.span)}: `, "\n"], v.ref);
+        return v;
       }
       case "NumberToString": {
         const v = this.expr(e.value);
@@ -2763,8 +2784,13 @@ class FnEmitter {
         const v = this.expr(e.value);
         const ty = scalar(e.type, "range-checked value");
         if (v.ty !== ty || !/^[su]i\d+$/.test(ty)) throw new MlirUnsupported("range check operand type");
-        return this.intrinsic(`range.${e.min}.${e.max}`, e, [{ name: "v", type: e.value.type, mode: "val", ref: v.ref }],
-          ([x]) => ({ ...e, value: x }), ty);
+        // Legacy's text names the line only (emitRangeCheck).
+        const lo = this.def(`milo.cmp lt, ${v.ref}, ${this.def(`milo.const ${e.min} : ${ty}`, ty).ref} : ${ty}`, "i1");
+        const hi = this.def(`milo.cmp gt, ${v.ref}, ${this.def(`milo.const ${e.max} : ${ty}`, ty).ref} : ${ty}`, "i1");
+        const bad = this.def(`milo.or ${lo.ref}, ${hi.ref} : i1`, "i1");
+        const l = this.site(e.span);
+        this.panicIf(bad.ref, `runtime error: value out of range at ${l.file}:${l.line}\n`);
+        return v;
       }
       case "VecGetOpt": {
         // `v.get(i)` / first / last: legacy's genVecGetOpt (the bounds test, a deep clone of
@@ -2927,11 +2953,14 @@ class FnEmitter {
       case "StrPanic": {
         const v = this.expr(e.value);
         if (!/^[su]i\d+$/.test(v.ty)) throw new MlirUnsupported("panic value type");
-        return this.intrinsic(`strpanic.${fnv1a(`${e.head}\0${e.tail}`)}`, e, [{ name: "v", type: e.value.type, mode: "val", ref: v.ref }],
-          ([x]) => ({ ...e, value: x }), null);
+        let n = this.widenBound(v);
+        if (n.ty === "ui64") n = this.def(`milo.cast ${n.ref} : ui64 to si64`, "si64");
+        this.panicIf(this.constTrue(), [e.head, `${e.tail} at ${this.panicAt(e.span)}\n`], n.ref);
+        return { ref: "", ty: "" };
       }
       case "VecPanic":
-        return this.intrinsic(`vecpanic.${fnv1a(e.message)}`, e, [], () => ({ ...e }), null);
+        this.panicIf(this.constTrue(), `${e.message} at ${this.panicAt(e.span)}\n`);
+        return { ref: "", ty: "" };
       case "StringPushStr": {
         // `s.pushStr(x)`: the place, then x, as legacy genStringPushStr; milo.string.append
         // is legacy's pushStr (unique first, then grow; `s.pushStr(s)` re-based).

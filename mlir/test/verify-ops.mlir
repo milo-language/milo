@@ -362,3 +362,27 @@ func.func @contract_kind(%c: i1) {
   milo.contract_check %c "assert"
   milo.return
 }
+
+// -----
+
+func.func @panic_if_stray_conversion(%b: i1) {
+  // expected-error @+1 {{message has a conversion other than %lld or %%}}
+  milo.panic_if %b, "at %s\n"
+  milo.return
+}
+
+// -----
+
+func.func @panic_if_value_without_conversion(%b: i1, %v: si64) {
+  // expected-error @+1 {{message needs one %lld exactly when a value is given}}
+  milo.panic_if %b, "100%% bad\n"(%v)
+  milo.return
+}
+
+// -----
+
+func.func @panic_if_conversion_without_value(%b: i1) {
+  // expected-error @+1 {{message needs one %lld exactly when a value is given}}
+  milo.panic_if %b, "n = %lld\n"
+  milo.return
+}

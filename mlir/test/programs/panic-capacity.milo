@@ -1,0 +1,7 @@
+// milo.panic_if: NonNegative, the negative value printed through the one %lld.
+pub fn main(): i32 {
+    let n: i64 = 2 - 5
+    var v: Vec<i64> = Vec.withCapacity(n)
+    print(v.len())
+    return 0
+}

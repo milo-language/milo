@@ -1714,6 +1714,45 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `milo.panic_if` (::milo::PanicIfOp)
+
+_Panic with a message when a condition holds_
+
+Syntax:
+
+```
+operation ::= `milo.panic_if` $bad `,` $message (`(` $value^ `)`)? attr-dict
+```
+
+When `bad` holds, prints `message` to stderr as a printf format and aborts through the
+panic hook. `message` is the whole text, site included, as the emitter builds it; its
+only conversion is one `%lld`, for `value` when there is one. Every other `%` is
+written `%%`.
+
+```mlir
+milo.panic_if %neg, "milo: negative length at a.milo:3:9: %lld\n"(%n)
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::milo::PanicResource}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>message</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `bad` | 1-bit signless integer |
+| `value` | 64-bit signed integer |
+
+
+
 ### `milo.print` (::milo::PrintOp)
 
 _Print or eprint a line_

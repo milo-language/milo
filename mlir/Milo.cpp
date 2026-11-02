@@ -504,6 +504,27 @@ LogicalResult ContractCheckOp::verify() {
   return success();
 }
 
+LogicalResult PanicIfOp::verify() {
+  // printf reads one argument per conversion: the message may name exactly the value given.
+  StringRef m = getMessage();
+  unsigned convs = 0;
+  for (size_t i = 0; i < m.size(); ++i) {
+    if (m[i] != '%')
+      continue;
+    if (m.substr(i, 2) == "%%") {
+      ++i;
+      continue;
+    }
+    if (m.substr(i, 4) != "%lld")
+      return emitOpError("message has a conversion other than %lld or %%");
+    ++convs;
+    i += 3;
+  }
+  if (convs != (getValue() ? 1u : 0u))
+    return emitOpError("message needs one %lld exactly when a value is given");
+  return success();
+}
+
 LogicalResult ArrayTailArrayOp::verify() {
   auto t = arrayTailSlot(*this, getRef());
   if (!t)

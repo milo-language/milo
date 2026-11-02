@@ -3390,6 +3390,14 @@ export class Codegen {
     this.panicAbort(lines);
     lines.push(`  unreachable`);
     b.endFn();
+    lines.push("");
+    // milo.panic_if with a value: the message's one %lld.
+    const b2 = new LlvmTextBuilder(lines, this);
+    b2.defineFn({ name: "__milo_mlir_panic_i64", ret: Ty.void, params: [{ name: "msg", ty: Ty.ptr }, { name: "v", ty: Ty.i64 }], internal: true, attrs: " noreturn cold noinline" });
+    this.emitFdPrintf(lines, 2, "%msg", ", i64 %v");
+    this.panicAbort(lines);
+    lines.push(`  unreachable`);
+    b2.endFn();
     return lines;
   }
 

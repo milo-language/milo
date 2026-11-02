@@ -1,0 +1,8 @@
+// milo.panic_if: std's _vecPanic, a static message with the site.
+pub fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    print(v.len())
+    v.insert(5, 2)
+    return 0
+}
