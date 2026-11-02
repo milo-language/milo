@@ -115,6 +115,7 @@ const docsSidebar = [
       { text: 'Concurrency API', link: '/features/concurrency-api' },
       { text: 'Warnings & errors', link: '/language/warnings-and-errors' },
       { text: 'Compile errors', link: '/language/errors' },
+      { text: 'MLIR dialect (v0)', link: '/mlir-dialect' },
       { text: 'Standard library', link: '/stdlib/' },
     ]
   },

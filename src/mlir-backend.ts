@@ -94,8 +94,9 @@ export const MLIR_PIPELINE = "--pass-pipeline=builtin.module(" + [
     // bounds check in the loop passes (mlir/README.md).
     "milo-raise-to-scf",
     // The milo region ops left (loops with early exits, ifs outside raised loops) go to cf
-    // before any generic pass runs: they do not describe their control flow to MLIR
-    // (no RegionBranchOpInterface), so CSE would reuse a load from before a milo.while
+    // before any generic pass runs: they describe their control flow to MLIR only in part
+    // (break, continue and return are not region-branch terminators, so a memory-state
+    // analysis cannot see a loop exit early), so CSE would reuse a load from before a milo.while
     // inside its body as if the loop never stored in between.
     "milo-lower-structured-cf",
     // Init state of every owned slot over the CFG (MLIR's dense dataflow): before any

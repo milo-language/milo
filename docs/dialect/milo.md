@@ -508,7 +508,7 @@ operation ::= `milo.copy` $src `,` $dst attr-dict `:` type($src) `,` type($dst) 
 
 A `T` copied from one place to another, as legacy's llvm.memcpy: how a 128+ byte
 aggregate moves between places without becoming an SSA value (SROA splits a whole
-aggregate load per element). Either side is a slot (!milo.ref<T>) or a raw pointer to a
+aggregate load per element). Either side is a slot (`!milo.ref<T>`) or a raw pointer to a
 T. It moves no ownership by itself: an owned source that gives its value up is emptied
 right after with an unused milo.move, an owned destination is marked milo.filled.
 
@@ -2793,7 +2793,7 @@ Syntax:
 ```
 
 A `Heap<I>` of an interface: legacy's `{ ptr data, ptr itable }`, owned (its drop glue,
-legacy's milo.drop.dyn.<I>, runs the concrete type's drop through the itable and frees
+legacy's `milo.drop.dyn.<I>`, runs the concrete type's drop through the itable and frees
 the box). Opaque: a method call through it is legacy's dispatch in a helper.
 
 #### Parameters:
@@ -2850,7 +2850,7 @@ Syntax:
 ```
 
 A `Heap<T>`: legacy's malloc'd pointer to one T, owned (its drop glue, legacy's
-milo.drop.heap.<t>, drops the T and frees the box). `*h` is the place milo.heap.place
+`milo.drop.heap.<t>`, drops the T and frees the box). `*h` is the place milo.heap.place
 gives. Through it a type can hold itself (`enum Expr { Add(Heap<Expr>, ...) }`).
 
 #### Parameters:
@@ -2872,10 +2872,10 @@ Syntax:
 >
 ```
 
-A HashMap<K, V> value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
+A `HashMap<K, V>` value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
 i64 tombs }` (codegen-map.ts). Its methods are Milo code in std/hashmap that reads it
 through a raw pointer, so no op here looks inside; K and V only name its drop glue
-(legacy's, milo.drop.map.<k>.<v>).
+(legacy's, `milo.drop.map.<k>.<v>`).
 
 #### Parameters:
 
@@ -2940,7 +2940,7 @@ the identified LLVM struct of that name, so a spliced body uses the module's own
 definition and the layout is LLVM's natural one, which is legacy's.
 A type with its own `impl Drop` says so after its name, `!milo.struct<"Noisy" drop, si64>`
 (enums the same way): it has drop glue whatever its fields are, and the glue runs the
-user's drop first (legacy's, through milo.drop.<key>).
+user's drop first (legacy's, through `milo.drop.<key>`).
 Structs and enums are identified by name, as LLVM's identified structs are: the body is
 set once, after the type exists, so a type can hold itself through a Vec (a JSON value,
 a tree). Inside its own body it is spelled by name alone, `!milo.enum<"Json">`, which is
@@ -2988,7 +2988,7 @@ Syntax:
 >
 ```
 
-A Vec<T> passed by reference: the address of its {ptr, len, cap} header (a `&Vec<T>`
+A `Vec<T>` passed by reference: the address of its {ptr, len, cap} header (a `&Vec<T>`
 or `&mut Vec<T>` param, or milo.vec.place of a slot). Borrowed: it owns nothing, and
 nothing drops through it. The indexing and len ops take it.
 
@@ -3010,8 +3010,8 @@ Syntax:
 >
 ```
 
-A Vec<T> value: legacy's `%Vec = { ptr data, i64 len, i64 cap }`. Its place, the address
-of that header, is !milo.vec<T> (milo.vec.place), which the indexing ops take.
+A `Vec<T>` value: legacy's `%Vec = { ptr data, i64 len, i64 cap }`. Its place, the address
+of that header, is `!milo.vec<T>` (milo.vec.place), which the indexing ops take.
 
 #### Parameters:
 

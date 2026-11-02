@@ -41,7 +41,7 @@ def Milo_Dialect : Dialect {
 def Milo_VecType : TypeDef<Milo_Dialect, "Vec"> {
   let summary = "a Vec by reference: the address of its header";
   let description = [{
-    A Vec<T> passed by reference: the address of its {ptr, len, cap} header (a `&Vec<T>`
+    A `Vec<T>` passed by reference: the address of its {ptr, len, cap} header (a `&Vec<T>`
     or `&mut Vec<T>` param, or milo.vec.place of a slot). Borrowed: it owns nothing, and
     nothing drops through it. The indexing and len ops take it.
   }];
@@ -158,8 +158,8 @@ def Milo_PtrType : TypeDef<Milo_Dialect, "Ptr"> {
 def Milo_VecValType : TypeDef<Milo_Dialect, "VecVal"> {
   let summary = "a Vec value, the header itself";
   let description = [{
-    A Vec<T> value: legacy's `%Vec = { ptr data, i64 len, i64 cap }`. Its place, the address
-    of that header, is !milo.vec<T> (milo.vec.place), which the indexing ops take.
+    A `Vec<T>` value: legacy's `%Vec = { ptr data, i64 len, i64 cap }`. Its place, the address
+    of that header, is `!milo.vec<T>` (milo.vec.place), which the indexing ops take.
   }];
   let mnemonic = "vecval";
   let parameters = (ins "::mlir::Type":$elementType);
@@ -169,10 +169,10 @@ def Milo_VecValType : TypeDef<Milo_Dialect, "VecVal"> {
 def Milo_MapType : TypeDef<Milo_Dialect, "Map"> {
   let summary = "a HashMap value";
   let description = [{
-    A HashMap<K, V> value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
+    A `HashMap<K, V>` value: legacy's `%HashMap = { ptr data, i64 len, i64 cap, i64 seed,
     i64 tombs }` (codegen-map.ts). Its methods are Milo code in std/hashmap that reads it
     through a raw pointer, so no op here looks inside; K and V only name its drop glue
-    (legacy's, milo.drop.map.<k>.<v>).
+    (legacy's, `milo.drop.map.<k>.<v>`).
   }];
   let mnemonic = "map";
   let parameters = (ins "::mlir::Type":$keyType, "::mlir::Type":$valueType);
@@ -183,7 +183,7 @@ def Milo_HeapType : TypeDef<Milo_Dialect, "Heap"> {
   let summary = "an owned box holding one value";
   let description = [{
     A `Heap<T>`: legacy's malloc'd pointer to one T, owned (its drop glue, legacy's
-    milo.drop.heap.<t>, drops the T and frees the box). `*h` is the place milo.heap.place
+    `milo.drop.heap.<t>`, drops the T and frees the box). `*h` is the place milo.heap.place
     gives. Through it a type can hold itself (`enum Expr { Add(Heap<Expr>, ...) }`).
   }];
   let mnemonic = "heap";
@@ -195,7 +195,7 @@ def Milo_DynType : TypeDef<Milo_Dialect, "Dyn"> {
   let summary = "an owned box of an interface value";
   let description = [{
     A `Heap<I>` of an interface: legacy's `{ ptr data, ptr itable }`, owned (its drop glue,
-    legacy's milo.drop.dyn.<I>, runs the concrete type's drop through the itable and frees
+    legacy's `milo.drop.dyn.<I>`, runs the concrete type's drop through the itable and frees
     the box). Opaque: a method call through it is legacy's dispatch in a helper.
   }];
   let mnemonic = "dyn";
@@ -236,7 +236,7 @@ def Milo_StructType : TypeDef<Milo_Dialect, "Struct", [MutableType]> {
     definition and the layout is LLVM's natural one, which is legacy's.
     A type with its own `impl Drop` says so after its name, `!milo.struct<"Noisy" drop, si64>`
     (enums the same way): it has drop glue whatever its fields are, and the glue runs the
-    user's drop first (legacy's, through milo.drop.<key>).
+    user's drop first (legacy's, through `milo.drop.<key>`).
     Structs and enums are identified by name, as LLVM's identified structs are: the body is
     set once, after the type exists, so a type can hold itself through a Vec (a JSON value,
     a tree). Inside its own body it is spelled by name alone, `!milo.enum<"Json">`, which is
@@ -484,7 +484,7 @@ def Milo_CopyOp : Milo_Op<"copy"> {
   let description = [{
     A `T` copied from one place to another, as legacy's llvm.memcpy: how a 128+ byte
     aggregate moves between places without becoming an SSA value (SROA splits a whole
-    aggregate load per element). Either side is a slot (!milo.ref<T>) or a raw pointer to a
+    aggregate load per element). Either side is a slot (`!milo.ref<T>`) or a raw pointer to a
     T. It moves no ownership by itself: an owned source that gives its value up is emptied
     right after with an unused milo.move, an owned destination is marked milo.filled.
   }];

@@ -157,6 +157,18 @@ const doc = existsSync(DOC) ? readFileSync(DOC, "utf8") : "";
 if (gen.exitCode !== 0 || !doc.includes(MARK) || doc.slice(doc.indexOf(MARK)) !== gen.stdout.toString())
   problems.push("docs/dialect/milo.md is stale or missing: run sh mlir/build.sh");
 
+// The site includes the reference (docs/site/mlir-dialect.md), and VitePress parses prose as
+// Vue: a bare `Vec<T>` outside backticks is an unclosed tag that fails the whole site build.
+{
+  let fence = false;
+  doc.split("\n").forEach((line, i) => {
+    if (line.startsWith("```")) { fence = !fence; return; }
+    const prose = fence ? "" : line.replace(/`[^`]*`/g, "");
+    if (/<\/?(table|tr|td|th|thead|tbody|br)\b|^\s*<!--/.test(prose)) return;
+    if (/<\/?[A-Za-z]|\{\{/.test(prose)) problems.push(`docs/dialect/milo.md:${i + 1}: angle brackets or {{ outside backticks (put the type in backticks in Milo.td): ${line.trim().slice(0, 80)}`);
+  });
+}
+
 const args = process.argv.slice(2);
 if (args.includes("--uncovered")) for (const m of uncovered) console.log(`uncovered verifier error: ${m}`);
 if (args.includes("--ops")) {
