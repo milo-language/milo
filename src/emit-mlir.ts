@@ -3429,7 +3429,7 @@ class FnEmitter {
       while (t.tag === "ref") t = t.inner;
       const v = this.borrow(this.expr(a.expr), t);
       // Scalar.cpp printKey spells the same names.
-      if (valueType(this.cx, t) !== v.ty || t.tag === "vec") throw new MlirUnsupported(`print part of type ${t.tag}`);
+      if (valueType(this.cx, t) !== v.ty) throw new MlirUnsupported(`print part of type ${t.tag}`);
       parts.push({ v, key: typeKey(t), type: t });
       if (!formatted && t.tag === "string" && i < args.length - 1) flush(true);
     });

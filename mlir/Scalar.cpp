@@ -1489,7 +1489,9 @@ struct PrintLowering : ConvertOpToLLVMPattern<PrintOp> {
     for (auto [part, v] : llvm::zip(op.getParts(), a.getParts())) {
       Type t = part.getType();
       name += "." + typeKey(t);
-      if (!isa<StringType, StructType, EnumType>(t)) {
+      // As legacy mlirPrintHelper: scalars and pointers by value, every other part by
+      // address (a by-value Vec param would be dropped inside the helper).
+      if (isa<IntegerType, FloatType, PtrType>(t)) {
         args.push_back(v);
         argTys.push_back(v.getType());
         continue;

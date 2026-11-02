@@ -1,0 +1,33 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): a Vec as a
+// print part, passed to legacy's print helper by address (a by-value Vec param would be
+// dropped there): ints, strings, nested, empty, a field, interpolated and on stderr.
+
+struct Bag {
+    items: Vec<string>,
+}
+
+fn nums(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..n { v.push(i * i) }
+    return v
+}
+
+fn main() {
+    let v = nums(4)
+    print(v)
+    var s: Vec<string> = Vec.new()
+    s.push("a")
+    s.push("b c")
+    print(s)
+    var nested: Vec<Vec<i64>> = Vec.new()
+    nested.push(nums(2))
+    nested.push(nums(0))
+    print(nested)
+    print(nums(3))
+    let b = Bag { items: s.clone() }
+    print(b.items)
+    print($"v={v} n={v.len()}")
+    eprint(v)
+    print(v.len())
+    print(s[1])
+}
