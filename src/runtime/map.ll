@@ -114,3 +114,62 @@ go:
 fail:
   ret ptr null
 }
+
+; @@ milo.vec.grow.realloc
+; std's `_vecGrowBuf(data, len, cap)`: the buffer of `keep` used bytes moved to one of
+; `count * size` bytes. At least {{reallocMin}} kept bytes go through realloc, a smaller
+; buffer to a fresh block (copy, then free). Null when the size overflows or allocation
+; fails, the old buffer then untouched; the caller reports it at its site.
+define internal ptr @milo.vec.grow.realloc(ptr %old, i64 %keep, i64 %count, i64 %size) {
+entry:
+  %m = call { i64, i1 } @llvm.umul.with.overflow.i64(i64 %count, i64 %size)
+  %bytes = extractvalue { i64, i1 } %m, 0
+  %ovf = extractvalue { i64, i1 } %m, 1
+  br i1 %ovf, label %fail, label %pick
+pick:
+  %re = icmp uge i64 %keep, {{reallocMin}}
+  br i1 %re, label %grow, label %fresh
+grow:
+  %r = call ptr @realloc(ptr %old, i64 %bytes)
+  ret ptr %r
+fresh:
+  %f = call ptr @malloc(i64 %bytes)
+  %src = icmp ne ptr %old, null
+  %dst = icmp ne ptr %f, null
+  %both = and i1 %src, %dst
+  br i1 %both, label %copy, label %done
+copy:
+  call ptr @memcpy(ptr %f, ptr %old, i64 %keep)
+  call void @free(ptr %old)
+  br label %done
+done:
+  ret ptr %f
+fail:
+  ret ptr null
+}
+
+; @@ milo.vec.grow.copy
+; milo.vec.grow.realloc where realloc is not an option (Cortex-M's bump heap, or a
+; zero-size element, since realloc(p, 0) may free p): always a fresh block.
+define internal ptr @milo.vec.grow.copy(ptr %old, i64 %keep, i64 %count, i64 %size) {
+entry:
+  %m = call { i64, i1 } @llvm.umul.with.overflow.i64(i64 %count, i64 %size)
+  %bytes = extractvalue { i64, i1 } %m, 0
+  %ovf = extractvalue { i64, i1 } %m, 1
+  br i1 %ovf, label %fail, label %alloc
+alloc:
+  %f = call ptr @malloc(i64 %bytes)
+  %dst = icmp ne ptr %f, null
+  br i1 %dst, label %check, label %fail
+check:
+  %src = icmp ne ptr %old, null
+  br i1 %src, label %copy, label %done
+copy:
+  call ptr @memcpy(ptr %f, ptr %old, i64 %keep)
+  call void @free(ptr %old)
+  br label %done
+done:
+  ret ptr %f
+fail:
+  ret ptr null
+}

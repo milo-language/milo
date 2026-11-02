@@ -8638,6 +8638,19 @@ export class Codegen {
     return (this.itableLayouts.get(`${from}.${iface}`)?.globalName ?? `@itable.${from}.${iface}`).slice(1);
   }
 
+  /** MLIR path: std's _vecGrowBuf as a runtime section, realloc where the target has it. */
+  public mlirVecGrow(elemSize: number): string {
+    const realloc = this.hasRealloc && elemSize > 0;
+    const name = realloc ? "milo.vec.grow.realloc" : "milo.vec.grow.copy";
+    if (this.emittedMlirWrites.has(name)) return name;
+    this.emittedMlirWrites.add(name);
+    this.needsMalloc = this.needsMemcpy = this.needsFree = true;
+    if (realloc) this.needsRealloc = true;
+    this.usedOverflowIntrinsics.add("declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)");
+    this.helperFnBodies.push(realloc ? runtimeFn("milo.vec.grow.realloc", { reallocMin: String(REALLOC_MIN_BYTES) }) : runtimeFn("milo.vec.grow.copy"));
+    return name;
+  }
+
   /** MLIR path: offsetOf(S, f), the byte offset legacy lays the field at (0 when unknown, as legacy). */
   public mlirFieldOffset(struct: string, field: string): number {
     const layout = this.structLayouts.get(struct);
