@@ -900,6 +900,14 @@ RegionBranchOpInterface cannot express. Sparse analyses stay sound (no value tra
 those jumps, and liveness is per block); dense analyses would not, so none runs before
 `--milo-lower-structured-cf`.
 
+Symbols and calls: milo.closure is a SymbolUserOpInterface, its body checked once through
+the verifier's symbol table; milo.closure.call is a CallOpInterface (indirect: the callee is
+the fn value), so the dataflow framework takes it through its call path
+(`mlir/test/call-interface.mlir`). milo.global and milo.global.init are neither: they name a
+global the legacy module defines, so the MLIR module holds no symbol to define or check. That
+needs the emitter to declare each global at module level (a `milo.global.decl` symbol that
+milo.global then uses), which is a change to `src/emit-mlir.ts`.
+
 ### Deploying apps built with MLIR
 
 Critical apps (Tahoe Roads) move only after: M4 green under the ownership gates over the

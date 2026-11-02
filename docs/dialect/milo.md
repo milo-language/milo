@@ -322,6 +322,8 @@ the captures' addresses in order) lends it every capture in place. The checker k
 such a closure from outliving the frame; no captures means a null env. Not Pure: the
 body may write any capture whenever the value is called.
 
+Interfaces: `SymbolUserOpInterface`
+
 #### Attributes:
 
 <table>
@@ -355,6 +357,8 @@ operation ::= `milo.closure.call` $callee `(` $args `)` attr-dict `:` type($call
 
 `f(args)` through a fn value: its fn pointer called with its env first. Unknown code,
 so no traits.
+
+Interfaces: `ArgAndResultAttrsOpInterface`, `CallOpInterface`
 
 #### Operands:
 

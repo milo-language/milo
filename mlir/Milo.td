@@ -11,6 +11,8 @@ include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/InferIntRangeInterface.td"
+include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
 
 def Milo_Dialect : Dialect {
   let name = "milo";
@@ -1142,7 +1144,7 @@ def Milo_FnCastOp : Milo_Op<"fn.cast", [Pure]> {
   let hasVerifier = 1;
 }
 
-def Milo_ClosureOp : Milo_Op<"closure"> {
+def Milo_ClosureOp : Milo_Op<"closure", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "a by-reference closure value";
   let description = [{
     A by-reference closure literal: `fn` is its body, a func.func taking `(!milo.ptr env,
@@ -1170,7 +1172,7 @@ def Milo_EnvCaptureOp : Milo_Op<"env.capture", [Pure]> {
   let hasVerifier = 1;
 }
 
-def Milo_ClosureCallOp : Milo_Op<"closure.call"> {
+def Milo_ClosureCallOp : Milo_Op<"closure.call", [DeclareOpInterfaceMethods<CallOpInterface>]> {
   let summary = "call a fn value";
   let description = [{
     `f(args)` through a fn value: its fn pointer called with its env first. Unknown code,
@@ -1180,6 +1182,15 @@ def Milo_ClosureCallOp : Milo_Op<"closure.call"> {
   let results = (outs Optional<Milo_Value>:$result);
   let assemblyFormat = "$callee `(` $args `)` attr-dict `:` type($callee) (`,` type($args)^)? (`->` type($result)^)?";
   let hasVerifier = 1;
+  // CallOpInterface's per-argument attributes: a fn value's signature carries none.
+  let extraClassDeclaration = [{
+    ::mlir::ArrayAttr getArgAttrsAttr() { return nullptr; }
+    ::mlir::ArrayAttr getResAttrsAttr() { return nullptr; }
+    void setArgAttrsAttr(::mlir::ArrayAttr) {}
+    void setResAttrsAttr(::mlir::ArrayAttr) {}
+    ::mlir::Attribute removeArgAttrsAttr() { return nullptr; }
+    ::mlir::Attribute removeResAttrsAttr() { return nullptr; }
+  }];
 }
 
 def Milo_GlobalInitOp : Milo_Op<"global.init"> {

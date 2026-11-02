@@ -312,11 +312,17 @@ LogicalResult GlobalOp::verify() {
 }
 
 LogicalResult ClosureOp::verify() {
-  auto body = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!body)
-    return emitOpError("names no function: ") << getFn();
   if (getType().getOwning())
     return emitOpError("builds a by-reference closure, which owns nothing: not ") << getType();
+  return success();
+}
+
+// The body is a symbol use, checked through the verifier's shared symbol table (one
+// lookup per closure instead of a walk of the module for each).
+LogicalResult ClosureOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto body = symbols.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!body)
+    return emitOpError("names no function: ") << getFn();
   FunctionType sig = getType().getSignature();
   FunctionType fty = body.getFunctionType();
   if (fty.getNumInputs() != sig.getNumInputs() + 1 || !isa<PtrType>(fty.getInput(0)) ||
@@ -350,6 +356,16 @@ LogicalResult ClosureCallOp::verify() {
     return emitOpError("result does not match ") << sig;
   return success();
 }
+
+// An indirect call: the callee is the fn value. Upstream analyses resolve it to the op
+// that made the value (a milo.closure, a load), never a callable, so they treat it as a
+// call to unknown code, which it is.
+CallInterfaceCallable ClosureCallOp::getCallableForCallee() { return getCallee(); }
+void ClosureCallOp::setCalleeFromCallable(CallInterfaceCallable callee) {
+  getCalleeMutable().assign(cast<Value>(callee));
+}
+Operation::operand_range ClosureCallOp::getArgOperands() { return getArgs(); }
+MutableOperandRange ClosureCallOp::getArgOperandsMutable() { return getArgsMutable(); }
 
 LogicalResult StringAppendOp::verify() {
   if (!isa<StringType>(getDst().getType().getPointee()))
