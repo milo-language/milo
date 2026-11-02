@@ -178,7 +178,80 @@ struct AppendInPlacePass : PassWrapper<AppendInPlacePass, OperationPass<func::Fu
 
 enum : uint8_t { kInit = 1, kUninit = 2 };
 
-// For each owned slot, whether it may hold a value here and whether it may not.
+// What drop elaboration tracks: each owned slot, and each field path of one that some
+// milo.move takes a value out of (a partial move, emit-mlir moveField: only fields that
+// run a user Drop, whose zeroed leftover would not read as empty). A key is the slot, or
+// for a path the field_ref of the first move out of it.
+struct Tracked {
+  Value slot;
+  SmallVector<int64_t, 4> path;
+  Value key;
+};
+
+// `ref` as a place of an owned slot: the slot and the field indices down to it.
+bool ownedPlace(Value ref, Value &slot, SmallVector<int64_t, 4> &path) {
+  path.clear();
+  while (auto f = ref.getDefiningOp<FieldRefOp>()) {
+    path.push_back(f.getIndex());
+    ref = f.getRef();
+  }
+  std::reverse(path.begin(), path.end());
+  slot = ref;
+  return isOwnedSlot(ref);
+}
+
+bool isPrefix(ArrayRef<int64_t> p, ArrayRef<int64_t> q) {
+  return p.size() <= q.size() && p == q.take_front(p.size());
+}
+
+struct Places {
+  ArrayRef<Value> slots;
+  SmallVector<Tracked> paths;
+
+  // The path tracked at exactly `path` of `slot`, or null.
+  const Tracked *at(Value slot, ArrayRef<int64_t> path) const {
+    for (const Tracked &t : paths)
+      if (t.slot == slot && ArrayRef<int64_t>(t.path) == path)
+        return &t;
+    return nullptr;
+  }
+  bool under(Value slot, ArrayRef<int64_t> path) const {
+    return llvm::any_of(paths, [&](const Tracked &t) {
+      return t.slot == slot && t.path.size() > path.size() && isPrefix(path, t.path);
+    });
+  }
+
+  // The keys `op` fills (true) or empties (false). A write to a place covers every path
+  // under it: a store over `o.inner` puts back `o.inner.value` too.
+  void effects(Operation *op, function_ref<void(Value, bool)> fn) const {
+    Value ref;
+    bool full;
+    if (auto st = dyn_cast<StoreOp>(op))
+      ref = st.getRef(), full = true;
+    else if (auto f = dyn_cast<FilledOp>(op))
+      ref = f.getRef(), full = true;
+    else if (auto c = dyn_cast<CopyOp>(op))
+      ref = c.getDst(), full = true;
+    else if (auto mv = dyn_cast<MoveOp>(op))
+      ref = mv.getRef(), full = false;
+    else if (auto d = dyn_cast<DropOp>(op))
+      ref = d.getRef(), full = false;
+    else
+      return;
+    Value slot;
+    SmallVector<int64_t, 4> path;
+    if (!ownedPlace(ref, slot, path))
+      return;
+    // A milo.copy into the slot itself is followed by milo.filled, the fact that counts.
+    if (path.empty() && !isa<CopyOp>(op))
+      fn(slot, full);
+    for (const Tracked &t : paths)
+      if (t.slot == slot && isPrefix(path, t.path))
+        fn(t.key, full);
+  }
+};
+
+// For each owned slot and tracked path, whether it may hold a value here and whether it may not.
 class InitLattice : public dataflow::AbstractDenseLattice {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(InitLattice)
@@ -206,14 +279,14 @@ public:
 
 class InitAnalysis : public dataflow::DenseForwardDataFlowAnalysis<InitLattice> {
 public:
-  InitAnalysis(DataFlowSolver &solver, ArrayRef<Value> slots)
-      : DenseForwardDataFlowAnalysis(solver), slots(slots) {}
+  InitAnalysis(DataFlowSolver &solver, const Places &places)
+      : DenseForwardDataFlowAnalysis(solver), places(places) {}
 
   LogicalResult visitOperation(Operation *op, const InitLattice &before,
                                InitLattice *after) override {
     InitLattice next(after->getAnchor());
     next.state = before.state;
-    transfer(op, next);
+    places.effects(op, [&](Value key, bool full) { next.state[key] = full ? kInit : kUninit; });
     propagateIfChanged(after, after->join(next));
     return success();
   }
@@ -226,28 +299,15 @@ public:
 
   void setToEntryState(InitLattice *lattice) override {
     InitLattice entry(lattice->getAnchor());
-    for (Value s : slots)
+    for (Value s : places.slots)
       entry.state[s] = kUninit;
+    for (const Tracked &t : places.paths)
+      entry.state[t.key] = kUninit;
     propagateIfChanged(lattice, lattice->join(entry));
   }
 
-  static void transfer(Operation *op, InitLattice &l) {
-    if (auto st = dyn_cast<StoreOp>(op)) {
-      if (isOwnedSlot(st.getRef()))
-        l.state[st.getRef()] = kInit;
-    } else if (auto f = dyn_cast<FilledOp>(op)) {
-      l.state[f.getRef()] = kInit;
-    } else if (auto mv = dyn_cast<MoveOp>(op)) {
-      if (isOwnedSlot(mv.getRef()))
-        l.state[mv.getRef()] = kUninit;
-    } else if (auto d = dyn_cast<DropOp>(op)) {
-      if (isOwnedSlot(d.getRef()))
-        l.state[d.getRef()] = kUninit;
-    }
-  }
-
 private:
-  ArrayRef<Value> slots;
+  const Places &places;
 };
 
 struct ElaborateDropsPass
@@ -267,11 +327,18 @@ struct ElaborateDropsPass
     });
     if (slots.empty())
       return;
+    Places places{slots, {}};
+    fn.walk([&](MoveOp mv) {
+      Value slot;
+      SmallVector<int64_t, 4> path;
+      if (ownedPlace(mv.getRef(), slot, path) && !path.empty() && !places.at(slot, path))
+        places.paths.push_back({slot, path, mv.getRef()});
+    });
 
     DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
     solver.load<dataflow::DeadCodeAnalysis>();
     solver.load<dataflow::SparseConstantPropagation>();
-    solver.load<InitAnalysis>(slots);
+    solver.load<InitAnalysis>(places);
     if (failed(solver.initializeAndRun(fn)))
       return signalPassFailure();
     // Null for an op no path reaches.
@@ -305,32 +372,113 @@ struct ElaborateDropsPass
     if (bad)
       return signalPassFailure();
 
-    SmallVector<DropOp> drops;
+    // Each drop of an owned place is kept, erased, flagged, or (a place with a moved path
+    // under it) split into drops of its fields, the last field first as the glue does.
+    struct Plan {
+      DropOp drop;
+      const InitLattice *l;
+    };
+    SmallVector<Plan> plans;
     fn.walk([&](DropOp d) {
-      if (isOwnedSlot(d.getRef()) && !d.getFlag())
-        drops.push_back(d);
+      Value slot;
+      SmallVector<int64_t, 4> path;
+      if (!d.getFlag() && ownedPlace(d.getRef(), slot, path))
+        plans.push_back({d, before(d)});
     });
     llvm::SmallSetVector<Value, 4> flagged;
-    SmallVector<DropOp> maybe;
-    for (DropOp d : drops) {
-      const InitLattice *l = before(d);
-      uint8_t bits = l ? l->get(d.getRef()) : 0;
-      if (bits == kInit)
-        continue;
-      if (bits == kInit + kUninit) {
-        flagged.insert(d.getRef());
-        maybe.push_back(d);
-        continue;
-      }
-      d.erase();
-    }
+    for (const Plan &p : plans)
+      if (failed(lower(p.drop, p.l, places, nullptr, flagged)))
+        return signalPassFailure();
+    llvm::DenseMap<Value, Value> flags;
     if (!flagged.empty())
-      addFlags(fn, flagged.getArrayRef(), maybe);
+      flags = addFlags(fn, places, flagged.getArrayRef());
+    for (const Plan &p : plans)
+      (void)lower(p.drop, p.l, places, &flags, flagged);
   }
 
-  // A slot whose drop differs by path gets an i1 flag that follows it exactly: false at
-  // entry, true after each store, false after each move and drop.
-  void addFlags(func::FuncOp fn, ArrayRef<Value> slots, ArrayRef<DropOp> maybe) {
+  static uint8_t bitsOf(const InitLattice *l, Value key) { return l ? l->get(key) : 0; }
+
+  // The drop `d`, by what the lattice `l` before it says. With `flags` null only the
+  // keys that need a drop flag are gathered; with them the IR is rewritten.
+  LogicalResult lower(DropOp d, const InitLattice *l, const Places &places,
+                      llvm::DenseMap<Value, Value> *flags,
+                      llvm::SmallSetVector<Value, 4> &flagged) {
+    Value slot;
+    SmallVector<int64_t, 4> path;
+    ownedPlace(d.getRef(), slot, path);
+    // An untracked field (a store over it) always holds one.
+    Value guard;
+    if (path.empty())
+      guard = slot;
+    else if (const Tracked *t = places.at(slot, path))
+      guard = t->key;
+    bool split = places.under(slot, path) && llvm::any_of(places.paths, [&](const Tracked &t) {
+      return t.slot == slot && isPrefix(path, t.path) && bitsOf(l, t.key) != kInit;
+    });
+    if (!split) {
+      uint8_t bits = guard ? bitsOf(l, guard) : kInit;
+      if (bits == kInit + kUninit) {
+        if (!flags)
+          flagged.insert(guard);
+        else {
+          OpBuilder b(d);
+          d.getFlagMutable().assign(LoadOp::create(b, d.getLoc(), b.getI1Type(), (*flags)[guard]));
+        }
+      } else if (bits != kInit && flags) {
+        d.erase();
+      }
+      return success();
+    }
+    OpBuilder b(d);
+    if (failed(split1(b, d, flags ? d.getRef() : Value(), d.getRef().getType().getPointee(), slot, path,
+                      guard, l, places, flags, flagged)))
+      return failure();
+    if (flags)
+      d.erase();
+    return success();
+  }
+
+  // The drops of the place `ref` (a `ty`, at `path` of `slot`; null when only gathering).
+  LogicalResult split1(OpBuilder &b, DropOp d, Value ref, Type ty, Value slot, SmallVector<int64_t, 4> path,
+                       Value guard, const InitLattice *l, const Places &places,
+                       llvm::DenseMap<Value, Value> *flags, llvm::SmallSetVector<Value, 4> &flagged) {
+    if (const Tracked *t = places.at(slot, path))
+      guard = t->key;
+    uint8_t bits = guard ? bitsOf(l, guard) : kInit;
+    if (!(bits & kInit))
+      return success();
+    if (!places.under(slot, path)) {
+      if (bits != kInit && !flags)
+        flagged.insert(guard);
+      if (!flags)
+        return success();
+      Value flag;
+      if (bits != kInit)
+        flag = LoadOp::create(b, d.getLoc(), b.getI1Type(), (*flags)[guard]);
+      DropOp::create(b, d.getLoc(), ref, flag);
+      return success();
+    }
+    auto st = dyn_cast<StructType>(ty);
+    if (!st)
+      return d.emitOpError("splits a place that is not a struct");
+    ArrayRef<Type> fields = st.getFields();
+    for (int64_t i = fields.size() - 1; i >= 0; i--) {
+      if (!needsDrop(fields[i]))
+        continue;
+      SmallVector<int64_t, 4> sub(path);
+      sub.push_back(i);
+      Value fr;
+      if (flags)
+        fr = FieldRefOp::create(b, d.getLoc(), RefType::get(b.getContext(), fields[i]), ref, b.getI64IntegerAttr(i));
+      if (failed(split1(b, d, fr, fields[i], slot, sub, guard, l, places, flags, flagged)))
+        return failure();
+    }
+    return success();
+  }
+
+  // A key whose drop differs by path gets an i1 flag that follows it exactly: false at
+  // entry, true after each op that fills it, false after each that empties it.
+  llvm::DenseMap<Value, Value> addFlags(func::FuncOp fn, const Places &places, ArrayRef<Value> keys) {
     OpBuilder b(&getContext());
     Block &entry = fn.getBody().front();
     Operation *afterVars = nullptr;
@@ -339,45 +487,40 @@ struct ElaborateDropsPass
         afterVars = &op;
     llvm::DenseMap<Value, Value> flags;
     Location loc = fn.getLoc();
-    for (Value s : slots) {
+    for (Value k : keys) {
       if (afterVars)
         b.setInsertionPointAfter(afterVars);
       else
         b.setInsertionPointToStart(&entry);
-      auto name = s.getDefiningOp<VarOp>().getName();
+      Value slot;
+      SmallVector<int64_t, 4> path;
+      ownedPlace(k, slot, path);
+      std::string name = slot.getDefiningOp<VarOp>().getName().str();
+      for (int64_t i : path)
+        name += "." + std::to_string(i);
       Value flag = VarOp::create(b, loc, RefType::get(b.getContext(), b.getI1Type()),
-                                 b.getStringAttr((name + ".alive").str()), UnitAttr());
+                                 b.getStringAttr(name + ".alive"), UnitAttr());
       afterVars = flag.getDefiningOp();
-      flags[s] = flag;
+      flags[k] = flag;
     }
     b.setInsertionPointAfter(afterVars);
     Value f = ConstOp::create(b, loc, b.getI1Type(), b.getBoolAttr(false));
-    for (Value s : slots)
-      StoreOp::create(b, loc, f, flags[s]);
+    for (Value k : keys)
+      StoreOp::create(b, loc, f, flags[k]);
 
-    auto set = [&](Operation *after, Value slot, bool v) {
-      b.setInsertionPointAfter(after);
-      Value c = ConstOp::create(b, after->getLoc(), b.getI1Type(), b.getBoolAttr(v));
-      StoreOp::create(b, after->getLoc(), c, flags[slot]);
-    };
     SmallVector<std::tuple<Operation *, Value, bool>> sets;
     fn.walk([&](Operation *op) {
-      if (auto st = dyn_cast<StoreOp>(op); st && flags.count(st.getRef()))
-        sets.push_back({op, st.getRef(), true});
-      else if (auto f = dyn_cast<FilledOp>(op); f && flags.count(f.getRef()))
-        sets.push_back({op, f.getRef(), true});
-      else if (auto mv = dyn_cast<MoveOp>(op); mv && flags.count(mv.getRef()))
-        sets.push_back({op, mv.getRef(), false});
-      else if (auto d = dyn_cast<DropOp>(op); d && flags.count(d.getRef()))
-        sets.push_back({op, d.getRef(), false});
+      places.effects(op, [&](Value key, bool full) {
+        if (flags.count(key))
+          sets.push_back({op, key, full});
+      });
     });
-    for (auto [op, slot, v] : sets)
-      set(op, slot, v);
-    for (DropOp d : maybe) {
-      b.setInsertionPoint(d);
-      Value alive = LoadOp::create(b, d.getLoc(), b.getI1Type(), flags[d.getRef()]);
-      d.getFlagMutable().assign(alive);
+    for (auto [op, key, v] : sets) {
+      b.setInsertionPointAfter(op);
+      Value c = ConstOp::create(b, op->getLoc(), b.getI1Type(), b.getBoolAttr(v));
+      StoreOp::create(b, op->getLoc(), c, flags[key]);
     }
+    return flags;
   }
 };
 

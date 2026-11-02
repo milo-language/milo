@@ -1,0 +1,136 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a field that runs a
+// user Drop moved out of a local. Its zeroed leftover would run Drop again (`drop 0`), so
+// the local is dropped field by field without it (milo-elaborate-drops, legacy's
+// field-move flags): which fields drop, in which order, on every path.
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Pair { a: Res, name: string, b: Res }
+
+struct Nest { inner: Pair, tail: Res, tag: string }
+
+struct Many { rs: Vec<Res>, one: Res }
+
+// 128+ bytes: lives in a slot and moves by copy.
+struct Big { pad: [i64; 16], r: Res, s: string }
+
+fn take(r: Res): void { print($"took {r.id}") }
+
+fn takePair(p: Pair): void { print($"took pair {p.a.id} {p.name} {p.b.id}") }
+
+fn takeBig(b: Big): void { print($"took big {b.r.id} {b.pad[3]}") }
+
+fn pair(i: i64): Pair {
+    return Pair { a: Res { id: i }, name: $"p{i}", b: Res { id: i + 1 } }
+}
+
+fn fromParam(p: Pair): void {
+    take(p.b)
+    print("param end")
+}
+
+fn branches(c: i64): void {
+    let n = Nest { inner: pair(10 * c), tail: Res { id: 10 * c + 5 }, tag: "n" }
+    if c == 1 {
+        take(n.inner.a)
+    } else if c == 2 {
+        takePair(n.inner)
+    } else if c == 3 {
+        take(n.tail)
+        take(n.inner.b)
+    }
+    print($"branches {c} end")
+}
+
+fn early(c: bool): i64 {
+    let p = pair(50)
+    take(p.a)
+    if c {
+        print("early return")
+        return 1
+    }
+    take(p.b)
+    print("late return")
+    return 2
+}
+
+fn loops(): void {
+    var i = 0
+    while i < 3 {
+        let p = pair(60 + 10 * i)
+        if i == 1 {
+            take(p.b)
+            i = i + 1
+            continue
+        }
+        take(p.a)
+        if i == 2 { break }
+        i = i + 1
+    }
+    var q = pair(90)
+    var j = 0
+    while j < 2 {
+        take(q.a)
+        q.a = Res { id: 95 + j }
+        j = j + 1
+    }
+    print("loops end")
+}
+
+fn reassign(): void {
+    var p = pair(100)
+    take(p.a)
+    p.a = Res { id: 102 }
+    var n = Nest { inner: pair(110), tail: Res { id: 115 }, tag: "t" }
+    take(n.inner.b)
+    n.inner = pair(120)
+    var w = pair(130)
+    take(w.b)
+    w = pair(140)
+    print("reassign end")
+}
+
+fn stringOut(): void {
+    let p = pair(150)
+    let s = p.name
+    print($"name {s}")
+}
+
+fn vecOut(): void {
+    var m = Many { rs: Vec.new(), one: Res { id: 160 } }
+    m.rs.push(Res { id: 161 })
+    m.rs.push(Res { id: 162 })
+    let rs = m.rs
+    print($"vec {rs.len()}")
+}
+
+fn bigOut(): void {
+    var pad: [i64; 16] = [0; 16]
+    pad[3] = 7
+    let b = Big { pad: pad, r: Res { id: 170 }, s: "big" }
+    take(b.r)
+    print($"big {b.s} {b.pad[3]}")
+    let c = Big { pad: pad, r: Res { id: 171 }, s: "big2" }
+    takeBig(c)
+}
+
+fn main(): i32 {
+    fromParam(pair(1))
+    branches(1)
+    branches(2)
+    branches(3)
+    branches(4)
+    print($"early {early(true)}")
+    print($"late {early(false)}")
+    loops()
+    reassign()
+    stringOut()
+    vecOut()
+    bigOut()
+    print("end")
+    return 0
+}

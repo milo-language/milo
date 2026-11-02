@@ -878,6 +878,10 @@ class FnEmitter {
         if (e.kind !== "FieldAccess" || !e.isMove || !this.fieldOfOwnedLocal(e)) throw new MlirUnsupported(`move out of a field (128+, ${this.moveRoot(e)})`);
         const p = this.fieldPlace(e)!;
         if (p.ty !== ty) return null;
+        if (this.runsUserDrop(ty)) {
+          this.partialMove(e);
+          return { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: () => { this.def(`milo.move ${p.ref} : !milo.ref<${ty}>`, ty); } };
+        }
         return { ref: p.ref, refTy: `!milo.ref<${ty}>`, done: () => {
           this.emit(`milo.store ${this.def(`milo.zero : ${ty}`, ty).ref}, ${p.ref} init : !milo.ref<${ty}>`);
         } };
@@ -3917,8 +3921,13 @@ class FnEmitter {
   private moveField(e: HIRExpr & { kind: "FieldAccess" }): Val {
     let p: { ref: string; ty: string };
     const o = e.object, k = o.kind;
-    if (this.fieldOfOwnedLocal(e)) p = this.fieldPlace(e)!;
-    else if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && k !== "HeapDeref" && k !== "PtrDeref"
+    if (this.fieldOfOwnedLocal(e)) {
+      p = this.fieldPlace(e)!;
+      if (this.runsUserDrop(p.ty)) {
+        this.partialMove(e);
+        return { ...this.def(`milo.move ${p.ref} : !milo.ref<${p.ty}>`, p.ty), own: "owned" };
+      }
+    } else if (k !== "Ident" && k !== "FieldAccess" && k !== "IndexAccess" && k !== "HeapDeref" && k !== "PtrDeref"
       && o.type.tag === "struct" && !this.runsUserDrop(this.place$(o.type, "struct"))) {
       // Out of a temporary (`make().name`): it goes to a slot that dies with the
       // statement, so the fields left behind are dropped there (legacy
@@ -3933,17 +3942,31 @@ class FnEmitter {
   }
 
   /**
-   * `e` is a field (of a field...) of a struct local this function owns, none of whose
-   * structs runs a user Drop (which would see the zeroed field).
+   * A field that runs a user Drop, moved out of a local (legacy's field-move flags): a
+   * zeroed one is not empty, so it is emptied by milo.move instead, and
+   * milo-elaborate-drops drops the local field by field without it. Those drops call the
+   * glue of every field of each struct on the way down.
+   */
+  private partialMove(e: HIRExpr & { kind: "FieldAccess" }): void {
+    for (let o: HIRExpr = e.object; ; o = (o as HIRExpr & { kind: "FieldAccess" }).object) {
+      if (o.type.tag === "struct")
+        for (const f of fieldTypes(this.cx, o.type)) if (ownsStructurally(this.cx, f, [])) this.dropGlue("", f);
+      if (o.kind !== "FieldAccess") break;
+    }
+    this.dropGlue("", e.type);
+  }
+
+  /**
+   * `e` is a field (of a field...) of a struct local this function owns, every step a
+   * struct by value. None of them implements Drop (the checker refuses a move out of
+   * one), so dropping the local with a moved field zeroed drops the rest.
    */
   private fieldOfOwnedLocal(e: HIRExpr): boolean {
     if (e.kind === "Ident") {
       const b = this.scopes.some(m => m.has(e.name)) ? this.lookup(e.name) : null;
       return b?.kind === "var" && !!b.owned;
     }
-    if (e.kind !== "FieldAccess" || e.object.type.tag !== "struct") return false;
-    const st = this.place$(e.object.type, "struct");
-    return !this.runsUserDrop(st) && this.fieldOfOwnedLocal(e.object);
+    return e.kind === "FieldAccess" && e.object.type.tag === "struct" && this.fieldOfOwnedLocal(e.object);
   }
 
   /** `e` names a string this function owns outright (legacy isOwnedLocalPlace). */

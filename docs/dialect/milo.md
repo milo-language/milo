@@ -586,8 +586,10 @@ operation ::= `milo.drop` $ref (`if` $flag^)? attr-dict `:` type($ref)
 The value in the slot dies: its drop glue runs (legacy's, codegen mlirDropHelper). On an
 owned slot this is "if it holds one" until milo-elaborate-drops decides: it erases the
 drop where the slot is empty on every path, keeps it where it is full on every path,
-and gives it the slot's drop flag (`if %flag`) where that differs by path. On any other
-place (a `&mut` param, a field) it always holds one.
+and gives it the slot's drop flag (`if %flag`) where that differs by path. A field of an
+owned slot that a milo.move takes a value out of is tracked the same way, and a drop of
+a place with such a field under it becomes drops of its fields, the last first. On any
+other place (a `&mut` param, a field) it always holds one.
 
 #### Operands:
 
@@ -1400,7 +1402,8 @@ operation ::= `milo.move` $ref attr-dict `:` type($ref)
 ```
 
 The value in an owned slot, moved out: the result owns it and the slot holds nothing
-after it, so drop elaboration erases or flags the slot's later drops.
+after it, so drop elaboration erases or flags the slot's later drops. On a field of an
+owned slot (a partial move) only that field is emptied.
 
 Interfaces: `InferTypeOpInterface`
 

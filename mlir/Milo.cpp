@@ -335,9 +335,13 @@ LogicalResult ScopeOp::verify() {
 LogicalResult DropOp::verify() {
   if (!needsDrop(getRef().getType().getPointee()))
     return emitOpError("of a value with no drop glue");
-  auto v = getRef().getDefiningOp<VarOp>();
+  // A flagged field of an owned slot is one a partial move may have taken out.
+  Value root = getRef();
+  while (auto f = root.getDefiningOp<FieldRefOp>())
+    root = f.getRef();
+  auto v = root.getDefiningOp<VarOp>();
   if (getFlag() && !(v && v.getOwned()))
-    return emitOpError("with a drop flag needs an owned slot");
+    return emitOpError("with a drop flag needs an owned slot or a field of one");
   return success();
 }
 

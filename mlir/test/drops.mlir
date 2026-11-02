@@ -95,3 +95,42 @@ func.func @owning_array() {
   }
   milo.return
 }
+
+// A field that runs a user Drop moved out on one path (a partial move): the slot's drop
+// splits into drops of its fields, the last field first, and only the moved one tests a
+// flag, which the slot's store sets as well as the move clears.
+// CHECK-LABEL: func @partial_move
+// CHECK:     %[[H:.*]] = milo.var "h" owned
+// CHECK-NOT: milo.var "h.alive"
+// CHECK:     %[[F:.*]] = milo.var "h.0.alive"
+// CHECK:     milo.store %{{.*}}, %[[H]]
+// CHECK:     milo.store %{{.*}}, %[[F]]
+// CHECK:     milo.move %{{.*}} : <!milo.struct<"R" drop, si64>>
+// CHECK:     milo.store %{{.*}}, %[[F]]
+// CHECK:     %[[B:.*]] = milo.field_ref %[[H]][2]
+// CHECK:     milo.drop %[[B]] : <!milo.struct<"R" drop, si64>>
+// CHECK:     %[[S:.*]] = milo.field_ref %[[H]][1]
+// CHECK:     milo.drop %[[S]] : <!milo.string>
+// CHECK:     %[[A:.*]] = milo.field_ref %[[H]][0]
+// CHECK:     %[[FA:.*]] = milo.load %[[F]]
+// CHECK:     milo.drop %[[A]] if %[[FA]]
+// CHECK-NOT: milo.drop %[[H]]
+// CHECK:     milo.return
+func.func @partial_move(%c: i1, %v: !milo.struct<"H", !milo.struct<"R" drop, si64>, !milo.string, !milo.struct<"R" drop, si64>>) {
+  %h = milo.var "h" owned : !milo.ref<!milo.struct<"H", !milo.struct<"R" drop, si64>, !milo.string, !milo.struct<"R" drop, si64>>>
+  %t = milo.var "t" owned : !milo.ref<!milo.struct<"R" drop, si64>>
+  milo.scope %h : !milo.ref<!milo.struct<"H", !milo.struct<"R" drop, si64>, !milo.string, !milo.struct<"R" drop, si64>>> {
+    milo.store %v, %h : !milo.ref<!milo.struct<"H", !milo.struct<"R" drop, si64>, !milo.string, !milo.struct<"R" drop, si64>>>
+    milo.if %c {
+      milo.scope %t : !milo.ref<!milo.struct<"R" drop, si64>> {
+        %a = milo.field_ref %h[0] : !milo.ref<!milo.struct<"H", !milo.struct<"R" drop, si64>, !milo.string, !milo.struct<"R" drop, si64>>> -> !milo.ref<!milo.struct<"R" drop, si64>>
+        %m = milo.move %a : !milo.ref<!milo.struct<"R" drop, si64>>
+        milo.store %m, %t : !milo.ref<!milo.struct<"R" drop, si64>>
+        milo.yield
+      }
+      milo.yield
+    }
+    milo.yield
+  }
+  milo.return
+}
