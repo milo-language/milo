@@ -1,0 +1,29 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: an owning field read
+// out of a temporary (a call, an if/match fork) is cloned and the temporary dropped right
+// after the read, before the statement goes on; a user Drop prints the order. A fork of
+// named places is a view (nothing dropped); a mixed fork clones its view arm.
+
+struct R { id: i64, name: string }
+
+impl Drop for R { fn drop(self: &mut Self): void { print($"drop {self.id}") } }
+
+fn mk(i: i64): R { return R { id: i, name: $"n{i}" } }
+
+fn main() {
+    print(mk(1).name)
+    let c = true
+    print((if c { mk(2) } else { mk(3) }).name)
+    let a = mk(4)
+    let b = mk(5)
+    print((if c { a } else { b }).name)
+    print((if c { a } else { mk(6) }).id)
+    let o: Option<i64> = Option.Some(7)
+    print((match o { Option.Some(k) => mk(k), Option.None => mk(0) }).name)
+    let s = "keep" + ""
+    var total = 0
+    for i in 0..4 {
+        let t = if i % 2 == 0 { s } else { $"m{i}" }
+        total = total + t.len
+    }
+    print(total, " ", s)
+}

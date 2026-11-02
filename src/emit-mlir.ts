@@ -24,6 +24,7 @@ export interface MlirEmitCtx {
   // main is taken only when it is the process entry (no green-task wrapper around it).
   readonly mlirMainOk: boolean;
   mlirStrViewStep(): string;
+  mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean;
   mlirClosureParamEscapes(fnName: string, idx: number): boolean;
   mlirPrintHelper(stderr: boolean, parts: { key: string; type: TypeKind }[], partial?: boolean): string;
   hasStringType: boolean;
@@ -2575,7 +2576,21 @@ class FnEmitter {
         // A temporary that owns is kept in a slot while its field is read: until the end of
         // the statement when the field is a view into it, else only for the read (tempSlot).
         const get = (s: Val): Val => ({ ...this.def(`milo.struct.get ${s.ref}[${index}] : ${s.ty} -> ${ty}`, ty), own });
-        return own ? get(this.borrow(this.expr(e.object), e.object.type)) : this.peek(e.object, get);
+        if (!own) return this.peek(e.object, get);
+        const ov = this.expr(e.object);
+        if (ov.own === "owned" && !this.bitCopies.has(ov.ref) && !this.runsUserDrop(ty) && this.hasDrop(ov.ty)) {
+          // An owning field of a temporary, as legacy reads it: the field cloned out, the
+          // temporary dropped right after the read (`mk().name`), so a user Drop runs
+          // before the statement goes on. A field that runs its own Drop is not cloned.
+          this.owned.push([]);
+          const start = this.body.length;
+          const slot = this.ownedSlot("field.of", ov.ty, e.object.type);
+          this.emit(`milo.store ${ov.ref}, ${slot} : !milo.ref<${ov.ty}>`);
+          const fr = this.def(`milo.field_ref ${slot}[${index}] : !milo.ref<${ov.ty}> -> !milo.ref<${ty}>`, `!milo.ref<${ty}>`).ref;
+          const c = this.copyOut(e, fr, ty, true);
+          return this.closeScope(start, false, c) ?? c;
+        }
+        return get(this.borrow(ov, e.object.type));
       }
       case "StructLit": return this.structLit(e);
       case "EnumLit": {
@@ -2603,19 +2618,29 @@ class FnEmitter {
         const c = this.expr(e.cond);
         if (c.ty !== "i1") throw new MlirUnsupported("if condition type");
         const ref = this.fresh();
-        this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
-        // lower.ts folds a compile-time condition to `true` with the dead arm left out
-        // (constFoldBool): that else never runs.
-        const folded = e.cond.kind === "BoolLit" && e.cond.value && e.elseBody.length === 0;
-        this.region("} else {", () => { if (!folded) return this.tail(e.elseBody, ty); this.emit("milo.unreachable"); return true; });
+        const mode = this.forkMode(e, ty);
+        this.forks.push(mode);
+        try {
+          this.region(`${ref} = milo.if ${c.ref} -> ${ty} {`, () => this.tail(e.thenBody, ty));
+          // lower.ts folds a compile-time condition to `true` with the dead arm left out
+          // (constFoldBool): that else never runs.
+          const folded = e.cond.kind === "BoolLit" && e.cond.value && e.elseBody.length === 0;
+          this.region("} else {", () => { if (!folded) return this.tail(e.elseBody, ty); this.emit("milo.unreachable"); return true; });
+        } finally { this.forks.pop(); }
         this.emit("}");
-        return { ref, ty, own: this.hasDrop(ty) ? "owned" : undefined };
+        return { ref, ty, own: mode === "view" ? "view" : this.hasDrop(ty) ? "owned" : undefined };
       }
       case "Closure": return this.closure(e);
       case "ClosureCall": return this.valued(this.callScope(() => this.closureCall(e, stmt)), stmt);
       case "MatchExpr": {
         if (e.type.tag === "void" || e.type.tag === "never") throw new MlirUnsupported("match-expression without a value");
-        return this.match(e, this.value(e.type, "match-expression")).v;
+        const ty = this.value(e.type, "match-expression");
+        const mode = this.forkMode(e, ty);
+        this.forks.push(mode);
+        try {
+          const v = this.match(e, ty).v;
+          return mode === "view" ? { ...v, own: "view" } : v;
+        } finally { this.forks.pop(); }
       }
       case "Propagate": return this.propagate(e);
       case "DefaultValue": return this.defaultValue(e);
@@ -3070,6 +3095,17 @@ class FnEmitter {
    * A value-producing block (if-expression and match arms): every statement but the last,
    * then the value of the last one to yield, or true when the block jumps instead.
    */
+  /**
+   * A user fork's ownership, as legacy's blockValueOwnsResult: owned when some arm yields
+   * an owned value (the checker clones a place arm there), else a view (only views and
+   * literals, or a view of a user-Drop type, which no clone may copy). Null: owns nothing.
+   */
+  private forks: ("own" | "view" | null)[] = [];
+  private forkMode(e: HIRExpr & { kind: "IfExpr" | "MatchExpr" }, ty: string): "own" | "view" | null {
+    if (!this.hasDrop(ty)) return null;
+    return this.cx.mlirBlockValueOwnsResult(e) ? "own" : "view";
+  }
+
   private tail(body: HIRStmt[], ty: string): true | Val {
     const last = body[body.length - 1];
     if (this.stmts(body.slice(0, -1))) return true;
@@ -3083,7 +3119,11 @@ class FnEmitter {
     let v = armLocal?.kind === "var" && armLocal.owned
       ? { ...this.def(`milo.move ${armLocal.ref} : !milo.ref<${armLocal.ty}>`, armLocal.ty), own: "owned" as const }
       : this.expr(last.expr);
-    v = this.consume(v, "block value");
+    const mode = this.forks[this.forks.length - 1];
+    if (mode === "view") {
+      // A view fork's arms only lend (a place, a literal): nothing here is owned.
+      if (v.own === "owned" && !this.bitCopies.has(v.ref)) throw new MlirUnsupported("view fork arm that owns its value");
+    } else v = this.consume(v, "block value");
     if (v.ty !== ty) throw new MlirUnsupported("block value of another type");
     return v;
   }
@@ -3585,7 +3625,8 @@ class FnEmitter {
     };
     if (into) return this.match({ subject: e.operand, arms: [okArm, errArm] }, null, b => this.tailInto(b, into.dst, into.ty)).v;
     const resultTy = ok.fields.length ? this.value(e.type, "`?` result") : null;
-    return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v;
+    this.forks.push(null);
+    try { return this.match({ subject: e.operand, arms: [okArm, errArm] }, resultTy).v; } finally { this.forks.pop(); }
   }
 
   /**
@@ -3602,7 +3643,8 @@ class FnEmitter {
       { pattern: { kind: "WildcardPattern" as const }, body: [{ kind: "ExprStmt" as const, expr: e.default }] },
     ];
     if (into) return this.match({ subject: e.operand, arms }, null, b => this.tailInto(b, into.dst, into.ty)).v;
-    return this.match({ subject: e.operand, arms }, this.value(e.type, "`??` result")).v;
+    this.forks.push(null);
+    try { return this.match({ subject: e.operand, arms }, this.value(e.type, "`??` result")).v; } finally { this.forks.pop(); }
   }
 
   /**

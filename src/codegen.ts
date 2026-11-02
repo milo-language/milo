@@ -9430,6 +9430,9 @@ export class Codegen {
   // exactly one value it owns. For a resource type the checker moves such a place instead
   // (moveMixedFork), since a structural clone would run its Drop twice. A string literal
   // owns nothing, and a fork of only views and literals stays a view.
+  /** MLIR path: blockValueOwnsResult, which decides a fork's ownership the same way. */
+  public mlirBlockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean { return this.blockValueOwnsResult(expr); }
+
   private blockValueOwnsResult(expr: HIRExpr & { kind: "IfExpr" | "MatchExpr" }): boolean {
     if (!this.needsDropCg(expr.type)) return false;
     const arms = expr.kind === "IfExpr"
