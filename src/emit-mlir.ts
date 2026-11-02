@@ -694,20 +694,21 @@ class FnEmitter {
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout || this.place$(e.type, "struct literal") !== ty) throw new MlirUnsupported("struct literal layout");
     const given = new Map<string, Val>();
-    const mark = this.pending;
+    const mark = this.pending.length;
     for (const f of e.fields) {
       const i = layout.fields.findIndex(lf => lf.name === f.name);
       const lt = layout.fields[i]?.typeKind;
       const pty = lt && valueType(this.cx, lt) === null ? placeType(this.cx, lt) : null;
-      if (pty === null) { given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"))); continue; }
+      if (pty === null) { given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"), f.value.type)); continue; }
       // A field that is a place only (an array) is built in its own place, in source order.
-      this.into(f.value, this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref, pty);
+      const fr = this.def(`milo.field_ref ${dst}[${i}] : !milo.ref<${ty}> -> !milo.ref<${pty}>`, `!milo.ref<${pty}>`).ref;
+      this.into(f.value, fr, pty);
       // An owning one built in place is owned by nothing until the whole struct is: a
       // jump out of a later field would leak it, so it counts as a pending operand.
-      if (this.hasDrop(pty)) this.pending++;
+      if (this.hasDrop(pty)) this.pending.push({ ref: fr, ty: pty, t: lt, place: true });
       given.set(f.name, { ref: "", ty: pty });
     }
-    this.pending = mark;
+    this.pending.length = mark;
     layout.fields.forEach((f, i) => {
       const g = given.get(f.name);
       if (g?.ref === "") return;
@@ -728,7 +729,7 @@ class FnEmitter {
     const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
     if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
     this.emit(`milo.enum.set_tag ${dst}, ${v.tag} : !milo.ref<${ty}>`);
-    const mark = this.pending;
+    const mark = this.pending.length;
     e.args.forEach((a, k) => {
       const fty = this.place$(v.fields[k], "payload");
       const r = this.def(`milo.enum.field_ref ${dst}[${v.tag}, ${k}] : !milo.ref<${ty}> -> !milo.ref<${fty}>`, `!milo.ref<${fty}>`).ref;
@@ -737,9 +738,9 @@ class FnEmitter {
         const x = this.operand(a, fty, "payload");
         this.emit(`milo.store ${x.ref}, ${r} init : !milo.ref<${fty}>`);
       }
-      if (this.hasDrop(fty)) this.pending++;
+      if (this.hasDrop(fty)) this.pending.push({ ref: r, ty: fty, t: v.fields[k], place: true });
     });
-    this.pending = mark;
+    this.pending.length = mark;
   }
 
   /**
@@ -777,7 +778,7 @@ class FnEmitter {
       if (e.elements.length !== t.size) throw new MlirUnsupported("array literal of another size");
       // A stored owning element is owned by nothing until the array's place is: pending,
       // as a field of a struct literal built in place.
-      const mark = this.pending;
+      const mark = this.pending.length;
       e.elements.forEach((x, k) => {
         const r = at(this.def(`milo.const ${k} : si64`, "si64").ref);
         if (valueType(this.cx, t.element) === null) this.into(x, r, ety);
@@ -785,9 +786,9 @@ class FnEmitter {
           const v = this.operand(x, ety, "array element");
           this.emit(`milo.store ${v.ref}, ${r} init : !milo.ref<${ety}>`);
         }
-        if (this.hasDrop(ety)) this.pending++;
+        if (this.hasDrop(ety)) this.pending.push({ ref: r, ty: ety, t: t.element, place: true });
       });
-      this.pending = mark;
+      this.pending.length = mark;
       return;
     }
     if (valueType(this.cx, t.element) === null) throw new MlirUnsupported("array repeat of a place-only value");
@@ -1010,6 +1011,7 @@ class FnEmitter {
     this.ret(`milo.return ${z.ref} : si32`);
   }
   private ret(line: string): void {
+    this.dropPending(0);
     if (this.replay) this.emit("milo.replay.exit");
     this.emit(line);
   }
@@ -1168,16 +1170,33 @@ class FnEmitter {
   }
 
   // Owned operands evaluated and not yet handed to their op (`tok()` in
-  // `take(tok(), match o { None => return 0, ... })`): SSA values, so no scope drops them on
-  // a jump out of a later operand. Legacy drops them (its pend.temps); here such a jump
-  // keeps the function legacy.
-  private pending = 0;
-  private pend(v: Val): Val {
-    if (this.hasDrop(v.ty) && v.own === "owned") this.pending++;
+  // `take(tok(), match o { None => return 0, ... })`), or an owning field or element
+  // already stored into a place built in place (`place`): no scope drops them on a jump out
+  // of a later operand, so the jump does, last first (legacy emitPendingDrops). `hold` is
+  // a value with a second owner until its op (MemReplace's old value): no jump may come
+  // between, so one keeps the function legacy.
+  private pending: { ref: string; ty: string; t: TypeKind; place?: boolean; hold?: boolean }[] = [];
+  // pending.length at each enclosing loop's entry: a break or continue drops only above it.
+  private loopBase: number[] = [];
+  private pend(v: Val, t: TypeKind, hold = false): Val {
+    if (this.hasDrop(v.ty) && v.own === "owned") this.pending.push({ ref: v.ref, ty: v.ty, t: stripRefs(t), hold });
     return v;
   }
-  private noPending(): void {
-    if (this.pending > 0) throw new MlirUnsupported("jump out of an expression with an owned operand pending");
+  private dropPending(from: number): void {
+    for (let i = this.pending.length - 1; i >= from; i--) {
+      const p = this.pending[i];
+      if (p.hold) throw new MlirUnsupported("jump out of an expression with a replaced value pending");
+      this.owned.push([]);
+      const start = this.body.length;
+      if (p.place) {
+        this.dropGlue(p.ty, p.t);
+        this.emit(`milo.drop ${p.ref} : !milo.ref<${p.ty}>`);
+      } else {
+        const slot = this.ownedSlot("pending", p.ty, p.t);
+        this.emit(`milo.store ${p.ref}, ${slot} : !milo.ref<${p.ty}>`);
+      }
+      this.closeScope(start, false, null);
+    }
   }
 
   /**
@@ -1188,7 +1207,7 @@ class FnEmitter {
    */
   private helperOperand(e: HIRExpr, what: string): { v: Val; type: TypeKind } {
     const type = stripRefs(this.fieldType(e));
-    const v = this.pend(this.expr(e));
+    const v = this.pend(this.expr(e), type);
     if (!isScalarTy(v.ty) && v.ty !== PTR && (!v.ty || v.ty !== valueType(this.cx, type) || this.hasDrop(v.ty)))
       throw new MlirUnsupported(`${what} of type ${type.tag}`);
     return { v, type };
@@ -1376,7 +1395,6 @@ class FnEmitter {
         return false;
       }
       case "Return": {
-        this.noPending();
         if (this.sretOut && s.value) {
           this.into(s.value, this.sretOut.ref, this.sretOut.ty);
           this.ret("milo.return");
@@ -1444,7 +1462,7 @@ class FnEmitter {
       }
       case "While": {
         if (this.cx.contractChecks && s.invariants?.length) throw new MlirUnsupported("loop invariant");
-        this.loops++;
+        this.loops++; this.loopBase.push(this.pending.length);
         if (s.cond.kind === "BoolLit" && s.cond.value) {
           this.region("milo.loop {", () => this.stmts(s.body));
         } else {
@@ -1457,7 +1475,7 @@ class FnEmitter {
           this.region("} do {", () => this.stmts(s.body));
         }
         this.emit("}");
-        this.loops--;
+        this.loops--; this.loopBase.pop();
         return false;
       }
       case "ForEach": {
@@ -1496,7 +1514,7 @@ class FnEmitter {
         const idx = this.fresh();
         this.vars.push(`  ${idx} = milo.var "for.idx" : !milo.ref<si64>`);
         this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
-        this.loops++;
+        this.loops++; this.loopBase.push(this.pending.length);
         this.region("milo.while {", () => {
           const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
           this.emit(`milo.condition ${this.def(`milo.cmp lt, ${i}, ${len} : si64`, "i1").ref}`);
@@ -1519,7 +1537,7 @@ class FnEmitter {
           return this.stmts(s.body);
         });
         this.emit("}");
-        this.loops--;
+        this.loops--; this.loopBase.pop();
         return false;
       }
       case "ForRange": {
@@ -1540,20 +1558,20 @@ class FnEmitter {
         const start = widen(this.expr(s.start));
         const end = widen(this.expr(s.end));
         const iv = this.fresh();
-        this.loops++;
+        this.loops++; this.loopBase.push(this.pending.length);
         this.region(`milo.for ${start.ref} to ${end.ref} : ${ty} {`, () => {
           this.emit(`^bb0(${iv}: ${ty}):`);
           this.bind(s.varName, { kind: "ssa", v: { ref: iv, ty } });
           return this.stmts(s.body);
         });
         this.emit("}");
-        this.loops--;
+        this.loops--; this.loopBase.pop();
         return false;
       }
       case "Break":
       case "Continue":
         if (this.loops === 0) throw new MlirUnsupported(`${s.kind} outside a loop`);
-        this.noPending();
+        this.dropPending(this.loopBase[this.loopBase.length - 1]);
         this.emit(s.kind === "Break" ? "milo.break" : "milo.continue");
         return true;
       case "Match":
@@ -1600,7 +1618,7 @@ class FnEmitter {
     const dty = this.place$(ot, "interface box");
     if (!p || p.ty !== dty) throw new MlirUnsupported("interface call on a box that is not a place");
     const ops: { name: string; type: TypeKind; mode: "val" | "ref" | "mut"; ref: string }[] = [{ name: "o", type: ot, mode: "ref", ref: p.ref }];
-    const mark = this.pending;
+    const mark = this.pending.length;
     e.args.forEach((a, k) => {
       const t = stripRefs(a.expr.type);
       if (a.passByRef) {
@@ -1610,7 +1628,7 @@ class FnEmitter {
       const { v, type } = this.helperOperand(a.expr, "interface call argument");
       ops.push({ name: `a${k}`, type, mode: "val", ref: v.ref });
     });
-    this.pending = mark;
+    this.pending.length = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "interface call result");
     if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("interface call result type");
     const r = this.intrinsic(`dyn${e.methodIndex}`, e, ops, ([o, ...xs]) => ({
@@ -1681,7 +1699,7 @@ class FnEmitter {
       };
       const ks = view(s.varName, kt), vs = s.varName2 ? view(s.varName2, vt) : null;
       const iv = this.fresh();
-      this.loops++;
+      this.loops++; this.loopBase.push(this.pending.length);
       this.region(`milo.for ${this.def("milo.const 0 : si64", "si64").ref} to ${cap} : si64 {`, () => {
         this.emit(`^bb0(${iv}: si64):`);
         const at = this.def(`milo.mul ${iv}, ${this.def(`milo.const ${lay.size} : si64`, "si64").ref} wrapping : si64`, "si64").ref;
@@ -1703,7 +1721,7 @@ class FnEmitter {
         return false;
       });
       this.emit("}");
-      this.loops--;
+      this.loops--; this.loopBase.pop();
       this.closeScope(scopeStart, false, null);
       return false;
     } finally { this.scopes.pop(); this.blocks.pop(); }
@@ -1743,7 +1761,7 @@ class FnEmitter {
       const zero = this.def("milo.const 0 : si64", "si64").ref;
       const n = this.def(`milo.const ${at.size} : si64`, "si64").ref;
       const iv = this.fresh();
-      this.loops++;
+      this.loops++; this.loopBase.push(this.pending.length);
       this.region(`milo.for ${zero} to ${n} : si64 {`, () => {
         this.emit(`^bb0(${iv}: si64):`);
         const r = this.def(`milo.array.index ${arr}[${iv}] : !milo.ref<${aty}> -> !milo.ref<${ety}>`, `!milo.ref<${ety}>`, this.loc(s.span)).ref;
@@ -1752,7 +1770,7 @@ class FnEmitter {
         return this.stmts(s.body);
       });
       this.emit("}");
-      this.loops--;
+      this.loops--; this.loopBase.pop();
       this.closeScope(scopeStart, false, null);
       return false;
     } finally { this.scopes.pop(); this.blocks.pop(); }
@@ -1783,7 +1801,7 @@ class FnEmitter {
     const idx = this.fresh();
     this.vars.push(`  ${idx} = milo.var "for.idx" : !milo.ref<si64>`);
     this.emit(`milo.store ${this.def("milo.const 0 : si64", "si64").ref}, ${idx} : !milo.ref<si64>`);
-    this.loops++;
+    this.loops++; this.loopBase.push(this.pending.length);
     this.region("milo.while {", () => {
       const i = this.def(`milo.load ${idx} : !milo.ref<si64>`, "si64").ref;
       this.emit(`milo.condition ${this.def(`milo.cmp lt, ${i}, ${len} : si64`, "i1").ref}`);
@@ -1821,7 +1839,7 @@ class FnEmitter {
       return this.stmts(s.body);
     });
     this.emit("}");
-    this.loops--;
+    this.loops--; this.loopBase.pop();
     this.closeScope(start, false, null);
     return false;
   }
@@ -2112,10 +2130,10 @@ class FnEmitter {
         const p = this.place(e.place, `!milo.ref<${ty}>`, true).ref;
         const old = { ...this.def(`milo.load ${p} : !milo.ref<${ty}>`, ty), own: this.hasDrop(ty) ? "owned" as const : undefined };
         // Until the store, the old value has two owners on paper: no jump may come between.
-        const mark = this.pending;
-        this.pend(old);
+        const mark = this.pending.length;
+        this.pend(old, e.type, true);
         const v = this.operand(e.value, ty, "replacement");
-        this.pending = mark;
+        this.pending.length = mark;
         this.emit(`milo.store ${v.ref}, ${p} init : !milo.ref<${ty}>`);
         return old;
       }
@@ -2316,12 +2334,12 @@ class FnEmitter {
         const ty = this.value(e.type, "enum literal");
         const v = this.cx.mlirEnumLayout(e.enumName)?.variants.find(x => x.name === e.variant);
         if (!v || v.fields.length !== e.args.length) throw new MlirUnsupported("enum variant");
-        const mark = this.pending;
+        const mark = this.pending.length;
         // A 128+ byte payload of an enum that is a value passes through one SSA value from
         // its place (bigArg), as a big argument does at a call.
         const fields = v.fields.map(f => this.place$(f, "payload"));
-        const args = e.args.map((a, k) => this.pend(this.operand(a, fields[k], "payload", !isSsa(this.cx, fields[k]))));
-        this.pending = mark;
+        const args = e.args.map((a, k) => this.pend(this.operand(a, fields[k], "payload", !isSsa(this.cx, fields[k])), v.fields[k]));
+        this.pending.length = mark;
         const ops = args.length ? ` (${args.map(a => a.ref).join(", ")} : ${fields.join(", ")})` : "";
         return { ...this.def(`milo.enum.new ${v.tag}${ops} -> ${ty}`, ty), own: this.hasDrop(ty) ? "owned" : undefined };
       }
@@ -2421,12 +2439,12 @@ class FnEmitter {
         // evaluated here in order and moved into it.
         const et = e.type.element;
         const ety = this.value(et, "Vec literal element");
-        const mark = this.pending;
+        const mark = this.pending.length;
         const args = e.elements.map(x => {
-          const v = this.pend(this.operand(x, ety, "Vec literal element"));
+          const v = this.pend(this.operand(x, ety, "Vec literal element"), x.type);
           return `${v.ref} : ${ety}`;
         });
-        this.pending = mark;
+        this.pending.length = mark;
         const name = this.cx.mlirHelper(`milo.veclit.${typeKey(et)}.${e.elements.length}`, () => ({
           params: e.elements.map((_, k) => ({ name: `e${k}`, type: et, isRef: false, isRefMut: false })),
           retType: e.type,
@@ -2572,7 +2590,7 @@ class FnEmitter {
     if (ft.params.length !== e.args.length) throw new MlirUnsupported("closure call arity");
     const ptys = ft.params.map(p => closureParamType(this.cx, p));
     const refs: { ref: string; mut: boolean; ty: string }[] = [];
-    const mark = this.pending;
+    const mark = this.pending.length;
     const args = e.args.map((a, i) => {
       const pty = ptys[i];
       if (pty === null || (ft.params[i].tag === "ref") !== a.passByRef) throw new MlirUnsupported("closure call arg");
@@ -2581,10 +2599,10 @@ class FnEmitter {
         refs.push({ ref: r, mut: a.refMut, ty: pty });
         return r;
       }
-      const v = this.pend(this.operand(a.expr, pty, "argument", true));
+      const v = this.pend(this.operand(a.expr, pty, "argument", true), a.expr.type);
       return v.ref;
     });
-    this.pending = mark;
+    this.pending.length = mark;
     for (let i = 0; i < refs.length; i++) {
       for (let j = i + 1; j < refs.length; j++) {
         if ((!refs[i].mut && !refs[j].mut) || refs[i].ref === refs[j].ref) continue;
@@ -2724,9 +2742,9 @@ class FnEmitter {
     const layout = this.cx.structLayouts.get(e.name);
     if (!layout) throw new MlirUnsupported("struct layout");
     const given = new Map<string, Val>();
-    const mark = this.pending;
-    for (const f of e.fields) given.set(f.name, this.pend(this.consume(this.expr(f.value), "field")));
-    this.pending = mark;
+    const mark = this.pending.length;
+    for (const f of e.fields) given.set(f.name, this.pend(this.consume(this.expr(f.value), "field"), f.value.type));
+    this.pending.length = mark;
     // The base gives up its unlisted fields and drops its listed ones: not with owned ones yet.
     if (e.base && this.hasDrop(ty)) throw new MlirUnsupported("struct update of an owning struct");
     const base = e.base ? this.expr(e.base) : null;
@@ -3741,7 +3759,7 @@ class FnEmitter {
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];
-    const mark = this.pending;
+    const mark = this.pending.length;
     e.args.forEach((a, k) => {
       const t = a.expr.type;
       const name = `a${k}`;
@@ -3788,7 +3806,7 @@ class FnEmitter {
       args.push(`${v.ref} : ${v.ty}`);
       keys.push(typeKey(type));
     });
-    this.pending = mark;
+    this.pending.length = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
     if (ret !== null && !isScalarTy(ret) && ret !== PTR) throw new MlirUnsupported("extern call result type");
     const l = this.site(e.span);
@@ -3809,7 +3827,7 @@ class FnEmitter {
     const params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[] = [];
     const args: string[] = [];
     const keys: string[] = [];
-    const mark = this.pending;
+    const mark = this.pending.length;
     e.args.forEach((a, k) => {
       const t = stripRefs(a.expr.type);
       const name = `a${k}`;
@@ -3827,7 +3845,7 @@ class FnEmitter {
       args.push(`${v.ref} : ${v.ty}`);
       keys.push(typeKey(type));
     });
-    this.pending = mark;
+    this.pending.length = mark;
     const ret = e.type.tag === "void" || e.type.tag === "never" ? null : this.value(e.type, "builtin result");
     if (ret !== null && !isScalarTy(ret) && ret !== PTR && ret !== STR) throw new MlirUnsupported("builtin result type");
     const l = e.span ? this.cx.checkLocation(this.fn.trackedCaller ?? e.span) : null;
@@ -4033,7 +4051,7 @@ class FnEmitter {
     const refs: { ref: string; mut: boolean; ty: string }[] = [];
     const provenance: (number | null)[] = [];
     const k0 = sret ? 1 : 0;
-    const mark = this.pending;
+    const mark = this.pending.length;
     const args = e.args.map((a, j) => {
       const i = j + k0;
       if (a.passByRef) {
@@ -4043,11 +4061,11 @@ class FnEmitter {
         return ref.ref;
       }
       if (paramTys[i] === PTR && a.expr.type.tag === "array") { provenance.push(null); return this.decay(a.expr).ref; }
-      const v = this.pend(this.operand(a.expr, paramTys[i], "argument", true));
+      const v = this.pend(this.operand(a.expr, paramTys[i], "argument", true), a.expr.type);
       provenance.push(null);
       return v.ref;
     });
-    this.pending = mark;
+    this.pending.length = mark;
     // As legacy genCall: after every argument, one check per pair with a `&mut`; a pair
     // that is the same SSA value is the same static place, which the checker already
     // rejected.

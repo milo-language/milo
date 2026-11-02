@@ -1,0 +1,85 @@
+// Differential program for scripts/mlir-same.ts --programs --owned: a return, break or
+// continue out of a later operand while earlier owned operands are evaluated and not yet
+// handed to their op. The jump drops them, last first (legacy emitPendingDrops).
+
+struct Res { id: i64 }
+
+impl Drop for Res {
+    fn drop(self: &mut Self): void { print($"drop {self.id}") }
+}
+
+struct Two { a: Res, s: string, b: Res }
+
+enum Got { Both(Res, Res), None }
+
+fn res(i: i64): Res { return Res { id: i } }
+
+fn take2(a: Res, b: Res): i64 { return a.id + b.id }
+
+fn take3(a: Res, s: string, b: Res): i64 { return a.id + s.len() + b.id }
+
+fn ret_in_arg(o: Option<i64>): i64 {
+    return take2(res(1), match o { Some(x) => res(x), None => { return -1 } })
+}
+
+fn ret_in_arg3(o: Option<i64>): i64 {
+    return take3(res(2), $"s{2}", match o { Some(x) => res(x), None => { return -2 } })
+}
+
+fn ret_in_field(o: Option<i64>): i64 {
+    let t = Two { a: res(3), s: $"t{3}", b: match o { Some(x) => res(x), None => { return -3 } } }
+    return t.a.id + t.b.id
+}
+
+fn ret_in_payload(o: Option<i64>): i64 {
+    let g = Got.Both(res(4), match o { Some(x) => res(x), None => { return -4 } })
+    match g {
+        Got.Both(a, b) => { return a.id + b.id }
+        Got.None => { return 0 }
+    }
+}
+
+fn ret_in_vec(o: Option<i64>): i64 {
+    let v = [res(5), res(6), match o { Some(x) => res(x), None => { return -5 } }]
+    return v[0].id + v[2].id
+}
+
+fn try_in_arg(o: Option<i64>): Option<i64> {
+    return Some(take2(res(7), res(o?)))
+}
+
+fn loops(): i64 {
+    var sum = 0
+    for i in 0..4 {
+        let o: Option<i64> = if i % 2 == 0 { Some(i) } else { None }
+        sum = sum + take2(res(10 + i), match o { Some(x) => res(x), None => { continue } })
+        if i == 2 {
+            sum = sum + take2(res(20), match o { Some(_) => { break }, None => res(0) })
+        }
+    }
+    return sum
+}
+
+fn outer_pending_inner_loop(n: i64): i64 {
+    // A loop inside a later operand: its break drops nothing of the outer call's operands.
+    return take2(res(30), if n >= 0 {
+        var k = 0
+        while true {
+            if k >= n { break }
+            k = k + 1
+        }
+        res(k)
+    } else { res(-1) })
+}
+
+fn main(): i32 {
+    print($"{ret_in_arg(Some(9))} {ret_in_arg(None)}")
+    print($"{ret_in_arg3(Some(9))} {ret_in_arg3(None)}")
+    print($"{ret_in_field(Some(9))} {ret_in_field(None)}")
+    print($"{ret_in_payload(Some(9))} {ret_in_payload(None)}")
+    print($"{ret_in_vec(Some(9))} {ret_in_vec(None)}")
+    print($"{try_in_arg(Some(9)) ?? 0} {try_in_arg(None) ?? 0}")
+    print($"{loops()}")
+    print($"{outer_pending_inner_loop(3)}")
+    return 0
+}
