@@ -30,7 +30,7 @@ export interface MlirEmitCtx {
   mlirVecTailDropHelper(key: string, vec: TypeKind): void;
   mlirHelper(name: string, make: () => Omit<HIRFunction, "name" | "isExtern" | "isVariadic">): string;
   structLayouts: Map<string, { fields: { name: string; typeKind: TypeKind }[] }>;
-  mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
+  mlirEnumLayout(name: string): { size: number; align: number; niche?: { intTy: string; value: string }; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null;
   needsDropCg(t: TypeKind): boolean;
   dropImpls: Set<string>;
   typeSizeOf(t: TypeKind): number;
@@ -346,7 +346,6 @@ function lentType(cx: MlirEmitCtx, t: TypeKind): string | null {
 const hasUserDrop = (cx: MlirEmitCtx, t: TypeKind & { name: string }) => cx.dropImpls.has(t.name);
 
 function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }): string | null {
-  if (cx.llvmType(t) !== `%${t.name}`) return null;
   const drop = hasUserDrop(cx, t) ? " drop" : "";
   if (t.tag === "struct") {
     const l = cx.structLayouts.get(t.name);
@@ -362,7 +361,8 @@ function aggregateType(cx: MlirEmitCtx, t: TypeKind & { tag: "struct" | "enum" }
     if (fields.some(f => f === null)) return null;
     variants.push(`${v.tag}: (${fields.map((f, k) => `${f} at ${v.offsets[k]}`).join(", ")})`);
   }
-  return `!milo.enum<${quote(t.name)}${drop}, size = ${l.size}, align = ${l.align}, [${variants.join(", ")}]>`;
+  const shape = l.niche ? `niche = ${l.niche.value} : ${l.niche.intTy}` : `size = ${l.size}, align = ${l.align}`;
+  return `!milo.enum<${quote(t.name)}${drop}, ${shape}, [${variants.join(", ")}]>`;
 }
 
 function stripRefs(t: TypeKind): TypeKind {
@@ -381,7 +381,6 @@ function placeBlocker(cx: MlirEmitCtx, t: TypeKind, depth = 0): string {
     case "array": return t.size === null ? "slice" : inner(t.element);
     case "fn": return t.owning ? "owning fn" : "fn";
     case "struct": case "enum": {
-      if (cx.llvmType(t) !== `%${t.name}`) return `${t.tag} (niche)`;
       const bad = fieldTypes(cx, t).find(f => placeType(cx, f) === null);
       return bad ? inner(bad) : t.tag;
     }
@@ -395,7 +394,7 @@ function blocker(cx: MlirEmitCtx, t: TypeKind, depth = 0, seen: string[] = []): 
   if (t.tag === "vec" && depth <= 3) return `vec (${blocker(cx, t.element, depth + 1, seen)})`;
   if ((t.tag !== "struct" && t.tag !== "enum") || depth > 3) return t.tag;
   if (seen.includes(t.name)) return "recursive";
-  const why = cx.typeSizeOf(t) >= 128 ? "128+ bytes" : cx.llvmType(t) !== `%${t.name}` ? "niche" : null;
+  const why = cx.typeSizeOf(t) >= 128 ? "128+ bytes" : null;
   if (why) return `${t.tag} (${why})`;
   const fields = t.tag === "struct" ? cx.structLayouts.get(t.name)?.fields.map(f => f.typeKind) ?? []
     : cx.mlirEnumLayout(t.name)?.variants.flatMap(v => v.fields) ?? [];
@@ -3016,7 +3015,7 @@ class FnEmitter {
     };
   }
 
-  /** An enum's layout, or the function stays legacy (a niche-optimized enum has none here). */
+  /** An enum's layout, or the function stays legacy. */
   private enumLayout(name: string): NonNullable<ReturnType<MlirEmitCtx["mlirEnumLayout"]>> {
     const l = this.cx.mlirEnumLayout(name);
     if (!l) throw new MlirUnsupported("match subject layout");

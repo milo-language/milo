@@ -1,0 +1,153 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): niche-packed
+// enums (an Option-shaped enum whose payload is a ranged int, or a one-field struct of one,
+// stored as the payload alone with the fieldless variant as the value past the range).
+// Built, matched, unwrapped, `?`-propagated, passed and returned, held in structs, Vecs and
+// a HashMap, matched in place through `&mut`, and dropped inside owning containers; with
+// the fieldless variant first (tag 0) and last, and niche values that wrap (u8 201) or sit
+// below the range (i16).
+
+type R = i32(0..2147483646)
+type U = u8(0..200)
+type Neg = i16(-32767..32767)
+type Big = i64(0..9223372036854775806)
+
+struct Id { at: R }
+
+struct Outer { id: Id }
+
+enum Slot { Empty, At(R) }
+
+struct Rec { name: string, left: Option<Id>, slot: Slot, tags: Vec<string> }
+
+struct Wide {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64,
+    i: i64, j: i64, k: i64, l: i64, m: i64, n: i64, o: i64, p: i64,
+    pick: Option<R>,
+}
+
+fn some(x: R): Option<R> { return Some(x) }
+
+fn none(): Option<R> { return None }
+
+fn slotOf(n: i32): Slot {
+    if n < 0 { return Slot.Empty }
+    let r: R = n
+    return Slot.At(r)
+}
+
+fn showSlot(s: Slot): string {
+    match s {
+        Slot.Empty => { return "empty" }
+        Slot.At(x) => { return "at " + x.toString() }
+    }
+}
+
+fn showId(o: Option<Id>): string {
+    match o { Some(id) => { return "id " + id.at.toString() } None => { return "no id" } }
+}
+
+fn half(x: R): Option<R> {
+    if x % 2 == 0 { return Some(x / 2) }
+    return None
+}
+
+fn quarter(o: Option<R>): Option<R> {
+    let a = half(o?)?
+    return half(a)
+}
+
+fn clear(o: &mut Option<R>) {
+    var big = false
+    match o {
+        Some(x) => { big = x > 10 }
+        None => {}
+    }
+    if big { o = None } else if o.isNone() { o = Some(7) }
+}
+
+fn bump(s: &mut Slot) {
+    var next: i32 = 0
+    match s {
+        Slot.At(x) => { next = x + 1 }
+        Slot.Empty => {}
+    }
+    s = slotOf(next)
+}
+
+fn wide(p: Option<R>): Wide {
+    return Wide { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, pick: p }
+}
+
+fn main() {
+    let hi: R = 2147483646
+    print(sizeOf<Option<R>>())
+    print(sizeOf<Slot>())
+    print(sizeOf<Option<Outer>>())
+    print(some(hi)!)
+    print(none() ?? 5)
+    print(quarter(Some(12)) ?? 99)
+    print(quarter(Some(6)) ?? 99)
+    print(quarter(None) ?? 99)
+    print(showSlot(slotOf(-1)))
+    print(showSlot(slotOf(2147483646)))
+
+    // in place, through &mut
+    var o: Option<R> = Some(42)
+    clear(&mut o)
+    print(o ?? 1)
+    clear(&mut o)
+    print(o ?? 1)
+    clear(&mut o)
+    print(o ?? 1)
+    var s = Slot.Empty
+    bump(&mut s)
+    bump(&mut s)
+    print(showSlot(s))
+
+    // other widths: a niche that wraps (u8 201 is -55), one below the range, an i64
+    let u: Option<U> = Some(200)
+    let un: Option<U> = None
+    print(u ?? 0)
+    print(un ?? 1)
+    let ng: Option<Neg> = Some(-32767)
+    let ngn: Option<Neg> = None
+    print(ng ?? 0)
+    print(ngn ?? 2)
+    let bg: Option<Big> = Some(9223372036854775806)
+    let bgn: Option<Big> = None
+    print(bg ?? 0)
+    print(bgn ?? 3)
+    let w: Option<Outer> = Some(Outer { id: Id { at: 11 } })
+    match w { Some(x) => print(x.id.at), None => print("none") }
+
+    // in owning containers, dropped with them
+    var recs: Vec<Rec> = Vec.new()
+    var tags: Vec<string> = Vec.new()
+    tags.push("t" + hi.toString())
+    recs.push(Rec { name: "a" + "x", left: Some(Id { at: 3 }), slot: Slot.Empty, tags: tags })
+    recs.push(Rec { name: "b" + "y", left: None, slot: slotOf(9), tags: Vec.new() })
+    for r in recs { print(r.name + " " + showId(r.left) + " " + showSlot(r.slot) + " " + r.tags.len().toString()) }
+    recs[1].left = Some(Id { at: 8 })
+    recs[0].slot = Slot.At(4)
+    print(showId(recs[1].left) + " " + showSlot(recs[0].slot))
+    var opts: Vec<Option<R>> = Vec.new()
+    opts.push(Some(0))
+    opts.push(None)
+    opts.push(Some(hi))
+    while let Some(x) = opts.pop() { print(x) }
+    var hm: HashMap<string, Option<Id>> = HashMap.new()
+    hm.insert("k" + "1", Some(Id { at: 1 }))
+    hm.insert("k" + "2", None)
+    match hm.get("k1") { Some(v) => print(showId(v)), None => print("missing") }
+    match hm.get("k2") { Some(v) => print(showId(v)), None => print("missing") }
+    match hm.get("k3") { Some(v) => print(showId(v)), None => print("missing") }
+
+    // a 128+ byte struct holding one
+    let wd = wide(Some(77))
+    print(wd.pick ?? 0)
+    let wn = wide(None)
+    print((wn.pick ?? 0) as i64 + wn.p)
+
+    // unwrapping None panics with legacy's text
+    print(none()!)
+}

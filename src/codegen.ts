@@ -3274,15 +3274,18 @@ export class Codegen {
   // through the panic hook.
   /**
    * MLIR path: enum `name`'s layout as this codegen stores it (EnumLayout), for the
-   * dialect's !milo.enum to spell out; null for a niche-packed one, which has no tag word.
+   * dialect's !milo.enum to spell out. A niche-packed one has no tag word: its payload is
+   * at offset 0 and `niche` says which integer value there is the fieldless variant.
    */
-  public mlirEnumLayout(name: string): { size: number; align: number; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null {
+  public mlirEnumLayout(name: string): { size: number; align: number; niche?: { intTy: string; value: string }; variants: { name: string; tag: number; fields: TypeKind[]; offsets: number[] }[] } | null {
     const l = this.enumLayouts.get(name);
-    if (!l || l.niche) return null;
+    if (!l) return null;
+    const n = l.niche;
     return {
       size: l.size,
       align: Math.max(4, l.payloadAlign),
-      variants: [...l.variants].map(([vn, v]) => ({ name: vn, tag: v.tag, fields: v.fieldTypeKinds, offsets: this.variantFieldOffsets(v.fieldTypes) })),
+      niche: n && { intTy: n.intTy, value: n.value },
+      variants: [...l.variants].map(([vn, v]) => ({ name: vn, tag: v.tag, fields: v.fieldTypeKinds, offsets: n ? v.fieldTypes.map(() => 0) : this.variantFieldOffsets(v.fieldTypes) })),
     };
   }
 

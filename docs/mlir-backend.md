@@ -225,8 +225,10 @@ structs, enums.
   elaboration sees the subject empty on that path only (legacy's alive flag); an arm that
   leaves an owning field unbound stays legacy (legacy leaks it). A `&mut` subject binds
   payload places (`milo.enum.field_ref`). String and float literal patterns are a chain of
-  `==` tests in nested `milo.if`s. Still legacy: nested patterns, niche-packed enums
-  (ranged ints are not in the dialect at all), a 128+ byte enum matched by value.
+  `==` tests in nested `milo.if`s. A niche-packed enum (legacy EnumNiche) is
+  `!milo.enum<"N", niche = V : iN, [...]>`: legacy's `{ P }` with no tag word, its tag read
+  as a compare of the payload's leading integer with V (program `niche-enums`, FileCheck
+  `niche.mlir`). Still legacy: nested patterns, a 128+ byte enum matched by value.
 - *128+ byte aggregates* are places, never SSA values (legacy's isBigAgg: SROA splits a
   whole-aggregate load per element). `placeType` admits them, `valueType` does not: by-ref
   params and args, field places, a by-value param (stored to its slot on entry, as legacy
@@ -1107,6 +1109,10 @@ raw pointer); an empty `match e {}` printed an unbalanced region.
   What is left is mostly pass work: niche-packed enums (~55), per-field drop flags for moves out
   of a struct whose field type has a user Drop (30, legacy's field-move flags), jumps out of an
   expression with an owned operand pending (14).
+- *Niche-packed enums*: `!milo.enum` gained the niche form, so the 71 fixture functions it
+  kept on legacy (enumNicheInt 59, enumNicheIntOps 10, vecMinMaxStd 2) go through MLIR;
+  one left (enumNicheIntOps main: `unwrapOrElse`, its own refusal). Planted bug: the
+  fieldless variant stored as the niche value minus one turned program `niche-enums` red.
 - *Where it stands*: census 484098 of 484487 (99.92%, 389 on legacy) one commit before the
   `??` and C fn pointer fixes; full corpus `--owned` at 0c4d1317 1173 of 1173 same (1
   nondeterministic), 336 fixture functions on legacy; milojs runtime 5763 of 5774, its full
