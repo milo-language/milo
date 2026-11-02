@@ -1074,6 +1074,39 @@ deleted legacy's never-freed `u.clone()` (legacy inlines the `$"…"` formatting
 print helper), and at -O0 both hold 3. `mlir-same --owned` now decides on the -O0 count; a
 planted extra clone in MLIR is red at -O0 and invisible at -O2.
 
+### Twelfth batch (2026-11-01, overnight)
+
+`bun scripts/mlir-census.ts` is now the one command for the compile-only census (fixtures and
+examples with a main, milojs's two entry points; it lists files that fail to compile). Run it
+from a worktree of a commit (with `MILO_OPT`) when `src/` may change meanwhile: every compile
+loads `src/` afresh. Start: census 492019 of 494182 (99.56%), 2163 on legacy.
+
+Landed, each with a gate program in `mlir/test/programs/` and, where a plant could tell, a
+planted bug proven red: scoped tasks' heap-env closures; cast-only scalars' ownership; Vecs of
+raw pointers (`Vec<*T>`; one refusal in vecElem was 1146 census functions, which the census
+had mislabelled "128+ bytes" until placeBlocker named the real field); `get`/`first`/`last`;
+repr enum casts; deep copies of 128+ byte owning elements; owning fields moved out of
+temporaries; 128+ byte unwraps built in place; field addresses of SSA bindings; places behind
+raw pointers lent to calls (`milo.ptr.lend`, verified to have only call users); Vecs as print
+parts (non-scalar parts by address, as legacy's helper takes them); iterator for-in (as a
+loop over `next`); ranged ints (stored as their width; RangeCheck through legacy's text);
+foreign raw slices; adopt; builtin queries (capacity, HeapPtr, tryFrom, bit ops, JSON);
+C fn pointers; addresses of scalar elements; `??` over an owning Err.
+
+Found on the way: legacy's `??` leaked a consumed owning Err (now dropped in both backends);
+legacy genUnwrap zeroes an Ident operand through localAddr, which for a by-ref param is the
+slot holding its address (the first big-unwrap helper smashed its -O0 frame; it now takes a
+raw pointer); an empty `match e {}` printed an unbalanced region.
+
+- *Where it stands*: census 484098 of 484487 (99.92%, 389 on legacy) one commit before the
+  `??` and C fn pointer fixes; full corpus `--owned` at 0c4d1317 1173 of 1173 same (1
+  nondeterministic), 336 fixture functions on legacy; milojs runtime 5763 of 5774, its full
+  suite green on the MLIR build. `MlirUnsupported` sites 229 (new handlers carry narrower
+  refusals of their own). Next by count: niche-packed enums (~60: `!milo.enum` has no niche
+  form yet; needs the type, its parser and the enum lowerings), for over a HashMap (34: needs
+  a binding for places behind pointers), moves out of fields (22), jumps out of an expression
+  with an owned operand pending (16).
+
 ## Gates (every milestone, every commit)
 
 - **Corpus diff**: `bun test tests/run.test.ts` under the default passes exactly as with
