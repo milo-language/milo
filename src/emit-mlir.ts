@@ -3326,7 +3326,8 @@ class FnEmitter {
         const rb = this.lookup(root.name);
         if (rb.kind === "ssa") this.spill(root.name, rb.v);
       }
-      const p = this.fieldPlace(e.operand);
+      // `v[i].addrOf()` of a Vec of scalars: the element's place, bounds-checked (scalarElem).
+      const p = this.fieldPlace(e.operand) ?? this.scalarElem(e.operand);
       if (!p) {
         let r: HIRExpr = e.operand, path = "";
         while (r.kind === "FieldAccess") { path += ".f"; r = r.object; }

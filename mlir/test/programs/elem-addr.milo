@@ -1,0 +1,20 @@
+// Differential program for the default build (scripts/mlir-same.ts --programs): the
+// address of a Vec element of scalars (`v[i].addrOf()`), bounds-checked like v[i]; a write
+// through it is the element's, and an index past the end panics as v[i] does.
+
+fn bump(p: *i64, by: i64) {
+    unsafe {*p = *p + by }
+}
+
+fn main() {
+    var v: Vec<i64> = Vec.new()
+    for i in 0..4 { v.push(i) }
+    unsafe {
+        bump(v[2].addrOf(), 40)
+        let base = v[0].addrOf()
+        bump(base, 7)
+    }
+    print(v[0] + v[1] + v[2] + v[3])
+    unsafe { bump(v[9].addrOf(), 1) }
+    print(v.len())
+}
