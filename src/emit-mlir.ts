@@ -2909,7 +2909,15 @@ class FnEmitter {
         const at = this.def(`milo.addr ${this.place(e.object, lent, false).ref} : ${lent}`, PTR).ref;
         return this.def(`milo.ptr.load ${this.def(`milo.ptr.field ${at}[2] : !milo.struct<"Vec", ${PTR}, si64, si64>`, PTR).ref} : si64`, "si64");
       }
-      case "HeapPtr": return this.builtinOf(e, "object", false);
+      case "HeapPtr": {
+        // `h.ptr()`: the box's address, read from the Heap's place (legacy: the Heap IS the
+        // pointer). The Heap keeps owning it.
+        const ht = stripRefs(e.object.type);
+        if (ht.tag !== "heap" || ht.inner.tag === "interface" || scalar(e.type, "heap pointer") !== PTR) return this.builtinOf(e, "object", false);
+        const lt = this.lent(ht, "heap of ptr");
+        const at = this.def(`milo.addr ${this.place(e.object, lt, false).ref} : ${lt}`, PTR).ref;
+        return this.def(`milo.ptr.load ${at} : ${PTR}`, PTR);
+      }
       case "EnumTryFrom": {
         // `E.tryFrom(n)`: Some of the variant whose discriminant is n (its tag), else None;
         // n compared in i64, widened by its own signedness.
