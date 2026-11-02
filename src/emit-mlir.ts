@@ -991,6 +991,20 @@ class FnEmitter {
     if (this.pending > 0) throw new MlirUnsupported("jump out of an expression with an owned operand pending");
   }
 
+  /**
+   * An operand a legacy helper takes by value (an extern's, a builtin's, an itable
+   * dispatch's): any SSA value that owns nothing (a scalar, a pointer, a plain fn value, a
+   * struct or enum of those), typed as the helper's own param. One that owns would leave
+   * the helper to drop it, which only a direct call's callee does.
+   */
+  private helperOperand(e: HIRExpr, what: string): { v: Val; type: TypeKind } {
+    const type = stripRefs(this.fieldType(e));
+    const v = this.pend(this.expr(e));
+    if (!isScalarTy(v.ty) && v.ty !== PTR && (!v.ty || v.ty !== valueType(this.cx, type) || this.hasDrop(v.ty)))
+      throw new MlirUnsupported(`${what} of type ${type.tag}`);
+    return { v, type };
+  }
+
   /** `v` where it is consumed (stored, passed or returned by value): it must own itself. */
   private consume(v: Val, what: string): Val {
     if (this.hasDrop(v.ty) && v.own === "view") throw new MlirUnsupported(`${what} copies a borrowed value`);
@@ -1363,9 +1377,8 @@ class FnEmitter {
         ops.push({ name: `a${k}`, type: t, mode: a.refMut ? "mut" : "ref", ref: this.place(a.expr, refOf(ty), a.refMut).ref });
         return;
       }
-      const v = this.pend(this.expr(a.expr));
-      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`interface call argument of type ${t.tag}`);
-      ops.push({ name: `a${k}`, type: t, mode: "val", ref: v.ref });
+      const { v, type } = this.helperOperand(a.expr, "interface call argument");
+      ops.push({ name: `a${k}`, type, mode: "val", ref: v.ref });
     });
     this.pending = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "interface call result");
@@ -2990,11 +3003,10 @@ class FnEmitter {
         keys.push("ptr");
         return;
       }
-      const v = this.pend(this.expr(a.expr));
-      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`extern argument of type ${t.tag}`);
-      params.push({ name, type: t, isRef: false, isRefMut: false });
+      const { v, type } = this.helperOperand(a.expr, "extern argument");
+      params.push({ name, type, isRef: false, isRefMut: false });
       args.push(`${v.ref} : ${v.ty}`);
-      keys.push(typeKey(t));
+      keys.push(typeKey(type));
     });
     this.pending = mark;
     const ret = e.type.tag === "void" ? null : this.value(e.type, "extern call result");
@@ -3032,11 +3044,10 @@ class FnEmitter {
         keys.push(`r${typeKey(t)}`);
         return;
       }
-      const v = this.pend(this.expr(a.expr));
-      if (!isScalarTy(v.ty) && v.ty !== PTR) throw new MlirUnsupported(`builtin operand of type ${t.tag}`);
-      params.push({ name, type: t, isRef: false, isRefMut: false });
+      const { v, type } = this.helperOperand(a.expr, "builtin operand");
+      params.push({ name, type, isRef: false, isRefMut: false });
       args.push(`${v.ref} : ${v.ty}`);
-      keys.push(typeKey(t));
+      keys.push(typeKey(type));
     });
     this.pending = mark;
     const ret = e.type.tag === "void" || e.type.tag === "never" ? null : this.value(e.type, "builtin result");
